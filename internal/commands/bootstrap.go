@@ -1,8 +1,17 @@
 package commands
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -55,8 +64,8 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	blocName := viper.GetString("bloc_name")
 	iaas := viper.GetString("iaas")
 	region := viper.GetString("region")
-	blocs := viper.GetString("bootstrap.blocs")
 	force := viper.GetBool("bootstrap.force")
+	configFile := viper.GetString("config")
 
 	// Validate required configuration
 	if blocName == "" {
@@ -66,18 +75,77 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("iaas provider is required")
 	}
 
-	// TODO: Load configuration
-	// TODO: Initialize provider
-	// TODO: Execute bootstrap workflow
+	// Initialize logger
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs")
+	if err := logger.Initialize(logger.Config{
+		Level:     viper.GetString("log_level"),
+		Debug:     viper.GetBool("debug"),
+		Verbose:   viper.GetBool("verbose"),
+		Trace:     viper.GetBool("trace"),
+		NoLog:     viper.GetBool("no_log"),
+		LogDir:    logDir,
+		BlocName:  blocName,
+		Command:   "bootstrap",
+		RequestID: os.Getenv("OCFP_REQUEST_ID"),
+	}); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer logger.Sync()
 
-	// Placeholder output
-	fmt.Printf("Bootstrapping environment:\n")
-	fmt.Printf("  Bloc: %s\n", blocName)
-	fmt.Printf("  Provider: %s\n", iaas)
-	fmt.Printf("  Region: %s\n", region)
-	fmt.Printf("  Blocs to bootstrap: %s\n", blocs)
-	fmt.Printf("  Force: %v\n", force)
-	fmt.Println("\n[This is a placeholder - bootstrap implementation pending]")
+	// Load configuration
+	cfg, err := config.Load(configFile, blocName)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Create provider config
+	providerConfig := map[string]interface{}{
+		"project_id": cfg.ProjectID,
+		"org_id":     cfg.OrgID,
+		"auth_token": cfg.AuthToken,
+		"region":     region,
+	}
+
+	// Initialize provider
+	provider, err := cpi.CreateProvider(context.Background(), iaas, providerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+	defer provider.Cleanup(context.Background())
+
+	// Initialize state manager
+	stateManager, err := state.NewManager("")
+	if err != nil {
+		return fmt.Errorf("failed to create state manager: %w", err)
+	}
+
+	// Create bootstrap manager
+	bootstrapOpts := &bootstrap.Options{
+		BlocName: blocName,
+		Provider: iaas,
+		Region:   region,
+		Force:    force,
+		DryRun:   viper.GetBool("dry_run"),
+		Timeout:  30 * time.Minute,
+	}
+
+	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
+
+	// Execute bootstrap
+	ctx := context.Background()
+	if err := bootstrapManager.Execute(ctx); err != nil {
+		return fmt.Errorf("bootstrap failed: %w", err)
+	}
+
+	// Save final state
+	if err := stateManager.Save(); err != nil {
+		logger.Warnf("Failed to save final state: %v", err)
+	}
+
+	fmt.Printf("\n✅ Bootstrap completed successfully!\n")
+	fmt.Printf("Bloc: %s\n", blocName)
+	fmt.Printf("Provider: %s\n", iaas)
+	fmt.Printf("Region: %s\n", region)
 
 	return nil
 }

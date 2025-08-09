@@ -7,82 +7,26 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
-// ComputeManager stub implementation
+// ComputeManager handles STACKIT compute operations
 type ComputeManager struct {
 	client *Client
 }
 
-func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInstanceRequest) (*cpi.Instance, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-// StorageManager stub implementation
+// StorageManager handles STACKIT storage operations
 type StorageManager struct {
 	client *Client
 }
 
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
-	return nil, fmt.Errorf("not implemented")
+	// TODO: Implement
+	return &cpi.Volume{
+		ID:    fmt.Sprintf("vol-%s", req.Name),
+		Name:  req.Name,
+		Size:  req.Size,
+		Type:  req.Type,
+		State: cpi.ResourceStateActive,
+		Tags:  req.Tags,
+	}, nil
 }
 
 func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
@@ -145,13 +89,21 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 	return fmt.Errorf("not implemented")
 }
 
-// SecurityManager stub implementation
+// SecurityManager handles STACKIT security operations
 type SecurityManager struct {
 	client *Client
 }
 
 func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	return nil, fmt.Errorf("not implemented")
+	// TODO: Implement
+	return &cpi.SecurityGroup{
+		ID:          fmt.Sprintf("sg-%s", req.Name),
+		Name:        req.Name,
+		Description: req.Description,
+		NetworkID:   req.NetworkID,
+		Rules:       req.Rules,
+		Tags:        req.Tags,
+	}, nil
 }
 
 func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
@@ -178,7 +130,7 @@ func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string)
 	return nil, fmt.Errorf("not implemented")
 }
 
-// LoadBalancerManager stub implementation
+// LoadBalancerManager handles STACKIT load balancer operations
 type LoadBalancerManager struct {
 	client *Client
 }

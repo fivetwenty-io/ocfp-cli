@@ -3,7 +3,6 @@ package cpi
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"time"
 

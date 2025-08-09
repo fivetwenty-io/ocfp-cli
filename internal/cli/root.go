@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/ocfp/ocfp-cli-go/internal/version"
+	_ "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit" // Register STACKIT provider
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
