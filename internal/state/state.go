@@ -72,7 +72,7 @@ func (m *Manager) Load(blocName string) (*State, error) {
 	defer m.mu.Unlock()
 
 	statePath := m.getStatePath(blocName)
-	
+
 	// Check if state file exists
 	if _, err := os.Stat(statePath); os.IsNotExist(err) {
 		// Create new state
@@ -118,7 +118,7 @@ func (m *Manager) Save() error {
 	}
 
 	m.current.UpdatedAt = time.Now()
-	
+
 	// Create backup of existing state
 	statePath := m.getStatePath(m.current.BlocName)
 	if _, err := os.Stat(statePath); err == nil {
@@ -158,7 +158,7 @@ func (m *Manager) AddResource(resource *Resource) error {
 
 	// Generate resource key
 	key := fmt.Sprintf("%s.%s", resource.Type, resource.Name)
-	
+
 	// Check if resource exists
 	if existing, ok := m.current.Resources[key]; ok {
 		// Update existing resource
@@ -188,13 +188,13 @@ func (m *Manager) RemoveResource(resourceType, resourceName string) error {
 	}
 
 	key := fmt.Sprintf("%s.%s", resourceType, resourceName)
-	
+
 	if _, ok := m.current.Resources[key]; !ok {
 		return fmt.Errorf("resource %s not found", key)
 	}
 
 	delete(m.current.Resources, key)
-	
+
 	// Remove from dependencies
 	delete(m.current.Dependencies, key)
 	for k, deps := range m.current.Dependencies {
@@ -240,7 +240,7 @@ func (m *Manager) ListResources(resourceType string) ([]*Resource, error) {
 
 	var resources []*Resource
 	prefix := resourceType + "."
-	
+
 	for key, resource := range m.current.Resources {
 		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
 			resources = append(resources, resource)
@@ -326,7 +326,7 @@ func (m *Manager) GetDependencies(resource string) ([]string, error) {
 // Lock acquires an exclusive lock on the state
 func (m *Manager) Lock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
-	
+
 	// Check if lock exists
 	if _, err := os.Stat(lockPath); err == nil {
 		// Read lock info
@@ -334,13 +334,13 @@ func (m *Manager) Lock(blocName string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read lock file: %w", err)
 		}
-		
+
 		var lockInfo map[string]interface{}
 		if err := json.Unmarshal(data, &lockInfo); err == nil {
-			return fmt.Errorf("state is locked by %v at %v", 
+			return fmt.Errorf("state is locked by %v at %v",
 				lockInfo["owner"], lockInfo["created_at"])
 		}
-		
+
 		return fmt.Errorf("state is locked")
 	}
 
@@ -368,7 +368,7 @@ func (m *Manager) Lock(blocName string) error {
 // Unlock releases the lock on the state
 func (m *Manager) Unlock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
-	
+
 	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove lock file: %w", err)
 	}

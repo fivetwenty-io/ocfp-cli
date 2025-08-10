@@ -69,7 +69,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 
 	for _, phase := range phases {
 		logger.Infof("Executing phase: %s", phase.name)
-		
+
 		if m.options.DryRun {
 			logger.Infof("[DRY RUN] Would execute: %s", phase.name)
 			continue
@@ -152,7 +152,7 @@ func (m *Manager) createSubnets(ctx context.Context) error {
 	for _, bloc := range m.config.Blocs {
 		for _, subnet := range bloc.Subnets {
 			subnetName := fmt.Sprintf("%s-%s", bloc.Name, subnet.Name)
-			
+
 			// Check if subnet already exists
 			existingSubnet, _ := m.stateManager.GetResource("subnet", subnetName)
 			if existingSubnet != nil && existingSubnet.State == string(cpi.ResourceStateActive) {
@@ -267,7 +267,7 @@ func (m *Manager) createSecurityGroups(ctx context.Context) error {
 
 	for _, sg := range securityGroups {
 		sgName := fmt.Sprintf("%s-%s", m.config.Name, sg.name)
-		
+
 		// Check if already exists
 		existingSG, _ := m.stateManager.GetResource("security_group", sgName)
 		if existingSG != nil {
@@ -318,7 +318,7 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 	logger.Info("Managing SSH key pair...")
 
 	keypairName := fmt.Sprintf("%s-bastion", m.config.Name)
-	
+
 	// Check if keypair already exists
 	existingKP, _ := m.stateManager.GetResource("keypair", keypairName)
 	if existingKP != nil {
@@ -372,11 +372,11 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 // createVolumes creates persistent volumes
 func (m *Manager) createVolumes(ctx context.Context) error {
 	logger.Info("Creating volumes...")
-	
+
 	// Default volumes for bastion
 	volumes := []struct {
-		name string
-		size int
+		name    string
+		size    int
 		volType string
 	}{
 		{"bastion-root", 50, "standard"},
@@ -385,7 +385,7 @@ func (m *Manager) createVolumes(ctx context.Context) error {
 
 	for _, vol := range volumes {
 		volName := fmt.Sprintf("%s-%s", m.config.Name, vol.name)
-		
+
 		// Check if already exists
 		existingVol, _ := m.stateManager.GetResource("volume", volName)
 		if existingVol != nil {
@@ -435,7 +435,7 @@ func (m *Manager) createBastion(ctx context.Context) error {
 	logger.Info("Creating bastion host...")
 
 	bastionName := fmt.Sprintf("%s-bastion", m.config.Name)
-	
+
 	// Check if already exists
 	existingBastion, _ := m.stateManager.GetResource("instance", bastionName)
 	if existingBastion != nil && existingBastion.State == string(cpi.ResourceStateActive) {

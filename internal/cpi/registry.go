@@ -49,6 +49,17 @@ func Get(name string) (ProviderFactory, error) {
 	return factory, nil
 }
 
+// GetProvider creates a new provider instance by name
+func GetProvider(name string) (Provider, error) {
+	factory, err := Get(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// For now, pass nil config - the provider will be initialized separately
+	return factory(nil)
+}
+
 // List returns all registered provider names
 func List() []string {
 	globalRegistry.mu.RLock()

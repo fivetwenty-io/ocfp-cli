@@ -15,74 +15,71 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewSSHCmd creates the SSH command
-func NewSSHCmd() *cobra.Command {
+// NewSCPCmd creates the SCP command
+func NewSCPCmd() *cobra.Command {
 	var (
 		user       string
 		key        string
-		sshOptions string
+		recursive  bool
+		scpOptions string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "ssh [target]",
-		Short: "Connect to bastion host or other servers",
-		Long: `SSH connects to the bastion host or other servers in the OCFP environment.
+		Use:   "scp <source> <destination>",
+		Short: "Copy files to/from bastion host",
+		Long: `SCP copies files between the local machine and the bastion host.
 
-The command automatically:
-- Locates the bastion host's public IP address
-- Finds the SSH key in standard locations
-- Uses the correct private key to establish connection
+The command supports bidirectional transfers:
+- Local to bastion: ocfp scp /local/file bastion:/remote/path
+- Bastion to local: ocfp scp bastion:/remote/file /local/path
 
-SSH keys are searched in the following order:
-1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-2. ~/.ssh/{environment-name}-{bastion_keypair}
-3. Configured ssh_key_storage_dir`,
-		Example: `  # Connect to bastion host
-  ocfp ssh --bloc-name production
+The bastion host is automatically discovered using the bloc configuration.`,
+		Example: `  # Copy file to bastion
+  ocfp scp --bloc-name production /local/file.txt bastion:/tmp/
 
-  # Connect as specific user
-  ocfp ssh --bloc-name production --user admin
+  # Copy file from bastion
+  ocfp scp --bloc-name production bastion:/etc/config.yml ./config.yml
+
+  # Recursive copy of directory
+  ocfp scp --bloc-name production -r /local/dir/ bastion:/remote/dir/
 
   # Use specific SSH key
-  ocfp ssh --bloc-name production --key /path/to/key.pem
-
-  # Pass additional SSH options
-  ocfp ssh --bloc-name production --ssh-options "-o StrictHostKeyChecking=no"`,
-		Args: cobra.MaximumNArgs(1),
+  ocfp scp --bloc-name production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSSH(cmd, args)
+			return runSCP(cmd, args)
 		},
 	}
 
 	// Command-specific flags
-	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SSH login")
+	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SCP")
 	cmd.Flags().StringVar(&key, "key", "", "path to SSH private key")
-	cmd.Flags().StringVar(&sshOptions, "ssh-options", "", "additional SSH options")
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recursively copy directories")
+	cmd.Flags().StringVar(&scpOptions, "scp-options", "", "additional SCP options")
 
 	// Bind flags to viper
-	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
-	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("ssh.options", cmd.Flags().Lookup("ssh-options"))
+	_ = viper.BindPFlag("scp.user", cmd.Flags().Lookup("user"))
+	_ = viper.BindPFlag("scp.key", cmd.Flags().Lookup("key"))
+	_ = viper.BindPFlag("scp.recursive", cmd.Flags().Lookup("recursive"))
+	_ = viper.BindPFlag("scp.options", cmd.Flags().Lookup("scp-options"))
 
 	return cmd
 }
 
-func runSSH(cmd *cobra.Command, args []string) error {
+func runSCP(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	log := logger.WithOperation("ssh")
+	log := logger.WithOperation("scp")
 
 	// Get configuration values
 	blocName := viper.GetString("bloc_name")
 	iaas := viper.GetString("iaas")
-	user := viper.GetString("ssh.user")
-	keyPath := viper.GetString("ssh.key")
-	sshOptions := viper.GetString("ssh.options")
+	user := viper.GetString("scp.user")
+	keyPath := viper.GetString("scp.key")
+	recursive := viper.GetBool("scp.recursive")
+	scpOptions := viper.GetString("scp.options")
 
-	// Determine target
-	target := "bastion"
-	if len(args) > 0 {
-		target = args[0]
-	}
+	source := args[0]
+	destination := args[1]
 
 	// Validate required configuration
 	if blocName == "" {
@@ -109,44 +106,42 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get bastion IP address
-	var bastionIP string
-	if target == "bastion" {
-		bastionIP, err = getBastionIP(ctx, provider, blocName)
-		if err != nil {
-			return fmt.Errorf("failed to get bastion IP: %w", err)
-		}
-	} else {
-		// For non-bastion targets, we'd need to look up the target IP
-		// This could be another instance or a service
-		bastionIP = target
+	bastionIP, err := getBastionIPForSCP(ctx, provider, blocName)
+	if err != nil {
+		return fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
 	// Find SSH key if not specified
 	if keyPath == "" {
-		keyPath, err = findSSHKey(blocName, cfg)
+		keyPath, err = findSSHKeyForSCP(blocName, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to find SSH key: %w", err)
 		}
 	}
 
 	// Verify key exists and has correct permissions
-	if err := verifySSHKey(keyPath); err != nil {
+	if err := verifySSHKeyForSCP(keyPath); err != nil {
 		return fmt.Errorf("SSH key verification failed: %w", err)
 	}
 
-	// Build SSH command
-	sshCmd := buildSSHCommand(bastionIP, user, keyPath, sshOptions)
+	// Process source and destination paths
+	processedSource := processSCPPath(source, bastionIP, user)
+	processedDest := processSCPPath(destination, bastionIP, user)
 
-	log.Infof("Connecting to %s at %s as %s", target, bastionIP, user)
+	// Build SCP command
+	scpCmd := buildSCPCommand(processedSource, processedDest, keyPath, recursive, scpOptions)
+
+	log.Infof("Copying files: %s -> %s", source, destination)
 	log.Debugf("Using SSH key: %s", keyPath)
+	log.Debugf("Bastion IP: %s", bastionIP)
 
-	// Execute SSH command
-	return executeSSH(sshCmd)
+	// Execute SCP command
+	return executeSCP(scpCmd)
 }
 
-// getBastionIP retrieves the bastion host's public IP address
-func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
-	log := logger.WithOperation("getBastionIP")
+// getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic)
+func getBastionIPForSCP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
+	log := logger.WithOperation("getBastionIPForSCP")
 
 	// List instances with bastion tag/label
 	filters := map[string]string{
@@ -183,9 +178,9 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 	return bastion.FloatingIP, nil
 }
 
-// findSSHKey locates the SSH private key for the bastion
-func findSSHKey(blocName string, cfg *config.Config) (string, error) {
-	log := logger.WithOperation("findSSHKey")
+// findSSHKeyForSCP locates the SSH private key for SCP
+func findSSHKeyForSCP(blocName string, cfg *config.Config) (string, error) {
+	log := logger.WithOperation("findSSHKeyForSCP")
 
 	// Search paths in order of preference
 	searchPaths := []string{
@@ -223,8 +218,8 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
 }
 
-// verifySSHKey checks if the SSH key exists and has correct permissions
-func verifySSHKey(keyPath string) error {
+// verifySSHKeyForSCP checks if the SSH key exists and has correct permissions
+func verifySSHKeyForSCP(keyPath string) error {
 	info, err := os.Stat(keyPath)
 	if err != nil {
 		return fmt.Errorf("SSH key not found: %s", keyPath)
@@ -237,15 +232,25 @@ func verifySSHKey(keyPath string) error {
 		if err := os.Chmod(keyPath, 0600); err != nil {
 			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
 		}
-		logger.WithOperation("verifySSHKey").Warnf("Fixed SSH key permissions for: %s", keyPath)
+		logger.WithOperation("verifySSHKeyForSCP").Warnf("Fixed SSH key permissions for: %s", keyPath)
 	}
 
 	return nil
 }
 
-// buildSSHCommand constructs the SSH command with all options
-func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
-	cmd := []string{"ssh"}
+// processSCPPath converts bastion: references to proper SCP format
+func processSCPPath(path, bastionIP, user string) string {
+	if strings.HasPrefix(path, "bastion:") {
+		// Replace bastion: with user@bastionIP:
+		remotePath := strings.TrimPrefix(path, "bastion:")
+		return fmt.Sprintf("%s@%s:%s", user, bastionIP, remotePath)
+	}
+	return path
+}
+
+// buildSCPCommand constructs the SCP command with all options
+func buildSCPCommand(source, destination, keyPath string, recursive bool, extraOptions string) []string {
+	cmd := []string{"scp"}
 
 	// Standard options
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
@@ -257,25 +262,29 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 		cmd = append(cmd, "-i", keyPath)
 	}
 
+	// Add recursive flag if needed
+	if recursive {
+		cmd = append(cmd, "-r")
+	}
+
 	// Add extra options if provided
 	if extraOptions != "" {
-		// Parse extra options (simple space splitting for now)
 		options := strings.Fields(extraOptions)
 		cmd = append(cmd, options...)
 	}
 
-	// Add user@host
-	cmd = append(cmd, fmt.Sprintf("%s@%s", user, host))
+	// Add source and destination
+	cmd = append(cmd, source, destination)
 
 	return cmd
 }
 
-// executeSSH executes the SSH command and attaches to stdin/stdout/stderr
-func executeSSH(sshCmd []string) error {
-	log := logger.WithOperation("executeSSH")
-	log.Debugf("Executing: %s", strings.Join(sshCmd, " "))
+// executeSCP executes the SCP command
+func executeSCP(scpCmd []string) error {
+	log := logger.WithOperation("executeSCP")
+	log.Debugf("Executing: %s", strings.Join(scpCmd, " "))
 
-	cmd := exec.Command(sshCmd[0], sshCmd[1:]...)
+	cmd := exec.Command(scpCmd[0], scpCmd[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

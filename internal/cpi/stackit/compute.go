@@ -399,24 +399,135 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 
 // ListImages lists available images
 func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
-	// TODO: Implement
-	return nil, fmt.Errorf("not implemented")
+	logger.WithOperation("ListImages").Debug("Listing images")
+
+	query := "?"
+	for k, v := range filters {
+		query += fmt.Sprintf("%s=%s&", k, v)
+	}
+
+	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/images"+query, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := m.client.do(ctx, httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list images: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, m.client.parseError(resp)
+	}
+
+	var result struct {
+		Images []*cpi.Image `json:"images"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	logger.WithOperation("ListImages").Debugf("Found %d images", len(result.Images))
+	return result.Images, nil
 }
 
 // GetImage retrieves an image
 func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
-	// TODO: Implement
-	return nil, fmt.Errorf("not implemented")
+	logger.WithOperation("GetImage").Debugf("Getting image: %s", id)
+
+	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/images/"+id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := m.client.do(ctx, httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &cpi.ProviderError{
+			Provider: "stackit",
+			Code:     "NotFound",
+			Message:  fmt.Sprintf("Image %s not found", id),
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, m.client.parseError(resp)
+	}
+
+	var image cpi.Image
+	if err := json.NewDecoder(resp.Body).Decode(&image); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &image, nil
 }
 
 // ListFlavors lists available flavors
 func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
-	// TODO: Implement
-	return nil, fmt.Errorf("not implemented")
+	logger.WithOperation("ListFlavors").Debug("Listing flavors")
+
+	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/flavors", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := m.client.do(ctx, httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list flavors: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, m.client.parseError(resp)
+	}
+
+	var result struct {
+		Flavors []*cpi.Flavor `json:"flavors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	logger.WithOperation("ListFlavors").Debugf("Found %d flavors", len(result.Flavors))
+	return result.Flavors, nil
 }
 
 // GetFlavor retrieves a flavor
 func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
-	// TODO: Implement
-	return nil, fmt.Errorf("not implemented")
+	logger.WithOperation("GetFlavor").Debugf("Getting flavor: %s", id)
+
+	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/flavors/"+id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := m.client.do(ctx, httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get flavor: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &cpi.ProviderError{
+			Provider: "stackit",
+			Code:     "NotFound",
+			Message:  fmt.Sprintf("Flavor %s not found", id),
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, m.client.parseError(resp)
+	}
+
+	var flavor cpi.Flavor
+	if err := json.NewDecoder(resp.Body).Decode(&flavor); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &flavor, nil
 }

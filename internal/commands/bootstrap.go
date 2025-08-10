@@ -53,8 +53,8 @@ This includes:
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
 
 	// Bind flags to viper
-	viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
-	viper.BindPFlag("bootstrap.force", cmd.Flags().Lookup("force"))
+	_ = viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
+	_ = viper.BindPFlag("bootstrap.force", cmd.Flags().Lookup("force"))
 
 	return cmd
 }
@@ -93,7 +93,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	defer logger.Sync()
 
 	// Load configuration
-	cfg, err := config.Load(configFile, blocName)
+	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}

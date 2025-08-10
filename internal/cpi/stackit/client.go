@@ -2,8 +2,11 @@ package stackit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -15,7 +18,7 @@ type Client struct {
 	config      *Config
 	httpClient  *http.Client
 	rateLimiter *cpi.RateLimiter
-	
+
 	// Resource managers
 	network      *NetworkManager
 	compute      *ComputeManager
@@ -26,14 +29,14 @@ type Client struct {
 
 // Config holds STACKIT-specific configuration
 type Config struct {
-	ProjectID    string
-	OrgID        string
-	AuthToken    string
-	Region       string
-	BaseURL      string
-	Timeout      time.Duration
-	MaxRetries   int
-	RateLimit    int
+	ProjectID  string
+	OrgID      string
+	AuthToken  string
+	Region     string
+	BaseURL    string
+	Timeout    time.Duration
+	MaxRetries int
+	RateLimit  int
 }
 
 // NewClient creates a new STACKIT client
@@ -41,7 +44,7 @@ func NewClient(config *Config) (*Client, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config is required")
 	}
-	
+
 	// Set defaults
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.stackit.cloud"
@@ -55,33 +58,36 @@ func NewClient(config *Config) (*Client, error) {
 	if config.RateLimit == 0 {
 		config.RateLimit = 10 // requests per second
 	}
-	
-	// Create HTTP client
+
+	// Create HTTP client with optimized transport settings
 	httpClient := &http.Client{
 		Timeout: config.Timeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			MaxConnsPerHost:       100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
 		},
 	}
-	
+
 	// Create rate limiter
 	rateLimiter := cpi.NewRateLimiter(config.RateLimit, config.RateLimit*2)
-	
+
 	client := &Client{
 		config:      config,
 		httpClient:  httpClient,
 		rateLimiter: rateLimiter,
 	}
-	
+
 	// Initialize resource managers
 	client.network = &NetworkManager{client: client}
 	client.compute = &ComputeManager{client: client}
 	client.storage = &StorageManager{client: client}
 	client.security = &SecurityManager{client: client}
 	client.loadBalancer = &LoadBalancerManager{client: client}
-	
+
 	return client, nil
 }
 
@@ -100,23 +106,23 @@ func (c *Client) Region() string {
 // Authenticate validates and stores credentials
 func (c *Client) Authenticate(ctx context.Context) error {
 	logger.Debug("Authenticating with STACKIT")
-	
+
 	// Validate token by making a simple API call
 	req, err := c.newRequest(ctx, "GET", "/v1/projects/"+c.config.ProjectID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create auth request: %w", err)
 	}
-	
+
 	resp, err := c.do(ctx, req)
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("authentication failed: status %d", resp.StatusCode)
 	}
-	
+
 	logger.Info("Successfully authenticated with STACKIT")
 	return nil
 }
@@ -157,14 +163,65 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	if !ok {
 		return fmt.Errorf("invalid config type for STACKIT provider")
 	}
-	
+
+	// Set defaults
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.stackit.cloud"
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 30 * time.Second
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = 3
+	}
+	if cfg.RateLimit == 0 {
+		cfg.RateLimit = 10 // requests per second
+	}
+
 	c.config = cfg
-	
+
+	// Create HTTP client if not already set
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{
+			Timeout: cfg.Timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   10,
+				MaxConnsPerHost:       100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 10 * time.Second,
+			},
+		}
+	}
+
+	// Create rate limiter if not already set
+	if c.rateLimiter == nil {
+		c.rateLimiter = cpi.NewRateLimiter(cfg.RateLimit, cfg.RateLimit*2)
+	}
+
+	// Initialize resource managers if not already set
+	if c.network == nil {
+		c.network = &NetworkManager{client: c}
+	}
+	if c.compute == nil {
+		c.compute = &ComputeManager{client: c}
+	}
+	if c.storage == nil {
+		c.storage = &StorageManager{client: c}
+	}
+	if c.security == nil {
+		c.security = &SecurityManager{client: c}
+	}
+	if c.loadBalancer == nil {
+		c.loadBalancer = &LoadBalancerManager{client: c}
+	}
+
 	// Authenticate
 	if err := c.Authenticate(ctx); err != nil {
 		return fmt.Errorf("failed to initialize STACKIT provider: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -174,12 +231,12 @@ func (c *Client) Cleanup(ctx context.Context) error {
 	if c.rateLimiter != nil {
 		c.rateLimiter.Stop()
 	}
-	
+
 	// Close idle connections
 	if c.httpClient != nil {
 		c.httpClient.CloseIdleConnections()
 	}
-	
+
 	return nil
 }
 
@@ -188,20 +245,28 @@ func (c *Client) Cleanup(ctx context.Context) error {
 // newRequest creates a new HTTP request
 func (c *Client) newRequest(ctx context.Context, method, path string, body interface{}) (*http.Request, error) {
 	url := c.config.BaseURL + path
-	
-	// TODO: Marshal body if provided
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+
+	var bodyReader io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = strings.NewReader(string(jsonData))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Set headers
 	req.Header.Set("Authorization", "Bearer "+c.config.AuthToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Project-ID", c.config.ProjectID)
 	req.Header.Set("X-Organization-ID", c.config.OrgID)
-	
+
 	return req, nil
 }
 
@@ -211,7 +276,7 @@ func (c *Client) do(ctx context.Context, req *http.Request) (*http.Response, err
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, err
 	}
-	
+
 	// Execute with retry
 	var resp *http.Response
 	err := cpi.WithRetry(ctx, &cpi.RetryConfig{
@@ -229,7 +294,7 @@ func (c *Client) do(ctx context.Context, req *http.Request) (*http.Response, err
 				Message:  err.Error(),
 			}
 		}
-		
+
 		// Check for retryable status codes
 		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
 			return &cpi.ProviderError{
@@ -238,16 +303,72 @@ func (c *Client) do(ctx context.Context, req *http.Request) (*http.Response, err
 				Message:  "Server error",
 			}
 		}
-		
+
 		return nil
 	})
-	
+
 	return resp, err
 }
 
 // parseError parses an error response
 func (c *Client) parseError(resp *http.Response) error {
-	// TODO: Parse STACKIT error response format
+	if resp.Body == nil {
+		return &cpi.ProviderError{
+			Provider: "stackit",
+			Code:     fmt.Sprintf("%d", resp.StatusCode),
+			Message:  fmt.Sprintf("Request failed with status %d", resp.StatusCode),
+		}
+	}
+
+	// Read the body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &cpi.ProviderError{
+			Provider: "stackit",
+			Code:     fmt.Sprintf("%d", resp.StatusCode),
+			Message:  fmt.Sprintf("Request failed with status %d", resp.StatusCode),
+		}
+	}
+
+	// Try to parse as JSON first
+	var errorResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+		Details string `json:"details"`
+	}
+
+	if err := json.Unmarshal(body, &errorResp); err == nil {
+		// Use the parsed error message
+		message := errorResp.Error
+		if message == "" {
+			message = errorResp.Message
+		}
+		if message == "" {
+			message = errorResp.Details
+		}
+		if message != "" {
+			return &cpi.ProviderError{
+				Provider: "stackit",
+				Code:     fmt.Sprintf("%d", resp.StatusCode),
+				Message:  message,
+			}
+		}
+	}
+
+	// If JSON parsing failed or no message found, use plain text if available
+	if len(body) > 0 {
+		message := string(body)
+		// Trim whitespace and check if it's meaningful
+		if trimmed := strings.TrimSpace(message); trimmed != "" {
+			return &cpi.ProviderError{
+				Provider: "stackit",
+				Code:     fmt.Sprintf("%d", resp.StatusCode),
+				Message:  trimmed,
+			}
+		}
+	}
+
+	// Fallback to generic message
 	return &cpi.ProviderError{
 		Provider: "stackit",
 		Code:     fmt.Sprintf("%d", resp.StatusCode),

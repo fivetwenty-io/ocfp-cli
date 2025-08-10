@@ -1,0 +1,712 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+// NewLBCmd creates the load balancer command
+func NewLBCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lb",
+		Short: "Manage operational load balancers",
+		Long: `Manage load balancers for Cloud Foundry deployments.
+
+The lb command provides functionality to create, delete, and manage
+load balancers including adding/removing services and checking status.`,
+	}
+
+	// Add subcommands
+	cmd.AddCommand(newLBCreateCmd())
+	cmd.AddCommand(newLBDeleteCmd())
+	cmd.AddCommand(newLBListCmd())
+	cmd.AddCommand(newLBStatusCmd())
+	cmd.AddCommand(newLBAddServiceCmd())
+	cmd.AddCommand(newLBRemoveServiceCmd())
+	cmd.AddCommand(newLBUpdateCmd())
+
+	return cmd
+}
+
+// newLBCreateCmd creates the lb create subcommand
+func newLBCreateCmd() *cobra.Command {
+	var (
+		name        string
+		lbType      string
+		algorithm   string
+		port        int
+		targetPort  int
+		protocol    string
+		healthCheck bool
+		tags        []string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new load balancer",
+		Long: `Create a new load balancer for Cloud Foundry services.
+
+This command creates a load balancer with the specified configuration
+and associates it with the appropriate network resources.`,
+		Example: `  # Create a basic HTTP load balancer
+  ocfp lb create --name cf-router --type external --port 80
+
+  # Create HTTPS load balancer with health checks
+  ocfp lb create --name cf-router --type external --port 443 --protocol https --health-check
+
+  # Create internal load balancer for databases
+  ocfp lb create --name postgres-lb --type internal --port 5432 --target-port 5432`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
+
+			if name == "" {
+				return fmt.Errorf("load balancer name is required")
+			}
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			log.Info("Creating load balancer", "name", name, "type", lbType)
+
+			// Create load balancer configuration
+			lbConfig := &cpi.LoadBalancer{
+				Name:       name,
+				Type:       lbType,
+				Algorithm:  algorithm,
+				Port:       port,
+				TargetPort: targetPort,
+				Protocol:   protocol,
+				Tags:       tags,
+			}
+
+			// Create the load balancer
+			lb, err := network.CreateLoadBalancer(ctx, lbConfig)
+			if err != nil {
+				return fmt.Errorf("failed to create load balancer: %w", err)
+			}
+
+			log.Info("Load balancer created successfully",
+				"id", lb.ID,
+				"name", lb.Name,
+				"ip", lb.IPAddress,
+				"status", lb.Status)
+
+			// Configure health check if requested
+			if healthCheck {
+				healthConfig := &cpi.HealthCheck{
+					Path:               "/health",
+					Interval:           30,
+					Timeout:            5,
+					HealthyThreshold:   3,
+					UnhealthyThreshold: 3,
+				}
+
+				if err := network.ConfigureHealthCheck(ctx, lb.ID, healthConfig); err != nil {
+					log.Warn("Failed to configure health check", "error", err)
+				} else {
+					log.Info("Health check configured")
+				}
+			}
+
+			fmt.Printf("Load balancer created: %s (%s)\n", lb.Name, lb.IPAddress)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "load balancer name")
+	cmd.Flags().StringVar(&lbType, "type", "external", "load balancer type (external|internal)")
+	cmd.Flags().StringVar(&algorithm, "algorithm", "round-robin", "load balancing algorithm")
+	cmd.Flags().IntVar(&port, "port", 80, "load balancer port")
+	cmd.Flags().IntVar(&targetPort, "target-port", 0, "backend target port (defaults to lb port)")
+	cmd.Flags().StringVar(&protocol, "protocol", "tcp", "protocol (tcp|http|https)")
+	cmd.Flags().BoolVar(&healthCheck, "health-check", false, "enable health checks")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "tags to apply to load balancer")
+
+	return cmd
+}
+
+// newLBDeleteCmd creates the lb delete subcommand
+func newLBDeleteCmd() *cobra.Command {
+	var (
+		force bool
+		all   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a load balancer",
+		Long:  `Delete a load balancer and its associated resources.`,
+		Example: `  # Delete a specific load balancer
+  ocfp lb delete cf-router
+
+  # Force delete without confirmation
+  ocfp lb delete cf-router --force
+
+  # Delete all load balancers
+  ocfp lb delete --all --force`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
+
+			if !all && len(args) == 0 {
+				return fmt.Errorf("load balancer name required (or use --all)")
+			}
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			// Get list of load balancers to delete
+			var lbsToDelete []string
+
+			if all {
+				lbs, err := network.ListLoadBalancers(ctx, nil)
+				if err != nil {
+					return fmt.Errorf("failed to list load balancers: %w", err)
+				}
+				for _, lb := range lbs {
+					lbsToDelete = append(lbsToDelete, lb.ID)
+				}
+				log.Info("Found load balancers to delete", "count", len(lbsToDelete))
+			} else {
+				lbsToDelete = []string{args[0]}
+			}
+
+			// Confirm deletion if not forced
+			if !force {
+				fmt.Printf("This will delete %d load balancer(s). Continue? [y/N]: ", len(lbsToDelete))
+				var response string
+				fmt.Scanln(&response)
+				if !strings.HasPrefix(strings.ToLower(response), "y") {
+					log.Info("Deletion cancelled by user")
+					return nil
+				}
+			}
+
+			// Delete load balancers
+			for _, lbID := range lbsToDelete {
+				log.Info("Deleting load balancer", "id", lbID)
+				if err := network.DeleteLoadBalancer(ctx, lbID); err != nil {
+					log.Error("Failed to delete load balancer", "id", lbID, "error", err)
+				} else {
+					log.Info("Load balancer deleted", "id", lbID)
+				}
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+	cmd.Flags().BoolVar(&all, "all", false, "delete all load balancers")
+
+	return cmd
+}
+
+// newLBListCmd creates the lb list subcommand
+func newLBListCmd() *cobra.Command {
+	var (
+		format string
+		filter string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List load balancers",
+		Long:  `List all load balancers in the current deployment.`,
+		Example: `  # List all load balancers
+  ocfp lb list
+
+  # List with custom format
+  ocfp lb list --format json
+
+  # Filter by type
+  ocfp lb list --filter type=external`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			_ = logger.Get() // log not used in list output
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			// Parse filters
+			filters := make(map[string]string)
+			if filter != "" {
+				parts := strings.Split(filter, "=")
+				if len(parts) == 2 {
+					filters[parts[0]] = parts[1]
+				}
+			}
+
+			// List load balancers
+			lbs, err := network.ListLoadBalancers(ctx, filters)
+			if err != nil {
+				return fmt.Errorf("failed to list load balancers: %w", err)
+			}
+
+			if len(lbs) == 0 {
+				fmt.Println("No load balancers found")
+				return nil
+			}
+
+			// Display results
+			switch format {
+			case "json":
+				// Output JSON format (implementation would use json.Marshal)
+				fmt.Println("JSON output not yet implemented")
+			default:
+				// Table format
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+				fmt.Fprintln(w, "NAME\tTYPE\tIP\tPORT\tSTATUS\tCREATED")
+				for _, lb := range lbs {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+						lb.Name, lb.Type, lb.IPAddress, lb.Port, lb.Status, lb.CreatedAt)
+				}
+				w.Flush()
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&format, "format", "table", "output format (table|json|yaml)")
+	cmd.Flags().StringVar(&filter, "filter", "", "filter results (key=value)")
+
+	return cmd
+}
+
+// newLBStatusCmd creates the lb status subcommand
+func newLBStatusCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status <name>",
+		Short: "Get load balancer status",
+		Long:  `Get detailed status information for a load balancer.`,
+		Example: `  # Get status of a load balancer
+  ocfp lb status cf-router`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+
+			lbName := args[0]
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			// Get load balancer
+			lb, err := network.GetLoadBalancer(ctx, lbName)
+			if err != nil {
+				return fmt.Errorf("failed to get load balancer: %w", err)
+			}
+
+			// Display status
+			fmt.Printf("Load Balancer: %s\n", lb.Name)
+			fmt.Printf("ID: %s\n", lb.ID)
+			fmt.Printf("Type: %s\n", lb.Type)
+			fmt.Printf("Status: %s\n", lb.Status)
+			fmt.Printf("IP Address: %s\n", lb.IPAddress)
+			fmt.Printf("Port: %d\n", lb.Port)
+			fmt.Printf("Algorithm: %s\n", lb.Algorithm)
+			fmt.Printf("Created: %s\n", lb.CreatedAt)
+
+			// Get backend pool information
+			pools, err := network.GetBackendPools(ctx, lb.ID)
+			if err == nil && len(pools) > 0 {
+				fmt.Printf("\nBackend Pools:\n")
+				for _, pool := range pools {
+					fmt.Printf("  - %s: %d members\n", pool.Name, len(pool.Members))
+				}
+			}
+
+			// Get health status
+			health, err := network.GetLoadBalancerHealth(ctx, lb.ID)
+			if err == nil {
+				fmt.Printf("\nHealth Status:\n")
+				fmt.Printf("  Healthy: %d\n", health.Healthy)
+				fmt.Printf("  Unhealthy: %d\n", health.Unhealthy)
+				fmt.Printf("  Total: %d\n", health.Total)
+			}
+
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+// newLBAddServiceCmd creates the lb add-service subcommand
+func newLBAddServiceCmd() *cobra.Command {
+	var (
+		port       int
+		targetPort int
+		weight     int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "add-service <lb-name> <service-ip>",
+		Short: "Add a service to load balancer",
+		Long:  `Add a backend service to a load balancer pool.`,
+		Example: `  # Add a service to load balancer
+  ocfp lb add-service cf-router 10.0.1.10
+
+  # Add with custom port mapping
+  ocfp lb add-service cf-router 10.0.1.10 --port 8080 --target-port 80
+
+  # Add with weight for weighted load balancing
+  ocfp lb add-service cf-router 10.0.1.10 --weight 2`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
+
+			lbName := args[0]
+			serviceIP := args[1]
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			log.Info("Adding service to load balancer",
+				"lb", lbName,
+				"service", serviceIP,
+				"port", port)
+
+			// Get load balancer
+			lb, err := network.GetLoadBalancer(ctx, lbName)
+			if err != nil {
+				return fmt.Errorf("failed to get load balancer: %w", err)
+			}
+
+			// Create backend member
+			member := &cpi.BackendMember{
+				IPAddress:  serviceIP,
+				Port:       port,
+				TargetPort: targetPort,
+				Weight:     weight,
+			}
+
+			// Add member to backend pool
+			if err := network.AddBackendMember(ctx, lb.ID, member); err != nil {
+				return fmt.Errorf("failed to add backend member: %w", err)
+			}
+
+			log.Info("Service added to load balancer successfully")
+			fmt.Printf("Added %s to load balancer %s\n", serviceIP, lbName)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&port, "port", 80, "service port")
+	cmd.Flags().IntVar(&targetPort, "target-port", 0, "target port (defaults to service port)")
+	cmd.Flags().IntVar(&weight, "weight", 1, "service weight for weighted load balancing")
+
+	return cmd
+}
+
+// newLBRemoveServiceCmd creates the lb remove-service subcommand
+func newLBRemoveServiceCmd() *cobra.Command {
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "remove-service <lb-name> <service-ip>",
+		Short: "Remove a service from load balancer",
+		Long:  `Remove a backend service from a load balancer pool.`,
+		Example: `  # Remove a service from load balancer
+  ocfp lb remove-service cf-router 10.0.1.10
+
+  # Force removal without confirmation
+  ocfp lb remove-service cf-router 10.0.1.10 --force`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
+
+			lbName := args[0]
+			serviceIP := args[1]
+
+			// Confirm removal if not forced
+			if !force {
+				fmt.Printf("Remove %s from load balancer %s? [y/N]: ", serviceIP, lbName)
+				var response string
+				fmt.Scanln(&response)
+				if !strings.HasPrefix(strings.ToLower(response), "y") {
+					log.Info("Removal cancelled by user")
+					return nil
+				}
+			}
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			log.Info("Removing service from load balancer", "lb", lbName, "service", serviceIP)
+
+			// Get load balancer
+			lb, err := network.GetLoadBalancer(ctx, lbName)
+			if err != nil {
+				return fmt.Errorf("failed to get load balancer: %w", err)
+			}
+
+			// Remove member from backend pool
+			if err := network.RemoveBackendMember(ctx, lb.ID, serviceIP); err != nil {
+				return fmt.Errorf("failed to remove backend member: %w", err)
+			}
+
+			log.Info("Service removed from load balancer successfully")
+			fmt.Printf("Removed %s from load balancer %s\n", serviceIP, lbName)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+
+	return cmd
+}
+
+// newLBUpdateCmd creates the lb update subcommand
+func newLBUpdateCmd() *cobra.Command {
+	var (
+		algorithm   string
+		healthCheck string
+		timeout     int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "update <name>",
+		Short: "Update load balancer configuration",
+		Long:  `Update configuration settings for an existing load balancer.`,
+		Example: `  # Update load balancing algorithm
+  ocfp lb update cf-router --algorithm least-connections
+
+  # Update health check settings
+  ocfp lb update cf-router --health-check /health --timeout 10`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
+
+			lbName := args[0]
+
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc-name")
+
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider
+			provider, err := cpi.GetProvider(cfg.Provider)
+			if err != nil {
+				return fmt.Errorf("failed to get provider: %w", err)
+			}
+
+			// Initialize provider
+			if err := provider.Initialize(ctx, cfg); err != nil {
+				return fmt.Errorf("failed to initialize provider: %w", err)
+			}
+			defer provider.Cleanup(ctx)
+
+			network := provider.Network()
+			if network == nil {
+				return fmt.Errorf("provider does not support network management")
+			}
+
+			log.Info("Updating load balancer", "name", lbName)
+
+			// Get existing load balancer
+			lb, err := network.GetLoadBalancer(ctx, lbName)
+			if err != nil {
+				return fmt.Errorf("failed to get load balancer: %w", err)
+			}
+
+			// Update fields if provided
+			updateNeeded := false
+
+			if algorithm != "" && algorithm != lb.Algorithm {
+				lb.Algorithm = algorithm
+				updateNeeded = true
+			}
+
+			if updateNeeded {
+				if err := network.UpdateLoadBalancer(ctx, lb); err != nil {
+					return fmt.Errorf("failed to update load balancer: %w", err)
+				}
+				log.Info("Load balancer configuration updated")
+			}
+
+			// Update health check if provided
+			if healthCheck != "" {
+				healthConfig := &cpi.HealthCheck{
+					Path:               healthCheck,
+					Interval:           30,
+					Timeout:            timeout,
+					HealthyThreshold:   3,
+					UnhealthyThreshold: 3,
+				}
+
+				if err := network.ConfigureHealthCheck(ctx, lb.ID, healthConfig); err != nil {
+					return fmt.Errorf("failed to update health check: %w", err)
+				}
+				log.Info("Health check configuration updated")
+			}
+
+			fmt.Printf("Load balancer %s updated successfully\n", lbName)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&algorithm, "algorithm", "", "load balancing algorithm (round-robin|least-connections|ip-hash)")
+	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check path")
+	cmd.Flags().IntVar(&timeout, "timeout", 5, "health check timeout in seconds")
+
+	return cmd
+}

@@ -11,13 +11,13 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewBootstrapCmd())
 	root.AddCommand(commands.NewConfigureCmd())
 	root.AddCommand(commands.NewTeardownCmd())
-	
+
 	// Environment and access commands
 	root.AddCommand(commands.NewSSHCmd())
 	root.AddCommand(commands.NewSCPCmd())
 	root.AddCommand(commands.NewRSyncCmd())
 	root.AddCommand(commands.NewEnvCmd())
-	
+
 	// Operational commands
 	root.AddCommand(commands.NewInitCmd())
 	root.AddCommand(commands.NewTestCmd())
@@ -26,7 +26,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewScaleCmd())
 	root.AddCommand(commands.NewBackupCmd())
 	root.AddCommand(commands.NewRestoreCmd())
-	
+
 	// Provider and utility commands
 	root.AddCommand(commands.NewProviderCmd())
 	root.AddCommand(commands.NewTmuxCmd())

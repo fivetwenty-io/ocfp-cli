@@ -4,15 +4,15 @@ import "time"
 
 // Network represents a VPC or virtual network
 type Network struct {
-	ID          string
-	Name        string
-	CIDR        string
-	Region      string
-	State       ResourceState
-	Tags        map[string]string
-	DNSServers  []string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID         string
+	Name       string
+	CIDR       string
+	Region     string
+	State      ResourceState
+	Tags       map[string]string
+	DNSServers []string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Subnet represents a network subnet
@@ -39,6 +39,7 @@ type Instance struct {
 	SubnetID         string
 	PrivateIP        string
 	PublicIP         string
+	FloatingIP       string
 	SecurityGroups   []string
 	KeyPair          string
 	AvailabilityZone string
@@ -110,15 +111,15 @@ type FloatingIP struct {
 
 // Router represents a network router
 type Router struct {
-	ID            string
-	Name          string
-	NetworkID     string
+	ID              string
+	Name            string
+	NetworkID       string
 	ExternalGateway string
-	State         ResourceState
-	Routes        []*Route
-	Interfaces    []string // subnet IDs
-	Tags          map[string]string
-	CreatedAt     time.Time
+	State           ResourceState
+	Routes          []*Route
+	Interfaces      []string // subnet IDs
+	Tags            map[string]string
+	CreatedAt       time.Time
 }
 
 // Route represents a network route
@@ -129,31 +130,35 @@ type Route struct {
 
 // LoadBalancer represents a load balancer
 type LoadBalancer struct {
-	ID           string
-	Name         string
-	Type         string // application, network
-	Scheme       string // internet-facing, internal
-	VIP          string // Virtual IP
-	State        ResourceState
-	NetworkID    string
-	SubnetIDs    []string
+	ID             string
+	Name           string
+	Type           string // external, internal
+	Algorithm      string // round-robin, least-connections, ip-hash
+	IPAddress      string // Load balancer IP address
+	Port           int
+	TargetPort     int
+	Protocol       string // tcp, http, https
+	Status         string // active, pending, error
+	State          ResourceState
+	NetworkID      string
+	SubnetIDs      []string
 	SecurityGroups []string
-	Backends     []*Backend
-	HealthCheck  *HealthCheck
-	Tags         map[string]string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	Backends       []*Backend
+	HealthCheck    *HealthCheck
+	Tags           []string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // Backend represents a load balancer backend
 type Backend struct {
-	ID       string
-	Name     string
-	Address  string
-	Port     int
-	Weight   int
-	Enabled  bool
-	Health   string // healthy, unhealthy, unknown
+	ID      string
+	Name    string
+	Address string
+	Port    int
+	Weight  int
+	Enabled bool
+	Health  string // healthy, unhealthy, unknown
 }
 
 // HealthCheck represents a health check configuration
@@ -165,6 +170,23 @@ type HealthCheck struct {
 	Timeout            int // seconds
 	HealthyThreshold   int
 	UnhealthyThreshold int
+}
+
+// BackendPool represents a load balancer backend pool
+type BackendPool struct {
+	ID      string
+	Name    string
+	Members []*BackendMember
+}
+
+// BackendMember represents a backend pool member
+type BackendMember struct {
+	ID         string
+	IPAddress  string
+	Port       int
+	TargetPort int
+	Weight     int
+	Status     string // active, draining, disabled
 }
 
 // HealthStatus represents the health status of a load balancer
@@ -207,10 +229,10 @@ type Flavor struct {
 	ID          string
 	Name        string
 	VCPUs       int
-	RAM         int   // MB
-	Disk        int   // GB
-	Ephemeral   int   // GB
-	NetworkCap  int   // Mbps
+	RAM         int // MB
+	Disk        int // GB
+	Ephemeral   int // GB
+	NetworkCap  int // Mbps
 	Description string
 }
 
@@ -264,13 +286,22 @@ type CreateInstanceRequest struct {
 
 // CreateVolumeRequest for creating a volume
 type CreateVolumeRequest struct {
-	Name      string
-	Size      int // GB
-	Type      string
-	Encrypted bool
-	SourceSnapshot string
+	Name             string
+	Size             int // GB
+	Type             string
+	Encrypted        bool
+	SnapshotID       string // Source snapshot ID for creating volume from snapshot
+	SourceSnapshot   string // Deprecated: Use SnapshotID instead
 	AvailabilityZone string
-	Tags      map[string]string
+	Tags             map[string]string
+}
+
+// CreateSnapshotRequest for creating a snapshot
+type CreateSnapshotRequest struct {
+	Name        string
+	VolumeID    string
+	Description string
+	Tags        map[string]string
 }
 
 // CreateSecurityGroupRequest for creating a security group

@@ -10,18 +10,18 @@ type Provider interface {
 	// Provider information
 	Name() string
 	Region() string
-	
+
 	// Authentication
 	Authenticate(ctx context.Context) error
 	ValidateCredentials(ctx context.Context) error
-	
+
 	// Resource managers
 	Network() NetworkManager
 	Compute() ComputeManager
 	Storage() StorageManager
 	Security() SecurityManager
 	LoadBalancer() LoadBalancerManager
-	
+
 	// Lifecycle
 	Initialize(ctx context.Context, config interface{}) error
 	Cleanup(ctx context.Context) error
@@ -34,13 +34,13 @@ type NetworkManager interface {
 	GetNetwork(ctx context.Context, id string) (*Network, error)
 	ListNetworks(ctx context.Context, filters map[string]string) ([]*Network, error)
 	DeleteNetwork(ctx context.Context, id string) error
-	
+
 	// Subnet operations
 	CreateSubnet(ctx context.Context, req *CreateSubnetRequest) (*Subnet, error)
 	GetSubnet(ctx context.Context, id string) (*Subnet, error)
 	ListSubnets(ctx context.Context, networkID string) ([]*Subnet, error)
 	DeleteSubnet(ctx context.Context, id string) error
-	
+
 	// Floating IP operations
 	AllocateFloatingIP(ctx context.Context, req *AllocateFloatingIPRequest) (*FloatingIP, error)
 	GetFloatingIP(ctx context.Context, id string) (*FloatingIP, error)
@@ -48,7 +48,7 @@ type NetworkManager interface {
 	AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error
 	DisassociateFloatingIP(ctx context.Context, ipID string) error
 	ReleaseFloatingIP(ctx context.Context, id string) error
-	
+
 	// Router operations
 	CreateRouter(ctx context.Context, req *CreateRouterRequest) (*Router, error)
 	GetRouter(ctx context.Context, id string) (*Router, error)
@@ -56,6 +56,22 @@ type NetworkManager interface {
 	AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error
 	DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error
 	DeleteRouter(ctx context.Context, id string) error
+
+	// Load Balancer operations
+	CreateLoadBalancer(ctx context.Context, config *LoadBalancer) (*LoadBalancer, error)
+	GetLoadBalancer(ctx context.Context, nameOrID string) (*LoadBalancer, error)
+	ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*LoadBalancer, error)
+	UpdateLoadBalancer(ctx context.Context, lb *LoadBalancer) error
+	DeleteLoadBalancer(ctx context.Context, id string) error
+
+	// Backend pool operations
+	GetBackendPools(ctx context.Context, lbID string) ([]*BackendPool, error)
+	AddBackendMember(ctx context.Context, lbID string, member *BackendMember) error
+	RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error
+
+	// Health check operations
+	ConfigureHealthCheck(ctx context.Context, lbID string, check *HealthCheck) error
+	GetLoadBalancerHealth(ctx context.Context, lbID string) (*HealthStatus, error)
 }
 
 // ComputeManager handles compute-related operations
@@ -68,18 +84,18 @@ type ComputeManager interface {
 	StopInstance(ctx context.Context, id string) error
 	RebootInstance(ctx context.Context, id string) error
 	DeleteInstance(ctx context.Context, id string) error
-	
+
 	// SSH key operations
 	CreateKeyPair(ctx context.Context, name string) (*KeyPair, error)
 	ImportKeyPair(ctx context.Context, name string, publicKey string) error
 	GetKeyPair(ctx context.Context, name string) (*KeyPair, error)
 	ListKeyPairs(ctx context.Context) ([]*KeyPair, error)
 	DeleteKeyPair(ctx context.Context, name string) error
-	
+
 	// Image operations
 	ListImages(ctx context.Context, filters map[string]string) ([]*Image, error)
 	GetImage(ctx context.Context, id string) (*Image, error)
-	
+
 	// Flavor operations
 	ListFlavors(ctx context.Context) ([]*Flavor, error)
 	GetFlavor(ctx context.Context, id string) (*Flavor, error)
@@ -95,13 +111,13 @@ type StorageManager interface {
 	DetachVolume(ctx context.Context, volumeID string) error
 	ResizeVolume(ctx context.Context, id string, size int) error
 	DeleteVolume(ctx context.Context, id string) error
-	
+
 	// Snapshot operations
 	CreateSnapshot(ctx context.Context, volumeID string, name string) (*Snapshot, error)
 	GetSnapshot(ctx context.Context, id string) (*Snapshot, error)
 	ListSnapshots(ctx context.Context, volumeID string) ([]*Snapshot, error)
 	DeleteSnapshot(ctx context.Context, id string) error
-	
+
 	// Object storage operations
 	CreateBucket(ctx context.Context, name string) (*Bucket, error)
 	GetBucket(ctx context.Context, name string) (*Bucket, error)
@@ -117,7 +133,7 @@ type SecurityManager interface {
 	GetSecurityGroup(ctx context.Context, id string) (*SecurityGroup, error)
 	ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*SecurityGroup, error)
 	DeleteSecurityGroup(ctx context.Context, id string) error
-	
+
 	// Security rules operations
 	AddSecurityRule(ctx context.Context, groupID string, rule *SecurityRule) error
 	RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error
@@ -131,13 +147,13 @@ type LoadBalancerManager interface {
 	ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*LoadBalancer, error)
 	UpdateLoadBalancer(ctx context.Context, id string, req *UpdateLoadBalancerRequest) error
 	DeleteLoadBalancer(ctx context.Context, id string) error
-	
+
 	// Backend operations
 	AddBackend(ctx context.Context, lbID string, backend *Backend) error
 	RemoveBackend(ctx context.Context, lbID string, backendID string) error
 	EnableBackend(ctx context.Context, lbID string, backendID string) error
 	DisableBackend(ctx context.Context, lbID string, backendID string) error
-	
+
 	// Health check operations
 	ConfigureHealthCheck(ctx context.Context, lbID string, check *HealthCheck) error
 	GetHealthStatus(ctx context.Context, lbID string) (*HealthStatus, error)
@@ -157,13 +173,15 @@ type Resource interface {
 type ResourceState string
 
 const (
-	ResourceStateCreating ResourceState = "creating"
-	ResourceStateActive   ResourceState = "active"
-	ResourceStateStopped  ResourceState = "stopped"
-	ResourceStateDeleting ResourceState = "deleting"
-	ResourceStateDeleted  ResourceState = "deleted"
-	ResourceStateError    ResourceState = "error"
-	ResourceStateUnknown  ResourceState = "unknown"
+	ResourceStateCreating  ResourceState = "creating"
+	ResourceStateActive    ResourceState = "active"
+	ResourceStateAvailable ResourceState = "available"
+	ResourceStateInUse     ResourceState = "in-use"
+	ResourceStateStopped   ResourceState = "stopped"
+	ResourceStateDeleting  ResourceState = "deleting"
+	ResourceStateDeleted   ResourceState = "deleted"
+	ResourceStateError     ResourceState = "error"
+	ResourceStateUnknown   ResourceState = "unknown"
 )
 
 // ProviderError represents a provider-specific error

@@ -15,7 +15,7 @@ func init() {
 func NewProvider(config interface{}) (cpi.Provider, error) {
 	// Convert generic config to STACKIT config
 	var stackitConfig *Config
-	
+
 	switch cfg := config.(type) {
 	case *Config:
 		stackitConfig = cfg

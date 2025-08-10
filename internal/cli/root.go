@@ -5,21 +5,22 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ocfp/ocfp-cli-go/internal/version"
 	_ "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit" // Register STACKIT provider
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var (
-	cfgFile   string
-	blocName  string
-	debug     bool
-	verbose   bool
-	trace     bool
-	noLog     bool
-	region    string
-	iaas      string
+	cfgFile  string
+	blocName string
+	debug    bool
+	verbose  bool
+	trace    bool
+	noLog    bool
+	region   string
+	iaas     string
 )
 
 // rootCmd represents the base command
@@ -56,14 +57,30 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&iaas, "iaas", "", "cloud provider (stackit, openstack, aws, gcp, azure)")
 
 	// Bind flags to viper
-	viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
-	viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc-name"))
-	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
-	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
-	viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace"))
-	viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log"))
-	viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
-	viper.BindPFlag("iaas", rootCmd.PersistentFlags().Lookup("iaas"))
+	if err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config")); err != nil {
+		logger.Warnf("Failed to bind config flag: %v", err)
+	}
+	if err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc-name")); err != nil {
+		logger.Warnf("Failed to bind bloc-name flag: %v", err)
+	}
+	if err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug")); err != nil {
+		logger.Warnf("Failed to bind debug flag: %v", err)
+	}
+	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
+		logger.Warnf("Failed to bind verbose flag: %v", err)
+	}
+	if err := viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace")); err != nil {
+		logger.Warnf("Failed to bind trace flag: %v", err)
+	}
+	if err := viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log")); err != nil {
+		logger.Warnf("Failed to bind no-log flag: %v", err)
+	}
+	if err := viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region")); err != nil {
+		logger.Warnf("Failed to bind region flag: %v", err)
+	}
+	if err := viper.BindPFlag("iaas", rootCmd.PersistentFlags().Lookup("iaas")); err != nil {
+		logger.Warnf("Failed to bind iaas flag: %v", err)
+	}
 
 	// Set custom version template
 	rootCmd.SetVersionTemplate(version.Get().String() + "\n")

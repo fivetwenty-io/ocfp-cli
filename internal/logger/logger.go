@@ -14,7 +14,7 @@ import (
 var (
 	// Global logger instance
 	log *zap.SugaredLogger
-	
+
 	// Atom for dynamic log level changes
 	atom zap.AtomicLevel
 )
@@ -38,7 +38,7 @@ func Initialize(cfg Config) error {
 	// Determine log level
 	level := determineLogLevel(cfg)
 	atom = zap.NewAtomicLevelAt(level)
-	
+
 	// Create encoder config
 	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "timestamp",
@@ -54,15 +54,15 @@ func Initialize(cfg Config) error {
 		EncodeDuration: zapcore.SecondsDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
-	
+
 	// Create console encoder for terminal output
 	consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
-	
+
 	// Default to console output
 	cores := []zapcore.Core{
 		zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stderr), atom),
 	}
-	
+
 	// Add file logging if not disabled
 	if !cfg.NoLog && cfg.LogDir != "" {
 		fileCore, err := createFileCore(cfg, encoderConfig)
@@ -71,11 +71,11 @@ func Initialize(cfg Config) error {
 		}
 		cores = append(cores, fileCore)
 	}
-	
+
 	// Create the logger
 	core := zapcore.NewTee(cores...)
 	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-	
+
 	// Add context fields
 	if cfg.RequestID != "" {
 		zapLogger = zapLogger.With(zap.String("request_id", cfg.RequestID))
@@ -86,12 +86,12 @@ func Initialize(cfg Config) error {
 	if cfg.BlocName != "" {
 		zapLogger = zapLogger.With(zap.String("bloc", cfg.BlocName))
 	}
-	
+
 	log = zapLogger.Sugar()
-	
+
 	// Replace global logger
 	zap.ReplaceGlobals(zapLogger)
-	
+
 	return nil
 }
 
@@ -101,7 +101,7 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	if err := os.MkdirAll(cfg.LogDir, 0755); err != nil {
 		return nil, err
 	}
-	
+
 	// Generate log filename
 	timestamp := time.Now().Format("20060102-150405")
 	filename := fmt.Sprintf("%s-%s-%s", timestamp, cfg.Command, cfg.BlocName)
@@ -109,18 +109,18 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 		filename = fmt.Sprintf("%s-%s", filename, cfg.RequestID)
 	}
 	filename = fmt.Sprintf("%s.log", filename)
-	
+
 	logPath := filepath.Join(cfg.LogDir, filename)
-	
+
 	// Open log file
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Create JSON encoder for file output
 	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
-	
+
 	return zapcore.NewCore(jsonEncoder, zapcore.AddSync(file), atom), nil
 }
 
@@ -135,7 +135,7 @@ func determineLogLevel(cfg Config) zapcore.Level {
 	if cfg.Verbose {
 		return zapcore.InfoLevel
 	}
-	
+
 	// Parse configured level
 	switch strings.ToLower(cfg.Level) {
 	case "debug":
@@ -253,34 +253,34 @@ func Sync() error {
 func ArchiveOldLogs(logDir string, daysOld int) error {
 	cutoff := time.Now().AddDate(0, 0, -daysOld)
 	archiveDir := filepath.Join(logDir, "archive")
-	
+
 	// Create archive directory if it doesn't exist
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		return err
 	}
-	
+
 	// Walk through log directory
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		return err
 	}
-	
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		
+
 		// Check if file is a log file
 		if !strings.HasSuffix(entry.Name(), ".log") {
 			continue
 		}
-		
+
 		// Get file info
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		
+
 		// Check if file is old enough to archive
 		if info.ModTime().Before(cutoff) {
 			// TODO: Implement compression and move to archive
@@ -288,6 +288,6 @@ func ArchiveOldLogs(logDir string, daysOld int) error {
 			Debugf("Would archive old log: %s", entry.Name())
 		}
 	}
-	
+
 	return nil
 }
