@@ -49,7 +49,7 @@ func NewCheckpointManager(cfg *config.Config) *CheckpointManager {
 // Save saves the current provisioning state
 func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[string]interface{}) error {
 	// Ensure checkpoint directory exists
-	if err := os.MkdirAll(cm.checkpointDir, 0755); err != nil {
+	if err := os.MkdirAll(cm.checkpointDir, 0750); err != nil {
 		return fmt.Errorf("failed to create checkpoint directory: %w", err)
 	}
 
@@ -83,7 +83,7 @@ func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[s
 		return fmt.Errorf("failed to marshal checkpoint data: %w", err)
 	}
 
-	if err := os.WriteFile(checkpointFile, data, 0644); err != nil {
+	if err := os.WriteFile(checkpointFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write checkpoint file: %w", err)
 	}
 

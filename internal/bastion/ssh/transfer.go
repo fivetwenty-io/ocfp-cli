@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/pkg/sftp"
 )
 
@@ -156,6 +157,9 @@ func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote stri
 	}
 
 	// Open local file
+	if err := security.ValidatePath(local); err != nil {
+		return fmt.Errorf("invalid local path: %w", err)
+	}
 	localFile, err := os.Open(local)
 	if err != nil {
 		return fmt.Errorf("failed to open local file: %w", err)
@@ -223,6 +227,9 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 	}
 
 	// Read local file
+	if err := security.ValidatePath(local); err != nil {
+		return fmt.Errorf("invalid local path: %w", err)
+	}
 	data, err := os.ReadFile(local)
 	if err != nil {
 		return fmt.Errorf("failed to read local file: %w", err)
@@ -269,11 +276,14 @@ func (tm *TransferManager) downloadViaSFTP(ctx context.Context, remote, local st
 
 	// Ensure local directory exists
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0755); err != nil {
+	if err := os.MkdirAll(localDir, 0750); err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
 	// Create local file
+	if err := security.ValidatePath(local); err != nil {
+		return fmt.Errorf("invalid local path: %w", err)
+	}
 	localFile, err := os.Create(local)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
@@ -312,12 +322,12 @@ func (tm *TransferManager) downloadViaCat(ctx context.Context, remote, local str
 
 	// Ensure local directory exists
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0755); err != nil {
+	if err := os.MkdirAll(localDir, 0750); err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
 	// Write to local file
-	return os.WriteFile(local, []byte(result.Stdout), 0644)
+	return os.WriteFile(local, []byte(result.Stdout), 0600)
 }
 
 // copyWithProgress copies data while reporting progress
@@ -395,6 +405,9 @@ func (tm *TransferManager) verifyUpload(ctx context.Context, localPath, remotePa
 
 // calculateFileHash calculates SHA256 hash of a file
 func (tm *TransferManager) calculateFileHash(filePath string) (string, error) {
+	if err := security.ValidatePath(filePath); err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -461,6 +474,9 @@ func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remo
 			// Use sshpass for password authentication
 			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
 			sshpassArgs = append(sshpassArgs, args...)
+			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
+				return fmt.Errorf("invalid sshpass command: %w", err)
+			}
 			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
 		} else {
 			tm.log.Warn("sshpass not available for password authentication")
@@ -488,7 +504,7 @@ func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, l
 
 	// Ensure local directory exists
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0755); err != nil {
+	if err := os.MkdirAll(localDir, 0750); err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
@@ -533,6 +549,9 @@ func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, l
 			// Use sshpass for password authentication
 			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
 			sshpassArgs = append(sshpassArgs, args...)
+			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
+				return fmt.Errorf("invalid sshpass command: %w", err)
+			}
 			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
 		} else {
 			tm.log.Warn("sshpass not available for password authentication")

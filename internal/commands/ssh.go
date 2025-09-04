@@ -6,13 +6,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+var (
+	sshValidHostPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
+	sshValidUserPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
+	sshValidPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 )
 
 // NewSSHCmd creates the SSH command
@@ -265,6 +273,22 @@ func verifySSHKey(keyPath string) error {
 func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd := []string{"ssh"}
 
+	// Validate inputs
+	if err := security.ValidateInput(host, sshValidHostPattern); err != nil {
+		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
+		return []string{"ssh", "--help"} // Return safe command
+	}
+	if err := security.ValidateInput(user, sshValidUserPattern); err != nil {
+		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
+		return []string{"ssh", "--help"} // Return safe command
+	}
+	if keyPath != "" {
+		if err := security.ValidateInput(keyPath, sshValidPathPattern); err != nil {
+			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
+			return []string{"ssh", "--help"} // Return safe command
+		}
+	}
+
 	// Standard options
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
 	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
@@ -275,11 +299,23 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 		cmd = append(cmd, "-i", keyPath)
 	}
 
-	// Add extra options if provided
+	// Add extra options if provided - sanitize by only allowing safe SSH options
 	if extraOptions != "" {
-		// Parse extra options (simple space splitting for now)
+		// Only allow specific safe SSH options
+		allowedOptions := map[string]bool{
+			"-p": true, "-v": true, "-q": true, "-4": true, "-6": true,
+			"-o": true, "-L": true, "-R": true, "-D": true,
+		}
 		options := strings.Fields(extraOptions)
-		cmd = append(cmd, options...)
+		for _, opt := range options {
+			if strings.HasPrefix(opt, "-") {
+				if !allowedOptions[opt] {
+					logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+					continue
+				}
+			}
+			cmd = append(cmd, opt)
+		}
 	}
 
 	// Add user@host
@@ -292,6 +328,11 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 func executeSSH(sshCmd []string) error {
 	log := logger.WithOperation("executeSSH")
 	log.Debugf("Executing: %s", strings.Join(sshCmd, " "))
+
+	// Validate that the command is ssh
+	if len(sshCmd) == 0 || sshCmd[0] != "ssh" {
+		return fmt.Errorf("invalid SSH command")
+	}
 
 	cmd := exec.Command(sshCmd[0], sshCmd[1:]...)
 	cmd.Stdin = os.Stdin

@@ -6,13 +6,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+var (
+	validFilePathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
+	validDNSPattern      = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
+	validUserPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 )
 
 // NewInitCmd creates the init command
@@ -174,7 +182,7 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
 	if _, err := os.Stat(deploymentDir); os.IsNotExist(err) {
 		log.Info("Creating deployment directory", "path", deploymentDir)
-		if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		if err := os.MkdirAll(deploymentDir, 0750); err != nil {
 			return fmt.Errorf("failed to create deployment directory: %w", err)
 		}
 	}
@@ -194,6 +202,12 @@ func checkBastionConnectivity(cfg *config.Config) error {
 	}
 
 	// Try SSH connection with timeout
+	if err := security.ValidateInput(cfg.Bastion.SSHUser, validUserPattern); err != nil {
+		return fmt.Errorf("invalid SSH user: %w", err)
+	}
+	if err := security.ValidateInput(bastionIP, validDNSPattern); err != nil {
+		return fmt.Errorf("invalid bastion IP: %w", err)
+	}
 	cmd := exec.Command("ssh",
 		"-o", "ConnectTimeout=5",
 		"-o", "StrictHostKeyChecking=no",
@@ -257,6 +271,12 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 
 	// Deploy BOSH (example command)
 	log.Info("Deploying BOSH Director")
+	if err := security.ValidateInput(manifestPath, validFilePathPattern); err != nil {
+		return fmt.Errorf("invalid manifest path: %w", err)
+	}
+	if err := security.ValidateInput(deploymentDir, validFilePathPattern); err != nil {
+		return fmt.Errorf("invalid deployment directory: %w", err)
+	}
 	cmd := exec.Command("bosh", "create-env", manifestPath,
 		"--state", filepath.Join(deploymentDir, "state.json"),
 		"--vars-store", filepath.Join(deploymentDir, "creds.yml"))
@@ -305,6 +325,9 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	// Deploy Cloud Foundry
 	log.Info("Deploying Cloud Foundry")
 	manifestPath := filepath.Join(deploymentDir, "cf-deployment.yml")
+	if err := security.ValidateInput(manifestPath, validFilePathPattern); err != nil {
+		return fmt.Errorf("invalid manifest path: %w", err)
+	}
 
 	cmd = exec.Command("bosh", "-d", "cf", "deploy", manifestPath,
 		"-o", filepath.Join(deploymentDir, "operations", "scale.yml"),
@@ -366,7 +389,7 @@ instance_groups:
     static_ips: [10.0.0.6]
 `, cfg.Bastion.Flavor, cfg.Network.CIDR)
 
-	return os.WriteFile(path, []byte(manifest), 0644)
+	return os.WriteFile(path, []byte(manifest), 0600)
 }
 
 // configureBOSHEnvironment sets up BOSH CLI environment
@@ -381,7 +404,7 @@ export BOSH_CLIENT_SECRET=$(bosh int %s/creds.yml --path /admin_password)
 export BOSH_CA_CERT=$(bosh int %s/creds.yml --path /director_ssl/ca)
 `, cfg.Name, deploymentDir, deploymentDir)
 
-	return os.WriteFile(envFile, []byte(envContent), 0755)
+	return os.WriteFile(envFile, []byte(envContent), 0600)
 }
 
 // configureCloudFoundry performs initial CF configuration
@@ -390,6 +413,9 @@ func configureCloudFoundry(cfg *config.Config) error {
 
 	// Login to CF
 	log.Info("Logging into Cloud Foundry")
+	if err := security.ValidateInput(cfg.DNS[0], validDNSPattern); err != nil {
+		return fmt.Errorf("invalid DNS name: %w", err)
+	}
 	cmd := exec.Command("cf", "login",
 		"-a", fmt.Sprintf("https://api.%s", cfg.DNS[0]),
 		"-u", "admin",

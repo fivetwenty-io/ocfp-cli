@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
@@ -348,6 +349,9 @@ func determineConfigPath(configFile string, blocName string) string {
 
 // loadFromFile loads configuration from a YAML file
 func loadFromFile(path string, target interface{}) error {
+	if err := security.ValidateConfigPath(path); err != nil {
+		return fmt.Errorf("invalid config path: %w", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err

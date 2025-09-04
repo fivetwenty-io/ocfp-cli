@@ -16,6 +16,31 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// validateCommand validates that only safe commands are executed
+func validateCommand(cmdSlice []string) error {
+	if len(cmdSlice) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	allowedCommands := map[string]bool{
+		"sshpass": true,
+		"ssh":     true,
+	}
+
+	if !allowedCommands[cmdSlice[0]] {
+		return fmt.Errorf("command not allowed: %s", cmdSlice[0])
+	}
+
+	// Check for shell metacharacters in arguments
+	for _, arg := range cmdSlice[1:] {
+		if strings.Contains(arg, ";") || strings.Contains(arg, "|") || strings.Contains(arg, "&") || strings.Contains(arg, "`") {
+			return fmt.Errorf("argument contains shell metacharacters: %s", arg)
+		}
+	}
+
+	return nil
+}
+
 // Client implements the SSHClient interface using Go's native SSH library
 type Client struct {
 	config     *ConnectionDetails
@@ -231,8 +256,7 @@ func (c *Client) Close() error {
 func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		c.log.Warn("Failed to get home directory, using insecure host key checking")
-		return ssh.InsecureIgnoreHostKey(), nil
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
@@ -241,19 +265,28 @@ func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	if _, err := os.Stat(knownHostsPath); err == nil {
 		hostKeyCallback, err := knownhosts.New(knownHostsPath)
 		if err != nil {
-			c.log.Warn("Failed to load known_hosts file, using insecure host key checking",
-				"path", knownHostsPath,
-				"error", err.Error())
-			return ssh.InsecureIgnoreHostKey(), nil
+			return nil, fmt.Errorf("failed to load known_hosts file: %w", err)
 		}
 
 		// Wrap the callback to handle new hosts
 		return c.wrapHostKeyCallback(hostKeyCallback, knownHostsPath), nil
 	}
 
-	c.log.Warn("No known_hosts file found, using insecure host key checking",
-		"expected_path", knownHostsPath)
-	return ssh.InsecureIgnoreHostKey(), nil
+	// Create known_hosts file if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
+		return nil, fmt.Errorf("failed to create .ssh directory: %w", err)
+	}
+	if _, err := os.Create(knownHostsPath); err != nil {
+		return nil, fmt.Errorf("failed to create known_hosts file: %w", err)
+	}
+
+	// Now load the empty known_hosts file
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load newly created known_hosts file: %w", err)
+	}
+
+	return c.wrapHostKeyCallback(hostKeyCallback, knownHostsPath), nil
 }
 
 // wrapHostKeyCallback wraps the known hosts callback to handle new hosts
@@ -305,7 +338,7 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	}
 
 	// Open known_hosts file for appending
-	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file: %w", err)
 	}
@@ -324,6 +357,36 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	}
 
 	return nil
+}
+
+// createFallbackHostKeyCallback creates a host key callback that adds unknown hosts
+func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+
+		knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
+
+		// Try to verify against existing known_hosts
+		if _, err := os.Stat(knownHostsPath); err == nil {
+			hostKeyCallback, err := knownhosts.New(knownHostsPath)
+			if err == nil {
+				if err := hostKeyCallback(hostname, remote, key); err == nil {
+					return nil // Host key is known and valid
+				}
+			}
+		}
+
+		// Host is unknown, add it to known_hosts
+		c.log.Info("Adding unknown host to known_hosts", "host", hostname)
+		if err := c.addHostKey(knownHostsPath, hostname, key); err != nil {
+			return fmt.Errorf("failed to add host key: %w", err)
+		}
+
+		return nil
+	}
 }
 
 // prepareSSHConfig creates the SSH client configuration
@@ -419,9 +482,9 @@ func (c *Client) connectWithExternalSSH(ctx context.Context, sshConfig *ssh.Clie
 	relaxedConfig := &ssh.ClientConfig{
 		User:            sshConfig.User,
 		Auth:            sshConfig.Auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Fallback uses less strict checking
-		Timeout:         45 * time.Second,            // Longer timeout
-		ClientVersion:   "SSH-2.0-OCFP-Go-Client",    // Custom client version
+		HostKeyCallback: c.createFallbackHostKeyCallback(), // Fallback uses host key verification with auto-add
+		Timeout:         45 * time.Second,                  // Longer timeout
+		ClientVersion:   "SSH-2.0-OCFP-Go-Client",          // Custom client version
 	}
 
 	// Try native connection with relaxed config
@@ -493,6 +556,9 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 			// Use sshpass for password authentication
 			sshpassArgs := []string{"-p", c.config.Password, "ssh"}
 			sshpassArgs = append(sshpassArgs, args...)
+			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
+				return fmt.Errorf("invalid sshpass command: %w", err)
+			}
 			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
 		} else {
 			c.log.Warn("sshpass not available for password authentication")

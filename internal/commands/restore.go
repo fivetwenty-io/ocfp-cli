@@ -342,7 +342,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 		log.Info("Restoring data", "component", component, "destination", destPath)
 
 		// Create destination directory
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
 			log.Warn("Failed to create destination directory", "path", destPath, "error", err)
 			continue
 		}
@@ -528,7 +528,7 @@ func restoreComponent(sourcePath, destPath, baseDestination string) error {
 	log.Info("Restoring component", "source", sourcePath, "dest", actualDest)
 
 	// Create destination directory
-	if err := os.MkdirAll(filepath.Dir(actualDest), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(actualDest), 0750); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
@@ -626,13 +626,13 @@ func downloadFromS3(ctx context.Context, cfg *config.Config, source, dest string
 
 	// Parse S3 URL and download
 	// Placeholder implementation
-	return os.WriteFile(dest, []byte("downloaded backup"), 0644)
+	return os.WriteFile(dest, []byte("downloaded backup"), 0600)
 }
 
 func downloadFromHTTP(source, dest string) error {
 	// Download from HTTP URL
 	// Placeholder implementation
-	return os.WriteFile(dest, []byte("downloaded backup"), 0644)
+	return os.WriteFile(dest, []byte("downloaded backup"), 0600)
 }
 
 func copyForRestore(src, dest string) error {
@@ -641,7 +641,7 @@ func copyForRestore(src, dest string) error {
 	if info, err := os.Stat(src); err == nil && info.IsDir() {
 		return os.MkdirAll(dest, info.Mode())
 	}
-	return os.WriteFile(dest, []byte("restored file"), 0644)
+	return os.WriteFile(dest, []byte("restored file"), 0600)
 }
 
 func extractArchive(archivePath, destDir string) error {
@@ -650,7 +650,7 @@ func extractArchive(archivePath, destDir string) error {
 	log.Info("Extracting archive", "archive", archivePath, "dest", destDir)
 
 	// Create destination directory
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return err
 	}
 

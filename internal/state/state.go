@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,7 +57,7 @@ func NewManager(stateDir string) (*Manager, error) {
 	}
 
 	// Ensure state directory exists
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
+	if err := os.MkdirAll(stateDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
@@ -89,6 +90,9 @@ func (m *Manager) Load(blocName string) (*State, error) {
 	}
 
 	// Load existing state
+	if err := security.ValidateConfigPath(statePath); err != nil {
+		return nil, fmt.Errorf("invalid state path: %w", err)
+	}
 	data, err := os.ReadFile(statePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file: %w", err)
@@ -134,7 +138,7 @@ func (m *Manager) Save() error {
 	}
 
 	// Write state file
-	if err := os.WriteFile(statePath, data, 0644); err != nil {
+	if err := os.WriteFile(statePath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -329,6 +333,9 @@ func (m *Manager) Lock(blocName string) error {
 	// Check if lock exists
 	if _, err := os.Stat(lockPath); err == nil {
 		// Read lock info
+		if err := security.ValidatePath(lockPath); err != nil {
+			return fmt.Errorf("invalid lock path: %w", err)
+		}
 		data, err := os.ReadFile(lockPath)
 		if err != nil {
 			return fmt.Errorf("failed to read lock file: %w", err)
@@ -356,7 +363,7 @@ func (m *Manager) Lock(blocName string) error {
 		return fmt.Errorf("failed to create lock info: %w", err)
 	}
 
-	if err := os.WriteFile(lockPath, data, 0644); err != nil {
+	if err := os.WriteFile(lockPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to create lock file: %w", err)
 	}
 

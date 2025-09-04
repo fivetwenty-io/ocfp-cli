@@ -8,10 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+)
+
+var (
+	validScriptPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+\.sh$`)
+	validUsernamePattern   = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 )
 
 // NewTmuxCmd creates the tmux command
@@ -46,6 +53,9 @@ func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	log.Info("Creating OCFP tmux session...")
 
 	// Execute the tmux script
+	if err := security.ValidateInput(scriptPath, validScriptPathPattern); err != nil {
+		return fmt.Errorf("invalid script path: %w", err)
+	}
 	cmd_exec := exec.Command(scriptPath)
 	cmd_exec.Stdout = os.Stdout
 	cmd_exec.Stderr = os.Stderr
@@ -399,6 +409,9 @@ func buildEnvironmentVariables(log *zap.Logger) string {
 
 // fetchGitHubKeys fetches SSH keys from GitHub for a user
 func fetchGitHubKeys(username string) ([]string, error) {
+	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
+		return nil, fmt.Errorf("invalid GitHub username: %w", err)
+	}
 	url := fmt.Sprintf("https://github.com/%s.keys", username)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -429,6 +442,9 @@ func fetchGitHubKeys(username string) ([]string, error) {
 
 // fetchGitLabKeys fetches SSH keys from GitLab for a user
 func fetchGitLabKeys(username string) ([]string, error) {
+	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
+		return nil, fmt.Errorf("invalid GitLab username: %w", err)
+	}
 	url := fmt.Sprintf("https://gitlab.com/%s.keys", username)
 	resp, err := http.Get(url)
 	if err != nil {

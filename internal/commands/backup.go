@@ -484,7 +484,7 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 		relPath := strings.TrimPrefix(file, "/")
 		dest := filepath.Join(stagingDir, relPath)
 
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dest), 0750); err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
 
@@ -594,13 +594,13 @@ func shouldExclude(path string, excludePaths []string) bool {
 func copyForBackup(src, dest string) error {
 	// This would implement recursive copying
 	// For now, return a placeholder
-	return os.MkdirAll(dest, 0755)
+	return os.MkdirAll(dest, 0750)
 }
 
 func createArchive(sourceDir, archivePath string, compress bool) error {
 	// This would create a tar archive, optionally compressed
 	// Placeholder implementation
-	return os.WriteFile(archivePath, []byte("archive"), 0644)
+	return os.WriteFile(archivePath, []byte("archive"), 0600)
 }
 
 func encryptFile(source, dest string) error {
@@ -679,13 +679,13 @@ func exportSecrets(ctx context.Context, cfg *config.Config, outputFile string) e
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
 	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
-	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+	if err := os.MkdirAll(metadataDir, 0750); err != nil {
 		return err
 	}
 
 	metadataFile := filepath.Join(metadataDir, backup.ID+".json")
 	// Would marshal and save backup metadata
-	return os.WriteFile(metadataFile, []byte("{}"), 0644)
+	return os.WriteFile(metadataFile, []byte("{}"), 0600)
 }
 
 func getLastBackup(deployment string) (*BackupMetadata, error) {

@@ -371,7 +371,11 @@ func splitParentIntoTwo(parentCIDR string) (string, string) {
 	// base of parent
 	base := ipToUint32(parent.IP.Mask(parent.Mask))
 	// size of each child block
-	childSize := uint32(1) << uint32(32-nextPrefix)
+	if nextPrefix < 0 || nextPrefix > 32 {
+		return "", ""
+	}
+	// Safe conversion: nextPrefix is validated to be 0-32
+	childSize := uint32(1) << uint(32-nextPrefix)
 	first := (&net.IPNet{IP: uint32ToIP(base), Mask: net.CIDRMask(nextPrefix, 32)}).String()
 	second := (&net.IPNet{IP: uint32ToIP(base + childSize), Mask: net.CIDRMask(nextPrefix, 32)}).String()
 	return first, second
@@ -1196,7 +1200,9 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 						}
 					}
 					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
+							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						}
 					}
 					res.Properties["versioning"] = settings.Versioning
 					res.Properties["noncurrent_days"] = settings.NoncurrentDays
@@ -1208,7 +1214,9 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 						}
 					}
 					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
+							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						}
 					}
 					res.Properties["versioning"] = settings.Versioning
 					res.Properties["noncurrent_days"] = settings.NoncurrentDays
@@ -1220,7 +1228,9 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 						}
 					}
 					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
+							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						}
 					}
 					res.Properties["versioning"] = settings.Versioning
 					res.Properties["noncurrent_days"] = settings.NoncurrentDays
@@ -1232,7 +1242,9 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 						}
 					}
 					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
+							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
+						}
 					}
 					res.Properties["versioning"] = settings.Versioning
 					res.Properties["noncurrent_days"] = settings.NoncurrentDays
@@ -1267,9 +1279,16 @@ func splitIntoN(parentCIDR string, n int) []string {
 		return nil
 	}
 	base := ipToUint32(parent.IP.Mask(parent.Mask))
-	size := uint32(1) << uint32(32-newPrefix)
+	if newPrefix < 0 || newPrefix > 32 {
+		return nil
+	}
+	// Safe conversion: newPrefix is validated to be 0-32
+	size := uint32(1) << uint(32-newPrefix)
 	out := make([]string, 0, n)
 	for i := 0; i < n; i++ {
+		if i < 0 || i > int(^uint32(0)) {
+			continue
+		}
 		cidr := (&net.IPNet{IP: uint32ToIP(base + uint32(i)*size), Mask: net.CIDRMask(newPrefix, 32)}).String()
 		out = append(out, cidr)
 	}
@@ -1291,7 +1310,11 @@ func cidrLastUsableIP(cidr string) string {
 	}
 	base := ipToUint32(ipnet.IP.Mask(ipnet.Mask))
 	ones, _ := ipnet.Mask.Size()
-	size := uint32(1) << uint32(32-ones)
+	if ones < 0 || ones > 32 {
+		return ""
+	}
+	// Safe conversion: ones is validated to be 0-32
+	size := uint32(1) << uint(32-ones)
 	if size <= 2 {
 		return uint32ToIP(base).String()
 	}
@@ -1377,7 +1400,12 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, parentCID
 
 	// helper to set output
 	set := func(key, val string) { _ = m.stateManager.SetOutput(fmt.Sprintf("reserved_%s_%s", name, key), val) }
-	ipAt := func(off int) string { return uint32ToIP(base + uint32(off)).String() }
+	ipAt := func(off int) string {
+		if off < 0 || off > int(^uint32(0)) {
+			panic("offset out of range for uint32")
+		}
+		return uint32ToIP(base + uint32(off)).String()
+	}
 
 	// Single-IP assignments for mgmt
 	// All ocfp subnets

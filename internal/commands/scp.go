@@ -302,6 +302,11 @@ func executeSCP(scpCmd []string) error {
 	log := logger.WithOperation("executeSCP")
 	log.Debugf("Executing: %s", strings.Join(scpCmd, " "))
 
+	// Validate that the command is scp
+	if len(scpCmd) == 0 || scpCmd[0] != "scp" {
+		return fmt.Errorf("invalid SCP command")
+	}
+
 	cmd := exec.Command(scpCmd[0], scpCmd[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

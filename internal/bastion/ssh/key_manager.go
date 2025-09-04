@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -68,6 +69,9 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 
 // CreatePublicKeyAuth creates an SSH public key authentication method
 func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthMethod, error) {
+	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+		return nil, fmt.Errorf("invalid key path: %w", err)
+	}
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file: %w", err)
@@ -96,6 +100,9 @@ func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthM
 
 // IsKeyPasswordProtected checks if an SSH key is password protected
 func (km *KeyManager) IsKeyPasswordProtected(keyPath string) (bool, error) {
+	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+		return false, fmt.Errorf("invalid key path: %w", err)
+	}
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to read key file: %w", err)
@@ -106,6 +113,9 @@ func (km *KeyManager) IsKeyPasswordProtected(keyPath string) (bool, error) {
 
 // GetKeyFingerprint returns the fingerprint of an SSH key
 func (km *KeyManager) GetKeyFingerprint(keyPath string) (string, error) {
+	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+		return "", fmt.Errorf("invalid key path: %w", err)
+	}
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read key file: %w", err)
@@ -126,6 +136,9 @@ func (km *KeyManager) GetKeyFingerprint(keyPath string) (string, error) {
 // ValidateKeyPair verifies that a private key matches its public key
 func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) error {
 	// Read and parse private key
+	if err := security.ValidateSSHKeyPath(privateKeyPath); err != nil {
+		return fmt.Errorf("invalid private key path: %w", err)
+	}
 	privateKeyData, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to read private key: %w", err)
@@ -137,6 +150,9 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 	}
 
 	// Read and parse public key
+	if err := security.ValidateSSHKeyPath(publicKeyPath); err != nil {
+		return fmt.Errorf("invalid public key path: %w", err)
+	}
 	publicKeyData, err := os.ReadFile(publicKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to read public key: %w", err)
@@ -276,6 +292,9 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 	}
 
 	// Write to file
+	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+		return fmt.Errorf("invalid key path: %w", err)
+	}
 	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create private key file: %w", err)
@@ -299,7 +318,7 @@ func (km *KeyManager) writePublicKey(keyPath string, publicKey ssh.PublicKey) er
 	keyData := ssh.MarshalAuthorizedKey(publicKey)
 
 	// Write to file
-	if err := os.WriteFile(keyPath, keyData, 0644); err != nil {
+	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
 		return fmt.Errorf("failed to write public key: %w", err)
 	}
 
@@ -308,6 +327,9 @@ func (km *KeyManager) writePublicKey(keyPath string, publicKey ssh.PublicKey) er
 
 // isValidPrivateKey checks if a file contains a valid SSH private key
 func (km *KeyManager) isValidPrivateKey(keyPath string) bool {
+	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+		return false
+	}
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return false
@@ -371,6 +393,9 @@ func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
 
 // LoadAuthorizedKeys loads authorized keys from a file
 func (km *KeyManager) LoadAuthorizedKeys(authorizedKeysPath string) ([]ssh.PublicKey, error) {
+	if err := security.ValidateSSHKeyPath(authorizedKeysPath); err != nil {
+		return nil, fmt.Errorf("invalid authorized keys path: %w", err)
+	}
 	file, err := os.Open(authorizedKeysPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open authorized_keys file: %w", err)

@@ -354,7 +354,7 @@ func (m *Manager) validatePrerequisites() error {
 
 	// Create local directories
 	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs", "provision")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
@@ -742,7 +742,7 @@ func (m *Manager) saveCheckpoint() error {
 	// Implementation would save checkpoint data to file
 	// For now, just create the directory
 	dir := filepath.Dir(checkpointPath)
-	return os.MkdirAll(dir, 0755)
+	return os.MkdirAll(dir, 0750)
 }
 
 // Phase implementation functions
@@ -920,7 +920,7 @@ func (m *Manager) setupRepositories(ctx context.Context) error {
 
 	// Create temporary script file locally
 	localScriptPath := filepath.Join(os.TempDir(), "provision-bastion.sh")
-	if err := os.WriteFile(localScriptPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(localScriptPath, []byte(script), 0600); err != nil {
 		return fmt.Errorf("failed to write script file: %w", err)
 	}
 	defer func() {

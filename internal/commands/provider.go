@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,11 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
+)
+
+var (
+	validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 )
 
 // NewProviderCmd creates the provider command
@@ -190,6 +196,9 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	if err := security.ValidateInput(tokenPath, validPathPattern); err != nil {
+		return "", "", fmt.Errorf("invalid token path: %w", err)
+	}
 	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath)
 	output, err := cmd.Output()
 	if err == nil {
@@ -204,6 +213,9 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	jsonPath := fmt.Sprintf("secret/config/%s/mgmt/cpi/stackit:service_account_json", blocName)
 	log.Debug("Attempting to retrieve STACKIT service account JSON from vault", zap.String("path", jsonPath))
 
+	if err := security.ValidateInput(jsonPath, validPathPattern); err != nil {
+		return "", "", fmt.Errorf("invalid JSON path: %w", err)
+	}
 	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath)
 	output, err = cmd.Output()
 	if err == nil {
@@ -239,6 +251,9 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if err := security.ValidateInput(tempFile.Name(), validPathPattern); err != nil {
+		return fmt.Errorf("invalid temp file path: %w", err)
+	}
 	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -101,7 +102,7 @@ func Initialize(cfg Config) error {
 // createFileCore creates a file logging core
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
 	// Create log directory if it doesn't exist
-	if err := os.MkdirAll(cfg.LogDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.LogDir, 0750); err != nil {
 		return nil, err
 	}
 
@@ -116,7 +117,10 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	logPath := filepath.Join(cfg.LogDir, filename)
 
 	// Open log file
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err := security.ValidatePath(logPath); err != nil {
+		return nil, fmt.Errorf("invalid log path: %w", err)
+	}
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +265,7 @@ func ArchiveOldLogs(logDir string, daysOld int) error {
 	archiveDir := filepath.Join(logDir, "archive")
 
 	// Create archive directory if it doesn't exist
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+	if err := os.MkdirAll(archiveDir, 0750); err != nil {
 		return err
 	}
 

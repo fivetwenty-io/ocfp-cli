@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -27,6 +29,11 @@ const (
 	TestSuiteAll        TestSuite = "all"
 	TestSuiteSmoke      TestSuite = "smoke"
 	TestSuiteAcceptance TestSuite = "acceptance"
+)
+
+var (
+	testValidOrgNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
+	testValidDNSPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 )
 
 // NewTestCmd creates the test command
@@ -475,7 +482,7 @@ func (r *TestRunner) SaveResults(results *TestResults, filename string) error {
 	content := fmt.Sprintf("Test Results: %d passed, %d failed, %d skipped",
 		results.Passed, results.Failed, results.Skipped)
 
-	return os.WriteFile(filename, []byte(content), 0644)
+	return os.WriteFile(filename, []byte(content), 0600)
 }
 
 // Helper methods for test validation and execution
@@ -525,6 +532,9 @@ func (r *TestRunner) validateTestDirectories() error {
 
 func (r *TestRunner) setCFTarget() error {
 	// Set CF API target
+	if err := security.ValidateInput(r.Config.DNS[0], testValidDNSPattern); err != nil {
+		return fmt.Errorf("invalid DNS name: %w", err)
+	}
 	apiURL := fmt.Sprintf("https://api.%s", r.Config.DNS[0])
 	cmd := exec.Command("cf", "api", apiURL, "--skip-ssl-validation")
 	return cmd.Run()
@@ -532,6 +542,9 @@ func (r *TestRunner) setCFTarget() error {
 
 func (r *TestRunner) createTestOrgSpace() error {
 	// Create test organization and space
+	if err := security.ValidateInput(r.Config.Name, testValidOrgNamePattern); err != nil {
+		return fmt.Errorf("invalid config name: %w", err)
+	}
 	orgName := fmt.Sprintf("%s-test-org", r.Config.Name)
 	spaceName := fmt.Sprintf("%s-test-space", r.Config.Name)
 
@@ -673,6 +686,9 @@ func (r *TestRunner) cleanupTestApps(ctx context.Context) error {
 
 func (r *TestRunner) cleanupTestOrgSpace() error {
 	// Delete test org and space
+	if err := security.ValidateInput(r.Config.Name, testValidOrgNamePattern); err != nil {
+		return fmt.Errorf("invalid config name: %w", err)
+	}
 	orgName := fmt.Sprintf("%s-test-org", r.Config.Name)
 	cmd := exec.Command("cf", "delete-org", orgName, "-f")
 	return cmd.Run()

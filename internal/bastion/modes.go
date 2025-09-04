@@ -287,7 +287,7 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 
 	// Ensure destination directory exists
 	destDir := filepath.Dir(remote)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 

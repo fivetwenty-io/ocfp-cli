@@ -366,6 +366,11 @@ func executeRSync(rsyncCmd []string) error {
 	log := logger.WithOperation("executeRSync")
 	log.Debugf("Executing: %s", strings.Join(rsyncCmd, " "))
 
+	// Validate that the command is rsync
+	if len(rsyncCmd) == 0 || rsyncCmd[0] != "rsync" {
+		return fmt.Errorf("invalid rsync command")
+	}
+
 	cmd := exec.Command(rsyncCmd[0], rsyncCmd[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

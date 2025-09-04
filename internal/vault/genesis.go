@@ -7,6 +7,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -172,6 +173,9 @@ func (gi *GenesisIntegration) getEnvironmentFileName(envType string) string {
 
 // readEnvironmentFile reads a Genesis environment file
 func (gi *GenesisIntegration) readEnvironmentFile(filePath string) (*GenesisEnvironment, error) {
+	if err := security.ValidateConfigPath(filePath); err != nil {
+		return nil, fmt.Errorf("invalid file path: %w", err)
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
@@ -202,7 +206,7 @@ func (gi *GenesisIntegration) createEnvironmentFile(filePath, envType, vaultURL,
 func (gi *GenesisIntegration) writeEnvironmentFile(filePath string, env *GenesisEnvironment) error {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -213,7 +217,7 @@ func (gi *GenesisIntegration) writeEnvironmentFile(filePath string, env *Genesis
 	}
 
 	// Write file
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -318,13 +322,16 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	backupPath := filePath + ".bak"
 
 	// Read original file
+	if err := security.ValidateConfigPath(filePath); err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read original file: %w", err)
 	}
 
 	// Write backup
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+	if err := os.WriteFile(backupPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write backup file: %w", err)
 	}
 

@@ -252,7 +252,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	ocfpConfig["config_file"] = targetEnv.ConfigFile
 
 	// Write back the config
-	if err := os.MkdirAll(filepath.Dir(ocfpConfigPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ocfpConfigPath), 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -261,7 +261,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(ocfpConfigPath, data, 0644); err != nil {
+	if err := os.WriteFile(ocfpConfigPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
