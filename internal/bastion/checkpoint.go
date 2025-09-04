@@ -106,7 +106,7 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 	}
 
 	// Read checkpoint file
-	data, err := os.ReadFile(checkpointFile)
+	data, err := os.ReadFile(checkpointFile) // #nosec G304 - checkpointFile is constructed from safe paths
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint file: %w", err)
 	}
@@ -271,7 +271,7 @@ func (cm *CheckpointManager) ListCheckpoints() ([]CheckpointData, error) {
 		}
 
 		checkpointPath := filepath.Join(cm.checkpointDir, entry.Name())
-		data, err := os.ReadFile(checkpointPath)
+		data, err := os.ReadFile(checkpointPath) // #nosec G304 - checkpointPath is constructed from safe paths
 		if err != nil {
 			cm.log.Warn("Failed to read checkpoint file",
 				"file", entry.Name(),

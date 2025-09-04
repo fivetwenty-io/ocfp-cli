@@ -352,7 +352,7 @@ func loadFromFile(path string, target interface{}) error {
 	if err := security.ValidateConfigPath(path); err != nil {
 		return fmt.Errorf("invalid config path: %w", err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 - path is validated above
 	if err != nil {
 		return err
 	}

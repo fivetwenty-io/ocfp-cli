@@ -375,7 +375,11 @@ func splitParentIntoTwo(parentCIDR string) (string, string) {
 		return "", ""
 	}
 	// Safe conversion: nextPrefix is validated to be 0-32
-	childSize := uint32(1) << uint(32-nextPrefix)
+	if nextPrefix < 0 || nextPrefix > 32 {
+		return "", ""
+	}
+	shift := uint32(32 - nextPrefix) // #nosec G115 - nextPrefix bounds validated above
+	childSize := uint32(1) << shift
 	first := (&net.IPNet{IP: uint32ToIP(base), Mask: net.CIDRMask(nextPrefix, 32)}).String()
 	second := (&net.IPNet{IP: uint32ToIP(base + childSize), Mask: net.CIDRMask(nextPrefix, 32)}).String()
 	return first, second
@@ -1283,7 +1287,11 @@ func splitIntoN(parentCIDR string, n int) []string {
 		return nil
 	}
 	// Safe conversion: newPrefix is validated to be 0-32
-	size := uint32(1) << uint(32-newPrefix)
+	if newPrefix < 0 || newPrefix > 32 {
+		return nil
+	}
+	shift := uint32(32 - newPrefix) // #nosec G115 - newPrefix bounds validated above
+	size := uint32(1) << shift
 	out := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		if i < 0 || i > int(^uint32(0)) {
@@ -1314,7 +1322,11 @@ func cidrLastUsableIP(cidr string) string {
 		return ""
 	}
 	// Safe conversion: ones is validated to be 0-32
-	size := uint32(1) << uint(32-ones)
+	if ones < 0 || ones > 32 {
+		return ""
+	}
+	shift := uint32(32 - ones) // #nosec G115 - ones bounds validated above
+	size := uint32(1) << shift
 	if size <= 2 {
 		return uint32ToIP(base).String()
 	}

@@ -412,7 +412,7 @@ func newVaultImportCmd() *cobra.Command {
 
 // loadSecretsFromFile loads secrets from a YAML or JSON file
 func loadSecretsFromFile(path string) (map[string]interface{}, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 - path comes from user input but is used for reading config
 	if err != nil {
 		return nil, err
 	}

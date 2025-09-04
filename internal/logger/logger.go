@@ -120,7 +120,7 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	if err := security.ValidatePath(logPath); err != nil {
 		return nil, fmt.Errorf("invalid log path: %w", err)
 	}
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 - logPath is validated above
 	if err != nil {
 		return nil, err
 	}

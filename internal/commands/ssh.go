@@ -334,7 +334,7 @@ func executeSSH(sshCmd []string) error {
 		return fmt.Errorf("invalid SSH command")
 	}
 
-	cmd := exec.Command(sshCmd[0], sshCmd[1:]...)
+	cmd := exec.Command(sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

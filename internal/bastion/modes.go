@@ -15,6 +15,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
 // ExecutionMode represents the mode of bastion initialization
@@ -285,6 +286,14 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 	// Strip any accidental "bastion:" prefix if present
 	remote = strings.TrimPrefix(remote, "bastion:")
 
+	// Validate paths for security
+	if err := security.ValidatePath(local); err != nil {
+		return fmt.Errorf("invalid source path: %w", err)
+	}
+	if err := security.ValidatePath(remote); err != nil {
+		return fmt.Errorf("invalid destination path: %w", err)
+	}
+
 	// Ensure destination directory exists
 	destDir := filepath.Dir(remote)
 	if err := os.MkdirAll(destDir, 0750); err != nil {
@@ -292,13 +301,13 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 	}
 
 	// Copy file contents
-	in, err := os.Open(local)
+	in, err := os.Open(local) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.Create(remote)
+	out, err := os.Create(remote) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}

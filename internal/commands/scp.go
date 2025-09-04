@@ -307,7 +307,7 @@ func executeSCP(scpCmd []string) error {
 		return fmt.Errorf("invalid SCP command")
 	}
 
-	cmd := exec.Command(scpCmd[0], scpCmd[1:]...)
+	cmd := exec.Command(scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

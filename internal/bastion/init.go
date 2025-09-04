@@ -542,7 +542,7 @@ func (m *Manager) previewConfigChanges(ctx context.Context) error {
 				current = res.Stdout
 			}
 		} else {
-			data, readErr := os.ReadFile(path)
+			data, readErr := os.ReadFile(path) // #nosec G304 - path is validated above
 			if readErr == nil {
 				current = string(data)
 			}

@@ -151,7 +151,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	// Run OCFP configure deployments
 	lines = append(lines, "# Run OCFP configure deployments")
 	lines = append(lines, "log_info 'Running OCFP configure to setup deployments'")
-	lines = append(lines, "CONFIGURE_CMD=\"perl bin/ocfp configure deployments --bloc-name='${OCFP_BLOC_NAME}'\"")
+	lines = append(lines, "CONFIGURE_CMD=\"perl bin/ocfp configure deployments --bloc '${OCFP_BLOC_NAME}'\"")
 	lines = append(lines, "log_info \"Executing: $CONFIGURE_CMD\"")
 	lines = append(lines, "")
 
@@ -229,7 +229,7 @@ func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 
 	// Build and execute vault populate command
 	lines = append(lines, "# Build vault populate command")
-	lines = append(lines, "VAULT_CMD=\"perl bin/ocfp vault populate --bloc-name='${OCFP_BLOC_NAME}'\"")
+	lines = append(lines, "VAULT_CMD=\"perl bin/ocfp vault populate --bloc '${OCFP_BLOC_NAME}'\"")
 	lines = append(lines, "log_info \"Running: $VAULT_CMD\"")
 	lines = append(lines, "")
 

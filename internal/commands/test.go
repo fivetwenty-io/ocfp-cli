@@ -536,7 +536,7 @@ func (r *TestRunner) setCFTarget() error {
 		return fmt.Errorf("invalid DNS name: %w", err)
 	}
 	apiURL := fmt.Sprintf("https://api.%s", r.Config.DNS[0])
-	cmd := exec.Command("cf", "api", apiURL, "--skip-ssl-validation")
+	cmd := exec.Command("cf", "api", apiURL, "--skip-ssl-validation") // #nosec G204 - input validated above
 	return cmd.Run()
 }
 
@@ -549,21 +549,21 @@ func (r *TestRunner) createTestOrgSpace() error {
 	spaceName := fmt.Sprintf("%s-test-space", r.Config.Name)
 
 	// Create org
-	cmd := exec.Command("cf", "create-org", orgName)
+	cmd := exec.Command("cf", "create-org", orgName) // #nosec G204 - input validated above
 	if err := cmd.Run(); err != nil {
 		// Ignore error if org already exists - CF will return error code 1 if org exists
 		logger.Debugf("org creation error (likely already exists): %v", err)
 	}
 
 	// Create space
-	cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName)
+	cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
 	if err := cmd.Run(); err != nil {
 		// Ignore error if space already exists - CF will return error code 1 if space exists
 		logger.Debugf("space creation error (likely already exists): %v", err)
 	}
 
 	// Target org/space
-	cmd = exec.Command("cf", "target", "-o", orgName, "-s", spaceName)
+	cmd = exec.Command("cf", "target", "-o", orgName, "-s", spaceName) // #nosec G204 - input validated above
 	return cmd.Run()
 }
 
@@ -690,7 +690,7 @@ func (r *TestRunner) cleanupTestOrgSpace() error {
 		return fmt.Errorf("invalid config name: %w", err)
 	}
 	orgName := fmt.Sprintf("%s-test-org", r.Config.Name)
-	cmd := exec.Command("cf", "delete-org", orgName, "-f")
+	cmd := exec.Command("cf", "delete-org", orgName, "-f") // #nosec G204 - input validated above
 	return cmd.Run()
 }
 

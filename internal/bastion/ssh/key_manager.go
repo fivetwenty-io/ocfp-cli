@@ -72,7 +72,7 @@ func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthM
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return nil, fmt.Errorf("invalid key path: %w", err)
 	}
-	keyData, err := os.ReadFile(keyPath)
+	keyData, err := os.ReadFile(keyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file: %w", err)
 	}
@@ -103,7 +103,7 @@ func (km *KeyManager) IsKeyPasswordProtected(keyPath string) (bool, error) {
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return false, fmt.Errorf("invalid key path: %w", err)
 	}
-	keyData, err := os.ReadFile(keyPath)
+	keyData, err := os.ReadFile(keyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return false, fmt.Errorf("failed to read key file: %w", err)
 	}
@@ -116,7 +116,7 @@ func (km *KeyManager) GetKeyFingerprint(keyPath string) (string, error) {
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return "", fmt.Errorf("invalid key path: %w", err)
 	}
-	keyData, err := os.ReadFile(keyPath)
+	keyData, err := os.ReadFile(keyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return "", fmt.Errorf("failed to read key file: %w", err)
 	}
@@ -139,7 +139,7 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 	if err := security.ValidateSSHKeyPath(privateKeyPath); err != nil {
 		return fmt.Errorf("invalid private key path: %w", err)
 	}
-	privateKeyData, err := os.ReadFile(privateKeyPath)
+	privateKeyData, err := os.ReadFile(privateKeyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to read private key: %w", err)
 	}
@@ -153,7 +153,7 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 	if err := security.ValidateSSHKeyPath(publicKeyPath); err != nil {
 		return fmt.Errorf("invalid public key path: %w", err)
 	}
-	publicKeyData, err := os.ReadFile(publicKeyPath)
+	publicKeyData, err := os.ReadFile(publicKeyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to read public key: %w", err)
 	}
@@ -295,7 +295,7 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return fmt.Errorf("invalid key path: %w", err)
 	}
-	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to create private key file: %w", err)
 	}
@@ -330,7 +330,7 @@ func (km *KeyManager) isValidPrivateKey(keyPath string) bool {
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return false
 	}
-	keyData, err := os.ReadFile(keyPath)
+	keyData, err := os.ReadFile(keyPath) // #nosec G304 - path validated above
 	if err != nil {
 		return false
 	}
@@ -396,7 +396,7 @@ func (km *KeyManager) LoadAuthorizedKeys(authorizedKeysPath string) ([]ssh.Publi
 	if err := security.ValidateSSHKeyPath(authorizedKeysPath); err != nil {
 		return nil, fmt.Errorf("invalid authorized keys path: %w", err)
 	}
-	file, err := os.Open(authorizedKeysPath)
+	file, err := os.Open(authorizedKeysPath) // #nosec G304 - authorizedKeysPath is validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to open authorized_keys file: %w", err)
 	}

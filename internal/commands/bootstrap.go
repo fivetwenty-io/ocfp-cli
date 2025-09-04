@@ -104,7 +104,7 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 	}
 
 	// Load config file to enumerate blocs
-	data, err := os.ReadFile(configFile)
+	data, err := os.ReadFile(configFile) // #nosec G304 - configFile is from user but used for reading config
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}

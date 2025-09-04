@@ -199,7 +199,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	if err := security.ValidateInput(tokenPath, validPathPattern); err != nil {
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath)
+	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath) // #nosec G204 - input validated above
 	output, err := cmd.Output()
 	if err == nil {
 		token := strings.TrimSpace(string(output))
@@ -216,7 +216,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	if err := security.ValidateInput(jsonPath, validPathPattern); err != nil {
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
-	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath)
+	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath) // #nosec G204 - input validated above
 	output, err = cmd.Output()
 	if err == nil {
 		jsonCreds := strings.TrimSpace(string(output))
@@ -254,7 +254,7 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	if err := security.ValidateInput(tempFile.Name(), validPathPattern); err != nil {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name())
+	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) // #nosec G204 - path is validated above
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

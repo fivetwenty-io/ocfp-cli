@@ -176,7 +176,7 @@ func (gi *GenesisIntegration) readEnvironmentFile(filePath string) (*GenesisEnvi
 	if err := security.ValidateConfigPath(filePath); err != nil {
 		return nil, fmt.Errorf("invalid file path: %w", err)
 	}
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
@@ -325,7 +325,7 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	if err := security.ValidateConfigPath(filePath); err != nil {
 		return fmt.Errorf("invalid file path: %w", err)
 	}
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
 		return fmt.Errorf("failed to read original file: %w", err)
 	}

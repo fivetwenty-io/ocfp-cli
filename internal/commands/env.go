@@ -240,6 +240,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	// Read existing config or create new
 	ocfpConfig := make(map[string]interface{})
+	// #nosec G304 - ocfpConfigPath is constructed from safe paths
 	if data, err := os.ReadFile(ocfpConfigPath); err == nil {
 		if err := yaml.Unmarshal(data, &ocfpConfig); err != nil {
 			log.Warnf("Failed to parse existing config: %v", err)
@@ -342,7 +343,7 @@ func findEnvironments() ([]environmentInfo, error) {
 
 		for _, match := range matches {
 			// Try to load and parse the file
-			data, err := os.ReadFile(match)
+			data, err := os.ReadFile(match) // #nosec G304 - match is from glob pattern
 			if err != nil {
 				continue
 			}

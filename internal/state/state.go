@@ -93,7 +93,7 @@ func (m *Manager) Load(blocName string) (*State, error) {
 	if err := security.ValidateConfigPath(statePath); err != nil {
 		return nil, fmt.Errorf("invalid state path: %w", err)
 	}
-	data, err := os.ReadFile(statePath)
+	data, err := os.ReadFile(statePath) // #nosec G304 - statePath is validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file: %w", err)
 	}
@@ -336,7 +336,7 @@ func (m *Manager) Lock(blocName string) error {
 		if err := security.ValidatePath(lockPath); err != nil {
 			return fmt.Errorf("invalid lock path: %w", err)
 		}
-		data, err := os.ReadFile(lockPath)
+		data, err := os.ReadFile(lockPath) // #nosec G304 - lockPath is validated above
 		if err != nil {
 			return fmt.Errorf("failed to read lock file: %w", err)
 		}

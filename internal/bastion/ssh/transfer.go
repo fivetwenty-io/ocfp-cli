@@ -160,7 +160,7 @@ func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote stri
 	if err := security.ValidatePath(local); err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
-	localFile, err := os.Open(local)
+	localFile, err := os.Open(local) // #nosec G304 - local path is validated above
 	if err != nil {
 		return fmt.Errorf("failed to open local file: %w", err)
 	}
@@ -230,7 +230,7 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 	if err := security.ValidatePath(local); err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
-	data, err := os.ReadFile(local)
+	data, err := os.ReadFile(local) // #nosec G304 - local path is validated above
 	if err != nil {
 		return fmt.Errorf("failed to read local file: %w", err)
 	}
@@ -284,7 +284,7 @@ func (tm *TransferManager) downloadViaSFTP(ctx context.Context, remote, local st
 	if err := security.ValidatePath(local); err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
-	localFile, err := os.Create(local)
+	localFile, err := os.Create(local) // #nosec G304 - local path is validated above
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}
@@ -408,7 +408,7 @@ func (tm *TransferManager) calculateFileHash(filePath string) (string, error) {
 	if err := security.ValidatePath(filePath); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
 		return "", err
 	}
@@ -477,7 +477,7 @@ func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remo
 			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)
 			}
-			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
+			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
 		} else {
 			tm.log.Warn("sshpass not available for password authentication")
 		}
@@ -552,7 +552,7 @@ func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, l
 			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)
 			}
-			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
+			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
 		} else {
 			tm.log.Warn("sshpass not available for password authentication")
 		}

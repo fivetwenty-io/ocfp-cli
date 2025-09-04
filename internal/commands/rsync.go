@@ -371,7 +371,7 @@ func executeRSync(rsyncCmd []string) error {
 		return fmt.Errorf("invalid rsync command")
 	}
 
-	cmd := exec.Command(rsyncCmd[0], rsyncCmd[1:]...)
+	cmd := exec.Command(rsyncCmd[0], rsyncCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -208,7 +208,7 @@ func checkBastionConnectivity(cfg *config.Config) error {
 	if err := security.ValidateInput(bastionIP, validDNSPattern); err != nil {
 		return fmt.Errorf("invalid bastion IP: %w", err)
 	}
-	cmd := exec.Command("ssh",
+	cmd := exec.Command("ssh", // #nosec G204 - input validated above
 		"-o", "ConnectTimeout=5",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -277,7 +277,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	if err := security.ValidateInput(deploymentDir, validFilePathPattern); err != nil {
 		return fmt.Errorf("invalid deployment directory: %w", err)
 	}
-	cmd := exec.Command("bosh", "create-env", manifestPath,
+	cmd := exec.Command("bosh", "create-env", manifestPath, // #nosec G204 - input validated above
 		"--state", filepath.Join(deploymentDir, "state.json"),
 		"--vars-store", filepath.Join(deploymentDir, "creds.yml"))
 
@@ -315,7 +315,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 
 	// Upload cloud foundry deployment
 	log.Info("Uploading Cloud Foundry deployment")
-	cmd := exec.Command("bosh", "upload-release",
+	cmd := exec.Command("bosh", "upload-release", // #nosec G204 - using hardcoded URL
 		"https://bosh.io/d/github.com/cloudfoundry/cf-deployment")
 
 	if err := cmd.Run(); err != nil {
@@ -329,7 +329,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
 
-	cmd = exec.Command("bosh", "-d", "cf", "deploy", manifestPath,
+	cmd = exec.Command("bosh", "-d", "cf", "deploy", manifestPath, // #nosec G204 - input validated above
 		"-o", filepath.Join(deploymentDir, "operations", "scale.yml"),
 		"-o", filepath.Join(deploymentDir, "operations", "use-postgres.yml"))
 
@@ -416,7 +416,7 @@ func configureCloudFoundry(cfg *config.Config) error {
 	if err := security.ValidateInput(cfg.DNS[0], validDNSPattern); err != nil {
 		return fmt.Errorf("invalid DNS name: %w", err)
 	}
-	cmd := exec.Command("cf", "login",
+	cmd := exec.Command("cf", "login", // #nosec G204 - input validated above
 		"-a", fmt.Sprintf("https://api.%s", cfg.DNS[0]),
 		"-u", "admin",
 		"-p", "admin", // This should come from credhub
@@ -429,17 +429,17 @@ func configureCloudFoundry(cfg *config.Config) error {
 	// Create default org and space
 	log.Info("Creating default organization and space")
 
-	cmd = exec.Command("cf", "create-org", "default")
+	cmd = exec.Command("cf", "create-org", "default") // #nosec G204 - using hardcoded values
 	if err := cmd.Run(); err != nil {
 		log.Warn("Failed to create org", "error", err)
 	}
 
-	cmd = exec.Command("cf", "create-space", "development", "-o", "default")
+	cmd = exec.Command("cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
 	if err := cmd.Run(); err != nil {
 		log.Warn("Failed to create space", "error", err)
 	}
 
-	cmd = exec.Command("cf", "target", "-o", "default", "-s", "development")
+	cmd = exec.Command("cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
 	if err := cmd.Run(); err != nil {
 		log.Warn("Failed to target org/space", "error", err)
 	}

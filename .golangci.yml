@@ -25,12 +25,6 @@ formatters:
       - vendor
       - tmp
 
-# Output configuration
-output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-
 # Issues configuration
 issues:
   max-same-issues: 3

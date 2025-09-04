@@ -276,6 +276,7 @@ func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
 		return nil, fmt.Errorf("failed to create .ssh directory: %w", err)
 	}
+	// #nosec G304 - knownHostsPath is constructed from safe paths (user home directory)
 	if _, err := os.Create(knownHostsPath); err != nil {
 		return nil, fmt.Errorf("failed to create known_hosts file: %w", err)
 	}
@@ -338,7 +339,7 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	}
 
 	// Open known_hosts file for appending
-	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 - safe path construction
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file: %w", err)
 	}
@@ -559,7 +560,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 			if err := validateCommand(append([]string{"sshpass"}, sshpassArgs...)); err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)
 			}
-			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...)
+			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
 		} else {
 			c.log.Warn("sshpass not available for password authentication")
 		}
