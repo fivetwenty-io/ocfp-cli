@@ -10,6 +10,8 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // TestTmuxIntegration tests tmux session management integration
@@ -33,15 +35,15 @@ func TestTmuxIntegration(t *testing.T) {
 		// In a test environment without a proper terminal, tmux may fail
 		// But we can verify the command structure and error handling
 		err := cmd.Execute()
-		
+
 		if err != nil {
 			// Expected in test environments - verify it's a tmux-related error, not a panic
 			errMsg := err.Error()
-			assert.True(t, 
-				strings.Contains(errMsg, "tmux") || 
-				strings.Contains(errMsg, "terminal") || 
-				strings.Contains(errMsg, "session") ||
-				strings.Contains(errMsg, "display"),
+			assert.True(t,
+				strings.Contains(errMsg, "tmux") ||
+					strings.Contains(errMsg, "terminal") ||
+					strings.Contains(errMsg, "session") ||
+					strings.Contains(errMsg, "display"),
 				"Error should be tmux-related: %s", errMsg)
 		}
 	})
@@ -66,7 +68,7 @@ tmux attach-session -t ocfp
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
@@ -87,7 +89,7 @@ tmux attach-session -t ocfp
 		// Create deployment directory structure
 		deploymentDir := filepath.Join(tmpDir, "ocfp", "deployments")
 		services := []string{"bosh", "vault", "shield", "doomsday", "prometheus", "concourse", "cf"}
-		
+
 		for _, service := range services {
 			serviceDir := filepath.Join(deploymentDir, service)
 			err := os.MkdirAll(serviceDir, 0755)
@@ -100,8 +102,8 @@ tmux attach-session -t ocfp
 
 		// Set HOME to tmpDir so tmux can find deployment directories
 		oldHome := os.Getenv("HOME")
-		os.Setenv("HOME", tmpDir)
-		defer os.Setenv("HOME", oldHome)
+		_ = os.Setenv("HOME", tmpDir)
+		defer func() { _ = os.Setenv("HOME", oldHome) }()
 
 		cmd := commands.NewTmuxCmd()
 		err = cmd.Execute()
@@ -168,12 +170,12 @@ exit 0;
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"init", "--user", "testuser", "--key", "/tmp/test-key"})
@@ -210,15 +212,15 @@ exit 0;
 		require.NoError(t, err)
 
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
-		cmd.SetArgs([]string{"provision", "--user", "ubuntu", "--key", "/tmp/test-key", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"provision", "--user", "ubuntu", "--key", "/tmp/test-key", "--bloc", "test"})
 
 		err = cmd.Execute()
 		// Current implementation uses placeholder functionality, so it succeeds
@@ -262,12 +264,12 @@ exit 0;
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"init", "--user", "ubuntu", "--key", keyPath})
@@ -279,15 +281,15 @@ exit 0;
 
 	t.Run("BastionEnvironmentVariables", func(t *testing.T) {
 		// Test environment variable passing
-		os.Setenv("OCFP_BLOC_NAME", "test-env-bloc")
-		os.Setenv("OCFP_PROVIDER", "stackit")
-		os.Setenv("STACKIT_PROJECT_ID", "env-project-123")
-		os.Setenv("GENESIS_ENVIRONMENT", "test")
+		_ = os.Setenv("OCFP_BLOC_NAME", "test-env-bloc")
+		_ = os.Setenv("OCFP_PROVIDER", "stackit")
+		_ = os.Setenv("STACKIT_PROJECT_ID", "env-project-123")
+		_ = os.Setenv("GENESIS_ENVIRONMENT", "test")
 		defer func() {
-			os.Unsetenv("OCFP_BLOC_NAME")
-			os.Unsetenv("OCFP_PROVIDER")
-			os.Unsetenv("STACKIT_PROJECT_ID")
-			os.Unsetenv("GENESIS_ENVIRONMENT")
+			_ = os.Unsetenv("OCFP_BLOC_NAME")
+			_ = os.Unsetenv("OCFP_PROVIDER")
+			_ = os.Unsetenv("STACKIT_PROJECT_ID")
+			_ = os.Unsetenv("GENESIS_ENVIRONMENT")
 		}()
 
 		// Create simple provision script that echoes environment
@@ -307,12 +309,12 @@ exit 0;
 		require.NoError(t, err)
 
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"provision", "--user", "ubuntu"})
@@ -368,13 +370,13 @@ blocs:
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command with workflow config
 		providerCmd := commands.NewProviderCmd()
-		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "mgmt"})
-		
+		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "mgmt"})
+
 		err = providerCmd.Execute()
 		assert.Error(t, err) // Expected due to fake credentials
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
@@ -385,8 +387,8 @@ blocs:
 
 		// Test bastion command with workflow config
 		bastionCmd := commands.NewBastionCmd()
-		bastionCmd.SetArgs([]string{"init", "--bloc-name", "mgmt"})
-		
+		bastionCmd.SetArgs([]string{"init", "--bloc", "mgmt"})
+
 		err = bastionCmd.Execute()
 		assert.Error(t, err) // Expected due to missing script/SSH
 		assert.Contains(t, err.Error(), "cannot find bastion-init script")
@@ -395,12 +397,12 @@ blocs:
 	t.Run("ScriptDirectoryStructure", func(t *testing.T) {
 		// Create expected script directory structure
 		scriptsBase := filepath.Join(tmpDir, "scripts")
-		
+
 		// Create tmux scripts
 		tmuxDir := filepath.Join(scriptsBase, "tmux")
 		err := os.MkdirAll(tmuxDir, 0755)
 		require.NoError(t, err)
-		
+
 		tmuxScript := filepath.Join(tmuxDir, "ocfp")
 		err = os.WriteFile(tmuxScript, []byte("#!/bin/bash\necho 'OCFP tmux session'\n"), 0755)
 		require.NoError(t, err)
@@ -437,9 +439,9 @@ exit 0;
 	t.Run("DeploymentDirectoryStructure", func(t *testing.T) {
 		// Create OCFP deployment directory structure
 		deploymentBase := filepath.Join(tmpDir, "ocfp", "deployments")
-		
+
 		deployments := []string{
-			"bosh", "vault", "shield", "doomsday", "prometheus", 
+			"bosh", "vault", "shield", "doomsday", "prometheus",
 			"concourse", "cf", "autoscaler", "scheduler", "jumpbox", "blacksmith",
 		}
 
@@ -476,15 +478,15 @@ exit 0;
 // TestToolAvailability tests availability of external tools
 func TestToolAvailability(t *testing.T) {
 	tools := map[string]string{
-		"tmux":    "Terminal multiplexer for session management",
-		"ssh":     "SSH client for bastion connections", 
-		"scp":     "Secure copy for file transfers",
-		"rsync":   "File synchronization tool",
-		"perl":    "Perl interpreter for provision scripts",
+		"tmux":  "Terminal multiplexer for session management",
+		"ssh":   "SSH client for bastion connections",
+		"scp":   "Secure copy for file transfers",
+		"rsync": "File synchronization tool",
+		"perl":  "Perl interpreter for provision scripts",
 	}
 
 	for tool, description := range tools {
-		t.Run("Check"+strings.Title(tool), func(t *testing.T) {
+		t.Run("Check"+cases.Title(language.English).String(tool), func(t *testing.T) {
 			_, err := exec.LookPath(tool)
 			if err != nil {
 				t.Logf("%s not available: %s", tool, description)
@@ -506,7 +508,7 @@ func TestToolAvailability(t *testing.T) {
 	}
 
 	for tool, description := range cloudTools {
-		t.Run("CheckOptional"+strings.Title(tool), func(t *testing.T) {
+		t.Run("CheckOptional"+cases.Title(language.English).String(tool), func(t *testing.T) {
 			_, err := exec.LookPath(tool)
 			if err != nil {
 				t.Logf("Optional tool %s not available: %s", tool, description)

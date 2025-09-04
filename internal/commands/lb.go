@@ -10,6 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -33,6 +34,13 @@ load balancers including adding/removing services and checking status.`,
 	cmd.AddCommand(newLBAddServiceCmd())
 	cmd.AddCommand(newLBRemoveServiceCmd())
 	cmd.AddCommand(newLBUpdateCmd())
+
+	// Typed LB management commands (STACKIT-oriented but provider-agnostic wrappers)
+	cmd.AddCommand(newLBOpsCmd())
+	cmd.AddCommand(newLBRoutersCmd())
+	cmd.AddCommand(newLBTCPRoutersCmd())
+	cmd.AddCommand(newLBCFSSHCmd())
+	cmd.AddCommand(newLBSyncCmd())
 
 	return cmd
 }
@@ -75,7 +83,7 @@ and associates it with the appropriate network resources.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -92,7 +100,7 @@ and associates it with the appropriate network resources.`,
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -188,7 +196,7 @@ func newLBDeleteCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -205,7 +213,7 @@ func newLBDeleteCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -232,7 +240,7 @@ func newLBDeleteCmd() *cobra.Command {
 			if !force {
 				fmt.Printf("This will delete %d load balancer(s). Continue? [y/N]: ", len(lbsToDelete))
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Deletion cancelled by user")
 					return nil
@@ -284,7 +292,7 @@ func newLBListCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -301,7 +309,7 @@ func newLBListCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -336,12 +344,12 @@ func newLBListCmd() *cobra.Command {
 			default:
 				// Table format
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-				fmt.Fprintln(w, "NAME\tTYPE\tIP\tPORT\tSTATUS\tCREATED")
+				_, _ = fmt.Fprintln(w, "NAME\tTYPE\tIP\tPORT\tSTATUS\tCREATED")
 				for _, lb := range lbs {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
 						lb.Name, lb.Type, lb.IPAddress, lb.Port, lb.Status, lb.CreatedAt)
 				}
-				w.Flush()
+				_ = w.Flush()
 			}
 
 			return nil
@@ -370,7 +378,7 @@ func newLBStatusCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -387,7 +395,7 @@ func newLBStatusCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -444,9 +452,16 @@ func newLBAddServiceCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "add-service <lb-name> <service-ip>",
+		Use:   "add-service <lb-name> <service-ip|reserved:key[:index]>",
 		Short: "Add a service to load balancer",
-		Long:  `Add a backend service to a load balancer pool.`,
+		Long: `Add a backend service to a load balancer pool.
+
+You can reference reserved IPs computed by bootstrap (STACKIT) using the form:
+  reserved:<key>[:index]
+Examples:
+  reserved:vault_ip        # uses ocfp-0 by default
+  reserved:doomsday_ip:1   # uses ocfp-1
+`,
 		Example: `  # Add a service to load balancer
   ocfp lb add-service cf-router 10.0.1.10
 
@@ -454,7 +469,11 @@ func newLBAddServiceCmd() *cobra.Command {
   ocfp lb add-service cf-router 10.0.1.10 --port 8080 --target-port 80
 
   # Add with weight for weighted load balancing
-  ocfp lb add-service cf-router 10.0.1.10 --weight 2`,
+  ocfp lb add-service cf-router 10.0.1.10 --weight 2
+
+  # Use reserved IPs (STACKIT)
+  ocfp lb add-service ops-https reserved:vault_ip
+  ocfp lb add-service doomsday-mgmt reserved:doomsday_ip:1`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -465,7 +484,7 @@ func newLBAddServiceCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -482,7 +501,7 @@ func newLBAddServiceCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -498,6 +517,15 @@ func newLBAddServiceCmd() *cobra.Command {
 			lb, err := network.GetLoadBalancer(ctx, lbName)
 			if err != nil {
 				return fmt.Errorf("failed to get load balancer: %w", err)
+			}
+
+			// Resolve token references (reserved:, public-ip:)
+			if isToken(serviceIP) {
+				resolved, err := resolveTargetIP(blocName, serviceIP)
+				if err != nil {
+					return fmt.Errorf("failed to resolve %s: %w", serviceIP, err)
+				}
+				serviceIP = resolved
 			}
 
 			// Create backend member
@@ -527,6 +555,123 @@ func newLBAddServiceCmd() *cobra.Command {
 	return cmd
 }
 
+// resolveReservedIP resolves a reserved IP output from state based on
+// the token form reserved:<key>[:index]. Default index is 0 (ocfp-0).
+func resolveReservedIP(blocName string, token string) (string, error) {
+	// token format: reserved:key or reserved:key:index
+	parts := strings.Split(strings.TrimPrefix(token, "reserved:"), ":")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", fmt.Errorf("invalid reserved format; expected reserved:<key>[:index]")
+	}
+	key := parts[0]
+	index := "0"
+	if len(parts) > 1 && parts[1] != "" {
+		index = parts[1]
+	}
+	// Build output key: reserved_<bloc>-ocfp-<index>_<key>
+	stateKey := fmt.Sprintf("reserved_%s-ocfp-%s_%s", blocName, index, key)
+	sm, err := state.NewManager("")
+	if err != nil {
+		return "", fmt.Errorf("state manager: %w", err)
+	}
+	if _, err := sm.Load(blocName); err != nil {
+		return "", fmt.Errorf("load state: %w", err)
+	}
+	val, err := sm.GetOutput(stateKey)
+	if err != nil {
+		return "", fmt.Errorf("output %s not found", stateKey)
+	}
+	s, ok := val.(string)
+	if !ok || s == "" {
+		return "", fmt.Errorf("output %s empty or not string", stateKey)
+	}
+	return s, nil
+}
+
+// isToken returns true if arg begins with a supported token prefix
+func isToken(s string) bool {
+	return strings.HasPrefix(s, "reserved:") || strings.HasPrefix(s, "public-ip:")
+}
+
+// resolveTargetIP resolves tokens of the form:
+//   - reserved:<key>[:index]
+//   - public-ip:<job>[:index]
+func resolveTargetIP(blocName string, token string) (string, error) {
+	if strings.HasPrefix(token, "reserved:") {
+		return resolveReservedIP(blocName, token)
+	}
+	if strings.HasPrefix(token, "public-ip:") {
+		rest := strings.TrimPrefix(token, "public-ip:")
+		parts := strings.Split(rest, ":")
+		if len(parts) == 0 || parts[0] == "" {
+			return "", fmt.Errorf("invalid public-ip token; expected public-ip:<job>[:index]")
+		}
+		job := parts[0]
+		index := ""
+		if len(parts) > 1 {
+			index = parts[1]
+		}
+		ip, err := findPublicIPByJob(blocName, job, index)
+		if err != nil {
+			return "", err
+		}
+		if ip == "" {
+			return "", fmt.Errorf("no matching public-ip for job %s index %s", job, index)
+		}
+		return ip, nil
+	}
+	return token, nil
+}
+
+// findPublicIPByJob reads state for public_ip resources with matching job and optional index
+func findPublicIPByJob(blocName, job, index string) (string, error) {
+	sm, err := state.NewManager("")
+	if err != nil {
+		return "", fmt.Errorf("state manager: %w", err)
+	}
+	if _, err := sm.Load(blocName); err != nil {
+		return "", fmt.Errorf("load state: %w", err)
+	}
+	res, err := sm.ListResources("public_ip")
+	if err != nil {
+		return "", err
+	}
+	for _, r := range res {
+		// check job via tags or properties
+		var rjob string
+		if r.Tags != nil && r.Tags["job"] != "" {
+			rjob = r.Tags["job"]
+		}
+		if rjob == "" {
+			if v, ok := r.Properties["job"].(string); ok {
+				rjob = v
+			}
+		}
+		if rjob != job {
+			continue
+		}
+		// check index if provided
+		if index != "" {
+			var ridx string
+			if r.Tags != nil && r.Tags["index"] != "" {
+				ridx = r.Tags["index"]
+			}
+			if ridx == "" {
+				if v, ok := r.Properties["index"].(string); ok {
+					ridx = v
+				}
+			}
+			if ridx != index {
+				continue
+			}
+		}
+		if addr, ok := r.Properties["address"].(string); ok && addr != "" {
+			return addr, nil
+		}
+	}
+	return "", nil
+}
+
 // newLBRemoveServiceCmd creates the lb remove-service subcommand
 func newLBRemoveServiceCmd() *cobra.Command {
 	var force bool
@@ -552,7 +697,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 			if !force {
 				fmt.Printf("Remove %s from load balancer %s? [y/N]: ", serviceIP, lbName)
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Removal cancelled by user")
 					return nil
@@ -561,7 +706,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -578,7 +723,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {
@@ -636,7 +781,7 @@ func newLBUpdateCmd() *cobra.Command {
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -653,7 +798,7 @@ func newLBUpdateCmd() *cobra.Command {
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			network := provider.Network()
 			if network == nil {

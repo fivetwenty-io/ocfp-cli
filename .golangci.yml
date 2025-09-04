@@ -1,143 +1,36 @@
+# golangci-lint v2 configuration
+version: "2"
+
+# Run configuration
 run:
   timeout: 5m
-  skip-dirs:
-    - vendor
-    - .devcontainer
-    - scripts
-  skip-files:
-    - ".*_test.go"
-    - "mock_.*"
+  tests: true
 
+# Linters configuration
 linters:
-  enable:
-    - gofmt
-    - goimports
-    - golint
-    - govet
-    - errcheck
-    - staticcheck
-    - gosimple
-    - ineffassign
-    - structcheck
-    - varcheck
-    - deadcode
-    - typecheck
-    - unused
-    - gosec
-    - misspell
-    - unparam
-    - nakedret
-    - prealloc
-    - scopelint
-    - gocritic
-    - gochecknoinits
-    - gochecknoglobals
-    - dupl
-    - gocyclo
-    - gocognit
-    - funlen
-    - bodyclose
-    - dogsled
-    - whitespace
-    - wsl
-    - goprintffuncname
-    - gomnd
-    - goerr113
-    - goconst
-    - godot
-    - godox
-    - maligned
-    - nestif
-    - nolintlint
-    - rowserrcheck
-    - stylecheck
-    - sqlclosecheck
-    - exportloopref
-    - noctx
-    - unconvert
-  disable:
-    - testpackage
-    - wrapcheck
-    - exhaustive
-    - exhaustivestruct
-    - lll
-    - gofumpt
-    - nlreturn
-    - paralleltest
-    - tparallel
-    - thelper
-    - forbidigo
+  # Use the default set of linters
+  default: standard
 
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  gocognit:
-    min-complexity: 20
-  funlen:
-    lines: 100
-    statements: 60
-  govet:
-    check-shadowing: true
-  golint:
-    min-confidence: 0.8
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  misspell:
-    locale: US
-  unused:
-    check-exported: false
-  unparam:
-    check-exported: false
-  nakedret:
-    max-func-lines: 30
-  prealloc:
-    simple: true
-    range-loops: true
-    for-loops: true
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-    disabled-checks:
-      - dupImport
-      - ifElseChain
-      - octalLiteral
-      - whyNoLint
-  gosec:
-    excludes:
-      - G204 # Subprocess launched with variable
-      - G304 # Potential file inclusion via variable
-  gomnd:
-    settings:
-      mnd:
-        checks: argument,case,condition,operation,return,assign
-        ignored-numbers: 0,1,2,3,4,5,10,100,1000
-  dupl:
-    threshold: 150
+  # Exclude paths from linting
+  exclusions:
+    paths:
+      - vendor
+      - tmp
 
+# Formatters configuration
+formatters:
+  # Exclude paths from formatting checks
+  exclusions:
+    paths:
+      - vendor
+      - tmp
+
+# Output configuration
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+# Issues configuration
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - gochecknoglobals
-    - path: internal/cpi/
-      linters:
-        - dupl
-    - path: internal/commands/
-      linters:
-        - dupl
-        - gocognit
-    - linters:
-        - stylecheck
-      text: "ST1000:"
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  max-same-issues: 3

@@ -21,12 +21,15 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInst
 		"flavor":            req.Flavor,
 		"image":             req.Image,
 		"network_id":        req.NetworkID,
-		"subnet_id":         req.SubnetID,
 		"security_groups":   req.SecurityGroups,
 		"key_name":          req.KeyPair,
 		"user_data":         req.UserData,
 		"availability_zone": req.AvailabilityZone,
 		"labels":            req.Tags,
+	}
+	// For STACKIT, subnet_id is optional; only include if provided
+	if req.SubnetID != "" {
+		apiReq["subnet_id"] = req.SubnetID
 	}
 
 	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/instances", apiReq)
@@ -38,7 +41,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInst
 	if err != nil {
 		return nil, fmt.Errorf("failed to create instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, m.client.parseError(resp)
@@ -72,7 +75,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{
@@ -113,7 +116,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("failed to list instances: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -143,7 +146,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil // Already deleted
@@ -174,7 +177,7 @@ func (m *ComputeManager) CreateKeyPair(ctx context.Context, name string) (*cpi.K
 	if err != nil {
 		return nil, fmt.Errorf("failed to create key pair: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, m.client.parseError(resp)
@@ -207,7 +210,7 @@ func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicK
 	if err != nil {
 		return fmt.Errorf("failed to import key pair: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return m.client.parseError(resp)
@@ -230,7 +233,7 @@ func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyP
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key pair: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{
@@ -265,7 +268,7 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to list key pairs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -294,7 +297,7 @@ func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete key pair: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil // Already deleted
@@ -336,7 +339,7 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return m.client.parseError(resp)
@@ -362,7 +365,7 @@ func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stop instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return m.client.parseError(resp)
@@ -388,7 +391,7 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to reboot instance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return m.client.parseError(resp)
@@ -415,7 +418,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -445,7 +448,7 @@ func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{
@@ -480,7 +483,7 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list flavors: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -510,7 +513,7 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get flavor: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{

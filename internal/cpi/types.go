@@ -109,6 +109,22 @@ type FloatingIP struct {
 	CreatedAt  time.Time
 }
 
+// PublicIP represents a public IP address
+type PublicIP struct {
+	ID         string
+	Address    string
+	Name       string
+	Status     string // available, associated, pending
+	Job        string // router, cf-ssh, jumpbox, tcp-router, ops
+	Index      string // 0-based index for the IP
+	InstanceID string
+	NetworkID  string
+	Labels     map[string]string
+	Tags       map[string]string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 // Router represents a network router
 type Router struct {
 	ID              string
@@ -316,6 +332,16 @@ type CreateSecurityGroupRequest struct {
 // AllocateFloatingIPRequest for allocating a floating IP
 type AllocateFloatingIPRequest struct {
 	NetworkID string
+	Tags      map[string]string
+}
+
+// CreatePublicIPRequest for creating a public IP
+type CreatePublicIPRequest struct {
+	Name      string
+	Job       string // router, cf-ssh, jumpbox, tcp-router, ops
+	Index     string // 0-based index
+	NetworkID string
+	Labels    map[string]string
 	Tags      map[string]string
 }
 

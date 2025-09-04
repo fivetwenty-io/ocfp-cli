@@ -43,19 +43,19 @@ The command supports bidirectional synchronization with advanced options:
 
 The bastion host is automatically discovered using the bloc configuration.`,
 		Example: `  # Sync directory to bastion
-  ocfp rsync --bloc-name production /local/dir/ bastion:/remote/dir/
+  ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/
 
   # Sync from bastion with compression
-  ocfp rsync --bloc-name production --compress bastion:/remote/dir/ /local/dir/
+  ocfp rsync --bloc production --compress bastion:/remote/dir/ /local/dir/
 
   # Mirror sync with delete (removes extra files in destination)
-  ocfp rsync --bloc-name production --delete /local/dir/ bastion:/remote/dir/
+  ocfp rsync --bloc production --delete /local/dir/ bastion:/remote/dir/
 
   # Dry run to see what would be synced
-  ocfp rsync --bloc-name production --dry-run /local/dir/ bastion:/remote/dir/
+  ocfp rsync --bloc production --dry-run /local/dir/ bastion:/remote/dir/
 
   # Exclude certain files
-  ocfp rsync --bloc-name production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/`,
+  ocfp rsync --bloc production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRSync(cmd, args)
@@ -95,7 +95,6 @@ func runRSync(cmd *cobra.Command, args []string) error {
 
 	// Get configuration values
 	blocName := viper.GetString("bloc_name")
-	iaas := viper.GetString("iaas")
 	user := viper.GetString("rsync.user")
 	keyPath := viper.GetString("rsync.key")
 	archive := viper.GetBool("rsync.archive")
@@ -112,26 +111,45 @@ func runRSync(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc-name is required")
-	}
-	if iaas == "" {
-		return fmt.Errorf("iaas provider is required")
+		return fmt.Errorf("bloc is required")
 	}
 
-	// Load configuration
+	// Load configuration first - this will provide the provider if not set via flags
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Initialize provider
-	provider, err := cpi.GetProvider(iaas)
-	if err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
+	// Get iaas provider - either from flags/env or from loaded configuration
+	iaas := viper.GetString("iaas")
+	if iaas == "" {
+		// Try to get provider from loaded configuration
+		if cfg.Provider != "" {
+			iaas = cfg.Provider
+		} else if cfg.IaaS != "" {
+			iaas = cfg.IaaS
+		}
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider: %w", err)
+	// Now validate we have a provider
+	if iaas == "" {
+		return fmt.Errorf("iaas provider is required (not found in flags or configuration)")
+	}
+
+	// Create provider config from the loaded configuration
+	providerConfig := map[string]interface{}{
+		"project_id":            cfg.ProjectID,
+		"org_id":                cfg.OrgID,
+		"auth_token":            cfg.AuthToken,
+		"service_account_token": cfg.ServiceAccountToken,
+		"service_account_json":  cfg.ServiceAccountJSON,
+		"region":                cfg.Region,
+	}
+
+	// Initialize provider
+	provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
 	}
 
 	// Get bastion IP address
@@ -315,7 +333,7 @@ func buildRSyncCommand(source, destination, keyPath string, archive, compress, v
 	cmd = append(cmd, "--progress")
 
 	// Add SSH options
-	sshCmd := fmt.Sprintf("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR")
+	sshCmd := "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR"
 	if keyPath != "" {
 		sshCmd += fmt.Sprintf(" -i %s", keyPath)
 	}

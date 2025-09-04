@@ -121,19 +121,19 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	// Create table writer
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
-	fmt.Fprintln(w, "----\t--------\t------\t------\t------")
+	_, _ = fmt.Fprintln(w, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
+	_, _ = fmt.Fprintln(w, "----\t--------\t------\t------\t------")
 
 	for _, env := range envs {
 		status := ""
 		if env.Name == currentEnv {
 			status = "ACTIVE"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			env.Name, env.Provider, env.Region, status, env.ConfigFile)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	log.Debugf("Listed %d environments", len(envs))
 
 	return nil
@@ -187,11 +187,14 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Key Pair:    %s\n", cfg.Bastion.Keypair)
 	}
 
-	if len(cfg.Blocs) > 0 {
-		fmt.Printf("\nBlocs:\n")
-		for _, bloc := range cfg.Blocs {
-			fmt.Printf("  - %s (%s)\n", bloc.Name, bloc.Type)
-		}
+	// Print current bloc information
+	fmt.Printf("\nCurrent Bloc:\n")
+	fmt.Printf("  Name: %s\n", cfg.Name)
+	if cfg.Type != "" {
+		fmt.Printf("  Type: %s\n", cfg.Type)
+	}
+	if cfg.Environment != "" {
+		fmt.Printf("  Environment: %s\n", cfg.Environment)
 	}
 
 	if len(cfg.AZs) > 0 {

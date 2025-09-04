@@ -35,16 +35,16 @@ The command supports bidirectional transfers:
 
 The bastion host is automatically discovered using the bloc configuration.`,
 		Example: `  # Copy file to bastion
-  ocfp scp --bloc-name production /local/file.txt bastion:/tmp/
+  ocfp scp --bloc production /local/file.txt bastion:/tmp/
 
   # Copy file from bastion
-  ocfp scp --bloc-name production bastion:/etc/config.yml ./config.yml
+  ocfp scp --bloc production bastion:/etc/config.yml ./config.yml
 
   # Recursive copy of directory
-  ocfp scp --bloc-name production -r /local/dir/ bastion:/remote/dir/
+  ocfp scp --bloc production -r /local/dir/ bastion:/remote/dir/
 
   # Use specific SSH key
-  ocfp scp --bloc-name production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
+  ocfp scp --bloc production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSCP(cmd, args)
@@ -72,7 +72,6 @@ func runSCP(cmd *cobra.Command, args []string) error {
 
 	// Get configuration values
 	blocName := viper.GetString("bloc_name")
-	iaas := viper.GetString("iaas")
 	user := viper.GetString("scp.user")
 	keyPath := viper.GetString("scp.key")
 	recursive := viper.GetBool("scp.recursive")
@@ -83,26 +82,45 @@ func runSCP(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc-name is required")
-	}
-	if iaas == "" {
-		return fmt.Errorf("iaas provider is required")
+		return fmt.Errorf("bloc is required")
 	}
 
-	// Load configuration
+	// Load configuration first - this will provide the provider if not set via flags
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Initialize provider
-	provider, err := cpi.GetProvider(iaas)
-	if err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
+	// Get iaas provider - either from flags/env or from loaded configuration
+	iaas := viper.GetString("iaas")
+	if iaas == "" {
+		// Try to get provider from loaded configuration
+		if cfg.Provider != "" {
+			iaas = cfg.Provider
+		} else if cfg.IaaS != "" {
+			iaas = cfg.IaaS
+		}
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider: %w", err)
+	// Now validate we have a provider
+	if iaas == "" {
+		return fmt.Errorf("iaas provider is required (not found in flags or configuration)")
+	}
+
+	// Create provider config from the loaded configuration
+	providerConfig := map[string]interface{}{
+		"project_id":            cfg.ProjectID,
+		"org_id":                cfg.OrgID,
+		"auth_token":            cfg.AuthToken,
+		"service_account_token": cfg.ServiceAccountToken,
+		"service_account_json":  cfg.ServiceAccountJSON,
+		"region":                cfg.Region,
+	}
+
+	// Initialize provider
+	provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
 	}
 
 	// Get bastion IP address

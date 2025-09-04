@@ -36,20 +36,20 @@ This command:
 The configure command should be run after bootstrap to apply the final
 configuration to your infrastructure.`,
 		Example: `  # Apply all configurations
-  ocfp configure --bloc-name production
+  ocfp configure --bloc production
 
   # Dry run to see what would be configured
-  ocfp configure --bloc-name production --dry-run
+  ocfp configure --bloc production --dry-run
 
   # Skip specific configuration steps
-  ocfp configure --bloc-name production --skip-routes --skip-floating-ips`,
+  ocfp configure --bloc production --skip-routes --skip-floating-ips`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log := logger.Get()
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -66,7 +66,7 @@ configuration to your infrastructure.`,
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			log.Info("Starting configuration", "provider", cfg.Provider, "dry-run", dryRun)
 

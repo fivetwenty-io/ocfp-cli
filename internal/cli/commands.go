@@ -27,6 +27,9 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewBackupCmd())
 	root.AddCommand(commands.NewRestoreCmd())
 
+	// Networking / Public IPs
+	root.AddCommand(commands.NewPublicIPsCmd())
+
 	// Provider and utility commands
 	root.AddCommand(commands.NewProviderCmd())
 	root.AddCommand(commands.NewTmuxCmd())

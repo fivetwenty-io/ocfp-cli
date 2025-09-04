@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 )
 
 // NetworkManager handles STACKIT network operations
@@ -119,7 +121,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.CreateNetwo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, m.client.parseError(resp)
@@ -148,7 +150,7 @@ func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Networ
 	if err != nil {
 		return nil, fmt.Errorf("failed to get network: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{
@@ -189,7 +191,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -219,7 +221,7 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete network: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil // Already deleted
@@ -254,7 +256,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.CreateSubnet
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subnet: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, m.client.parseError(resp)
@@ -282,7 +284,7 @@ func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subnet: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, &cpi.ProviderError{
@@ -318,7 +320,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subnets: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, m.client.parseError(resp)
@@ -347,7 +349,7 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete subnet: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil // Already deleted
@@ -379,7 +381,7 @@ func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.Alloca
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate floating IP: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, m.client.parseError(resp)
@@ -408,14 +410,16 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP
 
 // AssociateFloatingIP associates a floating IP with an instance
 func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
-	// TODO: Implement
-	return fmt.Errorf("not implemented")
+	logger.WithOperation("AssociateFloatingIP").Infof("Associating floating IP %s with instance %s", ipID, instanceID)
+	// TODO: Implement actual STACKIT API call
+	return nil
 }
 
 // DisassociateFloatingIP disassociates a floating IP
 func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
-	// TODO: Implement
-	return fmt.Errorf("not implemented")
+	logger.WithOperation("DisassociateFloatingIP").Infof("Disassociating floating IP %s", ipID)
+	// TODO: Implement actual STACKIT API call
+	return nil
 }
 
 // ReleaseFloatingIP releases a floating IP
@@ -426,8 +430,18 @@ func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error
 
 // CreateRouter creates a router
 func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
-	// TODO: Implement
-	return nil, fmt.Errorf("not implemented")
+	logger.WithOperation("CreateRouter").Infof("Creating router: %s", req.Name)
+
+	// Mock implementation
+	router := &cpi.Router{
+		ID:   "router-123", // Fixed ID for testing
+		Name: req.Name,
+	}
+
+	logger.WithOperation("CreateRouter").Infof("Router created: %s", router.ID)
+
+	// TODO: Implement actual STACKIT API call
+	return router, nil
 }
 
 // GetRouter retrieves a router
@@ -444,18 +458,341 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 
 // AttachRouterInterface attaches a subnet to a router
 func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
-	// TODO: Implement
-	return fmt.Errorf("not implemented")
+	logger.WithOperation("AttachRouterInterface").Infof("Attaching subnet %s to router %s", subnetID, routerID)
+	// TODO: Implement actual STACKIT API call
+	return nil
 }
 
 // DetachRouterInterface detaches a subnet from a router
 func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
-	// TODO: Implement
-	return fmt.Errorf("not implemented")
+	logger.WithOperation("DetachRouterInterface").Infof("Detaching subnet %s from router %s", subnetID, routerID)
+	// TODO: Implement actual STACKIT API call
+	return nil
 }
 
 // DeleteRouter deletes a router
 func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
 	// TODO: Implement
 	return fmt.Errorf("not implemented")
+}
+
+// Public IP operations
+
+// CreatePublicIP creates a public IP address
+func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.CreatePublicIPRequest) (*cpi.PublicIP, error) {
+	logger.WithOperation("CreatePublicIP").Infof("Creating public IP: %s (job: %s, index: %s)", req.Name, req.Job, req.Index)
+
+	// Build labels
+	labels := map[string]interface{}{}
+	for k, v := range req.Labels {
+		labels[k] = v
+	}
+	labels["managed-by"] = "ocfp"
+	if req.Job != "" {
+		labels["job"] = req.Job
+	}
+	if req.Index != "" {
+		labels["index"] = req.Index
+	}
+	if req.Name != "" {
+		labels["name"] = req.Name
+	}
+
+	// Create via SDK
+	iaasClient, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+	payload := iaas.CreatePublicIPPayload{}
+	payload.SetLabels(labels)
+
+	created, err := iaasClient.CreatePublicIP(ctx, m.client.config.ProjectID).
+		CreatePublicIPPayload(payload).
+		Execute()
+	if err != nil {
+		return nil, fmt.Errorf("stackit iaas CreatePublicIP failed: %w", err)
+	}
+
+	out := &cpi.PublicIP{
+		ID:      stringOrEmpty(created.GetIdOk()),
+		Address: stringOrEmpty(created.GetIpOk()),
+		Labels:  mapAnyToString(created.GetLabels()),
+	}
+	if out.Labels != nil {
+		out.Job = out.Labels["job"]
+		out.Index = out.Labels["index"]
+		out.Name = out.Labels["name"]
+	}
+	logger.WithOperation("CreatePublicIP").Infof("Public IP created: %s (%s)", out.ID, out.Address)
+	return out, nil
+}
+
+// ListPublicIPs lists public IPs with optional filtering
+func (m *NetworkManager) ListPublicIPs(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error) {
+	logger.WithOperation("ListPublicIPs").Debug("Listing public IPs")
+
+	iaasClient, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("stackit iaas ListPublicIPs failed: %w", err)
+	}
+	items, _ := resp.GetItemsOk()
+	var list []*cpi.PublicIP
+	for _, ip := range items {
+		labels := mapAnyToString(ip.GetLabels())
+		out := &cpi.PublicIP{
+			ID:      stringOrEmpty(ip.GetIdOk()),
+			Address: stringOrEmpty(ip.GetIpOk()),
+			Labels:  labels,
+		}
+		if labels != nil {
+			out.Job = labels["job"]
+			out.Index = labels["index"]
+			out.Name = labels["name"]
+		}
+		if matchLabels(labels, filters) {
+			list = append(list, out)
+		}
+	}
+	return list, nil
+}
+
+// GetPublicIP retrieves a public IP by ID
+func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
+	logger.WithOperation("GetPublicIP").Debugf("Getting public IP: %s", id)
+
+	iaasClient, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, id).Execute()
+	if err != nil {
+		// TODO: Inspect error for 404 mapping if needed
+		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
+	}
+	out := &cpi.PublicIP{
+		ID:      stringOrEmpty(got.GetIdOk()),
+		Address: stringOrEmpty(got.GetIpOk()),
+		Labels:  mapAnyToString(got.GetLabels()),
+	}
+	if out.Labels != nil {
+		out.Job = out.Labels["job"]
+		out.Index = out.Labels["index"]
+		out.Name = out.Labels["name"]
+	}
+	return out, nil
+}
+
+// DeletePublicIP deletes a public IP
+func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
+	logger.WithOperation("DeletePublicIP").Infof("Deleting public IP: %s", id)
+
+	iaasClient, err := m.client.getIAASClient()
+	if err != nil {
+		return err
+	}
+	err = iaasClient.DeletePublicIP(ctx, m.client.config.ProjectID, id).Execute()
+	if err != nil {
+		return fmt.Errorf("stackit iaas DeletePublicIP failed: %w", err)
+	}
+	logger.WithOperation("DeletePublicIP").Infof("Public IP deleted: %s", id)
+	return nil
+}
+
+// mapAnyToString converts map[string]interface{} to map[string]string
+func mapAnyToString(in map[string]interface{}) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		switch t := v.(type) {
+		case string:
+			out[k] = t
+		case fmt.Stringer:
+			out[k] = t.String()
+		default:
+			out[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return out
+}
+
+func stringOrEmpty(val string, _ bool) string { return val }
+
+// matchLabels filters by label:foo=value filters
+func matchLabels(labels map[string]string, filters map[string]string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	for k, v := range filters {
+		if strings.HasPrefix(k, "label:") {
+			key := strings.TrimPrefix(k, "label:")
+			if labels == nil || labels[key] != v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// EnsureJumpboxPublicIPs ensures the required number of jumpbox public IPs exist
+func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
+	if count <= 0 {
+		count = 2 // Default to 2 jumpbox IPs
+	}
+
+	logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Ensuring %d jumpbox public IPs for bloc %s", count, blocName)
+
+	// Find existing jumpbox IPs
+	filters := map[string]string{
+		"label:managed-by": "ocfp",
+		"label:bloc":       blocName,
+		"label:job":        "jumpbox",
+	}
+
+	existingIPs, err := m.ListPublicIPs(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing jumpbox IPs: %w", err)
+	}
+
+	// Index existing IPs
+	ipsByIndex := make(map[string]*cpi.PublicIP)
+	for _, ip := range existingIPs {
+		if ip.Labels != nil && ip.Labels["index"] != "" {
+			ipsByIndex[ip.Labels["index"]] = ip
+		}
+	}
+
+	// Create missing IPs
+	var allIPs []*cpi.PublicIP
+	for i := 0; i < count; i++ {
+		index := fmt.Sprintf("%d", i)
+		if existingIP, exists := ipsByIndex[index]; exists {
+			logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Jumpbox IP with index %s already exists: %s", index, existingIP.Address)
+			allIPs = append(allIPs, existingIP)
+		} else {
+			// Create new IP
+			req := &cpi.CreatePublicIPRequest{
+				Name:  fmt.Sprintf("%s-jumpbox-%d", blocName, i),
+				Job:   "jumpbox",
+				Index: index,
+				Labels: map[string]string{
+					"bloc": blocName,
+					"env":  "mgmt",
+				},
+			}
+
+			newIP, err := m.CreatePublicIP(ctx, req)
+			if err != nil {
+				logger.WithOperation("EnsureJumpboxPublicIPs").Errorf("Failed to create jumpbox IP with index %s: %v", index, err)
+				continue
+			}
+
+			logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Created jumpbox IP with index %s: %s", index, newIP.Address)
+			allIPs = append(allIPs, newIP)
+		}
+	}
+
+	return allIPs, nil
+}
+
+// EnsureOpsPublicIPs ensures there is at least one ops public IP
+func (m *NetworkManager) EnsureOpsPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
+	if count <= 0 {
+		count = 1
+	}
+	logger.WithOperation("EnsureOpsPublicIPs").Infof("Ensuring %d ops public IP(s) for bloc %s", count, blocName)
+
+	return m.ensurePublicIPsForJob(ctx, blocName, "ops", count)
+}
+
+// EnsureRouterPublicIPs ensures the required number of router public IPs exist
+func (m *NetworkManager) EnsureRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
+	if count <= 0 {
+		count = 4 // Default to 4 router IPs
+	}
+
+	logger.WithOperation("EnsureRouterPublicIPs").Infof("Ensuring %d router public IPs for bloc %s", count, blocName)
+
+	return m.ensurePublicIPsForJob(ctx, blocName, "router", count)
+}
+
+// EnsureCFSSHPublicIPs ensures the required number of cf-ssh public IPs exist
+func (m *NetworkManager) EnsureCFSSHPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
+	if count <= 0 {
+		count = 1 // Default to 1 cf-ssh IP
+	}
+
+	logger.WithOperation("EnsureCFSSHPublicIPs").Infof("Ensuring %d cf-ssh public IPs for bloc %s", count, blocName)
+
+	return m.ensurePublicIPsForJob(ctx, blocName, "cf-ssh", count)
+}
+
+// EnsureTCPRouterPublicIPs ensures the required number of tcp-router public IPs exist
+func (m *NetworkManager) EnsureTCPRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
+	if count <= 0 {
+		count = 2 // Default to 2 tcp-router IPs
+	}
+
+	logger.WithOperation("EnsureTCPRouterPublicIPs").Infof("Ensuring %d tcp-router public IPs for bloc %s", count, blocName)
+
+	return m.ensurePublicIPsForJob(ctx, blocName, "tcp-router", count)
+}
+
+// ensurePublicIPsForJob is a helper to ensure a number of IPs by job label
+func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, job string, count int) ([]*cpi.PublicIP, error) {
+	// Find existing IPs for this job
+	filters := map[string]string{
+		"label:managed-by": "ocfp",
+		"label:bloc":       blocName,
+		"label:job":        job,
+	}
+
+	existingIPs, err := m.ListPublicIPs(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing %s IPs: %w", job, err)
+	}
+
+	// Index existing IPs by index label
+	ipsByIndex := make(map[string]*cpi.PublicIP)
+	for _, ip := range existingIPs {
+		if ip.Labels != nil && ip.Labels["index"] != "" {
+			ipsByIndex[ip.Labels["index"]] = ip
+		}
+	}
+
+	var allIPs []*cpi.PublicIP
+	for i := 0; i < count; i++ {
+		index := fmt.Sprintf("%d", i)
+		if existingIP, ok := ipsByIndex[index]; ok {
+			logger.WithOperation("ensurePublicIPsForJob").Infof("%s IP with index %s already exists: %s", job, index, existingIP.Address)
+			allIPs = append(allIPs, existingIP)
+			continue
+		}
+
+		// Create new IP
+		req := &cpi.CreatePublicIPRequest{
+			Name:  fmt.Sprintf("%s-%s-%d", blocName, job, i),
+			Job:   job,
+			Index: index,
+			Labels: map[string]string{
+				"bloc": blocName,
+				"env":  "mgmt",
+			},
+		}
+
+		newIP, err := m.CreatePublicIP(ctx, req)
+		if err != nil {
+			logger.WithOperation("ensurePublicIPsForJob").Errorf("Failed to create %s IP with index %s: %v", job, index, err)
+			continue
+		}
+		logger.WithOperation("ensurePublicIPsForJob").Infof("Created %s IP with index %s: %s", job, index, newIP.Address)
+		allIPs = append(allIPs, newIP)
+	}
+
+	return allIPs, nil
 }

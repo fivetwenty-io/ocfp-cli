@@ -76,7 +76,7 @@ backup archives.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -140,7 +140,7 @@ backup archives.`,
 			if !force {
 				fmt.Printf("This will restore %s from backup %s. Continue? [y/N]: ", cfg.Name, backupID)
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Restore cancelled by user")
 					return nil
@@ -230,7 +230,7 @@ func performFullRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore components in order
 	components := []struct {
@@ -284,7 +284,7 @@ func performConfigRestore(ctx context.Context, cfg *config.Config, restore *Rest
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore configuration components
 	configComponents := []string{"config", "manifests", "operations", "vars"}
@@ -320,7 +320,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore data components
 	dataComponents := map[string]string{
@@ -366,7 +366,7 @@ func performVaultRestore(ctx context.Context, cfg *config.Config, restore *Resto
 	if err != nil {
 		return fmt.Errorf("failed to download vault backup: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Look for secrets file
 	secretsFile := filepath.Join(tempDir, "secrets.json")
@@ -472,7 +472,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 		log.Info("Downloading backup from S3", "source", source)
 
 		if err := downloadFromS3(ctx, cfg, source, backupFile); err != nil {
-			os.RemoveAll(tempDir)
+			_ = os.RemoveAll(tempDir)
 			return "", fmt.Errorf("failed to download from S3: %w", err)
 		}
 	} else if strings.HasPrefix(source, "http") {
@@ -480,7 +480,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 		log.Info("Downloading backup from HTTP", "source", source)
 
 		if err := downloadFromHTTP(source, backupFile); err != nil {
-			os.RemoveAll(tempDir)
+			_ = os.RemoveAll(tempDir)
 			return "", fmt.Errorf("failed to download from HTTP: %w", err)
 		}
 	} else {
@@ -488,7 +488,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 		log.Info("Using local backup file", "source", source)
 
 		if err := copyForRestore(source, backupFile); err != nil {
-			os.RemoveAll(tempDir)
+			_ = os.RemoveAll(tempDir)
 			return "", fmt.Errorf("failed to copy local file: %w", err)
 		}
 	}
@@ -497,17 +497,17 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 	if strings.HasSuffix(backupFile, ".enc") {
 		decryptedFile := strings.TrimSuffix(backupFile, ".enc")
 		if err := decryptFile(backupFile, decryptedFile); err != nil {
-			os.RemoveAll(tempDir)
+			_ = os.RemoveAll(tempDir)
 			return "", fmt.Errorf("failed to decrypt backup: %w", err)
 		}
-		os.Remove(backupFile)
+		_ = os.Remove(backupFile)
 		backupFile = decryptedFile
 	}
 
 	// Extract archive
 	extractDir := filepath.Join(tempDir, "extracted")
 	if err := extractArchive(backupFile, extractDir); err != nil {
-		os.RemoveAll(tempDir)
+		_ = os.RemoveAll(tempDir)
 		return "", fmt.Errorf("failed to extract backup: %w", err)
 	}
 
@@ -622,7 +622,7 @@ func downloadFromS3(ctx context.Context, cfg *config.Config, source, dest string
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider: %w", err)
 	}
-	defer provider.Cleanup(ctx)
+	defer func() { _ = provider.Cleanup(ctx) }()
 
 	// Parse S3 URL and download
 	// Placeholder implementation

@@ -16,16 +16,15 @@ func TestConfigLoading(t *testing.T) {
 		configFile := filepath.Join(tmpDir, "config.yml")
 
 		testConfig := `
-name: test-bloc
-provider: stackit
-ssh_key_storage_dir: /tmp/keys
-project_id: test-project
-auth_token: test-key
-region: eu-de-1
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
     environment: test
+    ssh_key_storage_dir: /tmp/keys
+    project_id: test-project
+    auth_token: test-key
+    region: eu-de-1
 `
 
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
@@ -35,7 +34,7 @@ blocs:
 		require.NoError(t, err)
 
 		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Equal(t, "test-bloc", cfg.Name)
+		assert.Equal(t, "test", cfg.Name)
 		assert.Equal(t, "/tmp/keys", cfg.SSHKeyStorageDir)
 		assert.Equal(t, "test-project", cfg.ProjectID)
 		assert.Equal(t, "test-key", cfg.AuthToken)
@@ -48,14 +47,16 @@ blocs:
 		configFile := filepath.Join(tmpDir, "config.yml")
 
 		testConfig := `
-provider: stackit
-name: ${OCFP_TEST_VAR}
+blocs:
+  test-env:
+    name: ${OCFP_TEST_VAR}
+    provider: stackit
 `
 
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "")
+		cfg, err := config.LoadWithParams(configFile, "test-env")
 		require.NoError(t, err)
 
 		// Config loader doesn't expand env vars automatically
@@ -67,17 +68,17 @@ name: ${OCFP_TEST_VAR}
 		configFile := filepath.Join(tmpDir, "config.yml")
 
 		testConfig := `
-name: test-deployment
-provider: stackit
 blocs:
-  - name: mgmt
+  mgmt:
+    name: mgmt
     provider: stackit
     type: management
     environment: dev
     network:
       name: mgmt-network
       cidr: 10.0.0.0/16
-  - name: ocf
+  ocf:
+    name: ocf
     provider: stackit
     type: application
     environment: dev
@@ -92,10 +93,11 @@ blocs:
 		cfg, err := config.LoadWithParams(configFile, "mgmt")
 		require.NoError(t, err)
 
-		assert.Equal(t, 2, len(cfg.Blocs))
-		assert.Equal(t, "mgmt", cfg.Blocs[0].Name)
-		assert.Equal(t, "ocf", cfg.Blocs[1].Name)
-		assert.Equal(t, "10.0.0.0/16", cfg.Blocs[0].Network.CIDR)
+		// Test that we loaded the correct bloc
+		assert.Equal(t, "mgmt", cfg.Name)
+		assert.Equal(t, "stackit", cfg.Provider)
+		assert.Equal(t, "management", cfg.Type)
+		assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
 	})
 
 	t.Run("NetworkConfiguration", func(t *testing.T) {
@@ -103,21 +105,23 @@ blocs:
 		configFile := filepath.Join(tmpDir, "config.yml")
 
 		testConfig := `
-name: test
-provider: stackit
-network:
-  name: test-network
-  cidr: 10.0.0.0/16
-  network_cidr: 10.0.0.0/8
-  dns:
-    - 8.8.8.8
-    - 8.8.4.4
+blocs:
+  test:
+    name: test
+    provider: stackit
+    network:
+      name: test-network
+      cidr: 10.0.0.0/16
+      network_cidr: 10.0.0.0/8
+      dns:
+        - 8.8.8.8
+        - 8.8.4.4
 `
 
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "")
+		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
 
 		assert.Equal(t, "test-network", cfg.Network.Name)
@@ -130,21 +134,23 @@ network:
 		configFile := filepath.Join(tmpDir, "config.yml")
 
 		testConfig := `
-name: test
-provider: stackit
-bastion:
-  flavor: t3.small
-  image: ubuntu-22.04
-  os: ubuntu
-  os_version: "22.04"
-  keypair: test-key
-  ssh_user: ubuntu
+blocs:
+  test:
+    name: test
+    provider: stackit
+    bastion:
+      flavor: t3.small
+      image: ubuntu-22.04
+      os: ubuntu
+      os_version: "22.04"
+      keypair: test-key
+      ssh_user: ubuntu
 `
 
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "")
+		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
 
 		assert.Equal(t, "t3.small", cfg.Bastion.Flavor)

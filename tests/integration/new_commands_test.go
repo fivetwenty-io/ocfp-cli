@@ -60,23 +60,23 @@ blocs:
 
 		// Test flag existence
 		assert.NotNil(t, cmd.Flags().Lookup("iaas"))
-		assert.NotNil(t, cmd.Flags().Lookup("bloc-name"))
+		assert.NotNil(t, cmd.Flags().Lookup("bloc"))
 
 		// Test flag defaults
 		iaasFlag := cmd.Flags().Lookup("iaas")
 		assert.Equal(t, "string", iaasFlag.Value.Type())
-		
-		blocFlag := cmd.Flags().Lookup("bloc-name")
+
+		blocFlag := cmd.Flags().Lookup("bloc")
 		assert.Equal(t, "string", blocFlag.Value.Type())
 	})
 
 	t.Run("ProviderLoginWithConfig", func(t *testing.T) {
 		// Set config file environment variable
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "aws", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"login", "--iaas", "aws", "--bloc", "test"})
 
 		// This should succeed with a warning for AWS (placeholder implementation)
 		err := cmd.Execute()
@@ -86,11 +86,11 @@ blocs:
 
 	t.Run("ProviderLoginStackitValidation", func(t *testing.T) {
 		// Test STACKIT provider validation without actual credentials
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
 
 		// This should fail since we don't have real STACKIT credentials
 		err := cmd.Execute()
@@ -131,7 +131,7 @@ func TestTmuxCommandIntegration(t *testing.T) {
 		// Test that the command can generate a basic tmux script
 		// This tests the internal script generation logic
 		cmd := commands.NewTmuxCmd()
-		
+
 		// The command should be able to create its internal structures
 		assert.NotNil(t, cmd.RunE)
 	})
@@ -190,7 +190,7 @@ blocs:
 		assert.NotNil(t, cmd.Flags().Lookup("user"))
 		assert.NotNil(t, cmd.Flags().Lookup("key"))
 		assert.NotNil(t, cmd.Flags().Lookup("iaas"))
-		assert.NotNil(t, cmd.Flags().Lookup("bloc-name"))
+		assert.NotNil(t, cmd.Flags().Lookup("bloc"))
 
 		// Test flag defaults
 		userFlag := cmd.Flags().Lookup("user")
@@ -199,8 +199,8 @@ blocs:
 
 	t.Run("BastionInitWithoutScript", func(t *testing.T) {
 		// Set config file environment variable
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"init", "--user", "testuser", "--key", "/tmp/nonexistent"})
@@ -212,8 +212,8 @@ blocs:
 	})
 
 	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"provision", "--user", "testuser"})
@@ -241,12 +241,12 @@ exit 0;
 
 		// Change to the tmpDir so the script can be found
 		oldWd, _ := os.Getwd()
-		defer os.Chdir(oldWd)
+		defer func() { _ = os.Chdir(oldWd) }()
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"provision", "--user", "testuser", "--key", "/tmp/test-key"})
@@ -282,11 +282,11 @@ blocs:
 		err = os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
 
 		// This will attempt to read from vault and fail
 		// But we can verify it tried the vault path
@@ -351,8 +351,8 @@ blocs:
 	require.NoError(t, err)
 
 	t.Run("MultipleCommandsWithSameConfig", func(t *testing.T) {
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command
 		providerCmd := commands.NewProviderCmd()
@@ -371,12 +371,12 @@ blocs:
 	})
 
 	t.Run("BlocSpecificConfiguration", func(t *testing.T) {
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command with mgmt bloc
 		providerCmd := commands.NewProviderCmd()
-		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "mgmt"})
+		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "mgmt"})
 
 		// Should fail due to credentials but should find the bloc config
 		err := providerCmd.Execute()
@@ -385,7 +385,7 @@ blocs:
 
 		// Test provider command with apps bloc
 		providerCmd2 := commands.NewProviderCmd()
-		providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "apps"})
+		providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "apps"})
 
 		err = providerCmd2.Execute()
 		assert.Error(t, err)
@@ -439,12 +439,12 @@ func TestCommandErrorHandling(t *testing.T) {
 	t.Run("TmuxCommandWithoutTmux", func(t *testing.T) {
 		// Temporarily hide tmux from PATH to test error handling
 		originalPath := os.Getenv("PATH")
-		os.Setenv("PATH", "/nonexistent")
-		defer os.Setenv("PATH", originalPath)
+		_ = os.Setenv("PATH", "/nonexistent")
+		defer func() { _ = os.Setenv("PATH", originalPath) }()
 
 		cmd := commands.NewTmuxCmd()
 		err := cmd.Execute()
-		
+
 		// Should handle missing tmux gracefully
 		if err != nil {
 			assert.Contains(t, err.Error(), "tmux")

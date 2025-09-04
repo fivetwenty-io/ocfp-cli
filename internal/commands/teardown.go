@@ -51,25 +51,25 @@ Resources are deleted in dependency order:
 7. Networks
 8. Public IPs (only if --public-ips flag is used)`,
 		Example: `  # Interactive teardown (with confirmation)
-  ocfp teardown --bloc-name production
+  ocfp teardown --bloc production
 
   # Force teardown (no confirmation)
-  ocfp teardown --bloc-name production --force
+  ocfp teardown --bloc production --force
 
   # Dry run to preview deletions
-  ocfp teardown --bloc-name production --dry-run
+  ocfp teardown --bloc production --dry-run
 
   # Delete specific resource types
-  ocfp teardown --bloc-name production --servers --volumes
+  ocfp teardown --bloc production --servers --volumes
 
   # Skip specific resource types
-  ocfp teardown --bloc-name production --skip network --skip storage
+  ocfp teardown --bloc production --skip network --skip storage
 
   # Delete including public IPs (use with caution!)
-  ocfp teardown --bloc-name production --public-ips --force
+  ocfp teardown --bloc production --public-ips --force
 
   # DANGER: Delete ALL resources in project
-  ocfp teardown --bloc-name production --nuke --force`,
+  ocfp teardown --bloc production --nuke --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTeardown(cmd, args)
 		},
@@ -117,7 +117,7 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc-name is required")
+		return fmt.Errorf("bloc is required")
 	}
 
 	// Validate nuke mode
@@ -141,7 +141,7 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider: %w", err)
 	}
-	defer provider.Cleanup(ctx)
+	defer func() { _ = provider.Cleanup(ctx) }()
 
 	// Initialize state manager
 	stateManager, err := state.NewManager("")
@@ -239,7 +239,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	if err := m.stateManager.Lock(m.options.BlocName); err != nil {
 		return fmt.Errorf("failed to acquire state lock: %w", err)
 	}
-	defer m.stateManager.Unlock(m.options.BlocName)
+	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
 	// Discover resources to delete
 	resourcesToDelete, err := m.discoverResources(ctx)
@@ -371,7 +371,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 	// Build tag filters for OCFP resources
 	tagFilter := map[string]string{
 		"managed-by": "ocfp",
-		"bloc-name":  m.options.BlocName,
+		"bloc":       m.options.BlocName,
 	}
 
 	// Discover instances
@@ -459,6 +459,36 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 				})
 			}
 			log.Info("Discovered floating IPs", "count", len(floatingIPs))
+		}
+
+		// Discover STACKIT public IPs (if requested)
+		if m.options.PublicIPs {
+			type stackitPublicIPLister interface {
+				ListPublicIPs(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error)
+			}
+			if s, ok := network.(stackitPublicIPLister); ok {
+				filters := map[string]string{
+					"label:managed-by": "ocfp",
+					"label:bloc":       m.config.Name,
+				}
+				ips, err := s.ListPublicIPs(ctx, filters)
+				if err == nil {
+					for _, ip := range ips {
+						resources = append(resources, &ResourceToDelete{
+							Type: "public_ip",
+							ID:   ip.ID,
+							Name: ip.Address,
+							Properties: map[string]interface{}{
+								"job":   ip.Labels["job"],
+								"index": ip.Labels["index"],
+							},
+						})
+					}
+					log.Info("Discovered public IPs", "count", len(ips))
+				} else {
+					log.Warn("Failed to list public IPs", "error", err)
+				}
+			}
 		}
 
 		// Discover load balancers
@@ -560,6 +590,11 @@ func (m *TeardownManager) filterResources(resources []*ResourceToDelete) []*Reso
 			continue
 		}
 
+		// Skip public IPs unless explicitly requested
+		if resource.Type == "public_ip" && !m.options.PublicIPs {
+			continue
+		}
+
 		filtered = append(filtered, resource)
 	}
 
@@ -651,7 +686,7 @@ func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error 
 func (m *TeardownManager) confirmDeletion(resourceCount int) bool {
 	fmt.Printf("\nThis will permanently delete %d resources. Continue? [y/N]: ", resourceCount)
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	return strings.HasPrefix(strings.ToLower(response), "y")
 }
 
@@ -680,6 +715,16 @@ func (m *TeardownManager) deleteResource(ctx context.Context, resource *Resource
 			}
 			return storage.DeleteBucket(ctx, resource.ID)
 		}
+	case "credentials_group":
+		if storage := m.provider.Storage(); storage != nil {
+			// STACKIT-specific
+			type stackitCreds interface {
+				DeleteCredentialsGroup(context.Context, string) error
+			}
+			if s, ok := storage.(stackitCreds); ok {
+				return s.DeleteCredentialsGroup(ctx, resource.ID)
+			}
+		}
 	case "loadbalancer":
 		if network := m.provider.Network(); network != nil {
 			return network.DeleteLoadBalancer(ctx, resource.ID)
@@ -687,6 +732,16 @@ func (m *TeardownManager) deleteResource(ctx context.Context, resource *Resource
 	case "floating_ip":
 		if network := m.provider.Network(); network != nil {
 			return network.ReleaseFloatingIP(ctx, resource.ID)
+		}
+	case "public_ip":
+		if network := m.provider.Network(); network != nil {
+			// STACKIT-specific public IP deletion via type assertion
+			type stackitPublicIP interface {
+				DeletePublicIP(ctx context.Context, id string) error
+			}
+			if s, ok := network.(stackitPublicIP); ok {
+				return s.DeletePublicIP(ctx, resource.ID)
+			}
 		}
 	case "security_group":
 		if security := m.provider.Security(); security != nil {

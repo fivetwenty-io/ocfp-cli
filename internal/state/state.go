@@ -23,7 +23,6 @@ type State struct {
 	Resources    map[string]*Resource   `json:"resources" yaml:"resources"`
 	Outputs      map[string]interface{} `json:"outputs" yaml:"outputs"`
 	Dependencies map[string][]string    `json:"dependencies" yaml:"dependencies"`
-	mu           sync.RWMutex
 }
 
 // Resource represents a managed resource

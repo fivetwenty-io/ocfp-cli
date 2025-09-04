@@ -74,7 +74,7 @@ Backups are stored in the configured Shield bucket or specified destination.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -212,7 +212,11 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			log.Warn("Failed to remove staging directory", "error", err)
+		}
+	}()
 
 	// Collect items to backup
 	items := []struct {
@@ -270,7 +274,11 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err := createArchive(stagingDir, archivePath, backup.Compressed); err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
-	defer os.Remove(archivePath)
+	defer func() {
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove archive file", "error", err)
+		}
+	}()
 
 	// Encrypt if requested
 	if backup.Encrypted {
@@ -278,7 +286,9 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 		if err := encryptFile(archivePath, encryptedPath); err != nil {
 			return fmt.Errorf("failed to encrypt backup: %w", err)
 		}
-		os.Remove(archivePath)
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove unencrypted archive", "error", err)
+		}
 		archivePath = encryptedPath
 	}
 
@@ -299,7 +309,11 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			log.Warn("Failed to remove staging directory", "error", err)
+		}
+	}()
 
 	// Backup configuration files
 	configPaths := []string{
@@ -327,7 +341,11 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create config archive: %w", err)
 	}
-	defer os.Remove(archivePath)
+	defer func() {
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove archive file", "error", err)
+		}
+	}()
 
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
@@ -341,7 +359,11 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			log.Warn("Failed to remove staging directory", "error", err)
+		}
+	}()
 
 	// Backup data directories
 	dataPaths := []string{
@@ -367,7 +389,11 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create data archive: %w", err)
 	}
-	defer os.Remove(archivePath)
+	defer func() {
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove archive file", "error", err)
+		}
+	}()
 
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
@@ -381,7 +407,11 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			log.Warn("Failed to remove staging directory", "error", err)
+		}
+	}()
 
 	// Export secrets
 	secretsFile := filepath.Join(stagingDir, "secrets.json")
@@ -399,12 +429,16 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	if err := createArchive(stagingDir, tempArchive, true); err != nil {
 		return fmt.Errorf("failed to create vault archive: %w", err)
 	}
-	defer os.Remove(tempArchive)
+	defer func() { _ = os.Remove(tempArchive) }()
 
 	if err := encryptFile(tempArchive, archivePath); err != nil {
 		return fmt.Errorf("failed to encrypt vault backup: %w", err)
 	}
-	defer os.Remove(archivePath)
+	defer func() {
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove archive file", "error", err)
+		}
+	}()
 
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
@@ -426,7 +460,11 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			log.Warn("Failed to remove staging directory", "error", err)
+		}
+	}()
 
 	// Find changed files since last backup
 	changedFiles, err := findChangedFiles(lastBackup.Timestamp, excludePaths)
@@ -463,7 +501,11 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create incremental archive: %w", err)
 	}
-	defer os.Remove(archivePath)
+	defer func() {
+		if err := os.Remove(archivePath); err != nil {
+			log.Warn("Failed to remove archive file", "error", err)
+		}
+	}()
 
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
@@ -583,7 +625,7 @@ func uploadBackup(ctx context.Context, cfg *config.Config, localPath, destinatio
 		if err := provider.Initialize(ctx, cfg); err != nil {
 			return fmt.Errorf("failed to initialize provider: %w", err)
 		}
-		defer provider.Cleanup(ctx)
+		defer func() { _ = provider.Cleanup(ctx) }()
 
 		storage := provider.Storage()
 		if storage == nil {
@@ -662,7 +704,7 @@ func countDirContents(dir string) (int, int64) {
 	var count int
 	var size int64
 
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			count++
 			size += info.Size()

@@ -12,7 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the main configuration structure
+// ConfigFile represents the top-level configuration file structure
+type ConfigFile struct {
+	Debug   bool               `yaml:"debug" mapstructure:"debug"`
+	Verbose bool               `yaml:"verbose" mapstructure:"verbose"`
+	Blocs   map[string]*Config `yaml:"blocs" mapstructure:"blocs"`
+}
+
+// Config represents a bloc configuration
 type Config struct {
 	Name                  string                      `yaml:"name" mapstructure:"name"`
 	Provider              string                      `yaml:"provider" mapstructure:"provider"`
@@ -24,7 +31,19 @@ type Config struct {
 	ServiceAccountToken   string                      `yaml:"service_account_token" mapstructure:"service_account_token"`
 	ServiceAccountJSON    string                      `yaml:"service_account_json" mapstructure:"service_account_json"`
 	ServiceAccountKeyPath string                      `yaml:"service_account_key_path" mapstructure:"service_account_key_path"`
-	Blocs                 []Bloc                      `yaml:"blocs" mapstructure:"blocs"`
+	AccessKeyID           string                      `yaml:"access_key_id" mapstructure:"access_key_id"`
+	SecretAccessKey       string                      `yaml:"secret_access_key" mapstructure:"secret_access_key"`
+	SubscriptionID        string                      `yaml:"subscription_id" mapstructure:"subscription_id"`
+	TenantID              string                      `yaml:"tenant_id" mapstructure:"tenant_id"`
+	ClientID              string                      `yaml:"client_id" mapstructure:"client_id"`
+	ClientSecret          string                      `yaml:"client_secret" mapstructure:"client_secret"`
+	AuthURL               string                      `yaml:"auth_url" mapstructure:"auth_url"`
+	Username              string                      `yaml:"username" mapstructure:"username"`
+	Password              string                      `yaml:"password" mapstructure:"password"`
+	ProjectName           string                      `yaml:"project_name" mapstructure:"project_name"`
+	DomainName            string                      `yaml:"domain_name" mapstructure:"domain_name"`
+	SessionToken          string                      `yaml:"session_token" mapstructure:"session_token"`
+	BastionIP             string                      `yaml:"bastion_ip" mapstructure:"bastion_ip"`
 	Network               NetworkConfig               `yaml:"network" mapstructure:"network"`
 	Bastion               Bastion                     `yaml:"bastion" mapstructure:"bastion"`
 	Genesis               Genesis                     `yaml:"genesis" mapstructure:"genesis"`
@@ -34,17 +53,41 @@ type Config struct {
 	SSHKeyStorageDir      string                      `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
 	Routers               ComponentConfig             `yaml:"routers" mapstructure:"routers"`
 	Cells                 ComponentConfig             `yaml:"cells" mapstructure:"cells"`
+	// Additional fields from the example config
+	FQDNs             map[string]interface{} `yaml:"fqdns" mapstructure:"fqdns"`
+	S3                map[string]string      `yaml:"s3" mapstructure:"s3"`
+	AllowedIngressIPs []string               `yaml:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips"`
+	Type              string                 `yaml:"type" mapstructure:"type"`
+	Environment       string                 `yaml:"environment" mapstructure:"environment"`
+	Subnets           []Subnet               `yaml:"subnets" mapstructure:"subnets"`
+	SubnetStrategy    string                 `yaml:"subnet_strategy" mapstructure:"subnet_strategy"`
+	LBs               map[string]LBService   `yaml:"lbs" mapstructure:"lbs"`
+	Users             map[string]string      `yaml:"users" mapstructure:"users"`
+	// Public IP configurations
+	RouterPublicIPs    int `yaml:"router_public_ips" mapstructure:"router_public_ips"`
+	CFSSHPublicIPs     int `yaml:"cf_ssh_public_ips" mapstructure:"cf_ssh_public_ips"`
+	JumpboxPublicIPs   int `yaml:"jumpbox_public_ips" mapstructure:"jumpbox_public_ips"`
+	TCPRouterPublicIPs int `yaml:"tcp_router_public_ips" mapstructure:"tcp_router_public_ips"`
+
+	// Blobstore policies (optional, for object storage buckets)
+	Blobstore BlobstoreConfig `yaml:"blobstore" mapstructure:"blobstore"`
 }
 
-// Bloc represents a deployment bloc
-type Bloc struct {
-	Name        string            `yaml:"name" mapstructure:"name"`
-	Provider    string            `yaml:"provider" mapstructure:"provider"`
-	Type        string            `yaml:"type" mapstructure:"type"`
-	Environment string            `yaml:"environment" mapstructure:"environment"`
-	Network     Network           `yaml:"network" mapstructure:"network"`
-	Subnets     []Subnet          `yaml:"subnets" mapstructure:"subnets"`
-	Users       map[string]string `yaml:"users" mapstructure:"users"`
+// BlobstoreConfig controls versioning/lifecycle policies for expected buckets
+type BlobstoreConfig struct {
+	EnablePolicies bool `yaml:"enable_policies" mapstructure:"enable_policies"`
+
+	// Per-bucket overrides
+	BoshBlobstore BucketSettings `yaml:"bosh_blobstore" mapstructure:"bosh_blobstore"`
+	CFBuildpacks  BucketSettings `yaml:"cf_buildpacks" mapstructure:"cf_buildpacks"`
+	CFDroplets    BucketSettings `yaml:"cf_droplets" mapstructure:"cf_droplets"`
+	CFAppPackages BucketSettings `yaml:"cf_app_packages" mapstructure:"cf_app_packages"`
+}
+
+// BucketSettings specify data-plane policies
+type BucketSettings struct {
+	Versioning     bool `yaml:"versioning" mapstructure:"versioning"`
+	NoncurrentDays int  `yaml:"noncurrent_days" mapstructure:"noncurrent_days"`
 }
 
 // NetworkConfig represents network configuration
@@ -57,9 +100,6 @@ type NetworkConfig struct {
 	DNS         []string `yaml:"dns" mapstructure:"dns"`
 }
 
-// Network represents a network (for bloc configuration)
-type Network = NetworkConfig
-
 // Subnet configuration
 type Subnet struct {
 	Name             string `yaml:"name" mapstructure:"name"`
@@ -70,15 +110,25 @@ type Subnet struct {
 
 // Bastion configuration
 type Bastion struct {
-	Flavor     string `yaml:"flavor" mapstructure:"flavor"`
-	Image      string `yaml:"image" mapstructure:"image"`
-	OS         string `yaml:"os" mapstructure:"os"`
-	OSVersion  string `yaml:"os_version" mapstructure:"os_version"`
-	Keypair    string `yaml:"keypair" mapstructure:"keypair"`
-	SSHUser    string `yaml:"ssh_user" mapstructure:"ssh_user"`
-	SSHOptions string `yaml:"ssh_options" mapstructure:"ssh_options"`
-	SSHKeyDir  string `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
-	SSHKeyName string `yaml:"ssh_key_name" mapstructure:"ssh_key_name"`
+	Flavor     string    `yaml:"flavor" mapstructure:"flavor"`
+	Image      string    `yaml:"image" mapstructure:"image"`
+	OS         string    `yaml:"os" mapstructure:"os"`
+	OSVersion  string    `yaml:"os_version" mapstructure:"os_version"`
+	Keypair    string    `yaml:"keypair" mapstructure:"keypair"`
+	SSHUser    string    `yaml:"ssh_user" mapstructure:"ssh_user"`
+	SSHOptions string    `yaml:"ssh_options" mapstructure:"ssh_options"`
+	SSHKeyDir  string    `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
+	SSHKeyName string    `yaml:"ssh_key_name" mapstructure:"ssh_key_name"`
+	Genesis    Genesis   `yaml:"genesis" mapstructure:"genesis"`
+	Git        GitConfig `yaml:"git" mapstructure:"git"`
+	// Optional overrides for tooling installation/selection
+	Tools     OverrideSets `yaml:"tools" mapstructure:"tools"`
+	CFPlugins OverrideSets `yaml:"cf_plugins" mapstructure:"cf_plugins"`
+	Snaps     OverrideSets `yaml:"snaps" mapstructure:"snaps"`
+	// Per-item override maps (by name)
+	ToolOverrides     map[string]ToolOverride     `yaml:"tool_overrides" mapstructure:"tool_overrides"`
+	CFPluginOverrides map[string]CFPluginOverride `yaml:"cf_plugin_overrides" mapstructure:"cf_plugin_overrides"`
+	SnapOverrides     map[string]SnapOverride     `yaml:"snap_overrides" mapstructure:"snap_overrides"`
 }
 
 // ComponentConfig represents configuration for CF components
@@ -96,6 +146,59 @@ type Genesis struct {
 	Branch        string `yaml:"branch" mapstructure:"branch"`
 	Commit        string `yaml:"commit" mapstructure:"commit"`
 	VersionPrefix string `yaml:"version_prefix" mapstructure:"version_prefix"`
+}
+
+// GitConfig represents Git configuration for the bastion
+type GitConfig struct {
+	User GitUser `yaml:"user" mapstructure:"user"`
+}
+
+// GitUser represents Git user configuration
+type GitUser struct {
+	Name  string `yaml:"name" mapstructure:"name"`
+	Email string `yaml:"email" mapstructure:"email"`
+}
+
+// OverrideSets allows enabling or disabling named items via config
+type OverrideSets struct {
+	Enable  []string `yaml:"enable" mapstructure:"enable"`
+	Disable []string `yaml:"disable" mapstructure:"disable"`
+}
+
+// ToolOverride allows overriding advanced tool properties
+type ToolOverride struct {
+	URL            string `yaml:"url" mapstructure:"url"`
+	Version        string `yaml:"version" mapstructure:"version"`
+	VersionURL     string `yaml:"version_url" mapstructure:"version_url"`
+	VersionPattern string `yaml:"version_pattern" mapstructure:"version_pattern"`
+	URLTemplate    string `yaml:"url_template" mapstructure:"url_template"`
+	Dest           string `yaml:"dest" mapstructure:"dest"`
+	Mode           uint32 `yaml:"mode" mapstructure:"mode"`
+	Sudo           *bool  `yaml:"sudo" mapstructure:"sudo"`
+	Extract        *bool  `yaml:"extract" mapstructure:"extract"`
+	InstallCommand string `yaml:"install_command" mapstructure:"install_command"`
+	InstallScript  string `yaml:"install_script" mapstructure:"install_script"`
+	VerifyCommand  string `yaml:"verify_command" mapstructure:"verify_command"`
+	PathAddition   string `yaml:"path_addition" mapstructure:"path_addition"`
+	Cleanup        string `yaml:"cleanup" mapstructure:"cleanup"`
+}
+
+// CFPluginOverride allows overriding CF plugin properties
+type CFPluginOverride struct {
+	GitHubRepo string `yaml:"github_repo" mapstructure:"github_repo"`
+	Version    string `yaml:"version" mapstructure:"version"`
+	Repo       string `yaml:"repo" mapstructure:"repo"`
+	RepoURL    string `yaml:"repo_url" mapstructure:"repo_url"`
+	Force      *bool  `yaml:"force" mapstructure:"force"`
+}
+
+// SnapOverride allows overriding snap package properties
+type SnapOverride struct {
+	Channel      string `yaml:"channel" mapstructure:"channel"`
+	Classic      *bool  `yaml:"classic" mapstructure:"classic"`
+	DevMode      *bool  `yaml:"devmode" mapstructure:"devmode"`
+	Dangerous    *bool  `yaml:"dangerous" mapstructure:"dangerous"`
+	CheckCommand string `yaml:"check_command" mapstructure:"check_command"`
 }
 
 // Deployment configuration
@@ -122,13 +225,6 @@ type cachedConfig struct {
 	filePath string
 }
 
-// clearConfigCache clears the configuration cache (useful for testing)
-func clearConfigCache() {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-	cachedConfigs = make(map[string]*cachedConfig)
-}
-
 // Load loads configuration with default parameters
 func Load() (*Config, error) {
 	return LoadWithParams("", "")
@@ -138,7 +234,7 @@ func Load() (*Config, error) {
 func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	// Determine config file path
 	configPath := determineConfigPath(configFile, blocName)
-	
+
 	// Check cache first if we have a config file
 	if configPath != "" {
 		configMutex.RLock()
@@ -155,23 +251,53 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 		configMutex.RUnlock()
 	}
 
-	cfg := &Config{}
+	var cfg *Config
 
-	// Apply provider defaults first
-	if err := applyDefaults(cfg, viper.GetString("iaas")); err != nil {
+	if configPath != "" {
+		// Load the entire config file
+		configFileData := &ConfigFile{}
+		if err := loadFromFile(configPath, configFileData); err != nil {
+			return nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
+		}
+
+		// Find the matching bloc
+		if blocConfig, exists := configFileData.Blocs[blocName]; exists {
+			cfg = blocConfig
+			// Ensure the bloc name is set
+			if cfg.Name == "" {
+				cfg.Name = blocName
+			}
+		}
+
+		if cfg == nil {
+			return nil, fmt.Errorf("bloc '%s' not found in configuration file %s", blocName, configPath)
+		}
+	} else {
+		// No config file, create empty config
+		cfg = &Config{}
+	}
+
+	// Apply provider defaults
+	provider := cfg.Provider
+	if provider == "" {
+		provider = cfg.IaaS
+	}
+	if provider == "" {
+		provider = viper.GetString("iaas")
+	}
+	if err := applyDefaults(cfg, provider); err != nil {
 		return nil, err
 	}
 
-	if configPath != "" {
-		// Load from file
-		if err := loadFromFile(configPath, cfg); err != nil {
-			return nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
-		}
+	// Override with viper values (from flags/env) for specific fields only
+	if viper.GetString("iaas") != "" {
+		cfg.IaaS = viper.GetString("iaas")
 	}
-
-	// Override with viper values (from flags/env)
-	if err := viper.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	if viper.GetString("provider") != "" {
+		cfg.Provider = viper.GetString("provider")
+	}
+	if viper.GetString("region") != "" {
+		cfg.Region = viper.GetString("region")
 	}
 
 	// Validate configuration
@@ -203,30 +329,31 @@ func determineConfigPath(configFile string, blocName string) string {
 		return configFile
 	}
 
-	// Priority 2: Bloc name based config
-	if blocName != "" {
-		path := fmt.Sprintf("config/%s.yml", blocName)
-		if _, err := os.Stat(path); err == nil {
-			return path
+	// Priority 2: Default config file at ~/.ocfp/config.yml
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		defaultPath := filepath.Join(homeDir, ".ocfp", "config.yml")
+		if _, err := os.Stat(defaultPath); err == nil {
+			return defaultPath
 		}
 	}
 
-	// Priority 3: Default bootstrap.yml
-	if _, err := os.Stat("config/bootstrap.yml"); err == nil {
-		return "config/bootstrap.yml"
+	// Priority 3: Check in local config/config.yml
+	if _, err := os.Stat("config/config.yml"); err == nil {
+		return "config/config.yml"
 	}
 
 	return ""
 }
 
 // loadFromFile loads configuration from a YAML file
-func loadFromFile(path string, cfg *Config) error {
+func loadFromFile(path string, target interface{}) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := yaml.Unmarshal(data, target); err != nil {
 		return err
 	}
 
@@ -293,6 +420,8 @@ func applyStackitDefaults(cfg *Config) {
 			"eu01-2": {CloudProperties: `{"availability_zone": "eu01-2"}`},
 			"eu01-3": {CloudProperties: `{"availability_zone": "eu01-3"}`},
 		}
+
+		// No default lifecycle/versioning; leave disabled unless configured
 	}
 }
 
@@ -400,4 +529,11 @@ func GetSSHKeyPath(blocName string, keypair string) string {
 	}
 
 	return ""
+}
+
+// LBService describes a desired load balancer and its backend targets
+type LBService struct {
+	Protocol string   `yaml:"protocol" mapstructure:"protocol"`
+	Port     int      `yaml:"port" mapstructure:"port"`
+	Targets  []string `yaml:"targets" mapstructure:"targets"`
 }

@@ -38,16 +38,16 @@ SSH keys are searched in the following order:
 2. ~/.ssh/{environment-name}-{bastion_keypair}
 3. Configured ssh_key_storage_dir`,
 		Example: `  # Connect to bastion host
-  ocfp ssh --bloc-name production
+  ocfp ssh --bloc production
 
   # Connect as specific user
-  ocfp ssh --bloc-name production --user admin
+  ocfp ssh --bloc production --user admin
 
   # Use specific SSH key
-  ocfp ssh --bloc-name production --key /path/to/key.pem
+  ocfp ssh --bloc production --key /path/to/key.pem
 
   # Pass additional SSH options
-  ocfp ssh --bloc-name production --ssh-options "-o StrictHostKeyChecking=no"`,
+  ocfp ssh --bloc production --ssh-options "-o StrictHostKeyChecking=no"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSSH(cmd, args)
@@ -73,7 +73,6 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	// Get configuration values
 	blocName := viper.GetString("bloc_name")
-	iaas := viper.GetString("iaas")
 	user := viper.GetString("ssh.user")
 	keyPath := viper.GetString("ssh.key")
 	sshOptions := viper.GetString("ssh.options")
@@ -86,26 +85,45 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc-name is required")
-	}
-	if iaas == "" {
-		return fmt.Errorf("iaas provider is required")
+		return fmt.Errorf("bloc is required")
 	}
 
-	// Load configuration
+	// Load configuration first - this will provide the provider if not set via flags
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Initialize provider
-	provider, err := cpi.GetProvider(iaas)
-	if err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
+	// Get iaas provider - either from flags/env or from loaded configuration
+	iaas := viper.GetString("iaas")
+	if iaas == "" {
+		// Try to get provider from loaded configuration
+		if cfg.Provider != "" {
+			iaas = cfg.Provider
+		} else if cfg.IaaS != "" {
+			iaas = cfg.IaaS
+		}
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider: %w", err)
+	// Now validate we have a provider
+	if iaas == "" {
+		return fmt.Errorf("iaas provider is required (not found in flags or configuration)")
+	}
+
+	// Create provider config from the loaded configuration
+	providerConfig := map[string]interface{}{
+		"project_id":            cfg.ProjectID,
+		"org_id":                cfg.OrgID,
+		"auth_token":            cfg.AuthToken,
+		"service_account_token": cfg.ServiceAccountToken,
+		"service_account_json":  cfg.ServiceAccountJSON,
+		"region":                cfg.Region,
+	}
+
+	// Initialize provider
+	provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
 	}
 
 	// Get bastion IP address

@@ -65,17 +65,17 @@ bastion:
 
 ```bash
 # Bootstrap cloud infrastructure
-ocfp bootstrap --bloc-name production
+ocfp bootstrap --bloc production
 
 # Configure networking and security
-ocfp configure --bloc-name production
+ocfp configure --bloc production
 ```
 
 ### 3. Access bastion host
 
 ```bash
 # SSH to bastion
-ocfp ssh --bloc-name production
+ocfp ssh --bloc production
 
 # Copy files
 ocfp scp local-file.txt bastion:/tmp/
@@ -121,7 +121,7 @@ eval $(ocfp env export)
 | `init` | Initialize OCFP components (PostgreSQL, CF, BOSH) |
 | `test` | Run platform tests |
 | `vault` | Manage secrets in Vault |
-| `lb` | Load balancer management |
+| `lb` | Load balancer management (see go/docs/cmds/lb.md) |
 | `scale` | Scale resources |
 | `backup` | Backup configurations |
 | `restore` | Restore from backup |
@@ -148,6 +148,80 @@ network:
     - 8.8.8.8
     - 8.8.4.4
 
+# Subnet defaults (see go/docs/networking/subnets.md)
+
+- Non-STACKIT providers: If `subnets` are omitted, bootstrap derives two subnets named `mgmt` (public) and `ocf` (private) by splitting the bloc network into two equal subnets (e.g., `/20` → two `/21`). Bastion prefers `mgmt`.
+- STACKIT: No real provider subnets are created. A single virtual subnet `ocfp-0` equals the bloc network CIDR and is treated as public for placement and IP assignment semantics. Bastion uses the network directly and records a dependency on `subnet.<bloc>-ocfp-0` in state.
+
+Subnet strategies (STACKIT) (see go/docs/networking/subnets.md)
+
+- `subnet_strategy: ocfp-triple`: Splits the bloc network into 4 equal CIDRs and uses the last three for virtual subnets `ocfp-0..2` (e.g., `/20` → `10.4.4.0/22`, `10.4.8.0/22`, `10.4.12.0/22`).
+- Reserved IPs: For each virtual subnet, state outputs include service IPs and ranges used by load balancers and kits, e.g.:
+  - `reserved_<bloc>-ocfp-0_bastion_ip`, `reserved_<bloc>-ocfp-0_bosh_ip`, `reserved_<bloc>-ocfp-0_vault_ip`
+  - `reserved_<bloc>-ocfp-1_doomsday_ip`, `reserved_<bloc>-ocfp-2_ocfp_ui_ip`
+  - Ranges: `reserved_<subnet>_available_a/b` and `reserved_<subnet>_reserved_a/b[/c/d]`
+  - Offsets mirror the Perl defaults (bastion .3, bosh .4, vault .5, jumpbox .6, concourse .7, prometheus .8, shield .9 on ocfp-0, doomsday .9 on ocfp-1, ocfp_ui .9 on ocfp-2; ranges reserved 0-10,30-> and available 11-29).
+
+### Load balancer management (see go/docs/cmds/lb.md)
+
+- Add a backend by IP:
+  - `ocfp lb add-service cf-router 10.0.1.10 --port 8080 --target-port 80`
+- STACKIT reserved IP integration:
+  - `ocfp lb add-service ops-https reserved:vault_ip`
+  - `ocfp lb add-service doomsday-mgmt reserved:doomsday_ip:1` (uses ocfp-1)
+  - Format: `reserved:<key>[:index]` where index selects ocfp subnet (default 0).
+
+- Sync from config (lbs:) and reconcile pool members:
+  - Define LBs in bloc config under `lbs:` and sync with: `ocfp lb sync --name <key> [--remove-unused]`
+  - Example config:
+    lbs:
+      ops-https:
+        protocol: tcp
+        port: 443
+        targets:
+          - reserved:vault_ip
+          - reserved:prometheus_ip
+          - reserved:shield_ip
+          - reserved:doomsday_ip:1
+      router-80:
+        protocol: http
+        port: 80
+        targets:
+          - public-ip:router:0
+          - public-ip:router:1
+      cf-ssh:
+        protocol: tcp
+        port: 2222
+        targets:
+          - 10.4.0.50
+
+- Target token formats:
+  - `reserved:<key>[:index]` uses reserved IPs computed at bootstrap (STACKIT virtual subnets), e.g. `reserved:vault_ip`, `reserved:doomsday_ip:1`.
+  - `public-ip:<job>[:index]` uses public IP resources discovered/created during bootstrap for job labels, e.g. `public-ip:router:0`, `public-ip:cf-ssh:0`, `public-ip:tcp-router:1`.
+
+### Typed load balancer commands
+
+- `ocfp lb ops`:
+  - Ensures an external HTTPS LB for ops endpoints (default name `<bloc>-ops-https`, port 443).
+  - Default behavior: if `lbs.ops-https` exists in config, pool members are reconciled from it (adds missing, with `--remove-unused` to prune).
+  - Fallback: if no config, auto-add reserved IPs `vault_ip`, `prometheus_ip`, `shield_ip` from `ocfp-0`; optional `--with-doomsday` to add `doomsday_ip` from `ocfp-1`.
+  - Flags: `--name`, `--port`, `--protocol` (default https), `--remove-unused`, `--with-doomsday`.
+
+- `ocfp lb routers`:
+  - Ensures external LBs for CF routers (HTTP/HTTPS) with names `<bloc>-router-80` and `<bloc>-router-443` by default.
+  - Default behavior: if a matching key exists in `lbs:` (e.g., `router-80`), pool members are reconciled from it (with `--remove-unused`). Else, it falls back to public IPs labeled `job=router` from state.
+  - Flags: `--name-prefix`, `--http`, `--https`, `--http-port`, `--https-port`, `--remove-unused`.
+
+- `ocfp lb tcp-routers`:
+  - Ensures an external TCP router LB (operator supplies `--port`).
+  - Default behavior: if `lbs.<name>` exists, pool members are reconciled from it (with `--remove-unused`). Else, it falls back to public IPs labeled `job=tcp-router` from state.
+  - Flags: `--name`, `--port` (default 1024), `--remove-unused`.
+
+- `ocfp lb cf-ssh`:
+  - Ensures an external LB for CF SSH (default name `<bloc>-cf-ssh`, port 2222).
+  - Default behavior: if `lbs.<name>` exists, pool members are reconciled from it (with `--remove-unused`). Else, it falls back to public IPs labeled `job=cf-ssh` from state.
+  - Flags: `--name`, `--port`, `--remove-unused`.
+
 # Bastion configuration
 bastion:
   flavor: m1.small
@@ -172,6 +246,29 @@ blocs:
     network:
       cidr: 10.0.2.0/24
 ```
+
+### Blobstore Policies (optional)
+
+Object storage bucket policies (versioning/lifecycle) are disabled by default. To enable and tune them per bucket:
+
+```yaml
+blobstore:
+  enable_policies: true
+  bosh_blobstore:
+    versioning: true
+    noncurrent_days: 30
+  cf_buildpacks:
+    versioning: true
+    noncurrent_days: 90
+  cf_droplets:
+    versioning: true
+    noncurrent_days: 7
+  cf_app_packages:
+    versioning: false
+    noncurrent_days: 30
+```
+
+Alternatively, set `OCFP_ENABLE_BUCKET_POLICIES=1` to enable policies from the environment. Applied settings are persisted to state on bootstrap.
 
 ### Environment Variables
 

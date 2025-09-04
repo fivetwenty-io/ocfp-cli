@@ -11,6 +11,9 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	stackitconfig "github.com/stackitcloud/stackit-sdk-go/core/config"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
+	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage"
 )
 
 // Client implements the STACKIT provider
@@ -25,18 +28,24 @@ type Client struct {
 	storage      *StorageManager
 	security     *SecurityManager
 	loadBalancer *LoadBalancerManager
+
+	// SDK clients (lazy)
+	iaasClient *iaas.APIClient
+	objClient  *objectstorage.APIClient
 }
 
 // Config holds STACKIT-specific configuration
 type Config struct {
-	ProjectID  string
-	OrgID      string
-	AuthToken  string
-	Region     string
-	BaseURL    string
-	Timeout    time.Duration
-	MaxRetries int
-	RateLimit  int
+	ProjectID           string
+	OrgID               string
+	AuthToken           string
+	ServiceAccountToken string
+	ServiceAccountJSON  string
+	Region              string
+	BaseURL             string
+	Timeout             time.Duration
+	MaxRetries          int
+	RateLimit           int
 }
 
 // NewClient creates a new STACKIT client
@@ -117,7 +126,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("authentication failed: status %d", resp.StatusCode)
@@ -159,9 +168,17 @@ func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
 
 // Initialize initializes the provider with configuration
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
-	cfg, ok := config.(*Config)
-	if !ok {
-		return fmt.Errorf("invalid config type for STACKIT provider")
+	// Handle different config types
+	var cfg *Config
+	switch v := config.(type) {
+	case *Config:
+		cfg = v
+	case map[string]interface{}:
+		// Config was already parsed in NewProvider, just return success
+		// The client is already properly initialized with authentication
+		return nil
+	default:
+		return fmt.Errorf("invalid config type for STACKIT provider: %T", config)
 	}
 
 	// Set defaults
@@ -238,6 +255,71 @@ func (c *Client) Cleanup(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// getIAASClient returns a cached IAAS API client, initializing on first use
+func (c *Client) getIAASClient() (*iaas.APIClient, error) {
+	if c.iaasClient != nil {
+		return c.iaasClient, nil
+	}
+
+	opts := []stackitconfig.ConfigurationOption{}
+
+	// Region (e.g., "eu01")
+	if c.config.Region != "" {
+		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
+	}
+
+	// Auth selection: prefer service account JSON, then service account token, then auth token
+	if c.config.ServiceAccountJSON != "" {
+		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
+	} else if c.config.ServiceAccountToken != "" {
+		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
+	} else if c.config.AuthToken != "" {
+		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
+	}
+
+	// Timeout similar to our HTTP client
+	if c.config.Timeout > 0 {
+		opts = append(opts, stackitconfig.WithTimeout(c.config.Timeout))
+	}
+
+	cli, err := iaas.NewAPIClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IAAS client: %w", err)
+	}
+	c.iaasClient = cli
+	return c.iaasClient, nil
+}
+
+// getObjectStorageClient returns a cached Object Storage API client, initializing on first use
+func (c *Client) getObjectStorageClient() (*objectstorage.APIClient, error) {
+	if c.objClient != nil {
+		return c.objClient, nil
+	}
+
+	opts := []stackitconfig.ConfigurationOption{}
+
+	if c.config.Region != "" {
+		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
+	}
+	if c.config.ServiceAccountJSON != "" {
+		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
+	} else if c.config.ServiceAccountToken != "" {
+		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
+	} else if c.config.AuthToken != "" {
+		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
+	}
+	if c.config.Timeout > 0 {
+		opts = append(opts, stackitconfig.WithTimeout(c.config.Timeout))
+	}
+
+	cli, err := objectstorage.NewAPIClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Object Storage client: %w", err)
+	}
+	c.objClient = cli
+	return c.objClient, nil
 }
 
 // HTTP helper methods

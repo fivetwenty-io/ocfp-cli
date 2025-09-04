@@ -48,7 +48,7 @@ func init() {
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "f", "", "config file path")
-	rootCmd.PersistentFlags().StringVar(&blocName, "bloc-name", "", "bloc name (uses config/<bloc-name>.yml)")
+	rootCmd.PersistentFlags().StringVar(&blocName, "bloc", "", "bloc name (uses config/<bloc>.yml)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug output")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
 	rootCmd.PersistentFlags().BoolVar(&trace, "trace", false, "enable trace-level debugging")
@@ -60,8 +60,8 @@ func init() {
 	if err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config")); err != nil {
 		logger.Warnf("Failed to bind config flag: %v", err)
 	}
-	if err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc-name")); err != nil {
-		logger.Warnf("Failed to bind bloc-name flag: %v", err)
+	if err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc")); err != nil {
+		logger.Warnf("Failed to bind bloc flag: %v", err)
 	}
 	if err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug")); err != nil {
 		logger.Warnf("Failed to bind debug flag: %v", err)
@@ -86,8 +86,8 @@ func init() {
 	rootCmd.SetVersionTemplate(version.Get().String() + "\n")
 
 	// Deprecated flags for backward compatibility
-	rootCmd.PersistentFlags().StringVar(&blocName, "env-name", "", "deprecated: use --bloc-name instead")
-	rootCmd.PersistentFlags().MarkDeprecated("env-name", "use --bloc-name instead")
+	rootCmd.PersistentFlags().StringVar(&blocName, "env-name", "", "deprecated: use --bloc instead")
+	_ = rootCmd.PersistentFlags().MarkDeprecated("env-name", "use --bloc instead")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -100,7 +100,7 @@ func initConfig() {
 	if os.Getenv("OCFP_CONFIG_PATH") == "" {
 		home, err := os.UserHomeDir()
 		if err == nil {
-			os.Setenv("OCFP_CONFIG_PATH", filepath.Join(home, ".ocfp"))
+			_ = os.Setenv("OCFP_CONFIG_PATH", filepath.Join(home, ".ocfp"))
 		}
 	}
 
@@ -109,7 +109,7 @@ func initConfig() {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
 	} else if blocName != "" {
-		// Use config/<bloc-name>.yml
+		// Use config/<bloc>.yml
 		viper.SetConfigFile(fmt.Sprintf("config/%s.yml", blocName))
 	} else {
 		// Search for config in standard locations

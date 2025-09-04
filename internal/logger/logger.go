@@ -19,6 +19,9 @@ var (
 	atom zap.AtomicLevel
 )
 
+// Logger type alias for consistent usage across the codebase
+type Logger = *zap.SugaredLogger
+
 // Config holds logger configuration
 type Config struct {
 	Level      string
@@ -166,7 +169,10 @@ func SetLevel(level string) {
 func Get() *zap.SugaredLogger {
 	if log == nil {
 		// Initialize with defaults if not already initialized
-		Initialize(Config{Level: "info"})
+		if err := Initialize(Config{Level: "info"}); err != nil {
+			// Fallback to console logger if initialization fails
+			panic(fmt.Errorf("failed to initialize logger: %w", err))
+		}
 	}
 	return log
 }

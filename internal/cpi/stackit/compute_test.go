@@ -54,14 +54,14 @@ func TestComputeManager_CreateInstance(t *testing.T) {
 			assert.Equal(t, "test-instance", reqBody["name"])
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(expectedInstance)
+			_ = json.NewEncoder(w).Encode(expectedInstance)
 
 		case 2: // Get instance status call (waiting for active)
 			assert.Equal(t, "/v1/projects/test-project/instances/instance-123", r.URL.Path)
 			assert.Equal(t, "GET", r.Method)
 
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(expectedInstance)
+			_ = json.NewEncoder(w).Encode(expectedInstance)
 		}
 	})
 	defer server.Close()
@@ -94,7 +94,7 @@ func TestComputeManager_GetInstance(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedInstance)
+		_ = json.NewEncoder(w).Encode(expectedInstance)
 	})
 	defer server.Close()
 
@@ -107,7 +107,7 @@ func TestComputeManager_GetInstance(t *testing.T) {
 func TestComputeManager_GetInstance_NotFound(t *testing.T) {
 	manager, server := setupTestComputeManager(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"error": "instance not found",
 		})
 	})
@@ -140,7 +140,7 @@ func TestComputeManager_ListInstances(t *testing.T) {
 		assert.Contains(t, r.URL.RawQuery, "label=test")
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"instances": expectedInstances,
 		})
 	})
@@ -187,7 +187,9 @@ func TestComputeManager_StartInstance(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
 		assert.Equal(t, "start", reqBody["action"])
 
 		w.WriteHeader(http.StatusOK)
@@ -204,7 +206,9 @@ func TestComputeManager_StopInstance(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
 		assert.Equal(t, "stop", reqBody["action"])
 
 		w.WriteHeader(http.StatusOK)
@@ -227,11 +231,13 @@ func TestComputeManager_CreateKeyPair(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
 		assert.Equal(t, "test-key", reqBody["name"])
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(expectedKeyPair)
+		_ = json.NewEncoder(w).Encode(expectedKeyPair)
 	})
 	defer server.Close()
 
@@ -247,7 +253,9 @@ func TestComputeManager_ImportKeyPair(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
 		assert.Equal(t, "test-key", reqBody["name"])
 		assert.Equal(t, "ssh-rsa AAAAB3...", reqBody["public_key"])
 
@@ -276,7 +284,7 @@ func TestComputeManager_ListImages(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"images": expectedImages,
 		})
 	})
@@ -311,7 +319,7 @@ func TestComputeManager_ListFlavors(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"flavors": expectedFlavors,
 		})
 	})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
@@ -14,6 +15,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // NewBootstrapCmd creates the bootstrap command
@@ -39,10 +41,10 @@ This includes:
   ocfp bootstrap --config config/production.yml
 
   # Bootstrap using bloc name
-  ocfp bootstrap --bloc-name dev
+  ocfp bootstrap --bloc dev
 
   # Bootstrap specific blocs
-  ocfp bootstrap --bloc-name dev --blocs mgmt,ocf`,
+  ocfp bootstrap --bloc dev --blocs mgmt,ocf`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBootstrap(cmd, args)
 		},
@@ -60,22 +62,110 @@ This includes:
 }
 
 func runBootstrap(cmd *cobra.Command, args []string) error {
-	// Get configuration values
-	blocName := viper.GetString("bloc_name")
+	// Determine blocs to run for
+	blocsFlag := viper.GetString("bootstrap.blocs")
+	configFile := viper.GetString("config")
+	if configFile == "" {
+		// Prefer the file viper loaded if any
+		if used := viper.ConfigFileUsed(); used != "" {
+			configFile = used
+		}
+	}
+
+	if blocsFlag == "" || blocsFlag == "all" {
+		// Run for all blocs in the config file
+		// Fallback to single bloc via --bloc if config has no blocs
+		if err := runBootstrapForSelection(configFile, nil); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Run for explicit list of blocs
+	sel := []string{}
+	for _, s := range splitAndTrim(blocsFlag) {
+		if s != "" {
+			sel = append(sel, s)
+		}
+	}
+	if err := runBootstrapForSelection(configFile, sel); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runBootstrapForSelection(configFile string, selected []string) error {
+	// If no selection provided, try single bloc via --bloc
+	if len(selected) == 0 {
+		single := viper.GetString("bloc_name")
+		if single != "" {
+			return runBootstrapForBloc(configFile, single)
+		}
+	}
+
+	// Load config file to enumerate blocs
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
+	}
+	var cf struct {
+		Blocs map[string]interface{} `yaml:"blocs"`
+	}
+	if err := yaml.Unmarshal(data, &cf); err != nil {
+		return fmt.Errorf("failed to parse config file %s: %w", configFile, err)
+	}
+	if len(cf.Blocs) == 0 {
+		// No blocs defined; try single via --bloc
+		single := viper.GetString("bloc_name")
+		if single == "" {
+			return fmt.Errorf("no blocs found in config and --bloc not provided")
+		}
+		return runBootstrapForBloc(configFile, single)
+	}
+
+	// Build list to run
+	toRun := []string{}
+	if len(selected) == 0 {
+		for blocName := range cf.Blocs {
+			toRun = append(toRun, blocName)
+		}
+	} else {
+		// Filter by selected names
+		want := map[string]bool{}
+		for _, n := range selected {
+			want[n] = true
+		}
+		for blocName := range cf.Blocs {
+			if want[blocName] {
+				toRun = append(toRun, blocName)
+			}
+		}
+		if len(toRun) == 0 {
+			return fmt.Errorf("no matching blocs found for selection")
+		}
+	}
+
+	for _, name := range toRun {
+		if err := runBootstrapForBloc(configFile, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runBootstrapForBloc(configFile, blocName string) error {
 	iaas := viper.GetString("iaas")
 	region := viper.GetString("region")
 	force := viper.GetBool("bootstrap.force")
-	configFile := viper.GetString("config")
 
-	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc-name is required")
+		return fmt.Errorf("bloc is required")
 	}
 	if iaas == "" {
 		return fmt.Errorf("iaas provider is required")
 	}
 
-	// Initialize logger
+	// Initialize logger per bloc
 	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs")
 	if err := logger.Initialize(logger.Config{
 		Level:     viper.GetString("log_level"),
@@ -90,12 +180,12 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	// Load configuration
+	// Load configuration for this bloc
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return fmt.Errorf("failed to load configuration for bloc %s: %w", blocName, err)
 	}
 
 	// Create provider config
@@ -111,7 +201,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create provider: %w", err)
 	}
-	defer provider.Cleanup(context.Background())
+	defer func() { _ = provider.Cleanup(context.Background()) }()
 
 	// Initialize state manager
 	stateManager, err := state.NewManager("")
@@ -128,24 +218,35 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		DryRun:   viper.GetBool("dry_run"),
 		Timeout:  30 * time.Minute,
 	}
-
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
 
 	// Execute bootstrap
 	ctx := context.Background()
 	if err := bootstrapManager.Execute(ctx); err != nil {
-		return fmt.Errorf("bootstrap failed: %w", err)
+		return fmt.Errorf("bootstrap failed for bloc %s: %w", blocName, err)
 	}
-
-	// Save final state
 	if err := stateManager.Save(); err != nil {
-		logger.Warnf("Failed to save final state: %v", err)
+		logger.Warnf("Failed to save final state for %s: %v", blocName, err)
 	}
-
-	fmt.Printf("\n✅ Bootstrap completed successfully!\n")
-	fmt.Printf("Bloc: %s\n", blocName)
-	fmt.Printf("Provider: %s\n", iaas)
-	fmt.Printf("Region: %s\n", region)
-
+	fmt.Printf("\n✅ Bootstrap completed: bloc=%s provider=%s region=%s\n", blocName, iaas, region)
 	return nil
+}
+
+func splitAndTrim(s string) []string {
+	parts := []string{}
+	curr := ""
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			if curr != "" {
+				parts = append(parts, strings.TrimSpace(curr))
+			}
+			curr = ""
+		} else {
+			curr += string(s[i])
+		}
+	}
+	if curr != "" {
+		parts = append(parts, strings.TrimSpace(curr))
+	}
+	return parts
 }

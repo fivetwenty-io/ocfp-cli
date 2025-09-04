@@ -109,7 +109,7 @@ the configured credentials and endpoints.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -538,13 +538,15 @@ func (r *TestRunner) createTestOrgSpace() error {
 	// Create org
 	cmd := exec.Command("cf", "create-org", orgName)
 	if err := cmd.Run(); err != nil {
-		// Ignore error if org already exists
+		// Ignore error if org already exists - CF will return error code 1 if org exists
+		logger.Debugf("org creation error (likely already exists): %v", err)
 	}
 
 	// Create space
 	cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName)
 	if err := cmd.Run(); err != nil {
-		// Ignore error if space already exists
+		// Ignore error if space already exists - CF will return error code 1 if space exists
+		logger.Debugf("space creation error (likely already exists): %v", err)
 	}
 
 	// Target org/space

@@ -2,9 +2,11 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,14 +27,13 @@ func TestProviderAuthenticationFlow(t *testing.T) {
 
 	t.Run("StackitAuthWithToken", func(t *testing.T) {
 		configFile := filepath.Join(tmpDir, "stackit-token-config.yml")
-		
+
 		testConfig := `
-name: stackit-test
-provider: stackit
-service_account_token: "test-token-value"
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
+    service_account_token: "test-token-value"
     environment: test
     region: eu-de-1
     project_id: test-project-123
@@ -45,7 +46,7 @@ blocs:
 		// Test configuration loading
 		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
-		
+
 		assert.Equal(t, "stackit", cfg.Provider)
 		assert.Equal(t, "test-token-value", cfg.ServiceAccountToken)
 
@@ -72,26 +73,24 @@ blocs:
   "private_key": "-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----",
   "client_email": "test@example.com"
 }`
-		
-		testConfig := `
-name: stackit-json-test
-provider: stackit
-service_account_json: |
-` + "  " + serviceAccountJSON + `
+
+		testConfig := fmt.Sprintf(`
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
+    service_account_json: '%s'
     environment: test
     region: eu-west-1
     project_id: test-project-json
-`
+`, strings.ReplaceAll(serviceAccountJSON, "'", "''"))
 
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
 		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
-		
+
 		assert.Equal(t, "stackit", cfg.Provider)
 		assert.Contains(t, cfg.ServiceAccountJSON, "service_account")
 		assert.Contains(t, cfg.ServiceAccountJSON, "test-project-json")
@@ -111,12 +110,11 @@ blocs:
 
 		configFile := filepath.Join(tmpDir, "stackit-keypath-config.yml")
 		testConfig := `
-name: stackit-keypath-test
-provider: stackit
-service_account_key_path: ` + keyPath + `
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
+    service_account_key_path: ` + keyPath + `
     environment: test
     region: eu-central-1
     project_id: test-project-keypath
@@ -127,7 +125,7 @@ blocs:
 
 		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
-		
+
 		assert.Equal(t, "stackit", cfg.Provider)
 		assert.Equal(t, keyPath, cfg.ServiceAccountKeyPath)
 
@@ -162,11 +160,11 @@ blocs:
 		err = os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
 
 		// This will fail with authentication error, but should reach the stackit CLI
 		err = cmd.Execute()
@@ -182,7 +180,7 @@ func TestProviderValidationFlow(t *testing.T) {
 
 	t.Run("ValidateProviderTypes", func(t *testing.T) {
 		configFile := filepath.Join(tmpDir, "validation-config.yml")
-		
+
 		testConfig := `
 name: validation-test
 provider: stackit
@@ -207,18 +205,18 @@ blocs:
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		providers := []string{"stackit", "aws", "openstack", "gcp", "azure"}
 		blocs := []string{"stackit-bloc", "aws-bloc", "openstack-bloc", "gcp-bloc", "azure-bloc"}
 
 		for i, provider := range providers {
 			cmd := commands.NewProviderCmd()
-			cmd.SetArgs([]string{"login", "--iaas", provider, "--bloc-name", blocs[i]})
+			cmd.SetArgs([]string{"login", "--iaas", provider, "--bloc", blocs[i]})
 
 			err := cmd.Execute()
-			
+
 			if provider == "stackit" {
 				// STACKIT should fail with credential error
 				assert.Error(t, err)
@@ -232,10 +230,10 @@ blocs:
 
 	t.Run("ValidateEnvironmentVariables", func(t *testing.T) {
 		// Test provider selection via environment variable
-		os.Setenv("OCFP_PROVIDER", "aws")
-		os.Setenv("OCFP_BLOC_NAME", "test-bloc")
-		defer os.Unsetenv("OCFP_PROVIDER")
-		defer os.Unsetenv("OCFP_BLOC_NAME")
+		_ = os.Setenv("OCFP_PROVIDER", "aws")
+		_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
+		defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
+		defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
 
 		configFile := filepath.Join(tmpDir, "env-var-config.yml")
 		testConfig := `
@@ -250,13 +248,13 @@ blocs:
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
 		cmd.SetArgs([]string{"login"})
 
-		// Should use environment variables for provider and bloc-name
+		// Should use environment variables for provider and bloc
 		err = cmd.Execute()
 		assert.NoError(t, err) // AWS placeholder should succeed
 	})
@@ -275,11 +273,11 @@ blocs:
 		err := os.WriteFile(configFile, []byte(testConfig), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("OCFP_CONFIG", configFile)
-		defer os.Unsetenv("OCFP_CONFIG")
+		_ = os.Setenv("OCFP_CONFIG", configFile)
+		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "unknown-provider", "--bloc-name", "test"})
+		cmd.SetArgs([]string{"login", "--iaas", "unknown-provider", "--bloc", "test"})
 
 		err = cmd.Execute()
 		assert.Error(t, err)
@@ -332,7 +330,7 @@ func TestProviderNetworkFlow(t *testing.T) {
 		}
 
 		client := &stackit.Client{}
-		
+
 		// Test initialization without actual authentication
 		// This tests the initialization logic without making real API calls
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -367,16 +365,15 @@ func TestProviderCredentialDiscovery(t *testing.T) {
 
 	t.Run("CredentialPriority", func(t *testing.T) {
 		// Test credential priority: config file > vault > environment
-		
+
 		// Create config with token
 		configFile := filepath.Join(tmpDir, "priority-config.yml")
 		testConfig := `
-name: priority-test
-provider: stackit
-service_account_token: "config-file-token"
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
+    service_account_token: "config-file-token"
     environment: test
     region: eu-de-1
     project_id: test-project
@@ -387,7 +384,7 @@ blocs:
 
 		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
-		
+
 		// Config file token should take priority
 		assert.Equal(t, "config-file-token", cfg.ServiceAccountToken)
 	})
@@ -396,21 +393,20 @@ blocs:
 		// Test handling of multiple credential formats in same config
 		configFile := filepath.Join(tmpDir, "multi-format-config.yml")
 		keyPath := filepath.Join(tmpDir, "multi-key.json")
-		
+
 		keyContent := `{"type": "service_account", "project_id": "multi-test"}`
 		err := os.WriteFile(keyPath, []byte(keyContent), 0600)
 		require.NoError(t, err)
 
 		testConfig := `
-name: multi-format-test
-provider: stackit
-service_account_token: "token-value"
-service_account_json: |
-  {"type": "service_account", "project_id": "json-project"}
-service_account_key_path: ` + keyPath + `
 blocs:
-  - name: test
+  test:
+    name: test
     provider: stackit
+    service_account_token: "token-value"
+    service_account_json: |
+      {"type": "service_account", "project_id": "json-project"}
+    service_account_key_path: ` + keyPath + `
     environment: test
 `
 
@@ -419,7 +415,7 @@ blocs:
 
 		cfg, err := config.LoadWithParams(configFile, "test")
 		require.NoError(t, err)
-		
+
 		// All credential formats should be available
 		assert.Equal(t, "token-value", cfg.ServiceAccountToken)
 		assert.Contains(t, cfg.ServiceAccountJSON, "json-project")
@@ -430,7 +426,7 @@ blocs:
 		// Check if vault integration tools are available
 		_, safeErr := exec.LookPath("safe")
 		_, vaultErr := exec.LookPath("vault")
-		
+
 		if safeErr != nil && vaultErr != nil {
 			t.Skip("neither safe nor vault CLI available, skipping vault integration test")
 		}

@@ -49,19 +49,19 @@ func TestNetworkManager_CreateNetwork(t *testing.T) {
 			assert.Equal(t, "POST", r.Method)
 
 			var reqBody map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&reqBody)
+			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-network", reqBody["name"])
 			assert.Equal(t, "10.0.0.0/16", reqBody["cidr"])
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(expectedNetwork)
+			_ = json.NewEncoder(w).Encode(expectedNetwork)
 
 		case 2: // Get network status call
 			assert.Equal(t, "/v1/projects/test-project/networks/net-123", r.URL.Path)
 			assert.Equal(t, "GET", r.Method)
 
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(expectedNetwork)
+			_ = json.NewEncoder(w).Encode(expectedNetwork)
 		}
 	})
 	defer server.Close()
@@ -98,20 +98,20 @@ func TestNetworkManager_CreateSubnet(t *testing.T) {
 			assert.Equal(t, "POST", r.Method)
 
 			var reqBody map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&reqBody)
+			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-subnet", reqBody["name"])
 			assert.Equal(t, "10.0.1.0/24", reqBody["cidr"])
 			assert.Equal(t, "net-123", reqBody["network_id"])
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(expectedSubnet)
+			_ = json.NewEncoder(w).Encode(expectedSubnet)
 
 		case 2: // Get subnet status call
 			assert.Equal(t, "/v1/projects/test-project/subnets/subnet-123", r.URL.Path)
 			assert.Equal(t, "GET", r.Method)
 
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(expectedSubnet)
+			_ = json.NewEncoder(w).Encode(expectedSubnet)
 		}
 	})
 	defer server.Close()
@@ -143,11 +143,11 @@ func TestNetworkManager_AllocateFloatingIP(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 		assert.Equal(t, "net-123", reqBody["network_id"])
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(expectedFloatingIP)
+		_ = json.NewEncoder(w).Encode(expectedFloatingIP)
 	})
 	defer server.Close()
 
@@ -168,7 +168,7 @@ func TestNetworkManager_AssociateFloatingIP(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 		assert.Equal(t, "instance-123", reqBody["instance_id"])
 
 		w.WriteHeader(http.StatusOK)
@@ -209,18 +209,18 @@ func TestNetworkManager_CreateRouter(t *testing.T) {
 			assert.Equal(t, "POST", r.Method)
 
 			var reqBody map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&reqBody)
+			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-router", reqBody["name"])
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(expectedRouter)
+			_ = json.NewEncoder(w).Encode(expectedRouter)
 
 		case 2: // Get router status call
 			assert.Equal(t, "/v1/projects/test-project/routers/router-123", r.URL.Path)
 			assert.Equal(t, "GET", r.Method)
 
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(expectedRouter)
+			_ = json.NewEncoder(w).Encode(expectedRouter)
 		}
 	})
 	defer server.Close()
@@ -244,7 +244,7 @@ func TestNetworkManager_AttachRouterInterface(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 		assert.Equal(t, "subnet-123", reqBody["subnet_id"])
 
 		w.WriteHeader(http.StatusOK)
@@ -261,7 +261,7 @@ func TestNetworkManager_DetachRouterInterface(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		var reqBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 		assert.Equal(t, "subnet-123", reqBody["subnet_id"])
 
 		w.WriteHeader(http.StatusOK)
@@ -291,7 +291,7 @@ func TestNetworkManager_ListNetworks(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"networks": expectedNetworks,
 		})
 	})

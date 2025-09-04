@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
@@ -20,6 +21,9 @@ func NewInitCmd() *cobra.Command {
 		force      bool
 		skipChecks bool
 		parallel   bool
+		dryRun     bool
+		resume     bool
+		verbose    bool
 	)
 
 	cmd := &cobra.Command{
@@ -28,10 +32,11 @@ func NewInitCmd() *cobra.Command {
 		Long: `Initialize OCFP components including PostgreSQL, Cloud Foundry, and BOSH.
 
 Components:
-  pg    - Initialize PostgreSQL database
-  cf    - Initialize Cloud Foundry
-  bosh  - Initialize BOSH Director
-  all   - Initialize all components (default)
+  pg      - Initialize PostgreSQL database
+  cf      - Initialize Cloud Foundry
+  bosh    - Initialize BOSH Director
+  bastion - Initialize bastion host
+  all     - Initialize all components (default)
 
 The init command prepares and initializes the core components required
 for a Cloud Foundry deployment. It ensures proper ordering of component
@@ -42,12 +47,15 @@ initialization and validates prerequisites.`,
   # Initialize only PostgreSQL
   ocfp init pg
 
+  # Initialize bastion host
+  ocfp init bastion
+
   # Force initialization, skipping confirmation
   ocfp init all --force
 
   # Initialize with parallel execution where possible
   ocfp init --parallel`,
-		ValidArgs: []string{"pg", "cf", "bosh", "all"},
+		ValidArgs: []string{"pg", "cf", "bosh", "bastion", "all"},
 		Args:      cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -60,7 +68,7 @@ initialization and validates prerequisites.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -80,7 +88,7 @@ initialization and validates prerequisites.`,
 			if !force {
 				fmt.Printf("This will initialize %s components. Continue? [y/N]: ", component)
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Initialization cancelled by user")
 					return nil
@@ -95,9 +103,15 @@ initialization and validates prerequisites.`,
 				return initializeCloudFoundry(ctx, cfg)
 			case "bosh":
 				return initializeBOSH(ctx, cfg)
+			case "bastion":
+				return initializeBastion(ctx, cfg, force, parallel, dryRun, resume, verbose)
 			case "all":
-				// Initialize in order: pg -> bosh -> cf
+				// Initialize in order: bastion -> pg -> bosh -> cf
 				log.Info("Initializing all components")
+
+				if err := initializeBastion(ctx, cfg, force, parallel, dryRun, resume, verbose); err != nil {
+					return fmt.Errorf("bastion initialization failed: %w", err)
+				}
 
 				if err := initializePostgreSQL(ctx, cfg); err != nil {
 					return fmt.Errorf("PostgreSQL initialization failed: %w", err)
@@ -108,7 +122,7 @@ initialization and validates prerequisites.`,
 				}
 
 				if err := initializeCloudFoundry(ctx, cfg); err != nil {
-					return fmt.Errorf("Cloud Foundry initialization failed: %w", err)
+					return fmt.Errorf("cloud Foundry initialization failed: %w", err)
 				}
 
 				log.Info("All components initialized successfully")
@@ -123,11 +137,17 @@ initialization and validates prerequisites.`,
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&skipChecks, "skip-checks", false, "skip prerequisite validation")
 	cmd.Flags().BoolVar(&parallel, "parallel", false, "run independent tasks in parallel")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print actions without executing")
+	cmd.Flags().BoolVar(&resume, "resume", false, "resume from last successful checkpoint")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "enable verbose logging")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("init.force", cmd.Flags().Lookup("force"))
 	_ = viper.BindPFlag("init.skip_checks", cmd.Flags().Lookup("skip-checks"))
 	_ = viper.BindPFlag("init.parallel", cmd.Flags().Lookup("parallel"))
+	_ = viper.BindPFlag("init.dry_run", cmd.Flags().Lookup("dry-run"))
+	_ = viper.BindPFlag("init.resume", cmd.Flags().Lookup("resume"))
+	_ = viper.BindPFlag("init.verbose", cmd.Flags().Lookup("verbose"))
 
 	return cmd
 }
@@ -398,5 +418,30 @@ func configureCloudFoundry(cfg *config.Config) error {
 		log.Warn("Failed to target org/space", "error", err)
 	}
 
+	return nil
+}
+
+// initializeBastion performs bastion host initialization
+func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume bool, verbose bool) error {
+	log := logger.Get()
+	log.Info("Initializing bastion host")
+
+	// Create provisioning options
+	options := &bastion.ProvisioningOptions{
+		DryRun:      dryRun,
+		Force:       force,
+		Parallel:    parallel,
+		Resume:      resume,
+		Verbose:     verbose,
+		MaxWorkers:  4,
+		ProgressOut: os.Stdout,
+	}
+
+	// Use mode-aware initialization that detects local vs remote execution
+	if err := bastion.InitializeBastionWithMode(ctx, cfg, options); err != nil {
+		return fmt.Errorf("bastion initialization failed: %w", err)
+	}
+
+	log.Info("Bastion initialization completed successfully")
 	return nil
 }

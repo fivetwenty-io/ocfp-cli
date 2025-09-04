@@ -42,14 +42,14 @@ func TestProviderLoginCommand(t *testing.T) {
 			expectedErr: "provider not specified",
 		},
 		{
-			name: "login with env provider but no bloc-name",
-			args: []string{"login"},
-			env:  map[string]string{"OCFP_PROVIDER": "stackit"},
-			expectedErr: "--bloc-name flag or OCFP_BLOC_NAME environment variable required",
+			name:        "login with env provider but no bloc",
+			args:        []string{"login"},
+			env:         map[string]string{"OCFP_PROVIDER": "stackit"},
+			expectedErr: "--bloc flag or OCFP_BLOC_NAME environment variable required",
 		},
 		{
-			name: "login with stackit provider",
-			args: []string{"login", "--iaas", "stackit", "--bloc-name", "test"},
+			name:        "login with stackit provider",
+			args:        []string{"login", "--iaas", "stackit", "--bloc", "test"},
 			expectedErr: "could not retrieve STACKIT service account credentials",
 		},
 		{
@@ -63,8 +63,8 @@ func TestProviderLoginCommand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variables
 			for key, value := range tt.env {
-				os.Setenv(key, value)
-				defer os.Unsetenv(key)
+				_ = os.Setenv(key, value)
+				defer func() { _ = os.Unsetenv(key) }()
 			}
 
 			cmd := NewProviderCmd()
@@ -108,7 +108,7 @@ func TestFindTmuxScript(t *testing.T) {
 	// Either finds a script or creates a temporary one
 	assert.NoError(t, err)
 	assert.NotEmpty(t, scriptPath)
-	
+
 	// Check that the path exists
 	_, statErr := os.Stat(scriptPath)
 	assert.NoError(t, statErr)
@@ -118,7 +118,7 @@ func TestCreateBasicTmuxScript(t *testing.T) {
 	scriptPath, err := createBasicTmuxScript()
 	require.NoError(t, err)
 	require.NotEmpty(t, scriptPath)
-	defer os.Remove(scriptPath)
+	defer func() { _ = os.Remove(scriptPath) }()
 
 	// Check that the file exists and is readable
 	content, err := os.ReadFile(scriptPath)
@@ -132,8 +132,8 @@ func TestEnsureExecutable(t *testing.T) {
 	// Create a temporary file
 	tempFile, err := os.CreateTemp("", "test-executable-*")
 	require.NoError(t, err)
-	tempFile.Close()
-	defer os.Remove(tempFile.Name())
+	_ = tempFile.Close()
+	defer func() { _ = os.Remove(tempFile.Name()) }()
 
 	// Initially should not be executable
 	info, err := os.Stat(tempFile.Name())
@@ -208,8 +208,8 @@ func TestGetBastionContext(t *testing.T) {
 	cmd.Flags().String("key", "/path/to/key", "SSH key path")
 
 	// Set flag values
-	cmd.Flags().Set("user", "testuser")
-	cmd.Flags().Set("key", "/test/key")
+	_ = cmd.Flags().Set("user", "testuser")
+	_ = cmd.Flags().Set("key", "/test/key")
 
 	ctx, err := getBastionContext(cmd, nil)
 	require.NoError(t, err)
@@ -220,10 +220,10 @@ func TestGetBastionContext(t *testing.T) {
 
 func TestBuildEnvironmentVariables(t *testing.T) {
 	// Set some environment variables
-	os.Setenv("OCFP_BLOC_NAME", "test-bloc")
-	os.Setenv("OCFP_PROVIDER", "stackit")
-	defer os.Unsetenv("OCFP_BLOC_NAME")
-	defer os.Unsetenv("OCFP_PROVIDER")
+	_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
+	_ = os.Setenv("OCFP_PROVIDER", "stackit")
+	defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
+	defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
 
 	envString := buildEnvironmentVariables(nil)
 	assert.Contains(t, envString, "OCFP_BLOC_NAME='test-bloc'")
@@ -234,7 +234,7 @@ func TestFetchGitHubKeys(t *testing.T) {
 	// Test with a known public GitHub user (this is a real API call)
 	// Using "octocat" which is GitHub's mascot account
 	keys, err := fetchGitHubKeys("octocat")
-	
+
 	// The API call might fail due to network issues, rate limiting, etc.
 	// So we check if either we got keys or a reasonable error
 	if err != nil {
@@ -247,9 +247,8 @@ func TestFetchGitHubKeys(t *testing.T) {
 		for _, key := range keys {
 			assert.True(t, len(key) > 0)
 			// SSH keys typically start with ssh-rsa, ssh-ed25519, etc.
-			assert.True(t, 
-				len(key) > 7 && (
-					key[:7] == "ssh-rsa" || 
+			assert.True(t,
+				len(key) > 7 && (key[:7] == "ssh-rsa" ||
 					key[:11] == "ssh-ed25519" ||
 					key[:19] == "ecdsa-sha2-nistp256" ||
 					key[:19] == "ecdsa-sha2-nistp384" ||
@@ -263,7 +262,7 @@ func TestFetchGitLabKeys(t *testing.T) {
 	// Test with GitLab API - using a test that should not cause issues
 	// Note: This makes a real HTTP request which could fail
 	keys, err := fetchGitLabKeys("root") // root user exists on most GitLab instances
-	
+
 	// Similar to GitHub test - check for reasonable behavior
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to fetch GitLab keys")
@@ -281,7 +280,7 @@ func TestFindProvisionScript(t *testing.T) {
 	_, err := findProvisionScript("non-existent-script")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in any search paths")
-	
+
 	// Create a test script
 	tempDir := t.TempDir()
 	scriptPath := filepath.Join(tempDir, "scripts", "provision", "test-script")
@@ -289,12 +288,12 @@ func TestFindProvisionScript(t *testing.T) {
 	require.NoError(t, err)
 	err = os.WriteFile(scriptPath, []byte("#!/bin/bash\necho test"), 0644)
 	require.NoError(t, err)
-	
+
 	// Change working directory to temp dir
 	oldWd, _ := os.Getwd()
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-	
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
 	// Now it should find the script
 	foundPath, err := findProvisionScript("test-script")
 	assert.NoError(t, err)

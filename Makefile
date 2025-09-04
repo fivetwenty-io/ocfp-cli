@@ -1,12 +1,27 @@
 # OCFP CLI Go Implementation Makefile
 # github.com/ocfp/ocfp-cli-go
 
+# Colors for terminal output
+GREEN  := \033[1;32m
+YELLOW := \033[1;33m
+BLUE   := \033[1;34m
+CYAN   := \033[1;36m
+WHITE  := \033[1;37m
+RED    := \033[1;31m
+MAGENTA:= \033[1;35m
+RESET  := \033[0m
+
+# Default target - show help
+.DEFAULT_GOAL := help
+
 # Variables
 BINARY_NAME := ocfp
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev/$(GIT_BRANCH)/$(GIT_SHA)")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GO_VERSION := $(shell go version | cut -d' ' -f3)
+GO_FILES := $(shell find . -name '*.go' -type f -not -path "./vendor/*")
 
 # Build variables
 MAIN_PATH := cmd/ocfp/main.go
@@ -24,92 +39,43 @@ LDFLAGS := -ldflags "\
 	-s -w \
 	-X github.com/ocfp/ocfp-cli-go/internal/version.Version=$(VERSION) \
 	-X github.com/ocfp/ocfp-cli-go/internal/version.BuildTime=$(BUILD_TIME) \
-	-X github.com/ocfp/ocfp-cli-go/internal/version.GitCommit=$(GIT_COMMIT) \
+	-X github.com/ocfp/ocfp-cli-go/internal/version.GitCommit=$(GIT_SHA) \
 	-X github.com/ocfp/ocfp-cli-go/internal/version.GoVersion=$(GO_VERSION)"
 
-# Colors for output
-RESET := \033[0m
-BOLD := \033[1m
-RED := \033[31m
-GREEN := \033[32m
-YELLOW := \033[33m
-BLUE := \033[34m
-MAGENTA := \033[35m
-CYAN := \033[36m
-WHITE := \033[37m
+##@ General
 
-# Default target - show help
-.DEFAULT_GOAL := help
+.PHONY: help
+help: ## Display this help message
+	@echo "$(BLUE)OCFP CLI Makefile$(RESET)"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make $(CYAN)<target>$(RESET)\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  $(CYAN)%-20s$(RESET) %s\n", $$1, $$2 } /^##@/ { printf "\n$(YELLOW)%s$(RESET)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-# Phony targets
-.PHONY: help build build-linux build-windows build-macos build-all build-release \
-        test-unit test-integration test-plugins tests \
-        fmt vet lint check \
-        vulncheck trivy security \
-        build-dev dev clean
+##@ Build
 
-# Help target with categorized, colorized output
-help: ## Show this help message
-	@echo "$(BOLD)$(CYAN)OCFP CLI - Go Implementation$(RESET)"
-	@echo "$(YELLOW)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
-	@echo ""
-	@echo "$(BOLD)$(GREEN)General$(RESET)"
-	@echo "$(WHITE)  make $(GREEN)help$(RESET)              - Show this help message"
-	@echo ""
-	@echo "$(BOLD)$(BLUE)Build$(RESET)"
-	@echo "$(WHITE)  make $(BLUE)build$(RESET)             - Build binary for current platform"
-	@echo "$(WHITE)  make $(BLUE)build-linux$(RESET)       - Build Linux binary (amd64)"
-	@echo "$(WHITE)  make $(BLUE)build-windows$(RESET)     - Build Windows binary (amd64)"
-	@echo "$(WHITE)  make $(BLUE)build-macos$(RESET)       - Build macOS binary (universal)"
-	@echo "$(WHITE)  make $(BLUE)build-all$(RESET)         - Build binaries for all platforms"
-	@echo "$(WHITE)  make $(BLUE)build-release$(RESET)     - Build release binaries with version info"
-	@echo ""
-	@echo "$(BOLD)$(MAGENTA)Test$(RESET)"
-	@echo "$(WHITE)  make $(MAGENTA)test-unit$(RESET)         - Run unit tests with coverage"
-	@echo "$(WHITE)  make $(MAGENTA)test-integration$(RESET)  - Run integration tests"
-	@echo "$(WHITE)  make $(MAGENTA)test-plugins$(RESET)      - Run plugin tests"
-	@echo "$(WHITE)  make $(MAGENTA)tests$(RESET)             - Run all tests"
-	@echo ""
-	@echo "$(BOLD)$(YELLOW)Check$(RESET)"
-	@echo "$(WHITE)  make $(YELLOW)fmt$(RESET)               - Format code with gofmt"
-	@echo "$(WHITE)  make $(YELLOW)vet$(RESET)               - Run go vet for static analysis"
-	@echo "$(WHITE)  make $(YELLOW)lint$(RESET)              - Run golangci-lint"
-	@echo "$(WHITE)  make $(YELLOW)check$(RESET)             - Run all checks (fmt, vet, lint)"
-	@echo ""
-	@echo "$(BOLD)$(RED)Security$(RESET)"
-	@echo "$(WHITE)  make $(RED)vulncheck$(RESET)         - Run govulncheck for vulnerabilities"
-	@echo "$(WHITE)  make $(RED)trivy$(RESET)             - Run trivy security scanner"
-	@echo "$(WHITE)  make $(RED)security$(RESET)          - Run all security checks"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)Development$(RESET)"
-	@echo "$(WHITE)  make $(CYAN)build-dev$(RESET)         - Build development container"
-	@echo "$(WHITE)  make $(CYAN)dev$(RESET)               - Run development container"
-	@echo "$(WHITE)  make $(CYAN)clean$(RESET)             - Clean build artifacts"
-	@echo ""
-	@echo "$(YELLOW)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
-	@echo "$(WHITE)Version: $(VERSION) | Commit: $(GIT_COMMIT)$(RESET)"
-
-# Build targets
+.PHONY: build
 build: ## Build binary for current platform
-	@echo "$(CYAN)Building $(BINARY_NAME) for current platform...$(RESET)"
+	@echo "$(GREEN)Building $(BINARY_NAME)...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 	@echo "$(GREEN)✓ Build complete: $(BUILD_DIR)/$(BINARY_NAME)$(RESET)"
 
+.PHONY: build-linux
 build-linux: ## Build Linux binary (amd64)
-	@echo "$(CYAN)Building $(BINARY_NAME) for Linux amd64...$(RESET)"
+	@echo "$(GREEN)Building $(BINARY_NAME) for Linux amd64...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
 	@echo "$(GREEN)✓ Linux build complete$(RESET)"
 
+.PHONY: build-windows
 build-windows: ## Build Windows binary (amd64)
-	@echo "$(CYAN)Building $(BINARY_NAME) for Windows amd64...$(RESET)"
+	@echo "$(GREEN)Building $(BINARY_NAME) for Windows amd64...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 	@echo "$(GREEN)✓ Windows build complete$(RESET)"
 
+.PHONY: build-macos
 build-macos: ## Build macOS binary (universal)
-	@echo "$(CYAN)Building $(BINARY_NAME) for macOS (universal)...$(RESET)"
+	@echo "$(GREEN)Building $(BINARY_NAME) for macOS (universal)...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
 	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
@@ -119,11 +85,278 @@ build-macos: ## Build macOS binary (universal)
 	@rm $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64
 	@echo "$(GREEN)✓ macOS universal build complete$(RESET)"
 
+.PHONY: build-all
 build-all: build-linux build-windows build-macos ## Build binaries for all platforms
 	@echo "$(GREEN)✓ All platform builds complete$(RESET)"
 
+.PHONY: install
+install: build ## Install binary to GOPATH
+	@echo "$(GREEN)Installing $(BINARY_NAME)...$(RESET)"
+	@go install $(LDFLAGS) $(MAIN_PATH)
+	@echo "$(GREEN)✓ Installed to $(GOPATH)/bin/$(BINARY_NAME)$(RESET)"
+
+.PHONY: run
+run: build ## Build and run the application
+	@echo "$(GREEN)Running $(BINARY_NAME)...$(RESET)"
+	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
+
+##@ Testing
+
+.PHONY: test
+test: test-unit test-integration test-plugins ## Run all tests
+	@echo "$(GREEN)✓ All tests complete$(RESET)"
+
+.PHONY: test-unit
+test-unit: ## Run unit tests with coverage
+	@echo "$(GREEN)Running unit tests...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@go test -v -race -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./internal/...
+	@echo "$(GREEN)✓ Unit tests complete$(RESET)"
+
+.PHONY: test-integration
+test-integration: ## Run integration tests
+	@echo "$(GREEN)Running integration tests...$(RESET)"
+	@go test -v -race -tags=integration ./tests/integration/...
+	@echo "$(GREEN)✓ Integration tests complete$(RESET)"
+
+.PHONY: test-plugins
+test-plugins: ## Run plugin tests
+	@echo "$(GREEN)Running plugin tests...$(RESET)"
+	@go test -v -race ./pkg/plugins/...
+	@echo "$(GREEN)✓ Plugin tests complete$(RESET)"
+
+.PHONY: test-short
+test-short: ## Run tests in short mode
+	@echo "$(GREEN)Running short tests...$(RESET)"
+	@go test -short $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Short tests complete$(RESET)"
+
+.PHONY: test-race
+test-race: ## Run tests with race detector
+	@echo "$(GREEN)Running tests with race detector...$(RESET)"
+	@go test -race -v $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Race condition tests complete$(RESET)"
+
+.PHONY: test-all
+test-all: test coverage test-race ## Run all tests with coverage and race detection
+	@echo "$(GREEN)✓ All tests and coverage complete$(RESET)"
+
+.PHONY: coverage
+coverage: ## Generate test coverage report
+	@echo "$(GREEN)Generating coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@go test -coverprofile=$(COVERAGE_DIR)/coverage.out $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@go tool cover -func=$(COVERAGE_DIR)/coverage.out
+	@echo "$(GREEN)✓ Coverage report generated$(RESET)"
+
+.PHONY: coverage-html
+coverage-html: coverage ## Generate and open HTML coverage report
+	@echo "$(GREEN)Opening HTML coverage report...$(RESET)"
+	@go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/coverage.html$(RESET)"
+
+.PHONY: bench
+bench: ## Run benchmarks
+	@echo "$(GREEN)Running benchmarks...$(RESET)"
+	@go test -bench=. -benchmem ./...
+	@echo "$(GREEN)✓ Benchmarks complete$(RESET)"
+
+##@ Code Quality
+
+.PHONY: fmt
+fmt: ## Format all Go source files
+	@echo "$(GREEN)Formatting code (go fmt)...$(RESET)"
+	@go fmt $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Code formatted$(RESET)"
+
+.PHONY: vet
+vet: ## Run go vet on all source files
+	@echo "$(GREEN)Vetting code (go vet)...$(RESET)"
+	@go vet $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Vet analysis complete$(RESET)"
+
+.PHONY: lint
+lint: ## Run golangci-lint
+	@echo "$(GREEN)Running golangci-lint...$(RESET)"
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+	}
+	@golangci-lint run --timeout=5m ./...
+	@echo "$(GREEN)✓ Lint check complete$(RESET)"
+
+.PHONY: golangci
+golangci: lint ## Alias for lint (runs golangci-lint)
+
+.PHONY: staticcheck
+staticcheck: ## Run staticcheck static analysis
+	@echo "$(GREEN)Running staticcheck...$(RESET)"
+	@command -v staticcheck >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing staticcheck...$(RESET)"; \
+		go install honnef.co/go/tools/cmd/staticcheck@latest; \
+	}
+	@staticcheck $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Staticcheck analysis complete$(RESET)"
+
+.PHONY: gocyclo
+gocyclo: ## Run gocyclo complexity analysis
+	@echo "$(GREEN)Running gocyclo complexity analysis...$(RESET)"
+	@command -v gocyclo >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing gocyclo...$(RESET)"; \
+		go install github.com/fzipp/gocyclo/cmd/gocyclo@latest; \
+	}
+	@gocyclo -over 15 $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
+	@echo "$(GREEN)✓ Gocyclo analysis complete$(RESET)"
+
+.PHONY: ineffassign
+ineffassign: ## Run ineffassign to detect ineffectual assignments
+	@echo "$(GREEN)Running ineffassign...$(RESET)"
+	@command -v ineffassign >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing ineffassign...$(RESET)"; \
+		go install github.com/gordonklaus/ineffassign@latest; \
+	}
+	@ineffassign $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
+	@echo "$(GREEN)✓ Ineffassign analysis complete$(RESET)"
+
+.PHONY: errcheck
+errcheck: ## Run errcheck to find unchecked errors
+	@echo "$(GREEN)Running errcheck...$(RESET)"
+	@command -v errcheck >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing errcheck...$(RESET)"; \
+		go install github.com/kisielk/errcheck@latest; \
+	}
+	@errcheck -ignoretests $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Errcheck analysis complete$(RESET)"
+
+.PHONY: goimports
+goimports: ## Run goimports to check import formatting
+	@echo "$(GREEN)Running goimports...$(RESET)"
+	@command -v goimports >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing goimports...$(RESET)"; \
+		go install golang.org/x/tools/cmd/goimports@latest; \
+	}
+	@goimports -l $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*") | (! grep . || (echo "$(RED)✗ Files need goimports formatting$(RESET)" && false))
+	@echo "$(GREEN)✓ Goimports check complete$(RESET)"
+
+.PHONY: deadcode
+deadcode: ## Run deadcode to find unused code
+	@echo "$(GREEN)Running deadcode analysis...$(RESET)"
+	@command -v deadcode >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing deadcode...$(RESET)"; \
+		go install golang.org/x/tools/cmd/deadcode@latest; \
+	}
+	@deadcode -test $(shell go list ./... | grep -v vendor | grep -v tmp) || true
+	@echo "$(GREEN)✓ Deadcode analysis complete$(RESET)"
+
+.PHONY: check
+check: fmt vet lint staticcheck ## Run basic checks (fmt, vet, lint, staticcheck)
+	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
+
+.PHONY: check-all
+check-all: fmt vet lint staticcheck gocyclo ineffassign errcheck goimports ## Run all code quality checks
+	@echo "$(GREEN)✓ All checks passed$(RESET)"
+
+##@ Security
+
+.PHONY: govulncheck
+govulncheck: ## Run vulnerability check on dependencies
+	@echo "$(GREEN)Checking for vulnerabilities (govulncheck)...$(RESET)"
+	@command -v govulncheck >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing govulncheck...$(RESET)"; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	}
+	@govulncheck $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Vulnerability check complete$(RESET)"
+
+.PHONY: gosec
+gosec: ## Run security scanner on source code
+	@echo "$(GREEN)Running security scan (gosec)...$(RESET)"
+	@command -v gosec >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing gosec...$(RESET)"; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+	}
+	@gosec -quiet -fmt text -exclude-dir=tmp ./...
+	@echo "$(GREEN)✓ Security scan complete$(RESET)"
+
+.PHONY: trivy
+trivy: ## Run Trivy container and dependency scanner
+	@echo "$(GREEN)Running Trivy scan...$(RESET)"
+	@command -v trivy >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Trivy not found. Please install it:$(RESET)"; \
+		echo "$(CYAN)  brew install trivy$(RESET) (macOS)"; \
+		echo "$(CYAN)  apt-get install trivy$(RESET) (Debian/Ubuntu)"; \
+		echo "$(CYAN)  Or visit: https://aquasecurity.github.io/trivy$(RESET)"; \
+		exit 1; \
+	}
+	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --skip-dirs vendor,tmp .
+	@echo "$(GREEN)✓ Trivy scan complete$(RESET)"
+
+.PHONY: security
+security: govulncheck gosec trivy ## Run all security scans
+	@echo "$(GREEN)✓ All security scans complete$(RESET)"
+
+##@ Development
+
+.PHONY: build-dev
+build-dev: ## Build development container
+	@echo "$(GREEN)Building development container...$(RESET)"
+	@docker build -f .devcontainer/Dockerfile -t $(DEV_CONTAINER) .
+	@echo "$(GREEN)✓ Development container built$(RESET)"
+
+.PHONY: dev
+dev: ## Run development container
+	@echo "$(GREEN)Starting development container...$(RESET)"
+	@docker run -it --rm \
+		-v $(PWD):/workspace \
+		-v $(HOME)/.ocfp:/root/.ocfp \
+		-w /workspace \
+		$(DEV_CONTAINER) \
+		/bin/bash
+	@echo "$(GREEN)✓ Development session ended$(RESET)"
+
+.PHONY: mocks
+mocks: ## Generate mock interfaces for testing
+	@echo "$(GREEN)Generating mocks...$(RESET)"
+	@command -v mockgen >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing mockgen...$(RESET)"; \
+		go install github.com/golang/mock/mockgen@latest; \
+	}
+	@go generate ./...
+	@echo "$(GREEN)✓ Mocks generated$(RESET)"
+
+.PHONY: docs
+docs: ## Generate documentation
+	@echo "$(GREEN)Generating documentation...$(RESET)"
+	@go doc -all > docs/API.md
+	@echo "$(GREEN)✓ Documentation generated$(RESET)"
+
+##@ Dependencies
+
+.PHONY: deps
+deps: ## Download and verify dependencies
+	@echo "$(GREEN)Downloading dependencies...$(RESET)"
+	@go mod download
+	@go mod verify
+	@echo "$(GREEN)✓ Dependencies ready$(RESET)"
+
+.PHONY: deps-update
+deps-update: ## Update all dependencies to latest versions
+	@echo "$(GREEN)Updating dependencies...$(RESET)"
+	@go get -u ./...
+	@go mod tidy
+	@echo "$(GREEN)✓ Dependencies updated$(RESET)"
+
+.PHONY: deps-tidy
+deps-tidy: ## Clean up go.mod and go.sum
+	@echo "$(GREEN)Tidying dependencies...$(RESET)"
+	@go mod tidy
+	@echo "$(GREEN)✓ Dependencies tidied$(RESET)"
+
+##@ Release
+
+.PHONY: build-release
 build-release: clean ## Build release binaries with version info
-	@echo "$(CYAN)Building release binaries v$(VERSION)...$(RESET)"
+	@echo "$(GREEN)Building release binaries v$(VERSION)...$(RESET)"
 	@mkdir -p $(DIST_DIR)
 	
 	@echo "$(WHITE)  Building Linux amd64...$(RESET)"
@@ -149,148 +382,40 @@ build-release: clean ## Build release binaries with version info
 	@echo "$(GREEN)✓ Release build complete$(RESET)"
 	@echo "$(WHITE)  Release artifacts in $(DIST_DIR)/$(RESET)"
 
-# Test targets
-test-unit: ## Run unit tests with coverage
-	@echo "$(CYAN)Running unit tests...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@go test -v -race -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./internal/...
-	@go tool cover -html=$(COVERAGE_DIR)/unit.out -o $(COVERAGE_DIR)/unit.html
-	@echo "$(GREEN)✓ Unit tests complete$(RESET)"
-	@echo "$(WHITE)  Coverage report: $(COVERAGE_DIR)/unit.html$(RESET)"
+.PHONY: shipit
+shipit: ## Build release artifacts (requires VERSION env var)
+	@echo "$(BLUE)Preparing release...$(RESET)"
+	@test -n "$(VERSION)" || { echo "$(RED)ERROR: VERSION not set$(RESET)"; exit 1; }
+	@echo "$(GREEN)OK. VERSION=$(VERSION)$(RESET)"
+	@$(MAKE) build-release VERSION=$(VERSION)
+	@echo ""
+	@echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo "$(WHITE)Release $(VERSION) artifacts ready in $(DIST_DIR)/$(RESET)"
+	@echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
 
-test-integration: ## Run integration tests
-	@echo "$(CYAN)Running integration tests...$(RESET)"
-	@go test -v -race -tags=integration ./tests/integration/...
-	@echo "$(GREEN)✓ Integration tests complete$(RESET)"
+##@ Cleanup
 
-test-plugins: ## Run plugin tests
-	@echo "$(CYAN)Running plugin tests...$(RESET)"
-	@go test -v -race ./pkg/plugins/...
-	@echo "$(GREEN)✓ Plugin tests complete$(RESET)"
-
-tests: test-unit test-integration test-plugins ## Run all tests
-	@echo "$(GREEN)✓ All tests complete$(RESET)"
-
-# Check targets
-fmt: ## Format code with gofmt
-	@echo "$(CYAN)Formatting code...$(RESET)"
-	@gofmt -w -s .
-	@echo "$(GREEN)✓ Code formatted$(RESET)"
-
-vet: ## Run go vet for static analysis
-	@echo "$(CYAN)Running go vet...$(RESET)"
-	@go vet ./...
-	@echo "$(GREEN)✓ Vet analysis complete$(RESET)"
-
-lint: ## Run golangci-lint
-	@echo "$(CYAN)Running golangci-lint...$(RESET)"
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run --timeout=5m; \
-		echo "$(GREEN)✓ Lint check complete$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠ golangci-lint not installed$(RESET)"; \
-		echo "$(WHITE)  Install with: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s latest$(RESET)"; \
-	fi
-
-check: fmt vet lint ## Run all checks
-	@echo "$(GREEN)✓ All checks complete$(RESET)"
-
-# Security targets
-vulncheck: ## Run govulncheck for vulnerabilities
-	@echo "$(CYAN)Running vulnerability check...$(RESET)"
-	@if command -v govulncheck >/dev/null 2>&1; then \
-		govulncheck ./...; \
-		echo "$(GREEN)✓ Vulnerability check complete$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠ govulncheck not installed$(RESET)"; \
-		echo "$(WHITE)  Install with: go install golang.org/x/vuln/cmd/govulncheck@latest$(RESET)"; \
-	fi
-
-trivy: ## Run trivy security scanner
-	@echo "$(CYAN)Running trivy security scan...$(RESET)"
-	@if command -v trivy >/dev/null 2>&1; then \
-		trivy fs --security-checks vuln,config .; \
-		echo "$(GREEN)✓ Security scan complete$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠ trivy not installed$(RESET)"; \
-		echo "$(WHITE)  Install from: https://github.com/aquasecurity/trivy$(RESET)"; \
-	fi
-
-security: vulncheck trivy ## Run all security checks
-	@echo "$(GREEN)✓ All security checks complete$(RESET)"
-
-# Development targets
-build-dev: ## Build development container
-	@echo "$(CYAN)Building development container...$(RESET)"
-	@docker build -f .devcontainer/Dockerfile -t $(DEV_CONTAINER) .
-	@echo "$(GREEN)✓ Development container built$(RESET)"
-
-dev: ## Run development container
-	@echo "$(CYAN)Starting development container...$(RESET)"
-	@docker run -it --rm \
-		-v $(PWD):/workspace \
-		-v $(HOME)/.ocfp:/root/.ocfp \
-		-w /workspace \
-		$(DEV_CONTAINER) \
-		/bin/bash
-	@echo "$(GREEN)✓ Development session ended$(RESET)"
-
-# Utility targets
-clean: ## Clean build artifacts
-	@echo "$(CYAN)Cleaning build artifacts...$(RESET)"
+.PHONY: clean
+clean: ## Clean build artifacts and test cache
+	@echo "$(YELLOW)Cleaning up...$(RESET)"
 	@rm -rf $(BUILD_DIR) $(DIST_DIR) $(COVERAGE_DIR)
+	@rm -f coverage.out coverage.html test.cov
 	@go clean -cache -testcache
-	@echo "$(GREEN)✓ Clean complete$(RESET)"
+	@echo "$(GREEN)✓ Cleanup complete$(RESET)"
 
-# Install target (for local development)
-install: build ## Install binary to GOPATH
-	@echo "$(CYAN)Installing $(BINARY_NAME)...$(RESET)"
-	@go install $(LDFLAGS) $(MAIN_PATH)
-	@echo "$(GREEN)✓ Installed to $(GOPATH)/bin/$(BINARY_NAME)$(RESET)"
+##@ CI/CD
 
-# Version info
-version: ## Show version information
-	@echo "$(BOLD)Version Information$(RESET)"
-	@echo "$(WHITE)  Version:    $(VERSION)$(RESET)"
-	@echo "$(WHITE)  Git Commit: $(GIT_COMMIT)$(RESET)"
-	@echo "$(WHITE)  Build Time: $(BUILD_TIME)$(RESET)"
-	@echo "$(WHITE)  Go Version: $(GO_VERSION)$(RESET)"
-
-# Dependencies
-deps: ## Download and verify dependencies
-	@echo "$(CYAN)Downloading dependencies...$(RESET)"
-	@go mod download
-	@go mod verify
-	@echo "$(GREEN)✓ Dependencies ready$(RESET)"
-
-# Run the application
-run: build ## Build and run the application
-	@echo "$(CYAN)Running $(BINARY_NAME)...$(RESET)"
-	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
-
-# Quick test for CI
-ci: deps check tests security ## Run CI pipeline locally
+.PHONY: ci
+ci: deps check-all test-all security ## Run full CI pipeline locally
 	@echo "$(GREEN)✓ CI pipeline complete$(RESET)"
 
-# Generate mocks
-mocks: ## Generate mock interfaces for testing
-	@echo "$(CYAN)Generating mocks...$(RESET)"
-	@if command -v mockgen >/dev/null 2>&1; then \
-		go generate ./...; \
-		echo "$(GREEN)✓ Mocks generated$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠ mockgen not installed$(RESET)"; \
-		echo "$(WHITE)  Install with: go install github.com/golang/mock/mockgen@latest$(RESET)"; \
-	fi
+##@ Info
 
-# Documentation
-docs: ## Generate documentation
-	@echo "$(CYAN)Generating documentation...$(RESET)"
-	@go doc -all > docs/API.md
-	@echo "$(GREEN)✓ Documentation generated$(RESET)"
-
-# Benchmark
-bench: ## Run benchmarks
-	@echo "$(CYAN)Running benchmarks...$(RESET)"
-	@go test -bench=. -benchmem ./...
-	@echo "$(GREEN)✓ Benchmarks complete$(RESET)"
+.PHONY: version
+version: ## Display version information
+	@echo "$(CYAN)Version Information$(RESET)"
+	@echo "$(WHITE)  Version:    $(VERSION)$(RESET)"
+	@echo "$(WHITE)  Git Branch: $(GIT_BRANCH)$(RESET)"
+	@echo "$(WHITE)  Git Commit: $(GIT_SHA)$(RESET)"
+	@echo "$(WHITE)  Build Time: $(BUILD_TIME)$(RESET)"
+	@echo "$(WHITE)  Go Version: $(GO_VERSION)$(RESET)"

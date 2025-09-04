@@ -60,7 +60,7 @@ routers, cells, and other component instances.`,
 
 			// Load configuration
 			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc-name")
+			blocName := viper.GetString("bloc")
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -73,7 +73,7 @@ routers, cells, and other component instances.`,
 			if !force && !dryRun {
 				fmt.Printf("Scale %s to %d instances? [y/N]: ", resource, count)
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Scaling cancelled by user")
 					return nil
@@ -90,7 +90,7 @@ routers, cells, and other component instances.`,
 			if err := provider.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize provider: %w", err)
 			}
-			defer provider.Cleanup(ctx)
+			defer func() { _ = provider.Cleanup(ctx) }()
 
 			// Perform scaling based on resource type
 			switch strings.ToLower(resource) {
