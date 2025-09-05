@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -228,14 +229,14 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd := []string{"ssh"}
 
 	// Validate inputs
-	err := security.ValidateInput(host, sshValidHostPattern)
+    err := security.ValidateInput(host, sshValidHostPattern)
 	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
 
 		return []string{"ssh", "--help"} // Return safe command
 	}
 
-	err := security.ValidateInput(user, sshValidUserPattern)
+    err = security.ValidateInput(user, sshValidUserPattern)
 	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
 
@@ -243,7 +244,7 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	}
 
 	if keyPath != "" {
-		err := security.ValidateInput(keyPath, sshValidPathPattern)
+        err = security.ValidateInput(keyPath, sshValidPathPattern)
 		if err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
 

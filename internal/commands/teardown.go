@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -313,7 +314,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	for i, resource := range sortedResources {
 		log.Info("Deleting resource", "type", resource.Type, "name", resource.Name, "progress", fmt.Sprintf("%d/%d", i+1, len(sortedResources)))
 
-		err := m.deleteResource(ctx, resource)
+        err := m.deleteResource(ctx, resource)
 		if err != nil {
 			log.Error("Failed to delete resource", "type", resource.Type, "name", resource.Name, "error", err)
 
@@ -323,13 +324,13 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 		deletedCount++
 
 		// Remove from state
-		err := m.stateManager.RemoveResource(resource.Type, resource.Name)
+        err = m.stateManager.RemoveResource(resource.Type, resource.Name)
 		if err != nil {
 			log.Warn("Failed to remove resource from state", "resource", resource.Name, "error", err)
 		}
 
 		// Save state after each successful deletion
-		err := m.stateManager.Save()
+        err = m.stateManager.Save()
 		if err != nil {
 			log.Warn("Failed to save state", "error", err)
 		}

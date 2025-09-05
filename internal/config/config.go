@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -314,7 +315,7 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	}
 
 	// Validate configuration
-	err := validate(cfg)
+	err = validate(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}

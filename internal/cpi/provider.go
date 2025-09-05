@@ -2,6 +2,7 @@ package cpi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 

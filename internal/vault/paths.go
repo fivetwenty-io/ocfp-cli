@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"

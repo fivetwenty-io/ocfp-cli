@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -215,7 +216,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 			{"cf_plugins", m.installCFPlugins},
 			{"git_repos", m.cloneGitRepositories},
 		}
-		err := m.runPhasesParallel(ctx, par)
+		err = m.runPhasesParallel(ctx, par)
 		if err != nil {
 			return err
 		}
@@ -236,7 +237,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 			{"verification", m.verifyInstallation},
 			{"health_check", m.runHealthCheck},
 		}
-		err := m.runPhasesSequential(ctx, post)
+		err = m.runPhasesSequential(ctx, post)
 		if err != nil {
 			return err
 		}
@@ -880,7 +881,7 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 	}
 
 	// Copy SSH keys
-	err := m.copySSHKeys(ctx)
+	err = m.copySSHKeys(ctx)
 	if err != nil {
 		m.log.Warn("Failed to copy SSH keys", "error", err.Error())
 	}

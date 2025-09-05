@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"

@@ -2,7 +2,9 @@ package stackit
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"

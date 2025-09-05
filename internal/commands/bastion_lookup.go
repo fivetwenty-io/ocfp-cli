@@ -1,9 +1,9 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"strings"
+    "context"
+    "fmt"
+    "strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"

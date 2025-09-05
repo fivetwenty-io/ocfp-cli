@@ -1,12 +1,12 @@
 package commands
 
 import (
-	"bufio"
-	"fmt"
-	"io"
-	"net/http"
-	"regexp"
-	"strings"
+    "bufio"
+    "fmt"
+    "io"
+    "net/http"
+    "regexp"
+    "strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )

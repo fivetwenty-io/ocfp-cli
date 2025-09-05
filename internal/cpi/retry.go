@@ -3,6 +3,7 @@ package cpi
 import (
 	"context"
 	crand "crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"

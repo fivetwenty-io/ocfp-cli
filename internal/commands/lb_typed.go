@@ -2,8 +2,10 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"

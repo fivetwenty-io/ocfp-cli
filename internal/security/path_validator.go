@@ -1,6 +1,7 @@
 package security
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"

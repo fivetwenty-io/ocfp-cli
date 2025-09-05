@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"

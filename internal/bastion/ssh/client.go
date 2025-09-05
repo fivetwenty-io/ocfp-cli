@@ -2,12 +2,14 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
