@@ -168,7 +168,7 @@ blocs:
 
 		// This will fail with authentication error, but should reach the stackit CLI
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		// The error should be about authentication, not missing commands
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 	})
@@ -219,7 +219,7 @@ blocs:
 
 			if provider == "stackit" {
 				// STACKIT should fail with credential error
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 			} else {
 				// Other providers should succeed with placeholder warning
@@ -280,7 +280,7 @@ blocs:
 		cmd.SetArgs([]string{"login", "--iaas", "unknown-provider", "--bloc", "test"})
 
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported provider")
 	})
 }
@@ -338,7 +338,7 @@ func TestProviderNetworkFlow(t *testing.T) {
 
 		err := client.Initialize(ctx, config)
 		// This should fail with authentication error, not initialization error
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to initialize STACKIT provider")
 	})
 

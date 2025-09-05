@@ -126,7 +126,7 @@ blocs:
 
 		assert.Equal(t, "test-network", cfg.Network.Name)
 		assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
-		assert.Equal(t, 2, len(cfg.Network.DNS))
+		assert.Len(t, cfg.Network.DNS, 2)
 	})
 
 	t.Run("BastionConfiguration", func(t *testing.T) {

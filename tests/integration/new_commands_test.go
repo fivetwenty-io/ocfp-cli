@@ -44,11 +44,11 @@ blocs:
 
 		// Test with no args (should fail)
 		err := cmd.Args(cmd, []string{})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with valid action
 		err = cmd.Args(cmd, []string{"login"})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Test with invalid action
 		err = cmd.Args(cmd, []string{"invalid-action"})
@@ -94,7 +94,7 @@ blocs:
 
 		// This should fail since we don't have real STACKIT credentials
 		err := cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 	})
 }
@@ -173,11 +173,11 @@ blocs:
 
 		// Test with no args (should fail)
 		err := cmd.Args(cmd, []string{})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with valid actions
 		err = cmd.Args(cmd, []string{"init"})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		err = cmd.Args(cmd, []string{"provision"})
 		assert.NoError(t, err)
@@ -207,7 +207,7 @@ blocs:
 
 		// This should fail because no bastion-init script exists
 		err := cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot find bastion-init script")
 	})
 
@@ -220,7 +220,7 @@ blocs:
 
 		// This should fail because no provision script exists
 		err := cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot find bastion provision script")
 	})
 
@@ -291,7 +291,7 @@ blocs:
 		// This will attempt to read from vault and fail
 		// But we can verify it tried the vault path
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 	})
 }
@@ -380,7 +380,7 @@ blocs:
 
 		// Should fail due to credentials but should find the bloc config
 		err := providerCmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 
 		// Test provider command with apps bloc
@@ -388,7 +388,7 @@ blocs:
 		providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "apps"})
 
 		err = providerCmd2.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 	})
 }
@@ -401,21 +401,21 @@ func TestCommandErrorHandling(t *testing.T) {
 		// Test missing action
 		cmd.SetArgs([]string{})
 		err := cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "requires at least 1 arg")
 
 		// Test unknown action
 		cmd = commands.NewProviderCmd()
 		cmd.SetArgs([]string{"unknown-action"})
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown provider action")
 
 		// Test missing provider
 		cmd = commands.NewProviderCmd()
 		cmd.SetArgs([]string{"login"})
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "provider not specified")
 	})
 
@@ -425,14 +425,14 @@ func TestCommandErrorHandling(t *testing.T) {
 		// Test missing action
 		cmd.SetArgs([]string{})
 		err := cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "requires at least 1 arg")
 
 		// Test unknown action
 		cmd = commands.NewBastionCmd()
 		cmd.SetArgs([]string{"unknown-action"})
 		err = cmd.Execute()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown bastion action")
 	})
 

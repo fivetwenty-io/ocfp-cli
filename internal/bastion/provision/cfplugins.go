@@ -21,9 +21,9 @@ type CFPlugin struct {
 	Name              string `yaml:"name"`
 	Enabled           bool   `yaml:"enabled"`
 	Repo              string `yaml:"repo"`
-	RepoURL           string `yaml:"repo_url"`
-	GitHubRepo        string `yaml:"github_repo"`
-	InstallFromGitHub bool   `yaml:"install_from_github"`
+	RepoURL           string `yaml:"repoUrl"`
+	GitHubRepo        string `yaml:"githubRepo"`
+	InstallFromGitHub bool   `yaml:"installFromGithub"`
 	Version           string `yaml:"version"`
 	Force             bool   `yaml:"force"`
 }
@@ -70,39 +70,39 @@ func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 			disable[strings.ToLower(n)] = struct{}{}
 		}
 		if len(enable) > 0 || len(disable) > 0 {
-			for i := range plugins {
-				name := strings.ToLower(plugins[i].Name)
+			for index := range plugins {
+				name := strings.ToLower(plugins[index].Name)
 				if _, ok := enable[name]; ok {
-					plugins[i].Enabled = true
+					plugins[index].Enabled = true
 				}
 				if _, ok := disable[name]; ok {
-					plugins[i].Enabled = false
+					plugins[index].Enabled = false
 				}
 			}
 		}
 		// Per-plugin overrides by name
 		if cfm.config.Bastion.CFPluginOverrides != nil {
-			for i := range plugins {
-				name := strings.ToLower(plugins[i].Name)
-				for k, ov := range cfm.config.Bastion.CFPluginOverrides {
-					if strings.ToLower(k) != name {
+			for index := range plugins {
+				name := strings.ToLower(plugins[index].Name)
+				for key, override := range cfm.config.Bastion.CFPluginOverrides {
+					if strings.ToLower(key) != name {
 						continue
 					}
-					if ov.GitHubRepo != "" {
-						plugins[i].GitHubRepo = ov.GitHubRepo
-						plugins[i].InstallFromGitHub = true
+					if override.GitHubRepo != "" {
+						plugins[index].GitHubRepo = override.GitHubRepo
+						plugins[index].InstallFromGitHub = true
 					}
-					if ov.Version != "" {
-						plugins[i].Version = ov.Version
+					if override.Version != "" {
+						plugins[index].Version = override.Version
 					}
-					if ov.Repo != "" {
-						plugins[i].Repo = ov.Repo
+					if override.Repo != "" {
+						plugins[index].Repo = override.Repo
 					}
-					if ov.RepoURL != "" {
-						plugins[i].RepoURL = ov.RepoURL
+					if override.RepoURL != "" {
+						plugins[index].RepoURL = override.RepoURL
 					}
-					if ov.Force != nil {
-						plugins[i].Force = *ov.Force
+					if override.Force != nil {
+						plugins[index].Force = *override.Force
 					}
 				}
 			}

@@ -16,11 +16,11 @@ import (
 // State represents the current state of an OCFP environment
 type State struct {
 	Version      string                 `json:"version" yaml:"version"`
-	BlocName     string                 `json:"bloc_name" yaml:"bloc_name"`
+	BlocName     string                 `json:"blocName" yaml:"blocName"`
 	Provider     string                 `json:"provider" yaml:"provider"`
 	Region       string                 `json:"region" yaml:"region"`
-	CreatedAt    time.Time              `json:"created_at" yaml:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at" yaml:"updated_at"`
+	CreatedAt    time.Time              `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt    time.Time              `json:"updatedAt" yaml:"updatedAt"`
 	Resources    map[string]*Resource   `json:"resources" yaml:"resources"`
 	Outputs      map[string]interface{} `json:"outputs" yaml:"outputs"`
 	Dependencies map[string][]string    `json:"dependencies" yaml:"dependencies"`
@@ -35,8 +35,8 @@ type Resource struct {
 	State      string                 `json:"state" yaml:"state"`
 	Properties map[string]interface{} `json:"properties" yaml:"properties"`
 	Tags       map[string]string      `json:"tags" yaml:"tags"`
-	CreatedAt  time.Time              `json:"created_at" yaml:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at" yaml:"updated_at"`
+	CreatedAt  time.Time              `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt  time.Time              `json:"updatedAt" yaml:"updatedAt"`
 }
 
 // Manager handles state persistence and retrieval
@@ -200,14 +200,14 @@ func (m *Manager) RemoveResource(resourceType, resourceName string) error {
 
 	// Remove from dependencies
 	delete(m.current.Dependencies, key)
-	for k, deps := range m.current.Dependencies {
+	for resourceKey, deps := range m.current.Dependencies {
 		filtered := make([]string, 0)
 		for _, dep := range deps {
 			if dep != key {
 				filtered = append(filtered, dep)
 			}
 		}
-		m.current.Dependencies[k] = filtered
+		m.current.Dependencies[resourceKey] = filtered
 	}
 
 	logger.Debugf("Removed resource %s from state", key)

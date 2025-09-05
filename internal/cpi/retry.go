@@ -43,7 +43,7 @@ func DefaultRetryConfig() *RetryConfig {
 type RetryableFunc func(ctx context.Context) error
 
 // WithRetry executes a function with retry logic
-func WithRetry(ctx context.Context, cfg *RetryConfig, fn RetryableFunc) error {
+func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFunc) error {
 	if cfg == nil {
 		cfg = DefaultRetryConfig()
 	}
@@ -60,7 +60,7 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, fn RetryableFunc) error {
 		}
 
 		// Execute the function
-		err := fn(ctx)
+		err := retryableFunc(ctx)
 		if err == nil {
 			return nil
 		}
@@ -155,11 +155,11 @@ func calculateDelay(baseDelay time.Duration, cfg *RetryConfig) time.Duration {
 }
 
 // contains checks if a string contains a substring (case-insensitive)
-func contains(s, substr string) bool {
-	if len(s) == 0 || len(substr) == 0 {
+func contains(str, substr string) bool {
+	if len(str) == 0 || len(substr) == 0 {
 		return false
 	}
-	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+	return strings.Contains(strings.ToLower(str), strings.ToLower(substr))
 }
 
 // ExponentialBackoff implements exponential backoff with context support
@@ -220,11 +220,11 @@ func (b *ExponentialBackoff) NextBackOff() time.Duration {
 }
 
 // Retry executes a function with exponential backoff
-func (b *ExponentialBackoff) Retry(ctx context.Context, fn RetryableFunc) error {
+func (b *ExponentialBackoff) Retry(ctx context.Context, retryableFunc RetryableFunc) error {
 	b.Reset()
 
 	for {
-		err := fn(ctx)
+		err := retryableFunc(ctx)
 		if err == nil {
 			return nil
 		}
@@ -249,7 +249,7 @@ func (b *ExponentialBackoff) Retry(ctx context.Context, fn RetryableFunc) error 
 }
 
 // RetryOnConflict retries an operation when a conflict occurs
-func RetryOnConflict(ctx context.Context, fn RetryableFunc) error {
+func RetryOnConflict(ctx context.Context, retryableFunc RetryableFunc) error {
 	backoff := &ExponentialBackoff{
 		InitialInterval: 100 * time.Millisecond,
 		MaxInterval:     3 * time.Second,
@@ -258,7 +258,7 @@ func RetryOnConflict(ctx context.Context, fn RetryableFunc) error {
 	}
 
 	return backoff.Retry(ctx, func(ctx context.Context) error {
-		err := fn(ctx)
+		err := retryableFunc(ctx)
 		if err != nil && IsAlreadyExists(err) {
 			return err // Retry on conflict
 		}
@@ -309,7 +309,7 @@ type RateLimiter struct {
 
 // NewRateLimiter creates a new rate limiter
 func NewRateLimiter(rate int, burst int) *RateLimiter {
-	rl := &RateLimiter{
+	rateLimiter := &RateLimiter{
 		rate:   rate,
 		burst:  burst,
 		tokens: make(chan struct{}, burst),
@@ -317,26 +317,26 @@ func NewRateLimiter(rate int, burst int) *RateLimiter {
 	}
 
 	// Fill initial tokens
-	for i := 0; i < burst; i++ {
-		rl.tokens <- struct{}{}
+	for index := 0; index < burst; index++ {
+		rateLimiter.tokens <- struct{}{}
 	}
 
 	// Start token refill goroutine
-	rl.ticker = time.NewTicker(time.Second / time.Duration(rate))
-	go rl.refill()
+	rateLimiter.ticker = time.NewTicker(time.Second / time.Duration(rate))
+	go rateLimiter.refill()
 
-	return rl
+	return rateLimiter
 }
 
 // refill adds tokens at the configured rate
-func (rl *RateLimiter) refill() {
+func (rateLimiter *RateLimiter) refill() {
 	for {
 		select {
-		case <-rl.stopCh:
+		case <-rateLimiter.stopCh:
 			return
-		case <-rl.ticker.C:
+		case <-rateLimiter.ticker.C:
 			select {
-			case rl.tokens <- struct{}{}:
+			case rateLimiter.tokens <- struct{}{}:
 			default:
 				// Channel full, skip
 			}
@@ -345,19 +345,19 @@ func (rl *RateLimiter) refill() {
 }
 
 // Wait blocks until a token is available
-func (rl *RateLimiter) Wait(ctx context.Context) error {
+func (rateLimiter *RateLimiter) Wait(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-rl.tokens:
+	case <-rateLimiter.tokens:
 		return nil
 	}
 }
 
 // Stop stops the rate limiter
-func (rl *RateLimiter) Stop() {
-	close(rl.stopCh)
-	rl.ticker.Stop()
+func (rateLimiter *RateLimiter) Stop() {
+	close(rateLimiter.stopCh)
+	rateLimiter.ticker.Stop()
 }
 
 // CircuitBreaker implements the circuit breaker pattern
@@ -382,7 +382,7 @@ func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBrea
 }
 
 // Call executes a function with circuit breaker protection
-func (cb *CircuitBreaker) Call(ctx context.Context, fn RetryableFunc) error {
+func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc) error {
 	// Check circuit state
 	switch cb.state {
 	case "open":
@@ -395,7 +395,7 @@ func (cb *CircuitBreaker) Call(ctx context.Context, fn RetryableFunc) error {
 	}
 
 	// Execute function
-	err := fn(ctx)
+	err := retryableFunc(ctx)
 
 	// Update circuit state based on result
 	if err != nil {

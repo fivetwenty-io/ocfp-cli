@@ -40,7 +40,7 @@ blocs:
 - During the bootstrap process, OCFP will create the specified number of jumpbox public IPs
 - Each IP is labeled with:
   - `managed-by=ocfp`
-  - `bloc={bloc-name}`
+  - `bloc={bloc}`
   - `env=mgmt`
   - `job=jumpbox`
   - `index={0-based-index}`
@@ -86,7 +86,7 @@ blocs:
 - During the bootstrap process, OCFP will create the specified number of router public IPs
 - Each IP is labeled with:
   - `managed-by=ocfp`
-  - `bloc={bloc-name}`
+  - `bloc={bloc}`
   - `env=mgmt`
   - `job=router`
   - `index={0-based-index}`
@@ -117,7 +117,7 @@ blocs:
 - During the bootstrap process, OCFP will create the specified number of CF SSH public IPs
 - Each IP is labeled with:
   - `managed-by=ocfp`
-  - `bloc={bloc-name}`
+  - `bloc={bloc}`
   - `env=mgmt`
   - `job=cf-ssh`
   - `index={0-based-index}`
@@ -148,7 +148,7 @@ blocs:
 - During the bootstrap process, OCFP will create the specified number of TCP router public IPs
 - Each IP is labeled with:
   - `managed-by=ocfp`
-  - `bloc={bloc-name}`
+  - `bloc={bloc}`
   - `env=mgmt`
   - `job=tcp-router`
   - `index={0-based-index}`
@@ -187,10 +187,10 @@ stackit public-ip list
 
 #### Public IP Preservation
 
-By default, the `ocfp teardown` command preserves public IPs to avoid disrupting production traffic. To include public IPs in teardown, you must explicitly use the `--public-ips` flag:
+By default, the `ocfp teardown` command preserves public IPs to avoid disrupting production traffic. To include public IPs in teardown, you must explicitly use the `--public-ips` flag. The provider is derived from the bloc configuration; no `--iaas` flag is needed:
 
 ```bash
-ocfp teardown --bloc production --region eu01 --iaas stackit --public-ips --force
+ocfp teardown --bloc production --region eu01 --public-ips --force
 ```
 
 ## Implementation Status

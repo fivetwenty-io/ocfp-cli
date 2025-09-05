@@ -199,18 +199,18 @@ func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manage
 
 	manager.progress.TotalSteps = len(phases)
 
-	for i, phase := range phases {
+	for phaseIndex, phase := range phases {
 		if manager.shouldSkipPhase(phase.name) {
 			le.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 			continue
 		}
 
 		manager.progress.CurrentStep = phase.name
-		manager.progress.CompletedSteps = i
+		manager.progress.CompletedSteps = phaseIndex
 
 		le.log.Info("Executing local phase",
 			"phase", phase.name,
-			"progress", fmt.Sprintf("%d/%d", i+1, len(phases)))
+			"progress", fmt.Sprintf("%d/%d", phaseIndex+1, len(phases)))
 
 		if le.options.DryRun {
 			le.log.Info("DRY RUN: Would execute local phase", "phase", phase.name)
@@ -301,11 +301,11 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 	}
 
 	// Copy file contents
-	in, err := os.Open(local) // #nosec G304 - path validated above
+	inputFile, err := os.Open(local) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer func() { _ = in.Close() }()
+	defer func() { _ = inputFile.Close() }()
 
 	out, err := os.Create(remote) // #nosec G304 - path validated above
 	if err != nil {
@@ -316,7 +316,7 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 		_ = out.Close()
 	}()
 
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, inputFile); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 

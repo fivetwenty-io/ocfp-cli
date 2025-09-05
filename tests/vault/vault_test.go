@@ -34,7 +34,7 @@ func TestVaultClient(t *testing.T) {
 
 	// Test connection validation
 	err = client.ValidateConnection()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // TestSafeOperations tests safe wrapper operations
@@ -55,11 +55,11 @@ func TestSafeOperations(t *testing.T) {
 
 	// Test Set operation
 	err := safe.Set(testPath, "test_key", "test_value")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Test Get operation
 	value, err := safe.Get(testPath, "test_key")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "test_value", value)
 
 	// Test SetMultiple operation
@@ -69,11 +69,11 @@ func TestSafeOperations(t *testing.T) {
 		"key3": 123,
 	}
 	err = safe.SetMultiple(testPath, data)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Test GetAll operation
 	allData, err := safe.GetAll(testPath)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Contains(t, allData, "key1")
 	assert.Contains(t, allData, "key2")
 	assert.Contains(t, allData, "key3")
@@ -81,11 +81,11 @@ func TestSafeOperations(t *testing.T) {
 
 	// Test Delete operation
 	err = safe.Delete(testPath, "")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify deletion
 	exists, err := safe.Exists(testPath)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, exists)
 }
 
@@ -106,13 +106,13 @@ func TestEngineDetection(t *testing.T) {
 
 	// Test secret mount (typically KV v2)
 	info, err := detector.DetectEngineForPath("secret/test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, info)
 	assert.Contains(t, []string{"kv-v1", "kv-v2"}, info.Type)
 
 	// Test IsKVv2
 	isV2, err := detector.IsKVv2("secret/test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	t.Logf("secret/ mount is KV v2: %v", isV2)
 
 	// Test cache functionality
@@ -126,7 +126,7 @@ func TestSecretGeneration(t *testing.T) {
 
 	// Test password generation
 	password, err := generator.GenerateSimplePassword(20)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, password, 20)
 
 	// Test with options
@@ -139,19 +139,19 @@ func TestSecretGeneration(t *testing.T) {
 		ExcludeAmbiguous: true,
 	}
 	password2, err := generator.GeneratePassword(opts)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, password2, 16)
 
 	// Test inception secrets
 	secrets, err := generator.GenerateInceptionSecrets("test-deployment")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, secrets.AdminPassword)
 	assert.NotEmpty(t, secrets.DirectorPassword)
 	assert.Equal(t, "test-deployment", secrets.DeploymentName)
 
 	// Test default secrets
 	defaultSecrets, err := generator.GenerateDefaultSecrets("test-deployment")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, defaultSecrets.AdminPassword)
 	assert.Equal(t, "test-deployment", defaultSecrets.DeploymentName)
 }
@@ -200,12 +200,12 @@ func TestValidation(t *testing.T) {
 
 	// Test path validation
 	result, err := validator.ValidateVaultPath("secret/test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, result)
 
 	// Test invalid path
 	result, err = validator.ValidateVaultPath("")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, result.Valid)
 	assert.NotEmpty(t, result.Errors)
 }
@@ -240,21 +240,21 @@ func TestPolicyManagement(t *testing.T) {
 	}
 
 	err := policyManager.CreatePolicy(policy)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Test policy retrieval
 	policyHCL, err := policyManager.GetPolicy("test-policy")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Contains(t, policyHCL, "secret/test/*")
 
 	// Test policy listing
 	policies, err := policyManager.ListPolicies()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Contains(t, policies, "test-policy")
 
 	// Cleanup
 	err = policyManager.DeletePolicy("test-policy")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // Helper functions for testing

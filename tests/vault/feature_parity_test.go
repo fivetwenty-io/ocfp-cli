@@ -40,7 +40,7 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 			assert.NoError(t, err, "STACKIT populate should succeed")
 		} else {
 			// Other providers should fail gracefully with "not implemented"
-			assert.Error(t, err)
+			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not implemented")
 		}
 	})
@@ -55,7 +55,7 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 		if cfg.Provider == "stackit" {
 			assert.NoError(t, err, "STACKIT public IPs populate should succeed")
 		} else {
-			assert.Error(t, err)
+			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not implemented")
 		}
 	})
@@ -162,23 +162,23 @@ func TestStackitProviderSpecific(t *testing.T) {
 
 	t.Run("SaveConfigToVault", func(t *testing.T) {
 		err := provider.SaveConfigToVault()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Verify config was stored
 		configPath := "secret/config/stackit-test/ocfp"
 		config, err := safe.Get(configPath, "config")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotEmpty(t, config)
 	})
 
 	t.Run("ConfigurePublicIPs", func(t *testing.T) {
 		err := provider.ConfigurePublicIPs()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Verify public IPs were configured
 		publicIPsPath := "secret/config/stackit-test/ocf/public-ips"
 		publicIPs, err := safe.GetAll(publicIPsPath)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotEmpty(t, publicIPs)
 
 		// Check for expected CF router IPs
@@ -225,7 +225,7 @@ func TestIntegrationWorkflow(t *testing.T) {
 		}
 
 		err = manager.Migrate(migrateOpts)
-		assert.NoError(t, err, "Migration dry-run should succeed")
+		require.NoError(t, err, "Migration dry-run should succeed")
 
 		// Step 4: Test populate
 		populateOpts := &vault.PopulateOptions{
@@ -233,7 +233,7 @@ func TestIntegrationWorkflow(t *testing.T) {
 		}
 
 		err = manager.Populate(populateOpts)
-		assert.NoError(t, err, "Populate dry-run should succeed")
+		require.NoError(t, err, "Populate dry-run should succeed")
 
 		// Cleanup: Remove test data
 		err = safe.Delete(inceptionPath, "")

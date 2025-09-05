@@ -29,11 +29,11 @@ func NewVerificationManager(provider string, cfg *config.Config) *VerificationMa
 type ToolVerification struct {
 	Name            string   `yaml:"name"`
 	Commands        []string `yaml:"commands"`
-	VersionCommand  string   `yaml:"version_command"`
-	ConfigCheck     string   `yaml:"config_check"`
-	ServiceCheck    string   `yaml:"service_check"`
+	VersionCommand  string   `yaml:"versionCommand"`
+	ConfigCheck     string   `yaml:"configCheck"`
+	ServiceCheck    string   `yaml:"serviceCheck"`
 	Required        bool     `yaml:"required"`
-	PostInstallTest string   `yaml:"post_install_test"`
+	PostInstallTest string   `yaml:"postInstallTest"`
 }
 
 // GetToolVerifications returns comprehensive tool verifications

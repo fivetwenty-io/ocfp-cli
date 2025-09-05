@@ -21,8 +21,10 @@ import (
 // NewBootstrapCmd creates the bootstrap command
 func NewBootstrapCmd() *cobra.Command {
 	var (
-		blocs string
-		force bool
+		blocs  string
+		force  bool
+		dryRun bool
+		output string
 	)
 
 	cmd := &cobra.Command{
@@ -53,10 +55,14 @@ This includes:
 	// Command-specific flags
 	cmd.Flags().StringVarP(&blocs, "blocs", "b", "all", "specific blocs to bootstrap (comma-separated)")
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview actions without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (dry-run only)")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
 	_ = viper.BindPFlag("bootstrap.force", cmd.Flags().Lookup("force"))
+	_ = viper.BindPFlag("dry_run", cmd.Flags().Lookup("dry-run"))
+	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
 
 	return cmd
 }
@@ -83,9 +89,9 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 
 	// Run for explicit list of blocs
 	sel := []string{}
-	for _, s := range splitAndTrim(blocsFlag) {
-		if s != "" {
-			sel = append(sel, s)
+	for _, blocName := range splitAndTrim(blocsFlag) {
+		if blocName != "" {
+			sel = append(sel, blocName)
 		}
 	}
 	if err := runBootstrapForSelection(configFile, sel); err != nil {
@@ -108,13 +114,13 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}
-	var cf struct {
+	var configData struct {
 		Blocs map[string]interface{} `yaml:"blocs"`
 	}
-	if err := yaml.Unmarshal(data, &cf); err != nil {
+	if err := yaml.Unmarshal(data, &configData); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", configFile, err)
 	}
-	if len(cf.Blocs) == 0 {
+	if len(configData.Blocs) == 0 {
 		// No blocs defined; try single via --bloc
 		single := viper.GetString("bloc_name")
 		if single == "" {
@@ -126,16 +132,16 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 	// Build list to run
 	toRun := []string{}
 	if len(selected) == 0 {
-		for blocName := range cf.Blocs {
+		for blocName := range configData.Blocs {
 			toRun = append(toRun, blocName)
 		}
 	} else {
 		// Filter by selected names
 		want := map[string]bool{}
-		for _, n := range selected {
-			want[n] = true
+		for _, blocName := range selected {
+			want[blocName] = true
 		}
-		for blocName := range cf.Blocs {
+		for blocName := range configData.Blocs {
 			if want[blocName] {
 				toRun = append(toRun, blocName)
 			}
@@ -154,19 +160,15 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 }
 
 func runBootstrapForBloc(configFile, blocName string) error {
-	iaas := viper.GetString("iaas")
-	region := viper.GetString("region")
 	force := viper.GetBool("bootstrap.force")
 
 	if blocName == "" {
 		return fmt.Errorf("bloc is required")
 	}
-	if iaas == "" {
-		return fmt.Errorf("iaas provider is required")
-	}
+	// Provider will be derived from bloc configuration
 
 	// Initialize logger per bloc
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs")
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
 	if err := logger.Initialize(logger.Config{
 		Level:     viper.GetString("log_level"),
 		Debug:     viper.GetBool("debug"),
@@ -188,12 +190,43 @@ func runBootstrapForBloc(configFile, blocName string) error {
 		return fmt.Errorf("failed to load configuration for bloc %s: %w", blocName, err)
 	}
 
-	// Create provider config
+	// Determine provider and region from configuration (allow --region override)
+	iaas := cfg.Provider
+	if iaas == "" {
+		iaas = cfg.IaaS
+	}
+	if iaas == "" {
+		return fmt.Errorf("provider must be specified in bloc config '%s'", blocName)
+	}
+	region := cfg.Region
+	if v := viper.GetString("region"); v != "" {
+		region = v
+	}
+
+	// Create provider config (include auth fields for providers like STACKIT)
 	providerConfig := map[string]interface{}{
 		"project_id": cfg.ProjectID,
 		"org_id":     cfg.OrgID,
 		"auth_token": cfg.AuthToken,
 		"region":     region,
+	}
+
+	// Prefer service account JSON/token when present
+	if cfg.ServiceAccountJSON != "" {
+		providerConfig["service_account_json"] = cfg.ServiceAccountJSON
+	}
+	if cfg.ServiceAccountToken != "" {
+		providerConfig["service_account_token"] = cfg.ServiceAccountToken
+	}
+	// If key path is provided and JSON not set, try to read it
+	if providerConfig["service_account_json"] == nil && cfg.ServiceAccountKeyPath != "" {
+		if content, err := os.ReadFile(cfg.ServiceAccountKeyPath); err == nil {
+			providerConfig["service_account_json"] = string(content)
+		}
+	}
+	// Map optional API endpoint override
+	if cfg.APIEndpoint != "" {
+		providerConfig["base_url"] = cfg.APIEndpoint
 	}
 
 	// Initialize provider
@@ -216,6 +249,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 		Region:   region,
 		Force:    force,
 		DryRun:   viper.GetBool("dry_run"),
+		Output:   viper.GetString("bootstrap.output"),
 		Timeout:  30 * time.Minute,
 	}
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
@@ -232,17 +266,17 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	return nil
 }
 
-func splitAndTrim(s string) []string {
+func splitAndTrim(input string) []string {
 	parts := []string{}
 	curr := ""
-	for i := 0; i < len(s); i++ {
-		if s[i] == ',' {
+	for charIndex := 0; charIndex < len(input); charIndex++ {
+		if input[charIndex] == ',' {
 			if curr != "" {
 				parts = append(parts, strings.TrimSpace(curr))
 			}
 			curr = ""
 		} else {
-			curr += string(s[i])
+			curr += string(input[charIndex])
 		}
 	}
 	if curr != "" {

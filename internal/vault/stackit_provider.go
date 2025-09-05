@@ -213,14 +213,14 @@ func (s *StackitVaultProvider) configureSubnets(envPath, envType string) error {
 		lastHost := fmt.Sprintf("%s.254", cidrPrefix)
 
 		// Get AZ for this subnet
-		var az string
+		var availabilityZone string
 		if len(s.Config.AZs) > subnetNum {
 			azNames := make([]string, 0, len(s.Config.AZs))
 			for name := range s.Config.AZs {
 				azNames = append(azNames, name)
 			}
 			if subnetNum < len(azNames) {
-				az = azNames[subnetNum]
+				availabilityZone = azNames[subnetNum]
 			}
 		}
 
@@ -232,7 +232,7 @@ func (s *StackitVaultProvider) configureSubnets(envPath, envType string) error {
 			"ip_n":        lastHost,
 			"gateway":     gateway,
 			"dns":         s.Config.DNS,
-			"az":          az,
+			"az":          availabilityZone,
 			"type":        subnetType,
 		}
 
@@ -553,17 +553,17 @@ func (s *StackitVaultProvider) buildLBServiceTargetsFromState() map[string]map[s
 	out := map[string]map[string]interface{}{}
 
 	// Load state for bloc
-	sm, err := state.NewManager("")
+	stateManager, err := state.NewManager("")
 	if err != nil {
 		return out
 	}
-	if _, err := sm.Load(s.BlocName); err != nil {
+	if _, err := stateManager.Load(s.BlocName); err != nil {
 		return out
 	}
 
 	get := func(idx int, key string) string {
 		k := fmt.Sprintf("reserved_%s-ocfp-%d_%s", s.BlocName, idx, key)
-		v, err := sm.GetOutput(k)
+		v, err := stateManager.GetOutput(k)
 		if err != nil {
 			return ""
 		}
@@ -628,17 +628,17 @@ func (s *StackitVaultProvider) buildLBServiceTargetsFromState() map[string]map[s
 
 	// Routers: consume public IP resources by job label
 	getPublicIPs := func(job string) []string {
-		res, _ := sm.ListResources("public_ip")
+		res, _ := stateManager.ListResources("public_ip")
 		ips := []string{}
-		for _, r := range res {
-			if r.Tags != nil && r.Tags["job"] == job {
-				if addr, ok := r.Properties["address"].(string); ok && addr != "" {
+		for _, resource := range res {
+			if resource.Tags != nil && resource.Tags["job"] == job {
+				if addr, ok := resource.Properties["address"].(string); ok && addr != "" {
 					ips = append(ips, addr)
 				}
 				continue
 			}
-			if j, ok := r.Properties["job"].(string); ok && j == job {
-				if addr, ok := r.Properties["address"].(string); ok && addr != "" {
+			if j, ok := resource.Properties["job"].(string); ok && j == job {
+				if addr, ok := resource.Properties["address"].(string); ok && addr != "" {
 					ips = append(ips, addr)
 				}
 			}

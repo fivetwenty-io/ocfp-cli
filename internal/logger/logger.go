@@ -59,22 +59,13 @@ func Initialize(cfg Config) error {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// Create console encoder for terminal output
-	consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
-
-	// Default to console output
-	cores := []zapcore.Core{
-		zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stderr), atom),
+	// Always log to file (JSON) only; stdout/stderr reserved for user UX
+	cores := []zapcore.Core{}
+	fileCore, err := createFileCore(cfg, encoderConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create file logger: %w", err)
 	}
-
-	// Add file logging if not disabled
-	if !cfg.NoLog && cfg.LogDir != "" {
-		fileCore, err := createFileCore(cfg, encoderConfig)
-		if err != nil {
-			return fmt.Errorf("failed to create file logger: %w", err)
-		}
-		cores = append(cores, fileCore)
-	}
+	cores = append(cores, fileCore)
 
 	// Create the logger
 	core := zapcore.NewTee(cores...)
@@ -101,20 +92,28 @@ func Initialize(cfg Config) error {
 
 // createFileCore creates a file logging core
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
-	// Create log directory if it doesn't exist
-	if err := os.MkdirAll(cfg.LogDir, 0750); err != nil {
+	// Place logs under {LogDir}/{command}/{timestamp}.log
+	baseDir := cfg.LogDir
+	if baseDir == "" {
+		// Fallback to ~/.ocfp/log if not provided
+		if home, err := os.UserHomeDir(); err == nil {
+			baseDir = filepath.Join(home, ".ocfp", "log")
+		}
+	}
+	// Ensure per-command subdirectory
+	dir := filepath.Join(baseDir, cfg.Command)
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, err
 	}
 
-	// Generate log filename
+	// Generate filename by timestamp (and optional request ID)
 	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("%s-%s-%s", timestamp, cfg.Command, cfg.BlocName)
+	filename := fmt.Sprintf("%s.log", timestamp)
 	if cfg.RequestID != "" {
-		filename = fmt.Sprintf("%s-%s", filename, cfg.RequestID)
+		filename = fmt.Sprintf("%s-%s.log", timestamp, cfg.RequestID)
 	}
-	filename = fmt.Sprintf("%s.log", filename)
 
-	logPath := filepath.Join(cfg.LogDir, filename)
+	logPath := filepath.Join(dir, filename)
 
 	// Open log file
 	if err := security.ValidatePath(logPath); err != nil {

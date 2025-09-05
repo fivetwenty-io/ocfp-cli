@@ -84,14 +84,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	var lastErr error
-	for i, strategy := range strategies {
-		c.log.Debug("Attempting connection strategy", "strategy", i+1)
+	for index, strategy := range strategies {
+		c.log.Debug("Attempting connection strategy", "strategy", index+1)
 
 		client, err := strategy(ctx, sshConfig)
 		if err != nil {
 			lastErr = err
 			c.log.Warn("Connection strategy failed",
-				"strategy", i+1,
+				"strategy", index+1,
 				"error", err.Error())
 			continue
 		}

@@ -1,25 +1,29 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"strconv"
-	"strings"
+    "context"
+    "fmt"
+    "strconv"
+    "strings"
+    "os"
+    "path/filepath"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+    "github.com/ocfp/ocfp-cli-go/internal/config"
+    "github.com/ocfp/ocfp-cli-go/internal/cpi"
+    "github.com/ocfp/ocfp-cli-go/internal/logger"
+    "github.com/ocfp/ocfp-cli-go/internal/ui"
+    "github.com/spf13/cobra"
+    "github.com/spf13/viper"
 )
 
 // NewScaleCmd creates the scale command
 func NewScaleCmd() *cobra.Command {
-	var (
-		dryRun bool
-		force  bool
-		wait   bool
-	)
+    var (
+        dryRun bool
+        force  bool
+        wait   bool
+        output string
+    )
 
 	cmd := &cobra.Command{
 		Use:   "scale <resource> <count>",
@@ -41,12 +45,11 @@ routers, cells, and other component instances.`,
   # Scale and wait for completion
   ocfp scale cells 10 --wait`,
 		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			log := logger.Get()
+        RunE: func(cmd *cobra.Command, args []string) error {
+            ctx := context.Background()
 
-			resource := args[0]
-			countStr := args[1]
+            resource := args[0]
+            countStr := args[1]
 
 			// Parse count
 			count, err := strconv.Atoi(countStr)
@@ -58,9 +61,27 @@ routers, cells, and other component instances.`,
 				return fmt.Errorf("count must be non-negative")
 			}
 
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
+            // Load configuration
+            configFile := viper.GetString("config")
+            blocName := viper.GetString("bloc_name")
+
+            // Initialize logger per command
+            logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+            if err := logger.Initialize(logger.Config{
+                Level:     viper.GetString("log_level"),
+                Debug:     viper.GetBool("debug"),
+                Verbose:   viper.GetBool("verbose"),
+                Trace:     viper.GetBool("trace"),
+                NoLog:     viper.GetBool("no_log"),
+                LogDir:    logDir,
+                BlocName:  blocName,
+                Command:   "scale",
+                RequestID: os.Getenv("OCFP_REQUEST_ID"),
+            }); err != nil {
+                return fmt.Errorf("failed to initialize logger: %w", err)
+            }
+            defer func() { _ = logger.Sync() }()
+            log := logger.Get()
 
 			cfg, err := config.LoadWithParams(configFile, blocName)
 			if err != nil {
@@ -92,8 +113,16 @@ routers, cells, and other component instances.`,
 			}
 			defer func() { _ = provider.Cleanup(ctx) }()
 
-			// Perform scaling based on resource type
-			switch strings.ToLower(resource) {
+            // If dry-run, render a plan after discovery and exit
+            if dryRun {
+                if err := renderScalePlan(ctx, resource, count, viper.GetString("scale.output"), provider, cfg); err != nil {
+                    return fmt.Errorf("failed to render scale plan: %w", err)
+                }
+                return nil
+            }
+
+            // Perform scaling based on resource type (real changes)
+            switch strings.ToLower(resource) {
 			case "routers", "router":
 				err = scaleRouters(ctx, provider, cfg, count, dryRun, wait)
 			case "cells", "cell", "diego-cells":
@@ -124,25 +153,27 @@ routers, cells, and other component instances.`,
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview scaling without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
-	cmd.Flags().BoolVar(&wait, "wait", false, "wait for scaling to complete")
+    cmd.Flags().BoolVar(&wait, "wait", false, "wait for scaling to complete")
+    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("scale.dry_run", cmd.Flags().Lookup("dry-run"))
 	_ = viper.BindPFlag("scale.force", cmd.Flags().Lookup("force"))
-	_ = viper.BindPFlag("scale.wait", cmd.Flags().Lookup("wait"))
+    _ = viper.BindPFlag("scale.wait", cmd.Flags().Lookup("wait"))
+    _ = viper.BindPFlag("scale.output", cmd.Flags().Lookup("output"))
 
 	return cmd
 }
 
 // scaleRouters scales router instances
 func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
-	log := logger.Get()
-	log.Info("Scaling routers", "target_count", count)
+    log := logger.Get()
+    log.Info("Scaling routers", "target_count", count)
 
-	if dryRun {
-		log.Info("[DRY RUN] Would scale routers", "count", count)
-		return nil
-	}
+    if dryRun {
+        // No-op here; dry-run handled at command layer with a plan
+        return nil
+    }
 
 	compute := provider.Compute()
 	if compute == nil {
@@ -218,13 +249,13 @@ func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config
 
 // scaleCells scales Diego cell instances
 func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
-	log := logger.Get()
-	log.Info("Scaling Diego cells", "target_count", count)
+    log := logger.Get()
+    log.Info("Scaling Diego cells", "target_count", count)
 
-	if dryRun {
-		log.Info("[DRY RUN] Would scale Diego cells", "count", count)
-		return nil
-	}
+    if dryRun {
+        // No-op here; dry-run handled at command layer with a plan
+        return nil
+    }
 
 	compute := provider.Compute()
 	if compute == nil {
@@ -319,13 +350,13 @@ func scaleInstances(ctx context.Context, provider cpi.Provider, cfg *config.Conf
 
 // scaleLoadBalancer scales load balancer backend members
 func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
-	log := logger.Get()
-	log.Info("Scaling load balancer backends", "target_count", count)
+    log := logger.Get()
+    log.Info("Scaling load balancer backends", "target_count", count)
 
-	if dryRun {
-		log.Info("[DRY RUN] Would scale load balancer backends", "count", count)
-		return nil
-	}
+    if dryRun {
+        // No-op here; dry-run handled at command layer with a plan
+        return nil
+    }
 
 	network := provider.Network()
 	if network == nil {
@@ -343,11 +374,11 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 	}
 
 	// Scale backends for the first load balancer
-	lb := lbs[0]
-	log.Info("Scaling backends for load balancer", "name", lb.Name)
+	loadBalancer := lbs[0]
+	log.Info("Scaling backends for load balancer", "name", loadBalancer.Name)
 
 	// Get current backend pools
-	pools, err := network.GetBackendPools(ctx, lb.ID)
+	pools, err := network.GetBackendPools(ctx, loadBalancer.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get backend pools: %w", err)
 	}
@@ -378,7 +409,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 				Weight:    1,
 			}
 
-			if err := network.AddBackendMember(ctx, lb.ID, member); err != nil {
+			if err := network.AddBackendMember(ctx, loadBalancer.ID, member); err != nil {
 				log.Error("Failed to add backend member", "error", err)
 				continue
 			}
@@ -392,7 +423,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 
 		for i := 0; i < toRemove && i < len(pool.Members); i++ {
 			member := pool.Members[len(pool.Members)-1-i]
-			if err := network.RemoveBackendMember(ctx, lb.ID, member.IPAddress); err != nil {
+			if err := network.RemoveBackendMember(ctx, loadBalancer.ID, member.IPAddress); err != nil {
 				log.Error("Failed to remove backend member", "error", err)
 				continue
 			}
@@ -411,13 +442,13 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 
 // scaleDatabase scales database instances
 func scaleDatabase(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
-	log := logger.Get()
-	log.Info("Scaling database instances", "target_count", count)
+    log := logger.Get()
+    log.Info("Scaling database instances", "target_count", count)
 
-	if dryRun {
-		log.Info("[DRY RUN] Would scale database instances", "count", count)
-		return nil
-	}
+    if dryRun {
+        // No-op here; dry-run handled at command layer with a plan
+        return nil
+    }
 
 	if count > 1 {
 		log.Info("Setting up PostgreSQL replication", "replicas", count-1)
@@ -430,4 +461,104 @@ func scaleDatabase(ctx context.Context, provider cpi.Provider, cfg *config.Confi
 	}
 
 	return fmt.Errorf("database scaling not yet implemented")
+}
+
+// renderScalePlan builds and renders a dry-run plan for the scale command
+func renderScalePlan(ctx context.Context, resource string, target int, format string, provider cpi.Provider, cfg *config.Config) error {
+    title := fmt.Sprintf("DRY RUN — Scale Plan (resource=%s, target=%d)", strings.ToLower(resource), target)
+    planTable := &ui.Table{Title: title}
+
+    switch strings.ToLower(resource) {
+    case "routers", "router":
+        compute := provider.Compute()
+        if compute == nil { return fmt.Errorf("provider does not support compute management") }
+        instances, err := compute.ListInstances(ctx, map[string]string{"role": "router"})
+        if err != nil { return fmt.Errorf("failed to list router instances: %w", err) }
+        current := len(instances)
+        delta := target - current
+        planTable.Summary = fmt.Sprintf("Routers: current=%d target=%d delta=%+d", current, target, delta)
+        // Current section
+        rows := [][]string{}
+        for _, inst := range instances { rows = append(rows, []string{inst.Name, inst.ID}) }
+        planTable.Sections = append(planTable.Sections, ui.Section{Title: "Current Routers", Headers: []string{"NAME", "ID"}, Rows: rows})
+        // Planned
+        if delta > 0 {
+            planned := [][]string{}
+            for i := 0; i < delta; i++ {
+                planned = append(planned, []string{fmt.Sprintf("%s-router-%d", cfg.Name, current+i+1)})
+            }
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Create", Headers: []string{"NAME"}, Rows: planned})
+        } else if delta < 0 {
+            // Remove highest-numbered; sort by name
+            // Fallback: use tail of list
+            removeN := -delta
+            planned := [][]string{}
+            for i := 0; i < removeN && i < len(instances); i++ {
+                inst := instances[len(instances)-1-i]
+                planned = append(planned, []string{inst.Name, inst.ID})
+            }
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Remove", Headers: []string{"NAME", "ID"}, Rows: planned})
+        }
+    case "cells", "cell", "diego-cells":
+        compute := provider.Compute()
+        if compute == nil { return fmt.Errorf("provider does not support compute management") }
+        instances, err := compute.ListInstances(ctx, map[string]string{"role": "diego-cell"})
+        if err != nil { return fmt.Errorf("failed to list Diego cell instances: %w", err) }
+        current := len(instances)
+        delta := target - current
+        planTable.Summary = fmt.Sprintf("Diego Cells: current=%d target=%d delta=%+d", current, target, delta)
+        rows := [][]string{}
+        for _, inst := range instances { rows = append(rows, []string{inst.Name, inst.ID}) }
+        planTable.Sections = append(planTable.Sections, ui.Section{Title: "Current Cells", Headers: []string{"NAME", "ID"}, Rows: rows})
+        if delta > 0 {
+            planned := [][]string{}
+            for i := 0; i < delta; i++ {
+                planned = append(planned, []string{fmt.Sprintf("%s-diego-cell-%d", cfg.Name, current+i+1)})
+            }
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Create", Headers: []string{"NAME"}, Rows: planned})
+        } else if delta < 0 {
+            removeN := -delta
+            planned := [][]string{}
+            for i := 0; i < removeN && i < len(instances); i++ {
+                inst := instances[len(instances)-1-i]
+                planned = append(planned, []string{inst.Name, inst.ID})
+            }
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Remove", Headers: []string{"NAME", "ID"}, Rows: planned})
+        }
+    case "load-balancer", "lb":
+        network := provider.Network()
+        if network == nil { return fmt.Errorf("provider does not support network management") }
+        lbs, err := network.ListLoadBalancers(ctx, nil)
+        if err != nil { return fmt.Errorf("failed to list load balancers: %w", err) }
+        if len(lbs) == 0 { return fmt.Errorf("no load balancers found") }
+        lb := lbs[0]
+        pools, err := network.GetBackendPools(ctx, lb.ID)
+        if err != nil { return fmt.Errorf("failed to get backend pools: %w", err) }
+        if len(pools) == 0 {
+            planTable.Summary = fmt.Sprintf("LB: %s — no pools found", lb.Name)
+            return ui.Render(planTable, format)
+        }
+        pool := pools[0]
+        current := len(pool.Members)
+        delta := target - current
+        planTable.Summary = fmt.Sprintf("LB %s pool %s: current=%d target=%d delta=%+d", lb.Name, pool.Name, current, target, delta)
+        // Current members
+        rows := [][]string{}
+        for _, m := range pool.Members { rows = append(rows, []string{m.IPAddress, fmt.Sprintf("%d", m.Port)}) }
+        planTable.Sections = append(planTable.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
+        if delta > 0 {
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Add", Headers: []string{"COUNT"}, Rows: [][]string{{fmt.Sprintf("%d", delta)}}})
+        } else if delta < 0 {
+            planTable.Sections = append(planTable.Sections, ui.Section{Title: "Remove", Headers: []string{"COUNT"}, Rows: [][]string{{fmt.Sprintf("%d", -delta)}}})
+        }
+    case "instances", "instance":
+        planTable.Summary = "Generic instance scaling not yet implemented"
+    case "database", "db", "postgres":
+        planTable.Summary = "Database scaling not yet implemented"
+    default:
+        return fmt.Errorf("unknown resource type: %s", resource)
+    }
+
+    if format == "" { format = "table" }
+    return ui.Render(planTable, format)
 }

@@ -27,13 +27,11 @@ func NewBastionCmd() *cobra.Command {
 	// Flags align with SSH/SCP commands for consistency
 	cmd.Flags().String("user", "ubuntu", "SSH username for bastion connection")
 	cmd.Flags().String("key", "", "Path to SSH private key")
-	cmd.Flags().String("iaas", "", "Cloud provider type")
 	cmd.Flags().String("bloc", "", "Bloc name for configuration")
 
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
 	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("iaas", cmd.Flags().Lookup("iaas"))
 	_ = viper.BindPFlag("bloc_name", cmd.Flags().Lookup("bloc"))
 
 	return cmd
@@ -119,49 +117,32 @@ func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, 
 	user := viper.GetString("ssh.user")
 	key := viper.GetString("ssh.key")
 	blocName := viper.GetString("bloc_name")
-	iaas := viper.GetString("iaas")
 
 	// Attempt discovery when bloc/provider are available
 	if blocName != "" {
 		cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 		if err == nil {
-			if iaas == "" {
-				if cfg.Provider != "" {
-					iaas = cfg.Provider
-				} else if cfg.IaaS != "" {
-					iaas = cfg.IaaS
-				}
-			}
-
-			// Initialize provider if we have one
-			if iaas != "" {
-				providerConfig := map[string]interface{}{
-					"project_id":            cfg.ProjectID,
-					"org_id":                cfg.OrgID,
-					"auth_token":            cfg.AuthToken,
-					"service_account_token": cfg.ServiceAccountToken,
-					"service_account_json":  cfg.ServiceAccountJSON,
-					"region":                cfg.Region,
-				}
-
+			if cfg.Provider != "" || cfg.IaaS != "" {
 				ctx := context.Background()
-				provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
-				if err == nil {
-					// Reuse getBastionIP helper
-					ip, err := getBastionIP(ctx, provider, blocName)
-					if err == nil && ip != "" {
-						// Find key if not specified
-						if key == "" {
-							if k, kerr := findSSHKey(blocName, cfg); kerr == nil {
-								key = k
+				provider, perr := cpi.GetProvider(cfg.Provider)
+				if perr == nil {
+					if ierr := provider.Initialize(ctx, cfg); ierr == nil {
+						// Reuse getBastionIP helper
+						bastionIP, err := getBastionIP(ctx, provider, blocName)
+						if err == nil && bastionIP != "" {
+							// Find key if not specified
+							if key == "" {
+								if k, kerr := findSSHKey(blocName, cfg); kerr == nil {
+									key = k
+								}
 							}
+							return &bastionContext{
+								IP:           bastionIP,
+								User:         user,
+								SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+								SSHKeyOption: strings.TrimSpace(key),
+							}, nil
 						}
-						return &bastionContext{
-							IP:           ip,
-							User:         user,
-							SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
-							SSHKeyOption: strings.TrimSpace(key),
-						}, nil
 					}
 				}
 			}

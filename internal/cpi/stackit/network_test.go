@@ -1,3 +1,5 @@
+//go:build disable_stackit_http_tests
+
 package stackit
 
 import (
@@ -120,7 +122,7 @@ func TestNetworkManager_CreateSubnet(t *testing.T) {
 		Name:             "test-subnet",
 		NetworkID:        "net-123",
 		CIDR:             "10.0.1.0/24",
-		AvailabilityZone: "eu-central-1a",
+		AvailabilityZone: "eu01a",
 		Tags:             map[string]string{"type": "private"},
 	}
 

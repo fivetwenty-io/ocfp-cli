@@ -85,42 +85,22 @@ func runSCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("bloc is required")
 	}
 
-	// Load configuration first - this will provide the provider if not set via flags
+	// Load configuration; provider and region come from bloc config
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
-
-	// Get iaas provider - either from flags/env or from loaded configuration
-	iaas := viper.GetString("iaas")
-	if iaas == "" {
-		// Try to get provider from loaded configuration
-		if cfg.Provider != "" {
-			iaas = cfg.Provider
-		} else if cfg.IaaS != "" {
-			iaas = cfg.IaaS
-		}
+	if cfg.Provider == "" && cfg.IaaS == "" {
+		return fmt.Errorf("provider must be specified in bloc config")
 	}
 
-	// Now validate we have a provider
-	if iaas == "" {
-		return fmt.Errorf("iaas provider is required (not found in flags or configuration)")
-	}
-
-	// Create provider config from the loaded configuration
-	providerConfig := map[string]interface{}{
-		"project_id":            cfg.ProjectID,
-		"org_id":                cfg.OrgID,
-		"auth_token":            cfg.AuthToken,
-		"service_account_token": cfg.ServiceAccountToken,
-		"service_account_json":  cfg.ServiceAccountJSON,
-		"region":                cfg.Region,
-	}
-
-	// Initialize provider
-	provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
+	// Initialize provider using bloc configuration
+	provider, err := cpi.GetProvider(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", iaas, err)
+		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
+	}
+	if err := provider.Initialize(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
 
 	// Get bastion IP address
@@ -159,41 +139,8 @@ func runSCP(cmd *cobra.Command, args []string) error {
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic)
 func getBastionIPForSCP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
-	log := logger.WithOperation("getBastionIPForSCP")
-
-	// List instances with bastion tag/label
-	filters := map[string]string{
-		"label.bloc":      blocName,
-		"label.component": "bastion",
-	}
-
-	instances, err := provider.Compute().ListInstances(ctx, filters)
-	if err != nil {
-		return "", fmt.Errorf("failed to list instances: %w", err)
-	}
-
-	if len(instances) == 0 {
-		return "", fmt.Errorf("no bastion host found for bloc %s", blocName)
-	}
-
-	// Get the first bastion's floating IP
-	bastion := instances[0]
-	if bastion.FloatingIP == "" {
-		// Try to find associated floating IP
-		floatingIPs, err := provider.Network().ListFloatingIPs(ctx)
-		if err != nil {
-			return "", fmt.Errorf("failed to list floating IPs: %w", err)
-		}
-
-		if len(floatingIPs) == 0 {
-			return "", fmt.Errorf("bastion %s has no public IP address", bastion.Name)
-		}
-
-		bastion.FloatingIP = floatingIPs[0].Address
-	}
-
-	log.Debugf("Found bastion IP: %s", bastion.FloatingIP)
-	return bastion.FloatingIP, nil
+	// Delegate to shared helper for robust lookup
+	return findBastionIP(ctx, provider, blocName)
 }
 
 // findSSHKeyForSCP locates the SSH private key for SCP

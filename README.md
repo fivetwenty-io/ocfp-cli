@@ -43,13 +43,12 @@ brew install ocfp-cli
 
 ### 1. Configure your environment
 
-Create a configuration file at `~/.ocfp/config.yml`:
+Create a configuration file at `~/.ocfp/config.yml` (provider comes from bloc config):
 
 ```yaml
 name: production
 provider: stackit
-iaas: stackit
-region: eu-central-1
+region: eu01  # For STACKIT, defaults to eu01 if omitted
 project_id: your-project-id
 auth_token: your-auth-token
 network:
@@ -100,6 +99,27 @@ ocfp env show
 eval $(ocfp env export)
 ```
 
+### Unicode vs ASCII Tables
+
+The CLI renders rich Unicode box-drawn tables by default. If your terminal/font does not display these cleanly, enable ASCII-only tables globally with either of:
+
+- CLI flag: `--ascii` (e.g., `ocfp --ascii bootstrap --bloc production --dry-run`)
+- Environment variable: `OCFP_ASCII=true`
+
+### Global Flags
+
+| Flag | Shorthand | Description | Env Var | Default |
+|------|-----------|-------------|--------|---------|
+| `--config` | `-f` | Config file path | `OCFP_CONFIG` | – |
+| `--bloc` | – | Bloc/environment name (key under `blocs:`) | `OCFP_BLOC_NAME` | – |
+| `--debug` | `-d` | Enable debug output | `OCFP_DEBUG` | `false` |
+| `--verbose` | `-v` | Enable verbose output | `OCFP_VERBOSE` | `false` |
+| `--trace` | – | Enable trace-level debugging | `OCFP_TRACE` | `false` |
+| `--no-log` | – | Disable logging to `~/.ocfp/logs/` | `OCFP_NO_LOG` | `false` |
+| `--region` | – | Cloud region | `OCFP_REGION` | – |
+| `--debug-lookup` | – | Print bastion lookup strategy matches | `OCFP_DEBUG_LOOKUP` | `false` |
+| `--ascii` | – | Use ASCII-only tables in output | `OCFP_ASCII` | `false` |
+
 ## Commands
 
 ### Core Commands
@@ -131,11 +151,10 @@ eval $(ocfp env export)
 ### Configuration File Structure
 
 ```yaml
-# Basic configuration
+# Basic configuration (provider is read from bloc config)
 name: environment-name
 provider: stackit
-iaas: stackit
-region: eu-central-1
+region: eu01  # For STACKIT, defaults to eu01 if omitted
 project_id: project-123
 org_id: org-456
 auth_token: ${STACKIT_AUTH_TOKEN}
@@ -279,6 +298,13 @@ Alternatively, set `OCFP_ENABLE_BUCKET_POLICIES=1` to enable policies from the e
 | `OCFP_PROVIDER` | Cloud provider |
 | `OCFP_REGION` | Cloud region |
 | `OCFP_DEBUG` | Enable debug logging |
+| `OCFP_VERBOSE` | Enable verbose logging |
+| `OCFP_TRACE` | Enable trace-level logging |
+| `OCFP_NO_LOG` | Disable file logging to `~/.ocfp/logs/` |
+| `OCFP_DEBUG_LOOKUP` | Print bastion lookup strategy matches |
+| `OCFP_ASCII` | Use ASCII-only tables (equivalent to `--ascii`) |
+
+Note: For the STACKIT provider, if no region is specified via config, `--region`, or `OCFP_REGION`, OCFP defaults to `eu01`.
 
 ## Provider Support
 

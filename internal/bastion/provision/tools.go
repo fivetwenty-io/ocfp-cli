@@ -26,25 +26,25 @@ type AdvancedBinaryTool struct {
 	Name            string            `yaml:"name"`
 	Enabled         bool              `yaml:"enabled"`
 	Condition       string            `yaml:"condition"`
-	CheckCommand    string            `yaml:"check_command"`
-	CheckFile       string            `yaml:"check_file"`
+	CheckCommand    string            `yaml:"checkCommand"`
+	CheckFile       string            `yaml:"checkFile"`
 	URL             string            `yaml:"url"`
-	VersionURL      string            `yaml:"version_url"`
-	VersionPattern  string            `yaml:"version_pattern"`
-	URLTemplate     string            `yaml:"url_template"`
+	VersionURL      string            `yaml:"versionUrl"`
+	VersionPattern  string            `yaml:"versionPattern"`
+	URLTemplate     string            `yaml:"urlTemplate"`
 	FixedVersion    string            `yaml:"version"`
-	ArchMap         map[string]string `yaml:"arch_map"`
+	ArchMap         map[string]string `yaml:"archMap"`
 	Dest            string            `yaml:"dest"`
 	Mode            uint32            `yaml:"mode"`
 	Sudo            bool              `yaml:"sudo"`
 	Extract         bool              `yaml:"extract"`
-	InstallCommand  string            `yaml:"install_command"`
-	InstallScript   string            `yaml:"install_script"`
-	PathAddition    string            `yaml:"path_addition"`
+	InstallCommand  string            `yaml:"installCommand"`
+	InstallScript   string            `yaml:"installScript"`
+	PathAddition    string            `yaml:"pathAddition"`
 	Cleanup         string            `yaml:"cleanup"`
-	PostInstall     string            `yaml:"post_install"`
-	VerifyCommand   string            `yaml:"verify_command"`
-	BuildFromSource bool              `yaml:"build_from_source"`
+	PostInstall     string            `yaml:"postInstall"`
+	VerifyCommand   string            `yaml:"verifyCommand"`
+	BuildFromSource bool              `yaml:"buildFromSource"`
 }
 
 // NewAdvancedToolManager creates a new advanced tool manager
@@ -147,13 +147,13 @@ func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 			disable[strings.ToLower(n)] = struct{}{}
 		}
 		if len(enable) > 0 || len(disable) > 0 {
-			for i := range tools {
-				name := strings.ToLower(tools[i].Name)
+			for index := range tools {
+				name := strings.ToLower(tools[index].Name)
 				if _, ok := enable[name]; ok {
-					tools[i].Enabled = true
+					tools[index].Enabled = true
 				}
 				if _, ok := disable[name]; ok {
-					tools[i].Enabled = false
+					tools[index].Enabled = false
 				}
 			}
 		}
@@ -416,7 +416,7 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(versionURL, pattern string) (s
 
 	// Try JSON parsing first
 	var release struct {
-		TagName string `json:"tag_name"`
+		TagName string `json:"tagName"`
 	}
 
 	if err := json.Unmarshal(body, &release); err == nil && release.TagName != "" {
@@ -478,61 +478,61 @@ func (atm *AdvancedToolManager) applyToolOverrides(tools []AdvancedBinaryTool) [
 	if atm.config == nil || atm.config.Bastion.ToolOverrides == nil {
 		return tools
 	}
-	for i := range tools {
-		name := strings.ToLower(tools[i].Name)
+	for toolIndex := range tools {
+		name := strings.ToLower(tools[toolIndex].Name)
 		// Find override key in case-insensitive manner
-		var ov *config.ToolOverride
+		var override *config.ToolOverride
 		for k, v := range atm.config.Bastion.ToolOverrides {
 			if strings.ToLower(k) == name {
 				temp := v
-				ov = &temp
+				override = &temp
 				break
 			}
 		}
-		if ov == nil {
+		if override == nil {
 			continue
 		}
-		if ov.URL != "" {
-			tools[i].URL = ov.URL
+		if override.URL != "" {
+			tools[toolIndex].URL = override.URL
 		}
-		if ov.VersionURL != "" {
-			tools[i].VersionURL = ov.VersionURL
+		if override.VersionURL != "" {
+			tools[toolIndex].VersionURL = override.VersionURL
 		}
-		if ov.VersionPattern != "" {
-			tools[i].VersionPattern = ov.VersionPattern
+		if override.VersionPattern != "" {
+			tools[toolIndex].VersionPattern = override.VersionPattern
 		}
-		if ov.URLTemplate != "" {
-			tools[i].URLTemplate = ov.URLTemplate
+		if override.URLTemplate != "" {
+			tools[toolIndex].URLTemplate = override.URLTemplate
 		}
-		if ov.Version != "" {
-			tools[i].FixedVersion = ov.Version
+		if override.Version != "" {
+			tools[toolIndex].FixedVersion = override.Version
 		}
-		if ov.Dest != "" {
-			tools[i].Dest = ov.Dest
+		if override.Dest != "" {
+			tools[toolIndex].Dest = override.Dest
 		}
-		if ov.Mode != 0 {
-			tools[i].Mode = ov.Mode
+		if override.Mode != 0 {
+			tools[toolIndex].Mode = override.Mode
 		}
-		if ov.Sudo != nil {
-			tools[i].Sudo = *ov.Sudo
+		if override.Sudo != nil {
+			tools[toolIndex].Sudo = *override.Sudo
 		}
-		if ov.Extract != nil {
-			tools[i].Extract = *ov.Extract
+		if override.Extract != nil {
+			tools[toolIndex].Extract = *override.Extract
 		}
-		if ov.InstallCommand != "" {
-			tools[i].InstallCommand = ov.InstallCommand
+		if override.InstallCommand != "" {
+			tools[toolIndex].InstallCommand = override.InstallCommand
 		}
-		if ov.InstallScript != "" {
-			tools[i].InstallScript = ov.InstallScript
+		if override.InstallScript != "" {
+			tools[toolIndex].InstallScript = override.InstallScript
 		}
-		if ov.VerifyCommand != "" {
-			tools[i].VerifyCommand = ov.VerifyCommand
+		if override.VerifyCommand != "" {
+			tools[toolIndex].VerifyCommand = override.VerifyCommand
 		}
-		if ov.PathAddition != "" {
-			tools[i].PathAddition = ov.PathAddition
+		if override.PathAddition != "" {
+			tools[toolIndex].PathAddition = override.PathAddition
 		}
-		if ov.Cleanup != "" {
-			tools[i].Cleanup = ov.Cleanup
+		if override.Cleanup != "" {
+			tools[toolIndex].Cleanup = override.Cleanup
 		}
 	}
 	return tools

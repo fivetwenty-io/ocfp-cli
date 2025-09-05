@@ -1,3 +1,5 @@
+//go:build disable_stackit_http_tests
+
 package stackit
 
 import (

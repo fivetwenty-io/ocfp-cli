@@ -120,7 +120,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	lines = append(lines, "# Find configuration file")
 	lines = append(lines, "CONFIG_FILE=\"\"")
 	lines = append(lines, "CONFIG_LOCATIONS=(")
-	lines = append(lines, `    "${HOME}/.ocfp/config/${OCFP_BLOC_NAME}.yml"`)
+	lines = append(lines, `    "${HOME}/.ocfp/config.yml"`)
 	lines = append(lines, `    "${HOME}/.ocfp/config/config.yml"`)
 	lines = append(lines, ")")
 	lines = append(lines, "")

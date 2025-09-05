@@ -108,7 +108,7 @@ type StorageManager interface {
 	GetVolume(ctx context.Context, id string) (*Volume, error)
 	ListVolumes(ctx context.Context, filters map[string]string) ([]*Volume, error)
 	AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error
-	DetachVolume(ctx context.Context, volumeID string) error
+	DetachVolume(ctx context.Context, volumeID string, instanceID string) error
 	ResizeVolume(ctx context.Context, id string, size int) error
 	DeleteVolume(ctx context.Context, id string) error
 

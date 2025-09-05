@@ -22,53 +22,56 @@ type ConfigFile struct {
 
 // Config represents a bloc configuration
 type Config struct {
-	Name                  string                      `yaml:"name" mapstructure:"name"`
-	Provider              string                      `yaml:"provider" mapstructure:"provider"`
-	IaaS                  string                      `yaml:"iaas" mapstructure:"iaas"`
-	Region                string                      `yaml:"region" mapstructure:"region"`
-	ProjectID             string                      `yaml:"project_id" mapstructure:"project_id"`
-	OrgID                 string                      `yaml:"org_id" mapstructure:"org_id"`
-	AuthToken             string                      `yaml:"auth_token" mapstructure:"auth_token"`
-	ServiceAccountToken   string                      `yaml:"service_account_token" mapstructure:"service_account_token"`
-	ServiceAccountJSON    string                      `yaml:"service_account_json" mapstructure:"service_account_json"`
-	ServiceAccountKeyPath string                      `yaml:"service_account_key_path" mapstructure:"service_account_key_path"`
-	AccessKeyID           string                      `yaml:"access_key_id" mapstructure:"access_key_id"`
-	SecretAccessKey       string                      `yaml:"secret_access_key" mapstructure:"secret_access_key"`
-	SubscriptionID        string                      `yaml:"subscription_id" mapstructure:"subscription_id"`
-	TenantID              string                      `yaml:"tenant_id" mapstructure:"tenant_id"`
-	ClientID              string                      `yaml:"client_id" mapstructure:"client_id"`
-	ClientSecret          string                      `yaml:"client_secret" mapstructure:"client_secret"`
-	AuthURL               string                      `yaml:"auth_url" mapstructure:"auth_url"`
-	Username              string                      `yaml:"username" mapstructure:"username"`
-	Password              string                      `yaml:"password" mapstructure:"password"`
-	ProjectName           string                      `yaml:"project_name" mapstructure:"project_name"`
-	DomainName            string                      `yaml:"domain_name" mapstructure:"domain_name"`
-	SessionToken          string                      `yaml:"session_token" mapstructure:"session_token"`
-	BastionIP             string                      `yaml:"bastion_ip" mapstructure:"bastion_ip"`
-	Network               NetworkConfig               `yaml:"network" mapstructure:"network"`
-	Bastion               Bastion                     `yaml:"bastion" mapstructure:"bastion"`
-	Genesis               Genesis                     `yaml:"genesis" mapstructure:"genesis"`
-	Deployment            Deployment                  `yaml:"deployments" mapstructure:"deployments"`
-	DNS                   []string                    `yaml:"dns" mapstructure:"dns"`
-	AZs                   map[string]AvailabilityZone `yaml:"azs" mapstructure:"azs"`
-	SSHKeyStorageDir      string                      `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
-	Routers               ComponentConfig             `yaml:"routers" mapstructure:"routers"`
-	Cells                 ComponentConfig             `yaml:"cells" mapstructure:"cells"`
-	// Additional fields from the example config
-	FQDNs             map[string]interface{} `yaml:"fqdns" mapstructure:"fqdns"`
-	S3                map[string]string      `yaml:"s3" mapstructure:"s3"`
-	AllowedIngressIPs []string               `yaml:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips"`
-	Type              string                 `yaml:"type" mapstructure:"type"`
-	Environment       string                 `yaml:"environment" mapstructure:"environment"`
-	Subnets           []Subnet               `yaml:"subnets" mapstructure:"subnets"`
-	SubnetStrategy    string                 `yaml:"subnet_strategy" mapstructure:"subnet_strategy"`
-	LBs               map[string]LBService   `yaml:"lbs" mapstructure:"lbs"`
-	Users             map[string]string      `yaml:"users" mapstructure:"users"`
-	// Public IP configurations
-	RouterPublicIPs    int `yaml:"router_public_ips" mapstructure:"router_public_ips"`
-	CFSSHPublicIPs     int `yaml:"cf_ssh_public_ips" mapstructure:"cf_ssh_public_ips"`
-	JumpboxPublicIPs   int `yaml:"jumpbox_public_ips" mapstructure:"jumpbox_public_ips"`
-	TCPRouterPublicIPs int `yaml:"tcp_router_public_ips" mapstructure:"tcp_router_public_ips"`
+    Name                  string `yaml:"name" mapstructure:"name"`
+    Provider              string `yaml:"provider" mapstructure:"provider"`
+    IaaS                  string `yaml:"iaas" mapstructure:"iaas"`
+    Region                string `yaml:"region" mapstructure:"region"`
+    // Prefer snake_case to match README and user configs
+    ProjectID             string `yaml:"project_id" mapstructure:"project_id"`
+    OrgID                 string `yaml:"org_id" mapstructure:"org_id"`
+    AuthToken             string `yaml:"auth_token" mapstructure:"auth_token"`
+    ServiceAccountToken   string `yaml:"service_account_token" mapstructure:"service_account_token"`
+    ServiceAccountJSON    string `yaml:"service_account_json" mapstructure:"service_account_json"`
+    ServiceAccountKeyPath string `yaml:"service_account_key_path" mapstructure:"service_account_key_path"`
+    // Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
+    APIEndpoint      string                      `yaml:"api_endpoint" mapstructure:"api_endpoint"`
+    AccessKeyID      string                      `yaml:"access_key_id" mapstructure:"access_key_id"`
+    SecretAccessKey  string                      `yaml:"secret_access_key" mapstructure:"secret_access_key"`
+    SubscriptionID   string                      `yaml:"subscription_id" mapstructure:"subscription_id"`
+    TenantID         string                      `yaml:"tenant_id" mapstructure:"tenant_id"`
+    ClientID         string                      `yaml:"client_id" mapstructure:"client_id"`
+    ClientSecret     string                      `yaml:"client_secret" mapstructure:"client_secret"`
+    AuthURL          string                      `yaml:"auth_url" mapstructure:"auth_url"`
+    Username         string                      `yaml:"username" mapstructure:"username"`
+    Password         string                      `yaml:"password" mapstructure:"password"`
+    ProjectName      string                      `yaml:"project_name" mapstructure:"project_name"`
+    DomainName       string                      `yaml:"domain_name" mapstructure:"domain_name"`
+    SessionToken     string                      `yaml:"session_token" mapstructure:"session_token"`
+    BastionIP        string                      `yaml:"bastion_ip" mapstructure:"bastion_ip"`
+    Network          NetworkConfig               `yaml:"network" mapstructure:"network"`
+    Bastion          Bastion                     `yaml:"bastion" mapstructure:"bastion"`
+    Genesis          Genesis                     `yaml:"genesis" mapstructure:"genesis"`
+    Deployment       Deployment                  `yaml:"deployments" mapstructure:"deployments"`
+    DNS              []string                    `yaml:"dns" mapstructure:"dns"`
+    AZs              map[string]AvailabilityZone `yaml:"azs" mapstructure:"azs"`
+    SSHKeyStorageDir string                      `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
+    Routers          ComponentConfig             `yaml:"routers" mapstructure:"routers"`
+    Cells            ComponentConfig             `yaml:"cells" mapstructure:"cells"`
+    // Additional fields from the example config
+    FQDNs             map[string]interface{} `yaml:"fqdns" mapstructure:"fqdns"`
+    S3                map[string]string      `yaml:"s3" mapstructure:"s3"`
+    AllowedIngressIPs []string               `yaml:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips"`
+    Type              string                 `yaml:"type" mapstructure:"type"`
+    Environment       string                 `yaml:"environment" mapstructure:"environment"`
+    Subnets           []Subnet               `yaml:"subnets" mapstructure:"subnets"`
+    SubnetStrategy    string                 `yaml:"subnet_strategy" mapstructure:"subnet_strategy"`
+    LBs               map[string]LBService   `yaml:"lbs" mapstructure:"lbs"`
+    Users             map[string]string      `yaml:"users" mapstructure:"users"`
+    // Public IP configurations
+    RouterPublicIPs    int `yaml:"router_public_ips" mapstructure:"router_public_ips"`
+    CFSSHPublicIPs     int `yaml:"cf_ssh_public_ips" mapstructure:"cf_ssh_public_ips"`
+    JumpboxPublicIPs   int `yaml:"jumpbox_public_ips" mapstructure:"jumpbox_public_ips"`
+    TCPRouterPublicIPs int `yaml:"tcp_router_public_ips" mapstructure:"tcp_router_public_ips"`
 
 	// Blobstore policies (optional, for object storage buckets)
 	Blobstore BlobstoreConfig `yaml:"blobstore" mapstructure:"blobstore"`
@@ -76,19 +79,19 @@ type Config struct {
 
 // BlobstoreConfig controls versioning/lifecycle policies for expected buckets
 type BlobstoreConfig struct {
-	EnablePolicies bool `yaml:"enable_policies" mapstructure:"enable_policies"`
+	EnablePolicies bool `yaml:"enablePolicies" mapstructure:"enablePolicies"`
 
 	// Per-bucket overrides
-	BoshBlobstore BucketSettings `yaml:"bosh_blobstore" mapstructure:"bosh_blobstore"`
-	CFBuildpacks  BucketSettings `yaml:"cf_buildpacks" mapstructure:"cf_buildpacks"`
-	CFDroplets    BucketSettings `yaml:"cf_droplets" mapstructure:"cf_droplets"`
-	CFAppPackages BucketSettings `yaml:"cf_app_packages" mapstructure:"cf_app_packages"`
+	BoshBlobstore BucketSettings `yaml:"boshBlobstore" mapstructure:"boshBlobstore"`
+	CFBuildpacks  BucketSettings `yaml:"cfBuildpacks" mapstructure:"cfBuildpacks"`
+	CFDroplets    BucketSettings `yaml:"cfDroplets" mapstructure:"cfDroplets"`
+	CFAppPackages BucketSettings `yaml:"cfAppPackages" mapstructure:"cfAppPackages"`
 }
 
 // BucketSettings specify data-plane policies
 type BucketSettings struct {
 	Versioning     bool `yaml:"versioning" mapstructure:"versioning"`
-	NoncurrentDays int  `yaml:"noncurrent_days" mapstructure:"noncurrent_days"`
+	NoncurrentDays int  `yaml:"noncurrentDays" mapstructure:"noncurrentDays"`
 }
 
 // NetworkConfig represents network configuration
@@ -96,8 +99,8 @@ type NetworkConfig struct {
 	ID          string   `yaml:"id" mapstructure:"id"`
 	Name        string   `yaml:"name" mapstructure:"name"`
 	CIDR        string   `yaml:"cidr" mapstructure:"cidr"`
-	NetworkCIDR string   `yaml:"network_cidr" mapstructure:"network_cidr"`
-	SubnetID    string   `yaml:"subnet_id" mapstructure:"subnet_id"`
+	NetworkCIDR string   `yaml:"networkCidr" mapstructure:"networkCidr"`
+	SubnetID    string   `yaml:"subnetId" mapstructure:"subnetId"`
 	DNS         []string `yaml:"dns" mapstructure:"dns"`
 }
 
@@ -105,7 +108,7 @@ type NetworkConfig struct {
 type Subnet struct {
 	Name             string `yaml:"name" mapstructure:"name"`
 	CIDR             string `yaml:"cidr" mapstructure:"cidr"`
-	AvailabilityZone string `yaml:"availability_zone" mapstructure:"availability_zone"`
+	AvailabilityZone string `yaml:"availabilityZone" mapstructure:"availabilityZone"`
 	Type             string `yaml:"type" mapstructure:"type"`
 }
 
@@ -114,22 +117,22 @@ type Bastion struct {
 	Flavor     string    `yaml:"flavor" mapstructure:"flavor"`
 	Image      string    `yaml:"image" mapstructure:"image"`
 	OS         string    `yaml:"os" mapstructure:"os"`
-	OSVersion  string    `yaml:"os_version" mapstructure:"os_version"`
+	OSVersion  string    `yaml:"osVersion" mapstructure:"osVersion"`
 	Keypair    string    `yaml:"keypair" mapstructure:"keypair"`
-	SSHUser    string    `yaml:"ssh_user" mapstructure:"ssh_user"`
-	SSHOptions string    `yaml:"ssh_options" mapstructure:"ssh_options"`
-	SSHKeyDir  string    `yaml:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir"`
-	SSHKeyName string    `yaml:"ssh_key_name" mapstructure:"ssh_key_name"`
+	SSHUser    string    `yaml:"sshUser" mapstructure:"sshUser"`
+	SSHOptions string    `yaml:"sshOptions" mapstructure:"sshOptions"`
+	SSHKeyDir  string    `yaml:"sshKeyStorageDir" mapstructure:"sshKeyStorageDir"`
+	SSHKeyName string    `yaml:"sshKeyName" mapstructure:"sshKeyName"`
 	Genesis    Genesis   `yaml:"genesis" mapstructure:"genesis"`
 	Git        GitConfig `yaml:"git" mapstructure:"git"`
 	// Optional overrides for tooling installation/selection
 	Tools     OverrideSets `yaml:"tools" mapstructure:"tools"`
-	CFPlugins OverrideSets `yaml:"cf_plugins" mapstructure:"cf_plugins"`
+	CFPlugins OverrideSets `yaml:"cfPlugins" mapstructure:"cfPlugins"`
 	Snaps     OverrideSets `yaml:"snaps" mapstructure:"snaps"`
 	// Per-item override maps (by name)
-	ToolOverrides     map[string]ToolOverride     `yaml:"tool_overrides" mapstructure:"tool_overrides"`
-	CFPluginOverrides map[string]CFPluginOverride `yaml:"cf_plugin_overrides" mapstructure:"cf_plugin_overrides"`
-	SnapOverrides     map[string]SnapOverride     `yaml:"snap_overrides" mapstructure:"snap_overrides"`
+	ToolOverrides     map[string]ToolOverride     `yaml:"toolOverrides" mapstructure:"toolOverrides"`
+	CFPluginOverrides map[string]CFPluginOverride `yaml:"cfPluginOverrides" mapstructure:"cfPluginOverrides"`
+	SnapOverrides     map[string]SnapOverride     `yaml:"snapOverrides" mapstructure:"snapOverrides"`
 }
 
 // ComponentConfig represents configuration for CF components
@@ -137,7 +140,7 @@ type ComponentConfig struct {
 	Flavor   string `yaml:"flavor" mapstructure:"flavor"`
 	Image    string `yaml:"image" mapstructure:"image"`
 	Count    int    `yaml:"count" mapstructure:"count"`
-	DiskSize int    `yaml:"disk_size" mapstructure:"disk_size"`
+	DiskSize int    `yaml:"diskSize" mapstructure:"diskSize"`
 }
 
 // Genesis configuration
@@ -146,7 +149,7 @@ type Genesis struct {
 	Repo          string `yaml:"repo" mapstructure:"repo"`
 	Branch        string `yaml:"branch" mapstructure:"branch"`
 	Commit        string `yaml:"commit" mapstructure:"commit"`
-	VersionPrefix string `yaml:"version_prefix" mapstructure:"version_prefix"`
+	VersionPrefix string `yaml:"versionPrefix" mapstructure:"versionPrefix"`
 }
 
 // GitConfig represents Git configuration for the bastion
@@ -170,26 +173,26 @@ type OverrideSets struct {
 type ToolOverride struct {
 	URL            string `yaml:"url" mapstructure:"url"`
 	Version        string `yaml:"version" mapstructure:"version"`
-	VersionURL     string `yaml:"version_url" mapstructure:"version_url"`
-	VersionPattern string `yaml:"version_pattern" mapstructure:"version_pattern"`
-	URLTemplate    string `yaml:"url_template" mapstructure:"url_template"`
+	VersionURL     string `yaml:"versionUrl" mapstructure:"versionUrl"`
+	VersionPattern string `yaml:"versionPattern" mapstructure:"versionPattern"`
+	URLTemplate    string `yaml:"urlTemplate" mapstructure:"urlTemplate"`
 	Dest           string `yaml:"dest" mapstructure:"dest"`
 	Mode           uint32 `yaml:"mode" mapstructure:"mode"`
 	Sudo           *bool  `yaml:"sudo" mapstructure:"sudo"`
 	Extract        *bool  `yaml:"extract" mapstructure:"extract"`
-	InstallCommand string `yaml:"install_command" mapstructure:"install_command"`
-	InstallScript  string `yaml:"install_script" mapstructure:"install_script"`
-	VerifyCommand  string `yaml:"verify_command" mapstructure:"verify_command"`
-	PathAddition   string `yaml:"path_addition" mapstructure:"path_addition"`
+	InstallCommand string `yaml:"installCommand" mapstructure:"installCommand"`
+	InstallScript  string `yaml:"installScript" mapstructure:"installScript"`
+	VerifyCommand  string `yaml:"verifyCommand" mapstructure:"verifyCommand"`
+	PathAddition   string `yaml:"pathAddition" mapstructure:"pathAddition"`
 	Cleanup        string `yaml:"cleanup" mapstructure:"cleanup"`
 }
 
 // CFPluginOverride allows overriding CF plugin properties
 type CFPluginOverride struct {
-	GitHubRepo string `yaml:"github_repo" mapstructure:"github_repo"`
+	GitHubRepo string `yaml:"githubRepo" mapstructure:"githubRepo"`
 	Version    string `yaml:"version" mapstructure:"version"`
 	Repo       string `yaml:"repo" mapstructure:"repo"`
-	RepoURL    string `yaml:"repo_url" mapstructure:"repo_url"`
+	RepoURL    string `yaml:"repoUrl" mapstructure:"repoUrl"`
 	Force      *bool  `yaml:"force" mapstructure:"force"`
 }
 
@@ -197,21 +200,21 @@ type CFPluginOverride struct {
 type SnapOverride struct {
 	Channel      string `yaml:"channel" mapstructure:"channel"`
 	Classic      *bool  `yaml:"classic" mapstructure:"classic"`
-	DevMode      *bool  `yaml:"devmode" mapstructure:"devmode"`
+	DevMode      *bool  `yaml:"devMode" mapstructure:"devMode"`
 	Dangerous    *bool  `yaml:"dangerous" mapstructure:"dangerous"`
-	CheckCommand string `yaml:"check_command" mapstructure:"check_command"`
+	CheckCommand string `yaml:"checkCommand" mapstructure:"checkCommand"`
 }
 
 // Deployment configuration
 type Deployment struct {
-	HierarchyFiles      bool `yaml:"hierarchy_files" mapstructure:"hierarchy_files"`
-	HierarchyVaultPaths bool `yaml:"hierarchy_vault_paths" mapstructure:"hierarchy_vault_paths"`
+	HierarchyFiles      bool `yaml:"hierarchyFiles" mapstructure:"hierarchyFiles"`
+	HierarchyVaultPaths bool `yaml:"hierarchyVaultPaths" mapstructure:"hierarchyVaultPaths"`
 }
 
 // AvailabilityZone configuration
 type AvailabilityZone struct {
 	Zone            string `yaml:"zone" mapstructure:"zone"`
-	CloudProperties string `yaml:"cloud_properties" mapstructure:"cloud_properties"`
+	CloudProperties string `yaml:"cloudProperties" mapstructure:"cloudProperties"`
 }
 
 // Configuration caching for performance optimization
@@ -397,6 +400,11 @@ func applyDefaults(cfg *Config, provider string) error {
 
 // applyStackitDefaults applies STACKIT-specific defaults
 func applyStackitDefaults(cfg *Config) {
+	// Default region for STACKIT if not specified via config or flags
+	if cfg.Region == "" {
+		cfg.Region = "eu01"
+	}
+
 	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
 		cfg.Network.NetworkCIDR = "10.4.0.0/20"
 	}
@@ -406,7 +414,7 @@ func applyStackitDefaults(cfg *Config) {
 	}
 
 	if cfg.Bastion.Flavor == "" {
-		cfg.Bastion.Flavor = "m1.2"
+		cfg.Bastion.Flavor = "m1a.2d"
 	}
 
 	if cfg.Bastion.Image == "" && cfg.Bastion.OS != "" && cfg.Bastion.OSVersion != "" {

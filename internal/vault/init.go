@@ -153,18 +153,18 @@ func (im *InitManager) UnsealVault(keys []string) error {
 	im.logger.Info("Vault seal status", "sealed", status.Sealed, "threshold", status.T, "shares", status.N, "progress", status.Progress)
 
 	// Unseal with provided keys
-	for i, key := range keys {
-		im.logger.Debug("Providing unseal key", "key_number", i+1, "total", len(keys))
+	for keyIndex, key := range keys {
+		im.logger.Debug("Providing unseal key", "key_number", keyIndex+1, "total", len(keys))
 
 		unsealResp, err := im.client.client.Sys().Unseal(key)
 		if err != nil {
-			return fmt.Errorf("failed to provide unseal key %d: %w", i+1, err)
+			return fmt.Errorf("failed to provide unseal key %d: %w", keyIndex+1, err)
 		}
 
 		im.logger.Debug("Unseal progress", "progress", unsealResp.Progress, "threshold", unsealResp.T)
 
 		if !unsealResp.Sealed {
-			im.logger.Info("Vault successfully unsealed", "keys_used", i+1)
+			im.logger.Info("Vault successfully unsealed", "keys_used", keyIndex+1)
 			return nil
 		}
 	}
@@ -213,8 +213,8 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 
 	// Look for unseal keys in environment variables
 	var keys []string
-	for i := 1; i <= 10; i++ { // Check up to 10 keys
-		keyName := fmt.Sprintf("VAULT_UNSEAL_KEY_%d", i)
+	for keyNumber := 1; keyNumber <= 10; keyNumber++ { // Check up to 10 keys
+		keyName := fmt.Sprintf("VAULT_UNSEAL_KEY_%d", keyNumber)
 		if key := getEnvOrDefault(keyName, ""); key != "" {
 			keys = append(keys, key)
 		}

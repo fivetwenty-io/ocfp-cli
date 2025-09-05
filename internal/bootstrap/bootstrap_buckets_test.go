@@ -31,7 +31,9 @@ func (f *fakeStorage) ListVolumes(ctx context.Context, filters map[string]string
 func (f *fakeStorage) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
 	return nil
 }
-func (f *fakeStorage) DetachVolume(ctx context.Context, volumeID string) error     { return nil }
+func (f *fakeStorage) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
+	return nil
+}
 func (f *fakeStorage) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
 func (f *fakeStorage) DeleteVolume(ctx context.Context, id string) error           { return nil }
 func (f *fakeStorage) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
@@ -86,21 +88,21 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 	tmp := t.TempDir()
 	// Isolate state under temp directory
 	stateDir := filepath.Join(tmp, ".ocfp-state")
-	sm, err := state.NewManager(stateDir)
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
 
-	fs := &fakeStorage{}
-	p := &fakeProvider{s: fs}
+	fakeStore := &fakeStorage{}
+	provider := &fakeProvider{s: fakeStore}
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
-	m := NewManager(cfg, p, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	manager := NewManager(cfg, provider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 
 	ctx := context.Background()
-	if err := m.createBuckets(ctx); err != nil {
+	if err := manager.createBuckets(ctx); err != nil {
 		t.Fatalf("createBuckets: %v", err)
 	}
 
@@ -113,10 +115,10 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 		"prod-artifacts":       true,
 		"prod-shield-backups":  true,
 	}
-	if len(fs.created) != len(want) {
-		t.Fatalf("created %d buckets, want %d: %+v", len(fs.created), len(want), fs.created)
+	if len(fakeStore.created) != len(want) {
+		t.Fatalf("created %d buckets, want %d: %+v", len(fakeStore.created), len(want), fakeStore.created)
 	}
-	for _, name := range fs.created {
+	for _, name := range fakeStore.created {
 		if !want[name] {
 			t.Fatalf("unexpected bucket created: %s", name)
 		}
@@ -133,16 +135,16 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".ocfp-state")
-	sm, err := state.NewManager(stateDir)
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
 
-	fs := &fakeStorage{}
-	p := &fakeProvider{s: fs}
+	fakeStore := &fakeStorage{}
+	provider := &fakeProvider{s: fakeStore}
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
 	// Enable policies and set custom values
 	cfg.Blobstore.EnablePolicies = true
@@ -155,9 +157,9 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 	cfg.Blobstore.BoshBlobstore.Versioning = true
 	cfg.Blobstore.BoshBlobstore.NoncurrentDays = 9
 
-	m := NewManager(cfg, p, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	manager := NewManager(cfg, provider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 	ctx := context.Background()
-	if err := m.createBuckets(ctx); err != nil {
+	if err := manager.createBuckets(ctx); err != nil {
 		t.Fatalf("createBuckets: %v", err)
 	}
 
@@ -185,21 +187,21 @@ func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".ocfp-state")
-	sm, err := state.NewManager(stateDir)
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
 
-	fs := &fakeStorage{}
-	p := &fakeProvider{s: fs}
+	fakeStore := &fakeStorage{}
+	provider := &fakeProvider{s: fakeStore}
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
 	// Do not enable cfg.Blobstore.EnablePolicies
-	m := NewManager(cfg, p, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	manager := NewManager(cfg, provider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 	ctx := context.Background()
-	if err := m.createBuckets(ctx); err != nil {
+	if err := manager.createBuckets(ctx); err != nil {
 		t.Fatalf("createBuckets: %v", err)
 	}
 

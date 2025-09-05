@@ -9,16 +9,16 @@ import (
 
 func TestResolveReservedIP(t *testing.T) {
 	// Prepare state
-	sm, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	bloc := "prod"
-	if _, err := sm.Load(bloc); err != nil {
+	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}
 	// Inject output
-	_ = sm.SetOutput("reserved_prod-ocfp-0_vault_ip", "10.4.0.5")
+	_ = stateManager.SetOutput("reserved_prod-ocfp-0_vault_ip", "10.4.0.5")
 
 	ip, err := resolveReservedIP(bloc, "reserved:vault_ip")
 	if err != nil {
@@ -30,16 +30,16 @@ func TestResolveReservedIP(t *testing.T) {
 }
 
 func TestResolvePublicIPToken(t *testing.T) {
-	sm, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	bloc := "prod"
-	if _, err := sm.Load(bloc); err != nil {
+	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}
 	// Inject a public_ip resource
-	_ = sm.AddResource(&state.Resource{
+	_ = stateManager.AddResource(&state.Resource{
 		ID:    "pip-1",
 		Type:  "public_ip",
 		Name:  "prod-jumpbox-0",
@@ -62,17 +62,17 @@ func TestResolvePublicIPToken(t *testing.T) {
 }
 
 func TestResolveReservedIPWithIndex(t *testing.T) {
-	sm, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	bloc := "prod"
-	if _, err := sm.Load(bloc); err != nil {
+	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}
 
 	// With index
-	_ = sm.SetOutput("reserved_prod-ocfp-1_doomsday_ip", "10.4.4.9")
+	_ = stateManager.SetOutput("reserved_prod-ocfp-1_doomsday_ip", "10.4.4.9")
 	ip, err := resolveReservedIP(bloc, "reserved:doomsday_ip:1")
 	if err != nil {
 		t.Fatalf("resolve idx: %v", err)

@@ -30,7 +30,9 @@ func (f *fakeStorageCreds) ListVolumes(ctx context.Context, filters map[string]s
 func (f *fakeStorageCreds) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
 	return nil
 }
-func (f *fakeStorageCreds) DetachVolume(ctx context.Context, volumeID string) error     { return nil }
+func (f *fakeStorageCreds) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
+	return nil
+}
 func (f *fakeStorageCreds) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
 func (f *fakeStorageCreds) DeleteVolume(ctx context.Context, id string) error           { return nil }
 func (f *fakeStorageCreds) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
@@ -68,23 +70,23 @@ func (p *fakeProviderCreds) Initialize(ctx context.Context, cfg interface{}) err
 func (p *fakeProviderCreds) Cleanup(ctx context.Context) error                     { return nil }
 
 func TestTeardownDeletesCredentialsGroup(t *testing.T) {
-	st := &fakeStorageCreds{}
-	p := &fakeProviderCreds{s: st}
+	fakeStorage := &fakeStorageCreds{}
+	fakeProvider := &fakeProviderCreds{s: fakeStorage}
 	cfg := &config.Config{Name: "prod", Provider: "stackit", Region: "eu01"}
-	sm, err := state.NewManager(t.TempDir())
+	stateManager, err := state.NewManager(t.TempDir())
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
-	m := NewTeardownManager(cfg, p, sm, &TeardownOptions{BlocName: "prod"})
+	m := NewTeardownManager(cfg, fakeProvider, stateManager, &TeardownOptions{BlocName: "prod"})
 
 	r := &ResourceToDelete{Type: "credentials_group", ID: "group-123", Name: "ocfp-cli"}
 	if err := m.deleteResource(context.Background(), r); err != nil {
 		t.Fatalf("deleteResource: %v", err)
 	}
-	if st.deletedGroup != "group-123" {
-		t.Fatalf("expected credentials group deletion to be called, got %q", st.deletedGroup)
+	if fakeStorage.deletedGroup != "group-123" {
+		t.Fatalf("expected credentials group deletion to be called, got %q", fakeStorage.deletedGroup)
 	}
 }
