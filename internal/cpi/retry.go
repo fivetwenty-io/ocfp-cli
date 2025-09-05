@@ -394,16 +394,15 @@ func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBrea
 
 // Call executes a function with circuit breaker protection.
 func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc) error {
-	// Check circuit state
-	switch cb.state {
-	case "open":
-		if time.Since(cb.lastFailure) > cb.resetTimeout {
-			cb.state = "half-open"
-			cb.failures = 0
-		} else {
-			return errors.New("circuit breaker is open")
-		}
-	}
+    // Check circuit state
+    if cb.state == "open" {
+        if time.Since(cb.lastFailure) > cb.resetTimeout {
+            cb.state = "half-open"
+            cb.failures = 0
+        } else {
+            return errors.New("circuit breaker is open")
+        }
+    }
 
 	// Execute function
 	err := retryableFunc(ctx)

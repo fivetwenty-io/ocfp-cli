@@ -12,6 +12,7 @@ import (
 )
 
 func TestEnvCommand(t *testing.T) {
+	t.Parallel()
 	// Create test config directory
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
@@ -39,12 +40,16 @@ environments:
 	require.NoError(t, err)
 
 	t.Run("CreateCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewEnvCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "env", cmd.Use)
 	})
 
 	t.Run("ListSubcommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewEnvCmd()
 
 		// Find list subcommand
@@ -63,6 +68,8 @@ environments:
 	})
 
 	t.Run("ShowSubcommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewEnvCmd()
 
 		// Find show subcommand
@@ -81,6 +88,8 @@ environments:
 	})
 
 	t.Run("SetSubcommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewEnvCmd()
 
 		// Find set subcommand
@@ -106,6 +115,8 @@ environments:
 	})
 
 	t.Run("ExportSubcommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewEnvCmd()
 
 		// Find export subcommand
@@ -125,13 +136,18 @@ environments:
 }
 
 func TestBootstrapCommand(t *testing.T) {
+	t.Parallel()
 	t.Run("CreateCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBootstrapCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "bootstrap", cmd.Use)
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBootstrapCmd()
 
 		// Test flag existence
@@ -141,13 +157,18 @@ func TestBootstrapCommand(t *testing.T) {
 }
 
 func TestTeardownCommand(t *testing.T) {
+	t.Parallel()
 	t.Run("CreateCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewTeardownCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "teardown", cmd.Use)
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewTeardownCmd()
 
 		// Test flag existence

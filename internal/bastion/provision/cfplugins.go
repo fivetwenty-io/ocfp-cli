@@ -16,6 +16,11 @@ type CFPluginManager struct {
 	log      logger.Logger
 }
 
+const (
+    // cfInstallForceFlag appends force flag to cf install commands
+    cfInstallForceFlag = " -f"
+)
+
 // CFPlugin represents a CloudFoundry plugin configuration.
 type CFPlugin struct {
 	Name              string `yaml:"name"`
@@ -171,9 +176,9 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 
 			// Build CF install command
 			installCmd := fmt.Sprintf("cf install-plugin \"/tmp/%s-plugin\"", plugin.Name)
-			if plugin.Force {
-				installCmd += " -f"
-			}
+            if plugin.Force {
+                installCmd += cfInstallForceFlag
+            }
 
 			lines = append(lines, "        "+installCmd)
 			lines = append(lines, "        if [ $? -eq 0 ]; then")
@@ -188,16 +193,16 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 		} else if plugin.Repo != "" {
 			// Install from CF Community repository
 			installCmd := fmt.Sprintf("cf add-plugin-repo %s %s", plugin.Name, plugin.RepoURL)
-			if plugin.Force {
-				installCmd += " -f"
-			}
+            if plugin.Force {
+                installCmd += cfInstallForceFlag
+            }
 
 			lines = append(lines, "    "+installCmd)
 			lines = append(lines, "    cf install-plugin "+plugin.Name)
 
-			if plugin.Force {
-				lines[len(lines)-1] += " -f"
-			}
+            if plugin.Force {
+                lines[len(lines)-1] += cfInstallForceFlag
+            }
 		}
 
 		lines = append(lines, "fi")

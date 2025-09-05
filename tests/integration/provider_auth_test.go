@@ -23,9 +23,13 @@ func TestProviderAuthenticationFlow(t *testing.T) {
 		t.Skip("skipping provider authentication integration tests in short mode")
 	}
 
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 
 	t.Run("StackitAuthWithToken", func(t *testing.T) {
+		t.Parallel()
+
 		configFile := filepath.Join(tmpDir, "stackit-token-config.yml")
 
 		testConfig := `
@@ -66,6 +70,8 @@ blocs:
 	})
 
 	t.Run("StackitAuthWithJSON", func(t *testing.T) {
+		t.Parallel()
+
 		configFile := filepath.Join(tmpDir, "stackit-json-config.yml")
 		serviceAccountJSON := `{
   "type": "service_account",
@@ -97,6 +103,8 @@ blocs:
 	})
 
 	t.Run("StackitAuthWithKeyPath", func(t *testing.T) {
+		t.Parallel()
+
 		keyPath := filepath.Join(tmpDir, "service-account-key.json")
 		serviceAccountContent := `{
   "type": "service_account",
@@ -137,6 +145,7 @@ blocs:
 	})
 
 	t.Run("ProviderCommandWithStackitCLI", func(t *testing.T) {
+		t.Parallel()
 		// Check if stackit CLI is available
 		_, err := exec.LookPath("stackit")
 		if err != nil {
@@ -177,9 +186,12 @@ blocs:
 
 // TestProviderValidationFlow tests provider validation logic.
 func TestProviderValidationFlow(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	t.Run("ValidateProviderTypes", func(t *testing.T) {
+		t.Parallel()
+
 		configFile := filepath.Join(tmpDir, "validation-config.yml")
 
 		testConfig := `
@@ -231,6 +243,7 @@ blocs:
 	})
 
 	t.Run("ValidateEnvironmentVariables", func(t *testing.T) {
+		t.Parallel()
 		// Test provider selection via environment variable
 		_ = os.Setenv("OCFP_PROVIDER", "aws")
 		_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
@@ -264,6 +277,8 @@ blocs:
 	})
 
 	t.Run("InvalidProviderHandling", func(t *testing.T) {
+		t.Parallel()
+
 		configFile := filepath.Join(tmpDir, "invalid-provider-config.yml")
 		testConfig := `
 name: invalid-test
@@ -296,7 +311,10 @@ func TestProviderNetworkFlow(t *testing.T) {
 		t.Skip("skipping network flow tests in short mode")
 	}
 
+	t.Parallel()
+
 	t.Run("StackitClientNetworkOperations", func(t *testing.T) {
+		t.Parallel()
 		// Test STACKIT client network manager initialization
 		config := &stackit.Config{
 			AuthToken: "test-token",
@@ -327,6 +345,8 @@ func TestProviderNetworkFlow(t *testing.T) {
 	})
 
 	t.Run("StackitClientInitialization", func(t *testing.T) {
+		t.Parallel()
+
 		config := &stackit.Config{
 			AuthToken: "test-token",
 			ProjectID: "test-project",
@@ -348,6 +368,8 @@ func TestProviderNetworkFlow(t *testing.T) {
 	})
 
 	t.Run("StackitClientCleanup", func(t *testing.T) {
+		t.Parallel()
+
 		config := &stackit.Config{
 			AuthToken: "test-token",
 			ProjectID: "test-project",
@@ -366,9 +388,11 @@ func TestProviderNetworkFlow(t *testing.T) {
 
 // TestProviderCredentialDiscovery tests credential discovery mechanisms.
 func TestProviderCredentialDiscovery(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	t.Run("CredentialPriority", func(t *testing.T) {
+		t.Parallel()
 		// Test credential priority: config file > vault > environment
 
 		// Create config with token
@@ -395,6 +419,7 @@ blocs:
 	})
 
 	t.Run("MultipleCredentialFormats", func(t *testing.T) {
+		t.Parallel()
 		// Test handling of multiple credential formats in same config
 		configFile := filepath.Join(tmpDir, "multi-format-config.yml")
 		keyPath := filepath.Join(tmpDir, "multi-key.json")
@@ -428,6 +453,7 @@ blocs:
 	})
 
 	t.Run("VaultIntegrationCheck", func(t *testing.T) {
+		t.Parallel()
 		// Check if vault integration tools are available
 		_, safeErr := exec.LookPath("safe")
 		_, vaultErr := exec.LookPath("vault")

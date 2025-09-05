@@ -70,6 +70,7 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 }
 
 // CreatePublicKeyAuth creates an SSH public key authentication method.
+//nolint:ireturn // returning ssh.AuthMethod interface is intentional (crypto/ssh API)
 func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthMethod, error) {
 	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
 		return nil, fmt.Errorf("invalid key path: %w", err)
@@ -165,7 +166,7 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 		return fmt.Errorf("failed to read public key: %w", err)
 	}
 
-	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData)
+    publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData) //nolint:dogsled // only the publicKey and error are needed
 	if err != nil {
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
@@ -439,7 +440,7 @@ func (km *KeyManager) LoadAuthorizedKeys(authorizedKeysPath string) ([]ssh.Publi
 			continue
 		}
 
-		publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+        publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line)) //nolint:dogsled // only the publicKey and error are needed
 		if err != nil {
 			km.log.Warn("Failed to parse authorized key",
 				"line", line,

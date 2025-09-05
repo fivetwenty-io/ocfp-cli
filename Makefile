@@ -238,6 +238,16 @@ goimports: ## Run goimports to check import formatting
 	@goimports -l $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*") | (! grep . || (echo "$(RED)✗ Files need goimports formatting$(RESET)" && false))
 	@echo "$(GREEN)✓ Goimports check complete$(RESET)"
 
+.PHONY: revive
+revive: ## Run revive linter
+	@echo "$(GREEN)Running revive linter...$(RESET)"
+	@command -v revive >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing revive...$(RESET)"; \
+		go install github.com/mgechev/revive@latest; \
+	}
+	@revive -config revive.toml -formatter friendly ./...
+	@echo "$(GREEN)✓ Revive linter complete$(RESET)"
+
 .PHONY: deadcode
 deadcode: ## Run deadcode to find unused code
 	@echo "$(GREEN)Running deadcode analysis...$(RESET)"
@@ -253,7 +263,7 @@ check: fmt vet lint staticcheck ## Run basic checks (fmt, vet, lint, staticcheck
 	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
 
 .PHONY: check-all
-check-all: fmt vet lint staticcheck gocyclo ineffassign errcheck goimports ## Run all code quality checks
+check-all: fmt vet lint staticcheck revive gocyclo ineffassign errcheck goimports ## Run all code quality checks
 	@echo "$(GREEN)✓ All checks passed$(RESET)"
 
 ##@ Security

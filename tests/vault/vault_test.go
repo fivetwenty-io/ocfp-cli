@@ -1,8 +1,8 @@
 package vault_test
 
 import (
-	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,6 +17,8 @@ func TestVaultClient(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
+
+	t.Parallel()
 
 	cfg := &vault.Config{
 		Address: getTestVaultAddr(),
@@ -44,6 +46,8 @@ func TestSafeOperations(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
+
+	t.Parallel()
 
 	client := createTestClient(t)
 
@@ -99,6 +103,8 @@ func TestEngineDetection(t *testing.T) {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
+	t.Parallel()
+
 	client := createTestClient(t)
 
 	defer func() {
@@ -128,6 +134,8 @@ func TestEngineDetection(t *testing.T) {
 
 // TestSecretGeneration tests secret generation utilities.
 func TestSecretGeneration(t *testing.T) {
+	t.Parallel()
+
 	generator := vault.NewSecretGenerator()
 
 	// Test password generation
@@ -168,6 +176,8 @@ func TestVaultManager(t *testing.T) {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
+	t.Parallel()
+
 	cfg := createTestConfig()
 	manager, err := vault.NewManagerFromEnv(cfg, "test-bloc")
 	require.NoError(t, err)
@@ -194,6 +204,8 @@ func TestValidation(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
+
+	t.Parallel()
 
 	client := createTestClient(t)
 
@@ -225,6 +237,8 @@ func TestPolicyManagement(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
+
+	t.Parallel()
 
 	client := createTestClient(t)
 

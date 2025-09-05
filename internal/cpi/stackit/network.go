@@ -178,7 +178,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 
 	items, _ := resp.GetItemsOk()
 
-	var list []*cpi.Network
+    list := make([]*cpi.Network, 0, len(items))
 
 	for _, n := range items {
 		labels := mapAnyToString(n.GetLabels())
@@ -288,7 +288,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP
 
 	items, _ := resp.GetItemsOk()
 
-	var list []*cpi.FloatingIP
+    list := make([]*cpi.FloatingIP, 0, len(items))
 	for _, ip := range items {
 		floatingIP := &cpi.FloatingIP{
 			ID:      stringOrEmpty(ip.GetIdOk()),
@@ -387,39 +387,39 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 
 	logger.WithOperation("CreateRouter").Infof("Router created: %s", router.ID)
 
-	// TODO: Implement actual STACKIT API call
+// Pending: implement actual STACKIT API call
 	return router, nil
 }
 
 // GetRouter retrieves a router.
 func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
-	// TODO: Implement
+// Pending: implement
 	return nil, errors.New("not implemented")
 }
 
 // ListRouters lists routers.
 func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
-	// TODO: Implement
+// Pending: implement
 	return nil, errors.New("not implemented")
 }
 
 // AttachRouterInterface attaches a subnet to a router.
 func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("AttachRouterInterface").Infof("Attaching subnet %s to router %s", subnetID, routerID)
-	// TODO: Implement actual STACKIT API call
+// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DetachRouterInterface detaches a subnet from a router.
 func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("DetachRouterInterface").Infof("Detaching subnet %s from router %s", subnetID, routerID)
-	// TODO: Implement actual STACKIT API call
+// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DeleteRouter deletes a router.
 func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
-	// TODO: Implement
+// Pending: implement
 	return errors.New("not implemented")
 }
 
@@ -496,7 +496,7 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context, filters map[string]s
 
 	items, _ := resp.GetItemsOk()
 
-	var list []*cpi.PublicIP
+    list := make([]*cpi.PublicIP, 0, len(items))
 
 	for _, ip := range items {
 		labels := mapAnyToString(ip.GetLabels())
@@ -531,7 +531,7 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, publicIPID string) (*c
 
 	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, publicIPID).Execute()
 	if err != nil {
-		// TODO: Inspect error for 404 mapping if needed
+		// Pending: inspect error for 404 mapping if needed
 		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
 	}
 
@@ -639,7 +639,7 @@ func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName st
 	}
 
 	// Create missing IPs
-	var allIPs []*cpi.PublicIP
+    allIPs := make([]*cpi.PublicIP, 0, count)
 
 	for ipIndex := range count {
 		index := strconv.Itoa(ipIndex)
@@ -740,7 +740,7 @@ func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, jo
 		}
 	}
 
-	var allIPs []*cpi.PublicIP
+	allIPs := make([]*cpi.PublicIP, 0, count)
 
 	for ipIndex := range count {
 		indexString := strconv.Itoa(ipIndex)

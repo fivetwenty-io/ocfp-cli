@@ -114,6 +114,48 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 	return c.Authenticate(ctx)
 }
 
+// buildConfigOptions builds common SDK configuration options based on client config.
+func (c *Client) buildConfigOptions() []stackitconfig.ConfigurationOption {
+	opts := []stackitconfig.ConfigurationOption{}
+
+	if c.config.Region != "" {
+		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
+	}
+
+	if c.config.BaseURL != "" {
+		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
+	}
+
+	switch {
+	case c.config.ServiceAccountJSON != "":
+		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
+	case c.config.ServiceAccountToken != "":
+		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
+	case c.config.AuthToken != "":
+		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
+	}
+
+	return opts
+}
+
+// httpClientConfigurer is implemented by SDK clients that expose GetConfig().
+type httpClientConfigurer interface {
+	GetConfig() *stackitconfig.Configuration
+}
+
+// applyTimeout configures the HTTP client timeout on a SDK client if set.
+func (c *Client) applyTimeout(cli httpClientConfigurer) {
+	if c.config.Timeout <= 0 {
+		return
+	}
+
+	if cli.GetConfig().HTTPClient == nil {
+		cli.GetConfig().HTTPClient = &http.Client{}
+	}
+
+	cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
+}
+
 // Network returns the network manager.
 func (c *Client) Network() cpi.NetworkManager {
 	return c.network
@@ -211,38 +253,12 @@ func (c *Client) getIAASClient() (*iaas.APIClient, error) {
 		return c.iaasClient, nil
 	}
 
-	opts := []stackitconfig.ConfigurationOption{}
-
-	// Region (e.g., "eu01")
-	if c.config.Region != "" {
-		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
-	}
-	// Optional explicit endpoint override
-	if c.config.BaseURL != "" {
-		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
-	}
-
-	// Auth selection: prefer service account JSON, then service account token, then auth token
-	if c.config.ServiceAccountJSON != "" {
-		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
-	} else if c.config.ServiceAccountToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
-	} else if c.config.AuthToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
-	}
-
-	cli, err := iaas.NewAPIClient(opts...)
+	cli, err := iaas.NewAPIClient(c.buildConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAAS client: %w", err)
 	}
-	// Configure timeout after client creation to avoid nil HTTPClient in options
-	if c.config.Timeout > 0 {
-		if cli.GetConfig().HTTPClient == nil {
-			cli.GetConfig().HTTPClient = &http.Client{}
-		}
 
-		cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
-	}
+	c.applyTimeout(cli)
 
 	c.iaasClient = cli
 
@@ -255,36 +271,12 @@ func (c *Client) getObjectStorageClient() (*objectstorage.APIClient, error) {
 		return c.objClient, nil
 	}
 
-	opts := []stackitconfig.ConfigurationOption{}
-
-	if c.config.Region != "" {
-		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
-	}
-
-	if c.config.BaseURL != "" {
-		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
-	}
-
-	if c.config.ServiceAccountJSON != "" {
-		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
-	} else if c.config.ServiceAccountToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
-	} else if c.config.AuthToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
-	}
-
-	cli, err := objectstorage.NewAPIClient(opts...)
+	cli, err := objectstorage.NewAPIClient(c.buildConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Object Storage client: %w", err)
 	}
 
-	if c.config.Timeout > 0 {
-		if cli.GetConfig().HTTPClient == nil {
-			cli.GetConfig().HTTPClient = &http.Client{}
-		}
-
-		cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
-	}
+	c.applyTimeout(cli)
 
 	c.objClient = cli
 
@@ -297,31 +289,12 @@ func (c *Client) getLoadBalancerClient() (*lb.APIClient, error) {
 		return c.lbClient, nil
 	}
 
-	opts := []stackitconfig.ConfigurationOption{}
-	if c.config.Region != "" {
-		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
-	}
-
-	if c.config.ServiceAccountJSON != "" {
-		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
-	} else if c.config.ServiceAccountToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
-	} else if c.config.AuthToken != "" {
-		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
-	}
-
-	cli, err := lb.NewAPIClient(opts...)
+	cli, err := lb.NewAPIClient(c.buildConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Load Balancer client: %w", err)
 	}
 
-	if c.config.Timeout > 0 {
-		if cli.GetConfig().HTTPClient == nil {
-			cli.GetConfig().HTTPClient = &http.Client{}
-		}
-
-		cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
-	}
+	c.applyTimeout(cli)
 
 	c.lbClient = cli
 

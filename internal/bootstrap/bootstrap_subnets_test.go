@@ -1,14 +1,20 @@
 package bootstrap
 
+//nolint:ireturn // test fakes intentionally return interfaces
+
 import (
-	"context"
-	"fmt"
-	"path/filepath"
-	"testing"
+    "context"
+    "fmt"
+    "path/filepath"
+    "testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+    "github.com/ocfp/ocfp-cli-go/internal/state"
+)
+
+const (
+    testCIDR104 = "10.4.0.0/20"
 )
 
 // Fakes for network + compute.
@@ -23,7 +29,9 @@ func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.CreateNetworkReque
 
 	return n, nil
 }
-func (f *fakeNet) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { return nil, nil }
+func (f *fakeNet) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
+}
 func (f *fakeNet) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
 	return nil, nil
 }
@@ -35,28 +43,36 @@ func (f *fakeNet) CreateSubnet(ctx context.Context, req *cpi.CreateSubnetRequest
 
 	return s, nil
 }
-func (f *fakeNet) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { return nil, nil }
+func (f *fakeNet) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
+}
 func (f *fakeNet) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeNet) DeleteSubnet(ctx context.Context, id string) error { return nil }
-func (f *fakeNet) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
+func (f *fakeNet) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeNet) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeNet) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeNet) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
-	return nil, nil
-}
-func (f *fakeNet) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) { return nil, nil }
 func (f *fakeNet) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
 	return nil
 }
 func (f *fakeNet) DisassociateFloatingIP(ctx context.Context, ipID string) error { return nil }
 func (f *fakeNet) ReleaseFloatingIP(ctx context.Context, id string) error        { return nil }
-func (f *fakeNet) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
-	return nil, nil
+func (f *fakeNet) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetRouter(ctx context.Context, id string) (*cpi.Router, error) { return nil, nil }
-func (f *fakeNet) ListRouters(ctx context.Context) ([]*cpi.Router, error)        { return nil, nil }
+func (f *fakeNet) GetRouter(ctx context.Context, id string) (*cpi.Router, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeNet) ListRouters(ctx context.Context) ([]*cpi.Router, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
 func (f *fakeNet) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
 	return nil
 }
@@ -64,19 +80,19 @@ func (f *fakeNet) DetachRouterInterface(ctx context.Context, routerID string, su
 	return nil
 }
 func (f *fakeNet) DeleteRouter(ctx context.Context, id string) error { return nil }
-func (f *fakeNet) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
-	return nil, nil
+func (f *fakeNet) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
-	return nil, nil
+func (f *fakeNet) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
-	return nil, nil
+func (f *fakeNet) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeNet) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error { return nil }
 func (f *fakeNet) DeleteLoadBalancer(ctx context.Context, id string) error            { return nil }
-func (f *fakeNet) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
-	return nil, nil
+func (f *fakeNet) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) { //nolint:nilnil // test fake
+    return nil, nil
 }
 func (f *fakeNet) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
 	return nil
@@ -87,8 +103,8 @@ func (f *fakeNet) RemoveBackendMember(ctx context.Context, lbID string, memberIP
 func (f *fakeNet) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
 	return nil
 }
-func (f *fakeNet) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
-	return nil, nil
+func (f *fakeNet) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
 
 type fakeCompute struct{ lastReq *cpi.CreateInstanceRequest }
@@ -98,11 +114,11 @@ func (f *fakeCompute) CreateInstance(ctx context.Context, req *cpi.CreateInstanc
 
 	return &cpi.Instance{ID: "inst-1", Name: req.Name, NetworkID: req.NetworkID, SubnetID: req.SubnetID, PrivateIP: "10.0.0.10", State: cpi.ResourceStateActive, Tags: req.Tags}, nil
 }
-func (f *fakeCompute) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
-	return nil, nil
+func (f *fakeCompute) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
-	return nil, nil
+func (f *fakeCompute) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) { //nolint:nilnil // test fake
+    return nil, nil
 }
 func (f *fakeCompute) StartInstance(ctx context.Context, id string) error  { return nil }
 func (f *fakeCompute) StopInstance(ctx context.Context, id string) error   { return nil }
@@ -117,14 +133,22 @@ func (f *fakeCompute) ImportKeyPair(ctx context.Context, name string, publicKey 
 func (f *fakeCompute) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
 	return &cpi.KeyPair{Name: name}, nil
 }
-func (f *fakeCompute) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) { return nil, nil }
-func (f *fakeCompute) DeleteKeyPair(ctx context.Context, name string) error     { return nil }
-func (f *fakeCompute) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
-	return nil, nil
+func (f *fakeCompute) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) { //nolint:nilnil // test fake
+    return nil, nil
 }
-func (f *fakeCompute) GetImage(ctx context.Context, id string) (*cpi.Image, error)   { return nil, nil }
-func (f *fakeCompute) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)        { return nil, nil }
-func (f *fakeCompute) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) { return nil, nil }
+func (f *fakeCompute) DeleteKeyPair(ctx context.Context, name string) error     { return nil }
+func (f *fakeCompute) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) { //nolint:nilnil // test fake
+    return nil, nil
+}
+func (f *fakeCompute) GetImage(ctx context.Context, id string) (*cpi.Image, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeCompute) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) { //nolint:nilnil // test fake
+    return nil, nil
+}
+func (f *fakeCompute) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
 
 type fakeProv struct {
 	n cpi.NetworkManager
@@ -144,11 +168,13 @@ func (p *fakeProv) Initialize(ctx context.Context, cfg interface{}) error { retu
 func (p *fakeProv) Cleanup(ctx context.Context) error                     { return nil }
 
 func TestSplitParentIntoTwo(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in           string
 		want1, want2 string
 	}{
-		{"10.4.0.0/20", "10.4.0.0/21", "10.4.8.0/21"},
+    {testCIDR104, "10.4.0.0/21", "10.4.8.0/21"},
 		{"10.4.0.0/23", "10.4.0.0/24", "10.4.1.0/24"},
 		{"10.4.0.0/24", "10.4.0.0/25", "10.4.0.128/25"},
 	}
@@ -161,6 +187,7 @@ func TestSplitParentIntoTwo(t *testing.T) {
 }
 
 func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
@@ -173,7 +200,7 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	}
 
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
-	cfg.Network.NetworkCIDR = "10.4.0.0/20"
+    cfg.Network.NetworkCIDR = testCIDR104
 
 	fakeNetwork := &fakeNet{}
 	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
@@ -224,6 +251,7 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 }
 
 func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
@@ -288,6 +316,7 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 }
 
 func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
@@ -299,8 +328,8 @@ func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{Name: "prod", Region: "eu01", SubnetStrategy: "ocfp-triple"}
-	cfg.Network.NetworkCIDR = "10.4.0.0/20"
+    cfg := &config.Config{Name: "prod", Region: "eu01", SubnetStrategy: subnetStrategyTriple}
+    cfg.Network.NetworkCIDR = testCIDR104
 
 	fakeNetwork := &fakeNet{}
 	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}

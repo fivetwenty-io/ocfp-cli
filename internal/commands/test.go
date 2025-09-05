@@ -1,14 +1,14 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "regexp"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -21,14 +21,14 @@ import (
 type TestSuite string
 
 const (
-	TestSuiteC2C        TestSuite = "c2c"
-	TestSuiteBlacksmith TestSuite = "blacksmith"
-	TestSuiteNFS        TestSuite = "nfs"
-	TestSuiteSMB        TestSuite = "smb"
-	TestSuiteTCP        TestSuite = "tcp"
-	TestSuiteAll        TestSuite = "all"
-	TestSuiteSmoke      TestSuite = "smoke"
-	TestSuiteAcceptance TestSuite = "acceptance"
+    TestSuiteC2C        TestSuite = "c2c"
+    TestSuiteBlacksmith TestSuite = "blacksmith"
+    TestSuiteNFS        TestSuite = "nfs"
+    TestSuiteSMB        TestSuite = "smb"
+    TestSuiteTCP        TestSuite = ProtocolTCP
+    TestSuiteAll        TestSuite = KeywordAll
+    TestSuiteSmoke      TestSuite = "smoke"
+    TestSuiteAcceptance TestSuite = "acceptance"
 )
 
 var (
@@ -254,27 +254,27 @@ func (r *TestRunner) ValidateEnvironment(ctx context.Context) error {
 	log.Info("Validating test environment")
 
 	// Check CF CLI is available and logged in
-    err := r.validateCFCLI()
+	err := r.validateCFCLI()
 	if err != nil {
 		return fmt.Errorf("CF CLI validation failed: %w", err)
 	}
 
 	// Check BOSH CLI if needed
 	if r.Suite == TestSuiteAll || r.Suite == TestSuiteAcceptance {
-        err := r.validateBOSHCLI()
+		err := r.validateBOSHCLI()
 		if err != nil {
 			return fmt.Errorf("BOSH CLI validation failed: %w", err)
 		}
 	}
 
 	// Verify CF deployment is accessible
-    err = r.validateCFDeployment(ctx)
+	err = r.validateCFDeployment(ctx)
 	if err != nil {
 		return fmt.Errorf("CF deployment validation failed: %w", err)
 	}
 
 	// Check required test directories exist
-    err = r.validateTestDirectories()
+	err = r.validateTestDirectories()
 	if err != nil {
 		return fmt.Errorf("test directory validation failed: %w", err)
 	}
@@ -288,27 +288,27 @@ func (r *TestRunner) Setup(ctx context.Context) error {
 	log.Info("Setting up test environment")
 
 	// Set CF target
-    err := r.setCFTarget()
+	err := r.setCFTarget()
 	if err != nil {
 		return fmt.Errorf("failed to set CF target: %w", err)
 	}
 
 	// Create test org and space if needed
-    err = r.createTestOrgSpace()
+	err = r.createTestOrgSpace()
 	if err != nil {
 		return fmt.Errorf("failed to create test org/space: %w", err)
 	}
 
 	// Deploy test applications if needed
 	if r.Suite == TestSuiteC2C || r.Suite == TestSuiteAll {
-        err := r.deployTestApps(ctx)
+		err := r.deployTestApps(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to deploy test apps: %w", err)
 		}
 	}
 
 	// Setup test data
-    err = r.setupTestData()
+	err = r.setupTestData()
 	if err != nil {
 		return fmt.Errorf("failed to setup test data: %w", err)
 	}
@@ -359,6 +359,8 @@ func (r *TestRunner) Execute(ctx context.Context) (*TestResults, error) {
 			results.Failed++
 		case TestStatusSkipped:
 			results.Skipped++
+		case TestStatusRunning:
+			// Running status should not affect final counters
 		}
 
 		if r.Verbose {
@@ -430,6 +432,9 @@ func (r *TestRunner) executeTest(ctx context.Context, testName string, result *T
 		cmd = r.buildNFSTestCommand(testName)
 	case TestSuiteSMB:
 		cmd = r.buildSMBTestCommand(testName)
+	case TestSuiteAll:
+		// When running all, default to smoke test builder for single-test execution
+		cmd = r.buildSmokeTestCommand(testName)
 	case TestSuiteTCP:
 		cmd = r.buildTCPTestCommand(testName)
 	case TestSuiteAcceptance:
@@ -453,19 +458,19 @@ func (r *TestRunner) Cleanup(ctx context.Context) error {
 	log.Info("Cleaning up test environment")
 
 	// Delete test apps
-    err := r.cleanupTestApps(ctx)
+	err := r.cleanupTestApps(ctx)
 	if err != nil {
 		log.Warn("Failed to cleanup test apps", "error", err)
 	}
 
 	// Delete test org/space
-    err = r.cleanupTestOrgSpace()
+	err = r.cleanupTestOrgSpace()
 	if err != nil {
 		log.Warn("Failed to cleanup test org/space", "error", err)
 	}
 
 	// Cleanup test data
-    err = r.cleanupTestData()
+	err = r.cleanupTestData()
 	if err != nil {
 		log.Warn("Failed to cleanup test data", "error", err)
 	}
@@ -508,7 +513,8 @@ func (r *TestRunner) SaveResults(results *TestResults, filename string) error {
 
 func (r *TestRunner) validateCFCLI() error {
 	// Check if cf CLI is installed and logged in
-	cmd := exec.Command("cf", "api")
+	cmd := exec.CommandContext(context.Background(), "cf", "api")
+
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("cf CLI not available or not logged in: %w", err)
@@ -519,7 +525,8 @@ func (r *TestRunner) validateCFCLI() error {
 
 func (r *TestRunner) validateBOSHCLI() error {
 	// Check if bosh CLI is installed
-	cmd := exec.Command("bosh", "env")
+	cmd := exec.CommandContext(context.Background(), "bosh", "env")
+
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("bosh CLI not available: %w", err)
@@ -530,7 +537,8 @@ func (r *TestRunner) validateBOSHCLI() error {
 
 func (r *TestRunner) validateCFDeployment(ctx context.Context) error {
 	// Verify CF deployment is accessible
-	cmd := exec.Command("cf", "org")
+	cmd := exec.CommandContext(ctx, "cf", "org")
+
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("CF deployment not accessible: %w", err)
@@ -563,7 +571,7 @@ func (r *TestRunner) setCFTarget() error {
 	}
 
 	apiURL := "https://api." + r.Config.DNS[0]
-	cmd := exec.Command("cf", "api", apiURL, "--skip-ssl-validation") // #nosec G204 - input validated above
+	cmd := exec.CommandContext(context.Background(), "cf", "api", apiURL, "--skip-ssl-validation") // #nosec G204 - input validated above
 
 	return cmd.Run()
 }
@@ -579,23 +587,25 @@ func (r *TestRunner) createTestOrgSpace() error {
 	spaceName := r.Config.Name + "-test-space"
 
 	// Create org
-    cmd := exec.Command("cf", "create-org", orgName) // #nosec G204 - input validated above
-    err = cmd.Run()
+	cmd := exec.CommandContext(context.Background(), "cf", "create-org", orgName) // #nosec G204 - input validated above
+
+	err = cmd.Run()
 	if err != nil {
 		// Ignore error if org already exists - CF will return error code 1 if org exists
 		logger.Debugf("org creation error (likely already exists): %v", err)
 	}
 
 	// Create space
-    cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
-    err = cmd.Run()
+	cmd = exec.CommandContext(context.Background(), "cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
+
+	err = cmd.Run()
 	if err != nil {
 		// Ignore error if space already exists - CF will return error code 1 if space exists
 		logger.Debugf("space creation error (likely already exists): %v", err)
 	}
 
 	// Target org/space
-	cmd = exec.Command("cf", "target", "-o", orgName, "-s", spaceName) // #nosec G204 - input validated above
+	cmd = exec.CommandContext(context.Background(), "cf", "target", "-o", orgName, "-s", spaceName) // #nosec G204 - input validated above
 
 	return cmd.Run()
 }
@@ -685,37 +695,37 @@ func (r *TestRunner) getTestEnvironment() []string {
 }
 
 func (r *TestRunner) buildSmokeTestCommand(testName string) *exec.Cmd {
-	return exec.Command("cf", "curl", "/v2/info")
+	return exec.CommandContext(context.Background(), "cf", "curl", "/v2/info")
 }
 
 func (r *TestRunner) buildC2CTestCommand(testName string) *exec.Cmd {
 	// Build command for C2C networking tests
-	return exec.Command("echo", "Running C2C test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running C2C test:", testName)
 }
 
 func (r *TestRunner) buildBlacksmithTestCommand(testName string) *exec.Cmd {
 	// Build command for Blacksmith service broker tests
-	return exec.Command("echo", "Running Blacksmith test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running Blacksmith test:", testName)
 }
 
 func (r *TestRunner) buildNFSTestCommand(testName string) *exec.Cmd {
 	// Build command for NFS volume service tests
-	return exec.Command("echo", "Running NFS test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running NFS test:", testName)
 }
 
 func (r *TestRunner) buildSMBTestCommand(testName string) *exec.Cmd {
 	// Build command for SMB volume service tests
-	return exec.Command("echo", "Running SMB test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running SMB test:", testName)
 }
 
 func (r *TestRunner) buildTCPTestCommand(testName string) *exec.Cmd {
 	// Build command for TCP routing tests
-	return exec.Command("echo", "Running TCP test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running TCP test:", testName)
 }
 
 func (r *TestRunner) buildAcceptanceTestCommand(testName string) *exec.Cmd {
 	// Build command for acceptance tests
-	return exec.Command("echo", "Running acceptance test:", testName)
+	return exec.CommandContext(context.Background(), "echo", "Running acceptance test:", testName)
 }
 
 func (r *TestRunner) cleanupTestApps(ctx context.Context) error {
@@ -731,7 +741,7 @@ func (r *TestRunner) cleanupTestOrgSpace() error {
 	}
 
 	orgName := r.Config.Name + "-test-org"
-	cmd := exec.Command("cf", "delete-org", orgName, "-f") // #nosec G204 - input validated above
+	cmd := exec.CommandContext(context.Background(), "cf", "delete-org", orgName, "-f") // #nosec G204 - input validated above
 
 	return cmd.Run()
 }

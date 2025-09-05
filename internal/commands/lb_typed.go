@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -92,7 +91,7 @@ func newLBOpsCmd() *cobra.Command {
 				existing := map[string]bool{}
 				if lb, err := netMgr.GetLoadBalancer(ctx, name); err == nil && lb != nil {
 					if pools, err := netMgr.GetBackendPools(ctx, lb.ID); err == nil && len(pools) > 0 {
-						rows := [][]string{}
+						rows := make([][]string, 0, len(pools[0].Members))
 						for _, m := range pools[0].Members {
 							existing[m.IPAddress] = true
 							rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
@@ -100,7 +99,7 @@ func newLBOpsCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
 					}
 				}
-				addRows := [][]string{}
+				addRows := make([][]string, 0, len(desired))
 				for ip := range desired {
 					if !existing[ip] {
 						addRows = append(addRows, []string{ip, strconv.Itoa(port)})
@@ -110,7 +109,7 @@ func newLBOpsCmd() *cobra.Command {
 					t.Sections = append(t.Sections, ui.Section{Title: "Add", Headers: []string{"IP", "PORT"}, Rows: addRows})
 				}
 				if removeUnused {
-					remRows := [][]string{}
+					remRows := make([][]string, 0, len(existing))
 					for ip := range existing {
 						if !desired[ip] {
 							remRows = append(remRows, []string{ip})
@@ -120,9 +119,9 @@ func newLBOpsCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: remRows})
 					}
 				}
-				if output == "" {
-					output = "table"
-				}
+                if output == "" {
+                    output = OutputTable
+                }
 
 				return ui.Render(t, strings.ToLower(output))
 			}
@@ -296,7 +295,7 @@ func newLBRoutersCmd() *cobra.Command {
 					existing := map[string]bool{}
 					if lb, err := netMgr.GetLoadBalancer(ctx, lbName); err == nil && lb != nil {
 						if pools, err := netMgr.GetBackendPools(ctx, lb.ID); err == nil && len(pools) > 0 {
-							rows := [][]string{}
+							rows := make([][]string, 0, len(pools[0].Members))
 							for _, m := range pools[0].Members {
 								existing[m.IPAddress] = true
 								rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
@@ -304,7 +303,7 @@ func newLBRoutersCmd() *cobra.Command {
 							t.Sections = append(t.Sections, ui.Section{Title: fmt.Sprintf("Current Members (%s)", lbName), Headers: []string{"IP", "PORT"}, Rows: rows})
 						}
 					}
-					addRows := [][]string{}
+					addRows := make([][]string, 0, len(desired))
 					for ip := range desired {
 						if !existing[ip] {
 							addRows = append(addRows, []string{ip, strconv.Itoa(port)})
@@ -314,7 +313,7 @@ func newLBRoutersCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: fmt.Sprintf("Add (%s)", lbName), Headers: []string{"IP", "PORT"}, Rows: addRows})
 					}
 					if removeUnused {
-						remRows := [][]string{}
+						remRows := make([][]string, 0, len(existing))
 						for ip := range existing {
 							if !desired[ip] {
 								remRows = append(remRows, []string{ip})
@@ -331,9 +330,9 @@ func newLBRoutersCmd() *cobra.Command {
 				if createHTTPS {
 					addPlan(namePrefix+"-443", "https", httpsPort, "router")
 				}
-				if output == "" {
-					output = "table"
-				}
+                if output == "" {
+                    output = OutputTable
+                }
 
 				return ui.Render(t, strings.ToLower(output))
 			}
@@ -402,7 +401,7 @@ func newLBRoutersCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&createHTTPS, "https", true, "ensure HTTPS router LB")
 	cmd.Flags().BoolVar(&removeUnused, "remove-unused", false, "remove backends not listed in lbs config")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without making them")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (dry-run)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run)")
 
 	return cmd
 }
@@ -472,7 +471,7 @@ func newLBTCPRoutersCmd() *cobra.Command {
 				existing := map[string]bool{}
 				if lb, err := netMgr.GetLoadBalancer(ctx, name); err == nil && lb != nil {
 					if pools, err := netMgr.GetBackendPools(ctx, lb.ID); err == nil && len(pools) > 0 {
-						rows := [][]string{}
+						rows := make([][]string, 0, len(pools[0].Members))
 						for _, m := range pools[0].Members {
 							existing[m.IPAddress] = true
 							rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
@@ -500,9 +499,9 @@ func newLBTCPRoutersCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: remRows})
 					}
 				}
-				if output == "" {
-					output = "table"
-				}
+                if output == "" {
+                    output = OutputTable
+                }
 
 				return ui.Render(t, strings.ToLower(output))
 			}
@@ -537,7 +536,7 @@ func newLBTCPRoutersCmd() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 1024, "TCP router port (placeholder)")
 	cmd.Flags().BoolVar(&removeUnused, "remove-unused", false, "remove backends not listed in lbs config")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without making them")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (dry-run)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run)")
 
 	return cmd
 }
@@ -738,6 +737,7 @@ func reconcileLBFromSpec(ctx context.Context, lbMgr cpi.LoadBalancerManager, net
 		}
 
 		member := &cpi.BackendMember{IPAddress: ipAddress, Port: spec.Port, TargetPort: 0, Weight: 1}
+
 		err := netMgr.AddBackendMember(ctx, loadBalancer.ID, member)
 		if err != nil {
 			log.Warn("failed add backend", "ip", ipAddress, "err", err)
@@ -791,6 +791,7 @@ func reconcileLBIPs(ctx context.Context, lbMgr cpi.LoadBalancerManager, netMgr c
 		}
 
 		member := &cpi.BackendMember{IPAddress: ipAddress, Port: port, TargetPort: 0, Weight: 1}
+
 		err := netMgr.AddBackendMember(ctx, loadBalancer.ID, member)
 		if err != nil {
 			log.Warn("failed add backend", "ip", ipAddress, "err", err)
@@ -821,7 +822,7 @@ func reconcileLBIPs(ctx context.Context, lbMgr cpi.LoadBalancerManager, netMgr c
 
 // getStatePublicIPsByJob returns a list of public IP addresses from state where job label matches.
 func getStatePublicIPsByJob(blocName, job string) []string {
-	stateManager, err := state.NewManager(filepath.Join(""))
+	stateManager, err := state.NewManager("")
 	if err != nil {
 		return nil
 	}

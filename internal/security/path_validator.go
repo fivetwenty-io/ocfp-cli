@@ -9,15 +9,15 @@ import (
 )
 
 var (
-	// Valid path characters: alphanumeric, dash, underscore, dot, slash.
+    // Valid path characters: alphanumeric, dash, underscore, dot, slash.
 
-	// Disallowed path patterns for security.
-	dangerousPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`\.\.`),        // Directory traversal
-		regexp.MustCompile(`^/proc`),      // Process filesystem
-		regexp.MustCompile(`^/sys`),       // System filesystem
-		regexp.MustCompile(`^/dev`),       // Device filesystem
-		regexp.MustCompile(`/etc/passwd`), // System password file
+    // Disallowed path patterns for security.
+    dangerousPatterns = []*regexp.Regexp{ //nolint:gochecknoglobals // compiled regexps reused for efficiency
+        regexp.MustCompile(`\.\.`),        // Directory traversal
+        regexp.MustCompile(`^/proc`),      // Process filesystem
+        regexp.MustCompile(`^/sys`),       // System filesystem
+        regexp.MustCompile(`^/dev`),       // Device filesystem
+        regexp.MustCompile(`/etc/passwd`), // System password file
 		regexp.MustCompile(`/etc/shadow`), // System shadow file
 		regexp.MustCompile(`\.ssh/id_`),   // SSH private keys (unless specifically allowed)
 	}

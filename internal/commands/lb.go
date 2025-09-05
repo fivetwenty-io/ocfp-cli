@@ -213,7 +213,7 @@ and associates it with the appropriate network resources.`,
 	cmd.Flags().BoolVar(&healthCheck, "health-check", false, "enable health checks")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "tags to apply to load balancer")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview creation without making changes")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
@@ -293,12 +293,13 @@ func newLBDeleteCmd() *cobra.Command {
 			if dryRun {
 				// Build plan
 				t := &ui.Table{Title: "DRY RUN — LB Delete Plan"}
-				rows := [][]string{}
+				rows := make([][]string, 0)
 				if all {
 					lbs, err := network.ListLoadBalancers(ctx, nil)
 					if err != nil {
 						return fmt.Errorf("failed to list load balancers: %w", err)
 					}
+					rows = make([][]string, 0, len(lbs))
 					for _, l := range lbs {
 						rows = append(rows, []string{l.Name, l.ID, l.IPAddress, strconv.Itoa(l.Port), l.Type})
 					}
@@ -312,7 +313,7 @@ func newLBDeleteCmd() *cobra.Command {
 				t.Summary = fmt.Sprintf("Delete %d load balancer(s)", len(rows))
 				t.Sections = append(t.Sections, ui.Section{Title: "Load Balancers", Headers: []string{"NAME", "ID", "IP", "PORT", "TYPE"}, Rows: rows})
 				if output == "" {
-					output = "table"
+                output = OutputTable
 				}
 
 				return ui.Render(t, strings.ToLower(output))
@@ -348,7 +349,7 @@ func newLBDeleteCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
 	cmd.Flags().BoolVar(&all, "all", false, "delete all load balancers")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview deletions without making changes")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
@@ -432,7 +433,7 @@ func newLBListCmd() *cobra.Command {
 			}
 			t.Sections = append(t.Sections, ui.Section{Title: fmt.Sprintf("%d items", len(rows)), Headers: []string{"NAME", "TYPE", "IP", "PORT", "STATUS", "CREATED"}, Rows: rows})
 			if output == "" {
-				output = "table"
+                output = OutputTable
 			}
 
 			return ui.Render(t, strings.ToLower(output))
@@ -440,7 +441,7 @@ func newLBListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format (table|json|yaml)")
 	cmd.Flags().StringVar(&filter, "filter", "", "filter results (key=value)")
 
 	return cmd
@@ -498,24 +499,24 @@ func newLBStatusCmd() *cobra.Command {
 			t := &ui.Table{Title: "Load Balancer: " + loadBalancer.Name}
 			t.Sections = append(t.Sections, ui.Section{Title: "Details", Headers: []string{"ID", "TYPE", "STATUS", "IP", "PORT", "ALGORITHM", "CREATED"}, Rows: [][]string{{loadBalancer.ID, loadBalancer.Type, loadBalancer.Status, loadBalancer.IPAddress, strconv.Itoa(loadBalancer.Port), loadBalancer.Algorithm, loadBalancer.CreatedAt.Format(time.RFC3339)}}})
 
-			if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-				rows := [][]string{}
-				for _, pool := range pools {
-					rows = append(rows, []string{pool.Name, strconv.Itoa(len(pool.Members))})
+				if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
+					rows := make([][]string, 0, len(pools))
+					for _, pool := range pools {
+						rows = append(rows, []string{pool.Name, strconv.Itoa(len(pool.Members))})
+					}
+					t.Sections = append(t.Sections, ui.Section{Title: "Backend Pools", Headers: []string{"NAME", "MEMBERS"}, Rows: rows})
 				}
-				t.Sections = append(t.Sections, ui.Section{Title: "Backend Pools", Headers: []string{"NAME", "MEMBERS"}, Rows: rows})
-			}
 			if health, err := network.GetLoadBalancerHealth(ctx, loadBalancer.ID); err == nil {
 				t.Sections = append(t.Sections, ui.Section{Title: "Health Status", Headers: []string{"HEALTHY", "UNHEALTHY", "TOTAL"}, Rows: [][]string{{strconv.Itoa(health.Healthy), strconv.Itoa(health.Unhealthy), strconv.Itoa(health.Total)}}})
 			}
 			if output == "" {
-				output = "table"
+                output = OutputTable
 			}
 
 			return ui.Render(t, strings.ToLower(output))
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format (table|json|yaml)")
 
 	return cmd
 }
@@ -619,7 +620,7 @@ Examples:
 				t := &ui.Table{Title: "DRY RUN — LB Add Service Plan"}
 				t.Summary = "Add backend to " + lbName
 				if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-					rows := [][]string{}
+					rows := make([][]string, 0, len(pools[0].Members))
 					for _, m := range pools[0].Members {
 						rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
 					}
@@ -627,7 +628,7 @@ Examples:
 				}
 				t.Sections = append(t.Sections, ui.Section{Title: "Add", Headers: []string{"IP", "PORT", "TARGET_PORT", "WEIGHT"}, Rows: [][]string{{member.IPAddress, strconv.Itoa(member.Port), strconv.Itoa(member.TargetPort), strconv.Itoa(member.Weight)}}})
 				if output == "" {
-					output = "table"
+                    output = OutputTable
 				}
 
 				return ui.Render(t, strings.ToLower(output))
@@ -649,7 +650,7 @@ Examples:
 	cmd.Flags().IntVar(&targetPort, "target-port", 0, "target port (defaults to service port)")
 	cmd.Flags().IntVar(&weight, "weight", 1, "service weight for weighted load balancing")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member addition without making changes")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
@@ -870,7 +871,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 				t := &ui.Table{Title: "DRY RUN — LB Remove Service Plan"}
 				t.Summary = "Remove backend from " + lbName
 				if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-					rows := [][]string{}
+					rows := make([][]string, 0, len(pools[0].Members))
 					for _, m := range pools[0].Members {
 						rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
 					}
@@ -878,7 +879,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 				}
 				t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: [][]string{{serviceIP}}})
 				if output == "" {
-					output = "table"
+                    output = OutputTable
 				}
 
 				return ui.Render(t, strings.ToLower(output))
@@ -898,7 +899,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member removal without making changes")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
@@ -967,7 +968,7 @@ func newLBUpdateCmd() *cobra.Command {
 			if dryRun {
 				t := &ui.Table{Title: "DRY RUN — LB Update Plan"}
 				t.Summary = "Update load balancer " + lbName
-				rows := [][]string{}
+				rows := make([][]string, 0, 3)
 				if algorithm != "" && algorithm != loadBalancer.Algorithm {
 					rows = append(rows, []string{"algorithm", loadBalancer.Algorithm, algorithm})
 				}
@@ -980,7 +981,7 @@ func newLBUpdateCmd() *cobra.Command {
 				}
 				t.Sections = append(t.Sections, ui.Section{Title: "Changes", Headers: []string{"FIELD", "CURRENT", "NEW"}, Rows: rows})
 				if output == "" {
-					output = "table"
+                    output = OutputTable
 				}
 
 				return ui.Render(t, strings.ToLower(output))

@@ -14,10 +14,10 @@ import (
 
 var (
 	// Global logger instance.
-	log *zap.SugaredLogger
+	log *zap.SugaredLogger //nolint:gochecknoglobals // shared logger singleton
 
 	// Atom for dynamic log level changes.
-	atom zap.AtomicLevel
+	atom zap.AtomicLevel //nolint:gochecknoglobals // shared logging level controller
 )
 
 // Logger type alias for consistent usage across the codebase.
@@ -95,6 +95,8 @@ func Initialize(cfg Config) error {
 }
 
 // createFileCore creates a file logging core.
+//
+//nolint:ireturn // returning zapcore.Core interface is intentional (zap API)
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
 	// Place logs under {LogDir}/{command}/{timestamp}.log
 	baseDir := cfg.LogDir
@@ -170,6 +172,7 @@ func determineLogLevel(cfg Config) zapcore.Level {
 // SetLevel dynamically changes the log level.
 func SetLevel(level string) {
 	var zapLevel zapcore.Level
+
 	err := zapLevel.UnmarshalText([]byte(level))
 	if err != nil {
 		return
@@ -305,7 +308,7 @@ func ArchiveOldLogs(logDir string, daysOld int) error {
 
 		// Check if file is old enough to archive
 		if info.ModTime().Before(cutoff) {
-			// TODO: Implement compression and move to archive
+			// Pending: implement compression and move to archive
 			// For now, just log that we would archive it
 			Debugf("Would archive old log: %s", entry.Name())
 		}

@@ -3,6 +3,8 @@ package stackit
 import "testing"
 
 func TestParseBlocFromBucketName(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, want string }{
 		{"prod-bosh-blobstore", "prod"},
 		{"dev-cf-buildpacks", "dev"},

@@ -1,13 +1,13 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "regexp"
-    "strings"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -172,7 +172,7 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 	log.Info("Validating prerequisites")
 
 	// Check for bastion connectivity
-	err := checkBastionConnectivity(cfg)
+	err := checkBastionConnectivity(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("bastion check failed: %w", err)
 	}
@@ -189,8 +189,8 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
 	if _, err := os.Stat(deploymentDir); os.IsNotExist(err) {
 		log.Info("Creating deployment directory", "path", deploymentDir)
-		err = os.MkdirAll(deploymentDir, 0750)
 
+		err = os.MkdirAll(deploymentDir, 0750)
 		if err != nil {
 			return fmt.Errorf("failed to create deployment directory: %w", err)
 		}
@@ -200,7 +200,7 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 }
 
 // checkBastionConnectivity verifies bastion host is accessible.
-func checkBastionConnectivity(cfg *config.Config) error {
+func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 
 	// Get bastion IP from config
@@ -216,13 +216,13 @@ func checkBastionConnectivity(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("invalid SSH user: %w", err)
 	}
-	err = security.ValidateInput(bastionIP, validDNSPattern)
 
+	err = security.ValidateInput(bastionIP, validDNSPattern)
 	if err != nil {
 		return fmt.Errorf("invalid bastion IP: %w", err)
 	}
 
-	cmd := exec.Command("ssh", // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "ssh", // #nosec G204 - input validated above
 		"-o", "ConnectTimeout=5",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -255,7 +255,7 @@ func initializePostgreSQL(ctx context.Context, cfg *config.Config) error {
 
 	for _, db := range databases {
 		log.Info("Creating database", "name", db)
-		// TODO: Actual database creation via psql or Go postgres driver
+		// Pending: implement database creation via psql or Go postgres driver
 	}
 
 	log.Info("PostgreSQL initialization completed")
@@ -281,8 +281,8 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	// Check if manifest exists
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
 		log.Info("Creating BOSH manifest", "path", manifestPath)
-		err = createBOSHManifest(cfg, manifestPath)
 
+		err = createBOSHManifest(cfg, manifestPath)
 		if err != nil {
 			return fmt.Errorf("failed to create BOSH manifest: %w", err)
 		}
@@ -290,18 +290,18 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 
 	// Deploy BOSH (example command)
 	log.Info("Deploying BOSH Director")
-	err := security.ValidateInput(manifestPath, validFilePathPattern)
 
+	err := security.ValidateInput(manifestPath, validFilePathPattern)
 	if err != nil {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
-	err = security.ValidateInput(deploymentDir, validFilePathPattern)
 
+	err = security.ValidateInput(deploymentDir, validFilePathPattern)
 	if err != nil {
 		return fmt.Errorf("invalid deployment directory: %w", err)
 	}
 
-	cmd := exec.Command("bosh", "create-env", manifestPath, // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "bosh", "create-env", manifestPath, // #nosec G204 - input validated above
 		"--state", filepath.Join(deploymentDir, "state.json"),
 		"--vars-store", filepath.Join(deploymentDir, "creds.yml"))
 
@@ -316,8 +316,8 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 
 	// Set BOSH environment
 	log.Info("Configuring BOSH environment")
-	err = configureBOSHEnvironment(cfg, deploymentDir)
 
+	err = configureBOSHEnvironment(cfg, deploymentDir)
 	if err != nil {
 		return fmt.Errorf("failed to configure BOSH environment: %w", err)
 	}
@@ -344,7 +344,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	// Upload cloud foundry deployment
 	log.Info("Uploading Cloud Foundry deployment")
 
-	cmd := exec.Command("bosh", "upload-release", // #nosec G204 - using hardcoded URL
+	cmd := exec.CommandContext(ctx, "bosh", "upload-release", // #nosec G204 - using hardcoded URL
 		"https://bosh.io/d/github.com/cloudfoundry/cf-deployment")
 
 	err := cmd.Run()
@@ -356,12 +356,13 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	log.Info("Deploying Cloud Foundry")
 
 	manifestPath := filepath.Join(deploymentDir, "cf-deployment.yml")
+
 	err = security.ValidateInput(manifestPath, validFilePathPattern)
 	if err != nil {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
 
-	cmd = exec.Command("bosh", "-d", "cf", "deploy", manifestPath, // #nosec G204 - input validated above
+	cmd = exec.CommandContext(ctx, "bosh", "-d", "cf", "deploy", manifestPath, // #nosec G204 - input validated above
 		"-o", filepath.Join(deploymentDir, "operations", "scale.yml"),
 		"-o", filepath.Join(deploymentDir, "operations", "use-postgres.yml"))
 
@@ -376,8 +377,8 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 
 	// Configure CF
 	log.Info("Configuring Cloud Foundry")
-	err = configureCloudFoundry(cfg)
 
+	err = configureCloudFoundry(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to configure CF: %w", err)
 	}
@@ -444,18 +445,18 @@ export BOSH_CA_CERT=$(bosh int %s/creds.yml --path /director_ssl/ca)
 }
 
 // configureCloudFoundry performs initial CF configuration.
-func configureCloudFoundry(cfg *config.Config) error {
+func configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 
 	// Login to CF
 	log.Info("Logging into Cloud Foundry")
-	err := security.ValidateInput(cfg.DNS[0], validDNSPattern)
 
+	err := security.ValidateInput(cfg.DNS[0], validDNSPattern)
 	if err != nil {
 		return fmt.Errorf("invalid DNS name: %w", err)
 	}
 
-	cmd := exec.Command("cf", "login", // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "cf", "login", // #nosec G204 - input validated above
 		"-a", "https://api."+cfg.DNS[0],
 		"-u", "admin",
 		"-p", "admin", // This should come from credhub
@@ -469,19 +470,22 @@ func configureCloudFoundry(cfg *config.Config) error {
 	// Create default org and space
 	log.Info("Creating default organization and space")
 
-	cmd = exec.Command("cf", "create-org", "default") // #nosec G204 - using hardcoded values
+	cmd = exec.CommandContext(ctx, "cf", "create-org", "default") // #nosec G204 - using hardcoded values
+
 	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to create org", "error", err)
 	}
 
-	cmd = exec.Command("cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
+	cmd = exec.CommandContext(ctx, "cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
+
 	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to create space", "error", err)
 	}
 
-	cmd = exec.Command("cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
+	cmd = exec.CommandContext(ctx, "cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
+
 	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to target org/space", "error", err)

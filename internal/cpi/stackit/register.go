@@ -1,22 +1,19 @@
 package stackit
 
 import (
-	"errors"
-	"fmt"
+    "errors"
+    "fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+    "github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
-func init() {
-	// Register STACKIT provider
-	err := cpi.Register("stackit", NewProvider)
-	if err != nil {
-		// Registration errors during init are critical
-		panic(fmt.Errorf("failed to register STACKIT provider: %w", err))
-	}
+// Register registers the STACKIT provider with the CPI registry.
+func Register() error {
+    return cpi.Register("stackit", NewProvider)
 }
 
 // NewProvider creates a new STACKIT provider instance.
+//nolint:ireturn // returning Provider interface is intentional for registry API
 func NewProvider(config interface{}) (cpi.Provider, error) {
 	// Convert generic config to STACKIT config
 	var stackitConfig *Config

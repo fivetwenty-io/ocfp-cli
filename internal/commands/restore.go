@@ -2,8 +2,8 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -360,7 +360,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 			continue
 		}
 
-        err = restoreComponent(componentPath, destPath, "")
+		err = restoreComponent(componentPath, destPath, "")
 		if err != nil {
 			log.Warn("Failed to restore data", "component", component, "error", err)
 
@@ -489,7 +489,8 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 	// Download backup file
 	backupFile := filepath.Join(tempDir, "backup.tar.gz")
 
-	if strings.HasPrefix(source, "s3://") {
+	switch {
+	case strings.HasPrefix(source, "s3://"):
 		// Download from S3
 		log.Info("Downloading backup from S3", "source", source)
 
@@ -499,7 +500,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 
 			return "", fmt.Errorf("failed to download from S3: %w", err)
 		}
-	} else if strings.HasPrefix(source, "http") {
+	case strings.HasPrefix(source, "http"):
 		// Download from HTTP
 		log.Info("Downloading backup from HTTP", "source", source)
 
@@ -509,7 +510,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 
 			return "", fmt.Errorf("failed to download from HTTP: %w", err)
 		}
-	} else {
+	default:
 		// Local file
 		log.Info("Using local backup file", "source", source)
 
@@ -524,6 +525,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 	// Decrypt if needed (detect by file extension)
 	if strings.HasSuffix(backupFile, ".enc") {
 		decryptedFile := strings.TrimSuffix(backupFile, ".enc")
+
 		err := decryptFile(backupFile, decryptedFile)
 		if err != nil {
 			_ = os.RemoveAll(tempDir)
@@ -630,7 +632,7 @@ func getRestoreManifest(ctx context.Context, cfg *config.Config, source string) 
 
 func checkRestoreConflicts(manifest []BackupItem, destination string) ([]string, error) {
 	// Check for files that would be overwritten
-	var conflicts []string
+	conflicts := make([]string, 0, len(manifest))
 
 	for _, item := range manifest {
 		destPath := filepath.Join(destination, item.Path)

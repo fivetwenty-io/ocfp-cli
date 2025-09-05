@@ -221,7 +221,7 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 	}
 
 	// Look for unseal keys in environment variables
-	var keys []string
+	keys := make([]string, 0, 10)
 
 	for keyNumber := 1; keyNumber <= 10; keyNumber++ { // Check up to 10 keys
 		keyName := fmt.Sprintf("VAULT_UNSEAL_KEY_%d", keyNumber)

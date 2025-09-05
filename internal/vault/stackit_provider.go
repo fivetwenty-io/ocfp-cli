@@ -83,6 +83,7 @@ func (s *StackitVaultProvider) Configure() error {
 
 		// Configure BOSH-specific components for each environment
 		boshPath := s.PathBuilder.GetBOSHPath(envType)
+
 		err = s.configureBOSH(boshPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure BOSH for %s: %w", envType, err)
@@ -186,6 +187,7 @@ func (s *StackitVaultProvider) configureVPC(envPath, envType string) error {
 			"name": azName,
 			"zone": azData.Zone,
 		}
+
 		err := s.Safe.SetMultiple(azPath, azInfo)
 		if err != nil {
 			return fmt.Errorf("failed to set AZ data for %s: %w", azName, err)
@@ -288,6 +290,7 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 	systemIPs := s.calculateSystemIPs(cidr, subnetType, subnetNum, envType)
 
 	reservedPath := s.PathBuilder.GetReservedIPsPath(envType, subnetType, subnetNum)
+
 	err := s.Safe.SetMultiple(reservedPath, systemIPs)
 	if err != nil {
 		return fmt.Errorf("failed to set reserved IPs: %w", err)
@@ -308,16 +311,16 @@ func (s *StackitVaultProvider) calculateSystemIPs(cidr, subnetType string, subne
 	systemIPs := make(map[string]interface{})
 
 	// Standard system IP assignments (simplified)
-	switch envType {
-	case "mgmt":
-		systemIPs["bosh_ip"] = baseIP + ".6"
-		systemIPs["jumpbox_ip"] = baseIP + ".5"
-	case "ocf":
-		systemIPs["cf_router_0_ip"] = baseIP + ".10"
-		systemIPs["cf_router_1_ip"] = baseIP + ".11"
-		systemIPs["diego_cell_0_ip"] = baseIP + ".20"
-		systemIPs["diego_cell_1_ip"] = baseIP + ".21"
-	}
+    switch envType {
+    case MgmtEnvType:
+        systemIPs["bosh_ip"] = baseIP + ".6"
+        systemIPs["jumpbox_ip"] = baseIP + ".5"
+    case OCFEnvType:
+        systemIPs["cf_router_0_ip"] = baseIP + ".10"
+        systemIPs["cf_router_1_ip"] = baseIP + ".11"
+        systemIPs["diego_cell_0_ip"] = baseIP + ".20"
+        systemIPs["diego_cell_1_ip"] = baseIP + ".21"
+    }
 
 	return systemIPs
 }
@@ -470,6 +473,7 @@ func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string) erro
 		systemBlobstores := s.getBlobstoresForSystem(system, envType)
 		for blobstoreName, blobstoreConfig := range systemBlobstores {
 			blobstorePath := s.PathBuilder.GetSystemBlobstorePath(envType, system, blobstoreName)
+
 			err := s.Safe.SetMultiple(blobstorePath, blobstoreConfig)
 			if err != nil {
 				return fmt.Errorf("failed to set blobstore %s for %s: %w", blobstoreName, system, err)
@@ -514,6 +518,7 @@ func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string) error
 
 	for dbName, dbConfig := range databases {
 		dbPath := s.PathBuilder.GetDatabasePath(envType, dbName)
+
 		err := s.Safe.SetMultiple(dbPath, dbConfig)
 		if err != nil {
 			return fmt.Errorf("failed to set database %s: %w", dbName, err)
@@ -576,6 +581,7 @@ func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string) e
 	if len(services) > 0 {
 		for serviceName, cfg := range services {
 			svcPath := s.PathBuilder.GetLoadBalancerPath(envType, serviceName)
+
 			err := s.Safe.SetMultiple(svcPath, cfg)
 			if err != nil {
 				return fmt.Errorf("failed to set LB service %s: %w", serviceName, err)
@@ -767,7 +773,13 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 	}
 
 	fqdnPath := s.PathBuilder.GetFQDNsPath(envType)
-	err := s.Safe.SetMultiple(fqdnPath, envFQDNs.(map[string]interface{}))
+
+	data, ok := envFQDNs.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid FQDNs config type for %s: %T", envType, envFQDNs)
+	}
+
+	err := s.Safe.SetMultiple(fqdnPath, data)
 	if err != nil {
 		return fmt.Errorf("failed to set FQDNs: %w", err)
 	}

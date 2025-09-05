@@ -8,6 +8,7 @@ import (
 
 // TestStackitDefaultRegion verifies that STACKIT defaults region to eu01 when unspecified.
 func TestStackitDefaultRegion(t *testing.T) {
+    t.Parallel()
 	// Create a temporary config file inside the repo workspace
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yml")
@@ -34,6 +35,7 @@ func TestStackitDefaultRegion(t *testing.T) {
 
 // TestStackitRegionOverride verifies that a specified region is preserved.
 func TestStackitRegionOverride(t *testing.T) {
+    t.Parallel()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yml")
 

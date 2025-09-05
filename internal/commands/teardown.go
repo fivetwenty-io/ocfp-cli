@@ -55,7 +55,7 @@ Resources are deleted in dependency order:
 6. Security groups
 7. Networks
 8. Public IPs (only if --public-ips flag is used)`,
-		Example: `  # Interactive teardown (with confirmation)
+            Example: `  # Interactive teardown (with confirmation)
   ocfp teardown --bloc production
 
   # Force teardown (no confirmation)
@@ -75,9 +75,7 @@ Resources are deleted in dependency order:
 
   # DANGER: Delete ALL resources in project
   ocfp teardown --bloc production --nuke --force`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTeardown(cmd, args)
-		},
+            RunE:   runTeardown,
 	}
 
 	// Command-specific flags
@@ -87,7 +85,7 @@ Resources are deleted in dependency order:
 	cmd.Flags().BoolVar(&publicIPs, "public-ips", false, "include public IPs in deletion")
 	cmd.Flags().BoolVar(&all, "all", false, "delete all OCFP/BOSH-managed resources")
 	cmd.Flags().BoolVar(&nuke, "nuke", false, "DANGER: delete ALL resources in project")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	// Resource type flags
 	cmd.Flags().BoolVar(&servers, "servers", false, "delete servers")
@@ -663,11 +661,11 @@ func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 			return true
 		}
 		// Support skipping by category
-		if (skip == "storage" && (resourceType == "volume" || resourceType == "snapshot" || resourceType == "bucket")) ||
-			(skip == "network" && (resourceType == "network" || resourceType == "subnet" || resourceType == "router")) ||
-			(skip == "security" && (resourceType == "security_group")) {
-			return true
-		}
+        if (skip == "storage" && (resourceType == "volume" || resourceType == "snapshot" || resourceType == "bucket")) ||
+            (skip == CategoryNetwork && (resourceType == CategoryNetwork || resourceType == "subnet" || resourceType == "router")) ||
+            (skip == "security" && (resourceType == "security_group")) {
+            return true
+        }
 	}
 
 	return false
@@ -752,7 +750,7 @@ func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error 
 
 	format := strings.ToLower(strings.TrimSpace(m.options.Output))
 	if format == "" {
-		format = "table"
+        format = OutputTable
 	}
 
 	return ui.Render(planTable, format)
@@ -799,9 +797,9 @@ func (m *TeardownManager) deleteResource(ctx context.Context, resource *Resource
 	case "credentials_group":
 		if storage := m.provider.Storage(); storage != nil {
 			// STACKIT-specific
-			type stackitCreds interface {
-				DeleteCredentialsGroup(context.Context, string) error
-			}
+            type stackitCreds interface {
+                DeleteCredentialsGroup(ctx context.Context, id string) error
+            }
 			if s, ok := storage.(stackitCreds); ok {
 				return s.DeleteCredentialsGroup(ctx, resource.ID)
 			}

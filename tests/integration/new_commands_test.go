@@ -13,6 +13,7 @@ import (
 
 // TestProviderCommandIntegration tests the provider command integration.
 func TestProviderCommandIntegration(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
 
@@ -33,6 +34,8 @@ blocs:
 	require.NoError(t, err)
 
 	t.Run("CreateProviderCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewProviderCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "provider <action>", cmd.Use)
@@ -40,6 +43,8 @@ blocs:
 	})
 
 	t.Run("ValidateProviderArgs", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewProviderCmd()
 
 		// Test with no args (should fail)
@@ -56,6 +61,8 @@ blocs:
 	})
 
 	t.Run("ProviderCommandFlags", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewProviderCmd()
 
 		// Test flag existence
@@ -71,6 +78,7 @@ blocs:
 	})
 
 	t.Run("ProviderLoginWithConfig", func(t *testing.T) {
+		t.Parallel()
 		// Set config file environment variable
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
@@ -86,6 +94,7 @@ blocs:
 	})
 
 	t.Run("ProviderLoginStackitValidation", func(t *testing.T) {
+		t.Parallel()
 		// Test STACKIT provider validation without actual credentials
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
@@ -103,7 +112,10 @@ blocs:
 
 // TestTmuxCommandIntegration tests the tmux command integration.
 func TestTmuxCommandIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("CreateTmuxCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewTmuxCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "tmux", cmd.Use)
@@ -111,6 +123,8 @@ func TestTmuxCommandIntegration(t *testing.T) {
 	})
 
 	t.Run("TmuxCommandExecution", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewTmuxCmd()
 
 		// Check if tmux is available on the system
@@ -130,6 +144,7 @@ func TestTmuxCommandIntegration(t *testing.T) {
 	})
 
 	t.Run("TmuxScriptGeneration", func(t *testing.T) {
+		t.Parallel()
 		// Test that the command can generate a basic tmux script
 		// This tests the internal script generation logic
 		cmd := commands.NewTmuxCmd()
@@ -141,6 +156,7 @@ func TestTmuxCommandIntegration(t *testing.T) {
 
 // TestBastionCommandIntegration tests the bastion command integration.
 func TestBastionCommandIntegration(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
 
@@ -164,6 +180,8 @@ blocs:
 	require.NoError(t, err)
 
 	t.Run("CreateBastionCommand", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBastionCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "bastion <action>", cmd.Use)
@@ -171,6 +189,8 @@ blocs:
 	})
 
 	t.Run("ValidateBastionArgs", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBastionCmd()
 
 		// Test with no args (should fail)
@@ -186,6 +206,8 @@ blocs:
 	})
 
 	t.Run("BastionCommandFlags", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBastionCmd()
 
 		// Test flag existence
@@ -200,6 +222,7 @@ blocs:
 	})
 
 	t.Run("BastionInitWithoutScript", func(t *testing.T) {
+		t.Parallel()
 		// Set config file environment variable
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
@@ -215,6 +238,8 @@ blocs:
 	})
 
 	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
+		t.Parallel()
+
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
@@ -229,44 +254,34 @@ blocs:
 	})
 
 	t.Run("BastionWithProvisionScript", func(t *testing.T) {
-		// Create a test provision script
-		scriptsDir := filepath.Join(tmpDir, "scripts", "provision")
-		err := os.MkdirAll(scriptsDir, 0755)
-		require.NoError(t, err)
+		t.Parallel()
 
-		scriptPath := filepath.Join(scriptsDir, "bastion")
 		scriptContent := `#!/usr/bin/perl
 # Test provision script
 print "Provision script executed successfully\n";
 exit 0;
 `
-		err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
-		require.NoError(t, err)
+		_ = createScript(t, tmpDir, filepath.Join("scripts", "provision"), "bastion", scriptContent, 0755)
 
-		// Change to the tmpDir so the script can be found
-		oldWd, _ := os.Getwd()
+		cleanupChdir := chdir(t, tmpDir)
+		defer cleanupChdir()
 
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err = os.Chdir(tmpDir)
-		require.NoError(t, err)
-
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+		cleanupEnv := withEnv(t, "OCFP_CONFIG", configFile)
+		defer cleanupEnv()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"provision", "--user", "testuser", "--key", "/tmp/test-key"})
 
 		// Current implementation uses placeholder functionality, so it succeeds
 		// In a real implementation, this would fail on SSH connection
-		err = cmd.Execute()
+		err := cmd.Execute()
 		assert.NoError(t, err)
 	})
 }
 
 // TestCommandIntegrationWithVault tests commands that integrate with Vault.
 func TestCommandIntegrationWithVault(t *testing.T) {
+	t.Parallel()
 	t.Run("ProviderLoginWithVault", func(t *testing.T) {
 		// Check if 'safe' command is available (Vault wrapper)
 		_, err := exec.LookPath("safe")
@@ -306,6 +321,7 @@ blocs:
 
 // TestCommandConfigIntegration tests configuration integration across commands.
 func TestCommandConfigIntegration(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "integration-config.yml")
 
@@ -359,6 +375,8 @@ blocs:
 	require.NoError(t, err)
 
 	t.Run("MultipleCommandsWithSameConfig", func(t *testing.T) {
+		t.Parallel()
+
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
@@ -380,6 +398,8 @@ blocs:
 	})
 
 	t.Run("BlocSpecificConfiguration", func(t *testing.T) {
+		t.Parallel()
+
 		_ = os.Setenv("OCFP_CONFIG", configFile)
 
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
@@ -405,7 +425,10 @@ blocs:
 
 // TestCommandErrorHandling tests error handling across all new commands.
 func TestCommandErrorHandling(t *testing.T) {
+	t.Parallel()
 	t.Run("ProviderCommandErrors", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewProviderCmd()
 
 		// Test missing action
@@ -430,6 +453,8 @@ func TestCommandErrorHandling(t *testing.T) {
 	})
 
 	t.Run("BastionCommandErrors", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewBastionCmd()
 
 		// Test missing action
@@ -447,6 +472,7 @@ func TestCommandErrorHandling(t *testing.T) {
 	})
 
 	t.Run("TmuxCommandWithoutTmux", func(t *testing.T) {
+		t.Parallel()
 		// Temporarily hide tmux from PATH to test error handling
 		originalPath := os.Getenv("PATH")
 		_ = os.Setenv("PATH", "/nonexistent")

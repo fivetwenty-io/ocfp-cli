@@ -40,7 +40,7 @@ func newPublicIPsListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format (table|json|yaml)")
 	_ = viper.BindPFlag("public_ips.output", cmd.Flags().Lookup("output"))
 
 	return cmd
@@ -129,7 +129,7 @@ func runPublicIPsList(cmd *cobra.Command, output string) error {
 	t.Sections = append(t.Sections, ui.Section{Title: "IPs", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
 
 	if output == "" {
-		output = "table"
+        output = OutputTable
 	}
 
 	return ui.Render(t, strings.ToLower(output))

@@ -506,6 +506,7 @@ func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remo
 			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
 
 			sshpassArgs = append(sshpassArgs, args...)
+
 			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
 			if err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)
@@ -585,6 +586,7 @@ func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, l
 			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
 
 			sshpassArgs = append(sshpassArgs, args...)
+
 			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
 			if err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)

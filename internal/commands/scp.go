@@ -1,13 +1,12 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+    "context"
+    "fmt"
+    "errors"
+    "os"
+    "os/exec"
+    "strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -46,10 +45,8 @@ The bastion host is automatically discovered using the bloc configuration.`,
 
   # Use specific SSH key
   ocfp scp --bloc production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSCP(cmd, args)
-		},
+            Args: cobra.ExactArgs(2),
+            RunE:   runSCP,
 	}
 
 	// Command-specific flags
@@ -112,18 +109,18 @@ func runSCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	// Find SSH key if not specified
-	if keyPath == "" {
-		keyPath, err = findSSHKeyForSCP(blocName, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to find SSH key: %w", err)
-		}
-	}
+    // Find SSH key if not specified
+    if keyPath == "" {
+        keyPath, err = findSSHKey(blocName, cfg)
+        if err != nil {
+            return fmt.Errorf("failed to find SSH key: %w", err)
+        }
+    }
 
-	// Verify key exists and has correct permissions
-	if err := verifySSHKeyForSCP(keyPath); err != nil {
-		return fmt.Errorf("SSH key verification failed: %w", err)
-	}
+    // Verify key exists and has correct permissions
+    if err := verifySSHKey(keyPath); err != nil {
+        return fmt.Errorf("SSH key verification failed: %w", err)
+    }
 
 	// Process source and destination paths
 	processedSource := processSCPPath(source, bastionIP, user)
@@ -137,7 +134,7 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	log.Debugf("Bastion IP: %s", bastionIP)
 
 	// Execute SCP command
-	return executeSCP(scpCmd)
+    return executeSCP(ctx, scpCmd)
 }
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).
@@ -147,69 +144,7 @@ func getBastionIPForSCP(ctx context.Context, provider cpi.Provider, blocName str
 }
 
 // findSSHKeyForSCP locates the SSH private key for SCP.
-func findSSHKeyForSCP(blocName string, cfg *config.Config) (string, error) {
-	log := logger.WithOperation("findSSHKeyForSCP")
-
-	// Search paths in order of preference
-	searchPaths := []string{
-		// 1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-		filepath.Join(os.Getenv("HOME"), ".ocfp", "keys", blocName+"-bastion", "id_rsa"),
-		// 2. ~/.ssh/{bloc_name}-bastion
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion"),
-		// 3. ~/.ssh/{bloc_name}-bastion.pem
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion.pem"),
-		// 4. From config ssh_key_storage_dir
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion"),
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion.pem"),
-	}
-
-	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
-			log.Debugf("Found SSH key at: %s", path)
-
-			return path, nil
-		}
-	}
-
-	// Try to find any key with bastion in the name
-	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
-
-	entries, err := os.ReadDir(sshDir)
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
-				path := filepath.Join(sshDir, entry.Name())
-				log.Debugf("Found SSH key at: %s", path)
-
-				return path, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
-}
-
-// verifySSHKeyForSCP checks if the SSH key exists and has correct permissions.
-func verifySSHKeyForSCP(keyPath string) error {
-	info, err := os.Stat(keyPath)
-	if err != nil {
-		return fmt.Errorf("SSH key not found: %s", keyPath)
-	}
-
-	// Check permissions (should be 600 or 400)
-	mode := info.Mode()
-	if mode.Perm()&0077 != 0 {
-		// Try to fix permissions
-		err := os.Chmod(keyPath, 0600)
-		if err != nil {
-			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
-		}
-
-		logger.WithOperation("verifySSHKeyForSCP").Warnf("Fixed SSH key permissions for: %s", keyPath)
-	}
-
-	return nil
-}
+// findSSHKeyForSCP and verifySSHKeyForSCP are removed in favor of shared helpers
 
 // processSCPPath converts bastion: references to proper SCP format.
 func processSCPPath(path, bastionIP, user string) string {
@@ -255,7 +190,7 @@ func buildSCPCommand(source, destination, keyPath string, recursive bool, extraO
 }
 
 // executeSCP executes the SCP command.
-func executeSCP(scpCmd []string) error {
+func executeSCP(ctx context.Context, scpCmd []string) error {
 	log := logger.WithOperation("executeSCP")
 	log.Debugf("Executing: %s", strings.Join(scpCmd, " "))
 
@@ -264,7 +199,7 @@ func executeSCP(scpCmd []string) error {
 		return errors.New("invalid SCP command")
 	}
 
-	cmd := exec.Command(scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
+    cmd := exec.CommandContext(ctx, scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -10,6 +10,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+    kvV1Type = "kv-v1"
+    kvV2Type = "kv-v2"
+)
+
 // EngineInfo holds information about a vault engine.
 type EngineInfo struct {
 	Type    string // kv, kv-v2, transit, etc.
@@ -103,38 +108,45 @@ func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error)
 
 // parseMountInfo parses mount information from vault API response.
 func (ed *EngineDetector) parseMountInfo(mountPath string, mountData map[string]interface{}) (*EngineInfo, error) {
-	engineType, _ := mountData["type"].(string)
-	options, _ := mountData["options"].(map[string]interface{})
+	engineType := ""
+	if t, ok := mountData["type"].(string); ok {
+		engineType = t
+	}
+
+	var options map[string]interface{}
+	if opt, ok := mountData["options"].(map[string]interface{}); ok {
+		options = opt
+	}
 
 	info := &EngineInfo{
 		Path: strings.TrimSuffix(mountPath, "/"),
 		Type: engineType,
 	}
 
-	switch engineType {
-	case "kv":
+    switch engineType {
+    case "kv":
 		// Check version in options
 		if version, ok := options["version"]; ok {
 			if versionStr, ok := version.(string); ok {
 				info.Version = versionStr
-				if versionStr == "2" {
-					info.Type = "kv-v2"
-				} else {
-					info.Type = "kv-v1"
-				}
+                if versionStr == "2" {
+                    info.Type = kvV2Type
+                } else {
+                    info.Type = kvV1Type
+                }
 			}
 		} else {
 			// Default to v1 if no version specified
-			info.Type = "kv-v1"
-			info.Version = "1"
-		}
-	case "generic":
-		// Legacy generic engine is KV v1
-		info.Type = "kv-v1"
-		info.Version = "1"
-	default:
-		info.Version = "1" // Default version
-	}
+            info.Type = kvV1Type
+            info.Version = "1"
+        }
+    case "generic":
+        // Legacy generic engine is KV v1
+        info.Type = kvV1Type
+        info.Version = "1"
+    default:
+        info.Version = "1" // Default version
+    }
 
 	return info, nil
 }
@@ -149,22 +161,22 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 		if mountPath == mount {
 			ed.logger.Debug("Inferred KV v2 engine from common mount path", "path", mountPath)
 
-			return &EngineInfo{
-				Path:    mountPath,
-				Type:    "kv-v2",
-				Version: "2",
-			}, nil
+    return &EngineInfo{
+        Path:    mountPath,
+        Type:    kvV2Type,
+        Version: "2",
+    }, nil
 		}
 	}
 
 	// Default to KV v1 for unknown mounts
 	ed.logger.Debug("Defaulting to KV v1 engine", "path", mountPath)
 
-	return &EngineInfo{
-		Path:    mountPath,
-		Type:    "kv-v1",
-		Version: "1",
-	}, nil
+    return &EngineInfo{
+        Path:    mountPath,
+        Type:    kvV1Type,
+        Version: "1",
+    }, nil
 }
 
 // extractMountPath extracts the mount path from a full vault path.
@@ -188,7 +200,7 @@ func (ed *EngineDetector) IsKVv2(path string) (bool, error) {
 		return false, err
 	}
 
-	return info.Type == "kv-v2", nil
+    return info.Type == kvV2Type, nil
 }
 
 // IsKVv1 checks if a path uses KV v1 engine.
@@ -198,7 +210,7 @@ func (ed *EngineDetector) IsKVv1(path string) (bool, error) {
 		return false, err
 	}
 
-	return info.Type == "kv-v1" || info.Type == "generic", nil
+    return info.Type == kvV1Type || info.Type == "generic", nil
 }
 
 // GetEngineType returns the engine type for a path.

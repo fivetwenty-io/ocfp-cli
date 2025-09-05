@@ -1,7 +1,8 @@
 package vault
 
-// SafeInterface defines the interface for vault safe operations
+// SafeInterface defines the interface for vault safe operations.
 // This allows for mocking in tests.
+//nolint:interfacebloat // Safe abstraction intentionally aggregates many operations
 type SafeInterface interface {
 	Set(path, key string, value interface{}) error
 	SetMultiple(path string, data map[string]interface{}) error

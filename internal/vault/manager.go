@@ -198,7 +198,8 @@ func (m *Manager) populateFullConfiguration() error {
 	}
 
 	// Perform full configuration
-	if err := provider.Configure(); err != nil {
+	err = provider.Configure()
+	if err != nil {
 		return fmt.Errorf("provider configuration failed: %w", err)
 	}
 
@@ -218,7 +219,8 @@ func (m *Manager) populatePublicIPs() error {
 	}
 
 	// Configure public IPs
-	if err := provider.ConfigurePublicIPs(); err != nil {
+	err = provider.ConfigurePublicIPs()
+	if err != nil {
 		return fmt.Errorf("public IPs configuration failed: %w", err)
 	}
 
@@ -300,12 +302,13 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 	// Import to production
 	m.logger.Info("Importing to production vault", "vault", productionName)
 
-	if err := m.safe.Import(productionPath, secrets); err != nil {
+	err = m.safe.Import(productionPath, secrets)
+	if err != nil {
 		// Attempt rollback on failure
 		if rollback != nil {
 			m.logger.Error("Import failed, attempting rollback", "error", err)
-			rollbackErr := validator.ExecuteRollback(rollback)
 
+			rollbackErr := validator.ExecuteRollback(rollback)
 			if rollbackErr != nil {
 				m.logger.Error("Rollback also failed", "rollback_error", rollbackErr)
 
@@ -398,6 +401,7 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	// Delete each path
 	for _, path := range paths {
 		fullPath := fmt.Sprintf("%s/%s", inceptionPath, strings.TrimSuffix(path, "/"))
+
 		err := m.safe.Delete(fullPath, "")
 		if err != nil {
 			m.logger.Warn("Failed to delete path", "path", fullPath, "error", err)
@@ -466,6 +470,8 @@ func (m *Manager) GetClient() *Client {
 }
 
 // createVaultProvider creates a provider-specific vault implementation.
+//
+//nolint:ireturn // returning VaultProvider interface is intentional for provider pluggability
 func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 	switch strings.ToLower(m.config.Provider) {
 	case "stackit":

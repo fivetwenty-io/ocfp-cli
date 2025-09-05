@@ -200,6 +200,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 			{"repositories", m.setupRepositories},
 			{"packages", m.installPackages}, // avoid dpkg lock issues
 		}
+
 		err := m.runPhasesSequential(ctx, pre)
 		if err != nil {
 			return err
@@ -216,6 +217,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 			{"cf_plugins", m.installCFPlugins},
 			{"git_repos", m.cloneGitRepositories},
 		}
+
 		err = m.runPhasesParallel(ctx, par)
 		if err != nil {
 			return err
@@ -237,6 +239,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 			{"verification", m.verifyInstallation},
 			{"health_check", m.runHealthCheck},
 		}
+
 		err = m.runPhasesSequential(ctx, post)
 		if err != nil {
 			return err
@@ -285,6 +288,7 @@ func (m *Manager) Initialize(ctx context.Context) error {
 					"error_type":   "execution_failure",
 					"attempt":      index + 1,
 				}
+
 				saveErr := m.checkpointManager.Save(m.progress, metadata)
 				if saveErr != nil {
 					m.log.Warn("Failed to save failure checkpoint", "error", saveErr.Error())
@@ -366,6 +370,7 @@ func (m *Manager) validatePrerequisites() error {
 
 	// Create local directories
 	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs", "provision")
+
 	err := os.MkdirAll(logDir, 0750)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
@@ -464,14 +469,15 @@ func (m *Manager) previewConfigChanges(ctx context.Context) error {
 				}
 			}
 
-			if current == "" {
+			switch {
+			case current == "":
 				_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/profile.d/ocfp.sh")
-			} else if current != desired {
+			case current != desired:
 				diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(desired), FromFile: "/etc/profile.d/ocfp.sh (current)", ToFile: "/etc/profile.d/ocfp.sh (proposed)", Context: 3}
 				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
 					_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 				}
-			} else {
+			default:
 				_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/profile.d/ocfp.sh")
 			}
 		}
@@ -491,7 +497,8 @@ func (m *Manager) previewConfigChanges(ctx context.Context) error {
 			proposed := m.buildProposedEnvironment(current, envVars)
 			_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== /etc/environment changes ==")
 
-			if strings.TrimSpace(current) == "" {
+			switch {
+			case strings.TrimSpace(current) == "":
 				// Treat as create
 				diff := difflib.UnifiedDiff{A: []string{}, B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", Context: 3}
 				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
@@ -499,12 +506,12 @@ func (m *Manager) previewConfigChanges(ctx context.Context) error {
 				} else {
 					_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/environment")
 				}
-			} else if current != proposed {
+			case current != proposed:
 				diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", Context: 3}
 				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
 					_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 				}
-			} else {
+			default:
 				_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/environment")
 			}
 		}
@@ -734,7 +741,7 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 	// Collect
 	var anyErr error
 
-	for range len(phases) {
+	for range phases {
 		err := <-errs
 		if err != nil {
 			anyErr = err
@@ -745,6 +752,8 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 }
 
 // getProviderInitializer returns the appropriate provider initializer.
+//
+//nolint:ireturn // returning interface type is intentional for provider pluggability
 func (m *Manager) getProviderInitializer() (providers.BastionInitializer, error) {
 	switch m.config.Provider {
 	case "stackit":
@@ -765,6 +774,8 @@ func (m *Manager) getProviderInitializer() (providers.BastionInitializer, error)
 }
 
 // createSSHClient creates an SSH client with the given connection details.
+//
+//nolint:ireturn // returning interface type is intentional to abstract SSH client
 func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) (SSHClient, error) {
 	sshOptions := &ssh.ProvisioningOptions{
 		DryRun:      m.options.DryRun,
@@ -781,6 +792,8 @@ func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) (SSHClient, er
 }
 
 // loadProvisioningConfig loads the provisioning configuration.
+//
+//nolint:ireturn // returning interface type is intentional to abstract provision config
 func (m *Manager) loadProvisioningConfig() (provision.ProvisionConfig, error) {
 	return provision.NewConfig(m.config.Provider, m.config), nil
 }
@@ -1278,8 +1291,7 @@ func (m *Manager) getEnvironmentVariables() map[string]string {
 	}
 
 	// Add provider-specific variables based on the provider
-	switch m.config.Provider {
-	case "stackit":
+	if m.config.Provider == "stackit" {
 		if m.config.ProjectID != "" {
 			env["STACKIT_PROJECT_ID"] = m.config.ProjectID
 		}

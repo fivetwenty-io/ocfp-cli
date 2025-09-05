@@ -214,21 +214,22 @@ func (atm *AdvancedToolManager) GenerateAdvancedToolScript(ctx context.Context) 
 
 		lines = append(lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
 
-		if tool.InstallScript != "" {
-			// Script-based installation
-			lines = append(lines, "    "+tool.InstallScript)
+            switch {
+            case tool.InstallScript != "":
+                // Script-based installation
+                lines = append(lines, "    "+tool.InstallScript)
 
-			if tool.PathAddition != "" {
-				expandedPath := atm.expandVariables(tool.PathAddition)
-				lines = append(lines, fmt.Sprintf("    export PATH=\"%s:$PATH\"", expandedPath))
-			}
-		} else if tool.URLTemplate != "" && (tool.VersionURL != "" || tool.FixedVersion != "") {
-			// Version-based installation (supports fixed version override)
-			lines = append(lines, atm.generateVersionBasedInstall(tool)...)
-		} else if tool.URL != "" {
-			// Direct URL installation
-			lines = append(lines, atm.generateDirectInstall(tool)...)
-		}
+                if tool.PathAddition != "" {
+                    expandedPath := atm.expandVariables(tool.PathAddition)
+                    lines = append(lines, fmt.Sprintf("    export PATH=\"%s:$PATH\"", expandedPath))
+                }
+            case tool.URLTemplate != "" && (tool.VersionURL != "" || tool.FixedVersion != ""):
+                // Version-based installation (supports fixed version override)
+                lines = append(lines, atm.generateVersionBasedInstall(tool)...)
+            case tool.URL != "":
+                // Direct URL installation
+                lines = append(lines, atm.generateDirectInstall(tool)...)
+            }
 
 		// Run post-install if specified
 		if tool.PostInstall != "" {
@@ -411,15 +412,18 @@ fi`
 }
 
 // GetVersionFromAPI fetches the latest version from a GitHub API URL.
-func (atm *AdvancedToolManager) GetVersionFromAPI(versionURL, pattern string) (string, error) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionURL, pattern string) (string, error) {
+    client := &http.Client{Timeout: 10 * time.Second}
 
-	resp, err := client.Get(versionURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch version info: %w", err)
-	}
+    req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+    if err != nil {
+        return "", fmt.Errorf("failed to build request: %w", err)
+    }
+
+    resp, err := client.Do(req)
+    if err != nil {
+        return "", fmt.Errorf("failed to fetch version info: %w", err)
+    }
 
 	defer func() { _ = resp.Body.Close() }()
 

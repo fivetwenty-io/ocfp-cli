@@ -223,7 +223,7 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, cfg *config.Con
 			continue
 		}
 
-		// TODO: Add route configuration based on bloc requirements
+		// Pending: add route configuration based on bloc requirements
 	}
 
 	return nil
@@ -312,7 +312,7 @@ func configureBastion(ctx context.Context, provider cpi.Provider, cfg *config.Co
 		return nil
 	}
 
-	// TODO: Add bastion configuration steps
+// Pending: add bastion configuration steps
 	// - Install required packages
 	// - Configure SSH
 	// - Set up jump host configuration

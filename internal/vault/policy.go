@@ -63,7 +63,8 @@ func (pm *PolicyManager) CreateOCFPPolicies() error {
 
 // getOCFPPolicyTemplates returns all policy templates for OCFP.
 func (pm *PolicyManager) getOCFPPolicyTemplates() []*PolicyTemplate {
-	var policies []*PolicyTemplate
+    // Currently 5 policy templates appended below
+    policies := make([]*PolicyTemplate, 0, 5)
 
 	// Admin policy for full OCFP management
 	policies = append(policies, &PolicyTemplate{
@@ -347,8 +348,8 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 		return errors.New("invalid policies format in token")
 	}
 
-	// Convert to string slice
-	var tokenPolicies []string
+    // Convert to string slice
+    tokenPolicies := make([]string, 0, len(tokenPoliciesList))
 	for _, policy := range tokenPoliciesList {
 		if policyStr, ok := policy.(string); ok {
 			tokenPolicies = append(tokenPolicies, policyStr)
@@ -366,8 +367,8 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 		}
 	}
 
-	// Check for required policies
-	var missing []string
+    // Check for required policies
+    missing := make([]string, 0, len(requiredPolicies))
 
 	for _, required := range requiredPolicies {
 		found := false
@@ -456,7 +457,7 @@ func (pm *PolicyManager) CleanupOCFPPolicies() error {
 	// Find OCFP policies for this bloc
 	ocfpPolicyPrefix := fmt.Sprintf("ocfp-%s-", pm.blocName)
 
-	var ocfpPolicies []string
+    ocfpPolicies := make([]string, 0, len(allPolicies))
 
 	for _, policy := range allPolicies {
 		if strings.HasPrefix(policy, ocfpPolicyPrefix) {

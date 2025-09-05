@@ -189,7 +189,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	}
 
 	// Build label selector from filters (accepts keys like "label.foo" or "label:foo")
-	var selectors []string
+    selectors := make([]string, 0, len(filters))
 
 	for k, v := range filters {
 		if strings.HasPrefix(k, "label.") {

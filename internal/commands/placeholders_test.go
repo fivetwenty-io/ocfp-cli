@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"errors"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +13,8 @@ import (
 )
 
 func TestNewProviderCmd(t *testing.T) {
+	t.Parallel()
+
 	cmd := NewProviderCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "provider <action>", cmd.Use)
@@ -21,6 +23,8 @@ func TestNewProviderCmd(t *testing.T) {
 }
 
 func TestProviderLoginCommand(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		args        []string
@@ -61,21 +65,23 @@ func TestProviderLoginCommand(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
+		tc := testCase
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			// Set environment variables
-			for key, value := range testCase.env {
+			for key, value := range tc.env {
 				_ = os.Setenv(key, value)
 
 				defer func() { _ = os.Unsetenv(key) }()
 			}
 
 			cmd := NewProviderCmd()
-			cmd.SetArgs(testCase.args)
+			cmd.SetArgs(tc.args)
 
 			err := cmd.Execute()
-			if testCase.expectedErr != "" {
+			if tc.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), testCase.expectedErr)
+				assert.Contains(t, err.Error(), tc.expectedErr)
 			} else {
 				require.NoError(t, err)
 			}
@@ -84,6 +90,8 @@ func TestProviderLoginCommand(t *testing.T) {
 }
 
 func TestNewTmuxCmd(t *testing.T) {
+	t.Parallel()
+
 	cmd := NewTmuxCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "tmux", cmd.Use)
@@ -91,6 +99,8 @@ func TestNewTmuxCmd(t *testing.T) {
 }
 
 func TestTmuxCommand(t *testing.T) {
+	t.Parallel()
+
 	cmd := NewTmuxCmd()
 	cmd.SetArgs([]string{})
 
@@ -105,6 +115,7 @@ func TestTmuxCommand(t *testing.T) {
 }
 
 func TestFindTmuxScript(t *testing.T) {
+	t.Parallel()
 	// Test that the function doesn't panic and returns some path
 	scriptPath, err := findTmuxScript()
 	// Either finds a script or creates a temporary one
@@ -117,6 +128,8 @@ func TestFindTmuxScript(t *testing.T) {
 }
 
 func TestCreateBasicTmuxScript(t *testing.T) {
+	t.Parallel()
+
 	scriptPath, err := createBasicTmuxScript()
 	require.NoError(t, err)
 	require.NotEmpty(t, scriptPath)
@@ -132,6 +145,7 @@ func TestCreateBasicTmuxScript(t *testing.T) {
 }
 
 func TestEnsureExecutable(t *testing.T) {
+	t.Parallel()
 	// Create a temporary file
 	tempFile, err := os.CreateTemp(t.TempDir(), "test-executable-*")
 	require.NoError(t, err)
@@ -156,6 +170,8 @@ func TestEnsureExecutable(t *testing.T) {
 }
 
 func TestNewBastionCmd(t *testing.T) {
+	t.Parallel()
+
 	cmd := NewBastionCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "bastion <action>", cmd.Use)
@@ -164,6 +180,8 @@ func TestNewBastionCmd(t *testing.T) {
 }
 
 func TestBastionCommand(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		args        []string
@@ -192,14 +210,17 @@ func TestBastionCommand(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
+		tc := testCase
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			cmd := NewBastionCmd()
-			cmd.SetArgs(testCase.args)
+			cmd.SetArgs(tc.args)
 
 			err := cmd.Execute()
-			if testCase.expectedErr != "" {
+			if tc.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), testCase.expectedErr)
+				assert.Contains(t, err.Error(), tc.expectedErr)
 			} else {
 				require.NoError(t, err)
 			}
@@ -208,6 +229,8 @@ func TestBastionCommand(t *testing.T) {
 }
 
 func TestGetBastionContext(t *testing.T) {
+	t.Parallel()
+
 	cmd := &cobra.Command{}
 	cmd.Flags().String("user", "ubuntu", "SSH username")
 	cmd.Flags().String("key", "/path/to/key", "SSH key path")
@@ -224,6 +247,7 @@ func TestGetBastionContext(t *testing.T) {
 }
 
 func TestBuildEnvironmentVariables(t *testing.T) {
+	t.Parallel()
 	// Set some environment variables
 	_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
 	_ = os.Setenv("OCFP_PROVIDER", "stackit")
@@ -237,9 +261,10 @@ func TestBuildEnvironmentVariables(t *testing.T) {
 }
 
 func TestFetchGitHubKeys(t *testing.T) {
+	t.Parallel()
 	// Test with a known public GitHub user (this is a real API call)
 	// Using "octocat" which is GitHub's mascot account
-	keys, err := fetchGitHubKeys("octocat")
+	keys, err := fetchGitHubKeys(context.Background(), "octocat")
 
 	// The API call might fail due to network issues, rate limiting, etc.
 	// So we check if either we got keys or a reasonable error
@@ -265,9 +290,10 @@ func TestFetchGitHubKeys(t *testing.T) {
 }
 
 func TestFetchGitLabKeys(t *testing.T) {
+	t.Parallel()
 	// Test with GitLab API - using a test that should not cause issues
 	// Note: This makes a real HTTP request which could fail
-	keys, err := fetchGitLabKeys("root") // root user exists on most GitLab instances
+	keys, err := fetchGitLabKeys(context.Background(), "root") // root user exists on most GitLab instances
 
 	// Similar to GitHub test - check for reasonable behavior
 	if err != nil {
@@ -282,6 +308,7 @@ func TestFetchGitLabKeys(t *testing.T) {
 }
 
 func TestFindProvisionScript(t *testing.T) {
+	t.Parallel()
 	// This should fail for non-existent script
 	_, err := findProvisionScript("non-existent-script")
 	require.Error(t, err)
