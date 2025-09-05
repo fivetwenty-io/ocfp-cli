@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -65,32 +66,32 @@ func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*
 	}
 
 	// Check inception vault exists and has data
-	err := v.validateInceptionVault(inceptionPath, result)
+	err = v.validateInceptionVault(inceptionPath, result)
 	if err != nil {
 		return result, fmt.Errorf("inception vault validation failed: %w", err)
 	}
 
 	// Check target vault accessibility
-	err := v.validateTargetVault(targetPath, result)
+	err = v.validateTargetVault(targetPath, result)
 	if err != nil {
 		return result, fmt.Errorf("target vault validation failed: %w", err)
 	}
 
 	// Check for active BOSH deployments
-	err := v.checkActiveBOSHDeployments(result)
+	err = v.checkActiveBOSHDeployments(result)
 	if err != nil {
 		v.logger.Warn("BOSH deployment check failed", "error", err)
 		result.AddWarning("Could not verify BOSH deployment status")
 	}
 
 	// Check for conflicting secrets
-	err := v.checkSecretConflicts(inceptionPath, targetPath, result)
+	err = v.checkSecretConflicts(inceptionPath, targetPath, result)
 	if err != nil {
 		return result, fmt.Errorf("secret conflict check failed: %w", err)
 	}
 
 	// Validate vault policies
-	err := v.validateVaultPolicies(result)
+	err = v.validateVaultPolicies(result)
 	if err != nil {
 		v.logger.Warn("Vault policy validation failed", "error", err)
 		result.AddWarning("Could not validate vault policies")

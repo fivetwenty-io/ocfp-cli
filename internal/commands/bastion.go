@@ -1,11 +1,11 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+    "context"
+    "fmt"
+    "os"
+    "path/filepath"
+    "strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -202,7 +202,7 @@ func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operati
 	envString := buildEnvironmentVariables(log)
 
 	// Execute the script on bastion
-	err := executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log)
+	err = executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log)
 	if err != nil {
 		return err
 	}

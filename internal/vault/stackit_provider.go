@@ -61,42 +61,42 @@ func (s *StackitVaultProvider) Configure() error {
 		}
 
 		// Configure services
-		err := s.ConfigureBlobstores(envPath, envType)
+		err = s.ConfigureBlobstores(envPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
 		}
 
-		err := s.ConfigureDatabases(envPath, envType)
+		err = s.ConfigureDatabases(envPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure databases for %s: %w", envType, err)
 		}
 
-		err := s.ConfigureLoadBalancers(envPath, envType)
+		err = s.ConfigureLoadBalancers(envPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure load balancers for %s: %w", envType, err)
 		}
 
-		err := s.ConfigureFQDNs(envPath, envType)
+		err = s.ConfigureFQDNs(envPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
 		}
 
 		// Configure BOSH-specific components for each environment
 		boshPath := s.PathBuilder.GetBOSHPath(envType)
-		err := s.configureBOSH(boshPath, envType)
+		err = s.configureBOSH(boshPath, envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure BOSH for %s: %w", envType, err)
 		}
 	}
 
 	// Configure certificates (shared between environments)
-	err := s.ConfigureCertificates("", "")
+	err = s.ConfigureCertificates("", "")
 	if err != nil {
 		return fmt.Errorf("failed to configure certificates: %w", err)
 	}
 
 	// Configure public IPs (OCF environment only)
-	err := s.ConfigurePublicIPs()
+	err = s.ConfigurePublicIPs()
 	if err != nil {
 		return fmt.Errorf("failed to configure public IPs: %w", err)
 	}
@@ -141,19 +141,19 @@ func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
 	}
 
 	// Configure subnets
-	err := s.configureSubnets(envPath, envType)
+	err = s.configureSubnets(envPath, envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure subnets: %w", err)
 	}
 
 	// Configure security groups
-	err := s.configureSecurityGroups(envPath, envType)
+	err = s.configureSecurityGroups(envPath, envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure security groups: %w", err)
 	}
 
 	// Configure region
-	err := s.configureRegion(envPath, envType)
+	err = s.configureRegion(envPath, envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure region: %w", err)
 	}
@@ -347,7 +347,7 @@ func (s *StackitVaultProvider) configureSecurityGroups(envPath, envType string) 
 		"description": fmt.Sprintf("Security group for %s environment", envType),
 	}
 
-	err := s.Safe.SetMultiple(envSGPath, envSGData)
+	err = s.Safe.SetMultiple(envSGPath, envSGData)
 	if err != nil {
 		return fmt.Errorf("failed to set %s security group: %w", envType, err)
 	}
@@ -381,13 +381,13 @@ func (s *StackitVaultProvider) configureBOSH(boshPath, envType string) error {
 	}
 
 	// Configure keys
-	err := s.configureKeys(boshPath, envType)
+	err = s.configureKeys(boshPath, envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure keys: %w", err)
 	}
 
 	// Configure KMS (no-op for STACKIT)
-	err := s.configureKMS(boshPath, envType)
+	err = s.configureKMS(boshPath, envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure KMS: %w", err)
 	}

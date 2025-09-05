@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
+    "context"
+    "fmt"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "regexp"
+    "strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -87,7 +87,7 @@ initialization and validates prerequisites.`,
 
 			// Validate prerequisites
 			if !skipChecks {
-				err := validatePrerequisites(ctx, cfg)
+				err = validatePrerequisites(ctx, cfg)
 				if err != nil {
 					return fmt.Errorf("prerequisite check failed: %w", err)
 				}
@@ -119,22 +119,22 @@ initialization and validates prerequisites.`,
 				// Initialize in order: bastion -> pg -> bosh -> cf
 				log.Info("Initializing all components")
 
-				err := initializeBastion(ctx, cfg, force, parallel, dryRun, resume, verbose)
+				err = initializeBastion(ctx, cfg, force, parallel, dryRun, resume, verbose)
 				if err != nil {
 					return fmt.Errorf("bastion initialization failed: %w", err)
 				}
 
-				err := initializePostgreSQL(ctx, cfg)
+				err = initializePostgreSQL(ctx, cfg)
 				if err != nil {
 					return fmt.Errorf("PostgreSQL initialization failed: %w", err)
 				}
 
-				err := initializeBOSH(ctx, cfg)
+				err = initializeBOSH(ctx, cfg)
 				if err != nil {
 					return fmt.Errorf("BOSH initialization failed: %w", err)
 				}
 
-				err := initializeCloudFoundry(ctx, cfg)
+				err = initializeCloudFoundry(ctx, cfg)
 				if err != nil {
 					return fmt.Errorf("cloud Foundry initialization failed: %w", err)
 				}
@@ -189,7 +189,7 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
 	if _, err := os.Stat(deploymentDir); os.IsNotExist(err) {
 		log.Info("Creating deployment directory", "path", deploymentDir)
-		err := os.MkdirAll(deploymentDir, 0750)
+		err = os.MkdirAll(deploymentDir, 0750)
 
 		if err != nil {
 			return fmt.Errorf("failed to create deployment directory: %w", err)
@@ -216,7 +216,7 @@ func checkBastionConnectivity(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("invalid SSH user: %w", err)
 	}
-	err := security.ValidateInput(bastionIP, validDNSPattern)
+	err = security.ValidateInput(bastionIP, validDNSPattern)
 
 	if err != nil {
 		return fmt.Errorf("invalid bastion IP: %w", err)
@@ -229,7 +229,7 @@ func checkBastionConnectivity(cfg *config.Config) error {
 		fmt.Sprintf("%s@%s", cfg.Bastion.SSHUser, bastionIP),
 		"echo", "connected")
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("bastion not accessible: %w", err)
 	}
@@ -281,7 +281,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	// Check if manifest exists
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
 		log.Info("Creating BOSH manifest", "path", manifestPath)
-		err := createBOSHManifest(cfg, manifestPath)
+		err = createBOSHManifest(cfg, manifestPath)
 
 		if err != nil {
 			return fmt.Errorf("failed to create BOSH manifest: %w", err)
@@ -295,7 +295,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
-	err := security.ValidateInput(deploymentDir, validFilePathPattern)
+	err = security.ValidateInput(deploymentDir, validFilePathPattern)
 
 	if err != nil {
 		return fmt.Errorf("invalid deployment directory: %w", err)
@@ -309,14 +309,14 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("BOSH deployment failed: %w", err)
 	}
 
 	// Set BOSH environment
 	log.Info("Configuring BOSH environment")
-	err := configureBOSHEnvironment(cfg, deploymentDir)
+	err = configureBOSHEnvironment(cfg, deploymentDir)
 
 	if err != nil {
 		return fmt.Errorf("failed to configure BOSH environment: %w", err)
@@ -356,7 +356,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	log.Info("Deploying Cloud Foundry")
 
 	manifestPath := filepath.Join(deploymentDir, "cf-deployment.yml")
-	err := security.ValidateInput(manifestPath, validFilePathPattern)
+	err = security.ValidateInput(manifestPath, validFilePathPattern)
 	if err != nil {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
@@ -369,14 +369,14 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("CF deployment failed: %w", err)
 	}
 
 	// Configure CF
 	log.Info("Configuring Cloud Foundry")
-	err := configureCloudFoundry(cfg)
+	err = configureCloudFoundry(cfg)
 
 	if err != nil {
 		return fmt.Errorf("failed to configure CF: %w", err)
@@ -461,7 +461,7 @@ func configureCloudFoundry(cfg *config.Config) error {
 		"-p", "admin", // This should come from credhub
 		"--skip-ssl-validation")
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("CF login failed: %w", err)
 	}
@@ -470,19 +470,19 @@ func configureCloudFoundry(cfg *config.Config) error {
 	log.Info("Creating default organization and space")
 
 	cmd = exec.Command("cf", "create-org", "default") // #nosec G204 - using hardcoded values
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to create org", "error", err)
 	}
 
 	cmd = exec.Command("cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to create space", "error", err)
 	}
 
 	cmd = exec.Command("cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Warn("Failed to target org/space", "error", err)
 	}

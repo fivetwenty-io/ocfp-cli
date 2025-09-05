@@ -2,7 +2,7 @@ package providers
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"

@@ -1,6 +1,7 @@
 package stackit
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"

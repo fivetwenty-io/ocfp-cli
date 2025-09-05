@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 

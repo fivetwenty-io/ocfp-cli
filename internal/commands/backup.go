@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -294,7 +295,7 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 		if err != nil {
 			return fmt.Errorf("failed to encrypt backup: %w", err)
 		}
-		err := os.Remove(archivePath)
+		err = os.Remove(archivePath)
 
 		if err != nil {
 			log.Warn("Failed to remove unencrypted archive", "error", err)
@@ -521,7 +522,7 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
 
-		err := copyForBackup(file, dest)
+		err = copyForBackup(file, dest)
 		if err != nil {
 			log.Warn("Failed to backup file", "file", file, "error", err)
 

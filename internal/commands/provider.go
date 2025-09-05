@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"

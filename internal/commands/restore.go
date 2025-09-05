@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -359,7 +360,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 			continue
 		}
 
-		err := restoreComponent(componentPath, destPath, "")
+        err = restoreComponent(componentPath, destPath, "")
 		if err != nil {
 			log.Warn("Failed to restore data", "component", component, "error", err)
 

@@ -66,11 +66,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&asciiTables, "ascii", false, "use ASCII-only tables in output")
 
 	// Bind flags to viper
-	err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
+    err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
 	if err != nil {
 		logger.Warnf("Failed to bind config flag: %v", err)
 	}
-	err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc"))
+    err = viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind bloc flag: %v", err)
@@ -83,36 +83,36 @@ func init() {
 		// Apply global UI settings
 		ui.SetASCII(viper.GetBool("ascii"))
 	}
-	err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+    err = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 	if err != nil {
 		logger.Warnf("Failed to bind debug flag: %v", err)
 	}
-	err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+    err = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind verbose flag: %v", err)
 	}
-	err := viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace"))
+    err = viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind trace flag: %v", err)
 	}
-	err := viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log"))
+    err = viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind no-log flag: %v", err)
 	}
-	err := viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
+    err = viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind region flag: %v", err)
 	}
 	// No binding for iaas; provider should come from bloc config
-	err := viper.BindPFlag("debug_lookup", rootCmd.PersistentFlags().Lookup("debug-lookup"))
+    err = viper.BindPFlag("debug_lookup", rootCmd.PersistentFlags().Lookup("debug-lookup"))
 	if err != nil {
 		logger.Warnf("Failed to bind debug-lookup flag: %v", err)
 	}
-	err := viper.BindPFlag("ascii", rootCmd.PersistentFlags().Lookup("ascii"))
+    err = viper.BindPFlag("ascii", rootCmd.PersistentFlags().Lookup("ascii"))
 
 	if err != nil {
 		logger.Warnf("Failed to bind ascii flag: %v", err)

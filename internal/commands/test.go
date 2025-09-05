@@ -1,14 +1,14 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"time"
+    "context"
+    "fmt"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "regexp"
+    "strings"
+    "time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -254,27 +254,27 @@ func (r *TestRunner) ValidateEnvironment(ctx context.Context) error {
 	log.Info("Validating test environment")
 
 	// Check CF CLI is available and logged in
-	err := r.validateCFCLI()
+    err := r.validateCFCLI()
 	if err != nil {
 		return fmt.Errorf("CF CLI validation failed: %w", err)
 	}
 
 	// Check BOSH CLI if needed
 	if r.Suite == TestSuiteAll || r.Suite == TestSuiteAcceptance {
-		err := r.validateBOSHCLI()
+        err := r.validateBOSHCLI()
 		if err != nil {
 			return fmt.Errorf("BOSH CLI validation failed: %w", err)
 		}
 	}
 
 	// Verify CF deployment is accessible
-	err := r.validateCFDeployment(ctx)
+    err = r.validateCFDeployment(ctx)
 	if err != nil {
 		return fmt.Errorf("CF deployment validation failed: %w", err)
 	}
 
 	// Check required test directories exist
-	err := r.validateTestDirectories()
+    err = r.validateTestDirectories()
 	if err != nil {
 		return fmt.Errorf("test directory validation failed: %w", err)
 	}
@@ -288,27 +288,27 @@ func (r *TestRunner) Setup(ctx context.Context) error {
 	log.Info("Setting up test environment")
 
 	// Set CF target
-	err := r.setCFTarget()
+    err := r.setCFTarget()
 	if err != nil {
 		return fmt.Errorf("failed to set CF target: %w", err)
 	}
 
 	// Create test org and space if needed
-	err := r.createTestOrgSpace()
+    err = r.createTestOrgSpace()
 	if err != nil {
 		return fmt.Errorf("failed to create test org/space: %w", err)
 	}
 
 	// Deploy test applications if needed
 	if r.Suite == TestSuiteC2C || r.Suite == TestSuiteAll {
-		err := r.deployTestApps(ctx)
+        err := r.deployTestApps(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to deploy test apps: %w", err)
 		}
 	}
 
 	// Setup test data
-	err := r.setupTestData()
+    err = r.setupTestData()
 	if err != nil {
 		return fmt.Errorf("failed to setup test data: %w", err)
 	}
@@ -453,19 +453,19 @@ func (r *TestRunner) Cleanup(ctx context.Context) error {
 	log.Info("Cleaning up test environment")
 
 	// Delete test apps
-	err := r.cleanupTestApps(ctx)
+    err := r.cleanupTestApps(ctx)
 	if err != nil {
 		log.Warn("Failed to cleanup test apps", "error", err)
 	}
 
 	// Delete test org/space
-	err := r.cleanupTestOrgSpace()
+    err = r.cleanupTestOrgSpace()
 	if err != nil {
 		log.Warn("Failed to cleanup test org/space", "error", err)
 	}
 
 	// Cleanup test data
-	err := r.cleanupTestData()
+    err = r.cleanupTestData()
 	if err != nil {
 		log.Warn("Failed to cleanup test data", "error", err)
 	}
@@ -579,16 +579,16 @@ func (r *TestRunner) createTestOrgSpace() error {
 	spaceName := r.Config.Name + "-test-space"
 
 	// Create org
-	cmd := exec.Command("cf", "create-org", orgName) // #nosec G204 - input validated above
-	err := cmd.Run()
+    cmd := exec.Command("cf", "create-org", orgName) // #nosec G204 - input validated above
+    err = cmd.Run()
 	if err != nil {
 		// Ignore error if org already exists - CF will return error code 1 if org exists
 		logger.Debugf("org creation error (likely already exists): %v", err)
 	}
 
 	// Create space
-	cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
-	err := cmd.Run()
+    cmd = exec.Command("cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
+    err = cmd.Run()
 	if err != nil {
 		// Ignore error if space already exists - CF will return error code 1 if space exists
 		logger.Debugf("space creation error (likely already exists): %v", err)

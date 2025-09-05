@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
