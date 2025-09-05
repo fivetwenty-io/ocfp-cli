@@ -10,7 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ErrorType represents different categories of errors
+// ErrorType represents different categories of errors.
 type ErrorType string
 
 const (
@@ -23,7 +23,7 @@ const (
 	ErrorTypeUnknown       ErrorType = "unknown"
 )
 
-// BastionError represents an error with context and retry information
+// BastionError represents an error with context and retry information.
 type BastionError struct {
 	Type         ErrorType
 	Phase        string
@@ -35,24 +35,24 @@ type BastionError struct {
 	AttemptCount int
 }
 
-// Error implements the error interface
+// Error implements the error interface.
 func (be *BastionError) Error() string {
 	return fmt.Sprintf("[%s] %s: %s", be.Type, be.Phase, be.Message)
 }
 
-// Unwrap returns the underlying error
+// Unwrap returns the underlying error.
 func (be *BastionError) Unwrap() error {
 	return be.Cause
 }
 
-// ErrorHandler handles error classification and retry logic
+// ErrorHandler handles error classification and retry logic.
 type ErrorHandler struct {
 	log        logger.Logger
 	maxRetries int
 	baseDelay  time.Duration
 }
 
-// NewErrorHandler creates a new error handler
+// NewErrorHandler creates a new error handler.
 func NewErrorHandler() *ErrorHandler {
 	return &ErrorHandler{
 		log:        logger.Get(),
@@ -61,7 +61,7 @@ func NewErrorHandler() *ErrorHandler {
 	}
 }
 
-// ClassifyError analyzes an error and returns a BastionError with context
+// ClassifyError analyzes an error and returns a BastionError with context.
 func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *BastionError {
 	if err == nil {
 		return nil
@@ -90,6 +90,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 			"Check security group rules",
 			"Verify DNS resolution",
 		}
+
 		return bastionErr
 	}
 
@@ -106,6 +107,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 			"Check file/directory permissions",
 			"Ensure SSH key matches bastion configuration",
 		}
+
 		return bastionErr
 	}
 
@@ -122,6 +124,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 			"Ensure all required fields are present",
 			"Check file paths and permissions",
 		}
+
 		return bastionErr
 	}
 
@@ -138,6 +141,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 			"Verify sufficient disk space for installations",
 			"Check if conflicting packages are installed",
 		}
+
 		return bastionErr
 	}
 
@@ -154,6 +158,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 			"Verify system load",
 			"Consider running during off-peak hours",
 		}
+
 		return bastionErr
 	}
 
@@ -170,7 +175,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 	return bastionErr
 }
 
-// ExecuteWithRetry executes a function with retry logic
+// ExecuteWithRetry executes a function with retry logic.
 func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn func() error) error {
 	var lastErr *BastionError
 
@@ -199,6 +204,7 @@ func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn f
 				"phase", phase,
 				"error_type", string(bastionErr.Type))
 			eh.logSuggestions(bastionErr)
+
 			return bastionErr
 		}
 
@@ -233,7 +239,7 @@ func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn f
 	return fmt.Errorf("phase %s failed after %d attempts: %w", phase, eh.maxRetries, lastErr)
 }
 
-// calculateDelay calculates delay with exponential backoff
+// calculateDelay calculates delay with exponential backoff.
 func (eh *ErrorHandler) calculateDelay(attempt int) time.Duration {
 	// Exponential backoff: 2s, 4s, 8s, 16s, ...
 	multiplier := 1 << (attempt - 1) // 2^(attempt-1)
@@ -247,36 +253,38 @@ func (eh *ErrorHandler) calculateDelay(attempt int) time.Duration {
 	return delay
 }
 
-// logSuggestions logs helpful suggestions for error recovery
+// logSuggestions logs helpful suggestions for error recovery.
 func (eh *ErrorHandler) logSuggestions(bastionErr *BastionError) {
 	if len(bastionErr.Suggestions) == 0 {
 		return
 	}
 
 	eh.log.Info("Suggested recovery actions:")
+
 	for i, suggestion := range bastionErr.Suggestions {
 		eh.log.Info(fmt.Sprintf("  %d. %s", i+1, suggestion))
 	}
 }
 
-// containsAny checks if a string contains any of the given substrings
+// containsAny checks if a string contains any of the given substrings.
 func (eh *ErrorHandler) containsAny(text string, substrings []string) bool {
 	for _, substr := range substrings {
 		if strings.Contains(text, substr) {
 			return true
 		}
 	}
+
 	return false
 }
 
-// RecoverableErrorWrapper wraps operations to provide error context and recovery
+// RecoverableErrorWrapper wraps operations to provide error context and recovery.
 type RecoverableErrorWrapper struct {
 	handler *ErrorHandler
 	phase   string
 	log     logger.Logger
 }
 
-// NewRecoverableErrorWrapper creates a new error wrapper
+// NewRecoverableErrorWrapper creates a new error wrapper.
 func NewRecoverableErrorWrapper(phase string) *RecoverableErrorWrapper {
 	return &RecoverableErrorWrapper{
 		handler: NewErrorHandler(),
@@ -285,29 +293,33 @@ func NewRecoverableErrorWrapper(phase string) *RecoverableErrorWrapper {
 	}
 }
 
-// Execute wraps function execution with error handling
+// Execute wraps function execution with error handling.
 func (rew *RecoverableErrorWrapper) Execute(ctx context.Context, operation func() error) error {
 	return rew.handler.ExecuteWithRetry(ctx, rew.phase, operation)
 }
 
-// ExecuteCommand wraps SSH command execution with error handling
+// ExecuteCommand wraps SSH command execution with error handling.
 func (rew *RecoverableErrorWrapper) ExecuteCommand(ctx context.Context, sshClient SSHClient, cmd string) (*ssh.CommandResult, error) {
-	var result *ssh.CommandResult
-	var err error
+	var (
+		result *ssh.CommandResult
+		err    error
+	)
 
 	operation := func() error {
 		result, err = sshClient.ExecuteCommand(ctx, cmd)
+
 		return err
 	}
 
-	if execErr := rew.Execute(ctx, operation); execErr != nil {
+	execErr := rew.Execute(ctx, operation)
+	if execErr != nil {
 		return result, execErr
 	}
 
 	return result, nil
 }
 
-// ExecuteTransfer wraps file transfer with error handling
+// ExecuteTransfer wraps file transfer with error handling.
 func (rew *RecoverableErrorWrapper) ExecuteTransfer(ctx context.Context, sshClient SSHClient, local, remote string, opts ssh.TransferOptions) error {
 	operation := func() error {
 		return sshClient.TransferFile(ctx, local, remote, opts)

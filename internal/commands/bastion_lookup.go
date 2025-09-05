@@ -26,6 +26,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 					} else {
 						log.Debugf("Using bastion IP from state cache: %s", bastionIP)
 					}
+
 					return bastionIP, nil
 				}
 			}
@@ -44,6 +45,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		if err != nil {
 			return "", fmt.Errorf("failed to list instances: %w", err)
 		}
+
 		if len(instances) == 0 {
 			continue
 		}
@@ -57,7 +59,9 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 				} else {
 					log.Debugf("Found bastion by label %s: %s (%s)", key, inst.Name, publicIP)
 				}
+
 				cacheBastionIP(blocName, publicIP)
+
 				return publicIP, nil
 			}
 		}
@@ -74,7 +78,9 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 							} else {
 								log.Debugf("Found bastion floating IP by label %s: %s (%s)", key, inst.Name, fip.Address)
 							}
+
 							cacheBastionIP(blocName, fip.Address)
+
 							return fip.Address, nil
 						}
 					}
@@ -90,6 +96,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	if err != nil {
 		return "", fmt.Errorf("failed to list instances: %w", err)
 	}
+
 	if len(instances) == 0 {
 		return "", fmt.Errorf("no instances found for bloc %s", blocName)
 	}
@@ -104,7 +111,9 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 				} else {
 					log.Debugf("Found bastion by name: %s (%s)", inst.Name, publicIP)
 				}
+
 				cacheBastionIP(blocName, publicIP)
+
 				return publicIP, nil
 			}
 		}
@@ -115,9 +124,10 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	if err == nil {
 		for _, inst := range instances {
 			name := strings.ToLower(inst.Name)
-			if !(strings.HasSuffix(name, "-bastion") || strings.Contains(name, "bastion")) {
+			if !strings.HasSuffix(name, "-bastion") && !strings.Contains(name, "bastion") {
 				continue
 			}
+
 			for _, fip := range fips {
 				if fip.InstanceID == inst.ID && fip.Address != "" {
 					if viper.GetBool("debug_lookup") {
@@ -125,7 +135,9 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 					} else {
 						log.Debugf("Found bastion floating IP by name: %s (%s)", inst.Name, fip.Address)
 					}
+
 					cacheBastionIP(blocName, fip.Address)
+
 					return fip.Address, nil
 				}
 			}
@@ -141,6 +153,7 @@ func firstNonEmpty(vals ...string) string {
 			return v
 		}
 	}
+
 	return ""
 }
 
@@ -149,15 +162,19 @@ func cacheBastionIP(blocName, bastionIP string) {
 	if bastionIP == "" {
 		return
 	}
+
 	stateManager, err := state.NewManager("")
 	if err != nil {
 		return
 	}
+
 	if _, err := stateManager.Load(blocName); err != nil {
 		return
 	}
+
 	if err := stateManager.SetOutput("bastion_public_ip", bastionIP); err != nil {
 		return
 	}
+
 	_ = stateManager.Save()
 }

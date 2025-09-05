@@ -15,7 +15,7 @@ var (
 	validScriptPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+\.sh$`)
 )
 
-// NewTmuxCmd creates the tmux command
+// NewTmuxCmd creates the tmux command.
 func NewTmuxCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tmux",
@@ -28,7 +28,7 @@ func NewTmuxCmd() *cobra.Command {
 func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	// Check if tmux is available
 	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux is not installed. Please install tmux to use this command")
+		return errors.New("tmux is not installed. Please install tmux to use this command")
 	}
 
 	// Find the tmux script
@@ -46,6 +46,7 @@ func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	if err := security.ValidateInput(scriptPath, validScriptPathPattern); err != nil {
 		return fmt.Errorf("invalid script path: %w", err)
 	}
+
 	execCmd := exec.Command(scriptPath) // #nosec G204 - scriptPath is validated above
 	execCmd.Stdout = os.Stdout
 	execCmd.Stderr = os.Stderr
@@ -64,6 +65,7 @@ func findTmuxScript() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	execDir := filepath.Dir(execPath)
 
 	// Look for the tmux script in various locations
@@ -129,8 +131,10 @@ echo "Attach with: tmux attach-session -t ocfp"
 	if _, err := tempFile.WriteString(scriptContent); err != nil {
 		_ = tempFile.Close()
 		_ = os.Remove(tempFile.Name())
+
 		return "", err
 	}
+
 	_ = tempFile.Close()
 
 	return tempFile.Name(), nil

@@ -9,15 +9,16 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
-// fakeStorageCreds implements cpi.StorageManager and a STACKIT-specific deletion method
+// fakeStorageCreds implements cpi.StorageManager and a STACKIT-specific deletion method.
 type fakeStorageCreds struct{ deletedGroup string }
 
 func (f *fakeStorageCreds) DeleteCredentialsGroup(ctx context.Context, groupID string) error {
 	f.deletedGroup = groupID
+
 	return nil
 }
 
-// cpi.StorageManager required methods (stubs)
+// cpi.StorageManager required methods (stubs).
 func (f *fakeStorageCreds) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
 	return nil, nil
 }
@@ -73,19 +74,23 @@ func TestTeardownDeletesCredentialsGroup(t *testing.T) {
 	fakeStorage := &fakeStorageCreds{}
 	fakeProvider := &fakeProviderCreds{s: fakeStorage}
 	cfg := &config.Config{Name: "prod", Provider: "stackit", Region: "eu01"}
+
 	stateManager, err := state.NewManager(t.TempDir())
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
+
 	m := NewTeardownManager(cfg, fakeProvider, stateManager, &TeardownOptions{BlocName: "prod"})
 
 	r := &ResourceToDelete{Type: "credentials_group", ID: "group-123", Name: "ocfp-cli"}
 	if err := m.deleteResource(context.Background(), r); err != nil {
 		t.Fatalf("deleteResource: %v", err)
 	}
+
 	if fakeStorage.deletedGroup != "group-123" {
 		t.Fatalf("expected credentials group deletion to be called, got %q", fakeStorage.deletedGroup)
 	}

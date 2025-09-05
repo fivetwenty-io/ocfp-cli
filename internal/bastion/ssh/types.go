@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ConnectionDetails holds SSH connection information
+// ConnectionDetails holds SSH connection information.
 type ConnectionDetails struct {
 	Host           string
 	Port           int
@@ -16,7 +16,7 @@ type ConnectionDetails struct {
 	UseSSHPass     bool
 }
 
-// CommandResult holds the result of a remote command execution
+// CommandResult holds the result of a remote command execution.
 type CommandResult struct {
 	Command  string
 	ExitCode int
@@ -25,7 +25,7 @@ type CommandResult struct {
 	Duration time.Duration
 }
 
-// TransferOptions configures file transfer behavior
+// TransferOptions configures file transfer behavior.
 type TransferOptions struct {
 	Recursive    bool
 	Preserve     bool
@@ -37,7 +37,7 @@ type TransferOptions struct {
 	BackupRemote bool
 }
 
-// ProvisioningOptions configures bastion provisioning behavior
+// ProvisioningOptions configures bastion provisioning behavior.
 type ProvisioningOptions struct {
 	DryRun      bool
 	Force       bool

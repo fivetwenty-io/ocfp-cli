@@ -8,7 +8,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 )
 
-// TestKeyManagerKeyDiscovery tests SSH key discovery functionality
+// TestKeyManagerKeyDiscovery tests SSH key discovery functionality.
 func TestKeyManagerKeyDiscovery(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -42,7 +42,7 @@ NhAAAAAwEAAQAAAQEAtest-key-content-here
 	}
 }
 
-// TestSSHClientCreation tests SSH client creation
+// TestSSHClientCreation tests SSH client creation.
 func TestSSHClientCreation(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -66,15 +66,17 @@ func TestSSHClientCreation(t *testing.T) {
 	}
 }
 
-// TestFileTransferManager tests file transfer functionality
+// TestFileTransferManager tests file transfer functionality.
 func TestFileTransferManager(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
 	// Create test files
 	testFile := filepath.Join(tempDir, "test.txt")
+
 	testContent := "test file content"
-	if err := os.WriteFile(testFile, []byte(testContent), 0644); err != nil {
+	err := os.WriteFile(testFile, []byte(testContent), 0644)
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -86,7 +88,7 @@ func TestFileTransferManager(t *testing.T) {
 	}
 }
 
-// TestKeyManagerKeyValidation tests SSH key validation
+// TestKeyManagerKeyValidation tests SSH key validation.
 func TestKeyManagerKeyValidation(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -98,6 +100,7 @@ func TestKeyManagerKeyValidation(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
+
 	if isProtected {
 		t.Error("Expected false for non-existent key")
 	}
@@ -120,6 +123,7 @@ mock-encrypted-key-content
 	if err != nil {
 		t.Fatalf("Failed to check encrypted key: %v", err)
 	}
+
 	if !isProtected {
 		t.Error("Expected encrypted key to be detected as password protected")
 	}
@@ -139,6 +143,7 @@ b3BlbnNzaC1rZXktdjEAAAAABG5vbmU=
 	if err != nil {
 		t.Fatalf("Failed to check unencrypted key: %v", err)
 	}
+
 	if isProtected {
 		t.Error("Expected unencrypted key to not be detected as password protected")
 	}

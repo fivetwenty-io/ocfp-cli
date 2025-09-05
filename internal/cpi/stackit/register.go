@@ -8,13 +8,14 @@ import (
 
 func init() {
 	// Register STACKIT provider
-	if err := cpi.Register("stackit", NewProvider); err != nil {
+	err := cpi.Register("stackit", NewProvider)
+	if err != nil {
 		// Registration errors during init are critical
 		panic(fmt.Errorf("failed to register STACKIT provider: %w", err))
 	}
 }
 
-// NewProvider creates a new STACKIT provider instance
+// NewProvider creates a new STACKIT provider instance.
 func NewProvider(config interface{}) (cpi.Provider, error) {
 	// Convert generic config to STACKIT config
 	var stackitConfig *Config
@@ -38,10 +39,11 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 
 	// Validate required fields
 	if stackitConfig.ProjectID == "" {
-		return nil, fmt.Errorf("project_id is required for STACKIT provider")
+		return nil, errors.New("project_id is required for STACKIT provider")
 	}
+
 	if stackitConfig.OrgID == "" {
-		return nil, fmt.Errorf("org_id is required for STACKIT provider")
+		return nil, errors.New("org_id is required for STACKIT provider")
 	}
 
 	// Check for authentication - prefer service_account_json, then service_account_token, then auth_token
@@ -50,18 +52,19 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 	hasAuthToken := stackitConfig.AuthToken != ""
 
 	if !hasServiceAccountJSON && !hasServiceAccountToken && !hasAuthToken {
-		return nil, fmt.Errorf("STACKIT provider requires either 'service_account_json', 'service_account_token' or 'auth_token' to be set")
+		return nil, errors.New("STACKIT provider requires either 'service_account_json', 'service_account_token' or 'auth_token' to be set")
 	}
 
 	return NewClient(stackitConfig)
 }
 
-// getString safely gets a string from a map
+// getString safely gets a string from a map.
 func getString(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
 		}
 	}
+
 	return ""
 }

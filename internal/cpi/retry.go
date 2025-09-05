@@ -11,7 +11,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// RetryConfig configures retry behavior
+// RetryConfig configures retry behavior.
 type RetryConfig struct {
 	MaxAttempts     int
 	InitialDelay    time.Duration
@@ -21,7 +21,7 @@ type RetryConfig struct {
 	RetryableErrors []string
 }
 
-// DefaultRetryConfig returns the default retry configuration
+// DefaultRetryConfig returns the default retry configuration.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxAttempts:     3,
@@ -39,16 +39,17 @@ func DefaultRetryConfig() *RetryConfig {
 	}
 }
 
-// RetryableFunc is a function that can be retried
+// RetryableFunc is a function that can be retried.
 type RetryableFunc func(ctx context.Context) error
 
-// WithRetry executes a function with retry logic
+// WithRetry executes a function with retry logic.
 func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFunc) error {
 	if cfg == nil {
 		cfg = DefaultRetryConfig()
 	}
 
 	var lastErr error
+
 	delay := cfg.InitialDelay
 
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
@@ -70,12 +71,14 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFun
 		// Check if error is retryable
 		if !isRetryable(err, cfg.RetryableErrors) {
 			logger.Debugf("Error is not retryable: %v", err)
+
 			return err
 		}
 
 		// Don't retry if we've exhausted attempts
 		if attempt >= cfg.MaxAttempts {
 			logger.Warnf("Max retry attempts (%d) reached", cfg.MaxAttempts)
+
 			break
 		}
 
@@ -90,6 +93,7 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFun
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+
 			return ctx.Err()
 		case <-timer.C:
 		}
@@ -104,14 +108,15 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFun
 	return fmt.Errorf("operation failed after %d attempts: %w", cfg.MaxAttempts, lastErr)
 }
 
-// isRetryable checks if an error is retryable
+// isRetryable checks if an error is retryable.
 func isRetryable(err error, retryableErrors []string) bool {
 	if err == nil {
 		return false
 	}
 
 	// Check if it's a provider error
-	if perr, ok := err.(*ProviderError); ok {
+	perr := &ProviderError{}
+	if errors.As(err, &perr) {
 		for _, code := range retryableErrors {
 			if perr.Code == code {
 				return true
@@ -136,7 +141,7 @@ func isRetryable(err error, retryableErrors []string) bool {
 	return false
 }
 
-// calculateDelay calculates the next delay with jitter
+// calculateDelay calculates the next delay with jitter.
 func calculateDelay(baseDelay time.Duration, cfg *RetryConfig) time.Duration {
 	// Add jitter to prevent thundering herd
 	jitter := cfg.RandomizeFactor * float64(baseDelay)
@@ -154,15 +159,16 @@ func calculateDelay(baseDelay time.Duration, cfg *RetryConfig) time.Duration {
 	return delay
 }
 
-// contains checks if a string contains a substring (case-insensitive)
+// contains checks if a string contains a substring (case-insensitive).
 func contains(str, substr string) bool {
 	if len(str) == 0 || len(substr) == 0 {
 		return false
 	}
+
 	return strings.Contains(strings.ToLower(str), strings.ToLower(substr))
 }
 
-// ExponentialBackoff implements exponential backoff with context support
+// ExponentialBackoff implements exponential backoff with context support.
 type ExponentialBackoff struct {
 	InitialInterval time.Duration
 	MaxInterval     time.Duration
@@ -173,7 +179,7 @@ type ExponentialBackoff struct {
 	startTime       time.Time
 }
 
-// NewExponentialBackoff creates a new exponential backoff
+// NewExponentialBackoff creates a new exponential backoff.
 func NewExponentialBackoff() *ExponentialBackoff {
 	return &ExponentialBackoff{
 		InitialInterval: 500 * time.Millisecond,
@@ -183,13 +189,13 @@ func NewExponentialBackoff() *ExponentialBackoff {
 	}
 }
 
-// Reset resets the backoff to initial state
+// Reset resets the backoff to initial state.
 func (b *ExponentialBackoff) Reset() {
 	b.currentInterval = b.InitialInterval
 	b.startTime = time.Now()
 }
 
-// NextBackOff returns the next backoff duration
+// NextBackOff returns the next backoff duration.
 func (b *ExponentialBackoff) NextBackOff() time.Duration {
 	// Initialize on first use
 	if b.startTime.IsZero() {
@@ -216,10 +222,11 @@ func (b *ExponentialBackoff) NextBackOff() time.Duration {
 	maxJitter := b.currentInterval / 2
 	n, _ := crand.Int(crand.Reader, big.NewInt(int64(maxJitter)))
 	jitter := time.Duration(n.Int64()) - b.currentInterval/4
+
 	return b.currentInterval + jitter
 }
 
-// Retry executes a function with exponential backoff
+// Retry executes a function with exponential backoff.
 func (b *ExponentialBackoff) Retry(ctx context.Context, retryableFunc RetryableFunc) error {
 	b.Reset()
 
@@ -242,13 +249,14 @@ func (b *ExponentialBackoff) Retry(ctx context.Context, retryableFunc RetryableF
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+
 			return ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-// RetryOnConflict retries an operation when a conflict occurs
+// RetryOnConflict retries an operation when a conflict occurs.
 func RetryOnConflict(ctx context.Context, retryableFunc RetryableFunc) error {
 	backoff := &ExponentialBackoff{
 		InitialInterval: 100 * time.Millisecond,
@@ -262,15 +270,16 @@ func RetryOnConflict(ctx context.Context, retryableFunc RetryableFunc) error {
 		if err != nil && IsAlreadyExists(err) {
 			return err // Retry on conflict
 		}
+
 		return err
 	})
 }
 
-// WaitForCondition waits for a condition to be true
+// WaitForCondition waits for a condition to be true.
 func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.Duration,
 	condition func() (bool, error)) error {
-
 	deadline := time.Now().Add(timeout)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -280,6 +289,7 @@ func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.
 		if err != nil {
 			return err
 		}
+
 		if done {
 			return nil
 		}
@@ -298,7 +308,7 @@ func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.
 	}
 }
 
-// RateLimiter provides rate limiting functionality
+// RateLimiter provides rate limiting functionality.
 type RateLimiter struct {
 	rate   int // requests per second
 	burst  int // burst size
@@ -307,7 +317,7 @@ type RateLimiter struct {
 	stopCh chan struct{}
 }
 
-// NewRateLimiter creates a new rate limiter
+// NewRateLimiter creates a new rate limiter.
 func NewRateLimiter(rate int, burst int) *RateLimiter {
 	rateLimiter := &RateLimiter{
 		rate:   rate,
@@ -317,7 +327,7 @@ func NewRateLimiter(rate int, burst int) *RateLimiter {
 	}
 
 	// Fill initial tokens
-	for index := 0; index < burst; index++ {
+	for range burst {
 		rateLimiter.tokens <- struct{}{}
 	}
 
@@ -328,7 +338,7 @@ func NewRateLimiter(rate int, burst int) *RateLimiter {
 	return rateLimiter
 }
 
-// refill adds tokens at the configured rate
+// refill adds tokens at the configured rate.
 func (rateLimiter *RateLimiter) refill() {
 	for {
 		select {
@@ -344,7 +354,7 @@ func (rateLimiter *RateLimiter) refill() {
 	}
 }
 
-// Wait blocks until a token is available
+// Wait blocks until a token is available.
 func (rateLimiter *RateLimiter) Wait(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -354,13 +364,13 @@ func (rateLimiter *RateLimiter) Wait(ctx context.Context) error {
 	}
 }
 
-// Stop stops the rate limiter
+// Stop stops the rate limiter.
 func (rateLimiter *RateLimiter) Stop() {
 	close(rateLimiter.stopCh)
 	rateLimiter.ticker.Stop()
 }
 
-// CircuitBreaker implements the circuit breaker pattern
+// CircuitBreaker implements the circuit breaker pattern.
 type CircuitBreaker struct {
 	maxFailures      int
 	resetTimeout     time.Duration
@@ -371,7 +381,7 @@ type CircuitBreaker struct {
 	state       string // closed, open, half-open
 }
 
-// NewCircuitBreaker creates a new circuit breaker
+// NewCircuitBreaker creates a new circuit breaker.
 func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
 		maxFailures:      maxFailures,
@@ -381,7 +391,7 @@ func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBrea
 	}
 }
 
-// Call executes a function with circuit breaker protection
+// Call executes a function with circuit breaker protection.
 func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc) error {
 	// Check circuit state
 	switch cb.state {
@@ -390,7 +400,7 @@ func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc)
 			cb.state = "half-open"
 			cb.failures = 0
 		} else {
-			return fmt.Errorf("circuit breaker is open")
+			return errors.New("circuit breaker is open")
 		}
 	}
 
@@ -414,13 +424,14 @@ func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc)
 	if cb.state == "half-open" {
 		cb.state = "closed"
 		cb.failures = 0
+
 		logger.Info("Circuit breaker closed")
 	}
 
 	return nil
 }
 
-// Reset resets the circuit breaker
+// Reset resets the circuit breaker.
 func (cb *CircuitBreaker) Reset() {
 	cb.state = "closed"
 	cb.failures = 0

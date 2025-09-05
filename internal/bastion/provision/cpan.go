@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// CPANManager handles CPAN module installations
+// CPANManager handles CPAN module installations.
 type CPANManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// CPANModule represents a CPAN module configuration
+// CPANModule represents a CPAN module configuration.
 type CPANModule struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
@@ -25,7 +25,7 @@ type CPANModule struct {
 	Sudo    bool   `yaml:"sudo"`
 }
 
-// NewCPANManager creates a new CPAN manager
+// NewCPANManager creates a new CPAN manager.
 func NewCPANManager(provider string, cfg *config.Config) *CPANManager {
 	return &CPANManager{
 		config:   cfg,
@@ -34,7 +34,7 @@ func NewCPANManager(provider string, cfg *config.Config) *CPANManager {
 	}
 }
 
-// GetCPANModules returns the list of CPAN modules to install
+// GetCPANModules returns the list of CPAN modules to install.
 func (cm *CPANManager) GetCPANModules() []CPANModule {
 	return []CPANModule{
 		// Required for OCFP core functionality
@@ -61,7 +61,7 @@ func (cm *CPANManager) GetCPANModules() []CPANModule {
 	}
 }
 
-// GenerateCPANInstallScript generates script for CPAN module installation
+// GenerateCPANInstallScript generates script for CPAN module installation.
 func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 	modules := cm.GetCPANModules()
 	if len(modules) == 0 {
@@ -69,6 +69,7 @@ func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 	}
 
 	var lines []string
+
 	lines = append(lines, "# CPAN module installation")
 	lines = append(lines, "")
 
@@ -94,7 +95,7 @@ func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Install CPAN module: %s", module.Name))
+		lines = append(lines, "# Install CPAN module: "+module.Name)
 		lines = append(lines, fmt.Sprintf("log_info 'Installing CPAN module: %s'", module.Name))
 
 		// Check if module is already installed
@@ -120,7 +121,7 @@ func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 
 		installCmd += fmt.Sprintf(" '%s'", module.Name)
 
-		lines = append(lines, fmt.Sprintf("    %s", installCmd))
+		lines = append(lines, "    "+installCmd)
 		lines = append(lines, "    if [ $? -eq 0 ]; then")
 		lines = append(lines, fmt.Sprintf("        log_success 'CPAN module %s installed successfully'", module.Name))
 		lines = append(lines, "    else")
@@ -138,14 +139,16 @@ func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 		lines = append(lines, fmt.Sprintf("log_info 'Installing %s system-wide'", module))
 		lines = append(lines, fmt.Sprintf("sudo cpanm --notest '%s' || log_warning 'Failed to install %s system-wide'", module, module))
 	}
+
 	lines = append(lines, "")
 
 	return strings.Join(lines, "\n")
 }
 
-// InstallOCFPPerlDependencies installs OCFP Perl dependencies from Makefile.PL
+// InstallOCFPPerlDependencies installs OCFP Perl dependencies from Makefile.PL.
 func (cm *CPANManager) InstallOCFPPerlDependencies(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Install OCFP Perl dependencies")
 	lines = append(lines, "")
 

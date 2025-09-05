@@ -12,14 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// GenesisIntegration handles Genesis environment file updates
+// GenesisIntegration handles Genesis environment file updates.
 type GenesisIntegration struct {
 	config   *config.Config
 	blocName string
 	logger   *zap.SugaredLogger
 }
 
-// NewGenesisIntegration creates a new Genesis integration helper
+// NewGenesisIntegration creates a new Genesis integration helper.
 func NewGenesisIntegration(cfg *config.Config, blocName string) *GenesisIntegration {
 	return &GenesisIntegration{
 		config:   cfg,
@@ -28,7 +28,7 @@ func NewGenesisIntegration(cfg *config.Config, blocName string) *GenesisIntegrat
 	}
 }
 
-// GenesisEnvironment represents a Genesis environment configuration
+// GenesisEnvironment represents a Genesis environment configuration.
 type GenesisEnvironment struct {
 	Name             string                 `yaml:"name,omitempty"`
 	Version          string                 `yaml:"version,omitempty"`
@@ -38,20 +38,20 @@ type GenesisEnvironment struct {
 	Kit              KitInfo                `yaml:"kit,omitempty"`
 }
 
-// SecretsProvider represents a secrets provider configuration
+// SecretsProvider represents a secrets provider configuration.
 type SecretsProvider struct {
 	Name string `yaml:"name"`
 	Type string `yaml:"type"`
 	URL  string `yaml:"url,omitempty"`
 }
 
-// KitInfo represents Genesis kit information
+// KitInfo represents Genesis kit information.
 type KitInfo struct {
 	Name    string `yaml:"name,omitempty"`
 	Version string `yaml:"version,omitempty"`
 }
 
-// UpdateEnvironmentSecrets updates Genesis environment files with new vault information
+// UpdateEnvironmentSecrets updates Genesis environment files with new vault information.
 func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, vaultToken string) error {
 	gi.logger.Info("Updating Genesis environment secrets providers", "bloc", gi.blocName)
 
@@ -66,17 +66,19 @@ func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, vaultToken stri
 	// Update environment files for each environment type
 	environments := []string{"mgmt", "ocf"}
 	for _, envType := range environments {
-		if err := gi.updateEnvironmentFile(genesisDir, envType, vaultURL, vaultToken); err != nil {
+		err := gi.updateEnvironmentFile(genesisDir, envType, vaultURL, vaultToken)
+		if err != nil {
 			gi.logger.Warn("Failed to update environment file", "env_type", envType, "error", err)
 			// Don't fail completely - continue with other environments
 		}
 	}
 
 	gi.logger.Info("Completed Genesis environment secrets provider updates")
+
 	return nil
 }
 
-// findGenesisDirectory locates the Genesis environments directory
+// findGenesisDirectory locates the Genesis environments directory.
 func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
 	// Common Genesis directory locations
 	possiblePaths := []string{
@@ -85,7 +87,7 @@ func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
 		filepath.Join(os.Getenv("HOME"), "workspace", gi.blocName),
 		filepath.Join(".", gi.blocName),
 		filepath.Join("..", gi.blocName),
-		fmt.Sprintf("/opt/genesis/%s", gi.blocName),
+		"/opt/genesis/" + gi.blocName,
 	}
 
 	for _, path := range possiblePaths {
@@ -104,15 +106,15 @@ func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
 	return "", fmt.Errorf("genesis directory not found for bloc %s", gi.blocName)
 }
 
-// isGenesisDirectory checks if a path contains Genesis environment files
+// isGenesisDirectory checks if a path contains Genesis environment files.
 func (gi *GenesisIntegration) isGenesisDirectory(path string) bool {
 	// Check for common Genesis files/directories
 	genesisMarkers := []string{
 		".genesis",
 		"mgmt.yml",
 		"ocf.yml",
-		fmt.Sprintf("%s-mgmt.yml", gi.blocName),
-		fmt.Sprintf("%s-ocf.yml", gi.blocName),
+		gi.blocName + "-mgmt.yml",
+		gi.blocName + "-ocf.yml",
 	}
 
 	for _, marker := range genesisMarkers {
@@ -124,7 +126,7 @@ func (gi *GenesisIntegration) isGenesisDirectory(path string) bool {
 	return false
 }
 
-// updateEnvironmentFile updates a specific environment file
+// updateEnvironmentFile updates a specific environment file.
 func (gi *GenesisIntegration) updateEnvironmentFile(genesisDir, envType, vaultURL, vaultToken string) error {
 	// Determine environment file name
 	envFileName := gi.getEnvironmentFileName(envType)
@@ -135,6 +137,7 @@ func (gi *GenesisIntegration) updateEnvironmentFile(genesisDir, envType, vaultUR
 	// Check if file exists
 	if _, err := os.Stat(envFilePath); os.IsNotExist(err) {
 		gi.logger.Info("Environment file does not exist, creating", "file", envFilePath)
+
 		return gi.createEnvironmentFile(envFilePath, envType, vaultURL, vaultToken)
 	}
 
@@ -153,10 +156,11 @@ func (gi *GenesisIntegration) updateEnvironmentFile(genesisDir, envType, vaultUR
 	}
 
 	gi.logger.Info("Updated environment file", "file", envFilePath)
+
 	return nil
 }
 
-// getEnvironmentFileName determines the environment file name
+// getEnvironmentFileName determines the environment file name.
 func (gi *GenesisIntegration) getEnvironmentFileName(envType string) string {
 	// Try bloc-specific name first
 	blocSpecific := fmt.Sprintf("%s-%s.yml", gi.blocName, envType)
@@ -164,18 +168,19 @@ func (gi *GenesisIntegration) getEnvironmentFileName(envType string) string {
 	// Common patterns
 	patterns := []string{
 		blocSpecific,
-		fmt.Sprintf("%s.yml", envType),
-		fmt.Sprintf("%s-environment.yml", envType),
+		envType + ".yml",
+		envType + "-environment.yml",
 	}
 
 	return patterns[0] // Return the bloc-specific name as default
 }
 
-// readEnvironmentFile reads a Genesis environment file
+// readEnvironmentFile reads a Genesis environment file.
 func (gi *GenesisIntegration) readEnvironmentFile(filePath string) (*GenesisEnvironment, error) {
 	if err := security.ValidateConfigPath(filePath); err != nil {
 		return nil, fmt.Errorf("invalid file path: %w", err)
 	}
+
 	data, err := os.ReadFile(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
@@ -189,7 +194,7 @@ func (gi *GenesisIntegration) readEnvironmentFile(filePath string) (*GenesisEnvi
 	return &env, nil
 }
 
-// createEnvironmentFile creates a new Genesis environment file
+// createEnvironmentFile creates a new Genesis environment file.
 func (gi *GenesisIntegration) createEnvironmentFile(filePath, envType, vaultURL, vaultToken string) error {
 	env := &GenesisEnvironment{
 		Name:             fmt.Sprintf("%s-%s", gi.blocName, envType),
@@ -202,7 +207,7 @@ func (gi *GenesisIntegration) createEnvironmentFile(filePath, envType, vaultURL,
 	return gi.writeEnvironmentFile(filePath, env)
 }
 
-// writeEnvironmentFile writes a Genesis environment file
+// writeEnvironmentFile writes a Genesis environment file.
 func (gi *GenesisIntegration) writeEnvironmentFile(filePath string, env *GenesisEnvironment) error {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
@@ -224,7 +229,7 @@ func (gi *GenesisIntegration) writeEnvironmentFile(filePath string, env *Genesis
 	return nil
 }
 
-// createSecretsProviders creates secrets provider configuration
+// createSecretsProviders creates secrets provider configuration.
 func (gi *GenesisIntegration) createSecretsProviders(vaultURL, vaultToken string) []SecretsProvider {
 	providers := []SecretsProvider{
 		{
@@ -245,7 +250,7 @@ func (gi *GenesisIntegration) createSecretsProviders(vaultURL, vaultToken string
 	return providers
 }
 
-// hasCredhubConfig checks if Credhub configuration exists
+// hasCredhubConfig checks if Credhub configuration exists.
 func (gi *GenesisIntegration) hasCredhubConfig() bool {
 	// Check for common Credhub environment variables or config
 	credhubIndicators := []string{
@@ -263,7 +268,7 @@ func (gi *GenesisIntegration) hasCredhubConfig() bool {
 	return false
 }
 
-// createDefaultParams creates default parameters for environment type
+// createDefaultParams creates default parameters for environment type.
 func (gi *GenesisIntegration) createDefaultParams(envType string) map[string]interface{} {
 	params := map[string]interface{}{
 		"name":       fmt.Sprintf("%s-%s", gi.blocName, envType),
@@ -283,7 +288,7 @@ func (gi *GenesisIntegration) createDefaultParams(envType string) map[string]int
 	return params
 }
 
-// createDefaultFeatures creates default features for environment type
+// createDefaultFeatures creates default features for environment type.
 func (gi *GenesisIntegration) createDefaultFeatures(envType string) []string {
 	switch envType {
 	case "mgmt":
@@ -295,7 +300,7 @@ func (gi *GenesisIntegration) createDefaultFeatures(envType string) []string {
 	return []string{}
 }
 
-// createKitInfo creates kit information for environment type
+// createKitInfo creates kit information for environment type.
 func (gi *GenesisIntegration) createKitInfo(envType string) KitInfo {
 	switch envType {
 	case "mgmt":
@@ -313,7 +318,7 @@ func (gi *GenesisIntegration) createKitInfo(envType string) KitInfo {
 	return KitInfo{}
 }
 
-// BackupEnvironmentFile creates a backup of an environment file before modification
+// BackupEnvironmentFile creates a backup of an environment file before modification.
 func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return nil // No need to backup if file doesn't exist
@@ -325,6 +330,7 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	if err := security.ValidateConfigPath(filePath); err != nil {
 		return fmt.Errorf("invalid file path: %w", err)
 	}
+
 	data, err := os.ReadFile(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
 		return fmt.Errorf("failed to read original file: %w", err)
@@ -336,10 +342,11 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	}
 
 	gi.logger.Debug("Created backup file", "original", filePath, "backup", backupPath)
+
 	return nil
 }
 
-// ValidateEnvironmentFile validates Genesis environment file format
+// ValidateEnvironmentFile validates Genesis environment file format.
 func (gi *GenesisIntegration) ValidateEnvironmentFile(filePath string) error {
 	env, err := gi.readEnvironmentFile(filePath)
 	if err != nil {
@@ -348,31 +355,34 @@ func (gi *GenesisIntegration) ValidateEnvironmentFile(filePath string) error {
 
 	// Basic validation
 	if env.Name == "" {
-		return fmt.Errorf("environment name is required")
+		return errors.New("environment name is required")
 	}
 
 	if len(env.SecretsProviders) == 0 {
-		return fmt.Errorf("at least one secrets provider is required")
+		return errors.New("at least one secrets provider is required")
 	}
 
 	// Validate secrets providers
 	for _, provider := range env.SecretsProviders {
 		if provider.Name == "" {
-			return fmt.Errorf("secrets provider name is required")
+			return errors.New("secrets provider name is required")
 		}
+
 		if provider.Type == "" {
-			return fmt.Errorf("secrets provider type is required")
+			return errors.New("secrets provider type is required")
 		}
+
 		if provider.Type == "vault" && provider.URL == "" {
-			return fmt.Errorf("vault secrets provider requires URL")
+			return errors.New("vault secrets provider requires URL")
 		}
 	}
 
 	gi.logger.Debug("Environment file validation passed", "file", filePath)
+
 	return nil
 }
 
-// GetVaultPath returns the vault path for a specific environment
+// GetVaultPath returns the vault path for a specific environment.
 func (gi *GenesisIntegration) GetVaultPath(envType string) string {
 	return fmt.Sprintf("secret/config/%s/%s", gi.blocName, envType)
 }

@@ -10,7 +10,7 @@ import (
 
 // Additional phase implementations for comprehensive bastion initialization
 
-// runPrerequisiteChecks performs prerequisite validation
+// runPrerequisiteChecks performs prerequisite validation.
 func (m *Manager) runPrerequisiteChecks(ctx context.Context) error {
 	m.log.Info("Running prerequisite checks")
 
@@ -20,7 +20,7 @@ func (m *Manager) runPrerequisiteChecks(ctx context.Context) error {
 	return m.executeScript(ctx, script, "prerequisite-checks")
 }
 
-// setupOCFPDirectories sets up OCFP-specific directory structure
+// setupOCFPDirectories sets up OCFP-specific directory structure.
 func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 	m.log.Info("Setting up OCFP directories")
 
@@ -30,7 +30,7 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-directories")
 }
 
-// installSnapPackages installs snap packages
+// installSnapPackages installs snap packages.
 func (m *Manager) installSnapPackages(ctx context.Context) error {
 	m.log.Info("Installing snap packages")
 
@@ -40,7 +40,7 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 	return m.executeScript(ctx, script, "snap-packages")
 }
 
-// installCPANModules installs CPAN modules
+// installCPANModules installs CPAN modules.
 func (m *Manager) installCPANModules(ctx context.Context) error {
 	m.log.Info("Installing CPAN modules")
 
@@ -48,16 +48,18 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 
 	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
-	if err := m.executeScript(ctx, script, "cpan-modules"); err != nil {
+	err := m.executeScript(ctx, script, "cpan-modules")
+	if err != nil {
 		return err
 	}
 
 	// Install OCFP Perl dependencies
 	ocfpScript := cpanMgr.InstallOCFPPerlDependencies(ctx)
+
 	return m.executeScript(ctx, ocfpScript, "ocfp-perl-deps")
 }
 
-// installCFPlugins installs CloudFoundry plugins
+// installCFPlugins installs CloudFoundry plugins.
 func (m *Manager) installCFPlugins(ctx context.Context) error {
 	m.log.Info("Installing CloudFoundry plugins")
 
@@ -67,7 +69,7 @@ func (m *Manager) installCFPlugins(ctx context.Context) error {
 	return m.executeScript(ctx, script, "cf-plugins")
 }
 
-// createConfigFiles creates configuration files
+// createConfigFiles creates configuration files.
 func (m *Manager) createConfigFiles(ctx context.Context) error {
 	m.log.Info("Creating configuration files")
 
@@ -77,7 +79,7 @@ func (m *Manager) createConfigFiles(ctx context.Context) error {
 	return m.executeScript(ctx, script, "config-files")
 }
 
-// setupShellEnvironment configures shell environment (.bashrc, aliases)
+// setupShellEnvironment configures shell environment (.bashrc, aliases).
 func (m *Manager) setupShellEnvironment(ctx context.Context) error {
 	m.log.Info("Setting up shell environment")
 
@@ -87,7 +89,7 @@ func (m *Manager) setupShellEnvironment(ctx context.Context) error {
 	return m.executeScript(ctx, script, "shell-environment")
 }
 
-// setupSystemEnvironment configures system environment (/etc/environment, /etc/profile.d)
+// setupSystemEnvironment configures system environment (/etc/environment, /etc/profile.d).
 func (m *Manager) setupSystemEnvironment(ctx context.Context) error {
 	m.log.Info("Setting up system environment")
 
@@ -97,7 +99,7 @@ func (m *Manager) setupSystemEnvironment(ctx context.Context) error {
 	return m.executeScript(ctx, script, "system-environment")
 }
 
-// setupOCFPCLI sets up OCFP CLI
+// setupOCFPCLI sets up OCFP CLI.
 func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	m.log.Info("Setting up OCFP CLI")
 
@@ -107,7 +109,7 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
 }
 
-// setupVaultInception runs vault inception
+// setupVaultInception runs vault inception.
 func (m *Manager) setupVaultInception(ctx context.Context) error {
 	m.log.Info("Setting up vault inception")
 
@@ -117,7 +119,7 @@ func (m *Manager) setupVaultInception(ctx context.Context) error {
 	return m.executeScript(ctx, script, "vault-inception")
 }
 
-// runOCFPConfigure runs OCFP configure deployments
+// runOCFPConfigure runs OCFP configure deployments.
 func (m *Manager) runOCFPConfigure(ctx context.Context) error {
 	m.log.Info("Running OCFP configure deployments")
 
@@ -127,7 +129,7 @@ func (m *Manager) runOCFPConfigure(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-configure")
 }
 
-// runVaultPopulate runs OCFP vault populate
+// runVaultPopulate runs OCFP vault populate.
 func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	m.log.Info("Running vault populate")
 
@@ -137,7 +139,7 @@ func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	return m.executeScript(ctx, script, "vault-populate")
 }
 
-// runHealthCheck performs comprehensive health check
+// runHealthCheck performs comprehensive health check.
 func (m *Manager) runHealthCheck(ctx context.Context) error {
 	m.log.Info("Running health check")
 
@@ -147,10 +149,11 @@ func (m *Manager) runHealthCheck(ctx context.Context) error {
 	return m.executeScript(ctx, script, "health-check")
 }
 
-// executeScript is a helper method to execute generated scripts
+// executeScript is a helper method to execute generated scripts.
 func (m *Manager) executeScript(ctx context.Context, script, scriptName string) error {
 	if script == "" {
 		m.log.Debug("Skipping empty script", "script", scriptName)
+
 		return nil
 	}
 
@@ -159,6 +162,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 		m.log.Debug("Script content preview",
 			"script", scriptName,
 			"lines", len(strings.Split(script, "\n")))
+
 		return nil
 	}
 
@@ -168,7 +172,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 		fullScript := m.wrapScriptWithFunctions(script)
 
 		// Execute script inline to avoid file transfer for simple scripts
-		cmd := fmt.Sprintf("bash -c %s", m.escapeShellString(fullScript))
+		cmd := "bash -c " + m.escapeShellString(fullScript)
 
 		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
@@ -176,18 +180,20 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 				"script", scriptName,
 				"exit_code", result.ExitCode,
 				"stderr", result.Stderr)
+
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
 		m.log.Debug("Script executed successfully", "script", scriptName)
+
 		return nil
 	}
 
 	// For local execution, we would use os/exec
-	return fmt.Errorf("local script execution not implemented")
+	return errors.New("local script execution not implemented")
 }
 
-// wrapScriptWithFunctions wraps script content with necessary functions
+// wrapScriptWithFunctions wraps script content with necessary functions.
 func (m *Manager) wrapScriptWithFunctions(script string) string {
 	functions := `#!/bin/bash
 set -euo pipefail
@@ -231,9 +237,10 @@ log_info "Log file: ${LOG_FILE}"
 	return functions + "\n" + script
 }
 
-// escapeShellString escapes a string for safe shell execution
+// escapeShellString escapes a string for safe shell execution.
 func (m *Manager) escapeShellString(script string) string {
 	// Simple escaping - in production, this would need more sophisticated escaping
 	escaped := strings.ReplaceAll(script, "'", "'\"'\"'")
+
 	return fmt.Sprintf("'%s'", escaped)
 }

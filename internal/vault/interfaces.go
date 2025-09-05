@@ -1,7 +1,7 @@
 package vault
 
 // SafeInterface defines the interface for vault safe operations
-// This allows for mocking in tests
+// This allows for mocking in tests.
 type SafeInterface interface {
 	Set(path, key string, value interface{}) error
 	SetMultiple(path string, data map[string]interface{}) error
@@ -18,5 +18,5 @@ type SafeInterface interface {
 	GetJSON(path, key string) ([]byte, error)
 }
 
-// Ensure Safe implements SafeInterface
+// Ensure Safe implements SafeInterface.
 var _ SafeInterface = (*Safe)(nil)

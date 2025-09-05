@@ -14,19 +14,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// SecretGenerator provides utilities for generating various types of secrets
+// SecretGenerator provides utilities for generating various types of secrets.
 type SecretGenerator struct {
 	logger *zap.SugaredLogger
 }
 
-// NewSecretGenerator creates a new secret generator
+// NewSecretGenerator creates a new secret generator.
 func NewSecretGenerator() *SecretGenerator {
 	return &SecretGenerator{
 		logger: logger.Get(),
 	}
 }
 
-// PasswordOptions holds options for password generation
+// PasswordOptions holds options for password generation.
 type PasswordOptions struct {
 	Length           int
 	IncludeUpper     bool
@@ -36,7 +36,7 @@ type PasswordOptions struct {
 	ExcludeAmbiguous bool
 }
 
-// DefaultPasswordOptions returns sensible defaults for password generation
+// DefaultPasswordOptions returns sensible defaults for password generation.
 func DefaultPasswordOptions() *PasswordOptions {
 	return &PasswordOptions{
 		Length:           32,
@@ -48,14 +48,14 @@ func DefaultPasswordOptions() *PasswordOptions {
 	}
 }
 
-// GeneratePassword generates a random password with specified options
+// GeneratePassword generates a random password with specified options.
 func (sg *SecretGenerator) GeneratePassword(opts *PasswordOptions) (string, error) {
 	if opts == nil {
 		opts = DefaultPasswordOptions()
 	}
 
 	if opts.Length <= 0 {
-		return "", fmt.Errorf("password length must be positive")
+		return "", errors.New("password length must be positive")
 	}
 
 	// Build character set
@@ -94,40 +94,43 @@ func (sg *SecretGenerator) GeneratePassword(opts *PasswordOptions) (string, erro
 	}
 
 	if charset == "" {
-		return "", fmt.Errorf("no character types selected for password generation")
+		return "", errors.New("no character types selected for password generation")
 	}
 
 	// Generate password
 	password := make([]byte, opts.Length)
 	charsetLen := big.NewInt(int64(len(charset)))
 
-	for i := 0; i < opts.Length; i++ {
+	for i := range opts.Length {
 		randomIndex, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate random number: %w", err)
 		}
+
 		password[i] = charset[randomIndex.Int64()]
 	}
 
 	sg.logger.Debug("Generated password", "length", opts.Length)
+
 	return string(password), nil
 }
 
-// GenerateSimplePassword generates a password with default settings
+// GenerateSimplePassword generates a password with default settings.
 func (sg *SecretGenerator) GenerateSimplePassword(length int) (string, error) {
 	opts := DefaultPasswordOptions()
 	opts.Length = length
+
 	return sg.GeneratePassword(opts)
 }
 
-// KeyPairOptions holds options for SSH key generation
+// KeyPairOptions holds options for SSH key generation.
 type KeyPairOptions struct {
 	KeyType string // rsa, ed25519
 	KeySize int    // for RSA keys
 	Comment string
 }
 
-// GenerateSSHKeyPair generates an SSH key pair
+// GenerateSSHKeyPair generates an SSH key pair.
 func (sg *SecretGenerator) GenerateSSHKeyPair(opts *KeyPairOptions) (publicKey, privateKey string, err error) {
 	if opts == nil {
 		opts = &KeyPairOptions{
@@ -141,13 +144,13 @@ func (sg *SecretGenerator) GenerateSSHKeyPair(opts *KeyPairOptions) (publicKey, 
 	case "rsa":
 		return sg.generateRSAKeyPair(opts)
 	case "ed25519":
-		return "", "", fmt.Errorf("ed25519 key generation not yet implemented")
+		return "", "", errors.New("ed25519 key generation not yet implemented")
 	default:
 		return "", "", fmt.Errorf("unsupported key type: %s", opts.KeyType)
 	}
 }
 
-// generateRSAKeyPair generates an RSA SSH key pair
+// generateRSAKeyPair generates an RSA SSH key pair.
 func (sg *SecretGenerator) generateRSAKeyPair(opts *KeyPairOptions) (string, string, error) {
 	keySize := opts.KeySize
 	if keySize == 0 {
@@ -184,7 +187,7 @@ func (sg *SecretGenerator) generateRSAKeyPair(opts *KeyPairOptions) (string, str
 	return publicKeyStr, privateKeyStr, nil
 }
 
-// GenerateUUID generates a UUID-like string for identifiers
+// GenerateUUID generates a UUID-like string for identifiers.
 func (sg *SecretGenerator) GenerateUUID() (string, error) {
 	// Generate 16 random bytes
 	bytes := make([]byte, 16)
@@ -200,7 +203,7 @@ func (sg *SecretGenerator) GenerateUUID() (string, error) {
 		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16]), nil
 }
 
-// GenerateEncryptionKey generates a random encryption key
+// GenerateEncryptionKey generates a random encryption key.
 func (sg *SecretGenerator) GenerateEncryptionKey(length int) (string, error) {
 	if length <= 0 {
 		length = 32 // Default to 256-bit key
@@ -212,15 +215,15 @@ func (sg *SecretGenerator) GenerateEncryptionKey(length int) (string, error) {
 	}
 
 	// Return as hex string
-	return fmt.Sprintf("%x", bytes), nil
+	return hex.EncodeToString(bytes), nil
 }
 
-// GenerateJWTSecret generates a secret suitable for JWT signing
+// GenerateJWTSecret generates a secret suitable for JWT signing.
 func (sg *SecretGenerator) GenerateJWTSecret() (string, error) {
 	return sg.GenerateEncryptionKey(64) // 512-bit secret
 }
 
-// InceptionSecrets holds the secrets generated for inception
+// InceptionSecrets holds the secrets generated for inception.
 type InceptionSecrets struct {
 	AdminPassword          string
 	DirectorPassword       string
@@ -237,7 +240,7 @@ type InceptionSecrets struct {
 }
 
 // GenerateInceptionSecrets generates all secrets needed for inception
-// This matches the functionality in Perl's generateInceptionSecrets
+// This matches the functionality in Perl's generateInceptionSecrets.
 func (sg *SecretGenerator) GenerateInceptionSecrets(deploymentName string) (*InceptionSecrets, error) {
 	sg.logger.Info("Generating inception secrets", "deployment", deploymentName)
 
@@ -293,10 +296,11 @@ func (sg *SecretGenerator) GenerateInceptionSecrets(deploymentName string) (*Inc
 	}
 
 	sg.logger.Info("Successfully generated inception secrets", "deployment", deploymentName)
+
 	return secrets, nil
 }
 
-// ToMap converts InceptionSecrets to a map for vault storage
+// ToMap converts InceptionSecrets to a map for vault storage.
 func (is *InceptionSecrets) ToMap() map[string]interface{} {
 	return map[string]interface{}{
 		"admin_password":           is.AdminPassword,
@@ -314,7 +318,7 @@ func (is *InceptionSecrets) ToMap() map[string]interface{} {
 	}
 }
 
-// DefaultSecrets holds the default secrets for a deployment
+// DefaultSecrets holds the default secrets for a deployment.
 type DefaultSecrets struct {
 	AdminPassword            string
 	UAAAdminClientSecret     string
@@ -328,18 +332,17 @@ type DefaultSecrets struct {
 }
 
 // GenerateDefaultSecrets generates default secrets for a deployment
-// This matches the functionality in Perl's generateDefaultSecrets
+// This matches the functionality in Perl's generateDefaultSecrets.
 func (sg *SecretGenerator) GenerateDefaultSecrets(deploymentName string) (*DefaultSecrets, error) {
 	sg.logger.Info("Generating default secrets", "deployment", deploymentName)
 
 	secrets := &DefaultSecrets{
 		DeploymentName: deploymentName,
-		DirectorName:   fmt.Sprintf("%s-bosh", deploymentName),
+		DirectorName:   deploymentName + "-bosh",
 		InternalIP:     "10.0.0.6", // Default from Perl implementation
 	}
 
 	var err error
-
 	if secrets.AdminPassword, err = sg.GenerateSimplePassword(32); err != nil {
 		return nil, fmt.Errorf("failed to generate admin password: %w", err)
 	}
@@ -365,10 +368,11 @@ func (sg *SecretGenerator) GenerateDefaultSecrets(deploymentName string) (*Defau
 	}
 
 	sg.logger.Info("Successfully generated default secrets", "deployment", deploymentName)
+
 	return secrets, nil
 }
 
-// ToMap converts DefaultSecrets to a map for vault storage
+// ToMap converts DefaultSecrets to a map for vault storage.
 func (ds *DefaultSecrets) ToMap() map[string]interface{} {
 	return map[string]interface{}{
 		"admin_password":              ds.AdminPassword,

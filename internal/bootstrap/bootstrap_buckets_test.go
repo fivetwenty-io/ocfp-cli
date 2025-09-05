@@ -11,16 +11,17 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
-// fakeStorage implements cpi.StorageManager partially for testing createBuckets
+// fakeStorage implements cpi.StorageManager partially for testing createBuckets.
 type fakeStorage struct{ created []string }
 
 func (f *fakeStorage) CreateBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
 	f.created = append(f.created, name)
+
 	return &cpi.Bucket{Name: name}, nil
 }
 func (f *fakeStorage) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { return nil, nil }
 
-// Unused interface methods
+// Unused interface methods.
 func (f *fakeStorage) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
 	return nil, nil
 }
@@ -52,7 +53,7 @@ func (f *fakeStorage) GetBucket(ctx context.Context, name string) (*cpi.Bucket, 
 func (f *fakeStorage) DeleteBucket(ctx context.Context, name string) error { return nil }
 func (f *fakeStorage) EmptyBucket(ctx context.Context, name string) error  { return nil }
 
-// Policy methods for tests
+// Policy methods for tests.
 var (
 	enabledCalls   = make(map[string]bool)
 	lifecycleCalls = make(map[string]int32)
@@ -60,10 +61,12 @@ var (
 
 func (f *fakeStorage) EnableBucketVersioning(ctx context.Context, name string) error {
 	enabledCalls[name] = true
+
 	return nil
 }
 func (f *fakeStorage) SetBucketLifecycleNoncurrentDays(ctx context.Context, name string, days int32) error {
 	lifecycleCalls[name] = days
+
 	return nil
 }
 func (f *fakeStorage) EnsureObjectStorageCredentialsGroup(ctx context.Context, displayName string) (string, error) {
@@ -88,10 +91,12 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 	tmp := t.TempDir()
 	// Isolate state under temp directory
 	stateDir := filepath.Join(tmp, ".ocfp-state")
+
 	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
@@ -118,6 +123,7 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 	if len(fakeStore.created) != len(want) {
 		t.Fatalf("created %d buckets, want %d: %+v", len(fakeStore.created), len(want), fakeStore.created)
 	}
+
 	for _, name := range fakeStore.created {
 		if !want[name] {
 			t.Fatalf("unexpected bucket created: %s", name)
@@ -135,10 +141,12 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".ocfp-state")
+
 	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
@@ -158,6 +166,7 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 	cfg.Blobstore.BoshBlobstore.NoncurrentDays = 9
 
 	manager := NewManager(cfg, provider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+
 	ctx := context.Background()
 	if err := manager.createBuckets(ctx); err != nil {
 		t.Fatalf("createBuckets: %v", err)
@@ -167,15 +176,19 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 	if !enabledCalls["prod-cf-buildpacks"] || lifecycleCalls["prod-cf-buildpacks"] != 11 {
 		t.Fatalf("expected policies on cf-buildpacks: %+v %+v", enabledCalls, lifecycleCalls)
 	}
+
 	if !enabledCalls["prod-cf-droplets"] || lifecycleCalls["prod-cf-droplets"] != 5 {
 		t.Fatalf("expected policies on cf-droplets")
 	}
+
 	if enabledCalls["prod-cf-app-packages"] {
 		t.Fatalf("did not expect versioning on cf-app-packages")
 	}
+
 	if lifecycleCalls["prod-cf-app-packages"] != 3 {
 		t.Fatalf("expected noncurrent days on cf-app-packages = 3")
 	}
+
 	if !enabledCalls["prod-bosh-blobstore"] || lifecycleCalls["prod-bosh-blobstore"] != 9 {
 		t.Fatalf("expected policies on bosh-blobstore")
 	}
@@ -187,10 +200,12 @@ func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".ocfp-state")
+
 	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatalf("state manager: %v", err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatalf("load state: %v", err)
 	}
@@ -200,6 +215,7 @@ func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
 	// Do not enable cfg.Blobstore.EnablePolicies
 	manager := NewManager(cfg, provider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+
 	ctx := context.Background()
 	if err := manager.createBuckets(ctx); err != nil {
 		t.Fatalf("createBuckets: %v", err)

@@ -7,7 +7,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// RetryConfig holds retry configuration
+// RetryConfig holds retry configuration.
 type RetryConfig struct {
 	MaxAttempts   int
 	BaseDelay     time.Duration
@@ -15,7 +15,7 @@ type RetryConfig struct {
 	BackoffFactor float64
 }
 
-// DefaultRetryConfig returns sensible retry defaults
+// DefaultRetryConfig returns sensible retry defaults.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxAttempts:   3,
@@ -25,7 +25,7 @@ func DefaultRetryConfig() *RetryConfig {
 	}
 }
 
-// RetryableError represents an error that can be retried
+// RetryableError represents an error that can be retried.
 type RetryableError struct {
 	Err       error
 	Retryable bool
@@ -35,7 +35,7 @@ func (re *RetryableError) Error() string {
 	return re.Err.Error()
 }
 
-// IsRetryable checks if an error should trigger a retry
+// IsRetryable checks if an error should trigger a retry.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -74,7 +74,7 @@ func IsRetryable(err error) bool {
 	return false
 }
 
-// containsAny checks if a string contains any of the provided substrings
+// containsAny checks if a string contains any of the provided substrings.
 func containsAny(s string, substrings []string) bool {
 	for _, sub := range substrings {
 		if len(s) >= len(sub) {
@@ -85,16 +85,18 @@ func containsAny(s string, substrings []string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
-// WithRetry executes a function with exponential backoff retry logic
+// WithRetry executes a function with exponential backoff retry logic.
 func WithRetry(operation func() error, config *RetryConfig) error {
 	if config == nil {
 		config = DefaultRetryConfig()
 	}
 
 	log := logger.Get()
+
 	var lastErr error
 
 	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
@@ -109,6 +111,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 			if attempt > 1 {
 				log.Info("Operation succeeded after retry", "attempts", attempt)
 			}
+
 			return nil
 		}
 
@@ -117,6 +120,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 		// Check if we should retry
 		if !IsRetryable(err) {
 			log.Debug("Error not retryable, giving up", "error", err, "attempt", attempt)
+
 			return &VaultError{
 				Operation: "retry",
 				Err:       err,
@@ -138,10 +142,10 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 	}
 }
 
-// calculateDelay calculates the delay for a given attempt using exponential backoff
+// calculateDelay calculates the delay for a given attempt using exponential backoff.
 func calculateDelay(attempt int, config *RetryConfig) time.Duration {
 	delay := config.BaseDelay
-	for i := 0; i < attempt; i++ {
+	for range attempt {
 		delay = time.Duration(float64(delay) * config.BackoffFactor)
 	}
 
@@ -152,7 +156,7 @@ func calculateDelay(attempt int, config *RetryConfig) time.Duration {
 	return delay
 }
 
-// VaultError represents a vault-specific error with context
+// VaultError represents a vault-specific error with context.
 type VaultError struct {
 	Operation string
 	Path      string
@@ -167,6 +171,7 @@ func (ve *VaultError) Error() string {
 	} else if ve.Path != "" {
 		return fmt.Sprintf("vault %s failed at %s: %v", ve.Operation, ve.Path, ve.Err)
 	}
+
 	return fmt.Sprintf("vault %s failed: %v", ve.Operation, ve.Err)
 }
 
@@ -178,7 +183,7 @@ func (ve *VaultError) IsRetryable() bool {
 	return ve.Retryable
 }
 
-// NewVaultError creates a new VaultError
+// NewVaultError creates a new VaultError.
 func NewVaultError(operation, path, key string, err error) *VaultError {
 	return &VaultError{
 		Operation: operation,
@@ -189,13 +194,14 @@ func NewVaultError(operation, path, key string, err error) *VaultError {
 	}
 }
 
-// RetryableVaultOperation wraps a vault operation with retry logic
+// RetryableVaultOperation wraps a vault operation with retry logic.
 func RetryableVaultOperation(operation, path, key string, fn func() error) error {
 	return WithRetry(func() error {
 		err := fn()
 		if err != nil {
 			return NewVaultError(operation, path, key, err)
 		}
+
 		return nil
 	}, DefaultRetryConfig())
 }

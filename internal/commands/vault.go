@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NewVaultCmd creates the vault command
+// NewVaultCmd creates the vault command.
 func NewVaultCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vault",
@@ -35,7 +35,7 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 	return cmd
 }
 
-// newVaultPopulateCmd creates the vault populate subcommand
+// newVaultPopulateCmd creates the vault populate subcommand.
 func newVaultPopulateCmd() *cobra.Command {
 	var (
 		vaultPath string
@@ -93,7 +93,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 
 			// Handle file input
 			if fromFile != "" {
-				return fmt.Errorf("populate from file not yet implemented")
+				return errors.New("populate from file not yet implemented")
 			}
 
 			// Perform populate operation
@@ -102,6 +102,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 			}
 
 			log.Info("Vault populated successfully")
+
 			return nil
 		},
 	}
@@ -114,7 +115,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	return cmd
 }
 
-// newVaultInceptionCmd creates the vault inception subcommand
+// newVaultInceptionCmd creates the vault inception subcommand.
 func newVaultInceptionCmd() *cobra.Command {
 	var (
 		deploymentName string
@@ -179,6 +180,7 @@ and encryption keys.`,
 			}
 
 			log.Info("Vault inception completed", "path", inceptionPath)
+
 			return nil
 		},
 	}
@@ -189,7 +191,7 @@ and encryption keys.`,
 	return cmd
 }
 
-// newVaultMigrateCmd creates the vault migrate subcommand
+// newVaultMigrateCmd creates the vault migrate subcommand.
 func newVaultMigrateCmd() *cobra.Command {
 	var (
 		sourcePath string
@@ -245,6 +247,7 @@ useful for migrating between environments or restructuring vault paths.`,
 			}
 
 			log.Info("Vault migration completed")
+
 			return nil
 		},
 	}
@@ -257,7 +260,7 @@ useful for migrating between environments or restructuring vault paths.`,
 	return cmd
 }
 
-// newVaultExportCmd creates the vault export subcommand
+// newVaultExportCmd creates the vault export subcommand.
 func newVaultExportCmd() *cobra.Command {
 	var (
 		vaultPath  string
@@ -278,7 +281,7 @@ func newVaultExportCmd() *cobra.Command {
 			log := logger.Get()
 
 			if vaultPath == "" {
-				return fmt.Errorf("vault path is required")
+				return errors.New("vault path is required")
 			}
 
 			log.Info("Exporting vault secrets", "path", vaultPath)
@@ -323,7 +326,8 @@ func newVaultExportCmd() *cobra.Command {
 
 			// Write to file or stdout
 			if outputFile != "" {
-				if err := os.WriteFile(outputFile, data, 0600); err != nil {
+				err := os.WriteFile(outputFile, data, 0600)
+				if err != nil {
 					return fmt.Errorf("failed to write file: %w", err)
 				}
 				log.Info("Secrets exported", "file", outputFile)
@@ -342,7 +346,7 @@ func newVaultExportCmd() *cobra.Command {
 	return cmd
 }
 
-// newVaultImportCmd creates the vault import subcommand
+// newVaultImportCmd creates the vault import subcommand.
 func newVaultImportCmd() *cobra.Command {
 	var (
 		vaultPath string
@@ -363,7 +367,7 @@ func newVaultImportCmd() *cobra.Command {
 			log := logger.Get()
 
 			if vaultPath == "" || inputFile == "" {
-				return fmt.Errorf("vault path and input file are required")
+				return errors.New("vault path and input file are required")
 			}
 
 			log.Info("Importing secrets to vault", "path", vaultPath, "file", inputFile)
@@ -397,6 +401,7 @@ func newVaultImportCmd() *cobra.Command {
 			}
 
 			log.Info("Secrets imported successfully", "count", len(secrets))
+
 			return nil
 		},
 	}
@@ -410,7 +415,7 @@ func newVaultImportCmd() *cobra.Command {
 
 // Helper functions
 
-// loadSecretsFromFile loads secrets from a YAML or JSON file
+// loadSecretsFromFile loads secrets from a YAML or JSON file.
 func loadSecretsFromFile(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path) // #nosec G304 - path comes from user input but is used for reading config
 	if err != nil {
@@ -429,10 +434,10 @@ func loadSecretsFromFile(path string) (map[string]interface{}, error) {
 		return secrets, nil
 	}
 
-	return nil, fmt.Errorf("unable to parse file as YAML or JSON")
+	return nil, errors.New("unable to parse file as YAML or JSON")
 }
 
-// manualMigrateVault performs manual migration between specified paths
+// manualMigrateVault performs manual migration between specified paths.
 func manualMigrateVault(manager *vault.Manager, sourcePath, destPath string, dryRun bool) error {
 	log := logger.Get()
 
@@ -448,9 +453,11 @@ func manualMigrateVault(manager *vault.Manager, sourcePath, destPath string, dry
 
 	if dryRun {
 		log.Info("Dry run - would migrate secrets", "count", len(secrets))
+
 		for key := range secrets {
 			log.Info("Would migrate", "key", key)
 		}
+
 		return nil
 	}
 
@@ -460,5 +467,6 @@ func manualMigrateVault(manager *vault.Manager, sourcePath, destPath string, dry
 	}
 
 	log.Info("Manual vault migration completed", "migrated", len(secrets))
+
 	return nil
 }

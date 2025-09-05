@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPathBuilder tests vault path construction
+// TestPathBuilder tests vault path construction.
 func TestPathBuilder(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -47,7 +47,7 @@ func TestPathBuilder(t *testing.T) {
 	assert.Equal(t, "secret/config/test-bloc/mgmt/jumpbox/users", pathBuilder.GetJumpboxUsersPath())
 }
 
-// TestPathBuilderParsing tests path parsing functionality
+// TestPathBuilderParsing tests path parsing functionality.
 func TestPathBuilderParsing(t *testing.T) {
 	cfg := &config.Config{Name: "test-bloc"}
 	pathBuilder := NewPathBuilder(cfg, "test-bloc")
@@ -72,7 +72,7 @@ func TestPathBuilderParsing(t *testing.T) {
 	assert.False(t, pathBuilder.IsInceptionPath("secret/regular/path"))
 }
 
-// TestSecretGenerator tests secret generation
+// TestSecretGenerator tests secret generation.
 func TestSecretGenerator(t *testing.T) {
 	generator := NewSecretGenerator()
 
@@ -112,7 +112,7 @@ func TestSecretGenerator(t *testing.T) {
 	assert.Len(t, jwtSecret, 128) // 64 bytes = 128 hex chars
 }
 
-// TestInceptionSecrets tests inception secret generation
+// TestInceptionSecrets tests inception secret generation.
 func TestInceptionSecrets(t *testing.T) {
 	generator := NewSecretGenerator()
 
@@ -140,7 +140,7 @@ func TestInceptionSecrets(t *testing.T) {
 	assert.Equal(t, secrets.DeploymentName, secretsMap["deployment_name"])
 }
 
-// TestDefaultSecrets tests default secret generation
+// TestDefaultSecrets tests default secret generation.
 func TestDefaultSecrets(t *testing.T) {
 	generator := NewSecretGenerator()
 
@@ -165,12 +165,13 @@ func TestDefaultSecrets(t *testing.T) {
 	assert.Equal(t, secrets.DirectorName, secretsMap["director_name"])
 }
 
-// TestRetryLogic tests retry functionality
+// TestRetryLogic tests retry functionality.
 func TestRetryLogic(t *testing.T) {
 	// Test successful operation (no retry needed)
 	attempts := 0
 	err := WithRetry(func() error {
 		attempts++
+
 		return nil
 	}, DefaultRetryConfig())
 
@@ -182,8 +183,9 @@ func TestRetryLogic(t *testing.T) {
 	err = WithRetry(func() error {
 		attempts++
 		if attempts < 3 {
-			return fmt.Errorf("connection timeout") // Retryable error
+			return errors.New("connection timeout") // Retryable error
 		}
+
 		return nil
 	}, DefaultRetryConfig())
 
@@ -194,14 +196,15 @@ func TestRetryLogic(t *testing.T) {
 	attempts = 0
 	err = WithRetry(func() error {
 		attempts++
-		return fmt.Errorf("access denied") // Non-retryable error
+
+		return errors.New("access denied") // Non-retryable error
 	}, DefaultRetryConfig())
 
 	require.Error(t, err)
 	assert.Equal(t, 1, attempts) // Should not retry
 }
 
-// TestIsRetryable tests error classification
+// TestIsRetryable tests error classification.
 func TestIsRetryable(t *testing.T) {
 	// Test retryable errors
 	retryableErrors := []string{
@@ -235,7 +238,7 @@ func TestIsRetryable(t *testing.T) {
 	assert.False(t, IsRetryable(nil))
 }
 
-// TestStackitProvider tests STACKIT provider functionality
+// TestStackitProvider tests STACKIT provider functionality.
 func TestStackitProvider(t *testing.T) {
 	cfg := &config.Config{
 		Name:                "stackit-test",
@@ -273,7 +276,7 @@ func TestStackitProvider(t *testing.T) {
 	require.NoError(t, err) // Should succeed with mock
 }
 
-// MockSafe is a mock implementation of Safe for unit testing
+// MockSafe is a mock implementation of Safe for unit testing.
 type MockSafe struct {
 	data map[string]map[string]interface{}
 }
@@ -282,12 +285,15 @@ func (m *MockSafe) Set(path, key string, value interface{}) error {
 	if m.data[path] == nil {
 		m.data[path] = make(map[string]interface{})
 	}
+
 	m.data[path][key] = value
+
 	return nil
 }
 
 func (m *MockSafe) SetMultiple(path string, data map[string]interface{}) error {
 	m.data[path] = data
+
 	return nil
 }
 
@@ -296,20 +302,24 @@ func (m *MockSafe) Get(path, key string) (interface{}, error) {
 		if key == "" {
 			return pathData, nil
 		}
+
 		return pathData[key], nil
 	}
-	return nil, fmt.Errorf("path not found")
+
+	return nil, errors.New("path not found")
 }
 
 func (m *MockSafe) GetAll(path string) (map[string]interface{}, error) {
 	if pathData, exists := m.data[path]; exists {
 		return pathData, nil
 	}
-	return nil, fmt.Errorf("path not found")
+
+	return nil, errors.New("path not found")
 }
 
 func (m *MockSafe) Exists(path string) (bool, error) {
 	_, exists := m.data[path]
+
 	return exists, nil
 }
 
@@ -319,21 +329,25 @@ func (m *MockSafe) Delete(path, key string) error {
 	} else if pathData, exists := m.data[path]; exists {
 		delete(pathData, key)
 	}
+
 	return nil
 }
 
 func (m *MockSafe) List(path string) ([]string, error) {
 	var keys []string
+
 	for key := range m.data {
 		if len(key) > len(path) && key[:len(path)] == path {
 			keys = append(keys, key[len(path):])
 		}
 	}
+
 	return keys, nil
 }
 
 func (m *MockSafe) Export(path string) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
+
 	for dataPath, data := range m.data {
 		if len(dataPath) >= len(path) && dataPath[:len(path)] == path {
 			relativePath := dataPath[len(path):]
@@ -347,11 +361,13 @@ func (m *MockSafe) Export(path string) (map[string]interface{}, error) {
 			}
 		}
 	}
+
 	return result, nil
 }
 
 func (m *MockSafe) Import(path string, data map[string]interface{}) error {
 	m.data[path] = data
+
 	return nil
 }
 
@@ -368,6 +384,7 @@ func (m *MockSafe) MustGet(path, key string) interface{} {
 	if err != nil {
 		panic(err)
 	}
+
 	return value
 }
 
@@ -376,12 +393,14 @@ func (m *MockSafe) GetString(path, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if str, ok := value.(string); ok {
 		return str, nil
 	}
-	return "", fmt.Errorf("not a string")
+
+	return "", errors.New("not a string")
 }
 
 func (m *MockSafe) GetJSON(path, key string) ([]byte, error) {
-	return nil, fmt.Errorf("not implemented in mock")
+	return nil, errors.New("not implemented in mock")
 }

@@ -8,9 +8,9 @@ import (
 )
 
 var (
-	// Valid path characters: alphanumeric, dash, underscore, dot, slash
+	// Valid path characters: alphanumeric, dash, underscore, dot, slash.
 
-	// Disallowed path patterns for security
+	// Disallowed path patterns for security.
 	dangerousPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`\.\.`),        // Directory traversal
 		regexp.MustCompile(`^/proc`),      // Process filesystem
@@ -22,10 +22,10 @@ var (
 	}
 )
 
-// ValidatePath validates a file path for security
+// ValidatePath validates a file path for security.
 func ValidatePath(path string) error {
 	if path == "" {
-		return fmt.Errorf("empty path")
+		return errors.New("empty path")
 	}
 
 	// Clean the path
@@ -46,9 +46,10 @@ func ValidatePath(path string) error {
 	return nil
 }
 
-// ValidatePathWithPattern validates a path against a specific pattern
+// ValidatePathWithPattern validates a path against a specific pattern.
 func ValidatePathWithPattern(path string, pattern *regexp.Regexp) error {
-	if err := ValidatePath(path); err != nil {
+	err := ValidatePath(path)
+	if err != nil {
 		return err
 	}
 
@@ -59,25 +60,29 @@ func ValidatePathWithPattern(path string, pattern *regexp.Regexp) error {
 	return nil
 }
 
-// ValidateConfigPath validates paths used for configuration files
+// ValidateConfigPath validates paths used for configuration files.
 func ValidateConfigPath(path string) error {
 	configPattern := regexp.MustCompile(`^[a-zA-Z0-9/._-]+\.(yml|yaml|json|toml)$`)
+
 	return ValidatePathWithPattern(path, configPattern)
 }
 
-// ValidateSSHKeyPath validates SSH key file paths
+// ValidateSSHKeyPath validates SSH key file paths.
 func ValidateSSHKeyPath(path string) error {
 	keyPattern := regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
+
 	return ValidatePathWithPattern(path, keyPattern)
 }
 
-// ValidateInput validates input for command injection prevention
+// ValidateInput validates input for command injection prevention.
 func ValidateInput(input string, pattern *regexp.Regexp) error {
 	if pattern != nil && !pattern.MatchString(input) {
 		return fmt.Errorf("invalid input: %s", input)
 	}
+
 	if strings.Contains(input, ";") || strings.Contains(input, "|") || strings.Contains(input, "&") {
 		return fmt.Errorf("input contains shell metacharacters: %s", input)
 	}
+
 	return nil
 }

@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Validator provides validation and safety features for vault operations
+// Validator provides validation and safety features for vault operations.
 type Validator struct {
 	client *Client
 	safe   *Safe
@@ -18,7 +18,7 @@ type Validator struct {
 	logger *zap.SugaredLogger
 }
 
-// NewValidator creates a new vault validator
+// NewValidator creates a new vault validator.
 func NewValidator(client *Client, safe *Safe, cfg *config.Config) *Validator {
 	return &Validator{
 		client: client,
@@ -28,7 +28,7 @@ func NewValidator(client *Client, safe *Safe, cfg *config.Config) *Validator {
 	}
 }
 
-// ValidationResult holds the result of a validation check
+// ValidationResult holds the result of a validation check.
 type ValidationResult struct {
 	Valid      bool
 	Warnings   []string
@@ -36,71 +36,79 @@ type ValidationResult struct {
 	Suggestion string
 }
 
-// AddWarning adds a warning to the validation result
+// AddWarning adds a warning to the validation result.
 func (vr *ValidationResult) AddWarning(warning string) {
 	vr.Warnings = append(vr.Warnings, warning)
 }
 
-// AddError adds an error to the validation result
+// AddError adds an error to the validation result.
 func (vr *ValidationResult) AddError(err string) {
 	vr.Errors = append(vr.Errors, err)
 	vr.Valid = false
 }
 
-// HasIssues returns true if there are any warnings or errors
+// HasIssues returns true if there are any warnings or errors.
 func (vr *ValidationResult) HasIssues() bool {
 	return len(vr.Warnings) > 0 || len(vr.Errors) > 0
 }
 
-// PreMigrationHealthCheck performs comprehensive health checks before migration
+// PreMigrationHealthCheck performs comprehensive health checks before migration.
 func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*ValidationResult, error) {
 	v.logger.Info("Starting pre-migration health check", "inception", inceptionPath, "target", targetPath)
 
 	result := &ValidationResult{Valid: true}
 
 	// Check vault connectivity
-	if err := v.validateVaultConnectivity(result); err != nil {
+	err := v.validateVaultConnectivity(result)
+	if err != nil {
 		return result, fmt.Errorf("vault connectivity check failed: %w", err)
 	}
 
 	// Check inception vault exists and has data
-	if err := v.validateInceptionVault(inceptionPath, result); err != nil {
+	err := v.validateInceptionVault(inceptionPath, result)
+	if err != nil {
 		return result, fmt.Errorf("inception vault validation failed: %w", err)
 	}
 
 	// Check target vault accessibility
-	if err := v.validateTargetVault(targetPath, result); err != nil {
+	err := v.validateTargetVault(targetPath, result)
+	if err != nil {
 		return result, fmt.Errorf("target vault validation failed: %w", err)
 	}
 
 	// Check for active BOSH deployments
-	if err := v.checkActiveBOSHDeployments(result); err != nil {
+	err := v.checkActiveBOSHDeployments(result)
+	if err != nil {
 		v.logger.Warn("BOSH deployment check failed", "error", err)
 		result.AddWarning("Could not verify BOSH deployment status")
 	}
 
 	// Check for conflicting secrets
-	if err := v.checkSecretConflicts(inceptionPath, targetPath, result); err != nil {
+	err := v.checkSecretConflicts(inceptionPath, targetPath, result)
+	if err != nil {
 		return result, fmt.Errorf("secret conflict check failed: %w", err)
 	}
 
 	// Validate vault policies
-	if err := v.validateVaultPolicies(result); err != nil {
+	err := v.validateVaultPolicies(result)
+	if err != nil {
 		v.logger.Warn("Vault policy validation failed", "error", err)
 		result.AddWarning("Could not validate vault policies")
 	}
 
 	v.logger.Info("Pre-migration health check completed", "valid", result.Valid, "warnings", len(result.Warnings), "errors", len(result.Errors))
+
 	return result, nil
 }
 
-// validateVaultConnectivity checks basic vault connectivity
+// validateVaultConnectivity checks basic vault connectivity.
 func (v *Validator) validateVaultConnectivity(result *ValidationResult) error {
 	v.logger.Debug("Validating vault connectivity")
 
 	if err := v.client.ValidateConnection(); err != nil {
 		result.AddError(fmt.Sprintf("Vault connection failed: %v", err))
 		result.Suggestion = "Check VAULT_ADDR and VAULT_TOKEN environment variables"
+
 		return err
 	}
 
@@ -116,7 +124,7 @@ func (v *Validator) validateVaultConnectivity(result *ValidationResult) error {
 	return nil
 }
 
-// validateInceptionVault checks inception vault exists and has required data
+// validateInceptionVault checks inception vault exists and has required data.
 func (v *Validator) validateInceptionVault(inceptionPath string, result *ValidationResult) error {
 	v.logger.Debug("Validating inception vault", "path", inceptionPath)
 
@@ -124,12 +132,14 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 	exists, err := v.safe.Exists(inceptionPath)
 	if err != nil {
 		result.AddError(fmt.Sprintf("Failed to check inception vault existence: %v", err))
+
 		return err
 	}
 
 	if !exists {
-		result.AddError(fmt.Sprintf("Inception vault not found at path: %s", inceptionPath))
+		result.AddError("Inception vault not found at path: " + inceptionPath)
 		result.Suggestion = "Run 'ocfp vault inception' to create inception vault"
+
 		return nil
 	}
 
@@ -144,7 +154,7 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 	for _, secretKey := range requiredSecrets {
 		_, err := v.safe.Get(inceptionPath, secretKey)
 		if err != nil {
-			result.AddWarning(fmt.Sprintf("Required inception secret missing or inaccessible: %s", secretKey))
+			result.AddWarning("Required inception secret missing or inaccessible: " + secretKey)
 		}
 	}
 
@@ -155,6 +165,7 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 	} else {
 		secretCount := len(secrets)
 		v.logger.Debug("Inception vault contains secrets", "count", secretCount)
+
 		if secretCount == 0 {
 			result.AddError("Inception vault exists but contains no secrets")
 		} else if secretCount < 5 {
@@ -165,18 +176,19 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 	return nil
 }
 
-// validateTargetVault checks target vault accessibility
+// validateTargetVault checks target vault accessibility.
 func (v *Validator) validateTargetVault(targetPath string, result *ValidationResult) error {
 	v.logger.Debug("Validating target vault accessibility", "path", targetPath)
 
 	// Test write access by attempting to write a test secret
-	testPath := fmt.Sprintf("%s/migration-test", targetPath)
+	testPath := targetPath + "/migration-test"
 	testKey := "test"
 	testValue := fmt.Sprintf("migration-test-%d", time.Now().Unix())
 
 	if err := v.safe.Set(testPath, testKey, testValue); err != nil {
 		result.AddError(fmt.Sprintf("Cannot write to target vault path %s: %v", targetPath, err))
 		result.Suggestion = "Check vault permissions for the target path"
+
 		return nil
 	}
 
@@ -184,23 +196,25 @@ func (v *Validator) validateTargetVault(targetPath string, result *ValidationRes
 	retrievedValue, err := v.safe.Get(testPath, testKey)
 	if err != nil {
 		result.AddError(fmt.Sprintf("Cannot read from target vault path %s: %v", targetPath, err))
+
 		return nil
 	}
 
 	if retrievedValue != testValue {
 		result.AddError("Read/write test failed - retrieved value doesn't match written value")
+
 		return nil
 	}
 
 	// Clean up test secret
 	if err := v.safe.Delete(testPath, testKey); err != nil {
-		result.AddWarning(fmt.Sprintf("Could not clean up test secret at %s", testPath))
+		result.AddWarning("Could not clean up test secret at " + testPath)
 	}
 
 	return nil
 }
 
-// checkActiveBOSHDeployments checks for active BOSH deployments that might be affected
+// checkActiveBOSHDeployments checks for active BOSH deployments that might be affected.
 func (v *Validator) checkActiveBOSHDeployments(result *ValidationResult) error {
 	v.logger.Debug("Checking for active BOSH deployments")
 
@@ -226,7 +240,7 @@ func (v *Validator) checkActiveBOSHDeployments(result *ValidationResult) error {
 	return nil
 }
 
-// checkSecretConflicts checks for conflicting secrets between inception and target
+// checkSecretConflicts checks for conflicting secrets between inception and target.
 func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, result *ValidationResult) error {
 	v.logger.Debug("Checking for secret conflicts", "inception", inceptionPath, "target", targetPath)
 
@@ -249,11 +263,13 @@ func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, resul
 	targetSecrets, err := v.safe.GetAll(targetPath)
 	if err != nil {
 		result.AddWarning(fmt.Sprintf("Could not read target secrets for conflict check: %v", err))
+
 		return nil
 	}
 
 	// Check for overlapping keys
 	var conflicts []string
+
 	for key := range inceptionSecrets {
 		if _, exists := targetSecrets[key]; exists {
 			conflicts = append(conflicts, key)
@@ -269,7 +285,7 @@ func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, resul
 	return nil
 }
 
-// validateVaultPolicies validates vault policies for the current token
+// validateVaultPolicies validates vault policies for the current token.
 func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	v.logger.Debug("Validating vault policies")
 
@@ -280,19 +296,21 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	}
 
 	if secret == nil || secret.Data == nil {
-		return fmt.Errorf("no token data returned")
+		return errors.New("no token data returned")
 	}
 
 	// Check policies
 	policies, policiesFound := secret.Data["policies"]
 	if !policiesFound {
 		result.AddWarning("No policies found for current token")
+
 		return nil
 	}
 
 	policyList, validPolicyList := policies.([]interface{})
 	if !validPolicyList {
 		result.AddWarning("Could not parse token policies")
+
 		return nil
 	}
 
@@ -305,6 +323,7 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 			for _, required := range requiredPolicies {
 				if strings.Contains(policyStr, required) {
 					hasRequired = true
+
 					break
 				}
 			}
@@ -319,13 +338,14 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	return nil
 }
 
-// ValidateVaultPath validates a vault path format and accessibility
+// ValidateVaultPath validates a vault path format and accessibility.
 func (v *Validator) ValidateVaultPath(path string) (*ValidationResult, error) {
 	result := &ValidationResult{Valid: true}
 
 	// Basic path validation
 	if path == "" {
 		result.AddError("Path cannot be empty")
+
 		return result, nil
 	}
 
@@ -341,6 +361,7 @@ func (v *Validator) ValidateVaultPath(path string) (*ValidationResult, error) {
 	exists, err := v.safe.Exists(path)
 	if err != nil {
 		result.AddError(fmt.Sprintf("Cannot access path %s: %v", path, err))
+
 		return result, nil
 	}
 
@@ -351,7 +372,7 @@ func (v *Validator) ValidateVaultPath(path string) (*ValidationResult, error) {
 	return result, nil
 }
 
-// CreateRollbackPoint creates a rollback point before dangerous operations
+// CreateRollbackPoint creates a rollback point before dangerous operations.
 func (v *Validator) CreateRollbackPoint(paths []string) (*RollbackPoint, error) {
 	v.logger.Info("Creating rollback point", "paths", len(paths))
 
@@ -364,6 +385,7 @@ func (v *Validator) CreateRollbackPoint(paths []string) (*RollbackPoint, error) 
 		secrets, err := v.safe.Export(path)
 		if err != nil {
 			v.logger.Warn("Failed to backup path for rollback", "path", path, "error", err)
+
 			continue
 		}
 
@@ -372,16 +394,17 @@ func (v *Validator) CreateRollbackPoint(paths []string) (*RollbackPoint, error) 
 	}
 
 	v.logger.Info("Rollback point created", "backed_up_paths", len(rollback.Paths))
+
 	return rollback, nil
 }
 
-// RollbackPoint represents a point-in-time backup for rollback
+// RollbackPoint represents a point-in-time backup for rollback.
 type RollbackPoint struct {
 	Timestamp time.Time
 	Paths     map[string]map[string]interface{}
 }
 
-// ExecuteRollback restores vault state from a rollback point
+// ExecuteRollback restores vault state from a rollback point.
 func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
 	v.logger.Info("Executing rollback", "timestamp", rollback.Timestamp, "paths", len(rollback.Paths))
 
@@ -390,7 +413,8 @@ func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
 	for path, secrets := range rollback.Paths {
 		v.logger.Debug("Restoring path from rollback", "path", path)
 
-		if err := v.safe.Import(path, secrets); err != nil {
+		err := v.safe.Import(path, secrets)
+		if err != nil {
 			errorMsg := fmt.Sprintf("Failed to restore path %s: %v", path, err)
 			errors = append(errors, errorMsg)
 			v.logger.Error(errorMsg)
@@ -402,5 +426,6 @@ func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
 	}
 
 	v.logger.Info("Rollback completed successfully")
+
 	return nil
 }

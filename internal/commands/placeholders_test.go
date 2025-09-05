@@ -64,6 +64,7 @@ func TestProviderLoginCommand(t *testing.T) {
 			// Set environment variables
 			for key, value := range testCase.env {
 				_ = os.Setenv(key, value)
+
 				defer func() { _ = os.Unsetenv(key) }()
 			}
 
@@ -118,6 +119,7 @@ func TestCreateBasicTmuxScript(t *testing.T) {
 	scriptPath, err := createBasicTmuxScript()
 	require.NoError(t, err)
 	require.NotEmpty(t, scriptPath)
+
 	defer func() { _ = os.Remove(scriptPath) }()
 
 	// Check that the file exists and is readable
@@ -130,9 +132,11 @@ func TestCreateBasicTmuxScript(t *testing.T) {
 
 func TestEnsureExecutable(t *testing.T) {
 	// Create a temporary file
-	tempFile, err := os.CreateTemp("", "test-executable-*")
+	tempFile, err := os.CreateTemp(t.TempDir(), "test-executable-*")
 	require.NoError(t, err)
+
 	_ = tempFile.Close()
+
 	defer func() { _ = os.Remove(tempFile.Name()) }()
 
 	// Initially should not be executable
@@ -222,6 +226,7 @@ func TestBuildEnvironmentVariables(t *testing.T) {
 	// Set some environment variables
 	_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
 	_ = os.Setenv("OCFP_PROVIDER", "stackit")
+
 	defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
 	defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
 
@@ -291,7 +296,9 @@ func TestFindProvisionScript(t *testing.T) {
 
 	// Change working directory to temp dir
 	oldWd, _ := os.Getwd()
+
 	defer func() { _ = os.Chdir(oldWd) }()
+
 	_ = os.Chdir(tempDir)
 
 	// Now it should find the script
@@ -300,10 +307,11 @@ func TestFindProvisionScript(t *testing.T) {
 	assert.Contains(t, foundPath, "test-script")
 }
 
-// Helper function for min
+// Helper function for min.
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

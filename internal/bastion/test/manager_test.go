@@ -13,7 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
-// TestManagerInitialization tests basic manager initialization
+// TestManagerInitialization tests basic manager initialization.
 func TestManagerInitialization(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "test-bloc",
@@ -39,7 +39,7 @@ func TestManagerInitialization(t *testing.T) {
 	// (Can't test internal fields as they're unexported)
 }
 
-// TestManagerDryRun tests dry run functionality
+// TestManagerDryRun tests dry run functionality.
 func TestManagerDryRun(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "test-bloc",
@@ -73,7 +73,7 @@ func TestManagerDryRun(t *testing.T) {
 	}
 }
 
-// TestProgressTracking tests progress tracking functionality
+// TestProgressTracking tests progress tracking functionality.
 func TestProgressTracking(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -93,7 +93,7 @@ func TestProgressTracking(t *testing.T) {
 	}
 }
 
-// TestModeDetection tests execution mode detection
+// TestModeDetection tests execution mode detection.
 func TestModeDetection(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -121,7 +121,7 @@ func TestModeDetection(t *testing.T) {
 	}
 }
 
-// TestExecutionInfo tests execution environment information
+// TestExecutionInfo tests execution environment information.
 func TestExecutionInfo(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -153,7 +153,7 @@ func TestExecutionInfo(t *testing.T) {
 
 // Mock implementations for testing
 
-// MockSSHClient implements SSHClient for testing
+// MockSSHClient implements SSHClient for testing.
 type MockSSHClient struct {
 	connected      bool
 	commands       []string
@@ -161,7 +161,7 @@ type MockSSHClient struct {
 	transferErrors map[string]error
 }
 
-// NewMockSSHClient creates a new mock SSH client
+// NewMockSSHClient creates a new mock SSH client.
 func NewMockSSHClient() *MockSSHClient {
 	return &MockSSHClient{
 		commands:       make([]string, 0),
@@ -170,13 +170,14 @@ func NewMockSSHClient() *MockSSHClient {
 	}
 }
 
-// Connect simulates SSH connection
+// Connect simulates SSH connection.
 func (m *MockSSHClient) Connect(ctx context.Context) error {
 	m.connected = true
+
 	return nil
 }
 
-// ExecuteCommand simulates command execution
+// ExecuteCommand simulates command execution.
 func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
 	m.commands = append(m.commands, cmd)
 
@@ -194,7 +195,7 @@ func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.Co
 	}, nil
 }
 
-// TransferFile simulates file transfer
+// TransferFile simulates file transfer.
 func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
 	transferKey := fmt.Sprintf("%s->%s", local, remote)
 
@@ -205,29 +206,30 @@ func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, 
 	return nil // Success by default
 }
 
-// CreateTunnel simulates tunnel creation
+// CreateTunnel simulates tunnel creation.
 func (m *MockSSHClient) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
 	return nil
 }
 
-// Close simulates connection closure
+// Close simulates connection closure.
 func (m *MockSSHClient) Close() error {
 	m.connected = false
+
 	return nil
 }
 
-// SetCommandResult sets the result for a specific command
+// SetCommandResult sets the result for a specific command.
 func (m *MockSSHClient) SetCommandResult(cmd string, result *ssh.CommandResult) {
 	m.commandResults[cmd] = result
 }
 
-// SetTransferError sets an error for a specific file transfer
+// SetTransferError sets an error for a specific file transfer.
 func (m *MockSSHClient) SetTransferError(local, remote string, err error) {
 	transferKey := fmt.Sprintf("%s->%s", local, remote)
 	m.transferErrors[transferKey] = err
 }
 
-// GetExecutedCommands returns the list of executed commands
+// GetExecutedCommands returns the list of executed commands.
 func (m *MockSSHClient) GetExecutedCommands() []string {
 	return m.commands
 }
@@ -240,10 +242,11 @@ func containsAny(text string, substrings []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
-// setupTestEnvironment creates a test environment
+// setupTestEnvironment creates a test environment.
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	// Create temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "ocfp-bastion-test-*")

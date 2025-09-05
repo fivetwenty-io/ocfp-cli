@@ -23,7 +23,7 @@ var (
 	sshValidPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 )
 
-// NewSSHCmd creates the SSH command
+// NewSSHCmd creates the SSH command.
 func NewSSHCmd() *cobra.Command {
 	var (
 		user       string
@@ -93,7 +93,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 
 	// Load configuration; provider and region come from bloc config
@@ -101,8 +101,9 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return fmt.Errorf("provider must be specified in bloc config")
+		return errors.New("provider must be specified in bloc config")
 	}
 
 	// Initialize provider using bloc configuration
@@ -110,6 +111,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
 	}
+
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
@@ -150,13 +152,13 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	return executeSSH(sshCmd)
 }
 
-// getBastionIP retrieves the bastion host's public IP address
+// getBastionIP retrieves the bastion host's public IP address.
 func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	// Deprecated: kept for compatibility in tests; delegate to shared helper
 	return findBastionIP(ctx, provider, blocName)
 }
 
-// findSSHKey locates the SSH private key for the bastion
+// findSSHKey locates the SSH private key for the bastion.
 func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
 
@@ -176,18 +178,21 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	for _, path := range searchPaths {
 		if _, err := os.Stat(path); err == nil {
 			log.Debugf("Found SSH key at: %s", path)
+
 			return path, nil
 		}
 	}
 
 	// Try to find any key with bastion in the name
 	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+
 	entries, err := os.ReadDir(sshDir)
 	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
 				path := filepath.Join(sshDir, entry.Name())
 				log.Debugf("Found SSH key at: %s", path)
+
 				return path, nil
 			}
 		}
@@ -196,7 +201,7 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
 }
 
-// verifySSHKey checks if the SSH key exists and has correct permissions
+// verifySSHKey checks if the SSH key exists and has correct permissions.
 func verifySSHKey(keyPath string) error {
 	info, err := os.Stat(keyPath)
 	if err != nil {
@@ -207,31 +212,41 @@ func verifySSHKey(keyPath string) error {
 	mode := info.Mode()
 	if mode.Perm()&0077 != 0 {
 		// Try to fix permissions
-		if err := os.Chmod(keyPath, 0600); err != nil {
+		err := os.Chmod(keyPath, 0600)
+		if err != nil {
 			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
 		}
+
 		logger.WithOperation("verifySSHKey").Warnf("Fixed SSH key permissions for: %s", keyPath)
 	}
 
 	return nil
 }
 
-// buildSSHCommand constructs the SSH command with all options
+// buildSSHCommand constructs the SSH command with all options.
 func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd := []string{"ssh"}
 
 	// Validate inputs
-	if err := security.ValidateInput(host, sshValidHostPattern); err != nil {
+	err := security.ValidateInput(host, sshValidHostPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
+
 		return []string{"ssh", "--help"} // Return safe command
 	}
-	if err := security.ValidateInput(user, sshValidUserPattern); err != nil {
+
+	err := security.ValidateInput(user, sshValidUserPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
+
 		return []string{"ssh", "--help"} // Return safe command
 	}
+
 	if keyPath != "" {
-		if err := security.ValidateInput(keyPath, sshValidPathPattern); err != nil {
+		err := security.ValidateInput(keyPath, sshValidPathPattern)
+		if err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
+
 			return []string{"ssh", "--help"} // Return safe command
 		}
 	}
@@ -253,14 +268,17 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 			"-p": true, "-v": true, "-q": true, "-4": true, "-6": true,
 			"-o": true, "-L": true, "-R": true, "-D": true,
 		}
+
 		options := strings.Fields(extraOptions)
 		for _, opt := range options {
 			if strings.HasPrefix(opt, "-") {
 				if !allowedOptions[opt] {
 					logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+
 					continue
 				}
 			}
+
 			cmd = append(cmd, opt)
 		}
 	}
@@ -271,14 +289,14 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	return cmd
 }
 
-// executeSSH executes the SSH command and attaches to stdin/stdout/stderr
+// executeSSH executes the SSH command and attaches to stdin/stdout/stderr.
 func executeSSH(sshCmd []string) error {
 	log := logger.WithOperation("executeSSH")
 	log.Debugf("Executing: %s", strings.Join(sshCmd, " "))
 
 	// Validate that the command is ssh
 	if len(sshCmd) == 0 || sshCmd[0] != "ssh" {
-		return fmt.Errorf("invalid SSH command")
+		return errors.New("invalid SSH command")
 	}
 
 	cmd := exec.Command(sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above

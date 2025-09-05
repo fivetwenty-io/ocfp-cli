@@ -13,51 +13,53 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// State represents the current state of an OCFP environment
+// State represents the current state of an OCFP environment.
 type State struct {
-	Version      string                 `json:"version" yaml:"version"`
-	BlocName     string                 `json:"blocName" yaml:"blocName"`
-	Provider     string                 `json:"provider" yaml:"provider"`
-	Region       string                 `json:"region" yaml:"region"`
-	CreatedAt    time.Time              `json:"createdAt" yaml:"createdAt"`
-	UpdatedAt    time.Time              `json:"updatedAt" yaml:"updatedAt"`
-	Resources    map[string]*Resource   `json:"resources" yaml:"resources"`
-	Outputs      map[string]interface{} `json:"outputs" yaml:"outputs"`
+	Version      string                 `json:"version"      yaml:"version"`
+	BlocName     string                 `json:"blocName"     yaml:"blocName"`
+	Provider     string                 `json:"provider"     yaml:"provider"`
+	Region       string                 `json:"region"       yaml:"region"`
+	CreatedAt    time.Time              `json:"createdAt"    yaml:"createdAt"`
+	UpdatedAt    time.Time              `json:"updatedAt"    yaml:"updatedAt"`
+	Resources    map[string]*Resource   `json:"resources"    yaml:"resources"`
+	Outputs      map[string]interface{} `json:"outputs"      yaml:"outputs"`
 	Dependencies map[string][]string    `json:"dependencies" yaml:"dependencies"`
 }
 
-// Resource represents a managed resource
+// Resource represents a managed resource.
 type Resource struct {
-	ID         string                 `json:"id" yaml:"id"`
-	Type       string                 `json:"type" yaml:"type"`
-	Name       string                 `json:"name" yaml:"name"`
-	Provider   string                 `json:"provider" yaml:"provider"`
-	State      string                 `json:"state" yaml:"state"`
+	ID         string                 `json:"id"         yaml:"id"`
+	Type       string                 `json:"type"       yaml:"type"`
+	Name       string                 `json:"name"       yaml:"name"`
+	Provider   string                 `json:"provider"   yaml:"provider"`
+	State      string                 `json:"state"      yaml:"state"`
 	Properties map[string]interface{} `json:"properties" yaml:"properties"`
-	Tags       map[string]string      `json:"tags" yaml:"tags"`
-	CreatedAt  time.Time              `json:"createdAt" yaml:"createdAt"`
-	UpdatedAt  time.Time              `json:"updatedAt" yaml:"updatedAt"`
+	Tags       map[string]string      `json:"tags"       yaml:"tags"`
+	CreatedAt  time.Time              `json:"createdAt"  yaml:"createdAt"`
+	UpdatedAt  time.Time              `json:"updatedAt"  yaml:"updatedAt"`
 }
 
-// Manager handles state persistence and retrieval
+// Manager handles state persistence and retrieval.
 type Manager struct {
 	stateDir string
 	current  *State
 	mu       sync.RWMutex
 }
 
-// NewManager creates a new state manager
+// NewManager creates a new state manager.
 func NewManager(stateDir string) (*Manager, error) {
 	if stateDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
+
 		stateDir = filepath.Join(home, ".ocfp", "state")
 	}
 
 	// Ensure state directory exists
-	if err := os.MkdirAll(stateDir, 0750); err != nil {
+	err := os.MkdirAll(stateDir, 0750)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
@@ -66,7 +68,7 @@ func NewManager(stateDir string) (*Manager, error) {
 	}, nil
 }
 
-// Load loads state for a specific bloc
+// Load loads state for a specific bloc.
 func (m *Manager) Load(blocName string) (*State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -86,6 +88,7 @@ func (m *Manager) Load(blocName string) (*State, error) {
 			Dependencies: make(map[string][]string),
 		}
 		m.current = state
+
 		return state, nil
 	}
 
@@ -93,6 +96,7 @@ func (m *Manager) Load(blocName string) (*State, error) {
 	if err := security.ValidateConfigPath(statePath); err != nil {
 		return nil, fmt.Errorf("invalid state path: %w", err)
 	}
+
 	data, err := os.ReadFile(statePath) // #nosec G304 - statePath is validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file: %w", err)
@@ -101,23 +105,25 @@ func (m *Manager) Load(blocName string) (*State, error) {
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		// Try YAML format
-		if err := yaml.Unmarshal(data, &state); err != nil {
+		err := yaml.Unmarshal(data, &state)
+		if err != nil {
 			return nil, fmt.Errorf("failed to parse state file: %w", err)
 		}
 	}
 
 	m.current = &state
 	logger.Debugf("Loaded state for bloc %s with %d resources", blocName, len(state.Resources))
+
 	return &state, nil
 }
 
-// Save persists the current state
+// Save persists the current state.
 func (m *Manager) Save() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.current == nil {
-		return fmt.Errorf("no state loaded")
+		return errors.New("no state loaded")
 	}
 
 	m.current.UpdatedAt = time.Now()
@@ -126,7 +132,8 @@ func (m *Manager) Save() error {
 	statePath := m.getStatePath(m.current.BlocName)
 	if _, err := os.Stat(statePath); err == nil {
 		backupPath := statePath + ".backup"
-		if err := os.Rename(statePath, backupPath); err != nil {
+		err := os.Rename(statePath, backupPath)
+		if err != nil {
 			logger.Warnf("Failed to create state backup: %v", err)
 		}
 	}
@@ -143,20 +150,21 @@ func (m *Manager) Save() error {
 	}
 
 	logger.Debugf("Saved state for bloc %s with %d resources", m.current.BlocName, len(m.current.Resources))
+
 	return nil
 }
 
-// AddResource adds or updates a resource in the state
+// AddResource adds or updates a resource in the state.
 func (m *Manager) AddResource(resource *Resource) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.current == nil {
-		return fmt.Errorf("no state loaded")
+		return errors.New("no state loaded")
 	}
 
 	if resource.ID == "" {
-		return fmt.Errorf("resource ID is required")
+		return errors.New("resource ID is required")
 	}
 
 	// Generate resource key
@@ -169,6 +177,7 @@ func (m *Manager) AddResource(resource *Resource) error {
 		existing.Properties = resource.Properties
 		existing.Tags = resource.Tags
 		existing.UpdatedAt = time.Now()
+
 		logger.Debugf("Updated resource %s in state", key)
 	} else {
 		// Add new resource
@@ -181,13 +190,13 @@ func (m *Manager) AddResource(resource *Resource) error {
 	return nil
 }
 
-// RemoveResource removes a resource from the state
+// RemoveResource removes a resource from the state.
 func (m *Manager) RemoveResource(resourceType, resourceName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.current == nil {
-		return fmt.Errorf("no state loaded")
+		return errors.New("no state loaded")
 	}
 
 	key := fmt.Sprintf("%s.%s", resourceType, resourceName)
@@ -200,30 +209,35 @@ func (m *Manager) RemoveResource(resourceType, resourceName string) error {
 
 	// Remove from dependencies
 	delete(m.current.Dependencies, key)
+
 	for resourceKey, deps := range m.current.Dependencies {
 		filtered := make([]string, 0)
+
 		for _, dep := range deps {
 			if dep != key {
 				filtered = append(filtered, dep)
 			}
 		}
+
 		m.current.Dependencies[resourceKey] = filtered
 	}
 
 	logger.Debugf("Removed resource %s from state", key)
+
 	return nil
 }
 
-// GetResource retrieves a resource from the state
+// GetResource retrieves a resource from the state.
 func (m *Manager) GetResource(resourceType, resourceName string) (*Resource, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.current == nil {
-		return nil, fmt.Errorf("no state loaded")
+		return nil, errors.New("no state loaded")
 	}
 
 	key := fmt.Sprintf("%s.%s", resourceType, resourceName)
+
 	resource, ok := m.current.Resources[key]
 	if !ok {
 		return nil, fmt.Errorf("resource %s not found", key)
@@ -232,16 +246,17 @@ func (m *Manager) GetResource(resourceType, resourceName string) (*Resource, err
 	return resource, nil
 }
 
-// ListResources returns all resources of a specific type
+// ListResources returns all resources of a specific type.
 func (m *Manager) ListResources(resourceType string) ([]*Resource, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.current == nil {
-		return nil, fmt.Errorf("no state loaded")
+		return nil, errors.New("no state loaded")
 	}
 
 	var resources []*Resource
+
 	prefix := resourceType + "."
 
 	for key, resource := range m.current.Resources {
@@ -253,27 +268,28 @@ func (m *Manager) ListResources(resourceType string) ([]*Resource, error) {
 	return resources, nil
 }
 
-// SetOutput sets an output value
+// SetOutput sets an output value.
 func (m *Manager) SetOutput(key string, value interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.current == nil {
-		return fmt.Errorf("no state loaded")
+		return errors.New("no state loaded")
 	}
 
 	m.current.Outputs[key] = value
 	logger.Debugf("Set output %s in state", key)
+
 	return nil
 }
 
-// GetOutput retrieves an output value
+// GetOutput retrieves an output value.
 func (m *Manager) GetOutput(key string) (interface{}, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.current == nil {
-		return nil, fmt.Errorf("no state loaded")
+		return nil, errors.New("no state loaded")
 	}
 
 	value, ok := m.current.Outputs[key]
@@ -284,13 +300,13 @@ func (m *Manager) GetOutput(key string) (interface{}, error) {
 	return value, nil
 }
 
-// AddDependency adds a dependency between resources
+// AddDependency adds a dependency between resources.
 func (m *Manager) AddDependency(resource, dependsOn string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.current == nil {
-		return fmt.Errorf("no state loaded")
+		return errors.New("no state loaded")
 	}
 
 	if m.current.Dependencies[resource] == nil {
@@ -306,16 +322,17 @@ func (m *Manager) AddDependency(resource, dependsOn string) error {
 
 	m.current.Dependencies[resource] = append(m.current.Dependencies[resource], dependsOn)
 	logger.Debugf("Added dependency %s -> %s", resource, dependsOn)
+
 	return nil
 }
 
-// GetDependencies returns dependencies for a resource
+// GetDependencies returns dependencies for a resource.
 func (m *Manager) GetDependencies(resource string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.current == nil {
-		return nil, fmt.Errorf("no state loaded")
+		return nil, errors.New("no state loaded")
 	}
 
 	deps, ok := m.current.Dependencies[resource]
@@ -326,7 +343,7 @@ func (m *Manager) GetDependencies(resource string) ([]string, error) {
 	return deps, nil
 }
 
-// Lock acquires an exclusive lock on the state
+// Lock acquires an exclusive lock on the state.
 func (m *Manager) Lock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
 
@@ -336,6 +353,7 @@ func (m *Manager) Lock(blocName string) error {
 		if err := security.ValidatePath(lockPath); err != nil {
 			return fmt.Errorf("invalid lock path: %w", err)
 		}
+
 		data, err := os.ReadFile(lockPath) // #nosec G304 - lockPath is validated above
 		if err != nil {
 			return fmt.Errorf("failed to read lock file: %w", err)
@@ -347,7 +365,7 @@ func (m *Manager) Lock(blocName string) error {
 				lockInfo["owner"], lockInfo["created_at"])
 		}
 
-		return fmt.Errorf("state is locked")
+		return errors.New("state is locked")
 	}
 
 	// Create lock file
@@ -368,50 +386,56 @@ func (m *Manager) Lock(blocName string) error {
 	}
 
 	logger.Debugf("Acquired state lock for bloc %s", blocName)
+
 	return nil
 }
 
-// Unlock releases the lock on the state
+// Unlock releases the lock on the state.
 func (m *Manager) Unlock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
 
-	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+	err := os.Remove(lockPath)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove lock file: %w", err)
 	}
 
 	logger.Debugf("Released state lock for bloc %s", blocName)
+
 	return nil
 }
 
-// getStatePath returns the path to the state file
+// getStatePath returns the path to the state file.
 func (m *Manager) getStatePath(blocName string) string {
-	return filepath.Join(m.stateDir, fmt.Sprintf("%s.json", blocName))
+	return filepath.Join(m.stateDir, blocName+".json")
 }
 
-// getLockPath returns the path to the lock file
+// getLockPath returns the path to the lock file.
 func (m *Manager) getLockPath(blocName string) string {
-	return filepath.Join(m.stateDir, fmt.Sprintf("%s.lock", blocName))
+	return filepath.Join(m.stateDir, blocName+".lock")
 }
 
-// getHostname returns the hostname
+// getHostname returns the hostname.
 func getHostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
 	}
+
 	return hostname
 }
 
-// Current returns the current state
+// Current returns the current state.
 func (m *Manager) Current() *State {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	return m.current
 }
 
-// Clear clears the current state from memory
+// Clear clears the current state from memory.
 func (m *Manager) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.current = nil
 }

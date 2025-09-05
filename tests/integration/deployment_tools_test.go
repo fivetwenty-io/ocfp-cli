@@ -14,7 +14,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-// TestTmuxIntegration tests tmux session management integration
+// TestTmuxIntegration tests tmux session management integration.
 func TestTmuxIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping tmux integration tests in short mode")
@@ -35,7 +35,6 @@ func TestTmuxIntegration(t *testing.T) {
 		// In a test environment without a proper terminal, tmux may fail
 		// But we can verify the command structure and error handling
 		err := cmd.Execute()
-
 		if err != nil {
 			// Expected in test environments - verify it's a tmux-related error, not a panic
 			errMsg := err.Error()
@@ -68,7 +67,9 @@ tmux attach-session -t ocfp
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
@@ -103,6 +104,7 @@ tmux attach-session -t ocfp
 		// Set HOME to tmpDir so tmux can find deployment directories
 		oldHome := os.Getenv("HOME")
 		_ = os.Setenv("HOME", tmpDir)
+
 		defer func() { _ = os.Setenv("HOME", oldHome) }()
 
 		cmd := commands.NewTmuxCmd()
@@ -116,7 +118,7 @@ tmux attach-session -t ocfp
 	})
 }
 
-// TestBastionIntegration tests bastion host management integration
+// TestBastionIntegration tests bastion host management integration.
 func TestBastionIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping bastion integration tests in short mode")
@@ -170,11 +172,14 @@ exit 0;
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -212,11 +217,14 @@ exit 0;
 		require.NoError(t, err)
 
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -264,11 +272,14 @@ exit 0;
 
 		// Change to tmpDir so script can be found
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -285,6 +296,7 @@ exit 0;
 		_ = os.Setenv("OCFP_PROVIDER", "stackit")
 		_ = os.Setenv("STACKIT_PROJECT_ID", "env-project-123")
 		_ = os.Setenv("GENESIS_ENVIRONMENT", "test")
+
 		defer func() {
 			_ = os.Unsetenv("OCFP_BLOC_NAME")
 			_ = os.Unsetenv("OCFP_PROVIDER")
@@ -309,11 +321,14 @@ exit 0;
 		require.NoError(t, err)
 
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -325,7 +340,7 @@ exit 0;
 	})
 }
 
-// TestDeploymentWorkflow tests the complete deployment workflow integration
+// TestDeploymentWorkflow tests the complete deployment workflow integration.
 func TestDeploymentWorkflow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping deployment workflow tests in short mode")
@@ -371,6 +386,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command with workflow config
@@ -475,7 +491,7 @@ exit 0;
 	})
 }
 
-// TestToolAvailability tests availability of external tools
+// TestToolAvailability tests availability of external tools.
 func TestToolAvailability(t *testing.T) {
 	tools := map[string]string{
 		"tmux":  "Terminal multiplexer for session management",

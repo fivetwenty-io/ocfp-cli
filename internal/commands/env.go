@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NewEnvCmd creates the env command group
+// NewEnvCmd creates the env command group.
 func NewEnvCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env",
@@ -36,7 +36,7 @@ such as development, staging, and production.`,
 	return cmd
 }
 
-// newEnvListCmd creates the env list command
+// newEnvListCmd creates the env list command.
 func newEnvListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -49,7 +49,7 @@ func newEnvListCmd() *cobra.Command {
 	}
 }
 
-// newEnvShowCmd creates the env show command
+// newEnvShowCmd creates the env show command.
 func newEnvShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show [environment]",
@@ -64,7 +64,7 @@ If no environment is specified, shows the current environment.`,
 	}
 }
 
-// newEnvSetCmd creates the env set command
+// newEnvSetCmd creates the env set command.
 func newEnvSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "set <environment>",
@@ -78,7 +78,7 @@ func newEnvSetCmd() *cobra.Command {
 	}
 }
 
-// newEnvExportCmd creates the env export command
+// newEnvExportCmd creates the env export command.
 func newEnvExportCmd() *cobra.Command {
 	var format string
 
@@ -98,7 +98,7 @@ If no environment is specified, exports the current environment.`,
 	return cmd
 }
 
-// runEnvList lists all available environments
+// runEnvList lists all available environments.
 func runEnvList(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-list")
 
@@ -110,6 +110,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	if len(envs) == 0 {
 		fmt.Println("No environments found")
+
 		return nil
 	}
 
@@ -129,17 +130,19 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		if env.Name == currentEnv {
 			status = "ACTIVE"
 		}
+
 		_, _ = fmt.Fprintf(tableWriter, "%s\t%s\t%s\t%s\t%s\n",
 			env.Name, env.Provider, env.Region, status, env.ConfigFile)
 	}
 
 	_ = tableWriter.Flush()
+
 	log.Debugf("Listed %d environments", len(envs))
 
 	return nil
 }
 
-// runEnvShow displays details about an environment
+// runEnvShow displays details about an environment.
 func runEnvShow(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-show")
 
@@ -150,7 +153,7 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	} else {
 		envName = viper.GetString("bloc_name")
 		if envName == "" {
-			return fmt.Errorf("no environment specified and no current environment set")
+			return errors.New("no environment specified and no current environment set")
 		}
 	}
 
@@ -175,6 +178,7 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nNetwork Configuration:\n")
 		fmt.Printf("  Name:        %s\n", cfg.Network.Name)
 		fmt.Printf("  CIDR:        %s\n", cfg.Network.CIDR)
+
 		if len(cfg.Network.DNS) > 0 {
 			fmt.Printf("  DNS:         %s\n", strings.Join(cfg.Network.DNS, ", "))
 		}
@@ -190,15 +194,18 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	// Print current bloc information
 	fmt.Printf("\nCurrent Bloc:\n")
 	fmt.Printf("  Name: %s\n", cfg.Name)
+
 	if cfg.Type != "" {
 		fmt.Printf("  Type: %s\n", cfg.Type)
 	}
+
 	if cfg.Environment != "" {
 		fmt.Printf("  Environment: %s\n", cfg.Environment)
 	}
 
 	if len(cfg.AZs) > 0 {
 		fmt.Printf("\nAvailability Zones:\n")
+
 		for name, az := range cfg.AZs {
 			fmt.Printf("  - %s: %s\n", name, az.Zone)
 		}
@@ -209,7 +216,7 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runEnvSet sets the active environment
+// runEnvSet sets the active environment.
 func runEnvSet(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-set")
 
@@ -222,11 +229,14 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	}
 
 	found := false
+
 	var targetEnv *environmentInfo
+
 	for _, env := range envs {
 		if env.Name == envName {
 			found = true
 			targetEnv = &env
+
 			break
 		}
 	}
@@ -242,7 +252,8 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	ocfpConfig := make(map[string]interface{})
 	// #nosec G304 - ocfpConfigPath is constructed from safe paths
 	if data, err := os.ReadFile(ocfpConfigPath); err == nil {
-		if err := yaml.Unmarshal(data, &ocfpConfig); err != nil {
+		err := yaml.Unmarshal(data, &ocfpConfig)
+		if err != nil {
 			log.Warnf("Failed to parse existing config: %v", err)
 		}
 	}
@@ -274,7 +285,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runEnvExport exports environment variables
+// runEnvExport exports environment variables.
 func runEnvExport(cmd *cobra.Command, args []string, format string) error {
 	log := logger.WithOperation("env-export")
 
@@ -285,7 +296,7 @@ func runEnvExport(cmd *cobra.Command, args []string, format string) error {
 	} else {
 		envName = viper.GetString("bloc_name")
 		if envName == "" {
-			return fmt.Errorf("no environment specified and no current environment set")
+			return errors.New("no environment specified and no current environment set")
 		}
 	}
 
@@ -312,7 +323,7 @@ func runEnvExport(cmd *cobra.Command, args []string, format string) error {
 	return nil
 }
 
-// environmentInfo contains basic environment information
+// environmentInfo contains basic environment information.
 type environmentInfo struct {
 	Name       string
 	Provider   string
@@ -320,7 +331,7 @@ type environmentInfo struct {
 	ConfigFile string
 }
 
-// findEnvironments searches for available environment configurations
+// findEnvironments searches for available environment configurations.
 func findEnvironments() ([]environmentInfo, error) {
 	var envs []environmentInfo
 
@@ -370,7 +381,7 @@ func findEnvironments() ([]environmentInfo, error) {
 	return envs, nil
 }
 
-// exportBash exports environment variables in bash format
+// exportBash exports environment variables in bash format.
 func exportBash(cfg *config.Config) {
 	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
 	fmt.Printf("export OCFP_BLOC_NAME='%s'\n", cfg.Name)
@@ -379,13 +390,14 @@ func exportBash(cfg *config.Config) {
 	fmt.Printf("export OCFP_REGION='%s'\n", cfg.Region)
 	fmt.Printf("export OCFP_PROJECT_ID='%s'\n", cfg.ProjectID)
 	fmt.Printf("export OCFP_ORG_ID='%s'\n", cfg.OrgID)
+
 	if cfg.Network.Name != "" {
 		fmt.Printf("export OCFP_NETWORK_NAME='%s'\n", cfg.Network.Name)
 		fmt.Printf("export OCFP_NETWORK_CIDR='%s'\n", cfg.Network.CIDR)
 	}
 }
 
-// exportFish exports environment variables in fish format
+// exportFish exports environment variables in fish format.
 func exportFish(cfg *config.Config) {
 	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
 	fmt.Printf("set -x OCFP_BLOC_NAME '%s'\n", cfg.Name)
@@ -394,13 +406,14 @@ func exportFish(cfg *config.Config) {
 	fmt.Printf("set -x OCFP_REGION '%s'\n", cfg.Region)
 	fmt.Printf("set -x OCFP_PROJECT_ID '%s'\n", cfg.ProjectID)
 	fmt.Printf("set -x OCFP_ORG_ID '%s'\n", cfg.OrgID)
+
 	if cfg.Network.Name != "" {
 		fmt.Printf("set -x OCFP_NETWORK_NAME '%s'\n", cfg.Network.Name)
 		fmt.Printf("set -x OCFP_NETWORK_CIDR '%s'\n", cfg.Network.CIDR)
 	}
 }
 
-// exportPowerShell exports environment variables in PowerShell format
+// exportPowerShell exports environment variables in PowerShell format.
 func exportPowerShell(cfg *config.Config) {
 	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
 	fmt.Printf("$env:OCFP_BLOC_NAME = '%s'\n", cfg.Name)
@@ -409,6 +422,7 @@ func exportPowerShell(cfg *config.Config) {
 	fmt.Printf("$env:OCFP_REGION = '%s'\n", cfg.Region)
 	fmt.Printf("$env:OCFP_PROJECT_ID = '%s'\n", cfg.ProjectID)
 	fmt.Printf("$env:OCFP_ORG_ID = '%s'\n", cfg.OrgID)
+
 	if cfg.Network.Name != "" {
 		fmt.Printf("$env:OCFP_NETWORK_NAME = '%s'\n", cfg.Network.Name)
 		fmt.Printf("$env:OCFP_NETWORK_CIDR = '%s'\n", cfg.Network.CIDR)

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderCommandIntegration tests the provider command integration
+// TestProviderCommandIntegration tests the provider command integration.
 func TestProviderCommandIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
@@ -73,6 +73,7 @@ blocs:
 	t.Run("ProviderLoginWithConfig", func(t *testing.T) {
 		// Set config file environment variable
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -87,6 +88,7 @@ blocs:
 	t.Run("ProviderLoginStackitValidation", func(t *testing.T) {
 		// Test STACKIT provider validation without actual credentials
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -99,7 +101,7 @@ blocs:
 	})
 }
 
-// TestTmuxCommandIntegration tests the tmux command integration
+// TestTmuxCommandIntegration tests the tmux command integration.
 func TestTmuxCommandIntegration(t *testing.T) {
 	t.Run("CreateTmuxCommand", func(t *testing.T) {
 		cmd := commands.NewTmuxCmd()
@@ -137,7 +139,7 @@ func TestTmuxCommandIntegration(t *testing.T) {
 	})
 }
 
-// TestBastionCommandIntegration tests the bastion command integration
+// TestBastionCommandIntegration tests the bastion command integration.
 func TestBastionCommandIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
@@ -200,6 +202,7 @@ blocs:
 	t.Run("BastionInitWithoutScript", func(t *testing.T) {
 		// Set config file environment variable
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -213,6 +216,7 @@ blocs:
 
 	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -241,11 +245,14 @@ exit 0;
 
 		// Change to the tmpDir so the script can be found
 		oldWd, _ := os.Getwd()
+
 		defer func() { _ = os.Chdir(oldWd) }()
+
 		err = os.Chdir(tmpDir)
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewBastionCmd()
@@ -258,7 +265,7 @@ exit 0;
 	})
 }
 
-// TestCommandIntegrationWithVault tests commands that integrate with Vault
+// TestCommandIntegrationWithVault tests commands that integrate with Vault.
 func TestCommandIntegrationWithVault(t *testing.T) {
 	t.Run("ProviderLoginWithVault", func(t *testing.T) {
 		// Check if 'safe' command is available (Vault wrapper)
@@ -283,6 +290,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -296,7 +304,7 @@ blocs:
 	})
 }
 
-// TestCommandConfigIntegration tests configuration integration across commands
+// TestCommandConfigIntegration tests configuration integration across commands.
 func TestCommandConfigIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "integration-config.yml")
@@ -352,6 +360,7 @@ blocs:
 
 	t.Run("MultipleCommandsWithSameConfig", func(t *testing.T) {
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command
@@ -372,6 +381,7 @@ blocs:
 
 	t.Run("BlocSpecificConfiguration", func(t *testing.T) {
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		// Test provider command with mgmt bloc
@@ -393,7 +403,7 @@ blocs:
 	})
 }
 
-// TestCommandErrorHandling tests error handling across all new commands
+// TestCommandErrorHandling tests error handling across all new commands.
 func TestCommandErrorHandling(t *testing.T) {
 	t.Run("ProviderCommandErrors", func(t *testing.T) {
 		cmd := commands.NewProviderCmd()
@@ -440,6 +450,7 @@ func TestCommandErrorHandling(t *testing.T) {
 		// Temporarily hide tmux from PATH to test error handling
 		originalPath := os.Getenv("PATH")
 		_ = os.Setenv("PATH", "/nonexistent")
+
 		defer func() { _ = os.Setenv("PATH", originalPath) }()
 
 		cmd := commands.NewTmuxCmd()

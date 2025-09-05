@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ConfigFileManager handles configuration file generation
+// ConfigFileManager handles configuration file generation.
 type ConfigFileManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// ConfigFile represents a configuration file to create
+// ConfigFile represents a configuration file to create.
 type ConfigFile struct {
 	Name        string `yaml:"name"`
 	Path        string `yaml:"path"`
@@ -28,7 +28,7 @@ type ConfigFile struct {
 	Enabled     bool   `yaml:"enabled"`
 }
 
-// NewConfigFileManager creates a new configuration file manager
+// NewConfigFileManager creates a new configuration file manager.
 func NewConfigFileManager(provider string, cfg *config.Config) *ConfigFileManager {
 	return &ConfigFileManager{
 		config:   cfg,
@@ -37,7 +37,7 @@ func NewConfigFileManager(provider string, cfg *config.Config) *ConfigFileManage
 	}
 }
 
-// GetConfigFiles returns the list of configuration files to create
+// GetConfigFiles returns the list of configuration files to create.
 func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 	return []ConfigFile{
 		{
@@ -84,7 +84,7 @@ func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 	}
 }
 
-// GenerateConfigFileScript generates script for configuration file creation
+// GenerateConfigFileScript generates script for configuration file creation.
 func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) string {
 	configFiles := cfm.GetConfigFiles()
 	if len(configFiles) == 0 {
@@ -92,6 +92,7 @@ func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) stri
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Configuration file creation")
 	lines = append(lines, "")
 
@@ -100,11 +101,11 @@ func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) stri
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Create configuration file: %s", file.Name))
+		lines = append(lines, "# Create configuration file: "+file.Name)
 
 		// Run pre-command if specified
 		if file.PreCommand != "" {
-			lines = append(lines, fmt.Sprintf("# Pre-command for %s", file.Name))
+			lines = append(lines, "# Pre-command for "+file.Name)
 			lines = append(lines, file.PreCommand)
 			lines = append(lines, "")
 		}
@@ -138,7 +139,7 @@ func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) stri
 
 		// Run post-command if specified
 		if file.PostCommand != "" {
-			lines = append(lines, fmt.Sprintf("# Post-command for %s", file.Name))
+			lines = append(lines, "# Post-command for "+file.Name)
 			lines = append(lines, file.PostCommand)
 		}
 
@@ -376,7 +377,7 @@ nnoremap <leader>to :tabonly<CR>
 let mapleader = ","`
 }
 
-// hasGitConfig checks if Git configuration is available
+// hasGitConfig checks if Git configuration is available.
 func (cfm *ConfigFileManager) hasGitConfig() bool {
 	return cfm.config.Bastion.Git.User.Name != "" || cfm.config.Bastion.Git.User.Email != ""
 }

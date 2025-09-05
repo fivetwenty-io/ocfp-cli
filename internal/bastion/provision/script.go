@@ -11,14 +11,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ScriptGenerator generates provisioning scripts from templates
+// ScriptGenerator generates provisioning scripts from templates.
 type ScriptGenerator struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// NewScriptGenerator creates a new script generator
+// NewScriptGenerator creates a new script generator.
 func NewScriptGenerator(provider string, cfg *config.Config) *ScriptGenerator {
 	return &ScriptGenerator{
 		config:   cfg,
@@ -27,7 +27,7 @@ func NewScriptGenerator(provider string, cfg *config.Config) *ScriptGenerator {
 	}
 }
 
-// GenerateProvisioningScript generates the main provisioning script
+// GenerateProvisioningScript generates the main provisioning script.
 func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provConfig ProvisionConfig, envVars map[string]string) (string, error) {
 	sg.log.Debug("Generating provisioning script")
 
@@ -188,7 +188,7 @@ func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provC
 	return finalScript, nil
 }
 
-// generateScriptHeader generates the script header
+// generateScriptHeader generates the script header.
 func (sg *ScriptGenerator) generateScriptHeader() string {
 	return `#!/bin/bash
 
@@ -248,9 +248,10 @@ log_info "Waiting for system to stabilize..."
 sleep 10`
 }
 
-// generateEnvironmentSetup generates environment variable setup
+// generateEnvironmentSetup generates environment variable setup.
 func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) string {
 	var lines []string
+
 	lines = append(lines, "# Environment variables setup")
 
 	for key, value := range envVars {
@@ -264,9 +265,10 @@ func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) s
 	return strings.Join(lines, "\n")
 }
 
-// generateSystemConfigScript generates system configuration
+// generateSystemConfigScript generates system configuration.
 func (sg *ScriptGenerator) generateSystemConfigScript(config SystemConfig) string {
 	var lines []string
+
 	lines = append(lines, "# System configuration")
 
 	if config.Hostname.Enabled && config.Hostname.Pattern != "" {
@@ -305,13 +307,14 @@ func (sg *ScriptGenerator) generateSystemConfigScript(config SystemConfig) strin
 	return strings.Join(lines, "\n")
 }
 
-// generateDirectoryScript generates directory creation script
+// generateDirectoryScript generates directory creation script.
 func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig) string {
 	if len(directories) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Directory creation")
 
 	for _, dir := range directories {
@@ -319,7 +322,7 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Create directory: %s", dir.Path))
+		lines = append(lines, "# Create directory: "+dir.Path)
 		lines = append(lines, fmt.Sprintf("DIR_PATH='%s'", dir.Path))
 		lines = append(lines, "DIR_PATH=$(echo \"${DIR_PATH}\" | envsubst)")
 		lines = append(lines, `log_info "Creating directory: ${DIR_PATH}"`)
@@ -335,6 +338,7 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 			if dir.Group != "" {
 				ownership += ":" + dir.Group
 			}
+
 			lines = append(lines, fmt.Sprintf(`sudo chown %s "${DIR_PATH}" 2>/dev/null || true`, ownership))
 		}
 
@@ -344,13 +348,14 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 	return strings.Join(lines, "\n")
 }
 
-// generateRepositoryScript generates APT repository setup
+// generateRepositoryScript generates APT repository setup.
 func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository) string {
 	if len(repositories) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# APT repository setup")
 
 	for _, repo := range repositories {
@@ -358,18 +363,20 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Add repository: %s", repo.Name))
+		lines = append(lines, "# Add repository: "+repo.Name)
 
 		// Download GPG key (atomic write)
 		if repo.GPGKey.URL != "" {
 			lines = append(lines, fmt.Sprintf("log_info 'Adding GPG key for %s repository'", repo.Name))
 			lines = append(lines, fmt.Sprintf("sudo mkdir -p $(dirname '%s')", repo.GPGKey.Dest))
+
 			lines = append(lines, "TMP_KEY=$(mktemp /tmp/ocfp-key-XXXXXX.gpg)")
 			if repo.GPGKey.Dearmor {
 				lines = append(lines, fmt.Sprintf("curl -fsSL '%s' | gpg --dearmor > \"$TMP_KEY\"", repo.GPGKey.URL))
 			} else {
 				lines = append(lines, fmt.Sprintf("curl -fsSL '%s' -o \"$TMP_KEY\"", repo.GPGKey.URL))
 			}
+
 			lines = append(lines, fmt.Sprintf("sudo install -m 0644 \"$TMP_KEY\" '%s'", repo.GPGKey.Dest))
 			lines = append(lines, "rm -f \"$TMP_KEY\"")
 			lines = append(lines, fmt.Sprintf("if [ -f '%s' ]; then log_success 'GPG key installed'; else log_error 'Failed to install GPG key'; fi", repo.GPGKey.Dest))
@@ -384,6 +391,7 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 			lines = append(lines, "rm -f \"$TMP_LIST\"")
 			lines = append(lines, fmt.Sprintf("if grep -qF '%s' '%s'; then log_success '%s repository added'; else log_error 'Failed to add %s repository'; fi", repo.SourceLine, repo.SourceFile, repo.Name, repo.Name))
 		}
+
 		lines = append(lines, "")
 	}
 
@@ -396,13 +404,14 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 	return strings.Join(lines, "\n")
 }
 
-// generatePackageScript generates package installation script
+// generatePackageScript generates package installation script.
 func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGroup) string {
 	if len(packages) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Package installation")
 
 	// Install packages by group
@@ -415,14 +424,16 @@ func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGrou
 
 		if len(group.Packages) > 0 {
 			pkgList := strings.Join(group.Packages, " ")
+
 			lines = append(lines, fmt.Sprintf("log_info 'Installing %s packages'", groupName))
-			lines = append(lines, fmt.Sprintf("sudo apt-get install -y %s", pkgList))
+			lines = append(lines, "sudo apt-get install -y "+pkgList)
 		}
 
 		if len(group.PipPackages) > 0 {
 			pipList := strings.Join(group.PipPackages, " ")
+
 			lines = append(lines, fmt.Sprintf("log_info 'Installing %s pip packages'", groupName))
-			lines = append(lines, fmt.Sprintf("pip3 install --user %s", pipList))
+			lines = append(lines, "pip3 install --user "+pipList)
 		}
 
 		// Verify packages
@@ -442,13 +453,14 @@ func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGrou
 	return strings.Join(lines, "\n")
 }
 
-// generateBinaryToolScript generates binary tool installation script
+// generateBinaryToolScript generates binary tool installation script.
 func (sg *ScriptGenerator) generateBinaryToolScript(tools []BinaryTool) string {
 	if len(tools) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Binary tool installation")
 
 	for _, tool := range tools {
@@ -456,7 +468,7 @@ func (sg *ScriptGenerator) generateBinaryToolScript(tools []BinaryTool) string {
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Install %s", tool.Name))
+		lines = append(lines, "# Install "+tool.Name)
 		lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
 
 		if tool.URL != "" {
@@ -518,13 +530,14 @@ func (sg *ScriptGenerator) generateBinaryToolScript(tools []BinaryTool) string {
 	return strings.Join(lines, "\n")
 }
 
-// generateGitRepositoryScript generates git repository cloning script
+// generateGitRepositoryScript generates git repository cloning script.
 func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) string {
 	if len(repos) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Git repository cloning")
 
 	for _, repo := range repos {
@@ -546,9 +559,11 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		if repo.Branch != "" {
 			cloneCmd += fmt.Sprintf(` -b "%s"`, repo.Branch)
 		}
+
 		if repo.Depth > 0 {
 			cloneCmd += fmt.Sprintf(` --depth %d`, repo.Depth)
 		}
+
 		cloneCmd += ` "${REPO_DEST}"`
 
 		lines = append(lines, cloneCmd)
@@ -561,13 +576,14 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 	return strings.Join(lines, "\n")
 }
 
-// generateGenesisDeploymentScript generates Genesis deployment initialization
+// generateGenesisDeploymentScript generates Genesis deployment initialization.
 func (sg *ScriptGenerator) generateGenesisDeploymentScript(deployments []GenesisDeployment) string {
 	if len(deployments) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Genesis deployment initialization")
 
 	for _, deployment := range deployments {
@@ -588,6 +604,7 @@ func (sg *ScriptGenerator) generateGenesisDeploymentScript(deployments []Genesis
 		if deployment.Branch != "" {
 			initCmd += fmt.Sprintf(` --kit-version "%s"`, deployment.Branch)
 		}
+
 		initCmd += fmt.Sprintf(` "%s"`, deployment.Name)
 
 		lines = append(lines, initCmd)
@@ -598,13 +615,14 @@ func (sg *ScriptGenerator) generateGenesisDeploymentScript(deployments []Genesis
 	return strings.Join(lines, "\n")
 }
 
-// generateCustomScriptSection generates custom script execution
+// generateCustomScriptSection generates custom script execution.
 func (sg *ScriptGenerator) generateCustomScriptSection(scripts []CustomScript) string {
 	if len(scripts) == 0 {
 		return ""
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Custom script execution")
 
 	for _, script := range scripts {
@@ -612,7 +630,7 @@ func (sg *ScriptGenerator) generateCustomScriptSection(scripts []CustomScript) s
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Execute custom script: %s", script.Name))
+		lines = append(lines, "# Execute custom script: "+script.Name)
 		lines = append(lines, fmt.Sprintf("log_info 'Executing custom script: %s'", script.Name))
 
 		if script.Content != "" {
@@ -639,7 +657,7 @@ func (sg *ScriptGenerator) generateCustomScriptSection(scripts []CustomScript) s
 	return strings.Join(lines, "\n")
 }
 
-// generateScriptFooter generates the script footer
+// generateScriptFooter generates the script footer.
 func (sg *ScriptGenerator) generateScriptFooter() string {
 	return `# Provisioning completed
 log_success "Bastion provisioning completed successfully at $(date)"
@@ -651,7 +669,7 @@ touch "${HOME}/.ocfp/provisioned"
 echo "$(date)" > "${HOME}/.ocfp/provisioned"`
 }
 
-// shouldSkipCondition evaluates whether a condition should be skipped
+// shouldSkipCondition evaluates whether a condition should be skipped.
 func (sg *ScriptGenerator) shouldSkipCondition(condition string) bool {
 	if condition == "" {
 		return false
@@ -676,7 +694,7 @@ func (sg *ScriptGenerator) shouldSkipCondition(condition string) bool {
 	}
 }
 
-// performVariableSubstitution performs variable substitution in the script
+// performVariableSubstitution performs variable substitution in the script.
 func (sg *ScriptGenerator) performVariableSubstitution(script string, envVars map[string]string) string {
 	// Add standard variables
 	vars := map[string]string{
@@ -699,6 +717,7 @@ func (sg *ScriptGenerator) performVariableSubstitution(script string, envVars ma
 			if val, ok := vars[key]; ok {
 				return val
 			}
+
 			return "${" + key + "}"
 		},
 	}
@@ -715,6 +734,7 @@ func (sg *ScriptGenerator) performVariableSubstitution(script string, envVars ma
 		}
 
 		varName := parts[1]
+
 		defaultValue := ""
 		if len(parts) > 2 {
 			defaultValue = parts[2]

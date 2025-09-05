@@ -5,7 +5,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// RegisterCommands adds all subcommands to the root command
+// RegisterCommands adds all subcommands to the root command.
 func RegisterCommands(root *cobra.Command) {
 	// Core provisioning commands
 	root.AddCommand(commands.NewBootstrapCmd())

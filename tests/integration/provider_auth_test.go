@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderAuthenticationFlow tests the complete authentication flow
+// TestProviderAuthenticationFlow tests the complete authentication flow.
 func TestProviderAuthenticationFlow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping provider authentication integration tests in short mode")
@@ -161,6 +161,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -174,7 +175,7 @@ blocs:
 	})
 }
 
-// TestProviderValidationFlow tests provider validation logic
+// TestProviderValidationFlow tests provider validation logic.
 func TestProviderValidationFlow(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -206,6 +207,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		providers := []string{"stackit", "aws", "openstack", "gcp", "azure"}
@@ -232,6 +234,7 @@ blocs:
 		// Test provider selection via environment variable
 		_ = os.Setenv("OCFP_PROVIDER", "aws")
 		_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
+
 		defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
 		defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
 
@@ -249,6 +252,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -274,6 +278,7 @@ blocs:
 		require.NoError(t, err)
 
 		_ = os.Setenv("OCFP_CONFIG", configFile)
+
 		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
 
 		cmd := commands.NewProviderCmd()
@@ -285,7 +290,7 @@ blocs:
 	})
 }
 
-// TestProviderNetworkFlow tests network-related provider functionality
+// TestProviderNetworkFlow tests network-related provider functionality.
 func TestProviderNetworkFlow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping network flow tests in short mode")
@@ -359,7 +364,7 @@ func TestProviderNetworkFlow(t *testing.T) {
 	})
 }
 
-// TestProviderCredentialDiscovery tests credential discovery mechanisms
+// TestProviderCredentialDiscovery tests credential discovery mechanisms.
 func TestProviderCredentialDiscovery(t *testing.T) {
 	tmpDir := t.TempDir()
 

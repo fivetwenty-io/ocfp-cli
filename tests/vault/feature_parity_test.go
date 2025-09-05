@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFeatureParitySTACKIT tests that Go implementation provides feature parity with Perl for STACKIT
+// TestFeatureParitySTACKIT tests that Go implementation provides feature parity with Perl for STACKIT.
 func TestFeatureParitySTACKIT(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping feature parity tests")
@@ -22,8 +22,10 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	// Create vault manager
 	manager, err := vault.NewManagerFromEnv(cfg, blocName)
 	require.NoError(t, err)
+
 	defer func() {
-		if err := manager.Close(); err != nil {
+		err := manager.Close()
+		if err != nil {
 			t.Errorf("Failed to close manager: %v", err)
 		}
 	}()
@@ -143,7 +145,7 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	})
 }
 
-// TestStackitProviderSpecific tests STACKIT-specific vault functionality
+// TestStackitProviderSpecific tests STACKIT-specific vault functionality.
 func TestStackitProviderSpecific(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping STACKIT provider tests")
@@ -151,8 +153,10 @@ func TestStackitProviderSpecific(t *testing.T) {
 
 	cfg := createStackitTestConfig()
 	client := createTestClient(t)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -187,7 +191,7 @@ func TestStackitProviderSpecific(t *testing.T) {
 	})
 }
 
-// TestIntegrationWorkflow tests complete end-to-end workflow
+// TestIntegrationWorkflow tests complete end-to-end workflow.
 func TestIntegrationWorkflow(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration workflow tests")
@@ -200,8 +204,10 @@ func TestIntegrationWorkflow(t *testing.T) {
 		// Step 1: Initialize vault manager
 		manager, err := vault.NewManagerFromEnv(cfg, blocName)
 		require.NoError(t, err)
+
 		defer func() {
-			if err := manager.Close(); err != nil {
+			err := manager.Close()
+			if err != nil {
 				t.Errorf("Failed to close manager: %v", err)
 			}
 		}()
@@ -241,7 +247,7 @@ func TestIntegrationWorkflow(t *testing.T) {
 	})
 }
 
-// createStackitTestConfig creates a test configuration for STACKIT
+// createStackitTestConfig creates a test configuration for STACKIT.
 func createStackitTestConfig() *config.Config {
 	return &config.Config{
 		Name:                "stackit-test",

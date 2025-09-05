@@ -1,6 +1,6 @@
 package provision
 
-// SystemConfig holds system-level configuration
+// SystemConfig holds system-level configuration.
 type SystemConfig struct {
 	Hostname    HostnameConfig `yaml:"hostname"`
 	WaitTime    int            `yaml:"waitTime"`
@@ -9,13 +9,13 @@ type SystemConfig struct {
 	UpdateCache bool           `yaml:"updateCache"`
 }
 
-// HostnameConfig configures hostname settings
+// HostnameConfig configures hostname settings.
 type HostnameConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Pattern string `yaml:"pattern"`
 }
 
-// DirectoryConfig defines a directory to create
+// DirectoryConfig defines a directory to create.
 type DirectoryConfig struct {
 	Path      string `yaml:"path"`
 	Mode      uint32 `yaml:"mode"`
@@ -24,7 +24,7 @@ type DirectoryConfig struct {
 	Condition string `yaml:"condition"`
 }
 
-// PackageGroup defines a group of packages to install
+// PackageGroup defines a group of packages to install.
 type PackageGroup struct {
 	Enabled     bool     `yaml:"enabled"`
 	Condition   string   `yaml:"condition"`
@@ -35,7 +35,7 @@ type PackageGroup struct {
 	PostInstall string   `yaml:"postInstall"`
 }
 
-// GenesisDeployment defines a Genesis deployment to initialize
+// GenesisDeployment defines a Genesis deployment to initialize.
 type GenesisDeployment struct {
 	Name      string `yaml:"name"`
 	Kit       string `yaml:"kit"`
@@ -45,7 +45,7 @@ type GenesisDeployment struct {
 	Condition string `yaml:"condition"`
 }
 
-// BinaryTool defines a binary tool to download and install
+// BinaryTool defines a binary tool to download and install.
 type BinaryTool struct {
 	Name           string `yaml:"name"`
 	Enabled        bool   `yaml:"enabled"`
@@ -62,7 +62,7 @@ type BinaryTool struct {
 	Sudo           bool   `yaml:"sudo"`
 }
 
-// APTRepository defines an APT repository to add
+// APTRepository defines an APT repository to add.
 type APTRepository struct {
 	Name       string `yaml:"name"`
 	Enabled    bool   `yaml:"enabled"`
@@ -72,14 +72,14 @@ type APTRepository struct {
 	SourceFile string `yaml:"sourceFile"`
 }
 
-// GPGKey defines GPG key configuration
+// GPGKey defines GPG key configuration.
 type GPGKey struct {
 	URL     string `yaml:"url"`
 	Dest    string `yaml:"dest"`
 	Dearmor bool   `yaml:"dearmor"`
 }
 
-// GitRepository defines a Git repository to clone
+// GitRepository defines a Git repository to clone.
 type GitRepository struct {
 	Name      string `yaml:"name"`
 	Enabled   bool   `yaml:"enabled"`
@@ -90,7 +90,7 @@ type GitRepository struct {
 	Depth     int    `yaml:"depth"`
 }
 
-// CustomScript defines a custom script to execute
+// CustomScript defines a custom script to execute.
 type CustomScript struct {
 	Name      string `yaml:"name"`
 	Enabled   bool   `yaml:"enabled"`
@@ -101,7 +101,7 @@ type CustomScript struct {
 	Execute   bool   `yaml:"execute"`
 }
 
-// ProvisionConfig defines the interface for provisioning configuration
+// ProvisionConfig defines the interface for provisioning configuration.
 type ProvisionConfig interface {
 	GetSystemConfig() SystemConfig
 	GetDirectories() []DirectoryConfig

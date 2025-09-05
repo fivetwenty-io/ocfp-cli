@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NewBootstrapCmd creates the bootstrap command
+// NewBootstrapCmd creates the bootstrap command.
 func NewBootstrapCmd() *cobra.Command {
 	var (
 		blocs  string
@@ -70,6 +70,7 @@ This includes:
 func runBootstrap(cmd *cobra.Command, args []string) error {
 	// Determine blocs to run for
 	blocsFlag := viper.GetString("bootstrap.blocs")
+
 	configFile := viper.GetString("config")
 	if configFile == "" {
 		// Prefer the file viper loaded if any
@@ -81,22 +82,28 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	if blocsFlag == "" || blocsFlag == "all" {
 		// Run for all blocs in the config file
 		// Fallback to single bloc via --bloc if config has no blocs
-		if err := runBootstrapForSelection(configFile, nil); err != nil {
+		err := runBootstrapForSelection(configFile, nil)
+		if err != nil {
 			return err
 		}
+
 		return nil
 	}
 
 	// Run for explicit list of blocs
 	sel := []string{}
+
 	for _, blocName := range splitAndTrim(blocsFlag) {
 		if blocName != "" {
 			sel = append(sel, blocName)
 		}
 	}
-	if err := runBootstrapForSelection(configFile, sel); err != nil {
+	err := runBootstrapForSelection(configFile, sel)
+
+	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -114,23 +121,27 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}
+
 	var configData struct {
 		Blocs map[string]interface{} `yaml:"blocs"`
 	}
 	if err := yaml.Unmarshal(data, &configData); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", configFile, err)
 	}
+
 	if len(configData.Blocs) == 0 {
 		// No blocs defined; try single via --bloc
 		single := viper.GetString("bloc_name")
 		if single == "" {
-			return fmt.Errorf("no blocs found in config and --bloc not provided")
+			return errors.New("no blocs found in config and --bloc not provided")
 		}
+
 		return runBootstrapForBloc(configFile, single)
 	}
 
 	// Build list to run
 	toRun := []string{}
+
 	if len(selected) == 0 {
 		for blocName := range configData.Blocs {
 			toRun = append(toRun, blocName)
@@ -141,21 +152,25 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 		for _, blocName := range selected {
 			want[blocName] = true
 		}
+
 		for blocName := range configData.Blocs {
 			if want[blocName] {
 				toRun = append(toRun, blocName)
 			}
 		}
+
 		if len(toRun) == 0 {
-			return fmt.Errorf("no matching blocs found for selection")
+			return errors.New("no matching blocs found for selection")
 		}
 	}
 
 	for _, name := range toRun {
-		if err := runBootstrapForBloc(configFile, name); err != nil {
+		err := runBootstrapForBloc(configFile, name)
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -163,7 +178,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	force := viper.GetBool("bootstrap.force")
 
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 	// Provider will be derived from bloc configuration
 
@@ -182,6 +197,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	}); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
+
 	defer func() { _ = logger.Sync() }()
 
 	// Load configuration for this bloc
@@ -195,9 +211,11 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	if iaas == "" {
 		iaas = cfg.IaaS
 	}
+
 	if iaas == "" {
 		return fmt.Errorf("provider must be specified in bloc config '%s'", blocName)
 	}
+
 	region := cfg.Region
 	if v := viper.GetString("region"); v != "" {
 		region = v
@@ -215,6 +233,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	if cfg.ServiceAccountJSON != "" {
 		providerConfig["service_account_json"] = cfg.ServiceAccountJSON
 	}
+
 	if cfg.ServiceAccountToken != "" {
 		providerConfig["service_account_token"] = cfg.ServiceAccountToken
 	}
@@ -234,6 +253,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create provider: %w", err)
 	}
+
 	defer func() { _ = provider.Cleanup(context.Background()) }()
 
 	// Initialize state manager
@@ -259,28 +279,35 @@ func runBootstrapForBloc(configFile, blocName string) error {
 	if err := bootstrapManager.Execute(ctx); err != nil {
 		return fmt.Errorf("bootstrap failed for bloc %s: %w", blocName, err)
 	}
+
 	if err := stateManager.Save(); err != nil {
 		logger.Warnf("Failed to save final state for %s: %v", blocName, err)
 	}
+
 	fmt.Printf("\n✅ Bootstrap completed: bloc=%s provider=%s region=%s\n", blocName, iaas, region)
+
 	return nil
 }
 
 func splitAndTrim(input string) []string {
 	parts := []string{}
 	curr := ""
-	for charIndex := 0; charIndex < len(input); charIndex++ {
+
+	for charIndex := range len(input) {
 		if input[charIndex] == ',' {
 			if curr != "" {
 				parts = append(parts, strings.TrimSpace(curr))
 			}
+
 			curr = ""
 		} else {
 			curr += string(input[charIndex])
 		}
 	}
+
 	if curr != "" {
 		parts = append(parts, strings.TrimSpace(curr))
 	}
+
 	return parts
 }

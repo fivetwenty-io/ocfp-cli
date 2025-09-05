@@ -16,7 +16,7 @@ import (
 )
 
 // Manager provides core vault management operations
-// This is the Go equivalent of OCFP::Vault::Manager from Perl
+// This is the Go equivalent of OCFP::Vault::Manager from Perl.
 type Manager struct {
 	client    *Client
 	safe      *Safe
@@ -26,7 +26,7 @@ type Manager struct {
 	logger    *zap.SugaredLogger
 }
 
-// NewManager creates a new vault manager instance
+// NewManager creates a new vault manager instance.
 func NewManager(cfg *config.Config, blocName string) (*Manager, error) {
 	client, err := NewClientFromConfig(cfg)
 	if err != nil {
@@ -45,7 +45,7 @@ func NewManager(cfg *config.Config, blocName string) (*Manager, error) {
 	}, nil
 }
 
-// NewManagerFromEnv creates a manager using environment variables
+// NewManagerFromEnv creates a manager using environment variables.
 func NewManagerFromEnv(cfg *config.Config, blocName string) (*Manager, error) {
 	client, err := NewClientFromEnv()
 	if err != nil {
@@ -64,7 +64,7 @@ func NewManagerFromEnv(cfg *config.Config, blocName string) (*Manager, error) {
 	}, nil
 }
 
-// PopulateOptions holds options for the populate operation
+// PopulateOptions holds options for the populate operation.
 type PopulateOptions struct {
 	Subcommand string
 	DryRun     bool
@@ -72,17 +72,19 @@ type PopulateOptions struct {
 }
 
 // Populate performs vault populate operation
-// This is the Go equivalent of the populate method in OCFP::Vault::Manager
+// This is the Go equivalent of the populate method in OCFP::Vault::Manager.
 func (m *Manager) Populate(opts *PopulateOptions) error {
 	m.logger.Info("Starting vault populate", "provider", m.config.Provider)
 
 	if opts.DryRun {
 		m.logger.Info("[DRY RUN] Would populate vault configuration")
+
 		return nil
 	}
 
 	// Validate vault connection
-	if err := m.client.ValidateConnection(); err != nil {
+	err := m.client.ValidateConnection()
+	if err != nil {
 		return fmt.Errorf("vault connection validation failed: %w", err)
 	}
 
@@ -98,17 +100,17 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 	}
 }
 
-// MigrateOptions holds options for the migrate operation
+// MigrateOptions holds options for the migrate operation.
 type MigrateOptions struct {
 	DryRun bool
 	Force  bool
 }
 
 // Migrate performs vault migration from inception to production
-// This is the Go equivalent of the migrate method in OCFP::Vault::Manager
+// This is the Go equivalent of the migrate method in OCFP::Vault::Manager.
 func (m *Manager) Migrate(opts *MigrateOptions) error {
 	if m.blocName == "" {
-		return fmt.Errorf("bloc_name is required for vault migrate operation")
+		return errors.New("bloc_name is required for vault migrate operation")
 	}
 
 	inceptionName := m.getInceptionVaultName()
@@ -116,7 +118,8 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 
 	// Step 1: Validate targets
 	if !opts.DryRun {
-		if err := m.validateTargets(inceptionName, m.blocName); err != nil {
+		err := m.validateTargets(inceptionName, m.blocName)
+		if err != nil {
 			return fmt.Errorf("target validation failed: %w", err)
 		}
 	} else {
@@ -125,7 +128,8 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 
 	// Step 2: Export/Import
 	if !opts.DryRun {
-		if err := m.exportImportVault(inceptionName, m.blocName+"-mgmt"); err != nil {
+		err := m.exportImportVault(inceptionName, m.blocName+"-mgmt")
+		if err != nil {
 			return fmt.Errorf("export/import failed: %w", err)
 		}
 	} else {
@@ -134,7 +138,8 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 
 	// Step 3: Validate migration
 	if !opts.DryRun {
-		if err := m.validateMigration(inceptionName, m.blocName+"-mgmt"); err != nil {
+		err := m.validateMigration(inceptionName, m.blocName+"-mgmt")
+		if err != nil {
 			return fmt.Errorf("migration validation failed: %w", err)
 		}
 	} else {
@@ -148,7 +153,8 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 			m.logger.Info("Would prompt for confirmation to decommission inception vault")
 		}
 
-		if err := m.decommissionInception(inceptionName); err != nil {
+		err := m.decommissionInception(inceptionName)
+		if err != nil {
 			return fmt.Errorf("decommission failed: %w", err)
 		}
 	} else {
@@ -157,7 +163,8 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 
 	// Step 5: Update environment secrets-providers
 	if !opts.DryRun {
-		if err := m.updateEnvironmentSecrets(); err != nil {
+		err := m.updateEnvironmentSecrets()
+		if err != nil {
 			return fmt.Errorf("environment update failed: %w", err)
 		}
 	} else {
@@ -166,18 +173,20 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 
 	duration := time.Since(m.startTime)
 	m.logger.Info("Vault migration completed", "duration", duration)
+
 	return nil
 }
 
-// getInceptionVaultName returns the inception vault name
+// getInceptionVaultName returns the inception vault name.
 func (m *Manager) getInceptionVaultName() string {
 	if m.blocName != "" {
 		return m.blocName + "-inception"
 	}
+
 	return "inception"
 }
 
-// populateFullConfiguration performs full vault configuration
+// populateFullConfiguration performs full vault configuration.
 func (m *Manager) populateFullConfiguration() error {
 	m.logger.Info("Populating full vault configuration", "provider", m.config.Provider)
 
@@ -193,10 +202,11 @@ func (m *Manager) populateFullConfiguration() error {
 	}
 
 	m.logger.Info("Full vault configuration completed")
+
 	return nil
 }
 
-// populatePublicIPs populates public IP information to vault
+// populatePublicIPs populates public IP information to vault.
 func (m *Manager) populatePublicIPs() error {
 	m.logger.Info("Populating public IPs to vault", "provider", m.config.Provider)
 
@@ -212,10 +222,11 @@ func (m *Manager) populatePublicIPs() error {
 	}
 
 	m.logger.Info("Public IPs population completed")
+
 	return nil
 }
 
-// validateTargets validates that both inception and production vaults are accessible
+// validateTargets validates that both inception and production vaults are accessible.
 func (m *Manager) validateTargets(inceptionName, productionName string) error {
 	m.logger.Info("Validating vault targets", "inception", inceptionName, "production", productionName)
 
@@ -223,8 +234,8 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 	validator := NewValidator(m.client, m.safe, m.config)
 
 	// Perform comprehensive pre-migration health check
-	inceptionPath := fmt.Sprintf("secret/%s", inceptionName)
-	productionPath := fmt.Sprintf("secret/config/%s", productionName)
+	inceptionPath := "secret/" + inceptionName
+	productionPath := "secret/config/" + productionName
 
 	result, err := validator.PreMigrationHealthCheck(inceptionPath, productionPath)
 	if err != nil {
@@ -241,9 +252,11 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 		for _, errMsg := range result.Errors {
 			m.logger.Error("Validation error", "error", errMsg)
 		}
+
 		if result.Suggestion != "" {
 			m.logger.Info("Suggestion", "suggestion", result.Suggestion)
 		}
+
 		return fmt.Errorf("validation failed with %d errors", len(result.Errors))
 	}
 
@@ -256,16 +269,17 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 	return nil
 }
 
-// exportImportVault exports secrets from inception and imports to production
+// exportImportVault exports secrets from inception and imports to production.
 func (m *Manager) exportImportVault(inceptionName, productionName string) error {
 	m.logger.Info("Exporting from inception vault", "vault", inceptionName)
 
 	// Create validator for rollback capability
 	validator := NewValidator(m.client, m.safe, m.config)
-	productionPath := fmt.Sprintf("secret/config/%s", productionName)
+	productionPath := "secret/config/" + productionName
 
 	// Create rollback point before making changes
 	m.logger.Info("Creating rollback point before migration")
+
 	rollback, err := validator.CreateRollbackPoint([]string{productionPath})
 	if err != nil {
 		m.logger.Warn("Failed to create rollback point", "error", err)
@@ -273,7 +287,8 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 	}
 
 	// Export from inception
-	inceptionPath := fmt.Sprintf("secret/%s", inceptionName)
+	inceptionPath := "secret/" + inceptionName
+
 	secrets, err := m.safe.Export(inceptionPath)
 	if err != nil {
 		return fmt.Errorf("failed to export from inception: %w", err)
@@ -288,12 +303,17 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 		// Attempt rollback on failure
 		if rollback != nil {
 			m.logger.Error("Import failed, attempting rollback", "error", err)
-			if rollbackErr := validator.ExecuteRollback(rollback); rollbackErr != nil {
+			rollbackErr := validator.ExecuteRollback(rollback)
+
+			if rollbackErr != nil {
 				m.logger.Error("Rollback also failed", "rollback_error", rollbackErr)
+
 				return fmt.Errorf("import failed and rollback failed: import=%w, rollback=%w", err, rollbackErr)
 			}
+
 			m.logger.Info("Rollback completed successfully")
 		}
+
 		return fmt.Errorf("failed to import to production: %w", err)
 	}
 
@@ -307,18 +327,20 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 	return nil
 }
 
-// validateMigration validates that all secrets were migrated correctly using checksums
+// validateMigration validates that all secrets were migrated correctly using checksums.
 func (m *Manager) validateMigration(inceptionName, productionName string) error {
 	m.logger.Info("Validating migration with checksums")
 
 	// Export from both vaults
-	inceptionPath := fmt.Sprintf("secret/%s", inceptionName)
+	inceptionPath := "secret/" + inceptionName
+
 	inceptionSecrets, err := m.safe.Export(inceptionPath)
 	if err != nil {
 		return fmt.Errorf("failed to export inception for validation: %w", err)
 	}
 
-	productionPath := fmt.Sprintf("secret/config/%s", productionName)
+	productionPath := "secret/config/" + productionName
+
 	productionSecrets, err := m.safe.Export(productionPath)
 	if err != nil {
 		return fmt.Errorf("failed to export production for validation: %w", err)
@@ -342,10 +364,11 @@ func (m *Manager) validateMigration(inceptionName, productionName string) error 
 	}
 
 	m.logger.Info("Migration validation successful", "checksum", inceptionChecksum[:8])
+
 	return nil
 }
 
-// calculateChecksum calculates SHA256 checksum of secret data
+// calculateChecksum calculates SHA256 checksum of secret data.
 func (m *Manager) calculateChecksum(secrets map[string]interface{}) (string, error) {
 	// Convert to JSON for consistent hashing
 	jsonData, err := json.Marshal(secrets)
@@ -355,14 +378,15 @@ func (m *Manager) calculateChecksum(secrets map[string]interface{}) (string, err
 
 	// Calculate SHA256
 	hash := sha256.Sum256(jsonData)
+
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// decommissionInception safely removes the inception vault
+// decommissionInception safely removes the inception vault.
 func (m *Manager) decommissionInception(inceptionName string) error {
 	m.logger.Info("Decommissioning inception vault", "vault", inceptionName)
 
-	inceptionPath := fmt.Sprintf("secret/%s", inceptionName)
+	inceptionPath := "secret/" + inceptionName
 
 	// List all paths under inception
 	paths, err := m.safe.List(inceptionPath)
@@ -373,7 +397,8 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	// Delete each path
 	for _, path := range paths {
 		fullPath := fmt.Sprintf("%s/%s", inceptionPath, strings.TrimSuffix(path, "/"))
-		if err := m.safe.Delete(fullPath, ""); err != nil {
+		err := m.safe.Delete(fullPath, "")
+		if err != nil {
 			m.logger.Warn("Failed to delete path", "path", fullPath, "error", err)
 		} else {
 			m.logger.Debug("Deleted path", "path", fullPath)
@@ -386,10 +411,11 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	}
 
 	m.logger.Info("Inception vault decommissioned", "vault", inceptionName)
+
 	return nil
 }
 
-// updateEnvironmentSecrets updates environment secrets-providers configuration
+// updateEnvironmentSecrets updates environment secrets-providers configuration.
 func (m *Manager) updateEnvironmentSecrets() error {
 	m.logger.Info("Updating environment secrets-providers")
 
@@ -409,33 +435,36 @@ func (m *Manager) updateEnvironmentSecrets() error {
 	}
 
 	// Update Genesis environment files
-	if err := genesis.UpdateEnvironmentSecrets(vaultURL, vaultToken); err != nil {
+	err := genesis.UpdateEnvironmentSecrets(vaultURL, vaultToken)
+	if err != nil {
 		return fmt.Errorf("failed to update Genesis environment secrets: %w", err)
 	}
 
 	m.logger.Info("Environment secrets-providers updated successfully")
+
 	return nil
 }
 
-// Close cleans up the manager
+// Close cleans up the manager.
 func (m *Manager) Close() error {
 	if m.client != nil {
 		return m.client.Close()
 	}
+
 	return nil
 }
 
-// GetSafe returns the safe wrapper for direct operations
+// GetSafe returns the safe wrapper for direct operations.
 func (m *Manager) GetSafe() *Safe {
 	return m.safe
 }
 
-// GetClient returns the vault client for advanced operations
+// GetClient returns the vault client for advanced operations.
 func (m *Manager) GetClient() *Client {
 	return m.client
 }
 
-// createVaultProvider creates a provider-specific vault implementation
+// createVaultProvider creates a provider-specific vault implementation.
 func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 	switch strings.ToLower(m.config.Provider) {
 	case "stackit":

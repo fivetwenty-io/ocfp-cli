@@ -7,7 +7,7 @@ import (
 )
 
 // VaultProvider defines the interface that all cloud providers must implement
-// for vault-related operations
+// for vault-related operations.
 type VaultProvider interface {
 	// Configure performs full vault configuration for the provider
 	Configure() error
@@ -41,13 +41,13 @@ type VaultProvider interface {
 }
 
 // BaseVaultProvider provides common functionality for all providers
-// Note: This is now just the interface - implementations need to embed their own Safe and PathBuilder
+// Note: This is now just the interface - implementations need to embed their own Safe and PathBuilder.
 type BaseVaultProvider struct {
 	Config   *config.Config
 	BlocName string
 }
 
-// NewBaseVaultProvider creates a new base provider (lightweight now)
+// NewBaseVaultProvider creates a new base provider (lightweight now).
 func NewBaseVaultProvider(cfg *config.Config, blocName string) *BaseVaultProvider {
 	return &BaseVaultProvider{
 		Config:   cfg,
@@ -55,7 +55,7 @@ func NewBaseVaultProvider(cfg *config.Config, blocName string) *BaseVaultProvide
 	}
 }
 
-// NotImplementedError is a helper for unimplemented methods
+// NotImplementedError is a helper for unimplemented methods.
 func (b *BaseVaultProvider) NotImplementedError(method string) error {
 	return &NotImplementedError{
 		Provider: b.GetProviderName(),
@@ -63,7 +63,7 @@ func (b *BaseVaultProvider) NotImplementedError(method string) error {
 	}
 }
 
-// NotImplementedError represents an unimplemented method error
+// NotImplementedError represents an unimplemented method error.
 type NotImplementedError struct {
 	Provider string
 	Method   string
@@ -73,7 +73,7 @@ func (e *NotImplementedError) Error() string {
 	return fmt.Sprintf("%s provider: %s method not implemented", e.Provider, e.Method)
 }
 
-// GetProviderName returns a default provider name (should be overridden)
+// GetProviderName returns a default provider name (should be overridden).
 func (b *BaseVaultProvider) GetProviderName() string {
 	return "unknown"
 }

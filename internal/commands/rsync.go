@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewRSyncCmd creates the rsync command
+// NewRSyncCmd creates the rsync command.
 func NewRSyncCmd() *cobra.Command {
 	var (
 		user         string
@@ -111,7 +111,7 @@ func runRSync(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 
 	// Load configuration; provider and region come from bloc config
@@ -119,8 +119,9 @@ func runRSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return fmt.Errorf("provider must be specified in bloc config")
+		return errors.New("provider must be specified in bloc config")
 	}
 
 	// Initialize provider using bloc configuration
@@ -128,6 +129,7 @@ func runRSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
 	}
+
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
@@ -164,6 +166,7 @@ func runRSync(cmd *cobra.Command, args []string) error {
 	} else {
 		log.Infof("Synchronizing: %s -> %s", source, destination)
 	}
+
 	log.Debugf("Using SSH key: %s", keyPath)
 	log.Debugf("Bastion IP: %s", bastionIP)
 
@@ -171,13 +174,13 @@ func runRSync(cmd *cobra.Command, args []string) error {
 	return executeRSync(rsyncCmd)
 }
 
-// getBastionIPForRSync retrieves the bastion host's public IP address
+// getBastionIPForRSync retrieves the bastion host's public IP address.
 func getBastionIPForRSync(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	// Delegate to shared helper for robust lookup
 	return findBastionIP(ctx, provider, blocName)
 }
 
-// findSSHKeyForRSync locates the SSH private key
+// findSSHKeyForRSync locates the SSH private key.
 func findSSHKeyForRSync(blocName string, cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKeyForRSync")
 
@@ -197,18 +200,21 @@ func findSSHKeyForRSync(blocName string, cfg *config.Config) (string, error) {
 	for _, path := range searchPaths {
 		if _, err := os.Stat(path); err == nil {
 			log.Debugf("Found SSH key at: %s", path)
+
 			return path, nil
 		}
 	}
 
 	// Try to find any key with bastion in the name
 	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+
 	entries, err := os.ReadDir(sshDir)
 	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
 				path := filepath.Join(sshDir, entry.Name())
 				log.Debugf("Found SSH key at: %s", path)
+
 				return path, nil
 			}
 		}
@@ -217,7 +223,7 @@ func findSSHKeyForRSync(blocName string, cfg *config.Config) (string, error) {
 	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
 }
 
-// verifySSHKeyForRSync checks if the SSH key exists and has correct permissions
+// verifySSHKeyForRSync checks if the SSH key exists and has correct permissions.
 func verifySSHKeyForRSync(keyPath string) error {
 	info, err := os.Stat(keyPath)
 	if err != nil {
@@ -228,44 +234,51 @@ func verifySSHKeyForRSync(keyPath string) error {
 	mode := info.Mode()
 	if mode.Perm()&0077 != 0 {
 		// Try to fix permissions
-		if err := os.Chmod(keyPath, 0600); err != nil {
+		err := os.Chmod(keyPath, 0600)
+		if err != nil {
 			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
 		}
+
 		logger.WithOperation("verifySSHKeyForRSync").Warnf("Fixed SSH key permissions for: %s", keyPath)
 	}
 
 	return nil
 }
 
-// processRSyncPath converts bastion: references to proper rsync format
+// processRSyncPath converts bastion: references to proper rsync format.
 func processRSyncPath(path, bastionIP, user string) string {
 	if strings.HasPrefix(path, "bastion:") {
 		// Replace bastion: with user@bastionIP:
 		remotePath := strings.TrimPrefix(path, "bastion:")
+
 		return fmt.Sprintf("%s@%s:%s", user, bastionIP, remotePath)
 	}
+
 	return path
 }
 
-// buildRSyncCommand constructs the rsync command with all options
+// buildRSyncCommand constructs the rsync command with all options.
 func buildRSyncCommand(source, destination, keyPath string, archive, compress, verbose,
 	deleteFlag, dryRun bool, exclude, include []string, extraOptions string) []string {
-
 	cmd := []string{"rsync"}
 
 	// Add flags
 	if archive {
 		cmd = append(cmd, "-a")
 	}
+
 	if compress {
 		cmd = append(cmd, "-z")
 	}
+
 	if verbose {
 		cmd = append(cmd, "-v")
 	}
+
 	if deleteFlag {
 		cmd = append(cmd, "--delete")
 	}
+
 	if dryRun {
 		cmd = append(cmd, "--dry-run")
 	}
@@ -276,8 +289,9 @@ func buildRSyncCommand(source, destination, keyPath string, archive, compress, v
 	// Add SSH options
 	sshCmd := "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR"
 	if keyPath != "" {
-		sshCmd += fmt.Sprintf(" -i %s", keyPath)
+		sshCmd += " -i " + keyPath
 	}
+
 	cmd = append(cmd, "-e", sshCmd)
 
 	// Add exclude patterns
@@ -302,14 +316,14 @@ func buildRSyncCommand(source, destination, keyPath string, archive, compress, v
 	return cmd
 }
 
-// executeRSync executes the rsync command
+// executeRSync executes the rsync command.
 func executeRSync(rsyncCmd []string) error {
 	log := logger.WithOperation("executeRSync")
 	log.Debugf("Executing: %s", strings.Join(rsyncCmd, " "))
 
 	// Validate that the command is rsync
 	if len(rsyncCmd) == 0 || rsyncCmd[0] != "rsync" {
-		return fmt.Errorf("invalid rsync command")
+		return errors.New("invalid rsync command")
 	}
 
 	cmd := exec.Command(rsyncCmd[0], rsyncCmd[1:]...) // #nosec G204 - command is validated above

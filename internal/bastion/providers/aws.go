@@ -10,13 +10,13 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// AWSBastionInit implements bastion initialization for AWS
+// AWSBastionInit implements bastion initialization for AWS.
 type AWSBastionInit struct {
 	config *config.Config
 	log    logger.Logger
 }
 
-// NewAWSBastionInit creates a new AWS bastion initializer
+// NewAWSBastionInit creates a new AWS bastion initializer.
 func NewAWSBastionInit(cfg *config.Config) *AWSBastionInit {
 	return &AWSBastionInit{
 		config: cfg,
@@ -24,26 +24,26 @@ func NewAWSBastionInit(cfg *config.Config) *AWSBastionInit {
 	}
 }
 
-// Validate validates the AWS configuration
+// Validate validates the AWS configuration.
 func (a *AWSBastionInit) Validate() error {
 	a.log.Debug("Validating AWS configuration")
 
 	if a.config.AccessKeyID == "" {
-		return fmt.Errorf("AWS access key ID is required")
+		return errors.New("AWS access key ID is required")
 	}
 
 	if a.config.SecretAccessKey == "" {
-		return fmt.Errorf("AWS secret access key is required")
+		return errors.New("AWS secret access key is required")
 	}
 
 	if a.config.Region == "" {
-		return fmt.Errorf("AWS region is required")
+		return errors.New("AWS region is required")
 	}
 
 	return nil
 }
 
-// PrepareEnvironment prepares AWS-specific environment variables
+// PrepareEnvironment prepares AWS-specific environment variables.
 func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 	env := make(map[string]string)
 
@@ -73,12 +73,15 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 		if a.config.Bastion.Genesis.Branch != "" {
 			env["GENESIS_BRANCH"] = a.config.Bastion.Genesis.Branch
 		}
+
 		if a.config.Bastion.Genesis.Commit != "" {
 			env["GENESIS_COMMIT"] = a.config.Bastion.Genesis.Commit
 		}
+
 		if a.config.Bastion.Genesis.VersionPrefix != "" {
 			env["GENESIS_VERSION_PREFIX"] = a.config.Bastion.Genesis.VersionPrefix
 		}
+
 		if a.config.Bastion.Genesis.Repo != "" {
 			env["GENESIS_REPO"] = a.config.Bastion.Genesis.Repo
 		}
@@ -90,6 +93,7 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 	if a.config.Bastion.Git.User.Name != "" {
 		env["OCFP_BASTION_GIT_USER_NAME"] = a.config.Bastion.Git.User.Name
 	}
+
 	if a.config.Bastion.Git.User.Email != "" {
 		env["OCFP_BASTION_GIT_USER_EMAIL"] = a.config.Bastion.Git.User.Email
 	}
@@ -97,7 +101,7 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 	return env
 }
 
-// GetConnectionDetails returns SSH connection details for the bastion
+// GetConnectionDetails returns SSH connection details for the bastion.
 func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	a.log.Debug("Getting AWS bastion connection details")
 
@@ -114,6 +118,7 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 
 	// Find SSH private key
 	keyManager := ssh.NewKeyManager()
+
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
@@ -150,13 +155,14 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return details, nil
 }
 
-// Initialize performs the actual bastion initialization
+// Initialize performs the actual bastion initialization.
 func (a *AWSBastionInit) Initialize(ctx context.Context) error {
 	a.log.Info("Initializing AWS bastion")
+
 	return nil
 }
 
-// getBastionIP retrieves the bastion host IP address
+// getBastionIP retrieves the bastion host IP address.
 func (a *AWSBastionInit) getBastionIP() (string, error) {
 	if a.config.BastionIP != "" {
 		return a.config.BastionIP, nil
@@ -169,5 +175,5 @@ func (a *AWSBastionInit) getBastionIP() (string, error) {
 
 	// Try to get from AWS API (would need AWS SDK integration)
 	// For now, return an error
-	return "", fmt.Errorf("could not determine bastion IP address")
+	return "", errors.New("could not determine bastion IP address")
 }

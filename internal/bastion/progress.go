@@ -10,7 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ProgressReporter handles real-time progress reporting
+// ProgressReporter handles real-time progress reporting.
 type ProgressReporter struct {
 	output         io.Writer
 	progress       *ProvisioningProgress
@@ -19,7 +19,7 @@ type ProgressReporter struct {
 	updateInterval time.Duration
 }
 
-// NewProgressReporter creates a new progress reporter
+// NewProgressReporter creates a new progress reporter.
 func NewProgressReporter(output io.Writer, progress *ProvisioningProgress) *ProgressReporter {
 	return &ProgressReporter{
 		output:         output,
@@ -29,12 +29,12 @@ func NewProgressReporter(output io.Writer, progress *ProvisioningProgress) *Prog
 	}
 }
 
-// Start begins progress reporting
+// Start begins progress reporting.
 func (pr *ProgressReporter) Start(ctx context.Context) {
 	go pr.reportLoop(ctx)
 }
 
-// UpdateProgress updates the current progress state
+// UpdateProgress updates the current progress state.
 func (pr *ProgressReporter) UpdateProgress(step string, completed int, total int) {
 	pr.progress.CurrentStep = step
 	pr.progress.CompletedSteps = completed
@@ -44,7 +44,7 @@ func (pr *ProgressReporter) UpdateProgress(step string, completed int, total int
 	pr.reportProgress()
 }
 
-// reportLoop runs the progress reporting loop
+// reportLoop runs the progress reporting loop.
 func (pr *ProgressReporter) reportLoop(ctx context.Context) {
 	ticker := time.NewTicker(pr.updateInterval)
 	defer ticker.Stop()
@@ -61,7 +61,7 @@ func (pr *ProgressReporter) reportLoop(ctx context.Context) {
 	}
 }
 
-// reportProgress outputs current progress information
+// reportProgress outputs current progress information.
 func (pr *ProgressReporter) reportProgress() {
 	if pr.output == nil {
 		return
@@ -78,6 +78,7 @@ func (pr *ProgressReporter) reportProgress() {
 
 	// Estimate remaining time
 	var eta string
+
 	if progressPercent > 0 && progressPercent < 100 {
 		rate := progressPercent / elapsed.Seconds()
 		remainingSeconds := (100 - progressPercent) / rate
@@ -109,7 +110,7 @@ func (pr *ProgressReporter) reportProgress() {
 	pr.lastUpdate = now
 }
 
-// createProgressBar creates a visual progress bar
+// createProgressBar creates a visual progress bar.
 func (pr *ProgressReporter) createProgressBar(percent float64) string {
 	barWidth := 30
 	filled := int(percent / 100 * float64(barWidth))
@@ -117,15 +118,17 @@ func (pr *ProgressReporter) createProgressBar(percent float64) string {
 	if filled > barWidth {
 		filled = barWidth
 	}
+
 	if filled < 0 {
 		filled = 0
 	}
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
 	return bar
 }
 
-// ReportPhaseStart reports the start of a new phase
+// ReportPhaseStart reports the start of a new phase.
 func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 	if pr.output == nil {
 		return
@@ -138,7 +141,7 @@ func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 	_, _ = pr.output.Write([]byte(message))
 }
 
-// ReportPhaseComplete reports completion of a phase
+// ReportPhaseComplete reports completion of a phase.
 func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Duration) {
 	if pr.output == nil {
 		return
@@ -149,7 +152,7 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 	_, _ = pr.output.Write([]byte(message))
 }
 
-// ReportSubtaskProgress reports subtask progress within a phase
+// ReportSubtaskProgress reports subtask progress within a phase.
 func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total int, label string) {
 	if pr.output == nil {
 		return
@@ -158,25 +161,29 @@ func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total i
 	if total <= 0 {
 		total = 1
 	}
+
 	if current < 0 {
 		current = 0
 	}
+
 	if current > total {
 		current = total
 	}
 
 	barWidth := 20
+
 	filled := int(float64(current) / float64(total) * float64(barWidth))
 	if filled > barWidth {
 		filled = barWidth
 	}
+
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
 	msg := fmt.Sprintf("  [%s] %d/%d %s (%s)\n", bar, current, total, label, phase)
 	_, _ = pr.output.Write([]byte(msg))
 }
 
-// ReportPhaseSkipped reports that a phase was skipped
+// ReportPhaseSkipped reports that a phase was skipped.
 func (pr *ProgressReporter) ReportPhaseSkipped(phase string, reason string) {
 	if pr.output == nil {
 		return
@@ -186,7 +193,7 @@ func (pr *ProgressReporter) ReportPhaseSkipped(phase string, reason string) {
 	_, _ = pr.output.Write([]byte(message))
 }
 
-// ReportError reports an error with context
+// ReportError reports an error with context.
 func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAttempts int) {
 	if pr.output == nil {
 		return
@@ -203,7 +210,7 @@ func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAtt
 	_, _ = pr.output.Write([]byte(message))
 }
 
-// ReportFinalSummary reports the final summary
+// ReportFinalSummary reports the final summary.
 func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Duration, phases int, errors int) {
 	if pr.output == nil {
 		return
@@ -214,10 +221,12 @@ func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Durat
 	if success {
 		message := "🎉 Bastion initialization completed successfully!\n"
 		message += fmt.Sprintf("   Duration: %s\n", duration.Round(time.Second))
+
 		message += fmt.Sprintf("   Phases completed: %d\n", phases)
 		if errors > 0 {
 			message += fmt.Sprintf("   Errors encountered: %d (resolved)\n", errors)
 		}
+
 		_, _ = pr.output.Write([]byte(message))
 	} else {
 		message := "❌ Bastion initialization failed\n"
@@ -229,13 +238,13 @@ func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Durat
 	_, _ = pr.output.Write([]byte("\n"))
 }
 
-// StatusReporter provides detailed status information
+// StatusReporter provides detailed status information.
 type StatusReporter struct {
 	checkpointManager *CheckpointManager
 	log               logger.Logger
 }
 
-// NewStatusReporter creates a new status reporter
+// NewStatusReporter creates a new status reporter.
 func NewStatusReporter(checkpointMgr *CheckpointManager) *StatusReporter {
 	return &StatusReporter{
 		checkpointManager: checkpointMgr,
@@ -243,7 +252,7 @@ func NewStatusReporter(checkpointMgr *CheckpointManager) *StatusReporter {
 	}
 }
 
-// GetCurrentStatus returns current bastion initialization status
+// GetCurrentStatus returns current bastion initialization status.
 func (sr *StatusReporter) GetCurrentStatus() (map[string]interface{}, error) {
 	checkpoint, err := sr.checkpointManager.Load()
 	if err != nil {
@@ -265,7 +274,7 @@ func (sr *StatusReporter) GetCurrentStatus() (map[string]interface{}, error) {
 	return status, nil
 }
 
-// PrintStatus prints formatted status information
+// PrintStatus prints formatted status information.
 func (sr *StatusReporter) PrintStatus(output io.Writer) error {
 	status, err := sr.GetCurrentStatus()
 	if err != nil {
@@ -309,7 +318,7 @@ func (sr *StatusReporter) PrintStatus(output io.Writer) error {
 	return nil
 }
 
-// PrintDetailedStatus prints detailed status with phase information
+// PrintDetailedStatus prints detailed status with phase information.
 func (sr *StatusReporter) PrintDetailedStatus(output io.Writer) error {
 	if err := sr.PrintStatus(output); err != nil {
 		return err

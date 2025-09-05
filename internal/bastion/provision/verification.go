@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// VerificationManager handles comprehensive tool verification and health checks
+// VerificationManager handles comprehensive tool verification and health checks.
 type VerificationManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// NewVerificationManager creates a new verification manager
+// NewVerificationManager creates a new verification manager.
 func NewVerificationManager(provider string, cfg *config.Config) *VerificationManager {
 	return &VerificationManager{
 		config:   cfg,
@@ -25,7 +25,7 @@ func NewVerificationManager(provider string, cfg *config.Config) *VerificationMa
 	}
 }
 
-// ToolVerification represents a tool verification configuration
+// ToolVerification represents a tool verification configuration.
 type ToolVerification struct {
 	Name            string   `yaml:"name"`
 	Commands        []string `yaml:"commands"`
@@ -36,7 +36,7 @@ type ToolVerification struct {
 	PostInstallTest string   `yaml:"postInstallTest"`
 }
 
-// GetToolVerifications returns comprehensive tool verifications
+// GetToolVerifications returns comprehensive tool verifications.
 func (vm *VerificationManager) GetToolVerifications() []ToolVerification {
 	verifications := []ToolVerification{
 		// Core system tools
@@ -141,11 +141,12 @@ func (vm *VerificationManager) GetToolVerifications() []ToolVerification {
 	return verifications
 }
 
-// GenerateVerificationScript generates comprehensive verification script
+// GenerateVerificationScript generates comprehensive verification script.
 func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) string {
 	verifications := vm.GetToolVerifications()
 
 	var lines []string
+
 	lines = append(lines, "# Comprehensive tool verification and health checks")
 	lines = append(lines, "")
 
@@ -155,7 +156,7 @@ func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) s
 	lines = append(lines, "")
 
 	for _, verification := range verifications {
-		lines = append(lines, fmt.Sprintf("# Verify %s", verification.Name))
+		lines = append(lines, "# Verify "+verification.Name)
 		lines = append(lines, fmt.Sprintf("log_info 'Verifying %s'", verification.Name))
 
 		// Check commands exist
@@ -176,6 +177,7 @@ func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) s
 
 				lines = append(lines, "fi")
 			}
+
 			lines = append(lines, "")
 		}
 
@@ -217,7 +219,7 @@ func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) s
 
 		// Post-install test
 		if verification.PostInstallTest != "" {
-			lines = append(lines, fmt.Sprintf("# Post-install test for %s", verification.Name))
+			lines = append(lines, "# Post-install test for "+verification.Name)
 			lines = append(lines, fmt.Sprintf("if %s >/dev/null 2>&1; then", verification.PostInstallTest))
 			lines = append(lines, fmt.Sprintf("    log_success '%s post-install test passed'", verification.Name))
 			lines = append(lines, "else")
@@ -245,9 +247,10 @@ func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) s
 	return strings.Join(lines, "\n")
 }
 
-// GenerateHealthCheckScript generates health check for bastion services
+// GenerateHealthCheckScript generates health check for bastion services.
 func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Bastion health check")
 	lines = append(lines, "")
 
@@ -289,6 +292,7 @@ func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) st
 		lines = append(lines, fmt.Sprintf("    log_warning '  ⚠ %s unreachable'", url))
 		lines = append(lines, "fi")
 	}
+
 	lines = append(lines, "")
 
 	// Check services
@@ -303,6 +307,7 @@ func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) st
 		lines = append(lines, fmt.Sprintf("    log_warning '  ⚠ %s service inactive'", service))
 		lines = append(lines, "fi")
 	}
+
 	lines = append(lines, "")
 
 	// Check vault if available
@@ -322,9 +327,10 @@ func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) st
 	return strings.Join(lines, "\n")
 }
 
-// GenerateProvisioningSummaryScript generates final provisioning summary
+// GenerateProvisioningSummaryScript generates final provisioning summary.
 func (vm *VerificationManager) GenerateProvisioningSummaryScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Generate provisioning summary")
 	lines = append(lines, "")
 
@@ -417,9 +423,10 @@ func (vm *VerificationManager) GenerateProvisioningSummaryScript(ctx context.Con
 	return strings.Join(lines, "\n")
 }
 
-// GeneratePreRequisiteCheckScript generates prerequisite checking script
+// GeneratePreRequisiteCheckScript generates prerequisite checking script.
 func (vm *VerificationManager) GeneratePreRequisiteCheckScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Prerequisite checks")
 	lines = append(lines, "")
 
@@ -465,7 +472,7 @@ func (vm *VerificationManager) GeneratePreRequisiteCheckScript(ctx context.Conte
 	return strings.Join(lines, "\n")
 }
 
-// GenerateRootCheckScript generates root user check
+// GenerateRootCheckScript generates root user check.
 func (vm *VerificationManager) GenerateRootCheckScript() string {
 	return `# Root user check
 if [ "$(id -u)" -eq 0 ]; then

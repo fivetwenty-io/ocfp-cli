@@ -13,6 +13,7 @@ func TestResolveReservedIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	bloc := "prod"
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
@@ -24,6 +25,7 @@ func TestResolveReservedIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+
 	if ip != "10.4.0.5" {
 		t.Fatalf("got %s want 10.4.0.5", ip)
 	}
@@ -34,6 +36,7 @@ func TestResolvePublicIPToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	bloc := "prod"
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
@@ -56,6 +59,7 @@ func TestResolvePublicIPToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+
 	if ip != "198.51.100.10" {
 		t.Fatalf("got %s want 198.51.100.10", ip)
 	}
@@ -66,6 +70,7 @@ func TestResolveReservedIPWithIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	bloc := "prod"
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
@@ -73,10 +78,12 @@ func TestResolveReservedIPWithIndex(t *testing.T) {
 
 	// With index
 	_ = stateManager.SetOutput("reserved_prod-ocfp-1_doomsday_ip", "10.4.4.9")
+
 	ip, err := resolveReservedIP(bloc, "reserved:doomsday_ip:1")
 	if err != nil {
 		t.Fatalf("resolve idx: %v", err)
 	}
+
 	if ip != "10.4.4.9" {
 		t.Fatalf("got %s want 10.4.4.9", ip)
 	}

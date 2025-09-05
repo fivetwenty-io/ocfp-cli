@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ConnectionDetails holds SSH connection information
+// ConnectionDetails holds SSH connection information.
 type ConnectionDetails struct {
 	Host           string
 	Port           int
@@ -16,7 +16,7 @@ type ConnectionDetails struct {
 	UseSSHPass     bool
 }
 
-// BastionInitializer defines the interface for bastion initialization
+// BastionInitializer defines the interface for bastion initialization.
 type BastionInitializer interface {
 	Validate() error
 	PrepareEnvironment() map[string]string
@@ -24,7 +24,7 @@ type BastionInitializer interface {
 	Initialize(ctx context.Context) error
 }
 
-// CommandResult holds the result of a remote command execution
+// CommandResult holds the result of a remote command execution.
 type CommandResult struct {
 	Command  string
 	ExitCode int

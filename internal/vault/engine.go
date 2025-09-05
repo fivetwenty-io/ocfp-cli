@@ -9,14 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// EngineInfo holds information about a vault engine
+// EngineInfo holds information about a vault engine.
 type EngineInfo struct {
 	Type    string // kv, kv-v2, transit, etc.
 	Version string // 1, 2, etc.
 	Path    string // mount path
 }
 
-// EngineDetector provides engine detection and caching
+// EngineDetector provides engine detection and caching.
 type EngineDetector struct {
 	client *Client
 	cache  map[string]*EngineInfo
@@ -24,7 +24,7 @@ type EngineDetector struct {
 	logger *zap.SugaredLogger
 }
 
-// NewEngineDetector creates a new engine detector
+// NewEngineDetector creates a new engine detector.
 func NewEngineDetector(client *Client) *EngineDetector {
 	return &EngineDetector{
 		client: client,
@@ -33,17 +33,20 @@ func NewEngineDetector(client *Client) *EngineDetector {
 	}
 }
 
-// DetectEngineForPath detects the engine type for a given vault path
+// DetectEngineForPath detects the engine type for a given vault path.
 func (ed *EngineDetector) DetectEngineForPath(path string) (*EngineInfo, error) {
 	// Clean the path to get the mount point
 	mountPath := ed.extractMountPath(path)
 
 	// Check cache first
 	ed.mutex.RLock()
+
 	if info, exists := ed.cache[mountPath]; exists {
 		ed.mutex.RUnlock()
+
 		return info, nil
 	}
+
 	ed.mutex.RUnlock()
 
 	// Query vault API for mount information
@@ -58,10 +61,11 @@ func (ed *EngineDetector) DetectEngineForPath(path string) (*EngineInfo, error) 
 	ed.mutex.Unlock()
 
 	ed.logger.Debug("Detected vault engine", "path", path, "mount", mountPath, "type", info.Type, "version", info.Version)
+
 	return info, nil
 }
 
-// queryEngineInfo queries the vault API to determine engine information
+// queryEngineInfo queries the vault API to determine engine information.
 func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error) {
 	// Query the sys/mounts endpoint to get mount information
 	secret, err := ed.client.logical.Read("sys/mounts")
@@ -70,7 +74,7 @@ func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("no mount information returned")
+		return nil, errors.New("no mount information returned")
 	}
 
 	// Parse the mount information
@@ -96,7 +100,7 @@ func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error)
 	return ed.inferEngineFromPath(mountPath)
 }
 
-// parseMountInfo parses mount information from vault API response
+// parseMountInfo parses mount information from vault API response.
 func (ed *EngineDetector) parseMountInfo(mountPath string, mountData map[string]interface{}) (*EngineInfo, error) {
 	engineType, _ := mountData["type"].(string)
 	options, _ := mountData["options"].(map[string]interface{})
@@ -134,7 +138,7 @@ func (ed *EngineDetector) parseMountInfo(mountPath string, mountData map[string]
 	return info, nil
 }
 
-// inferEngineFromPath attempts to infer engine type from path patterns
+// inferEngineFromPath attempts to infer engine type from path patterns.
 func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, error) {
 	mountPath = strings.TrimSuffix(mountPath, "/")
 
@@ -143,6 +147,7 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 	for _, mount := range kvV2Mounts {
 		if mountPath == mount {
 			ed.logger.Debug("Inferred KV v2 engine from common mount path", "path", mountPath)
+
 			return &EngineInfo{
 				Path:    mountPath,
 				Type:    "kv-v2",
@@ -153,6 +158,7 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 
 	// Default to KV v1 for unknown mounts
 	ed.logger.Debug("Defaulting to KV v1 engine", "path", mountPath)
+
 	return &EngineInfo{
 		Path:    mountPath,
 		Type:    "kv-v1",
@@ -160,7 +166,7 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 	}, nil
 }
 
-// extractMountPath extracts the mount path from a full vault path
+// extractMountPath extracts the mount path from a full vault path.
 func (ed *EngineDetector) extractMountPath(fullPath string) string {
 	// Remove leading slash if present
 	path := strings.TrimPrefix(fullPath, "/")
@@ -174,7 +180,7 @@ func (ed *EngineDetector) extractMountPath(fullPath string) string {
 	return path
 }
 
-// IsKVv2 checks if a path uses KV v2 engine
+// IsKVv2 checks if a path uses KV v2 engine.
 func (ed *EngineDetector) IsKVv2(path string) (bool, error) {
 	info, err := ed.DetectEngineForPath(path)
 	if err != nil {
@@ -184,7 +190,7 @@ func (ed *EngineDetector) IsKVv2(path string) (bool, error) {
 	return info.Type == "kv-v2", nil
 }
 
-// IsKVv1 checks if a path uses KV v1 engine
+// IsKVv1 checks if a path uses KV v1 engine.
 func (ed *EngineDetector) IsKVv1(path string) (bool, error) {
 	info, err := ed.DetectEngineForPath(path)
 	if err != nil {
@@ -194,7 +200,7 @@ func (ed *EngineDetector) IsKVv1(path string) (bool, error) {
 	return info.Type == "kv-v1" || info.Type == "generic", nil
 }
 
-// GetEngineType returns the engine type for a path
+// GetEngineType returns the engine type for a path.
 func (ed *EngineDetector) GetEngineType(path string) (string, error) {
 	info, err := ed.DetectEngineForPath(path)
 	if err != nil {
@@ -204,15 +210,16 @@ func (ed *EngineDetector) GetEngineType(path string) (string, error) {
 	return info.Type, nil
 }
 
-// ClearCache clears the engine detection cache
+// ClearCache clears the engine detection cache.
 func (ed *EngineDetector) ClearCache() {
 	ed.mutex.Lock()
 	defer ed.mutex.Unlock()
+
 	ed.cache = make(map[string]*EngineInfo)
 	ed.logger.Debug("Cleared engine detection cache")
 }
 
-// GetCachedEngines returns all cached engine information
+// GetCachedEngines returns all cached engine information.
 func (ed *EngineDetector) GetCachedEngines() map[string]*EngineInfo {
 	ed.mutex.RLock()
 	defer ed.mutex.RUnlock()
