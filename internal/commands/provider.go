@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -31,12 +32,12 @@ func NewProviderCmd() *cobra.Command {
 Available actions:
   login    Login to the specified cloud provider
 
-The --iaas parameter can be omitted if a bloc name is provided and the bloc 
-configuration specifies the provider.
+Provider is normally derived from the bloc configuration. Use --iaas only when
+you want to override or operate without a bloc.
 
 Examples:
-  ocfp provider login --iaas stackit --bloc my-bloc
-  ocfp provider login --bloc my-bloc  # provider read from bloc config
+  ocfp provider login --bloc my-bloc        # provider read from bloc config
+  ocfp provider login --iaas stackit --bloc my-bloc  # explicit override
   ocfp provider login --iaas aws
   ocfp provider login --iaas gcp`,
 		Args: cobra.MinimumNArgs(1),
@@ -71,6 +72,10 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	// If not specified, try to get from config using bloc name
 	if providerName == "" {
 		blocName, _ := cmd.Flags().GetString("bloc")
+		if blocName == "" {
+			// fallback to global viper value (supports --bloc-name alias)
+			blocName = viper.GetString("bloc_name")
+		}
 		if blocName == "" {
 			blocName = os.Getenv("OCFP_BLOC_NAME")
 		}

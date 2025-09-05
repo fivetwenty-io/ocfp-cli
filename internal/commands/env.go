@@ -120,20 +120,20 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create table writer
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
-	_, _ = fmt.Fprintln(w, "----\t--------\t------\t------\t------")
+	tableWriter := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tableWriter, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
+	_, _ = fmt.Fprintln(tableWriter, "----\t--------\t------\t------\t------")
 
 	for _, env := range envs {
 		status := ""
 		if env.Name == currentEnv {
 			status = "ACTIVE"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tableWriter, "%s\t%s\t%s\t%s\t%s\n",
 			env.Name, env.Provider, env.Region, status, env.ConfigFile)
 	}
 
-	_ = w.Flush()
+	_ = tableWriter.Flush()
 	log.Debugf("Listed %d environments", len(envs))
 
 	return nil

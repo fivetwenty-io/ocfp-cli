@@ -32,7 +32,7 @@ func NewGenesisIntegration(cfg *config.Config, blocName string) *GenesisIntegrat
 type GenesisEnvironment struct {
 	Name             string                 `yaml:"name,omitempty"`
 	Version          string                 `yaml:"version,omitempty"`
-	SecretsProviders []SecretsProvider      `yaml:"secrets_providers,omitempty"`
+	SecretsProviders []SecretsProvider      `yaml:"secretsProviders,omitempty"`
 	Params           map[string]interface{} `yaml:"params,omitempty"`
 	Features         []string               `yaml:"features,omitempty"`
 	Kit              KitInfo                `yaml:"kit,omitempty"`

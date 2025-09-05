@@ -93,7 +93,7 @@ environments:
 
 		// Test args validation
 		err := setCmd.Args(setCmd, []string{})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		err = setCmd.Args(setCmd, []string{"dev"})
 		assert.NoError(t, err)

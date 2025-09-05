@@ -378,7 +378,7 @@ blocs:
 		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "mgmt"})
 
 		err = providerCmd.Execute()
-		assert.Error(t, err) // Expected due to fake credentials
+		require.Error(t, err) // Expected due to fake credentials
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 
 		// Test tmux command with workflow config
@@ -390,7 +390,7 @@ blocs:
 		bastionCmd.SetArgs([]string{"init", "--bloc", "mgmt"})
 
 		err = bastionCmd.Execute()
-		assert.Error(t, err) // Expected due to missing script/SSH
+		require.Error(t, err) // Expected due to missing script/SSH
 		assert.Contains(t, err.Error(), "cannot find bastion-init script")
 	})
 
@@ -428,12 +428,12 @@ exit 0;
 			scriptPath := filepath.Join(provisionDir, script)
 			info, err := os.Stat(scriptPath)
 			require.NoError(t, err)
-			assert.True(t, info.Mode()&0111 != 0, "Script should be executable: "+script)
+			assert.NotEqual(t, 0, info.Mode()&0111, "Script should be executable: "+script)
 		}
 
 		tmuxInfo, err := os.Stat(tmuxScript)
 		require.NoError(t, err)
-		assert.True(t, tmuxInfo.Mode()&0111 != 0, "Tmux script should be executable")
+		assert.NotEqual(t, 0, tmuxInfo.Mode()&0111, "Tmux script should be executable")
 	})
 
 	t.Run("DeploymentDirectoryStructure", func(t *testing.T) {

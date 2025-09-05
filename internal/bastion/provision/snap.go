@@ -21,7 +21,7 @@ type SnapPackage struct {
 	Name         string `yaml:"name"`
 	Enabled      bool   `yaml:"enabled"`
 	Condition    string `yaml:"condition"`
-	CheckCommand string `yaml:"check_command"`
+	CheckCommand string `yaml:"checkCommand"`
 	Channel      string `yaml:"channel"`
 	Classic      bool   `yaml:"classic"`
 	DevMode      bool   `yaml:"devmode"`
@@ -80,38 +80,38 @@ func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 			disable[strings.ToLower(n)] = struct{}{}
 		}
 		if len(enable) > 0 || len(disable) > 0 {
-			for i := range pkgs {
-				name := strings.ToLower(pkgs[i].Name)
+			for pkgIndex := range pkgs {
+				name := strings.ToLower(pkgs[pkgIndex].Name)
 				if _, ok := enable[name]; ok {
-					pkgs[i].Enabled = true
+					pkgs[pkgIndex].Enabled = true
 				}
 				if _, ok := disable[name]; ok {
-					pkgs[i].Enabled = false
+					pkgs[pkgIndex].Enabled = false
 				}
 			}
 		}
 		// Per-snap overrides by name
 		if sm.config.Bastion.SnapOverrides != nil {
-			for i := range pkgs {
-				name := strings.ToLower(pkgs[i].Name)
-				for k, ov := range sm.config.Bastion.SnapOverrides {
-					if strings.ToLower(k) != name {
+			for index := range pkgs {
+				name := strings.ToLower(pkgs[index].Name)
+				for key, override := range sm.config.Bastion.SnapOverrides {
+					if strings.ToLower(key) != name {
 						continue
 					}
-					if ov.Channel != "" {
-						pkgs[i].Channel = ov.Channel
+					if override.Channel != "" {
+						pkgs[index].Channel = override.Channel
 					}
-					if ov.Classic != nil {
-						pkgs[i].Classic = *ov.Classic
+					if override.Classic != nil {
+						pkgs[index].Classic = *override.Classic
 					}
-					if ov.DevMode != nil {
-						pkgs[i].DevMode = *ov.DevMode
+					if override.DevMode != nil {
+						pkgs[index].DevMode = *override.DevMode
 					}
-					if ov.Dangerous != nil {
-						pkgs[i].Dangerous = *ov.Dangerous
+					if override.Dangerous != nil {
+						pkgs[index].Dangerous = *override.Dangerous
 					}
-					if ov.CheckCommand != "" {
-						pkgs[i].CheckCommand = ov.CheckCommand
+					if override.CheckCommand != "" {
+						pkgs[index].CheckCommand = override.CheckCommand
 					}
 				}
 			}

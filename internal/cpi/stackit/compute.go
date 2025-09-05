@@ -2,319 +2,363 @@ package stackit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 )
 
 // CreateInstance creates a new compute instance
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInstanceRequest) (*cpi.Instance, error) {
-	logger.WithOperation("CreateInstance").Infof("Creating instance: %s", req.Name)
+	logger.WithOperation("CreateInstance").Infof("Creating instance via SDK: %s", req.Name)
 
-	// Prepare API request
-	apiReq := map[string]interface{}{
-		"name":              req.Name,
-		"flavor":            req.Flavor,
-		"image":             req.Image,
-		"network_id":        req.NetworkID,
-		"security_groups":   req.SecurityGroups,
-		"key_name":          req.KeyPair,
-		"user_data":         req.UserData,
-		"availability_zone": req.AvailabilityZone,
-		"labels":            req.Tags,
-	}
-	// For STACKIT, subnet_id is optional; only include if provided
-	if req.SubnetID != "" {
-		apiReq["subnet_id"] = req.SubnetID
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/instances", apiReq)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
-	resp, err := m.client.do(ctx, httpReq)
+	payload := iaas.NewCreateServerPayload(req.Flavor, req.Name)
+	if req.Image != "" {
+		payload.SetImageId(req.Image)
+	}
+	if req.KeyPair != "" {
+		payload.SetKeypairName(req.KeyPair)
+	}
+	if req.AvailabilityZone != "" {
+		payload.SetAvailabilityZone(req.AvailabilityZone)
+	}
+	if len(req.Tags) > 0 {
+		lm := make(map[string]interface{}, len(req.Tags))
+		for k, v := range req.Tags {
+			lm[k] = v
+		}
+		payload.SetLabels(lm)
+	}
+	if req.NetworkID != "" {
+		net := iaas.NewCreateServerNetworking()
+		net.SetNetworkId(req.NetworkID)
+		n := iaas.CreateServerNetworkingAsCreateServerPayloadNetworking(net)
+		payload.SetNetworking(n)
+	}
+	if req.UserData != "" {
+		// SDK expects bytes; it will base64-encode for transport
+		payload.SetUserData([]byte(req.UserData))
+	}
+
+	created, err := cli.CreateServer(ctx, m.client.config.ProjectID).CreateServerPayload(*payload).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create instance: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, m.client.parseError(resp)
+		return nil, fmt.Errorf("stackit iaas CreateServer failed: %w", err)
 	}
 
-	// Parse response
-	var instance cpi.Instance
-	if err := json.NewDecoder(resp.Body).Decode(&instance); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	inst := &cpi.Instance{}
+	if id, ok := created.GetIdOk(); ok {
+		inst.ID = id
+	}
+	if name, ok := created.GetNameOk(); ok {
+		inst.Name = name
+	}
+	if mt, ok := created.GetMachineTypeOk(); ok {
+		inst.Flavor = mt
+	}
+	if img, ok := created.GetImageIdOk(); ok {
+		inst.Image = img
+	}
+	if az, ok := created.GetAvailabilityZoneOk(); ok {
+		inst.AvailabilityZone = az
+	}
+	if kp, ok := created.GetKeypairNameOk(); ok {
+		inst.KeyPair = kp
+	}
+	if labels, ok := created.GetLabelsOk(); ok {
+		inst.Tags = mapAnyToString(labels)
 	}
 
-	// Wait for instance to be active
-	if err := m.waitForInstanceState(ctx, instance.ID, cpi.ResourceStateActive, 5*time.Minute); err != nil {
+	if err := m.waitForInstanceState(ctx, inst.ID, cpi.ResourceStateActive, 10*time.Minute); err != nil {
 		return nil, fmt.Errorf("instance failed to become active: %w", err)
 	}
-
-	logger.WithOperation("CreateInstance").Infof("Instance created: %s (%s)", instance.Name, instance.ID)
-	return &instance, nil
+	logger.WithOperation("CreateInstance").Infof("Instance created: %s (%s)", inst.Name, inst.ID)
+	return inst, nil
 }
 
 // GetInstance retrieves an instance by ID
-func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
-	logger.WithOperation("GetInstance").Debugf("Getting instance: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/instances/"+id, nil)
+func (m *ComputeManager) GetInstance(ctx context.Context, instanceID string) (*cpi.Instance, error) {
+	logger.WithOperation("GetInstance").Debugf("Getting instance via SDK: %s", instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	server, err := cli.GetServer(ctx, m.client.config.ProjectID, instanceID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get instance: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetServer failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Instance %s not found", id),
+	inst := &cpi.Instance{}
+	if sid, ok := server.GetIdOk(); ok {
+		inst.ID = sid
+	}
+	if name, ok := server.GetNameOk(); ok {
+		inst.Name = name
+	}
+	if mt, ok := server.GetMachineTypeOk(); ok {
+		inst.Flavor = mt
+	}
+	if img, ok := server.GetImageIdOk(); ok {
+		inst.Image = img
+	}
+	if az, ok := server.GetAvailabilityZoneOk(); ok {
+		inst.AvailabilityZone = az
+	}
+	if kp, ok := server.GetKeypairNameOk(); ok {
+		inst.KeyPair = kp
+	}
+	if labels, ok := server.GetLabelsOk(); ok {
+		inst.Tags = mapAnyToString(labels)
+	}
+	// NICs and public IP
+	// Build map from NIC->PublicIP
+	pmap := make(map[string]string)
+	if pipResp, err := cli.ListPublicIPs(ctx, m.client.config.ProjectID).Execute(); err == nil {
+		if items, ok := pipResp.GetItemsOk(); ok {
+			for _, ip := range items {
+				if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil && *ni != "" {
+					if val, vok := ip.GetIpOk(); vok {
+						pmap[*ni] = val
+					}
+				}
+			}
 		}
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	if nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute(); err == nil {
+		if nics, ok := nicsResp.GetItemsOk(); ok {
+			for _, nic := range nics {
+				if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
+					inst.PrivateIP = ip
+				}
+				if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
+					inst.NetworkID = netID
+				}
+				if nicID, ok := nic.GetIdOk(); ok {
+					if pip, exists := pmap[nicID]; exists {
+						inst.PublicIP, inst.FloatingIP = pip, pip
+					}
+				}
+			}
+		}
 	}
-
-	var instance cpi.Instance
-	if err := json.NewDecoder(resp.Body).Decode(&instance); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &instance, nil
+	return inst, nil
 }
 
 // ListInstances lists all instances
 func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
-	logger.WithOperation("ListInstances").Debug("Listing instances")
+	logger.WithOperation("ListInstances").Debug("Listing instances via SDK")
 
-	// Build query parameters
-	query := "?"
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build label selector from filters (accepts keys like "label.foo" or "label:foo")
+	var selectors []string
 	for k, v := range filters {
-		query += fmt.Sprintf("%s=%s&", k, v)
+		if strings.HasPrefix(k, "label.") {
+			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label."), v))
+		} else if strings.HasPrefix(k, "label:") {
+			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label:"), v))
+		}
 	}
+	selector := strings.Join(selectors, ",")
 
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/instances"+query, nil)
+	req := cli.ListServers(ctx, m.client.config.ProjectID)
+	if selector != "" {
+		req = req.LabelSelector(selector)
+	}
+	resp, err := req.Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListServers failed: %w", err)
 	}
 
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list instances: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var result struct {
-		Instances []*cpi.Instance `json:"instances"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	// Build NIC->PublicIP map once to derive floating/public IP association
+	publicIPsByNIC := make(map[string]string)
+	if pipResp, err := cli.ListPublicIPs(ctx, m.client.config.ProjectID).Execute(); err == nil {
+		if items, ok := pipResp.GetItemsOk(); ok {
+			for _, ip := range items {
+				if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil && *ni != "" {
+					if val, vok := ip.GetIpOk(); vok {
+						publicIPsByNIC[*ni] = val
+					}
+				}
+			}
+		}
 	}
 
-	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(result.Instances))
-	return result.Instances, nil
+	items, _ := resp.GetItemsOk()
+	out := make([]*cpi.Instance, 0, len(items))
+	for _, server := range items {
+		inst := &cpi.Instance{}
+		if id, ok := server.GetIdOk(); ok {
+			inst.ID = id
+		}
+		if name, ok := server.GetNameOk(); ok {
+			inst.Name = name
+		}
+		if mt, ok := server.GetMachineTypeOk(); ok {
+			inst.Flavor = mt
+		}
+		if img, ok := server.GetImageIdOk(); ok {
+			inst.Image = img
+		}
+		if az, ok := server.GetAvailabilityZoneOk(); ok {
+			inst.AvailabilityZone = az
+		}
+		if kp, ok := server.GetKeypairNameOk(); ok {
+			inst.KeyPair = kp
+		}
+		if labels, ok := server.GetLabelsOk(); ok {
+			// Convert map[string]interface{} to map[string]string
+			inst.Tags = mapAnyToString(labels)
+		}
+		if status, ok := server.GetStatusOk(); ok {
+			inst.State = mapServerStatus(status)
+		}
+
+		// Populate networking: private and floating/public IP from NICs
+		if inst.ID != "" {
+			if nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, inst.ID).Execute(); err == nil {
+				if nics, ok := nicsResp.GetItemsOk(); ok {
+					for _, nic := range nics {
+						if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
+							inst.PrivateIP = ip
+						}
+						if nicID, ok := nic.GetIdOk(); ok {
+							if pip, exists := publicIPsByNIC[nicID]; exists {
+								inst.PublicIP = pip
+								inst.FloatingIP = pip
+							}
+						}
+						if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
+							inst.NetworkID = netID
+						}
+					}
+				}
+			}
+		}
+
+		out = append(out, inst)
+	}
+
+	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(out))
+	return out, nil
+}
+
+// mapServerStatus maps STACKIT server status to cpi.ResourceState
+func mapServerStatus(status string) cpi.ResourceState {
+	switch strings.ToUpper(status) {
+	case "ACTIVE":
+		return cpi.ResourceStateActive
+	case "STOPPED", "INACTIVE":
+		return cpi.ResourceStateStopped
+	case "CREATING", "STARTING", "REBUILDING", "RESIZING":
+		return cpi.ResourceStateCreating
+	case "SNAPSHOTTING":
+		return cpi.ResourceStateInUse
+	default:
+		return cpi.ResourceState(status)
+	}
 }
 
 // DeleteInstance deletes an instance
-func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
-	logger.WithOperation("DeleteInstance").Infof("Deleting instance: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "DELETE", "/v1/projects/"+m.client.config.ProjectID+"/instances/"+id, nil)
+func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) error {
+	logger.WithOperation("DeleteInstance").Infof("Deleting instance: %s", instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to delete instance: %w", err)
+	if err := cli.DeleteServer(ctx, m.client.config.ProjectID, instanceID).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas DeleteServer failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil // Already deleted
-	}
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return m.client.parseError(resp)
-	}
-
-	logger.WithOperation("DeleteInstance").Infof("Instance deleted: %s", id)
+	logger.WithOperation("DeleteInstance").Infof("Instance deleted: %s", instanceID)
 	return nil
 }
 
 // CreateKeyPair creates a new SSH key pair
 func (m *ComputeManager) CreateKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	logger.WithOperation("CreateKeyPair").Infof("Creating key pair: %s", name)
-
-	apiReq := map[string]interface{}{
-		"name": name,
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/keypairs", apiReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create key pair: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, m.client.parseError(resp)
-	}
-
-	var keyPair cpi.KeyPair
-	if err := json.NewDecoder(resp.Body).Decode(&keyPair); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	logger.WithOperation("CreateKeyPair").Infof("Key pair created: %s", name)
-	return &keyPair, nil
+	return nil, fmt.Errorf("stackit: CreateKeyPair unsupported; use ImportKeyPair with a public key")
 }
 
 // ImportKeyPair imports an existing public key
 func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
 	logger.WithOperation("ImportKeyPair").Infof("Importing key pair: %s", name)
-
-	apiReq := map[string]interface{}{
-		"name":       name,
-		"public_key": publicKey,
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/keypairs", apiReq)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to import key pair: %w", err)
+	payload := iaas.NewCreateKeyPairPayload(publicKey)
+	if name != "" {
+		payload.SetName(name)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return m.client.parseError(resp)
+	if _, err := cli.CreateKeyPair(ctx).CreateKeyPairPayload(*payload).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas CreateKeyPair failed: %w", err)
 	}
-
-	logger.WithOperation("ImportKeyPair").Infof("Key pair imported: %s", name)
 	return nil
 }
 
 // GetKeyPair retrieves a key pair by name
 func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	logger.WithOperation("GetKeyPair").Debugf("Getting key pair: %s", name)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/keypairs/"+name, nil)
+	logger.WithOperation("GetKeyPair").Debugf("Getting key pair via SDK: %s", name)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	kp, err := cli.GetKeyPair(ctx, name).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get key pair: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetKeyPair failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Key pair %s not found", name),
-		}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var keyPair cpi.KeyPair
-	if err := json.NewDecoder(resp.Body).Decode(&keyPair); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &keyPair, nil
+	out := &cpi.KeyPair{Name: stringOrEmpty(kp.GetNameOk()), Fingerprint: stringOrEmpty(kp.GetFingerprintOk()), PublicKey: stringOrEmpty(kp.GetPublicKeyOk())}
+	return out, nil
 }
 
 // ListKeyPairs lists all key pairs
 func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
-	logger.WithOperation("ListKeyPairs").Debug("Listing key pairs")
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/keypairs", nil)
+	logger.WithOperation("ListKeyPairs").Debug("Listing key pairs via SDK")
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	resp, err := cli.ListKeyPairs(ctx).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list key pairs: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListKeyPairs failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	items, _ := resp.GetItemsOk()
+	out := make([]*cpi.KeyPair, 0, len(items))
+	for _, k := range items {
+		out = append(out, &cpi.KeyPair{
+			Name:        stringOrEmpty(k.GetNameOk()),
+			Fingerprint: stringOrEmpty(k.GetFingerprintOk()),
+			PublicKey:   stringOrEmpty(k.GetPublicKeyOk()),
+		})
 	}
-
-	var result struct {
-		KeyPairs []*cpi.KeyPair `json:"keypairs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return result.KeyPairs, nil
+	return out, nil
 }
 
 // DeleteKeyPair deletes a key pair
 func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
 	logger.WithOperation("DeleteKeyPair").Infof("Deleting key pair: %s", name)
-
-	httpReq, err := m.client.newRequest(ctx, "DELETE", "/v1/projects/"+m.client.config.ProjectID+"/keypairs/"+name, nil)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to delete key pair: %w", err)
+	if err := cli.DeleteKeyPair(ctx, name).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas DeleteKeyPair failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil // Already deleted
-	}
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return m.client.parseError(resp)
-	}
-
-	logger.WithOperation("DeleteKeyPair").Infof("Key pair deleted: %s", name)
 	return nil
 }
 
 // waitForInstanceState waits for an instance to reach a specific state
-func (m *ComputeManager) waitForInstanceState(ctx context.Context, id string, targetState cpi.ResourceState, timeout time.Duration) error {
+func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID string, targetState cpi.ResourceState, timeout time.Duration) error {
 	return cpi.WaitForCondition(ctx, 5*time.Second, timeout, func() (bool, error) {
-		instance, err := m.GetInstance(ctx, id)
+		instance, err := m.GetInstance(ctx, instanceID)
 		if err != nil {
 			return false, err
 		}
@@ -323,214 +367,122 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, id string, ta
 }
 
 // StartInstance starts a stopped instance
-func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
-	logger.WithOperation("StartInstance").Infof("Starting instance: %s", id)
-
-	apiReq := map[string]interface{}{
-		"action": "start",
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/instances/%s/action", m.client.config.ProjectID, id), apiReq)
+func (m *ComputeManager) StartInstance(ctx context.Context, instanceID string) error {
+	logger.WithOperation("StartInstance").Infof("Starting instance: %s", instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to start instance: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
-	}
-
-	return nil
+	return cli.StartServer(ctx, m.client.config.ProjectID, instanceID).Execute()
 }
 
 // StopInstance stops a running instance
-func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
-	logger.WithOperation("StopInstance").Infof("Stopping instance: %s", id)
-
-	apiReq := map[string]interface{}{
-		"action": "stop",
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/instances/%s/action", m.client.config.ProjectID, id), apiReq)
+func (m *ComputeManager) StopInstance(ctx context.Context, instanceID string) error {
+	logger.WithOperation("StopInstance").Infof("Stopping instance: %s", instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to stop instance: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
-	}
-
-	return nil
+	return cli.StopServer(ctx, m.client.config.ProjectID, instanceID).Execute()
 }
 
 // RebootInstance reboots an instance
-func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
-	logger.WithOperation("RebootInstance").Infof("Rebooting instance: %s", id)
-
-	apiReq := map[string]interface{}{
-		"action": "reboot",
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/instances/%s/action", m.client.config.ProjectID, id), apiReq)
+func (m *ComputeManager) RebootInstance(ctx context.Context, instanceID string) error {
+	logger.WithOperation("RebootInstance").Infof("Rebooting instance: %s", instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to reboot instance: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
-	}
-
-	return nil
+	return cli.RebootServer(ctx, m.client.config.ProjectID, instanceID).Action("SOFT").Execute()
 }
 
 // ListImages lists available images
 func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
-	logger.WithOperation("ListImages").Debug("Listing images")
-
-	query := "?"
-	for k, v := range filters {
-		query += fmt.Sprintf("%s=%s&", k, v)
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/images"+query, nil)
+	logger.WithOperation("ListImages").Debug("Listing images via SDK")
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	resp, err := cli.ListImages(ctx, m.client.config.ProjectID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list images: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListImages failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	items, _ := resp.GetItemsOk()
+	out := make([]*cpi.Image, 0, len(items))
+	for _, it := range items {
+		img := &cpi.Image{ID: stringOrEmpty(it.GetIdOk()), Name: stringOrEmpty(it.GetNameOk()), Public: true}
+		out = append(out, img)
 	}
-
-	var result struct {
-		Images []*cpi.Image `json:"images"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	logger.WithOperation("ListImages").Debugf("Found %d images", len(result.Images))
-	return result.Images, nil
+	return out, nil
 }
 
 // GetImage retrieves an image
-func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
-	logger.WithOperation("GetImage").Debugf("Getting image: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/images/"+id, nil)
+func (m *ComputeManager) GetImage(ctx context.Context, imageID string) (*cpi.Image, error) {
+	logger.WithOperation("GetImage").Debugf("Getting image via SDK: %s", imageID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	got, err := cli.GetImage(ctx, m.client.config.ProjectID, imageID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get image: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetImage failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Image %s not found", id),
-		}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var image cpi.Image
-	if err := json.NewDecoder(resp.Body).Decode(&image); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &image, nil
+	out := &cpi.Image{ID: stringOrEmpty(got.GetIdOk()), Name: stringOrEmpty(got.GetNameOk()), Public: true}
+	return out, nil
 }
 
 // ListFlavors lists available flavors
 func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
-	logger.WithOperation("ListFlavors").Debug("Listing flavors")
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/flavors", nil)
+	logger.WithOperation("ListFlavors").Debug("Listing machine types via SDK")
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	resp, err := cli.ListMachineTypes(ctx, m.client.config.ProjectID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list flavors: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListMachineTypes failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	items, _ := resp.GetItemsOk()
+	out := make([]*cpi.Flavor, 0, len(items))
+	for _, machineType := range items {
+		flavor := &cpi.Flavor{
+			ID:   stringOrEmpty(machineType.GetNameOk()),
+			Name: stringOrEmpty(machineType.GetNameOk()),
+		}
+		if v, ok := machineType.GetVcpusOk(); ok {
+			flavor.VCPUs = int(v)
+		}
+		if r, ok := machineType.GetRamOk(); ok {
+			flavor.RAM = int(r)
+		}
+		if d, ok := machineType.GetDiskOk(); ok {
+			flavor.Disk = int(d)
+		}
+		out = append(out, flavor)
 	}
-
-	var result struct {
-		Flavors []*cpi.Flavor `json:"flavors"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	logger.WithOperation("ListFlavors").Debugf("Found %d flavors", len(result.Flavors))
-	return result.Flavors, nil
+	return out, nil
 }
 
 // GetFlavor retrieves a flavor
-func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
-	logger.WithOperation("GetFlavor").Debugf("Getting flavor: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/flavors/"+id, nil)
+func (m *ComputeManager) GetFlavor(ctx context.Context, flavorID string) (*cpi.Flavor, error) {
+	logger.WithOperation("GetFlavor").Debugf("Getting machine type via SDK: %s", flavorID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	machineType, err := cli.GetMachineType(ctx, m.client.config.ProjectID, flavorID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get flavor: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetMachineType failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Flavor %s not found", id),
-		}
+	flavor := &cpi.Flavor{ID: stringOrEmpty(machineType.GetNameOk()), Name: stringOrEmpty(machineType.GetNameOk())}
+	if v, ok := machineType.GetVcpusOk(); ok {
+		flavor.VCPUs = int(v)
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	if r, ok := machineType.GetRamOk(); ok {
+		flavor.RAM = int(r)
 	}
-
-	var flavor cpi.Flavor
-	if err := json.NewDecoder(resp.Body).Decode(&flavor); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	if d, ok := machineType.GetDiskOk(); ok {
+		flavor.Disk = int(d)
 	}
-
-	return &flavor, nil
+	return flavor, nil
 }

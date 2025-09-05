@@ -204,17 +204,17 @@ func TestErrorClassification(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := fmt.Errorf("%s", tc.error)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := fmt.Errorf("%s", testCase.error)
 			bastionErr := errorHandler.ClassifyError(err, "test_phase", "test_command")
 
-			if bastionErr.Type != tc.expectedType {
-				t.Errorf("Expected error type %s, got %s", tc.expectedType, bastionErr.Type)
+			if bastionErr.Type != testCase.expectedType {
+				t.Errorf("Expected error type %s, got %s", testCase.expectedType, bastionErr.Type)
 			}
 
-			if bastionErr.Retryable != tc.retryable {
-				t.Errorf("Expected retryable %t, got %t", tc.retryable, bastionErr.Retryable)
+			if bastionErr.Retryable != testCase.retryable {
+				t.Errorf("Expected retryable %t, got %t", testCase.retryable, bastionErr.Retryable)
 			}
 
 			if len(bastionErr.Suggestions) == 0 {

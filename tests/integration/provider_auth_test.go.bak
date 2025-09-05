@@ -219,7 +219,7 @@ blocs:
 
 			if provider == "stackit" {
 				// STACKIT should fail with credential error
-				require.Error(t, err)
+				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 			} else {
 				// Other providers should succeed with placeholder warning

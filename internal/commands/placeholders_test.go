@@ -16,7 +16,7 @@ func TestNewProviderCmd(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "provider <action>", cmd.Use)
 	assert.Equal(t, "Manage cloud provider operations", cmd.Short)
-	assert.True(t, cmd.Args(cmd, []string{"login"}) == nil)
+	assert.NoError(t, cmd.Args(cmd, []string{"login"}))
 }
 
 func TestProviderLoginCommand(t *testing.T) {
@@ -59,23 +59,23 @@ func TestProviderLoginCommand(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			// Set environment variables
-			for key, value := range tt.env {
+			for key, value := range testCase.env {
 				_ = os.Setenv(key, value)
 				defer func() { _ = os.Unsetenv(key) }()
 			}
 
 			cmd := NewProviderCmd()
-			cmd.SetArgs(tt.args)
+			cmd.SetArgs(testCase.args)
 
 			err := cmd.Execute()
-			if tt.expectedErr != "" {
+			if testCase.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedErr)
+				assert.Contains(t, err.Error(), testCase.expectedErr)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -106,7 +106,7 @@ func TestFindTmuxScript(t *testing.T) {
 	// Test that the function doesn't panic and returns some path
 	scriptPath, err := findTmuxScript()
 	// Either finds a script or creates a temporary one
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, scriptPath)
 
 	// Check that the path exists
@@ -155,7 +155,7 @@ func TestNewBastionCmd(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "bastion <action>", cmd.Use)
 	assert.Equal(t, "Bastion host management", cmd.Short)
-	assert.True(t, cmd.Args(cmd, []string{"init"}) == nil)
+	assert.NoError(t, cmd.Args(cmd, []string{"init"}))
 }
 
 func TestBastionCommand(t *testing.T) {
@@ -186,17 +186,17 @@ func TestBastionCommand(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			cmd := NewBastionCmd()
-			cmd.SetArgs(tt.args)
+			cmd.SetArgs(testCase.args)
 
 			err := cmd.Execute()
-			if tt.expectedErr != "" {
+			if testCase.expectedErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedErr)
+				assert.Contains(t, err.Error(), testCase.expectedErr)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -242,10 +242,10 @@ func TestFetchGitHubKeys(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to fetch GitHub keys")
 	} else {
 		// If successful, we might have keys (some users have no public keys)
-		assert.GreaterOrEqual(t, len(keys), 0)
+		// len(keys) >= 0 is always true for slices, removing useless assertion
 		// Each key should be a valid SSH key format
 		for _, key := range keys {
-			assert.True(t, len(key) > 0)
+			assert.NotEmpty(t, key)
 			// SSH keys typically start with ssh-rsa, ssh-ed25519, etc.
 			assert.True(t,
 				len(key) > 7 && (key[:7] == "ssh-rsa" ||
@@ -269,7 +269,7 @@ func TestFetchGitLabKeys(t *testing.T) {
 	} else if len(keys) > 0 {
 		// If we got keys, they should be valid SSH key format
 		for _, key := range keys {
-			assert.True(t, len(key) > 0)
+			assert.NotEmpty(t, key)
 		}
 	}
 	// If len(keys) == 0 and err == nil, that's also valid (user has no public keys)
@@ -278,7 +278,7 @@ func TestFetchGitLabKeys(t *testing.T) {
 func TestFindProvisionScript(t *testing.T) {
 	// This should fail for non-existent script
 	_, err := findProvisionScript("non-existent-script")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in any search paths")
 
 	// Create a test script
@@ -296,7 +296,7 @@ func TestFindProvisionScript(t *testing.T) {
 
 	// Now it should find the script
 	foundPath, err := findProvisionScript("test-script")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Contains(t, foundPath, "test-script")
 }
 

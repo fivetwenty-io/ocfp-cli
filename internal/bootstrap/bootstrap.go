@@ -1,20 +1,20 @@
 package bootstrap
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
+    "context"
+    "fmt"
+    "net"
+    "os"
+    "path/filepath"
+    "sort"
+    "strings"
+    "time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/olekukonko/tablewriter"
+    "github.com/ocfp/ocfp-cli-go/internal/config"
+    "github.com/ocfp/ocfp-cli-go/internal/cpi"
+    "github.com/ocfp/ocfp-cli-go/internal/logger"
+    "github.com/ocfp/ocfp-cli-go/internal/state"
+    "github.com/ocfp/ocfp-cli-go/internal/ui"
 )
 
 // Options represents bootstrap options
@@ -24,6 +24,7 @@ type Options struct {
 	Region   string
 	Force    bool
 	DryRun   bool
+	Output   string
 	Timeout  time.Duration
 }
 
@@ -64,6 +65,15 @@ func (m *Manager) Execute(ctx context.Context) error {
 		}
 	}()
 
+	// For dry-run, render a clear plan preview and exit early
+	if m.options.DryRun {
+		if err := m.renderDryRunPlan(ctx); err != nil {
+			return err
+		}
+		logger.Infof("Bootstrap completed successfully for bloc: %s", m.options.BlocName)
+		return nil
+	}
+
 	// Execute bootstrap phases
 	phases := []struct {
 		name string
@@ -82,11 +92,6 @@ func (m *Manager) Execute(ctx context.Context) error {
 	for _, phase := range phases {
 		logger.Infof("Executing phase: %s", phase.name)
 
-		if m.options.DryRun {
-			logger.Infof("[DRY RUN] Would execute: %s", phase.name)
-			continue
-		}
-
 		if err := phase.fn(ctx); err != nil {
 			return fmt.Errorf("phase %s failed: %w", phase.name, err)
 		}
@@ -99,6 +104,388 @@ func (m *Manager) Execute(ctx context.Context) error {
 
 	logger.Infof("Bootstrap completed successfully for bloc: %s", m.options.BlocName)
 	return nil
+}
+
+// securityGroupDef represents a default security group and its rules (pre-creation)
+type securityGroupDef struct {
+    name        string
+    description string
+    rules       []*cpi.SecurityRule
+}
+
+// defaultSecurityGroupDefs returns the list of default security groups and their rules used by bootstrap
+func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
+    return []securityGroupDef{
+        {
+            name:        "bastion",
+            description: "Security group for bastion host",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "infra",
+            description: "Security group for STACKIT infrastructure",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 8080, PortRangeMax: 8080, Description: "HTTP-ALT"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 8443, PortRangeMax: 8443, Description: "HTTPS-ALT"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "ocfp",
+            description: "Security group for OCFP services",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 25555, PortRangeMax: 25555, Description: "BOSH Director"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 6868, PortRangeMax: 6868, Description: "BOSH Agent"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "lb-ext",
+            description: "Security group for external load balancers",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTPS external"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "ocf-cf-router-ingress",
+            description: "Security group for Cloud Foundry router ingress",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTP"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTPS"},
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "ocf-cf-tcp-router-ingress",
+            description: "Security group for Cloud Foundry TCP router ingress",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 1024, PortRangeMax: 65535, RemoteIPCIDR: "0.0.0.0/0", Description: "CF TCP Router"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+        {
+            name:        "ocf-cf-ssh-ingress",
+            description: "Security group for Cloud Foundry SSH proxy ingress",
+            rules: []*cpi.SecurityRule{
+                {Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH Proxy"},
+                {Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+            },
+        },
+    }
+}
+
+// renderDryRunPlan prints a concise, user-friendly plan for bootstrap actions
+func (m *Manager) renderDryRunPlan(ctx context.Context) error {
+	// Shared plan data struct
+	type (
+		subnetPreview struct{ Name, CIDR, Type, AZ string }
+		sgPreview     struct {
+			Name  string
+			Rules int
+		}
+		volumePreview struct {
+			Name   string
+			SizeGB int
+			Type   string
+		}
+		bastionPreview struct{ Name, Flavor, Image, Network, Subnet string }
+		publicIPPlan   struct{ Ops, Jumpbox, Router, CFSSH, TCPRouter int }
+		plan           struct {
+			Bloc     string `json:"bloc" yaml:"bloc"`
+			Provider string `json:"provider" yaml:"provider"`
+			Region   string `json:"region" yaml:"region"`
+			Network  struct {
+				Name string   `json:"name" yaml:"name"`
+				CIDR string   `json:"cidr" yaml:"cidr"`
+				DNS  []string `json:"dns" yaml:"dns"`
+			} `json:"network" yaml:"network"`
+			Subnets        []subnetPreview `json:"subnets" yaml:"subnets"`
+			PublicIPs      *publicIPPlan   `json:"publicIps,omitempty" yaml:"publicIps,omitempty"`
+			SecurityGroups []sgPreview     `json:"securityGroups" yaml:"securityGroups"`
+			Buckets        []string        `json:"buckets" yaml:"buckets"`
+			Volumes        []volumePreview `json:"volumes" yaml:"volumes"`
+			Bastion        bastionPreview  `json:"bastion" yaml:"bastion"`
+			CreateCount    int             `json:"createCount" yaml:"createCount"`
+		}
+	)
+	bootstrapPlan := plan{Bloc: m.options.BlocName, Provider: m.options.Provider, Region: m.options.Region}
+
+	// Resolve network CIDR and derived subnets
+	parentCIDR := m.config.Network.NetworkCIDR
+	if parentCIDR == "" {
+		parentCIDR = m.config.Network.CIDR
+	}
+	if parentCIDR == "" {
+		parentCIDR = "10.4.0.0/20"
+	}
+	bootstrapPlan.Network.Name = fmt.Sprintf("%s-net", m.config.Name)
+	bootstrapPlan.Network.CIDR = parentCIDR
+	bootstrapPlan.Network.DNS = m.config.DNS
+
+	// Compute subnets preview
+	var subnets []subnetPreview
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		strat := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
+		if strat == "ocfp-triple" {
+			children := splitIntoN(parentCIDR, 4)
+			if len(children) < 4 {
+				c0 := firstChild24(parentCIDR)
+				c1 := nextSibling24(c0)
+				c2 := nextSibling24(c1)
+				c3 := nextSibling24(c2)
+				children = []string{c0, c1, c2, c3}
+			}
+			triples := []string{children[1], children[2], children[3]}
+			for i, cidr := range triples {
+				subnets = append(subnets, subnetPreview{
+					Name: fmt.Sprintf("%s-ocfp-%d", m.config.Name, i),
+					CIDR: cidr,
+					Type: "public (virtual)",
+				})
+			}
+		} else {
+			subnets = append(subnets, subnetPreview{
+				Name: fmt.Sprintf("%s-ocfp-0", m.config.Name),
+				CIDR: parentCIDR,
+				Type: "public (virtual)",
+			})
+		}
+	} else {
+		if len(m.config.Subnets) == 0 {
+			mgmtCIDR, ocfCIDR := splitParentIntoTwo(parentCIDR)
+			if mgmtCIDR == "" || ocfCIDR == "" {
+				mgmtCIDR = firstChild24(parentCIDR)
+				ocfCIDR = nextSibling24(mgmtCIDR)
+			}
+			subnets = append(subnets,
+				subnetPreview{Name: fmt.Sprintf("%s-mgmt", m.config.Name), CIDR: mgmtCIDR, Type: "public"},
+				subnetPreview{Name: fmt.Sprintf("%s-ocf", m.config.Name), CIDR: ocfCIDR, Type: "private"},
+			)
+		} else {
+			for _, sn := range m.config.Subnets {
+				subnets = append(subnets, subnetPreview{
+					Name: fmt.Sprintf("%s-%s", m.config.Name, sn.Name),
+					CIDR: sn.CIDR,
+					Type: sn.Type,
+					AZ:   sn.AvailabilityZone,
+				})
+			}
+		}
+	}
+
+	// Public IP counts (STACKIT only)
+	var (
+		opsCount       = 0
+		jumpboxCount   = 0
+		routerCount    = 0
+		cfsshCount     = 0
+		tcpRouterCount = 0
+	)
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		opsCount = 1
+		jumpboxCount = m.config.JumpboxPublicIPs
+		if jumpboxCount <= 0 {
+			jumpboxCount = 2
+		}
+		routerCount = m.config.RouterPublicIPs
+		if routerCount <= 0 {
+			routerCount = 4
+		}
+		cfsshCount = m.config.CFSSHPublicIPs
+		if cfsshCount <= 0 {
+			cfsshCount = 1
+		}
+		tcpRouterCount = m.config.TCPRouterPublicIPs
+		if tcpRouterCount <= 0 {
+			tcpRouterCount = 2
+		}
+	}
+
+	// Security groups planned (derive from default definitions)
+	plannedSGs := []sgPreview{}
+	for _, def := range m.defaultSecurityGroupDefs() {
+		plannedSGs = append(plannedSGs, sgPreview{
+			Name:  fmt.Sprintf("%s-%s", m.config.Name, def.name),
+			Rules: len(def.rules),
+		})
+	}
+
+	// Buckets planned
+	bucketNames := []string{
+		fmt.Sprintf("%s-bosh-blobstore", m.config.Name),
+		fmt.Sprintf("%s-cf-app-packages", m.config.Name),
+		fmt.Sprintf("%s-cf-buildpacks", m.config.Name),
+		fmt.Sprintf("%s-cf-droplets", m.config.Name),
+		fmt.Sprintf("%s-cf-resources", m.config.Name),
+		fmt.Sprintf("%s-artifacts", m.config.Name),
+		fmt.Sprintf("%s-shield-backups", m.config.Name),
+	}
+
+	// Volumes planned
+	volumes := []volumePreview{
+		{Name: fmt.Sprintf("%s-bastion-root", m.config.Name), SizeGB: 50, Type: "standard"},
+		{Name: fmt.Sprintf("%s-bastion-data", m.config.Name), SizeGB: 100, Type: "standard"},
+	}
+
+	// Bastion plan
+	bastionSubnet := ""
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		bastionSubnet = fmt.Sprintf("%s-ocfp-0 (virtual)", m.config.Name)
+		if strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy)) == "ocfp-triple" {
+			bastionSubnet = fmt.Sprintf("%s-ocfp-1 (virtual)", m.config.Name)
+		}
+	} else {
+		bastionSubnet = fmt.Sprintf("%s-mgmt", m.config.Name)
+	}
+
+	// Summary counts
+	totalCreates := 1 + len(subnets) + len(plannedSGs) + len(bucketNames) + len(volumes) + 1 // network + subnets + sgs + buckets + volumes + bastion
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		totalCreates += (opsCount + jumpboxCount + routerCount + cfsshCount + tcpRouterCount) // public IPs tracked
+		totalCreates += 1                                                                     // keypair tracked
+	} else {
+		totalCreates += 1 // keypair
+	}
+
+	// Build plan struct
+	bootstrapPlan.Subnets = subnets
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		bootstrapPlan.PublicIPs = &publicIPPlan{Ops: opsCount, Jumpbox: jumpboxCount, Router: routerCount, CFSSH: cfsshCount, TCPRouter: tcpRouterCount}
+	}
+	bootstrapPlan.SecurityGroups = plannedSGs
+	bootstrapPlan.Buckets = bucketNames
+	bootstrapPlan.Volumes = volumes
+	bootstrapPlan.Bastion = bastionPreview{
+		Name:    fmt.Sprintf("%s-bastion", m.config.Name),
+		Flavor:  m.config.Bastion.Flavor,
+		Image:   m.config.Bastion.Image,
+		Network: fmt.Sprintf("%s-net", m.config.Name),
+		Subnet:  bastionSubnet,
+	}
+	bootstrapPlan.CreateCount = totalCreates
+
+	// Build UI table and render via shared UI renderer
+    title := fmt.Sprintf("DRY RUN — Bootstrap Plan for bloc '%s' (provider=%s, region=%s)", m.options.BlocName, m.options.Provider, m.options.Region)
+    summary := fmt.Sprintf("Plan: create %d resources, 0 to change, 0 to destroy", totalCreates)
+    t := &ui.Table{Title: title, Summary: summary}
+
+    // Network
+    t.Sections = append(t.Sections, ui.Section{
+        Title:   "Network",
+        Headers: []string{"NAME", "CIDR", "DNS"},
+        Rows:    [][]string{{bootstrapPlan.Network.Name, bootstrapPlan.Network.CIDR, strings.Join(bootstrapPlan.Network.DNS, ",")}},
+    })
+
+    // Subnets
+    if len(subnets) > 0 {
+        rows := make([][]string, 0, len(subnets))
+        for _, s := range subnets {
+            rows = append(rows, []string{s.Name, s.CIDR, s.Type, s.AZ})
+        }
+        t.Sections = append(t.Sections, ui.Section{Title: "Subnets", Headers: []string{"NAME", "CIDR", "TYPE", "AZ"}, Rows: rows})
+    }
+
+    // Public IPs (STACKIT only)
+    if bootstrapPlan.PublicIPs != nil {
+        t.Sections = append(t.Sections, ui.Section{
+            Title:   "Public IPs",
+            Headers: []string{"JOB", "COUNT"},
+            Rows: [][]string{
+                {"ops", fmt.Sprintf("%d", bootstrapPlan.PublicIPs.Ops)},
+                {"jumpbox", fmt.Sprintf("%d", bootstrapPlan.PublicIPs.Jumpbox)},
+                {"router", fmt.Sprintf("%d", bootstrapPlan.PublicIPs.Router)},
+                {"cf-ssh", fmt.Sprintf("%d", bootstrapPlan.PublicIPs.CFSSH)},
+                {"tcp-router", fmt.Sprintf("%d", bootstrapPlan.PublicIPs.TCPRouter)},
+            },
+        })
+    }
+
+	    // Security Groups
+	    if len(plannedSGs) > 0 {
+	        rows := make([][]string, 0, len(plannedSGs))
+	        for _, s := range plannedSGs {
+	            rows = append(rows, []string{s.Name, fmt.Sprintf("%d", s.Rules)})
+	        }
+	        t.Sections = append(t.Sections, ui.Section{Title: "Security Groups", Headers: []string{"NAME", "RULES"}, Rows: rows})
+	    }
+
+	    // Security Group Rules (detailed)
+	    {
+	        ruleRows := [][]string{}
+	        for _, def := range m.defaultSecurityGroupDefs() {
+	            groupName := fmt.Sprintf("%s-%s", m.config.Name, def.name)
+	            for _, r := range def.rules {
+	                dir := strings.ToUpper(r.Direction)
+	                proto := strings.ToLower(r.Protocol)
+	                // Ports formatting
+	                ports := "-"
+	                if proto != "all" {
+	                    if r.PortRangeMin > 0 && r.PortRangeMax > 0 {
+	                        if r.PortRangeMin == r.PortRangeMax {
+	                            ports = fmt.Sprintf("%d", r.PortRangeMin)
+	                        } else {
+	                            ports = fmt.Sprintf("%d-%d", r.PortRangeMin, r.PortRangeMax)
+	                        }
+	                    }
+	                }
+	                remote := r.RemoteIPCIDR
+	                if strings.TrimSpace(remote) == "" {
+	                    remote = "-"
+	                }
+	                desc := r.Description
+	                ruleRows = append(ruleRows, []string{groupName, dir, proto, ports, remote, desc})
+	            }
+	        }
+	        if len(ruleRows) > 0 {
+	            t.Sections = append(t.Sections, ui.Section{
+	                Title:   "Security Group Rules",
+	                Headers: []string{"GROUP", "DIRECTION", "PROTO", "PORTS", "REMOTE", "DESCRIPTION"},
+	                Rows:    ruleRows,
+	            })
+	        }
+	    }
+
+    // Buckets
+    if len(bucketNames) > 0 {
+        rows := make([][]string, 0, len(bucketNames))
+        for _, b := range bucketNames { rows = append(rows, []string{b}) }
+        t.Sections = append(t.Sections, ui.Section{Title: "Object Storage Buckets", Headers: []string{"NAME"}, Rows: rows})
+    }
+
+    // Volumes
+    if len(volumes) > 0 {
+        rows := make([][]string, 0, len(volumes))
+        for _, v := range volumes { rows = append(rows, []string{v.Name, fmt.Sprintf("%d", v.SizeGB), v.Type}) }
+        t.Sections = append(t.Sections, ui.Section{Title: "Volumes", Headers: []string{"NAME", "SIZE(GB)", "TYPE"}, Rows: rows})
+    }
+
+    // Bastion
+    t.Sections = append(t.Sections, ui.Section{
+        Title:   "Bastion",
+        Headers: []string{"NAME", "FLAVOR", "IMAGE", "NETWORK", "SUBNET"},
+        Rows: [][]string{{
+            bootstrapPlan.Bastion.Name,
+            bootstrapPlan.Bastion.Flavor,
+            bootstrapPlan.Bastion.Image,
+            bootstrapPlan.Bastion.Network,
+            bootstrapPlan.Bastion.Subnet,
+        }},
+    })
+
+    format := strings.ToLower(strings.TrimSpace(m.options.Output))
+    if format == "" { format = "table" }
+    return ui.Render(t, format)
 }
 
 // baseTags returns standard tags/labels to attach to resources
@@ -399,7 +786,7 @@ func uint32ToIP(n uint32) net.IP {
 
 // createSecurityGroups creates security groups with default rules
 func (m *Manager) createSecurityGroups(ctx context.Context) error {
-	logger.Info("Creating security groups...")
+    logger.Info("Creating security groups...")
 
 	// Get network ID
 	networkID, err := m.stateManager.GetOutput("network_id")
@@ -407,83 +794,12 @@ func (m *Manager) createSecurityGroups(ctx context.Context) error {
 		return fmt.Errorf("network ID not found in state: %w", err)
 	}
 
-	// Security groups modeled after Perl implementation
-	// Names are prefixed with bloc name below
-	securityGroups := []struct {
-		name        string
-		description string
-		rules       []*cpi.SecurityRule
-	}{
-		{
-			name:        "bastion",
-			description: "Security group for bastion host",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "infra",
-			description: "Security group for STACKIT infrastructure",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 8080, PortRangeMax: 8080, Description: "HTTP-ALT"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 8443, PortRangeMax: 8443, Description: "HTTPS-ALT"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocfp",
-			description: "Security group for OCFP services",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 25555, PortRangeMax: 25555, Description: "BOSH Director"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 6868, PortRangeMax: 6868, Description: "BOSH Agent"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "lb-ext",
-			description: "Security group for external load balancers",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTPS external"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-router-ingress",
-			description: "Security group for Cloud Foundry router ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-tcp-router-ingress",
-			description: "Security group for Cloud Foundry TCP router ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 1024, PortRangeMax: 65535, RemoteIPCIDR: "0.0.0.0/0", Description: "CF TCP Router"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-ssh-ingress",
-			description: "Security group for Cloud Foundry SSH proxy ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH Proxy"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-	}
+    // Security groups modeled after Perl implementation (shared defs)
+    // Names are prefixed with bloc name below
+    securityGroups := m.defaultSecurityGroupDefs()
 
-	for _, sg := range securityGroups {
-		sgName := fmt.Sprintf("%s-%s", m.config.Name, sg.name)
+	for _, secGroup := range securityGroups {
+		sgName := fmt.Sprintf("%s-%s", m.config.Name, secGroup.name)
 
 		// Check if already exists
 		existingSG, _ := m.stateManager.GetResource("security_group", sgName)
@@ -495,9 +811,9 @@ func (m *Manager) createSecurityGroups(ctx context.Context) error {
 		// Create security group
 		createdSG, err := m.provider.Security().CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
 			Name:        sgName,
-			Description: sg.description,
+			Description: secGroup.description,
 			NetworkID:   networkID.(string),
-			Rules:       sg.rules,
+			Rules:       secGroup.rules,
 			Tags:        m.baseTags(),
 		})
 		if err != nil {
@@ -520,7 +836,7 @@ func (m *Manager) createSecurityGroups(ctx context.Context) error {
 			return fmt.Errorf("failed to save security group to state: %w", err)
 		}
 
-		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", sg.name), createdSG.ID)
+		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", secGroup.name), createdSG.ID)
 		logger.Infof("Security group created: %s", sgName)
 	}
 
@@ -553,7 +869,7 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 		CreatePublicIP(ctx context.Context, req *cpi.CreatePublicIPRequest) (*cpi.PublicIP, error)
 	}
 
-	s, ok := netMgr.(stackitEnsure)
+	stackitProvider, ok := netMgr.(stackitEnsure)
 	if !ok {
 		logger.Warn("STACKIT-specific network features not available; skipping public IP creation")
 		return nil
@@ -571,23 +887,23 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			if opsIPs, err := so.EnsureOpsPublicIPs(ctx, m.config.Name, 1); err != nil {
 				logger.Warnf("Failed ensuring ops public IP: %v", err)
 			} else {
-				for _, ip := range opsIPs {
-					resName := fmt.Sprintf("%s-ops-%s", m.config.Name, ip.Labels["index"]) // usually index 0
+				for _, opsIP := range opsIPs {
+					resName := fmt.Sprintf("%s-ops-%s", m.config.Name, opsIP.Labels["index"]) // usually index 0
 					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       ip.ID,
+						ID:       opsIP.ID,
 						Type:     "public_ip",
 						Name:     resName,
 						Provider: m.options.Provider,
 						State:    "active",
 						Properties: map[string]interface{}{
 							"job":       "ops",
-							"index":     ip.Labels["index"],
-							"address":   ip.Address,
-							"networkId": ip.NetworkID,
+							"index":     opsIP.Labels["index"],
+							"address":   opsIP.Address,
+							"networkId": opsIP.NetworkID,
 						},
-						Tags: ip.Labels,
+						Tags: opsIP.Labels,
 					}); err != nil {
-						logger.Warnf("Failed to save ops IP %s to state: %v", ip.ID, err)
+						logger.Warnf("Failed to save ops IP %s to state: %v", opsIP.ID, err)
 					}
 				}
 				logger.Infof("Ops public IP ensured: %d", len(opsIPs))
@@ -602,29 +918,29 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 		jumpboxIPCount = 2
 	}
 	logger.Infof("Ensuring %d jumpbox public IPs for bloc %s", jumpboxIPCount, m.config.Name)
-	jumpboxIPs, err := s.EnsureJumpboxPublicIPs(ctx, m.config.Name, jumpboxIPCount)
+	jumpboxIPs, err := stackitProvider.EnsureJumpboxPublicIPs(ctx, m.config.Name, jumpboxIPCount)
 	if err != nil {
 		return fmt.Errorf("failed ensuring jumpbox public IPs: %w", err)
 	}
 
 	// Persist jumpbox IPs to state
-	for _, ip := range jumpboxIPs {
-		resName := fmt.Sprintf("%s-jumpbox-%s", m.config.Name, ip.Labels["index"])
+	for _, jumpboxIP := range jumpboxIPs {
+		resName := fmt.Sprintf("%s-jumpbox-%s", m.config.Name, jumpboxIP.Labels["index"])
 		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       ip.ID,
+			ID:       jumpboxIP.ID,
 			Type:     "public_ip",
 			Name:     resName,
 			Provider: m.options.Provider,
 			State:    "active",
 			Properties: map[string]interface{}{
 				"job":       "jumpbox",
-				"index":     ip.Labels["index"],
-				"address":   ip.Address,
-				"networkId": ip.NetworkID,
+				"index":     jumpboxIP.Labels["index"],
+				"address":   jumpboxIP.Address,
+				"networkId": jumpboxIP.NetworkID,
 			},
-			Tags: ip.Labels,
+			Tags: jumpboxIP.Labels,
 		}); err != nil {
-			logger.Warnf("Failed to save jumpbox IP %s to state: %v", ip.ID, err)
+			logger.Warnf("Failed to save jumpbox IP %s to state: %v", jumpboxIP.ID, err)
 		}
 	}
 
@@ -644,23 +960,23 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			if routerIPs, err := sr.EnsureRouterPublicIPs(ctx, m.config.Name, routerCount); err != nil {
 				logger.Warnf("Failed ensuring router public IPs: %v", err)
 			} else {
-				for _, ip := range routerIPs {
-					resName := fmt.Sprintf("%s-router-%s", m.config.Name, ip.Labels["index"])
+				for _, routerIP := range routerIPs {
+					resName := fmt.Sprintf("%s-router-%s", m.config.Name, routerIP.Labels["index"])
 					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       ip.ID,
+						ID:       routerIP.ID,
 						Type:     "public_ip",
 						Name:     resName,
 						Provider: m.options.Provider,
 						State:    "active",
 						Properties: map[string]interface{}{
 							"job":       "router",
-							"index":     ip.Labels["index"],
-							"address":   ip.Address,
-							"networkId": ip.NetworkID,
+							"index":     routerIP.Labels["index"],
+							"address":   routerIP.Address,
+							"networkId": routerIP.NetworkID,
 						},
-						Tags: ip.Labels,
+						Tags: routerIP.Labels,
 					}); err != nil {
-						logger.Warnf("Failed to save router IP %s to state: %v", ip.ID, err)
+						logger.Warnf("Failed to save router IP %s to state: %v", routerIP.ID, err)
 					}
 				}
 				logger.Infof("Router public IPs ensured: %d", len(routerIPs))
@@ -682,23 +998,23 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			if cfIPs, err := sc.EnsureCFSSHPublicIPs(ctx, m.config.Name, cfsshCount); err != nil {
 				logger.Warnf("Failed ensuring cf-ssh public IPs: %v", err)
 			} else {
-				for _, ip := range cfIPs {
-					resName := fmt.Sprintf("%s-cf-ssh-%s", m.config.Name, ip.Labels["index"])
+				for _, publicIP := range cfIPs {
+					resName := fmt.Sprintf("%s-cf-ssh-%s", m.config.Name, publicIP.Labels["index"])
 					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       ip.ID,
+						ID:       publicIP.ID,
 						Type:     "public_ip",
 						Name:     resName,
 						Provider: m.options.Provider,
 						State:    "active",
 						Properties: map[string]interface{}{
 							"job":       "cf-ssh",
-							"index":     ip.Labels["index"],
-							"address":   ip.Address,
-							"networkId": ip.NetworkID,
+							"index":     publicIP.Labels["index"],
+							"address":   publicIP.Address,
+							"networkId": publicIP.NetworkID,
 						},
-						Tags: ip.Labels,
+						Tags: publicIP.Labels,
 					}); err != nil {
-						logger.Warnf("Failed to save cf-ssh IP %s to state: %v", ip.ID, err)
+						logger.Warnf("Failed to save cf-ssh IP %s to state: %v", publicIP.ID, err)
 					}
 				}
 				logger.Infof("CF-SSH public IPs ensured: %d", len(cfIPs))
@@ -720,23 +1036,23 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			if tcpIPs, err := st.EnsureTCPRouterPublicIPs(ctx, m.config.Name, tcpRouterCount); err != nil {
 				logger.Warnf("Failed ensuring tcp-router public IPs: %v", err)
 			} else {
-				for _, ip := range tcpIPs {
-					resName := fmt.Sprintf("%s-tcp-router-%s", m.config.Name, ip.Labels["index"])
+				for _, publicIP := range tcpIPs {
+					resName := fmt.Sprintf("%s-tcp-router-%s", m.config.Name, publicIP.Labels["index"])
 					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       ip.ID,
+						ID:       publicIP.ID,
 						Type:     "public_ip",
 						Name:     resName,
 						Provider: m.options.Provider,
 						State:    "active",
 						Properties: map[string]interface{}{
 							"job":       "tcp-router",
-							"index":     ip.Labels["index"],
-							"address":   ip.Address,
-							"networkId": ip.NetworkID,
+							"index":     publicIP.Labels["index"],
+							"address":   publicIP.Address,
+							"networkId": publicIP.NetworkID,
 						},
-						Tags: ip.Labels,
+						Tags: publicIP.Labels,
 					}); err != nil {
-						logger.Warnf("Failed to save tcp-router IP %s to state: %v", ip.ID, err)
+						logger.Warnf("Failed to save tcp-router IP %s to state: %v", publicIP.ID, err)
 					}
 				}
 				logger.Infof("TCP Router public IPs ensured: %d", len(tcpIPs))
@@ -754,62 +1070,61 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 
 // renderPublicIPsTable prints a table overview of ensured public IPs
 func renderPublicIPsTable(ips []*cpi.PublicIP) {
-	// Stable sort by job then numeric index
-	sort.Slice(ips, func(i, j int) bool {
-		if ips[i].Job == ips[j].Job {
-			ii, ij := parseIndex(ips[i].Index), parseIndex(ips[j].Index)
-			if ii == ij {
-				return ips[i].Index < ips[j].Index
-			}
-			return ii < ij
-		}
-		return ips[i].Job < ips[j].Job
-	})
+    // Stable sort by job then numeric index
+    sort.Slice(ips, func(first, second int) bool {
+        if ips[first].Job == ips[second].Job {
+            firstIndex, secondIndex := parseIndex(ips[first].Index), parseIndex(ips[second].Index)
+            if firstIndex == secondIndex {
+                return ips[first].Index < ips[second].Index
+            }
+            return firstIndex < secondIndex
+        }
+        return ips[first].Job < ips[second].Job
+    })
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"})
-	table.SetAutoWrapText(false)
-
-	for _, ip := range ips {
-		table.Append([]string{
-			ip.Job,
-			ip.Index,
-			ip.Address,
-			ip.ID,
-			ip.Name,
-			ip.NetworkID,
-			formatLabels(ip.Labels),
-		})
-	}
-
-	table.Render()
+    // Render via shared UI renderer for consistency
+    t := &ui.Table{Title: "Public IPs"}
+    rows := make([][]string, 0, len(ips))
+    for _, publicIP := range ips {
+        rows = append(rows, []string{
+            publicIP.Job,
+            publicIP.Index,
+            publicIP.Address,
+            publicIP.ID,
+            publicIP.Name,
+            publicIP.NetworkID,
+            formatLabels(publicIP.Labels),
+        })
+    }
+    t.Sections = append(t.Sections, ui.Section{Title: "Ensured", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
+    _ = ui.Render(t, "table")
 }
 
-func formatLabels(m map[string]string) string {
-	if len(m) == 0 {
+func formatLabels(labels map[string]string) string {
+	if len(labels) == 0 {
 		return ""
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", k, m[k]))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, labels[key]))
 	}
 	return strings.Join(parts, ",")
 }
 
-func parseIndex(s string) int {
-	var n int
-	for _, ch := range s {
+func parseIndex(indexString string) int {
+	var result int
+	for _, ch := range indexString {
 		if ch < '0' || ch > '9' {
 			return 1 << 30
 		}
-		n = n*10 + int(ch-'0')
+		result = result*10 + int(ch-'0')
 	}
-	return n
+	return result
 }
 
 // createKeyPair creates or imports SSH key pair
@@ -974,18 +1289,18 @@ func (m *Manager) createBastion(ctx context.Context) error {
 				return fmt.Errorf("failed to list subnets from state: %w", err)
 			}
 			var anyCandidate *state.Resource
-			for _, r := range subs {
-				if !strings.HasPrefix(r.Name, m.config.Name+"-") {
+			for _, subnet := range subs {
+				if !strings.HasPrefix(subnet.Name, m.config.Name+"-") {
 					continue
 				}
 				// Prefer public type if available
-				if t, ok := r.Properties["type"].(string); ok && strings.EqualFold(t, "public") {
-					subnetIDVal = r.ID
-					subnetNameForDep = r.Name
+				if t, ok := subnet.Properties["type"].(string); ok && strings.EqualFold(t, "public") {
+					subnetIDVal = subnet.ID
+					subnetNameForDep = subnet.Name
 					break
 				}
 				if anyCandidate == nil {
-					anyCandidate = r
+					anyCandidate = subnet
 				}
 			}
 			if subnetIDVal == nil && anyCandidate != nil {
@@ -1140,8 +1455,8 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 		type ensureGroup interface {
 			EnsureObjectStorageCredentialsGroup(context.Context, string) (string, error)
 		}
-		if s, ok := storage.(ensureGroup); ok {
-			if groupID, err := s.EnsureObjectStorageCredentialsGroup(ctx, "ocfp-cli"); err == nil {
+		if storageProvider, ok := storage.(ensureGroup); ok {
+			if groupID, err := storageProvider.EnsureObjectStorageCredentialsGroup(ctx, "ocfp-cli"); err == nil {
 				// Persist credentials group to state
 				_ = m.stateManager.AddResource(&state.Resource{
 					ID:       groupID,
@@ -1193,13 +1508,13 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 			type life interface {
 				SetBucketLifecycleNoncurrentDays(context.Context, string, int32) error
 			}
-			if v, ok := storage.(ver); ok {
+			if versionProvider, ok := storage.(ver); ok {
 				// Defaults tuned per bucket type
 				switch {
 				case strings.HasSuffix(name, "-cf-buildpacks"):
 					settings := m.config.Blobstore.CFBuildpacks
 					if settings.Versioning {
-						if err := v.EnableBucketVersioning(ctx, name); err != nil {
+						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
 							logger.Warnf("versioning %s: %v", name, err)
 						}
 					}
@@ -1213,7 +1528,7 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 				case strings.HasSuffix(name, "-cf-droplets"):
 					settings := m.config.Blobstore.CFDroplets
 					if settings.Versioning {
-						if err := v.EnableBucketVersioning(ctx, name); err != nil {
+						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
 							logger.Warnf("versioning %s: %v", name, err)
 						}
 					}
@@ -1227,7 +1542,7 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 				case strings.HasSuffix(name, "-cf-app-packages"):
 					settings := m.config.Blobstore.CFAppPackages
 					if vsettings := settings.Versioning; vsettings {
-						if err := v.EnableBucketVersioning(ctx, name); err != nil {
+						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
 							logger.Warnf("versioning %s: %v", name, err)
 						}
 					}
@@ -1241,7 +1556,7 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 				case strings.HasSuffix(name, "-bosh-blobstore"):
 					settings := m.config.Blobstore.BoshBlobstore
 					if settings.Versioning {
-						if err := v.EnableBucketVersioning(ctx, name); err != nil {
+						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
 							logger.Warnf("versioning %s: %v", name, err)
 						}
 					}
@@ -1261,8 +1576,8 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 
 // splitIntoN splits parent network into N equal-power-of-two child CIDRs if possible.
 // Returns empty slice if not feasible.
-func splitIntoN(parentCIDR string, n int) []string {
-	if n <= 0 || (n&(n-1)) != 0 { // n must be power of two
+func splitIntoN(parentCIDR string, count int) []string {
+	if count <= 0 || (count&(count-1)) != 0 { // count must be power of two
 		return nil
 	}
 	_, parent, err := net.ParseCIDR(parentCIDR)
@@ -1275,7 +1590,7 @@ func splitIntoN(parentCIDR string, n int) []string {
 	}
 	// Increase prefix by log2(n)
 	inc := 0
-	for (1 << inc) < n {
+	for (1 << inc) < count {
 		inc++
 	}
 	newPrefix := ones + inc
@@ -1292,12 +1607,12 @@ func splitIntoN(parentCIDR string, n int) []string {
 	}
 	shift := uint32(32 - newPrefix) // #nosec G115 - newPrefix bounds validated above
 	size := uint32(1) << shift
-	out := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		if i < 0 || i > int(^uint32(0)) {
+	out := make([]string, 0, count)
+	for index := 0; index < count; index++ {
+		if index < 0 || index > int(^uint32(0)) {
 			continue
 		}
-		cidr := (&net.IPNet{IP: uint32ToIP(base + uint32(i)*size), Mask: net.CIDRMask(newPrefix, 32)}).String()
+		cidr := (&net.IPNet{IP: uint32ToIP(base + uint32(index)*size), Mask: net.CIDRMask(newPrefix, 32)}).String()
 		out = append(out, cidr)
 	}
 	return out
@@ -1394,17 +1709,17 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, parentCID
 	idx := -1
 	if i := strings.LastIndex(name, "-"); i != -1 && i+1 < len(name) {
 		// parse trailing integer
-		var n int
+		var result int
 		for j := i + 1; j < len(name); j++ {
 			ch := name[j]
 			if ch < '0' || ch > '9' {
-				n = -1
+				result = -1
 				break
 			}
-			n = n*10 + int(ch-'0')
+			result = result*10 + int(ch-'0')
 		}
-		if n >= 0 {
-			idx = n
+		if result >= 0 {
+			idx = result
 		}
 	}
 	base := ipToUint32(net.ParseIP(cidrFirstIP(subnetCIDR)))

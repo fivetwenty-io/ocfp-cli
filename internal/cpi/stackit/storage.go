@@ -2,16 +2,15 @@ package stackit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage"
-	"net/url"
-	"strings"
 
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -21,166 +20,108 @@ import (
 
 // CreateVolume creates a new storage volume
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
-	logger.WithOperation("CreateVolume").Infof("Creating volume: %s", req.Name)
-
-	apiReq := map[string]interface{}{
-		"name":              req.Name,
-		"size":              req.Size,
-		"type":              req.Type,
-		"availability_zone": req.AvailabilityZone,
-		"labels":            req.Tags,
-	}
-
-	if req.SnapshotID != "" {
-		apiReq["snapshot_id"] = req.SnapshotID
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/volumes", apiReq)
+	logger.WithOperation("CreateVolume").Infof("Creating volume via SDK: %s", req.Name)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	payload := iaas.NewCreateVolumePayload(req.AvailabilityZone)
+	if req.Name != "" {
+		payload.SetName(req.Name)
+	}
+	if req.Size > 0 {
+		payload.SetSize(int64(req.Size))
+	}
+	if req.Encrypted {
+		payload.SetEncrypted(true)
+	}
+	if len(req.Tags) > 0 {
+		lm := make(map[string]interface{}, len(req.Tags))
+		for k, v := range req.Tags {
+			lm[k] = v
+		}
+		payload.SetLabels(lm)
+	}
+	created, err := cli.CreateVolume(ctx, m.client.config.ProjectID).CreateVolumePayload(*payload).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create volume: %w", err)
+		return nil, fmt.Errorf("stackit iaas CreateVolume failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, m.client.parseError(resp)
+	out := &cpi.Volume{ID: stringOrEmpty(created.GetIdOk()), Name: stringOrEmpty(created.GetNameOk())}
+	if size, ok := created.GetSizeOk(); ok {
+		out.Size = int(size)
 	}
-
-	var volume cpi.Volume
-	if err := json.NewDecoder(resp.Body).Decode(&volume); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	if az, ok := created.GetAvailabilityZoneOk(); ok {
+		out.Tags = map[string]string{"az": az}
 	}
-
-	if err := m.waitForVolumeState(ctx, volume.ID, cpi.ResourceStateAvailable, 5*time.Minute); err != nil {
+	if err := m.waitForVolumeState(ctx, out.ID, cpi.ResourceStateAvailable, 5*time.Minute); err != nil {
 		return nil, fmt.Errorf("volume failed to become available: %w", err)
 	}
-
-	logger.WithOperation("CreateVolume").Infof("Volume created: %s (%s)", volume.Name, volume.ID)
-	return &volume, nil
+	return out, nil
 }
 
 // GetVolume retrieves a volume by ID
-func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
-	logger.WithOperation("GetVolume").Debugf("Getting volume: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/volumes/"+id, nil)
+func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.Volume, error) {
+	logger.WithOperation("GetVolume").Debugf("Getting volume via SDK: %s", volumeID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	got, err := cli.GetVolume(ctx, m.client.config.ProjectID, volumeID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get volume: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetVolume failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Volume %s not found", id),
-		}
+	out := &cpi.Volume{ID: stringOrEmpty(got.GetIdOk()), Name: stringOrEmpty(got.GetNameOk())}
+	if size, ok := got.GetSizeOk(); ok {
+		out.Size = int(size)
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var volume cpi.Volume
-	if err := json.NewDecoder(resp.Body).Decode(&volume); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &volume, nil
+	return out, nil
 }
 
 // ListVolumes lists all volumes
 func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	logger.WithOperation("ListVolumes").Debug("Listing volumes")
-
-	query := "?"
-	for k, v := range filters {
-		query += fmt.Sprintf("%s=%s&", k, v)
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/volumes"+query, nil)
+	logger.WithOperation("ListVolumes").Debug("Listing volumes via SDK")
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	resp, err := cli.ListVolumes(ctx, m.client.config.ProjectID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list volumes: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListVolumes failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
+	items, _ := resp.GetItemsOk()
+	var out []*cpi.Volume
+	for _, v := range items {
+		vol := &cpi.Volume{ID: stringOrEmpty(v.GetIdOk()), Name: stringOrEmpty(v.GetNameOk())}
+		if size, ok := v.GetSizeOk(); ok {
+			vol.Size = int(size)
+		}
+		out = append(out, vol)
 	}
-
-	var result struct {
-		Volumes []*cpi.Volume `json:"volumes"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	logger.WithOperation("ListVolumes").Debugf("Found %d volumes", len(result.Volumes))
-	return result.Volumes, nil
+	return out, nil
 }
 
 // DeleteVolume deletes a volume
-func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
-	logger.WithOperation("DeleteVolume").Infof("Deleting volume: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "DELETE", "/v1/projects/"+m.client.config.ProjectID+"/volumes/"+id, nil)
+func (m *StorageManager) DeleteVolume(ctx context.Context, volumeID string) error {
+	logger.WithOperation("DeleteVolume").Infof("Deleting volume: %s", volumeID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to delete volume: %w", err)
+	if err := cli.DeleteVolume(ctx, m.client.config.ProjectID, volumeID).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas DeleteVolume failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return m.client.parseError(resp)
-	}
-
-	logger.WithOperation("DeleteVolume").Infof("Volume deleted: %s", id)
 	return nil
 }
 
 // AttachVolume attaches a volume to an instance
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
 	logger.WithOperation("AttachVolume").Infof("Attaching volume %s to instance %s", volumeID, instanceID)
-
-	apiReq := map[string]interface{}{
-		"instance_id": instanceID,
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/volumes/%s/attach", m.client.config.ProjectID, volumeID), apiReq)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to attach volume: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
+	if _, err := cli.AddVolumeToServer(ctx, m.client.config.ProjectID, instanceID, volumeID).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas AddVolumeToServer failed: %w", err)
 	}
 
 	if err := m.waitForVolumeState(ctx, volumeID, cpi.ResourceStateInUse, 2*time.Minute); err != nil {
@@ -192,28 +133,18 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 }
 
 // DetachVolume detaches a volume from an instance
-func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string) error {
-	logger.WithOperation("DetachVolume").Infof("Detaching volume: %s", volumeID)
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/volumes/%s/detach", m.client.config.ProjectID, volumeID), nil)
+func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
+	logger.WithOperation("DetachVolume").Infof("Detaching volume %s from instance %s", volumeID, instanceID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to detach volume: %w", err)
+	if err := cli.RemoveVolumeFromServer(ctx, m.client.config.ProjectID, instanceID, volumeID).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas RemoveVolumeFromServer failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
-	}
-
 	if err := m.waitForVolumeState(ctx, volumeID, cpi.ResourceStateAvailable, 2*time.Minute); err != nil {
 		return fmt.Errorf("volume failed to detach: %w", err)
 	}
-
 	logger.WithOperation("DetachVolume").Infof("Volume detached successfully")
 	return nil
 }
@@ -221,168 +152,91 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string) erro
 // ResizeVolume resizes a volume
 func (m *StorageManager) ResizeVolume(ctx context.Context, volumeID string, newSize int) error {
 	logger.WithOperation("ResizeVolume").Infof("Resizing volume %s to %d GB", volumeID, newSize)
-
-	apiReq := map[string]interface{}{
-		"size": newSize,
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", fmt.Sprintf("/v1/projects/%s/volumes/%s/resize", m.client.config.ProjectID, volumeID), apiReq)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to resize volume: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return m.client.parseError(resp)
-	}
-
-	logger.WithOperation("ResizeVolume").Infof("Volume resize initiated")
-	return nil
+	payload := iaas.NewResizeVolumePayload(int64(newSize))
+	return cli.ResizeVolume(ctx, m.client.config.ProjectID, volumeID).ResizeVolumePayload(*payload).Execute()
 }
 
 // CreateSnapshot creates a snapshot of a volume
 func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
-	logger.WithOperation("CreateSnapshot").Infof("Creating snapshot: %s", name)
-
-	apiReq := map[string]interface{}{
-		"name":      name,
-		"volume_id": volumeID,
-	}
-
-	httpReq, err := m.client.newRequest(ctx, "POST", "/v1/projects/"+m.client.config.ProjectID+"/snapshots", apiReq)
+	logger.WithOperation("CreateSnapshot").Infof("Creating snapshot via SDK: %s", name)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	payload := iaas.NewCreateSnapshotPayload(volumeID)
+	if name != "" {
+		payload.SetName(name)
+	}
+	created, err := cli.CreateSnapshot(ctx, m.client.config.ProjectID).CreateSnapshotPayload(*payload).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create snapshot: %w", err)
+		return nil, fmt.Errorf("stackit iaas CreateSnapshot failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, m.client.parseError(resp)
-	}
-
-	var snapshot cpi.Snapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if err := m.waitForSnapshotState(ctx, snapshot.ID, cpi.ResourceStateAvailable, 10*time.Minute); err != nil {
+	out := &cpi.Snapshot{ID: stringOrEmpty(created.GetIdOk()), Name: stringOrEmpty(created.GetNameOk()), VolumeID: stringOrEmpty(created.GetVolumeIdOk())}
+	if err := m.waitForSnapshotState(ctx, out.ID, cpi.ResourceStateAvailable, 10*time.Minute); err != nil {
 		return nil, fmt.Errorf("snapshot failed to become available: %w", err)
 	}
-
-	logger.WithOperation("CreateSnapshot").Infof("Snapshot created: %s (%s)", snapshot.Name, snapshot.ID)
-	return &snapshot, nil
+	return out, nil
 }
 
 // GetSnapshot retrieves a snapshot by ID
-func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
-	logger.WithOperation("GetSnapshot").Debugf("Getting snapshot: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/snapshots/"+id, nil)
+func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*cpi.Snapshot, error) {
+	logger.WithOperation("GetSnapshot").Debugf("Getting snapshot via SDK: %s", snapshotID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
+	got, err := cli.GetSnapshot(ctx, m.client.config.ProjectID, snapshotID).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get snapshot: %w", err)
+		return nil, fmt.Errorf("stackit iaas GetSnapshot failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &cpi.ProviderError{
-			Provider: "stackit",
-			Code:     "NotFound",
-			Message:  fmt.Sprintf("Snapshot %s not found", id),
-		}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var snapshot cpi.Snapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &snapshot, nil
+	out := &cpi.Snapshot{ID: stringOrEmpty(got.GetIdOk()), Name: stringOrEmpty(got.GetNameOk()), VolumeID: stringOrEmpty(got.GetVolumeIdOk())}
+	return out, nil
 }
 
 // ListSnapshots lists all snapshots for a volume
 func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) {
-	logger.WithOperation("ListSnapshots").Debug("Listing snapshots")
-
-	query := "?"
+	logger.WithOperation("ListSnapshots").Debug("Listing snapshots via SDK")
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+	req := cli.ListSnapshots(ctx, m.client.config.ProjectID)
 	if volumeID != "" {
-		query += fmt.Sprintf("volume_id=%s&", volumeID)
+		req = req.LabelSelector(fmt.Sprintf("volumeId=%s", volumeID))
 	}
-
-	httpReq, err := m.client.newRequest(ctx, "GET", "/v1/projects/"+m.client.config.ProjectID+"/snapshots"+query, nil)
+	resp, err := req.Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("stackit iaas ListSnapshots failed: %w", err)
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list snapshots: %w", err)
+	items, _ := resp.GetItemsOk()
+	var out []*cpi.Snapshot
+	for _, s := range items {
+		out = append(out, &cpi.Snapshot{ID: stringOrEmpty(s.GetIdOk()), Name: stringOrEmpty(s.GetNameOk()), VolumeID: stringOrEmpty(s.GetVolumeIdOk())})
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, m.client.parseError(resp)
-	}
-
-	var result struct {
-		Snapshots []*cpi.Snapshot `json:"snapshots"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	logger.WithOperation("ListSnapshots").Debugf("Found %d snapshots", len(result.Snapshots))
-	return result.Snapshots, nil
+	return out, nil
 }
 
 // DeleteSnapshot deletes a snapshot
-func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
-	logger.WithOperation("DeleteSnapshot").Infof("Deleting snapshot: %s", id)
-
-	httpReq, err := m.client.newRequest(ctx, "DELETE", "/v1/projects/"+m.client.config.ProjectID+"/snapshots/"+id, nil)
+func (m *StorageManager) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	logger.WithOperation("DeleteSnapshot").Infof("Deleting snapshot: %s", snapshotID)
+	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	resp, err := m.client.do(ctx, httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to delete snapshot: %w", err)
+	if err := cli.DeleteSnapshot(ctx, m.client.config.ProjectID, snapshotID).Execute(); err != nil {
+		return fmt.Errorf("stackit iaas DeleteSnapshot failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return m.client.parseError(resp)
-	}
-
-	logger.WithOperation("DeleteSnapshot").Infof("Snapshot deleted: %s", id)
 	return nil
 }
 
 // waitForVolumeState waits for a volume to reach a specific state
-func (m *StorageManager) waitForVolumeState(ctx context.Context, id string, targetState cpi.ResourceState, timeout time.Duration) error {
+func (m *StorageManager) waitForVolumeState(ctx context.Context, volumeID string, targetState cpi.ResourceState, timeout time.Duration) error {
 	return cpi.WaitForCondition(ctx, 5*time.Second, timeout, func() (bool, error) {
-		volume, err := m.GetVolume(ctx, id)
+		volume, err := m.GetVolume(ctx, volumeID)
 		if err != nil {
 			return false, err
 		}
@@ -391,9 +245,9 @@ func (m *StorageManager) waitForVolumeState(ctx context.Context, id string, targ
 }
 
 // waitForSnapshotState waits for a snapshot to reach a specific state
-func (m *StorageManager) waitForSnapshotState(ctx context.Context, id string, targetState cpi.ResourceState, timeout time.Duration) error {
+func (m *StorageManager) waitForSnapshotState(ctx context.Context, snapshotID string, targetState cpi.ResourceState, timeout time.Duration) error {
 	return cpi.WaitForCondition(ctx, 5*time.Second, timeout, func() (bool, error) {
-		snapshot, err := m.GetSnapshot(ctx, id)
+		snapshot, err := m.GetSnapshot(ctx, snapshotID)
 		if err != nil {
 			return false, err
 		}
@@ -436,10 +290,10 @@ func (m *StorageManager) CreateBucket(ctx context.Context, name string) (*cpi.Bu
 // parseBlocFromBucketName extracts the bloc name from a bucket name following
 // the pattern "<bloc>-<suffix>". Returns empty string if not matched.
 func parseBlocFromBucketName(name string) string {
-	for i := 0; i < len(name); i++ {
-		if name[i] == '-' {
-			if i > 0 {
-				return name[:i]
+	for index := 0; index < len(name); index++ {
+		if name[index] == '-' {
+			if index > 0 {
+				return name[:index]
 			}
 			return ""
 		}
@@ -463,13 +317,13 @@ func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucke
 	}
 
 	// Map SDK model to CPI bucket
-	var b objectstorage.Bucket
+	var bucketData objectstorage.Bucket
 	if bb, ok := resp.GetBucketOk(); ok {
-		b = bb
+		bucketData = bb
 	}
 	bucket := &cpi.Bucket{
-		Name:   b.GetName(),
-		Region: b.GetRegion(),
+		Name:   bucketData.GetName(),
+		Region: bucketData.GetRegion(),
 	}
 	return bucket, nil
 }
@@ -520,23 +374,23 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 
 // EmptyBucket removes all objects from a bucket
 func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
-	op := logger.WithOperation("EmptyBucket")
-	op.Infof("Emptying bucket: %s", name)
+	operation := logger.WithOperation("EmptyBucket")
+	operation.Infof("Emptying bucket: %s", name)
 
 	// Discover bucket endpoint URLs
 	cli, err := m.client.getObjectStorageClient()
 	if err != nil {
 		return err
 	}
-	gb, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+	getBucketResp, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to get bucket %s metadata: %w", name, err)
 	}
 
 	// Choose path-style URL for S3 client endpoint
 	var bucketInfo objectstorage.Bucket
-	if b, ok := gb.GetBucketOk(); ok {
-		bucketInfo = b
+	if bucketData, ok := getBucketResp.GetBucketOk(); ok {
+		bucketInfo = bucketData
 	} else {
 		return fmt.Errorf("bucket metadata missing in response for %s", name)
 	}
@@ -563,7 +417,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 		if _, derr := cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.config.Region, keyID).
 			CredentialsGroup(groupID).
 			Execute(); derr != nil {
-			op.Warnf("Failed to delete temporary access key %s: %v", keyID, derr)
+			operation.Warnf("Failed to delete temporary access key %s: %v", keyID, derr)
 		}
 	}()
 
@@ -580,7 +434,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 
 	// First attempt to delete object versions if versioning is enabled
 	if err := deleteAllObjectVersions(ctx, s3cli, name); err != nil {
-		op.Warnf("Deleting object versions failed or not supported: %v (continuing to delete current objects)", err)
+		operation.Warnf("Deleting object versions failed or not supported: %v (continuing to delete current objects)", err)
 	}
 
 	// Delete current objects
@@ -588,7 +442,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 		return fmt.Errorf("failed deleting objects: %w", err)
 	}
 
-	op.Infof("Bucket emptied: %s", name)
+	operation.Infof("Bucket emptied: %s", name)
 	return nil
 }
 
@@ -617,7 +471,7 @@ func (m *StorageManager) ensureTemporaryAccessKey(ctx context.Context) (string, 
 	// Create group if missing
 	if groupID == "" {
 		payload := objectstorage.NewCreateCredentialsGroupPayload(groupDisplay)
-		cr, err := cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region).
+		createResp, err := cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region).
 			CreateCredentialsGroupPayload(*payload).Execute()
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("create credentials group failed: %w", err)
@@ -633,7 +487,7 @@ func (m *StorageManager) ensureTemporaryAccessKey(ctx context.Context) (string, 
 				}
 			}
 		}
-		_ = cr // not used further, but created
+		_ = createResp // not used further, but created
 		if groupID == "" {
 			return "", "", "", "", fmt.Errorf("could not determine created credentials group id")
 		}
@@ -662,21 +516,21 @@ func deleteAllObjects(ctx context.Context, s3cli *s3.Client, bucket string) erro
 	const batch = 1000
 	var cont *string
 	for {
-		lo, err := s3cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucket, ContinuationToken: cont})
+		listResp, err := s3cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucket, ContinuationToken: cont})
 		if err != nil {
 			return err
 		}
-		if len(lo.Contents) == 0 {
+		if len(listResp.Contents) == 0 {
 			return nil
 		}
 		// Batch delete
-		for i := 0; i < len(lo.Contents); i += batch {
-			end := i + batch
-			if end > len(lo.Contents) {
-				end = len(lo.Contents)
+		for index := 0; index < len(listResp.Contents); index += batch {
+			end := index + batch
+			if end > len(listResp.Contents) {
+				end = len(listResp.Contents)
 			}
-			objs := make([]s3typesObjectIdentifier, 0, end-i)
-			for _, o := range lo.Contents[i:end] {
+			objs := make([]s3typesObjectIdentifier, 0, end-index)
+			for _, o := range listResp.Contents[index:end] {
 				key := *o.Key
 				objs = append(objs, s3typesObjectIdentifier{Key: &key})
 			}
@@ -687,8 +541,8 @@ func deleteAllObjects(ctx context.Context, s3cli *s3.Client, bucket string) erro
 				return err
 			}
 		}
-		if aws.ToBool(lo.IsTruncated) && lo.NextContinuationToken != nil {
-			cont = lo.NextContinuationToken
+		if aws.ToBool(listResp.IsTruncated) && listResp.NextContinuationToken != nil {
+			cont = listResp.NextContinuationToken
 		} else {
 			return nil
 		}
@@ -701,7 +555,7 @@ func deleteAllObjectVersions(ctx context.Context, s3cli *s3.Client, bucket strin
 	const batch = 1000
 	var keyMarker, versionIdMarker *string
 	for {
-		lv, err := s3cli.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
+		listVersionsResp, err := s3cli.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 			Bucket:          &bucket,
 			KeyMarker:       keyMarker,
 			VersionIdMarker: versionIdMarker,
@@ -709,27 +563,27 @@ func deleteAllObjectVersions(ctx context.Context, s3cli *s3.Client, bucket strin
 		if err != nil {
 			return err
 		}
-		if len(lv.Versions) == 0 && len(lv.DeleteMarkers) == 0 {
+		if len(listVersionsResp.Versions) == 0 && len(listVersionsResp.DeleteMarkers) == 0 {
 			return nil
 		}
 		// Collect identifiers
-		ids := make([]s3typesObjectIdentifier, 0, len(lv.Versions)+len(lv.DeleteMarkers))
-		for _, v := range lv.Versions {
+		ids := make([]s3typesObjectIdentifier, 0, len(listVersionsResp.Versions)+len(listVersionsResp.DeleteMarkers))
+		for _, v := range listVersionsResp.Versions {
 			key := *v.Key
 			ver := *v.VersionId
 			ids = append(ids, s3typesObjectIdentifier{Key: &key, VersionId: &ver})
 		}
-		for _, dm := range lv.DeleteMarkers {
+		for _, dm := range listVersionsResp.DeleteMarkers {
 			key := *dm.Key
 			ver := *dm.VersionId
 			ids = append(ids, s3typesObjectIdentifier{Key: &key, VersionId: &ver})
 		}
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
+		for index := 0; index < len(ids); index += batch {
+			end := index + batch
 			if end > len(ids) {
 				end = len(ids)
 			}
-			chunk := ids[i:end]
+			chunk := ids[index:end]
 			if _, err := s3cli.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: &bucket,
 				Delete: &s3typesDelete{Objects: chunk, Quiet: aws.Bool(true)},
@@ -737,9 +591,9 @@ func deleteAllObjectVersions(ctx context.Context, s3cli *s3.Client, bucket strin
 				return err
 			}
 		}
-		if aws.ToBool(lv.IsTruncated) && (lv.NextKeyMarker != nil || lv.NextVersionIdMarker != nil) {
-			keyMarker = lv.NextKeyMarker
-			versionIdMarker = lv.NextVersionIdMarker
+		if aws.ToBool(listVersionsResp.IsTruncated) && (listVersionsResp.NextKeyMarker != nil || listVersionsResp.NextVersionIdMarker != nil) {
+			keyMarker = listVersionsResp.NextKeyMarker
+			versionIdMarker = listVersionsResp.NextVersionIdMarker
 		} else {
 			return nil
 		}
@@ -760,19 +614,19 @@ func (m *StorageManager) EnableBucketVersioning(ctx context.Context, name string
 	if err != nil {
 		return fmt.Errorf("get bucket for versioning: %w", err)
 	}
-	var b objectstorage.Bucket
+	var bucketData objectstorage.Bucket
 	if bb, ok := meta.GetBucketOk(); ok {
-		b = bb
+		bucketData = bb
 	} else {
 		return fmt.Errorf("bucket info missing")
 	}
-	u, err := url.Parse(b.GetUrlPathStyle())
+	u, err := url.Parse(bucketData.GetUrlPathStyle())
 	if err != nil {
 		return fmt.Errorf("parse bucket path url: %w", err)
 	}
 	endpoint := u.Scheme + "://" + u.Host
 
-	ak, sk, keyID, groupID, err := m.ensureTemporaryAccessKey(ctx)
+	accessKey, secretKey, keyID, groupID, err := m.ensureTemporaryAccessKey(ctx)
 	if err != nil {
 		return err
 	}
@@ -782,7 +636,7 @@ func (m *StorageManager) EnableBucketVersioning(ctx context.Context, name string
 
 	cfg := aws.Config{
 		Region:      m.client.config.Region,
-		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	}
 	s3cli := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
@@ -805,19 +659,19 @@ func (m *StorageManager) SetBucketLifecycleNoncurrentDays(ctx context.Context, n
 	if err != nil {
 		return fmt.Errorf("get bucket for lifecycle: %w", err)
 	}
-	var b objectstorage.Bucket
+	var bucketData objectstorage.Bucket
 	if bb, ok := meta.GetBucketOk(); ok {
-		b = bb
+		bucketData = bb
 	} else {
 		return fmt.Errorf("bucket info missing")
 	}
-	u, err := url.Parse(b.GetUrlPathStyle())
+	u, err := url.Parse(bucketData.GetUrlPathStyle())
 	if err != nil {
 		return fmt.Errorf("parse bucket path url: %w", err)
 	}
 	endpoint := u.Scheme + "://" + u.Host
 
-	ak, sk, keyID, groupID, err := m.ensureTemporaryAccessKey(ctx)
+	accessKey, secretKey, keyID, groupID, err := m.ensureTemporaryAccessKey(ctx)
 	if err != nil {
 		return err
 	}
@@ -827,7 +681,7 @@ func (m *StorageManager) SetBucketLifecycleNoncurrentDays(ctx context.Context, n
 
 	cfg := aws.Config{
 		Region:      m.client.config.Region,
-		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	}
 	s3cli := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true

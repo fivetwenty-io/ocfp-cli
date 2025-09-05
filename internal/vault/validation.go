@@ -284,14 +284,14 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	}
 
 	// Check policies
-	policies, ok := secret.Data["policies"]
-	if !ok {
+	policies, policiesFound := secret.Data["policies"]
+	if !policiesFound {
 		result.AddWarning("No policies found for current token")
 		return nil
 	}
 
-	policyList, ok := policies.([]interface{})
-	if !ok {
+	policyList, validPolicyList := policies.([]interface{})
+	if !validPolicyList {
 		result.AddWarning("Could not parse token policies")
 		return nil
 	}
@@ -301,7 +301,7 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	hasRequired := false
 
 	for _, policy := range policyList {
-		if policyStr, ok := policy.(string); ok {
+		if policyStr, isString := policy.(string); isString {
 			for _, required := range requiredPolicies {
 				if strings.Contains(policyStr, required) {
 					hasRequired = true

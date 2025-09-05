@@ -326,8 +326,8 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 	}
 
 	// Extract token policies
-	tokenPoliciesRaw, ok := secret.Data["policies"]
-	if !ok {
+	tokenPoliciesRaw, tokenPoliciesOK := secret.Data["policies"]
+	if !tokenPoliciesOK {
 		return fmt.Errorf("no policies found in token")
 	}
 

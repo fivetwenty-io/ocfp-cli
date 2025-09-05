@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/ui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -29,6 +32,7 @@ func NewTeardownCmd() *cobra.Command {
 		buckets   bool
 		secGroups bool
 		network   bool
+		output    string
 	)
 
 	cmd := &cobra.Command{
@@ -82,6 +86,7 @@ Resources are deleted in dependency order:
 	cmd.Flags().BoolVar(&publicIPs, "public-ips", false, "include public IPs in deletion")
 	cmd.Flags().BoolVar(&all, "all", false, "delete all OCFP/BOSH-managed resources")
 	cmd.Flags().BoolVar(&nuke, "nuke", false, "DANGER: delete ALL resources in project")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	// Resource type flags
 	cmd.Flags().BoolVar(&servers, "servers", false, "delete servers")
@@ -98,13 +103,13 @@ Resources are deleted in dependency order:
 	_ = viper.BindPFlag("teardown.public_ips", cmd.Flags().Lookup("public-ips"))
 	_ = viper.BindPFlag("teardown.all", cmd.Flags().Lookup("all"))
 	_ = viper.BindPFlag("teardown.nuke", cmd.Flags().Lookup("nuke"))
+	_ = viper.BindPFlag("teardown.output", cmd.Flags().Lookup("output"))
 
 	return cmd
 }
 
 func runTeardown(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	log := logger.Get()
 
 	// Get configuration values
 	blocName := viper.GetString("bloc_name")
@@ -114,6 +119,23 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 	nuke := viper.GetBool("teardown.nuke")
 	all := viper.GetBool("teardown.all")
 	publicIPs := viper.GetBool("teardown.public_ips")
+	// Initialize logger per command, per bloc
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+	if err := logger.Initialize(logger.Config{
+		Level:     viper.GetString("log_level"),
+		Debug:     viper.GetBool("debug"),
+		Verbose:   viper.GetBool("verbose"),
+		Trace:     viper.GetBool("trace"),
+		NoLog:     viper.GetBool("no_log"),
+		LogDir:    logDir,
+		BlocName:  blocName,
+		Command:   "teardown",
+		RequestID: os.Getenv("OCFP_REQUEST_ID"),
+	}); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer func() { _ = logger.Sync() }()
+	log := logger.Get()
 
 	// Validate required configuration
 	if blocName == "" {
@@ -165,6 +187,7 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 		PublicIPs: publicIPs,
 		Skip:      viper.GetStringSlice("teardown.skip"),
 		Mode:      getTeardownMode(all, nuke),
+		Output:    viper.GetString("teardown.output"),
 	}
 
 	teardownManager := NewTeardownManager(cfg, provider, stateManager, teardownOpts)
@@ -201,6 +224,7 @@ type TeardownOptions struct {
 	PublicIPs bool
 	Skip      []string
 	Mode      string
+	Output    string
 }
 
 // TeardownManager handles the teardown process
@@ -473,14 +497,14 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 				}
 				ips, err := s.ListPublicIPs(ctx, filters)
 				if err == nil {
-					for _, ip := range ips {
+					for _, publicIP := range ips {
 						resources = append(resources, &ResourceToDelete{
 							Type: "public_ip",
-							ID:   ip.ID,
-							Name: ip.Address,
+							ID:   publicIP.ID,
+							Name: publicIP.Address,
 							Properties: map[string]interface{}{
-								"job":   ip.Labels["job"],
-								"index": ip.Labels["index"],
+								"job":   publicIP.Labels["job"],
+								"index": publicIP.Labels["index"],
 							},
 						})
 					}
@@ -648,38 +672,50 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 
 // showDeletionPlan displays what will be deleted
 func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error {
-	fmt.Printf("\n=== Teardown Plan ===\n")
-	fmt.Printf("Mode: %s\n", m.options.Mode)
-	fmt.Printf("Bloc: %s\n", m.options.BlocName)
-
-	if m.options.DryRun {
-		fmt.Printf("DRY RUN - No resources will actually be deleted\n")
-	}
-
-	fmt.Printf("\nResources to delete (%d total):\n", len(resources))
-
-	// Group by type for display
+	// Group by type
 	typeGroups := make(map[string][]*ResourceToDelete)
-	for _, resource := range resources {
-		typeGroups[resource.Type] = append(typeGroups[resource.Type], resource)
-	}
-
-	for resourceType, resourceList := range typeGroups {
-		fmt.Printf("\n  %s (%d):\n", strings.ToUpper(resourceType), len(resourceList))
-		for _, resource := range resourceList {
-			status := ""
-			if resource.State != "" && resource.State != "active" {
-				status = fmt.Sprintf(" [%s]", resource.State)
-			}
-			fmt.Printf("    - %s (%s)%s\n", resource.Name, resource.ID, status)
+	types := []string{}
+	for _, r := range resources {
+		if _, ok := typeGroups[r.Type]; !ok {
+			types = append(types, r.Type)
 		}
+		typeGroups[r.Type] = append(typeGroups[r.Type], r)
 	}
+	sort.Strings(types)
 
-	if len(m.options.Skip) > 0 {
-		fmt.Printf("\nSkipped resource types: %s\n", strings.Join(m.options.Skip, ", "))
+	// Build plan table
+	title := fmt.Sprintf("DRY RUN — Teardown Plan for bloc '%s' (%s)", m.options.BlocName, m.options.Mode)
+	summary := fmt.Sprintf("Delete %d resources across %d types", len(resources), len(types))
+    planTable := &ui.Table{Title: title, Summary: summary}
+
+	for _, typ := range types {
+		list := typeGroups[typ]
+		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+		rows := make([][]string, 0, len(list))
+		for _, r := range list {
+			state := r.State
+			rows = append(rows, []string{r.Name, r.ID, state})
+		}
+        planTable.Sections = append(planTable.Sections, ui.Section{
+            Title:   fmt.Sprintf("%s (%d)", strings.ToUpper(typ), len(list)),
+            Headers: []string{"NAME", "ID", "STATE"},
+            Rows:    rows,
+        })
+    }
+
+    if len(m.options.Skip) > 0 {
+        planTable.Sections = append(planTable.Sections, ui.Section{
+            Title:   "Skipped",
+            Headers: []string{"TYPES"},
+            Rows:    [][]string{{strings.Join(m.options.Skip, ", ")}},
+        })
+    }
+
+	format := strings.ToLower(strings.TrimSpace(m.options.Output))
+	if format == "" {
+		format = "table"
 	}
-
-	return nil
+	return ui.Render(planTable, format)
 }
 
 // confirmDeletion asks user for confirmation

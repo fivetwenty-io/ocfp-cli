@@ -3,10 +3,10 @@ package provision
 // SystemConfig holds system-level configuration
 type SystemConfig struct {
 	Hostname    HostnameConfig `yaml:"hostname"`
-	WaitTime    int            `yaml:"wait_time"`
+	WaitTime    int            `yaml:"waitTime"`
 	Timezone    string         `yaml:"timezone"`
 	Locale      string         `yaml:"locale"`
-	UpdateCache bool           `yaml:"update_cache"`
+	UpdateCache bool           `yaml:"updateCache"`
 }
 
 // HostnameConfig configures hostname settings
@@ -28,11 +28,11 @@ type DirectoryConfig struct {
 type PackageGroup struct {
 	Enabled     bool     `yaml:"enabled"`
 	Condition   string   `yaml:"condition"`
-	DependsOn   []string `yaml:"depends_on"`
+	DependsOn   []string `yaml:"dependsOn"`
 	Packages    []string `yaml:"packages"`
-	PipPackages []string `yaml:"pip_packages"`
+	PipPackages []string `yaml:"pipPackages"`
 	Verify      []string `yaml:"verify"`
-	PostInstall string   `yaml:"post_install"`
+	PostInstall string   `yaml:"postInstall"`
 }
 
 // GenesisDeployment defines a Genesis deployment to initialize
@@ -51,13 +51,13 @@ type BinaryTool struct {
 	Enabled        bool   `yaml:"enabled"`
 	Condition      string `yaml:"condition"`
 	URL            string `yaml:"url"`
-	VersionURL     string `yaml:"version_url"`
-	VersionPattern string `yaml:"version_pattern"`
-	URLTemplate    string `yaml:"url_template"`
+	VersionURL     string `yaml:"versionUrl"`
+	VersionPattern string `yaml:"versionPattern"`
+	URLTemplate    string `yaml:"urlTemplate"`
 	Dest           string `yaml:"dest"`
 	Mode           uint32 `yaml:"mode"`
 	Extract        bool   `yaml:"extract"`
-	InstallCommand string `yaml:"install_command"`
+	InstallCommand string `yaml:"installCommand"`
 	Verify         string `yaml:"verify"`
 	Sudo           bool   `yaml:"sudo"`
 }
@@ -67,9 +67,9 @@ type APTRepository struct {
 	Name       string `yaml:"name"`
 	Enabled    bool   `yaml:"enabled"`
 	Condition  string `yaml:"condition"`
-	GPGKey     GPGKey `yaml:"gpg_key"`
-	SourceLine string `yaml:"source_line"`
-	SourceFile string `yaml:"source_file"`
+	GPGKey     GPGKey `yaml:"gpgKey"`
+	SourceLine string `yaml:"sourceLine"`
+	SourceFile string `yaml:"sourceFile"`
 }
 
 // GPGKey defines GPG key configuration

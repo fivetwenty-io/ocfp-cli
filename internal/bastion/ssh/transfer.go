@@ -336,11 +336,11 @@ func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalS
 	var written int64
 
 	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
-			if nw > 0 {
-				written += int64(nw)
+		numRead, readErr := src.Read(buf)
+		if numRead > 0 {
+			numWritten, writeErr := dst.Write(buf[0:numRead])
+			if numWritten > 0 {
+				written += int64(numWritten)
 
 				// Report progress
 				if tm.options.Progress != nil && totalSize > 0 {
@@ -350,16 +350,16 @@ func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalS
 					_, _ = tm.options.Progress.Write([]byte(progress))
 				}
 			}
-			if ew != nil {
-				return written, ew
+			if writeErr != nil {
+				return written, writeErr
 			}
-			if nr != nw {
+			if numRead != numWritten {
 				return written, io.ErrShortWrite
 			}
 		}
-		if er != nil {
-			if er != io.EOF {
-				return written, er
+		if readErr != nil {
+			if readErr != io.EOF {
+				return written, readErr
 			}
 			break
 		}

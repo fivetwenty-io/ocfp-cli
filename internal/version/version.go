@@ -16,9 +16,9 @@ var (
 // Info holds version information
 type Info struct {
 	Version   string `json:"version"`
-	BuildTime string `json:"build_time"`
-	GitCommit string `json:"git_commit"`
-	GoVersion string `json:"go_version"`
+	BuildTime string `json:"buildTime"`
+	GitCommit string `json:"gitCommit"`
+	GoVersion string `json:"goVersion"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
 }

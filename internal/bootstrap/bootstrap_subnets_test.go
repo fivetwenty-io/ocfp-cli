@@ -149,117 +149,117 @@ func TestSplitParentIntoTwo(t *testing.T) {
 		{"10.4.0.0/23", "10.4.0.0/24", "10.4.1.0/24"},
 		{"10.4.0.0/24", "10.4.0.0/25", "10.4.0.128/25"},
 	}
-	for _, c := range cases {
-		a, b := splitParentIntoTwo(c.in)
-		if a != c.want1 || b != c.want2 {
-			t.Fatalf("splitParentIntoTwo(%s) = %s,%s want %s,%s", c.in, a, b, c.want1, c.want2)
+	for _, testCase := range cases {
+		first, second := splitParentIntoTwo(testCase.in)
+		if first != testCase.want1 || second != testCase.want2 {
+			t.Fatalf("splitParentIntoTwo(%s) = %s,%s want %s,%s", testCase.in, first, second, testCase.want1, testCase.want2)
 		}
 	}
 }
 
 func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	tmp := t.TempDir()
-	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
 	cfg.Network.NetworkCIDR = "10.4.0.0/20"
 
-	fn := &fakeNet{}
-	fp := &fakeProv{n: fn, c: &fakeCompute{}}
-	m := NewManager(cfg, fp, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+	manager := NewManager(cfg, fakeProvider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 
 	ctx := context.Background()
-	if err := m.createNetwork(ctx); err != nil {
+	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
-	if err := m.createSubnets(ctx); err != nil {
+	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
 
 	// Expect no real subnets created for stackit
-	if got := len(fn.createdSubnets); got != 0 {
+	if got := len(fakeNetwork.createdSubnets); got != 0 {
 		t.Fatalf("created %d real subnets, want 0 (virtual only)", got)
 	}
 	// Virtual subnet resource exists in state with reserved fields
-	res, err := sm.GetResource("subnet", "prod-ocfp-0")
+	res, err := stateManager.GetResource("subnet", "prod-ocfp-0")
 	if err != nil {
 		t.Fatalf("expected virtual subnet prod-ocfp-0 in state: %v", err)
 	}
-	if _, err := sm.GetOutput("subnet_prod-ocfp-0_id"); err != nil {
+	if _, err := stateManager.GetOutput("subnet_prod-ocfp-0_id"); err != nil {
 		t.Fatalf("missing output subnet_prod-ocfp-0_id")
 	}
-	if _, err := sm.GetOutput("subnet_prod-ocfp-0_cidr"); err != nil {
+	if _, err := stateManager.GetOutput("subnet_prod-ocfp-0_cidr"); err != nil {
 		t.Fatalf("missing output subnet_prod-ocfp-0_cidr")
 	}
 	if res.Properties["ip_0"] == "" || res.Properties["ip_n"] == "" || res.Properties["gateway"] == "" {
 		t.Fatalf("expected reserved fields on virtual subnet: %+v", res.Properties)
 	}
 	// Check a couple of reserved IP outputs
-	if _, err := sm.GetOutput("reserved_prod-ocfp-0_bastion_ip"); err != nil {
+	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_bastion_ip"); err != nil {
 		t.Fatalf("missing bastion reserved ip output")
 	}
-	if _, err := sm.GetOutput("reserved_prod-ocfp-0_vault_ip"); err != nil {
+	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_vault_ip"); err != nil {
 		t.Fatalf("missing vault reserved ip output")
 	}
-	if _, err := sm.GetOutput("reserved_prod-ocfp-0_available_a"); err != nil {
+	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_available_a"); err != nil {
 		t.Fatalf("missing available_a output")
 	}
 }
 
 func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) {
 	tmp := t.TempDir()
-	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := &config.Config{Name: "prod", Region: "eu01"}
 	cfg.Network.NetworkCIDR = "10.4.0.0/23" // becomes two /24s
 
-	fn := &fakeNet{}
-	fc := &fakeCompute{}
-	fp := &fakeProv{n: fn, c: fc}
-	m := NewManager(cfg, fp, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	fakeNetwork := &fakeNet{}
+	fakeComp := &fakeCompute{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: fakeComp}
+	manager := NewManager(cfg, fakeProvider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 
 	ctx := context.Background()
-	if err := m.createNetwork(ctx); err != nil {
+	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
-	if err := m.createSubnets(ctx); err != nil {
+	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
 	// Seed required SG output for bastion
-	_ = sm.SetOutput("sg_bastion_id", "sg-1")
+	_ = stateManager.SetOutput("sg_bastion_id", "sg-1")
 
-	if err := m.createBastion(ctx); err != nil {
+	if err := manager.createBastion(ctx); err != nil {
 		t.Fatalf("createBastion: %v", err)
 	}
 
-	if fc.lastReq == nil {
+	if fakeComp.lastReq == nil {
 		t.Fatalf("expected instance create to be called")
 	}
 	// Subnet should be empty for STACKIT requests
-	if fc.lastReq.SubnetID != "" {
-		t.Fatalf("bastion SubnetID = %q, want empty for stackit", fc.lastReq.SubnetID)
+	if fakeComp.lastReq.SubnetID != "" {
+		t.Fatalf("bastion SubnetID = %q, want empty for stackit", fakeComp.lastReq.SubnetID)
 	}
 
 	// Dependencies should include subnet.prod-ocfp-0
-	deps, err := sm.GetDependencies("instance.prod-bastion")
+	deps, err := stateManager.GetDependencies("instance.prod-bastion")
 	if err != nil {
 		t.Fatalf("get deps: %v", err)
 	}
 	found := false
-	for _, d := range deps {
-		if d == "subnet.prod-ocfp-0" {
+	for _, dependency := range deps {
+		if dependency == "subnet.prod-ocfp-0" {
 			found = true
 			break
 		}
@@ -271,38 +271,38 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 
 func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 	tmp := t.TempDir()
-	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sm.Load("prod"); err != nil {
+	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := &config.Config{Name: "prod", Region: "eu01", SubnetStrategy: "ocfp-triple"}
 	cfg.Network.NetworkCIDR = "10.4.0.0/20"
 
-	fn := &fakeNet{}
-	fp := &fakeProv{n: fn, c: &fakeCompute{}}
-	m := NewManager(cfg, fp, sm, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+	manager := NewManager(cfg, fakeProvider, stateManager, &Options{BlocName: "prod", Provider: "stackit", Region: "eu01"})
 
 	ctx := context.Background()
-	if err := m.createNetwork(ctx); err != nil {
+	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
-	if err := m.createSubnets(ctx); err != nil {
+	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
 
 	// No real subnets for stackit
-	if len(fn.createdSubnets) != 0 {
-		t.Fatalf("expected 0 real subnets, got %d", len(fn.createdSubnets))
+	if len(fakeNetwork.createdSubnets) != 0 {
+		t.Fatalf("expected 0 real subnets, got %d", len(fakeNetwork.createdSubnets))
 	}
 
 	// Expect ocfp-0..2
-	for i, want := range []string{"10.4.4.0/22", "10.4.8.0/22", "10.4.12.0/22"} {
-		name := fmt.Sprintf("prod-ocfp-%d", i)
-		res, err := sm.GetResource("subnet", name)
+	for index, want := range []string{"10.4.4.0/22", "10.4.8.0/22", "10.4.12.0/22"} {
+		name := fmt.Sprintf("prod-ocfp-%d", index)
+		res, err := stateManager.GetResource("subnet", name)
 		if err != nil {
 			t.Fatalf("missing virtual subnet %s: %v", name, err)
 		}
@@ -313,8 +313,8 @@ func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 			t.Fatalf("%s missing reserved fields: %+v", name, res.Properties)
 		}
 		// spot-check conditional assignments
-		if i == 1 {
-			if _, err := sm.GetOutput("reserved_" + name + "_doomsday_ip"); err != nil {
+		if index == 1 {
+			if _, err := stateManager.GetOutput("reserved_" + name + "_doomsday_ip"); err != nil {
 				t.Fatalf("missing doomsday ip for %s", name)
 			}
 		}

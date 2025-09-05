@@ -21,16 +21,16 @@ type CheckpointManager struct {
 
 // CheckpointData represents saved provisioning state
 type CheckpointData struct {
-	BlocName        string                 `json:"bloc_name"`
+	BlocName        string                 `json:"blocName"`
 	Provider        string                 `json:"provider"`
-	StartTime       time.Time              `json:"start_time"`
-	LastUpdate      time.Time              `json:"last_update"`
-	TotalSteps      int                    `json:"total_steps"`
-	CompletedSteps  int                    `json:"completed_steps"`
-	CurrentStep     string                 `json:"current_step"`
-	CompletedPhases map[string]bool        `json:"completed_phases"`
-	FailedPhases    map[string]string      `json:"failed_phases"`
-	SkippedPhases   map[string]string      `json:"skipped_phases"`
+	StartTime       time.Time              `json:"startTime"`
+	LastUpdate      time.Time              `json:"lastUpdate"`
+	TotalSteps      int                    `json:"totalSteps"`
+	CompletedSteps  int                    `json:"completedSteps"`
+	CurrentStep     string                 `json:"currentStep"`
+	CompletedPhases map[string]bool        `json:"completedPhases"`
+	FailedPhases    map[string]string      `json:"failedPhases"`
+	SkippedPhases   map[string]string      `json:"skippedPhases"`
 	Metadata        map[string]interface{} `json:"metadata"`
 	Version         string                 `json:"version"`
 }

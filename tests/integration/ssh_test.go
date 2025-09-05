@@ -53,7 +53,7 @@ environments:
 
 		// Test with no args (should be OK, uses default)
 		err := cmd.Args(cmd, []string{})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Test with valid args
 		err = cmd.Args(cmd, []string{"test-host"})
@@ -82,11 +82,11 @@ func TestSCPCommand(t *testing.T) {
 
 		// Test with no args (should fail)
 		err := cmd.Args(cmd, []string{})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with one arg (should fail)
 		err = cmd.Args(cmd, []string{"source"})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with valid args
 		err = cmd.Args(cmd, []string{"source", "dest"})
@@ -116,11 +116,11 @@ func TestRsyncCommand(t *testing.T) {
 
 		// Test with no args (should fail)
 		err := cmd.Args(cmd, []string{})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with one arg (should fail)
 		err = cmd.Args(cmd, []string{"source"})
-		assert.Error(t, err)
+		require.Error(t, err)
 
 		// Test with valid args
 		err = cmd.Args(cmd, []string{"source", "dest"})

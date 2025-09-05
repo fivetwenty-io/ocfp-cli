@@ -380,7 +380,7 @@ blocs:
 
 		// Should fail due to credentials but should find the bloc config
 		err := providerCmd.Execute()
-		require.Error(t, err)
+		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 
 		// Test provider command with apps bloc
@@ -388,7 +388,7 @@ blocs:
 		providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "apps"})
 
 		err = providerCmd2.Execute()
-		require.Error(t, err)
+		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 	})
 }
@@ -415,7 +415,7 @@ func TestCommandErrorHandling(t *testing.T) {
 		cmd = commands.NewProviderCmd()
 		cmd.SetArgs([]string{"login"})
 		err = cmd.Execute()
-		require.Error(t, err)
+		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "provider not specified")
 	})
 
@@ -425,14 +425,14 @@ func TestCommandErrorHandling(t *testing.T) {
 		// Test missing action
 		cmd.SetArgs([]string{})
 		err := cmd.Execute()
-		require.Error(t, err)
+		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "requires at least 1 arg")
 
 		// Test unknown action
 		cmd = commands.NewBastionCmd()
 		cmd.SetArgs([]string{"unknown-action"})
 		err = cmd.Execute()
-		require.Error(t, err)
+		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown bastion action")
 	})
 

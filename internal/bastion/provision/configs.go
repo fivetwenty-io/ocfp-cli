@@ -22,9 +22,9 @@ type ConfigFile struct {
 	Path        string `yaml:"path"`
 	Content     string `yaml:"content"`
 	Mode        uint32 `yaml:"mode"`
-	CheckExists bool   `yaml:"check_exists"`
-	PreCommand  string `yaml:"pre_command"`
-	PostCommand string `yaml:"post_command"`
+	CheckExists bool   `yaml:"checkExists"`
+	PreCommand  string `yaml:"preCommand"`
+	PostCommand string `yaml:"postCommand"`
 	Enabled     bool   `yaml:"enabled"`
 }
 

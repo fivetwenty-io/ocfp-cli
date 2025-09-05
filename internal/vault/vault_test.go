@@ -16,60 +16,60 @@ func TestPathBuilder(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 	}
-	pb := NewPathBuilder(cfg, "test-bloc")
+	pathBuilder := NewPathBuilder(cfg, "test-bloc")
 
 	// Test basic paths
-	assert.Equal(t, "secret/config/test-bloc", pb.GetConfigPath())
-	assert.Equal(t, "secret/config/test-bloc/ocfp", pb.GetOCFPConfigPath())
-	assert.Equal(t, "secret/config/test-bloc/mgmt", pb.GetEnvironmentPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/ocf", pb.GetEnvironmentPath("ocf"))
+	assert.Equal(t, "secret/config/test-bloc", pathBuilder.GetConfigPath())
+	assert.Equal(t, "secret/config/test-bloc/ocfp", pathBuilder.GetOCFPConfigPath())
+	assert.Equal(t, "secret/config/test-bloc/mgmt", pathBuilder.GetEnvironmentPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/ocf", pathBuilder.GetEnvironmentPath("ocf"))
 
 	// Test VPC paths
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc", pb.GetVPCPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/ocf/vpc", pb.GetVPCPath("ocf"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc", pathBuilder.GetVPCPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/ocf/vpc", pathBuilder.GetVPCPath("ocf"))
 
 	// Test subnet paths
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets", pb.GetSubnetsPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets/ocfp-0", pb.GetSubnetPath("mgmt", "ocfp", 0))
-	assert.Equal(t, "secret/config/test-bloc/ocf/vpc/subnets/services-1", pb.GetSubnetPath("ocf", "services", 1))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets", pathBuilder.GetSubnetsPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets/ocfp-0", pathBuilder.GetSubnetPath("mgmt", "ocfp", 0))
+	assert.Equal(t, "secret/config/test-bloc/ocf/vpc/subnets/services-1", pathBuilder.GetSubnetPath("ocf", "services", 1))
 
 	// Test BOSH paths
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh", pb.GetBOSHPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam", pb.GetIAMPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam/s3", pb.GetS3IAMPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys", pb.GetKeysPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys/bosh", pb.GetBOSHKeyPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh", pathBuilder.GetBOSHPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam", pathBuilder.GetIAMPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam/s3", pathBuilder.GetS3IAMPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys", pathBuilder.GetKeysPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys/bosh", pathBuilder.GetBOSHKeyPath("mgmt"))
 
 	// Test other paths
-	assert.Equal(t, "secret/config/test-bloc/ocf/public-ips", pb.GetPublicIPsPath())
-	assert.Equal(t, "secret/config/test-bloc/certs", pb.GetCertsPath())
-	assert.Equal(t, "secret/test-bloc-inception", pb.GetInceptionPath())
-	assert.Equal(t, "secret/config/test-bloc/mgmt/jumpbox/users", pb.GetJumpboxUsersPath())
+	assert.Equal(t, "secret/config/test-bloc/ocf/public-ips", pathBuilder.GetPublicIPsPath())
+	assert.Equal(t, "secret/config/test-bloc/certs", pathBuilder.GetCertsPath())
+	assert.Equal(t, "secret/test-bloc-inception", pathBuilder.GetInceptionPath())
+	assert.Equal(t, "secret/config/test-bloc/mgmt/jumpbox/users", pathBuilder.GetJumpboxUsersPath())
 }
 
 // TestPathBuilderParsing tests path parsing functionality
 func TestPathBuilderParsing(t *testing.T) {
 	cfg := &config.Config{Name: "test-bloc"}
-	pb := NewPathBuilder(cfg, "test-bloc")
+	pathBuilder := NewPathBuilder(cfg, "test-bloc")
 
 	// Test config path parsing
-	info, err := pb.ParsePath("secret/config/test-bloc/mgmt/vpc/subnets")
+	info, err := pathBuilder.ParsePath("secret/config/test-bloc/mgmt/vpc/subnets")
 	require.NoError(t, err)
 	assert.Equal(t, "mgmt", info.Environment)
 	assert.Equal(t, "vpc", info.Component)
 	assert.Equal(t, "subnets", info.Subpath)
 
 	// Test inception path parsing
-	info, err = pb.ParsePath("secret/test-bloc-inception/admin")
+	info, err = pathBuilder.ParsePath("secret/test-bloc-inception/admin")
 	require.NoError(t, err)
 	assert.Equal(t, "inception", info.Component)
 	assert.Equal(t, "admin", info.Subpath)
 
 	// Test path validation
-	assert.True(t, pb.IsConfigPath("secret/config/test-bloc/mgmt"))
-	assert.True(t, pb.IsInceptionPath("secret/test-bloc-inception"))
-	assert.False(t, pb.IsConfigPath("secret/other/path"))
-	assert.False(t, pb.IsInceptionPath("secret/regular/path"))
+	assert.True(t, pathBuilder.IsConfigPath("secret/config/test-bloc/mgmt"))
+	assert.True(t, pathBuilder.IsInceptionPath("secret/test-bloc-inception"))
+	assert.False(t, pathBuilder.IsConfigPath("secret/other/path"))
+	assert.False(t, pathBuilder.IsInceptionPath("secret/regular/path"))
 }
 
 // TestSecretGenerator tests secret generation
@@ -174,7 +174,7 @@ func TestRetryLogic(t *testing.T) {
 		return nil
 	}, DefaultRetryConfig())
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 1, attempts)
 
 	// Test retryable error
@@ -187,7 +187,7 @@ func TestRetryLogic(t *testing.T) {
 		return nil
 	}, DefaultRetryConfig())
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 3, attempts)
 
 	// Test non-retryable error
@@ -197,7 +197,7 @@ func TestRetryLogic(t *testing.T) {
 		return fmt.Errorf("access denied") // Non-retryable error
 	}, DefaultRetryConfig())
 
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Equal(t, 1, attempts) // Should not retry
 }
 
@@ -266,11 +266,11 @@ func TestStackitProvider(t *testing.T) {
 
 	// Test save config (should succeed with mock)
 	err := provider.SaveConfigToVault()
-	assert.NoError(t, err) // Should succeed with mock
+	require.NoError(t, err) // Should succeed with mock
 
 	// Test configure public IPs
 	err = provider.ConfigurePublicIPs()
-	assert.NoError(t, err) // Should succeed with mock
+	require.NoError(t, err) // Should succeed with mock
 }
 
 // MockSafe is a mock implementation of Safe for unit testing
