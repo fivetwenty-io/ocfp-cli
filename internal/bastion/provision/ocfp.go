@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// OCFPManager handles OCFP-specific provisioning tasks
+// OCFPManager handles OCFP-specific provisioning tasks.
 type OCFPManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// NewOCFPManager creates a new OCFP manager
+// NewOCFPManager creates a new OCFP manager.
 func NewOCFPManager(provider string, cfg *config.Config) *OCFPManager {
 	return &OCFPManager{
 		config:   cfg,
@@ -25,9 +25,10 @@ func NewOCFPManager(provider string, cfg *config.Config) *OCFPManager {
 	}
 }
 
-// GenerateVaultInceptionScript generates script for vault inception setup
+// GenerateVaultInceptionScript generates script for vault inception setup.
 func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Vault inception setup")
 	lines = append(lines, "")
 
@@ -85,9 +86,10 @@ func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string 
 	return strings.Join(lines, "\n")
 }
 
-// GenerateOCFPConfigureScript generates script for OCFP configure deployments
+// GenerateOCFPConfigureScript generates script for OCFP configure deployments.
 func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# OCFP deployments setup")
 	lines = append(lines, "")
 
@@ -177,9 +179,10 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
-// GenerateVaultPopulateScript generates script for vault population
+// GenerateVaultPopulateScript generates script for vault population.
 func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Vault population")
 	lines = append(lines, "")
 
@@ -265,9 +268,10 @@ func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
-// GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init
+// GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
 func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Verify bastion-init prerequisites")
 	lines = append(lines, "")
 
@@ -300,9 +304,10 @@ func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) s
 	return strings.Join(lines, "\n")
 }
 
-// GenerateScriptCommandVerificationScript ensures script command is available
+// GenerateScriptCommandVerificationScript ensures script command is available.
 func (om *OCFPManager) GenerateScriptCommandVerificationScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Verify script command availability")
 	lines = append(lines, "")
 
@@ -324,9 +329,10 @@ func (om *OCFPManager) GenerateScriptCommandVerificationScript(ctx context.Conte
 	return strings.Join(lines, "\n")
 }
 
-// GenerateHostnameVerificationScript verifies hostname configuration
+// GenerateHostnameVerificationScript verifies hostname configuration.
 func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Hostname verification")
 	lines = append(lines, "")
 
@@ -369,9 +375,10 @@ func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) s
 	return strings.Join(lines, "\n")
 }
 
-// GenerateEnvironmentLoggingScript generates detailed environment logging
+// GenerateEnvironmentLoggingScript generates detailed environment logging.
 func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Environment information logging")
 	lines = append(lines, "")
 

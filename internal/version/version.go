@@ -5,7 +5,7 @@ import (
 	"runtime"
 )
 
-// Build information set via ldflags
+// Build information set via ldflags.
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
@@ -13,7 +13,7 @@ var (
 	GoVersion = runtime.Version()
 )
 
-// Info holds version information
+// Info holds version information.
 type Info struct {
 	Version   string `json:"version"`
 	BuildTime string `json:"buildTime"`
@@ -23,7 +23,7 @@ type Info struct {
 	Arch      string `json:"arch"`
 }
 
-// Get returns the version information
+// Get returns the version information.
 func Get() Info {
 	return Info{
 		Version:   Version,
@@ -35,13 +35,13 @@ func Get() Info {
 	}
 }
 
-// String returns a formatted version string
+// String returns a formatted version string.
 func (i Info) String() string {
 	return fmt.Sprintf("OCFP CLI v%s (commit: %s, built: %s, go: %s, %s/%s)",
 		i.Version, i.GitCommit, i.BuildTime, i.GoVersion, i.OS, i.Arch)
 }
 
-// Short returns a short version string
+// Short returns a short version string.
 func (i Info) Short() string {
-	return fmt.Sprintf("v%s", i.Version)
+	return "v" + i.Version
 }

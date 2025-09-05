@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// EnvironmentManager handles shell and system environment configuration
+// EnvironmentManager handles shell and system environment configuration.
 type EnvironmentManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// NewEnvironmentManager creates a new environment manager
+// NewEnvironmentManager creates a new environment manager.
 func NewEnvironmentManager(provider string, cfg *config.Config) *EnvironmentManager {
 	return &EnvironmentManager{
 		config:   cfg,
@@ -25,14 +25,15 @@ func NewEnvironmentManager(provider string, cfg *config.Config) *EnvironmentMana
 	}
 }
 
-// GetSystemEnvironmentVarsForPreview exposes the key/value set for previews
+// GetSystemEnvironmentVarsForPreview exposes the key/value set for previews.
 func (em *EnvironmentManager) GetSystemEnvironmentVarsForPreview() map[string]string {
 	return em.getSystemEnvironmentVars()
 }
 
-// GenerateShellEnvironmentScript generates .bashrc configuration
+// GenerateShellEnvironmentScript generates .bashrc configuration.
 func (em *EnvironmentManager) GenerateShellEnvironmentScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# Shell environment configuration")
 	lines = append(lines, "")
 
@@ -54,9 +55,10 @@ func (em *EnvironmentManager) GenerateShellEnvironmentScript(ctx context.Context
 	return strings.Join(lines, "\n")
 }
 
-// GenerateSystemEnvironmentScript generates /etc/environment and /etc/profile.d setup
+// GenerateSystemEnvironmentScript generates /etc/environment and /etc/profile.d setup.
 func (em *EnvironmentManager) GenerateSystemEnvironmentScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# System environment configuration")
 	lines = append(lines, "")
 
@@ -95,6 +97,7 @@ func (em *EnvironmentManager) GenerateSystemEnvironmentScript(ctx context.Contex
 		desired := fmt.Sprintf("%s=%s", key, value)
 		lines = append(lines, fmt.Sprintf("grep -qF '%s' /etc/environment && log_success '%s set in /etc/environment' || log_warning '%s missing in /etc/environment'", desired, key, key))
 	}
+
 	lines = append(lines, "")
 
 	// Create /etc/profile.d/ocfp.sh atomically
@@ -123,7 +126,7 @@ func (em *EnvironmentManager) GenerateSystemEnvironmentScript(ctx context.Contex
 	return strings.Join(lines, "\n")
 }
 
-// generateBashrcAdditions creates the bashrc configuration content
+// generateBashrcAdditions creates the bashrc configuration content.
 func (em *EnvironmentManager) generateBashrcAdditions() string {
 	var content strings.Builder
 
@@ -235,7 +238,7 @@ func (em *EnvironmentManager) generateBashrcAdditions() string {
 	return content.String()
 }
 
-// getSystemEnvironmentVars returns environment variables for system configuration
+// getSystemEnvironmentVars returns environment variables for system configuration.
 func (em *EnvironmentManager) getSystemEnvironmentVars() map[string]string {
 	vars := map[string]string{
 		"OCFP_BLOC_NAME": "${OCFP_BLOC_NAME}",

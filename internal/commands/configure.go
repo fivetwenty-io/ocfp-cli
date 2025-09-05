@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewConfigureCmd creates the configure command
+// NewConfigureCmd creates the configure command.
 func NewConfigureCmd() *cobra.Command {
 	var (
 		dryRun          bool
@@ -72,28 +72,32 @@ configuration to your infrastructure.`,
 
 			// Configure security groups
 			if !skipSecGroups {
-				if err := configureSecurityGroups(ctx, provider, cfg, dryRun); err != nil {
+				err := configureSecurityGroups(ctx, provider, cfg, dryRun)
+				if err != nil {
 					return fmt.Errorf("failed to configure security groups: %w", err)
 				}
 			}
 
 			// Configure network routes
 			if !skipRoutes {
-				if err := configureRoutes(ctx, provider, cfg, dryRun); err != nil {
+				err := configureRoutes(ctx, provider, cfg, dryRun)
+				if err != nil {
 					return fmt.Errorf("failed to configure routes: %w", err)
 				}
 			}
 
 			// Configure floating IPs
 			if !skipFloatingIPs {
-				if err := configureFloatingIPs(ctx, provider, cfg, dryRun); err != nil {
+				err := configureFloatingIPs(ctx, provider, cfg, dryRun)
+				if err != nil {
 					return fmt.Errorf("failed to configure floating IPs: %w", err)
 				}
 			}
 
 			// Configure bastion
 			if !skipBastion {
-				if err := configureBastion(ctx, provider, cfg, dryRun); err != nil {
+				err := configureBastion(ctx, provider, cfg, dryRun)
+				if err != nil {
 					return fmt.Errorf("failed to configure bastion: %w", err)
 				}
 			}
@@ -124,14 +128,14 @@ configuration to your infrastructure.`,
 	return cmd
 }
 
-// configureSecurityGroups configures security group rules
+// configureSecurityGroups configures security group rules.
 func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *config.Config, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring security groups")
 
 	security := provider.Security()
 	if security == nil {
-		return fmt.Errorf("provider does not support security management")
+		return errors.New("provider does not support security management")
 	}
 
 	// List existing security groups
@@ -145,6 +149,7 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *co
 
 		if dryRun {
 			log.Info("[DRY RUN] Would configure rules for security group", "name", group.Name)
+
 			continue
 		}
 
@@ -161,7 +166,8 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *co
 			}
 
 			for _, rule := range rules {
-				if err := security.AddSecurityRule(ctx, group.ID, &rule); err != nil {
+				err := security.AddSecurityRule(ctx, group.ID, &rule)
+				if err != nil {
 					log.Warn("Failed to add rule", "error", err, "rule", rule.Description)
 				} else {
 					log.Info("Added security rule", "group", group.Name, "rule", rule.Description)
@@ -178,7 +184,8 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *co
 			}
 
 			for _, rule := range rules {
-				if err := security.AddSecurityRule(ctx, group.ID, &rule); err != nil {
+				err := security.AddSecurityRule(ctx, group.ID, &rule)
+				if err != nil {
 					log.Warn("Failed to add rule", "error", err, "rule", rule.Description)
 				} else {
 					log.Info("Added security rule", "group", group.Name, "rule", rule.Description)
@@ -190,14 +197,14 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *co
 	return nil
 }
 
-// configureRoutes configures network routes
+// configureRoutes configures network routes.
 func configureRoutes(ctx context.Context, provider cpi.Provider, cfg *config.Config, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring network routes")
 
 	network := provider.Network()
 	if network == nil {
-		return fmt.Errorf("provider does not support network management")
+		return errors.New("provider does not support network management")
 	}
 
 	// List routers
@@ -211,6 +218,7 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, cfg *config.Con
 
 		if dryRun {
 			log.Info("[DRY RUN] Would configure routes for router", "name", router.Name)
+
 			continue
 		}
 
@@ -220,19 +228,19 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, cfg *config.Con
 	return nil
 }
 
-// configureFloatingIPs associates floating IPs with instances
+// configureFloatingIPs associates floating IPs with instances.
 func configureFloatingIPs(ctx context.Context, provider cpi.Provider, cfg *config.Config, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring floating IPs")
 
 	network := provider.Network()
 	if network == nil {
-		return fmt.Errorf("provider does not support network management")
+		return errors.New("provider does not support network management")
 	}
 
 	compute := provider.Compute()
 	if compute == nil {
-		return fmt.Errorf("provider does not support compute management")
+		return errors.New("provider does not support compute management")
 	}
 
 	// List floating IPs
@@ -256,9 +264,11 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, cfg *confi
 				log.Info("[DRY RUN] Would associate floating IP with bastion",
 					"ip", floatingIP.Address, "instance", bastion.Name)
 			} else {
-				if err := network.AssociateFloatingIP(ctx, floatingIP.ID, bastion.ID); err != nil {
+				err := network.AssociateFloatingIP(ctx, floatingIP.ID, bastion.ID)
+				if err != nil {
 					return fmt.Errorf("failed to associate floating IP: %w", err)
 				}
+
 				log.Info("Associated floating IP with bastion",
 					"ip", floatingIP.Address, "instance", bastion.Name)
 			}
@@ -270,14 +280,14 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, cfg *confi
 	return nil
 }
 
-// configureBastion finalizes bastion host configuration
+// configureBastion finalizes bastion host configuration.
 func configureBastion(ctx context.Context, provider cpi.Provider, cfg *config.Config, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring bastion host")
 
 	compute := provider.Compute()
 	if compute == nil {
-		return fmt.Errorf("provider does not support compute management")
+		return errors.New("provider does not support compute management")
 	}
 
 	// Find bastion instance
@@ -288,6 +298,7 @@ func configureBastion(ctx context.Context, provider cpi.Provider, cfg *config.Co
 
 	if len(instances) == 0 {
 		log.Warn("No bastion instance found")
+
 		return nil
 	}
 
@@ -296,6 +307,7 @@ func configureBastion(ctx context.Context, provider cpi.Provider, cfg *config.Co
 
 	if dryRun {
 		log.Info("[DRY RUN] Would configure bastion", "name", bastion.Name)
+
 		return nil
 	}
 

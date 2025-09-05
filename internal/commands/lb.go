@@ -1,48 +1,49 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
-    "github.com/ocfp/ocfp-cli-go/internal/config"
-    "github.com/ocfp/ocfp-cli-go/internal/cpi"
-    "github.com/ocfp/ocfp-cli-go/internal/logger"
-    "github.com/ocfp/ocfp-cli-go/internal/state"
-    "github.com/ocfp/ocfp-cli-go/internal/ui"
-    "github.com/spf13/cobra"
-    "github.com/spf13/viper"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-// NewLBCmd creates the load balancer command
+// NewLBCmd creates the load balancer command.
 func NewLBCmd() *cobra.Command {
-    cmd := &cobra.Command{
-        Use:   "lb",
-        Short: "Manage operational load balancers",
-        Long: `Manage load balancers for Cloud Foundry deployments.
+	cmd := &cobra.Command{
+		Use:   "lb",
+		Short: "Manage operational load balancers",
+		Long: `Manage load balancers for Cloud Foundry deployments.
 
 The lb command provides functionality to create, delete, and manage
 load balancers including adding/removing services and checking status.`,
-        PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-            // Initialize per-command file logger; keep stdout for UX
-            blocName := viper.GetString("bloc_name")
-            logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
-            return logger.Initialize(logger.Config{
-                Level:     viper.GetString("log_level"),
-                Debug:     viper.GetBool("debug"),
-                Verbose:   viper.GetBool("verbose"),
-                Trace:     viper.GetBool("trace"),
-                NoLog:     viper.GetBool("no_log"),
-                LogDir:    logDir,
-                BlocName:  blocName,
-                Command:   "lb",
-                RequestID: os.Getenv("OCFP_REQUEST_ID"),
-            })
-        },
-    }
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Initialize per-command file logger; keep stdout for UX
+			blocName := viper.GetString("bloc_name")
+			logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+
+			return logger.Initialize(logger.Config{
+				Level:     viper.GetString("log_level"),
+				Debug:     viper.GetBool("debug"),
+				Verbose:   viper.GetBool("verbose"),
+				Trace:     viper.GetBool("trace"),
+				NoLog:     viper.GetBool("no_log"),
+				LogDir:    logDir,
+				BlocName:  blocName,
+				Command:   "lb",
+				RequestID: os.Getenv("OCFP_REQUEST_ID"),
+			})
+		},
+	}
 
 	// Add subcommands
 	cmd.AddCommand(newLBCreateCmd())
@@ -63,20 +64,20 @@ load balancers including adding/removing services and checking status.`,
 	return cmd
 }
 
-// newLBCreateCmd creates the lb create subcommand
+// newLBCreateCmd creates the lb create subcommand.
 func newLBCreateCmd() *cobra.Command {
-    var (
-        name        string
-        lbType      string
-        algorithm   string
-        port        int
-        targetPort  int
-        protocol    string
-        healthCheck bool
-        tags        []string
-        dryRun      bool
-        output      string
-    )
+	var (
+		name        string
+		lbType      string
+		algorithm   string
+		port        int
+		targetPort  int
+		protocol    string
+		healthCheck bool
+		tags        []string
+		dryRun      bool
+		output      string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -93,44 +94,47 @@ and associates it with the appropriate network resources.`,
 
   # Create internal load balancer for databases
   ocfp lb create --name postgres-lb --type internal --port 5432 --target-port 5432`,
-        RunE: func(cmd *cobra.Command, args []string) error {
-            ctx := context.Background()
-            log := logger.Get()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
 
 			if name == "" {
-				return fmt.Errorf("load balancer name is required")
+				return errors.New("load balancer name is required")
 			}
 
-            // Load configuration
-            configFile := viper.GetString("config")
-            blocName := viper.GetString("bloc")
+			// Load configuration
+			configFile := viper.GetString("config")
+			blocName := viper.GetString("bloc")
 
-            cfg, err := config.LoadWithParams(configFile, blocName)
-            if err != nil {
-                return fmt.Errorf("failed to load config: %w", err)
-            }
+			cfg, err := config.LoadWithParams(configFile, blocName)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
 
-            if dryRun {
-                t := &ui.Table{Title: "DRY RUN — LB Create Plan"}
-                t.Summary = fmt.Sprintf("Create load balancer '%s'", name)
-                t.Sections = append(t.Sections, ui.Section{
-                    Title:   "Load Balancer",
-                    Headers: []string{"NAME", "TYPE", "PROTOCOL", "ALGORITHM", "PORT", "TARGET_PORT", "TAGS"},
-                    Rows: [][]string{{
-                        name, lbType, protocol, algorithm,
-                        fmt.Sprintf("%d", port), fmt.Sprintf("%d", targetPort), strings.Join(tags, ","),
-                    }},
-                })
-                if healthCheck {
-                    t.Sections = append(t.Sections, ui.Section{
-                        Title:   "Health Check",
-                        Headers: []string{"PATH", "INTERVAL", "TIMEOUT", "THRESHOLDS"},
-                        Rows:    [][]string{{"/health", "30", "5", "3/3"}},
-                    })
-                }
-                if output == "" { output = "table" }
-                return ui.Render(t, strings.ToLower(output))
-            }
+			if dryRun {
+				t := &ui.Table{Title: "DRY RUN — LB Create Plan"}
+				t.Summary = fmt.Sprintf("Create load balancer '%s'", name)
+				t.Sections = append(t.Sections, ui.Section{
+					Title:   "Load Balancer",
+					Headers: []string{"NAME", "TYPE", "PROTOCOL", "ALGORITHM", "PORT", "TARGET_PORT", "TAGS"},
+					Rows: [][]string{{
+						name, lbType, protocol, algorithm,
+						strconv.Itoa(port), strconv.Itoa(targetPort), strings.Join(tags, ","),
+					}},
+				})
+				if healthCheck {
+					t.Sections = append(t.Sections, ui.Section{
+						Title:   "Health Check",
+						Headers: []string{"PATH", "INTERVAL", "TIMEOUT", "THRESHOLDS"},
+						Rows:    [][]string{{"/health", "30", "5", "3/3"}},
+					})
+				}
+				if output == "" {
+					output = "table"
+				}
+
+				return ui.Render(t, strings.ToLower(output))
+			}
 
 			// Get provider
 			provider, err := cpi.GetProvider(cfg.Provider)
@@ -146,7 +150,7 @@ and associates it with the appropriate network resources.`,
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			log.Info("Creating load balancer", "name", name, "type", lbType)
@@ -184,7 +188,8 @@ and associates it with the appropriate network resources.`,
 					UnhealthyThreshold: 3,
 				}
 
-				if err := network.ConfigureHealthCheck(ctx, loadBalancer.ID, healthConfig); err != nil {
+				err := network.ConfigureHealthCheck(ctx, loadBalancer.ID, healthConfig)
+				if err != nil {
 					log.Warn("Failed to configure health check", "error", err)
 				} else {
 					log.Info("Health check configured")
@@ -192,6 +197,7 @@ and associates it with the appropriate network resources.`,
 			}
 
 			fmt.Printf("Load balancer created: %s (%s)\n", loadBalancer.Name, loadBalancer.IPAddress)
+
 			return nil
 		},
 	}
@@ -201,23 +207,23 @@ and associates it with the appropriate network resources.`,
 	cmd.Flags().StringVar(&algorithm, "algorithm", "round-robin", "load balancing algorithm")
 	cmd.Flags().IntVar(&port, "port", 80, "load balancer port")
 	cmd.Flags().IntVar(&targetPort, "target-port", 0, "backend target port (defaults to lb port)")
-    cmd.Flags().StringVar(&protocol, "protocol", "tcp", "protocol (tcp|http|https)")
-    cmd.Flags().BoolVar(&healthCheck, "health-check", false, "enable health checks")
-    cmd.Flags().StringSliceVar(&tags, "tags", nil, "tags to apply to load balancer")
-    cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview creation without making changes")
-    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+	cmd.Flags().StringVar(&protocol, "protocol", "tcp", "protocol (tcp|http|https)")
+	cmd.Flags().BoolVar(&healthCheck, "health-check", false, "enable health checks")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "tags to apply to load balancer")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview creation without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
 
-// newLBDeleteCmd creates the lb delete subcommand
+// newLBDeleteCmd creates the lb delete subcommand.
 func newLBDeleteCmd() *cobra.Command {
-    var (
-        force bool
-        all   bool
-        dryRun bool
-        output string
-    )
+	var (
+		force  bool
+		all    bool
+		dryRun bool
+		output string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
@@ -232,12 +238,12 @@ func newLBDeleteCmd() *cobra.Command {
   # Delete all load balancers
   ocfp lb delete --all --force`,
 		Args: cobra.MaximumNArgs(1),
-        RunE: func(cmd *cobra.Command, args []string) error {
-            ctx := context.Background()
-            log := logger.Get()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			log := logger.Get()
 
 			if !all && len(args) == 0 {
-				return fmt.Errorf("load balancer name required (or use --all)")
+				return errors.New("load balancer name required (or use --all)")
 			}
 
 			// Load configuration
@@ -263,47 +269,52 @@ func newLBDeleteCmd() *cobra.Command {
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
-            // Get list of load balancers to delete
-            var lbsToDelete []string
+			// Get list of load balancers to delete
+			var lbsToDelete []string
 
-            if all {
-                lbs, err := network.ListLoadBalancers(ctx, nil)
-                if err != nil {
-                    return fmt.Errorf("failed to list load balancers: %w", err)
-                }
-                for _, lb := range lbs {
-                    lbsToDelete = append(lbsToDelete, lb.ID)
-                }
-                log.Info("Found load balancers to delete", "count", len(lbsToDelete))
-            } else {
-                lbsToDelete = []string{args[0]}
-            }
+			if all {
+				lbs, err := network.ListLoadBalancers(ctx, nil)
+				if err != nil {
+					return fmt.Errorf("failed to list load balancers: %w", err)
+				}
+				for _, lb := range lbs {
+					lbsToDelete = append(lbsToDelete, lb.ID)
+				}
+				log.Info("Found load balancers to delete", "count", len(lbsToDelete))
+			} else {
+				lbsToDelete = []string{args[0]}
+			}
 
-            if dryRun {
-                // Build plan
-                t := &ui.Table{Title: "DRY RUN — LB Delete Plan"}
-                rows := [][]string{}
-                if all {
-                    lbs, err := network.ListLoadBalancers(ctx, nil)
-                    if err != nil { return fmt.Errorf("failed to list load balancers: %w", err) }
-                    for _, l := range lbs {
-                        rows = append(rows, []string{l.Name, l.ID, l.IPAddress, fmt.Sprintf("%d", l.Port), l.Type})
-                    }
-                } else {
-                    if lb, err := network.GetLoadBalancer(ctx, args[0]); err == nil {
-                        rows = append(rows, []string{lb.Name, lb.ID, lb.IPAddress, fmt.Sprintf("%d", lb.Port), lb.Type})
-                    } else {
-                        rows = append(rows, []string{args[0], "(not found)", "", "", ""})
-                    }
-                }
-                t.Summary = fmt.Sprintf("Delete %d load balancer(s)", len(rows))
-                t.Sections = append(t.Sections, ui.Section{Title: "Load Balancers", Headers: []string{"NAME", "ID", "IP", "PORT", "TYPE"}, Rows: rows})
-                if output == "" { output = "table" }
-                return ui.Render(t, strings.ToLower(output))
-            }
+			if dryRun {
+				// Build plan
+				t := &ui.Table{Title: "DRY RUN — LB Delete Plan"}
+				rows := [][]string{}
+				if all {
+					lbs, err := network.ListLoadBalancers(ctx, nil)
+					if err != nil {
+						return fmt.Errorf("failed to list load balancers: %w", err)
+					}
+					for _, l := range lbs {
+						rows = append(rows, []string{l.Name, l.ID, l.IPAddress, strconv.Itoa(l.Port), l.Type})
+					}
+				} else {
+					if lb, err := network.GetLoadBalancer(ctx, args[0]); err == nil {
+						rows = append(rows, []string{lb.Name, lb.ID, lb.IPAddress, strconv.Itoa(lb.Port), lb.Type})
+					} else {
+						rows = append(rows, []string{args[0], "(not found)", "", "", ""})
+					}
+				}
+				t.Summary = fmt.Sprintf("Delete %d load balancer(s)", len(rows))
+				t.Sections = append(t.Sections, ui.Section{Title: "Load Balancers", Headers: []string{"NAME", "ID", "IP", "PORT", "TYPE"}, Rows: rows})
+				if output == "" {
+					output = "table"
+				}
+
+				return ui.Render(t, strings.ToLower(output))
+			}
 
 			// Confirm deletion if not forced
 			if !force {
@@ -312,6 +323,7 @@ func newLBDeleteCmd() *cobra.Command {
 				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Deletion cancelled by user")
+
 					return nil
 				}
 			}
@@ -319,7 +331,8 @@ func newLBDeleteCmd() *cobra.Command {
 			// Delete load balancers
 			for _, lbID := range lbsToDelete {
 				log.Info("Deleting load balancer", "id", lbID)
-				if err := network.DeleteLoadBalancer(ctx, lbID); err != nil {
+				err := network.DeleteLoadBalancer(ctx, lbID)
+				if err != nil {
 					log.Error("Failed to delete load balancer", "id", lbID, "error", err)
 				} else {
 					log.Info("Load balancer deleted", "id", lbID)
@@ -331,14 +344,14 @@ func newLBDeleteCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
-    cmd.Flags().BoolVar(&all, "all", false, "delete all load balancers")
-    cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview deletions without making changes")
-    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+	cmd.Flags().BoolVar(&all, "all", false, "delete all load balancers")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview deletions without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
 
-// newLBListCmd creates the lb list subcommand
+// newLBListCmd creates the lb list subcommand.
 func newLBListCmd() *cobra.Command {
 	var (
 		output string
@@ -384,7 +397,7 @@ func newLBListCmd() *cobra.Command {
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			// Parse filters
@@ -404,21 +417,24 @@ func newLBListCmd() *cobra.Command {
 
 			if len(lbs) == 0 {
 				fmt.Println("No load balancers found")
+
 				return nil
 			}
 
 			// Build a UI table and render (table/json/yaml)
 			t := &ui.Table{Title: "Load Balancers"}
-            rows := make([][]string, 0, len(lbs))
-            for _, lb := range lbs {
-                created := lb.CreatedAt.Format(time.RFC3339)
-                rows = append(rows, []string{lb.Name, lb.Type, lb.IPAddress, fmt.Sprintf("%d", lb.Port), lb.Status, created})
-            }
+			rows := make([][]string, 0, len(lbs))
+			for _, lb := range lbs {
+				created := lb.CreatedAt.Format(time.RFC3339)
+				rows = append(rows, []string{lb.Name, lb.Type, lb.IPAddress, strconv.Itoa(lb.Port), lb.Status, created})
+			}
 			t.Sections = append(t.Sections, ui.Section{Title: fmt.Sprintf("%d items", len(rows)), Headers: []string{"NAME", "TYPE", "IP", "PORT", "STATUS", "CREATED"}, Rows: rows})
-			if output == "" { output = "table" }
+			if output == "" {
+				output = "table"
+			}
+
 			return ui.Render(t, strings.ToLower(output))
 
-			return nil
 		},
 	}
 
@@ -428,13 +444,14 @@ func newLBListCmd() *cobra.Command {
 	return cmd
 }
 
-// newLBStatusCmd creates the lb status subcommand
+// newLBStatusCmd creates the lb status subcommand.
 func newLBStatusCmd() *cobra.Command {
-    var output string
-    cmd := &cobra.Command{
-        Use:   "status <name>",
-        Short: "Get load balancer status",
-        Long:  `Get detailed status information for a load balancer.`,
+	var output string
+
+	cmd := &cobra.Command{
+		Use:   "status <name>",
+		Short: "Get load balancer status",
+		Long:  `Get detailed status information for a load balancer.`,
 		Example: `  # Get status of a load balancer
   ocfp lb status cf-router`,
 		Args: cobra.ExactArgs(1),
@@ -466,7 +483,7 @@ func newLBStatusCmd() *cobra.Command {
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			// Get load balancer
@@ -475,35 +492,41 @@ func newLBStatusCmd() *cobra.Command {
 				return fmt.Errorf("failed to get load balancer: %w", err)
 			}
 
-            // Render via shared UI
-            t := &ui.Table{Title: fmt.Sprintf("Load Balancer: %s", loadBalancer.Name)}
-            t.Sections = append(t.Sections, ui.Section{Title: "Details", Headers: []string{"ID", "TYPE", "STATUS", "IP", "PORT", "ALGORITHM", "CREATED"}, Rows: [][]string{{loadBalancer.ID, loadBalancer.Type, loadBalancer.Status, loadBalancer.IPAddress, fmt.Sprintf("%d", loadBalancer.Port), loadBalancer.Algorithm, loadBalancer.CreatedAt.Format(time.RFC3339)}}})
+			// Render via shared UI
+			t := &ui.Table{Title: "Load Balancer: " + loadBalancer.Name}
+			t.Sections = append(t.Sections, ui.Section{Title: "Details", Headers: []string{"ID", "TYPE", "STATUS", "IP", "PORT", "ALGORITHM", "CREATED"}, Rows: [][]string{{loadBalancer.ID, loadBalancer.Type, loadBalancer.Status, loadBalancer.IPAddress, strconv.Itoa(loadBalancer.Port), loadBalancer.Algorithm, loadBalancer.CreatedAt.Format(time.RFC3339)}}})
 
-            if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-                rows := [][]string{}
-                for _, pool := range pools { rows = append(rows, []string{pool.Name, fmt.Sprintf("%d", len(pool.Members))}) }
-                t.Sections = append(t.Sections, ui.Section{Title: "Backend Pools", Headers: []string{"NAME", "MEMBERS"}, Rows: rows})
-            }
-            if health, err := network.GetLoadBalancerHealth(ctx, loadBalancer.ID); err == nil {
-                t.Sections = append(t.Sections, ui.Section{Title: "Health Status", Headers: []string{"HEALTHY", "UNHEALTHY", "TOTAL"}, Rows: [][]string{{fmt.Sprintf("%d", health.Healthy), fmt.Sprintf("%d", health.Unhealthy), fmt.Sprintf("%d", health.Total)}}})
-            }
-            if output == "" { output = "table" }
-            return ui.Render(t, strings.ToLower(output))
-        },
-    }
-    cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
-    return cmd
+			if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
+				rows := [][]string{}
+				for _, pool := range pools {
+					rows = append(rows, []string{pool.Name, strconv.Itoa(len(pool.Members))})
+				}
+				t.Sections = append(t.Sections, ui.Section{Title: "Backend Pools", Headers: []string{"NAME", "MEMBERS"}, Rows: rows})
+			}
+			if health, err := network.GetLoadBalancerHealth(ctx, loadBalancer.ID); err == nil {
+				t.Sections = append(t.Sections, ui.Section{Title: "Health Status", Headers: []string{"HEALTHY", "UNHEALTHY", "TOTAL"}, Rows: [][]string{{strconv.Itoa(health.Healthy), strconv.Itoa(health.Unhealthy), strconv.Itoa(health.Total)}}})
+			}
+			if output == "" {
+				output = "table"
+			}
+
+			return ui.Render(t, strings.ToLower(output))
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
+
+	return cmd
 }
 
-// newLBAddServiceCmd creates the lb add-service subcommand
+// newLBAddServiceCmd creates the lb add-service subcommand.
 func newLBAddServiceCmd() *cobra.Command {
-    var (
-        port       int
-        targetPort int
-        weight     int
-        dryRun     bool
-        output     string
-    )
+	var (
+		port       int
+		targetPort int
+		weight     int
+		dryRun     bool
+		output     string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "add-service <lb-name> <service-ip|reserved:key[:index]>",
@@ -559,7 +582,7 @@ Examples:
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			log.Info("Adding service to load balancer",
@@ -582,33 +605,36 @@ Examples:
 				serviceIP = resolved
 			}
 
-            // Create backend member
-            member := &cpi.BackendMember{
-                IPAddress:  serviceIP,
-                Port:       port,
-                TargetPort: targetPort,
-                Weight:     weight,
-            }
+			// Create backend member
+			member := &cpi.BackendMember{
+				IPAddress:  serviceIP,
+				Port:       port,
+				TargetPort: targetPort,
+				Weight:     weight,
+			}
 
-            if dryRun {
-                t := &ui.Table{Title: "DRY RUN — LB Add Service Plan"}
-                t.Summary = fmt.Sprintf("Add backend to %s", lbName)
-                if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-                    rows := [][]string{}
-                    for _, m := range pools[0].Members {
-                        rows = append(rows, []string{m.IPAddress, fmt.Sprintf("%d", m.Port)})
-                    }
-                    t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
-                }
-                t.Sections = append(t.Sections, ui.Section{Title: "Add", Headers: []string{"IP", "PORT", "TARGET_PORT", "WEIGHT"}, Rows: [][]string{{member.IPAddress, fmt.Sprintf("%d", member.Port), fmt.Sprintf("%d", member.TargetPort), fmt.Sprintf("%d", member.Weight)}}})
-                if output == "" { output = "table" }
-                return ui.Render(t, strings.ToLower(output))
-            }
+			if dryRun {
+				t := &ui.Table{Title: "DRY RUN — LB Add Service Plan"}
+				t.Summary = "Add backend to " + lbName
+				if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
+					rows := [][]string{}
+					for _, m := range pools[0].Members {
+						rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
+					}
+					t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
+				}
+				t.Sections = append(t.Sections, ui.Section{Title: "Add", Headers: []string{"IP", "PORT", "TARGET_PORT", "WEIGHT"}, Rows: [][]string{{member.IPAddress, strconv.Itoa(member.Port), strconv.Itoa(member.TargetPort), strconv.Itoa(member.Weight)}}})
+				if output == "" {
+					output = "table"
+				}
 
-            // Add member to backend pool
-            if err := network.AddBackendMember(ctx, loadBalancer.ID, member); err != nil {
-                return fmt.Errorf("failed to add backend member: %w", err)
-            }
+				return ui.Render(t, strings.ToLower(output))
+			}
+
+			// Add member to backend pool
+			if err := network.AddBackendMember(ctx, loadBalancer.ID, member); err != nil {
+				return fmt.Errorf("failed to add backend member: %w", err)
+			}
 
 			log.Info("Service added to load balancer successfully")
 			fmt.Printf("Added %s to load balancer %s\n", serviceIP, lbName)
@@ -619,9 +645,9 @@ Examples:
 
 	cmd.Flags().IntVar(&port, "port", 80, "service port")
 	cmd.Flags().IntVar(&targetPort, "target-port", 0, "target port (defaults to service port)")
-    cmd.Flags().IntVar(&weight, "weight", 1, "service weight for weighted load balancing")
-    cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member addition without making changes")
-    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+	cmd.Flags().IntVar(&weight, "weight", 1, "service weight for weighted load balancing")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member addition without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
@@ -632,34 +658,41 @@ func resolveReservedIP(blocName string, token string) (string, error) {
 	// token format: reserved:key or reserved:key:index
 	parts := strings.Split(strings.TrimPrefix(token, "reserved:"), ":")
 	if len(parts) == 0 || parts[0] == "" {
-		return "", fmt.Errorf("invalid reserved format; expected reserved:<key>[:index]")
+		return "", errors.New("invalid reserved format; expected reserved:<key>[:index]")
 	}
+
 	key := parts[0]
+
 	index := "0"
 	if len(parts) > 1 && parts[1] != "" {
 		index = parts[1]
 	}
 	// Build output key: reserved_<bloc>-ocfp-<index>_<key>
 	stateKey := fmt.Sprintf("reserved_%s-ocfp-%s_%s", blocName, index, key)
+
 	stateManager, err := state.NewManager("")
 	if err != nil {
 		return "", fmt.Errorf("state manager: %w", err)
 	}
+
 	if _, err := stateManager.Load(blocName); err != nil {
 		return "", fmt.Errorf("load state: %w", err)
 	}
+
 	val, err := stateManager.GetOutput(stateKey)
 	if err != nil {
 		return "", fmt.Errorf("output %s not found", stateKey)
 	}
+
 	ipAddress, ok := val.(string)
 	if !ok || ipAddress == "" {
 		return "", fmt.Errorf("output %s empty or not string", stateKey)
 	}
+
 	return ipAddress, nil
 }
 
-// isToken returns true if arg begins with a supported token prefix
+// isToken returns true if arg begins with a supported token prefix.
 func isToken(s string) bool {
 	return strings.HasPrefix(s, "reserved:") || strings.HasPrefix(s, "public-ip:")
 }
@@ -671,53 +704,66 @@ func resolveTargetIP(blocName string, token string) (string, error) {
 	if strings.HasPrefix(token, "reserved:") {
 		return resolveReservedIP(blocName, token)
 	}
+
 	if strings.HasPrefix(token, "public-ip:") {
 		rest := strings.TrimPrefix(token, "public-ip:")
+
 		parts := strings.Split(rest, ":")
 		if len(parts) == 0 || parts[0] == "" {
-			return "", fmt.Errorf("invalid public-ip token; expected public-ip:<job>[:index]")
+			return "", errors.New("invalid public-ip token; expected public-ip:<job>[:index]")
 		}
+
 		job := parts[0]
+
 		index := ""
 		if len(parts) > 1 {
 			index = parts[1]
 		}
+
 		ip, err := findPublicIPByJob(blocName, job, index)
 		if err != nil {
 			return "", err
 		}
+
 		if ip == "" {
 			return "", fmt.Errorf("no matching public-ip for job %s index %s", job, index)
 		}
+
 		return ip, nil
 	}
+
 	return token, nil
 }
 
-// findPublicIPByJob reads state for public_ip resources with matching job and optional index
+// findPublicIPByJob reads state for public_ip resources with matching job and optional index.
 func findPublicIPByJob(blocName, job, index string) (string, error) {
 	stateManager, err := state.NewManager("")
 	if err != nil {
 		return "", fmt.Errorf("state manager: %w", err)
 	}
+
 	if _, err := stateManager.Load(blocName); err != nil {
 		return "", fmt.Errorf("load state: %w", err)
 	}
+
 	res, err := stateManager.ListResources("public_ip")
 	if err != nil {
 		return "", err
 	}
+
 	for _, resource := range res {
 		// check job via tags or properties
 		var rjob string
 		if resource.Tags != nil && resource.Tags["job"] != "" {
 			rjob = resource.Tags["job"]
 		}
+
 		if rjob == "" {
 			if v, ok := resource.Properties["job"].(string); ok {
 				rjob = v
 			}
 		}
+
 		if rjob != job {
 			continue
 		}
@@ -727,29 +773,33 @@ func findPublicIPByJob(blocName, job, index string) (string, error) {
 			if resource.Tags != nil && resource.Tags["index"] != "" {
 				ridx = resource.Tags["index"]
 			}
+
 			if ridx == "" {
 				if v, ok := resource.Properties["index"].(string); ok {
 					ridx = v
 				}
 			}
+
 			if ridx != index {
 				continue
 			}
 		}
+
 		if addr, ok := resource.Properties["address"].(string); ok && addr != "" {
 			return addr, nil
 		}
 	}
+
 	return "", nil
 }
 
-// newLBRemoveServiceCmd creates the lb remove-service subcommand
+// newLBRemoveServiceCmd creates the lb remove-service subcommand.
 func newLBRemoveServiceCmd() *cobra.Command {
-    var (
-        force  bool
-        dryRun bool
-        output string
-    )
+	var (
+		force  bool
+		dryRun bool
+		output string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "remove-service <lb-name> <service-ip>",
@@ -775,6 +825,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Removal cancelled by user")
+
 					return nil
 				}
 			}
@@ -802,7 +853,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			log.Info("Removing service from load balancer", "lb", lbName, "service", serviceIP)
@@ -813,25 +864,28 @@ func newLBRemoveServiceCmd() *cobra.Command {
 				return fmt.Errorf("failed to get load balancer: %w", err)
 			}
 
-            if dryRun {
-                t := &ui.Table{Title: "DRY RUN — LB Remove Service Plan"}
-                t.Summary = fmt.Sprintf("Remove backend from %s", lbName)
-                if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
-                    rows := [][]string{}
-                    for _, m := range pools[0].Members {
-                        rows = append(rows, []string{m.IPAddress, fmt.Sprintf("%d", m.Port)})
-                    }
-                    t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
-                }
-                t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: [][]string{{serviceIP}}})
-                if output == "" { output = "table" }
-                return ui.Render(t, strings.ToLower(output))
-            }
+			if dryRun {
+				t := &ui.Table{Title: "DRY RUN — LB Remove Service Plan"}
+				t.Summary = "Remove backend from " + lbName
+				if pools, err := network.GetBackendPools(ctx, loadBalancer.ID); err == nil && len(pools) > 0 {
+					rows := [][]string{}
+					for _, m := range pools[0].Members {
+						rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
+					}
+					t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
+				}
+				t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: [][]string{{serviceIP}}})
+				if output == "" {
+					output = "table"
+				}
 
-            // Remove member from backend pool
-            if err := network.RemoveBackendMember(ctx, loadBalancer.ID, serviceIP); err != nil {
-                return fmt.Errorf("failed to remove backend member: %w", err)
-            }
+				return ui.Render(t, strings.ToLower(output))
+			}
+
+			// Remove member from backend pool
+			if err := network.RemoveBackendMember(ctx, loadBalancer.ID, serviceIP); err != nil {
+				return fmt.Errorf("failed to remove backend member: %w", err)
+			}
 
 			log.Info("Service removed from load balancer successfully")
 			fmt.Printf("Removed %s from load balancer %s\n", serviceIP, lbName)
@@ -840,22 +894,22 @@ func newLBRemoveServiceCmd() *cobra.Command {
 		},
 	}
 
-    cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
-    cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member removal without making changes")
-    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview member removal without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }
 
-// newLBUpdateCmd creates the lb update subcommand
+// newLBUpdateCmd creates the lb update subcommand.
 func newLBUpdateCmd() *cobra.Command {
-    var (
-        algorithm   string
-        healthCheck string
-        timeout     int
-        dryRun      bool
-        output      string
-    )
+	var (
+		algorithm   string
+		healthCheck string
+		timeout     int
+		dryRun      bool
+		output      string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -896,7 +950,7 @@ func newLBUpdateCmd() *cobra.Command {
 
 			network := provider.Network()
 			if network == nil {
-				return fmt.Errorf("provider does not support network management")
+				return errors.New("provider does not support network management")
 			}
 
 			log.Info("Updating load balancer", "name", lbName)
@@ -907,26 +961,31 @@ func newLBUpdateCmd() *cobra.Command {
 				return fmt.Errorf("failed to get load balancer: %w", err)
 			}
 
-            // DRY-RUN plan
-            if dryRun {
-                t := &ui.Table{Title: "DRY RUN — LB Update Plan"}
-                t.Summary = fmt.Sprintf("Update load balancer %s", lbName)
-                rows := [][]string{}
-                if algorithm != "" && algorithm != loadBalancer.Algorithm {
-                    rows = append(rows, []string{"algorithm", loadBalancer.Algorithm, algorithm})
-                }
-                if healthCheck != "" {
-                    rows = append(rows, []string{"health_check.path", "/", healthCheck})
-                    rows = append(rows, []string{"health_check.timeout", "5", fmt.Sprintf("%d", timeout)})
-                }
-                if len(rows) == 0 { rows = append(rows, []string{"no-op", "", ""}) }
-                t.Sections = append(t.Sections, ui.Section{Title: "Changes", Headers: []string{"FIELD", "CURRENT", "NEW"}, Rows: rows})
-                if output == "" { output = "table" }
-                return ui.Render(t, strings.ToLower(output))
-            }
+			// DRY-RUN plan
+			if dryRun {
+				t := &ui.Table{Title: "DRY RUN — LB Update Plan"}
+				t.Summary = "Update load balancer " + lbName
+				rows := [][]string{}
+				if algorithm != "" && algorithm != loadBalancer.Algorithm {
+					rows = append(rows, []string{"algorithm", loadBalancer.Algorithm, algorithm})
+				}
+				if healthCheck != "" {
+					rows = append(rows, []string{"health_check.path", "/", healthCheck})
+					rows = append(rows, []string{"health_check.timeout", "5", strconv.Itoa(timeout)})
+				}
+				if len(rows) == 0 {
+					rows = append(rows, []string{"no-op", "", ""})
+				}
+				t.Sections = append(t.Sections, ui.Section{Title: "Changes", Headers: []string{"FIELD", "CURRENT", "NEW"}, Rows: rows})
+				if output == "" {
+					output = "table"
+				}
 
-            // Update fields if provided
-            updateNeeded := false
+				return ui.Render(t, strings.ToLower(output))
+			}
+
+			// Update fields if provided
+			updateNeeded := false
 
 			if algorithm != "" && algorithm != loadBalancer.Algorithm {
 				loadBalancer.Algorithm = algorithm
@@ -934,7 +993,8 @@ func newLBUpdateCmd() *cobra.Command {
 			}
 
 			if updateNeeded {
-				if err := network.UpdateLoadBalancer(ctx, loadBalancer); err != nil {
+				err := network.UpdateLoadBalancer(ctx, loadBalancer)
+				if err != nil {
 					return fmt.Errorf("failed to update load balancer: %w", err)
 				}
 				log.Info("Load balancer configuration updated")
@@ -950,22 +1010,24 @@ func newLBUpdateCmd() *cobra.Command {
 					UnhealthyThreshold: 3,
 				}
 
-				if err := network.ConfigureHealthCheck(ctx, loadBalancer.ID, healthConfig); err != nil {
+				err := network.ConfigureHealthCheck(ctx, loadBalancer.ID, healthConfig)
+				if err != nil {
 					return fmt.Errorf("failed to update health check: %w", err)
 				}
 				log.Info("Health check configuration updated")
 			}
 
 			fmt.Printf("Load balancer %s updated successfully\n", lbName)
+
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&algorithm, "algorithm", "", "load balancing algorithm (round-robin|least-connections|ip-hash)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check path")
-    cmd.Flags().IntVar(&timeout, "timeout", 5, "health check timeout in seconds")
-    cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview updates without making changes")
-    cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+	cmd.Flags().IntVar(&timeout, "timeout", 5, "health check timeout in seconds")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview updates without making changes")
+	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
 }

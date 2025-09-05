@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// PolicyManager handles vault policy creation and management
+// PolicyManager handles vault policy creation and management.
 type PolicyManager struct {
 	client   *Client
 	config   *config.Config
@@ -18,7 +18,7 @@ type PolicyManager struct {
 	logger   *zap.SugaredLogger
 }
 
-// NewPolicyManager creates a new policy manager
+// NewPolicyManager creates a new policy manager.
 func NewPolicyManager(client *Client, cfg *config.Config, blocName string) *PolicyManager {
 	return &PolicyManager{
 		client:   client,
@@ -28,37 +28,39 @@ func NewPolicyManager(client *Client, cfg *config.Config, blocName string) *Poli
 	}
 }
 
-// PolicyTemplate represents a vault policy template
+// PolicyTemplate represents a vault policy template.
 type PolicyTemplate struct {
 	Name        string
 	Description string
 	Rules       []PolicyRule
 }
 
-// PolicyRule represents a single policy rule
+// PolicyRule represents a single policy rule.
 type PolicyRule struct {
 	Path         string
 	Capabilities []string
 	Description  string
 }
 
-// CreateOCFPPolicies creates all necessary policies for OCFP operations
+// CreateOCFPPolicies creates all necessary policies for OCFP operations.
 func (pm *PolicyManager) CreateOCFPPolicies() error {
 	pm.logger.Info("Creating OCFP vault policies", "bloc", pm.blocName)
 
 	policies := pm.getOCFPPolicyTemplates()
 
 	for _, policy := range policies {
-		if err := pm.CreatePolicy(policy); err != nil {
+		err := pm.CreatePolicy(policy)
+		if err != nil {
 			return fmt.Errorf("failed to create policy %s: %w", policy.Name, err)
 		}
 	}
 
 	pm.logger.Info("OCFP policies created successfully", "count", len(policies))
+
 	return nil
 }
 
-// getOCFPPolicyTemplates returns all policy templates for OCFP
+// getOCFPPolicyTemplates returns all policy templates for OCFP.
 func (pm *PolicyManager) getOCFPPolicyTemplates() []*PolicyTemplate {
 	var policies []*PolicyTemplate
 
@@ -195,12 +197,12 @@ func (pm *PolicyManager) getOCFPPolicyTemplates() []*PolicyTemplate {
 	return policies
 }
 
-// getPolicyName generates a policy name with bloc prefix
+// getPolicyName generates a policy name with bloc prefix.
 func (pm *PolicyManager) getPolicyName(policyType string) string {
 	return fmt.Sprintf("ocfp-%s-%s", pm.blocName, policyType)
 }
 
-// CreatePolicy creates a vault policy
+// CreatePolicy creates a vault policy.
 func (pm *PolicyManager) CreatePolicy(template *PolicyTemplate) error {
 	pm.logger.Debug("Creating vault policy", "name", template.Name)
 
@@ -208,15 +210,17 @@ func (pm *PolicyManager) CreatePolicy(template *PolicyTemplate) error {
 	policyHCL := pm.generatePolicyHCL(template)
 
 	// Create the policy
-	if err := pm.client.client.Sys().PutPolicy(template.Name, policyHCL); err != nil {
+	err := pm.client.client.Sys().PutPolicy(template.Name, policyHCL)
+	if err != nil {
 		return fmt.Errorf("failed to create policy: %w", err)
 	}
 
 	pm.logger.Info("Created vault policy", "name", template.Name, "rules", len(template.Rules))
+
 	return nil
 }
 
-// generatePolicyHCL generates HCL policy content from template
+// generatePolicyHCL generates HCL policy content from template.
 func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 	var builder strings.Builder
 
@@ -238,6 +242,7 @@ func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 			for i, cap := range rule.Capabilities {
 				caps[i] = fmt.Sprintf("\"%s\"", cap)
 			}
+
 			builder.WriteString(fmt.Sprintf("  capabilities = [%s]\n", strings.Join(caps, ", ")))
 		}
 
@@ -247,7 +252,7 @@ func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 	return builder.String()
 }
 
-// ListPolicies lists all vault policies
+// ListPolicies lists all vault policies.
 func (pm *PolicyManager) ListPolicies() ([]string, error) {
 	policies, err := pm.client.client.Sys().ListPolicies()
 	if err != nil {
@@ -257,7 +262,7 @@ func (pm *PolicyManager) ListPolicies() ([]string, error) {
 	return policies, nil
 }
 
-// GetPolicy retrieves a specific policy
+// GetPolicy retrieves a specific policy.
 func (pm *PolicyManager) GetPolicy(name string) (string, error) {
 	policy, err := pm.client.client.Sys().GetPolicy(name)
 	if err != nil {
@@ -267,19 +272,21 @@ func (pm *PolicyManager) GetPolicy(name string) (string, error) {
 	return policy, nil
 }
 
-// DeletePolicy deletes a vault policy
+// DeletePolicy deletes a vault policy.
 func (pm *PolicyManager) DeletePolicy(name string) error {
 	pm.logger.Info("Deleting vault policy", "name", name)
 
-	if err := pm.client.client.Sys().DeletePolicy(name); err != nil {
+	err := pm.client.client.Sys().DeletePolicy(name)
+	if err != nil {
 		return fmt.Errorf("failed to delete policy %s: %w", name, err)
 	}
 
 	pm.logger.Info("Deleted vault policy", "name", name)
+
 	return nil
 }
 
-// UpdatePolicy updates an existing vault policy
+// UpdatePolicy updates an existing vault policy.
 func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 	pm.logger.Debug("Updating vault policy", "name", template.Name)
 
@@ -290,6 +297,7 @@ func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 			// Policy doesn't exist, create it
 			return pm.CreatePolicy(template)
 		}
+
 		return fmt.Errorf("failed to check existing policy: %w", err)
 	}
 
@@ -299,6 +307,7 @@ func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 	// Only update if content has changed
 	if strings.TrimSpace(existing) == strings.TrimSpace(newPolicyHCL) {
 		pm.logger.Debug("Policy content unchanged, skipping update", "name", template.Name)
+
 		return nil
 	}
 
@@ -308,10 +317,11 @@ func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 	}
 
 	pm.logger.Info("Updated vault policy", "name", template.Name)
+
 	return nil
 }
 
-// ValidateTokenPolicies validates that a token has the required policies
+// ValidateTokenPolicies validates that a token has the required policies.
 func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error {
 	pm.logger.Debug("Validating token policies", "required", requiredPolicies)
 
@@ -322,18 +332,18 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 	}
 
 	if secret == nil || secret.Data == nil {
-		return fmt.Errorf("no token data returned")
+		return errors.New("no token data returned")
 	}
 
 	// Extract token policies
 	tokenPoliciesRaw, tokenPoliciesOK := secret.Data["policies"]
 	if !tokenPoliciesOK {
-		return fmt.Errorf("no policies found in token")
+		return errors.New("no policies found in token")
 	}
 
 	tokenPoliciesList, ok := tokenPoliciesRaw.([]interface{})
 	if !ok {
-		return fmt.Errorf("invalid policies format in token")
+		return errors.New("invalid policies format in token")
 	}
 
 	// Convert to string slice
@@ -350,20 +360,25 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 	for _, policy := range tokenPolicies {
 		if policy == "root" {
 			pm.logger.Debug("Token has root policy, validation passed")
+
 			return nil
 		}
 	}
 
 	// Check for required policies
 	var missing []string
+
 	for _, required := range requiredPolicies {
 		found := false
+
 		for _, tokenPolicy := range tokenPolicies {
 			if tokenPolicy == required {
 				found = true
+
 				break
 			}
 		}
+
 		if !found {
 			missing = append(missing, required)
 		}
@@ -374,10 +389,11 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 	}
 
 	pm.logger.Debug("Token policy validation passed")
+
 	return nil
 }
 
-// CreateTokenWithPolicies creates a new token with specific policies
+// CreateTokenWithPolicies creates a new token with specific policies.
 func (pm *PolicyManager) CreateTokenWithPolicies(policies []string, ttl string, renewable bool) (string, error) {
 	pm.logger.Info("Creating token with policies", "policies", policies, "ttl", ttl)
 
@@ -398,32 +414,35 @@ func (pm *PolicyManager) CreateTokenWithPolicies(policies []string, ttl string, 
 	}
 
 	if secret == nil || secret.Auth == nil {
-		return "", fmt.Errorf("no auth information in token response")
+		return "", errors.New("no auth information in token response")
 	}
 
 	token := secret.Auth.ClientToken
+
 	pm.logger.Info("Created token successfully", "policies", len(policies))
 
 	return token, nil
 }
 
-// EnsureOCFPPoliciesExist ensures all required OCFP policies exist and are current
+// EnsureOCFPPoliciesExist ensures all required OCFP policies exist and are current.
 func (pm *PolicyManager) EnsureOCFPPoliciesExist() error {
 	pm.logger.Info("Ensuring OCFP policies exist and are current")
 
 	policies := pm.getOCFPPolicyTemplates()
 
 	for _, policy := range policies {
-		if err := pm.UpdatePolicy(policy); err != nil {
+		err := pm.UpdatePolicy(policy)
+		if err != nil {
 			return fmt.Errorf("failed to ensure policy %s: %w", policy.Name, err)
 		}
 	}
 
 	pm.logger.Info("OCFP policies are current", "count", len(policies))
+
 	return nil
 }
 
-// CleanupOCFPPolicies removes all OCFP policies for this bloc
+// CleanupOCFPPolicies removes all OCFP policies for this bloc.
 func (pm *PolicyManager) CleanupOCFPPolicies() error {
 	pm.logger.Info("Cleaning up OCFP policies", "bloc", pm.blocName)
 
@@ -435,6 +454,7 @@ func (pm *PolicyManager) CleanupOCFPPolicies() error {
 
 	// Find OCFP policies for this bloc
 	ocfpPolicyPrefix := fmt.Sprintf("ocfp-%s-", pm.blocName)
+
 	var ocfpPolicies []string
 
 	for _, policy := range allPolicies {
@@ -445,11 +465,13 @@ func (pm *PolicyManager) CleanupOCFPPolicies() error {
 
 	// Delete OCFP policies
 	for _, policy := range ocfpPolicies {
-		if err := pm.DeletePolicy(policy); err != nil {
+		err := pm.DeletePolicy(policy)
+		if err != nil {
 			pm.logger.Warn("Failed to delete policy", "policy", policy, "error", err)
 		}
 	}
 
 	pm.logger.Info("OCFP policy cleanup completed", "deleted", len(ocfpPolicies))
+
 	return nil
 }

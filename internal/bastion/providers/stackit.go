@@ -13,13 +13,13 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// StackitBastionInit implements bastion initialization for STACKIT
+// StackitBastionInit implements bastion initialization for STACKIT.
 type StackitBastionInit struct {
 	config *config.Config
 	log    logger.Logger
 }
 
-// NewStackitBastionInit creates a new STACKIT bastion initializer
+// NewStackitBastionInit creates a new STACKIT bastion initializer.
 func NewStackitBastionInit(cfg *config.Config) *StackitBastionInit {
 	return &StackitBastionInit{
 		config: cfg,
@@ -27,17 +27,17 @@ func NewStackitBastionInit(cfg *config.Config) *StackitBastionInit {
 	}
 }
 
-// Validate validates the STACKIT configuration
+// Validate validates the STACKIT configuration.
 func (s *StackitBastionInit) Validate() error {
 	s.log.Debug("Validating STACKIT configuration")
 
 	// Check required configuration
 	if s.config.ProjectID == "" {
-		return fmt.Errorf("STACKIT project ID is required")
+		return errors.New("STACKIT project ID is required")
 	}
 
 	if s.config.Region == "" {
-		return fmt.Errorf("STACKIT region is required")
+		return errors.New("STACKIT region is required")
 	}
 
 	// Check for service account JSON or other auth method
@@ -48,7 +48,7 @@ func (s *StackitBastionInit) Validate() error {
 	return nil
 }
 
-// PrepareEnvironment prepares STACKIT-specific environment variables
+// PrepareEnvironment prepares STACKIT-specific environment variables.
 func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	env := make(map[string]string)
 
@@ -80,12 +80,15 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 		if s.config.Bastion.Genesis.Branch != "" {
 			env["GENESIS_BRANCH"] = s.config.Bastion.Genesis.Branch
 		}
+
 		if s.config.Bastion.Genesis.Commit != "" {
 			env["GENESIS_COMMIT"] = s.config.Bastion.Genesis.Commit
 		}
+
 		if s.config.Bastion.Genesis.VersionPrefix != "" {
 			env["GENESIS_VERSION_PREFIX"] = s.config.Bastion.Genesis.VersionPrefix
 		}
+
 		if s.config.Bastion.Genesis.Repo != "" {
 			env["GENESIS_REPO"] = s.config.Bastion.Genesis.Repo
 		}
@@ -97,6 +100,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	if s.config.Bastion.Git.User.Name != "" {
 		env["OCFP_BASTION_GIT_USER_NAME"] = s.config.Bastion.Git.User.Name
 	}
+
 	if s.config.Bastion.Git.User.Email != "" {
 		env["OCFP_BASTION_GIT_USER_EMAIL"] = s.config.Bastion.Git.User.Email
 	}
@@ -104,7 +108,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	return env
 }
 
-// GetConnectionDetails returns SSH connection details for the bastion
+// GetConnectionDetails returns SSH connection details for the bastion.
 func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	s.log.Debug("Getting STACKIT bastion connection details")
 
@@ -124,6 +128,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 
 	// Find SSH private key
 	keyManager := ssh.NewKeyManager()
+
 	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
@@ -167,6 +172,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 		// Check if sshpass is available
 		if _, err := exec.LookPath("sshpass"); err != nil {
 			s.log.Warn("SSH key is encrypted but sshpass is not available")
+
 			details.UseSSHPass = false
 		}
 	}
@@ -174,7 +180,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 	return details, nil
 }
 
-// Initialize performs the actual bastion initialization
+// Initialize performs the actual bastion initialization.
 func (s *StackitBastionInit) Initialize(ctx context.Context) error {
 	s.log.Info("Initializing STACKIT bastion")
 
@@ -185,49 +191,53 @@ func (s *StackitBastionInit) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// getBastionIP retrieves the bastion host IP address
+// getBastionIP retrieves the bastion host IP address.
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
 	if s.config.BastionIP != "" {
 		s.log.Debug("Using configured bastion IP", "ip", s.config.BastionIP)
+
 		return s.config.BastionIP, nil
 	}
 
 	// Strategy 2: Try to get from STACKIT API (would need to implement STACKIT client)
 	if ip, err := s.getBastionIPFromAPI(); err == nil && ip != "" {
 		s.log.Debug("Retrieved bastion IP from STACKIT API", "ip", ip)
+
 		return ip, nil
 	}
 
 	// Strategy 3: Try to find in terraform state or other sources
 	if ip, err := s.getBastionIPFromState(); err == nil && ip != "" {
 		s.log.Debug("Retrieved bastion IP from state", "ip", ip)
+
 		return ip, nil
 	}
 
 	// Strategy 4: Check environment variable
 	if ip := os.Getenv("STACKIT_BASTION_IP"); ip != "" {
 		s.log.Debug("Using bastion IP from environment", "ip", ip)
+
 		return ip, nil
 	}
 
-	return "", fmt.Errorf("could not determine bastion IP address")
+	return "", errors.New("could not determine bastion IP address")
 }
 
-// getBastionIPFromAPI retrieves bastion IP from STACKIT API
+// getBastionIPFromAPI retrieves bastion IP from STACKIT API.
 func (s *StackitBastionInit) getBastionIPFromAPI() (string, error) {
 	// This would implement calls to STACKIT API to find the bastion server
 	// For now, return an error to fall back to other methods
-	return "", fmt.Errorf("STACKIT API integration not implemented")
+	return "", errors.New("STACKIT API integration not implemented")
 }
 
-// getBastionIPFromState retrieves bastion IP from terraform state or similar
+// getBastionIPFromState retrieves bastion IP from terraform state or similar.
 func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 	// Look for terraform state file or other state sources
 	stateFiles := []string{
 		"terraform.tfstate",
 		fmt.Sprintf("terraform-%s.tfstate", s.config.Name),
-		filepath.Join("state", fmt.Sprintf("%s.tfstate", s.config.Name)),
+		filepath.Join("state", s.config.Name+".tfstate"),
 	}
 
 	for _, stateFile := range stateFiles {
@@ -239,7 +249,7 @@ func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no state file found")
+	return "", errors.New("no state file found")
 }
 
 // (Removed unused helper stubs: validateStackitConnection, setupStackitCredentials)

@@ -1,20 +1,20 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "sort"
-    "strings"
+	"context"
+	"fmt"
+	"sort"
+	"strings"
 
-    "github.com/ocfp/ocfp-cli-go/internal/config"
-    "github.com/ocfp/ocfp-cli-go/internal/cpi"
-    "github.com/ocfp/ocfp-cli-go/internal/logger"
-    "github.com/ocfp/ocfp-cli-go/internal/ui"
-    "github.com/spf13/cobra"
-    "github.com/spf13/viper"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-// NewPublicIPsCmd creates the public-ips root command
+// NewPublicIPsCmd creates the public-ips root command.
 func NewPublicIPsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "public-ips",
@@ -23,11 +23,12 @@ func NewPublicIPsCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newPublicIPsListCmd())
+
 	return cmd
 }
 
 func newPublicIPsListCmd() *cobra.Command {
-    var output string
+	var output string
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -38,21 +39,21 @@ func newPublicIPsListCmd() *cobra.Command {
 		},
 	}
 
-    cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
-    _ = viper.BindPFlag("public_ips.output", cmd.Flags().Lookup("output"))
+	cmd.Flags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
+	_ = viper.BindPFlag("public_ips.output", cmd.Flags().Lookup("output"))
 
 	return cmd
 }
 
 func runPublicIPsList(cmd *cobra.Command, output string) error {
 	ctx := context.Background()
-    _ = logger.Get() // ensure logger initialized; UX goes to stdout
+	_ = logger.Get() // ensure logger initialized; UX goes to stdout
 
 	blocName := viper.GetString("bloc_name")
 	cfgFile := viper.GetString("config")
 
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 
 	cfg, err := config.LoadWithParams(cfgFile, blocName)
@@ -61,16 +62,18 @@ func runPublicIPsList(cmd *cobra.Command, output string) error {
 	}
 
 	if strings.ToLower(cfg.Provider) != "stackit" {
-		return fmt.Errorf("public IP listing is currently supported for STACKIT only")
+		return errors.New("public IP listing is currently supported for STACKIT only")
 	}
 
 	provider, err := cpi.GetProvider(cfg.Provider)
 	if err != nil {
 		return fmt.Errorf("failed to get provider: %w", err)
 	}
+
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider: %w", err)
 	}
+
 	defer func() { _ = provider.Cleanup(ctx) }()
 
 	network := provider.Network()
@@ -85,7 +88,7 @@ func runPublicIPsList(cmd *cobra.Command, output string) error {
 
 	stackitLister, ok := network.(stackitPublicIPLister)
 	if !ok {
-		return fmt.Errorf("provider does not support public IP listing")
+		return errors.New("provider does not support public IP listing")
 	}
 
 	filters := map[string]string{
@@ -106,21 +109,29 @@ func runPublicIPsList(cmd *cobra.Command, output string) error {
 			if indexI == indexJ {
 				return ips[iIndex].Index < ips[jIndex].Index
 			}
+
 			return indexI < indexJ
 		}
+
 		return jobI < jobJ
 	})
 
-    // Build a UI table so we can consistently render table/json/yaml
-    title := fmt.Sprintf("Public IPs — bloc %s", cfg.Name)
-    t := &ui.Table{Title: title}
-    rows := make([][]string, 0, len(ips))
-    for _, ip := range ips {
-        rows = append(rows, []string{ip.Job, ip.Index, ip.Address, ip.ID, ip.Name, ip.NetworkID, formatLabels(ip.Labels)})
-    }
-    t.Sections = append(t.Sections, ui.Section{Title: "IPs", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
-    if output == "" { output = "table" }
-    return ui.Render(t, strings.ToLower(output))
+	// Build a UI table so we can consistently render table/json/yaml
+	title := "Public IPs — bloc " + cfg.Name
+	t := &ui.Table{Title: title}
+
+	rows := make([][]string, 0, len(ips))
+	for _, ip := range ips {
+		rows = append(rows, []string{ip.Job, ip.Index, ip.Address, ip.ID, ip.Name, ip.NetworkID, formatLabels(ip.Labels)})
+	}
+
+	t.Sections = append(t.Sections, ui.Section{Title: "IPs", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
+
+	if output == "" {
+		output = "table"
+	}
+
+	return ui.Render(t, strings.ToLower(output))
 }
 
 // drop direct table rendering; handled by ui.Render above
@@ -134,23 +145,28 @@ func formatLabels(labelsMap map[string]string) string {
 	for k := range labelsMap {
 		keys = append(keys, k)
 	}
+
 	sort.Strings(keys)
 
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, labelsMap[k]))
 	}
+
 	return strings.Join(parts, ",")
 }
 
 func parseIndex(s string) int {
 	// fallback-friendly atoi
 	var index int
+
 	for _, ch := range s {
 		if ch < '0' || ch > '9' {
 			return 1 << 30 // non-numeric go to end
 		}
+
 		index = index*10 + int(ch-'0')
 	}
+
 	return index
 }

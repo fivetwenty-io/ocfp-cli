@@ -9,7 +9,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
-// TestProvisioningConfigGeneration tests provisioning configuration generation
+// TestProvisioningConfigGeneration tests provisioning configuration generation.
 func TestProvisioningConfigGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "test-bloc",
@@ -80,7 +80,7 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 	}
 }
 
-// TestScriptGeneration tests script generation functionality
+// TestScriptGeneration tests script generation functionality.
 func TestScriptGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "test-bloc",
@@ -100,6 +100,7 @@ func TestScriptGeneration(t *testing.T) {
 	}
 
 	ctx := context.Background()
+
 	script, err := scriptGen.GenerateProvisioningScript(ctx, provConfig, envVars)
 	if err != nil {
 		t.Fatalf("Failed to generate provisioning script: %v", err)
@@ -139,7 +140,7 @@ func TestScriptGeneration(t *testing.T) {
 	}
 }
 
-// TestSnapPackageGeneration tests snap package script generation
+// TestSnapPackageGeneration tests snap package script generation.
 func TestSnapPackageGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -155,15 +156,19 @@ func TestSnapPackageGeneration(t *testing.T) {
 
 	// Check for Go package
 	goFound := false
+
 	for _, pkg := range snapPackages {
 		if pkg.Name == "go" {
 			goFound = true
+
 			if !pkg.Enabled {
 				t.Error("Expected Go snap package to be enabled")
 			}
+
 			if !pkg.Classic {
 				t.Error("Expected Go snap package to use classic confinement")
 			}
+
 			break
 		}
 	}
@@ -194,7 +199,7 @@ func TestSnapPackageGeneration(t *testing.T) {
 	}
 }
 
-// TestAdvancedToolsGeneration tests advanced binary tools script generation
+// TestAdvancedToolsGeneration tests advanced binary tools script generation.
 func TestAdvancedToolsGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -246,7 +251,7 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 	}
 }
 
-// TestCPANModuleGeneration tests CPAN module installation script generation
+// TestCPANModuleGeneration tests CPAN module installation script generation.
 func TestCPANModuleGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
@@ -299,7 +304,7 @@ func TestCPANModuleGeneration(t *testing.T) {
 	}
 }
 
-// TestConfigFileGeneration tests configuration file generation
+// TestConfigFileGeneration tests configuration file generation.
 func TestConfigFileGeneration(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",

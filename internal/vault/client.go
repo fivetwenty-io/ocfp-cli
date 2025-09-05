@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Client wraps the HashiCorp Vault API client with OCFP-specific functionality
+// Client wraps the HashiCorp Vault API client with OCFP-specific functionality.
 type Client struct {
 	client    *api.Client
 	logical   *api.Logical
@@ -22,7 +22,7 @@ type Client struct {
 	logger    *zap.SugaredLogger
 }
 
-// Config holds vault client configuration
+// Config holds vault client configuration.
 type Config struct {
 	Address   string
 	Token     string
@@ -36,7 +36,7 @@ type Config struct {
 	TLSSkip   bool
 }
 
-// NewClient creates a new vault client with the specified configuration
+// NewClient creates a new vault client with the specified configuration.
 func NewClient(cfg *Config) (*Client, error) {
 	log := logger.Get()
 
@@ -52,6 +52,7 @@ func NewClient(cfg *Config) (*Client, error) {
 	if cfg.CACert != "" {
 		tlsConfig.CACert = cfg.CACert
 	}
+
 	if err := vaultConfig.ConfigureTLS(tlsConfig); err != nil {
 		return nil, fmt.Errorf("failed to configure TLS: %w", err)
 	}
@@ -81,7 +82,8 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	// Authenticate if needed
 	if cfg.Token == "" {
-		if err := vaultClient.authenticate(cfg); err != nil {
+		err := vaultClient.authenticate(cfg)
+		if err != nil {
 			return nil, fmt.Errorf("failed to authenticate: %w", err)
 		}
 	}
@@ -89,7 +91,7 @@ func NewClient(cfg *Config) (*Client, error) {
 	return vaultClient, nil
 }
 
-// NewClientFromEnv creates a vault client using environment variables
+// NewClientFromEnv creates a vault client using environment variables.
 func NewClientFromEnv() (*Client, error) {
 	cfg := &Config{
 		Address:   getEnvOrDefault("VAULT_ADDR", "https://127.0.0.1:8200"),
@@ -107,7 +109,7 @@ func NewClientFromEnv() (*Client, error) {
 	return NewClient(cfg)
 }
 
-// NewClientFromConfig creates a vault client from OCFP config
+// NewClientFromConfig creates a vault client from OCFP config.
 func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
 	// Extract vault configuration from OCFP config
 	// This would be expanded based on how vault config is stored in OCFP
@@ -122,7 +124,7 @@ func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
 	return NewClient(cfg)
 }
 
-// authenticate handles various authentication methods
+// authenticate handles various authentication methods.
 func (c *Client) authenticate(cfg *Config) error {
 	ctx := context.Background()
 
@@ -134,18 +136,19 @@ func (c *Client) authenticate(cfg *Config) error {
 	case "token":
 		// Token should already be set
 		if cfg.Token == "" {
-			return fmt.Errorf("token authentication requires VAULT_TOKEN to be set")
+			return errors.New("token authentication requires VAULT_TOKEN to be set")
 		}
+
 		return nil
 	default:
 		return fmt.Errorf("unsupported auth type: %s", cfg.AuthType)
 	}
 }
 
-// authenticateUserPass authenticates using username/password
+// authenticateUserPass authenticates using username/password.
 func (c *Client) authenticateUserPass(ctx context.Context, cfg *Config) error {
 	if cfg.Username == "" || cfg.Password == "" {
-		return fmt.Errorf("username and password required for userpass auth")
+		return errors.New("username and password required for userpass auth")
 	}
 
 	userpassAuth, err := userpass.NewUserpassAuth(cfg.Username, &userpass.Password{FromString: cfg.Password})
@@ -159,17 +162,18 @@ func (c *Client) authenticateUserPass(ctx context.Context, cfg *Config) error {
 	}
 
 	if authInfo == nil || authInfo.Auth == nil {
-		return fmt.Errorf("no auth info returned")
+		return errors.New("no auth info returned")
 	}
 
 	c.logger.Debug("Authenticated with userpass", "lease_duration", authInfo.Auth.LeaseDuration)
+
 	return nil
 }
 
-// authenticateAppRole authenticates using AppRole
+// authenticateAppRole authenticates using AppRole.
 func (c *Client) authenticateAppRole(ctx context.Context, cfg *Config) error {
 	if cfg.RoleID == "" || cfg.SecretID == "" {
-		return fmt.Errorf("role_id and secret_id required for approle auth")
+		return errors.New("role_id and secret_id required for approle auth")
 	}
 
 	approleAuth, err := approle.NewAppRoleAuth(cfg.RoleID, &approle.SecretID{FromString: cfg.SecretID})
@@ -183,14 +187,15 @@ func (c *Client) authenticateAppRole(ctx context.Context, cfg *Config) error {
 	}
 
 	if authInfo == nil || authInfo.Auth == nil {
-		return fmt.Errorf("no auth info returned")
+		return errors.New("no auth info returned")
 	}
 
 	c.logger.Debug("Authenticated with approle", "lease_duration", authInfo.Auth.LeaseDuration)
+
 	return nil
 }
 
-// ValidateConnection tests the vault connection and authentication
+// ValidateConnection tests the vault connection and authentication.
 func (c *Client) ValidateConnection() error {
 	// Try to read own token info to validate connection
 	secret, err := c.client.Auth().Token().LookupSelf()
@@ -199,33 +204,35 @@ func (c *Client) ValidateConnection() error {
 	}
 
 	if secret == nil || secret.Data == nil {
-		return fmt.Errorf("invalid token response")
+		return errors.New("invalid token response")
 	}
 
 	c.logger.Debug("Vault connection validated", "token_policies", secret.Data["policies"])
+
 	return nil
 }
 
-// Close cleans up the client connection
+// Close cleans up the client connection.
 func (c *Client) Close() error {
 	// Nothing to close for the HTTP client
 	return nil
 }
 
-// GetClient returns the underlying vault client for advanced operations
+// GetClient returns the underlying vault client for advanced operations.
 func (c *Client) GetClient() *api.Client {
 	return c.client
 }
 
-// GetLogical returns the logical client for secret operations
+// GetLogical returns the logical client for secret operations.
 func (c *Client) GetLogical() *api.Logical {
 	return c.logical
 }
 
-// getEnvOrDefault returns environment variable value or default
+// getEnvOrDefault returns environment variable value or default.
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }

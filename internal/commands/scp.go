@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewSCPCmd creates the SCP command
+// NewSCPCmd creates the SCP command.
 func NewSCPCmd() *cobra.Command {
 	var (
 		user       string
@@ -82,7 +82,7 @@ func runSCP(cmd *cobra.Command, args []string) error {
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 
 	// Load configuration; provider and region come from bloc config
@@ -90,8 +90,9 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return fmt.Errorf("provider must be specified in bloc config")
+		return errors.New("provider must be specified in bloc config")
 	}
 
 	// Initialize provider using bloc configuration
@@ -99,6 +100,7 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
 	}
+
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
@@ -137,13 +139,13 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	return executeSCP(scpCmd)
 }
 
-// getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic)
+// getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).
 func getBastionIPForSCP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	// Delegate to shared helper for robust lookup
 	return findBastionIP(ctx, provider, blocName)
 }
 
-// findSSHKeyForSCP locates the SSH private key for SCP
+// findSSHKeyForSCP locates the SSH private key for SCP.
 func findSSHKeyForSCP(blocName string, cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKeyForSCP")
 
@@ -163,18 +165,21 @@ func findSSHKeyForSCP(blocName string, cfg *config.Config) (string, error) {
 	for _, path := range searchPaths {
 		if _, err := os.Stat(path); err == nil {
 			log.Debugf("Found SSH key at: %s", path)
+
 			return path, nil
 		}
 	}
 
 	// Try to find any key with bastion in the name
 	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+
 	entries, err := os.ReadDir(sshDir)
 	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
 				path := filepath.Join(sshDir, entry.Name())
 				log.Debugf("Found SSH key at: %s", path)
+
 				return path, nil
 			}
 		}
@@ -183,7 +188,7 @@ func findSSHKeyForSCP(blocName string, cfg *config.Config) (string, error) {
 	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
 }
 
-// verifySSHKeyForSCP checks if the SSH key exists and has correct permissions
+// verifySSHKeyForSCP checks if the SSH key exists and has correct permissions.
 func verifySSHKeyForSCP(keyPath string) error {
 	info, err := os.Stat(keyPath)
 	if err != nil {
@@ -194,26 +199,30 @@ func verifySSHKeyForSCP(keyPath string) error {
 	mode := info.Mode()
 	if mode.Perm()&0077 != 0 {
 		// Try to fix permissions
-		if err := os.Chmod(keyPath, 0600); err != nil {
+		err := os.Chmod(keyPath, 0600)
+		if err != nil {
 			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
 		}
+
 		logger.WithOperation("verifySSHKeyForSCP").Warnf("Fixed SSH key permissions for: %s", keyPath)
 	}
 
 	return nil
 }
 
-// processSCPPath converts bastion: references to proper SCP format
+// processSCPPath converts bastion: references to proper SCP format.
 func processSCPPath(path, bastionIP, user string) string {
 	if strings.HasPrefix(path, "bastion:") {
 		// Replace bastion: with user@bastionIP:
 		remotePath := strings.TrimPrefix(path, "bastion:")
+
 		return fmt.Sprintf("%s@%s:%s", user, bastionIP, remotePath)
 	}
+
 	return path
 }
 
-// buildSCPCommand constructs the SCP command with all options
+// buildSCPCommand constructs the SCP command with all options.
 func buildSCPCommand(source, destination, keyPath string, recursive bool, extraOptions string) []string {
 	cmd := []string{"scp"}
 
@@ -244,14 +253,14 @@ func buildSCPCommand(source, destination, keyPath string, recursive bool, extraO
 	return cmd
 }
 
-// executeSCP executes the SCP command
+// executeSCP executes the SCP command.
 func executeSCP(scpCmd []string) error {
 	log := logger.WithOperation("executeSCP")
 	log.Debugf("Executing: %s", strings.Join(scpCmd, " "))
 
 	// Validate that the command is scp
 	if len(scpCmd) == 0 || scpCmd[0] != "scp" {
-		return fmt.Errorf("invalid SCP command")
+		return errors.New("invalid SCP command")
 	}
 
 	cmd := exec.Command(scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above

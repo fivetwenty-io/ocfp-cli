@@ -2,7 +2,7 @@ package cpi
 
 import "time"
 
-// Network represents a VPC or virtual network
+// Network represents a VPC or virtual network.
 type Network struct {
 	ID         string
 	Name       string
@@ -15,7 +15,7 @@ type Network struct {
 	UpdatedAt  time.Time
 }
 
-// Subnet represents a network subnet
+// Subnet represents a network subnet.
 type Subnet struct {
 	ID               string
 	Name             string
@@ -28,7 +28,7 @@ type Subnet struct {
 	CreatedAt        time.Time
 }
 
-// Instance represents a compute instance
+// Instance represents a compute instance.
 type Instance struct {
 	ID               string
 	Name             string
@@ -49,7 +49,7 @@ type Instance struct {
 	UpdatedAt        time.Time
 }
 
-// Volume represents a block storage volume
+// Volume represents a block storage volume.
 type Volume struct {
 	ID         string
 	Name       string
@@ -63,7 +63,7 @@ type Volume struct {
 	CreatedAt  time.Time
 }
 
-// Snapshot represents a volume snapshot
+// Snapshot represents a volume snapshot.
 type Snapshot struct {
 	ID          string
 	Name        string
@@ -75,7 +75,7 @@ type Snapshot struct {
 	CreatedAt   time.Time
 }
 
-// SecurityGroup represents a security group
+// SecurityGroup represents a security group.
 type SecurityGroup struct {
 	ID          string
 	Name        string
@@ -86,7 +86,7 @@ type SecurityGroup struct {
 	CreatedAt   time.Time
 }
 
-// SecurityRule represents a security group rule
+// SecurityRule represents a security group rule.
 type SecurityRule struct {
 	ID           string
 	Direction    string // ingress, egress
@@ -98,7 +98,7 @@ type SecurityRule struct {
 	Description  string
 }
 
-// FloatingIP represents a floating/elastic IP
+// FloatingIP represents a floating/elastic IP.
 type FloatingIP struct {
 	ID         string
 	Address    string
@@ -109,7 +109,7 @@ type FloatingIP struct {
 	CreatedAt  time.Time
 }
 
-// PublicIP represents a public IP address
+// PublicIP represents a public IP address.
 type PublicIP struct {
 	ID         string
 	Address    string
@@ -125,7 +125,7 @@ type PublicIP struct {
 	UpdatedAt  time.Time
 }
 
-// Router represents a network router
+// Router represents a network router.
 type Router struct {
 	ID              string
 	Name            string
@@ -138,13 +138,13 @@ type Router struct {
 	CreatedAt       time.Time
 }
 
-// Route represents a network route
+// Route represents a network route.
 type Route struct {
 	Destination string
 	NextHop     string
 }
 
-// LoadBalancer represents a load balancer
+// LoadBalancer represents a load balancer.
 type LoadBalancer struct {
 	ID             string
 	Name           string
@@ -166,7 +166,7 @@ type LoadBalancer struct {
 	UpdatedAt      time.Time
 }
 
-// Backend represents a load balancer backend
+// Backend represents a load balancer backend.
 type Backend struct {
 	ID      string
 	Name    string
@@ -177,7 +177,7 @@ type Backend struct {
 	Health  string // healthy, unhealthy, unknown
 }
 
-// HealthCheck represents a health check configuration
+// HealthCheck represents a health check configuration.
 type HealthCheck struct {
 	Protocol           string // http, https, tcp
 	Port               int
@@ -188,14 +188,14 @@ type HealthCheck struct {
 	UnhealthyThreshold int
 }
 
-// BackendPool represents a load balancer backend pool
+// BackendPool represents a load balancer backend pool.
 type BackendPool struct {
 	ID      string
 	Name    string
 	Members []*BackendMember
 }
 
-// BackendMember represents a backend pool member
+// BackendMember represents a backend pool member.
 type BackendMember struct {
 	ID         string
 	IPAddress  string
@@ -205,7 +205,7 @@ type BackendMember struct {
 	Status     string // active, draining, disabled
 }
 
-// HealthStatus represents the health status of a load balancer
+// HealthStatus represents the health status of a load balancer.
 type HealthStatus struct {
 	LoadBalancerID string
 	Healthy        int
@@ -214,7 +214,7 @@ type HealthStatus struct {
 	Backends       map[string]string // backend ID -> health status
 }
 
-// KeyPair represents an SSH key pair
+// KeyPair represents an SSH key pair.
 type KeyPair struct {
 	Name        string
 	Fingerprint string
@@ -223,7 +223,7 @@ type KeyPair struct {
 	CreatedAt   time.Time
 }
 
-// Image represents a machine image
+// Image represents a machine image.
 type Image struct {
 	ID           string
 	Name         string
@@ -240,7 +240,7 @@ type Image struct {
 	CreatedAt    time.Time
 }
 
-// Flavor represents an instance type/flavor
+// Flavor represents an instance type/flavor.
 type Flavor struct {
 	ID          string
 	Name        string
@@ -252,7 +252,7 @@ type Flavor struct {
 	Description string
 }
 
-// Bucket represents an object storage bucket
+// Bucket represents an object storage bucket.
 type Bucket struct {
 	Name         string
 	Region       string
@@ -268,7 +268,7 @@ type Bucket struct {
 
 // Request types for resource creation
 
-// CreateNetworkRequest for creating a network
+// CreateNetworkRequest for creating a network.
 type CreateNetworkRequest struct {
 	Name       string
 	CIDR       string
@@ -276,7 +276,7 @@ type CreateNetworkRequest struct {
 	Tags       map[string]string
 }
 
-// CreateSubnetRequest for creating a subnet
+// CreateSubnetRequest for creating a subnet.
 type CreateSubnetRequest struct {
 	Name             string
 	NetworkID        string
@@ -286,7 +286,7 @@ type CreateSubnetRequest struct {
 	Tags             map[string]string
 }
 
-// CreateInstanceRequest for creating an instance
+// CreateInstanceRequest for creating an instance.
 type CreateInstanceRequest struct {
 	Name             string
 	Flavor           string
@@ -300,7 +300,7 @@ type CreateInstanceRequest struct {
 	Tags             map[string]string
 }
 
-// CreateVolumeRequest for creating a volume
+// CreateVolumeRequest for creating a volume.
 type CreateVolumeRequest struct {
 	Name             string
 	Size             int // GB
@@ -312,7 +312,7 @@ type CreateVolumeRequest struct {
 	Tags             map[string]string
 }
 
-// CreateSnapshotRequest for creating a snapshot
+// CreateSnapshotRequest for creating a snapshot.
 type CreateSnapshotRequest struct {
 	Name        string
 	VolumeID    string
@@ -320,7 +320,7 @@ type CreateSnapshotRequest struct {
 	Tags        map[string]string
 }
 
-// CreateSecurityGroupRequest for creating a security group
+// CreateSecurityGroupRequest for creating a security group.
 type CreateSecurityGroupRequest struct {
 	Name        string
 	Description string
@@ -329,13 +329,13 @@ type CreateSecurityGroupRequest struct {
 	Tags        map[string]string
 }
 
-// AllocateFloatingIPRequest for allocating a floating IP
+// AllocateFloatingIPRequest for allocating a floating IP.
 type AllocateFloatingIPRequest struct {
 	NetworkID string
 	Tags      map[string]string
 }
 
-// CreatePublicIPRequest for creating a public IP
+// CreatePublicIPRequest for creating a public IP.
 type CreatePublicIPRequest struct {
 	Name      string
 	Job       string // router, cf-ssh, jumpbox, tcp-router, ops
@@ -345,7 +345,7 @@ type CreatePublicIPRequest struct {
 	Tags      map[string]string
 }
 
-// CreateRouterRequest for creating a router
+// CreateRouterRequest for creating a router.
 type CreateRouterRequest struct {
 	Name            string
 	NetworkID       string
@@ -353,7 +353,7 @@ type CreateRouterRequest struct {
 	Tags            map[string]string
 }
 
-// CreateLoadBalancerRequest for creating a load balancer
+// CreateLoadBalancerRequest for creating a load balancer.
 type CreateLoadBalancerRequest struct {
 	Name           string
 	Type           string // application, network
@@ -364,7 +364,7 @@ type CreateLoadBalancerRequest struct {
 	Tags           map[string]string
 }
 
-// UpdateLoadBalancerRequest for updating a load balancer
+// UpdateLoadBalancerRequest for updating a load balancer.
 type UpdateLoadBalancerRequest struct {
 	Name           *string
 	SecurityGroups []string

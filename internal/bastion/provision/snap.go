@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// SnapManager handles snap package installations
+// SnapManager handles snap package installations.
 type SnapManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// SnapPackage represents a snap package configuration
+// SnapPackage represents a snap package configuration.
 type SnapPackage struct {
 	Name         string `yaml:"name"`
 	Enabled      bool   `yaml:"enabled"`
@@ -28,7 +28,7 @@ type SnapPackage struct {
 	Dangerous    bool   `yaml:"dangerous"`
 }
 
-// NewSnapManager creates a new snap package manager
+// NewSnapManager creates a new snap package manager.
 func NewSnapManager(provider string, cfg *config.Config) *SnapManager {
 	return &SnapManager{
 		config:   cfg,
@@ -37,7 +37,7 @@ func NewSnapManager(provider string, cfg *config.Config) *SnapManager {
 	}
 }
 
-// GetSnapPackages returns snap packages configuration
+// GetSnapPackages returns snap packages configuration.
 func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 	pkgs := []SnapPackage{
 		{
@@ -75,16 +75,19 @@ func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 		for _, n := range sm.config.Bastion.Snaps.Enable {
 			enable[strings.ToLower(n)] = struct{}{}
 		}
+
 		disable := make(map[string]struct{})
 		for _, n := range sm.config.Bastion.Snaps.Disable {
 			disable[strings.ToLower(n)] = struct{}{}
 		}
+
 		if len(enable) > 0 || len(disable) > 0 {
 			for pkgIndex := range pkgs {
 				name := strings.ToLower(pkgs[pkgIndex].Name)
 				if _, ok := enable[name]; ok {
 					pkgs[pkgIndex].Enabled = true
 				}
+
 				if _, ok := disable[name]; ok {
 					pkgs[pkgIndex].Enabled = false
 				}
@@ -98,18 +101,23 @@ func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 					if strings.ToLower(key) != name {
 						continue
 					}
+
 					if override.Channel != "" {
 						pkgs[index].Channel = override.Channel
 					}
+
 					if override.Classic != nil {
 						pkgs[index].Classic = *override.Classic
 					}
+
 					if override.DevMode != nil {
 						pkgs[index].DevMode = *override.DevMode
 					}
+
 					if override.Dangerous != nil {
 						pkgs[index].Dangerous = *override.Dangerous
 					}
+
 					if override.CheckCommand != "" {
 						pkgs[index].CheckCommand = override.CheckCommand
 					}
@@ -117,10 +125,11 @@ func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 			}
 		}
 	}
+
 	return pkgs
 }
 
-// GenerateSnapInstallScript generates script for snap package installation
+// GenerateSnapInstallScript generates script for snap package installation.
 func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 	packages := sm.GetSnapPackages()
 	if len(packages) == 0 {
@@ -128,6 +137,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 	}
 
 	var lines []string
+
 	lines = append(lines, "# Snap package installation")
 	lines = append(lines, "")
 
@@ -155,7 +165,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Install snap package: %s", pkg.Name))
+		lines = append(lines, "# Install snap package: "+pkg.Name)
 
 		// Check if already installed
 		if pkg.CheckCommand != "" {
@@ -169,10 +179,10 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 		}
 
 		// Build snap install command
-		installCmd := fmt.Sprintf("sudo snap install %s", pkg.Name)
+		installCmd := "sudo snap install " + pkg.Name
 
 		if pkg.Channel != "" {
-			installCmd += fmt.Sprintf(" --channel=%s", pkg.Channel)
+			installCmd += " --channel=" + pkg.Channel
 		}
 
 		if pkg.Classic {
@@ -188,7 +198,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 		}
 
 		lines = append(lines, fmt.Sprintf("    log_info 'Installing snap package: %s'", pkg.Name))
-		lines = append(lines, fmt.Sprintf("    %s", installCmd))
+		lines = append(lines, "    "+installCmd)
 		lines = append(lines, "    if [ $? -eq 0 ]; then")
 		lines = append(lines, fmt.Sprintf("        log_success 'Snap package %s installed successfully'", pkg.Name))
 		lines = append(lines, "    else")
@@ -206,7 +216,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
-// shouldSkipCondition evaluates whether a condition should be skipped
+// shouldSkipCondition evaluates whether a condition should be skipped.
 func (sm *SnapManager) shouldSkipCondition(condition string) bool {
 	if condition == "" {
 		return false

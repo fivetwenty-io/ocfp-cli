@@ -13,17 +13,17 @@ import (
 )
 
 var (
-	// Global logger instance
+	// Global logger instance.
 	log *zap.SugaredLogger
 
-	// Atom for dynamic log level changes
+	// Atom for dynamic log level changes.
 	atom zap.AtomicLevel
 )
 
-// Logger type alias for consistent usage across the codebase
+// Logger type alias for consistent usage across the codebase.
 type Logger = *zap.SugaredLogger
 
-// Config holds logger configuration
+// Config holds logger configuration.
 type Config struct {
 	Level      string
 	Debug      bool
@@ -37,7 +37,7 @@ type Config struct {
 	DirectorID string
 }
 
-// Initialize sets up the global logger
+// Initialize sets up the global logger.
 func Initialize(cfg Config) error {
 	// Determine log level
 	level := determineLogLevel(cfg)
@@ -61,10 +61,12 @@ func Initialize(cfg Config) error {
 
 	// Always log to file (JSON) only; stdout/stderr reserved for user UX
 	cores := []zapcore.Core{}
+
 	fileCore, err := createFileCore(cfg, encoderConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create file logger: %w", err)
 	}
+
 	cores = append(cores, fileCore)
 
 	// Create the logger
@@ -75,9 +77,11 @@ func Initialize(cfg Config) error {
 	if cfg.RequestID != "" {
 		zapLogger = zapLogger.With(zap.String("request_id", cfg.RequestID))
 	}
+
 	if cfg.DirectorID != "" {
 		zapLogger = zapLogger.With(zap.String("director_id", cfg.DirectorID))
 	}
+
 	if cfg.BlocName != "" {
 		zapLogger = zapLogger.With(zap.String("bloc", cfg.BlocName))
 	}
@@ -90,7 +94,7 @@ func Initialize(cfg Config) error {
 	return nil
 }
 
-// createFileCore creates a file logging core
+// createFileCore creates a file logging core.
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
 	// Place logs under {LogDir}/{command}/{timestamp}.log
 	baseDir := cfg.LogDir
@@ -108,7 +112,8 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 
 	// Generate filename by timestamp (and optional request ID)
 	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("%s.log", timestamp)
+
+	filename := timestamp + ".log"
 	if cfg.RequestID != "" {
 		filename = fmt.Sprintf("%s-%s.log", timestamp, cfg.RequestID)
 	}
@@ -119,6 +124,7 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	if err := security.ValidatePath(logPath); err != nil {
 		return nil, fmt.Errorf("invalid log path: %w", err)
 	}
+
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 - logPath is validated above
 	if err != nil {
 		return nil, err
@@ -130,14 +136,16 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	return zapcore.NewCore(jsonEncoder, zapcore.AddSync(file), atom), nil
 }
 
-// determineLogLevel determines the log level based on configuration
+// determineLogLevel determines the log level based on configuration.
 func determineLogLevel(cfg Config) zapcore.Level {
 	if cfg.Trace {
 		return zapcore.DebugLevel // Zap doesn't have trace, use debug
 	}
+
 	if cfg.Debug {
 		return zapcore.DebugLevel
 	}
+
 	if cfg.Verbose {
 		return zapcore.InfoLevel
 	}
@@ -159,106 +167,111 @@ func determineLogLevel(cfg Config) zapcore.Level {
 	}
 }
 
-// SetLevel dynamically changes the log level
+// SetLevel dynamically changes the log level.
 func SetLevel(level string) {
 	var zapLevel zapcore.Level
-	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+	err := zapLevel.UnmarshalText([]byte(level))
+	if err != nil {
 		return
 	}
+
 	atom.SetLevel(zapLevel)
 }
 
-// Get returns the global logger instance
+// Get returns the global logger instance.
 func Get() *zap.SugaredLogger {
 	if log == nil {
 		// Initialize with defaults if not already initialized
-		if err := Initialize(Config{Level: "info"}); err != nil {
+		err := Initialize(Config{Level: "info"})
+		if err != nil {
 			// Fallback to console logger if initialization fails
 			panic(fmt.Errorf("failed to initialize logger: %w", err))
 		}
 	}
+
 	return log
 }
 
-// Debug logs a debug message
+// Debug logs a debug message.
 func Debug(args ...interface{}) {
 	Get().Debug(args...)
 }
 
-// Debugf logs a formatted debug message
+// Debugf logs a formatted debug message.
 func Debugf(format string, args ...interface{}) {
 	Get().Debugf(format, args...)
 }
 
-// Info logs an info message
+// Info logs an info message.
 func Info(args ...interface{}) {
 	Get().Info(args...)
 }
 
-// Infof logs a formatted info message
+// Infof logs a formatted info message.
 func Infof(format string, args ...interface{}) {
 	Get().Infof(format, args...)
 }
 
-// Warn logs a warning message
+// Warn logs a warning message.
 func Warn(args ...interface{}) {
 	Get().Warn(args...)
 }
 
-// Warnf logs a formatted warning message
+// Warnf logs a formatted warning message.
 func Warnf(format string, args ...interface{}) {
 	Get().Warnf(format, args...)
 }
 
-// Error logs an error message
+// Error logs an error message.
 func Error(args ...interface{}) {
 	Get().Error(args...)
 }
 
-// Errorf logs a formatted error message
+// Errorf logs a formatted error message.
 func Errorf(format string, args ...interface{}) {
 	Get().Errorf(format, args...)
 }
 
-// Fatal logs a fatal message and exits
+// Fatal logs a fatal message and exits.
 func Fatal(args ...interface{}) {
 	Get().Fatal(args...)
 }
 
-// Fatalf logs a formatted fatal message and exits
+// Fatalf logs a formatted fatal message and exits.
 func Fatalf(format string, args ...interface{}) {
 	Get().Fatalf(format, args...)
 }
 
-// With creates a child logger with additional fields
+// With creates a child logger with additional fields.
 func With(fields ...interface{}) *zap.SugaredLogger {
 	return Get().With(fields...)
 }
 
-// WithRequestID creates a logger with request ID context
+// WithRequestID creates a logger with request ID context.
 func WithRequestID(requestID string) *zap.SugaredLogger {
 	return Get().With("request_id", requestID)
 }
 
-// WithBloc creates a logger with bloc context
+// WithBloc creates a logger with bloc context.
 func WithBloc(blocName string) *zap.SugaredLogger {
 	return Get().With("bloc", blocName)
 }
 
-// WithOperation creates a logger with operation context
+// WithOperation creates a logger with operation context.
 func WithOperation(operation string) *zap.SugaredLogger {
 	return Get().With("operation", operation)
 }
 
-// Sync flushes any buffered log entries
+// Sync flushes any buffered log entries.
 func Sync() error {
 	if log != nil {
 		return log.Sync()
 	}
+
 	return nil
 }
 
-// ArchiveOldLogs compresses and archives logs older than specified days
+// ArchiveOldLogs compresses and archives logs older than specified days.
 func ArchiveOldLogs(logDir string, daysOld int) error {
 	cutoff := time.Now().AddDate(0, 0, -daysOld)
 	archiveDir := filepath.Join(logDir, "archive")

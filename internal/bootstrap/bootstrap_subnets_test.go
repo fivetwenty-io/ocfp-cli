@@ -11,7 +11,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
-// Fakes for network + compute
+// Fakes for network + compute.
 type fakeNet struct {
 	createdNetworks []*cpi.Network
 	createdSubnets  []*cpi.Subnet
@@ -20,6 +20,7 @@ type fakeNet struct {
 func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.CreateNetworkRequest) (*cpi.Network, error) {
 	n := &cpi.Network{ID: "net-1", Name: req.Name, CIDR: req.CIDR, Tags: req.Tags, State: cpi.ResourceStateActive}
 	f.createdNetworks = append(f.createdNetworks, n)
+
 	return n, nil
 }
 func (f *fakeNet) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { return nil, nil }
@@ -31,6 +32,7 @@ func (f *fakeNet) CreateSubnet(ctx context.Context, req *cpi.CreateSubnetRequest
 	id := "subnet-" + req.Name
 	s := &cpi.Subnet{ID: id, Name: req.Name, NetworkID: req.NetworkID, CIDR: req.CIDR, AvailabilityZone: req.AvailabilityZone, Type: req.Type, State: cpi.ResourceStateActive, Tags: req.Tags}
 	f.createdSubnets = append(f.createdSubnets, s)
+
 	return s, nil
 }
 func (f *fakeNet) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { return nil, nil }
@@ -93,6 +95,7 @@ type fakeCompute struct{ lastReq *cpi.CreateInstanceRequest }
 
 func (f *fakeCompute) CreateInstance(ctx context.Context, req *cpi.CreateInstanceRequest) (*cpi.Instance, error) {
 	f.lastReq = req
+
 	return &cpi.Instance{ID: "inst-1", Name: req.Name, NetworkID: req.NetworkID, SubnetID: req.SubnetID, PrivateIP: "10.0.0.10", State: cpi.ResourceStateActive, Tags: req.Tags}, nil
 }
 func (f *fakeCompute) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
@@ -159,10 +162,12 @@ func TestSplitParentIntoTwo(t *testing.T) {
 
 func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	tmp := t.TempDir()
+
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +183,7 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
+
 	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
@@ -191,12 +197,15 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected virtual subnet prod-ocfp-0 in state: %v", err)
 	}
+
 	if _, err := stateManager.GetOutput("subnet_prod-ocfp-0_id"); err != nil {
 		t.Fatalf("missing output subnet_prod-ocfp-0_id")
 	}
+
 	if _, err := stateManager.GetOutput("subnet_prod-ocfp-0_cidr"); err != nil {
 		t.Fatalf("missing output subnet_prod-ocfp-0_cidr")
 	}
+
 	if res.Properties["ip_0"] == "" || res.Properties["ip_n"] == "" || res.Properties["gateway"] == "" {
 		t.Fatalf("expected reserved fields on virtual subnet: %+v", res.Properties)
 	}
@@ -204,9 +213,11 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_bastion_ip"); err != nil {
 		t.Fatalf("missing bastion reserved ip output")
 	}
+
 	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_vault_ip"); err != nil {
 		t.Fatalf("missing vault reserved ip output")
 	}
+
 	if _, err := stateManager.GetOutput("reserved_prod-ocfp-0_available_a"); err != nil {
 		t.Fatalf("missing available_a output")
 	}
@@ -214,10 +225,12 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 
 func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) {
 	tmp := t.TempDir()
+
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
@@ -234,6 +247,7 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
+
 	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
@@ -257,13 +271,17 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 	if err != nil {
 		t.Fatalf("get deps: %v", err)
 	}
+
 	found := false
+
 	for _, dependency := range deps {
 		if dependency == "subnet.prod-ocfp-0" {
 			found = true
+
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected dependency on subnet.prod-ocfp-0, got %v", deps)
 	}
@@ -271,10 +289,12 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 
 func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 	tmp := t.TempDir()
+
 	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := stateManager.Load("prod"); err != nil {
 		t.Fatal(err)
 	}
@@ -290,6 +310,7 @@ func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 	if err := manager.createNetwork(ctx); err != nil {
 		t.Fatalf("createNetwork: %v", err)
 	}
+
 	if err := manager.createSubnets(ctx); err != nil {
 		t.Fatalf("createSubnets: %v", err)
 	}
@@ -302,13 +323,16 @@ func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 	// Expect ocfp-0..2
 	for index, want := range []string{"10.4.4.0/22", "10.4.8.0/22", "10.4.12.0/22"} {
 		name := fmt.Sprintf("prod-ocfp-%d", index)
+
 		res, err := stateManager.GetResource("subnet", name)
 		if err != nil {
 			t.Fatalf("missing virtual subnet %s: %v", name, err)
 		}
+
 		if res.Properties["cidr"] != want {
 			t.Fatalf("%s cidr=%v want %s", name, res.Properties["cidr"], want)
 		}
+
 		if res.Properties["ip_0"] == "" || res.Properties["ip_n"] == "" || res.Properties["gateway"] == "" {
 			t.Fatalf("%s missing reserved fields: %+v", name, res.Properties)
 		}

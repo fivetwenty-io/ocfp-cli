@@ -1,31 +1,31 @@
 package cli
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
+	"fmt"
+	"os"
+	"path/filepath"
 
-    _ "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit" // Register STACKIT provider
-    "github.com/ocfp/ocfp-cli-go/internal/logger"
-    "github.com/ocfp/ocfp-cli-go/internal/ui"
-    "github.com/ocfp/ocfp-cli-go/internal/version"
-    "github.com/spf13/cobra"
-    "github.com/spf13/viper"
+	_ "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit" // Register STACKIT provider
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/ocfp/ocfp-cli-go/internal/version"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
-    cfgFile     string
-    blocName    string
-    debug       bool
-    verbose     bool
-    trace       bool
-    noLog       bool
-    region      string
-    debugLookup bool
-    asciiTables bool
+	cfgFile     string
+	blocName    string
+	debug       bool
+	verbose     bool
+	trace       bool
+	noLog       bool
+	region      string
+	debugLookup bool
+	asciiTables bool
 )
 
-// rootCmd represents the base command
+// rootCmd represents the base command.
 var rootCmd = &cobra.Command{
 	Use:   "ocfp",
 	Short: "Open Cloud Foundry Platform CLI",
@@ -39,7 +39,8 @@ operational tooling for Cloud Foundry environments.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -65,10 +66,13 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&asciiTables, "ascii", false, "use ASCII-only tables in output")
 
 	// Bind flags to viper
-	if err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config")); err != nil {
+	err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
+	if err != nil {
 		logger.Warnf("Failed to bind config flag: %v", err)
 	}
-	if err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc")); err != nil {
+	err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind bloc flag: %v", err)
 	}
 	// Ensure viper sees the chosen bloc value even if only --bloc-name is used
@@ -79,26 +83,38 @@ func init() {
 		// Apply global UI settings
 		ui.SetASCII(viper.GetBool("ascii"))
 	}
-	if err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug")); err != nil {
+	err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	if err != nil {
 		logger.Warnf("Failed to bind debug flag: %v", err)
 	}
-	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
+	err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind verbose flag: %v", err)
 	}
-	if err := viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace")); err != nil {
+	err := viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind trace flag: %v", err)
 	}
-	if err := viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log")); err != nil {
+	err := viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind no-log flag: %v", err)
 	}
-	if err := viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region")); err != nil {
+	err := viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind region flag: %v", err)
 	}
 	// No binding for iaas; provider should come from bloc config
-	if err := viper.BindPFlag("debug_lookup", rootCmd.PersistentFlags().Lookup("debug-lookup")); err != nil {
+	err := viper.BindPFlag("debug_lookup", rootCmd.PersistentFlags().Lookup("debug-lookup"))
+	if err != nil {
 		logger.Warnf("Failed to bind debug-lookup flag: %v", err)
 	}
-	if err := viper.BindPFlag("ascii", rootCmd.PersistentFlags().Lookup("ascii")); err != nil {
+	err := viper.BindPFlag("ascii", rootCmd.PersistentFlags().Lookup("ascii"))
+
+	if err != nil {
 		logger.Warnf("Failed to bind ascii flag: %v", err)
 	}
 
@@ -144,7 +160,8 @@ func initConfig() {
 	}
 
 	// Read config file if it exists
-	if err := viper.ReadInConfig(); err == nil {
+	err := viper.ReadInConfig()
+	if err == nil {
 		if debug || verbose {
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		}

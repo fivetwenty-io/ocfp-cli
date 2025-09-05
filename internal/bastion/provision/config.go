@@ -7,13 +7,13 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
-// Config implements the ProvisionConfig interface
+// Config implements the ProvisionConfig interface.
 type Config struct {
 	provider string
 	config   *config.Config
 }
 
-// NewConfig creates a new provisioning configuration
+// NewConfig creates a new provisioning configuration.
 func NewConfig(provider string, cfg *config.Config) *Config {
 	return &Config{
 		provider: provider,
@@ -21,7 +21,7 @@ func NewConfig(provider string, cfg *config.Config) *Config {
 	}
 }
 
-// GetSystemConfig returns system configuration
+// GetSystemConfig returns system configuration.
 func (c *Config) GetSystemConfig() SystemConfig {
 	return SystemConfig{
 		Hostname: HostnameConfig{
@@ -35,7 +35,7 @@ func (c *Config) GetSystemConfig() SystemConfig {
 	}
 }
 
-// GetDirectories returns directories to create
+// GetDirectories returns directories to create.
 func (c *Config) GetDirectories() []DirectoryConfig {
 	return []DirectoryConfig{
 		{Path: "${HOME}/ocfp/cli", Mode: 0755},
@@ -47,7 +47,7 @@ func (c *Config) GetDirectories() []DirectoryConfig {
 	}
 }
 
-// GetPackages returns package groups to install
+// GetPackages returns package groups to install.
 func (c *Config) GetPackages() map[string]PackageGroup {
 	packages := map[string]PackageGroup{
 		"essential": {
@@ -147,7 +147,7 @@ func (c *Config) GetPackages() map[string]PackageGroup {
 	return packages
 }
 
-// GetGenesisDeployments returns Genesis deployments to initialize
+// GetGenesisDeployments returns Genesis deployments to initialize.
 func (c *Config) GetGenesisDeployments() []GenesisDeployment {
 	deployments := []GenesisDeployment{
 		{Name: "bosh", Kit: "bosh", Repo: "bosh-genesis-kit", Branch: "develop", Enabled: true},
@@ -166,7 +166,7 @@ func (c *Config) GetGenesisDeployments() []GenesisDeployment {
 	return deployments
 }
 
-// GetBinaryTools returns binary tools to install
+// GetBinaryTools returns binary tools to install.
 func (c *Config) GetBinaryTools() []BinaryTool {
 	return []BinaryTool{
 		{
@@ -261,7 +261,7 @@ func (c *Config) GetBinaryTools() []BinaryTool {
 	}
 }
 
-// GetAPTRepositories returns APT repositories to add
+// GetAPTRepositories returns APT repositories to add.
 func (c *Config) GetAPTRepositories() []APTRepository {
 	repos := []APTRepository{
 		{
@@ -320,7 +320,7 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 	return repos
 }
 
-// GetGitRepositories returns Git repositories to clone
+// GetGitRepositories returns Git repositories to clone.
 func (c *Config) GetGitRepositories() []GitRepository {
 	repos := []GitRepository{
 		{
@@ -347,6 +347,7 @@ func (c *Config) GetGitRepositories() []GitRepository {
 		if repo.URL == "" {
 			repo.URL = "git@github.com:genesis-community/genesis.git"
 		}
+
 		if repo.Branch == "" {
 			repo.Branch = "v3.1.x-dev"
 		}
@@ -357,7 +358,7 @@ func (c *Config) GetGitRepositories() []GitRepository {
 	return repos
 }
 
-// GetCustomScripts returns custom scripts to execute
+// GetCustomScripts returns custom scripts to execute.
 func (c *Config) GetCustomScripts() []CustomScript {
 	scripts := []CustomScript{
 		{
@@ -378,7 +379,7 @@ func (c *Config) GetCustomScripts() []CustomScript {
 	providerScript := c.generateProviderScript()
 	if providerScript != "" {
 		scripts = append(scripts, CustomScript{
-			Name:    fmt.Sprintf("configure-%s", c.provider),
+			Name:    "configure-" + c.provider,
 			Enabled: true,
 			Content: providerScript,
 			Execute: true,
@@ -419,6 +420,7 @@ func (c *Config) generateGitConfigScript() string {
 	}
 
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# Git configuration script")
 	lines = append(lines, "")
@@ -455,6 +457,7 @@ func (c *Config) generateProviderScript() string {
 
 func (c *Config) generateStackitScript() string {
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# STACKIT CLI configuration")
 	lines = append(lines, "")
@@ -469,6 +472,7 @@ func (c *Config) generateStackitScript() string {
 
 func (c *Config) generateAWSScript() string {
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# AWS CLI configuration")
 	lines = append(lines, "")
@@ -479,6 +483,7 @@ func (c *Config) generateAWSScript() string {
 
 func (c *Config) generateAzureScript() string {
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# Azure CLI configuration")
 	lines = append(lines, "")
@@ -489,6 +494,7 @@ func (c *Config) generateAzureScript() string {
 
 func (c *Config) generateGCPScript() string {
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# GCP CLI configuration")
 	lines = append(lines, "")
@@ -502,6 +508,7 @@ func (c *Config) generateGCPScript() string {
 
 func (c *Config) generateOpenStackScript() string {
 	var lines []string
+
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# OpenStack CLI configuration")
 	lines = append(lines, "")
@@ -522,9 +529,11 @@ func (c *Config) getProviderEnvironmentVars() map[string]string {
 		if c.config.ProjectID != "" {
 			vars["STACKIT_PROJECT_ID"] = c.config.ProjectID
 		}
+
 		if c.config.OrgID != "" {
 			vars["STACKIT_ORG_ID"] = c.config.OrgID
 		}
+
 		if c.config.Region != "" {
 			vars["STACKIT_REGION"] = c.config.Region
 		}
@@ -532,9 +541,11 @@ func (c *Config) getProviderEnvironmentVars() map[string]string {
 		if c.config.AccessKeyID != "" {
 			vars["AWS_ACCESS_KEY_ID"] = c.config.AccessKeyID
 		}
+
 		if c.config.SecretAccessKey != "" {
 			vars["AWS_SECRET_ACCESS_KEY"] = c.config.SecretAccessKey
 		}
+
 		if c.config.Region != "" {
 			vars["AWS_DEFAULT_REGION"] = c.config.Region
 		}
@@ -542,12 +553,15 @@ func (c *Config) getProviderEnvironmentVars() map[string]string {
 		if c.config.SubscriptionID != "" {
 			vars["AZURE_SUBSCRIPTION_ID"] = c.config.SubscriptionID
 		}
+
 		if c.config.TenantID != "" {
 			vars["AZURE_TENANT_ID"] = c.config.TenantID
 		}
+
 		if c.config.ClientID != "" {
 			vars["AZURE_CLIENT_ID"] = c.config.ClientID
 		}
+
 		if c.config.ClientSecret != "" {
 			vars["AZURE_CLIENT_SECRET"] = c.config.ClientSecret
 		}
@@ -559,15 +573,19 @@ func (c *Config) getProviderEnvironmentVars() map[string]string {
 		if c.config.AuthURL != "" {
 			vars["OS_AUTH_URL"] = c.config.AuthURL
 		}
+
 		if c.config.Username != "" {
 			vars["OS_USERNAME"] = c.config.Username
 		}
+
 		if c.config.Password != "" {
 			vars["OS_PASSWORD"] = c.config.Password
 		}
+
 		if c.config.ProjectName != "" {
 			vars["OS_PROJECT_NAME"] = c.config.ProjectName
 		}
+
 		if c.config.DomainName != "" {
 			vars["OS_USER_DOMAIN_NAME"] = c.config.DomainName
 			vars["OS_PROJECT_DOMAIN_NAME"] = c.config.DomainName

@@ -8,21 +8,21 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ProviderFactory is a function that creates a new provider instance
+// ProviderFactory is a function that creates a new provider instance.
 type ProviderFactory func(config interface{}) (Provider, error)
 
-// Registry manages provider registrations
+// Registry manages provider registrations.
 type Registry struct {
 	providers map[string]ProviderFactory
 	mu        sync.RWMutex
 }
 
-// globalRegistry is the global provider registry
+// globalRegistry is the global provider registry.
 var globalRegistry = &Registry{
 	providers: make(map[string]ProviderFactory),
 }
 
-// Register registers a provider factory
+// Register registers a provider factory.
 func Register(name string, factory ProviderFactory) error {
 	globalRegistry.mu.Lock()
 	defer globalRegistry.mu.Unlock()
@@ -33,10 +33,11 @@ func Register(name string, factory ProviderFactory) error {
 
 	globalRegistry.providers[name] = factory
 	logger.Debugf("Registered provider: %s", name)
+
 	return nil
 }
 
-// Get retrieves a provider factory
+// Get retrieves a provider factory.
 func Get(name string) (ProviderFactory, error) {
 	globalRegistry.mu.RLock()
 	defer globalRegistry.mu.RUnlock()
@@ -49,7 +50,7 @@ func Get(name string) (ProviderFactory, error) {
 	return factory, nil
 }
 
-// GetProvider creates a new provider instance by name
+// GetProvider creates a new provider instance by name.
 func GetProvider(name string) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {
@@ -60,7 +61,7 @@ func GetProvider(name string) (Provider, error) {
 	return factory(nil)
 }
 
-// List returns all registered provider names
+// List returns all registered provider names.
 func List() []string {
 	globalRegistry.mu.RLock()
 	defer globalRegistry.mu.RUnlock()
@@ -69,10 +70,11 @@ func List() []string {
 	for name := range globalRegistry.providers {
 		names = append(names, name)
 	}
+
 	return names
 }
 
-// CreateProvider creates a provider instance by name
+// CreateProvider creates a provider instance by name.
 func CreateProvider(ctx context.Context, name string, config interface{}) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {
@@ -90,10 +92,11 @@ func CreateProvider(ctx context.Context, name string, config interface{}) (Provi
 	}
 
 	logger.Infof("Created provider: %s", name)
+
 	return provider, nil
 }
 
-// ProviderConfig represents generic provider configuration
+// ProviderConfig represents generic provider configuration.
 type ProviderConfig struct {
 	Type      string                 `mapstructure:"type"`
 	Region    string                 `mapstructure:"region"`

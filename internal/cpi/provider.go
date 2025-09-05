@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// Provider is the main interface that all cloud providers must implement
+// Provider is the main interface that all cloud providers must implement.
 type Provider interface {
 	// Provider information
 	Name() string
@@ -27,7 +27,7 @@ type Provider interface {
 	Cleanup(ctx context.Context) error
 }
 
-// NetworkManager handles network-related operations
+// NetworkManager handles network-related operations.
 type NetworkManager interface {
 	// VPC/Network operations
 	CreateNetwork(ctx context.Context, req *CreateNetworkRequest) (*Network, error)
@@ -74,7 +74,7 @@ type NetworkManager interface {
 	GetLoadBalancerHealth(ctx context.Context, lbID string) (*HealthStatus, error)
 }
 
-// ComputeManager handles compute-related operations
+// ComputeManager handles compute-related operations.
 type ComputeManager interface {
 	// Instance operations
 	CreateInstance(ctx context.Context, req *CreateInstanceRequest) (*Instance, error)
@@ -101,7 +101,7 @@ type ComputeManager interface {
 	GetFlavor(ctx context.Context, id string) (*Flavor, error)
 }
 
-// StorageManager handles storage-related operations
+// StorageManager handles storage-related operations.
 type StorageManager interface {
 	// Volume operations
 	CreateVolume(ctx context.Context, req *CreateVolumeRequest) (*Volume, error)
@@ -126,7 +126,7 @@ type StorageManager interface {
 	EmptyBucket(ctx context.Context, name string) error
 }
 
-// SecurityManager handles security-related operations
+// SecurityManager handles security-related operations.
 type SecurityManager interface {
 	// Security group operations
 	CreateSecurityGroup(ctx context.Context, req *CreateSecurityGroupRequest) (*SecurityGroup, error)
@@ -140,7 +140,7 @@ type SecurityManager interface {
 	ListSecurityRules(ctx context.Context, groupID string) ([]*SecurityRule, error)
 }
 
-// LoadBalancerManager handles load balancer operations
+// LoadBalancerManager handles load balancer operations.
 type LoadBalancerManager interface {
 	CreateLoadBalancer(ctx context.Context, req *CreateLoadBalancerRequest) (*LoadBalancer, error)
 	GetLoadBalancer(ctx context.Context, id string) (*LoadBalancer, error)
@@ -159,7 +159,7 @@ type LoadBalancerManager interface {
 	GetHealthStatus(ctx context.Context, lbID string) (*HealthStatus, error)
 }
 
-// Resource represents a generic cloud resource
+// Resource represents a generic cloud resource.
 type Resource interface {
 	GetID() string
 	GetName() string
@@ -169,7 +169,7 @@ type Resource interface {
 	GetCreatedAt() string
 }
 
-// ResourceState represents the state of a resource
+// ResourceState represents the state of a resource.
 type ResourceState string
 
 const (
@@ -184,7 +184,7 @@ const (
 	ResourceStateUnknown   ResourceState = "unknown"
 )
 
-// ProviderError represents a provider-specific error
+// ProviderError represents a provider-specific error.
 type ProviderError struct {
 	Provider string
 	Code     string
@@ -196,26 +196,32 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("[%s] %s: %s", e.Provider, e.Code, e.Message)
 }
 
-// IsNotFound returns true if the error indicates a resource was not found
+// IsNotFound returns true if the error indicates a resource was not found.
 func IsNotFound(err error) bool {
-	if perr, ok := err.(*ProviderError); ok {
+	perr := &ProviderError{}
+	if errors.As(err, &perr) {
 		return perr.Code == "NotFound" || perr.Code == "404"
 	}
+
 	return false
 }
 
-// IsAlreadyExists returns true if the error indicates a resource already exists
+// IsAlreadyExists returns true if the error indicates a resource already exists.
 func IsAlreadyExists(err error) bool {
-	if perr, ok := err.(*ProviderError); ok {
+	perr := &ProviderError{}
+	if errors.As(err, &perr) {
 		return perr.Code == "AlreadyExists" || perr.Code == "409"
 	}
+
 	return false
 }
 
-// IsUnauthorized returns true if the error indicates an authentication failure
+// IsUnauthorized returns true if the error indicates an authentication failure.
 func IsUnauthorized(err error) bool {
-	if perr, ok := err.(*ProviderError); ok {
+	perr := &ProviderError{}
+	if errors.As(err, &perr) {
 		return perr.Code == "Unauthorized" || perr.Code == "401"
 	}
+
 	return false
 }

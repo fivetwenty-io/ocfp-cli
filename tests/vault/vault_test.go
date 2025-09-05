@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestVaultClient tests basic vault client functionality
+// TestVaultClient tests basic vault client functionality.
 func TestVaultClient(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
@@ -26,8 +26,10 @@ func TestVaultClient(t *testing.T) {
 
 	client, err := vault.NewClient(cfg)
 	require.NoError(t, err)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -37,15 +39,17 @@ func TestVaultClient(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestSafeOperations tests safe wrapper operations
+// TestSafeOperations tests safe wrapper operations.
 func TestSafeOperations(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
 	client := createTestClient(t)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -89,15 +93,17 @@ func TestSafeOperations(t *testing.T) {
 	assert.False(t, exists)
 }
 
-// TestEngineDetection tests KV engine detection
+// TestEngineDetection tests KV engine detection.
 func TestEngineDetection(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
 	client := createTestClient(t)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -120,7 +126,7 @@ func TestEngineDetection(t *testing.T) {
 	assert.GreaterOrEqual(t, len(cached), 1)
 }
 
-// TestSecretGeneration tests secret generation utilities
+// TestSecretGeneration tests secret generation utilities.
 func TestSecretGeneration(t *testing.T) {
 	generator := vault.NewSecretGenerator()
 
@@ -156,7 +162,7 @@ func TestSecretGeneration(t *testing.T) {
 	assert.Equal(t, "test-deployment", defaultSecrets.DeploymentName)
 }
 
-// TestVaultManager tests vault manager operations
+// TestVaultManager tests vault manager operations.
 func TestVaultManager(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
@@ -165,8 +171,10 @@ func TestVaultManager(t *testing.T) {
 	cfg := createTestConfig()
 	manager, err := vault.NewManagerFromEnv(cfg, "test-bloc")
 	require.NoError(t, err)
+
 	defer func() {
-		if err := manager.Close(); err != nil {
+		err := manager.Close()
+		if err != nil {
 			t.Errorf("Failed to close manager: %v", err)
 		}
 	}()
@@ -181,15 +189,17 @@ func TestVaultManager(t *testing.T) {
 	t.Logf("Populate dry-run result: %v", err)
 }
 
-// TestValidation tests vault validation features
+// TestValidation tests vault validation features.
 func TestValidation(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
 	client := createTestClient(t)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -210,15 +220,17 @@ func TestValidation(t *testing.T) {
 	assert.NotEmpty(t, result.Errors)
 }
 
-// TestPolicyManagement tests policy management features
+// TestPolicyManagement tests policy management features.
 func TestPolicyManagement(t *testing.T) {
 	if !hasVaultServer() {
 		t.Skip("Vault server not available, skipping integration tests")
 	}
 
 	client := createTestClient(t)
+
 	defer func() {
-		if err := client.Close(); err != nil {
+		err := client.Close()
+		if err != nil {
 			t.Errorf("Failed to close client: %v", err)
 		}
 	}()
@@ -259,28 +271,30 @@ func TestPolicyManagement(t *testing.T) {
 
 // Helper functions for testing
 
-// hasVaultServer checks if a vault server is available for testing
+// hasVaultServer checks if a vault server is available for testing.
 func hasVaultServer() bool {
 	vaultAddr := os.Getenv("VAULT_ADDR")
 	vaultToken := os.Getenv("VAULT_TOKEN")
+
 	return vaultAddr != "" && vaultToken != ""
 }
 
-// getTestVaultAddr returns the vault address for testing
+// getTestVaultAddr returns the vault address for testing.
 func getTestVaultAddr() string {
 	addr := os.Getenv("VAULT_ADDR")
 	if addr == "" {
 		addr = "http://127.0.0.1:8200"
 	}
+
 	return addr
 }
 
-// getTestVaultToken returns the vault token for testing
+// getTestVaultToken returns the vault token for testing.
 func getTestVaultToken() string {
 	return os.Getenv("VAULT_TOKEN")
 }
 
-// createTestClient creates a vault client for testing
+// createTestClient creates a vault client for testing.
 func createTestClient(t *testing.T) *vault.Client {
 	cfg := &vault.Config{
 		Address: getTestVaultAddr(),
@@ -294,7 +308,7 @@ func createTestClient(t *testing.T) *vault.Client {
 	return client
 }
 
-// createTestConfig creates a test configuration
+// createTestConfig creates a test configuration.
 func createTestConfig() *config.Config {
 	return &config.Config{
 		Name:      "test-bloc",
@@ -316,7 +330,7 @@ func createTestConfig() *config.Config {
 	}
 }
 
-// generateTestID generates a unique ID for test resources
+// generateTestID generates a unique ID for test resources.
 func generateTestID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }

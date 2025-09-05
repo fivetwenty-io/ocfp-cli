@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewTeardownCmd creates the teardown command
+// NewTeardownCmd creates the teardown command.
 func NewTeardownCmd() *cobra.Command {
 	var (
 		force     bool
@@ -134,17 +134,19 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
+
 	defer func() { _ = logger.Sync() }()
+
 	log := logger.Get()
 
 	// Validate required configuration
 	if blocName == "" {
-		return fmt.Errorf("bloc is required")
+		return errors.New("bloc is required")
 	}
 
 	// Validate nuke mode
 	if nuke && !force {
-		return fmt.Errorf("--nuke requires --force for safety")
+		return errors.New("--nuke requires --force for safety")
 	}
 
 	// Load configuration
@@ -163,6 +165,7 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider: %w", err)
 	}
+
 	defer func() { _ = provider.Cleanup(ctx) }()
 
 	// Initialize state manager
@@ -200,6 +203,7 @@ func runTeardown(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\n✅ Teardown completed successfully!\n")
+
 	return nil
 }
 
@@ -207,13 +211,15 @@ func getTeardownMode(all, nuke bool) string {
 	if nuke {
 		return "NUKE (delete ALL resources)"
 	}
+
 	if all {
 		return "ALL (delete all OCFP/BOSH resources)"
 	}
+
 	return "BOOTSTRAP (delete bootstrap-created resources)"
 }
 
-// TeardownOptions represents teardown configuration
+// TeardownOptions represents teardown configuration.
 type TeardownOptions struct {
 	BlocName  string
 	Provider  string
@@ -227,7 +233,7 @@ type TeardownOptions struct {
 	Output    string
 }
 
-// TeardownManager handles the teardown process
+// TeardownManager handles the teardown process.
 type TeardownManager struct {
 	config       *config.Config
 	provider     cpi.Provider
@@ -235,7 +241,7 @@ type TeardownManager struct {
 	options      *TeardownOptions
 }
 
-// NewTeardownManager creates a new teardown manager
+// NewTeardownManager creates a new teardown manager.
 func NewTeardownManager(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, opts *TeardownOptions) *TeardownManager {
 	return &TeardownManager{
 		config:       cfg,
@@ -245,7 +251,7 @@ func NewTeardownManager(cfg *config.Config, provider cpi.Provider, stateManager 
 	}
 }
 
-// ResourceToDelete represents a resource marked for deletion
+// ResourceToDelete represents a resource marked for deletion.
 type ResourceToDelete struct {
 	Type         string
 	ID           string
@@ -255,7 +261,7 @@ type ResourceToDelete struct {
 	Properties   map[string]interface{}
 }
 
-// Execute performs the teardown process
+// Execute performs the teardown process.
 func (m *TeardownManager) Execute(ctx context.Context) error {
 	log := logger.Get()
 
@@ -263,6 +269,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	if err := m.stateManager.Lock(m.options.BlocName); err != nil {
 		return fmt.Errorf("failed to acquire state lock: %w", err)
 	}
+
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
 	// Discover resources to delete
@@ -273,6 +280,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	if len(resourcesToDelete) == 0 {
 		log.Info("No resources found to delete")
+
 		return nil
 	}
 
@@ -288,45 +296,54 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	if !m.options.Force && !m.options.DryRun {
 		if !m.confirmDeletion(len(sortedResources)) {
 			log.Info("Teardown cancelled by user")
+
 			return nil
 		}
 	}
 
 	if m.options.DryRun {
 		log.Info("Dry run completed - no resources were deleted")
+
 		return nil
 	}
 
 	// Execute deletion
 	deletedCount := 0
+
 	for i, resource := range sortedResources {
 		log.Info("Deleting resource", "type", resource.Type, "name", resource.Name, "progress", fmt.Sprintf("%d/%d", i+1, len(sortedResources)))
 
-		if err := m.deleteResource(ctx, resource); err != nil {
+		err := m.deleteResource(ctx, resource)
+		if err != nil {
 			log.Error("Failed to delete resource", "type", resource.Type, "name", resource.Name, "error", err)
+
 			continue
 		}
 
 		deletedCount++
 
 		// Remove from state
-		if err := m.stateManager.RemoveResource(resource.Type, resource.Name); err != nil {
+		err := m.stateManager.RemoveResource(resource.Type, resource.Name)
+		if err != nil {
 			log.Warn("Failed to remove resource from state", "resource", resource.Name, "error", err)
 		}
 
 		// Save state after each successful deletion
-		if err := m.stateManager.Save(); err != nil {
+		err := m.stateManager.Save()
+		if err != nil {
 			log.Warn("Failed to save state", "error", err)
 		}
 	}
 
 	log.Info("Teardown completed", "deleted", deletedCount, "total", len(sortedResources))
+
 	return nil
 }
 
-// discoverResources finds all resources that should be deleted
+// discoverResources finds all resources that should be deleted.
 func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToDelete, error) {
 	log := logger.Get()
+
 	var resources []*ResourceToDelete
 
 	if m.options.Nuke {
@@ -346,6 +363,7 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 		if err != nil {
 			return nil, fmt.Errorf("failed to discover resources from cloud: %w", err)
 		}
+
 		resources = append(resources, cloudResources...)
 	}
 
@@ -353,10 +371,10 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 	return m.filterResources(resources), nil
 }
 
-// getResourcesFromState retrieves resources from the state file
+// getResourcesFromState retrieves resources from the state file.
 func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 	if m.stateManager.Current() == nil {
-		return nil, fmt.Errorf("no state loaded")
+		return nil, errors.New("no state loaded")
 	}
 
 	var resources []*ResourceToDelete
@@ -387,9 +405,10 @@ func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 	return resources, nil
 }
 
-// discoverResourcesFromCloud discovers resources by querying the cloud provider
+// discoverResourcesFromCloud discovers resources by querying the cloud provider.
 func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*ResourceToDelete, error) {
 	log := logger.Get()
+
 	var resources []*ResourceToDelete
 
 	// Build tag filters for OCFP resources
@@ -409,6 +428,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: instance.Name,
 				})
 			}
+
 			log.Info("Discovered instances", "count", len(instances))
 		}
 	}
@@ -424,6 +444,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: volume.Name,
 				})
 			}
+
 			log.Info("Discovered volumes", "count", len(volumes))
 		}
 
@@ -437,6 +458,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: snapshot.Name,
 				})
 			}
+
 			log.Info("Discovered snapshots", "count", len(snapshots))
 		}
 
@@ -453,6 +475,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					})
 				}
 			}
+
 			log.Info("Discovered buckets", "count", len(buckets))
 		}
 	}
@@ -468,6 +491,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: net.Name,
 				})
 			}
+
 			log.Info("Discovered networks", "count", len(networks))
 		}
 
@@ -482,6 +506,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: fip.Address,
 				})
 			}
+
 			log.Info("Discovered floating IPs", "count", len(floatingIPs))
 		}
 
@@ -495,6 +520,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					"label:managed-by": "ocfp",
 					"label:bloc":       m.config.Name,
 				}
+
 				ips, err := s.ListPublicIPs(ctx, filters)
 				if err == nil {
 					for _, publicIP := range ips {
@@ -508,6 +534,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 							},
 						})
 					}
+
 					log.Info("Discovered public IPs", "count", len(ips))
 				} else {
 					log.Warn("Failed to list public IPs", "error", err)
@@ -525,6 +552,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: lb.Name,
 				})
 			}
+
 			log.Info("Discovered load balancers", "count", len(lbs))
 		}
 	}
@@ -540,6 +568,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 					Name: sg.Name,
 				})
 			}
+
 			log.Info("Discovered security groups", "count", len(secGroups))
 		}
 	}
@@ -547,7 +576,7 @@ func (m *TeardownManager) discoverResourcesFromCloud(ctx context.Context) ([]*Re
 	return resources, nil
 }
 
-// discoverAllResources finds ALL resources in the project (nuke mode)
+// discoverAllResources finds ALL resources in the project (nuke mode).
 func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*ResourceToDelete, error) {
 	log := logger.Get()
 	log.Warn("NUKE MODE: Discovering ALL resources in project")
@@ -597,10 +626,11 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 	}
 
 	log.Warn("NUKE MODE: Found resources", "count", len(resources))
+
 	return resources, nil
 }
 
-// filterResources filters resources based on skip options
+// filterResources filters resources based on skip options.
 func (m *TeardownManager) filterResources(resources []*ResourceToDelete) []*ResourceToDelete {
 	var filtered []*ResourceToDelete
 
@@ -625,7 +655,7 @@ func (m *TeardownManager) filterResources(resources []*ResourceToDelete) []*Reso
 	return filtered
 }
 
-// shouldSkipResourceType checks if a resource type should be skipped
+// shouldSkipResourceType checks if a resource type should be skipped.
 func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 	for _, skip := range m.options.Skip {
 		if skip == resourceType {
@@ -638,10 +668,11 @@ func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
-// sortResourcesForDeletion sorts resources in the correct order for deletion
+// sortResourcesForDeletion sorts resources in the correct order for deletion.
 func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete) []*ResourceToDelete {
 	// Define deletion order (most dependent first)
 	order := map[string]int{
@@ -659,74 +690,85 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 
 	sort.Slice(resources, func(i, j int) bool {
 		orderI := order[resources[i].Type]
+
 		orderJ := order[resources[j].Type]
 		if orderI == orderJ {
 			// Same order, sort by name
 			return resources[i].Name < resources[j].Name
 		}
+
 		return orderI < orderJ
 	})
 
 	return resources
 }
 
-// showDeletionPlan displays what will be deleted
+// showDeletionPlan displays what will be deleted.
 func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error {
 	// Group by type
 	typeGroups := make(map[string][]*ResourceToDelete)
 	types := []string{}
+
 	for _, r := range resources {
 		if _, ok := typeGroups[r.Type]; !ok {
 			types = append(types, r.Type)
 		}
+
 		typeGroups[r.Type] = append(typeGroups[r.Type], r)
 	}
+
 	sort.Strings(types)
 
 	// Build plan table
 	title := fmt.Sprintf("DRY RUN — Teardown Plan for bloc '%s' (%s)", m.options.BlocName, m.options.Mode)
 	summary := fmt.Sprintf("Delete %d resources across %d types", len(resources), len(types))
-    planTable := &ui.Table{Title: title, Summary: summary}
+	planTable := &ui.Table{Title: title, Summary: summary}
 
 	for _, typ := range types {
 		list := typeGroups[typ]
 		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+
 		rows := make([][]string, 0, len(list))
 		for _, r := range list {
 			state := r.State
 			rows = append(rows, []string{r.Name, r.ID, state})
 		}
-        planTable.Sections = append(planTable.Sections, ui.Section{
-            Title:   fmt.Sprintf("%s (%d)", strings.ToUpper(typ), len(list)),
-            Headers: []string{"NAME", "ID", "STATE"},
-            Rows:    rows,
-        })
-    }
 
-    if len(m.options.Skip) > 0 {
-        planTable.Sections = append(planTable.Sections, ui.Section{
-            Title:   "Skipped",
-            Headers: []string{"TYPES"},
-            Rows:    [][]string{{strings.Join(m.options.Skip, ", ")}},
-        })
-    }
+		planTable.Sections = append(planTable.Sections, ui.Section{
+			Title:   fmt.Sprintf("%s (%d)", strings.ToUpper(typ), len(list)),
+			Headers: []string{"NAME", "ID", "STATE"},
+			Rows:    rows,
+		})
+	}
+
+	if len(m.options.Skip) > 0 {
+		planTable.Sections = append(planTable.Sections, ui.Section{
+			Title:   "Skipped",
+			Headers: []string{"TYPES"},
+			Rows:    [][]string{{strings.Join(m.options.Skip, ", ")}},
+		})
+	}
 
 	format := strings.ToLower(strings.TrimSpace(m.options.Output))
 	if format == "" {
 		format = "table"
 	}
+
 	return ui.Render(planTable, format)
 }
 
-// confirmDeletion asks user for confirmation
+// confirmDeletion asks user for confirmation.
 func (m *TeardownManager) confirmDeletion(resourceCount int) bool {
 	fmt.Printf("\nThis will permanently delete %d resources. Continue? [y/N]: ", resourceCount)
+
 	var response string
+
 	_, _ = fmt.Scanln(&response)
+
 	return strings.HasPrefix(strings.ToLower(response), "y")
 }
 
-// deleteResource deletes a single resource
+// deleteResource deletes a single resource.
 func (m *TeardownManager) deleteResource(ctx context.Context, resource *ResourceToDelete) error {
 	log := logger.Get()
 
@@ -746,9 +788,11 @@ func (m *TeardownManager) deleteResource(ctx context.Context, resource *Resource
 	case "bucket":
 		if storage := m.provider.Storage(); storage != nil {
 			// Empty bucket first if needed
-			if err := storage.EmptyBucket(ctx, resource.ID); err != nil {
+			err := storage.EmptyBucket(ctx, resource.ID)
+			if err != nil {
 				log.Warn("Failed to empty bucket", "bucket", resource.ID, "error", err)
 			}
+
 			return storage.DeleteBucket(ctx, resource.ID)
 		}
 	case "credentials_group":
@@ -787,6 +831,7 @@ func (m *TeardownManager) deleteResource(ctx context.Context, resource *Resource
 		if network := m.provider.Network(); network != nil {
 			// Subnet deletion is typically handled by network deletion
 			log.Info("Subnet will be deleted with network", "subnet", resource.Name)
+
 			return nil
 		}
 	case "network":

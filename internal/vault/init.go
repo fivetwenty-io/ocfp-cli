@@ -12,14 +12,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// InitManager handles vault initialization and unsealing
+// InitManager handles vault initialization and unsealing.
 type InitManager struct {
 	client *Client
 	config *config.Config
 	logger *zap.SugaredLogger
 }
 
-// NewInitManager creates a new vault init manager
+// NewInitManager creates a new vault init manager.
 func NewInitManager(client *Client, cfg *config.Config) *InitManager {
 	return &InitManager{
 		client: client,
@@ -28,7 +28,7 @@ func NewInitManager(client *Client, cfg *config.Config) *InitManager {
 	}
 }
 
-// InitRequest holds parameters for vault initialization
+// InitRequest holds parameters for vault initialization.
 type InitRequest struct {
 	SecretShares      int
 	SecretThreshold   int
@@ -39,7 +39,7 @@ type InitRequest struct {
 	PGPKeys           []string
 }
 
-// InitResponse holds the result of vault initialization
+// InitResponse holds the result of vault initialization.
 type InitResponse struct {
 	Keys            []string
 	KeysBase64      []string
@@ -49,7 +49,7 @@ type InitResponse struct {
 	Initialized     bool
 }
 
-// DefaultInitRequest returns sensible defaults for vault initialization
+// DefaultInitRequest returns sensible defaults for vault initialization.
 func DefaultInitRequest() *InitRequest {
 	return &InitRequest{
 		SecretShares:      5,
@@ -60,7 +60,7 @@ func DefaultInitRequest() *InitRequest {
 	}
 }
 
-// InitializeVault initializes a new vault instance
+// InitializeVault initializes a new vault instance.
 func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) {
 	im.logger.Info("Initializing vault", "shares", req.SecretShares, "threshold", req.SecretThreshold)
 
@@ -72,6 +72,7 @@ func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) 
 
 	if initialized {
 		im.logger.Info("Vault is already initialized")
+
 		return &InitResponse{Initialized: true}, nil
 	}
 
@@ -102,10 +103,11 @@ func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) 
 	}
 
 	im.logger.Info("Vault initialization completed successfully")
+
 	return result, nil
 }
 
-// IsInitialized checks if vault is initialized
+// IsInitialized checks if vault is initialized.
 func (im *InitManager) IsInitialized() (bool, error) {
 	status, err := im.client.client.Sys().InitStatus()
 	if err != nil {
@@ -115,7 +117,7 @@ func (im *InitManager) IsInitialized() (bool, error) {
 	return status, nil
 }
 
-// GetSealStatus gets the current seal status
+// GetSealStatus gets the current seal status.
 func (im *InitManager) GetSealStatus() (*api.SealStatusResponse, error) {
 	status, err := im.client.client.Sys().SealStatus()
 	if err != nil {
@@ -125,7 +127,7 @@ func (im *InitManager) GetSealStatus() (*api.SealStatusResponse, error) {
 	return status, nil
 }
 
-// IsSealed checks if vault is sealed
+// IsSealed checks if vault is sealed.
 func (im *InitManager) IsSealed() (bool, error) {
 	status, err := im.GetSealStatus()
 	if err != nil {
@@ -135,7 +137,7 @@ func (im *InitManager) IsSealed() (bool, error) {
 	return status.Sealed, nil
 }
 
-// UnsealVault unseals vault using the provided keys
+// UnsealVault unseals vault using the provided keys.
 func (im *InitManager) UnsealVault(keys []string) error {
 	im.logger.Info("Starting vault unseal process", "keys_provided", len(keys))
 
@@ -147,6 +149,7 @@ func (im *InitManager) UnsealVault(keys []string) error {
 
 	if !status.Sealed {
 		im.logger.Info("Vault is already unsealed")
+
 		return nil
 	}
 
@@ -165,6 +168,7 @@ func (im *InitManager) UnsealVault(keys []string) error {
 
 		if !unsealResp.Sealed {
 			im.logger.Info("Vault successfully unsealed", "keys_used", keyIndex+1)
+
 			return nil
 		}
 	}
@@ -181,22 +185,25 @@ func (im *InitManager) UnsealVault(keys []string) error {
 	}
 
 	im.logger.Info("Vault unseal completed successfully")
+
 	return nil
 }
 
-// SealVault seals the vault (requires root token)
+// SealVault seals the vault (requires root token).
 func (im *InitManager) SealVault() error {
 	im.logger.Info("Sealing vault")
 
-	if err := im.client.client.Sys().Seal(); err != nil {
+	err := im.client.client.Sys().Seal()
+	if err != nil {
 		return fmt.Errorf("failed to seal vault: %w", err)
 	}
 
 	im.logger.Info("Vault sealed successfully")
+
 	return nil
 }
 
-// AutoUnsealFromEnv attempts to unseal vault using keys from environment
+// AutoUnsealFromEnv attempts to unseal vault using keys from environment.
 func (im *InitManager) AutoUnsealFromEnv() error {
 	im.logger.Info("Attempting auto-unseal from environment variables")
 
@@ -208,11 +215,13 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 
 	if !sealed {
 		im.logger.Info("Vault is already unsealed")
+
 		return nil
 	}
 
 	// Look for unseal keys in environment variables
 	var keys []string
+
 	for keyNumber := 1; keyNumber <= 10; keyNumber++ { // Check up to 10 keys
 		keyName := fmt.Sprintf("VAULT_UNSEAL_KEY_%d", keyNumber)
 		if key := getEnvOrDefault(keyName, ""); key != "" {
@@ -232,7 +241,7 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 	}
 
 	if len(keys) == 0 {
-		return fmt.Errorf("no unseal keys found in environment variables")
+		return errors.New("no unseal keys found in environment variables")
 	}
 
 	im.logger.Info("Found unseal keys in environment", "count", len(keys))
@@ -240,7 +249,7 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 	return im.UnsealVault(keys)
 }
 
-// WaitForVaultReady waits for vault to be ready and unsealed
+// WaitForVaultReady waits for vault to be ready and unsealed.
 func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 	im.logger.Info("Waiting for vault to be ready", "timeout", timeout)
 
@@ -253,44 +262,50 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for vault to be ready")
+			return errors.New("timeout waiting for vault to be ready")
 		case <-ticker.C:
 			// Check if vault is initialized and unsealed
 			initialized, err := im.IsInitialized()
 			if err != nil {
 				im.logger.Debug("Vault not accessible yet", "error", err)
+
 				continue
 			}
 
 			if !initialized {
 				im.logger.Debug("Vault not initialized yet")
+
 				continue
 			}
 
 			sealed, err := im.IsSealed()
 			if err != nil {
 				im.logger.Debug("Cannot check seal status", "error", err)
+
 				continue
 			}
 
 			if sealed {
 				im.logger.Debug("Vault is sealed")
+
 				continue
 			}
 
 			// Test authentication
 			if err := im.client.ValidateConnection(); err != nil {
 				im.logger.Debug("Vault authentication not ready", "error", err)
+
 				continue
 			}
 
 			im.logger.Info("Vault is ready and accessible")
+
 			return nil
 		}
 	}
 }
 
-// InitializeAndUnseal performs complete vault initialization and unsealing
+// InitializeAndUnseal performs complete vault initialization and unsealing.
 func (im *InitManager) InitializeAndUnseal(req *InitRequest) (*InitResponse, error) {
 	im.logger.Info("Starting complete vault initialization and unseal process")
 
@@ -303,6 +318,7 @@ func (im *InitManager) InitializeAndUnseal(req *InitRequest) (*InitResponse, err
 	// If vault was already initialized, just return
 	if len(resp.Keys) == 0 {
 		im.logger.Info("Vault was already initialized, skipping unseal")
+
 		return resp, nil
 	}
 
@@ -320,17 +336,20 @@ func (im *InitManager) InitializeAndUnseal(req *InitRequest) (*InitResponse, err
 			keysToUse = keysToUse[:req.SecretThreshold]
 		}
 
-		if err := im.UnsealVault(keysToUse); err != nil {
+		err := im.UnsealVault(keysToUse)
+		if err != nil {
 			im.logger.Error("Unseal failed after initialization", "error", err)
+
 			return resp, fmt.Errorf("unseal failed: %w", err)
 		}
 	}
 
 	im.logger.Info("Vault initialization and unseal completed successfully")
+
 	return resp, nil
 }
 
-// GetHealth gets vault health status
+// GetHealth gets vault health status.
 func (im *InitManager) GetHealth() (*api.HealthResponse, error) {
 	health, err := im.client.client.Sys().Health()
 	if err != nil {
@@ -340,7 +359,7 @@ func (im *InitManager) GetHealth() (*api.HealthResponse, error) {
 	return health, nil
 }
 
-// IsHealthy checks if vault is healthy
+// IsHealthy checks if vault is healthy.
 func (im *InitManager) IsHealthy() (bool, error) {
 	health, err := im.GetHealth()
 	if err != nil {

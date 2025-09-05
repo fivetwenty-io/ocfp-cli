@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// DirectoryManager handles OCFP directory structure and symlink management
+// DirectoryManager handles OCFP directory structure and symlink management.
 type DirectoryManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// NewDirectoryManager creates a new directory manager
+// NewDirectoryManager creates a new directory manager.
 func NewDirectoryManager(provider string, cfg *config.Config) *DirectoryManager {
 	return &DirectoryManager{
 		config:   cfg,
@@ -25,7 +25,7 @@ func NewDirectoryManager(provider string, cfg *config.Config) *DirectoryManager 
 	}
 }
 
-// GetOCFPDirectories returns OCFP-specific directories to create
+// GetOCFPDirectories returns OCFP-specific directories to create.
 func (dm *DirectoryManager) GetOCFPDirectories() []DirectoryConfig {
 	ocfpPath := "${HOME}/ocfp"
 
@@ -49,7 +49,7 @@ func (dm *DirectoryManager) GetOCFPDirectories() []DirectoryConfig {
 	}
 }
 
-// GetOCFPSymlinks returns OCFP symlinks to create
+// GetOCFPSymlinks returns OCFP symlinks to create.
 func (dm *DirectoryManager) GetOCFPSymlinks() map[string]string {
 	return map[string]string{
 		"${HOME}/ops":         "${HOME}/ocfp",
@@ -57,14 +57,16 @@ func (dm *DirectoryManager) GetOCFPSymlinks() map[string]string {
 	}
 }
 
-// GenerateOCFPDirectoryScript generates script for OCFP directory setup
+// GenerateOCFPDirectoryScript generates script for OCFP directory setup.
 func (dm *DirectoryManager) GenerateOCFPDirectoryScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# OCFP directory structure setup")
 	lines = append(lines, "")
 
 	// Create directories
 	directories := dm.GetOCFPDirectories()
+
 	lines = append(lines, "# Create OCFP directories")
 
 	for _, dir := range directories {
@@ -107,6 +109,7 @@ func (dm *DirectoryManager) GenerateOCFPDirectoryScript(ctx context.Context) str
 
 	// Create symlinks
 	symlinks := dm.GetOCFPSymlinks()
+
 	lines = append(lines, "# Create OCFP symlinks")
 
 	for linkPath, targetPath := range symlinks {
@@ -157,14 +160,16 @@ func (dm *DirectoryManager) GenerateOCFPDirectoryScript(ctx context.Context) str
 		lines = append(lines, fmt.Sprintf("    log_warning '  ✗ %s (missing)'", expandedDir))
 		lines = append(lines, "fi")
 	}
+
 	lines = append(lines, "")
 
 	return strings.Join(lines, "\n")
 }
 
-// GenerateOCFPCLISetupScript generates script for OCFP CLI setup
+// GenerateOCFPCLISetupScript generates script for OCFP CLI setup.
 func (dm *DirectoryManager) GenerateOCFPCLISetupScript(ctx context.Context) string {
 	var lines []string
+
 	lines = append(lines, "# OCFP CLI setup")
 	lines = append(lines, "")
 
@@ -206,10 +211,11 @@ func (dm *DirectoryManager) GenerateOCFPCLISetupScript(ctx context.Context) stri
 	return strings.Join(lines, "\n")
 }
 
-// expandVariables expands environment variables in strings
+// expandVariables expands environment variables in strings.
 func (dm *DirectoryManager) expandVariables(text string) string {
 	text = strings.ReplaceAll(text, "${HOME}", "$HOME")
 	text = strings.ReplaceAll(text, "${USER}", "$USER")
 	text = strings.ReplaceAll(text, "${OCFP_BLOC_NAME}", "$OCFP_BLOC_NAME")
+
 	return text
 }

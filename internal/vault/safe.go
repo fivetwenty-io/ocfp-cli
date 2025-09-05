@@ -13,14 +13,14 @@ import (
 )
 
 // Safe provides operations compatible with the Genesis 'safe' CLI tool
-// but uses the HashiCorp Vault API directly
+// but uses the HashiCorp Vault API directly.
 type Safe struct {
 	client *Client
 	engine *EngineDetector
 	logger *zap.SugaredLogger
 }
 
-// NewSafe creates a new Safe wrapper around a vault client
+// NewSafe creates a new Safe wrapper around a vault client.
 func NewSafe(client *Client) *Safe {
 	return &Safe{
 		client: client,
@@ -30,7 +30,7 @@ func NewSafe(client *Client) *Safe {
 }
 
 // Set stores a key-value pair at the specified path
-// This mimics the behavior of 'safe set path key=value'
+// This mimics the behavior of 'safe set path key=value'.
 func (s *Safe) Set(path, key string, value interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -39,6 +39,7 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
+
 	secret, err := s.client.logical.Read(path)
 	if err != nil {
 		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
@@ -58,9 +59,11 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 
 	// Determine if we're using KV v1 or v2
 	var writeData map[string]interface{}
+
 	isKVv2, err := s.engine.IsKVv2(path)
 	if err != nil {
 		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
 		isKVv2 = false
 	}
 
@@ -77,6 +80,7 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set", path, key, func() error {
 		_, writeErr := s.client.logical.Write(path, writeData)
+
 		return writeErr
 	})
 	if err != nil {
@@ -84,11 +88,12 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	}
 
 	s.logger.Debug("Successfully set vault secret", "path", path, "key", key)
+
 	return nil
 }
 
 // SetMultiple stores multiple key-value pairs at the specified path
-// This is more efficient than calling Set multiple times
+// This is more efficient than calling Set multiple times.
 func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -97,6 +102,7 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
+
 	secret, err := s.client.logical.Read(path)
 	if err != nil {
 		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
@@ -118,9 +124,11 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 
 	// Determine if we're using KV v1 or v2
 	var writeData map[string]interface{}
+
 	isKVv2, err := s.engine.IsKVv2(path)
 	if err != nil {
 		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
 		isKVv2 = false
 	}
 
@@ -137,6 +145,7 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set_multiple", path, "", func() error {
 		_, writeErr := s.client.logical.Write(path, writeData)
+
 		return writeErr
 	})
 	if err != nil {
@@ -144,11 +153,12 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 	}
 
 	s.logger.Debug("Successfully set multiple vault secrets", "path", path, "keys", len(data))
+
 	return nil
 }
 
 // Get retrieves a value for a specific key at the given path
-// This mimics the behavior of 'safe get path:key'
+// This mimics the behavior of 'safe get path:key'.
 func (s *Safe) Get(path, key string) (interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -156,9 +166,12 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 	s.logger.Debug("Getting vault secret", "path", path, "key", key)
 
 	var secret *api.Secret
+
 	err := RetryableVaultOperation("get", path, key, func() error {
 		var readErr error
+
 		secret, readErr = s.client.logical.Read(path)
+
 		return readErr
 	})
 	if err != nil {
@@ -190,11 +203,12 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 	}
 
 	s.logger.Debug("Successfully retrieved vault secret", "path", path, "key", key)
+
 	return value, nil
 }
 
 // GetAll retrieves all key-value pairs at the given path
-// This mimics the behavior of 'safe get path'
+// This mimics the behavior of 'safe get path'.
 func (s *Safe) GetAll(path string) (map[string]interface{}, error) {
 	result, err := s.Get(path, "")
 	if err != nil {
@@ -209,7 +223,7 @@ func (s *Safe) GetAll(path string) (map[string]interface{}, error) {
 	return data, nil
 }
 
-// Exists checks if a path exists in vault
+// Exists checks if a path exists in vault.
 func (s *Safe) Exists(path string) (bool, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -219,13 +233,14 @@ func (s *Safe) Exists(path string) (bool, error) {
 		// If we get a permission denied or similar, the path might exist
 		// but we can't read it. For now, treat any error as "doesn't exist"
 		s.logger.Debug("Error checking path existence", "path", path, "error", err)
+
 		return false, nil
 	}
 
 	return secret != nil, nil
 }
 
-// Delete removes a specific key from a path, or the entire path if no key specified
+// Delete removes a specific key from a path, or the entire path if no key specified.
 func (s *Safe) Delete(path, key string) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -233,10 +248,12 @@ func (s *Safe) Delete(path, key string) error {
 	if key == "" {
 		// Delete entire path
 		s.logger.Debug("Deleting entire vault path", "path", path)
+
 		_, err := s.client.logical.Delete(path)
 		if err != nil {
 			return fmt.Errorf("failed to delete path %s: %w", path, err)
 		}
+
 		return nil
 	}
 
@@ -254,7 +271,7 @@ func (s *Safe) Delete(path, key string) error {
 	return s.SetMultiple(path, data)
 }
 
-// List returns all paths under the given path
+// List returns all paths under the given path.
 func (s *Safe) List(path string) ([]string, error) {
 	// Ensure path doesn't start with / but ends with /
 	path = strings.TrimPrefix(path, "/")
@@ -286,10 +303,11 @@ func (s *Safe) List(path string) ([]string, error) {
 	}
 
 	s.logger.Debug("Successfully listed vault paths", "path", path, "count", len(paths))
+
 	return paths, nil
 }
 
-// Export exports all secrets from a path recursively
+// Export exports all secrets from a path recursively.
 func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -298,15 +316,17 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 
 	result := make(map[string]interface{})
 
-	if err := s.exportRecursive(path, "", result); err != nil {
+	err := s.exportRecursive(path, "", result)
+	if err != nil {
 		return nil, fmt.Errorf("failed to export from %s: %w", path, err)
 	}
 
 	s.logger.Debug("Successfully exported vault secrets", "path", path, "entries", len(result))
+
 	return result, nil
 }
 
-// exportRecursive recursively exports secrets from a path
+// exportRecursive recursively exports secrets from a path.
 func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]interface{}) error {
 	fullPath := basePath
 	if currentPath != "" {
@@ -324,6 +344,7 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		} else {
 			result[currentPath] = data
 		}
+
 		return nil
 	}
 
@@ -343,7 +364,8 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 			newCurrentPath = filepath.Join(currentPath, strings.TrimSuffix(subPath, "/"))
 		}
 
-		if err := s.exportRecursive(basePath, newCurrentPath, result); err != nil {
+		err := s.exportRecursive(basePath, newCurrentPath, result)
+		if err != nil {
 			return err
 		}
 	}
@@ -351,7 +373,7 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 	return nil
 }
 
-// Import imports secrets to a path
+// Import imports secrets to a path.
 func (s *Safe) Import(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -366,36 +388,40 @@ func (s *Safe) Import(path string, data map[string]interface{}) error {
 
 		if valueMap, ok := value.(map[string]interface{}); ok {
 			// This is a nested structure, import as multiple keys
-			if err := s.SetMultiple(fullPath, valueMap); err != nil {
+			err := s.SetMultiple(fullPath, valueMap)
+			if err != nil {
 				return fmt.Errorf("failed to import to %s: %w", fullPath, err)
 			}
 		} else {
 			// This is a single value, import as a single key
-			if err := s.Set(fullPath, "value", value); err != nil {
+			err := s.Set(fullPath, "value", value)
+			if err != nil {
 				return fmt.Errorf("failed to import single value to %s: %w", fullPath, err)
 			}
 		}
 	}
 
 	s.logger.Debug("Successfully imported vault secrets", "path", path, "entries", len(data))
+
 	return nil
 }
 
-// GetEngineInfo returns engine information for a path
+// GetEngineInfo returns engine information for a path.
 func (s *Safe) GetEngineInfo(path string) (*EngineInfo, error) {
 	return s.engine.DetectEngineForPath(path)
 }
 
-// MustGet is like Get but panics on error (for compatibility with Genesis patterns)
+// MustGet is like Get but panics on error (for compatibility with Genesis patterns).
 func (s *Safe) MustGet(path, key string) interface{} {
 	value, err := s.Get(path, key)
 	if err != nil {
 		panic(fmt.Sprintf("failed to get %s:%s - %v", path, key, err))
 	}
+
 	return value
 }
 
-// GetString is a convenience method to get a string value
+// GetString is a convenience method to get a string value.
 func (s *Safe) GetString(path, key string) (string, error) {
 	value, err := s.Get(path, key)
 	if err != nil {
@@ -409,7 +435,7 @@ func (s *Safe) GetString(path, key string) (string, error) {
 	return "", fmt.Errorf("value at %s:%s is not a string", path, key)
 }
 
-// GetJSON gets a value and returns it as JSON
+// GetJSON gets a value and returns it as JSON.
 func (s *Safe) GetJSON(path, key string) ([]byte, error) {
 	value, err := s.Get(path, key)
 	if err != nil {

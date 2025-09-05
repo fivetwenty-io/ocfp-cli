@@ -12,7 +12,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
-// TestFullDryRunIntegration tests complete dry run integration
+// TestFullDryRunIntegration tests complete dry run integration.
 func TestFullDryRunIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -68,7 +68,7 @@ func TestFullDryRunIntegration(t *testing.T) {
 	t.Logf("Dry run output: %s", outputStr)
 }
 
-// TestCheckpointFunctionality tests checkpoint save/load functionality
+// TestCheckpointFunctionality tests checkpoint save/load functionality.
 func TestCheckpointFunctionality(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -85,6 +85,7 @@ func TestCheckpointFunctionality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load checkpoint: %v", err)
 	}
+
 	if checkpoint != nil {
 		t.Error("Expected no checkpoint initially")
 	}
@@ -117,6 +118,7 @@ func TestCheckpointFunctionality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load saved checkpoint: %v", err)
 	}
+
 	if loadedCheckpoint == nil {
 		t.Fatal("Expected loaded checkpoint, got nil")
 	}
@@ -157,12 +159,13 @@ func TestCheckpointFunctionality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load after clear: %v", err)
 	}
+
 	if clearedCheckpoint != nil {
 		t.Error("Expected no checkpoint after clear")
 	}
 }
 
-// TestErrorClassification tests error classification and retry logic
+// TestErrorClassification tests error classification and retry logic.
 func TestErrorClassification(t *testing.T) {
 	errorHandler := bastion.NewErrorHandler()
 
@@ -224,7 +227,7 @@ func TestErrorClassification(t *testing.T) {
 	}
 }
 
-// TestProgressReporting tests progress reporting functionality
+// TestProgressReporting tests progress reporting functionality.
 func TestProgressReporting(t *testing.T) {
 	var output bytes.Buffer
 
@@ -261,7 +264,7 @@ func TestProgressReporting(t *testing.T) {
 	}
 }
 
-// TestStatusReporting tests status reporting functionality
+// TestStatusReporting tests status reporting functionality.
 func TestStatusReporting(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()

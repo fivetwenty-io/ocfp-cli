@@ -9,14 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// CFPluginManager handles CloudFoundry plugin installations
+// CFPluginManager handles CloudFoundry plugin installations.
 type CFPluginManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
 }
 
-// CFPlugin represents a CloudFoundry plugin configuration
+// CFPlugin represents a CloudFoundry plugin configuration.
 type CFPlugin struct {
 	Name              string `yaml:"name"`
 	Enabled           bool   `yaml:"enabled"`
@@ -28,7 +28,7 @@ type CFPlugin struct {
 	Force             bool   `yaml:"force"`
 }
 
-// NewCFPluginManager creates a new CF plugin manager
+// NewCFPluginManager creates a new CF plugin manager.
 func NewCFPluginManager(provider string, cfg *config.Config) *CFPluginManager {
 	return &CFPluginManager{
 		config:   cfg,
@@ -37,7 +37,7 @@ func NewCFPluginManager(provider string, cfg *config.Config) *CFPluginManager {
 	}
 }
 
-// GetCFPlugins returns the list of CF plugins to install
+// GetCFPlugins returns the list of CF plugins to install.
 func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 	plugins := []CFPlugin{
 		{
@@ -65,16 +65,19 @@ func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 		for _, n := range cfm.config.Bastion.CFPlugins.Enable {
 			enable[strings.ToLower(n)] = struct{}{}
 		}
+
 		disable := make(map[string]struct{})
 		for _, n := range cfm.config.Bastion.CFPlugins.Disable {
 			disable[strings.ToLower(n)] = struct{}{}
 		}
+
 		if len(enable) > 0 || len(disable) > 0 {
 			for index := range plugins {
 				name := strings.ToLower(plugins[index].Name)
 				if _, ok := enable[name]; ok {
 					plugins[index].Enabled = true
 				}
+
 				if _, ok := disable[name]; ok {
 					plugins[index].Enabled = false
 				}
@@ -88,19 +91,24 @@ func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 					if strings.ToLower(key) != name {
 						continue
 					}
+
 					if override.GitHubRepo != "" {
 						plugins[index].GitHubRepo = override.GitHubRepo
 						plugins[index].InstallFromGitHub = true
 					}
+
 					if override.Version != "" {
 						plugins[index].Version = override.Version
 					}
+
 					if override.Repo != "" {
 						plugins[index].Repo = override.Repo
 					}
+
 					if override.RepoURL != "" {
 						plugins[index].RepoURL = override.RepoURL
 					}
+
 					if override.Force != nil {
 						plugins[index].Force = *override.Force
 					}
@@ -108,10 +116,11 @@ func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 			}
 		}
 	}
+
 	return plugins
 }
 
-// GenerateCFPluginInstallScript generates script for CF plugin installation
+// GenerateCFPluginInstallScript generates script for CF plugin installation.
 func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) string {
 	plugins := cfm.GetCFPlugins()
 	if len(plugins) == 0 {
@@ -119,6 +128,7 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 	}
 
 	var lines []string
+
 	lines = append(lines, "# CloudFoundry plugin installation")
 	lines = append(lines, "")
 
@@ -135,7 +145,7 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Install CF plugin: %s", plugin.Name))
+		lines = append(lines, "# Install CF plugin: "+plugin.Name)
 
 		// Check if plugin is already installed
 		lines = append(lines, fmt.Sprintf("if cf plugins | grep -q '^%s '; then", plugin.Name))
@@ -151,6 +161,7 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 			} else {
 				lines = append(lines, fmt.Sprintf("    LATEST_RELEASE=$(curl -s https://api.github.com/repos/%s/releases/latest | grep 'tag_name' | cut -d'\"' -f4)", plugin.GitHubRepo))
 			}
+
 			lines = append(lines, fmt.Sprintf("    PLUGIN_URL=\"https://github.com/%s/releases/download/${LATEST_RELEASE}/%s-linux-amd64\"", plugin.GitHubRepo, plugin.Name))
 			lines = append(lines, "    ")
 			lines = append(lines, "    # Download and install plugin")
@@ -164,7 +175,7 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 				installCmd += " -f"
 			}
 
-			lines = append(lines, fmt.Sprintf("        %s", installCmd))
+			lines = append(lines, "        "+installCmd)
 			lines = append(lines, "        if [ $? -eq 0 ]; then")
 			lines = append(lines, fmt.Sprintf("            log_success 'CF plugin %s installed successfully'", plugin.Name))
 			lines = append(lines, "        else")
@@ -181,8 +192,8 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 				installCmd += " -f"
 			}
 
-			lines = append(lines, fmt.Sprintf("    %s", installCmd))
-			lines = append(lines, fmt.Sprintf("    cf install-plugin %s", plugin.Name))
+			lines = append(lines, "    "+installCmd)
+			lines = append(lines, "    cf install-plugin "+plugin.Name)
 
 			if plugin.Force {
 				lines[len(lines)-1] += " -f"

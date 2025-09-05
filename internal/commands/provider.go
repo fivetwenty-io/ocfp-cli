@@ -22,7 +22,7 @@ var (
 	validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 )
 
-// NewProviderCmd creates the provider command
+// NewProviderCmd creates the provider command.
 func NewProviderCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider <action>",
@@ -76,6 +76,7 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 			// fallback to global viper value (supports --bloc-name alias)
 			blocName = viper.GetString("bloc_name")
 		}
+
 		if blocName == "" {
 			blocName = os.Getenv("OCFP_BLOC_NAME")
 		}
@@ -87,7 +88,7 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if providerName == "" {
-		return fmt.Errorf("provider not specified. Use --iaas flag, OCFP_PROVIDER environment variable, or specify in config")
+		return errors.New("provider not specified. Use --iaas flag, OCFP_PROVIDER environment variable, or specify in config")
 	}
 
 	providerName = strings.ToLower(providerName)
@@ -110,7 +111,7 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	}
 }
 
-// STACKIT Login Implementation
+// STACKIT Login Implementation.
 func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	blocName, _ := cmd.Flags().GetString("bloc")
 	if blocName == "" {
@@ -118,7 +119,7 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if blocName == "" {
-		return fmt.Errorf("--bloc flag or OCFP_BLOC_NAME environment variable required")
+		return errors.New("--bloc flag or OCFP_BLOC_NAME environment variable required")
 	}
 
 	// Get credentials (either JSON or token)
@@ -128,12 +129,13 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if credentials == "" {
-		return fmt.Errorf("could not retrieve STACKIT service account credentials from config or vault")
+		return errors.New("could not retrieve STACKIT service account credentials from config or vault")
 	}
 
 	if authType == "token" {
 		return authenticateSTACKITToken(credentials, log)
 	}
+
 	return authenticateSTACKIT(credentials, log)
 }
 
@@ -143,6 +145,7 @@ func getSTACKITCredentials(blocName string, log *zap.Logger) (string, string, er
 	if err != nil {
 		return "", "", err
 	}
+
 	if credentials != "" {
 		return authType, credentials, nil
 	}
@@ -155,6 +158,7 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 	cfg, err := config.LoadWithParams("", "")
 	if err != nil {
 		log.Debug("Failed to load config", zap.Error(err))
+
 		return "", "", nil
 	}
 
@@ -163,12 +167,14 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 	// Check if config has service account token
 	if cfg.ServiceAccountToken != "" {
 		log.Info("Retrieved STACKIT service account token from config file")
+
 		return "token", cfg.ServiceAccountToken, nil
 	}
 
 	// Check if config has service account JSON
 	if cfg.ServiceAccountJSON != "" {
 		log.Info("Retrieved STACKIT service account credentials from config file")
+
 		return "json", cfg.ServiceAccountJSON, nil
 	}
 
@@ -179,7 +185,9 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 			if err != nil {
 				return "", "", fmt.Errorf("cannot read service account key file: %w", err)
 			}
+
 			log.Info("Retrieved STACKIT service account credentials from file", zap.String("path", cfg.ServiceAccountKeyPath))
+
 			return "json", string(content), nil
 		}
 	}
@@ -191,6 +199,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	// Check if safe command is available
 	if _, err := exec.LookPath("safe"); err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
+
 		return "", "", nil
 	}
 
@@ -204,12 +213,15 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	if err := security.ValidateInput(tokenPath, validPathPattern); err != nil {
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
+
 	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath) // #nosec G204 - input validated above
+
 	output, err := cmd.Output()
 	if err == nil {
 		token := strings.TrimSpace(string(output))
 		if token != "" {
 			log.Info("Retrieved STACKIT service account token from vault")
+
 			return "token", token, nil
 		}
 	}
@@ -221,17 +233,21 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	if err := security.ValidateInput(jsonPath, validPathPattern); err != nil {
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
+
 	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath) // #nosec G204 - input validated above
+
 	output, err = cmd.Output()
 	if err == nil {
 		jsonCreds := strings.TrimSpace(string(output))
 		if jsonCreds != "" {
 			log.Info("Retrieved STACKIT service account JSON from vault")
+
 			return "json", jsonCreds, nil
 		}
 	}
 
 	log.Debug("Vault retrieval failed or returned empty")
+
 	return "", "", nil
 }
 
@@ -241,12 +257,15 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
+
 	defer func() { _ = os.Remove(tempFile.Name()) }()
 
 	if _, err := tempFile.WriteString(serviceAccountJSON); err != nil {
 		_ = tempFile.Close()
+
 		return fmt.Errorf("failed to write service account JSON: %w", err)
 	}
+
 	_ = tempFile.Close()
 
 	// Execute stackit auth command
@@ -259,17 +278,22 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	if err := security.ValidateInput(tempFile.Name(), validPathPattern); err != nil {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
+
 	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) // #nosec G204 - path is validated above
+
 	var stdout, stderr bytes.Buffer
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
+
 	if stdout.Len() > 0 {
 		fmt.Print(stdout.String())
 	}
@@ -286,16 +310,21 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken)
+
 	var stdout, stderr bytes.Buffer
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
+
 	if stdout.Len() > 0 {
 		fmt.Print(stdout.String())
 	}
@@ -303,13 +332,14 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	return nil
 }
 
-// Other Provider Login Implementations (Placeholder)
+// Other Provider Login Implementations (Placeholder).
 func loginAWS(log *zap.Logger) error {
 	log.Warn("AWS provider login not implemented yet")
 	log.Info("AWS authentication typically uses:")
 	log.Info("  - AWS CLI profiles: aws configure")
 	log.Info("  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY")
 	log.Info("  - IAM roles for EC2 instances")
+
 	return nil
 }
 
@@ -318,6 +348,7 @@ func loginOpenStack(log *zap.Logger) error {
 	log.Info("OpenStack authentication typically uses:")
 	log.Info("  - OpenStack RC file: source openrc.sh")
 	log.Info("  - Environment variables: OS_AUTH_URL, OS_USERNAME, OS_PASSWORD, etc.")
+
 	return nil
 }
 
@@ -327,6 +358,7 @@ func loginGCP(log *zap.Logger) error {
 	log.Info("  - gcloud auth login")
 	log.Info("  - Service account key files")
 	log.Info("  - Application default credentials")
+
 	return nil
 }
 
@@ -336,5 +368,6 @@ func loginAzure(log *zap.Logger) error {
 	log.Info("  - az login")
 	log.Info("  - Service principal credentials")
 	log.Info("  - Managed identities")
+
 	return nil
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// BackupType represents the type of backup
+// BackupType represents the type of backup.
 type BackupType string
 
 const (
@@ -26,7 +26,7 @@ const (
 	BackupTypeVault       BackupType = "vault"
 )
 
-// NewBackupCmd creates the backup command
+// NewBackupCmd creates the backup command.
 func NewBackupCmd() *cobra.Command {
 	var (
 		backupType   string
@@ -176,7 +176,7 @@ Backups are stored in the configured Shield bucket or specified destination.`,
 	return cmd
 }
 
-// BackupMetadata represents backup information
+// BackupMetadata represents backup information.
 type BackupMetadata struct {
 	ID          string
 	Deployment  string
@@ -191,7 +191,7 @@ type BackupMetadata struct {
 	Manifest    []BackupItem
 }
 
-// BackupItem represents a single item in the backup
+// BackupItem represents a single item in the backup.
 type BackupItem struct {
 	Path         string
 	Size         int64
@@ -202,7 +202,7 @@ type BackupItem struct {
 	IsCompressed bool
 }
 
-// performFullBackup performs a full backup of all components
+// performFullBackup performs a full backup of all components.
 func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 	log.Info("Performing full backup")
@@ -212,8 +212,10 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
+
 	defer func() {
-		if err := os.RemoveAll(stagingDir); err != nil {
+		err := os.RemoveAll(stagingDir)
+		if err != nil {
 			log.Warn("Failed to remove staging directory", "error", err)
 		}
 	}()
@@ -236,13 +238,16 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	for _, item := range items {
 		if shouldExclude(item.source, excludePaths) {
 			log.Info("Excluding from backup", "path", item.source)
+
 			continue
 		}
 
 		log.Info("Backing up", "item", item.name, "source", item.source)
 
-		if err := copyForBackup(item.source, item.dest); err != nil {
+		err := copyForBackup(item.source, item.dest)
+		if err != nil {
 			log.Warn("Failed to backup item", "item", item.name, "error", err)
+
 			continue
 		}
 
@@ -274,8 +279,10 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err := createArchive(stagingDir, archivePath, backup.Compressed); err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
+
 	defer func() {
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+		if err != nil {
 			log.Warn("Failed to remove archive file", "error", err)
 		}
 	}()
@@ -283,12 +290,16 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	// Encrypt if requested
 	if backup.Encrypted {
 		encryptedPath := archivePath + ".enc"
-		if err := encryptFile(archivePath, encryptedPath); err != nil {
+		err := encryptFile(archivePath, encryptedPath)
+		if err != nil {
 			return fmt.Errorf("failed to encrypt backup: %w", err)
 		}
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+
+		if err != nil {
 			log.Warn("Failed to remove unencrypted archive", "error", err)
 		}
+
 		archivePath = encryptedPath
 	}
 
@@ -300,7 +311,7 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	return nil
 }
 
-// performConfigBackup backs up only configuration files
+// performConfigBackup backs up only configuration files.
 func performConfigBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 	log.Info("Performing configuration backup")
@@ -309,8 +320,10 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
+
 	defer func() {
-		if err := os.RemoveAll(stagingDir); err != nil {
+		err := os.RemoveAll(stagingDir)
+		if err != nil {
 			log.Warn("Failed to remove staging directory", "error", err)
 		}
 	}()
@@ -330,8 +343,10 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 		}
 
 		dest := filepath.Join(stagingDir, filepath.Base(path))
-		if err := copyForBackup(path, dest); err != nil {
+		err := copyForBackup(path, dest)
+		if err != nil {
 			log.Warn("Failed to backup config", "path", path, "error", err)
+
 			continue
 		}
 	}
@@ -341,8 +356,10 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create config archive: %w", err)
 	}
+
 	defer func() {
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+		if err != nil {
 			log.Warn("Failed to remove archive file", "error", err)
 		}
 	}()
@@ -350,7 +367,7 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
 
-// performDataBackup backs up data and state files
+// performDataBackup backs up data and state files.
 func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 	log.Info("Performing data backup")
@@ -359,8 +376,10 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
+
 	defer func() {
-		if err := os.RemoveAll(stagingDir); err != nil {
+		err := os.RemoveAll(stagingDir)
+		if err != nil {
 			log.Warn("Failed to remove staging directory", "error", err)
 		}
 	}()
@@ -378,8 +397,10 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 		}
 
 		dest := filepath.Join(stagingDir, filepath.Base(path))
-		if err := copyForBackup(path, dest); err != nil {
+		err := copyForBackup(path, dest)
+		if err != nil {
 			log.Warn("Failed to backup data", "path", path, "error", err)
+
 			continue
 		}
 	}
@@ -389,8 +410,10 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create data archive: %w", err)
 	}
+
 	defer func() {
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+		if err != nil {
 			log.Warn("Failed to remove archive file", "error", err)
 		}
 	}()
@@ -398,7 +421,7 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
 
-// performVaultBackup backs up vault/credhub secrets
+// performVaultBackup backs up vault/credhub secrets.
 func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata) error {
 	log := logger.Get()
 	log.Info("Performing vault backup")
@@ -407,8 +430,10 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
+
 	defer func() {
-		if err := os.RemoveAll(stagingDir); err != nil {
+		err := os.RemoveAll(stagingDir)
+		if err != nil {
 			log.Warn("Failed to remove staging directory", "error", err)
 		}
 	}()
@@ -429,13 +454,16 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	if err := createArchive(stagingDir, tempArchive, true); err != nil {
 		return fmt.Errorf("failed to create vault archive: %w", err)
 	}
+
 	defer func() { _ = os.Remove(tempArchive) }()
 
 	if err := encryptFile(tempArchive, archivePath); err != nil {
 		return fmt.Errorf("failed to encrypt vault backup: %w", err)
 	}
+
 	defer func() {
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+		if err != nil {
 			log.Warn("Failed to remove archive file", "error", err)
 		}
 	}()
@@ -443,7 +471,7 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
 
-// performIncrementalBackup performs an incremental backup
+// performIncrementalBackup performs an incremental backup.
 func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 
@@ -451,6 +479,7 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	lastBackup, err := getLastBackup(cfg.Name)
 	if err != nil {
 		log.Info("No previous backup found, performing full backup")
+
 		return performFullBackup(ctx, cfg, backup, excludePaths)
 	}
 
@@ -460,8 +489,10 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	if err != nil {
 		return fmt.Errorf("failed to create staging directory: %w", err)
 	}
+
 	defer func() {
-		if err := os.RemoveAll(stagingDir); err != nil {
+		err := os.RemoveAll(stagingDir)
+		if err != nil {
 			log.Warn("Failed to remove staging directory", "error", err)
 		}
 	}()
@@ -474,6 +505,7 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 
 	if len(changedFiles) == 0 {
 		log.Info("No changes since last backup")
+
 		return nil
 	}
 
@@ -484,12 +516,15 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 		relPath := strings.TrimPrefix(file, "/")
 		dest := filepath.Join(stagingDir, relPath)
 
-		if err := os.MkdirAll(filepath.Dir(dest), 0750); err != nil {
+		err := os.MkdirAll(filepath.Dir(dest), 0750)
+		if err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
 
-		if err := copyForBackup(file, dest); err != nil {
+		err := copyForBackup(file, dest)
+		if err != nil {
 			log.Warn("Failed to backup file", "file", file, "error", err)
+
 			continue
 		}
 
@@ -501,8 +536,10 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	if err := createArchive(stagingDir, archivePath, true); err != nil {
 		return fmt.Errorf("failed to create incremental archive: %w", err)
 	}
+
 	defer func() {
-		if err := os.Remove(archivePath); err != nil {
+		err := os.Remove(archivePath)
+		if err != nil {
 			log.Warn("Failed to remove archive file", "error", err)
 		}
 	}()
@@ -510,7 +547,7 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 	return uploadBackup(ctx, cfg, archivePath, backup.Destination)
 }
 
-// performDryRunBackup shows what would be backed up
+// performDryRunBackup shows what would be backed up.
 func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 	log.Info("[DRY RUN] Backup simulation")
@@ -535,12 +572,15 @@ func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *Backup
 		filepath.Join(os.Getenv("HOME"), ".cf"),
 	}
 
-	var totalSize int64
-	var totalFiles int
+	var (
+		totalSize  int64
+		totalFiles int
+	)
 
 	for _, item := range items {
 		if shouldExclude(item, excludePaths) {
 			fmt.Printf("  [EXCLUDED] %s\n", item)
+
 			continue
 		}
 
@@ -552,6 +592,7 @@ func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *Backup
 				totalSize += size
 			} else {
 				fmt.Printf("  [FILE] %s (%s)\n", item, formatBytes(info.Size()))
+
 				totalFiles++
 				totalSize += info.Size()
 			}
@@ -563,6 +604,7 @@ func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *Backup
 	fmt.Printf("\n=== Summary ===\n")
 	fmt.Printf("Total files: %d\n", totalFiles)
 	fmt.Printf("Total size: %s\n", formatBytes(totalSize))
+
 	if backup.Compressed {
 		fmt.Printf("Estimated compressed size: %s\n", formatBytes(totalSize/3))
 	}
@@ -574,12 +616,13 @@ func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *Backup
 
 func generateBackupID(deployment string) string {
 	timestamp := time.Now().Format("20060102-150405")
+
 	return fmt.Sprintf("%s-backup-%s", deployment, timestamp)
 }
 
 func getShieldBucket(cfg *config.Config) string {
 	// Default Shield bucket name
-	return fmt.Sprintf("%s-shield-backups", cfg.Name)
+	return cfg.Name + "-shield-backups"
 }
 
 func shouldExclude(path string, excludePaths []string) bool {
@@ -588,6 +631,7 @@ func shouldExclude(path string, excludePaths []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -625,11 +669,12 @@ func uploadBackup(ctx context.Context, cfg *config.Config, localPath, destinatio
 		if err := provider.Initialize(ctx, cfg); err != nil {
 			return fmt.Errorf("failed to initialize provider: %w", err)
 		}
+
 		defer func() { _ = provider.Cleanup(ctx) }()
 
 		storage := provider.Storage()
 		if storage == nil {
-			return fmt.Errorf("provider does not support storage operations")
+			return errors.New("provider does not support storage operations")
 		}
 
 		// Parse S3 destination
@@ -679,7 +724,8 @@ func exportSecrets(ctx context.Context, cfg *config.Config, outputFile string) e
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
 	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
-	if err := os.MkdirAll(metadataDir, 0750); err != nil {
+	err := os.MkdirAll(metadataDir, 0750)
+	if err != nil {
 		return err
 	}
 
@@ -691,7 +737,7 @@ func saveBackupMetadata(backup *BackupMetadata) error {
 func getLastBackup(deployment string) (*BackupMetadata, error) {
 	// Get the most recent backup metadata
 	// Placeholder implementation
-	return nil, fmt.Errorf("no previous backup found")
+	return nil, errors.New("no previous backup found")
 }
 
 func findChangedFiles(since time.Time, excludePaths []string) ([]string, error) {
@@ -701,14 +747,17 @@ func findChangedFiles(since time.Time, excludePaths []string) ([]string, error) 
 }
 
 func countDirContents(dir string) (int, int64) {
-	var count int
-	var size int64
+	var (
+		count int
+		size  int64
+	)
 
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			count++
 			size += info.Size()
 		}
+
 		return nil
 	})
 
@@ -720,10 +769,12 @@ func formatBytes(bytes int64) string {
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)
 	}
+
 	div, exp := int64(unit), 0
 	for n := bytes / unit; n >= unit; n /= unit {
 		div *= unit
 		exp++
 	}
+
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

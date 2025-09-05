@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// RestoreMode represents the restore operation mode
+// RestoreMode represents the restore operation mode.
 type RestoreMode string
 
 const (
@@ -25,7 +25,7 @@ const (
 	RestoreModeVault  RestoreMode = "vault"
 )
 
-// NewRestoreCmd creates the restore command
+// NewRestoreCmd creates the restore command.
 func NewRestoreCmd() *cobra.Command {
 	var (
 		backupID     string
@@ -143,6 +143,7 @@ backup archives.`,
 				_, _ = fmt.Scanln(&response)
 				if !strings.HasPrefix(strings.ToLower(response), "y") {
 					log.Info("Restore cancelled by user")
+
 					return nil
 				}
 			}
@@ -165,7 +166,8 @@ backup archives.`,
 
 			// Verify restore if requested
 			if verify {
-				if err := verifyRestore(ctx, cfg, restore); err != nil {
+				err := verifyRestore(ctx, cfg, restore)
+				if err != nil {
 					log.Warn("Restore verification failed", "error", err)
 				} else {
 					log.Info("Restore verification successful")
@@ -195,7 +197,7 @@ backup archives.`,
 	return cmd
 }
 
-// RestoreOperation represents a restore operation
+// RestoreOperation represents a restore operation.
 type RestoreOperation struct {
 	BackupID      string
 	Source        string
@@ -210,7 +212,7 @@ type RestoreOperation struct {
 	BytesRestored int64
 }
 
-// BackupInfo represents information about an available backup
+// BackupInfo represents information about an available backup.
 type BackupInfo struct {
 	ID        string
 	Source    string
@@ -220,7 +222,7 @@ type BackupInfo struct {
 	Encrypted bool
 }
 
-// performFullRestore performs a complete restore
+// performFullRestore performs a complete restore.
 func performFullRestore(ctx context.Context, cfg *config.Config, restore *RestoreOperation) error {
 	log := logger.Get()
 	log.Info("Performing full restore")
@@ -230,6 +232,7 @@ func performFullRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
+
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore components in order
@@ -248,13 +251,16 @@ func performFullRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	for _, component := range components {
 		if shouldExcludeRestore(component.path, restore.ExcludePaths) {
 			log.Info("Excluding from restore", "component", component.name)
+
 			continue
 		}
 
 		log.Info("Restoring component", "name", component.name)
 
-		if err := restoreComponent(component.path, component.name, restore.Destination); err != nil {
+		err := restoreComponent(component.path, component.name, restore.Destination)
+		if err != nil {
 			log.Warn("Failed to restore component", "name", component.name, "error", err)
+
 			continue
 		}
 
@@ -274,7 +280,7 @@ func performFullRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	return nil
 }
 
-// performConfigRestore restores only configuration files
+// performConfigRestore restores only configuration files.
 func performConfigRestore(ctx context.Context, cfg *config.Config, restore *RestoreOperation) error {
 	log := logger.Get()
 	log.Info("Performing configuration restore")
@@ -284,6 +290,7 @@ func performConfigRestore(ctx context.Context, cfg *config.Config, restore *Rest
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
+
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore configuration components
@@ -301,8 +308,10 @@ func performConfigRestore(ctx context.Context, cfg *config.Config, restore *Rest
 
 		log.Info("Restoring configuration", "component", component)
 
-		if err := restoreComponent(componentPath, component, restore.Destination); err != nil {
+		err := restoreComponent(componentPath, component, restore.Destination)
+		if err != nil {
 			log.Warn("Failed to restore configuration", "component", component, "error", err)
+
 			continue
 		}
 	}
@@ -310,7 +319,7 @@ func performConfigRestore(ctx context.Context, cfg *config.Config, restore *Rest
 	return nil
 }
 
-// performDataRestore restores data and state files
+// performDataRestore restores data and state files.
 func performDataRestore(ctx context.Context, cfg *config.Config, restore *RestoreOperation) error {
 	log := logger.Get()
 	log.Info("Performing data restore")
@@ -320,6 +329,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	if err != nil {
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
+
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Restore data components
@@ -342,13 +352,17 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 		log.Info("Restoring data", "component", component, "destination", destPath)
 
 		// Create destination directory
-		if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
+		err := os.MkdirAll(filepath.Dir(destPath), 0750)
+		if err != nil {
 			log.Warn("Failed to create destination directory", "path", destPath, "error", err)
+
 			continue
 		}
 
-		if err := restoreComponent(componentPath, destPath, ""); err != nil {
+		err := restoreComponent(componentPath, destPath, "")
+		if err != nil {
 			log.Warn("Failed to restore data", "component", component, "error", err)
+
 			continue
 		}
 	}
@@ -356,7 +370,7 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 	return nil
 }
 
-// performVaultRestore restores vault/credhub secrets
+// performVaultRestore restores vault/credhub secrets.
 func performVaultRestore(ctx context.Context, cfg *config.Config, restore *RestoreOperation) error {
 	log := logger.Get()
 	log.Info("Performing vault restore")
@@ -366,12 +380,13 @@ func performVaultRestore(ctx context.Context, cfg *config.Config, restore *Resto
 	if err != nil {
 		return fmt.Errorf("failed to download vault backup: %w", err)
 	}
+
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Look for secrets file
 	secretsFile := filepath.Join(tempDir, "secrets.json")
 	if _, err := os.Stat(secretsFile); os.IsNotExist(err) {
-		return fmt.Errorf("secrets file not found in backup")
+		return errors.New("secrets file not found in backup")
 	}
 
 	// Import secrets
@@ -380,10 +395,11 @@ func performVaultRestore(ctx context.Context, cfg *config.Config, restore *Resto
 	}
 
 	log.Info("Vault restore completed")
+
 	return nil
 }
 
-// performDryRunRestore shows what would be restored
+// performDryRunRestore shows what would be restored.
 func performDryRunRestore(ctx context.Context, cfg *config.Config, restore *RestoreOperation) error {
 	log := logger.Get()
 	log.Info("[DRY RUN] Restore simulation")
@@ -392,6 +408,7 @@ func performDryRunRestore(ctx context.Context, cfg *config.Config, restore *Rest
 	fmt.Printf("Backup ID: %s\n", restore.BackupID)
 	fmt.Printf("Source: %s\n", restore.Source)
 	fmt.Printf("Mode: %s\n", restore.Mode)
+
 	if restore.Destination != "" {
 		fmt.Printf("Destination: %s\n", restore.Destination)
 	}
@@ -404,12 +421,15 @@ func performDryRunRestore(ctx context.Context, cfg *config.Config, restore *Rest
 		return fmt.Errorf("failed to get restore manifest: %w", err)
 	}
 
-	var totalFiles int
-	var totalSize int64
+	var (
+		totalFiles int
+		totalSize  int64
+	)
 
 	for _, item := range manifest {
 		if shouldExcludeRestore(item.Path, restore.ExcludePaths) {
 			fmt.Printf("  [EXCLUDED] %s\n", item.Path)
+
 			continue
 		}
 
@@ -430,6 +450,7 @@ func performDryRunRestore(ctx context.Context, cfg *config.Config, restore *Rest
 	conflicts, err := checkRestoreConflicts(manifest, restore.Destination)
 	if err == nil && len(conflicts) > 0 {
 		fmt.Printf("\n=== Potential Conflicts ===\n")
+
 		for _, conflict := range conflicts {
 			fmt.Printf("  [CONFLICT] %s (will be overwritten)\n", conflict)
 		}
@@ -446,7 +467,7 @@ func findLatestBackup(deployment, bucket string) (*BackupInfo, error) {
 
 	// Placeholder implementation
 	return &BackupInfo{
-		ID:        fmt.Sprintf("%s-backup-latest", deployment),
+		ID:        deployment + "-backup-latest",
 		Source:    fmt.Sprintf("s3://%s/backups/%s-latest.tar.gz", bucket, deployment),
 		Type:      "full",
 		Timestamp: time.Now().Add(-24 * time.Hour),
@@ -471,24 +492,30 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 		// Download from S3
 		log.Info("Downloading backup from S3", "source", source)
 
-		if err := downloadFromS3(ctx, cfg, source, backupFile); err != nil {
+		err := downloadFromS3(ctx, cfg, source, backupFile)
+		if err != nil {
 			_ = os.RemoveAll(tempDir)
+
 			return "", fmt.Errorf("failed to download from S3: %w", err)
 		}
 	} else if strings.HasPrefix(source, "http") {
 		// Download from HTTP
 		log.Info("Downloading backup from HTTP", "source", source)
 
-		if err := downloadFromHTTP(source, backupFile); err != nil {
+		err := downloadFromHTTP(source, backupFile)
+		if err != nil {
 			_ = os.RemoveAll(tempDir)
+
 			return "", fmt.Errorf("failed to download from HTTP: %w", err)
 		}
 	} else {
 		// Local file
 		log.Info("Using local backup file", "source", source)
 
-		if err := copyForRestore(source, backupFile); err != nil {
+		err := copyForRestore(source, backupFile)
+		if err != nil {
 			_ = os.RemoveAll(tempDir)
+
 			return "", fmt.Errorf("failed to copy local file: %w", err)
 		}
 	}
@@ -496,10 +523,13 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 	// Decrypt if needed (detect by file extension)
 	if strings.HasSuffix(backupFile, ".enc") {
 		decryptedFile := strings.TrimSuffix(backupFile, ".enc")
-		if err := decryptFile(backupFile, decryptedFile); err != nil {
+		err := decryptFile(backupFile, decryptedFile)
+		if err != nil {
 			_ = os.RemoveAll(tempDir)
+
 			return "", fmt.Errorf("failed to decrypt backup: %w", err)
 		}
+
 		_ = os.Remove(backupFile)
 		backupFile = decryptedFile
 	}
@@ -508,6 +538,7 @@ func downloadAndExtractBackup(ctx context.Context, cfg *config.Config, source st
 	extractDir := filepath.Join(tempDir, "extracted")
 	if err := extractArchive(backupFile, extractDir); err != nil {
 		_ = os.RemoveAll(tempDir)
+
 		return "", fmt.Errorf("failed to extract backup: %w", err)
 	}
 
@@ -528,7 +559,8 @@ func restoreComponent(sourcePath, destPath, baseDestination string) error {
 	log.Info("Restoring component", "source", sourcePath, "dest", actualDest)
 
 	// Create destination directory
-	if err := os.MkdirAll(filepath.Dir(actualDest), 0750); err != nil {
+	err := os.MkdirAll(filepath.Dir(actualDest), 0750)
+	if err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
@@ -581,6 +613,7 @@ func shouldExcludeRestore(path string, excludePaths []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -622,6 +655,7 @@ func downloadFromS3(ctx context.Context, cfg *config.Config, source, dest string
 	if err := provider.Initialize(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to initialize provider: %w", err)
 	}
+
 	defer func() { _ = provider.Cleanup(ctx) }()
 
 	// Parse S3 URL and download
@@ -641,6 +675,7 @@ func copyForRestore(src, dest string) error {
 	if info, err := os.Stat(src); err == nil && info.IsDir() {
 		return os.MkdirAll(dest, info.Mode())
 	}
+
 	return os.WriteFile(dest, []byte("restored file"), 0600)
 }
 
@@ -650,7 +685,8 @@ func extractArchive(archivePath, destDir string) error {
 	log.Info("Extracting archive", "archive", archivePath, "dest", destDir)
 
 	// Create destination directory
-	if err := os.MkdirAll(destDir, 0750); err != nil {
+	err := os.MkdirAll(destDir, 0750)
+	if err != nil {
 		return err
 	}
 

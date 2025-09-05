@@ -49,9 +49,11 @@ environments:
 
 		// Find list subcommand
 		var listCmd *cobra.Command
+
 		for _, sub := range cmd.Commands() {
 			if sub.Name() == "list" {
 				listCmd = sub
+
 				break
 			}
 		}
@@ -65,9 +67,11 @@ environments:
 
 		// Find show subcommand
 		var showCmd *cobra.Command
+
 		for _, sub := range cmd.Commands() {
 			if sub.Name() == "show" {
 				showCmd = sub
+
 				break
 			}
 		}
@@ -81,9 +85,11 @@ environments:
 
 		// Find set subcommand
 		var setCmd *cobra.Command
+
 		for _, sub := range cmd.Commands() {
 			if sub.Name() == "set" {
 				setCmd = sub
+
 				break
 			}
 		}
@@ -104,9 +110,11 @@ environments:
 
 		// Find export subcommand
 		var exportCmd *cobra.Command
+
 		for _, sub := range cmd.Commands() {
 			if sub.Name() == "export" {
 				exportCmd = sub
+
 				break
 			}
 		}

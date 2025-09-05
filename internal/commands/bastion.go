@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// NewBastionCmd creates the bastion command
+// NewBastionCmd creates the bastion command.
 func NewBastionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bastion <action>",
@@ -124,9 +124,11 @@ func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, 
 		if err == nil {
 			if cfg.Provider != "" || cfg.IaaS != "" {
 				ctx := context.Background()
+
 				provider, perr := cpi.GetProvider(cfg.Provider)
 				if perr == nil {
-					if ierr := provider.Initialize(ctx, cfg); ierr == nil {
+					ierr := provider.Initialize(ctx, cfg)
+					if ierr == nil {
 						// Reuse getBastionIP helper
 						bastionIP, err := getBastionIP(ctx, provider, blocName)
 						if err == nil && bastionIP != "" {
@@ -136,6 +138,7 @@ func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, 
 									key = k
 								}
 							}
+
 							return &bastionContext{
 								IP:           bastionIP,
 								User:         user,
@@ -153,6 +156,7 @@ func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, 
 	if log != nil {
 		log.Warnf("Bastion context discovery not fully available - using placeholder values")
 	}
+
 	return &bastionContext{
 		IP:           "placeholder-ip",
 		User:         user,
@@ -167,6 +171,7 @@ func findProvisionScript(scriptName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	execDir := filepath.Dir(execPath)
 
 	// Look for the script in various locations
@@ -188,7 +193,8 @@ func findProvisionScript(scriptName string) (string, error) {
 
 func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operationName, logPath string, log logger.Logger) error {
 	// Copy the script to bastion
-	if err := copyScriptToBastion(ctx, scriptPath, remoteScript, log); err != nil {
+	err := copyScriptToBastion(ctx, scriptPath, remoteScript, log)
+	if err != nil {
 		return err
 	}
 
@@ -196,7 +202,8 @@ func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operati
 	envString := buildEnvironmentVariables(log)
 
 	// Execute the script on bastion
-	if err := executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log); err != nil {
+	err := executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log)
+	if err != nil {
 		return err
 	}
 
@@ -213,6 +220,7 @@ func copyScriptToBastion(ctx *bastionContext, scriptPath, remoteScript string, l
 	// Reuse SCP builder/executor
 	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, false, "")
 	log.Debugf("Copying script via: %s", strings.Join(scpCmd, " "))
+
 	return executeSCP(scpCmd)
 }
 
@@ -231,7 +239,7 @@ func executeRemoteScript(ctx *bastionContext, remoteScript, envString, operation
 
 func cleanupRemoteScript(ctx *bastionContext, remoteScript string, log logger.Logger) {
 	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
-	sshCmd = append(sshCmd, fmt.Sprintf("rm -f %s", remoteScript))
+	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(sshCmd) // best effort
 }
 
@@ -242,15 +250,19 @@ func buildEnvironmentVariables(log logger.Logger) string {
 	if blocName := os.Getenv("OCFP_BLOC_NAME"); blocName != "" {
 		envVars = append(envVars, fmt.Sprintf("OCFP_BLOC_NAME='%s'", blocName))
 	}
+
 	if provider := os.Getenv("OCFP_PROVIDER"); provider != "" {
 		envVars = append(envVars, fmt.Sprintf("OCFP_PROVIDER='%s'", provider))
 	}
+
 	if stackitProjectID := os.Getenv("STACKIT_PROJECT_ID"); stackitProjectID != "" {
 		envVars = append(envVars, fmt.Sprintf("STACKIT_PROJECT_ID='%s'", stackitProjectID))
 	}
+
 	if stackitOrgID := os.Getenv("STACKIT_ORG_ID"); stackitOrgID != "" {
 		envVars = append(envVars, fmt.Sprintf("STACKIT_ORG_ID='%s'", stackitOrgID))
 	}
+
 	if stackitRegion := os.Getenv("STACKIT_REGION"); stackitRegion != "" {
 		envVars = append(envVars, fmt.Sprintf("STACKIT_REGION='%s'", stackitRegion))
 	}
