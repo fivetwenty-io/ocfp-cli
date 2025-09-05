@@ -7,10 +7,10 @@ import (
 
 // Build information set via ldflags.
 var (
-	Version   = "dev"
-	BuildTime = "unknown"
-	GitCommit = "unknown"
-	GoVersion = runtime.Version()
+    Version   = "dev"            //nolint:gochecknoglobals // set via ldflags at build time
+    BuildTime = "unknown"        //nolint:gochecknoglobals // set via ldflags at build time
+    GitCommit = "unknown"        //nolint:gochecknoglobals // set via ldflags at build time
+    GoVersion = runtime.Version() //nolint:gochecknoglobals // captured at init for reporting
 )
 
 // Info holds version information.

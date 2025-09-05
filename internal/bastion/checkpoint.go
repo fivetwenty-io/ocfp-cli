@@ -102,11 +102,11 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 	checkpointFile := cm.getCheckpointPath()
 
 	// Check if checkpoint file exists
-	if _, err := os.Stat(checkpointFile); os.IsNotExist(err) {
-		cm.log.Debug("No checkpoint file found", "file", checkpointFile)
+    if _, err := os.Stat(checkpointFile); os.IsNotExist(err) {
+        cm.log.Debug("No checkpoint file found", "file", checkpointFile)
 
-		return nil, nil // No checkpoint exists
-	}
+        return nil, nil //nolint:nilnil // explicit: no checkpoint is not an error
+    }
 
 	// Read checkpoint file
 	data, err := os.ReadFile(checkpointFile) // #nosec G304 - checkpointFile is constructed from safe paths
@@ -121,11 +121,11 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 	}
 
 	// Validate checkpoint data
-	if err := cm.validateCheckpoint(&checkpoint); err != nil {
-		cm.log.Warn("Invalid checkpoint data, ignoring", "error", err.Error())
+    if err := cm.validateCheckpoint(&checkpoint); err != nil {
+        cm.log.Warn("Invalid checkpoint data, ignoring", "error", err.Error())
 
-		return nil, nil
-	}
+        return nil, nil //nolint:nilnil // invalid checkpoint treated as absence
+    }
 
 	cm.log.Info("Checkpoint loaded",
 		"file", checkpointFile,
@@ -270,7 +270,7 @@ func (cm *CheckpointManager) ListCheckpoints() ([]CheckpointData, error) {
 		return nil, fmt.Errorf("failed to read checkpoint directory: %w", err)
 	}
 
-	var checkpoints []CheckpointData
+    checkpoints := make([]CheckpointData, 0, len(entries))
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {

@@ -1,8 +1,9 @@
 package commands
 
+//nolint:ireturn // test fakes intentionally return interfaces
+
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -20,14 +21,14 @@ func (f *fakeStorageCreds) DeleteCredentialsGroup(ctx context.Context, groupID s
 }
 
 // cpi.StorageManager required methods (stubs).
-func (f *fakeStorageCreds) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
-	return nil, nil
+func (f *fakeStorageCreds) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
-	return nil, nil
+func (f *fakeStorageCreds) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	return nil, nil
+func (f *fakeStorageCreds) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorageCreds) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
 	return nil
@@ -37,25 +38,27 @@ func (f *fakeStorageCreds) DetachVolume(ctx context.Context, volumeID string, in
 }
 func (f *fakeStorageCreds) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
 func (f *fakeStorageCreds) DeleteVolume(ctx context.Context, id string) error           { return nil }
-func (f *fakeStorageCreds) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorageCreds) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorageCreds) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorageCreds) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorageCreds) DeleteSnapshot(ctx context.Context, id string) error { return nil }
-func (f *fakeStorageCreds) CreateBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
+func (f *fakeStorageCreds) CreateBucket(ctx context.Context, name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeStorageCreds) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+    return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeStorageCreds) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeStorageCreds) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
-	return nil, nil
-}
-func (f *fakeStorageCreds) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { return nil, nil }
-func (f *fakeStorageCreds) DeleteBucket(ctx context.Context, name string) error    { return nil }
-func (f *fakeStorageCreds) EmptyBucket(ctx context.Context, name string) error     { return nil }
+func (f *fakeStorageCreds) DeleteBucket(ctx context.Context, name string) error { return nil }
+func (f *fakeStorageCreds) EmptyBucket(ctx context.Context, name string) error  { return nil }
 
 type fakeProviderCreds struct{ s *fakeStorageCreds }
 
@@ -72,6 +75,8 @@ func (p *fakeProviderCreds) Initialize(ctx context.Context, cfg interface{}) err
 func (p *fakeProviderCreds) Cleanup(ctx context.Context) error                     { return nil }
 
 func TestTeardownDeletesCredentialsGroup(t *testing.T) {
+	t.Parallel()
+
 	fakeStorage := &fakeStorageCreds{}
 	fakeProvider := &fakeProviderCreds{s: fakeStorage}
 	cfg := &config.Config{Name: "prod", Provider: "stackit", Region: "eu01"}

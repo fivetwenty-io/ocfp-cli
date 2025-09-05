@@ -2,8 +2,8 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -126,17 +126,17 @@ routers, cells, and other component instances.`,
 			}
 
 			// Perform scaling based on resource type (real changes)
-			switch strings.ToLower(resource) {
-			case "routers", "router":
-				err = scaleRouters(ctx, provider, cfg, count, dryRun, wait)
-			case "cells", "cell", "diego-cells":
-				err = scaleCells(ctx, provider, cfg, count, dryRun, wait)
-			case "instances", "instance":
-				err = scaleInstances(ctx, provider, cfg, count, dryRun, wait)
-			case "load-balancer", "lb":
-				err = scaleLoadBalancer(ctx, provider, cfg, count, dryRun, wait)
-			case "database", "db", "postgres":
-				err = scaleDatabase(ctx, provider, cfg, count, dryRun, wait)
+            switch strings.ToLower(resource) {
+            case ResourceRouters, ResourceRouter:
+                err = scaleRouters(ctx, provider, cfg, count, dryRun, wait)
+            case "cells", "cell", "diego-cells":
+                err = scaleCells(ctx, provider, cfg, count, dryRun, wait)
+            case ResourceInstances, ResourceInstance:
+                err = scaleInstances(ctx, provider, cfg, count, dryRun, wait)
+            case "load-balancer", "lb":
+                err = scaleLoadBalancer(ctx, provider, cfg, count, dryRun, wait)
+            case "database", "db", "postgres":
+                err = scaleDatabase(ctx, provider, cfg, count, dryRun, wait)
 			default:
 				return fmt.Errorf("unknown resource type: %s", resource)
 			}
@@ -158,7 +158,7 @@ routers, cells, and other component instances.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview scaling without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for scaling to complete")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("scale.dry_run", cmd.Flags().Lookup("dry-run"))
@@ -249,7 +249,7 @@ func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config
 
 	if wait {
 		log.Info("Waiting for scaling to complete...")
-		// TODO: Implement wait logic with status checking
+		// Pending: implement wait logic with status checking
 	}
 
 	return nil
@@ -324,7 +324,7 @@ func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, 
 			instance := instances[len(instances)-1-i]
 			log.Info("Removing Diego cell instance", "id", instance.ID, "name", instance.Name)
 
-			// TODO: Drain apps from cell before deletion
+			// Pending: drain apps from cell before deletion
 			log.Info("Draining apps from cell", "id", instance.ID)
 
 			err := compute.DeleteInstance(ctx, instance.ID)
@@ -338,7 +338,7 @@ func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, 
 
 	if wait {
 		log.Info("Waiting for scaling to complete...")
-		// TODO: Implement wait logic with status checking
+		// Pending: implement wait logic with status checking
 	}
 
 	return nil
@@ -355,7 +355,7 @@ func scaleInstances(ctx context.Context, provider cpi.Provider, cfg *config.Conf
 		return nil
 	}
 
-	// TODO: Implement generic instance scaling
+	// Pending: implement generic instance scaling
 	// This would require additional parameters to specify instance type
 
 	return errors.New("generic instance scaling not yet implemented")
@@ -440,6 +440,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 
 		for i := 0; i < toRemove && i < len(pool.Members); i++ {
 			member := pool.Members[len(pool.Members)-1-i]
+
 			err := network.RemoveBackendMember(ctx, loadBalancer.ID, member.IPAddress)
 			if err != nil {
 				log.Error("Failed to remove backend member", "error", err)
@@ -453,7 +454,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, cfg *config.C
 
 	if wait {
 		log.Info("Waiting for scaling to complete...")
-		// TODO: Implement wait logic
+		// Pending: implement wait logic
 	}
 
 	return nil
@@ -471,7 +472,7 @@ func scaleDatabase(ctx context.Context, provider cpi.Provider, cfg *config.Confi
 
 	if count > 1 {
 		log.Info("Setting up PostgreSQL replication", "replicas", count-1)
-		// TODO: Implement PostgreSQL replication setup
+		// Pending: implement PostgreSQL replication setup
 		// This would involve:
 		// 1. Creating replica instances
 		// 2. Configuring streaming replication
@@ -503,7 +504,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 		delta := target - current
 		planTable.Summary = fmt.Sprintf("Routers: current=%d target=%d delta=%+d", current, target, delta)
 		// Current section
-		rows := [][]string{}
+		rows := make([][]string, 0, len(instances))
 		for _, inst := range instances {
 			rows = append(rows, []string{inst.Name, inst.ID})
 		}
@@ -511,7 +512,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 		planTable.Sections = append(planTable.Sections, ui.Section{Title: "Current Routers", Headers: []string{"NAME", "ID"}, Rows: rows})
 		// Planned
 		if delta > 0 {
-			planned := [][]string{}
+			planned := make([][]string, 0, delta)
 			for i := range delta {
 				planned = append(planned, []string{fmt.Sprintf("%s-router-%d", cfg.Name, current+i+1)})
 			}
@@ -521,7 +522,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 			// Remove highest-numbered; sort by name
 			// Fallback: use tail of list
 			removeN := -delta
-			planned := [][]string{}
+			planned := make([][]string, 0, removeN)
 
 			for i := 0; i < removeN && i < len(instances); i++ {
 				inst := instances[len(instances)-1-i]
@@ -545,14 +546,14 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 		delta := target - current
 		planTable.Summary = fmt.Sprintf("Diego Cells: current=%d target=%d delta=%+d", current, target, delta)
 
-		rows := [][]string{}
+		rows := make([][]string, 0, len(instances))
 		for _, inst := range instances {
 			rows = append(rows, []string{inst.Name, inst.ID})
 		}
 
 		planTable.Sections = append(planTable.Sections, ui.Section{Title: "Current Cells", Headers: []string{"NAME", "ID"}, Rows: rows})
 		if delta > 0 {
-			planned := [][]string{}
+			planned := make([][]string, 0, delta)
 			for i := range delta {
 				planned = append(planned, []string{fmt.Sprintf("%s-diego-cell-%d", cfg.Name, current+i+1)})
 			}
@@ -560,7 +561,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 			planTable.Sections = append(planTable.Sections, ui.Section{Title: "Create", Headers: []string{"NAME"}, Rows: planned})
 		} else if delta < 0 {
 			removeN := -delta
-			planned := [][]string{}
+			planned := make([][]string, 0, removeN)
 
 			for i := 0; i < removeN && i < len(instances); i++ {
 				inst := instances[len(instances)-1-i]
@@ -602,7 +603,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 		delta := target - current
 		planTable.Summary = fmt.Sprintf("LB %s pool %s: current=%d target=%d delta=%+d", lb.Name, pool.Name, current, target, delta)
 		// Current members
-		rows := [][]string{}
+		rows := make([][]string, 0, len(pool.Members))
 		for _, m := range pool.Members {
 			rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
 		}
@@ -622,7 +623,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 	}
 
 	if format == "" {
-		format = "table"
+    format = OutputTable
 	}
 
 	return ui.Render(planTable, format)

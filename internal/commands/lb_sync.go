@@ -67,9 +67,9 @@ func newLBSyncCmd() *cobra.Command {
 			if spec.Port <= 0 {
 				return fmt.Errorf("lbs.%s.port must be > 0", name)
 			}
-			if spec.Protocol == "" {
-				spec.Protocol = "tcp"
-			}
+            if spec.Protocol == "" {
+                spec.Protocol = ProtocolTCP
+            }
 
 			if dryRun {
 				t := &ui.Table{Title: "DRY RUN — LB Sync Plan"}
@@ -93,7 +93,7 @@ func newLBSyncCmd() *cobra.Command {
 				existing := map[string]bool{}
 				if lb, err := netMgr.GetLoadBalancer(ctx, name); err == nil && lb != nil {
 					if pools, err := netMgr.GetBackendPools(ctx, lb.ID); err == nil && len(pools) > 0 {
-						rows := [][]string{}
+						rows := make([][]string, 0, len(pools[0].Members))
 						for _, m := range pools[0].Members {
 							existing[m.IPAddress] = true
 							rows = append(rows, []string{m.IPAddress, strconv.Itoa(m.Port)})
@@ -101,7 +101,7 @@ func newLBSyncCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: "Current Members", Headers: []string{"IP", "PORT"}, Rows: rows})
 					}
 				}
-				addRows := [][]string{}
+				addRows := make([][]string, 0, len(desired))
 				for ip := range desired {
 					if !existing[ip] {
 						addRows = append(addRows, []string{ip, strconv.Itoa(spec.Port)})
@@ -111,7 +111,7 @@ func newLBSyncCmd() *cobra.Command {
 					t.Sections = append(t.Sections, ui.Section{Title: "Add", Headers: []string{"IP", "PORT"}, Rows: addRows})
 				}
 				if removeUnused {
-					remRows := [][]string{}
+					remRows := make([][]string, 0, len(existing))
 					for ip := range existing {
 						if !desired[ip] {
 							remRows = append(remRows, []string{ip})
@@ -121,9 +121,9 @@ func newLBSyncCmd() *cobra.Command {
 						t.Sections = append(t.Sections, ui.Section{Title: "Remove", Headers: []string{"IP"}, Rows: remRows})
 					}
 				}
-				if output == "" {
-					output = "table"
-				}
+                if output == "" {
+                    output = OutputTable
+                }
 
 				return ui.Render(t, strings.ToLower(output))
 			}
@@ -202,7 +202,7 @@ func newLBSyncCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Name of the LB (must exist under lbs: in config)")
 	cmd.Flags().BoolVar(&removeUnused, "remove-unused", false, "Remove backends not present in config")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without making them")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (dry-run)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run)")
 
 	return cmd
 }

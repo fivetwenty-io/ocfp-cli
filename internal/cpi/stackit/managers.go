@@ -88,7 +88,7 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 
 	items, _ := resp.GetItemsOk()
 
-	var out []*cpi.SecurityGroup
+    out := make([]*cpi.SecurityGroup, 0, len(items))
 
 	for _, sg := range items {
 		labels := mapAnyToString(sg.GetLabels())
@@ -169,7 +169,7 @@ func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string)
 
 	items, _ := resp.GetItemsOk()
 
-	var out []*cpi.SecurityRule
+    out := make([]*cpi.SecurityRule, 0, len(items))
 
 	for _, rule := range items {
 		proto := ""

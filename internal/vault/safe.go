@@ -295,7 +295,7 @@ func (s *Safe) List(path string) ([]string, error) {
 		return []string{}, nil
 	}
 
-	var paths []string
+	paths := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if keyStr, ok := key.(string); ok {
 			paths = append(paths, keyStr)

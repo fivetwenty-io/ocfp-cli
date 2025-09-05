@@ -73,7 +73,6 @@ linters:
   - nestif # Reports deeply nested if statements. [fast]
   - nilerr # Find the code that returns nil even if it checks that the error is not nil.
   - nilnesserr # Reports constructs that checks for err != nil, but returns a different nil value error.
-  - nilnil # Checks that there is no simultaneous return of `nil` error and an invalid value.
   - nlreturn # Checks for a new line before return and branch statements to increase code clarity. [fast, auto-fix]
   - noctx # Detects function and method with missing usage of context.Context.
   - noinlineerr # Disallows inline error handling (`if err := ...; err != nil {`).
@@ -88,13 +87,11 @@ linters:
   - protogetter # Reports direct reads from proto message fields when getters should be used. [auto-fix]
   - reassign # Checks that package variables are not reassigned.
   - recvcheck # Checks for receiver type consistency.
-  - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint. [auto-fix]
   - rowserrcheck # Checks whether Rows.Err of rows is checked successfully.
   - sloglint # Ensure consistent code style when using log/slog. [auto-fix]
   - spancheck # Checks for mistakes with OpenTelemetry/Census spans.
   - sqlclosecheck # Checks that sql.Rows, sql.Stmt, sqlx.NamedStmt, pgx.Query are closed.
   - tagalign # Check that struct tags are well aligned. [fast, auto-fix]
-  - tagliatelle # Checks the struct tags.
   - testableexamples # Linter checks if examples are testable (have an expected output). [fast]
   - testifylint # Checks usage of github.com/stretchr/testify. [auto-fix]
   - testpackage # Linter that makes you use a separate _test package. [fast]
@@ -110,6 +107,10 @@ linters:
   - wrapcheck # Checks that errors returned from external packages are wrapped.
   - wsl_v5 # Add or remove empty lines. [auto-fix]
   - zerologlint # Detects the wrong usage of `zerolog` that a user forgets to dispatch with `Send` or `Msg`.
+  # feels suspicious... - nilnil # Checks that there is no simultaneous return of `nil` error and an invalid value.
+  # moved to it's own target: - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint. [auto-fix]
+  # No to camel case: - tagliatelle # Checks the struct tags.
+
   # Exclude paths from linting
   exclusions:
     paths:
@@ -127,3 +128,4 @@ formatters:
 # Issues configuration
 issues:
   max-same-issues: 3
+

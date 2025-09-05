@@ -133,6 +133,7 @@ func (m *Manager) Save() error {
 	statePath := m.getStatePath(m.current.BlocName)
 	if _, err := os.Stat(statePath); err == nil {
 		backupPath := statePath + ".backup"
+
 		err := os.Rename(statePath, backupPath)
 		if err != nil {
 			logger.Warnf("Failed to create state backup: %v", err)
@@ -212,7 +213,7 @@ func (m *Manager) RemoveResource(resourceType, resourceName string) error {
 	delete(m.current.Dependencies, key)
 
 	for resourceKey, deps := range m.current.Dependencies {
-		filtered := make([]string, 0)
+		filtered := make([]string, 0, len(deps))
 
 		for _, dep := range deps {
 			if dep != key {
@@ -256,7 +257,7 @@ func (m *Manager) ListResources(resourceType string) ([]*Resource, error) {
 		return nil, errors.New("no state loaded")
 	}
 
-	var resources []*Resource
+	resources := make([]*Resource, 0, len(m.current.Resources))
 
 	prefix := resourceType + "."
 

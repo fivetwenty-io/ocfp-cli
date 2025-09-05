@@ -224,8 +224,10 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		"local_port", localPort,
 		"remote_port", remotePort)
 
-	// Listen on local port
-	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", localPort))
+	// Listen on local port with context
+	lc := &net.ListenConfig{}
+
+	listener, err := lc.Listen(ctx, "tcp", fmt.Sprintf("localhost:%d", localPort))
 	if err != nil {
 		return fmt.Errorf("failed to listen on local port %d: %w", localPort, err)
 	}
@@ -590,6 +592,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 			sshpassArgs := []string{"-p", c.config.Password, "ssh"}
 
 			sshpassArgs = append(sshpassArgs, args...)
+
 			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
 			if err != nil {
 				return fmt.Errorf("invalid sshpass command: %w", err)

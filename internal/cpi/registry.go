@@ -18,8 +18,8 @@ type Registry struct {
 }
 
 // globalRegistry is the global provider registry.
-var globalRegistry = &Registry{
-	providers: make(map[string]ProviderFactory),
+var globalRegistry = &Registry{ //nolint:gochecknoglobals // singleton registry for provider factories
+    providers: make(map[string]ProviderFactory),
 }
 
 // Register registers a provider factory.
@@ -51,6 +51,7 @@ func Get(name string) (ProviderFactory, error) {
 }
 
 // GetProvider creates a new provider instance by name.
+//nolint:ireturn // returning Provider interface is intentional for registry API
 func GetProvider(name string) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {
@@ -75,6 +76,7 @@ func List() []string {
 }
 
 // CreateProvider creates a provider instance by name.
+//nolint:ireturn // returning Provider interface is intentional for registry API
 func CreateProvider(ctx context.Context, name string, config interface{}) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {

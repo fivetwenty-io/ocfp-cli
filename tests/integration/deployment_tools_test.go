@@ -20,6 +20,8 @@ func TestTmuxIntegration(t *testing.T) {
 		t.Skip("skipping tmux integration tests in short mode")
 	}
 
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 
 	// Check if tmux is available
@@ -29,6 +31,8 @@ func TestTmuxIntegration(t *testing.T) {
 	}
 
 	t.Run("TmuxSessionCreation", func(t *testing.T) {
+		t.Parallel()
+
 		cmd := commands.NewTmuxCmd()
 		cmd.SetArgs([]string{})
 
@@ -48,6 +52,7 @@ func TestTmuxIntegration(t *testing.T) {
 	})
 
 	t.Run("TmuxScriptDiscovery", func(t *testing.T) {
+		t.Parallel()
 		// Create test tmux script in expected location
 		scriptDir := filepath.Join(tmpDir, "scripts", "tmux")
 		err := os.MkdirAll(scriptDir, 0755)
@@ -87,6 +92,7 @@ tmux attach-session -t ocfp
 	})
 
 	t.Run("TmuxDeploymentDirectories", func(t *testing.T) {
+		t.Parallel()
 		// Create deployment directory structure
 		deploymentDir := filepath.Join(tmpDir, "ocfp", "deployments")
 		services := []string{"bosh", "vault", "shield", "doomsday", "prometheus", "concourse", "cf"}
@@ -124,6 +130,8 @@ func TestBastionIntegration(t *testing.T) {
 		t.Skip("skipping bastion integration tests in short mode")
 	}
 
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "bastion-config.yml")
 
@@ -149,12 +157,8 @@ blocs:
 	require.NoError(t, err)
 
 	t.Run("BastionInitScript", func(t *testing.T) {
-		// Create bastion-init script
-		scriptDir := filepath.Join(tmpDir, "scripts", "provision")
-		err := os.MkdirAll(scriptDir, 0755)
-		require.NoError(t, err)
+		t.Parallel()
 
-		initScriptPath := filepath.Join(scriptDir, "bastion-init")
 		initScriptContent := `#!/usr/bin/perl
 use strict;
 use warnings;
@@ -167,31 +171,25 @@ print "Bastion initialization complete\n";
 
 exit 0;
 `
-		err = os.WriteFile(initScriptPath, []byte(initScriptContent), 0755)
-		require.NoError(t, err)
+		_ = createScript(t, tmpDir, filepath.Join("scripts", "provision"), "bastion-init", initScriptContent, 0755)
 
-		// Change to tmpDir so script can be found
-		oldWd, _ := os.Getwd()
+		cleanupChdir := chdir(t, tmpDir)
+		defer cleanupChdir()
 
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err = os.Chdir(tmpDir)
-		require.NoError(t, err)
-
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+		cleanupEnv := withEnv(t, "OCFP_CONFIG", configFile)
+		defer cleanupEnv()
 
 		cmd := commands.NewBastionCmd()
 		cmd.SetArgs([]string{"init", "--user", "testuser", "--key", "/tmp/test-key"})
 
-		err = cmd.Execute()
+		err := cmd.Execute()
 		// Current implementation uses placeholder functionality, so it succeeds
 		// In a real implementation, this would fail on SSH connection
 		assert.NoError(t, err)
 	})
 
 	t.Run("BastionProvisionScript", func(t *testing.T) {
+		t.Parallel()
 		// Create bastion provision script
 		scriptDir := filepath.Join(tmpDir, "scripts", "provision")
 		err := os.MkdirAll(scriptDir, 0755)
@@ -237,6 +235,7 @@ exit 0;
 	})
 
 	t.Run("BastionSSHKeyDiscovery", func(t *testing.T) {
+		t.Parallel()
 		// Create SSH key files
 		keyDir := filepath.Join(tmpDir, "keys")
 		err := os.MkdirAll(keyDir, 0700)
@@ -291,6 +290,7 @@ exit 0;
 	})
 
 	t.Run("BastionEnvironmentVariables", func(t *testing.T) {
+		t.Parallel()
 		// Test environment variable passing
 		_ = os.Setenv("OCFP_BLOC_NAME", "test-env-bloc")
 		_ = os.Setenv("OCFP_PROVIDER", "stackit")
@@ -346,9 +346,12 @@ func TestDeploymentWorkflow(t *testing.T) {
 		t.Skip("skipping deployment workflow tests in short mode")
 	}
 
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 
 	t.Run("ProviderTmuxBastionIntegration", func(t *testing.T) {
+		t.Parallel()
 		// Create comprehensive configuration
 		configFile := filepath.Join(tmpDir, "workflow-config.yml")
 		testConfig := `
@@ -411,6 +414,7 @@ blocs:
 	})
 
 	t.Run("ScriptDirectoryStructure", func(t *testing.T) {
+		t.Parallel()
 		// Create expected script directory structure
 		scriptsBase := filepath.Join(tmpDir, "scripts")
 
@@ -453,6 +457,7 @@ exit 0;
 	})
 
 	t.Run("DeploymentDirectoryStructure", func(t *testing.T) {
+		t.Parallel()
 		// Create OCFP deployment directory structure
 		deploymentBase := filepath.Join(tmpDir, "ocfp", "deployments")
 
@@ -493,6 +498,8 @@ exit 0;
 
 // TestToolAvailability tests availability of external tools.
 func TestToolAvailability(t *testing.T) {
+	t.Parallel()
+
 	tools := map[string]string{
 		"tmux":  "Terminal multiplexer for session management",
 		"ssh":   "SSH client for bastion connections",
@@ -502,13 +509,16 @@ func TestToolAvailability(t *testing.T) {
 	}
 
 	for tool, description := range tools {
-		t.Run("Check"+cases.Title(language.English).String(tool), func(t *testing.T) {
-			_, err := exec.LookPath(tool)
+		tl, desc := tool, description
+		t.Run("Check"+cases.Title(language.English).String(tl), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := exec.LookPath(tl)
 			if err != nil {
-				t.Logf("%s not available: %s", tool, description)
+				t.Logf("%s not available: %s", tl, desc)
 				// Don't fail the test, just log availability
 			} else {
-				t.Logf("%s available: %s", tool, description)
+				t.Logf("%s available: %s", tl, desc)
 				assert.NoError(t, err)
 			}
 		})
@@ -524,12 +534,15 @@ func TestToolAvailability(t *testing.T) {
 	}
 
 	for tool, description := range cloudTools {
-		t.Run("CheckOptional"+cases.Title(language.English).String(tool), func(t *testing.T) {
-			_, err := exec.LookPath(tool)
+		tl, desc := tool, description
+		t.Run("CheckOptional"+cases.Title(language.English).String(tl), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := exec.LookPath(tl)
 			if err != nil {
-				t.Logf("Optional tool %s not available: %s", tool, description)
+				t.Logf("Optional tool %s not available: %s", tl, desc)
 			} else {
-				t.Logf("Optional tool %s available: %s", tool, description)
+				t.Logf("Optional tool %s available: %s", tl, desc)
 			}
 			// Don't assert - these are optional tools
 		})

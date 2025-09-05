@@ -11,6 +11,8 @@ import (
 
 // TestProvisioningConfigGeneration tests provisioning configuration generation.
 func TestProvisioningConfigGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:      "test-bloc",
 		Provider:  "stackit",
@@ -82,6 +84,8 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 
 // TestScriptGeneration tests script generation functionality.
 func TestScriptGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:      "test-bloc",
 		Provider:  "stackit",
@@ -142,6 +146,8 @@ func TestScriptGeneration(t *testing.T) {
 
 // TestSnapPackageGeneration tests snap package script generation.
 func TestSnapPackageGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -201,6 +207,8 @@ func TestSnapPackageGeneration(t *testing.T) {
 
 // TestAdvancedToolsGeneration tests advanced binary tools script generation.
 func TestAdvancedToolsGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -253,6 +261,8 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 
 // TestCPANModuleGeneration tests CPAN module installation script generation.
 func TestCPANModuleGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -306,6 +316,8 @@ func TestCPANModuleGeneration(t *testing.T) {
 
 // TestConfigFileGeneration tests configuration file generation.
 func TestConfigFileGeneration(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",

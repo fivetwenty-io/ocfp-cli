@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"github.com/ocfp/ocfp-cli-go/internal/commands"
-	"github.com/spf13/cobra"
+    "github.com/ocfp/ocfp-cli-go/internal/commands"
+    "github.com/spf13/cobra"
 )
 
 // RegisterCommands adds all subcommands to the root command.
@@ -38,8 +38,3 @@ func RegisterCommands(root *cobra.Command) {
 
 // Placeholder implementations for commands not yet created
 // These will be replaced with actual implementations
-
-func init() {
-	// Register all commands with the root command
-	RegisterCommands(rootCmd)
-}

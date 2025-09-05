@@ -96,47 +96,47 @@ func (vm *VerificationManager) GetToolVerifications() []ToolVerification {
 	}
 
 	// Add provider-specific verifications
-	switch vm.provider {
-	case "stackit":
-		verifications = append(verifications, ToolVerification{
-			Name:           "stackit-tools",
-			Commands:       []string{"stackit"},
-			VersionCommand: "stackit --version",
-			ConfigCheck:    "stackit config list",
-			Required:       true,
-		})
-	case "aws":
-		verifications = append(verifications, ToolVerification{
-			Name:           "aws-tools",
-			Commands:       []string{"aws"},
-			VersionCommand: "aws --version",
-			ConfigCheck:    "aws sts get-caller-identity",
-			Required:       true,
-		})
-	case "azure":
-		verifications = append(verifications, ToolVerification{
-			Name:           "azure-tools",
-			Commands:       []string{"az"},
-			VersionCommand: "az --version",
-			ConfigCheck:    "az account show",
-			Required:       true,
-		})
-	case "gcp":
-		verifications = append(verifications, ToolVerification{
-			Name:           "gcp-tools",
-			Commands:       []string{"gcloud"},
-			VersionCommand: "gcloud --version",
-			ConfigCheck:    "gcloud config list",
-			Required:       true,
-		})
-	case "openstack":
-		verifications = append(verifications, ToolVerification{
-			Name:           "openstack-tools",
-			Commands:       []string{"openstack"},
-			VersionCommand: "openstack --version",
-			Required:       true,
-		})
-	}
+    switch vm.provider {
+    case providerStackit:
+        verifications = append(verifications, ToolVerification{
+            Name:           "stackit-tools",
+            Commands:       []string{"stackit"},
+            VersionCommand: "stackit --version",
+            ConfigCheck:    "stackit config list",
+            Required:       true,
+        })
+    case providerAWS:
+        verifications = append(verifications, ToolVerification{
+            Name:           "aws-tools",
+            Commands:       []string{"aws"},
+            VersionCommand: "aws --version",
+            ConfigCheck:    "aws sts get-caller-identity",
+            Required:       true,
+        })
+    case providerAzure:
+        verifications = append(verifications, ToolVerification{
+            Name:           "azure-tools",
+            Commands:       []string{"az"},
+            VersionCommand: "az --version",
+            ConfigCheck:    "az account show",
+            Required:       true,
+        })
+    case providerGCP:
+        verifications = append(verifications, ToolVerification{
+            Name:           "gcp-tools",
+            Commands:       []string{"gcloud"},
+            VersionCommand: "gcloud --version",
+            ConfigCheck:    "gcloud config list",
+            Required:       true,
+        })
+    case providerOpenStack:
+        verifications = append(verifications, ToolVerification{
+            Name:           "openstack-tools",
+            Commands:       []string{"openstack"},
+            VersionCommand: "openstack --version",
+            Required:       true,
+        })
+    }
 
 	return verifications
 }

@@ -269,7 +269,7 @@ func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, resul
 	}
 
 	// Check for overlapping keys
-	var conflicts []string
+	conflicts := make([]string, 0, len(inceptionSecrets))
 
 	for key := range inceptionSecrets {
 		if _, exists := targetSecrets[key]; exists {
@@ -409,7 +409,7 @@ type RollbackPoint struct {
 func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
 	v.logger.Info("Executing rollback", "timestamp", rollback.Timestamp, "paths", len(rollback.Paths))
 
-	var errors []string
+	errors := make([]string, 0, len(rollback.Paths))
 
 	for path, secrets := range rollback.Paths {
 		v.logger.Debug("Restoring path from rollback", "path", path)

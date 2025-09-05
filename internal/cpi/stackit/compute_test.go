@@ -16,7 +16,8 @@ import (
 )
 
 func setupTestComputeManager(t *testing.T, handler http.HandlerFunc) (*ComputeManager, *httptest.Server) {
-	server := httptest.NewServer(handler)
+    t.Helper()
+    server := httptest.NewServer(handler)
 
 	config := &Config{
 		ProjectID:  "test-project",

@@ -39,7 +39,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		filters := map[string]string{
 			"label.bloc": blocName,
 		}
-		filters["label."+key] = "bastion"
+        filters["label."+key] = RoleBastion
 
 		instances, err := provider.Compute().ListInstances(ctx, filters)
 		if err != nil {
@@ -89,7 +89,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		}
 	}
 
-	// Name-based fallback: list by bloc only, then match name containing "-bastion"
+    // Name-based fallback: list by bloc only, then match name containing "-bastion"
 	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
 		"label.bloc": blocName,
 	})
@@ -101,9 +101,9 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		return "", fmt.Errorf("no instances found for bloc %s", blocName)
 	}
 
-	for _, inst := range instances {
-		name := strings.ToLower(inst.Name)
-		if strings.HasSuffix(name, "-bastion") || strings.Contains(name, "bastion") {
+    for _, inst := range instances {
+        name := strings.ToLower(inst.Name)
+        if strings.HasSuffix(name, "-"+RoleBastion) || strings.Contains(name, RoleBastion) {
 			publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP)
 			if publicIP != "" {
 				if viper.GetBool("debug_lookup") {

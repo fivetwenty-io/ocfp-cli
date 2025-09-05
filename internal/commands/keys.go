@@ -1,12 +1,14 @@
 package commands
 
 import (
-    "bufio"
-    "fmt"
-    "io"
-    "net/http"
-    "regexp"
-    "strings"
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
@@ -16,73 +18,53 @@ var (
 )
 
 // fetchGitHubKeys fetches SSH keys from GitHub for a user.
-func fetchGitHubKeys(username string) ([]string, error) {
+func fetchGitHubKeys(ctx context.Context, username string) ([]string, error) {
 	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
 		return nil, fmt.Errorf("invalid GitHub username: %w", err)
 	}
 
 	url := fmt.Sprintf("https://github.com/%s.keys", username)
 
-	resp, err := http.Get(url) // #nosec G107 - URL constructed from validated username
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch GitHub keys: %w", err)
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch GitHub keys: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch GitHub keys: %w", err)
-	}
-
-	var keys []string
-
-	scanner := bufio.NewScanner(strings.NewReader(string(body)))
-	for scanner.Scan() {
-		key := strings.TrimSpace(scanner.Text())
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to fetch GitHub keys: %w", err)
-	}
-
-	return keys, nil
+	return fetchKeys(ctx, url, "GitHub")
 }
 
 // fetchGitLabKeys fetches SSH keys from GitLab for a user.
-func fetchGitLabKeys(username string) ([]string, error) {
+func fetchGitLabKeys(ctx context.Context, username string) ([]string, error) {
 	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
 		return nil, fmt.Errorf("invalid GitLab username: %w", err)
 	}
 
 	url := fmt.Sprintf("https://gitlab.com/%s.keys", username)
 
-	resp, err := http.Get(url) // #nosec G107 - URL constructed from validated username
+	return fetchKeys(ctx, url, "GitLab")
+}
+
+// fetchKeys performs the HTTP request and parses newline-delimited SSH keys.
+func fetchKeys(ctx context.Context, url, provider string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch GitLab keys: %w", err)
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) // #nosec G107 - URL constructed from validated input
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch GitLab keys: %s", resp.Status)
+		return nil, fmt.Errorf("failed to fetch %s keys: %s", provider, resp.Status)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch GitLab keys: %w", err)
+		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}
 
 	var keys []string
 
-	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	scanner := bufio.NewScanner(bytes.NewReader(body))
 	for scanner.Scan() {
 		key := strings.TrimSpace(scanner.Text())
 		if key != "" {
@@ -91,7 +73,7 @@ func fetchGitLabKeys(username string) ([]string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to fetch GitLab keys: %w", err)
+		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}
 
 	return keys, nil

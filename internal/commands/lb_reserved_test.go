@@ -1,21 +1,23 @@
 package commands
 
 import (
-	"errors"
-	"path/filepath"
-	"testing"
+    "path/filepath"
+    "testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
+const testBloc = "prod"
+
 func TestResolveReservedIP(t *testing.T) {
+	t.Parallel()
 	// Prepare state
 	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bloc := "prod"
+    bloc := testBloc
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}
@@ -33,12 +35,14 @@ func TestResolveReservedIP(t *testing.T) {
 }
 
 func TestResolvePublicIPToken(t *testing.T) {
+	t.Parallel()
+
 	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bloc := "prod"
+    bloc := testBloc
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +71,14 @@ func TestResolvePublicIPToken(t *testing.T) {
 }
 
 func TestResolveReservedIPWithIndex(t *testing.T) {
+	t.Parallel()
+
 	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bloc := "prod"
+    bloc := testBloc
 	if _, err := stateManager.Load(bloc); err != nil {
 		t.Fatal(err)
 	}

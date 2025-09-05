@@ -291,12 +291,13 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	// Encrypt if requested
 	if backup.Encrypted {
 		encryptedPath := archivePath + ".enc"
+
 		err := encryptFile(archivePath, encryptedPath)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt backup: %w", err)
 		}
-		err = os.Remove(archivePath)
 
+		err = os.Remove(archivePath)
 		if err != nil {
 			log.Warn("Failed to remove unencrypted archive", "error", err)
 		}
@@ -344,6 +345,7 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 		}
 
 		dest := filepath.Join(stagingDir, filepath.Base(path))
+
 		err := copyForBackup(path, dest)
 		if err != nil {
 			log.Warn("Failed to backup config", "path", path, "error", err)
@@ -398,6 +400,7 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 		}
 
 		dest := filepath.Join(stagingDir, filepath.Base(path))
+
 		err := copyForBackup(path, dest)
 		if err != nil {
 			log.Warn("Failed to backup data", "path", path, "error", err)
@@ -725,6 +728,7 @@ func exportSecrets(ctx context.Context, cfg *config.Config, outputFile string) e
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
 	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
+
 	err := os.MkdirAll(metadataDir, 0750)
 	if err != nil {
 		return err

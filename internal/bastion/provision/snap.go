@@ -222,20 +222,20 @@ func (sm *SnapManager) shouldSkipCondition(condition string) bool {
 		return false
 	}
 
-	switch condition {
-	case "provider_is_stackit":
-		return sm.provider != "stackit"
-	case "provider_is_aws":
-		return sm.provider != "aws"
-	case "provider_is_azure":
-		return sm.provider != "azure"
-	case "provider_is_gcp":
-		return sm.provider != "gcp"
-	case "provider_is_openstack":
-		return sm.provider != "openstack"
-	case "provider_is_vmware":
-		return sm.provider != "vmware" && sm.provider != "vsphere"
-	default:
-		return false
-	}
+    switch condition {
+    case condProviderIsStackit:
+        return sm.provider != providerStackit
+    case condProviderIsAWS:
+        return sm.provider != providerAWS
+    case condProviderIsAzure:
+        return sm.provider != providerAzure
+    case condProviderIsGCP:
+        return sm.provider != providerGCP
+    case condProviderIsOpenstack:
+        return sm.provider != providerOpenStack
+    case condProviderIsVMware:
+        return sm.provider != providerVMware && sm.provider != providerVsphere
+    default:
+        return false
+    }
 }

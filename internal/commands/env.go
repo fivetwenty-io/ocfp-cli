@@ -44,9 +44,7 @@ func newEnvListCmd() *cobra.Command {
 		Short:   "List all available environments",
 		Long:    `List all environments defined in the configuration files.`,
 		Aliases: []string{"ls"},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvList(cmd, args)
-		},
+            RunE:   runEnvList,
 	}
 }
 
@@ -59,9 +57,7 @@ func newEnvShowCmd() *cobra.Command {
 If no environment is specified, shows the current environment.`,
 		Aliases: []string{"info", "get"},
 		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvShow(cmd, args)
-		},
+            RunE:   runEnvShow,
 	}
 }
 
@@ -73,9 +69,7 @@ func newEnvSetCmd() *cobra.Command {
 		Long:    `Set the active environment for subsequent commands.`,
 		Aliases: []string{"use", "switch"},
 		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvSet(cmd, args)
-		},
+            RunE:   runEnvSet,
 	}
 }
 

@@ -48,16 +48,14 @@ This includes:
 
   # Bootstrap specific blocs
   ocfp bootstrap --bloc dev --blocs mgmt,ocf`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBootstrap(cmd, args)
-		},
+		RunE: runBootstrap,
 	}
 
 	// Command-specific flags
-	cmd.Flags().StringVarP(&blocs, "blocs", "b", "all", "specific blocs to bootstrap (comma-separated)")
+    cmd.Flags().StringVarP(&blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview actions without making changes")
-	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (dry-run only)")
+    cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
@@ -80,7 +78,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if blocsFlag == "" || blocsFlag == "all" {
+    if blocsFlag == "" || blocsFlag == string(KeywordAll) {
 		// Run for all blocs in the config file
 		// Fallback to single bloc via --bloc if config has no blocs
 		err := runBootstrapForSelection(configFile, nil)
@@ -99,8 +97,8 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 			sel = append(sel, blocName)
 		}
 	}
-	err := runBootstrapForSelection(configFile, sel)
 
+	err := runBootstrapForSelection(configFile, sel)
 	if err != nil {
 		return err
 	}

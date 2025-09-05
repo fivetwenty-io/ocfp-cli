@@ -57,10 +57,8 @@ SSH keys are searched in the following order:
 
   # Pass additional SSH options
   ocfp ssh --bloc production --ssh-options "-o StrictHostKeyChecking=no"`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSSH(cmd, args)
-		},
+            Args: cobra.MaximumNArgs(1),
+            RunE:   runSSH,
 	}
 
 	// Command-specific flags
@@ -150,7 +148,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	log.Debugf("Using SSH key: %s", keyPath)
 
 	// Execute SSH command
-	return executeSSH(sshCmd)
+    return executeSSH(ctx, sshCmd)
 }
 
 // getBastionIP retrieves the bastion host's public IP address.
@@ -291,7 +289,7 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 }
 
 // executeSSH executes the SSH command and attaches to stdin/stdout/stderr.
-func executeSSH(sshCmd []string) error {
+func executeSSH(ctx context.Context, sshCmd []string) error {
 	log := logger.WithOperation("executeSSH")
 	log.Debugf("Executing: %s", strings.Join(sshCmd, " "))
 
@@ -300,7 +298,7 @@ func executeSSH(sshCmd []string) error {
 		return errors.New("invalid SSH command")
 	}
 
-	cmd := exec.Command(sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
+    cmd := exec.CommandContext(ctx, sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

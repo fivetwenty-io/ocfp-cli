@@ -675,23 +675,23 @@ func (sg *ScriptGenerator) shouldSkipCondition(condition string) bool {
 		return false
 	}
 
-	switch condition {
-	case "provider_is_stackit":
-		return sg.provider != "stackit"
-	case "provider_is_aws":
-		return sg.provider != "aws"
-	case "provider_is_azure":
-		return sg.provider != "azure"
-	case "provider_is_gcp":
-		return sg.provider != "gcp"
-	case "provider_is_openstack":
-		return sg.provider != "openstack"
-	case "provider_is_vmware":
-		return sg.provider != "vmware" && sg.provider != "vsphere"
-	default:
-		// Unknown condition, don't skip
-		return false
-	}
+    switch condition {
+    case condProviderIsStackit:
+        return sg.provider != providerStackit
+    case condProviderIsAWS:
+        return sg.provider != providerAWS
+    case condProviderIsAzure:
+        return sg.provider != providerAzure
+    case condProviderIsGCP:
+        return sg.provider != providerGCP
+    case condProviderIsOpenstack:
+        return sg.provider != providerOpenStack
+    case condProviderIsVMware:
+        return sg.provider != providerVMware && sg.provider != providerVsphere
+    default:
+        // Unknown condition, don't skip
+        return false
+    }
 }
 
 // performVariableSubstitution performs variable substitution in the script.

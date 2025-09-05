@@ -32,9 +32,11 @@ const (
 
 // Environment types.
 const (
-	MgmtEnvType = "mgmt"
-	OCFEnvType  = "ocf"
+    MgmtEnvType = "mgmt"
+    OCFEnvType  = "ocf"
 )
+
+const inceptionComponent = "inception"
 
 // GetConfigPath returns the base configuration path for a bloc
 // Format: secret/config/{bloc}.
@@ -255,13 +257,13 @@ func (pb *PathBuilder) ParsePath(path string) (*PathInfo, error) {
 			}
 		}
 	} else if parts[0] == SecretPrefix {
-		// This might be an inception path
-		if strings.HasSuffix(parts[1], "-inception") {
-			info.Component = "inception"
-			if len(parts) > 2 {
-				info.Subpath = strings.Join(parts[2:], "/")
-			}
-		}
+    // This might be an inception path
+    if strings.HasSuffix(parts[1], "-inception") {
+        info.Component = inceptionComponent
+        if len(parts) > 2 {
+            info.Subpath = strings.Join(parts[2:], "/")
+        }
+    }
 	}
 
 	return info, nil
@@ -278,13 +280,14 @@ func (pb *PathBuilder) IsConfigPath(path string) bool {
 func (pb *PathBuilder) IsInceptionPath(path string) bool {
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 
-	return len(parts) >= 2 && parts[0] == SecretPrefix &&
-		(parts[1] == "inception" || strings.HasSuffix(parts[1], "-inception"))
+    return len(parts) >= 2 && parts[0] == SecretPrefix &&
+        (parts[1] == inceptionComponent || strings.HasSuffix(parts[1], "-inception"))
 }
 
 // GetAllStandardPaths returns all standard paths for the bloc.
 func (pb *PathBuilder) GetAllStandardPaths() []string {
-	var paths []string
+    // 2 envs * 13 paths each + 1 config + 1 publicIPs + 2 other = 30
+    paths := make([]string, 0, 30)
 
 	// Config paths
 	paths = append(paths, pb.GetOCFPConfigPath())

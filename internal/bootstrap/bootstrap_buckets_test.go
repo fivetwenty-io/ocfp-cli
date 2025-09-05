@@ -1,5 +1,7 @@
 package bootstrap
 
+//nolint:ireturn // test fakes intentionally return interfaces
+
 import (
 	"context"
 	"os"
@@ -19,15 +21,19 @@ func (f *fakeStorage) CreateBucket(ctx context.Context, name string) (*cpi.Bucke
 
 	return &cpi.Bucket{Name: name}, nil
 }
-func (f *fakeStorage) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { return nil, nil }
+func (f *fakeStorage) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake intentionally returns no data and no error
+	return nil, nil //nolint:nilnil // test fake
+}
 
 // Unused interface methods.
-func (f *fakeStorage) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) {
-	return nil, nil
+func (f *fakeStorage) CreateVolume(ctx context.Context, req *cpi.CreateVolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { return nil, nil }
-func (f *fakeStorage) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	return nil, nil
+func (f *fakeStorage) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
+}
+func (f *fakeStorage) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorage) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
 	return nil
@@ -37,26 +43,26 @@ func (f *fakeStorage) DetachVolume(ctx context.Context, volumeID string, instanc
 }
 func (f *fakeStorage) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
 func (f *fakeStorage) DeleteVolume(ctx context.Context, id string) error           { return nil }
-func (f *fakeStorage) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorage) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorage) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) {
-	return nil, nil
+func (f *fakeStorage) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorage) DeleteSnapshot(ctx context.Context, id string) error { return nil }
-func (f *fakeStorage) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
-	return nil, nil
+func (f *fakeStorage) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorage) DeleteBucket(ctx context.Context, name string) error { return nil }
 func (f *fakeStorage) EmptyBucket(ctx context.Context, name string) error  { return nil }
 
 // Policy methods for tests.
 var (
-	enabledCalls   = make(map[string]bool)
-	lifecycleCalls = make(map[string]int32)
+	enabledCalls   = make(map[string]bool)  //nolint:gochecknoglobals // test helper state
+	lifecycleCalls = make(map[string]int32) //nolint:gochecknoglobals // test helper state
 )
 
 func (f *fakeStorage) EnableBucketVersioning(ctx context.Context, name string) error {
@@ -88,6 +94,7 @@ func (p *fakeProvider) Initialize(ctx context.Context, cfg interface{}) error { 
 func (p *fakeProvider) Cleanup(ctx context.Context) error                     { return nil }
 
 func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	// Isolate state under temp directory
 	stateDir := filepath.Join(tmp, ".ocfp-state")
@@ -135,6 +142,7 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 }
 
 func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
+	t.Parallel()
 	// Reset call trackers
 	enabledCalls = make(map[string]bool)
 	lifecycleCalls = make(map[string]int32)
@@ -195,6 +203,8 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 }
 
 func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	enabledCalls = make(map[string]bool)
 	lifecycleCalls = make(map[string]int32)
 

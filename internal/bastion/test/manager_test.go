@@ -15,6 +15,8 @@ import (
 
 // TestManagerInitialization tests basic manager initialization.
 func TestManagerInitialization(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:      "test-bloc",
 		Provider:  "stackit",
@@ -41,6 +43,8 @@ func TestManagerInitialization(t *testing.T) {
 
 // TestManagerDryRun tests dry run functionality.
 func TestManagerDryRun(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:      "test-bloc",
 		Provider:  "stackit",
@@ -75,6 +79,8 @@ func TestManagerDryRun(t *testing.T) {
 
 // TestProgressTracking tests progress tracking functionality.
 func TestProgressTracking(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -95,6 +101,8 @@ func TestProgressTracking(t *testing.T) {
 
 // TestModeDetection tests execution mode detection.
 func TestModeDetection(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -123,6 +131,8 @@ func TestModeDetection(t *testing.T) {
 
 // TestExecutionInfo tests execution environment information.
 func TestExecutionInfo(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",

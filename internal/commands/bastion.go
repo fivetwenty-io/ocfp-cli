@@ -1,11 +1,11 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -221,7 +221,9 @@ func copyScriptToBastion(ctx *bastionContext, scriptPath, remoteScript string, l
 	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, false, "")
 	log.Debugf("Copying script via: %s", strings.Join(scpCmd, " "))
 
-	return executeSCP(scpCmd)
+	execCtx := context.Background()
+
+	return executeSCP(execCtx, scpCmd)
 }
 
 func executeRemoteScript(ctx *bastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
@@ -234,13 +236,15 @@ func executeRemoteScript(ctx *bastionContext, remoteScript, envString, operation
 	log.Infof("Executing %s on bastion", operationName)
 	log.Debugf("SSH exec: %s", strings.Join(sshCmd, " "))
 
-	return executeSSH(sshCmd)
+	execCtx := context.Background()
+
+	return executeSSH(execCtx, sshCmd)
 }
 
 func cleanupRemoteScript(ctx *bastionContext, remoteScript string, log logger.Logger) {
 	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
-	_ = executeSSH(sshCmd) // best effort
+	_ = executeSSH(context.Background(), sshCmd) // best effort
 }
 
 func buildEnvironmentVariables(log logger.Logger) string {

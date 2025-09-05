@@ -19,6 +19,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
 )
 
+const (
+    subnetStrategyTriple = "ocfp-triple"
+    roleBastion          = "bastion"
+)
+
 // Options represents bootstrap options.
 type Options struct {
 	BlocName string
@@ -245,9 +250,9 @@ func (m *Manager) renderDryRunPlan(ctx context.Context) error {
 	// Compute subnets preview
 	var subnets []subnetPreview
 
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		start := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
-		if start == "ocfp-triple" {
+    if strings.EqualFold(m.options.Provider, "stackit") {
+        start := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
+        if start == subnetStrategyTriple {
 			children := splitIntoN(parentCIDR, 4)
 			if len(children) < 4 {
 				c0 := firstChild24(parentCIDR)
@@ -358,7 +363,7 @@ func (m *Manager) renderDryRunPlan(ctx context.Context) error {
 	bastionSubnet := ""
 	if strings.EqualFold(m.options.Provider, "stackit") {
 		bastionSubnet = m.config.Name + "-ocfp-0 (virtual)"
-		if strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy)) == "ocfp-triple" {
+        if strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy)) == subnetStrategyTriple {
 			bastionSubnet = m.config.Name + "-ocfp-1 (virtual)"
 		}
 	} else {
@@ -613,7 +618,7 @@ func (m *Manager) createSubnets(ctx context.Context) error {
 
 		// Choose virtual strategy
 		start := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
-		if start == "ocfp-triple" {
+        if start == subnetStrategyTriple {
 			// Split parent into 4 equal children, take indices 1..3 (skip first)
 			children := splitIntoN(cidr, 4)
 			if len(children) < 4 {
@@ -704,9 +709,15 @@ func (m *Manager) createSubnets(ctx context.Context) error {
 			stags["environment"] = m.config.Environment
 		}
 
+		// Ensure networkID is a string
+		netID, ok := networkID.(string)
+		if !ok || netID == "" {
+			return fmt.Errorf("invalid network_id in state: %v", networkID)
+		}
+
 		createdSubnet, err := m.provider.Network().CreateSubnet(ctx, &cpi.CreateSubnetRequest{
 			Name:             subnetName,
-			NetworkID:        networkID.(string),
+			NetworkID:        netID,
 			CIDR:             subnet.CIDR,
 			AvailabilityZone: subnet.AvailabilityZone,
 			Type:             subnet.Type,
@@ -865,10 +876,16 @@ func (m *Manager) createSecurityGroups(ctx context.Context) error {
 		}
 
 		// Create security group
+		// Ensure networkID is a string
+		netID, ok := networkID.(string)
+		if !ok || netID == "" {
+			return fmt.Errorf("invalid network_id in state: %v", networkID)
+		}
+
 		createdSG, err := m.provider.Security().CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
 			Name:        sgName,
 			Description: secGroup.description,
-			NetworkID:   networkID.(string),
+			NetworkID:   netID,
 			Rules:       secGroup.rules,
 			Tags:        m.baseTags(),
 		})
@@ -1018,30 +1035,10 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			EnsureRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
 		}
 		if sr, ok := netMgr.(stackitRouterEnsure); ok {
-			if routerIPs, err := sr.EnsureRouterPublicIPs(ctx, m.config.Name, routerCount); err != nil {
-				logger.Warnf("Failed ensuring router public IPs: %v", err)
-			} else {
-				for _, routerIP := range routerIPs {
-					resName := fmt.Sprintf("%s-router-%s", m.config.Name, routerIP.Labels["index"])
-					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       routerIP.ID,
-						Type:     "public_ip",
-						Name:     resName,
-						Provider: m.options.Provider,
-						State:    "active",
-						Properties: map[string]interface{}{
-							"job":       "router",
-							"index":     routerIP.Labels["index"],
-							"address":   routerIP.Address,
-							"networkId": routerIP.NetworkID,
-						},
-						Tags: routerIP.Labels,
-					}); err != nil {
-						logger.Warnf("Failed to save router IP %s to state: %v", routerIP.ID, err)
-					}
-				}
-
-				logger.Infof("Router public IPs ensured: %d", len(routerIPs))
+			routerIPs := m.ensureAndRecordPublicIPs(ctx, "router", "%s-router-%s", func() ([]*cpi.PublicIP, error) {
+				return sr.EnsureRouterPublicIPs(ctx, m.config.Name, routerCount)
+			})
+			if len(routerIPs) > 0 {
 				allIPs = append(allIPs, routerIPs...)
 			}
 		}
@@ -1058,30 +1055,10 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			EnsureCFSSHPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
 		}
 		if sc, ok := netMgr.(stackitCFEnsure); ok {
-			if cfIPs, err := sc.EnsureCFSSHPublicIPs(ctx, m.config.Name, cfsshCount); err != nil {
-				logger.Warnf("Failed ensuring cf-ssh public IPs: %v", err)
-			} else {
-				for _, publicIP := range cfIPs {
-					resName := fmt.Sprintf("%s-cf-ssh-%s", m.config.Name, publicIP.Labels["index"])
-					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       publicIP.ID,
-						Type:     "public_ip",
-						Name:     resName,
-						Provider: m.options.Provider,
-						State:    "active",
-						Properties: map[string]interface{}{
-							"job":       "cf-ssh",
-							"index":     publicIP.Labels["index"],
-							"address":   publicIP.Address,
-							"networkId": publicIP.NetworkID,
-						},
-						Tags: publicIP.Labels,
-					}); err != nil {
-						logger.Warnf("Failed to save cf-ssh IP %s to state: %v", publicIP.ID, err)
-					}
-				}
-
-				logger.Infof("CF-SSH public IPs ensured: %d", len(cfIPs))
+			cfIPs := m.ensureAndRecordPublicIPs(ctx, "cf-ssh", "%s-cf-ssh-%s", func() ([]*cpi.PublicIP, error) {
+				return sc.EnsureCFSSHPublicIPs(ctx, m.config.Name, cfsshCount)
+			})
+			if len(cfIPs) > 0 {
 				allIPs = append(allIPs, cfIPs...)
 			}
 		}
@@ -1098,30 +1075,10 @@ func (m *Manager) createPublicIPs(ctx context.Context) error {
 			EnsureTCPRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
 		}
 		if st, ok := netMgr.(stackitTCPEnsure); ok {
-			if tcpIPs, err := st.EnsureTCPRouterPublicIPs(ctx, m.config.Name, tcpRouterCount); err != nil {
-				logger.Warnf("Failed ensuring tcp-router public IPs: %v", err)
-			} else {
-				for _, publicIP := range tcpIPs {
-					resName := fmt.Sprintf("%s-tcp-router-%s", m.config.Name, publicIP.Labels["index"])
-					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       publicIP.ID,
-						Type:     "public_ip",
-						Name:     resName,
-						Provider: m.options.Provider,
-						State:    "active",
-						Properties: map[string]interface{}{
-							"job":       "tcp-router",
-							"index":     publicIP.Labels["index"],
-							"address":   publicIP.Address,
-							"networkId": publicIP.NetworkID,
-						},
-						Tags: publicIP.Labels,
-					}); err != nil {
-						logger.Warnf("Failed to save tcp-router IP %s to state: %v", publicIP.ID, err)
-					}
-				}
-
-				logger.Infof("TCP Router public IPs ensured: %d", len(tcpIPs))
+			tcpIPs := m.ensureAndRecordPublicIPs(ctx, "tcp-router", "%s-tcp-router-%s", func() ([]*cpi.PublicIP, error) {
+				return st.EnsureTCPRouterPublicIPs(ctx, m.config.Name, tcpRouterCount)
+			})
+			if len(tcpIPs) > 0 {
 				allIPs = append(allIPs, tcpIPs...)
 			}
 		}
@@ -1168,7 +1125,47 @@ func renderPublicIPsTable(ips []*cpi.PublicIP) {
 	}
 
 	t.Sections = append(t.Sections, ui.Section{Title: "Ensured", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
-	_ = ui.Render(t, "table")
+    _ = ui.Render(t, "table")
+}
+
+// ensureAndRecordPublicIPs ensures public IPs using the provided ensure function,
+// records them in state, logs results, and returns the ensured IPs.
+func (m *Manager) ensureAndRecordPublicIPs(
+	ctx context.Context,
+	job string,
+	nameFmt string,
+	ensure func() ([]*cpi.PublicIP, error),
+) []*cpi.PublicIP {
+	ips, err := ensure()
+	if err != nil {
+		logger.Warnf("Failed ensuring %s public IPs: %v", job, err)
+
+		return nil
+	}
+
+	for _, ip := range ips {
+		resName := fmt.Sprintf(nameFmt, m.config.Name, ip.Labels["index"])
+		if err := m.stateManager.AddResource(&state.Resource{
+			ID:       ip.ID,
+			Type:     "public_ip",
+			Name:     resName,
+			Provider: m.options.Provider,
+			State:    "active",
+			Properties: map[string]interface{}{
+				"job":       job,
+				"index":     ip.Labels["index"],
+				"address":   ip.Address,
+				"networkId": ip.NetworkID,
+			},
+			Tags: ip.Labels,
+		}); err != nil {
+			logger.Warnf("Failed to save %s IP %s to state: %v", job, ip.ID, err)
+		}
+	}
+
+	logger.Infof("%s public IPs ensured: %d", job, len(ips))
+
+	return ips
 }
 
 func formatLabels(labels map[string]string) string {
@@ -1301,7 +1298,7 @@ func (m *Manager) createVolumes(ctx context.Context) error {
 			Name: volName,
 			Size: vol.size,
 			Type: vol.volType,
-			Tags: func() map[string]string { t := m.baseTags(); t["role"] = "bastion"; return t }(),
+            Tags: func() map[string]string { t := m.baseTags(); t["role"] = roleBastion; return t }(),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create volume %s: %w", volName, err)
@@ -1403,21 +1400,38 @@ func (m *Manager) createBastion(ctx context.Context) error {
 	sgID, _ := m.stateManager.GetOutput("sg_bastion_id")
 
 	// Create bastion instance
+	// Ensure required IDs are strings
+	netID, ok := networkID.(string)
+	if !ok || netID == "" {
+		return fmt.Errorf("invalid network_id in state: %v", networkID)
+	}
+
+	var subnetIDStr string
+
+	if subnetIDVal != nil {
+		var okSubnet bool
+
+		subnetIDStr, okSubnet = subnetIDVal.(string)
+		if !okSubnet {
+			return fmt.Errorf("invalid subnet_id in state: %v", subnetIDVal)
+		}
+	}
+
+	sgIDStr, ok := sgID.(string)
+	if !ok || sgIDStr == "" {
+		return fmt.Errorf("invalid sg_bastion_id in state: %v", sgID)
+	}
+
 	instance, err := m.provider.Compute().CreateInstance(ctx, &cpi.CreateInstanceRequest{
-		Name:      bastionName,
-		Flavor:    m.config.Bastion.Flavor,
-		Image:     m.config.Bastion.Image,
-		NetworkID: networkID.(string),
-		SubnetID: func() string {
-			if subnetIDVal == nil {
-				return ""
-			}
-			return subnetIDVal.(string)
-		}(),
-		SecurityGroups: []string{sgID.(string)},
+		Name:           bastionName,
+		Flavor:         m.config.Bastion.Flavor,
+		Image:          m.config.Bastion.Image,
+		NetworkID:      netID,
+		SubnetID:       subnetIDStr,
+		SecurityGroups: []string{sgIDStr},
 		KeyPair:        m.config.Name + "-bastion",
 		UserData:       generateBastionUserData(m.config),
-		Tags:           func() map[string]string { t := m.baseTags(); t["role"] = "bastion"; t["job"] = "bastion"; return t }(),
+        Tags:           func() map[string]string { t := m.baseTags(); t["role"] = roleBastion; t["job"] = roleBastion; return t }(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create bastion: %w", err)
@@ -1544,7 +1558,7 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 	// Optionally ensure a credentials group up-front (STACKIT only)
 	if m.options.Provider == "stackit" {
 		type ensureGroup interface {
-			EnsureObjectStorageCredentialsGroup(context.Context, string) (string, error)
+			EnsureObjectStorageCredentialsGroup(ctx context.Context, name string) (string, error)
 		}
 		if storageProvider, ok := storage.(ensureGroup); ok {
 			if groupID, err := storageProvider.EnsureObjectStorageCredentialsGroup(ctx, "ocfp-cli"); err == nil {
@@ -1597,11 +1611,11 @@ func (m *Manager) createBuckets(ctx context.Context) error {
 		if enablePolicies {
 			// Best-effort: ignore errors, log warnings
 			type ver interface {
-				EnableBucketVersioning(context.Context, string) error
+				EnableBucketVersioning(ctx context.Context, bucket string) error
 			}
 
 			type life interface {
-				SetBucketLifecycleNoncurrentDays(context.Context, string, int32) error
+				SetBucketLifecycleNoncurrentDays(ctx context.Context, bucket string, days int32) error
 			}
 
 			if versionProvider, ok := storage.(ver); ok {

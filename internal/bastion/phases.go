@@ -49,6 +49,7 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 
 	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
+
 	err := m.executeScript(ctx, script, "cpan-modules")
 	if err != nil {
 		return err

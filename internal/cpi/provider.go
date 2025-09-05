@@ -7,6 +7,7 @@ import (
 )
 
 // Provider is the main interface that all cloud providers must implement.
+//nolint:interfacebloat // Broad interface to cover multi-cloud functionality
 type Provider interface {
 	// Provider information
 	Name() string
@@ -29,6 +30,7 @@ type Provider interface {
 }
 
 // NetworkManager handles network-related operations.
+//nolint:interfacebloat // Aggregates common network operations
 type NetworkManager interface {
 	// VPC/Network operations
 	CreateNetwork(ctx context.Context, req *CreateNetworkRequest) (*Network, error)
@@ -76,6 +78,7 @@ type NetworkManager interface {
 }
 
 // ComputeManager handles compute-related operations.
+//nolint:interfacebloat // Aggregates common compute operations
 type ComputeManager interface {
 	// Instance operations
 	CreateInstance(ctx context.Context, req *CreateInstanceRequest) (*Instance, error)
@@ -103,6 +106,7 @@ type ComputeManager interface {
 }
 
 // StorageManager handles storage-related operations.
+//nolint:interfacebloat // Aggregates common storage operations
 type StorageManager interface {
 	// Volume operations
 	CreateVolume(ctx context.Context, req *CreateVolumeRequest) (*Volume, error)
@@ -128,6 +132,7 @@ type StorageManager interface {
 }
 
 // SecurityManager handles security-related operations.
+//nolint:interfacebloat // Aggregates common security operations
 type SecurityManager interface {
 	// Security group operations
 	CreateSecurityGroup(ctx context.Context, req *CreateSecurityGroupRequest) (*SecurityGroup, error)
@@ -142,6 +147,7 @@ type SecurityManager interface {
 }
 
 // LoadBalancerManager handles load balancer operations.
+//nolint:interfacebloat // Aggregates common load-balancer operations
 type LoadBalancerManager interface {
 	CreateLoadBalancer(ctx context.Context, req *CreateLoadBalancerRequest) (*LoadBalancer, error)
 	GetLoadBalancer(ctx context.Context, id string) (*LoadBalancer, error)

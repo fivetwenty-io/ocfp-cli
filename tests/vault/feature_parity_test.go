@@ -15,6 +15,8 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 		t.Skip("Vault server not available, skipping feature parity tests")
 	}
 
+	t.Parallel()
+
 	// Create test configuration that matches Perl test scenarios
 	cfg := createStackitTestConfig()
 	blocName := "parity-test"
@@ -31,6 +33,7 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	}()
 
 	t.Run("VaultPopulateFullConfiguration", func(t *testing.T) {
+		t.Parallel()
 		// Test dry-run populate (should not fail)
 		opts := &vault.PopulateOptions{
 			DryRun: true,
@@ -48,6 +51,8 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	})
 
 	t.Run("VaultPopulatePublicIPs", func(t *testing.T) {
+		t.Parallel()
+
 		opts := &vault.PopulateOptions{
 			Subcommand: "public-ips",
 			DryRun:     true,
@@ -63,6 +68,7 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	})
 
 	t.Run("VaultPathStructure", func(t *testing.T) {
+		t.Parallel()
 		// Test that vault paths match Perl implementation exactly
 		pathBuilder := vault.NewPathBuilder(cfg, blocName)
 
@@ -93,6 +99,8 @@ func TestFeatureParitySTACKIT(t *testing.T) {
 	})
 
 	t.Run("SecretGeneration", func(t *testing.T) {
+		t.Parallel()
+
 		generator := vault.NewSecretGenerator()
 
 		// Test inception secrets match expected structure
@@ -151,6 +159,8 @@ func TestStackitProviderSpecific(t *testing.T) {
 		t.Skip("Vault server not available, skipping STACKIT provider tests")
 	}
 
+	t.Parallel()
+
 	cfg := createStackitTestConfig()
 	client := createTestClient(t)
 
@@ -165,6 +175,8 @@ func TestStackitProviderSpecific(t *testing.T) {
 	provider := vault.NewStackitVaultProvider(cfg, safe, "stackit-test")
 
 	t.Run("SaveConfigToVault", func(t *testing.T) {
+		t.Parallel()
+
 		err := provider.SaveConfigToVault()
 		require.NoError(t, err)
 
@@ -176,6 +188,8 @@ func TestStackitProviderSpecific(t *testing.T) {
 	})
 
 	t.Run("ConfigurePublicIPs", func(t *testing.T) {
+		t.Parallel()
+
 		err := provider.ConfigurePublicIPs()
 		require.NoError(t, err)
 
@@ -197,10 +211,13 @@ func TestIntegrationWorkflow(t *testing.T) {
 		t.Skip("Vault server not available, skipping integration workflow tests")
 	}
 
+	t.Parallel()
+
 	cfg := createStackitTestConfig()
 	blocName := "integration-test"
 
 	t.Run("CompleteVaultWorkflow", func(t *testing.T) {
+		t.Parallel()
 		// Step 1: Initialize vault manager
 		manager, err := vault.NewManagerFromEnv(cfg, blocName)
 		require.NoError(t, err)

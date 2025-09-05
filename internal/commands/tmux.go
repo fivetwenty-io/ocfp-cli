@@ -1,8 +1,9 @@
 package commands
 
 import (
-	"fmt"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +49,7 @@ func runTmuxCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid script path: %w", err)
 	}
 
-	execCmd := exec.Command(scriptPath) // #nosec G204 - scriptPath is validated above
+	execCmd := exec.CommandContext(context.Background(), scriptPath) // #nosec G204 - scriptPath is validated above
 	execCmd.Stdout = os.Stdout
 	execCmd.Stderr = os.Stderr
 	execCmd.Stdin = os.Stdin

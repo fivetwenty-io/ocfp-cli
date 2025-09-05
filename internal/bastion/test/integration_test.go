@@ -18,6 +18,8 @@ func TestFullDryRunIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	t.Parallel()
+
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -70,6 +72,8 @@ func TestFullDryRunIntegration(t *testing.T) {
 
 // TestCheckpointFunctionality tests checkpoint save/load functionality.
 func TestCheckpointFunctionality(t *testing.T) {
+	t.Parallel()
+
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -167,6 +171,8 @@ func TestCheckpointFunctionality(t *testing.T) {
 
 // TestErrorClassification tests error classification and retry logic.
 func TestErrorClassification(t *testing.T) {
+	t.Parallel()
+
 	errorHandler := bastion.NewErrorHandler()
 
 	testCases := []struct {
@@ -208,16 +214,19 @@ func TestErrorClassification(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			err := fmt.Errorf("%s", testCase.error)
+		tc := testCase
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := fmt.Errorf("%s", tc.error)
 			bastionErr := errorHandler.ClassifyError(err, "test_phase", "test_command")
 
-			if bastionErr.Type != testCase.expectedType {
-				t.Errorf("Expected error type %s, got %s", testCase.expectedType, bastionErr.Type)
+			if bastionErr.Type != tc.expectedType {
+				t.Errorf("Expected error type %s, got %s", tc.expectedType, bastionErr.Type)
 			}
 
-			if bastionErr.Retryable != testCase.retryable {
-				t.Errorf("Expected retryable %t, got %t", testCase.retryable, bastionErr.Retryable)
+			if bastionErr.Retryable != tc.retryable {
+				t.Errorf("Expected retryable %t, got %t", tc.retryable, bastionErr.Retryable)
 			}
 
 			if len(bastionErr.Suggestions) == 0 {
@@ -229,6 +238,8 @@ func TestErrorClassification(t *testing.T) {
 
 // TestProgressReporting tests progress reporting functionality.
 func TestProgressReporting(t *testing.T) {
+	t.Parallel()
+
 	var output bytes.Buffer
 
 	progress := &bastion.ProvisioningProgress{
@@ -266,6 +277,8 @@ func TestProgressReporting(t *testing.T) {
 
 // TestStatusReporting tests status reporting functionality.
 func TestStatusReporting(t *testing.T) {
+	t.Parallel()
+
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -283,11 +296,11 @@ func TestStatusReporting(t *testing.T) {
 		t.Fatalf("Failed to get current status: %v", err)
 	}
 
-	if status["completed"].(bool) {
+	if completed, _ := status["completed"].(bool); completed {
 		t.Error("Expected status to show not completed")
 	}
 
-	if status["progress"].(float64) != 0.0 {
+	if prog, _ := status["progress"].(float64); prog != 0.0 {
 		t.Error("Expected 0% progress with no checkpoint")
 	}
 

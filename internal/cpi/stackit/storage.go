@@ -109,7 +109,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 	items, _ := resp.GetItemsOk()
 
-	var out []*cpi.Volume
+    out := make([]*cpi.Volume, 0, len(items))
 	for _, v := range items {
 		vol := &cpi.Volume{ID: stringOrEmpty(v.GetIdOk()), Name: stringOrEmpty(v.GetNameOk())}
 		if size, ok := v.GetSizeOk(); ok {
@@ -263,7 +263,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]
 
 	items, _ := resp.GetItemsOk()
 
-	var out []*cpi.Snapshot
+    out := make([]*cpi.Snapshot, 0, len(items))
 	for _, s := range items {
 		out = append(out, &cpi.Snapshot{ID: stringOrEmpty(s.GetIdOk()), Name: stringOrEmpty(s.GetNameOk()), VolumeID: stringOrEmpty(s.GetVolumeIdOk())})
 	}

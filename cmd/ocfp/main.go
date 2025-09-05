@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/ocfp/ocfp-cli-go/internal/cli"
+    "github.com/ocfp/ocfp-cli-go/internal/cli"
 )
 
 func main() {
-	// Execute the CLI
-	cli.Execute()
+    // Execute the CLI (constructs and runs root command)
+    cli.Execute()
 }

@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 
 // TestPathBuilder tests vault path construction.
 func TestPathBuilder(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -49,6 +52,8 @@ func TestPathBuilder(t *testing.T) {
 
 // TestPathBuilderParsing tests path parsing functionality.
 func TestPathBuilderParsing(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{Name: "test-bloc"}
 	pathBuilder := NewPathBuilder(cfg, "test-bloc")
 
@@ -74,6 +79,8 @@ func TestPathBuilderParsing(t *testing.T) {
 
 // TestSecretGenerator tests secret generation.
 func TestSecretGenerator(t *testing.T) {
+	t.Parallel()
+
 	generator := NewSecretGenerator()
 
 	// Test simple password generation
@@ -114,6 +121,8 @@ func TestSecretGenerator(t *testing.T) {
 
 // TestInceptionSecrets tests inception secret generation.
 func TestInceptionSecrets(t *testing.T) {
+	t.Parallel()
+
 	generator := NewSecretGenerator()
 
 	secrets, err := generator.GenerateInceptionSecrets("test-deployment")
@@ -142,6 +151,8 @@ func TestInceptionSecrets(t *testing.T) {
 
 // TestDefaultSecrets tests default secret generation.
 func TestDefaultSecrets(t *testing.T) {
+	t.Parallel()
+
 	generator := NewSecretGenerator()
 
 	secrets, err := generator.GenerateDefaultSecrets("test-deployment")
@@ -167,6 +178,7 @@ func TestDefaultSecrets(t *testing.T) {
 
 // TestRetryLogic tests retry functionality.
 func TestRetryLogic(t *testing.T) {
+	t.Parallel()
 	// Test successful operation (no retry needed)
 	attempts := 0
 	err := WithRetry(func() error {
@@ -206,6 +218,7 @@ func TestRetryLogic(t *testing.T) {
 
 // TestIsRetryable tests error classification.
 func TestIsRetryable(t *testing.T) {
+	t.Parallel()
 	// Test retryable errors
 	retryableErrors := []string{
 		"connection refused",
@@ -240,6 +253,8 @@ func TestIsRetryable(t *testing.T) {
 
 // TestStackitProvider tests STACKIT provider functionality.
 func TestStackitProvider(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Name:                "stackit-test",
 		Provider:            "stackit",

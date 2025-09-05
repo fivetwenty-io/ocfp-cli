@@ -281,26 +281,27 @@ func (sr *StatusReporter) PrintStatus(output io.Writer) error {
 		return err
 	}
 
-	completed := status["completed"].(bool)
-	progress := status["progress"].(float64)
-	completedSteps := status["completed_steps"].(int)
-	totalSteps := status["total_steps"].(int)
+    // Safely extract typed values from status map
+    completed, _ := status["completed"].(bool)
+    prog, _ := status["progress"].(float64)
+    completedSteps, _ := status["completed_steps"].(int)
+    totalSteps, _ := status["total_steps"].(int)
 
 	_, _ = output.Write([]byte("Bastion Initialization Status\n"))
 	_, _ = output.Write([]byte("============================\n\n"))
 
-	if completed {
-		_, _ = output.Write([]byte("✅ Status: COMPLETED\n"))
-	} else if completedSteps > 0 {
-		_, _ = output.Write([]byte("🔄 Status: IN PROGRESS\n"))
-	} else {
-		_, _ = output.Write([]byte("⏳ Status: NOT STARTED\n"))
-	}
+		switch {
+		case completed:
+			_, _ = output.Write([]byte("✅ Status: COMPLETED\n"))
+		case completedSteps > 0:
+			_, _ = output.Write([]byte("🔄 Status: IN PROGRESS\n"))
+		default:
+			_, _ = output.Write([]byte("⏳ Status: NOT STARTED\n"))
+		}
 
-	if totalSteps > 0 {
-		_, _ = fmt.Fprintf(output, "📊 Progress: %.1f%% (%d/%d phases)\n",
-			progress, completedSteps, totalSteps)
-	}
+    if totalSteps > 0 {
+        _, _ = fmt.Fprintf(output, "📊 Progress: %.1f%% (%d/%d phases)\n", prog, completedSteps, totalSteps)
+    }
 
 	if startTime, ok := status["start_time"].(time.Time); ok && !startTime.IsZero() {
 		_, _ = fmt.Fprintf(output, "⏰ Started: %s\n",

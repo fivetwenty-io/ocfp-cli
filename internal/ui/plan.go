@@ -28,7 +28,7 @@ type Section struct {
 
 // ASCII controls whether Render prints ASCII-only tables.
 // Defaults to false (use Unicode box-drawing where supported).
-var ASCII bool
+var ASCII bool //nolint:gochecknoglobals // global rendering toggle for UI tables
 
 // SetASCII sets ASCII-only rendering for tables.
 func SetASCII(on bool) { ASCII = on }
@@ -176,13 +176,13 @@ func boxifyUnicode(s string) string {
 	replaceLine := func(ln string, start, middle, end rune) string {
 		rs := []rune(ln)
 		// replace first intersection
-		for i := 0; i < len(rs); i++ {
-			if rs[i] == '┼' || rs[i] == '+' {
-				rs[i] = start
+        for i := range rs {
+            if rs[i] == '┼' || rs[i] == '+' {
+                rs[i] = start
 
-				break
-			}
-		}
+                break
+            }
+        }
 		// replace last intersection
 		for i := len(rs) - 1; i >= 0; i-- {
 			if rs[i] == '┼' || rs[i] == '+' {
@@ -193,12 +193,12 @@ func boxifyUnicode(s string) string {
 		}
 		// replace internal intersections
 		// skip first and last positions touched above
-		// do a second pass to swap remaining intersections
-		for i := 0; i < len(rs); i++ {
-			if rs[i] == '┼' || rs[i] == '+' {
-				rs[i] = middle
-			}
-		}
+        // do a second pass to swap remaining intersections
+        for i := range rs {
+            if rs[i] == '┼' || rs[i] == '+' {
+                rs[i] = middle
+            }
+        }
 
 		return string(rs)
 	}

@@ -11,7 +11,9 @@ import (
 )
 
 func TestConfigLoading(t *testing.T) {
-	t.Run("LoadValidConfig", func(t *testing.T) {
+    t.Parallel()
+    t.Run("LoadValidConfig", func(t *testing.T) {
+        t.Parallel()
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.yml")
 
@@ -40,7 +42,8 @@ blocs:
 		assert.Equal(t, "test-key", cfg.AuthToken)
 	})
 
-	t.Run("LoadWithoutEnvironmentVariables", func(t *testing.T) {
+    t.Run("LoadWithoutEnvironmentVariables", func(t *testing.T) {
+        t.Parallel()
 		// The config loader doesn't expand environment variables
 		// This test just ensures config can be loaded with ${} syntax
 		tmpDir := t.TempDir()
@@ -63,7 +66,8 @@ blocs:
 		assert.Equal(t, "${OCFP_TEST_VAR}", cfg.Name)
 	})
 
-	t.Run("BlocConfiguration", func(t *testing.T) {
+    t.Run("BlocConfiguration", func(t *testing.T) {
+        t.Parallel()
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.yml")
 
@@ -100,7 +104,8 @@ blocs:
 		assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
 	})
 
-	t.Run("NetworkConfiguration", func(t *testing.T) {
+    t.Run("NetworkConfiguration", func(t *testing.T) {
+        t.Parallel()
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.yml")
 
@@ -129,7 +134,8 @@ blocs:
 		assert.Len(t, cfg.Network.DNS, 2)
 	})
 
-	t.Run("BastionConfiguration", func(t *testing.T) {
+    t.Run("BastionConfiguration", func(t *testing.T) {
+        t.Parallel()
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.yml")
 

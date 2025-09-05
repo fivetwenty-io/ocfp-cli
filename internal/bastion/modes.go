@@ -237,6 +237,7 @@ func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manage
 
 		// Create checkpoint
 		manager.progress.Checkpoints[phase.name] = true
+
 		err = manager.saveCheckpoint()
 		if err != nil {
 			le.log.Warn("Failed to save checkpoint", "error", err)

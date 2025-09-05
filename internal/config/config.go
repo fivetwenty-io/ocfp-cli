@@ -89,6 +89,9 @@ type BlobstoreConfig struct {
 	CFAppPackages BucketSettings `mapstructure:"cfAppPackages" yaml:"cfAppPackages"`
 }
 
+// Common default network CIDR for several providers.
+const defaultNetworkCIDR = "10.0.0.0/16"
+
 // BucketSettings specify data-plane policies.
 type BucketSettings struct {
 	Versioning     bool `mapstructure:"versioning"     yaml:"versioning"`
@@ -220,8 +223,8 @@ type AvailabilityZone struct {
 
 // Configuration caching for performance optimization.
 var (
-	configMutex   sync.RWMutex
-	cachedConfigs = make(map[string]*cachedConfig)
+	configMutex   sync.RWMutex                     //nolint:gochecknoglobals // package-level cache lock for performance
+	cachedConfigs = make(map[string]*cachedConfig) //nolint:gochecknoglobals // package-level cache for configs
 )
 
 type cachedConfig struct {
@@ -264,6 +267,7 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	if configPath != "" {
 		// Load the entire config file
 		configFileData := &ConfigFile{}
+
 		err := loadFromFile(configPath, configFileData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
@@ -295,8 +299,8 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	if provider == "" {
 		provider = viper.GetString("iaas")
 	}
-	err := applyDefaults(cfg, provider)
 
+	err := applyDefaults(cfg, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -453,9 +457,9 @@ func applyStackitDefaults(cfg *Config) {
 
 // applyOpenStackDefaults applies OpenStack-specific defaults.
 func applyOpenStackDefaults(cfg *Config) {
-	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-		cfg.Network.NetworkCIDR = "10.0.0.0/16"
-	}
+    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+        cfg.Network.NetworkCIDR = defaultNetworkCIDR
+    }
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "t1.small"
@@ -464,9 +468,9 @@ func applyOpenStackDefaults(cfg *Config) {
 
 // applyAWSDefaults applies AWS-specific defaults.
 func applyAWSDefaults(cfg *Config) {
-	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-		cfg.Network.NetworkCIDR = "10.0.0.0/16"
-	}
+    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+        cfg.Network.NetworkCIDR = defaultNetworkCIDR
+    }
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "t3.small"
@@ -475,9 +479,9 @@ func applyAWSDefaults(cfg *Config) {
 
 // applyAzureDefaults applies Azure-specific defaults.
 func applyAzureDefaults(cfg *Config) {
-	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-		cfg.Network.NetworkCIDR = "10.0.0.0/16"
-	}
+    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+        cfg.Network.NetworkCIDR = defaultNetworkCIDR
+    }
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "Standard_B2s"
@@ -486,9 +490,9 @@ func applyAzureDefaults(cfg *Config) {
 
 // applyGCPDefaults applies GCP-specific defaults.
 func applyGCPDefaults(cfg *Config) {
-	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-		cfg.Network.NetworkCIDR = "10.0.0.0/16"
-	}
+    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+        cfg.Network.NetworkCIDR = defaultNetworkCIDR
+    }
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "e2-small"
