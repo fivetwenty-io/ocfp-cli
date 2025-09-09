@@ -19,7 +19,8 @@ type Registry struct {
 
 // globalRegistry is the global provider registry.
 var globalRegistry = &Registry{ //nolint:gochecknoglobals // singleton registry for provider factories
-    providers: make(map[string]ProviderFactory),
+	providers: make(map[string]ProviderFactory),
+	mu:        sync.RWMutex{},
 }
 
 // Register registers a provider factory.
@@ -28,7 +29,7 @@ func Register(name string, factory ProviderFactory) error {
 	defer globalRegistry.mu.Unlock()
 
 	if _, exists := globalRegistry.providers[name]; exists {
-		return fmt.Errorf("provider %s already registered", name)
+		return ErrProviderAlreadyRegistered(name)
 	}
 
 	globalRegistry.providers[name] = factory
@@ -44,14 +45,15 @@ func Get(name string) (ProviderFactory, error) {
 
 	factory, exists := globalRegistry.providers[name]
 	if !exists {
-		return nil, fmt.Errorf("provider %s not found", name)
+		return nil, ErrProviderNotFound(name)
 	}
 
 	return factory, nil
 }
 
 // GetProvider creates a new provider instance by name.
-//nolint:ireturn // returning Provider interface is intentional for registry API
+//
+//nolint:ireturn // Returns interface by design for provider abstraction
 func GetProvider(name string) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {
@@ -76,7 +78,8 @@ func List() []string {
 }
 
 // CreateProvider creates a provider instance by name.
-//nolint:ireturn // returning Provider interface is intentional for registry API
+//
+//nolint:ireturn // Returns interface by design for provider abstraction
 func CreateProvider(ctx context.Context, name string, config interface{}) (Provider, error) {
 	factory, err := Get(name)
 	if err != nil {
@@ -89,7 +92,8 @@ func CreateProvider(ctx context.Context, name string, config interface{}) (Provi
 	}
 
 	// Initialize the provider
-	if err := provider.Initialize(ctx, config); err != nil {
+	err = provider.Initialize(ctx, config)
+	if err != nil {
 		return nil, fmt.Errorf("failed to initialize provider %s: %w", name, err)
 	}
 

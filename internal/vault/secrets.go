@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -14,6 +13,32 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
+)
+
+const (
+	// Password generation.
+	DefaultPasswordLength = 32
+	SimplePasswordLength  = 24
+
+	// Key generation.
+	DefaultRSAKeySize = 2048
+	UUIDByteLength    = 16
+	DefaultKeyLength  = 32
+	JWTKeyLength      = 64
+
+	// UUID version and variant bits.
+	UUIDVersion4    = 0x40
+	UUIDVariant10   = 0x80
+	UUIDVersionMask = 0x0f
+	UUIDVariantMask = 0x3f
+
+	// Encryption key defaults.
+	BlobstoreKeyLength = 32
+	DBKeyLength        = 32
+	Encryption512Bit   = 64
+
+	// IP addressing.
+	DefaultInternalIP = "10.0.0.6"
 )
 
 // SecretGenerator provides utilities for generating various types of secrets.
@@ -41,7 +66,7 @@ type PasswordOptions struct {
 // DefaultPasswordOptions returns sensible defaults for password generation.
 func DefaultPasswordOptions() *PasswordOptions {
 	return &PasswordOptions{
-		Length:           32,
+		Length:           DefaultPasswordLength,
 		IncludeUpper:     true,
 		IncludeLower:     true,
 		IncludeNumbers:   true,
@@ -57,7 +82,7 @@ func (sg *SecretGenerator) GeneratePassword(opts *PasswordOptions) (string, erro
 	}
 
 	if opts.Length <= 0 {
-		return "", errors.New("password length must be positive")
+		return "", ErrPasswordLengthMustBePositive
 	}
 
 	// Build character set
@@ -96,20 +121,20 @@ func (sg *SecretGenerator) GeneratePassword(opts *PasswordOptions) (string, erro
 	}
 
 	if charset == "" {
-		return "", errors.New("no character types selected for password generation")
+		return "", ErrNoCharacterTypesSelectedForPassword
 	}
 
 	// Generate password
 	password := make([]byte, opts.Length)
 	charsetLen := big.NewInt(int64(len(charset)))
 
-	for i := range opts.Length {
+	for index := range opts.Length {
 		randomIndex, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate random number: %w", err)
 		}
 
-		password[i] = charset[randomIndex.Int64()]
+		password[index] = charset[randomIndex.Int64()]
 	}
 
 	sg.logger.Debug("Generated password", "length", opts.Length)
@@ -133,11 +158,11 @@ type KeyPairOptions struct {
 }
 
 // GenerateSSHKeyPair generates an SSH key pair.
-func (sg *SecretGenerator) GenerateSSHKeyPair(opts *KeyPairOptions) (publicKey, privateKey string, err error) {
+func (sg *SecretGenerator) GenerateSSHKeyPair(opts *KeyPairOptions) (string, string, error) {
 	if opts == nil {
 		opts = &KeyPairOptions{
 			KeyType: "rsa",
-			KeySize: 2048,
+			KeySize: DefaultRSAKeySize,
 			Comment: fmt.Sprintf("ocfp-generated-%d", time.Now().Unix()),
 		}
 	}
@@ -146,60 +171,25 @@ func (sg *SecretGenerator) GenerateSSHKeyPair(opts *KeyPairOptions) (publicKey, 
 	case "rsa":
 		return sg.generateRSAKeyPair(opts)
 	case "ed25519":
-		return "", "", errors.New("ed25519 key generation not yet implemented")
+		return "", "", ErrEd25519KeyGenerationNotImplemented
 	default:
-		return "", "", fmt.Errorf("unsupported key type: %s", opts.KeyType)
+		return "", "", ErrUnsupportedKeyType(opts.KeyType)
 	}
-}
-
-// generateRSAKeyPair generates an RSA SSH key pair.
-func (sg *SecretGenerator) generateRSAKeyPair(opts *KeyPairOptions) (string, string, error) {
-	keySize := opts.KeySize
-	if keySize == 0 {
-		keySize = 2048
-	}
-
-	// Generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, keySize)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to generate RSA key: %w", err)
-	}
-
-	// Encode private key to PEM
-	privateKeyPEM := &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-	}
-	privateKeyStr := string(pem.EncodeToMemory(privateKeyPEM))
-
-	// Generate public key
-	publicKeyRaw, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	publicKeyPEM := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: publicKeyRaw,
-	}
-	publicKeyStr := string(pem.EncodeToMemory(publicKeyPEM))
-
-	sg.logger.Debug("Generated RSA key pair", "size", keySize, "comment", opts.Comment)
-
-	return publicKeyStr, privateKeyStr, nil
 }
 
 // GenerateUUID generates a UUID-like string for identifiers.
 func (sg *SecretGenerator) GenerateUUID() (string, error) {
 	// Generate 16 random bytes
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
+	bytes := make([]byte, UUIDByteLength)
+
+	_, err := rand.Read(bytes)
+	if err != nil {
 		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
 	// Set version (4) and variant bits
-	bytes[6] = (bytes[6] & 0x0f) | 0x40 // Version 4
-	bytes[8] = (bytes[8] & 0x3f) | 0x80 // Variant 10
+	bytes[6] = (bytes[6] & UUIDVersionMask) | UUIDVersion4  // Version 4
+	bytes[8] = (bytes[8] & UUIDVariantMask) | UUIDVariant10 // Variant 10
 
 	return fmt.Sprintf("%x-%x-%x-%x-%x",
 		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16]), nil
@@ -212,7 +202,9 @@ func (sg *SecretGenerator) GenerateEncryptionKey(length int) (string, error) {
 	}
 
 	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
+
+	_, err := rand.Read(bytes)
+	if err != nil {
 		return "", fmt.Errorf("failed to generate encryption key: %w", err)
 	}
 
@@ -222,7 +214,7 @@ func (sg *SecretGenerator) GenerateEncryptionKey(length int) (string, error) {
 
 // GenerateJWTSecret generates a secret suitable for JWT signing.
 func (sg *SecretGenerator) GenerateJWTSecret() (string, error) {
-	return sg.GenerateEncryptionKey(64) // 512-bit secret
+	return sg.GenerateEncryptionKey(Encryption512Bit) // 512-bit secret
 }
 
 // InceptionSecrets holds the secrets generated for inception.
@@ -246,55 +238,26 @@ type InceptionSecrets struct {
 func (sg *SecretGenerator) GenerateInceptionSecrets(deploymentName string) (*InceptionSecrets, error) {
 	sg.logger.Info("Generating inception secrets", "deployment", deploymentName)
 
-	secrets := &InceptionSecrets{
-		DeploymentName: deploymentName,
-		InceptionDate:  time.Now().Format(time.RFC3339),
+	secrets := sg.createInceptionSecretsTemplate(deploymentName)
+
+	err := sg.generateCorePasswords(secrets)
+	if err != nil {
+		return nil, err
 	}
 
-	var err error
-
-	// Core passwords
-	if secrets.AdminPassword, err = sg.GenerateSimplePassword(32); err != nil {
-		return nil, fmt.Errorf("failed to generate admin password: %w", err)
+	err = sg.generateDatabasePasswords(secrets)
+	if err != nil {
+		return nil, err
 	}
 
-	if secrets.DirectorPassword, err = sg.GenerateSimplePassword(32); err != nil {
-		return nil, fmt.Errorf("failed to generate director password: %w", err)
+	err = sg.generateServicePasswords(secrets)
+	if err != nil {
+		return nil, err
 	}
 
-	// Database passwords
-	if secrets.PostgresPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate postgres password: %w", err)
-	}
-
-	if secrets.MySQLPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate mysql password: %w", err)
-	}
-
-	// Service passwords
-	if secrets.NatsPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate nats password: %w", err)
-	}
-
-	if secrets.RedisPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate redis password: %w", err)
-	}
-
-	if secrets.RegistryPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate registry password: %w", err)
-	}
-
-	if secrets.HealthMonitorPassword, err = sg.GenerateSimplePassword(24); err != nil {
-		return nil, fmt.Errorf("failed to generate health monitor password: %w", err)
-	}
-
-	// Encryption keys
-	if secrets.BlobstoreEncryptionKey, err = sg.GenerateEncryptionKey(32); err != nil {
-		return nil, fmt.Errorf("failed to generate blobstore encryption key: %w", err)
-	}
-
-	if secrets.DBEncryptionKey, err = sg.GenerateEncryptionKey(32); err != nil {
-		return nil, fmt.Errorf("failed to generate db encryption key: %w", err)
+	err = sg.generateEncryptionKeys(secrets)
+	if err != nil {
+		return nil, err
 	}
 
 	sg.logger.Info("Successfully generated inception secrets", "deployment", deploymentName)
@@ -339,39 +302,143 @@ func (sg *SecretGenerator) GenerateDefaultSecrets(deploymentName string) (*Defau
 	sg.logger.Info("Generating default secrets", "deployment", deploymentName)
 
 	secrets := &DefaultSecrets{
-		DeploymentName: deploymentName,
-		DirectorName:   deploymentName + "-bosh",
-		InternalIP:     "10.0.0.6", // Default from Perl implementation
+		AdminPassword:            "",
+		UAAAdminClientSecret:     "",
+		CredhubAdminClientSecret: "",
+		NatsPassword:             "",
+		PostgresPassword:         "",
+		BlobstoreSecret:          "",
+		DeploymentName:           deploymentName,
+		DirectorName:             deploymentName + "-bosh",
+		InternalIP:               "10.0.0.6", // Default from Perl implementation
 	}
 
 	var err error
-	if secrets.AdminPassword, err = sg.GenerateSimplePassword(32); err != nil {
+
+	secrets.AdminPassword, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate admin password: %w", err)
 	}
 
-	if secrets.UAAAdminClientSecret, err = sg.GenerateSimplePassword(32); err != nil {
+	secrets.UAAAdminClientSecret, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate UAA admin client secret: %w", err)
 	}
 
-	if secrets.CredhubAdminClientSecret, err = sg.GenerateSimplePassword(32); err != nil {
+	secrets.CredhubAdminClientSecret, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate Credhub admin client secret: %w", err)
 	}
 
-	if secrets.NatsPassword, err = sg.GenerateSimplePassword(24); err != nil {
+	secrets.NatsPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate NATS password: %w", err)
 	}
 
-	if secrets.PostgresPassword, err = sg.GenerateSimplePassword(24); err != nil {
+	secrets.PostgresPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate Postgres password: %w", err)
 	}
 
-	if secrets.BlobstoreSecret, err = sg.GenerateSimplePassword(32); err != nil {
+	secrets.BlobstoreSecret, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate blobstore secret: %w", err)
 	}
 
 	sg.logger.Info("Successfully generated default secrets", "deployment", deploymentName)
 
 	return secrets, nil
+}
+
+func (sg *SecretGenerator) createInceptionSecretsTemplate(deploymentName string) *InceptionSecrets {
+	return &InceptionSecrets{
+		AdminPassword:          "",
+		DirectorPassword:       "",
+		PostgresPassword:       "",
+		MySQLPassword:          "",
+		NatsPassword:           "",
+		RedisPassword:          "",
+		RegistryPassword:       "",
+		HealthMonitorPassword:  "",
+		BlobstoreEncryptionKey: "",
+		DBEncryptionKey:        "",
+		DeploymentName:         deploymentName,
+		InceptionDate:          time.Now().Format(time.RFC3339),
+	}
+}
+
+func (sg *SecretGenerator) generateCorePasswords(secrets *InceptionSecrets) error {
+	var err error
+
+	secrets.AdminPassword, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate admin password: %w", err)
+	}
+
+	secrets.DirectorPassword, err = sg.GenerateSimplePassword(DefaultPasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate director password: %w", err)
+	}
+
+	return nil
+}
+
+func (sg *SecretGenerator) generateDatabasePasswords(secrets *InceptionSecrets) error {
+	var err error
+
+	secrets.PostgresPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate postgres password: %w", err)
+	}
+
+	secrets.MySQLPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate mysql password: %w", err)
+	}
+
+	return nil
+}
+
+func (sg *SecretGenerator) generateServicePasswords(secrets *InceptionSecrets) error {
+	var err error
+
+	secrets.NatsPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate nats password: %w", err)
+	}
+
+	secrets.RedisPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate redis password: %w", err)
+	}
+
+	secrets.RegistryPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate registry password: %w", err)
+	}
+
+	secrets.HealthMonitorPassword, err = sg.GenerateSimplePassword(SimplePasswordLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate health monitor password: %w", err)
+	}
+
+	return nil
+}
+
+func (sg *SecretGenerator) generateEncryptionKeys(secrets *InceptionSecrets) error {
+	var err error
+
+	secrets.BlobstoreEncryptionKey, err = sg.GenerateEncryptionKey(BlobstoreKeyLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate blobstore encryption key: %w", err)
+	}
+
+	secrets.DBEncryptionKey, err = sg.GenerateEncryptionKey(BlobstoreKeyLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate db encryption key: %w", err)
+	}
+
+	return nil
 }
 
 // ToMap converts DefaultSecrets to a map for vault storage.
@@ -387,4 +454,43 @@ func (ds *DefaultSecrets) ToMap() map[string]interface{} {
 		"director_name":               ds.DirectorName,
 		"internal_ip":                 ds.InternalIP,
 	}
+}
+
+// generateRSAKeyPair generates an RSA SSH key pair.
+func (sg *SecretGenerator) generateRSAKeyPair(opts *KeyPairOptions) (string, string, error) {
+	keySize := opts.KeySize
+	if keySize == 0 {
+		keySize = DefaultRSAKeySize
+	}
+
+	// Generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, keySize)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate RSA key: %w", err)
+	}
+
+	// Encode private key to PEM
+	privateKeyPEM := &pem.Block{
+		Type:    "RSA PRIVATE KEY",
+		Headers: nil,
+		Bytes:   x509.MarshalPKCS1PrivateKey(privateKey),
+	}
+	privateKeyStr := string(pem.EncodeToMemory(privateKeyPEM))
+
+	// Generate public key
+	publicKeyRaw, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	publicKeyPEM := &pem.Block{
+		Type:    "PUBLIC KEY",
+		Headers: nil,
+		Bytes:   publicKeyRaw,
+	}
+	publicKeyStr := string(pem.EncodeToMemory(publicKeyPEM))
+
+	sg.logger.Debug("Generated RSA key pair", "size", keySize, "comment", opts.Comment)
+
+	return publicKeyStr, privateKeyStr, nil
 }

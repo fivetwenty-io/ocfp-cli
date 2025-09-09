@@ -13,6 +13,36 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// File permissions.
+	checkpointDirMode  = 0750
+	checkpointFileMode = 0600
+
+	// Progress calculation.
+	percentageMultiplier = 100
+)
+
+// Checkpoint validation errors.
+func ErrUnsupportedCheckpointVersion(version string) error {
+	return fmt.Errorf("unsupported checkpoint version: %s", version) //nolint:err113 // dynamic error with context
+}
+
+func ErrCheckpointBlocNameMismatch(got, expected string) error {
+	return fmt.Errorf("checkpoint bloc name mismatch: got %s, expected %s", got, expected) //nolint:err113 // dynamic error with context
+}
+
+func ErrCheckpointProviderMismatch(got, expected string) error {
+	return fmt.Errorf("checkpoint provider mismatch: got %s, expected %s", got, expected) //nolint:err113 // dynamic error with context
+}
+
+func ErrCheckpointTooOld(age string) error {
+	return fmt.Errorf("checkpoint is too old: %s", age) //nolint:err113 // dynamic error with context
+}
+
+func ErrInvalidCheckpointSteps(completed, total int) error {
+	return fmt.Errorf("invalid checkpoint: completed steps (%d) > total steps (%d)", completed, total) //nolint:err113 // dynamic error with context
+}
+
 // CheckpointManager handles saving and loading provisioning state.
 type CheckpointManager struct {
 	config        *config.Config
@@ -50,7 +80,8 @@ func NewCheckpointManager(cfg *config.Config) *CheckpointManager {
 // Save saves the current provisioning state.
 func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[string]interface{}) error {
 	// Ensure checkpoint directory exists
-	if err := os.MkdirAll(cm.checkpointDir, 0750); err != nil {
+	err := os.MkdirAll(cm.checkpointDir, checkpointDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create checkpoint directory: %w", err)
 	}
 
@@ -71,7 +102,16 @@ func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[s
 
 	// Add failed phases information
 	for _, err := range progress.Errors {
-		bastionErr := &BastionError{}
+		bastionErr := &BastionError{
+			Type:         "",
+			Phase:        "",
+			Command:      "",
+			Message:      "",
+			Cause:        nil,
+			Retryable:    false,
+			Suggestions:  nil,
+			AttemptCount: 0,
+		}
 		if errors.As(err, &bastionErr) {
 			checkpoint.FailedPhases[bastionErr.Phase] = bastionErr.Message
 		}
@@ -85,7 +125,8 @@ func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[s
 		return fmt.Errorf("failed to marshal checkpoint data: %w", err)
 	}
 
-	if err := os.WriteFile(checkpointFile, data, 0600); err != nil {
+	err = os.WriteFile(checkpointFile, data, checkpointFileMode)
+	if err != nil {
 		return fmt.Errorf("failed to write checkpoint file: %w", err)
 	}
 
@@ -102,11 +143,12 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 	checkpointFile := cm.getCheckpointPath()
 
 	// Check if checkpoint file exists
-    if _, err := os.Stat(checkpointFile); os.IsNotExist(err) {
-        cm.log.Debug("No checkpoint file found", "file", checkpointFile)
+	_, err := os.Stat(checkpointFile)
+	if os.IsNotExist(err) {
+		cm.log.Debug("No checkpoint file found", "file", checkpointFile)
 
-        return nil, nil //nolint:nilnil // explicit: no checkpoint is not an error
-    }
+		return nil, nil //nolint:nilnil // explicit: no checkpoint is not an error
+	}
 
 	// Read checkpoint file
 	data, err := os.ReadFile(checkpointFile) // #nosec G304 - checkpointFile is constructed from safe paths
@@ -116,16 +158,19 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 
 	// Parse checkpoint data
 	var checkpoint CheckpointData
-	if err := json.Unmarshal(data, &checkpoint); err != nil {
+
+	err = json.Unmarshal(data, &checkpoint)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse checkpoint data: %w", err)
 	}
 
 	// Validate checkpoint data
-    if err := cm.validateCheckpoint(&checkpoint); err != nil {
-        cm.log.Warn("Invalid checkpoint data, ignoring", "error", err.Error())
+	err = cm.validateCheckpoint(&checkpoint)
+	if err != nil {
+		cm.log.Warn("Invalid checkpoint data, ignoring", "error", err.Error())
 
-        return nil, nil //nolint:nilnil // invalid checkpoint treated as absence
-    }
+		return nil, nil //nolint:nilnil // invalid checkpoint treated as absence
+	}
 
 	cm.log.Info("Checkpoint loaded",
 		"file", checkpointFile,
@@ -140,11 +185,12 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 func (cm *CheckpointManager) Clear() error {
 	checkpointFile := cm.getCheckpointPath()
 
-	if _, err := os.Stat(checkpointFile); os.IsNotExist(err) {
+	_, err := os.Stat(checkpointFile)
+	if os.IsNotExist(err) {
 		return nil // Nothing to clear
 	}
 
-	err := os.Remove(checkpointFile)
+	err = os.Remove(checkpointFile)
 	if err != nil {
 		return fmt.Errorf("failed to remove checkpoint file: %w", err)
 	}
@@ -158,8 +204,12 @@ func (cm *CheckpointManager) Clear() error {
 func (cm *CheckpointManager) RestoreProgress(checkpoint *CheckpointData) *ProvisioningProgress {
 	if checkpoint == nil {
 		return &ProvisioningProgress{
-			StartTime:   time.Now(),
-			Checkpoints: make(map[string]bool),
+			TotalSteps:     0,
+			CompletedSteps: 0,
+			CurrentStep:    "",
+			StartTime:      time.Now(),
+			Errors:         nil,
+			Checkpoints:    make(map[string]bool),
 		}
 	}
 
@@ -204,7 +254,7 @@ func (cm *CheckpointManager) GetCompletionStatus(checkpoint *CheckpointData) map
 
 	progress := 0.0
 	if checkpoint.TotalSteps > 0 {
-		progress = float64(checkpoint.CompletedSteps) / float64(checkpoint.TotalSteps) * 100
+		progress = float64(checkpoint.CompletedSteps) / float64(checkpoint.TotalSteps) * percentageMultiplier
 	}
 
 	return map[string]interface{}{
@@ -219,49 +269,10 @@ func (cm *CheckpointManager) GetCompletionStatus(checkpoint *CheckpointData) map
 	}
 }
 
-// getCheckpointPath returns the path to the checkpoint file.
-func (cm *CheckpointManager) getCheckpointPath() string {
-	filename := fmt.Sprintf("bastion-%s-%s.json", cm.config.Name, cm.config.Provider)
-
-	return filepath.Join(cm.checkpointDir, filename)
-}
-
-// validateCheckpoint validates checkpoint data consistency.
-func (cm *CheckpointManager) validateCheckpoint(checkpoint *CheckpointData) error {
-	// Check version compatibility
-	if checkpoint.Version != "1.0" {
-		return fmt.Errorf("unsupported checkpoint version: %s", checkpoint.Version)
-	}
-
-	// Check basic data consistency
-	if checkpoint.BlocName != cm.config.Name {
-		return fmt.Errorf("checkpoint bloc name mismatch: got %s, expected %s",
-			checkpoint.BlocName, cm.config.Name)
-	}
-
-	if checkpoint.Provider != cm.config.Provider {
-		return fmt.Errorf("checkpoint provider mismatch: got %s, expected %s",
-			checkpoint.Provider, cm.config.Provider)
-	}
-
-	// Check if checkpoint is not too old (24 hours)
-	if time.Since(checkpoint.LastUpdate) > 24*time.Hour {
-		return fmt.Errorf("checkpoint is too old: %s",
-			time.Since(checkpoint.LastUpdate).String())
-	}
-
-	// Check data integrity
-	if checkpoint.CompletedSteps > checkpoint.TotalSteps {
-		return fmt.Errorf("invalid checkpoint: completed steps (%d) > total steps (%d)",
-			checkpoint.CompletedSteps, checkpoint.TotalSteps)
-	}
-
-	return nil
-}
-
 // ListCheckpoints lists all available checkpoints.
 func (cm *CheckpointManager) ListCheckpoints() ([]CheckpointData, error) {
-	if _, err := os.Stat(cm.checkpointDir); os.IsNotExist(err) {
+	_, err := os.Stat(cm.checkpointDir)
+	if os.IsNotExist(err) {
 		return []CheckpointData{}, nil
 	}
 
@@ -270,7 +281,7 @@ func (cm *CheckpointManager) ListCheckpoints() ([]CheckpointData, error) {
 		return nil, fmt.Errorf("failed to read checkpoint directory: %w", err)
 	}
 
-    checkpoints := make([]CheckpointData, 0, len(entries))
+	checkpoints := make([]CheckpointData, 0, len(entries))
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
@@ -289,7 +300,9 @@ func (cm *CheckpointManager) ListCheckpoints() ([]CheckpointData, error) {
 		}
 
 		var checkpoint CheckpointData
-		if err := json.Unmarshal(data, &checkpoint); err != nil {
+
+		err = json.Unmarshal(data, &checkpoint)
+		if err != nil {
 			cm.log.Warn("Failed to parse checkpoint file",
 				"file", entry.Name(),
 				"error", err.Error())
@@ -328,6 +341,42 @@ func (cm *CheckpointManager) CleanupOldCheckpoints(maxAge time.Duration) error {
 					"age", time.Since(checkpoint.LastUpdate).String())
 			}
 		}
+	}
+
+	return nil
+}
+
+// getCheckpointPath returns the path to the checkpoint file.
+func (cm *CheckpointManager) getCheckpointPath() string {
+	filename := fmt.Sprintf("bastion-%s-%s.json", cm.config.Name, cm.config.Provider)
+
+	return filepath.Join(cm.checkpointDir, filename)
+}
+
+// validateCheckpoint validates checkpoint data consistency.
+func (cm *CheckpointManager) validateCheckpoint(checkpoint *CheckpointData) error {
+	// Check version compatibility
+	if checkpoint.Version != "1.0" {
+		return ErrUnsupportedCheckpointVersion(checkpoint.Version)
+	}
+
+	// Check basic data consistency
+	if checkpoint.BlocName != cm.config.Name {
+		return ErrCheckpointBlocNameMismatch(checkpoint.BlocName, cm.config.Name)
+	}
+
+	if checkpoint.Provider != cm.config.Provider {
+		return ErrCheckpointProviderMismatch(checkpoint.Provider, cm.config.Provider)
+	}
+
+	// Check if checkpoint is not too old (24 hours)
+	if time.Since(checkpoint.LastUpdate) > 24*time.Hour {
+		return ErrCheckpointTooOld(time.Since(checkpoint.LastUpdate).String())
+	}
+
+	// Check data integrity
+	if checkpoint.CompletedSteps > checkpoint.TotalSteps {
+		return ErrInvalidCheckpointSteps(checkpoint.CompletedSteps, checkpoint.TotalSteps)
 	}
 
 	return nil

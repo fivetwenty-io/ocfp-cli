@@ -8,7 +8,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,7 +51,8 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 	km.log.Debug("Searching for SSH private keys")
 
 	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			km.log.Debug("Found SSH key", "path", path)
 
 			// Verify the key is valid
@@ -66,13 +66,15 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 		}
 	}
 
-	return "", errors.New("no valid SSH private key found")
+	return "", ErrNoValidSSHKeyFound
 }
 
 // CreatePublicKeyAuth creates an SSH public key authentication method.
+//
 //nolint:ireturn // returning ssh.AuthMethod interface is intentional (crypto/ssh API)
 func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthMethod, error) {
-	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+	err := security.ValidateSSHKeyPath(keyPath)
+	if err != nil {
 		return nil, fmt.Errorf("invalid key path: %w", err)
 	}
 
@@ -85,7 +87,7 @@ func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthM
 
 	if km.isKeyPasswordProtected(keyData) {
 		if passphrase == "" {
-			return nil, errors.New("private key is encrypted but no passphrase provided")
+			return nil, ErrKeyEncryptedNoPassphrase
 		}
 
 		signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(passphrase))
@@ -104,7 +106,8 @@ func (km *KeyManager) CreatePublicKeyAuth(keyPath, passphrase string) (ssh.AuthM
 
 // IsKeyPasswordProtected checks if an SSH key is password protected.
 func (km *KeyManager) IsKeyPasswordProtected(keyPath string) (bool, error) {
-	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+	err := security.ValidateSSHKeyPath(keyPath)
+	if err != nil {
 		return false, fmt.Errorf("invalid key path: %w", err)
 	}
 
@@ -118,7 +121,8 @@ func (km *KeyManager) IsKeyPasswordProtected(keyPath string) (bool, error) {
 
 // GetKeyFingerprint returns the fingerprint of an SSH key.
 func (km *KeyManager) GetKeyFingerprint(keyPath string) (string, error) {
-	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+	err := security.ValidateSSHKeyPath(keyPath)
+	if err != nil {
 		return "", fmt.Errorf("invalid key path: %w", err)
 	}
 
@@ -142,7 +146,8 @@ func (km *KeyManager) GetKeyFingerprint(keyPath string) (string, error) {
 // ValidateKeyPair verifies that a private key matches its public key.
 func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) error {
 	// Read and parse private key
-	if err := security.ValidateSSHKeyPath(privateKeyPath); err != nil {
+	err := security.ValidateSSHKeyPath(privateKeyPath)
+	if err != nil {
 		return fmt.Errorf("invalid private key path: %w", err)
 	}
 
@@ -157,7 +162,8 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 	}
 
 	// Read and parse public key
-	if err := security.ValidateSSHKeyPath(publicKeyPath); err != nil {
+	err = security.ValidateSSHKeyPath(publicKeyPath)
+	if err != nil {
 		return fmt.Errorf("invalid public key path: %w", err)
 	}
 
@@ -166,17 +172,98 @@ func (km *KeyManager) ValidateKeyPair(privateKeyPath, publicKeyPath string) erro
 		return fmt.Errorf("failed to read public key: %w", err)
 	}
 
-    publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData) //nolint:dogsled // only the publicKey and error are needed
+	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData) //nolint:dogsled // only the publicKey and error are needed
 	if err != nil {
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	// Compare public keys
 	if !keysEqual(signer.PublicKey(), publicKey) {
-		return errors.New("private and public keys do not match")
+		return ErrKeysMismatch
 	}
 
 	return nil
+}
+
+// GenerateKeyPair generates a new SSH key pair.
+func (km *KeyManager) GenerateKeyPair(keyPath, keyType string, keySize int) error {
+	km.log.Info("Generating SSH key pair",
+		"path", keyPath,
+		"type", keyType,
+		"size", keySize)
+
+	err := km.ensureSSHDirectory(keyPath)
+	if err != nil {
+		return err
+	}
+
+	privateKey, err := km.generatePrivateKey(keyType, keySize)
+	if err != nil {
+		return err
+	}
+
+	return km.writeKeyPair(keyPath, privateKey, keyType)
+}
+
+// LoadAuthorizedKeys loads authorized keys from a file.
+func (km *KeyManager) LoadAuthorizedKeys(authorizedKeysPath string) ([]ssh.PublicKey, error) {
+	err := security.ValidateSSHKeyPath(authorizedKeysPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorized keys path: %w", err)
+	}
+
+	file, err := os.Open(authorizedKeysPath) // #nosec G304 - authorizedKeysPath is validated above
+	if err != nil {
+		return nil, fmt.Errorf("failed to open authorized_keys file: %w", err)
+	}
+
+	defer func() {
+		err := file.Close()
+		if err != nil {
+			km.log.Debug("Failed to close authorized_keys file", "error", err.Error())
+		}
+	}()
+
+	var publicKeys []ssh.PublicKey
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+		if err != nil {
+			km.log.Warn("Failed to parse authorized key",
+				"line", line,
+				"error", err.Error())
+
+			continue
+		}
+
+		publicKeys = append(publicKeys, publicKey)
+	}
+
+	err = scanner.Err()
+	if err != nil {
+		return nil, fmt.Errorf("error reading authorized_keys file: %w", err)
+	}
+
+	return publicKeys, nil
+}
+
+// FormatPublicKey formats a public key for authorized_keys file.
+func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) string {
+	keyData := ssh.MarshalAuthorizedKey(publicKey)
+	keyStr := strings.TrimSpace(string(keyData))
+
+	if comment != "" {
+		keyStr += " " + comment
+	}
+
+	return keyStr
 }
 
 // keysEqual compares two SSH public keys for equality.
@@ -194,80 +281,6 @@ func keysEqual(key1, key2 ssh.PublicKey) bool {
 	return bytes.Equal(key1.Marshal(), key2.Marshal())
 }
 
-// GenerateKeyPair generates a new SSH key pair.
-func (km *KeyManager) GenerateKeyPair(keyPath, keyType string, keySize int) error {
-	km.log.Info("Generating SSH key pair",
-		"path", keyPath,
-		"type", keyType,
-		"size", keySize)
-
-	// Ensure SSH directory exists
-	sshDir := filepath.Dir(keyPath)
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return fmt.Errorf("failed to create SSH directory: %w", err)
-	}
-
-	var (
-		privateKey interface{}
-		err        error
-	)
-
-	// Generate key based on type
-
-	switch strings.ToLower(keyType) {
-	case "ed25519":
-		// Ed25519 keys don't use key size parameter
-		_, privateKey, err = ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return fmt.Errorf("failed to generate Ed25519 key: %w", err)
-		}
-
-	case "rsa":
-		if keySize == 0 {
-			keySize = 4096 // Default RSA key size
-		}
-
-		if keySize < 2048 {
-			return errors.New("RSA key size must be at least 2048 bits")
-		}
-
-		privateKey, err = rsa.GenerateKey(rand.Reader, keySize)
-		if err != nil {
-			return fmt.Errorf("failed to generate RSA key: %w", err)
-		}
-
-	default:
-		return fmt.Errorf("unsupported key type: %s (supported: rsa, ed25519)", keyType)
-	}
-
-	// Convert to SSH format
-	sshPrivateKey, err := ssh.NewSignerFromKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH signer: %w", err)
-	}
-
-	// Get public key
-	sshPublicKey := sshPrivateKey.PublicKey()
-
-	// Write private key
-	if err := km.writePrivateKey(keyPath, privateKey, keyType); err != nil {
-		return fmt.Errorf("failed to write private key: %w", err)
-	}
-
-	// Write public key
-	publicKeyPath := keyPath + ".pub"
-	if err := km.writePublicKey(publicKeyPath, sshPublicKey); err != nil {
-		return fmt.Errorf("failed to write public key: %w", err)
-	}
-
-	km.log.Info("SSH key pair generated successfully",
-		"private_key", keyPath,
-		"public_key", publicKeyPath,
-		"fingerprint", ssh.FingerprintSHA256(sshPublicKey))
-
-	return nil
-}
-
 // writePrivateKey writes a private key to file in the appropriate format.
 func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, keyType string) error {
 	var (
@@ -280,7 +293,7 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 		// Ed25519 private key
 		ed25519Key, ok := privateKey.(ed25519.PrivateKey)
 		if !ok {
-			return errors.New("invalid Ed25519 private key type")
+			return ErrInvalidEd25519KeyType
 		}
 
 		keyBytes, _ = x509.MarshalPKCS8PrivateKey(ed25519Key)
@@ -290,28 +303,30 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 		// RSA private key
 		rsaKey, ok := privateKey.(*rsa.PrivateKey)
 		if !ok {
-			return errors.New("invalid RSA private key type")
+			return ErrInvalidRSAKeyType
 		}
 
 		keyBytes = x509.MarshalPKCS1PrivateKey(rsaKey)
 		keyFormat = "RSA PRIVATE KEY"
 
 	default:
-		return fmt.Errorf("unsupported key type for writing: %s", keyType)
+		return ErrUnsupportedKeyTypeForWriting(keyType)
 	}
 
 	// Create PEM block
 	keyBlock := &pem.Block{
-		Type:  keyFormat,
-		Bytes: keyBytes,
+		Type:    keyFormat,
+		Headers: nil,
+		Bytes:   keyBytes,
 	}
 
 	// Write to file
-	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+	err := security.ValidateSSHKeyPath(keyPath)
+	if err != nil {
 		return fmt.Errorf("invalid key path: %w", err)
 	}
 
-	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 - path validated above
+	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, privateKeyMode) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to create private key file: %w", err)
 	}
@@ -323,7 +338,8 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 		}
 	}()
 
-	if err := pem.Encode(keyFile, keyBlock); err != nil {
+	err = pem.Encode(keyFile, keyBlock)
+	if err != nil {
 		return fmt.Errorf("failed to encode private key: %w", err)
 	}
 
@@ -336,7 +352,7 @@ func (km *KeyManager) writePublicKey(keyPath string, publicKey ssh.PublicKey) er
 	keyData := ssh.MarshalAuthorizedKey(publicKey)
 
 	// Write to file
-	err := os.WriteFile(keyPath, keyData, 0600)
+	err := os.WriteFile(keyPath, keyData, privateKeyMode)
 	if err != nil {
 		return fmt.Errorf("failed to write public key: %w", err)
 	}
@@ -346,7 +362,8 @@ func (km *KeyManager) writePublicKey(keyPath string, publicKey ssh.PublicKey) er
 
 // isValidPrivateKey checks if a file contains a valid SSH private key.
 func (km *KeyManager) isValidPrivateKey(keyPath string) bool {
-	if err := security.ValidateSSHKeyPath(keyPath); err != nil {
+	err := security.ValidateSSHKeyPath(keyPath)
+	if err != nil {
 		return false
 	}
 
@@ -412,61 +429,73 @@ func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
 	return false
 }
 
-// LoadAuthorizedKeys loads authorized keys from a file.
-func (km *KeyManager) LoadAuthorizedKeys(authorizedKeysPath string) ([]ssh.PublicKey, error) {
-	if err := security.ValidateSSHKeyPath(authorizedKeysPath); err != nil {
-		return nil, fmt.Errorf("invalid authorized keys path: %w", err)
-	}
+func (km *KeyManager) ensureSSHDirectory(keyPath string) error {
+	sshDir := filepath.Dir(keyPath)
 
-	file, err := os.Open(authorizedKeysPath) // #nosec G304 - authorizedKeysPath is validated above
+	err := os.MkdirAll(sshDir, sshDirectoryMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open authorized_keys file: %w", err)
+		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
-	defer func() {
-		err := file.Close()
-		if err != nil {
-			km.log.Debug("Failed to close authorized_keys file", "error", err.Error())
-		}
-	}()
-
-	var publicKeys []ssh.PublicKey
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-        publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line)) //nolint:dogsled // only the publicKey and error are needed
-		if err != nil {
-			km.log.Warn("Failed to parse authorized key",
-				"line", line,
-				"error", err.Error())
-
-			continue
-		}
-
-		publicKeys = append(publicKeys, publicKey)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading authorized_keys file: %w", err)
-	}
-
-	return publicKeys, nil
+	return nil
 }
 
-// FormatPublicKey formats a public key for authorized_keys file.
-func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) string {
-	keyData := ssh.MarshalAuthorizedKey(publicKey)
-	keyStr := strings.TrimSpace(string(keyData))
+func (km *KeyManager) generatePrivateKey(keyType string, keySize int) (interface{}, error) {
+	var (
+		privateKey interface{}
+		err        error
+	)
 
-	if comment != "" {
-		keyStr += " " + comment
+	switch strings.ToLower(keyType) {
+	case "ed25519":
+		_, privateKey, err = ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate Ed25519 key: %w", err)
+		}
+	case "rsa":
+		if keySize == 0 {
+			keySize = 4096
+		}
+
+		if keySize < minKeySize {
+			return nil, ErrRSAKeySizeTooSmall
+		}
+
+		privateKey, err = rsa.GenerateKey(rand.Reader, keySize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+		}
+	default:
+		return nil, ErrUnsupportedKeyType(keyType)
 	}
 
-	return keyStr
+	return privateKey, nil
+}
+
+func (km *KeyManager) writeKeyPair(keyPath string, privateKey interface{}, keyType string) error {
+	sshPrivateKey, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to create SSH signer: %w", err)
+	}
+
+	sshPublicKey := sshPrivateKey.PublicKey()
+
+	err = km.writePrivateKey(keyPath, privateKey, keyType)
+	if err != nil {
+		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	publicKeyPath := keyPath + ".pub"
+
+	err = km.writePublicKey(publicKeyPath, sshPublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to write public key: %w", err)
+	}
+
+	km.log.Info("SSH key pair generated successfully",
+		"private_key", keyPath,
+		"public_key", publicKeyPath,
+		"fingerprint", ssh.FingerprintSHA256(sshPublicKey))
+
+	return nil
 }

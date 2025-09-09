@@ -9,6 +9,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
 )
 
+// Phase execution errors.
+var (
+	ErrLocalScriptExecutionNotImplemented = errors.New("local script execution not implemented")
+)
+
 // Additional phase implementations for comprehensive bastion initialization
 
 // runPrerequisiteChecks performs prerequisite validation.
@@ -192,7 +197,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 	}
 
 	// For local execution, we would use os/exec
-	return errors.New("local script execution not implemented")
+	return ErrLocalScriptExecutionNotImplemented
 }
 
 // wrapScriptWithFunctions wraps script content with necessary functions.

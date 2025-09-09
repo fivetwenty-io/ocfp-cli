@@ -1,11 +1,10 @@
 package commands
 
 import (
-    "bytes"
-    "context"
-    "fmt"
-    "errors"
-    "os"
+	"bytes"
+	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -19,17 +18,24 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
+const (
+	// Command timeout constants for provider operations.
+	VaultTimeoutSeconds   = 10
+	StackitTimeoutSeconds = 30
+)
+
 var (
-    validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
+	validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 )
 
 const (
-    authTypeToken = "token"
-    authTypeJSON  = "json"
+	authTypeToken = "token"
+	authTypeJSON  = "json"
 )
 
 // NewProviderCmd creates the provider command.
 func NewProviderCmd() *cobra.Command {
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "provider <action>",
 		Short: "Manage cloud provider operations",
@@ -50,7 +56,7 @@ Examples:
 		RunE: runProviderCmd,
 	}
 
-    cmd.Flags().String("iaas", "", "Cloud provider type (stackit, aws, openstack, gcp, azure) - optional if specified in bloc config")
+	cmd.Flags().String("iaas", "", "Cloud provider type (stackit, aws, openstack, gcp, azure) - optional if specified in bloc config")
 	cmd.Flags().String("bloc", "", "Bloc name for configuration (required for STACKIT, can be used for provider discovery)")
 
 	return cmd
@@ -64,7 +70,7 @@ func runProviderCmd(cmd *cobra.Command, args []string) error {
 	case "login":
 		return handleProviderLogin(cmd, log)
 	default:
-		return fmt.Errorf("unknown provider action '%s'. Available actions: login", action)
+		return ErrUnknownProviderAction(action)
 	}
 }
 
@@ -94,26 +100,26 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if providerName == "" {
-		return errors.New("provider not specified. Use --iaas flag, OCFP_PROVIDER environment variable, or specify in config")
+		return ErrProviderNotSpecified
 	}
 
 	providerName = strings.ToLower(providerName)
 
 	log.Info("Logging into provider", zap.String("provider", providerName))
 
-    switch providerName {
-    case ProviderStackit:
-        return loginSTACKIT(cmd, log)
-    case "aws":
-        return loginAWS(log)
-    case "openstack":
-        return loginOpenStack(log)
+	switch providerName {
+	case ProviderStackit:
+		return loginSTACKIT(cmd, log)
+	case "aws":
+		return loginAWS(log)
+	case "openstack":
+		return loginOpenStack(log)
 	case "gcp":
 		return loginGCP(log)
 	case "azure":
 		return loginAzure(log)
 	default:
-		return fmt.Errorf("unsupported provider '%s'", providerName)
+		return ErrUnsupportedProvider(providerName)
 	}
 }
 
@@ -125,7 +131,7 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if blocName == "" {
-		return errors.New("--bloc flag or OCFP_BLOC_NAME environment variable required")
+		return ErrBlocFlagOrEnvVarRequired
 	}
 
 	// Get credentials (either JSON or token)
@@ -135,12 +141,12 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	if credentials == "" {
-		return errors.New("could not retrieve STACKIT service account credentials from config or vault")
+		return ErrCouldNotRetrieveStackitCredentials
 	}
 
-    if authType == authTypeToken {
-        return authenticateSTACKITToken(credentials, log)
-    }
+	if authType == authTypeToken {
+		return authenticateSTACKITToken(credentials, log)
+	}
 
 	return authenticateSTACKIT(credentials, log)
 }
@@ -171,22 +177,23 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 	log.Debug("Attempting to get credentials from config file")
 
 	// Check if config has service account token
-    if cfg.ServiceAccountToken != "" {
-        log.Info("Retrieved STACKIT service account token from config file")
+	if cfg.ServiceAccountToken != "" {
+		log.Info("Retrieved STACKIT service account token from config file")
 
-        return authTypeToken, cfg.ServiceAccountToken, nil
-    }
+		return authTypeToken, cfg.ServiceAccountToken, nil
+	}
 
 	// Check if config has service account JSON
-    if cfg.ServiceAccountJSON != "" {
-        log.Info("Retrieved STACKIT service account credentials from config file")
+	if cfg.ServiceAccountJSON != "" {
+		log.Info("Retrieved STACKIT service account credentials from config file")
 
-        return authTypeJSON, cfg.ServiceAccountJSON, nil
-    }
+		return authTypeJSON, cfg.ServiceAccountJSON, nil
+	}
 
 	// Check if config has service account key path
 	if cfg.ServiceAccountKeyPath != "" {
-		if _, err := os.Stat(cfg.ServiceAccountKeyPath); err == nil {
+		_, err := os.Stat(cfg.ServiceAccountKeyPath)
+		if err == nil {
 			content, err := os.ReadFile(cfg.ServiceAccountKeyPath)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot read service account key file: %w", err)
@@ -194,8 +201,8 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 
 			log.Info("Retrieved STACKIT service account credentials from file", zap.String("path", cfg.ServiceAccountKeyPath))
 
-            return authTypeJSON, string(content), nil
-    }
+			return authTypeJSON, string(content), nil
+		}
 	}
 
 	return "", "", nil
@@ -203,20 +210,22 @@ func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
 
 func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, string, error) {
 	// Check if safe command is available
-	if _, err := exec.LookPath("safe"); err != nil {
+	_, err := exec.LookPath("safe")
+	if err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
 
 		return "", "", nil
 	}
 
 	// Try to get token first
-    tokenPath := fmt.Sprintf("secret/config/%s/mgmt/cpi/stackit:service_account_token", blocName)
+	tokenPath := fmt.Sprintf("secret/config/%s/mgmt/cpi/stackit:service_account_token", blocName)
 	log.Debug("Attempting to retrieve STACKIT service account token from vault", zap.String("path", tokenPath))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	if err := security.ValidateInput(tokenPath, validPathPattern); err != nil {
+	err = security.ValidateInput(tokenPath, validPathPattern)
+	if err != nil {
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
 
@@ -228,15 +237,16 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		if token != "" {
 			log.Info("Retrieved STACKIT service account token from vault")
 
-            return authTypeToken, token, nil
-    }
+			return authTypeToken, token, nil
+		}
 	}
 
 	// If no token, try JSON
-    jsonPath := fmt.Sprintf("secret/config/%s/mgmt/cpi/stackit:service_account_json", blocName)
+	jsonPath := fmt.Sprintf("secret/config/%s/mgmt/cpi/stackit:service_account_json", blocName)
 	log.Debug("Attempting to retrieve STACKIT service account JSON from vault", zap.String("path", jsonPath))
 
-	if err := security.ValidateInput(jsonPath, validPathPattern); err != nil {
+	err = security.ValidateInput(jsonPath, validPathPattern)
+	if err != nil {
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
 
@@ -248,8 +258,8 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		if jsonCreds != "" {
 			log.Info("Retrieved STACKIT service account JSON from vault")
 
-        return authTypeJSON, jsonCreds, nil
-    }
+			return authTypeJSON, jsonCreds, nil
+		}
 	}
 
 	log.Debug("Vault retrieval failed or returned empty")
@@ -266,7 +276,8 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 
 	defer func() { _ = os.Remove(tempFile.Name()) }()
 
-	if _, err := tempFile.WriteString(serviceAccountJSON); err != nil {
+	_, err = tempFile.WriteString(serviceAccountJSON)
+	if err != nil {
 		_ = tempFile.Close()
 
 		return fmt.Errorf("failed to write service account JSON: %w", err)
@@ -278,10 +289,11 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	log.Info("Authenticating with STACKIT...")
 	log.Debug("Executing stackit auth activate-service-account", zap.String("keyPath", tempFile.Name()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
 	defer cancel()
 
-	if err := security.ValidateInput(tempFile.Name(), validPathPattern); err != nil {
+	err = security.ValidateInput(tempFile.Name(), validPathPattern)
+	if err != nil {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
 
@@ -292,7 +304,8 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	if err != nil {
 		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
 
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
@@ -301,7 +314,7 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 	log.Info("Successfully logged into STACKIT provider")
 
 	if stdout.Len() > 0 {
-		fmt.Print(stdout.String())
+		_, _ = fmt.Fprint(os.Stdout, stdout.String())
 	}
 
 	return nil
@@ -312,7 +325,7 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	log.Info("Authenticating with STACKIT token...")
 	log.Debug("Executing stackit auth activate-service-account with token")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken)
@@ -332,7 +345,7 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	log.Info("Successfully logged into STACKIT provider")
 
 	if stdout.Len() > 0 {
-		fmt.Print(stdout.String())
+		_, _ = fmt.Fprint(os.Stdout, stdout.String())
 	}
 
 	return nil

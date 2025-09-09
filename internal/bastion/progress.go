@@ -10,6 +10,16 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// Progress reporting configuration.
+	progressUpdateInterval = 500 * time.Millisecond
+	progressBarWidth       = 30
+	subtaskBarWidth        = 20
+
+	// Time thresholds.
+	elapsedTimeDisplayThreshold = 30 * time.Second
+)
+
 // ProgressReporter handles real-time progress reporting.
 type ProgressReporter struct {
 	output         io.Writer
@@ -25,7 +35,8 @@ func NewProgressReporter(output io.Writer, progress *ProvisioningProgress) *Prog
 		output:         output,
 		progress:       progress,
 		log:            logger.Get(),
-		updateInterval: 500 * time.Millisecond, // Update every 500ms
+		lastUpdate:     time.Time{},
+		updateInterval: progressUpdateInterval,
 	}
 }
 
@@ -42,90 +53,6 @@ func (pr *ProgressReporter) UpdateProgress(step string, completed int, total int
 
 	// Force immediate update for significant progress
 	pr.reportProgress()
-}
-
-// reportLoop runs the progress reporting loop.
-func (pr *ProgressReporter) reportLoop(ctx context.Context) {
-	ticker := time.NewTicker(pr.updateInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if time.Since(pr.lastUpdate) >= pr.updateInterval {
-				pr.reportProgress()
-			}
-		}
-	}
-}
-
-// reportProgress outputs current progress information.
-func (pr *ProgressReporter) reportProgress() {
-	if pr.output == nil {
-		return
-	}
-
-	now := time.Now()
-	elapsed := now.Sub(pr.progress.StartTime)
-
-	// Calculate progress percentage
-	var progressPercent float64
-	if pr.progress.TotalSteps > 0 {
-		progressPercent = float64(pr.progress.CompletedSteps) / float64(pr.progress.TotalSteps) * 100
-	}
-
-	// Estimate remaining time
-	var eta string
-
-	if progressPercent > 0 && progressPercent < 100 {
-		rate := progressPercent / elapsed.Seconds()
-		remainingSeconds := (100 - progressPercent) / rate
-		eta = fmt.Sprintf(" (ETA: %s)", time.Duration(remainingSeconds*float64(time.Second)).Round(time.Second))
-	}
-
-	// Create progress bar
-	progressBar := pr.createProgressBar(progressPercent)
-
-	// Format current step
-	currentStep := pr.progress.CurrentStep
-	if currentStep == "" {
-		currentStep = "initializing"
-	}
-
-	// Create status line
-	statusLine := fmt.Sprintf("\r[%s] %.1f%% - %s%s",
-		progressBar,
-		progressPercent,
-		currentStep,
-		eta)
-
-	// Add timing information
-	if elapsed > 30*time.Second {
-		statusLine += fmt.Sprintf(" [%s]", elapsed.Round(time.Second))
-	}
-
-	_, _ = pr.output.Write([]byte(statusLine))
-	pr.lastUpdate = now
-}
-
-// createProgressBar creates a visual progress bar.
-func (pr *ProgressReporter) createProgressBar(percent float64) string {
-	barWidth := 30
-	filled := int(percent / 100 * float64(barWidth))
-
-	if filled > barWidth {
-		filled = barWidth
-	}
-
-	if filled < 0 {
-		filled = 0
-	}
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-	return bar
 }
 
 // ReportPhaseStart reports the start of a new phase.
@@ -170,7 +97,7 @@ func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total i
 		current = total
 	}
 
-	barWidth := 20
+	barWidth := subtaskBarWidth
 
 	filled := int(float64(current) / float64(total) * float64(barWidth))
 	if filled > barWidth {
@@ -281,27 +208,27 @@ func (sr *StatusReporter) PrintStatus(output io.Writer) error {
 		return err
 	}
 
-    // Safely extract typed values from status map
-    completed, _ := status["completed"].(bool)
-    prog, _ := status["progress"].(float64)
-    completedSteps, _ := status["completed_steps"].(int)
-    totalSteps, _ := status["total_steps"].(int)
+	// Safely extract typed values from status map
+	completed, _ := status["completed"].(bool)
+	prog, _ := status["progress"].(float64)
+	completedSteps, _ := status["completed_steps"].(int)
+	totalSteps, _ := status["total_steps"].(int)
 
 	_, _ = output.Write([]byte("Bastion Initialization Status\n"))
 	_, _ = output.Write([]byte("============================\n\n"))
 
-		switch {
-		case completed:
-			_, _ = output.Write([]byte("✅ Status: COMPLETED\n"))
-		case completedSteps > 0:
-			_, _ = output.Write([]byte("🔄 Status: IN PROGRESS\n"))
-		default:
-			_, _ = output.Write([]byte("⏳ Status: NOT STARTED\n"))
-		}
+	switch {
+	case completed:
+		_, _ = output.Write([]byte("✅ Status: COMPLETED\n"))
+	case completedSteps > 0:
+		_, _ = output.Write([]byte("🔄 Status: IN PROGRESS\n"))
+	default:
+		_, _ = output.Write([]byte("⏳ Status: NOT STARTED\n"))
+	}
 
-    if totalSteps > 0 {
-        _, _ = fmt.Fprintf(output, "📊 Progress: %.1f%% (%d/%d phases)\n", prog, completedSteps, totalSteps)
-    }
+	if totalSteps > 0 {
+		_, _ = fmt.Fprintf(output, "📊 Progress: %.1f%% (%d/%d phases)\n", prog, completedSteps, totalSteps)
+	}
 
 	if startTime, ok := status["start_time"].(time.Time); ok && !startTime.IsZero() {
 		_, _ = fmt.Fprintf(output, "⏰ Started: %s\n",
@@ -321,12 +248,17 @@ func (sr *StatusReporter) PrintStatus(output io.Writer) error {
 
 // PrintDetailedStatus prints detailed status with phase information.
 func (sr *StatusReporter) PrintDetailedStatus(output io.Writer) error {
-	if err := sr.PrintStatus(output); err != nil {
+	err := sr.PrintStatus(output)
+	if err != nil {
 		return err
 	}
 
 	checkpoint, err := sr.checkpointManager.Load()
-	if err != nil || checkpoint == nil {
+	if err != nil {
+		return err
+	}
+
+	if checkpoint == nil {
 		return nil
 	}
 
@@ -360,4 +292,86 @@ func (sr *StatusReporter) PrintDetailedStatus(output io.Writer) error {
 	return nil
 }
 
-// (Removed unused executePhaseWithProgress helper)
+// reportLoop runs the progress reporting loop.
+func (pr *ProgressReporter) reportLoop(ctx context.Context) {
+	ticker := time.NewTicker(pr.updateInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Since(pr.lastUpdate) >= pr.updateInterval {
+				pr.reportProgress()
+			}
+		}
+	}
+}
+
+// reportProgress outputs current progress information.
+func (pr *ProgressReporter) reportProgress() {
+	if pr.output == nil {
+		return
+	}
+
+	now := time.Now()
+	elapsed := now.Sub(pr.progress.StartTime)
+
+	// Calculate progress percentage
+	var progressPercent float64
+	if pr.progress.TotalSteps > 0 {
+		progressPercent = float64(pr.progress.CompletedSteps) / float64(pr.progress.TotalSteps) * percentageMultiplier
+	}
+
+	// Estimate remaining time
+	var eta string
+
+	if progressPercent > 0 && progressPercent < percentageMultiplier {
+		rate := progressPercent / elapsed.Seconds()
+		remainingSeconds := (percentageMultiplier - progressPercent) / rate
+		eta = fmt.Sprintf(" (ETA: %s)", time.Duration(remainingSeconds*float64(time.Second)).Round(time.Second))
+	}
+
+	// Create progress bar
+	progressBar := pr.createProgressBar(progressPercent)
+
+	// Format current step
+	currentStep := pr.progress.CurrentStep
+	if currentStep == "" {
+		currentStep = "initializing"
+	}
+
+	// Create status line
+	statusLine := fmt.Sprintf("\r[%s] %.1f%% - %s%s",
+		progressBar,
+		progressPercent,
+		currentStep,
+		eta)
+
+	// Add timing information
+	if elapsed > elapsedTimeDisplayThreshold {
+		statusLine += fmt.Sprintf(" [%s]", elapsed.Round(time.Second))
+	}
+
+	_, _ = pr.output.Write([]byte(statusLine))
+	pr.lastUpdate = now
+}
+
+// createProgressBar creates a visual progress bar.
+func (pr *ProgressReporter) createProgressBar(percent float64) string {
+	barWidth := progressBarWidth
+	filled := int(percent / percentageMultiplier * float64(barWidth))
+
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	if filled < 0 {
+		filled = 0
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+	return bar
+}

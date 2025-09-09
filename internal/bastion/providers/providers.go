@@ -8,6 +8,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// Provider implementation errors.
+var (
+	ErrAzureProviderNotImplemented     = errors.New("azure provider not fully implemented")
+	ErrGCPProviderNotImplemented       = errors.New("GCP provider not fully implemented")
+	ErrOpenStackProviderNotImplemented = errors.New("OpenStack provider not fully implemented")
+	ErrVMwareProviderNotImplemented    = errors.New("VMware provider not fully implemented")
+)
+
 // Placeholder implementations for other providers
 // These would be implemented in their respective files
 
@@ -22,7 +30,7 @@ func NewAzureBastionInit(cfg *config.Config) *AzureBastionInit {
 }
 
 func (a *AzureBastionInit) Validate() error {
-	return errors.New("azure provider not fully implemented")
+	return ErrAzureProviderNotImplemented
 }
 
 func (a *AzureBastionInit) PrepareEnvironment() map[string]string {
@@ -30,11 +38,11 @@ func (a *AzureBastionInit) PrepareEnvironment() map[string]string {
 }
 
 func (a *AzureBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
-	return nil, errors.New("azure provider not fully implemented")
+	return nil, ErrAzureProviderNotImplemented
 }
 
 func (a *AzureBastionInit) Initialize(ctx context.Context) error {
-	return errors.New("azure provider not fully implemented")
+	return ErrAzureProviderNotImplemented
 }
 
 // GCPBastionInit implements bastion initialization for GCP.
@@ -48,7 +56,7 @@ func NewGCPBastionInit(cfg *config.Config) *GCPBastionInit {
 }
 
 func (g *GCPBastionInit) Validate() error {
-	return errors.New("GCP provider not fully implemented")
+	return ErrGCPProviderNotImplemented
 }
 
 func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
@@ -56,11 +64,11 @@ func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
 }
 
 func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
-	return nil, errors.New("GCP provider not fully implemented")
+	return nil, ErrGCPProviderNotImplemented
 }
 
 func (g *GCPBastionInit) Initialize(ctx context.Context) error {
-	return errors.New("GCP provider not fully implemented")
+	return ErrGCPProviderNotImplemented
 }
 
 // OpenStackBastionInit implements bastion initialization for OpenStack.
@@ -74,7 +82,7 @@ func NewOpenStackBastionInit(cfg *config.Config) *OpenStackBastionInit {
 }
 
 func (o *OpenStackBastionInit) Validate() error {
-	return errors.New("OpenStack provider not fully implemented")
+	return ErrOpenStackProviderNotImplemented
 }
 
 func (o *OpenStackBastionInit) PrepareEnvironment() map[string]string {
@@ -82,11 +90,11 @@ func (o *OpenStackBastionInit) PrepareEnvironment() map[string]string {
 }
 
 func (o *OpenStackBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
-	return nil, errors.New("OpenStack provider not fully implemented")
+	return nil, ErrOpenStackProviderNotImplemented
 }
 
 func (o *OpenStackBastionInit) Initialize(ctx context.Context) error {
-	return errors.New("OpenStack provider not fully implemented")
+	return ErrOpenStackProviderNotImplemented
 }
 
 // VMwareBastionInit implements bastion initialization for VMware.
@@ -100,7 +108,7 @@ func NewVMwareBastionInit(cfg *config.Config) *VMwareBastionInit {
 }
 
 func (v *VMwareBastionInit) Validate() error {
-	return errors.New("VMware provider not fully implemented")
+	return ErrVMwareProviderNotImplemented
 }
 
 func (v *VMwareBastionInit) PrepareEnvironment() map[string]string {
@@ -108,9 +116,9 @@ func (v *VMwareBastionInit) PrepareEnvironment() map[string]string {
 }
 
 func (v *VMwareBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
-	return nil, errors.New("VMware provider not fully implemented")
+	return nil, ErrVMwareProviderNotImplemented
 }
 
 func (v *VMwareBastionInit) Initialize(ctx context.Context) error {
-	return errors.New("VMware provider not fully implemented")
+	return ErrVMwareProviderNotImplemented
 }

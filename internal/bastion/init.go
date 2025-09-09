@@ -18,6 +18,36 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
+const (
+	// File permissions.
+	logDirectoryMode = 0750
+	scriptFileMode   = 0600
+
+	// Diff context.
+	diffContextLines = 3
+
+	// Worker pool defaults.
+	defaultWorkerCount = 3
+
+	// Git clone/update configuration.
+	gitBackoffInitial = 2 * time.Second
+	gitMaxAttempts    = 4
+	gitDefaultDepth   = 1
+)
+
+// Bastion initialization errors.
+var (
+	ErrBlocNameRequired                  = errors.New("bloc name is required")
+	ErrProviderRequired                  = errors.New("provider is required")
+	ErrBastionProvisioningDidNotComplete = errors.New("bastion provisioning did not complete successfully")
+	ErrOCFPConfigurationFileNotFound     = errors.New("OCFP configuration file not found")
+)
+
+// Dynamic error constructor.
+func ErrUnsupportedProvider(provider string) error {
+	return fmt.Errorf("unsupported provider: %s", provider) //nolint:err113 // dynamic error with context
+}
+
 // Manager orchestrates bastion initialization across providers.
 type Manager struct {
 	config            *config.Config
@@ -30,26 +60,52 @@ type Manager struct {
 	log               logger.Logger
 }
 
+// task represents a phase execution task.
+type task struct {
+	name string
+	fn   func(context.Context) error
+}
+
+// job represents a git clone/update job.
+type job struct {
+	index int
+	name  string
+	cmd   string
+}
+
 // NewManager creates a new bastion initialization manager.
 func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
 	checkpointMgr := NewCheckpointManager(cfg)
 
 	// Load existing progress if resuming
-	var progress *ProvisioningProgress
+	var (
+		progress   *ProvisioningProgress
+		err        error
+		checkpoint *CheckpointData
+	)
 
 	if opts.Resume {
-		if checkpoint, err := checkpointMgr.Load(); err == nil && checkpoint != nil {
+		checkpoint, err = checkpointMgr.Load()
+		if err == nil && checkpoint != nil {
 			progress = checkpointMgr.RestoreProgress(checkpoint)
 		} else {
 			progress = &ProvisioningProgress{
-				StartTime:   time.Now(),
-				Checkpoints: make(map[string]bool),
+				TotalSteps:     0,
+				CompletedSteps: 0,
+				CurrentStep:    "",
+				StartTime:      time.Now(),
+				Errors:         nil,
+				Checkpoints:    make(map[string]bool),
 			}
 		}
 	} else {
 		progress = &ProvisioningProgress{
-			StartTime:   time.Now(),
-			Checkpoints: make(map[string]bool),
+			TotalSteps:     0,
+			CompletedSteps: 0,
+			CurrentStep:    "",
+			StartTime:      time.Now(),
+			Errors:         nil,
+			Checkpoints:    make(map[string]bool),
 		}
 	}
 
@@ -57,6 +113,8 @@ func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
 		config:            cfg,
 		options:           opts,
 		progress:          progress,
+		sshClient:         nil,
+		provConfig:        nil,
 		checkpointManager: checkpointMgr,
 		errorHandler:      NewErrorHandler(),
 		log:               logger.Get(),
@@ -69,7 +127,49 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		"bloc", m.config.Name,
 		"provider", m.config.Provider)
 
-	if err := m.validatePrerequisites(); err != nil {
+	var err error
+
+	err = m.setupInfrastructure(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err := m.sshClient.Close()
+		if err != nil {
+			m.log.Warn("Failed to close SSH client", "error", err.Error())
+		}
+	}()
+
+	// If dry-run, preview configuration file changes
+	if m.options.DryRun {
+		m.previewConfigChanges(ctx)
+	}
+
+	phases := m.getInitializationPhases()
+	m.progress.TotalSteps = len(phases)
+
+	// Start progress reporting if configured
+	var reporter *ProgressReporter
+	if m.options.ProgressOut != nil {
+		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
+		reporter.Start(ctx)
+	}
+
+	err = m.executePhases(ctx, phases, reporter)
+	if err != nil {
+		return err
+	}
+
+	m.finalizeInitialization(phases)
+
+	return nil
+}
+
+// setupInfrastructure handles provider setup, SSH connection, and configuration loading.
+func (m *Manager) setupInfrastructure(ctx context.Context) error {
+	err := m.validatePrerequisites()
+	if err != nil {
 		return fmt.Errorf("prerequisite validation failed: %w", err)
 	}
 
@@ -80,7 +180,8 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	}
 
 	// Validate provider configuration
-	if err := initializer.Validate(); err != nil {
+	err = initializer.Validate()
+	if err != nil {
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
 
@@ -102,36 +203,26 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	}
 
 	// Create SSH client
-	m.sshClient, err = m.createSSHClient(connDetails)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH client: %w", err)
-	}
-
-	defer func() {
-		err := m.sshClient.Close()
-		if err != nil {
-			m.log.Warn("Failed to close SSH client", "error", err.Error())
-		}
-	}()
+	m.sshClient = m.createSSHClient(connDetails)
 
 	// Connect to bastion
-	if err := m.sshClient.Connect(ctx); err != nil {
+	err = m.sshClient.Connect(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to connect to bastion: %w", err)
 	}
 
 	// Load provisioning configuration
-	m.provConfig, err = m.loadProvisioningConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load provisioning config: %w", err)
-	}
+	m.provConfig = m.loadProvisioningConfig()
 
-	// If dry-run, preview configuration file changes
-	if m.options.DryRun {
-		_ = m.previewConfigChanges(ctx)
-	}
+	return nil
+}
 
-	// Execute initialization phases - comprehensive implementation
-	phases := []struct {
+// getInitializationPhases returns the list of initialization phases.
+func (m *Manager) getInitializationPhases() []struct {
+	name string
+	fn   func(context.Context) error
+} {
+	return []struct {
 		name string
 		fn   func(context.Context) error
 	}{
@@ -174,163 +265,211 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
 	}
+}
 
-	m.progress.TotalSteps = len(phases)
-
-	// Start progress reporting if configured
-	var reporter *ProgressReporter
-	if m.options.ProgressOut != nil {
-		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
-		reporter.Start(ctx)
-	}
-
-	// If parallel is enabled, run a coarse-grained parallel block for safe phases
+// executePhases runs phases either in parallel or sequential mode.
+func (m *Manager) executePhases(ctx context.Context, phases []struct {
+	name string
+	fn   func(context.Context) error
+}, reporter *ProgressReporter) error {
 	if m.options.Parallel {
-		// Sequential pre-parallel phases
-		pre := []struct {
-			name string
-			fn   func(context.Context) error
-		}{
-			{"prerequisite_check", m.runPrerequisiteChecks},
-			{"system_setup", m.setupSystem},
-			{"directories", m.createDirectories},
-			{"config_files", m.copyConfigFiles},
-			{"ocfp_directories", m.setupOCFPDirectories},
-			{"configuration_files", m.createConfigFiles},
-			{"repositories", m.setupRepositories},
-			{"packages", m.installPackages}, // avoid dpkg lock issues
-		}
+		return m.executeParallelPhases(ctx, reporter)
+	}
 
-		err := m.runPhasesSequential(ctx, pre)
+	return m.executeSequentialPhases(ctx, phases, reporter)
+}
+
+// executeParallelPhases handles parallel execution of initialization phases.
+func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter) error {
+	// Sequential pre-parallel phases
+	pre := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"prerequisite_check", m.runPrerequisiteChecks},
+		{"system_setup", m.setupSystem},
+		{"directories", m.createDirectories},
+		{"config_files", m.copyConfigFiles},
+		{"ocfp_directories", m.setupOCFPDirectories},
+		{"configuration_files", m.createConfigFiles},
+		{"repositories", m.setupRepositories},
+		{"packages", m.installPackages}, // avoid dpkg lock issues
+	}
+
+	err := m.runPhasesSequential(ctx, pre)
+	if err != nil {
+		return err
+	}
+
+	// Parallel-safe phases (no apt/dpkg)
+	par := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"snap_packages", m.installSnapPackages},
+		{"binary_tools", m.installBinaryTools},
+		{"cpan_modules", m.installCPANModules},
+		{"cf_plugins", m.installCFPlugins},
+		{"git_repos", m.cloneGitRepositories},
+	}
+
+	err = m.runPhasesParallel(ctx, par)
+	if err != nil {
+		return err
+	}
+
+	// Post-parallel sequential phases
+	post := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"genesis", m.setupGenesis},
+		{"shell_environment", m.setupShellEnvironment},
+		{"system_environment", m.setupSystemEnvironment},
+		{"ocfp_cli_setup", m.setupOCFPCLI},
+		{"vault_inception", m.setupVaultInception},
+		{"ocfp_configure", m.runOCFPConfigure},
+		{"vault_populate", m.runVaultPopulate},
+		{"custom_scripts", m.runCustomScripts},
+		{"verification", m.verifyInstallation},
+		{"health_check", m.runHealthCheck},
+	}
+
+	return m.runPhasesSequential(ctx, post)
+}
+
+// executeSequentialPhases handles sequential execution of all phases.
+func (m *Manager) executeSequentialPhases(ctx context.Context, phases []struct {
+	name string
+	fn   func(context.Context) error
+}, reporter *ProgressReporter) error {
+	for index, phase := range phases {
+		err := m.executePhase(ctx, phase, index, len(phases), reporter)
 		if err != nil {
 			return err
-		}
-
-		// Parallel-safe phases (no apt/dpkg)
-		par := []struct {
-			name string
-			fn   func(context.Context) error
-		}{
-			{"snap_packages", m.installSnapPackages},
-			{"binary_tools", m.installBinaryTools},
-			{"cpan_modules", m.installCPANModules},
-			{"cf_plugins", m.installCFPlugins},
-			{"git_repos", m.cloneGitRepositories},
-		}
-
-		err = m.runPhasesParallel(ctx, par)
-		if err != nil {
-			return err
-		}
-
-		// Post-parallel sequential phases
-		post := []struct {
-			name string
-			fn   func(context.Context) error
-		}{
-			{"genesis", m.setupGenesis},
-			{"shell_environment", m.setupShellEnvironment},
-			{"system_environment", m.setupSystemEnvironment},
-			{"ocfp_cli_setup", m.setupOCFPCLI},
-			{"vault_inception", m.setupVaultInception},
-			{"ocfp_configure", m.runOCFPConfigure},
-			{"vault_populate", m.runVaultPopulate},
-			{"custom_scripts", m.runCustomScripts},
-			{"verification", m.verifyInstallation},
-			{"health_check", m.runHealthCheck},
-		}
-
-		err = m.runPhasesSequential(ctx, post)
-		if err != nil {
-			return err
-		}
-
-		// Set completed steps and finalize reporter below
-	} else {
-		for index, phase := range phases {
-			if m.shouldSkipPhase(phase.name) {
-				m.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
-
-				if reporter != nil {
-					reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
-				}
-
-				continue
-			}
-
-			m.progress.CurrentStep = phase.name
-			m.progress.CompletedSteps = index
-
-			m.log.Info("Executing phase",
-				"phase", phase.name,
-				"progress", fmt.Sprintf("%d/%d", index+1, len(phases)))
-
-			if reporter != nil {
-				reporter.ReportPhaseStart(phase.name, index, len(phases))
-			}
-
-			if m.options.DryRun {
-				m.log.Info("DRY RUN: Would execute phase", "phase", phase.name)
-
-				continue
-			}
-
-			// Execute phase with error handling and retry
-			err := m.errorHandler.ExecuteWithRetry(ctx, phase.name, func() error {
-				return phase.fn(ctx)
-			})
-			if err != nil {
-				m.progress.Errors = append(m.progress.Errors, err)
-
-				// Save checkpoint with failure information
-				metadata := map[string]interface{}{
-					"failed_phase": phase.name,
-					"error_type":   "execution_failure",
-					"attempt":      index + 1,
-				}
-
-				saveErr := m.checkpointManager.Save(m.progress, metadata)
-				if saveErr != nil {
-					m.log.Warn("Failed to save failure checkpoint", "error", saveErr.Error())
-				}
-
-				if reporter != nil {
-					// Best effort to surface the error context
-					reporter.ReportError(phase.name, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries)
-				}
-
-				return fmt.Errorf("phase %s failed: %w", phase.name, err)
-			}
-
-			// Mark phase as completed
-			m.checkpointManager.MarkPhaseCompleted(m.progress, phase.name)
-
-			// Save checkpoint with success information
-			metadata := map[string]interface{}{
-				"completed_phase": phase.name,
-				"progress":        float64(index+1) / float64(len(phases)) * 100,
-				"timestamp":       time.Now(),
-			}
-			if err := m.checkpointManager.Save(m.progress, metadata); err != nil {
-				m.log.Warn("Failed to save checkpoint", "error", err)
-			}
-
-			if reporter != nil {
-				reporter.ReportPhaseComplete(phase.name, time.Since(m.progress.StartTime))
-			}
 		}
 	}
 
+	return nil
+}
+
+// executePhase handles the execution of a single phase.
+func (m *Manager) executePhase(ctx context.Context, phase struct {
+	name string
+	fn   func(context.Context) error
+}, index, total int, reporter *ProgressReporter) error {
+	if m.shouldSkipPhase(phase.name) {
+		m.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+
+		if reporter != nil {
+			reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
+		}
+
+		return nil
+	}
+
+	m.updatePhaseProgress(phase.name, index, total, reporter)
+
+	if m.options.DryRun {
+		m.log.Info("DRY RUN: Would execute phase", "phase", phase.name)
+
+		return nil
+	}
+
+	return m.executePhaseWithErrorHandling(ctx, phase, index, total, reporter)
+}
+
+// updatePhaseProgress updates progress tracking and logging for a phase.
+func (m *Manager) updatePhaseProgress(phaseName string, index, total int, reporter *ProgressReporter) {
+	m.progress.CurrentStep = phaseName
+	m.progress.CompletedSteps = index
+
+	m.log.Info("Executing phase",
+		"phase", phaseName,
+		"progress", fmt.Sprintf("%d/%d", index+1, total))
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, index, total)
+	}
+}
+
+// executePhaseWithErrorHandling executes a phase with retry logic and checkpoint management.
+func (m *Manager) executePhaseWithErrorHandling(ctx context.Context, phase struct {
+	name string
+	fn   func(context.Context) error
+}, index, total int, reporter *ProgressReporter) error {
+	err := m.errorHandler.ExecuteWithRetry(ctx, phase.name, func() error {
+		return phase.fn(ctx)
+	})
+	if err != nil {
+		return m.handlePhaseFailure(phase.name, index, err, reporter)
+	}
+
+	return m.handlePhaseSuccess(phase.name, index, total, reporter)
+}
+
+// handlePhaseFailure handles phase execution failure.
+func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, reporter *ProgressReporter) error {
+	m.progress.Errors = append(m.progress.Errors, err)
+
+	metadata := map[string]interface{}{
+		"failed_phase": phaseName,
+		"error_type":   "execution_failure",
+		"attempt":      index + 1,
+	}
+
+	saveErr := m.checkpointManager.Save(m.progress, metadata)
+	if saveErr != nil {
+		m.log.Warn("Failed to save failure checkpoint", "error", saveErr.Error())
+	}
+
+	if reporter != nil {
+		reporter.ReportError(phaseName, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries)
+	}
+
+	return fmt.Errorf("phase %s failed: %w", phaseName, err)
+}
+
+// handlePhaseSuccess handles phase execution success.
+func (m *Manager) handlePhaseSuccess(phaseName string, index, total int, reporter *ProgressReporter) error {
+	m.checkpointManager.MarkPhaseCompleted(m.progress, phaseName)
+
+	metadata := map[string]interface{}{
+		"completed_phase": phaseName,
+		"progress":        float64(index+1) / float64(total) * percentageMultiplier,
+		"timestamp":       time.Now(),
+	}
+
+	err := m.checkpointManager.Save(m.progress, metadata)
+	if err != nil {
+		m.log.Warn("Failed to save checkpoint", "error", err)
+	}
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(m.progress.StartTime))
+	}
+
+	return nil
+}
+
+// finalizeInitialization handles completion tasks like checkpointing and reporting.
+func (m *Manager) finalizeInitialization(phases []struct {
+	name string
+	fn   func(context.Context) error
+}) {
+	reporter := m.getProgressReporter()
 	m.progress.CompletedSteps = len(phases)
 	duration := time.Since(m.progress.StartTime)
 
 	// Clear checkpoint on successful completion
-	if err := m.checkpointManager.Clear(); err != nil {
+	err := m.checkpointManager.Clear()
+	if err != nil {
 		m.log.Warn("Failed to clear checkpoint", "error", err)
 	}
 
 	// Cleanup old checkpoints (older than 7 days)
-	if err := m.checkpointManager.CleanupOldCheckpoints(7 * 24 * time.Hour); err != nil {
+	err = m.checkpointManager.CleanupOldCheckpoints(7 * 24 * time.Hour)
+	if err != nil {
 		m.log.Warn("Failed to cleanup old checkpoints", "error", err)
 	}
 
@@ -343,8 +482,6 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		"duration", duration.String(),
 		"total_phases", len(phases),
 		"errors_encountered", len(m.progress.Errors))
-
-	return nil
 }
 
 // validatePrerequisites checks that required prerequisites are met.
@@ -353,17 +490,18 @@ func (m *Manager) validatePrerequisites() error {
 
 	// Check required configuration
 	if m.config.Name == "" {
-		return errors.New("bloc name is required")
+		return ErrBlocNameRequired
 	}
 
 	if m.config.Provider == "" {
-		return errors.New("provider is required")
+		return ErrProviderRequired
 	}
 
 	// Check local tools
 	requiredTools := []string{"ssh", "scp"}
 	for _, tool := range requiredTools {
-		if _, err := exec.LookPath(tool); err != nil {
+		_, err := exec.LookPath(tool)
+		if err != nil {
 			m.log.Warn("Required tool not found", "tool", tool)
 		}
 	}
@@ -371,7 +509,7 @@ func (m *Manager) validatePrerequisites() error {
 	// Create local directories
 	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs", "provision")
 
-	err := os.MkdirAll(logDir, 0750)
+	err := os.MkdirAll(logDir, logDirectoryMode)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -442,183 +580,233 @@ func (m *Manager) validateOverrides() {
 }
 
 // previewConfigChanges shows diffs for managed config files in dry-run.
-func (m *Manager) previewConfigChanges(ctx context.Context) error {
+func (m *Manager) previewConfigChanges(ctx context.Context) {
 	cfm := provision.NewConfigFileManager(m.config.Provider, m.config)
-
 	files := cfm.GetConfigFiles()
+
 	if len(files) == 0 || m.options.ProgressOut == nil {
-		// Preview system-managed files
-		_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== Dry-run: system file changes ==")
-		// /etc/profile.d/ocfp.sh diff
-		{
-			envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
-			// Build expected profile content
-			var b strings.Builder
-			b.WriteString("#!/bin/sh\n# OCFP environment variables\n# Generated by ocfp bastion provisioning\n\n")
+		m.previewSystemChanges(ctx)
 
-			for k, v := range envMgr.GetSystemEnvironmentVarsForPreview() {
-				b.WriteString(fmt.Sprintf("export %s='%s'\n", k, v))
-			}
-
-			desired := b.String()
-			current := ""
-
-			if m.sshClient != nil {
-				if res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/profile.d/ocfp.sh 2>/dev/null || true"); err == nil {
-					current = res.Stdout
-				}
-			}
-
-			switch {
-			case current == "":
-				_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/profile.d/ocfp.sh")
-			case current != desired:
-				diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(desired), FromFile: "/etc/profile.d/ocfp.sh (current)", ToFile: "/etc/profile.d/ocfp.sh (proposed)", Context: 3}
-				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
-					_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-				}
-			default:
-				_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/profile.d/ocfp.sh")
-			}
-		}
-
-		// /etc/environment full diff
-		{
-			envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
-			envVars := envMgr.GetSystemEnvironmentVarsForPreview()
-			current := ""
-
-			if m.sshClient != nil {
-				if res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/environment 2>/dev/null || true"); err == nil {
-					current = res.Stdout
-				}
-			}
-
-			proposed := m.buildProposedEnvironment(current, envVars)
-			_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== /etc/environment changes ==")
-
-			switch {
-			case strings.TrimSpace(current) == "":
-				// Treat as create
-				diff := difflib.UnifiedDiff{A: []string{}, B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", Context: 3}
-				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
-					_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-				} else {
-					_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/environment")
-				}
-			case current != proposed:
-				diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", Context: 3}
-				if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
-					_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-				}
-			default:
-				_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/environment")
-			}
-		}
-
-		// APT keys and sources plan
-		{
-			repos := m.provConfig.GetAPTRepositories()
-			if len(repos) > 0 {
-				_, _ = fmt.Fprintln(m.options.ProgressOut, "\nAPT repos plan:")
-				for _, repo := range repos {
-					if !repo.Enabled {
-						continue
-					}
-
-					if repo.GPGKey.Dest != "" {
-						exists := false
-
-						if m.sshClient != nil {
-							if _, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("test -f '%s'", repo.GPGKey.Dest)); err == nil {
-								exists = true
-							}
-						}
-
-						if exists {
-							_, _ = fmt.Fprintf(m.options.ProgressOut, "= key exists %s\n", repo.GPGKey.Dest)
-						} else {
-							_, _ = fmt.Fprintf(m.options.ProgressOut, "+ install key %s\n", repo.GPGKey.Dest)
-						}
-					}
-
-					if repo.SourceFile != "" && repo.SourceLine != "" {
-						present := false
-
-						if m.sshClient != nil {
-							if _, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("grep -qF '%s' '%s'", repo.SourceLine, repo.SourceFile)); err == nil {
-								present = true
-							}
-						}
-
-						if present {
-							_, _ = fmt.Fprintf(m.options.ProgressOut, "= repo line present in %s\n", repo.SourceFile)
-						} else {
-							_, _ = fmt.Fprintf(m.options.ProgressOut, "+ write repo line to %s\n", repo.SourceFile)
-						}
-					}
-				}
-			}
-		}
-
-		return nil
+		return
 	}
 
 	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== Dry-run: configuration file changes ==")
 	for _, file := range files {
-		// Expand path variables similar to script
-		path := file.Path
-		path = strings.ReplaceAll(path, "${HOME}", "$HOME")
-		path = strings.ReplaceAll(path, "${USER}", "$USER")
-		// Resolve $HOME locally if running local mode; otherwise leave tilde expanded by shell
-		path = strings.ReplaceAll(path, "$HOME", os.Getenv("HOME"))
+		m.previewFileChange(ctx, file)
+	}
+}
 
-		var current string
+// previewSystemChanges shows system-level changes in dry-run mode.
+func (m *Manager) previewSystemChanges(ctx context.Context) {
+	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== Dry-run: system file changes ==")
+	m.previewProfileChanges(ctx)
+	m.previewEnvironmentChanges(ctx)
+	m.previewAPTRepositories(ctx)
+}
 
-		if m.sshClient != nil {
-			// Read remote content if available
-			res, execErr := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("cat '%s' 2>/dev/null || true", path))
-			if execErr == nil {
-				current = res.Stdout
-			}
-		} else {
-			data, readErr := os.ReadFile(path) // #nosec G304 - path is validated above
-			if readErr == nil {
-				current = string(data)
-			}
-		}
+// previewFileChange shows the diff for a single configuration file.
+func (m *Manager) previewFileChange(ctx context.Context, file provision.ConfigFile) {
+	path := m.expandPathVariables(file.Path)
+	current := m.readFileContent(ctx, path)
 
-		desired := file.Content
-		if desired == "" {
-			// Skip empty content creators
-			continue
-		}
-
-		if current == "" {
-			_, _ = fmt.Fprintf(m.options.ProgressOut, "\n+ create %s (mode %o)\n", path, file.Mode)
-
-			continue
-		}
-
-		if current == desired {
-			_, _ = fmt.Fprintf(m.options.ProgressOut, "\n= no change %s\n", path)
-
-			continue
-		}
-
-		// Generate unified diff
-		diff := difflib.UnifiedDiff{
-			A:        difflib.SplitLines(current),
-			B:        difflib.SplitLines(desired),
-			FromFile: path + " (current)",
-			ToFile:   path + " (proposed)",
-			Context:  3,
-		}
-		text, _ := difflib.GetUnifiedDiffString(diff)
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "\n%s\n", text)
+	if file.Content == "" {
+		return
 	}
 
-	return nil
+	m.outputFileDiff(path, current, file.Content, os.FileMode(file.Mode))
+}
+
+// expandPathVariables expands environment variables in file paths.
+func (m *Manager) expandPathVariables(path string) string {
+	path = strings.ReplaceAll(path, "${HOME}", "$HOME")
+	path = strings.ReplaceAll(path, "${USER}", "$USER")
+	path = strings.ReplaceAll(path, "$HOME", os.Getenv("HOME"))
+
+	return path
+}
+
+// readFileContent reads file content from remote or local filesystem.
+func (m *Manager) readFileContent(ctx context.Context, path string) string {
+	if m.sshClient != nil {
+		res, execErr := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("cat '%s' 2>/dev/null || true", path))
+		if execErr == nil {
+			return res.Stdout
+		}
+
+		return ""
+	}
+
+	data, readErr := os.ReadFile(path) // #nosec G304 - path is validated above
+	if readErr == nil {
+		return string(data)
+	}
+
+	return ""
+}
+
+// outputFileDiff outputs the diff between current and desired file content.
+func (m *Manager) outputFileDiff(path, current, desired string, mode os.FileMode) {
+	if current == "" {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "\n+ create %s (mode %o)\n", path, mode)
+
+		return
+	}
+
+	if current == desired {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "\n= no change %s\n", path)
+
+		return
+	}
+
+	diff := difflib.UnifiedDiff{
+		A:        difflib.SplitLines(current),
+		B:        difflib.SplitLines(desired),
+		FromFile: path + " (current)",
+		ToFile:   path + " (proposed)",
+		FromDate: "",
+		ToDate:   "",
+		Eol:      "",
+		Context:  diffContextLines,
+	}
+	text, _ := difflib.GetUnifiedDiffString(diff)
+	_, _ = fmt.Fprintf(m.options.ProgressOut, "\n%s\n", text)
+}
+
+// previewProfileChanges shows diffs for /etc/profile.d/ocfp.sh changes.
+func (m *Manager) previewProfileChanges(ctx context.Context) {
+	envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
+	// Build expected profile content
+	var builder strings.Builder
+	builder.WriteString("#!/bin/sh\n# OCFP environment variables\n# Generated by ocfp bastion provisioning\n\n")
+
+	for k, v := range envMgr.GetSystemEnvironmentVarsForPreview() {
+		builder.WriteString(fmt.Sprintf("export %s='%s'\n", k, v))
+	}
+
+	desired := builder.String()
+	current := ""
+
+	if m.sshClient != nil {
+		res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/profile.d/ocfp.sh 2>/dev/null || true")
+		if err == nil {
+			current = res.Stdout
+		}
+	}
+
+	switch {
+	case current == "":
+		_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/profile.d/ocfp.sh")
+	case current != desired:
+		diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(desired), FromFile: "/etc/profile.d/ocfp.sh (current)", ToFile: "/etc/profile.d/ocfp.sh (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
+		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
+		}
+	default:
+		_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/profile.d/ocfp.sh")
+	}
+}
+
+// previewEnvironmentChanges shows diffs for /etc/environment changes.
+func (m *Manager) previewEnvironmentChanges(ctx context.Context) {
+	envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
+	envVars := envMgr.GetSystemEnvironmentVarsForPreview()
+	current := ""
+
+	if m.sshClient != nil {
+		res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/environment 2>/dev/null || true")
+		if err == nil {
+			current = res.Stdout
+		}
+	}
+
+	proposed := m.buildProposedEnvironment(current, envVars)
+	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== /etc/environment changes ==")
+
+	switch {
+	case strings.TrimSpace(current) == "":
+		// Treat as create
+		diff := difflib.UnifiedDiff{A: []string{}, B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
+		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
+		} else {
+			_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/environment")
+		}
+	case current != proposed:
+		diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
+		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
+		}
+	default:
+		_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/environment")
+	}
+}
+
+// previewAPTRepositories shows planned changes for APT repositories.
+func (m *Manager) previewAPTRepositories(ctx context.Context) {
+	repos := m.provConfig.GetAPTRepositories()
+	if len(repos) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(m.options.ProgressOut, "\nAPT repos plan:")
+	for _, repo := range repos {
+		if !repo.Enabled {
+			continue
+		}
+
+		m.previewAPTRepoGPGKey(ctx, repo)
+		m.previewAPTRepoSourceLine(ctx, repo)
+	}
+}
+
+// previewAPTRepoGPGKey checks and reports GPG key status for an APT repository.
+func (m *Manager) previewAPTRepoGPGKey(ctx context.Context, repo provision.APTRepository) {
+	if repo.GPGKey.Dest == "" {
+		return
+	}
+
+	exists := m.fileExistsOnRemote(ctx, repo.GPGKey.Dest)
+	if exists {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "= key exists %s\n", repo.GPGKey.Dest)
+	} else {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "+ install key %s\n", repo.GPGKey.Dest)
+	}
+}
+
+// previewAPTRepoSourceLine checks and reports source line status for an APT repository.
+func (m *Manager) previewAPTRepoSourceLine(ctx context.Context, repo provision.APTRepository) {
+	if repo.SourceFile == "" || repo.SourceLine == "" {
+		return
+	}
+
+	present := m.sourceLineExistsOnRemote(ctx, repo.SourceFile, repo.SourceLine)
+	if present {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "= repo line present in %s\n", repo.SourceFile)
+	} else {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "+ write repo line to %s\n", repo.SourceFile)
+	}
+}
+
+// fileExistsOnRemote checks if a file exists on the remote system.
+func (m *Manager) fileExistsOnRemote(ctx context.Context, path string) bool {
+	if m.sshClient == nil {
+		return false
+	}
+
+	_, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("test -f '%s'", path))
+
+	return err == nil
+}
+
+// sourceLineExistsOnRemote checks if a source line exists in a file on the remote system.
+func (m *Manager) sourceLineExistsOnRemote(ctx context.Context, file, line string) bool {
+	if m.sshClient == nil {
+		return false
+	}
+
+	_, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("grep -qF '%s' '%s'", line, file))
+
+	return err == nil
 }
 
 // runPhasesSequential executes phases one by one (internal helper).
@@ -677,71 +865,74 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 }) error {
 	workers := m.options.MaxWorkers
 	if workers <= 0 {
-		workers = 3
-	}
-
-	type task struct {
-		name string
-		fn   func(context.Context) error
+		workers = defaultWorkerCount
 	}
 
 	tasks := make(chan task)
 	errs := make(chan error, len(phases))
 
-	// Workers
+	// Start workers
 	for range workers {
-		go func() {
-			for task := range tasks {
-				if m.shouldSkipPhase(task.name) {
-					if m.options.ProgressOut != nil {
-						NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseSkipped(task.name, "resumed and previously completed")
-					}
-
-					errs <- nil
-
-					continue
-				}
-
-				if m.options.ProgressOut != nil {
-					NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseStart(task.name, 0, 0)
-				}
-
-				var err error
-
-				if m.options.DryRun {
-					m.log.Info("DRY RUN: Would execute phase", "phase", task.name)
-				} else {
-					err = m.errorHandler.ExecuteWithRetry(ctx, task.name, func() error { return task.fn(ctx) })
-				}
-
-				if err == nil {
-					m.checkpointManager.MarkPhaseCompleted(m.progress, task.name)
-
-					_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": task.name, "timestamp": time.Now()})
-					if m.options.ProgressOut != nil {
-						NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
-					}
-				} else {
-					m.progress.Errors = append(m.progress.Errors, err)
-					_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"failed_phase": task.name, "error_type": "execution_failure", "timestamp": time.Now()})
-				}
-
-				errs <- err
-			}
-		}()
+		go m.phaseWorker(ctx, tasks, errs)
 	}
 
-	// Enqueue
+	// Enqueue tasks
 	for _, p := range phases {
 		tasks <- task{name: p.name, fn: p.fn}
 	}
 
 	close(tasks)
 
-	// Collect
+	// Collect results
+	return m.collectWorkerResults(errs, len(phases))
+}
+
+// phaseWorker processes tasks from the task channel and reports results to the error channel.
+func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<- error) {
+	for task := range tasks {
+		if m.shouldSkipPhase(task.name) {
+			if m.options.ProgressOut != nil {
+				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseSkipped(task.name, "resumed and previously completed")
+			}
+
+			errs <- nil
+
+			continue
+		}
+
+		if m.options.ProgressOut != nil {
+			NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseStart(task.name, 0, 0)
+		}
+
+		var err error
+
+		if m.options.DryRun {
+			m.log.Info("DRY RUN: Would execute phase", "phase", task.name)
+		} else {
+			err = m.errorHandler.ExecuteWithRetry(ctx, task.name, func() error { return task.fn(ctx) })
+		}
+
+		if err == nil {
+			m.checkpointManager.MarkPhaseCompleted(m.progress, task.name)
+
+			_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": task.name, "timestamp": time.Now()})
+			if m.options.ProgressOut != nil {
+				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
+			}
+		} else {
+			m.progress.Errors = append(m.progress.Errors, err)
+			_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"failed_phase": task.name, "error_type": "execution_failure", "timestamp": time.Now()})
+		}
+
+		errs <- err
+	}
+}
+
+// collectWorkerResults collects errors from worker goroutines and returns the first error encountered.
+func (m *Manager) collectWorkerResults(errs <-chan error, numPhases int) error {
 	var anyErr error
 
-	for range phases {
+	for range numPhases {
 		err := <-errs
 		if err != nil {
 			anyErr = err
@@ -769,14 +960,14 @@ func (m *Manager) getProviderInitializer() (providers.BastionInitializer, error)
 	case "vmware", "vsphere":
 		return providers.NewVMwareBastionInit(m.config), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", m.config.Provider)
+		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}
 }
 
 // createSSHClient creates an SSH client with the given connection details.
 //
 //nolint:ireturn // returning interface type is intentional to abstract SSH client
-func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) (SSHClient, error) {
+func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) SSHClient {
 	sshOptions := &ssh.ProvisioningOptions{
 		DryRun:      m.options.DryRun,
 		Force:       m.options.Force,
@@ -788,14 +979,14 @@ func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) (SSHClient, er
 		LogFile:     m.options.LogFile,
 	}
 
-	return ssh.NewClient(details, sshOptions), nil
+	return ssh.NewClient(details, sshOptions)
 }
 
 // loadProvisioningConfig loads the provisioning configuration.
 //
 //nolint:ireturn // returning interface type is intentional to abstract provision config
-func (m *Manager) loadProvisioningConfig() (provision.ProvisionConfig, error) {
-	return provision.NewConfig(m.config.Provider, m.config), nil
+func (m *Manager) loadProvisioningConfig() provision.ProvisionConfig {
+	return provision.NewConfig(m.config.Provider, m.config)
 }
 
 // shouldSkipPhase determines if a phase should be skipped based on checkpoints.
@@ -807,6 +998,15 @@ func (m *Manager) shouldSkipPhase(phase string) bool {
 	return m.progress.Checkpoints[phase]
 }
 
+// getProgressReporter returns a progress reporter if configured.
+func (m *Manager) getProgressReporter() *ProgressReporter {
+	if m.options.ProgressOut != nil {
+		return NewProgressReporter(m.options.ProgressOut, m.progress)
+	}
+
+	return nil
+}
+
 // saveCheckpoint saves the current progress state.
 func (m *Manager) saveCheckpoint() error {
 	checkpointPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "checkpoints",
@@ -816,7 +1016,12 @@ func (m *Manager) saveCheckpoint() error {
 	// For now, just create the directory
 	dir := filepath.Dir(checkpointPath)
 
-	return os.MkdirAll(dir, 0750)
+	err := os.MkdirAll(dir, logDirectoryMode)
+	if err != nil {
+		return fmt.Errorf("failed to create checkpoint directory: %w", err)
+	}
+
+	return nil
 }
 
 // Phase implementation functions
@@ -828,26 +1033,7 @@ func (m *Manager) setupSystem(ctx context.Context) error {
 
 	// Set hostname if configured
 	if systemConfig.Hostname.Enabled && systemConfig.Hostname.Pattern != "" {
-		desired := m.expandVariables(systemConfig.Hostname.Pattern)
-
-		// Read current hostname
-		res, err := m.sshClient.ExecuteCommand(ctx, "hostname")
-		if err != nil {
-			m.log.Warn("Failed to read current hostname", "error", err.Error())
-		}
-
-		current := strings.TrimSpace(res.Stdout)
-
-		if current == desired {
-			m.log.Info("Hostname already set", "hostname", desired)
-		} else {
-			cmd := fmt.Sprintf("sudo hostnamectl set-hostname '%s' && echo '127.0.0.1 %s' | sudo tee -a /etc/hosts >/dev/null", desired, desired)
-			if _, err := m.sshClient.ExecuteCommand(ctx, cmd); err != nil {
-				m.log.Warn("Failed to set hostname", "error", err.Error())
-			} else {
-				m.log.Info("Hostname set", "hostname", desired)
-			}
-		}
+		m.configureHostname(ctx, systemConfig.Hostname.Pattern)
 	}
 
 	// Wait for system stabilization
@@ -856,6 +1042,45 @@ func (m *Manager) setupSystem(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *Manager) configureHostname(ctx context.Context, pattern string) {
+	desired := m.expandVariables(pattern)
+
+	current, err := m.getCurrentHostname(ctx)
+	if err != nil {
+		m.log.Warn("Failed to read current hostname", "error", err.Error())
+
+		return
+	}
+
+	if current == desired {
+		m.log.Info("Hostname already set", "hostname", desired)
+
+		return
+	}
+
+	m.setHostname(ctx, desired)
+}
+
+func (m *Manager) getCurrentHostname(ctx context.Context) (string, error) {
+	res, err := m.sshClient.ExecuteCommand(ctx, "hostname")
+	if err != nil {
+		return "", fmt.Errorf("failed to get current hostname: %w", err)
+	}
+
+	return strings.TrimSpace(res.Stdout), nil
+}
+
+func (m *Manager) setHostname(ctx context.Context, desired string) {
+	cmd := fmt.Sprintf("sudo hostnamectl set-hostname '%s' && echo '127.0.0.1 %s' | sudo tee -a /etc/hosts >/dev/null", desired, desired)
+
+	_, err := m.sshClient.ExecuteCommand(ctx, cmd)
+	if err != nil {
+		m.log.Warn("Failed to set hostname", "error", err.Error())
+	} else {
+		m.log.Info("Hostname set", "hostname", desired)
+	}
 }
 
 func (m *Manager) createDirectories(ctx context.Context) error {
@@ -870,7 +1095,8 @@ func (m *Manager) createDirectories(ctx context.Context) error {
 			cmd += fmt.Sprintf(" && chmod %o '%s'", dir.Mode, expandedPath)
 		}
 
-		if _, err := m.sshClient.ExecuteCommand(ctx, cmd); err != nil {
+		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
+		if err != nil {
 			m.log.Error("Failed to create directory",
 				"path", expandedPath,
 				"error", err.Error())
@@ -909,109 +1135,159 @@ func (m *Manager) setupRepositories(ctx context.Context) error {
 	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
 	envVars := m.getEnvironmentVariables()
 
-	// Emit subtask planning progress for phases executed by the script
-	if m.options.ProgressOut != nil {
-		reporter := NewProgressReporter(m.options.ProgressOut, m.progress)
+	// Report progress for phases executed by the script
+	m.reportRepositoryProgress()
 
-		// Snaps
-		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-		snaps := snapMgr.GetSnapPackages()
-		totalSnaps := 0
-
-		for _, s := range snaps {
-			if s.Enabled {
-				totalSnaps++
-			}
-		}
-
-		idx := 0
-
-		for _, s := range snaps {
-			if !s.Enabled {
-				continue
-			}
-
-			reporter.ReportSubtaskProgress("snap_packages", 0, totalSnaps, s.Name)
-
-			idx++
-		}
-
-		// CPAN modules
-		cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-		mods := cpanMgr.GetCPANModules()
-		totalMods := 0
-
-		for _, mdu := range mods {
-			if mdu.Enabled || mdu.Name != "" {
-				totalMods++
-			}
-		}
-
-		for _, mdu := range mods {
-			if mdu.Enabled || mdu.Name != "" {
-				reporter.ReportSubtaskProgress("cpan_modules", 0, totalMods, mdu.Name)
-			}
-		}
-
-		// CF plugins
-		cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
-		plugins := cfMgr.GetCFPlugins()
-		totalPlugins := 0
-
-		for _, p := range plugins {
-			if p.Enabled {
-				totalPlugins++
-			}
-		}
-
-		for _, p := range plugins {
-			if p.Enabled {
-				reporter.ReportSubtaskProgress("cf_plugins", 0, totalPlugins, p.Name)
-			}
-		}
-
-		// Binary tools (base + advanced)
-		baseTools := m.provConfig.GetBinaryTools()
-		advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
-		advTools := advMgr.GetAdvancedBinaryTools()
-		totalTools := 0
-
-		for _, t := range baseTools {
-			if t.Enabled {
-				totalTools++
-			}
-		}
-
-		for _, t := range advTools {
-			if t.Enabled {
-				totalTools++
-			}
-		}
-
-		for _, t := range baseTools {
-			if t.Enabled {
-				reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
-			}
-		}
-
-		for _, t := range advTools {
-			if t.Enabled {
-				reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
-			}
-		}
-	}
-
+	// Generate and execute provisioning script
 	script, err := scriptGen.GenerateProvisioningScript(ctx, m.provConfig, envVars)
 	if err != nil {
 		return fmt.Errorf("failed to generate provisioning script: %w", err)
 	}
 
+	return m.executeProvisioningScript(ctx, script)
+}
+
+// reportRepositoryProgress emits subtask planning progress for phases executed by the script.
+func (m *Manager) reportRepositoryProgress() {
+	if m.options.ProgressOut == nil {
+		return
+	}
+
+	reporter := NewProgressReporter(m.options.ProgressOut, m.progress)
+
+	m.reportSnapPackages(reporter)
+	m.reportCPANModules(reporter)
+	m.reportCFPlugins(reporter)
+	m.reportBinaryTools(reporter)
+}
+
+// reportSnapPackages reports progress for snap packages.
+func (m *Manager) reportSnapPackages(reporter *ProgressReporter) {
+	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
+	snaps := snapMgr.GetSnapPackages()
+
+	enabledSnaps := filterEnabledSnaps(snaps)
+	for _, s := range enabledSnaps {
+		reporter.ReportSubtaskProgress("snap_packages", 0, len(enabledSnaps), s.Name)
+	}
+}
+
+// filterEnabledSnaps returns only enabled snap packages.
+func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
+	var enabled []provision.SnapPackage
+
+	for _, s := range snaps {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+
+	return enabled
+}
+
+// reportCPANModules reports progress for CPAN modules.
+func (m *Manager) reportCPANModules(reporter *ProgressReporter) {
+	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
+	mods := cpanMgr.GetCPANModules()
+
+	activeMods := filterActiveCPANModules(mods)
+	for _, mdu := range activeMods {
+		reporter.ReportSubtaskProgress("cpan_modules", 0, len(activeMods), mdu.Name)
+	}
+}
+
+// filterActiveCPANModules returns CPAN modules that are enabled or have a name.
+func filterActiveCPANModules(mods []provision.CPANModule) []provision.CPANModule {
+	var active []provision.CPANModule
+
+	for _, mdu := range mods {
+		if mdu.Enabled || mdu.Name != "" {
+			active = append(active, mdu)
+		}
+	}
+
+	return active
+}
+
+// reportCFPlugins reports progress for CF plugins.
+func (m *Manager) reportCFPlugins(reporter *ProgressReporter) {
+	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
+	plugins := cfMgr.GetCFPlugins()
+
+	enabledPlugins := filterEnabledCFPlugins(plugins)
+	for _, p := range enabledPlugins {
+		reporter.ReportSubtaskProgress("cf_plugins", 0, len(enabledPlugins), p.Name)
+	}
+}
+
+// filterEnabledCFPlugins returns only enabled CF plugins.
+func filterEnabledCFPlugins(plugins []provision.CFPlugin) []provision.CFPlugin {
+	var enabled []provision.CFPlugin
+
+	for _, p := range plugins {
+		if p.Enabled {
+			enabled = append(enabled, p)
+		}
+	}
+
+	return enabled
+}
+
+// reportBinaryTools reports progress for binary tools.
+func (m *Manager) reportBinaryTools(reporter *ProgressReporter) {
+	baseTools := m.provConfig.GetBinaryTools()
+	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+	advTools := advMgr.GetAdvancedBinaryTools()
+
+	enabledBase := filterEnabledBinaryTools(baseTools)
+	enabledAdv := filterEnabledAdvancedTools(advTools)
+	totalTools := len(enabledBase) + len(enabledAdv)
+
+	for _, t := range enabledBase {
+		reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
+	}
+
+	for _, t := range enabledAdv {
+		reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
+	}
+}
+
+// filterEnabledBinaryTools returns only enabled binary tools.
+func filterEnabledBinaryTools(tools []provision.BinaryTool) []provision.BinaryTool {
+	var enabled []provision.BinaryTool
+
+	for _, t := range tools {
+		if t.Enabled {
+			enabled = append(enabled, t)
+		}
+	}
+
+	return enabled
+}
+
+// filterEnabledAdvancedTools returns only enabled advanced binary tools.
+func filterEnabledAdvancedTools(tools []provision.AdvancedBinaryTool) []provision.AdvancedBinaryTool {
+	var enabled []provision.AdvancedBinaryTool
+
+	for _, t := range tools {
+		if t.Enabled {
+			enabled = append(enabled, t)
+		}
+	}
+
+	return enabled
+}
+
+// executeProvisioningScript creates, transfers and executes a provisioning script on the bastion.
+func (m *Manager) executeProvisioningScript(ctx context.Context, script string) error {
 	// Copy script to bastion
 	scriptPath := "/tmp/provision-bastion.sh"
 
 	// Create temporary script file locally
 	localScriptPath := filepath.Join(os.TempDir(), "provision-bastion.sh")
-	if err := os.WriteFile(localScriptPath, []byte(script), 0600); err != nil {
+
+	err := os.WriteFile(localScriptPath, []byte(script), scriptFileMode)
+	if err != nil {
 		return fmt.Errorf("failed to write script file: %w", err)
 	}
 
@@ -1024,9 +1300,18 @@ func (m *Manager) setupRepositories(ctx context.Context) error {
 
 	// Transfer script to bastion
 	transferOpts := ssh.TransferOptions{
-		Verify: true,
+		Recursive:    false,
+		Preserve:     false,
+		Compress:     false,
+		Progress:     nil,
+		MaxRetries:   0,
+		ChunkSize:    0,
+		Verify:       true,
+		BackupRemote: false,
 	}
-	if err := m.sshClient.TransferFile(ctx, localScriptPath, scriptPath, transferOpts); err != nil {
+
+	err = m.sshClient.TransferFile(ctx, localScriptPath, scriptPath, transferOpts)
+	if err != nil {
 		return fmt.Errorf("failed to transfer script to bastion: %w", err)
 	}
 
@@ -1073,74 +1358,96 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
 	}
 
-	type job struct {
-		index int
-		name  string
-		cmd   string
-	}
-
-	// Worker pool
+	// Worker pool setup
 	workers := m.options.MaxWorkers
 	if workers <= 0 {
-		workers = 3
+		workers = defaultWorkerCount
 	}
 
 	jobs := make(chan job)
 	errs := make(chan error, total)
 
-	// spawn workers
+	// Start workers
 	for range workers {
-		go func() {
-			for job := range jobs {
-				// Execute with retry + backoff for rate limits
-				backoff := 2 * time.Second
-				maxAttempts := 4
-
-				var err error
-				for attempt := 1; attempt <= maxAttempts; attempt++ {
-					_, err = m.sshClient.ExecuteCommand(ctx, job.cmd)
-					if err == nil {
-						break
-					}
-					// Detect rate limit / transient
-					emsg := strings.ToLower(err.Error())
-					if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
-						m.log.Warn("Git op limited, backing off", "repo", job.name, "attempt", attempt, "delay", backoff.String())
-
-						select {
-						case <-ctx.Done():
-							break
-						case <-time.After(backoff):
-						}
-
-						backoff *= 2
-						// On final attempt, try without shallow depth
-						if attempt == maxAttempts-1 {
-							job.cmd = strings.ReplaceAll(job.cmd, " --depth 1", "")
-						}
-
-						continue
-					}
-					// Non-retryable
-					break
-				}
-
-				if err != nil {
-					errs <- fmt.Errorf("git op failed for %s: %w", job.name, err)
-				} else {
-					errs <- nil
-				}
-
-				completed++
-				if reporter != nil {
-					reporter.ReportSubtaskProgress("git_repos", completed, total, job.name)
-				}
-			}
-		}()
+		go m.gitCloneWorker(ctx, jobs, errs, reporter, total, &completed)
 	}
 
-	// enqueue jobs
-	for index, repo := range repos {
+	// Create and enqueue jobs
+	m.createGitJobs(interface{}(repos), jobs)
+
+	// Collect results
+	var anyErr error
+
+	for range total {
+		err := <-errs
+		if err != nil {
+			anyErr = err
+		}
+	}
+
+	return anyErr
+}
+
+// gitCloneWorker processes git clone/update jobs with retry logic for rate limits.
+func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan<- error, reporter *ProgressReporter, total int, completed *int) {
+	for job := range jobs {
+		// Execute with retry + backoff for rate limits
+		backoff := gitBackoffInitial
+		maxAttempts := gitMaxAttempts
+
+		var err error
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			_, err = m.sshClient.ExecuteCommand(ctx, job.cmd)
+			if err == nil {
+				break
+			}
+			// Detect rate limit / transient
+			emsg := strings.ToLower(err.Error())
+			if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
+				m.log.Warn("Git op limited, backing off", "repo", job.name, "attempt", attempt, "delay", backoff.String())
+
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(backoff):
+				}
+
+				backoff *= 2
+				// On final attempt, try without shallow depth
+				if attempt == maxAttempts-1 {
+					job.cmd = strings.ReplaceAll(job.cmd, " --depth 1", "")
+				}
+
+				continue
+			}
+			// Non-retryable
+			break
+		}
+
+		if err != nil {
+			errs <- fmt.Errorf("git op failed for %s: %w", job.name, err)
+		} else {
+			errs <- nil
+		}
+
+		*completed++
+		if reporter != nil {
+			reporter.ReportSubtaskProgress("git_repos", *completed, total, job.name)
+		}
+	}
+}
+
+// createGitJobs creates git clone/update jobs for each repository and enqueues them.
+func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
+	// Convert interface{} to git repositories
+	gitRepos, ok := repos.([]provision.GitRepository)
+	if !ok {
+		m.log.Error("Invalid type for repos parameter, expected []provision.GitRepository")
+
+		return
+	}
+
+	for index, repo := range gitRepos {
 		dest := m.expandVariables(repo.Dest)
 		branch := repo.Branch
 		depth := repo.Depth
@@ -1148,7 +1455,7 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 		var cmd string
 		// sanitize defaults
 		if depth <= 0 {
-			depth = 1
+			depth = gitDefaultDepth
 		}
 
 		if branch != "" {
@@ -1161,17 +1468,6 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 	}
 
 	close(jobs)
-
-	var anyErr error
-
-	for range total {
-		err := <-errs
-		if err != nil {
-			anyErr = err
-		}
-	}
-
-	return anyErr
 }
 
 func (m *Manager) setupGenesis(ctx context.Context) error {
@@ -1196,14 +1492,16 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	}
 
 	if strings.TrimSpace(result.Stdout) != "provisioned" {
-		return errors.New("bastion provisioning did not complete successfully")
+		return ErrBastionProvisioningDidNotComplete
 	}
 
 	// Verify key tools are available
 	tools := []string{"genesis", "safe", "spruce", "vault", "bosh", "cf"}
 	for _, tool := range tools {
 		cmd := "command -v " + tool
-		if _, err := m.sshClient.ExecuteCommand(ctx, cmd); err != nil {
+
+		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
+		if err != nil {
 			m.log.Warn("Tool not available", "tool", tool)
 		} else {
 			m.log.Debug("Tool verified", "tool", tool)
@@ -1225,7 +1523,8 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 	var configPath string
 
 	for _, path := range configPaths {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			configPath = path
 
 			break
@@ -1233,15 +1532,27 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 	}
 
 	if configPath == "" {
-		return errors.New("OCFP configuration file not found")
+		return ErrOCFPConfigurationFileNotFound
 	}
 
 	remoteConfigPath := "~/.ocfp/config.yml"
 	transferOpts := ssh.TransferOptions{
-		Verify: true,
+		Recursive:    false,
+		Preserve:     false,
+		Compress:     false,
+		Progress:     nil,
+		MaxRetries:   0,
+		ChunkSize:    0,
+		Verify:       true,
+		BackupRemote: false,
 	}
 
-	return m.sshClient.TransferFile(ctx, configPath, remoteConfigPath, transferOpts)
+	err := m.sshClient.TransferFile(ctx, configPath, remoteConfigPath, transferOpts)
+	if err != nil {
+		return fmt.Errorf("failed to transfer config file: %w", err)
+	}
+
+	return nil
 }
 
 func (m *Manager) copySSHKeys(ctx context.Context) error {
@@ -1252,9 +1563,19 @@ func (m *Manager) copySSHKeys(ctx context.Context) error {
 	publicKeyPath := filepath.Join(homeDir, ".ssh", keyBaseName+".pub")
 
 	// Copy private key
-	if _, err := os.Stat(privateKeyPath); err == nil {
+	_, err := os.Stat(privateKeyPath)
+	if err == nil {
 		remotePrivateKey := "~/.ssh/" + keyBaseName
-		transferOpts := ssh.TransferOptions{}
+		transferOpts := ssh.TransferOptions{
+			Recursive:    false,
+			Preserve:     false,
+			Compress:     false,
+			Progress:     nil,
+			MaxRetries:   0,
+			ChunkSize:    0,
+			Verify:       false,
+			BackupRemote: false,
+		}
 
 		err := m.sshClient.TransferFile(ctx, privateKeyPath, remotePrivateKey, transferOpts)
 		if err != nil {
@@ -1263,15 +1584,27 @@ func (m *Manager) copySSHKeys(ctx context.Context) error {
 
 		// Set proper permissions
 		cmd := "chmod 600 ~/.ssh/" + keyBaseName
-		if _, err := m.sshClient.ExecuteCommand(ctx, cmd); err != nil {
+
+		_, err = m.sshClient.ExecuteCommand(ctx, cmd)
+		if err != nil {
 			m.log.Warn("Failed to set private key permissions", "error", err.Error())
 		}
 	}
 
 	// Copy public key
-	if _, err := os.Stat(publicKeyPath); err == nil {
+	_, err = os.Stat(publicKeyPath)
+	if err == nil {
 		remotePublicKey := fmt.Sprintf("~/.ssh/%s.pub", keyBaseName)
-		transferOpts := ssh.TransferOptions{}
+		transferOpts := ssh.TransferOptions{
+			Recursive:    false,
+			Preserve:     false,
+			Compress:     false,
+			Progress:     nil,
+			MaxRetries:   0,
+			ChunkSize:    0,
+			Verify:       false,
+			BackupRemote: false,
+		}
 
 		err := m.sshClient.TransferFile(ctx, publicKeyPath, remotePublicKey, transferOpts)
 		if err != nil {
@@ -1344,14 +1677,14 @@ func (m *Manager) buildProposedEnvironment(current string, desired map[string]st
 			continue
 		}
 
-		eq := strings.IndexByte(line, '=')
-		if eq <= 0 {
+		equalIndex := strings.IndexByte(line, '=')
+		if equalIndex <= 0 {
 			kept = append(kept, line)
 
 			continue
 		}
 
-		key := line[:eq]
+		key := line[:equalIndex]
 		if _, ok := remove[key]; ok {
 			// skip existing entry; it will be replaced
 			continue

@@ -17,18 +17,25 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	// Test timeout constants.
+	DefaultTestTimeoutMinutes = 30   // Default test timeout in minutes
+	TestRetryDelaySeconds     = 5    // Delay between test retries
+	TestResultsFileMode       = 0600 // File mode for test results files
+)
+
 // TestSuite represents a test suite type.
 type TestSuite string
 
 const (
-    TestSuiteC2C        TestSuite = "c2c"
-    TestSuiteBlacksmith TestSuite = "blacksmith"
-    TestSuiteNFS        TestSuite = "nfs"
-    TestSuiteSMB        TestSuite = "smb"
-    TestSuiteTCP        TestSuite = ProtocolTCP
-    TestSuiteAll        TestSuite = KeywordAll
-    TestSuiteSmoke      TestSuite = "smoke"
-    TestSuiteAcceptance TestSuite = "acceptance"
+	TestSuiteC2C        TestSuite = "c2c"
+	TestSuiteBlacksmith TestSuite = "blacksmith"
+	TestSuiteNFS        TestSuite = "nfs"
+	TestSuiteSMB        TestSuite = "smb"
+	TestSuiteTCP        TestSuite = "tcp"
+	TestSuiteAll        TestSuite = "all"
+	TestSuiteSmoke      TestSuite = "smoke"
+	TestSuiteAcceptance TestSuite = "acceptance"
 )
 
 var (
@@ -36,19 +43,32 @@ var (
 	testValidDNSPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 )
 
+// testOptions holds the test command options.
+type testOptions struct {
+	parallel    bool
+	timeout     time.Duration
+	verbose     bool
+	outputFile  string
+	skipCleanup bool
+	retries     int
+	tags        []string
+	exclude     []string
+}
+
 // NewTestCmd creates the test command.
 func NewTestCmd() *cobra.Command {
-	var (
-		parallel    bool
-		timeout     time.Duration
-		verbose     bool
-		outputFile  string
-		skipCleanup bool
-		retries     int
-		tags        []string
-		exclude     []string
-	)
+	opts := &testOptions{
+		parallel:    false,
+		timeout:     0,
+		verbose:     false,
+		outputFile:  "",
+		skipCleanup: false,
+		retries:     0,
+		tags:        nil,
+		exclude:     nil,
+	}
 
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "test <type>",
 		Short: "Run tests (c2c|blacksmith|nfs|smb|tcp|smoke|acceptance|all)",
@@ -56,7 +76,7 @@ func NewTestCmd() *cobra.Command {
 
 The test command runs different types of tests against your Cloud Foundry deployment:
 - c2c: Container-to-container networking tests
-- blacksmith: Service broker tests  
+- blacksmith: Service broker tests
 - nfs: Network File System tests
 - smb: Server Message Block tests
 - tcp: TCP routing tests
@@ -86,120 +106,436 @@ the configured credentials and endpoints.`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"c2c", "blacksmith", "nfs", "smb", "tcp", "smoke", "acceptance", "all"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			log := logger.Get()
-
-			testType := args[0]
-
-			// Parse test suite
-			var suite TestSuite
-			switch strings.ToLower(testType) {
-			case "c2c":
-				suite = TestSuiteC2C
-			case "blacksmith":
-				suite = TestSuiteBlacksmith
-			case "nfs":
-				suite = TestSuiteNFS
-			case "smb":
-				suite = TestSuiteSMB
-			case "tcp":
-				suite = TestSuiteTCP
-			case "all":
-				suite = TestSuiteAll
-			case "smoke":
-				suite = TestSuiteSmoke
-			case "acceptance":
-				suite = TestSuiteAcceptance
-			default:
-				return fmt.Errorf("unknown test type: %s", testType)
-			}
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			log.Info("Running tests",
-				"suite", suite,
-				"deployment", cfg.Name,
-				"parallel", parallel,
-				"timeout", timeout)
-
-			// Create test runner
-			runner := &TestRunner{
-				Config:      cfg,
-				Suite:       suite,
-				Parallel:    parallel,
-				Timeout:     timeout,
-				Verbose:     verbose,
-				OutputFile:  outputFile,
-				SkipCleanup: skipCleanup,
-				Retries:     retries,
-				Tags:        tags,
-				Exclude:     exclude,
-			}
-
-			// Validate test environment
-			if err := runner.ValidateEnvironment(ctx); err != nil {
-				return fmt.Errorf("test environment validation failed: %w", err)
-			}
-
-			// Setup test environment
-			if err := runner.Setup(ctx); err != nil {
-				return fmt.Errorf("test setup failed: %w", err)
-			}
-
-			// Cleanup after tests if not skipped
-			if !skipCleanup {
-				defer func() {
-					err := runner.Cleanup(ctx)
-					if err != nil {
-						log.Warn("Test cleanup failed", "error", err)
-					}
-				}()
-			}
-
-			// Execute tests
-			results, err := runner.Execute(ctx)
-			if err != nil {
-				return fmt.Errorf("test execution failed: %w", err)
-			}
-
-			// Display results
-			runner.DisplayResults(results)
-
-			// Save results if output file specified
-			if outputFile != "" {
-				err := runner.SaveResults(results, outputFile)
-				if err != nil {
-					log.Warn("Failed to save test results", "error", err)
-				}
-			}
-
-			// Return error if any tests failed
-			if results.Failed > 0 {
-				return fmt.Errorf("tests failed: %d passed, %d failed, %d skipped",
-					results.Passed, results.Failed, results.Skipped)
-			}
-
-			return nil
+			return runTestCommand(args[0], opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&parallel, "parallel", false, "run tests in parallel")
-	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "test timeout")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "verbose test output")
-	cmd.Flags().StringVar(&outputFile, "output", "", "save test results to file")
-	cmd.Flags().BoolVar(&skipCleanup, "skip-cleanup", false, "skip test cleanup")
-	cmd.Flags().IntVar(&retries, "retries", 1, "number of retries for failed tests")
-	cmd.Flags().StringSliceVar(&tags, "tags", nil, "test tags to include")
-	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "test tags to exclude")
+	addTestFlags(cmd, opts)
 
 	return cmd
+}
+
+// ValidateEnvironment validates the test environment.
+func (r *TestRunner) ValidateEnvironment(ctx context.Context) error {
+	log := logger.Get()
+	log.Info("Validating test environment")
+
+	// Check CF CLI is available and logged in
+	err := r.validateCFCLI(ctx)
+	if err != nil {
+		return fmt.Errorf("CF CLI validation failed: %w", err)
+	}
+
+	// Check BOSH CLI if needed
+	if r.Suite == TestSuiteAll || r.Suite == TestSuiteAcceptance {
+		err := r.validateBOSHCLI(ctx)
+		if err != nil {
+			return fmt.Errorf("BOSH CLI validation failed: %w", err)
+		}
+	}
+
+	// Verify CF deployment is accessible
+	err = r.validateCFDeployment(ctx)
+	if err != nil {
+		return fmt.Errorf("CF deployment validation failed: %w", err)
+	}
+
+	// Check required test directories exist
+	err = r.validateTestDirectories()
+	if err != nil {
+		return fmt.Errorf("test directory validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// Setup prepares the test environment.
+func (r *TestRunner) Setup(ctx context.Context) error {
+	log := logger.Get()
+	log.Info("Setting up test environment")
+
+	// Set CF target
+	err := r.setCFTarget(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to set CF target: %w", err)
+	}
+
+	// Create test org and space if needed
+	err = r.createTestOrgSpace(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create test org/space: %w", err)
+	}
+
+	// Deploy test applications if needed
+	if r.Suite == TestSuiteC2C || r.Suite == TestSuiteAll {
+		err := r.deployTestApps(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to deploy test apps: %w", err)
+		}
+	}
+
+	// Setup test data
+	err = r.setupTestData()
+	if err != nil {
+		return fmt.Errorf("failed to setup test data: %w", err)
+	}
+
+	return nil
+}
+
+// Execute runs the test suite.
+func (r *TestRunner) Execute(ctx context.Context) (*TestResults, error) {
+	log := logger.Get()
+	log.Info("Executing test suite", "suite", r.Suite)
+
+	results := r.initializeTestResults()
+
+	tests, err := r.getTestList()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get test list: %w", err)
+	}
+
+	log.Info("Running tests", "count", len(tests))
+	r.executeTestSuite(ctx, tests, results)
+	results.Duration = time.Since(results.StartTime)
+
+	return results, nil
+}
+
+// Cleanup cleans up test environment.
+func (r *TestRunner) Cleanup(ctx context.Context) error {
+	log := logger.Get()
+	log.Info("Cleaning up test environment")
+
+	// Delete test apps
+	err := r.cleanupTestApps(ctx)
+	if err != nil {
+		log.Warn("Failed to cleanup test apps", "error", err)
+	}
+
+	// Delete test org/space
+	err = r.cleanupTestOrgSpace(ctx)
+	if err != nil {
+		log.Warn("Failed to cleanup test org/space", "error", err)
+	}
+
+	// Cleanup test data
+	err = r.cleanupTestData()
+	if err != nil {
+		log.Warn("Failed to cleanup test data", "error", err)
+	}
+
+	return nil
+}
+
+// DisplayResults displays test results.
+func (r *TestRunner) DisplayResults(results *TestResults) {
+	r.displayTestResultsHeader()
+	r.displayTestSummary(results)
+	r.displayFailedTests(results)
+}
+
+// SaveResults saves test results to file.
+func (r *TestRunner) SaveResults(results *TestResults, filename string) error {
+	// Save results in JUnit XML format or JSON
+	// Placeholder implementation
+	content := fmt.Sprintf("Test Results: %d passed, %d failed, %d skipped",
+		results.Passed, results.Failed, results.Skipped)
+
+	err := os.WriteFile(filename, []byte(content), TestResultsFileMode)
+	if err != nil {
+		return fmt.Errorf("failed to write test results to file: %w", err)
+	}
+
+	return nil
+}
+
+func (r *TestRunner) initializeTestResults() *TestResults {
+	return &TestResults{
+		Suite:     r.Suite,
+		Passed:    0,
+		Failed:    0,
+		Skipped:   0,
+		Duration:  0,
+		Tests:     []TestResult{},
+		Output:    "",
+		StartTime: time.Now(),
+	}
+}
+
+func (r *TestRunner) executeTestSuite(ctx context.Context, tests []string, results *TestResults) {
+	for _, test := range tests {
+		if r.shouldSkipTest(test) {
+			r.addSkippedTestResult(test, results)
+
+			continue
+		}
+
+		logger.Get().Info("Running test", "name", test)
+		result := r.runSingleTest(ctx, test)
+		r.processTestResult(result, results)
+	}
+}
+
+func (r *TestRunner) addSkippedTestResult(testName string, results *TestResults) {
+	results.Tests = append(results.Tests, TestResult{
+		Name:     testName,
+		Status:   TestStatusSkipped,
+		Duration: 0,
+		Error:    "",
+		Output:   "",
+		Retries:  0,
+	})
+	results.Skipped++
+}
+
+func (r *TestRunner) processTestResult(result TestResult, results *TestResults) {
+	results.Tests = append(results.Tests, result)
+	r.updateResultCounters(result, results)
+	r.logTestResult(result)
+}
+
+func (r *TestRunner) updateResultCounters(result TestResult, results *TestResults) {
+	switch result.Status {
+	case TestStatusPassed:
+		results.Passed++
+	case TestStatusFailed:
+		results.Failed++
+	case TestStatusSkipped:
+		results.Skipped++
+	case TestStatusRunning:
+	}
+}
+
+func (r *TestRunner) logTestResult(result TestResult) {
+	if !r.Verbose {
+		return
+	}
+
+	logger.Get().Info(fmt.Sprintf("[%s] %s (%v)", result.Status, result.Name, result.Duration))
+
+	if result.Error != "" {
+		logger.Get().Error("  Error: " + result.Error)
+	}
+}
+
+func (r *TestRunner) displayTestResultsHeader() {
+	err := r.writeOutput("\n=== Test Results ===\n")
+	if err != nil {
+		logger.Get().Error(fmt.Sprintf("Failed to write test results header: %v", err))
+	}
+}
+
+func (r *TestRunner) displayTestSummary(results *TestResults) {
+	summaryLines := []string{
+		fmt.Sprintf("Suite: %s\n", results.Suite),
+		fmt.Sprintf("Duration: %v\n", results.Duration),
+		fmt.Sprintf("Tests: %d\n", len(results.Tests)),
+		fmt.Sprintf("Passed: %d\n", results.Passed),
+		fmt.Sprintf("Failed: %d\n", results.Failed),
+		fmt.Sprintf("Skipped: %d\n", results.Skipped),
+	}
+
+	for _, line := range summaryLines {
+		err := r.writeOutput(line)
+		if err != nil {
+			logger.Get().Error(fmt.Sprintf("Failed to write summary line: %v", err))
+
+			return
+		}
+	}
+}
+
+func (r *TestRunner) displayFailedTests(results *TestResults) {
+	if results.Failed == 0 {
+		return
+	}
+
+	err := r.writeOutput("\n=== Failed Tests ===\n")
+	if err != nil {
+		logger.Get().Error(fmt.Sprintf("Failed to write failed tests header: %v", err))
+
+		return
+	}
+
+	for _, test := range results.Tests {
+		if test.Status == TestStatusFailed {
+			line := fmt.Sprintf("- %s: %s\n", test.Name, test.Error)
+
+			err := r.writeOutput(line)
+			if err != nil {
+				logger.Get().Error(fmt.Sprintf("Failed to write failed test info: %v", err))
+
+				return
+			}
+		}
+	}
+}
+
+func (r *TestRunner) writeOutput(message string) error {
+	_, err := fmt.Fprint(os.Stdout, message)
+	if err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	return nil
+}
+
+// addTestFlags adds all test command flags.
+func addTestFlags(cmd *cobra.Command, opts *testOptions) {
+	cmd.Flags().BoolVar(&opts.parallel, "parallel", false, "run tests in parallel")
+	cmd.Flags().DurationVar(&opts.timeout, "timeout", DefaultTestTimeoutMinutes*time.Minute, "test timeout")
+	cmd.Flags().BoolVar(&opts.verbose, "verbose", false, "verbose test output")
+	cmd.Flags().StringVar(&opts.outputFile, "output", "", "save test results to file")
+	cmd.Flags().BoolVar(&opts.skipCleanup, "skip-cleanup", false, "skip test cleanup")
+	cmd.Flags().IntVar(&opts.retries, "retries", 1, "number of retries for failed tests")
+	cmd.Flags().StringSliceVar(&opts.tags, "tags", nil, "test tags to include")
+	cmd.Flags().StringSliceVar(&opts.exclude, "exclude", nil, "test tags to exclude")
+}
+
+// runTestCommand executes the test command logic.
+func runTestCommand(testType string, opts *testOptions) error {
+	ctx := context.Background()
+	log := logger.Get()
+
+	suite, err := parseTestSuite(testType)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadTestConfig()
+	if err != nil {
+		return err
+	}
+
+	log.Info("Running tests", "suite", suite, "deployment", cfg.Name, "parallel", opts.parallel, "timeout", opts.timeout)
+
+	runner := createTestRunner(cfg, suite, opts)
+
+	return executeTestSuite(ctx, runner, opts, log)
+}
+
+// parseTestSuite parses the test suite from the test type string.
+func parseTestSuite(testType string) (TestSuite, error) {
+	switch strings.ToLower(testType) {
+	case "c2c":
+		return TestSuiteC2C, nil
+	case "blacksmith":
+		return TestSuiteBlacksmith, nil
+	case "nfs":
+		return TestSuiteNFS, nil
+	case "smb":
+		return TestSuiteSMB, nil
+	case "tcp":
+		return TestSuiteTCP, nil
+	case "all":
+		return TestSuiteAll, nil
+	case "smoke":
+		return TestSuiteSmoke, nil
+	case "acceptance":
+		return TestSuiteAcceptance, nil
+	default:
+		return TestSuiteSmoke, ErrUnknownTestType(testType)
+	}
+}
+
+// loadTestConfig loads the configuration for testing.
+func loadTestConfig() (*config.Config, error) {
+	configFile := viper.GetString("config")
+	blocName := viper.GetString("bloc")
+
+	cfg, err := config.LoadWithParams(configFile, blocName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// createTestRunner creates a new test runner with the given configuration.
+func createTestRunner(cfg *config.Config, suite TestSuite, opts *testOptions) *TestRunner {
+	return &TestRunner{
+		Config:      cfg,
+		Suite:       suite,
+		Parallel:    opts.parallel,
+		Timeout:     opts.timeout,
+		Verbose:     opts.verbose,
+		OutputFile:  opts.outputFile,
+		SkipCleanup: opts.skipCleanup,
+		Retries:     opts.retries,
+		Tags:        opts.tags,
+		Exclude:     opts.exclude,
+	}
+}
+
+// executeTestSuite executes the test suite using the runner.
+func executeTestSuite(ctx context.Context, runner *TestRunner, opts *testOptions, log logger.Logger) error {
+	err := prepareTestEnvironment(ctx, runner)
+	if err != nil {
+		return err
+	}
+
+	if !opts.skipCleanup {
+		defer cleanupTestEnvironment(ctx, runner, log)
+	}
+
+	results, err := runTests(ctx, runner)
+	if err != nil {
+		return err
+	}
+
+	return handleTestResults(results, opts, runner, log)
+}
+
+// prepareTestEnvironment validates and sets up the test environment.
+func prepareTestEnvironment(ctx context.Context, runner *TestRunner) error {
+	err := runner.ValidateEnvironment(ctx)
+	if err != nil {
+		return fmt.Errorf("test environment validation failed: %w", err)
+	}
+
+	err = runner.Setup(ctx)
+	if err != nil {
+		return fmt.Errorf("test setup failed: %w", err)
+	}
+
+	return nil
+}
+
+// cleanupTestEnvironment performs cleanup after test execution.
+func cleanupTestEnvironment(ctx context.Context, runner *TestRunner, log logger.Logger) {
+	err := runner.Cleanup(ctx)
+	if err != nil {
+		log.Warn("Test cleanup failed", "error", err)
+	}
+}
+
+// runTests executes the tests and returns results.
+func runTests(ctx context.Context, runner *TestRunner) (*TestResults, error) {
+	results, err := runner.Execute(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("test execution failed: %w", err)
+	}
+
+	return results, nil
+}
+
+// handleTestResults processes and reports test results.
+func handleTestResults(results *TestResults, opts *testOptions, runner *TestRunner, log logger.Logger) error {
+	runner.DisplayResults(results)
+
+	if opts.outputFile != "" {
+		err := runner.SaveResults(results, opts.outputFile)
+		if err != nil {
+			log.Warn("Failed to save test results", "error", err)
+		}
+	}
+
+	if results.Failed > 0 {
+		return ErrTestsFailed(results.Passed, results.Failed, results.Skipped)
+	}
+
+	return nil
 }
 
 // TestRunner handles test execution.
@@ -248,140 +584,15 @@ const (
 	TestStatusRunning TestStatus = "RUNNING"
 )
 
-// ValidateEnvironment validates the test environment.
-func (r *TestRunner) ValidateEnvironment(ctx context.Context) error {
-	log := logger.Get()
-	log.Info("Validating test environment")
-
-	// Check CF CLI is available and logged in
-	err := r.validateCFCLI()
-	if err != nil {
-		return fmt.Errorf("CF CLI validation failed: %w", err)
-	}
-
-	// Check BOSH CLI if needed
-	if r.Suite == TestSuiteAll || r.Suite == TestSuiteAcceptance {
-		err := r.validateBOSHCLI()
-		if err != nil {
-			return fmt.Errorf("BOSH CLI validation failed: %w", err)
-		}
-	}
-
-	// Verify CF deployment is accessible
-	err = r.validateCFDeployment(ctx)
-	if err != nil {
-		return fmt.Errorf("CF deployment validation failed: %w", err)
-	}
-
-	// Check required test directories exist
-	err = r.validateTestDirectories()
-	if err != nil {
-		return fmt.Errorf("test directory validation failed: %w", err)
-	}
-
-	return nil
-}
-
-// Setup prepares the test environment.
-func (r *TestRunner) Setup(ctx context.Context) error {
-	log := logger.Get()
-	log.Info("Setting up test environment")
-
-	// Set CF target
-	err := r.setCFTarget()
-	if err != nil {
-		return fmt.Errorf("failed to set CF target: %w", err)
-	}
-
-	// Create test org and space if needed
-	err = r.createTestOrgSpace()
-	if err != nil {
-		return fmt.Errorf("failed to create test org/space: %w", err)
-	}
-
-	// Deploy test applications if needed
-	if r.Suite == TestSuiteC2C || r.Suite == TestSuiteAll {
-		err := r.deployTestApps(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to deploy test apps: %w", err)
-		}
-	}
-
-	// Setup test data
-	err = r.setupTestData()
-	if err != nil {
-		return fmt.Errorf("failed to setup test data: %w", err)
-	}
-
-	return nil
-}
-
-// Execute runs the test suite.
-func (r *TestRunner) Execute(ctx context.Context) (*TestResults, error) {
-	log := logger.Get()
-	log.Info("Executing test suite", "suite", r.Suite)
-
-	results := &TestResults{
-		Suite:     r.Suite,
-		StartTime: time.Now(),
-		Tests:     []TestResult{},
-	}
-
-	// Get test list based on suite
-	tests, err := r.getTestList()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get test list: %w", err)
-	}
-
-	log.Info("Running tests", "count", len(tests))
-
-	// Execute tests
-	for _, test := range tests {
-		if r.shouldSkipTest(test) {
-			results.Tests = append(results.Tests, TestResult{
-				Name:   test,
-				Status: TestStatusSkipped,
-			})
-			results.Skipped++
-
-			continue
-		}
-
-		log.Info("Running test", "name", test)
-
-		result := r.runSingleTest(ctx, test)
-		results.Tests = append(results.Tests, result)
-
-		switch result.Status {
-		case TestStatusPassed:
-			results.Passed++
-		case TestStatusFailed:
-			results.Failed++
-		case TestStatusSkipped:
-			results.Skipped++
-		case TestStatusRunning:
-			// Running status should not affect final counters
-		}
-
-		if r.Verbose {
-			fmt.Printf("[%s] %s (%v)\n", result.Status, result.Name, result.Duration)
-
-			if result.Error != "" {
-				fmt.Printf("  Error: %s\n", result.Error)
-			}
-		}
-	}
-
-	results.Duration = time.Since(results.StartTime)
-
-	return results, nil
-}
-
 // runSingleTest executes a single test.
 func (r *TestRunner) runSingleTest(ctx context.Context, testName string) TestResult {
 	result := TestResult{
-		Name:   testName,
-		Status: TestStatusRunning,
+		Name:     testName,
+		Status:   TestStatusRunning,
+		Duration: 0,
+		Error:    "",
+		Output:   "",
+		Retries:  0,
 	}
 
 	start := time.Now()
@@ -393,7 +604,7 @@ func (r *TestRunner) runSingleTest(ctx context.Context, testName string) TestRes
 	// Run test with retries
 	for attempt := 0; attempt <= r.Retries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(5 * time.Second) // Wait before retry
+			time.Sleep(TestRetryDelaySeconds * time.Second) // Wait before retry
 		}
 
 		err := r.executeTest(testCtx, testName, &result)
@@ -423,24 +634,24 @@ func (r *TestRunner) executeTest(ctx context.Context, testName string, result *T
 
 	switch r.Suite {
 	case TestSuiteSmoke:
-		cmd = r.buildSmokeTestCommand(testName)
+		cmd = r.buildSmokeTestCommand(ctx)
 	case TestSuiteC2C:
-		cmd = r.buildC2CTestCommand(testName)
+		cmd = r.buildC2CTestCommand(ctx, testName)
 	case TestSuiteBlacksmith:
-		cmd = r.buildBlacksmithTestCommand(testName)
+		cmd = r.buildBlacksmithTestCommand(ctx, testName)
 	case TestSuiteNFS:
-		cmd = r.buildNFSTestCommand(testName)
+		cmd = r.buildNFSTestCommand(ctx, testName)
 	case TestSuiteSMB:
-		cmd = r.buildSMBTestCommand(testName)
+		cmd = r.buildSMBTestCommand(ctx, testName)
 	case TestSuiteAll:
 		// When running all, default to smoke test builder for single-test execution
-		cmd = r.buildSmokeTestCommand(testName)
+		cmd = r.buildSmokeTestCommand(ctx)
 	case TestSuiteTCP:
-		cmd = r.buildTCPTestCommand(testName)
+		cmd = r.buildTCPTestCommand(ctx, testName)
 	case TestSuiteAcceptance:
-		cmd = r.buildAcceptanceTestCommand(testName)
+		cmd = r.buildAcceptanceTestCommand(ctx, testName)
 	default:
-		return fmt.Errorf("unsupported test suite: %s", r.Suite)
+		return ErrUnsupportedTestSuite(string(r.Suite))
 	}
 
 	cmd.Env = append(os.Environ(), r.getTestEnvironment()...)
@@ -449,71 +660,18 @@ func (r *TestRunner) executeTest(ctx context.Context, testName string, result *T
 	output, err := cmd.CombinedOutput()
 	result.Output = string(output)
 
-	return err
-}
-
-// Cleanup cleans up test environment.
-func (r *TestRunner) Cleanup(ctx context.Context) error {
-	log := logger.Get()
-	log.Info("Cleaning up test environment")
-
-	// Delete test apps
-	err := r.cleanupTestApps(ctx)
 	if err != nil {
-		log.Warn("Failed to cleanup test apps", "error", err)
-	}
-
-	// Delete test org/space
-	err = r.cleanupTestOrgSpace()
-	if err != nil {
-		log.Warn("Failed to cleanup test org/space", "error", err)
-	}
-
-	// Cleanup test data
-	err = r.cleanupTestData()
-	if err != nil {
-		log.Warn("Failed to cleanup test data", "error", err)
+		return fmt.Errorf("failed to execute test command: %w", err)
 	}
 
 	return nil
 }
 
-// DisplayResults displays test results.
-func (r *TestRunner) DisplayResults(results *TestResults) {
-	fmt.Printf("\n=== Test Results ===\n")
-	fmt.Printf("Suite: %s\n", results.Suite)
-	fmt.Printf("Duration: %v\n", results.Duration)
-	fmt.Printf("Tests: %d\n", len(results.Tests))
-	fmt.Printf("Passed: %d\n", results.Passed)
-	fmt.Printf("Failed: %d\n", results.Failed)
-	fmt.Printf("Skipped: %d\n", results.Skipped)
-
-	if results.Failed > 0 {
-		fmt.Printf("\n=== Failed Tests ===\n")
-
-		for _, test := range results.Tests {
-			if test.Status == TestStatusFailed {
-				fmt.Printf("- %s: %s\n", test.Name, test.Error)
-			}
-		}
-	}
-}
-
-// SaveResults saves test results to file.
-func (r *TestRunner) SaveResults(results *TestResults, filename string) error {
-	// Save results in JUnit XML format or JSON
-	// Placeholder implementation
-	content := fmt.Sprintf("Test Results: %d passed, %d failed, %d skipped",
-		results.Passed, results.Failed, results.Skipped)
-
-	return os.WriteFile(filename, []byte(content), 0600)
-}
-
 // Helper methods for test validation and execution
 
-func (r *TestRunner) validateCFCLI() error {
+func (r *TestRunner) validateCFCLI(ctx context.Context) error {
 	// Check if cf CLI is installed and logged in
-	cmd := exec.CommandContext(context.Background(), "cf", "api")
+	cmd := exec.CommandContext(ctx, "cf", "api")
 
 	err := cmd.Run()
 	if err != nil {
@@ -523,9 +681,9 @@ func (r *TestRunner) validateCFCLI() error {
 	return nil
 }
 
-func (r *TestRunner) validateBOSHCLI() error {
+func (r *TestRunner) validateBOSHCLI(ctx context.Context) error {
 	// Check if bosh CLI is installed
-	cmd := exec.CommandContext(context.Background(), "bosh", "env")
+	cmd := exec.CommandContext(ctx, "bosh", "env")
 
 	err := cmd.Run()
 	if err != nil {
@@ -555,15 +713,16 @@ func (r *TestRunner) validateTestDirectories() error {
 	}
 
 	for _, dir := range testDirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return fmt.Errorf("test directory not found: %s", dir)
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return ErrTestDirectoryNotFound(dir)
 		}
 	}
 
 	return nil
 }
 
-func (r *TestRunner) setCFTarget() error {
+func (r *TestRunner) setCFTarget(ctx context.Context) error {
 	// Set CF API target
 	err := security.ValidateInput(r.Config.DNS[0], testValidDNSPattern)
 	if err != nil {
@@ -571,12 +730,17 @@ func (r *TestRunner) setCFTarget() error {
 	}
 
 	apiURL := "https://api." + r.Config.DNS[0]
-	cmd := exec.CommandContext(context.Background(), "cf", "api", apiURL, "--skip-ssl-validation") // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "cf", "api", apiURL, "--skip-ssl-validation") // #nosec G204 - input validated above
 
-	return cmd.Run()
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to set CF target: %w", err)
+	}
+
+	return nil
 }
 
-func (r *TestRunner) createTestOrgSpace() error {
+func (r *TestRunner) createTestOrgSpace(ctx context.Context) error {
 	// Create test organization and space
 	err := security.ValidateInput(r.Config.Name, testValidOrgNamePattern)
 	if err != nil {
@@ -587,7 +751,7 @@ func (r *TestRunner) createTestOrgSpace() error {
 	spaceName := r.Config.Name + "-test-space"
 
 	// Create org
-	cmd := exec.CommandContext(context.Background(), "cf", "create-org", orgName) // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "cf", "create-org", orgName) // #nosec G204 - input validated above
 
 	err = cmd.Run()
 	if err != nil {
@@ -596,7 +760,7 @@ func (r *TestRunner) createTestOrgSpace() error {
 	}
 
 	// Create space
-	cmd = exec.CommandContext(context.Background(), "cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
+	cmd = exec.CommandContext(ctx, "cf", "create-space", spaceName, "-o", orgName) // #nosec G204 - input validated above
 
 	err = cmd.Run()
 	if err != nil {
@@ -605,9 +769,14 @@ func (r *TestRunner) createTestOrgSpace() error {
 	}
 
 	// Target org/space
-	cmd = exec.CommandContext(context.Background(), "cf", "target", "-o", orgName, "-s", spaceName) // #nosec G204 - input validated above
+	cmd = exec.CommandContext(ctx, "cf", "target", "-o", orgName, "-s", spaceName) // #nosec G204 - input validated above
 
-	return cmd.Run()
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to target org/space: %w", err)
+	}
+
+	return nil
 }
 
 func (r *TestRunner) deployTestApps(ctx context.Context) error {
@@ -658,7 +827,7 @@ func (r *TestRunner) getTestList() ([]string, error) {
 
 		return allTests, nil
 	default:
-		return nil, fmt.Errorf("unknown test suite: %s", r.Suite)
+		return nil, ErrUnknownTestSuite(string(r.Suite))
 	}
 }
 
@@ -694,38 +863,38 @@ func (r *TestRunner) getTestEnvironment() []string {
 	}
 }
 
-func (r *TestRunner) buildSmokeTestCommand(testName string) *exec.Cmd {
-	return exec.CommandContext(context.Background(), "cf", "curl", "/v2/info")
+func (r *TestRunner) buildSmokeTestCommand(ctx context.Context) *exec.Cmd {
+	return exec.CommandContext(ctx, "cf", "curl", "/v2/info")
 }
 
-func (r *TestRunner) buildC2CTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildC2CTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for C2C networking tests
-	return exec.CommandContext(context.Background(), "echo", "Running C2C test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running C2C test:", testName)
 }
 
-func (r *TestRunner) buildBlacksmithTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildBlacksmithTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for Blacksmith service broker tests
-	return exec.CommandContext(context.Background(), "echo", "Running Blacksmith test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running Blacksmith test:", testName)
 }
 
-func (r *TestRunner) buildNFSTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildNFSTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for NFS volume service tests
-	return exec.CommandContext(context.Background(), "echo", "Running NFS test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running NFS test:", testName)
 }
 
-func (r *TestRunner) buildSMBTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildSMBTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for SMB volume service tests
-	return exec.CommandContext(context.Background(), "echo", "Running SMB test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running SMB test:", testName)
 }
 
-func (r *TestRunner) buildTCPTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildTCPTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for TCP routing tests
-	return exec.CommandContext(context.Background(), "echo", "Running TCP test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running TCP test:", testName)
 }
 
-func (r *TestRunner) buildAcceptanceTestCommand(testName string) *exec.Cmd {
+func (r *TestRunner) buildAcceptanceTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for acceptance tests
-	return exec.CommandContext(context.Background(), "echo", "Running acceptance test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running acceptance test:", testName)
 }
 
 func (r *TestRunner) cleanupTestApps(ctx context.Context) error {
@@ -733,7 +902,7 @@ func (r *TestRunner) cleanupTestApps(ctx context.Context) error {
 	return nil
 }
 
-func (r *TestRunner) cleanupTestOrgSpace() error {
+func (r *TestRunner) cleanupTestOrgSpace(ctx context.Context) error {
 	// Delete test org and space
 	err := security.ValidateInput(r.Config.Name, testValidOrgNamePattern)
 	if err != nil {
@@ -741,9 +910,14 @@ func (r *TestRunner) cleanupTestOrgSpace() error {
 	}
 
 	orgName := r.Config.Name + "-test-org"
-	cmd := exec.CommandContext(context.Background(), "cf", "delete-org", orgName, "-f") // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "cf", "delete-org", orgName, "-f") // #nosec G204 - input validated above
 
-	return cmd.Run()
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to delete test org: %w", err)
+	}
+
+	return nil
 }
 
 func (r *TestRunner) cleanupTestData() error {

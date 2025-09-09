@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"os"
@@ -13,11 +13,41 @@ import (
 
 func TestEnvCommand(t *testing.T) {
 	t.Parallel()
-	// Create test config directory
+	configFile := setupEnvTestConfig(t)
+
+	t.Run("CreateCommand", func(t *testing.T) {
+		t.Parallel()
+		testEnvCreateCommand(t)
+	})
+
+	t.Run("ListSubcommand", func(t *testing.T) {
+		t.Parallel()
+		testEnvListSubcommand(t)
+	})
+
+	t.Run("ShowSubcommand", func(t *testing.T) {
+		t.Parallel()
+		testEnvShowSubcommand(t)
+	})
+
+	t.Run("SetSubcommand", func(t *testing.T) {
+		t.Parallel()
+		testEnvSetSubcommand(t)
+	})
+
+	t.Run("ExportSubcommand", func(t *testing.T) {
+		t.Parallel()
+		testEnvExportSubcommand(t)
+	})
+
+	_ = configFile // Suppress unused variable warning
+}
+
+func setupEnvTestConfig(t *testing.T) string {
+	t.Helper()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
 
-	// Create test config
 	testConfig := `
 provider: stackit
 environment: dev
@@ -36,103 +66,100 @@ environments:
     account_id: prod-account
 `
 
-	err := os.WriteFile(configFile, []byte(testConfig), 0644)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
 	require.NoError(t, err)
 
-	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
+	return configFile
+}
 
-		cmd := commands.NewEnvCmd()
-		assert.NotNil(t, cmd)
-		assert.Equal(t, "env", cmd.Use)
-	})
+func testEnvCreateCommand(t *testing.T) {
+	t.Helper()
 
-	t.Run("ListSubcommand", func(t *testing.T) {
-		t.Parallel()
+	cmd := commands.NewEnvCmd()
+	assert.NotNil(t, cmd)
+	assert.Equal(t, "env", cmd.Use)
+}
 
-		cmd := commands.NewEnvCmd()
+func testEnvListSubcommand(t *testing.T) {
+	t.Helper()
 
-		// Find list subcommand
-		var listCmd *cobra.Command
+	cmd := commands.NewEnvCmd()
 
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == "list" {
-				listCmd = sub
+	var listCmd *cobra.Command
 
-				break
-			}
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "list" {
+			listCmd = sub
+
+			break
 		}
+	}
 
-		assert.NotNil(t, listCmd)
-		assert.Equal(t, "list", listCmd.Use)
-	})
+	assert.NotNil(t, listCmd)
+	assert.Equal(t, "list", listCmd.Use)
+}
 
-	t.Run("ShowSubcommand", func(t *testing.T) {
-		t.Parallel()
+func testEnvShowSubcommand(t *testing.T) {
+	t.Helper()
 
-		cmd := commands.NewEnvCmd()
+	cmd := commands.NewEnvCmd()
 
-		// Find show subcommand
-		var showCmd *cobra.Command
+	var showCmd *cobra.Command
 
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == "show" {
-				showCmd = sub
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "show" {
+			showCmd = sub
 
-				break
-			}
+			break
 		}
+	}
 
-		assert.NotNil(t, showCmd)
-		assert.Equal(t, "show [environment]", showCmd.Use)
-	})
+	assert.NotNil(t, showCmd)
+	assert.Equal(t, "show [environment]", showCmd.Use)
+}
 
-	t.Run("SetSubcommand", func(t *testing.T) {
-		t.Parallel()
+func testEnvSetSubcommand(t *testing.T) {
+	t.Helper()
 
-		cmd := commands.NewEnvCmd()
+	cmd := commands.NewEnvCmd()
 
-		// Find set subcommand
-		var setCmd *cobra.Command
+	var setCmd *cobra.Command
 
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == "set" {
-				setCmd = sub
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "set" {
+			setCmd = sub
 
-				break
-			}
+			break
 		}
+	}
 
-		assert.NotNil(t, setCmd)
-		assert.Equal(t, "set <environment>", setCmd.Use)
+	assert.NotNil(t, setCmd)
+	assert.Equal(t, "set <environment>", setCmd.Use)
 
-		// Test args validation
-		err := setCmd.Args(setCmd, []string{})
-		require.Error(t, err)
+	err := setCmd.Args(setCmd, []string{})
+	require.Error(t, err)
 
-		err = setCmd.Args(setCmd, []string{"dev"})
-		assert.NoError(t, err)
-	})
+	err = setCmd.Args(setCmd, []string{"dev"})
+	assert.NoError(t, err)
+}
 
-	t.Run("ExportSubcommand", func(t *testing.T) {
-		t.Parallel()
+func testEnvExportSubcommand(t *testing.T) {
+	t.Helper()
 
-		cmd := commands.NewEnvCmd()
+	cmd := commands.NewEnvCmd()
 
-		// Find export subcommand
-		var exportCmd *cobra.Command
+	var exportCmd *cobra.Command
 
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == "export" {
-				exportCmd = sub
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "export" {
+			exportCmd = sub
 
-				break
-			}
+			break
 		}
+	}
 
-		assert.NotNil(t, exportCmd)
-		assert.Equal(t, "export [environment]", exportCmd.Use)
-	})
+	assert.NotNil(t, exportCmd)
+	assert.Equal(t, "export [environment]", exportCmd.Use)
 }
 
 func TestBootstrapCommand(t *testing.T) {

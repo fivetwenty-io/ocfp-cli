@@ -1,18 +1,22 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "errors"
-    "os"
-    "os/exec"
-    "strings"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+const (
+	// Command arguments.
+	scpTwoArgs = 2
 )
 
 // NewSCPCmd creates the SCP command.
@@ -24,7 +28,7 @@ func NewSCPCmd() *cobra.Command {
 		scpOptions string
 	)
 
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "scp <source> <destination>",
 		Short: "Copy files to/from bastion host",
 		Long: `SCP copies files between the local machine and the bastion host.
@@ -45,8 +49,8 @@ The bastion host is automatically discovered using the bloc configuration.`,
 
   # Use specific SSH key
   ocfp scp --bloc production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
-            Args: cobra.ExactArgs(2),
-            RunE:   runSCP,
+		Args: cobra.ExactArgs(scpTwoArgs),
+		RunE: runSCP,
 	}
 
 	// Command-specific flags
@@ -68,73 +72,109 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("scp")
 
-	// Get configuration values
-	blocName := viper.GetString("bloc_name")
-	user := viper.GetString("scp.user")
-	keyPath := viper.GetString("scp.key")
-	recursive := viper.GetBool("scp.recursive")
-	scpOptions := viper.GetString("scp.options")
-
-	source := args[0]
-	destination := args[1]
-
-	// Validate required configuration
-	if blocName == "" {
-		return errors.New("bloc is required")
-	}
-
-	// Load configuration; provider and region come from bloc config
-	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+	scpConfig, err := getSCPConfig(args)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return err
 	}
 
-	if cfg.Provider == "" && cfg.IaaS == "" {
-		return errors.New("provider must be specified in bloc config")
-	}
-
-	// Initialize provider using bloc configuration
-	provider, err := cpi.GetProvider(cfg.Provider)
+	cfg, provider, err := setupSCPProvider(ctx, scpConfig)
 	if err != nil {
-		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
+		return err
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
-	}
-
-	// Get bastion IP address
-	bastionIP, err := getBastionIPForSCP(ctx, provider, blocName)
+	bastionIP, err := getBastionIPForSCP(ctx, provider, scpConfig.BlocName)
 	if err != nil {
 		return fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-    // Find SSH key if not specified
-    if keyPath == "" {
-        keyPath, err = findSSHKey(blocName, cfg)
-        if err != nil {
-            return fmt.Errorf("failed to find SSH key: %w", err)
-        }
-    }
+	keyPath, err := resolveSCPKey(scpConfig, cfg)
+	if err != nil {
+		return err
+	}
 
-    // Verify key exists and has correct permissions
-    if err := verifySSHKey(keyPath); err != nil {
-        return fmt.Errorf("SSH key verification failed: %w", err)
-    }
+	err = verifySSHKey(keyPath)
+	if err != nil {
+		return fmt.Errorf("SSH key verification failed: %w", err)
+	}
 
-	// Process source and destination paths
-	processedSource := processSCPPath(source, bastionIP, user)
-	processedDest := processSCPPath(destination, bastionIP, user)
+	scpCmd := prepareSCPCommand(scpConfig, bastionIP, keyPath)
 
-	// Build SCP command
-	scpCmd := buildSCPCommand(processedSource, processedDest, keyPath, recursive, scpOptions)
-
-	log.Infof("Copying files: %s -> %s", source, destination)
+	log.Infof("Copying files: %s -> %s", scpConfig.Source, scpConfig.Destination)
 	log.Debugf("Using SSH key: %s", keyPath)
 	log.Debugf("Bastion IP: %s", bastionIP)
 
-	// Execute SCP command
-    return executeSCP(ctx, scpCmd)
+	return executeSCP(ctx, scpCmd)
+}
+
+type scpConfig struct {
+	BlocName    string
+	User        string
+	KeyPath     string
+	Recursive   bool
+	Options     string
+	Source      string
+	Destination string
+}
+
+func getSCPConfig(args []string) (*scpConfig, error) {
+	blocName := viper.GetString("bloc_name")
+	if blocName == "" {
+		return nil, ErrBlocIsRequired
+	}
+
+	return &scpConfig{
+		BlocName:    blocName,
+		User:        viper.GetString("scp.user"),
+		KeyPath:     viper.GetString("scp.key"),
+		Recursive:   viper.GetBool("scp.recursive"),
+		Options:     viper.GetString("scp.options"),
+		Source:      args[0],
+		Destination: args[1],
+	}, nil
+}
+
+//nolint:ireturn // Returns interface by design for provider abstraction
+func setupSCPProvider(ctx context.Context, scpCfg *scpConfig) (*config.Config, cpi.Provider, error) {
+	cfg, err := config.LoadWithParams(viper.GetString("config.file"), scpCfg.BlocName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if cfg.Provider == "" && cfg.IaaS == "" {
+		return nil, nil, ErrProviderMustBeSpecifiedInBlocConfig(scpCfg.BlocName)
+	}
+
+	provider, err := cpi.GetProvider(cfg.Provider)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
+	}
+
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
+	}
+
+	return cfg, provider, nil
+}
+
+func resolveSCPKey(scpCfg *scpConfig, cfg *config.Config) (string, error) {
+	if scpCfg.KeyPath != "" {
+		return scpCfg.KeyPath, nil
+	}
+
+	keyPath, err := findSSHKey(scpCfg.BlocName, cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to find SSH key: %w", err)
+	}
+
+	return keyPath, nil
+}
+
+func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) []string {
+	processedSource := processSCPPath(scpCfg.Source, bastionIP, scpCfg.User)
+	processedDest := processSCPPath(scpCfg.Destination, bastionIP, scpCfg.User)
+
+	return buildSCPCommand(processedSource, processedDest, keyPath, scpCfg.Recursive, scpCfg.Options)
 }
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).
@@ -196,13 +236,13 @@ func executeSCP(ctx context.Context, scpCmd []string) error {
 
 	// Validate that the command is scp
 	if len(scpCmd) == 0 || scpCmd[0] != "scp" {
-		return errors.New("invalid SCP command")
+		return ErrInvalidSCPCommand
 	}
 
-    cmd := exec.CommandContext(ctx, scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
+	cmd := exec.CommandContext(ctx, scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	return fmt.Errorf("scp command failed: %w", cmd.Run())
 }

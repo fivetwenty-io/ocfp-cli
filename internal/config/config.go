@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,59 +22,65 @@ type ConfigFile struct {
 
 // Config represents a bloc configuration.
 type Config struct {
-	Name     string `mapstructure:"name"     yaml:"name"`
-	Provider string `mapstructure:"provider" yaml:"provider"`
-	IaaS     string `mapstructure:"iaas"     yaml:"iaas"`
-	Region   string `mapstructure:"region"   yaml:"region"`
+	Name     string `json:"name"     mapstructure:"name"     yaml:"name"`
+	Provider string `json:"provider" mapstructure:"provider" yaml:"provider"`
+	IaaS     string `json:"iaas"     mapstructure:"iaas"     yaml:"iaas"`
+	Region   string `json:"region"   mapstructure:"region"   yaml:"region"`
 	// Prefer snake_case to match README and user configs
-	ProjectID             string `mapstructure:"project_id"               yaml:"project_id"`
-	OrgID                 string `mapstructure:"org_id"                   yaml:"org_id"`
-	AuthToken             string `mapstructure:"auth_token"               yaml:"auth_token"`
-	ServiceAccountToken   string `mapstructure:"service_account_token"    yaml:"service_account_token"`
-	ServiceAccountJSON    string `mapstructure:"service_account_json"     yaml:"service_account_json"`
-	ServiceAccountKeyPath string `mapstructure:"service_account_key_path" yaml:"service_account_key_path"`
+	ProjectID             string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id"`
+	OrgID                 string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id"`
+	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token"`
+	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token"`
+	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json"`
+	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
-	APIEndpoint      string                      `mapstructure:"api_endpoint"        yaml:"api_endpoint"`
-	AccessKeyID      string                      `mapstructure:"access_key_id"       yaml:"access_key_id"`
-	SecretAccessKey  string                      `mapstructure:"secret_access_key"   yaml:"secret_access_key"`
-	SubscriptionID   string                      `mapstructure:"subscription_id"     yaml:"subscription_id"`
-	TenantID         string                      `mapstructure:"tenant_id"           yaml:"tenant_id"`
-	ClientID         string                      `mapstructure:"client_id"           yaml:"client_id"`
-	ClientSecret     string                      `mapstructure:"client_secret"       yaml:"client_secret"`
-	AuthURL          string                      `mapstructure:"auth_url"            yaml:"auth_url"`
-	Username         string                      `mapstructure:"username"            yaml:"username"`
-	Password         string                      `mapstructure:"password"            yaml:"password"`
-	ProjectName      string                      `mapstructure:"project_name"        yaml:"project_name"`
-	DomainName       string                      `mapstructure:"domain_name"         yaml:"domain_name"`
-	SessionToken     string                      `mapstructure:"session_token"       yaml:"session_token"`
-	BastionIP        string                      `mapstructure:"bastion_ip"          yaml:"bastion_ip"`
-	Network          NetworkConfig               `mapstructure:"network"             yaml:"network"`
-	Bastion          Bastion                     `mapstructure:"bastion"             yaml:"bastion"`
-	Genesis          Genesis                     `mapstructure:"genesis"             yaml:"genesis"`
-	Deployment       Deployment                  `mapstructure:"deployments"         yaml:"deployments"`
-	DNS              []string                    `mapstructure:"dns"                 yaml:"dns"`
-	AZs              map[string]AvailabilityZone `mapstructure:"azs"                 yaml:"azs"`
-	SSHKeyStorageDir string                      `mapstructure:"ssh_key_storage_dir" yaml:"ssh_key_storage_dir"`
-	Routers          ComponentConfig             `mapstructure:"routers"             yaml:"routers"`
-	Cells            ComponentConfig             `mapstructure:"cells"               yaml:"cells"`
+	APIEndpoint      string                      `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint"`
+	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id"`
+	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key"`
+	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id"`
+	TenantID         string                      `json:"tenant_id"           mapstructure:"tenant_id"           yaml:"tenant_id"`
+	ClientID         string                      `json:"client_id"           mapstructure:"client_id"           yaml:"client_id"`
+	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret"`
+	AuthURL          string                      `json:"auth_url"            mapstructure:"auth_url"            yaml:"auth_url"`
+	Username         string                      `json:"username"            mapstructure:"username"            yaml:"username"`
+	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password"`
+	ProjectName      string                      `json:"project_name"        mapstructure:"project_name"        yaml:"project_name"`
+	DomainName       string                      `json:"domain_name"         mapstructure:"domain_name"         yaml:"domain_name"`
+	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token"`
+	BastionIP        string                      `json:"bastion_ip"          mapstructure:"bastion_ip"          yaml:"bastion_ip"`
+	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network"`
+	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion"`
+	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis"`
+	Deployment       Deployment                  `json:"deployments"         mapstructure:"deployments"         yaml:"deployments"`
+	DNS              []string                    `json:"dns"                 mapstructure:"dns"                 yaml:"dns"`
+	AZs              map[string]AvailabilityZone `json:"azs"                 mapstructure:"azs"                 yaml:"azs"`
+	SSHKeyStorageDir string                      `json:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir" yaml:"ssh_key_storage_dir"`
+	Routers          ComponentConfig             `json:"routers"             mapstructure:"routers"             yaml:"routers"`
+	Cells            ComponentConfig             `json:"cells"               mapstructure:"cells"               yaml:"cells"`
 	// Additional fields from the example config
-	FQDNs             map[string]interface{} `mapstructure:"fqdns"               yaml:"fqdns"`
-	S3                map[string]string      `mapstructure:"s3"                  yaml:"s3"`
-	AllowedIngressIPs []string               `mapstructure:"allowed_ingress_ips" yaml:"allowed_ingress_ips"`
-	Type              string                 `mapstructure:"type"                yaml:"type"`
-	Environment       string                 `mapstructure:"environment"         yaml:"environment"`
-	Subnets           []Subnet               `mapstructure:"subnets"             yaml:"subnets"`
-	SubnetStrategy    string                 `mapstructure:"subnet_strategy"     yaml:"subnet_strategy"`
-	LBs               map[string]LBService   `mapstructure:"lbs"                 yaml:"lbs"`
-	Users             map[string]string      `mapstructure:"users"               yaml:"users"`
+	FQDNs             map[string]interface{} `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns"`
+	S3                map[string]string      `json:"s3"                  mapstructure:"s3"                  yaml:"s3"`
+	AllowedIngressIPs []string               `json:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips" yaml:"allowed_ingress_ips"`
+	Type              string                 `json:"type"                mapstructure:"type"                yaml:"type"`
+	Environment       string                 `json:"environment"         mapstructure:"environment"         yaml:"environment"`
+	Subnets           []Subnet               `json:"subnets"             mapstructure:"subnets"             yaml:"subnets"`
+	SubnetStrategy    string                 `json:"subnet_strategy"     mapstructure:"subnet_strategy"     yaml:"subnet_strategy"`
+	LBs               map[string]LBService   `json:"lbs"                 mapstructure:"lbs"                 yaml:"lbs"`
+	Users             map[string]string      `json:"users"               mapstructure:"users"               yaml:"users"`
 	// Public IP configurations
-	RouterPublicIPs    int `mapstructure:"router_public_ips"     yaml:"router_public_ips"`
-	CFSSHPublicIPs     int `mapstructure:"cf_ssh_public_ips"     yaml:"cf_ssh_public_ips"`
-	JumpboxPublicIPs   int `mapstructure:"jumpbox_public_ips"    yaml:"jumpbox_public_ips"`
-	TCPRouterPublicIPs int `mapstructure:"tcp_router_public_ips" yaml:"tcp_router_public_ips"`
+	RouterPublicIPs    int `json:"router_public_ips"     mapstructure:"router_public_ips"     yaml:"router_public_ips"`
+	CFSSHPublicIPs     int `json:"cf_ssh_public_ips"     mapstructure:"cf_ssh_public_ips"     yaml:"cf_ssh_public_ips"`
+	JumpboxPublicIPs   int `json:"jumpbox_public_ips"    mapstructure:"jumpbox_public_ips"    yaml:"jumpbox_public_ips"`
+	TCPRouterPublicIPs int `json:"tcp_router_public_ips" mapstructure:"tcp_router_public_ips" yaml:"tcp_router_public_ips"`
+
+	// Structured public IPs configuration
+	PublicIPs PublicIPsConfig `json:"public_ips" mapstructure:"public_ips" yaml:"public_ips"`
+
+	// Buckets configuration
+	Buckets []BucketConfig `json:"buckets" mapstructure:"buckets" yaml:"buckets"`
 
 	// Blobstore policies (optional, for object storage buckets)
-	Blobstore BlobstoreConfig `mapstructure:"blobstore" yaml:"blobstore"`
+	Blobstore BlobstoreConfig `json:"blobstore" mapstructure:"blobstore" yaml:"blobstore"`
 }
 
 // BlobstoreConfig controls versioning/lifecycle policies for expected buckets.
@@ -100,12 +105,15 @@ type BucketSettings struct {
 
 // NetworkConfig represents network configuration.
 type NetworkConfig struct {
-	ID          string   `mapstructure:"id"          yaml:"id"`
-	Name        string   `mapstructure:"name"        yaml:"name"`
-	CIDR        string   `mapstructure:"cidr"        yaml:"cidr"`
-	NetworkCIDR string   `mapstructure:"networkCidr" yaml:"networkCidr"`
-	SubnetID    string   `mapstructure:"subnetId"    yaml:"subnetId"`
-	DNS         []string `mapstructure:"dns"         yaml:"dns"`
+	ID             string   `mapstructure:"id"             yaml:"id"`
+	Name           string   `mapstructure:"name"           yaml:"name"`
+	CIDR           string   `mapstructure:"cidr"           yaml:"cidr"`
+	NetworkCIDR    string   `mapstructure:"networkCidr"    yaml:"networkCidr"`
+	SubnetID       string   `mapstructure:"subnetId"       yaml:"subnetId"`
+	DNS            []string `mapstructure:"dns"            yaml:"dns"`
+	DNSServers     []string `mapstructure:"dnsServers"     yaml:"dnsServers"`     // Alternative field name
+	SubnetStrategy string   `mapstructure:"subnetStrategy" yaml:"subnetStrategy"` // Network subnet strategy
+	Subnets        []Subnet `mapstructure:"subnets"        yaml:"subnets"`        // Network subnets
 }
 
 // Subnet configuration.
@@ -127,6 +135,7 @@ type Bastion struct {
 	SSHOptions string    `mapstructure:"sshOptions"       yaml:"sshOptions"`
 	SSHKeyDir  string    `mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir"`
 	SSHKeyName string    `mapstructure:"sshKeyName"       yaml:"sshKeyName"`
+	UserData   string    `mapstructure:"userData"         yaml:"userData"` // Custom user data for bastion
 	Genesis    Genesis   `mapstructure:"genesis"          yaml:"genesis"`
 	Git        GitConfig `mapstructure:"git"              yaml:"git"`
 	// Optional overrides for tooling installation/selection
@@ -241,56 +250,130 @@ func Load() (*Config, error) {
 // LoadWithParams loads configuration from file or defaults.
 func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	// Determine config file path
-	configPath := determineConfigPath(configFile, blocName)
+	configPath := determineConfigPath(configFile)
 
-	// Check cache first if we have a config file
-	if configPath != "" {
-		configMutex.RLock()
-
-		cacheKey := configPath + ":" + blocName
-		if cached, exists := cachedConfigs[cacheKey]; exists {
-			// Check if file has been modified since caching
-			if stat, err := os.Stat(configPath); err == nil {
-				if stat.ModTime().Equal(cached.modTime) {
-					configMutex.RUnlock()
-
-					return cached.config, nil
-				}
-			}
-		}
-
-		configMutex.RUnlock()
+	// Try to get from cache first
+	if cachedCfg := getCachedConfig(configPath, blocName); cachedCfg != nil {
+		return cachedCfg, nil
 	}
 
-	var cfg *Config
-
-	if configPath != "" {
-		// Load the entire config file
-		configFileData := &ConfigFile{}
-
-		err := loadFromFile(configPath, configFileData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
-		}
-
-		// Find the matching bloc
-		if blocConfig, exists := configFileData.Blocs[blocName]; exists {
-			cfg = blocConfig
-			// Ensure the bloc name is set
-			if cfg.Name == "" {
-				cfg.Name = blocName
-			}
-		}
-
-		if cfg == nil {
-			return nil, fmt.Errorf("bloc '%s' not found in configuration file %s", blocName, configPath)
-		}
-	} else {
-		// No config file, create empty config
-		cfg = &Config{}
+	// Load configuration
+	cfg, err := loadConfiguration(configPath, blocName)
+	if err != nil {
+		return nil, err
 	}
 
-	// Apply provider defaults
+	// Process loaded configuration
+	err = processConfiguration(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the configuration
+	cacheConfiguration(configPath, blocName, cfg)
+
+	return cfg, nil
+}
+
+// getCachedConfig retrieves configuration from cache if available and not stale.
+func getCachedConfig(configPath, blocName string) *Config {
+	if configPath == "" {
+		return nil
+	}
+
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	cacheKey := configPath + ":" + blocName
+
+	cached, exists := cachedConfigs[cacheKey]
+	if !exists {
+		return nil
+	}
+
+	// Check if file has been modified since caching
+	stat, err := os.Stat(configPath)
+	if err == nil {
+		if stat.ModTime().Equal(cached.modTime) {
+			return cached.config
+		}
+	}
+
+	return nil
+}
+
+// loadConfiguration loads the configuration from file or creates empty config.
+func loadConfiguration(configPath, blocName string) (*Config, error) {
+	if configPath == "" {
+		return createEmptyConfig(), nil
+	}
+
+	return loadConfigFromFile(configPath, blocName)
+}
+
+func createEmptyConfig() *Config {
+	return &Config{
+		Network: NetworkConfig{
+			DNS: []string{},
+		},
+		Bastion: Bastion{
+			Genesis:           Genesis{},
+			Git:               GitConfig{User: GitUser{}},
+			Tools:             OverrideSets{Enable: []string{}, Disable: []string{}},
+			CFPlugins:         OverrideSets{Enable: []string{}, Disable: []string{}},
+			Snaps:             OverrideSets{Enable: []string{}, Disable: []string{}},
+			ToolOverrides:     map[string]ToolOverride{},
+			CFPluginOverrides: map[string]CFPluginOverride{},
+			SnapOverrides:     map[string]SnapOverride{},
+		},
+		Genesis:           Genesis{},
+		Deployment:        Deployment{},
+		DNS:               []string{},
+		AZs:               map[string]AvailabilityZone{},
+		Routers:           ComponentConfig{},
+		Cells:             ComponentConfig{},
+		FQDNs:             map[string]interface{}{},
+		S3:                map[string]string{},
+		AllowedIngressIPs: []string{},
+		Subnets:           []Subnet{},
+		LBs:               map[string]LBService{},
+		Users:             map[string]string{},
+		Blobstore: BlobstoreConfig{
+			BoshBlobstore: BucketSettings{},
+			CFBuildpacks:  BucketSettings{},
+			CFDroplets:    BucketSettings{},
+			CFAppPackages: BucketSettings{},
+		},
+	}
+}
+
+func loadConfigFromFile(configPath, blocName string) (*Config, error) {
+	configFileData := &ConfigFile{
+		Debug:   false,
+		Verbose: false,
+		Blocs:   map[string]*Config{},
+	}
+
+	err := loadFromFile(configPath, configFileData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config from %s: %w", configPath, err)
+	}
+
+	blocConfig, exists := configFileData.Blocs[blocName]
+	if !exists {
+		return nil, ErrBlocNotFound(blocName, configPath)
+	}
+
+	if blocConfig.Name == "" {
+		blocConfig.Name = blocName
+	}
+
+	return blocConfig, nil
+}
+
+// processConfiguration applies defaults, overrides, and validates the config.
+func processConfiguration(cfg *Config) error {
+	// Determine provider
 	provider := cfg.Provider
 	if provider == "" {
 		provider = cfg.IaaS
@@ -300,12 +383,13 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 		provider = viper.GetString("iaas")
 	}
 
+	// Apply provider defaults
 	err := applyDefaults(cfg, provider)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Override with viper values (from flags/env) for specific fields only
+	// Override with viper values (from flags/env)
 	if viper.GetString("iaas") != "" {
 		cfg.IaaS = viper.GetString("iaas")
 	}
@@ -321,30 +405,35 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	// Validate configuration
 	err = validate(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Cache the configuration for future use
-	if configPath != "" {
-		configMutex.Lock()
+	return nil
+}
 
-		cacheKey := configPath + ":" + blocName
-		if stat, err := os.Stat(configPath); err == nil {
-			cachedConfigs[cacheKey] = &cachedConfig{
-				config:   cfg,
-				modTime:  stat.ModTime(),
-				filePath: configPath,
-			}
+// cacheConfiguration stores the configuration in cache.
+func cacheConfiguration(configPath, blocName string, cfg *Config) {
+	if configPath == "" {
+		return
+	}
+
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	cacheKey := configPath + ":" + blocName
+
+	stat, err := os.Stat(configPath)
+	if err == nil {
+		cachedConfigs[cacheKey] = &cachedConfig{
+			config:   cfg,
+			modTime:  stat.ModTime(),
+			filePath: configPath,
 		}
-
-		configMutex.Unlock()
 	}
-
-	return cfg, nil
 }
 
 // determineConfigPath determines the configuration file path.
-func determineConfigPath(configFile string, blocName string) string {
+func determineConfigPath(configFile string) string {
 	// Priority 1: Explicit config file
 	if configFile != "" {
 		return configFile
@@ -354,13 +443,16 @@ func determineConfigPath(configFile string, blocName string) string {
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
 		defaultPath := filepath.Join(homeDir, ".ocfp", "config.yml")
-		if _, err := os.Stat(defaultPath); err == nil {
+
+		_, err = os.Stat(defaultPath)
+		if err == nil {
 			return defaultPath
 		}
 	}
 
 	// Priority 3: Check in local config/config.yml
-	if _, err := os.Stat("config/config.yml"); err == nil {
+	_, err = os.Stat("config/config.yml")
+	if err == nil {
 		return "config/config.yml"
 	}
 
@@ -369,17 +461,19 @@ func determineConfigPath(configFile string, blocName string) string {
 
 // loadFromFile loads configuration from a YAML file.
 func loadFromFile(path string, target interface{}) error {
-	if err := security.ValidateConfigPath(path); err != nil {
+	err := security.ValidateConfigPath(path)
+	if err != nil {
 		return fmt.Errorf("invalid config path: %w", err)
 	}
 
 	data, err := os.ReadFile(path) // #nosec G304 - path is validated above
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, target); err != nil {
-		return err
+	err = yaml.Unmarshal(data, target)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
 	return nil
@@ -446,9 +540,9 @@ func applyStackitDefaults(cfg *Config) {
 	// Default availability zones for STACKIT
 	if len(cfg.AZs) == 0 {
 		cfg.AZs = map[string]AvailabilityZone{
-			"eu01-1": {CloudProperties: `{"availability_zone": "eu01-1"}`},
-			"eu01-2": {CloudProperties: `{"availability_zone": "eu01-2"}`},
-			"eu01-3": {CloudProperties: `{"availability_zone": "eu01-3"}`},
+			"eu01-1": {Zone: "eu01-1", CloudProperties: `{"availability_zone": "eu01-1"}`},
+			"eu01-2": {Zone: "eu01-2", CloudProperties: `{"availability_zone": "eu01-2"}`},
+			"eu01-3": {Zone: "eu01-3", CloudProperties: `{"availability_zone": "eu01-3"}`},
 		}
 
 		// No default lifecycle/versioning; leave disabled unless configured
@@ -457,9 +551,9 @@ func applyStackitDefaults(cfg *Config) {
 
 // applyOpenStackDefaults applies OpenStack-specific defaults.
 func applyOpenStackDefaults(cfg *Config) {
-    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-        cfg.Network.NetworkCIDR = defaultNetworkCIDR
-    }
+	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+		cfg.Network.NetworkCIDR = defaultNetworkCIDR
+	}
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "t1.small"
@@ -468,9 +562,9 @@ func applyOpenStackDefaults(cfg *Config) {
 
 // applyAWSDefaults applies AWS-specific defaults.
 func applyAWSDefaults(cfg *Config) {
-    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-        cfg.Network.NetworkCIDR = defaultNetworkCIDR
-    }
+	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+		cfg.Network.NetworkCIDR = defaultNetworkCIDR
+	}
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "t3.small"
@@ -479,9 +573,9 @@ func applyAWSDefaults(cfg *Config) {
 
 // applyAzureDefaults applies Azure-specific defaults.
 func applyAzureDefaults(cfg *Config) {
-    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-        cfg.Network.NetworkCIDR = defaultNetworkCIDR
-    }
+	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+		cfg.Network.NetworkCIDR = defaultNetworkCIDR
+	}
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "Standard_B2s"
@@ -490,9 +584,9 @@ func applyAzureDefaults(cfg *Config) {
 
 // applyGCPDefaults applies GCP-specific defaults.
 func applyGCPDefaults(cfg *Config) {
-    if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
-        cfg.Network.NetworkCIDR = defaultNetworkCIDR
-    }
+	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
+		cfg.Network.NetworkCIDR = defaultNetworkCIDR
+	}
 
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "e2-small"
@@ -503,7 +597,7 @@ func applyGCPDefaults(cfg *Config) {
 func validate(cfg *Config) error {
 	// Required fields
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return errors.New("provider or iaas must be specified")
+		return ErrProviderOrIaasRequired
 	}
 
 	// Set provider from iaas if not set
@@ -528,7 +622,7 @@ func validate(cfg *Config) error {
 	}
 
 	if !providerValid {
-		return fmt.Errorf("invalid provider: %s", cfg.Provider)
+		return ErrInvalidProvider(cfg.Provider)
 	}
 
 	return nil
@@ -553,13 +647,17 @@ func GetSSHKeyPath(blocName string, keypair string) string {
 
 	// Try new standard location first
 	newPath := filepath.Join(home, ".ocfp", "keys", blocName+"-bastion", "id_rsa")
-	if _, err := os.Stat(newPath); err == nil {
+
+	_, err = os.Stat(newPath)
+	if err == nil {
 		return newPath
 	}
 
 	// Try legacy location
 	legacyPath := filepath.Join(home, ".ssh", fmt.Sprintf("%s-%s", blocName, keypair))
-	if _, err := os.Stat(legacyPath); err == nil {
+
+	_, err = os.Stat(legacyPath)
+	if err == nil {
 		return legacyPath
 	}
 
@@ -571,4 +669,18 @@ type LBService struct {
 	Protocol string   `mapstructure:"protocol" yaml:"protocol"`
 	Port     int      `mapstructure:"port"     yaml:"port"`
 	Targets  []string `mapstructure:"targets"  yaml:"targets"`
+}
+
+// PublicIPsConfig represents public IPs configuration.
+type PublicIPsConfig struct {
+	Ops       int `mapstructure:"ops"        yaml:"ops"`
+	Jumpbox   int `mapstructure:"jumpbox"    yaml:"jumpbox"`
+	Router    int `mapstructure:"router"     yaml:"router"`
+	CFSSH     int `mapstructure:"cf_ssh"     yaml:"cf_ssh"`
+	TCPRouter int `mapstructure:"tcp_router" yaml:"tcp_router"`
+}
+
+// BucketConfig represents bucket configuration.
+type BucketConfig struct {
+	Name string `mapstructure:"name" yaml:"name"`
 }

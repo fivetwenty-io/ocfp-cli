@@ -81,7 +81,7 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	err = RetryableVaultOperation("set", path, key, func() error {
 		_, writeErr := s.client.logical.Write(path, writeData)
 
-		return writeErr
+		return fmt.Errorf("vault write operation failed: %w", writeErr)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secret to %s: %w", path, err)
@@ -146,7 +146,7 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 	err = RetryableVaultOperation("set_multiple", path, "", func() error {
 		_, writeErr := s.client.logical.Write(path, writeData)
 
-		return writeErr
+		return fmt.Errorf("vault write operation failed: %w", writeErr)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secrets to %s: %w", path, err)
@@ -172,14 +172,14 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 
 		secret, readErr = s.client.logical.Read(path)
 
-		return readErr
+		return fmt.Errorf("vault read operation failed: %w", readErr)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret from %s: %w", path, err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("no secret found at path %s", path)
+		return nil, ErrNoSecretFoundAtPath(path)
 	}
 
 	// Handle both KV v1 and v2 formats
@@ -199,7 +199,7 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 
 	value, exists := data[key]
 	if !exists {
-		return nil, fmt.Errorf("key '%s' not found at path %s", key, path)
+		return nil, ErrKeyNotFoundAtPath(key, path)
 	}
 
 	s.logger.Debug("Successfully retrieved vault secret", "path", path, "key", key)
@@ -217,7 +217,7 @@ func (s *Safe) GetAll(path string) (map[string]interface{}, error) {
 
 	data, ok := result.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected data type at path %s", path)
+		return nil, ErrUnexpectedDataTypeAtPath(path)
 	}
 
 	return data, nil
@@ -326,53 +326,6 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// exportRecursive recursively exports secrets from a path.
-func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]interface{}) error {
-	fullPath := basePath
-	if currentPath != "" {
-		fullPath = filepath.Join(basePath, currentPath)
-	}
-
-	// Try to read as a secret first
-	if data, err := s.GetAll(fullPath); err == nil {
-		// This is a secret, store it
-		if currentPath == "" {
-			// Root level
-			for k, v := range data {
-				result[k] = v
-			}
-		} else {
-			result[currentPath] = data
-		}
-
-		return nil
-	}
-
-	// Try to list as a directory
-	paths, err := s.List(fullPath)
-	if err != nil {
-		// Neither a secret nor a directory we can list
-		return nil
-	}
-
-	// Process each sub-path
-	for _, subPath := range paths {
-		var newCurrentPath string
-		if currentPath == "" {
-			newCurrentPath = strings.TrimSuffix(subPath, "/")
-		} else {
-			newCurrentPath = filepath.Join(currentPath, strings.TrimSuffix(subPath, "/"))
-		}
-
-		err := s.exportRecursive(basePath, newCurrentPath, result)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // Import imports secrets to a path.
 func (s *Safe) Import(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
@@ -432,7 +385,7 @@ func (s *Safe) GetString(path, key string) (string, error) {
 		return str, nil
 	}
 
-	return "", fmt.Errorf("value at %s:%s is not a string", path, key)
+	return "", ErrValueNotStringAtPath(path, key)
 }
 
 // GetJSON gets a value and returns it as JSON.
@@ -442,5 +395,58 @@ func (s *Safe) GetJSON(path, key string) ([]byte, error) {
 		return nil, err
 	}
 
-	return json.Marshal(value)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal value: %w", err)
+	}
+
+	return data, nil
+}
+
+// exportRecursive recursively exports secrets from a path.
+func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]interface{}) error {
+	fullPath := basePath
+	if currentPath != "" {
+		fullPath = filepath.Join(basePath, currentPath)
+	}
+
+	// Try to read as a secret first
+	data, err := s.GetAll(fullPath)
+	if err == nil {
+		// This is a secret, store it
+		if currentPath == "" {
+			// Root level
+			for k, v := range data {
+				result[k] = v
+			}
+		} else {
+			result[currentPath] = data
+		}
+
+		return nil
+	}
+
+	// Try to list as a directory
+	paths, err := s.List(fullPath)
+	if err != nil {
+		// Neither a secret nor a directory we can list
+		return err
+	}
+
+	// Process each sub-path
+	for _, subPath := range paths {
+		var newCurrentPath string
+		if currentPath == "" {
+			newCurrentPath = strings.TrimSuffix(subPath, "/")
+		} else {
+			newCurrentPath = filepath.Join(currentPath, strings.TrimSuffix(subPath, "/"))
+		}
+
+		err := s.exportRecursive(basePath, newCurrentPath, result)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

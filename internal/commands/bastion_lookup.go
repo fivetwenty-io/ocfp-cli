@@ -1,9 +1,8 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "strings"
+	"context"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -16,135 +15,184 @@ import (
 func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	log := logger.WithOperation("findBastionIP")
 
-	// 0) Try local state cache first
-	if stateManager, err := state.NewManager(""); err == nil {
-		if _, lerr := stateManager.Load(blocName); lerr == nil {
-			if v, gerr := stateManager.GetOutput("bastion_public_ip"); gerr == nil {
-				if bastionIP, ok := v.(string); ok && bastionIP != "" {
-					if viper.GetBool("debug_lookup") {
-						log.Infof("Bastion lookup matched: strategy=state-cache ip=%s", bastionIP)
-					} else {
-						log.Debugf("Using bastion IP from state cache: %s", bastionIP)
-					}
-
-					return bastionIP, nil
-				}
-			}
-		}
+	// Try local state cache first
+	if ip, found := tryStateCache(blocName, log); found {
+		return ip, nil
 	}
 
-	// Try common label keys used across implementations
+	// Try label-based discovery strategies
+	if ip, found := tryLabelBasedDiscovery(ctx, provider, blocName, log); found {
+		return ip, nil
+	}
+
+	// Fall back to name-based discovery
+	if ip, found := tryNameBasedDiscovery(ctx, provider, blocName, log); found {
+		return ip, nil
+	}
+
+	return "", ErrNoBastionHostFound(blocName)
+}
+
+func tryStateCache(blocName string, log logger.Logger) (string, bool) {
+	stateManager, err := state.NewManager("")
+	if err != nil {
+		return "", false
+	}
+
+	_, err = stateManager.Load(blocName)
+	if err != nil {
+		return "", false
+	}
+
+	v, err := stateManager.GetOutput("bastion_public_ip")
+	if err != nil {
+		return "", false
+	}
+
+	bastionIP, ok := v.(string)
+	if !ok || bastionIP == "" {
+		return "", false
+	}
+
+	logDiscoveryResult(log, "state-cache", "", "", bastionIP)
+
+	return bastionIP, true
+}
+
+func tryLabelBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) (string, bool) {
 	labelKeys := []string{"component", "role", "job"}
 	for _, key := range labelKeys {
 		filters := map[string]string{
-			"label.bloc": blocName,
+			"label.bloc":   blocName,
+			"label." + key: RoleBastion,
 		}
-        filters["label."+key] = RoleBastion
 
 		instances, err := provider.Compute().ListInstances(ctx, filters)
-		if err != nil {
-			return "", fmt.Errorf("failed to list instances: %w", err)
-		}
-
-		if len(instances) == 0 {
+		if err != nil || len(instances) == 0 {
 			continue
 		}
 
-		// Prefer an instance that already exposes a floating/public IP
-		for _, inst := range instances {
-			publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP)
-			if publicIP != "" {
-				if viper.GetBool("debug_lookup") {
-					log.Infof("Bastion lookup matched: strategy=label key=%s name=%s ip=%s", key, inst.Name, publicIP)
-				} else {
-					log.Debugf("Found bastion by label %s: %s (%s)", key, inst.Name, publicIP)
-				}
-
-				cacheBastionIP(blocName, publicIP)
-
-				return publicIP, nil
-			}
+		// Check for direct public IP
+		if ip := findDirectPublicIP(instances, key, log, blocName); ip != "" {
+			return ip, true
 		}
 
-		// Fallback: fetch any associated floating IPs and return the first match
-		if len(instances) > 0 {
-			fips, err := provider.Network().ListFloatingIPs(ctx)
-			if err == nil {
-				for _, inst := range instances {
-					for _, fip := range fips {
-						if fip.InstanceID == inst.ID && fip.Address != "" {
-							if viper.GetBool("debug_lookup") {
-								log.Infof("Bastion lookup matched: strategy=floating-ip-by-label key=%s name=%s ip=%s", key, inst.Name, fip.Address)
-							} else {
-								log.Debugf("Found bastion floating IP by label %s: %s (%s)", key, inst.Name, fip.Address)
-							}
-
-							cacheBastionIP(blocName, fip.Address)
-
-							return fip.Address, nil
-						}
-					}
-				}
-			}
+		// Check floating IPs
+		if ip := findFloatingIPForInstances(ctx, provider, instances, key, log, blocName); ip != "" {
+			return ip, true
 		}
 	}
 
-    // Name-based fallback: list by bloc only, then match name containing "-bastion"
+	return "", false
+}
+
+func tryNameBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) (string, bool) {
 	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
 		"label.bloc": blocName,
 	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list instances: %w", err)
+	if err != nil || len(instances) == 0 {
+		return "", false
 	}
 
-	if len(instances) == 0 {
-		return "", fmt.Errorf("no instances found for bloc %s", blocName)
-	}
+	// Check for direct public IP on bastion-named instances
+	for _, inst := range instances {
+		if !isBastionInstance(inst.Name) {
+			continue
+		}
 
-    for _, inst := range instances {
-        name := strings.ToLower(inst.Name)
-        if strings.HasSuffix(name, "-"+RoleBastion) || strings.Contains(name, RoleBastion) {
-			publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP)
-			if publicIP != "" {
-				if viper.GetBool("debug_lookup") {
-					log.Infof("Bastion lookup matched: strategy=name name=%s ip=%s", inst.Name, publicIP)
-				} else {
-					log.Debugf("Found bastion by name: %s (%s)", inst.Name, publicIP)
-				}
+		if publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP); publicIP != "" {
+			logDiscoveryResult(log, "name", "", inst.Name, publicIP)
+			cacheBastionIP(blocName, publicIP)
 
-				cacheBastionIP(blocName, publicIP)
-
-				return publicIP, nil
-			}
+			return publicIP, true
 		}
 	}
 
-	// Final attempt: correlate any instance with name like bastion to floating IP resources
+	// Check floating IPs for bastion-named instances
 	fips, err := provider.Network().ListFloatingIPs(ctx)
-	if err == nil {
-		for _, inst := range instances {
-			name := strings.ToLower(inst.Name)
-			if !strings.HasSuffix(name, "-bastion") && !strings.Contains(name, "bastion") {
-				continue
-			}
+	if err != nil {
+		return "", false
+	}
 
-			for _, fip := range fips {
-				if fip.InstanceID == inst.ID && fip.Address != "" {
-					if viper.GetBool("debug_lookup") {
-						log.Infof("Bastion lookup matched: strategy=floating-ip-by-name name=%s ip=%s", inst.Name, fip.Address)
-					} else {
-						log.Debugf("Found bastion floating IP by name: %s (%s)", inst.Name, fip.Address)
-					}
+	for _, inst := range instances {
+		if !isBastionInstance(inst.Name) {
+			continue
+		}
 
-					cacheBastionIP(blocName, fip.Address)
+		for _, fip := range fips {
+			if fip.InstanceID == inst.ID && fip.Address != "" {
+				logDiscoveryResult(log, "floating-ip-by-name", "", inst.Name, fip.Address)
+				cacheBastionIP(blocName, fip.Address)
 
-					return fip.Address, nil
-				}
+				return fip.Address, true
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no bastion host found for bloc %s", blocName)
+	return "", false
+}
+
+func findDirectPublicIP(instances []*cpi.Instance, key string, log logger.Logger, blocName string) string {
+	for _, inst := range instances {
+		if publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP); publicIP != "" {
+			logDiscoveryResult(log, "label", key, inst.Name, publicIP)
+			cacheBastionIP(blocName, publicIP)
+
+			return publicIP
+		}
+	}
+
+	return ""
+}
+
+func findFloatingIPForInstances(ctx context.Context, provider cpi.Provider, instances []*cpi.Instance, key string, log logger.Logger, blocName string) string {
+	fips, err := provider.Network().ListFloatingIPs(ctx)
+	if err != nil {
+		return ""
+	}
+
+	for _, inst := range instances {
+		for _, fip := range fips {
+			if fip.InstanceID == inst.ID && fip.Address != "" {
+				logDiscoveryResult(log, "floating-ip-by-label", key, inst.Name, fip.Address)
+				cacheBastionIP(blocName, fip.Address)
+
+				return fip.Address
+			}
+		}
+	}
+
+	return ""
+}
+
+func isBastionInstance(name string) bool {
+	lowerName := strings.ToLower(name)
+
+	return strings.HasSuffix(lowerName, "-"+RoleBastion) || strings.Contains(lowerName, RoleBastion)
+}
+
+func logDiscoveryResult(log logger.Logger, strategy, key, name, ipAddress string) {
+	if viper.GetBool("debug_lookup") {
+		logDebugDiscovery(log, strategy, key, name, ipAddress)
+	} else {
+		logNormalDiscovery(log, strategy, key, name, ipAddress)
+	}
+}
+
+func logDebugDiscovery(log logger.Logger, strategy, key, name, ipAddress string) {
+	if key != "" {
+		log.Infof("Bastion lookup matched: strategy=%s key=%s name=%s ip=%s", strategy, key, name, ipAddress)
+	} else {
+		log.Infof("Bastion lookup matched: strategy=%s name=%s ip=%s", strategy, name, ipAddress)
+	}
+}
+
+func logNormalDiscovery(log logger.Logger, strategy, key, name, ipAddress string) {
+	if key != "" {
+		log.Debugf("Found bastion by %s %s: %s (%s)", strategy, key, name, ipAddress)
+	} else {
+		log.Debugf("Found bastion by %s: %s (%s)", strategy, name, ipAddress)
+	}
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -168,11 +216,13 @@ func cacheBastionIP(blocName, bastionIP string) {
 		return
 	}
 
-	if _, err := stateManager.Load(blocName); err != nil {
+	_, err = stateManager.Load(blocName)
+	if err != nil {
 		return
 	}
 
-	if err := stateManager.SetOutput("bastion_public_ip", bastionIP); err != nil {
+	err = stateManager.SetOutput("bastion_public_ip", bastionIP)
+	if err != nil {
 		return
 	}
 

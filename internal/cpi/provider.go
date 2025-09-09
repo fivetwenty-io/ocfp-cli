@@ -7,6 +7,7 @@ import (
 )
 
 // Provider is the main interface that all cloud providers must implement.
+//
 //nolint:interfacebloat // Broad interface to cover multi-cloud functionality
 type Provider interface {
 	// Provider information
@@ -18,11 +19,21 @@ type Provider interface {
 	ValidateCredentials(ctx context.Context) error
 
 	// Resource managers
+	NetworkManager() NetworkManager
+	ComputeManager() ComputeManager
+	StorageManager() StorageManager
+	SecurityManager() SecurityManager
+	LoadBalancerManager() LoadBalancerManager
+
+	// Legacy method names for backward compatibility
 	Network() NetworkManager
 	Compute() ComputeManager
 	Storage() StorageManager
 	Security() SecurityManager
 	LoadBalancer() LoadBalancerManager
+
+	// Additional provider capabilities
+	SupportsStorage() bool
 
 	// Lifecycle
 	Initialize(ctx context.Context, config interface{}) error
@@ -30,19 +41,32 @@ type Provider interface {
 }
 
 // NetworkManager handles network-related operations.
+//
 //nolint:interfacebloat // Aggregates common network operations
 type NetworkManager interface {
 	// VPC/Network operations
-	CreateNetwork(ctx context.Context, req *CreateNetworkRequest) (*Network, error)
+	CreateNetwork(ctx context.Context, req *NetworkRequest) (*Network, error)
 	GetNetwork(ctx context.Context, id string) (*Network, error)
 	ListNetworks(ctx context.Context, filters map[string]string) ([]*Network, error)
 	DeleteNetwork(ctx context.Context, id string) error
 
 	// Subnet operations
-	CreateSubnet(ctx context.Context, req *CreateSubnetRequest) (*Subnet, error)
+	CreateSubnet(ctx context.Context, req *SubnetRequest) (*Subnet, error)
 	GetSubnet(ctx context.Context, id string) (*Subnet, error)
 	ListSubnets(ctx context.Context, networkID string) ([]*Subnet, error)
 	DeleteSubnet(ctx context.Context, id string) error
+
+	// Security group operations
+	CreateSecurityGroup(ctx context.Context, req *CreateSecurityGroupRequest) (*SecurityGroup, error)
+	GetSecurityGroup(ctx context.Context, id string) (*SecurityGroup, error)
+	ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*SecurityGroup, error)
+	DeleteSecurityGroup(ctx context.Context, id string) error
+
+	// Public IP operations
+	CreatePublicIP(ctx context.Context, req *PublicIPRequest) (*PublicIP, error)
+	GetPublicIP(ctx context.Context, id string) (*PublicIP, error)
+	ListPublicIPs(ctx context.Context) ([]*PublicIP, error)
+	DeletePublicIP(ctx context.Context, id string) error
 
 	// Floating IP operations
 	AllocateFloatingIP(ctx context.Context, req *AllocateFloatingIPRequest) (*FloatingIP, error)
@@ -78,10 +102,11 @@ type NetworkManager interface {
 }
 
 // ComputeManager handles compute-related operations.
+//
 //nolint:interfacebloat // Aggregates common compute operations
 type ComputeManager interface {
 	// Instance operations
-	CreateInstance(ctx context.Context, req *CreateInstanceRequest) (*Instance, error)
+	CreateInstance(ctx context.Context, req *InstanceRequest) (*Instance, error)
 	GetInstance(ctx context.Context, id string) (*Instance, error)
 	ListInstances(ctx context.Context, filters map[string]string) ([]*Instance, error)
 	StartInstance(ctx context.Context, id string) error
@@ -90,11 +115,17 @@ type ComputeManager interface {
 	DeleteInstance(ctx context.Context, id string) error
 
 	// SSH key operations
-	CreateKeyPair(ctx context.Context, name string) (*KeyPair, error)
+	CreateKeyPair(ctx context.Context, req *KeyPairRequest) (*KeyPair, error)
 	ImportKeyPair(ctx context.Context, name string, publicKey string) error
 	GetKeyPair(ctx context.Context, name string) (*KeyPair, error)
 	ListKeyPairs(ctx context.Context) ([]*KeyPair, error)
 	DeleteKeyPair(ctx context.Context, name string) error
+
+	// Volume operations
+	CreateVolume(ctx context.Context, req *VolumeRequest) (*Volume, error)
+	GetVolume(ctx context.Context, id string) (*Volume, error)
+	ListVolumes(ctx context.Context, filters map[string]string) ([]*Volume, error)
+	DeleteVolume(ctx context.Context, id string) error
 
 	// Image operations
 	ListImages(ctx context.Context, filters map[string]string) ([]*Image, error)
@@ -106,10 +137,11 @@ type ComputeManager interface {
 }
 
 // StorageManager handles storage-related operations.
+//
 //nolint:interfacebloat // Aggregates common storage operations
 type StorageManager interface {
 	// Volume operations
-	CreateVolume(ctx context.Context, req *CreateVolumeRequest) (*Volume, error)
+	CreateVolume(ctx context.Context, req *VolumeRequest) (*Volume, error)
 	GetVolume(ctx context.Context, id string) (*Volume, error)
 	ListVolumes(ctx context.Context, filters map[string]string) ([]*Volume, error)
 	AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error
@@ -124,15 +156,17 @@ type StorageManager interface {
 	DeleteSnapshot(ctx context.Context, id string) error
 
 	// Object storage operations
-	CreateBucket(ctx context.Context, name string) (*Bucket, error)
+	CreateBucket(ctx context.Context, req *BucketRequest) (*Bucket, error)
 	GetBucket(ctx context.Context, name string) (*Bucket, error)
 	ListBuckets(ctx context.Context) ([]*Bucket, error)
 	DeleteBucket(ctx context.Context, name string) error
 	EmptyBucket(ctx context.Context, name string) error
+
+	// Credentials group operations
+	CreateCredentialsGroup(ctx context.Context, req *CredentialsGroupRequest) (*CredentialsGroup, error)
 }
 
 // SecurityManager handles security-related operations.
-//nolint:interfacebloat // Aggregates common security operations
 type SecurityManager interface {
 	// Security group operations
 	CreateSecurityGroup(ctx context.Context, req *CreateSecurityGroupRequest) (*SecurityGroup, error)
@@ -147,6 +181,7 @@ type SecurityManager interface {
 }
 
 // LoadBalancerManager handles load balancer operations.
+//
 //nolint:interfacebloat // Aggregates common load-balancer operations
 type LoadBalancerManager interface {
 	CreateLoadBalancer(ctx context.Context, req *CreateLoadBalancerRequest) (*LoadBalancer, error)
@@ -205,7 +240,12 @@ func (e *ProviderError) Error() string {
 
 // IsNotFound returns true if the error indicates a resource was not found.
 func IsNotFound(err error) bool {
-	perr := &ProviderError{}
+	perr := &ProviderError{
+		Provider: "",
+		Code:     "",
+		Message:  "",
+		Details:  nil,
+	}
 	if errors.As(err, &perr) {
 		return perr.Code == "NotFound" || perr.Code == "404"
 	}
@@ -215,7 +255,12 @@ func IsNotFound(err error) bool {
 
 // IsAlreadyExists returns true if the error indicates a resource already exists.
 func IsAlreadyExists(err error) bool {
-	perr := &ProviderError{}
+	perr := &ProviderError{
+		Provider: "",
+		Code:     "",
+		Message:  "",
+		Details:  nil,
+	}
 	if errors.As(err, &perr) {
 		return perr.Code == "AlreadyExists" || perr.Code == "409"
 	}
@@ -225,7 +270,12 @@ func IsAlreadyExists(err error) bool {
 
 // IsUnauthorized returns true if the error indicates an authentication failure.
 func IsUnauthorized(err error) bool {
-	perr := &ProviderError{}
+	perr := &ProviderError{
+		Provider: "",
+		Code:     "",
+		Message:  "",
+		Details:  nil,
+	}
 	if errors.As(err, &perr) {
 		return perr.Code == "Unauthorized" || perr.Code == "401"
 	}

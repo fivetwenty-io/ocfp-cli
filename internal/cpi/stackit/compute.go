@@ -2,7 +2,6 @@ package stackit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +12,7 @@ import (
 )
 
 // CreateInstance creates a new compute instance.
-func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInstanceRequest) (*cpi.Instance, error) {
+func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	logger.WithOperation("CreateInstance").Infof("Creating instance via SDK: %s", req.Name)
 
 	cli, err := m.client.getIAASClient()
@@ -21,7 +20,29 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInst
 		return nil, err
 	}
 
+	payload := m.buildCreateServerPayload(req)
+
+	created, err := cli.CreateServer(ctx, m.client.config.ProjectID).CreateServerPayload(*payload).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("stackit iaas CreateServer failed: %w", err)
+	}
+
+	inst := m.serverResponseToInstance(created)
+
+	err = m.waitForInstanceState(ctx, inst.ID, cpi.ResourceStateActive, instanceWaitTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("instance failed to become active: %w", err)
+	}
+
+	logger.WithOperation("CreateInstance").Infof("Instance created: %s (%s)", inst.Name, inst.ID)
+
+	return inst, nil
+}
+
+// buildCreateServerPayload builds the server creation payload.
+func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest) *iaas.CreateServerPayload {
 	payload := iaas.NewCreateServerPayload(req.Flavor, req.Name)
+
 	if req.Image != "" {
 		payload.SetImageId(req.Image)
 	}
@@ -55,66 +76,41 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.CreateInst
 		payload.SetUserData([]byte(req.UserData))
 	}
 
-	created, err := cli.CreateServer(ctx, m.client.config.ProjectID).CreateServerPayload(*payload).Execute()
-	if err != nil {
-		return nil, fmt.Errorf("stackit iaas CreateServer failed: %w", err)
-	}
-
-	inst := &cpi.Instance{}
-	if id, ok := created.GetIdOk(); ok {
-		inst.ID = id
-	}
-
-	if name, ok := created.GetNameOk(); ok {
-		inst.Name = name
-	}
-
-	if mt, ok := created.GetMachineTypeOk(); ok {
-		inst.Flavor = mt
-	}
-
-	if img, ok := created.GetImageIdOk(); ok {
-		inst.Image = img
-	}
-
-	if az, ok := created.GetAvailabilityZoneOk(); ok {
-		inst.AvailabilityZone = az
-	}
-
-	if kp, ok := created.GetKeypairNameOk(); ok {
-		inst.KeyPair = kp
-	}
-
-	if labels, ok := created.GetLabelsOk(); ok {
-		inst.Tags = mapAnyToString(labels)
-	}
-
-	if err := m.waitForInstanceState(ctx, inst.ID, cpi.ResourceStateActive, 10*time.Minute); err != nil {
-		return nil, fmt.Errorf("instance failed to become active: %w", err)
-	}
-
-	logger.WithOperation("CreateInstance").Infof("Instance created: %s (%s)", inst.Name, inst.ID)
-
-	return inst, nil
+	return payload
 }
 
-// GetInstance retrieves an instance by ID.
-func (m *ComputeManager) GetInstance(ctx context.Context, instanceID string) (*cpi.Instance, error) {
-	logger.WithOperation("GetInstance").Debugf("Getting instance via SDK: %s", instanceID)
-
-	cli, err := m.client.getIAASClient()
-	if err != nil {
-		return nil, err
+// serverResponseToInstance converts a server response to an instance.
+func (m *ComputeManager) serverResponseToInstance(server interface {
+	GetIdOk() (string, bool)
+	GetNameOk() (string, bool)
+	GetMachineTypeOk() (string, bool)
+	GetImageIdOk() (string, bool)
+	GetAvailabilityZoneOk() (string, bool)
+	GetKeypairNameOk() (string, bool)
+	GetLabelsOk() (map[string]interface{}, bool)
+}) *cpi.Instance {
+	inst := &cpi.Instance{
+		ID:               "",
+		Name:             "",
+		State:            cpi.ResourceStateUnknown,
+		Flavor:           "",
+		Image:            "",
+		NetworkID:        "",
+		SubnetID:         "",
+		PrivateIP:        "",
+		PublicIP:         "",
+		FloatingIP:       "",
+		SecurityGroups:   []string{},
+		KeyPair:          "",
+		AvailabilityZone: "",
+		Tags:             map[string]string{},
+		Volumes:          []string{},
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
 	}
 
-	server, err := cli.GetServer(ctx, m.client.config.ProjectID, instanceID).Execute()
-	if err != nil {
-		return nil, fmt.Errorf("stackit iaas GetServer failed: %w", err)
-	}
-
-	inst := &cpi.Instance{}
-	if sid, ok := server.GetIdOk(); ok {
-		inst.ID = sid
+	if id, ok := server.GetIdOk(); ok {
+		inst.ID = id
 	}
 
 	if name, ok := server.GetNameOk(); ok {
@@ -140,43 +136,97 @@ func (m *ComputeManager) GetInstance(ctx context.Context, instanceID string) (*c
 	if labels, ok := server.GetLabelsOk(); ok {
 		inst.Tags = mapAnyToString(labels)
 	}
-	// NICs and public IP
-	// Build map from NIC->PublicIP
-	pmap := make(map[string]string)
 
-	if pipResp, err := cli.ListPublicIPs(ctx, m.client.config.ProjectID).Execute(); err == nil {
-		if items, ok := pipResp.GetItemsOk(); ok {
-			for _, ip := range items {
-				if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil && *ni != "" {
-					if val, vok := ip.GetIpOk(); vok {
-						pmap[*ni] = val
-					}
-				}
-			}
-		}
+	return inst
+}
+
+// GetInstance retrieves an instance by ID.
+func (m *ComputeManager) GetInstance(ctx context.Context, instanceID string) (*cpi.Instance, error) {
+	logger.WithOperation("GetInstance").Debugf("Getting instance via SDK: %s", instanceID)
+
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
 	}
 
-	if nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute(); err == nil {
-		if nics, ok := nicsResp.GetItemsOk(); ok {
-			for _, nic := range nics {
-				if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
-					inst.PrivateIP = ip
-				}
+	server, err := cli.GetServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("stackit iaas GetServer failed: %w", err)
+	}
 
-				if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
-					inst.NetworkID = netID
-				}
+	inst := m.serverResponseToInstance(server)
 
-				if nicID, ok := nic.GetIdOk(); ok {
-					if pip, exists := pmap[nicID]; exists {
-						inst.PublicIP, inst.FloatingIP = pip, pip
-					}
-				}
-			}
-		}
+	// Populate networking info
+	err = m.populateInstanceNetworking(ctx, cli, instanceID, inst)
+	if err != nil {
+		// Log but don't fail - networking info is supplementary
+		logger.WithOperation("GetInstance").Debugf("Failed to populate networking: %v", err)
 	}
 
 	return inst, nil
+}
+
+// populateInstanceNetworking populates networking info for an instance.
+func (m *ComputeManager) populateInstanceNetworking(ctx context.Context, cli *iaas.APIClient, instanceID string, inst *cpi.Instance) error {
+	// Build map from NIC->PublicIP
+	pmap := m.buildPublicIPMap(ctx, cli)
+
+	nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to list server NICs: %w", err)
+	}
+
+	if nics, ok := nicsResp.GetItemsOk(); ok {
+		m.processNetworkInterfaces(nics, pmap, inst)
+	}
+
+	return nil
+}
+
+// processNetworkInterfaces processes network interfaces and populates instance networking info.
+func (m *ComputeManager) processNetworkInterfaces(nics []iaas.NIC, pmap map[string]string, inst *cpi.Instance) {
+	for _, nic := range nics {
+		m.processNetworkInterface(nic, pmap, inst)
+	}
+}
+
+// processNetworkInterface processes a single network interface.
+func (m *ComputeManager) processNetworkInterface(nic iaas.NIC, pmap map[string]string, inst *cpi.Instance) {
+	if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
+		inst.PrivateIP = ip
+	}
+
+	if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
+		inst.NetworkID = netID
+	}
+
+	if nicID, ok := nic.GetIdOk(); ok {
+		if pip, exists := pmap[nicID]; exists {
+			inst.PublicIP, inst.FloatingIP = pip, pip
+		}
+	}
+}
+
+// buildPublicIPMap builds a map from NIC ID to public IP.
+func (m *ComputeManager) buildPublicIPMap(ctx context.Context, cli *iaas.APIClient) map[string]string {
+	pmap := make(map[string]string)
+
+	pipResp, err := cli.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
+	if err != nil {
+		return pmap
+	}
+
+	if items, ok := pipResp.GetItemsOk(); ok {
+		for _, ip := range items {
+			if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil && *ni != "" {
+				if val, vok := ip.GetIpOk(); vok {
+					pmap[*ni] = val
+				}
+			}
+		}
+	}
+
+	return pmap
 }
 
 // ListInstances lists all instances.
@@ -188,18 +238,26 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 		return nil, err
 	}
 
-	// Build label selector from filters (accepts keys like "label.foo" or "label:foo")
-    selectors := make([]string, 0, len(filters))
-
-	for k, v := range filters {
-		if strings.HasPrefix(k, "label.") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label."), v))
-		} else if strings.HasPrefix(k, "label:") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label:"), v))
-		}
+	// List servers with optional label selector
+	resp, err := m.listServersWithFilters(ctx, cli, filters)
+	if err != nil {
+		return nil, err
 	}
 
-	selector := strings.Join(selectors, ",")
+	// Build NIC->PublicIP map once
+	publicIPsByNIC := m.buildPublicIPMap(ctx, cli)
+
+	// Convert servers to instances
+	instances := m.serversToInstances(ctx, cli, resp, publicIPsByNIC)
+
+	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(instances))
+
+	return instances, nil
+}
+
+// listServersWithFilters lists servers applying the given filters.
+func (m *ComputeManager) listServersWithFilters(ctx context.Context, cli *iaas.APIClient, filters map[string]string) (*iaas.ServerListResponse, error) {
+	selector := m.buildLabelSelector(filters)
 
 	req := cli.ListServers(ctx, m.client.config.ProjectID)
 	if selector != "" {
@@ -211,89 +269,135 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 		return nil, fmt.Errorf("stackit iaas ListServers failed: %w", err)
 	}
 
-	// Build NIC->PublicIP map once to derive floating/public IP association
-	publicIPsByNIC := make(map[string]string)
+	return resp, nil
+}
 
-	if pipResp, err := cli.ListPublicIPs(ctx, m.client.config.ProjectID).Execute(); err == nil {
-		if items, ok := pipResp.GetItemsOk(); ok {
-			for _, ip := range items {
-				if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil && *ni != "" {
-					if val, vok := ip.GetIpOk(); vok {
-						publicIPsByNIC[*ni] = val
-					}
-				}
-			}
+// buildLabelSelector builds a label selector from filters.
+func (m *ComputeManager) buildLabelSelector(filters map[string]string) string {
+	selectors := make([]string, 0, len(filters))
+
+	for k, v := range filters {
+		if strings.HasPrefix(k, "label.") {
+			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label."), v))
+		} else if strings.HasPrefix(k, "label:") {
+			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label:"), v))
 		}
 	}
 
+	return strings.Join(selectors, ",")
+}
+
+// serversToInstances converts server responses to instances.
+func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APIClient, resp *iaas.ServerListResponse, publicIPsByNIC map[string]string) []*cpi.Instance {
 	items, _ := resp.GetItemsOk()
-
 	out := make([]*cpi.Instance, 0, len(items))
+
 	for _, server := range items {
-		inst := &cpi.Instance{}
-		if id, ok := server.GetIdOk(); ok {
-			inst.ID = id
-		}
+		inst := m.serverToInstance(server)
 
-		if name, ok := server.GetNameOk(); ok {
-			inst.Name = name
-		}
-
-		if mt, ok := server.GetMachineTypeOk(); ok {
-			inst.Flavor = mt
-		}
-
-		if img, ok := server.GetImageIdOk(); ok {
-			inst.Image = img
-		}
-
-		if az, ok := server.GetAvailabilityZoneOk(); ok {
-			inst.AvailabilityZone = az
-		}
-
-		if kp, ok := server.GetKeypairNameOk(); ok {
-			inst.KeyPair = kp
-		}
-
-		if labels, ok := server.GetLabelsOk(); ok {
-			// Convert map[string]interface{} to map[string]string
-			inst.Tags = mapAnyToString(labels)
-		}
-
-		if status, ok := server.GetStatusOk(); ok {
-			inst.State = mapServerStatus(status)
-		}
-
-		// Populate networking: private and floating/public IP from NICs
+		// Populate networking for each instance
 		if inst.ID != "" {
-			if nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, inst.ID).Execute(); err == nil {
-				if nics, ok := nicsResp.GetItemsOk(); ok {
-					for _, nic := range nics {
-						if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
-							inst.PrivateIP = ip
-						}
-
-						if nicID, ok := nic.GetIdOk(); ok {
-							if pip, exists := publicIPsByNIC[nicID]; exists {
-								inst.PublicIP = pip
-								inst.FloatingIP = pip
-							}
-						}
-
-						if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
-							inst.NetworkID = netID
-						}
-					}
-				}
-			}
+			m.populateInstanceNetworkingFromList(ctx, cli, inst.ID, inst, publicIPsByNIC)
 		}
 
 		out = append(out, inst)
 	}
 
-	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(out))
+	return out
+}
 
-	return out, nil
+// serverToInstance converts a server object to an instance.
+func (m *ComputeManager) serverToInstance(server iaas.Server) *cpi.Instance {
+	inst := &cpi.Instance{
+		ID:               "",
+		Name:             "",
+		State:            cpi.ResourceStateUnknown,
+		Flavor:           "",
+		Image:            "",
+		NetworkID:        "",
+		SubnetID:         "",
+		PrivateIP:        "",
+		PublicIP:         "",
+		FloatingIP:       "",
+		SecurityGroups:   []string{},
+		KeyPair:          "",
+		AvailabilityZone: "",
+		Tags:             map[string]string{},
+		Volumes:          []string{},
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	if id, ok := server.GetIdOk(); ok {
+		inst.ID = id
+	}
+
+	if name, ok := server.GetNameOk(); ok {
+		inst.Name = name
+	}
+
+	if mt, ok := server.GetMachineTypeOk(); ok {
+		inst.Flavor = mt
+	}
+
+	if img, ok := server.GetImageIdOk(); ok {
+		inst.Image = img
+	}
+
+	if az, ok := server.GetAvailabilityZoneOk(); ok {
+		inst.AvailabilityZone = az
+	}
+
+	if kp, ok := server.GetKeypairNameOk(); ok {
+		inst.KeyPair = kp
+	}
+
+	if labels, ok := server.GetLabelsOk(); ok {
+		inst.Tags = mapAnyToString(labels)
+	}
+
+	if status, ok := server.GetStatusOk(); ok {
+		inst.State = mapServerStatus(status)
+	}
+
+	return inst
+}
+
+// populateInstanceNetworkingFromList populates networking info from cached public IPs.
+func (m *ComputeManager) populateInstanceNetworkingFromList(ctx context.Context, cli *iaas.APIClient, instanceID string, inst *cpi.Instance, publicIPsByNIC map[string]string) {
+	nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		return
+	}
+
+	if nics, ok := nicsResp.GetItemsOk(); ok {
+		m.processNetworkInterfacesList(nics, publicIPsByNIC, inst)
+	}
+}
+
+// processNetworkInterfacesList processes network interfaces and populates instance networking info from cached public IPs.
+func (m *ComputeManager) processNetworkInterfacesList(nics []iaas.NIC, publicIPsByNIC map[string]string, inst *cpi.Instance) {
+	for _, nic := range nics {
+		m.processNetworkInterfaceFromList(nic, publicIPsByNIC, inst)
+	}
+}
+
+// processNetworkInterfaceFromList processes a single network interface from cached public IPs.
+func (m *ComputeManager) processNetworkInterfaceFromList(nic iaas.NIC, publicIPsByNIC map[string]string, inst *cpi.Instance) {
+	if ip, ok := nic.GetIpv4Ok(); ok && inst.PrivateIP == "" {
+		inst.PrivateIP = ip
+	}
+
+	if nicID, ok := nic.GetIdOk(); ok {
+		if pip, exists := publicIPsByNIC[nicID]; exists {
+			inst.PublicIP = pip
+			inst.FloatingIP = pip
+		}
+	}
+
+	if netID, ok := nic.GetNetworkIdOk(); ok && inst.NetworkID == "" {
+		inst.NetworkID = netID
+	}
 }
 
 // mapServerStatus maps STACKIT server status to cpi.ResourceState.
@@ -321,7 +425,8 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) 
 		return err
 	}
 
-	if err := cli.DeleteServer(ctx, m.client.config.ProjectID, instanceID).Execute(); err != nil {
+	err = cli.DeleteServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteServer failed: %w", err)
 	}
 
@@ -331,8 +436,8 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) 
 }
 
 // CreateKeyPair creates a new SSH key pair.
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	return nil, errors.New("stackit: CreateKeyPair unsupported; use ImportKeyPair with a public key")
+func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+	return nil, ErrCreateKeyPairUnsupported
 }
 
 // ImportKeyPair imports an existing public key.
@@ -349,7 +454,8 @@ func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicK
 		payload.SetName(name)
 	}
 
-	if _, err := cli.CreateKeyPair(ctx).CreateKeyPairPayload(*payload).Execute(); err != nil {
+	_, err = cli.CreateKeyPair(ctx).CreateKeyPairPayload(*payload).Execute()
+	if err != nil {
 		return fmt.Errorf("stackit iaas CreateKeyPair failed: %w", err)
 	}
 
@@ -365,12 +471,18 @@ func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyP
 		return nil, err
 	}
 
-	kp, err := cli.GetKeyPair(ctx, name).Execute()
+	keyPair, err := cli.GetKeyPair(ctx, name).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetKeyPair failed: %w", err)
 	}
 
-	out := &cpi.KeyPair{Name: stringOrEmpty(kp.GetNameOk()), Fingerprint: stringOrEmpty(kp.GetFingerprintOk()), PublicKey: stringOrEmpty(kp.GetPublicKeyOk())}
+	out := &cpi.KeyPair{
+		Name:        stringOrEmpty(keyPair.GetNameOk()),
+		Fingerprint: stringOrEmpty(keyPair.GetFingerprintOk()),
+		PublicKey:   stringOrEmpty(keyPair.GetPublicKeyOk()),
+		PrivateKey:  "",
+		CreatedAt:   time.Now(),
+	}
 
 	return out, nil
 }
@@ -397,6 +509,8 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 			Name:        stringOrEmpty(k.GetNameOk()),
 			Fingerprint: stringOrEmpty(k.GetFingerprintOk()),
 			PublicKey:   stringOrEmpty(k.GetPublicKeyOk()),
+			PrivateKey:  "",
+			CreatedAt:   time.Now(),
 		})
 	}
 
@@ -412,7 +526,8 @@ func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
 		return err
 	}
 
-	if err := cli.DeleteKeyPair(ctx, name).Execute(); err != nil {
+	err = cli.DeleteKeyPair(ctx, name).Execute()
+	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteKeyPair failed: %w", err)
 	}
 
@@ -421,7 +536,7 @@ func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
 
 // waitForInstanceState waits for an instance to reach a specific state.
 func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID string, targetState cpi.ResourceState, timeout time.Duration) error {
-	return cpi.WaitForCondition(ctx, 5*time.Second, timeout, func() (bool, error) {
+	err := cpi.WaitForCondition(ctx, conditionCheckInterval, timeout, func() (bool, error) {
 		instance, err := m.GetInstance(ctx, instanceID)
 		if err != nil {
 			return false, err
@@ -429,6 +544,11 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID st
 
 		return instance.State == targetState, nil
 	})
+	if err != nil {
+		return fmt.Errorf("failed to wait for instance %s to reach state %s: %w", instanceID, targetState, err)
+	}
+
+	return nil
 }
 
 // StartInstance starts a stopped instance.
@@ -437,10 +557,15 @@ func (m *ComputeManager) StartInstance(ctx context.Context, instanceID string) e
 
 	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IAAS client: %w", err)
 	}
 
-	return cli.StartServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	err = cli.StartServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	return nil
 }
 
 // StopInstance stops a running instance.
@@ -449,10 +574,15 @@ func (m *ComputeManager) StopInstance(ctx context.Context, instanceID string) er
 
 	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IAAS client: %w", err)
 	}
 
-	return cli.StopServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	err = cli.StopServer(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to stop server: %w", err)
+	}
+
+	return nil
 }
 
 // RebootInstance reboots an instance.
@@ -461,10 +591,15 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, instanceID string) 
 
 	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IAAS client: %w", err)
 	}
 
-	return cli.RebootServer(ctx, m.client.config.ProjectID, instanceID).Action("SOFT").Execute()
+	err = cli.RebootServer(ctx, m.client.config.ProjectID, instanceID).Action("SOFT").Execute()
+	if err != nil {
+		return fmt.Errorf("failed to reboot server: %w", err)
+	}
+
+	return nil
 }
 
 // ListImages lists available images.
@@ -485,7 +620,21 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 
 	out := make([]*cpi.Image, 0, len(items))
 	for _, it := range items {
-		img := &cpi.Image{ID: stringOrEmpty(it.GetIdOk()), Name: stringOrEmpty(it.GetNameOk()), Public: true}
+		img := &cpi.Image{
+			ID:           stringOrEmpty(it.GetIdOk()),
+			Name:         stringOrEmpty(it.GetNameOk()),
+			Description:  "",
+			OS:           "",
+			OSVersion:    "",
+			Architecture: "",
+			Size:         0,
+			MinDisk:      0,
+			MinRAM:       0,
+			Public:       true,
+			State:        "",
+			Tags:         map[string]string{},
+			CreatedAt:    time.Now(),
+		}
 		out = append(out, img)
 	}
 
@@ -506,7 +655,21 @@ func (m *ComputeManager) GetImage(ctx context.Context, imageID string) (*cpi.Ima
 		return nil, fmt.Errorf("stackit iaas GetImage failed: %w", err)
 	}
 
-	out := &cpi.Image{ID: stringOrEmpty(got.GetIdOk()), Name: stringOrEmpty(got.GetNameOk()), Public: true}
+	out := &cpi.Image{
+		ID:           stringOrEmpty(got.GetIdOk()),
+		Name:         stringOrEmpty(got.GetNameOk()),
+		Description:  "",
+		OS:           "",
+		OSVersion:    "",
+		Architecture: "",
+		Size:         0,
+		MinDisk:      0,
+		MinRAM:       0,
+		Public:       true,
+		State:        "",
+		Tags:         map[string]string{},
+		CreatedAt:    time.Now(),
+	}
 
 	return out, nil
 }
@@ -530,8 +693,14 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 	out := make([]*cpi.Flavor, 0, len(items))
 	for _, machineType := range items {
 		flavor := &cpi.Flavor{
-			ID:   stringOrEmpty(machineType.GetNameOk()),
-			Name: stringOrEmpty(machineType.GetNameOk()),
+			ID:          stringOrEmpty(machineType.GetNameOk()),
+			Name:        stringOrEmpty(machineType.GetNameOk()),
+			VCPUs:       0,
+			RAM:         0,
+			Disk:        0,
+			Ephemeral:   0,
+			NetworkCap:  0,
+			Description: "",
 		}
 		if v, ok := machineType.GetVcpusOk(); ok {
 			flavor.VCPUs = int(v)
@@ -565,7 +734,16 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, flavorID string) (*cpi.F
 		return nil, fmt.Errorf("stackit iaas GetMachineType failed: %w", err)
 	}
 
-	flavor := &cpi.Flavor{ID: stringOrEmpty(machineType.GetNameOk()), Name: stringOrEmpty(machineType.GetNameOk())}
+	flavor := &cpi.Flavor{
+		ID:          stringOrEmpty(machineType.GetNameOk()),
+		Name:        stringOrEmpty(machineType.GetNameOk()),
+		VCPUs:       0,
+		RAM:         0,
+		Disk:        0,
+		Ephemeral:   0,
+		NetworkCap:  0,
+		Description: "",
+	}
 	if v, ok := machineType.GetVcpusOk(); ok {
 		flavor.VCPUs = int(v)
 	}
@@ -579,4 +757,24 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, flavorID string) (*cpi.F
 	}
 
 	return flavor, nil
+}
+
+// CreateVolume creates a new volume.
+func (m *ComputeManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
+	return m.client.storage.CreateVolume(ctx, req)
+}
+
+// GetVolume retrieves a volume by ID.
+func (m *ComputeManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+	return m.client.storage.GetVolume(ctx, id)
+}
+
+// ListVolumes lists all volumes.
+func (m *ComputeManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
+	return m.client.storage.ListVolumes(ctx, filters)
+}
+
+// DeleteVolume deletes a volume.
+func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
+	return m.client.storage.DeleteVolume(ctx, id)
 }

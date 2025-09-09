@@ -1,9 +1,8 @@
-package test
+package test_test
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,18 +16,17 @@ import (
 func TestManagerInitialization(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:      "test-bloc",
-		Provider:  "stackit",
-		ProjectID: "test-project",
-	}
+	cfg := config.NewTestConfig().WithProjectID("test-project").Build()
 
 	opts := &bastion.ProvisioningOptions{
-		DryRun:   true,
-		Force:    false,
-		Parallel: false,
-		Resume:   false,
-		Verbose:  true,
+		DryRun:      true,
+		Force:       false,
+		Parallel:    false,
+		Resume:      false,
+		Verbose:     true,
+		MaxWorkers:  0,
+		ProgressOut: nil,
+		LogFile:     "",
 	}
 
 	manager := bastion.NewManager(cfg, opts)
@@ -45,18 +43,17 @@ func TestManagerInitialization(t *testing.T) {
 func TestManagerDryRun(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:      "test-bloc",
-		Provider:  "stackit",
-		ProjectID: "test-project",
-	}
+	cfg := config.NewTestConfig().WithProjectID("test-project").Build()
 
 	opts := &bastion.ProvisioningOptions{
-		DryRun:   true,
-		Force:    true,
-		Parallel: false,
-		Resume:   false,
-		Verbose:  true,
+		DryRun:      true,
+		Force:       true,
+		Parallel:    false,
+		Resume:      false,
+		Verbose:     true,
+		MaxWorkers:  0,
+		ProgressOut: nil,
+		LogFile:     "",
 	}
 
 	manager := bastion.NewManager(cfg, opts)
@@ -81,13 +78,17 @@ func TestManagerDryRun(t *testing.T) {
 func TestProgressTracking(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	opts := &bastion.ProvisioningOptions{
-		DryRun: true,
+		DryRun:      true,
+		Force:       false,
+		Parallel:    false,
+		Resume:      false,
+		Verbose:     false,
+		MaxWorkers:  0,
+		ProgressOut: nil,
+		LogFile:     "",
 	}
 
 	manager := bastion.NewManager(cfg, opts)
@@ -103,10 +104,7 @@ func TestProgressTracking(t *testing.T) {
 func TestModeDetection(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	detector := bastion.NewModeDetector(cfg)
 	ctx := context.Background()
@@ -133,10 +131,7 @@ func TestModeDetection(t *testing.T) {
 func TestExecutionInfo(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	info := bastion.GetExecutionInfo(cfg)
 
@@ -174,6 +169,7 @@ type MockSSHClient struct {
 // NewMockSSHClient creates a new mock SSH client.
 func NewMockSSHClient() *MockSSHClient {
 	return &MockSSHClient{
+		connected:      false,
 		commands:       make([]string, 0),
 		commandResults: make(map[string]*ssh.CommandResult),
 		transferErrors: make(map[string]error),
@@ -258,19 +254,15 @@ func containsAny(text string, substrings []string) bool {
 
 // setupTestEnvironment creates a test environment.
 func setupTestEnvironment(t *testing.T) (string, func()) {
+	t.Helper()
 	// Create temporary directory for test files
-	tempDir, err := os.MkdirTemp("", "ocfp-bastion-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	tempDir := t.TempDir()
 
 	// Set HOME environment variable for tests
-	oldHome := os.Getenv("HOME")
-	_ = os.Setenv("HOME", tempDir)
+	t.Setenv("HOME", tempDir)
 
 	cleanup := func() {
-		_ = os.Setenv("HOME", oldHome)
-		_ = os.RemoveAll(tempDir)
+		// TempDir and Setenv automatically clean up
 	}
 
 	return tempDir, cleanup

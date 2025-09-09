@@ -1,7 +1,6 @@
 package vault
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,8 +10,8 @@ import (
 )
 
 const (
-    kvV1Type = "kv-v1"
-    kvV2Type = "kv-v2"
+	kvV1Type = "kv-v1"
+	kvV2Type = "kv-v2"
 )
 
 // EngineInfo holds information about a vault engine.
@@ -35,6 +34,7 @@ func NewEngineDetector(client *Client) *EngineDetector {
 	return &EngineDetector{
 		client: client,
 		cache:  make(map[string]*EngineInfo),
+		mutex:  sync.RWMutex{},
 		logger: logger.Get(),
 	}
 }
@@ -71,6 +71,63 @@ func (ed *EngineDetector) DetectEngineForPath(path string) (*EngineInfo, error) 
 	return info, nil
 }
 
+// IsKVv2 checks if a path uses KV v2 engine.
+func (ed *EngineDetector) IsKVv2(path string) (bool, error) {
+	info, err := ed.DetectEngineForPath(path)
+	if err != nil {
+		return false, err
+	}
+
+	return info.Type == kvV2Type, nil
+}
+
+// IsKVv1 checks if a path uses KV v1 engine.
+func (ed *EngineDetector) IsKVv1(path string) (bool, error) {
+	info, err := ed.DetectEngineForPath(path)
+	if err != nil {
+		return false, err
+	}
+
+	return info.Type == kvV1Type || info.Type == "generic", nil
+}
+
+// GetEngineType returns the engine type for a path.
+func (ed *EngineDetector) GetEngineType(path string) (string, error) {
+	info, err := ed.DetectEngineForPath(path)
+	if err != nil {
+		return "", err
+	}
+
+	return info.Type, nil
+}
+
+// ClearCache clears the engine detection cache.
+func (ed *EngineDetector) ClearCache() {
+	ed.mutex.Lock()
+	defer ed.mutex.Unlock()
+
+	ed.cache = make(map[string]*EngineInfo)
+	ed.logger.Debug("Cleared engine detection cache")
+}
+
+// GetCachedEngines returns all cached engine information.
+func (ed *EngineDetector) GetCachedEngines() map[string]*EngineInfo {
+	ed.mutex.RLock()
+	defer ed.mutex.RUnlock()
+
+	// Return a copy to prevent external modification
+	result := make(map[string]*EngineInfo)
+	for k, v := range ed.cache {
+		result[k] = &EngineInfo{
+			Type:    v.Type,
+			Version: v.Version,
+			Path:    v.Path,
+		}
+	}
+
+	return result
+}
+
 // queryEngineInfo queries the vault API to determine engine information.
 func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error) {
 	// Query the sys/mounts endpoint to get mount information
@@ -80,7 +137,7 @@ func (ed *EngineDetector) queryEngineInfo(mountPath string) (*EngineInfo, error)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, errors.New("no mount information returned")
+		return nil, ErrNoMountInformationReturned
 	}
 
 	// Parse the mount information
@@ -119,36 +176,52 @@ func (ed *EngineDetector) parseMountInfo(mountPath string, mountData map[string]
 	}
 
 	info := &EngineInfo{
-		Path: strings.TrimSuffix(mountPath, "/"),
-		Type: engineType,
+		Type:    engineType,
+		Version: "",
+		Path:    strings.TrimSuffix(mountPath, "/"),
 	}
 
-    switch engineType {
-    case "kv":
-		// Check version in options
-		if version, ok := options["version"]; ok {
-			if versionStr, ok := version.(string); ok {
-				info.Version = versionStr
-                if versionStr == "2" {
-                    info.Type = kvV2Type
-                } else {
-                    info.Type = kvV1Type
-                }
-			}
-		} else {
-			// Default to v1 if no version specified
-            info.Type = kvV1Type
-            info.Version = "1"
-        }
-    case "generic":
-        // Legacy generic engine is KV v1
-        info.Type = kvV1Type
-        info.Version = "1"
-    default:
-        info.Version = "1" // Default version
-    }
+	configureEngineType(info, engineType, options)
 
 	return info, nil
+}
+
+// configureEngineType configures engine type and version based on engine type and options.
+func configureEngineType(info *EngineInfo, engineType string, options map[string]interface{}) {
+	switch engineType {
+	case "kv":
+		configureKVEngine(info, options)
+	case "generic":
+		configureGenericEngine(info)
+	default:
+		info.Version = "1"
+	}
+}
+
+// configureKVEngine configures KV engine type and version.
+func configureKVEngine(info *EngineInfo, options map[string]interface{}) {
+	if version, ok := options["version"]; ok {
+		if versionStr, ok := version.(string); ok {
+			info.Version = versionStr
+			if versionStr == "2" {
+				info.Type = kvV2Type
+			} else {
+				info.Type = kvV1Type
+			}
+
+			return
+		}
+	}
+
+	// Default to v1 if no version specified
+	info.Type = kvV1Type
+	info.Version = "1"
+}
+
+// configureGenericEngine configures generic engine as KV v1.
+func configureGenericEngine(info *EngineInfo) {
+	info.Type = kvV1Type
+	info.Version = "1"
 }
 
 // inferEngineFromPath attempts to infer engine type from path patterns.
@@ -161,22 +234,22 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 		if mountPath == mount {
 			ed.logger.Debug("Inferred KV v2 engine from common mount path", "path", mountPath)
 
-    return &EngineInfo{
-        Path:    mountPath,
-        Type:    kvV2Type,
-        Version: "2",
-    }, nil
+			return &EngineInfo{
+				Path:    mountPath,
+				Type:    kvV2Type,
+				Version: "2",
+			}, nil
 		}
 	}
 
 	// Default to KV v1 for unknown mounts
 	ed.logger.Debug("Defaulting to KV v1 engine", "path", mountPath)
 
-    return &EngineInfo{
-        Path:    mountPath,
-        Type:    kvV1Type,
-        Version: "1",
-    }, nil
+	return &EngineInfo{
+		Path:    mountPath,
+		Type:    kvV1Type,
+		Version: "1",
+	}, nil
 }
 
 // extractMountPath extracts the mount path from a full vault path.
@@ -191,61 +264,4 @@ func (ed *EngineDetector) extractMountPath(fullPath string) string {
 	}
 
 	return path
-}
-
-// IsKVv2 checks if a path uses KV v2 engine.
-func (ed *EngineDetector) IsKVv2(path string) (bool, error) {
-	info, err := ed.DetectEngineForPath(path)
-	if err != nil {
-		return false, err
-	}
-
-    return info.Type == kvV2Type, nil
-}
-
-// IsKVv1 checks if a path uses KV v1 engine.
-func (ed *EngineDetector) IsKVv1(path string) (bool, error) {
-	info, err := ed.DetectEngineForPath(path)
-	if err != nil {
-		return false, err
-	}
-
-    return info.Type == kvV1Type || info.Type == "generic", nil
-}
-
-// GetEngineType returns the engine type for a path.
-func (ed *EngineDetector) GetEngineType(path string) (string, error) {
-	info, err := ed.DetectEngineForPath(path)
-	if err != nil {
-		return "", err
-	}
-
-	return info.Type, nil
-}
-
-// ClearCache clears the engine detection cache.
-func (ed *EngineDetector) ClearCache() {
-	ed.mutex.Lock()
-	defer ed.mutex.Unlock()
-
-	ed.cache = make(map[string]*EngineInfo)
-	ed.logger.Debug("Cleared engine detection cache")
-}
-
-// GetCachedEngines returns all cached engine information.
-func (ed *EngineDetector) GetCachedEngines() map[string]*EngineInfo {
-	ed.mutex.RLock()
-	defer ed.mutex.RUnlock()
-
-	// Return a copy to prevent external modification
-	result := make(map[string]*EngineInfo)
-	for k, v := range ed.cache {
-		result[k] = &EngineInfo{
-			Type:    v.Type,
-			Version: v.Version,
-			Path:    v.Path,
-		}
-	}
-
-	return result
 }

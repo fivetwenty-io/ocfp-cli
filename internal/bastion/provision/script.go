@@ -33,156 +33,24 @@ func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provC
 
 	var scriptParts []string
 
-	// Script header
+	// Core script sections
 	scriptParts = append(scriptParts, sg.generateScriptHeader())
-
-	// Environment setup
 	scriptParts = append(scriptParts, sg.generateEnvironmentSetup(envVars))
 
-	// System configuration
-	systemConfig := provConfig.GetSystemConfig()
-	if systemPart := sg.generateSystemConfigScript(systemConfig); systemPart != "" {
-		scriptParts = append(scriptParts, systemPart)
-	}
+	// System and base configuration
+	sg.addSystemProvisioningSections(provConfig, &scriptParts)
 
-	// Directory creation
-	directories := provConfig.GetDirectories()
-	if dirPart := sg.generateDirectoryScript(directories); dirPart != "" {
-		scriptParts = append(scriptParts, dirPart)
-	}
+	// Package and tool management
+	sg.addPackageManagementSections(ctx, provConfig, &scriptParts)
 
-	// APT repositories setup
-	repositories := provConfig.GetAPTRepositories()
-	if repoPart := sg.generateRepositoryScript(repositories); repoPart != "" {
-		scriptParts = append(scriptParts, repoPart)
-	}
+	// OCFP-specific provisioning
+	sg.addOCFPProvisioningSections(ctx, &scriptParts)
 
-	// Package installation
-	packages := provConfig.GetPackages()
-	if pkgPart := sg.generatePackageScript(packages); pkgPart != "" {
-		scriptParts = append(scriptParts, pkgPart)
-	}
+	// Final sections
+	sg.addFinalProvisioningSections(ctx, provConfig, &scriptParts)
 
-	// Binary tools installation
-	tools := provConfig.GetBinaryTools()
-	if toolPart := sg.generateBinaryToolScript(tools); toolPart != "" {
-		scriptParts = append(scriptParts, toolPart)
-	}
-
-	// Git repositories
-	repos := provConfig.GetGitRepositories()
-	if repoPart := sg.generateGitRepositoryScript(repos); repoPart != "" {
-		scriptParts = append(scriptParts, repoPart)
-	}
-
-	// Genesis deployments
-	deployments := provConfig.GetGenesisDeployments()
-	if deployPart := sg.generateGenesisDeploymentScript(deployments); deployPart != "" {
-		scriptParts = append(scriptParts, deployPart)
-	}
-
-	// Snap packages
-	snapMgr := NewSnapManager(sg.provider, sg.config)
-	if snapPart := snapMgr.GenerateSnapInstallScript(ctx); snapPart != "" {
-		scriptParts = append(scriptParts, snapPart)
-	}
-
-	// CPAN modules
-	cpanMgr := NewCPANManager(sg.provider, sg.config)
-	if cpanPart := cpanMgr.GenerateCPANInstallScript(ctx); cpanPart != "" {
-		scriptParts = append(scriptParts, cpanPart)
-	}
-
-	// OCFP Perl dependencies
-	if ocfpPerlPart := cpanMgr.InstallOCFPPerlDependencies(ctx); ocfpPerlPart != "" {
-		scriptParts = append(scriptParts, ocfpPerlPart)
-	}
-
-	// Advanced binary tools
-	toolMgr := NewAdvancedToolManager(sg.provider, sg.config)
-	if toolPart := toolMgr.GenerateAdvancedToolScript(ctx); toolPart != "" {
-		scriptParts = append(scriptParts, toolPart)
-	}
-
-	// CF plugins
-	cfMgr := NewCFPluginManager(sg.provider, sg.config)
-	if cfPart := cfMgr.GenerateCFPluginInstallScript(ctx); cfPart != "" {
-		scriptParts = append(scriptParts, cfPart)
-	}
-
-	// Configuration files
-	configMgr := NewConfigFileManager(sg.provider, sg.config)
-	if configPart := configMgr.GenerateConfigFileScript(ctx); configPart != "" {
-		scriptParts = append(scriptParts, configPart)
-	}
-
-	// OCFP directory structure
-	dirMgr := NewDirectoryManager(sg.provider, sg.config)
-	if ocfpDirPart := dirMgr.GenerateOCFPDirectoryScript(ctx); ocfpDirPart != "" {
-		scriptParts = append(scriptParts, ocfpDirPart)
-	}
-
-	// OCFP CLI setup
-	if ocfpCLIPart := dirMgr.GenerateOCFPCLISetupScript(ctx); ocfpCLIPart != "" {
-		scriptParts = append(scriptParts, ocfpCLIPart)
-	}
-
-	// Shell environment setup
-	envMgr := NewEnvironmentManager(sg.provider, sg.config)
-	if shellEnvPart := envMgr.GenerateShellEnvironmentScript(ctx); shellEnvPart != "" {
-		scriptParts = append(scriptParts, shellEnvPart)
-	}
-
-	// System environment setup
-	if sysEnvPart := envMgr.GenerateSystemEnvironmentScript(ctx); sysEnvPart != "" {
-		scriptParts = append(scriptParts, sysEnvPart)
-	}
-
-	// OCFP integration (vault inception, configure, populate)
-	ocfpMgr := NewOCFPManager(sg.provider, sg.config)
-
-	if vaultInceptionPart := ocfpMgr.GenerateVaultInceptionScript(ctx); vaultInceptionPart != "" {
-		scriptParts = append(scriptParts, vaultInceptionPart)
-	}
-
-	if configurePart := ocfpMgr.GenerateOCFPConfigureScript(ctx); configurePart != "" {
-		scriptParts = append(scriptParts, configurePart)
-	}
-
-	if populatePart := ocfpMgr.GenerateVaultPopulateScript(ctx); populatePart != "" {
-		scriptParts = append(scriptParts, populatePart)
-	}
-
-	// Tool verification
-	ocfpMgr2 := NewOCFPManager(sg.provider, sg.config)
-	if verifyPart := ocfpMgr2.GenerateOCFPToolVerificationScript(ctx); verifyPart != "" {
-		scriptParts = append(scriptParts, verifyPart)
-	}
-
-	// Custom scripts
-	scripts := provConfig.GetCustomScripts()
-	if customPart := sg.generateCustomScriptSection(scripts); customPart != "" {
-		scriptParts = append(scriptParts, customPart)
-	}
-
-	// Comprehensive verification
-	verificationMgr := NewVerificationManager(sg.provider, sg.config)
-	if comprehensiveVerifyPart := verificationMgr.GenerateVerificationScript(ctx); comprehensiveVerifyPart != "" {
-		scriptParts = append(scriptParts, comprehensiveVerifyPart)
-	}
-
-	// Final summary
-	if summaryPart := verificationMgr.GenerateProvisioningSummaryScript(ctx); summaryPart != "" {
-		scriptParts = append(scriptParts, summaryPart)
-	}
-
-	// Script footer
-	scriptParts = append(scriptParts, sg.generateScriptFooter())
-
-	// Join all parts
+	// Join all parts and perform variable substitution
 	fullScript := strings.Join(scriptParts, "\n\n")
-
-	// Perform variable substitution
 	finalScript := sg.performVariableSubstitution(fullScript, envVars)
 
 	return finalScript, nil
@@ -250,7 +118,7 @@ sleep 10`
 
 // generateEnvironmentSetup generates environment variable setup.
 func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) string {
-	var lines []string
+	lines := make([]string, 0, scriptBufferScriptBase+len(envVars))
 
 	lines = append(lines, "# Environment variables setup")
 
@@ -267,7 +135,8 @@ func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) s
 
 // generateSystemConfigScript generates system configuration.
 func (sg *ScriptGenerator) generateSystemConfigScript(config SystemConfig) string {
-	var lines []string
+	// Mostly fixed content; preallocate a sensible capacity
+	lines := make([]string, 0, scriptBufferScript1)
 
 	lines = append(lines, "# System configuration")
 
@@ -313,7 +182,7 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript2+scriptBufferScript2*len(directories))
 
 	lines = append(lines, "# Directory creation")
 
@@ -354,7 +223,7 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript4*len(repositories))
 
 	lines = append(lines, "# APT repository setup")
 
@@ -410,7 +279,7 @@ func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGrou
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript3*len(packages))
 
 	lines = append(lines, "# Package installation")
 
@@ -459,72 +328,15 @@ func (sg *ScriptGenerator) generateBinaryToolScript(tools []BinaryTool) string {
 		return ""
 	}
 
-	var lines []string
-
+	lines := make([]string, 0, scriptBufferScript5+scriptBufferScript3*len(tools))
 	lines = append(lines, "# Binary tool installation")
 
 	for _, tool := range tools {
-		if !tool.Enabled || sg.shouldSkipCondition(tool.Condition) {
+		if !sg.shouldProcessTool(tool) {
 			continue
 		}
 
-		lines = append(lines, "# Install "+tool.Name)
-		lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
-
-		if tool.URL != "" {
-			// Direct download
-			lines = append(lines, fmt.Sprintf("curl -fsSL '%s' -o '/tmp/%s'", tool.URL, tool.Name))
-			if tool.Sudo {
-				lines = append(lines, fmt.Sprintf("sudo mv '/tmp/%s' '%s'", tool.Name, tool.Dest))
-				if tool.Mode != 0 {
-					lines = append(lines, fmt.Sprintf("sudo chmod %o '%s'", tool.Mode, tool.Dest))
-				}
-			} else {
-				lines = append(lines, fmt.Sprintf("mv '/tmp/%s' '%s'", tool.Name, tool.Dest))
-				if tool.Mode != 0 {
-					lines = append(lines, fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest))
-				}
-			}
-		} else if tool.VersionURL != "" && tool.URLTemplate != "" {
-			// Version-based download
-			lines = append(lines, fmt.Sprintf("LATEST_VERSION=$(curl -s '%s' | grep -oP '%s' | head -1)", tool.VersionURL, tool.VersionPattern))
-			lines = append(lines, "DOWNLOAD_URL=$(echo \""+tool.URLTemplate+"\" | sed \"s/\\${VERSION}/${LATEST_VERSION}/g\")")
-			lines = append(lines, fmt.Sprintf("curl -fsSL \"${DOWNLOAD_URL}\" -o '/tmp/%s'", tool.Name))
-
-			if tool.Extract {
-				lines = append(lines, fmt.Sprintf("cd /tmp && tar -xf '%s'", tool.Name))
-				if tool.Sudo {
-					lines = append(lines, fmt.Sprintf("sudo mv %s '%s'", tool.Name, tool.Dest))
-				} else {
-					lines = append(lines, fmt.Sprintf("mv %s '%s'", tool.Name, tool.Dest))
-				}
-			} else {
-				if tool.Sudo {
-					lines = append(lines, fmt.Sprintf("sudo mv '/tmp/%s' '%s'", tool.Name, tool.Dest))
-				} else {
-					lines = append(lines, fmt.Sprintf("mv '/tmp/%s' '%s'", tool.Name, tool.Dest))
-				}
-			}
-
-			if tool.Mode != 0 {
-				if tool.Sudo {
-					lines = append(lines, fmt.Sprintf("sudo chmod %o '%s'", tool.Mode, tool.Dest))
-				} else {
-					lines = append(lines, fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest))
-				}
-			}
-		}
-
-		// Verify installation
-		if tool.Verify != "" {
-			lines = append(lines, fmt.Sprintf("if %s >/dev/null 2>&1; then", tool.Verify))
-			lines = append(lines, fmt.Sprintf("    log_success '%s installed successfully'", tool.Name))
-			lines = append(lines, "else")
-			lines = append(lines, fmt.Sprintf("    log_warning '%s installation may have failed'", tool.Name))
-			lines = append(lines, "fi")
-		}
-
-		lines = append(lines, "")
+		lines = append(lines, sg.generateToolInstallationScript(tool)...)
 	}
 
 	return strings.Join(lines, "\n")
@@ -536,7 +348,7 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript3+decimalBase*len(repos))
 
 	lines = append(lines, "# Git repository cloning")
 
@@ -582,7 +394,7 @@ func (sg *ScriptGenerator) generateGenesisDeploymentScript(deployments []Genesis
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript3+decimalBase*len(deployments))
 
 	lines = append(lines, "# Genesis deployment initialization")
 
@@ -621,7 +433,7 @@ func (sg *ScriptGenerator) generateCustomScriptSection(scripts []CustomScript) s
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferScript3+decimalBase*len(scripts))
 
 	lines = append(lines, "# Custom script execution")
 
@@ -669,29 +481,269 @@ touch "${HOME}/.ocfp/provisioned"
 echo "$(date)" > "${HOME}/.ocfp/provisioned"`
 }
 
+// shouldProcessTool checks if a tool should be processed.
+func (sg *ScriptGenerator) shouldProcessTool(tool BinaryTool) bool {
+	return tool.Enabled && !sg.shouldSkipCondition(tool.Condition)
+}
+
+// generateToolInstallationScript generates installation script lines for a single tool.
+func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []string {
+	var lines []string
+
+	// Add header
+	lines = append(lines, "# Install "+tool.Name)
+	lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
+
+	// Add download and installation steps
+	lines = append(lines, sg.generateDownloadSteps(tool)...)
+
+	// Add verification step
+	lines = append(lines, sg.generateVerificationStep(tool)...)
+
+	// Add empty line separator
+	lines = append(lines, "")
+
+	return lines
+}
+
+// generateDownloadSteps generates download and installation steps for a tool.
+func (sg *ScriptGenerator) generateDownloadSteps(tool BinaryTool) []string {
+	var lines []string
+
+	if tool.URL != "" {
+		lines = append(lines, sg.generateDirectDownload(tool)...)
+	} else if tool.VersionURL != "" && tool.URLTemplate != "" {
+		lines = append(lines, sg.generateVersionBasedDownload(tool)...)
+	}
+
+	return lines
+}
+
+// generateDirectDownload generates script lines for direct URL download.
+func (sg *ScriptGenerator) generateDirectDownload(tool BinaryTool) []string {
+	var lines []string
+
+	// Download file
+	lines = append(lines, fmt.Sprintf("curl -fsSL '%s' -o '/tmp/%s'", tool.URL, tool.Name))
+
+	// Move file to destination
+	lines = append(lines, sg.generateMoveCommand(tool, "/tmp/"+tool.Name)...)
+
+	// Set permissions
+	lines = append(lines, sg.generatePermissionCommand(tool)...)
+
+	return lines
+}
+
+// generateVersionBasedDownload generates script lines for version-based download.
+func (sg *ScriptGenerator) generateVersionBasedDownload(tool BinaryTool) []string {
+	var lines []string
+
+	// Get latest version
+	lines = append(lines, fmt.Sprintf("LATEST_VERSION=$(curl -s '%s' | grep -oP '%s' | head -1)", tool.VersionURL, tool.VersionPattern))
+	lines = append(lines, "DOWNLOAD_URL=$(echo \""+tool.URLTemplate+"\" | sed \"s/\\${VERSION}/${LATEST_VERSION}/g\")")
+	lines = append(lines, fmt.Sprintf("curl -fsSL \"${DOWNLOAD_URL}\" -o '/tmp/%s'", tool.Name))
+
+	// Extract if needed
+	if tool.Extract {
+		lines = append(lines, fmt.Sprintf("cd /tmp && tar -xf '%s'", tool.Name))
+		lines = append(lines, sg.generateMoveCommand(tool, tool.Name)...)
+	} else {
+		lines = append(lines, sg.generateMoveCommand(tool, "/tmp/"+tool.Name)...)
+	}
+
+	// Set permissions
+	lines = append(lines, sg.generatePermissionCommand(tool)...)
+
+	return lines
+}
+
+// generateMoveCommand generates move command with appropriate sudo usage.
+func (sg *ScriptGenerator) generateMoveCommand(tool BinaryTool, source string) []string {
+	var lines []string
+
+	if tool.Sudo {
+		lines = append(lines, fmt.Sprintf("sudo mv '%s' '%s'", source, tool.Dest))
+	} else {
+		lines = append(lines, fmt.Sprintf("mv '%s' '%s'", source, tool.Dest))
+	}
+
+	return lines
+}
+
+// generatePermissionCommand generates chmod command if mode is specified.
+func (sg *ScriptGenerator) generatePermissionCommand(tool BinaryTool) []string {
+	var lines []string
+
+	if tool.Mode != 0 {
+		if tool.Sudo {
+			lines = append(lines, fmt.Sprintf("sudo chmod %o '%s'", tool.Mode, tool.Dest))
+		} else {
+			lines = append(lines, fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest))
+		}
+	}
+
+	return lines
+}
+
+// generateVerificationStep generates verification script lines if verification is configured.
+func (sg *ScriptGenerator) generateVerificationStep(tool BinaryTool) []string {
+	var lines []string
+
+	if tool.Verify != "" {
+		lines = append(lines,
+			fmt.Sprintf("if %s >/dev/null 2>&1; then", tool.Verify),
+			fmt.Sprintf("    log_success '%s installed successfully'", tool.Name),
+			"else",
+			fmt.Sprintf("    log_warning '%s installation may have failed'", tool.Name),
+			"fi",
+		)
+	}
+
+	return lines
+}
+
+// addSystemProvisioningSections adds system configuration and directory setup.
+func (sg *ScriptGenerator) addSystemProvisioningSections(provConfig ProvisionConfig, scriptParts *[]string) {
+	// System configuration
+	systemConfig := provConfig.GetSystemConfig()
+	sg.appendIfNotEmpty(scriptParts, sg.generateSystemConfigScript(systemConfig))
+
+	// Directory creation
+	directories := provConfig.GetDirectories()
+	sg.appendIfNotEmpty(scriptParts, sg.generateDirectoryScript(directories))
+
+	// APT repositories setup
+	repositories := provConfig.GetAPTRepositories()
+	sg.appendIfNotEmpty(scriptParts, sg.generateRepositoryScript(repositories))
+}
+
+// addPackageManagementSections adds package installation and tool management.
+func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, provConfig ProvisionConfig, scriptParts *[]string) {
+	// Package installation
+	packages := provConfig.GetPackages()
+	sg.appendIfNotEmpty(scriptParts, sg.generatePackageScript(packages))
+
+	// Binary tools installation
+	tools := provConfig.GetBinaryTools()
+	sg.appendIfNotEmpty(scriptParts, sg.generateBinaryToolScript(tools))
+
+	// Git repositories
+	repos := provConfig.GetGitRepositories()
+	sg.appendIfNotEmpty(scriptParts, sg.generateGitRepositoryScript(repos))
+
+	// Genesis deployments
+	deployments := provConfig.GetGenesisDeployments()
+	sg.appendIfNotEmpty(scriptParts, sg.generateGenesisDeploymentScript(deployments))
+
+	// Third-party package managers
+	sg.addThirdPartyPackageManagers(ctx, scriptParts)
+}
+
+// addThirdPartyPackageManagers adds snap, CPAN, and other package managers.
+func (sg *ScriptGenerator) addThirdPartyPackageManagers(ctx context.Context, scriptParts *[]string) {
+	// Snap packages
+	snapMgr := NewSnapManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, snapMgr.GenerateSnapInstallScript(ctx))
+
+	// CPAN modules
+	cpanMgr := NewCPANManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, cpanMgr.GenerateCPANInstallScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, cpanMgr.InstallOCFPPerlDependencies(ctx))
+
+	// Advanced binary tools
+	toolMgr := NewAdvancedToolManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, toolMgr.GenerateAdvancedToolScript(ctx))
+
+	// CF plugins
+	cfMgr := NewCFPluginManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, cfMgr.GenerateCFPluginInstallScript(ctx))
+}
+
+// addOCFPProvisioningSections adds OCFP-specific configuration and setup.
+func (sg *ScriptGenerator) addOCFPProvisioningSections(ctx context.Context, scriptParts *[]string) {
+	// Configuration files
+	configMgr := NewConfigFileManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, configMgr.GenerateConfigFileScript(ctx))
+
+	// OCFP directory structure and CLI setup
+	sg.addOCFPDirectoryAndCLISetup(ctx, scriptParts)
+
+	// Environment setup
+	sg.addEnvironmentSetup(ctx, scriptParts)
+
+	// OCFP integration
+	sg.addOCFPIntegration(ctx, scriptParts)
+}
+
+// addOCFPDirectoryAndCLISetup adds OCFP directory structure and CLI setup.
+func (sg *ScriptGenerator) addOCFPDirectoryAndCLISetup(ctx context.Context, scriptParts *[]string) {
+	dirMgr := NewDirectoryManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, dirMgr.GenerateOCFPDirectoryScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, dirMgr.GenerateOCFPCLISetupScript(ctx))
+}
+
+// addEnvironmentSetup adds shell and system environment setup.
+func (sg *ScriptGenerator) addEnvironmentSetup(ctx context.Context, scriptParts *[]string) {
+	envMgr := NewEnvironmentManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, envMgr.GenerateShellEnvironmentScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, envMgr.GenerateSystemEnvironmentScript(ctx))
+}
+
+// addOCFPIntegration adds OCFP integration components.
+func (sg *ScriptGenerator) addOCFPIntegration(ctx context.Context, scriptParts *[]string) {
+	ocfpMgr := NewOCFPManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateVaultInceptionScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateOCFPConfigureScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateVaultPopulateScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateOCFPToolVerificationScript(ctx))
+}
+
+// addFinalProvisioningSections adds custom scripts and verification.
+func (sg *ScriptGenerator) addFinalProvisioningSections(ctx context.Context, provConfig ProvisionConfig, scriptParts *[]string) {
+	// Custom scripts
+	scripts := provConfig.GetCustomScripts()
+	sg.appendIfNotEmpty(scriptParts, sg.generateCustomScriptSection(scripts))
+
+	// Comprehensive verification and summary
+	verificationMgr := NewVerificationManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, verificationMgr.GenerateVerificationScript(ctx))
+	sg.appendIfNotEmpty(scriptParts, verificationMgr.GenerateProvisioningSummaryScript(ctx))
+
+	// Script footer
+	*scriptParts = append(*scriptParts, sg.generateScriptFooter())
+}
+
+// appendIfNotEmpty appends a script part to the slice if it's not empty.
+func (sg *ScriptGenerator) appendIfNotEmpty(scriptParts *[]string, part string) {
+	if part != "" {
+		*scriptParts = append(*scriptParts, part)
+	}
+}
+
 // shouldSkipCondition evaluates whether a condition should be skipped.
 func (sg *ScriptGenerator) shouldSkipCondition(condition string) bool {
 	if condition == "" {
 		return false
 	}
 
-    switch condition {
-    case condProviderIsStackit:
-        return sg.provider != providerStackit
-    case condProviderIsAWS:
-        return sg.provider != providerAWS
-    case condProviderIsAzure:
-        return sg.provider != providerAzure
-    case condProviderIsGCP:
-        return sg.provider != providerGCP
-    case condProviderIsOpenstack:
-        return sg.provider != providerOpenStack
-    case condProviderIsVMware:
-        return sg.provider != providerVMware && sg.provider != providerVsphere
-    default:
-        // Unknown condition, don't skip
-        return false
-    }
+	switch condition {
+	case condProviderIsStackit:
+		return sg.provider != providerStackit
+	case condProviderIsAWS:
+		return sg.provider != providerAWS
+	case condProviderIsAzure:
+		return sg.provider != providerAzure
+	case condProviderIsGCP:
+		return sg.provider != providerGCP
+	case condProviderIsOpenstack:
+		return sg.provider != providerOpenStack
+	case condProviderIsVMware:
+		return sg.provider != providerVMware && sg.provider != providerVsphere
+	default:
+		// Unknown condition, don't skip
+		return false
+	}
 }
 
 // performVariableSubstitution performs variable substitution in the script.
@@ -729,14 +781,14 @@ func (sg *ScriptGenerator) performVariableSubstitution(script string, envVars ma
 	result := re.ReplaceAllStringFunc(script, func(match string) string {
 		// Extract variable name and default value
 		parts := re.FindStringSubmatch(match)
-		if len(parts) < 2 {
+		if len(parts) < minScriptParts {
 			return match
 		}
 
 		varName := parts[1]
 
 		defaultValue := ""
-		if len(parts) > 2 {
+		if len(parts) > maxScriptParts {
 			defaultValue = parts[2]
 		}
 

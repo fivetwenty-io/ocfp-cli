@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,7 +49,7 @@ func (tm *TransferManager) Transfer(ctx context.Context, local, remote string) e
 		return tm.upload(ctx, local, remote)
 	}
 
-	return errors.New("at least one path must specify bastion: prefix")
+	return ErrNoBastionPrefixSpecified
 }
 
 // upload uploads a file to the bastion host.
@@ -161,14 +160,17 @@ func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote stri
 
 	// Ensure remote directory exists
 	remoteDir := filepath.Dir(remote)
-	if err := sftpClient.MkdirAll(remoteDir); err != nil {
+
+	err = sftpClient.MkdirAll(remoteDir)
+	if err != nil {
 		tm.log.Warn("Failed to create remote directory",
 			"dir", remoteDir,
 			"error", err.Error())
 	}
 
 	// Open local file
-	if err := security.ValidatePath(local); err != nil {
+	err = security.ValidatePath(local)
+	if err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
 
@@ -189,7 +191,7 @@ func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote stri
 
 	// Copy with progress reporting
 	if tm.options.Progress != nil {
-		_, err = tm.copyWithProgress(localFile, remoteFile, localStat.Size())
+		err = tm.copyWithProgress(localFile, remoteFile, localStat.Size())
 	} else {
 		_, err = io.Copy(remoteFile, localFile)
 	}
@@ -224,25 +226,29 @@ func (tm *TransferManager) uploadViaTarPipe(ctx context.Context, local, remote s
 
 	// Ensure remote directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", remoteDir)
-	if _, err := tm.client.ExecuteCommand(ctx, mkdirCmd); err != nil {
+	stdout, err := tm.client.ExecuteCommand(ctx, mkdirCmd)
+	_ = stdout // ignore stdout
+
+	if err != nil {
 		tm.log.Warn("Failed to create remote directory",
 			"dir", remoteDir,
 			"error", err.Error())
 	}
 
 	// Execute tar pipe (this would need proper implementation)
-	return errors.New("tar pipe not fully implemented")
+	return ErrTarPipeNotImplemented
 }
 
 // uploadViaBase64 uploads by base64 encoding (for small files).
 func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote string, localStat os.FileInfo) error {
 	// Only use for small files
 	if localStat.Size() > 1024*1024 { // 1MB limit
-		return errors.New("file too large for base64 transfer")
+		return ErrFileTooLargeForBase64
 	}
 
 	// Read local file
-	if err := security.ValidatePath(local); err != nil {
+	err := security.ValidatePath(local)
+	if err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
 
@@ -258,7 +264,9 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 	remoteDir := filepath.Dir(remote)
 
 	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", remoteDir)
-	if _, err := tm.client.ExecuteCommand(ctx, mkdirCmd); err != nil {
+
+	_, err = tm.client.ExecuteCommand(ctx, mkdirCmd)
+	if err != nil {
 		tm.log.Warn("Failed to create remote directory", "error", err.Error())
 	}
 
@@ -296,12 +304,15 @@ func (tm *TransferManager) downloadViaSFTP(ctx context.Context, remote, local st
 
 	// Ensure local directory exists
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0750); err != nil {
+
+	err = os.MkdirAll(localDir, localDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
 	// Create local file
-	if err := security.ValidatePath(local); err != nil {
+	err = security.ValidatePath(local)
+	if err != nil {
 		return fmt.Errorf("invalid local path: %w", err)
 	}
 
@@ -319,12 +330,12 @@ func (tm *TransferManager) downloadViaSFTP(ctx context.Context, remote, local st
 	}
 
 	if tm.options.Progress != nil && size > 0 {
-		_, err = tm.copyWithProgress(remoteFile, localFile, size)
+		err = tm.copyWithProgress(remoteFile, localFile, size)
 	} else {
 		_, err = io.Copy(localFile, remoteFile)
 	}
 
-	return err
+	return fmt.Errorf("file copy failed: %w", err)
 }
 
 // downloadViaSCP downloads using SCP command.
@@ -345,17 +356,19 @@ func (tm *TransferManager) downloadViaCat(ctx context.Context, remote, local str
 
 	// Ensure local directory exists
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0750); err != nil {
+
+	err = os.MkdirAll(localDir, localDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
 
 	// Write to local file
-	return os.WriteFile(local, []byte(result.Stdout), 0600)
+	return fmt.Errorf("failed to write file: %w", os.WriteFile(local, []byte(result.Stdout), privateKeyMode))
 }
 
 // copyWithProgress copies data while reporting progress.
-func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalSize int64) (int64, error) {
-	buf := make([]byte, 32*1024) // 32KB buffer
+func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalSize int64) error {
+	buf := make([]byte, transferBufferSize)
 
 	var written int64
 
@@ -363,30 +376,23 @@ func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalS
 		numRead, readErr := src.Read(buf)
 		if numRead > 0 {
 			numWritten, writeErr := dst.Write(buf[0:numRead])
-			if numWritten > 0 {
-				written += int64(numWritten)
-
-				// Report progress
-				if tm.options.Progress != nil && totalSize > 0 {
-					percent := float64(written) / float64(totalSize) * 100
-					progress := fmt.Sprintf("\rProgress: %.1f%% (%d/%d bytes)",
-						percent, written, totalSize)
-					_, _ = tm.options.Progress.Write([]byte(progress))
-				}
-			}
-
 			if writeErr != nil {
-				return written, writeErr
+				return fmt.Errorf("write error: %w", writeErr)
 			}
 
 			if numRead != numWritten {
-				return written, io.ErrShortWrite
+				return io.ErrShortWrite
+			}
+
+			if numWritten > 0 {
+				written += int64(numWritten)
+				tm.reportProgress(written, totalSize)
 			}
 		}
 
 		if readErr != nil {
 			if readErr != io.EOF {
-				return written, readErr
+				return fmt.Errorf("read error: %w", readErr)
 			}
 
 			break
@@ -398,7 +404,19 @@ func (tm *TransferManager) copyWithProgress(src io.Reader, dst io.Writer, totalS
 		_, _ = tm.options.Progress.Write([]byte("\n"))
 	}
 
-	return written, nil
+	return nil
+}
+
+// reportProgress reports transfer progress if a progress writer is configured.
+func (tm *TransferManager) reportProgress(written, totalSize int64) {
+	if tm.options.Progress == nil || totalSize <= 0 {
+		return
+	}
+
+	percent := float64(written) / float64(totalSize) * percentageBase
+	progress := fmt.Sprintf("\rProgress: %.1f%% (%d/%d bytes)",
+		percent, written, totalSize)
+	_, _ = tm.options.Progress.Write([]byte(progress))
 }
 
 // verifyUpload verifies that the uploaded file matches the local file.
@@ -420,8 +438,7 @@ func (tm *TransferManager) verifyUpload(ctx context.Context, localPath, remotePa
 	remoteHash := strings.TrimSpace(result.Stdout)
 
 	if localHash != remoteHash {
-		return fmt.Errorf("file integrity check failed: local=%s remote=%s",
-			localHash, remoteHash)
+		return ErrFileIntegrityCheckFailed(localHash, remoteHash)
 	}
 
 	tm.log.Debug("File integrity verified",
@@ -434,20 +451,23 @@ func (tm *TransferManager) verifyUpload(ctx context.Context, localPath, remotePa
 
 // calculateFileHash calculates SHA256 hash of a file.
 func (tm *TransferManager) calculateFileHash(filePath string) (string, error) {
-	if err := security.ValidatePath(filePath); err != nil {
+	err := security.ValidatePath(filePath)
+	if err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 
 	file, err := os.Open(filePath) // #nosec G304 - filePath is validated above
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 
 	defer func() { _ = file.Close() }()
 
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
+
+	_, err = io.Copy(hasher, file)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy file for hashing: %w", err)
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
@@ -455,16 +475,33 @@ func (tm *TransferManager) calculateFileHash(filePath string) (string, error) {
 
 // External command implementations.
 func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remote string) error {
-	tm.log.Debug("Attempting upload via external SCP",
-		"local", local,
-		"remote", remote)
+	tm.log.Debug("Attempting upload via external SCP", "local", local, "remote", remote)
 
-	// Check if SCP command is available
-	if _, err := exec.LookPath("scp"); err != nil {
-		return errors.New("external SCP command not available")
+	err := tm.checkSCPAvailability()
+	if err != nil {
+		return err
 	}
 
-	// Build SCP command arguments
+	args := tm.buildSCPArgs(local, remote, true)
+
+	cmd, err := tm.createSCPCommand(ctx, args)
+	if err != nil {
+		return err
+	}
+
+	return tm.executeSCPCommand(cmd, "upload")
+}
+
+func (tm *TransferManager) checkSCPAvailability() error {
+	_, err := exec.LookPath("scp")
+	if err != nil {
+		return ErrExternalSCPNotAvailable
+	}
+
+	return nil
+}
+
+func (tm *TransferManager) buildSCPArgs(local, remote string, isUpload bool) []string {
 	args := []string{
 		"-o", "ConnectTimeout=30",
 		"-o", "StrictHostKeyChecking=no",
@@ -472,138 +509,130 @@ func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remo
 		"-o", "LogLevel=ERROR",
 	}
 
-	// Add port if not default
-	if tm.client.config.Port != 22 {
+	args = tm.addPortOptions(args)
+	args = tm.addKeyOptions(args)
+	args = tm.addPreserveOptions(args)
+	args = tm.addCustomSSHOptions(args)
+	args = tm.addSourceAndDestination(args, local, remote, isUpload)
+
+	return args
+}
+
+func (tm *TransferManager) addPortOptions(args []string) []string {
+	if tm.client.config.Port != DefaultSSHPort {
 		args = append(args, "-P", strconv.Itoa(tm.client.config.Port))
 	}
 
-	// Add private key if specified
+	return args
+}
+
+func (tm *TransferManager) addKeyOptions(args []string) []string {
 	if tm.client.config.PrivateKeyPath != "" {
 		args = append(args, "-i", tm.client.config.PrivateKeyPath)
 	}
 
-	// Add preserve permissions flag if requested
+	return args
+}
+
+func (tm *TransferManager) addPreserveOptions(args []string) []string {
 	if tm.options.Preserve {
 		args = append(args, "-p")
 	}
 
-	// Add custom SSH options
+	return args
+}
+
+func (tm *TransferManager) addCustomSSHOptions(args []string) []string {
 	for _, opt := range tm.client.config.SSHOptions {
 		args = append(args, "-o", opt)
 	}
 
-	// Add source and destination
-	destination := fmt.Sprintf("%s@%s:%s", tm.client.config.User, tm.client.config.Host, remote)
-	args = append(args, local, destination)
+	return args
+}
 
-	// Execute SCP command
+func (tm *TransferManager) addSourceAndDestination(args []string, local, remote string, isUpload bool) []string {
+	destination := fmt.Sprintf("%s@%s:%s", tm.client.config.User, tm.client.config.Host, remote)
+
+	if isUpload {
+		args = append(args, local, destination)
+	} else {
+		source := fmt.Sprintf("%s@%s:%s", tm.client.config.User, tm.client.config.Host, remote)
+		args = append(args, source, local)
+	}
+
+	return args
+}
+
+func (tm *TransferManager) createSCPCommand(ctx context.Context, args []string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, "scp", args...)
 
-	// Set up environment if password authentication is needed
 	if tm.client.config.UseSSHPass && tm.client.config.Password != "" {
-		if _, err := exec.LookPath("sshpass"); err == nil {
-			// Use sshpass for password authentication
-			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
-
-			sshpassArgs = append(sshpassArgs, args...)
-
-			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
-			if err != nil {
-				return fmt.Errorf("invalid sshpass command: %w", err)
-			}
-
-			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
-		} else {
-			tm.log.Warn("sshpass not available for password authentication")
-		}
+		return tm.createSSHPassCommand(ctx, args)
 	}
 
+	return cmd, nil
+}
+
+func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []string) (*exec.Cmd, error) {
+	_, err := exec.LookPath("sshpass")
+	if err != nil {
+		tm.log.Warn("sshpass not available for password authentication")
+
+		return exec.CommandContext(ctx, "scp", args...), err
+	}
+
+	sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
+	sshpassArgs = append(sshpassArgs, args...)
+
+	err = validateCommand(append([]string{"sshpass"}, sshpassArgs...))
+	if err != nil {
+		return nil, fmt.Errorf("invalid sshpass command: %w", err)
+	}
+
+	return exec.CommandContext(ctx, "sshpass", sshpassArgs...), nil // #nosec G204 - command is validated above
+}
+
+func (tm *TransferManager) executeSCPCommand(cmd *exec.Cmd, operation string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("external SCP upload failed: %w (output: %s)", err, string(output))
+		return fmt.Errorf("external SCP %s failed: %w (output: %s)", operation, err, string(output))
 	}
 
-	tm.log.Debug("External SCP upload completed successfully")
+	tm.log.Debug("External SCP " + operation + " completed successfully")
 
 	return nil
 }
 
 func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, local string) error {
-	tm.log.Debug("Attempting download via external SCP",
-		"remote", remote,
-		"local", local)
+	tm.log.Debug("Attempting download via external SCP", "remote", remote, "local", local)
 
-	// Check if SCP command is available
-	if _, err := exec.LookPath("scp"); err != nil {
-		return errors.New("external SCP command not available")
+	err := tm.checkSCPAvailability()
+	if err != nil {
+		return err
 	}
 
-	// Ensure local directory exists
+	err = tm.ensureLocalDirectory(local)
+	if err != nil {
+		return err
+	}
+
+	args := tm.buildSCPArgs(local, remote, false)
+
+	cmd, err := tm.createSCPCommand(ctx, args)
+	if err != nil {
+		return err
+	}
+
+	return tm.executeSCPCommand(cmd, "download")
+}
+
+func (tm *TransferManager) ensureLocalDirectory(local string) error {
 	localDir := filepath.Dir(local)
-	if err := os.MkdirAll(localDir, 0750); err != nil {
+
+	err := os.MkdirAll(localDir, localDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create local directory: %w", err)
 	}
-
-	// Build SCP command arguments
-	args := []string{
-		"-o", "ConnectTimeout=30",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-	}
-
-	// Add port if not default
-	if tm.client.config.Port != 22 {
-		args = append(args, "-P", strconv.Itoa(tm.client.config.Port))
-	}
-
-	// Add private key if specified
-	if tm.client.config.PrivateKeyPath != "" {
-		args = append(args, "-i", tm.client.config.PrivateKeyPath)
-	}
-
-	// Add preserve permissions flag if requested
-	if tm.options.Preserve {
-		args = append(args, "-p")
-	}
-
-	// Add custom SSH options
-	for _, opt := range tm.client.config.SSHOptions {
-		args = append(args, "-o", opt)
-	}
-
-	// Add source and destination
-	source := fmt.Sprintf("%s@%s:%s", tm.client.config.User, tm.client.config.Host, remote)
-	args = append(args, source, local)
-
-	// Execute SCP command
-	cmd := exec.CommandContext(ctx, "scp", args...)
-
-	// Set up environment if password authentication is needed
-	if tm.client.config.UseSSHPass && tm.client.config.Password != "" {
-		if _, err := exec.LookPath("sshpass"); err == nil {
-			// Use sshpass for password authentication
-			sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
-
-			sshpassArgs = append(sshpassArgs, args...)
-
-			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
-			if err != nil {
-				return fmt.Errorf("invalid sshpass command: %w", err)
-			}
-
-			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
-		} else {
-			tm.log.Warn("sshpass not available for password authentication")
-		}
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("external SCP download failed: %w (output: %s)", err, string(output))
-	}
-
-	tm.log.Debug("External SCP download completed successfully")
 
 	return nil
 }

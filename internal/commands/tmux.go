@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// File permission constants.
+	TmuxScriptExecuteMode = 0755 // Standard executable permissions for scripts
+)
+
 var (
 	validScriptPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+\.sh$`)
 )
 
 // NewTmuxCmd creates the tmux command.
 func NewTmuxCmd() *cobra.Command {
+	//nolint:exhaustruct // Using zero values for optional fields
 	return &cobra.Command{
 		Use:   "tmux",
 		Short: "Create tmux session for OCFP deployments",
@@ -29,23 +34,26 @@ func NewTmuxCmd() *cobra.Command {
 
 func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	// Check if tmux is available
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return errors.New("tmux is not installed. Please install tmux to use this command")
+	_, err := exec.LookPath("tmux")
+	if err != nil {
+		return ErrTmuxNotInstalled
 	}
 
 	// Find the tmux script
-	scriptPath, err := findTmuxScript()
+	scriptPath, err := FindTmuxScript()
 	if err != nil {
 		return fmt.Errorf("tmux script not found: %w", err)
 	}
 
 	// Check if script is executable
-	if err := ensureExecutable(scriptPath); err != nil {
+	err = EnsureExecutable(scriptPath)
+	if err != nil {
 		return fmt.Errorf("failed to make tmux script executable: %w", err)
 	}
 
 	// Execute the tmux script
-	if err := security.ValidateInput(scriptPath, validScriptPathPattern); err != nil {
+	err = security.ValidateInput(scriptPath, validScriptPathPattern)
+	if err != nil {
 		return fmt.Errorf("invalid script path: %w", err)
 	}
 
@@ -54,18 +62,19 @@ func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	execCmd.Stderr = os.Stderr
 	execCmd.Stdin = os.Stdin
 
-	if err := execCmd.Run(); err != nil {
+	err = execCmd.Run()
+	if err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
 	return nil
 }
 
-func findTmuxScript() (string, error) {
+func FindTmuxScript() (string, error) {
 	// Get the directory where the binary is located
 	execPath, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
 
 	execDir := filepath.Dir(execPath)
@@ -79,20 +88,21 @@ func findTmuxScript() (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			return path, nil
 		}
 	}
 
 	// If not found, create a basic tmux session creator
-	return createBasicTmuxScript()
+	return CreateBasicTmuxScript()
 }
 
-func createBasicTmuxScript() (string, error) {
+func CreateBasicTmuxScript() (string, error) {
 	// Create a temporary script that creates the basic tmux session
 	tempFile, err := os.CreateTemp("", "ocfp-tmux-*.sh")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create temp script file: %w", err)
 	}
 
 	scriptContent := `#!/bin/bash
@@ -130,11 +140,12 @@ echo "OCFP tmux session created successfully"
 echo "Attach with: tmux attach-session -t ocfp"
 `
 
-	if _, err := tempFile.WriteString(scriptContent); err != nil {
+	_, err = tempFile.WriteString(scriptContent)
+	if err != nil {
 		_ = tempFile.Close()
 		_ = os.Remove(tempFile.Name())
 
-		return "", err
+		return "", fmt.Errorf("failed to write script content: %w", err)
 	}
 
 	_ = tempFile.Close()
@@ -142,14 +153,17 @@ echo "Attach with: tmux attach-session -t ocfp"
 	return tempFile.Name(), nil
 }
 
-func ensureExecutable(path string) error {
+func EnsureExecutable(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	if info.Mode()&0111 == 0 {
-		return os.Chmod(path, info.Mode()|0755)
+		err := os.Chmod(path, info.Mode()|TmuxScriptExecuteMode)
+		if err != nil {
+			return fmt.Errorf("failed to make file executable: %w", err)
+		}
 	}
 
 	return nil

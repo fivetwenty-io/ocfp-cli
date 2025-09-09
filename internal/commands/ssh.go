@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+const (
+	// File permissions.
+	SSHKeyFileMode = 0600
 )
 
 var (
@@ -32,6 +36,7 @@ func NewSSHCmd() *cobra.Command {
 		sshOptions string
 	)
 
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "ssh [target]",
 		Short: "Connect to bastion host or other servers",
@@ -57,8 +62,8 @@ SSH keys are searched in the following order:
 
   # Pass additional SSH options
   ocfp ssh --bloc production --ssh-options "-o StrictHostKeyChecking=no"`,
-            Args: cobra.MaximumNArgs(1),
-            RunE:   runSSH,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runSSH,
 	}
 
 	// Command-specific flags
@@ -78,77 +83,110 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("ssh")
 
-	// Get configuration values
-	blocName := viper.GetString("bloc_name")
-	user := viper.GetString("ssh.user")
-	keyPath := viper.GetString("ssh.key")
-	sshOptions := viper.GetString("ssh.options")
+	sshConfig, err := getSSHConfig(args)
+	if err != nil {
+		return err
+	}
 
-	// Determine target
+	cfg, provider, err := setupSSHProvider(ctx, sshConfig)
+	if err != nil {
+		return err
+	}
+
+	bastionIP, err := resolveBastionIP(ctx, provider, sshConfig, cfg.Name)
+	if err != nil {
+		return err
+	}
+
+	keyPath, err := resolveSSHKeyForSSH(sshConfig, cfg)
+	if err != nil {
+		return err
+	}
+
+	err = verifySSHKey(keyPath)
+	if err != nil {
+		return fmt.Errorf("SSH key verification failed: %w", err)
+	}
+
+	sshCmd := buildSSHCommand(bastionIP, sshConfig.User, keyPath, sshConfig.Options)
+
+	log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
+	log.Debugf("Using SSH key: %s", keyPath)
+
+	return executeSSH(ctx, sshCmd)
+}
+
+type sshConfig struct {
+	BlocName string
+	User     string
+	KeyPath  string
+	Options  string
+	Target   string
+}
+
+func getSSHConfig(args []string) (*sshConfig, error) {
+	blocName := viper.GetString("bloc_name")
+	if blocName == "" {
+		return nil, ErrBlocIsRequired
+	}
+
 	target := "bastion"
 	if len(args) > 0 {
 		target = args[0]
 	}
 
-	// Validate required configuration
-	if blocName == "" {
-		return errors.New("bloc is required")
-	}
+	return &sshConfig{
+		BlocName: blocName,
+		User:     viper.GetString("ssh.user"),
+		KeyPath:  viper.GetString("ssh.key"),
+		Options:  viper.GetString("ssh.options"),
+		Target:   target,
+	}, nil
+}
 
-	// Load configuration; provider and region come from bloc config
-	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+//nolint:ireturn // Returns interface by design for provider abstraction
+func setupSSHProvider(ctx context.Context, sshCfg *sshConfig) (*config.Config, cpi.Provider, error) {
+	cfg, err := config.LoadWithParams(viper.GetString("config.file"), sshCfg.BlocName)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return nil, nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return errors.New("provider must be specified in bloc config")
+		return nil, nil, ErrProviderMustBeSpecifiedInBlocConfig(sshCfg.BlocName)
 	}
 
-	// Initialize provider using bloc configuration
 	provider, err := cpi.GetProvider(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
+		return nil, nil, fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
 
-	// Get bastion IP address
-	var bastionIP string
-	if target == "bastion" {
-		bastionIP, err = findBastionIP(ctx, provider, blocName)
-		if err != nil {
-			return fmt.Errorf("failed to get bastion IP: %w", err)
-		}
-	} else {
-		// For non-bastion targets, we'd need to look up the target IP
-		// This could be another instance or a service
-		bastionIP = target
+	return cfg, provider, nil
+}
+
+func resolveBastionIP(ctx context.Context, provider cpi.Provider, sshCfg *sshConfig, blocName string) (string, error) {
+	if sshCfg.Target == "bastion" {
+		return findBastionIP(ctx, provider, blocName)
 	}
 
-	// Find SSH key if not specified
-	if keyPath == "" {
-		keyPath, err = findSSHKey(blocName, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to find SSH key: %w", err)
-		}
+	return sshCfg.Target, nil
+}
+
+func resolveSSHKeyForSSH(sshCfg *sshConfig, cfg *config.Config) (string, error) {
+	if sshCfg.KeyPath != "" {
+		return sshCfg.KeyPath, nil
 	}
 
-	// Verify key exists and has correct permissions
-	if err := verifySSHKey(keyPath); err != nil {
-		return fmt.Errorf("SSH key verification failed: %w", err)
+	keyPath, err := findSSHKey(sshCfg.BlocName, cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to find SSH key: %w", err)
 	}
 
-	// Build SSH command
-	sshCmd := buildSSHCommand(bastionIP, user, keyPath, sshOptions)
-
-	log.Infof("Connecting to %s at %s as %s", target, bastionIP, user)
-	log.Debugf("Using SSH key: %s", keyPath)
-
-	// Execute SSH command
-    return executeSSH(ctx, sshCmd)
+	return keyPath, nil
 }
 
 // getBastionIP retrieves the bastion host's public IP address.
@@ -175,7 +213,8 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			log.Debugf("Found SSH key at: %s", path)
 
 			return path, nil
@@ -197,23 +236,23 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths)
+	return "", ErrCouldNotFindSSHKeyForBastion(searchPaths)
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
 func verifySSHKey(keyPath string) error {
 	info, err := os.Stat(keyPath)
 	if err != nil {
-		return fmt.Errorf("SSH key not found: %s", keyPath)
+		return ErrSSHKeyNotFound(keyPath)
 	}
 
 	// Check permissions (should be 600 or 400)
 	mode := info.Mode()
 	if mode.Perm()&0077 != 0 {
 		// Try to fix permissions
-		err := os.Chmod(keyPath, 0600)
+		err := os.Chmod(keyPath, SSHKeyFileMode)
 		if err != nil {
-			return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath)
+			return ErrSSHKeyIncorrectPermissions(keyPath)
 		}
 
 		logger.WithOperation("verifySSHKey").Warnf("Fixed SSH key permissions for: %s", keyPath)
@@ -227,14 +266,14 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd := []string{"ssh"}
 
 	// Validate inputs
-    err := security.ValidateInput(host, sshValidHostPattern)
+	err := security.ValidateInput(host, sshValidHostPattern)
 	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
 
 		return []string{"ssh", "--help"} // Return safe command
 	}
 
-    err = security.ValidateInput(user, sshValidUserPattern)
+	err = security.ValidateInput(user, sshValidUserPattern)
 	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
 
@@ -242,7 +281,7 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	}
 
 	if keyPath != "" {
-        err = security.ValidateInput(keyPath, sshValidPathPattern)
+		err = security.ValidateInput(keyPath, sshValidPathPattern)
 		if err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
 
@@ -295,13 +334,13 @@ func executeSSH(ctx context.Context, sshCmd []string) error {
 
 	// Validate that the command is ssh
 	if len(sshCmd) == 0 || sshCmd[0] != "ssh" {
-		return errors.New("invalid SSH command")
+		return ErrInvalidSSHCommand
 	}
 
-    cmd := exec.CommandContext(ctx, sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
+	cmd := exec.CommandContext(ctx, sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	return fmt.Errorf("ssh command failed: %w", cmd.Run())
 }

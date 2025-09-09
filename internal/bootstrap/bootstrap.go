@@ -20,9 +20,145 @@ import (
 )
 
 const (
-    subnetStrategyTriple = "ocfp-triple"
-    roleBastion          = "bastion"
+	subnetStrategyTriple = "ocfp-triple"
+	roleBastion          = "bastion"
+	defaultNetworkCIDR   = "10.4.0.0/20"
+
+	// Network ports.
+	sshPort      = 22
+	httpPort     = 80
+	httpsPort    = 443
+	httpAltPort  = 8080
+	httpsAltPort = 8443
+	boshPort     = 25555
+
+	// Network configuration.
+	networkSplitCount = 4
+	defaultSubnetBits = 24
+	ipv4Bits          = 32
+	subnetIncrement   = 256
+
+	// Default IP counts.
+	defaultJumpboxCount   = 2
+	defaultRouterCount    = 4
+	defaultTCPRouterCount = 2
+
+	// File permissions.
+	sshKeyDirMode  = 0700
+	sshKeyFileMode = 0600
+
+	// Network bit shifts.
+	shiftBy24Bits = 24
+	shiftBy16Bits = 16
+	shiftBy8Bits  = 8
+
+	// Mathematical constants.
+	decimalBase   = 10
+	maxInt32      = 2147483647
+	maxBitshift   = 30
+	minSubnetSize = 2
+
+	// IP allocation slots.
+	vaultIPSlot      = 5
+	jumpboxIPSlot    = 6
+	concourseIPSlot  = 7
+	prometheusIPSlot = 8
+	bastionIPSlot    = 3
+	shieldIPSlot     = 9
+	blacksmithIPSlot = 10
+	doomsdayIPSlot   = 9
+	ocfpUIIPSlot     = 9
+	availableAIPSlot = 11
+	availableBIPSlot = 29
+	reservedBIPSlot  = 10
+	reservedCIPSlot  = 30
+
+	// Special indices.
+	ocfpUIProviderIndex = 2
+
+	// Additional network ports.
+	boshAgentPort = 6868
+	cfSSHPort     = 2222
+	tcpRouterMin  = 1024
+	tcpRouterMax  = 65535
+
+	// Disk sizes (GB).
+	bastionRootDiskSize = 50
+	bastionDataDiskSize = 100
+
+	// Bit masks and operations.
+	byteMask        = 0xFF
+	broadcastOffset = 2
+
+	// Additional IP slots.
+	boshIPSlot = 4
+
+	// Protocol constants.
+	protocolAll = "all"
+
+	// Subnet splitting configuration.
+	dualSubnetSplitCount   = 2
+	tripleSubnetSplitCount = 3
+
+	// Bucket lifecycle policy days.
+	buildpacksRetentionDays = 30
+	dropletsRetentionDays   = 7
+	packagesRetentionDays   = 14
+	blobstoreRetentionDays  = 90
 )
+
+// Network configuration errors.
+var (
+	errInvalidParentCIDR   = errors.New("invalid parent CIDR")
+	errOnlyIPv4Supported   = errors.New("only IPv4 CIDRs are supported")
+	errInvalidPrefixLength = errors.New("invalid prefix length")
+	errCannotSplitNetwork  = errors.New("cannot split network into subnets")
+)
+
+// errCannotSplitNetworkInto wraps the static error with count information.
+func errCannotSplitNetworkInto(count int) error {
+	return fmt.Errorf("%w: %d", errCannotSplitNetwork, count)
+}
+
+// Plan data structures for dry run rendering.
+type (
+	subnetPreview struct{ Name, CIDR, Type, AZ string }
+	sgPreview     struct {
+		Name  string
+		Rules int
+	}
+	volumePreview struct {
+		Name   string
+		SizeGB int
+		Type   string
+	}
+	bastionPreview struct{ Name, Flavor, Image, Network, Subnet string }
+	publicIPPlan   struct{ Ops, Jumpbox, Router, CFSSH, TCPRouter int }
+	bootstrapPlan  struct {
+		Bloc     string `json:"bloc"     yaml:"bloc"`
+		Provider string `json:"provider" yaml:"provider"`
+		Region   string `json:"region"   yaml:"region"`
+		Network  struct {
+			Name string   `json:"name" yaml:"name"`
+			CIDR string   `json:"cidr" yaml:"cidr"`
+			DNS  []string `json:"dns"  yaml:"dns"`
+		} `json:"network" yaml:"network"`
+		Subnets        []subnetPreview `json:"subnets"             yaml:"subnets"`
+		PublicIPs      *publicIPPlan   `json:"publicIps,omitempty" yaml:"publicIPs,omitempty"`
+		SecurityGroups []sgPreview     `json:"securityGroups"      yaml:"securityGroups"`
+		Buckets        []string        `json:"buckets"             yaml:"buckets"`
+		Volumes        []volumePreview `json:"volumes"             yaml:"volumes"`
+		Bastion        bastionPreview  `json:"bastion"             yaml:"bastion"`
+		CreateCount    int             `json:"createCount"         yaml:"createCount"`
+	}
+)
+
+// securityGroupDef represents a default security group and its rules (pre-creation).
+type securityGroupDef struct {
+	name        string
+	description string
+	rules       []*cpi.SecurityRule
+}
 
 // Options represents bootstrap options.
 type Options struct {
@@ -43,1129 +179,96 @@ type Manager struct {
 	options      *Options
 }
 
-// NewManager creates a new bootstrap manager.
-func NewManager(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, opts *Options) *Manager {
-	return &Manager{
-		config:       cfg,
-		provider:     provider,
-		stateManager: stateManager,
-		options:      opts,
-	}
-}
-
-// Execute runs the bootstrap process.
-func (m *Manager) Execute(ctx context.Context) error {
-	logger.Infof("Starting bootstrap for bloc: %s", m.options.BlocName)
-
-	// Load or create state
-	if _, err := m.stateManager.Load(m.options.BlocName); err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
-	}
-
-	// Acquire state lock
-	if err := m.stateManager.Lock(m.options.BlocName); err != nil {
-		return fmt.Errorf("failed to acquire state lock: %w", err)
-	}
-
-	defer func() {
-		if err := m.stateManager.Unlock(m.options.BlocName); err != nil {
-			logger.Warnf("Failed to unlock state: %v", err)
-		}
-	}()
-
-	// For dry-run, render a clear plan preview and exit early
-	if m.options.DryRun {
-		if err := m.renderDryRunPlan(ctx); err != nil {
-			return err
-		}
-
-		logger.Infof("Bootstrap completed successfully for bloc: %s", m.options.BlocName)
-
-		return nil
-	}
-
-	// Execute bootstrap phases
-	phases := []struct {
-		name string
-		fn   func(context.Context) error
-	}{
-		{"network", m.createNetwork},
-		{"subnets", m.createSubnets},
-		{"security_groups", m.createSecurityGroups},
-		{"public_ips", m.createPublicIPs},
-		{"object_storage", m.createBuckets},
-		{"keypair", m.createKeyPair},
-		{"volumes", m.createVolumes},
-		{"bastion", m.createBastion},
-	}
-
-	for _, phase := range phases {
-		logger.Infof("Executing phase: %s", phase.name)
-
-		if err := phase.fn(ctx); err != nil {
-			return fmt.Errorf("phase %s failed: %w", phase.name, err)
-		}
-
-		// Save state after each phase
-		if err := m.stateManager.Save(); err != nil {
-			logger.Warnf("Failed to save state after phase %s: %v", phase.name, err)
-		}
-	}
-
-	logger.Infof("Bootstrap completed successfully for bloc: %s", m.options.BlocName)
-
-	return nil
-}
-
-// securityGroupDef represents a default security group and its rules (pre-creation).
-type securityGroupDef struct {
-	name        string
-	description string
-	rules       []*cpi.SecurityRule
-}
-
-// defaultSecurityGroupDefs returns the list of default security groups and their rules used by bootstrap.
-func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
-	return []securityGroupDef{
-		{
-			name:        "bastion",
-			description: "Security group for bastion host",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "infra",
-			description: "Security group for STACKIT infrastructure",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 8080, PortRangeMax: 8080, Description: "HTTP-ALT"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 8443, PortRangeMax: 8443, Description: "HTTPS-ALT"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocfp",
-			description: "Security group for OCFP services",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, Description: "SSH"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, Description: "HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, Description: "HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 25555, PortRangeMax: 25555, Description: "BOSH Director"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 6868, PortRangeMax: 6868, Description: "BOSH Agent"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "lb-ext",
-			description: "Security group for external load balancers",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTPS external"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-router-ingress",
-			description: "Security group for Cloud Foundry router ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 80, PortRangeMax: 80, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTP"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 443, PortRangeMax: 443, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTPS"},
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-tcp-router-ingress",
-			description: "Security group for Cloud Foundry TCP router ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 1024, PortRangeMax: 65535, RemoteIPCIDR: "0.0.0.0/0", Description: "CF TCP Router"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-		{
-			name:        "ocf-cf-ssh-ingress",
-			description: "Security group for Cloud Foundry SSH proxy ingress",
-			rules: []*cpi.SecurityRule{
-				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 2222, PortRangeMax: 2222, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH Proxy"},
-				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-			},
-		},
-	}
-}
-
-// renderDryRunPlan prints a concise, user-friendly plan for bootstrap actions.
-func (m *Manager) renderDryRunPlan(ctx context.Context) error {
-	// Shared plan data struct
-	type (
-		subnetPreview struct{ Name, CIDR, Type, AZ string }
-		sgPreview     struct {
-			Name  string
-			Rules int
-		}
-		volumePreview struct {
-			Name   string
-			SizeGB int
-			Type   string
-		}
-		bastionPreview struct{ Name, Flavor, Image, Network, Subnet string }
-		publicIPPlan   struct{ Ops, Jumpbox, Router, CFSSH, TCPRouter int }
-		plan           struct {
-			Bloc     string `json:"bloc"     yaml:"bloc"`
-			Provider string `json:"provider" yaml:"provider"`
-			Region   string `json:"region"   yaml:"region"`
-			Network  struct {
-				Name string   `json:"name" yaml:"name"`
-				CIDR string   `json:"cidr" yaml:"cidr"`
-				DNS  []string `json:"dns"  yaml:"dns"`
-			} `json:"network" yaml:"network"`
-			Subnets        []subnetPreview `json:"subnets"             yaml:"subnets"`
-			PublicIPs      *publicIPPlan   `json:"publicIps,omitempty" yaml:"publicIps,omitempty"`
-			SecurityGroups []sgPreview     `json:"securityGroups"      yaml:"securityGroups"`
-			Buckets        []string        `json:"buckets"             yaml:"buckets"`
-			Volumes        []volumePreview `json:"volumes"             yaml:"volumes"`
-			Bastion        bastionPreview  `json:"bastion"             yaml:"bastion"`
-			CreateCount    int             `json:"createCount"         yaml:"createCount"`
-		}
-	)
-
-	bootstrapPlan := plan{Bloc: m.options.BlocName, Provider: m.options.Provider, Region: m.options.Region}
-
-	// Resolve network CIDR and derived subnets
-	parentCIDR := m.config.Network.NetworkCIDR
-	if parentCIDR == "" {
-		parentCIDR = m.config.Network.CIDR
-	}
-
-	if parentCIDR == "" {
-		parentCIDR = "10.4.0.0/20"
-	}
-
-	bootstrapPlan.Network.Name = m.config.Name + "-net"
-	bootstrapPlan.Network.CIDR = parentCIDR
-	bootstrapPlan.Network.DNS = m.config.DNS
-
-	// Compute subnets preview
-	var subnets []subnetPreview
-
-    if strings.EqualFold(m.options.Provider, "stackit") {
-        start := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
-        if start == subnetStrategyTriple {
-			children := splitIntoN(parentCIDR, 4)
-			if len(children) < 4 {
-				c0 := firstChild24(parentCIDR)
-				c1 := nextSibling24(c0)
-				c2 := nextSibling24(c1)
-				c3 := nextSibling24(c2)
-				children = []string{c0, c1, c2, c3}
-			}
-
-			triples := []string{children[1], children[2], children[3]}
-			for i, cidr := range triples {
-				subnets = append(subnets, subnetPreview{
-					Name: fmt.Sprintf("%s-ocfp-%d", m.config.Name, i),
-					CIDR: cidr,
-					Type: "public (virtual)",
-				})
-			}
-		} else {
-			subnets = append(subnets, subnetPreview{
-				Name: m.config.Name + "-ocfp-0",
-				CIDR: parentCIDR,
-				Type: "public (virtual)",
-			})
-		}
-	} else {
-		if len(m.config.Subnets) == 0 {
-			mgmtCIDR, ocfCIDR := splitParentIntoTwo(parentCIDR)
-			if mgmtCIDR == "" || ocfCIDR == "" {
-				mgmtCIDR = firstChild24(parentCIDR)
-				ocfCIDR = nextSibling24(mgmtCIDR)
-			}
-
-			subnets = append(subnets,
-				subnetPreview{Name: m.config.Name + "-mgmt", CIDR: mgmtCIDR, Type: "public"},
-				subnetPreview{Name: m.config.Name + "-ocf", CIDR: ocfCIDR, Type: "private"},
-			)
-		} else {
-			for _, sn := range m.config.Subnets {
-				subnets = append(subnets, subnetPreview{
-					Name: fmt.Sprintf("%s-%s", m.config.Name, sn.Name),
-					CIDR: sn.CIDR,
-					Type: sn.Type,
-					AZ:   sn.AvailabilityZone,
-				})
-			}
-		}
-	}
-
-	// Public IP counts (STACKIT only)
-	var (
-		opsCount       = 0
-		jumpboxCount   = 0
-		routerCount    = 0
-		cfsshCount     = 0
-		tcpRouterCount = 0
-	)
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		opsCount = 1
-
-		jumpboxCount = m.config.JumpboxPublicIPs
-		if jumpboxCount <= 0 {
-			jumpboxCount = 2
-		}
-
-		routerCount = m.config.RouterPublicIPs
-		if routerCount <= 0 {
-			routerCount = 4
-		}
-
-		cfsshCount = m.config.CFSSHPublicIPs
-		if cfsshCount <= 0 {
-			cfsshCount = 1
-		}
-
-		tcpRouterCount = m.config.TCPRouterPublicIPs
-		if tcpRouterCount <= 0 {
-			tcpRouterCount = 2
-		}
-	}
-
-	// Security groups planned (derive from default definitions)
-	plannedSGs := []sgPreview{}
-	for _, def := range m.defaultSecurityGroupDefs() {
-		plannedSGs = append(plannedSGs, sgPreview{
-			Name:  fmt.Sprintf("%s-%s", m.config.Name, def.name),
-			Rules: len(def.rules),
-		})
-	}
-
-	// Buckets planned
-	bucketNames := []string{
-		m.config.Name + "-bosh-blobstore",
-		m.config.Name + "-cf-app-packages",
-		m.config.Name + "-cf-buildpacks",
-		m.config.Name + "-cf-droplets",
-		m.config.Name + "-cf-resources",
-		m.config.Name + "-artifacts",
-		m.config.Name + "-shield-backups",
-	}
-
-	// Volumes planned
-	volumes := []volumePreview{
-		{Name: m.config.Name + "-bastion-root", SizeGB: 50, Type: "standard"},
-		{Name: m.config.Name + "-bastion-data", SizeGB: 100, Type: "standard"},
-	}
-
-	// Bastion plan
-	bastionSubnet := ""
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		bastionSubnet = m.config.Name + "-ocfp-0 (virtual)"
-        if strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy)) == subnetStrategyTriple {
-			bastionSubnet = m.config.Name + "-ocfp-1 (virtual)"
-		}
-	} else {
-		bastionSubnet = m.config.Name + "-mgmt"
-	}
-
-	// Summary counts
-	totalCreates := 1 + len(subnets) + len(plannedSGs) + len(bucketNames) + len(volumes) + 1 // network + subnets + sgs + buckets + volumes + bastion
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		totalCreates += (opsCount + jumpboxCount + routerCount + cfsshCount + tcpRouterCount) // public IPs tracked
-		totalCreates += 1                                                                     // keypair tracked
-	} else {
-		totalCreates += 1 // keypair
-	}
-
-	// Build plan struct
-	bootstrapPlan.Subnets = subnets
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		bootstrapPlan.PublicIPs = &publicIPPlan{Ops: opsCount, Jumpbox: jumpboxCount, Router: routerCount, CFSSH: cfsshCount, TCPRouter: tcpRouterCount}
-	}
-
-	bootstrapPlan.SecurityGroups = plannedSGs
-	bootstrapPlan.Buckets = bucketNames
-	bootstrapPlan.Volumes = volumes
-	bootstrapPlan.Bastion = bastionPreview{
-		Name:    m.config.Name + "-bastion",
-		Flavor:  m.config.Bastion.Flavor,
-		Image:   m.config.Bastion.Image,
-		Network: m.config.Name + "-net",
-		Subnet:  bastionSubnet,
-	}
-	bootstrapPlan.CreateCount = totalCreates
-
-	// Build UI table and render via shared UI renderer
-	title := fmt.Sprintf("DRY RUN — Bootstrap Plan for bloc '%s' (provider=%s, region=%s)", m.options.BlocName, m.options.Provider, m.options.Region)
-	summary := fmt.Sprintf("Plan: create %d resources, 0 to change, 0 to destroy", totalCreates)
-	t := &ui.Table{Title: title, Summary: summary}
-
-	// Network
-	t.Sections = append(t.Sections, ui.Section{
-		Title:   "Network",
-		Headers: []string{"NAME", "CIDR", "DNS"},
-		Rows:    [][]string{{bootstrapPlan.Network.Name, bootstrapPlan.Network.CIDR, strings.Join(bootstrapPlan.Network.DNS, ",")}},
-	})
-
-	// Subnets
-	if len(subnets) > 0 {
-		rows := make([][]string, 0, len(subnets))
-		for _, s := range subnets {
-			rows = append(rows, []string{s.Name, s.CIDR, s.Type, s.AZ})
-		}
-
-		t.Sections = append(t.Sections, ui.Section{Title: "Subnets", Headers: []string{"NAME", "CIDR", "TYPE", "AZ"}, Rows: rows})
-	}
-
-	// Public IPs (STACKIT only)
-	if bootstrapPlan.PublicIPs != nil {
-		t.Sections = append(t.Sections, ui.Section{
-			Title:   "Public IPs",
-			Headers: []string{"JOB", "COUNT"},
-			Rows: [][]string{
-				{"ops", strconv.Itoa(bootstrapPlan.PublicIPs.Ops)},
-				{"jumpbox", strconv.Itoa(bootstrapPlan.PublicIPs.Jumpbox)},
-				{"router", strconv.Itoa(bootstrapPlan.PublicIPs.Router)},
-				{"cf-ssh", strconv.Itoa(bootstrapPlan.PublicIPs.CFSSH)},
-				{"tcp-router", strconv.Itoa(bootstrapPlan.PublicIPs.TCPRouter)},
-			},
-		})
-	}
-
-	// Security Groups
-	if len(plannedSGs) > 0 {
-		rows := make([][]string, 0, len(plannedSGs))
-		for _, s := range plannedSGs {
-			rows = append(rows, []string{s.Name, strconv.Itoa(s.Rules)})
-		}
-
-		t.Sections = append(t.Sections, ui.Section{Title: "Security Groups", Headers: []string{"NAME", "RULES"}, Rows: rows})
-	}
-
-	// Security Group Rules (detailed)
-	{
-		ruleRows := [][]string{}
-
-		for _, def := range m.defaultSecurityGroupDefs() {
-			groupName := fmt.Sprintf("%s-%s", m.config.Name, def.name)
-			for _, r := range def.rules {
-				dir := strings.ToUpper(r.Direction)
-				proto := strings.ToLower(r.Protocol)
-				// Ports formatting
-				ports := "-"
-
-				if proto != "all" {
-					if r.PortRangeMin > 0 && r.PortRangeMax > 0 {
-						if r.PortRangeMin == r.PortRangeMax {
-							ports = strconv.Itoa(r.PortRangeMin)
-						} else {
-							ports = fmt.Sprintf("%d-%d", r.PortRangeMin, r.PortRangeMax)
-						}
-					}
-				}
-
-				remote := r.RemoteIPCIDR
-				if strings.TrimSpace(remote) == "" {
-					remote = "-"
-				}
-
-				desc := r.Description
-				ruleRows = append(ruleRows, []string{groupName, dir, proto, ports, remote, desc})
-			}
-		}
-
-		if len(ruleRows) > 0 {
-			t.Sections = append(t.Sections, ui.Section{
-				Title:   "Security Group Rules",
-				Headers: []string{"GROUP", "DIRECTION", "PROTO", "PORTS", "REMOTE", "DESCRIPTION"},
-				Rows:    ruleRows,
-			})
-		}
-	}
-
-	// Buckets
-	if len(bucketNames) > 0 {
-		rows := make([][]string, 0, len(bucketNames))
-		for _, b := range bucketNames {
-			rows = append(rows, []string{b})
-		}
-
-		t.Sections = append(t.Sections, ui.Section{Title: "Object Storage Buckets", Headers: []string{"NAME"}, Rows: rows})
-	}
-
-	// Volumes
-	if len(volumes) > 0 {
-		rows := make([][]string, 0, len(volumes))
-		for _, v := range volumes {
-			rows = append(rows, []string{v.Name, strconv.Itoa(v.SizeGB), v.Type})
-		}
-
-		t.Sections = append(t.Sections, ui.Section{Title: "Volumes", Headers: []string{"NAME", "SIZE(GB)", "TYPE"}, Rows: rows})
-	}
-
-	// Bastion
-	t.Sections = append(t.Sections, ui.Section{
-		Title:   "Bastion",
-		Headers: []string{"NAME", "FLAVOR", "IMAGE", "NETWORK", "SUBNET"},
-		Rows: [][]string{{
-			bootstrapPlan.Bastion.Name,
-			bootstrapPlan.Bastion.Flavor,
-			bootstrapPlan.Bastion.Image,
-			bootstrapPlan.Bastion.Network,
-			bootstrapPlan.Bastion.Subnet,
-		}},
-	})
-
-	format := strings.ToLower(strings.TrimSpace(m.options.Output))
-	if format == "" {
-		format = "table"
-	}
-
-	return ui.Render(t, format)
-}
-
-// baseTags returns standard tags/labels to attach to resources.
-func (m *Manager) baseTags() map[string]string {
-	tags := map[string]string{
-		"managed-by": "ocfp",
-		"bloc":       m.options.BlocName,
-	}
-	if m.config.Environment != "" {
-		tags["environment"] = m.config.Environment
-	}
-	// Mark management bloc resources with env=mgmt for parity with Perl
-	if strings.EqualFold(m.config.Type, "management") || strings.EqualFold(m.options.BlocName, "mgmt") || strings.Contains(strings.ToLower(m.config.Name), "mgmt") {
-		tags["env"] = "mgmt"
-	}
-
-	return tags
-}
-
-// createNetwork creates the VPC/network.
-func (m *Manager) createNetwork(ctx context.Context) error {
-	logger.Info("Creating network...")
-
-	// Check if network already exists in state
-	existingNetwork, _ := m.stateManager.GetResource("network", m.config.Name)
-	if existingNetwork != nil && existingNetwork.State == string(cpi.ResourceStateActive) {
-		logger.Info("Network already exists, skipping creation")
-		return nil
-	}
-
-	// Create network
-	ntags := m.baseTags()
-	ntags["type"] = "infra"
-
-	network, err := m.provider.Network().CreateNetwork(ctx, &cpi.CreateNetworkRequest{
-		Name:       m.config.Name + "-net",
-		CIDR:       m.config.Network.NetworkCIDR,
-		DNSServers: m.config.DNS,
-		Tags:       ntags,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create network: %w", err)
-	}
-
-	// Save to state
-	if err := m.stateManager.AddResource(&state.Resource{
-		ID:       network.ID,
-		Type:     "network",
-		Name:     m.config.Name,
-		Provider: m.options.Provider,
-		State:    string(network.State),
-		Properties: map[string]interface{}{
-			"cidr":        network.CIDR,
-			"dns_servers": network.DNSServers,
-		},
-		Tags: network.Tags,
-	}); err != nil {
-		return fmt.Errorf("failed to save network to state: %w", err)
-	}
-
-	// Save network ID as output
-	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
-		logger.Warnf("Failed to set network_id output: %v", err)
-	}
-
-	logger.Infof("Network created: %s (%s)", network.Name, network.ID)
-
-	return nil
-}
-
-// createSubnets creates the subnets.
-func (m *Manager) createSubnets(ctx context.Context) error {
-	logger.Info("Creating subnets...")
-
-	// Get network ID from state
-	networkID, err := m.stateManager.GetOutput("network_id")
-	if err != nil {
-		return fmt.Errorf("network ID not found in state: %w", err)
-	}
-
-	// STACKIT: Do not create provider subnets. Use virtual subnets according to strategy.
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		// Resolve network CIDR
-		cidr := m.config.Network.CIDR
-		if cidr == "" {
-			cidr = m.config.Network.NetworkCIDR
-		}
-
-		if cidr == "" {
-			cidr = "10.4.0.0/20"
-		}
-
-		// Choose virtual strategy
-		start := strings.ToLower(strings.TrimSpace(m.config.SubnetStrategy))
-        if start == subnetStrategyTriple {
-			// Split parent into 4 equal children, take indices 1..3 (skip first)
-			children := splitIntoN(cidr, 4)
-			if len(children) < 4 {
-				// Fallback: derive three /24s starting after first child24 block
-				c0 := firstChild24(cidr)
-				c1 := nextSibling24(c0)
-				c2 := nextSibling24(c1)
-				c3 := nextSibling24(c2)
-				children = []string{c0, c1, c2, c3}
-			}
-			// Use 1..3
-			triples := []string{children[1], children[2], children[3]}
-			for i, sCIDR := range triples {
-				vname := fmt.Sprintf("%s-ocfp-%d", m.config.Name, i)
-				if err := m.addVirtualSubnetToState(vname, sCIDR, cidr, networkID); err != nil {
-					return err
-				}
-
-				if err := m.stateManager.AddDependency("subnet."+vname, "network."+m.config.Name); err != nil {
-					logger.Warnf("Failed to add dependency for subnet %s: %v", vname, err)
-				}
-			}
-			// Save parent network CIDR once
-			_ = m.stateManager.SetOutput("network_cidr", cidr)
-
-			return nil
-		}
-
-		// Default: single virtual ocfp-0 equal to parent
-		subnetName := fmt.Sprintf("%s-%s", m.config.Name, "ocfp-0")
-		if err := m.addVirtualSubnetToState(subnetName, cidr, cidr, networkID); err != nil {
-			return err
-		}
-
-		if err := m.stateManager.AddDependency("subnet."+subnetName, "network."+m.config.Name); err != nil {
-			logger.Warnf("Failed to add dependency for subnet %s: %v", subnetName, err)
-		}
-
-		_ = m.stateManager.SetOutput("network_cidr", cidr)
-
-		return nil
-	}
-
-	subnets := m.config.Subnets
-	if len(subnets) == 0 {
-		// Derive mgmt and ocf subnets from the bloc network range
-		parent := m.config.Network.CIDR
-		if parent == "" {
-			parent = m.config.Network.NetworkCIDR
-		}
-
-		if parent == "" {
-			parent = "10.4.0.0/20"
-		}
-
-		mgmtCIDR, ocfCIDR := splitParentIntoTwo(parent)
-		if mgmtCIDR == "" || ocfCIDR == "" {
-			// Fallback: if parsing failed, use first /24s
-			mgmtCIDR = firstChild24(parent)
-			ocfCIDR = nextSibling24(mgmtCIDR)
-		}
-
-		subnets = []config.Subnet{
-			{Name: "mgmt", CIDR: mgmtCIDR, Type: "public"},
-			{Name: "ocf", CIDR: ocfCIDR, Type: "private"},
-		}
-		logger.Infof("No subnets defined in config. Using defaults: mgmt=%s, ocf=%s", mgmtCIDR, ocfCIDR)
-		// Persist calculated CIDRs to state outputs for visibility
-		_ = m.stateManager.SetOutput("network_cidr", parent)
-		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s-%s_cidr", m.config.Name, "mgmt"), mgmtCIDR)
-		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s-%s_cidr", m.config.Name, "ocf"), ocfCIDR)
-	}
-
-	// Create subnets for the current bloc
-	for _, subnet := range subnets {
-		subnetName := fmt.Sprintf("%s-%s", m.config.Name, subnet.Name)
-
-		// Check if subnet already exists
-		existingSubnet, _ := m.stateManager.GetResource("subnet", subnetName)
-		if existingSubnet != nil && existingSubnet.State == string(cpi.ResourceStateActive) {
-			logger.Infof("Subnet %s already exists, skipping", subnetName)
-			continue
-		}
-
-		// Create subnet
-		stags := m.baseTags()
-		if m.config.Environment != "" {
-			stags["environment"] = m.config.Environment
-		}
-
-		// Ensure networkID is a string
-		netID, ok := networkID.(string)
-		if !ok || netID == "" {
-			return fmt.Errorf("invalid network_id in state: %v", networkID)
-		}
-
-		createdSubnet, err := m.provider.Network().CreateSubnet(ctx, &cpi.CreateSubnetRequest{
-			Name:             subnetName,
-			NetworkID:        netID,
-			CIDR:             subnet.CIDR,
-			AvailabilityZone: subnet.AvailabilityZone,
-			Type:             subnet.Type,
-			Tags:             stags,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create subnet %s: %w", subnetName, err)
-		}
-
-		// Save to state
-		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       createdSubnet.ID,
-			Type:     "subnet",
-			Name:     subnetName,
-			Provider: m.options.Provider,
-			State:    string(createdSubnet.State),
-			Properties: map[string]interface{}{
-				"cidr":              createdSubnet.CIDR,
-				"availability_zone": createdSubnet.AvailabilityZone,
-				"network_id":        networkID,
-				"type":              createdSubnet.Type,
-			},
-			Tags: createdSubnet.Tags,
-		}); err != nil {
-			return fmt.Errorf("failed to save subnet to state: %w", err)
-		}
-
-		// Add dependency
-		if err := m.stateManager.AddDependency("subnet."+subnetName, "network."+m.config.Name); err != nil {
-			logger.Warnf("Failed to add dependency for subnet %s: %v", subnetName, err)
-		}
-
-		// Save subnet ID as output
-		if err := m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_id", subnetName), createdSubnet.ID); err != nil {
-			logger.Warnf("Failed to set subnet_%s_id output: %v", subnetName, err)
-		}
-		// Save subnet CIDR as output
-		if err := m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_cidr", subnetName), createdSubnet.CIDR); err != nil {
-			logger.Warnf("Failed to set subnet_%s_cidr output: %v", subnetName, err)
-		}
-
-		logger.Infof("Subnet created: %s (%s)", subnetName, createdSubnet.ID)
-	}
-
-	return nil
-}
-
-// firstChild24 returns a /24 from the provided network CIDR.
+// Package-level functions (non-methods).
 func firstChild24(parentCIDR string) string {
 	_, ipnet, err := net.ParseCIDR(parentCIDR)
 	if err != nil || ipnet == nil {
 		return ""
 	}
-	// If parent is already /24 or narrower, just return it
-	ones, _ := ipnet.Mask.Size()
-	if ones >= 24 {
-		return ipnet.String()
-	}
-	// Construct a /24 starting at network base
-	mask := net.CIDRMask(24, 32)
-	base := ipnet.IP.Mask(ipnet.Mask)
 
-	return (&net.IPNet{IP: base, Mask: mask}).String()
+	base := ipToUint32(ipnet.IP.Mask(ipnet.Mask))
+
+	return uint32ToIP(base).String() + "/24"
 }
 
-// nextSibling24 returns the next /24 network after the given /24 CIDR.
 func nextSibling24(child24 string) string {
 	_, ipnet, err := net.ParseCIDR(child24)
 	if err != nil || ipnet == nil {
 		return ""
 	}
 
-	ones, bits := ipnet.Mask.Size()
-	if ones != 24 || bits != 32 {
-		return ""
-	}
-
 	base := ipToUint32(ipnet.IP.Mask(ipnet.Mask))
-	next := base + 256 // increment by size of /24
 
-	return (&net.IPNet{IP: uint32ToIP(next), Mask: net.CIDRMask(24, 32)}).String()
+	return uint32ToIP(base+subnetIncrement).String() + "/24"
 }
 
-// splitParentIntoTwo splits a parent IPv4 CIDR into two equal subnets within the same range.
-// If parent is /23, returns two /24s; if /24, returns two /25s; in general returns two subnets at prefix+1.
-func splitParentIntoTwo(parentCIDR string) (string, string) {
-	_, parent, err := net.ParseCIDR(parentCIDR)
-	if err != nil || parent == nil {
+func SplitParentIntoTwo(parentCIDR string) (string, string) {
+	parent, err := parseParentCIDR(parentCIDR)
+	if err != nil {
+		logger.Errorf("Error parsing parent CIDR %s: %v", parentCIDR, err)
+
 		return "", ""
 	}
 
-	ones, bits := parent.Mask.Size()
-	if bits != 32 {
+	newPrefix, err := calculateNewPrefix(parent, dualSubnetSplitCount)
+	if err != nil {
+		logger.Errorf("Error calculating new prefix for %s: %v", parentCIDR, err)
+
 		return "", ""
 	}
 
-	if ones >= 32 {
-		return parent.String(), ""
-	}
+	subnets := generateSubnets(parent, newPrefix, dualSubnetSplitCount)
+	if len(subnets) != dualSubnetSplitCount {
+		logger.Errorf("Expected %d subnets, got %d", dualSubnetSplitCount, len(subnets))
 
-	nextPrefix := ones + 1
-	// base of parent
-	base := ipToUint32(parent.IP.Mask(parent.Mask))
-	// size of each child block
-	if nextPrefix < 0 || nextPrefix > 32 {
-		return "", ""
-	}
-	// Safe conversion: nextPrefix is validated to be 0-32
-	if nextPrefix < 0 || nextPrefix > 32 {
 		return "", ""
 	}
 
-	shift := uint32(32 - nextPrefix) // #nosec G115 - nextPrefix bounds validated above
-	childSize := uint32(1) << shift
-	first := (&net.IPNet{IP: uint32ToIP(base), Mask: net.CIDRMask(nextPrefix, 32)}).String()
-	second := (&net.IPNet{IP: uint32ToIP(base + childSize), Mask: net.CIDRMask(nextPrefix, 32)}).String()
-
-	return first, second
+	return subnets[0], subnets[1]
 }
 
 func ipToUint32(ip net.IP) uint32 {
-	v := ip.To4()
-	if v == nil {
-		return 0
-	}
+	ip = ip.To4()
 
-	return uint32(v[0])<<24 | uint32(v[1])<<16 | uint32(v[2])<<8 | uint32(v[3])
+	return uint32(ip[0])<<shiftBy24Bits + uint32(ip[1])<<shiftBy16Bits + uint32(ip[2])<<shiftBy8Bits + uint32(ip[3])
 }
 
 func uint32ToIP(n uint32) net.IP {
-	return net.IPv4(byte(n>>24), byte((n>>16)&0xFF), byte((n>>8)&0xFF), byte(n&0xFF))
+	return net.IPv4(byte(n>>shiftBy24Bits&byteMask), byte(n>>shiftBy16Bits&byteMask), byte(n>>shiftBy8Bits&byteMask), byte(n&byteMask))
 }
 
-// createSecurityGroups creates security groups with default rules.
-func (m *Manager) createSecurityGroups(ctx context.Context) error {
-	logger.Info("Creating security groups...")
-
-	// Get network ID
-	networkID, err := m.stateManager.GetOutput("network_id")
-	if err != nil {
-		return fmt.Errorf("network ID not found in state: %w", err)
-	}
-
-	// Security groups modeled after Perl implementation (shared defs)
-	// Names are prefixed with bloc name below
-	securityGroups := m.defaultSecurityGroupDefs()
-
-	for _, secGroup := range securityGroups {
-		sgName := fmt.Sprintf("%s-%s", m.config.Name, secGroup.name)
-
-		// Check if already exists
-		existingSG, _ := m.stateManager.GetResource("security_group", sgName)
-		if existingSG != nil {
-			logger.Infof("Security group %s already exists, skipping", sgName)
-			continue
-		}
-
-		// Create security group
-		// Ensure networkID is a string
-		netID, ok := networkID.(string)
-		if !ok || netID == "" {
-			return fmt.Errorf("invalid network_id in state: %v", networkID)
-		}
-
-		createdSG, err := m.provider.Security().CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
-			Name:        sgName,
-			Description: secGroup.description,
-			NetworkID:   netID,
-			Rules:       secGroup.rules,
-			Tags:        m.baseTags(),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create security group %s: %w", sgName, err)
-		}
-
-		// Save to state
-		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       createdSG.ID,
-			Type:     "security_group",
-			Name:     sgName,
-			Provider: m.options.Provider,
-			State:    "active",
-			Properties: map[string]interface{}{
-				"network_id": networkID,
-				"rules":      len(createdSG.Rules),
-			},
-			Tags: createdSG.Tags,
-		}); err != nil {
-			return fmt.Errorf("failed to save security group to state: %w", err)
-		}
-
-		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", secGroup.name), createdSG.ID)
-
-		logger.Infof("Security group created: %s", sgName)
-	}
-
-	return nil
-}
-
-// createPublicIPs creates public IPs for various services.
-func (m *Manager) createPublicIPs(ctx context.Context) error {
-	logger.Info("Creating public IPs...")
-
-	// Check if provider is STACKIT (only STACKIT supports public IPs currently)
-	if m.options.Provider != "stackit" {
-		logger.Info("Provider does not support public IP management, skipping")
-		return nil
-	}
-
-	// Get network manager
-	netMgr := m.provider.Network()
-	if netMgr == nil {
-		logger.Warn("Network manager not available; skipping public IPs")
-		return nil
-	}
-
-	// We need STACKIT-specific Ensure methods not in the generic interface
-	// Use a type assertion to the STACKIT network manager
-	type stackitEnsure interface {
-		EnsureJumpboxPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
-		// Optional additional ensures can be added later (router, cf-ssh, tcp-router)
-		ListPublicIPs(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error)
-		CreatePublicIP(ctx context.Context, req *cpi.CreatePublicIPRequest) (*cpi.PublicIP, error)
-	}
-
-	stackitProvider, ok := netMgr.(stackitEnsure)
-	if !ok {
-		logger.Warn("STACKIT-specific network features not available; skipping public IP creation")
-		return nil
-	}
-
-	// Collect ensured IPs for summary output
-	var allIPs []*cpi.PublicIP
-
-	// Ops IP (single) for general operational access
-	{
-		type stackitOpsEnsure interface {
-			EnsureOpsPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
-		}
-		if so, ok := netMgr.(stackitOpsEnsure); ok {
-			if opsIPs, err := so.EnsureOpsPublicIPs(ctx, m.config.Name, 1); err != nil {
-				logger.Warnf("Failed ensuring ops public IP: %v", err)
-			} else {
-				for _, opsIP := range opsIPs {
-					resName := fmt.Sprintf("%s-ops-%s", m.config.Name, opsIP.Labels["index"]) // usually index 0
-					if err := m.stateManager.AddResource(&state.Resource{
-						ID:       opsIP.ID,
-						Type:     "public_ip",
-						Name:     resName,
-						Provider: m.options.Provider,
-						State:    "active",
-						Properties: map[string]interface{}{
-							"job":       "ops",
-							"index":     opsIP.Labels["index"],
-							"address":   opsIP.Address,
-							"networkId": opsIP.NetworkID,
-						},
-						Tags: opsIP.Labels,
-					}); err != nil {
-						logger.Warnf("Failed to save ops IP %s to state: %v", opsIP.ID, err)
-					}
-				}
-
-				logger.Infof("Ops public IP ensured: %d", len(opsIPs))
-				allIPs = append(allIPs, opsIPs...)
-			}
-		}
-	}
-
-	// Jumpbox IPs (default 2)
-	jumpboxIPCount := m.config.JumpboxPublicIPs
-	if jumpboxIPCount <= 0 {
-		jumpboxIPCount = 2
-	}
-
-	logger.Infof("Ensuring %d jumpbox public IPs for bloc %s", jumpboxIPCount, m.config.Name)
-
-	jumpboxIPs, err := stackitProvider.EnsureJumpboxPublicIPs(ctx, m.config.Name, jumpboxIPCount)
-	if err != nil {
-		return fmt.Errorf("failed ensuring jumpbox public IPs: %w", err)
-	}
-
-	// Persist jumpbox IPs to state
-	for _, jumpboxIP := range jumpboxIPs {
-		resName := fmt.Sprintf("%s-jumpbox-%s", m.config.Name, jumpboxIP.Labels["index"])
-		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       jumpboxIP.ID,
-			Type:     "public_ip",
-			Name:     resName,
-			Provider: m.options.Provider,
-			State:    "active",
-			Properties: map[string]interface{}{
-				"job":       "jumpbox",
-				"index":     jumpboxIP.Labels["index"],
-				"address":   jumpboxIP.Address,
-				"networkId": jumpboxIP.NetworkID,
-			},
-			Tags: jumpboxIP.Labels,
-		}); err != nil {
-			logger.Warnf("Failed to save jumpbox IP %s to state: %v", jumpboxIP.ID, err)
-		}
-	}
-
-	logger.Infof("Jumpbox public IPs ensured: %d", len(jumpboxIPs))
-	allIPs = append(allIPs, jumpboxIPs...)
-
-	// Router IPs (default 4)
-	routerCount := m.config.RouterPublicIPs
-	if routerCount <= 0 {
-		routerCount = 4
-	}
-
-	if routerCount > 0 {
-		type stackitRouterEnsure interface {
-			EnsureRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
-		}
-		if sr, ok := netMgr.(stackitRouterEnsure); ok {
-			routerIPs := m.ensureAndRecordPublicIPs(ctx, "router", "%s-router-%s", func() ([]*cpi.PublicIP, error) {
-				return sr.EnsureRouterPublicIPs(ctx, m.config.Name, routerCount)
-			})
-			if len(routerIPs) > 0 {
-				allIPs = append(allIPs, routerIPs...)
-			}
-		}
-	}
-
-	// CF SSH IPs (default 1)
-	cfsshCount := m.config.CFSSHPublicIPs
-	if cfsshCount <= 0 {
-		cfsshCount = 1
-	}
-
-	if cfsshCount > 0 {
-		type stackitCFEnsure interface {
-			EnsureCFSSHPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
-		}
-		if sc, ok := netMgr.(stackitCFEnsure); ok {
-			cfIPs := m.ensureAndRecordPublicIPs(ctx, "cf-ssh", "%s-cf-ssh-%s", func() ([]*cpi.PublicIP, error) {
-				return sc.EnsureCFSSHPublicIPs(ctx, m.config.Name, cfsshCount)
-			})
-			if len(cfIPs) > 0 {
-				allIPs = append(allIPs, cfIPs...)
-			}
-		}
-	}
-
-	// TCP Router IPs (default 2)
-	tcpRouterCount := m.config.TCPRouterPublicIPs
-	if tcpRouterCount <= 0 {
-		tcpRouterCount = 2
-	}
-
-	if tcpRouterCount > 0 {
-		type stackitTCPEnsure interface {
-			EnsureTCPRouterPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error)
-		}
-		if st, ok := netMgr.(stackitTCPEnsure); ok {
-			tcpIPs := m.ensureAndRecordPublicIPs(ctx, "tcp-router", "%s-tcp-router-%s", func() ([]*cpi.PublicIP, error) {
-				return st.EnsureTCPRouterPublicIPs(ctx, m.config.Name, tcpRouterCount)
-			})
-			if len(tcpIPs) > 0 {
-				allIPs = append(allIPs, tcpIPs...)
-			}
-		}
-	}
-
-	// Print a summary table
-	if len(allIPs) > 0 {
-		renderPublicIPsTable(allIPs)
-	}
-
-	return nil
-}
-
-// renderPublicIPsTable prints a table overview of ensured public IPs.
 func renderPublicIPsTable(ips []*cpi.PublicIP) {
-	// Stable sort by job then numeric index
-	sort.Slice(ips, func(first, second int) bool {
-		if ips[first].Job == ips[second].Job {
-			firstIndex, secondIndex := parseIndex(ips[first].Index), parseIndex(ips[second].Index)
-			if firstIndex == secondIndex {
-				return ips[first].Index < ips[second].Index
-			}
+	if len(ips) == 0 {
+		return
+	}
 
-			return firstIndex < secondIndex
+	sort.Slice(ips, func(i, j int) bool {
+		iLabels := ips[i].Labels
+		jLabels := ips[j].Labels
+
+		iJob, iIndex := iLabels["job"], parseIndex(iLabels["index"])
+		jJob, jIndex := jLabels["job"], parseIndex(jLabels["index"])
+
+		if iJob != jJob {
+			return iJob < jJob
 		}
 
-		return ips[first].Job < ips[second].Job
+		return iIndex < jIndex
 	})
 
-	// Render via shared UI renderer for consistency
-	t := &ui.Table{Title: "Public IPs"}
+	table := ui.NewTable("Public IPs")
+	table.SetHeaders([]string{"Name", "Job", "Address", "Labels"})
 
-	rows := make([][]string, 0, len(ips))
-	for _, publicIP := range ips {
-		rows = append(rows, []string{
-			publicIP.Job,
-			publicIP.Index,
-			publicIP.Address,
-			publicIP.ID,
-			publicIP.Name,
-			publicIP.NetworkID,
-			formatLabels(publicIP.Labels),
+	for _, ip := range ips {
+		table.AddRow([]string{
+			ip.Name,
+			ip.Labels["job"],
+			ip.IPAddress,
+			formatLabels(ip.Labels),
 		})
 	}
 
-	t.Sections = append(t.Sections, ui.Section{Title: "Ensured", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
-    _ = ui.Render(t, "table")
-}
-
-// ensureAndRecordPublicIPs ensures public IPs using the provided ensure function,
-// records them in state, logs results, and returns the ensured IPs.
-func (m *Manager) ensureAndRecordPublicIPs(
-	ctx context.Context,
-	job string,
-	nameFmt string,
-	ensure func() ([]*cpi.PublicIP, error),
-) []*cpi.PublicIP {
-	ips, err := ensure()
-	if err != nil {
-		logger.Warnf("Failed ensuring %s public IPs: %v", job, err)
-
-		return nil
-	}
-
-	for _, ip := range ips {
-		resName := fmt.Sprintf(nameFmt, m.config.Name, ip.Labels["index"])
-		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       ip.ID,
-			Type:     "public_ip",
-			Name:     resName,
-			Provider: m.options.Provider,
-			State:    "active",
-			Properties: map[string]interface{}{
-				"job":       job,
-				"index":     ip.Labels["index"],
-				"address":   ip.Address,
-				"networkId": ip.NetworkID,
-			},
-			Tags: ip.Labels,
-		}); err != nil {
-			logger.Warnf("Failed to save %s IP %s to state: %v", job, ip.ID, err)
-		}
-	}
-
-	logger.Infof("%s public IPs ensured: %d", job, len(ips))
-
-	return ips
+	_ = table.Render()
 }
 
 func formatLabels(labels map[string]string) string {
@@ -1173,577 +276,135 @@ func formatLabels(labels map[string]string) string {
 		return ""
 	}
 
-	keys := make([]string, 0, len(labels))
-	for key := range labels {
-		keys = append(keys, key)
+	pairs := make([]string, 0, len(labels))
+
+	for k, v := range labels {
+		pairs = append(pairs, k+"="+v)
 	}
 
-	sort.Strings(keys)
+	sort.Strings(pairs)
 
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", key, labels[key]))
-	}
-
-	return strings.Join(parts, ",")
+	return strings.Join(pairs, ", ")
 }
 
 func parseIndex(indexString string) int {
-	var result int
-
-	for _, ch := range indexString {
-		if ch < '0' || ch > '9' {
-			return 1 << 30
-		}
-
-		result = result*10 + int(ch-'0')
+	if indexString == "" {
+		return -1
 	}
 
-	return result
-}
-
-// createKeyPair creates or imports SSH key pair.
-func (m *Manager) createKeyPair(ctx context.Context) error {
-	logger.Info("Managing SSH key pair...")
-
-	keypairName := m.config.Name + "-bastion"
-
-	// Check if keypair already exists
-	existingKP, _ := m.stateManager.GetResource("keypair", keypairName)
-	if existingKP != nil {
-		logger.Info("Key pair already exists, skipping")
-		return nil
-	}
-
-	// Try to get existing key pair first
-	existingKeyPair, err := m.provider.Compute().GetKeyPair(ctx, keypairName)
-	if err != nil && !cpi.IsNotFound(err) {
-		return fmt.Errorf("failed to check existing key pair: %w", err)
-	}
-
-	if existingKeyPair != nil {
-		logger.Infof("Using existing key pair: %s", keypairName)
-	} else {
-		// Create new key pair
-		keyPair, err := m.provider.Compute().CreateKeyPair(ctx, keypairName)
-		if err != nil {
-			return fmt.Errorf("failed to create key pair: %w", err)
-		}
-
-		// Save private key to local file
-		if keyPair.PrivateKey != "" {
-			// Prefer new standard location: ~/.ocfp/keys/<bloc>-bastion/id_rsa
-			home, _ := os.UserHomeDir()
-
-			keyDir := filepath.Join(home, ".ocfp", "keys", m.config.Name+"-bastion")
-			if err := os.MkdirAll(keyDir, 0700); err != nil {
-				logger.Warnf("Failed to create key directory %s: %v", keyDir, err)
-			} else {
-				keyPath := filepath.Join(keyDir, "id_rsa")
-				if err := os.WriteFile(keyPath, []byte(keyPair.PrivateKey), 0600); err != nil {
-					logger.Warnf("Failed to save private key to %s: %v", keyPath, err)
-				} else {
-					logger.Infof("Saved bastion private key to: %s", keyPath)
-				}
-			}
-		}
-
-		logger.Infof("Key pair created: %s", keypairName)
-	}
-
-	// Save to state
-	if err := m.stateManager.AddResource(&state.Resource{
-		ID:       keypairName,
-		Type:     "keypair",
-		Name:     keypairName,
-		Provider: m.options.Provider,
-		State:    "active",
-		Tags: map[string]string{
-			"managed-by": "ocfp",
-			"bloc":       m.options.BlocName,
-		},
-	}); err != nil {
-		return fmt.Errorf("failed to save key pair to state: %w", err)
-	}
-
-	return nil
-}
-
-// createVolumes creates persistent volumes.
-func (m *Manager) createVolumes(ctx context.Context) error {
-	logger.Info("Creating volumes...")
-
-	// Default volumes for bastion
-	volumes := []struct {
-		name    string
-		size    int
-		volType string
-	}{
-		{"bastion-root", 50, "standard"},
-		{"bastion-data", 100, "standard"},
-	}
-
-	for _, vol := range volumes {
-		volName := fmt.Sprintf("%s-%s", m.config.Name, vol.name)
-
-		// Check if already exists
-		existingVol, _ := m.stateManager.GetResource("volume", volName)
-		if existingVol != nil {
-			logger.Infof("Volume %s already exists, skipping", volName)
-			continue
-		}
-
-		// Create volume
-		volume, err := m.provider.Storage().CreateVolume(ctx, &cpi.CreateVolumeRequest{
-			Name: volName,
-			Size: vol.size,
-			Type: vol.volType,
-            Tags: func() map[string]string { t := m.baseTags(); t["role"] = roleBastion; return t }(),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create volume %s: %w", volName, err)
-		}
-
-		// Save to state
-		if err := m.stateManager.AddResource(&state.Resource{
-			ID:       volume.ID,
-			Type:     "volume",
-			Name:     volName,
-			Provider: m.options.Provider,
-			State:    string(volume.State),
-			Properties: map[string]interface{}{
-				"size": volume.Size,
-				"type": volume.Type,
-			},
-			Tags: volume.Tags,
-		}); err != nil {
-			return fmt.Errorf("failed to save volume to state: %w", err)
-		}
-
-		_ = m.stateManager.SetOutput(fmt.Sprintf("volume_%s_id", vol.name), volume.ID)
-		logger.Infof("Volume created: %s (%dGB)", volName, vol.size)
-	}
-
-	return nil
-}
-
-// createBastion creates the bastion host.
-func (m *Manager) createBastion(ctx context.Context) error {
-	logger.Info("Creating bastion host...")
-
-	bastionName := m.config.Name + "-bastion"
-
-	// Check if already exists
-	existingBastion, _ := m.stateManager.GetResource("instance", bastionName)
-	if existingBastion != nil && existingBastion.State == string(cpi.ResourceStateActive) {
-		logger.Info("Bastion already exists, skipping")
-		return nil
-	}
-
-	// Get required IDs from state
-	networkID, _ := m.stateManager.GetOutput("network_id")
-	// Resolve a subnet for bastion.
-	// STACKIT: no real subnets; use network only and record dependency on virtual ocfp-0.
-	// Other providers: Prefer <bloc>-mgmt; if missing, fall back to any bloc subnet, preferring type=public.
-	var (
-		subnetIDVal      interface{}
-		subnetNameForDep string
-	)
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		// No subnet ID for STACKIT
-		subnetIDVal = nil
-		subnetNameForDep = fmt.Sprintf("%s-%s", m.config.Name, "ocfp-0")
-	} else {
-		mgmtSubnetKey := fmt.Sprintf("subnet_%s-%s_id", m.config.Name, "mgmt")
-		if id, err := m.stateManager.GetOutput(mgmtSubnetKey); err == nil && id != nil {
-			subnetIDVal = id
-			subnetNameForDep = fmt.Sprintf("%s-%s", m.config.Name, "mgmt")
-		} else {
-			// Fallback: scan state for subnets in this bloc
-			subs, err := m.stateManager.ListResources("subnet")
-			if err != nil {
-				return fmt.Errorf("failed to list subnets from state: %w", err)
-			}
-
-			var anyCandidate *state.Resource
-
-			for _, subnet := range subs {
-				if !strings.HasPrefix(subnet.Name, m.config.Name+"-") {
-					continue
-				}
-				// Prefer public type if available
-				if t, ok := subnet.Properties["type"].(string); ok && strings.EqualFold(t, "public") {
-					subnetIDVal = subnet.ID
-					subnetNameForDep = subnet.Name
-
-					break
-				}
-
-				if anyCandidate == nil {
-					anyCandidate = subnet
-				}
-			}
-
-			if subnetIDVal == nil && anyCandidate != nil {
-				subnetIDVal = anyCandidate.ID
-				subnetNameForDep = anyCandidate.Name
-			}
-
-			if subnetIDVal == nil {
-				return errors.New("no suitable subnet found for bastion; ensure subnets phase created at least one subnet")
-			}
-			// Standardize: publish chosen subnet as mgmt if not set
-			_ = m.stateManager.SetOutput(mgmtSubnetKey, subnetIDVal)
-		}
-	}
-
-	sgID, _ := m.stateManager.GetOutput("sg_bastion_id")
-
-	// Create bastion instance
-	// Ensure required IDs are strings
-	netID, ok := networkID.(string)
-	if !ok || netID == "" {
-		return fmt.Errorf("invalid network_id in state: %v", networkID)
-	}
-
-	var subnetIDStr string
-
-	if subnetIDVal != nil {
-		var okSubnet bool
-
-		subnetIDStr, okSubnet = subnetIDVal.(string)
-		if !okSubnet {
-			return fmt.Errorf("invalid subnet_id in state: %v", subnetIDVal)
-		}
-	}
-
-	sgIDStr, ok := sgID.(string)
-	if !ok || sgIDStr == "" {
-		return fmt.Errorf("invalid sg_bastion_id in state: %v", sgID)
-	}
-
-	instance, err := m.provider.Compute().CreateInstance(ctx, &cpi.CreateInstanceRequest{
-		Name:           bastionName,
-		Flavor:         m.config.Bastion.Flavor,
-		Image:          m.config.Bastion.Image,
-		NetworkID:      netID,
-		SubnetID:       subnetIDStr,
-		SecurityGroups: []string{sgIDStr},
-		KeyPair:        m.config.Name + "-bastion",
-		UserData:       generateBastionUserData(m.config),
-        Tags:           func() map[string]string { t := m.baseTags(); t["role"] = roleBastion; t["job"] = roleBastion; return t }(),
-	})
+	index, err := strconv.Atoi(indexString)
 	if err != nil {
-		return fmt.Errorf("failed to create bastion: %w", err)
+		return -1
 	}
 
-	// Save to state
-	if err := m.stateManager.AddResource(&state.Resource{
-		ID:       instance.ID,
-		Type:     "instance",
-		Name:     bastionName,
-		Provider: m.options.Provider,
-		State:    string(instance.State),
-		Properties: map[string]interface{}{
-			"flavor":     instance.Flavor,
-			"image":      instance.Image,
-			"private_ip": instance.PrivateIP,
-			"public_ip":  instance.PublicIP,
-		},
-		Tags: instance.Tags,
-	}); err != nil {
-		return fmt.Errorf("failed to save bastion to state: %w", err)
-	}
-
-	// Add dependencies
-	if subnetNameForDep == "" {
-		if strings.EqualFold(m.options.Provider, "stackit") {
-			subnetNameForDep = fmt.Sprintf("%s-%s", m.config.Name, "ocfp-0")
-		} else {
-			subnetNameForDep = fmt.Sprintf("%s-%s", m.config.Name, "mgmt")
-		}
-	}
-
-	_ = m.stateManager.AddDependency("instance."+bastionName, "subnet."+subnetNameForDep)
-	_ = m.stateManager.AddDependency("instance."+bastionName, fmt.Sprintf("security_group.%s-bastion", m.config.Name))
-
-	// Save outputs
-	_ = m.stateManager.SetOutput("bastion_id", instance.ID)
-
-	_ = m.stateManager.SetOutput("bastion_private_ip", instance.PrivateIP)
-	if instance.PublicIP != "" {
-		_ = m.stateManager.SetOutput("bastion_public_ip", instance.PublicIP)
-	}
-
-	logger.Infof("Bastion created: %s (IP: %s)", bastionName, instance.PrivateIP)
-
-	return nil
+	return index
 }
 
-// generateBastionUserData generates cloud-init user data for bastion.
 func generateBastionUserData(cfg *config.Config) string {
-	return fmt.Sprintf(`#cloud-config
-package_update: true
-package_upgrade: true
-packages:
-  - git
-  - tmux
-  - vim
-  - curl
-  - wget
-  - jq
-  - unzip
-  - ca-certificates
+	if cfg.Bastion.UserData != "" {
+		return cfg.Bastion.UserData
+	}
 
-users:
-  - default
-  - name: ocfp
-    gecos: OCFP Admin
-    groups: [sudo]
-    shell: /bin/bash
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: true
-
-write_files:
-  - path: /etc/profile.d/ocfp.sh
-    permissions: '0644'
-    content: |
-      export OCFP_BLOC_NAME=%[1]s
-      export OCFP_ENV=%[1]s
-  - path: /home/ocfp/.bashrc
-    owner: ocfp:ocfp
-    permissions: '0644'
-    content: |
-      export OCFP_BLOC_NAME=%[1]s
-
-runcmd:
-  - [ bash, -lc, 'hostnamectl set-hostname %[1]s-bastion' ]
-  - [ bash, -lc, 'mkdir -p /home/ocfp/.ocfp && chown -R ocfp:ocfp /home/ocfp/.ocfp' ]
-  - [ bash, -lc, 'echo "Bastion initialized for %[1]s"' ]
-`, cfg.Name)
+	return `#!/bin/bash
+# OCFP Bastion Host Setup
+apt-get update
+apt-get install -y vim curl wget git
+# Configure SSH
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+systemctl restart sshd
+# Create OCFP user
+useradd -m -s /bin/bash ocfp
+usermod -aG sudo ocfp
+mkdir -p /home/ocfp/.ssh
+chmod 700 /home/ocfp/.ssh
+chown ocfp:ocfp /home/ocfp/.ssh
+# Log completion
+echo "$(date): Bastion setup completed" >> /var/log/ocfp-setup.log
+`
 }
 
-// createBuckets ensures object storage buckets exist.
-func (m *Manager) createBuckets(ctx context.Context) error {
-	logger.Info("Ensuring object storage buckets...")
-
-	storage := m.provider.Storage()
-	if storage == nil {
-		logger.Info("Provider does not support object storage; skipping")
-		return nil
-	}
-
-	// Desired buckets based on Perl implementation
-	bucketNames := []string{
-		m.config.Name + "-bosh-blobstore",
-		m.config.Name + "-cf-app-packages",
-		m.config.Name + "-cf-buildpacks",
-		m.config.Name + "-cf-droplets",
-		m.config.Name + "-cf-resources",
-		m.config.Name + "-artifacts",
-		m.config.Name + "-shield-backups",
-	}
-
-	// List existing buckets (best-effort)
-	existing := map[string]bool{}
-
-	if list, err := storage.ListBuckets(ctx); err == nil {
-		for _, b := range list {
-			existing[b.Name] = true
-		}
-	} else {
-		logger.Warnf("Failed to list buckets: %v (will attempt to create expected ones)", err)
-	}
-
-	// Optionally ensure a credentials group up-front (STACKIT only)
-	if m.options.Provider == "stackit" {
-		type ensureGroup interface {
-			EnsureObjectStorageCredentialsGroup(ctx context.Context, name string) (string, error)
-		}
-		if storageProvider, ok := storage.(ensureGroup); ok {
-			if groupID, err := storageProvider.EnsureObjectStorageCredentialsGroup(ctx, "ocfp-cli"); err == nil {
-				// Persist credentials group to state
-				_ = m.stateManager.AddResource(&state.Resource{
-					ID:       groupID,
-					Type:     "credentials_group",
-					Name:     "ocfp-cli",
-					Provider: m.options.Provider,
-					State:    "active",
-				})
-			} else {
-				logger.Warnf("Failed to ensure credentials group: %v", err)
-			}
-		}
-	}
-
-	for _, name := range bucketNames {
-		if existing[name] {
-			logger.Infof("Bucket exists: %s", name)
-			continue
-		}
-
-		if m.options.DryRun {
-			logger.Infof("[DRY RUN] Would create bucket: %s", name)
-			continue
-		}
-
-		if _, err := storage.CreateBucket(ctx, name); err != nil {
-			logger.Warnf("Failed to create bucket %s: %v", name, err)
-			continue
-		}
-		// Save to state
-		res := &state.Resource{
-			ID:       name,
-			Type:     "bucket",
-			Name:     name,
-			Provider: m.options.Provider,
-			State:    "active",
-			Properties: map[string]interface{}{
-				"region": m.options.Region,
-			},
-		}
-		_ = m.stateManager.AddResource(res)
-
-		logger.Infof("Bucket created: %s", name)
-
-		// Optional: enable versioning/lifecycle for parity with Perl (config-driven)
-		enablePolicies := m.config.Blobstore.EnablePolicies || os.Getenv("OCFP_ENABLE_BUCKET_POLICIES") == "1" || os.Getenv("OCFP_ENABLE_BUCKET_POLICIES") == "true"
-		if enablePolicies {
-			// Best-effort: ignore errors, log warnings
-			type ver interface {
-				EnableBucketVersioning(ctx context.Context, bucket string) error
-			}
-
-			type life interface {
-				SetBucketLifecycleNoncurrentDays(ctx context.Context, bucket string, days int32) error
-			}
-
-			if versionProvider, ok := storage.(ver); ok {
-				// Defaults tuned per bucket type
-				switch {
-				case strings.HasSuffix(name, "-cf-buildpacks"):
-					settings := m.config.Blobstore.CFBuildpacks
-					if settings.Versioning {
-						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
-							logger.Warnf("versioning %s: %v", name, err)
-						}
-					}
-
-					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
-							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
-						}
-					}
-
-					res.Properties["versioning"] = settings.Versioning
-					res.Properties["noncurrent_days"] = settings.NoncurrentDays
-				case strings.HasSuffix(name, "-cf-droplets"):
-					settings := m.config.Blobstore.CFDroplets
-					if settings.Versioning {
-						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
-							logger.Warnf("versioning %s: %v", name, err)
-						}
-					}
-
-					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
-							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
-						}
-					}
-
-					res.Properties["versioning"] = settings.Versioning
-					res.Properties["noncurrent_days"] = settings.NoncurrentDays
-				case strings.HasSuffix(name, "-cf-app-packages"):
-					settings := m.config.Blobstore.CFAppPackages
-					if vsettings := settings.Versioning; vsettings {
-						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
-							logger.Warnf("versioning %s: %v", name, err)
-						}
-					}
-
-					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
-							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
-						}
-					}
-
-					res.Properties["versioning"] = settings.Versioning
-					res.Properties["noncurrent_days"] = settings.NoncurrentDays
-				case strings.HasSuffix(name, "-bosh-blobstore"):
-					settings := m.config.Blobstore.BoshBlobstore
-					if settings.Versioning {
-						if err := versionProvider.EnableBucketVersioning(ctx, name); err != nil {
-							logger.Warnf("versioning %s: %v", name, err)
-						}
-					}
-
-					if l, ok := storage.(life); ok && settings.NoncurrentDays > 0 {
-						if settings.NoncurrentDays >= 0 && settings.NoncurrentDays <= int(^int32(0)>>1) {
-							_ = l.SetBucketLifecycleNoncurrentDays(ctx, name, int32(settings.NoncurrentDays))
-						}
-					}
-
-					res.Properties["versioning"] = settings.Versioning
-					res.Properties["noncurrent_days"] = settings.NoncurrentDays
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// splitIntoN splits parent network into N equal-power-of-two child CIDRs if possible.
-// Returns empty slice if not feasible.
 func splitIntoN(parentCIDR string, count int) []string {
-	if count <= 0 || (count&(count-1)) != 0 { // count must be power of two
+	if !isValidCount(count) {
 		return nil
 	}
 
-	_, parent, err := net.ParseCIDR(parentCIDR)
-	if err != nil || parent == nil {
+	parent, err := parseParentCIDR(parentCIDR)
+	if err != nil {
 		return nil
 	}
 
-	ones, bits := parent.Mask.Size()
-	if bits != 32 {
-		return nil
-	}
-	// Increase prefix by log2(n)
-	inc := 0
-	for (1 << inc) < count {
-		inc++
-	}
-
-	newPrefix := ones + inc
-	if newPrefix > 32 {
+	newPrefix, err := calculateNewPrefix(parent, count)
+	if err != nil {
 		return nil
 	}
 
+	return generateSubnets(parent, newPrefix, count)
+}
+
+func isValidCount(count int) bool {
+	return count > 0 && count <= maxInt32
+}
+
+func parseParentCIDR(parentCIDR string) (*net.IPNet, error) {
+	ip, ipnet, err := net.ParseCIDR(parentCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", errInvalidParentCIDR, parentCIDR)
+	}
+
+	if ip.To4() == nil {
+		return nil, errOnlyIPv4Supported
+	}
+
+	return ipnet, nil
+}
+
+func calculateNewPrefix(parent *net.IPNet, count int) (int, error) {
+	oldPrefix, _ := parent.Mask.Size()
+	if oldPrefix < 0 || oldPrefix > ipv4Bits {
+		return 0, errInvalidPrefixLength
+	}
+
+	// Calculate new prefix to accommodate count subnets
+	for newPrefix := oldPrefix + 1; newPrefix <= maxBitshift; newPrefix++ {
+		maxSubnets := 1 << (newPrefix - oldPrefix)
+		if maxSubnets >= count {
+			return newPrefix, nil
+		}
+	}
+
+	return 0, errCannotSplitNetworkInto(count)
+}
+
+func generateSubnets(parent *net.IPNet, newPrefix, count int) []string {
 	base := ipToUint32(parent.IP.Mask(parent.Mask))
+	size := uint32(1) << (ipv4Bits - newPrefix)
+	subnets := make([]string, count)
 
-	if newPrefix < 0 || newPrefix > 32 {
-		return nil
-	}
-	// Safe conversion: newPrefix is validated to be 0-32
-	if newPrefix < 0 || newPrefix > 32 {
-		return nil
-	}
-
-	shift := uint32(32 - newPrefix) // #nosec G115 - newPrefix bounds validated above
-	size := uint32(1) << shift
-
-	out := make([]string, 0, count)
-	for index := range count {
-		if index < 0 || index > int(^uint32(0)) {
-			continue
+	for subnetIndex := range count {
+		if !isValidIndex(subnetIndex) {
+			break
 		}
 
-		cidr := (&net.IPNet{IP: uint32ToIP(base + uint32(index)*size), Mask: net.CIDRMask(newPrefix, 32)}).String()
-		out = append(out, cidr)
+		// Safe conversion: subnetIndex is validated to be >= 0 and <= maxInt32 (2147483647)
+		// which is well within uint32 range (0 to 4294967295)
+		if subnetIndex < 0 || subnetIndex > maxInt32 {
+			break // Additional safety check for gosec
+		}
+		index := uint32(subnetIndex)
+		subnets[subnetIndex] = createSubnetCIDR(base, index, size, newPrefix)
 	}
 
-	return out
+	return subnets
+}
+
+func isValidIndex(index int) bool {
+	return index >= 0 && index <= maxInt32
+}
+
+func createSubnetCIDR(base uint32, index uint32, size uint32, newPrefix int) string {
+	subnetBase := base + (index * size)
+
+	return fmt.Sprintf("%s/%d", uint32ToIP(subnetBase), newPrefix)
 }
 
 func cidrFirstIP(cidr string) string {
@@ -1752,7 +413,7 @@ func cidrFirstIP(cidr string) string {
 		return ""
 	}
 
-	return ipnet.IP.Mask(ipnet.Mask).String()
+	return ipnet.IP.String()
 }
 
 func cidrLastUsableIP(cidr string) string {
@@ -1762,24 +423,14 @@ func cidrLastUsableIP(cidr string) string {
 	}
 
 	base := ipToUint32(ipnet.IP.Mask(ipnet.Mask))
+	prefixLen, _ := ipnet.Mask.Size()
+	size := uint32(1) << (ipv4Bits - prefixLen)
 
-	ones, _ := ipnet.Mask.Size()
-	if ones < 0 || ones > 32 {
-		return ""
-	}
-	// Safe conversion: ones is validated to be 0-32
-	if ones < 0 || ones > 32 {
+	if size < minSubnetSize {
 		return ""
 	}
 
-	shift := uint32(32 - ones) // #nosec G115 - ones bounds validated above
-
-	size := uint32(1) << shift
-	if size <= 2 {
-		return uint32ToIP(base).String()
-	}
-
-	return uint32ToIP(base + size - 2).String()
+	return uint32ToIP(base + size - broadcastOffset).String()
 }
 
 func cidrGatewayIP(parentCIDR string) string {
@@ -1793,11 +444,1799 @@ func cidrGatewayIP(parentCIDR string) string {
 	return uint32ToIP(base + 1).String()
 }
 
-// addVirtualSubnetToState records a virtual subnet resource + outputs, including reserved IPs.
+// Constructor
+// NewManager creates a new bootstrap manager.
+func NewManager(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, opts *Options) *Manager {
+	return &Manager{
+		config:       cfg,
+		provider:     provider,
+		stateManager: stateManager,
+		options:      opts,
+	}
+}
+
+// Exported methods (public methods starting with capital letters)
+
+// StateManager returns the state manager.
+func (m *Manager) StateManager() *state.Manager {
+	return m.stateManager
+}
+
+// Execute executes the bootstrap process.
+func (m *Manager) Execute(ctx context.Context) error {
+	logger.Infof("Starting bootstrap for bloc=%s provider=%s region=%s", m.options.BlocName, m.options.Provider, m.options.Region)
+
+	if m.options.DryRun {
+		return m.renderDryRunPlan()
+	}
+
+	steps := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"Create Network", m.CreateNetwork},
+		{"Create Subnets", m.CreateSubnets},
+		{"Create Security Groups", m.createSecurityGroups},
+		{"Create Public IPs", m.createPublicIPs},
+		{"Create Key Pair", m.createKeyPair},
+		{"Create Volumes", m.createVolumes},
+		{"Create Bastion", m.CreateBastion},
+		{"Create Buckets", m.CreateBuckets},
+	}
+
+	for _, step := range steps {
+		logger.Infof("Executing step: %s", step.name)
+
+		err := step.fn(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to %s: %w", strings.ToLower(step.name), err)
+		}
+
+		logger.Infof("Completed step: %s", step.name)
+	}
+
+	logger.Infof("Bootstrap completed successfully")
+
+	return nil
+}
+
+// CreateNetwork creates the network infrastructure.
+func (m *Manager) CreateNetwork(ctx context.Context) error {
+	networkName := m.options.BlocName + "-network"
+
+	// Check if network already exists
+	if existingNetwork, _ := m.stateManager.GetResource("network", networkName); existingNetwork != nil {
+		logger.Infof("Network %s already exists, skipping creation", networkName)
+
+		return nil
+	}
+
+	netMgr := m.provider.NetworkManager()
+	cidr := m.resolveNetworkCIDR()
+
+	logger.Infof("Creating network: name=%s cidr=%s", networkName, cidr)
+
+	network, err := netMgr.CreateNetwork(ctx, &cpi.NetworkRequest{
+		Name:        networkName,
+		CIDR:        cidr,
+		DNSServers:  m.config.Network.DNSServers,
+		Description: "Network for OCFP bloc " + m.options.BlocName,
+		Tags:        m.baseTags(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network: %w", err)
+	}
+
+	// Save network to state
+	err = m.stateManager.AddResource(&state.Resource{
+		ID:         network.ID,
+		Type:       "network",
+		Name:       networkName,
+		Provider:   m.options.Provider,
+		State:      string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
+		Tags:       m.baseTags(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save network to state: %w", err)
+	}
+
+	// Set network outputs
+	_ = m.stateManager.SetOutput("network_name", networkName)
+	_ = m.stateManager.SetOutput("network_id", network.ID)
+	_ = m.stateManager.SetOutput("network_cidr", cidr)
+
+	logger.Infof("Network created successfully: id=%s", network.ID)
+
+	return nil
+}
+
+// CreateSubnets creates the network subnets.
+func (m *Manager) CreateSubnets(ctx context.Context) error {
+	// Get network ID from state
+	networkResource, err := m.stateManager.GetResource("network", m.options.BlocName+"-network")
+	if err != nil {
+		return fmt.Errorf("failed to get network from state: %w", err)
+	}
+
+	networkID := networkResource.ID
+	logger.Infof("Creating subnets for network: id=%s", networkID)
+
+	// Handle STACKIT virtual subnet strategy
+	if m.config.Network.SubnetStrategy == subnetStrategyTriple {
+		return m.createStackitVirtualSubnets(networkID)
+	}
+
+	return m.createStandardSubnets(ctx, networkID)
+}
+
+// CreateBastion creates the bastion host.
+func (m *Manager) CreateBastion(ctx context.Context) error {
+	bastionName := m.options.BlocName + "-bastion"
+
+	// Check if bastion already exists
+	if m.bastionAlreadyExists(bastionName) {
+		logger.Infof("Bastion %s already exists, skipping creation", bastionName)
+
+		return nil
+	}
+
+	// Resolve networking
+	_, subnetInfo, err := m.resolveBastionNetworking()
+	if err != nil {
+		return fmt.Errorf("failed to resolve bastion networking: %w", err)
+	}
+
+	// Get security group
+	sgID, err := m.getBastionSecurityGroup()
+	if err != nil {
+		return fmt.Errorf("failed to get bastion security group: %w", err)
+	}
+
+	// Create bastion instance
+	instance, err := m.createBastionInstance(ctx, bastionName, subnetInfo.ID, sgID)
+	if err != nil {
+		return fmt.Errorf("failed to create bastion instance: %w", err)
+	}
+
+	// Save to state
+	err = m.saveBastionToState(instance, bastionName)
+	if err != nil {
+		return fmt.Errorf("failed to save bastion to state: %w", err)
+	}
+
+	logger.Infof("Bastion created successfully: id=%s name=%s", instance.ID, bastionName)
+
+	return nil
+}
+
+// CreateBuckets creates the required storage buckets.
+func (m *Manager) CreateBuckets(ctx context.Context) error {
+	if !m.provider.SupportsStorage() {
+		logger.Infof("Provider %s does not support storage, skipping bucket creation", m.options.Provider)
+
+		return nil
+	}
+
+	storage := m.provider.StorageManager()
+	bucketNames := m.getRequiredBucketNames()
+
+	logger.Infof("Creating %d buckets", len(bucketNames))
+
+	existing := m.getExistingBuckets(ctx, storage)
+
+	// Ensure credentials bucket group exists
+	m.ensureCredentialsGroup(ctx, storage)
+
+	// Process each bucket
+	var errs []error
+
+	for _, name := range bucketNames {
+		err := m.processBucket(ctx, storage, name, existing)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to process bucket %s: %w", name, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return ErrBucketCreationErrors(errs)
+	}
+
+	logger.Infof("All buckets processed successfully")
+
+	return nil
+}
+
+// Unexported methods (private methods starting with lowercase letters)
+
+func (m *Manager) renderDryRunPlan() error {
+	plan := m.buildBootstrapPlan()
+	table := m.buildPlanTable(plan)
+	_ = table.Render()
+
+	return nil
+}
+
+func (m *Manager) buildBootstrapPlan() *bootstrapPlan {
+	plan := &bootstrapPlan{
+		Bloc:     m.options.BlocName,
+		Provider: m.options.Provider,
+		Region:   m.options.Region,
+	}
+
+	m.setupNetworkPlan(plan)
+	m.setupSubnetsPlan(plan)
+	m.setupPublicIPsPlan(plan)
+	m.setupSecurityGroupsPlan(plan)
+	m.setupBucketsPlan(plan)
+	m.setupVolumesPlan(plan)
+	m.setupBastionPlan(plan)
+	m.calculateCreateCount(plan)
+
+	return plan
+}
+
+func (m *Manager) setupNetworkPlan(plan *bootstrapPlan) {
+	cidr := m.resolveNetworkCIDR()
+	plan.Network.Name = m.options.BlocName + "-network"
+	plan.Network.CIDR = cidr
+	plan.Network.DNS = m.config.Network.DNSServers
+}
+
+func (m *Manager) resolveNetworkCIDR() string {
+	if m.config.Network.CIDR != "" {
+		return m.config.Network.CIDR
+	}
+
+	return defaultNetworkCIDR
+}
+
+func (m *Manager) setupSubnetsPlan(plan *bootstrapPlan) {
+	cidr := m.resolveNetworkCIDR()
+
+	switch m.config.Network.SubnetStrategy {
+	case subnetStrategyTriple:
+		plan.Subnets = m.buildStackitSubnets(cidr)
+	case "single":
+		plan.Subnets = m.buildSingleSubnet(cidr)
+	case "standard":
+		plan.Subnets = m.buildStandardSubnets(cidr)
+	case "default":
+		plan.Subnets = m.buildDefaultSubnets(cidr)
+	default:
+		plan.Subnets = m.buildConfiguredSubnets()
+	}
+}
+
+func (m *Manager) buildStackitSubnets(parentCIDR string) []subnetPreview {
+	return m.buildTripleSubnets(parentCIDR)
+}
+
+func (m *Manager) buildTripleSubnets(parentCIDR string) []subnetPreview {
+	subnets := splitIntoN(parentCIDR, tripleSubnetSplitCount)
+	if len(subnets) != tripleSubnetSplitCount {
+		logger.Warnf("Expected %d subnets from parent %s, got %d", tripleSubnetSplitCount, parentCIDR, len(subnets))
+
+		return nil
+	}
+
+	names := []string{"mgmt", "ocf", "services"}
+	types := []string{"public", "public", "public"}
+
+	previews := make([]subnetPreview, 0, len(subnets))
+
+	for i, subnet := range subnets {
+		previews = append(previews, subnetPreview{
+			Name: fmt.Sprintf("%s-%s", m.options.BlocName, names[i]),
+			CIDR: subnet,
+			Type: types[i],
+			AZ:   "",
+		})
+	}
+
+	return previews
+}
+
+func (m *Manager) buildSingleSubnet(parentCIDR string) []subnetPreview {
+	return []subnetPreview{
+		{
+			Name: m.options.BlocName + "-subnet",
+			CIDR: parentCIDR,
+			Type: "public",
+			AZ:   "",
+		},
+	}
+}
+
+func (m *Manager) buildStandardSubnets(parentCIDR string) []subnetPreview {
+	mgmtCIDR, ocfCIDR := SplitParentIntoTwo(parentCIDR)
+
+	return []subnetPreview{
+		{Name: m.options.BlocName + "-mgmt", CIDR: mgmtCIDR, Type: "public", AZ: ""},
+		{Name: m.options.BlocName + "-ocf", CIDR: ocfCIDR, Type: "public", AZ: ""},
+	}
+}
+
+func (m *Manager) buildDefaultSubnets(parentCIDR string) []subnetPreview {
+	mgmtCIDR, ocfCIDR := m.calculateDefaultSubnetCIDRs(parentCIDR)
+
+	return []subnetPreview{
+		{Name: m.options.BlocName + "-mgmt", CIDR: mgmtCIDR, Type: "public", AZ: ""},
+		{Name: m.options.BlocName + "-ocf", CIDR: ocfCIDR, Type: "public", AZ: ""},
+	}
+}
+
+func (m *Manager) buildConfiguredSubnets() []subnetPreview {
+	previews := make([]subnetPreview, 0, len(m.config.Network.Subnets))
+
+	for _, subnet := range m.config.Network.Subnets {
+		previews = append(previews, subnetPreview{
+			Name: subnet.Name,
+			CIDR: subnet.CIDR,
+			Type: subnet.Type,
+			AZ:   subnet.AvailabilityZone,
+		})
+	}
+
+	return previews
+}
+
+func (m *Manager) setupPublicIPsPlan(plan *bootstrapPlan) {
+	if !m.supportsPublicIPs() {
+		return
+	}
+
+	plan.PublicIPs = &publicIPPlan{
+		Ops:       m.getPublicIPCount(m.config.PublicIPs.Ops, 1),
+		Jumpbox:   m.getPublicIPCount(m.config.PublicIPs.Jumpbox, defaultJumpboxCount),
+		Router:    m.getPublicIPCount(m.config.PublicIPs.Router, defaultRouterCount),
+		CFSSH:     m.getPublicIPCount(m.config.PublicIPs.CFSSH, 1),
+		TCPRouter: m.getPublicIPCount(m.config.PublicIPs.TCPRouter, defaultTCPRouterCount),
+	}
+}
+
+func (m *Manager) getPublicIPCount(configured, defaultCount int) int {
+	if configured > 0 {
+		return configured
+	}
+
+	return defaultCount
+}
+
+func (m *Manager) setupSecurityGroupsPlan(plan *bootstrapPlan) {
+	groups := m.defaultSecurityGroupDefs()
+
+	for _, group := range groups {
+		plan.SecurityGroups = append(plan.SecurityGroups, sgPreview{
+			Name:  group.name,
+			Rules: len(group.rules),
+		})
+	}
+}
+
+func (m *Manager) setupBucketsPlan(plan *bootstrapPlan) {
+	if !m.provider.SupportsStorage() {
+		return
+	}
+
+	plan.Buckets = m.getRequiredBucketNames()
+}
+
+func (m *Manager) setupVolumesPlan(plan *bootstrapPlan) {
+	plan.Volumes = []volumePreview{
+		{Name: m.options.BlocName + "-bastion-root", SizeGB: bastionRootDiskSize, Type: "gp3"},
+		{Name: m.options.BlocName + "-bastion-data", SizeGB: bastionDataDiskSize, Type: "gp3"},
+	}
+}
+
+func (m *Manager) setupBastionPlan(plan *bootstrapPlan) {
+	plan.Bastion = bastionPreview{
+		Name:    m.options.BlocName + "-bastion",
+		Flavor:  m.config.Bastion.Flavor,
+		Image:   m.config.Bastion.Image,
+		Network: plan.Network.Name,
+		Subnet:  m.determineBastionSubnet(),
+	}
+}
+
+func (m *Manager) determineBastionSubnet() string {
+	// Use first management subnet if available
+	for _, subnet := range m.config.Network.Subnets {
+		if strings.Contains(subnet.Name, "mgmt") {
+			return subnet.Name
+		}
+	}
+
+	// Fallback to first subnet
+	if len(m.config.Network.Subnets) > 0 {
+		return m.config.Network.Subnets[0].Name
+	}
+
+	return m.options.BlocName + "-mgmt"
+}
+
+func (m *Manager) calculateCreateCount(plan *bootstrapPlan) {
+	count := 1 // Network
+	count += len(plan.Subnets)
+	count += len(plan.SecurityGroups)
+	count += len(plan.Buckets)
+	count += len(plan.Volumes)
+	count += 1 // Bastion
+
+	if plan.PublicIPs != nil {
+		count += plan.PublicIPs.Ops + plan.PublicIPs.Jumpbox + plan.PublicIPs.Router + plan.PublicIPs.CFSSH + plan.PublicIPs.TCPRouter
+	}
+
+	plan.CreateCount = count
+}
+
+func (m *Manager) buildPlanTable(plan *bootstrapPlan) *ui.Table {
+	table := ui.NewTable(fmt.Sprintf("Bootstrap Plan - %s (%s/%s)", plan.Bloc, plan.Provider, plan.Region))
+
+	m.addNetworkSection(table, plan)
+	m.addSubnetsSection(table, plan)
+
+	if plan.PublicIPs != nil {
+		m.addPublicIPsSection(table, plan)
+	}
+
+	m.addSecurityGroupsSection(table, plan)
+	m.addBucketsSection(table, plan)
+	m.addVolumesSection(table, plan)
+	m.addBastionSection(table, plan)
+
+	table.AddSeparator()
+	table.AddRow([]string{"Total Resources", strconv.Itoa(plan.CreateCount)})
+
+	return table
+}
+
+func (m *Manager) addNetworkSection(t *ui.Table, plan *bootstrapPlan) {
+	t.AddSection("Network")
+	t.AddRow([]string{"Name", plan.Network.Name})
+	t.AddRow([]string{"CIDR", plan.Network.CIDR})
+	t.AddRow([]string{"DNS", strings.Join(plan.Network.DNS, ", ")})
+}
+
+func (m *Manager) addSubnetsSection(table *ui.Table, plan *bootstrapPlan) {
+	if len(plan.Subnets) == 0 {
+		return
+	}
+
+	table.AddSection("Subnets")
+
+	for _, subnet := range plan.Subnets {
+		table.AddRow([]string{
+			subnet.Name,
+			fmt.Sprintf("%s (%s)", subnet.CIDR, subnet.Type),
+		})
+	}
+}
+
+func (m *Manager) addPublicIPsSection(table *ui.Table, plan *bootstrapPlan) {
+	if plan.PublicIPs == nil {
+		return
+	}
+
+	table.AddSection("Public IPs")
+	table.AddRow([]string{"Ops", strconv.Itoa(plan.PublicIPs.Ops)})
+	table.AddRow([]string{"Jumpbox", strconv.Itoa(plan.PublicIPs.Jumpbox)})
+	table.AddRow([]string{"Router", strconv.Itoa(plan.PublicIPs.Router)})
+	table.AddRow([]string{"CF SSH", strconv.Itoa(plan.PublicIPs.CFSSH)})
+	table.AddRow([]string{"TCP Router", strconv.Itoa(plan.PublicIPs.TCPRouter)})
+}
+
+func (m *Manager) addSecurityGroupsSection(table *ui.Table, plan *bootstrapPlan) {
+	if len(plan.SecurityGroups) == 0 {
+		return
+	}
+
+	table.AddSection("Security Groups")
+
+	for _, sg := range plan.SecurityGroups {
+		table.AddRow([]string{sg.Name, fmt.Sprintf("%d rules", sg.Rules)})
+	}
+
+	// Add detailed rules section
+	m.addSecurityGroupRulesSection(table)
+}
+
+func (m *Manager) addSecurityGroupRulesSection(table *ui.Table) {
+	table.AddSection("Security Group Rules")
+	table.SetHeaders([]string{"Group", "Direction", "Protocol", "Ports", "Remote", "Description"})
+
+	rows := m.buildSecurityGroupRuleRows()
+
+	for _, row := range rows {
+		table.AddRow(row)
+	}
+
+	table.SetHeaders(nil) // Reset headers
+}
+
+func (m *Manager) buildSecurityGroupRuleRows() [][]string {
+	var rows [][]string
+
+	groups := m.defaultSecurityGroupDefs()
+
+	for _, group := range groups {
+		for _, rule := range group.rules {
+			rows = append(rows, m.buildSecurityGroupRuleRow(group.name, rule))
+		}
+	}
+
+	return rows
+}
+
+func (m *Manager) buildSecurityGroupRuleRow(groupName string, rule *cpi.SecurityRule) []string {
+	proto := rule.Protocol
+	ports := m.formatPorts(rule, proto)
+	remote := m.formatRemote(rule.RemoteIPCIDR)
+
+	return []string{groupName, rule.Direction, proto, ports, remote, rule.Description}
+}
+
+func (m *Manager) formatPorts(rule *cpi.SecurityRule, proto string) string {
+	if proto == protocolAll {
+		return protocolAll
+	}
+
+	if rule.PortRangeMin == rule.PortRangeMax {
+		return strconv.Itoa(rule.PortRangeMin)
+	}
+
+	if rule.PortRangeMin == 0 && rule.PortRangeMax == 0 {
+		return protocolAll
+	}
+
+	return fmt.Sprintf("%d-%d", rule.PortRangeMin, rule.PortRangeMax)
+}
+
+func (m *Manager) formatRemote(remote string) string {
+	if remote == "" || remote == "0.0.0.0/0" {
+		return "anywhere"
+	}
+
+	return remote
+}
+
+func (m *Manager) addBucketsSection(table *ui.Table, plan *bootstrapPlan) {
+	if len(plan.Buckets) == 0 {
+		return
+	}
+
+	table.AddSection("Buckets")
+
+	for _, bucket := range plan.Buckets {
+		table.AddRow([]string{bucket, "S3-compatible"})
+	}
+}
+
+func (m *Manager) addVolumesSection(table *ui.Table, plan *bootstrapPlan) {
+	if len(plan.Volumes) == 0 {
+		return
+	}
+
+	table.AddSection("Volumes")
+
+	for _, volume := range plan.Volumes {
+		table.AddRow([]string{
+			volume.Name,
+			fmt.Sprintf("%d GB (%s)", volume.SizeGB, volume.Type),
+		})
+	}
+}
+
+func (m *Manager) addBastionSection(table *ui.Table, plan *bootstrapPlan) {
+	table.AddSection("Bastion")
+	table.AddRow([]string{"Name", plan.Bastion.Name})
+	table.AddRow([]string{"Flavor", plan.Bastion.Flavor})
+	table.AddRow([]string{"Image", plan.Bastion.Image})
+	table.AddRow([]string{"Network", plan.Bastion.Network})
+	table.AddRow([]string{"Subnet", plan.Bastion.Subnet})
+}
+
+func (m *Manager) baseTags() map[string]string {
+	return map[string]string{
+		"managed-by":    "ocfp-cli",
+		"ocfp-bloc":     m.options.BlocName,
+		"ocfp-provider": m.options.Provider,
+		"ocfp-region":   m.options.Region,
+		"created-by":    "bootstrap",
+	}
+}
+
+func (m *Manager) createStackitVirtualSubnets(networkID interface{}) error {
+	cidr := m.resolveNetworkCIDRForSubnets()
+
+	switch {
+	case strings.Contains(m.config.Network.SubnetStrategy, "triple"):
+		return m.createStackitTripleSubnets(cidr, networkID)
+	case strings.Contains(m.config.Network.SubnetStrategy, "single"):
+		return m.createStackitSingleSubnet(cidr, networkID)
+	default:
+		return m.createStackitTripleSubnets(cidr, networkID)
+	}
+}
+
+func (m *Manager) resolveNetworkCIDRForSubnets() string {
+	networkOutput, err := m.stateManager.GetOutput("network_cidr")
+	if err == nil {
+		if cidr, ok := networkOutput.(string); ok && cidr != "" {
+			return cidr
+		}
+	}
+
+	return m.resolveNetworkCIDR()
+}
+
+func (m *Manager) createStackitTripleSubnets(cidr string, networkID interface{}) error {
+	subnets := splitIntoN(cidr, tripleSubnetSplitCount)
+	if len(subnets) != tripleSubnetSplitCount {
+		// Fallback to manual split
+		subnets = m.generateFallbackChildren(cidr)
+	}
+
+	names := []string{"mgmt", "ocf", "services"}
+
+	for i, subnetCIDR := range subnets {
+		name := fmt.Sprintf("%s-%s", m.options.BlocName, names[i])
+
+		err := m.addVirtualSubnetWithDependency(name, subnetCIDR, cidr, networkID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) generateFallbackChildren(cidr string) []string {
+	child1 := firstChild24(cidr)
+	child2 := nextSibling24(child1)
+	child3 := nextSibling24(child2)
+
+	return []string{child1, child2, child3}
+}
+
+func (m *Manager) createStackitSingleSubnet(cidr string, networkID interface{}) error {
+	name := m.options.BlocName + "-subnet"
+
+	return m.addVirtualSubnetWithDependency(name, cidr, cidr, networkID)
+}
+
+func (m *Manager) addVirtualSubnetWithDependency(name, subnetCIDR, parentCIDR string, networkID interface{}) error {
+	err := m.addVirtualSubnetToState(name, subnetCIDR, parentCIDR, networkID)
+	if err != nil {
+		return err
+	}
+
+	m.addSubnetDependency(name)
+
+	return nil
+}
+
+func (m *Manager) createStandardSubnets(ctx context.Context, networkID interface{}) error {
+	netID, err := m.validateNetworkID(networkID)
+	if err != nil {
+		return err
+	}
+
+	subnets := m.resolveSubnetsForCreation()
+
+	for _, subnet := range subnets {
+		err := m.createSingleSubnet(ctx, subnet, netID, networkID)
+		if err != nil {
+			return fmt.Errorf("failed to create subnet %s: %w", subnet.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) resolveSubnetsForCreation() []config.Subnet {
+	if len(m.config.Network.Subnets) > 0 {
+		return m.config.Network.Subnets
+	}
+
+	return m.generateDefaultSubnets()
+}
+
+func (m *Manager) generateDefaultSubnets() []config.Subnet {
+	parent := m.resolveNetworkCIDRForSubnets()
+	mgmtCIDR, ocfCIDR := m.calculateDefaultSubnetCIDRs(parent)
+
+	subnets := []config.Subnet{
+		{
+			Name: m.options.BlocName + "-mgmt",
+			CIDR: mgmtCIDR,
+			Type: "public",
+		},
+		{
+			Name: m.options.BlocName + "-ocf",
+			CIDR: ocfCIDR,
+			Type: "public",
+		},
+	}
+
+	m.saveDefaultSubnetOutputs(parent, mgmtCIDR, ocfCIDR)
+
+	return subnets
+}
+
+func (m *Manager) calculateDefaultSubnetCIDRs(parent string) (string, string) {
+	mgmtCIDR, ocfCIDR := SplitParentIntoTwo(parent)
+	if mgmtCIDR == "" || ocfCIDR == "" {
+		// Fallback to /24 subnets
+		mgmtCIDR = firstChild24(parent)
+		ocfCIDR = nextSibling24(mgmtCIDR)
+	}
+
+	return mgmtCIDR, ocfCIDR
+}
+
+func (m *Manager) saveDefaultSubnetOutputs(parent, mgmtCIDR, ocfCIDR string) {
+	_ = m.stateManager.SetOutput("subnet_parent_cidr", parent)
+	_ = m.stateManager.SetOutput("subnet_mgmt_cidr", mgmtCIDR)
+	_ = m.stateManager.SetOutput("subnet_ocf_cidr", ocfCIDR)
+}
+
+func (m *Manager) validateNetworkID(networkID interface{}) (string, error) {
+	netID, ok := networkID.(string)
+	if !ok || netID == "" {
+		return "", ErrInvalidNetworkID(networkID)
+	}
+
+	return netID, nil
+}
+
+func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, netID string, networkID interface{}) error {
+	subnetName := subnet.Name
+
+	if m.subnetAlreadyExists(subnetName) {
+		logger.Infof("Subnet %s already exists, skipping creation", subnetName)
+
+		return nil
+	}
+
+	createdSubnet, err := m.createSubnetWithProvider(ctx, subnet, subnetName, netID)
+	if err != nil {
+		return err
+	}
+
+	return m.saveSubnetToState(createdSubnet, subnetName, networkID)
+}
+
+func (m *Manager) subnetAlreadyExists(subnetName string) bool {
+	existingSubnet, _ := m.stateManager.GetResource("subnet", subnetName)
+
+	return existingSubnet != nil
+}
+
+func (m *Manager) createSubnetWithProvider(ctx context.Context, subnet config.Subnet, subnetName, netID string) (*cpi.Subnet, error) {
+	netMgr := m.provider.NetworkManager()
+
+	logger.Infof("Creating subnet: name=%s cidr=%s type=%s", subnetName, subnet.CIDR, subnet.Type)
+
+	createdSubnet, err := netMgr.CreateSubnet(ctx, &cpi.SubnetRequest{
+		Name:             subnetName,
+		NetworkID:        netID,
+		CIDR:             subnet.CIDR,
+		Type:             subnet.Type,
+		AvailabilityZone: subnet.AvailabilityZone,
+		Tags:             m.baseTags(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create subnet %s: %w", subnetName, err)
+	}
+
+	return createdSubnet, nil
+}
+
+func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string, networkID interface{}) error {
+	// Save subnet to state
+	err := m.stateManager.AddResource(&state.Resource{
+		ID:       createdSubnet.ID,
+		Type:     "subnet",
+		Name:     subnetName,
+		Provider: m.options.Provider,
+		State:    string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{
+			"cidr":              createdSubnet.CIDR,
+			"availability_zone": createdSubnet.AvailabilityZone,
+			"network_id":        networkID,
+			"type":              createdSubnet.Type,
+		},
+		Tags:      m.baseTags(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save subnet to state: %w", err)
+	}
+
+	m.addSubnetDependency(subnetName)
+	m.saveSubnetOutputs(subnetName, createdSubnet)
+
+	logger.Infof("Subnet created successfully: id=%s name=%s", createdSubnet.ID, subnetName)
+
+	return nil
+}
+
+func (m *Manager) addSubnetDependency(subnetName string) {
+	networkName := m.options.BlocName + "-network"
+	_ = m.stateManager.AddDependency("subnet."+subnetName, "network."+networkName)
+}
+
+func (m *Manager) saveSubnetOutputs(subnetName string, createdSubnet *cpi.Subnet) {
+	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_id", subnetName), createdSubnet.ID)
+	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_cidr", subnetName), createdSubnet.CIDR)
+
+	if createdSubnet.AvailabilityZone != "" {
+		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_az", subnetName), createdSubnet.AvailabilityZone)
+	}
+}
+
+func (m *Manager) createSecurityGroups(ctx context.Context) error {
+	netMgr := m.provider.NetworkManager()
+	groups := m.defaultSecurityGroupDefs()
+
+	logger.Infof("Creating %d security groups", len(groups))
+
+	for _, group := range groups {
+		groupName := fmt.Sprintf("%s-%s", m.options.BlocName, group.name)
+
+		// Check if already exists
+		if existingSG, _ := m.stateManager.GetResource("security_group", groupName); existingSG != nil {
+			logger.Infof("Security group %s already exists, skipping creation", groupName)
+
+			continue
+		}
+
+		logger.Infof("Creating security group: name=%s rules=%d", groupName, len(group.rules))
+
+		securityGroup, err := netMgr.CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
+			Name:        groupName,
+			Description: group.description,
+			Rules:       group.rules,
+			Tags:        m.baseTags(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create security group %s: %w", groupName, err)
+		}
+
+		// Save to state
+		err = m.stateManager.AddResource(&state.Resource{
+			ID:         securityGroup.ID,
+			Type:       "security_group",
+			Name:       groupName,
+			Provider:   m.options.Provider,
+			State:      string(cpi.ResourceStateActive),
+			Properties: map[string]interface{}{"rules": len(group.rules)},
+			Tags:       m.baseTags(),
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to save security group to state: %w", err)
+		}
+
+		// Set output
+		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", group.name), securityGroup.ID)
+
+		logger.Infof("Security group created successfully: id=%s name=%s", securityGroup.ID, groupName)
+	}
+
+	return nil
+}
+
+func (m *Manager) createPublicIPs(ctx context.Context) error {
+	if !m.supportsPublicIPs() {
+		logger.Infof("Provider %s does not support public IPs, skipping creation", m.options.Provider)
+
+		return nil
+	}
+
+	netMgr := m.provider.NetworkManager()
+	stackitProvider, isStackit := m.getStackitProvider(netMgr)
+
+	var allIPs []*cpi.PublicIP
+
+	if isStackit {
+		allIPs = m.createAllPublicIPs(ctx, netMgr, stackitProvider)
+	} else {
+		allIPs = m.createOpsPublicIPs(ctx, netMgr)
+	}
+
+	if len(allIPs) > 0 {
+		m.renderPublicIPsSummary(allIPs)
+	}
+
+	return nil
+}
+
+func (m *Manager) supportsPublicIPs() bool {
+	return m.provider.NetworkManager() != nil
+}
+
+type stackitEnsure interface {
+	EnsureFloatingIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error)
+}
+
+type bucketVersioner interface {
+	SetBucketVersioning(ctx context.Context, bucketName string, enabled bool) error
+}
+
+type bucketLifecycler interface {
+	SetBucketLifecycle(ctx context.Context, bucketName string, noncurrentDays int) error
+}
+
+type bastionSubnetInfo struct {
+	ID   string
+	CIDR string
+	Name string
+}
+
+//nolint:ireturn // Required for interface type switching
+func (m *Manager) getStackitProvider(netMgr cpi.NetworkManager) (stackitEnsure, bool) {
+	if m.options.Provider != "stackit" {
+		return nil, false
+	}
+
+	// Type assertion to check if it supports EnsureFloatingIP
+	if se, ok := netMgr.(stackitEnsure); ok {
+		return se, true
+	}
+
+	return nil, false
+}
+
+func (m *Manager) createAllPublicIPs(ctx context.Context, netMgr cpi.NetworkManager, stackitProvider stackitEnsure) []*cpi.PublicIP {
+	var allIPs []*cpi.PublicIP
+
+	// Create ops public IPs
+	allIPs = append(allIPs, m.createOpsPublicIPs(ctx, netMgr)...)
+
+	// Create jumpbox public IPs
+	allIPs = append(allIPs, m.createJumpboxPublicIPs(ctx, stackitProvider)...)
+
+	// Create router public IPs
+	allIPs = append(allIPs, m.createRouterPublicIPs(ctx, netMgr)...)
+
+	// Create CF SSH public IPs
+	allIPs = append(allIPs, m.createCFSSHPublicIPs(ctx, netMgr)...)
+
+	// Create TCP router public IPs
+	allIPs = append(allIPs, m.createTCPRouterPublicIPs(ctx, netMgr)...)
+
+	return allIPs
+}
+
+func (m *Manager) createOpsPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Ops, 1)
+
+	return m.ensureAndRecordPublicIPs(
+		ctx, netMgr, "ops", count,
+		"ops-%d", map[string]string{
+			"job": "ops",
+		},
+	)
+}
+
+func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider stackitEnsure) []*cpi.PublicIP {
+	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Jumpbox, defaultJumpboxCount)
+
+	ips := make([]*cpi.PublicIP, 0, count)
+
+	for i := range count {
+		name := fmt.Sprintf("%s-jumpbox-%d", m.options.BlocName, i)
+		labels := map[string]string{"job": "jumpbox", "index": strconv.Itoa(i)}
+
+		publicIP, err := stackitProvider.EnsureFloatingIP(ctx, &cpi.PublicIPRequest{
+			Name:   name,
+			Labels: labels,
+			Tags:   m.baseTags(),
+		})
+		if err != nil {
+			logger.Errorf("Failed to create jumpbox public IP %s: %v", name, err)
+
+			continue
+		}
+
+		ips = append(ips, publicIP)
+	}
+
+	m.savePublicIPsToState(ips, "jumpbox", "jumpbox-%d")
+
+	return ips
+}
+
+func (m *Manager) createRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Router, defaultRouterCount)
+
+	return m.ensureAndRecordPublicIPs(
+		ctx, netMgr, "router", count,
+		"router-%d", map[string]string{
+			"job": "router",
+		},
+	)
+}
+
+func (m *Manager) createCFSSHPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.CFSSH, 1)
+
+	return m.ensureAndRecordPublicIPs(
+		ctx, netMgr, "cf-ssh", count,
+		"cf-ssh-%d", map[string]string{
+			"job": "cf-ssh",
+		},
+	)
+}
+
+func (m *Manager) createTCPRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.TCPRouter, defaultTCPRouterCount)
+
+	return m.ensureAndRecordPublicIPs(
+		ctx, netMgr, "tcp-router", count,
+		"tcp-router-%d", map[string]string{
+			"job": "tcp-router",
+		},
+	)
+}
+
+func (m *Manager) getPublicIPCountWithDefault(configured, defaultCount int) int {
+	if configured > 0 {
+		return configured
+	}
+
+	return defaultCount
+}
+
+func (m *Manager) savePublicIPsToState(ips []*cpi.PublicIP, job, nameFormat string) {
+	for index, publicIP := range ips {
+		name := fmt.Sprintf("%s-%s", m.options.BlocName, fmt.Sprintf(nameFormat, index))
+
+		err := m.stateManager.AddResource(&state.Resource{
+			ID:         publicIP.ID,
+			Type:       "public_ip",
+			Name:       name,
+			Provider:   m.options.Provider,
+			State:      string(cpi.ResourceStateActive),
+			Properties: map[string]interface{}{"ip_address": publicIP.IPAddress},
+			Tags:       m.baseTags(),
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		})
+		if err != nil {
+			logger.Errorf("Failed to save public IP to state: %v", err)
+		}
+
+		// Set outputs
+		_ = m.stateManager.SetOutput(fmt.Sprintf("%s_public_ip_%d", job, index), publicIP.IPAddress)
+		_ = m.stateManager.SetOutput(fmt.Sprintf("%s_public_ip_%d_id", job, index), publicIP.ID)
+	}
+}
+
+func (m *Manager) renderPublicIPsSummary(allIPs []*cpi.PublicIP) {
+	logger.Infof("Created %d public IP(s)", len(allIPs))
+	renderPublicIPsTable(allIPs)
+}
+
+func (m *Manager) ensureAndRecordPublicIPs(
+	ctx context.Context,
+	netMgr cpi.NetworkManager,
+	job string,
+	count int,
+	nameFormat string,
+	baseLabels map[string]string,
+) []*cpi.PublicIP {
+	ips := make([]*cpi.PublicIP, 0, count)
+
+	for index := range count {
+		name := fmt.Sprintf("%s-%s", m.options.BlocName, fmt.Sprintf(nameFormat, index))
+
+		// Check if already exists
+		if existingIP, _ := m.stateManager.GetResource("public_ip", name); existingIP != nil {
+			logger.Infof("Public IP %s already exists, skipping creation", name)
+
+			continue
+		}
+
+		labels := make(map[string]string)
+		for k, v := range baseLabels {
+			labels[k] = v
+		}
+
+		labels["index"] = strconv.Itoa(index)
+
+		publicIP, err := netMgr.CreatePublicIP(ctx, &cpi.PublicIPRequest{
+			Name:   name,
+			Labels: labels,
+			Tags:   m.baseTags(),
+		})
+		if err != nil {
+			logger.Errorf("Failed to create public IP %s: %v", name, err)
+
+			continue
+		}
+
+		ips = append(ips, publicIP)
+
+		logger.Infof("Public IP created successfully: id=%s address=%s", publicIP.ID, publicIP.IPAddress)
+	}
+
+	m.savePublicIPsToState(ips, job, nameFormat)
+
+	return ips
+}
+
+func (m *Manager) createKeyPair(ctx context.Context) error {
+	keypairName := m.options.BlocName + "-keypair"
+
+	// Check if keypair already exists
+	if existingKeypair, _ := m.stateManager.GetResource("keypair", keypairName); existingKeypair != nil {
+		logger.Infof("Keypair %s already exists, skipping creation", keypairName)
+
+		return nil
+	}
+
+	return m.createNewKeyPair(ctx, keypairName)
+}
+
+func (m *Manager) createNewKeyPair(ctx context.Context, keypairName string) error {
+	computeMgr := m.provider.ComputeManager()
+
+	logger.Infof("Creating keypair: name=%s", keypairName)
+
+	keypair, err := computeMgr.CreateKeyPair(ctx, &cpi.KeyPairRequest{
+		Name: keypairName,
+		Tags: m.baseTags(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create keypair: %w", err)
+	}
+
+	// Save private key to file
+	err = m.savePrivateKey(keypair.PrivateKey)
+	if err != nil {
+		return fmt.Errorf("failed to save private key: %w", err)
+	}
+
+	// Save keypair to state
+	err = m.stateManager.AddResource(&state.Resource{
+		ID:       keypair.ID,
+		Type:     "keypair",
+		Name:     keypairName,
+		Provider: m.options.Provider,
+		State:    string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{
+			"public_key":  keypair.PublicKey,
+			"fingerprint": keypair.Fingerprint,
+		},
+		Tags:      m.baseTags(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save keypair to state: %w", err)
+	}
+
+	// Set outputs
+	_ = m.stateManager.SetOutput("keypair_name", keypairName)
+	_ = m.stateManager.SetOutput("keypair_id", keypair.ID)
+	_ = m.stateManager.SetOutput("keypair_public_key", keypair.PublicKey)
+	_ = m.stateManager.SetOutput("keypair_fingerprint", keypair.Fingerprint)
+
+	logger.Infof("Keypair created successfully: id=%s", keypair.ID)
+
+	return nil
+}
+
+func (m *Manager) savePrivateKey(privateKey string) error {
+	keyDir := filepath.Join(os.Getenv("HOME"), ".ssh", "ocfp", m.options.BlocName)
+	keyFile := filepath.Join(keyDir, "id_rsa")
+
+	// Create directory if it doesn't exist
+	err := os.MkdirAll(keyDir, sshKeyDirMode)
+	if err != nil {
+		return fmt.Errorf("failed to create SSH key directory: %w", err)
+	}
+
+	// Write private key
+	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode)
+	if err != nil {
+		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	logger.Infof("Private key saved to: %s", keyFile)
+
+	return nil
+}
+
+func (m *Manager) createVolumes(ctx context.Context) error {
+	computeMgr := m.provider.ComputeManager()
+
+	volumes := []struct {
+		name   string
+		sizeGB int
+		vType  string
+	}{
+		{m.options.BlocName + "-bastion-root", bastionRootDiskSize, "gp3"},
+		{m.options.BlocName + "-bastion-data", bastionDataDiskSize, "gp3"},
+	}
+
+	logger.Infof("Creating %d volumes", len(volumes))
+
+	for _, vol := range volumes {
+		// Check if volume already exists
+		if existingVol, _ := m.stateManager.GetResource("volume", vol.name); existingVol != nil {
+			logger.Infof("Volume %s already exists, skipping creation", vol.name)
+
+			continue
+		}
+
+		logger.Infof("Creating volume: name=%s size=%dGB type=%s", vol.name, vol.sizeGB, vol.vType)
+
+		volume, err := computeMgr.CreateVolume(ctx, &cpi.VolumeRequest{
+			Name:       vol.name,
+			SizeGB:     vol.sizeGB,
+			VolumeType: vol.vType,
+			Tags:       m.baseTags(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create volume %s: %w", vol.name, err)
+		}
+
+		// Save volume to state
+		err = m.stateManager.AddResource(&state.Resource{
+			ID:       volume.ID,
+			Type:     "volume",
+			Name:     vol.name,
+			Provider: m.options.Provider,
+			State:    string(cpi.ResourceStateActive),
+			Properties: map[string]interface{}{
+				"size_gb":     vol.sizeGB,
+				"volume_type": vol.vType,
+			},
+			Tags:      m.baseTags(),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to save volume to state: %w", err)
+		}
+
+		logger.Infof("Volume created successfully: id=%s name=%s", volume.ID, vol.name)
+	}
+
+	return nil
+}
+
+func (m *Manager) bastionAlreadyExists(bastionName string) bool {
+	existingBastion, _ := m.stateManager.GetResource("instance", bastionName)
+
+	return existingBastion != nil
+}
+
+func (m *Manager) resolveBastionNetworking() (string, *bastionSubnetInfo, error) {
+	// Get network ID from outputs
+	networkOutput, err := m.stateManager.GetOutput("network_id")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to get network ID: %w", err)
+	}
+
+	networkID, ok := networkOutput.(string)
+	if !ok || networkID == "" {
+		return "", nil, ErrInvalidNetworkID(networkOutput)
+	}
+
+	// Try to find bastion subnet
+	subnetInfo, err := m.findBastionSubnet()
+	if err != nil {
+		logger.Warnf("Failed to find bastion subnet: %v", err)
+
+		// Try fallback subnet
+		subnetInfo, err = m.findFallbackSubnet()
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to find any suitable subnet for bastion: %w", err)
+		}
+
+		logger.Infof("Using fallback subnet for bastion: %s", subnetInfo.Name)
+	}
+
+	return networkID, subnetInfo, nil
+}
+
+func (m *Manager) findBastionSubnet() (*bastionSubnetInfo, error) {
+	// Look for management subnet first
+	bastionSubnet := m.options.BlocName + "-mgmt"
+
+	if subnet, _ := m.stateManager.GetResource("subnet", bastionSubnet); subnet != nil {
+		cidr, ok := subnet.Properties["cidr"].(string)
+		if !ok {
+			return nil, ErrInvalidCIDRTypeForSubnet(bastionSubnet)
+		}
+
+		return &bastionSubnetInfo{
+			ID:   subnet.ID,
+			CIDR: cidr,
+			Name: bastionSubnet,
+		}, nil
+	}
+
+	return nil, ErrBastionSubnetNotFound(bastionSubnet)
+}
+
+func (m *Manager) findFallbackSubnet() (*bastionSubnetInfo, error) {
+	// Get all subnets from state
+	resources, err := m.stateManager.GetResourcesByType("subnet")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subnets from state: %w", err)
+	}
+
+	// Find first subnet belonging to this bloc
+	for _, resource := range resources {
+		if strings.HasPrefix(resource.Name, m.options.BlocName+"-") {
+			m.saveFallbackAsManagementSubnet(resource.ID)
+
+			cidr, ok := resource.Properties["cidr"].(string)
+			if !ok {
+				return nil, ErrInvalidCIDRTypeForResource(resource.Name)
+			}
+
+			return &bastionSubnetInfo{
+				ID:   resource.ID,
+				CIDR: cidr,
+				Name: resource.Name,
+			}, nil
+		}
+	}
+
+	return nil, ErrNoSuitableSubnetFoundForBastion
+}
+
+func (m *Manager) saveFallbackAsManagementSubnet(subnetID string) {
+	_ = m.stateManager.SetOutput("mgmt_subnet_id", subnetID)
+}
+
+func (m *Manager) getBastionSecurityGroup() (string, error) {
+	sgName := m.options.BlocName + "-bastion"
+
+	if sg, _ := m.stateManager.GetResource("security_group", sgName); sg != nil {
+		return sg.ID, nil
+	}
+
+	return "", ErrBastionSecurityGroupNotFound(sgName)
+}
+
+func (m *Manager) createBastionInstance(ctx context.Context, bastionName, subnetID, sgID string) (*cpi.Instance, error) {
+	computeMgr := m.provider.ComputeManager()
+	userData := generateBastionUserData(m.config)
+
+	logger.Infof("Creating bastion instance: name=%s flavor=%s image=%s", bastionName, m.config.Bastion.Flavor, m.config.Bastion.Image)
+
+	instance, err := computeMgr.CreateInstance(ctx, &cpi.InstanceRequest{
+		Name:             bastionName,
+		Flavor:           m.config.Bastion.Flavor,
+		Image:            m.config.Bastion.Image,
+		KeyPairName:      m.options.BlocName + "-keypair",
+		SubnetID:         subnetID,
+		SecurityGroupIDs: []string{sgID},
+		UserData:         userData,
+		Tags:             m.baseTags(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bastion instance %s: %w", bastionName, err)
+	}
+
+	return instance, nil
+}
+
+func (m *Manager) saveBastionToState(instance *cpi.Instance, bastionName string) error {
+	err := m.stateManager.AddResource(&state.Resource{
+		ID:       instance.ID,
+		Type:     "instance",
+		Name:     bastionName,
+		Provider: m.options.Provider,
+		State:    string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{
+			"flavor":          instance.Flavor,
+			"image":           instance.Image,
+			"private_ip":      instance.PrivateIP,
+			"public_ip":       instance.PublicIP,
+			"keypair":         instance.KeyPairName,
+			"subnet_id":       instance.SubnetID,
+			"security_groups": instance.SecurityGroupIDs,
+		},
+		Tags:      m.baseTags(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save bastion to state: %w", err)
+	}
+
+	// Add dependencies
+	subnetName := m.getDefaultSubnetName()
+	m.addBastionDependencies(bastionName, subnetName)
+
+	// Save outputs
+	m.saveBastionOutputs(instance)
+
+	return nil
+}
+
+func (m *Manager) addBastionDependencies(bastionName, subnetName string) {
+	_ = m.stateManager.AddDependency("instance."+bastionName, "subnet."+subnetName)
+	_ = m.stateManager.AddDependency("instance."+bastionName, "security_group."+m.options.BlocName+"-bastion")
+	_ = m.stateManager.AddDependency("instance."+bastionName, "keypair."+m.options.BlocName+"-keypair")
+}
+
+func (m *Manager) getDefaultSubnetName() string {
+	return m.options.BlocName + "-mgmt"
+}
+
+func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
+	_ = m.stateManager.SetOutput("bastion_id", instance.ID)
+	_ = m.stateManager.SetOutput("bastion_private_ip", instance.PrivateIP)
+
+	if instance.PublicIP != "" {
+		_ = m.stateManager.SetOutput("bastion_public_ip", instance.PublicIP)
+	}
+
+	_ = m.stateManager.SetOutput("bastion_flavor", instance.Flavor)
+	_ = m.stateManager.SetOutput("bastion_image", instance.Image)
+
+	// SSH connection info
+	if instance.PublicIP != "" {
+		sshCommand := fmt.Sprintf("ssh -i ~/.ssh/ocfp/%s/id_rsa ubuntu@%s", m.options.BlocName, instance.PublicIP)
+		_ = m.stateManager.SetOutput("bastion_ssh_command", sshCommand)
+	}
+}
+
+func (m *Manager) getRequiredBucketNames() []string {
+	buckets := []string{
+		m.options.BlocName + "-cf-buildpacks",
+		m.options.BlocName + "-cf-droplets",
+		m.options.BlocName + "-cf-packages",
+		m.options.BlocName + "-bosh-blobstore",
+	}
+
+	// Add any additional configured buckets
+	for _, bucket := range m.config.Buckets {
+		buckets = append(buckets, bucket.Name)
+	}
+
+	return buckets
+}
+
+func (m *Manager) getExistingBuckets(ctx context.Context, storage cpi.StorageManager) map[string]bool {
+	existing := make(map[string]bool)
+
+	buckets, err := storage.ListBuckets(ctx)
+	if err != nil {
+		logger.Warnf("Failed to list existing buckets: %v", err)
+
+		return existing
+	}
+
+	for _, bucket := range buckets {
+		existing[bucket.Name] = true
+	}
+
+	return existing
+}
+
+func (m *Manager) ensureCredentialsGroup(ctx context.Context, storage cpi.StorageManager) {
+	// Skip if provider doesn't need credential groups
+	if m.options.Provider != "stackit" {
+		return
+	}
+
+	credentialsGroupName := m.options.BlocName + "-credentials"
+
+	if existingGroup, _ := m.stateManager.GetResource("credentials_group", credentialsGroupName); existingGroup != nil {
+		logger.Infof("Credentials group %s already exists", credentialsGroupName)
+
+		return
+	}
+
+	logger.Infof("Creating credentials group: %s", credentialsGroupName)
+
+	// Create credentials group using storage interface
+	credentialsGroup, err := storage.CreateCredentialsGroup(ctx, &cpi.CredentialsGroupRequest{
+		Name: credentialsGroupName,
+		Tags: m.baseTags(),
+	})
+	if err != nil {
+		logger.Errorf("Failed to create credentials group: %v", err)
+
+		return
+	}
+
+	// Save to state
+	err = m.stateManager.AddResource(&state.Resource{
+		ID:         credentialsGroup.ID,
+		Type:       "credentials_group",
+		Name:       credentialsGroupName,
+		Provider:   m.options.Provider,
+		State:      string(cpi.ResourceStateActive),
+		Properties: make(map[string]interface{}),
+		Tags:       m.baseTags(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		logger.Errorf("Failed to save credentials group to state: %v", err)
+	}
+
+	logger.Infof("Credentials group created successfully: %s", credentialsGroup.ID)
+}
+
+func (m *Manager) processBucket(ctx context.Context, storage cpi.StorageManager, name string, existing map[string]bool) error {
+	if existing[name] {
+		logger.Infof("Bucket %s already exists, configuring policies", name)
+		m.configureBucketPolicies(ctx, storage, name)
+
+		return nil
+	}
+
+	// Create new bucket
+	err := m.createBucket(ctx, storage, name)
+	if err != nil {
+		return err
+	}
+
+	// Configure policies for new bucket
+	m.configureBucketPolicies(ctx, storage, name)
+
+	return nil
+}
+
+func (m *Manager) createBucket(ctx context.Context, storage cpi.StorageManager, name string) error {
+	logger.Infof("Creating bucket: %s", name)
+
+	bucket, err := storage.CreateBucket(ctx, &cpi.BucketRequest{
+		Name: name,
+		Tags: m.baseTags(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create bucket: %w", err)
+	}
+
+	// Save bucket to state
+	err = m.stateManager.AddResource(&state.Resource{
+		ID:         bucket.ID,
+		Type:       "bucket",
+		Name:       name,
+		Provider:   m.options.Provider,
+		State:      string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{"region": bucket.Region},
+		Tags:       m.baseTags(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save bucket to state: %w", err)
+	}
+
+	// Set output
+	_ = m.stateManager.SetOutput(fmt.Sprintf("bucket_%s_name", strings.ReplaceAll(name, "-", "_")), name)
+
+	logger.Infof("Bucket created successfully: %s", name)
+
+	return nil
+}
+
+func (m *Manager) configureBucketPolicies(ctx context.Context, storage cpi.StorageManager, name string) {
+	if !m.shouldEnablePolicies() {
+		return
+	}
+
+	versionProvider, lifecycleProvider := m.getBucketPolicyProviders(storage)
+	if versionProvider == nil || lifecycleProvider == nil {
+		logger.Warnf("Provider does not support bucket policies for %s", name)
+
+		return
+	}
+
+	m.configureBucketByType(ctx, name, versionProvider, lifecycleProvider)
+}
+
+func (m *Manager) shouldEnablePolicies() bool {
+	return len(m.config.Buckets) > 0
+}
+
+//nolint:ireturn // Required for interface type switching
+func (m *Manager) getBucketPolicyProviders(storage cpi.StorageManager) (bucketVersioner, bucketLifecycler) {
+	if versioner, ok := storage.(bucketVersioner); ok {
+		if lifecycler, ok := storage.(bucketLifecycler); ok {
+			return versioner, lifecycler
+		}
+	}
+
+	return nil, nil
+}
+
+func (m *Manager) configureBucketByType(ctx context.Context, name string, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	switch {
+	case strings.Contains(name, "cf-buildpacks"):
+		m.configureCFBuildpacksBucket(ctx, name, versionProvider, lifecycleProvider)
+	case strings.Contains(name, "cf-droplets"):
+		m.configureCFDropletsBucket(ctx, name, versionProvider, lifecycleProvider)
+	case strings.Contains(name, "cf-packages"):
+		m.configureCFAppPackagesBucket(ctx, name, versionProvider, lifecycleProvider)
+	case strings.Contains(name, "bosh-blobstore"):
+		m.configureBoshBlobstoreBucket(ctx, name, versionProvider, lifecycleProvider)
+	default:
+		logger.Infof("No specific policy configuration for bucket: %s", name)
+	}
+}
+
+func (m *Manager) configureCFBuildpacksBucket(ctx context.Context, name string, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	m.applyBucketSettings(ctx, name, false, buildpacksRetentionDays, versionProvider, lifecycleProvider)
+}
+
+func (m *Manager) configureCFDropletsBucket(ctx context.Context, name string, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	m.applyBucketSettings(ctx, name, true, dropletsRetentionDays, versionProvider, lifecycleProvider)
+}
+
+func (m *Manager) configureCFAppPackagesBucket(ctx context.Context, name string, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	m.applyBucketSettings(ctx, name, true, packagesRetentionDays, versionProvider, lifecycleProvider)
+}
+
+func (m *Manager) configureBoshBlobstoreBucket(ctx context.Context, name string, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	m.applyBucketSettings(ctx, name, true, blobstoreRetentionDays, versionProvider, lifecycleProvider)
+}
+
+func (m *Manager) applyBucketSettings(ctx context.Context, name string, versioning bool, noncurrentDays int, versionProvider bucketVersioner, lifecycleProvider bucketLifecycler) {
+	if versioning {
+		err := versionProvider.SetBucketVersioning(ctx, name, versioning)
+		if err != nil {
+			logger.Warnf("Failed to configure versioning for %s: %v", name, err)
+		} else {
+			logger.Infof("Configured versioning for %s: %t", name, versioning)
+		}
+	}
+
+	if m.isValidNoncurrentDays(noncurrentDays) {
+		err := lifecycleProvider.SetBucketLifecycle(ctx, name, noncurrentDays)
+		if err != nil {
+			logger.Warnf("Failed to configure lifecycle for %s: %v", name, err)
+		} else {
+			logger.Infof("Configured lifecycle for %s: %d days", name, noncurrentDays)
+		}
+	}
+
+	m.updateBucketResourceProperties(name, versioning, noncurrentDays)
+}
+
+func (m *Manager) isValidNoncurrentDays(days int) bool {
+	return days > 0 && days <= 365
+}
+
+func (m *Manager) updateBucketResourceProperties(name string, versioning bool, noncurrentDays int) {
+	if resource, _ := m.stateManager.GetResource("bucket", name); resource != nil {
+		if resource.Properties == nil {
+			resource.Properties = make(map[string]interface{})
+		}
+
+		resource.Properties["versioning"] = versioning
+
+		if noncurrentDays > 0 {
+			resource.Properties["lifecycle_noncurrent_days"] = noncurrentDays
+		}
+
+		_ = m.stateManager.UpdateResource(resource)
+	}
+}
+
+func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
+	return []securityGroupDef{
+		m.bastionSecurityGroupDef(),
+		m.infraSecurityGroupDef(),
+		m.ocfpSecurityGroupDef(),
+		m.lbExtSecurityGroupDef(),
+		m.cfRouterSecurityGroupDef(),
+		m.cfTCPRouterSecurityGroupDef(),
+		m.cfSSHSecurityGroupDef(),
+	}
+}
+
+func (m *Manager) bastionSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "bastion",
+		description: "Security group for bastion host",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: sshPort, PortRangeMax: sshPort, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) infraSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "infra",
+		description: "Security group for STACKIT infrastructure",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: sshPort, PortRangeMax: sshPort, Description: "SSH"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpPort, PortRangeMax: httpPort, Description: "HTTP"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsPort, PortRangeMax: httpsPort, Description: "HTTPS"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpAltPort, PortRangeMax: httpAltPort, Description: "HTTP-ALT"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsAltPort, PortRangeMax: httpsAltPort, Description: "HTTPS-ALT"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) ocfpSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "ocfp",
+		description: "Security group for OCFP services",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: sshPort, PortRangeMax: sshPort, Description: "SSH"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpPort, PortRangeMax: httpPort, Description: "HTTP"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsPort, PortRangeMax: httpsPort, Description: "HTTPS"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: boshPort, PortRangeMax: boshPort, Description: "BOSH Director"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: boshAgentPort, PortRangeMax: boshAgentPort, Description: "BOSH Agent"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) lbExtSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "lb-ext",
+		description: "Security group for external load balancers",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsPort, PortRangeMax: httpsPort, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTPS external"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) cfRouterSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "ocf-cf-router-ingress",
+		description: "Security group for Cloud Foundry router ingress",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpPort, PortRangeMax: httpPort, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTP"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsPort, PortRangeMax: httpsPort, RemoteIPCIDR: "0.0.0.0/0", Description: "CF Router HTTPS"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: cfSSHPort, PortRangeMax: cfSSHPort, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) cfTCPRouterSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "ocf-cf-tcp-router-ingress",
+		description: "Security group for Cloud Foundry TCP router ingress",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: tcpRouterMin, PortRangeMax: tcpRouterMax, RemoteIPCIDR: "0.0.0.0/0", Description: "CF TCP Router"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+func (m *Manager) cfSSHSecurityGroupDef() securityGroupDef {
+	return securityGroupDef{
+		name:        "ocf-cf-ssh-ingress",
+		description: "Security group for Cloud Foundry SSH proxy ingress",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: cfSSHPort, PortRangeMax: cfSSHPort, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH Proxy"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
 func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID interface{}) error {
 	// Skip if already present
 	if existingSubnet, _ := m.stateManager.GetResource("subnet", name); existingSubnet != nil {
 		logger.Infof("Virtual subnet %s already recorded, skipping", name)
+
 		return nil
 	}
 
@@ -1813,7 +2252,8 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		"gateway":     cidrGatewayIP(parentCIDR),
 		"parent_cidr": parentCIDR,
 	}
-	if err := m.stateManager.AddResource(&state.Resource{
+
+	err := m.stateManager.AddResource(&state.Resource{
 		ID:         "virtual:" + name,
 		Type:       "subnet",
 		Name:       name,
@@ -1824,9 +2264,13 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 			t := m.baseTags()
 			t["subnet-kind"] = "virtual"
 			t["role"] = "ocfp"
+
 			return t
 		}(),
-	}); err != nil {
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+	if err != nil {
 		return fmt.Errorf("failed to save virtual subnet to state: %w", err)
 	}
 	// Outputs
@@ -1836,13 +2280,12 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_ip_n", name), props["ip_n"])
 	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_gateway", name), props["gateway"])
 	// Reserved IP role assignments (STACKIT parity)
-	m.addReservedIPOutputs(name, subnetCIDR, parentCIDR)
+	m.addReservedIPOutputs(name, subnetCIDR)
 
 	return nil
 }
 
-// addReservedIPOutputs mirrors Perl reserved-ips mapping for STACKIT mgmt env.
-func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, parentCIDR string) {
+func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
 	// Determine ocfp subnet index from name suffix
 	idx := -1
 
@@ -1851,13 +2294,14 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, parentCID
 		var result int
 
 		for j := i + 1; j < len(name); j++ {
-			ch := name[j]
-			if ch < '0' || ch > '9' {
+			character := name[j]
+			if character < '0' || character > '9' {
 				result = -1
+
 				break
 			}
 
-			result = result*10 + int(ch-'0')
+			result = result*decimalBase + int(character-'0')
 		}
 
 		if result >= 0 {
@@ -1880,34 +2324,34 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, parentCID
 
 	// Single-IP assignments for mgmt
 	// All ocfp subnets
-	set("vault_ip", ipAt(5))
-	set("jumpbox_ip", ipAt(6))
-	set("concourse_ip", ipAt(7))
-	set("prometheus_ip", ipAt(8))
+	set("vault_ip", ipAt(vaultIPSlot))
+	set("jumpbox_ip", ipAt(jumpboxIPSlot))
+	set("concourse_ip", ipAt(concourseIPSlot))
+	set("prometheus_ip", ipAt(prometheusIPSlot))
 
 	// Conditional per-subnet
 	if idx == 0 {
-		set("bastion_ip", ipAt(3))
-		set("bosh_ip", ipAt(4))
-		set("shield_ip", ipAt(9))
-		set("blacksmith_ip", ipAt(10))
+		set("bastion_ip", ipAt(bastionIPSlot))
+		set("bosh_ip", ipAt(boshIPSlot))
+		set("shield_ip", ipAt(shieldIPSlot))
+		set("blacksmith_ip", ipAt(blacksmithIPSlot))
 	}
 
 	if idx == 1 {
-		set("doomsday_ip", ipAt(9))
+		set("doomsday_ip", ipAt(doomsdayIPSlot))
 	}
 
-	if idx == 2 {
-		set("ocfp_ui_ip", ipAt(9))
+	if idx == ocfpUIProviderIndex {
+		set("ocfp_ui_ip", ipAt(ocfpUIIPSlot))
 	}
 
 	// Available range: 11-29
-	set("available_a", ipAt(11))
-	set("available_b", ipAt(29))
+	set("available_a", ipAt(availableAIPSlot))
+	set("available_b", ipAt(availableBIPSlot))
 	// Reserved ranges: 0-10, 30->
 	set("reserved_a", ipAt(0))
-	set("reserved_b", ipAt(10))
-	set("reserved_c", ipAt(30))
+	set("reserved_b", ipAt(reservedBIPSlot))
+	set("reserved_c", ipAt(reservedCIPSlot))
 	// reserved_d end of subnet (use last usable as approximation)
 	set("reserved_d", uint32ToIP(last).String())
 }

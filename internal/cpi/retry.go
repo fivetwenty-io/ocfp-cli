@@ -12,6 +12,31 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// Default retry configuration.
+	DefaultMaxAttempts     = 3
+	DefaultInitialDelaySec = 2
+	DefaultMaxDelaySec     = 30
+	DefaultMultiplier      = 2.0
+	DefaultRandomizeFactor = 0.1
+
+	// Exponential backoff configuration.
+	DefaultInitialIntervalMS = 500
+	DefaultMaxIntervalSec    = 60
+	ExponentialMultiplier    = 1.5
+	DefaultMaxElapsedMin     = 15
+
+	// Jitter calculation.
+	JitterDivisor = 2
+	JitterQuarter = 4
+
+	// Conflict retry configuration.
+	ConflictInitialIntervalMS = 100
+	ConflictMaxIntervalSec    = 3
+	ConflictMultiplier        = 2.0
+	ConflictMaxElapsedSec     = 30
+)
+
 // RetryConfig configures retry behavior.
 type RetryConfig struct {
 	MaxAttempts     int
@@ -25,11 +50,11 @@ type RetryConfig struct {
 // DefaultRetryConfig returns the default retry configuration.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
-		MaxAttempts:     3,
-		InitialDelay:    2 * time.Second,
-		MaxDelay:        30 * time.Second,
-		Multiplier:      2.0,
-		RandomizeFactor: 0.1,
+		MaxAttempts:     DefaultMaxAttempts,
+		InitialDelay:    DefaultInitialDelaySec * time.Second,
+		MaxDelay:        DefaultMaxDelaySec * time.Second,
+		Multiplier:      DefaultMultiplier,
+		RandomizeFactor: DefaultRandomizeFactor,
 		RetryableErrors: []string{
 			"Timeout",
 			"ServiceUnavailable",
@@ -57,7 +82,7 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFun
 		// Check context before attempting
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("operation cancelled: %w", ctx.Err())
 		default:
 		}
 
@@ -95,7 +120,7 @@ func WithRetry(ctx context.Context, cfg *RetryConfig, retryableFunc RetryableFun
 		case <-ctx.Done():
 			timer.Stop()
 
-			return ctx.Err()
+			return fmt.Errorf("operation cancelled during retry: %w", ctx.Err())
 		case <-timer.C:
 		}
 
@@ -116,7 +141,12 @@ func isRetryable(err error, retryableErrors []string) bool {
 	}
 
 	// Check if it's a provider error
-	perr := &ProviderError{}
+	perr := &ProviderError{
+		Provider: "",
+		Code:     "",
+		Message:  "",
+		Details:  nil,
+	}
 	if errors.As(err, &perr) {
 		for _, code := range retryableErrors {
 			if perr.Code == code {
@@ -183,17 +213,13 @@ type ExponentialBackoff struct {
 // NewExponentialBackoff creates a new exponential backoff.
 func NewExponentialBackoff() *ExponentialBackoff {
 	return &ExponentialBackoff{
-		InitialInterval: 500 * time.Millisecond,
-		MaxInterval:     60 * time.Second,
-		Multiplier:      1.5,
-		MaxElapsedTime:  15 * time.Minute,
+		InitialInterval: DefaultInitialIntervalMS * time.Millisecond,
+		MaxInterval:     DefaultMaxIntervalSec * time.Second,
+		Multiplier:      ExponentialMultiplier,
+		MaxElapsedTime:  DefaultMaxElapsedMin * time.Minute,
+		currentInterval: time.Duration(0),
+		startTime:       time.Time{},
 	}
-}
-
-// Reset resets the backoff to initial state.
-func (b *ExponentialBackoff) Reset() {
-	b.currentInterval = b.InitialInterval
-	b.startTime = time.Now()
 }
 
 // NextBackOff returns the next backoff duration.
@@ -220,11 +246,17 @@ func (b *ExponentialBackoff) NextBackOff() time.Duration {
 	}()
 
 	// Add jitter (±25%) using crypto/rand
-	maxJitter := b.currentInterval / 2
+	maxJitter := b.currentInterval / JitterDivisor
 	n, _ := crand.Int(crand.Reader, big.NewInt(int64(maxJitter)))
-	jitter := time.Duration(n.Int64()) - b.currentInterval/4
+	jitter := time.Duration(n.Int64()) - b.currentInterval/JitterQuarter
 
 	return b.currentInterval + jitter
+}
+
+// Reset resets the backoff to initial state.
+func (b *ExponentialBackoff) Reset() {
+	b.currentInterval = b.InitialInterval
+	b.startTime = time.Now()
 }
 
 // Retry executes a function with exponential backoff.
@@ -251,7 +283,7 @@ func (b *ExponentialBackoff) Retry(ctx context.Context, retryableFunc RetryableF
 		case <-ctx.Done():
 			timer.Stop()
 
-			return ctx.Err()
+			return fmt.Errorf("context cancelled during backoff: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -260,10 +292,12 @@ func (b *ExponentialBackoff) Retry(ctx context.Context, retryableFunc RetryableF
 // RetryOnConflict retries an operation when a conflict occurs.
 func RetryOnConflict(ctx context.Context, retryableFunc RetryableFunc) error {
 	backoff := &ExponentialBackoff{
-		InitialInterval: 100 * time.Millisecond,
-		MaxInterval:     3 * time.Second,
-		Multiplier:      2.0,
-		MaxElapsedTime:  30 * time.Second,
+		InitialInterval: ConflictInitialIntervalMS * time.Millisecond,
+		MaxInterval:     ConflictMaxIntervalSec * time.Second,
+		Multiplier:      DefaultMultiplier,
+		MaxElapsedTime:  ConflictMaxElapsedSec * time.Second,
+		currentInterval: time.Duration(0),
+		startTime:       time.Time{},
 	}
 
 	return backoff.Retry(ctx, func(ctx context.Context) error {
@@ -297,13 +331,13 @@ func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.
 
 		// Check timeout
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for condition after %v", timeout)
+			return ErrTimeoutWaitingForCondition(timeout.String())
 		}
 
 		// Wait for next check
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled during wait condition: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -324,6 +358,7 @@ func NewRateLimiter(rate int, burst int) *RateLimiter {
 		rate:   rate,
 		burst:  burst,
 		tokens: make(chan struct{}, burst),
+		ticker: nil,
 		stopCh: make(chan struct{}),
 	}
 
@@ -337,6 +372,22 @@ func NewRateLimiter(rate int, burst int) *RateLimiter {
 	go rateLimiter.refill()
 
 	return rateLimiter
+}
+
+// Stop stops the rate limiter.
+func (rateLimiter *RateLimiter) Stop() {
+	close(rateLimiter.stopCh)
+	rateLimiter.ticker.Stop()
+}
+
+// Wait blocks until a token is available.
+func (rateLimiter *RateLimiter) Wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled during rate limiter wait: %w", ctx.Err())
+	case <-rateLimiter.tokens:
+		return nil
+	}
 }
 
 // refill adds tokens at the configured rate.
@@ -353,22 +404,6 @@ func (rateLimiter *RateLimiter) refill() {
 			}
 		}
 	}
-}
-
-// Wait blocks until a token is available.
-func (rateLimiter *RateLimiter) Wait(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-rateLimiter.tokens:
-		return nil
-	}
-}
-
-// Stop stops the rate limiter.
-func (rateLimiter *RateLimiter) Stop() {
-	close(rateLimiter.stopCh)
-	rateLimiter.ticker.Stop()
 }
 
 // CircuitBreaker implements the circuit breaker pattern.
@@ -388,21 +423,23 @@ func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBrea
 		maxFailures:      maxFailures,
 		resetTimeout:     resetTimeout,
 		halfOpenRequests: 1,
+		failures:         0,
+		lastFailure:      time.Time{},
 		state:            "closed",
 	}
 }
 
 // Call executes a function with circuit breaker protection.
 func (cb *CircuitBreaker) Call(ctx context.Context, retryableFunc RetryableFunc) error {
-    // Check circuit state
-    if cb.state == "open" {
-        if time.Since(cb.lastFailure) > cb.resetTimeout {
-            cb.state = "half-open"
-            cb.failures = 0
-        } else {
-            return errors.New("circuit breaker is open")
-        }
-    }
+	// Check circuit state
+	if cb.state == "open" {
+		if time.Since(cb.lastFailure) > cb.resetTimeout {
+			cb.state = "half-open"
+			cb.failures = 0
+		} else {
+			return ErrCircuitBreakerOpen
+		}
+	}
 
 	// Execute function
 	err := retryableFunc(ctx)

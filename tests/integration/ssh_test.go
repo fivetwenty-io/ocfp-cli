@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"os"
@@ -34,7 +34,7 @@ environments:
       floating_ip: 10.0.0.1
 `
 
-	err := os.WriteFile(configFile, []byte(testConfig), 0644)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
 	require.NoError(t, err)
 
 	// Create test SSH key

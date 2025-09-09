@@ -14,6 +14,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// STACKIT provider errors.
+var (
+	ErrStackitProjectIDRequired            = errors.New("STACKIT project ID is required")
+	ErrStackitRegionRequired               = errors.New("STACKIT region is required")
+	ErrStackitAPIIntegrationNotImplemented = errors.New("STACKIT API integration not implemented")
+	ErrNoStateFileFound                    = errors.New("no state file found")
+)
+
 // StackitBastionInit implements bastion initialization for STACKIT.
 type StackitBastionInit struct {
 	config *config.Config
@@ -34,11 +42,11 @@ func (s *StackitBastionInit) Validate() error {
 
 	// Check required configuration
 	if s.config.ProjectID == "" {
-		return errors.New("STACKIT project ID is required")
+		return ErrStackitProjectIDRequired
 	}
 
 	if s.config.Region == "" {
-		return errors.New("STACKIT region is required")
+		return ErrStackitRegionRequired
 	}
 
 	// Check for service account JSON or other auth method
@@ -77,25 +85,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	}
 
 	// Add Genesis-specific variables if configured
-	if s.config.Bastion.Genesis.Enabled {
-		if s.config.Bastion.Genesis.Branch != "" {
-			env["GENESIS_BRANCH"] = s.config.Bastion.Genesis.Branch
-		}
-
-		if s.config.Bastion.Genesis.Commit != "" {
-			env["GENESIS_COMMIT"] = s.config.Bastion.Genesis.Commit
-		}
-
-		if s.config.Bastion.Genesis.VersionPrefix != "" {
-			env["GENESIS_VERSION_PREFIX"] = s.config.Bastion.Genesis.VersionPrefix
-		}
-
-		if s.config.Bastion.Genesis.Repo != "" {
-			env["GENESIS_REPO"] = s.config.Bastion.Genesis.Repo
-		}
-	} else {
-		env["GENESIS_SKIP_INSTALL"] = "1"
-	}
+	s.addGenesisEnv(env)
 
 	// Add bastion git configuration
 	if s.config.Bastion.Git.User.Name != "" {
@@ -159,10 +149,12 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
-		Port:           22,
+		Port:           defaultSSHPort,
 		User:           sshUser,
 		PrivateKeyPath: privateKeyPath,
+		Password:       "",
 		SSHOptions:     sshOptions,
+		UseSSHPass:     false,
 	}
 
 	// Set password if key is encrypted (use bloc name as password)
@@ -171,7 +163,8 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 		details.UseSSHPass = true
 
 		// Check if sshpass is available
-		if _, err := exec.LookPath("sshpass"); err != nil {
+		_, err = exec.LookPath("sshpass")
+		if err != nil {
 			s.log.Warn("SSH key is encrypted but sshpass is not available")
 
 			details.UseSSHPass = false
@@ -192,6 +185,31 @@ func (s *StackitBastionInit) Initialize(ctx context.Context) error {
 	return nil
 }
 
+// addGenesisEnv adds Genesis-specific environment variables to the provided map.
+func (s *StackitBastionInit) addGenesisEnv(env map[string]string) {
+	if !s.config.Bastion.Genesis.Enabled {
+		env["GENESIS_SKIP_INSTALL"] = "1"
+
+		return
+	}
+
+	if s.config.Bastion.Genesis.Branch != "" {
+		env["GENESIS_BRANCH"] = s.config.Bastion.Genesis.Branch
+	}
+
+	if s.config.Bastion.Genesis.Commit != "" {
+		env["GENESIS_COMMIT"] = s.config.Bastion.Genesis.Commit
+	}
+
+	if s.config.Bastion.Genesis.VersionPrefix != "" {
+		env["GENESIS_VERSION_PREFIX"] = s.config.Bastion.Genesis.VersionPrefix
+	}
+
+	if s.config.Bastion.Genesis.Repo != "" {
+		env["GENESIS_REPO"] = s.config.Bastion.Genesis.Repo
+	}
+}
+
 // getBastionIP retrieves the bastion host IP address.
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
@@ -202,14 +220,16 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 	}
 
 	// Strategy 2: Try to get from STACKIT API (would need to implement STACKIT client)
-	if ip, err := s.getBastionIPFromAPI(); err == nil && ip != "" {
-		s.log.Debug("Retrieved bastion IP from STACKIT API", "ip", ip)
+	bastionIP, err := s.getBastionIPFromAPI()
+	if err == nil && bastionIP != "" {
+		s.log.Debug("Retrieved bastion IP from STACKIT API", "ip", bastionIP)
 
-		return ip, nil
+		return bastionIP, nil
 	}
 
 	// Strategy 3: Try to find in terraform state or other sources
-	if ip, err := s.getBastionIPFromState(); err == nil && ip != "" {
+	ip, err := s.getBastionIPFromState()
+	if err == nil && ip != "" {
 		s.log.Debug("Retrieved bastion IP from state", "ip", ip)
 
 		return ip, nil
@@ -222,14 +242,14 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 		return ip, nil
 	}
 
-	return "", errors.New("could not determine bastion IP address")
+	return "", ErrCouldNotDetermineBastionIP
 }
 
 // getBastionIPFromAPI retrieves bastion IP from STACKIT API.
 func (s *StackitBastionInit) getBastionIPFromAPI() (string, error) {
 	// This would implement calls to STACKIT API to find the bastion server
 	// For now, return an error to fall back to other methods
-	return "", errors.New("STACKIT API integration not implemented")
+	return "", ErrStackitAPIIntegrationNotImplemented
 }
 
 // getBastionIPFromState retrieves bastion IP from terraform state or similar.
@@ -242,7 +262,8 @@ func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 	}
 
 	for _, stateFile := range stateFiles {
-		if _, err := os.Stat(stateFile); err == nil {
+		_, err := os.Stat(stateFile)
+		if err == nil {
 			// Parse state file to extract bastion IP
 			// This is a placeholder - would need actual terraform state parsing
 			s.log.Debug("Found terraform state file", "file", stateFile)
@@ -250,7 +271,5 @@ func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 		}
 	}
 
-	return "", errors.New("no state file found")
+	return "", ErrNoStateFileFound
 }
-
-// (Removed unused helper stubs: validateStackitConnection, setupStackitCredentials)

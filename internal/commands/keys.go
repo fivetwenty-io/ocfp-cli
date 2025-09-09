@@ -17,9 +17,10 @@ var (
 	validUsernamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 )
 
-// fetchGitHubKeys fetches SSH keys from GitHub for a user.
-func fetchGitHubKeys(ctx context.Context, username string) ([]string, error) {
-	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
+// FetchGitHubKeys fetches SSH keys from GitHub for a user.
+func FetchGitHubKeys(ctx context.Context, username string) ([]string, error) {
+	err := security.ValidateInput(username, validUsernamePattern)
+	if err != nil {
 		return nil, fmt.Errorf("invalid GitHub username: %w", err)
 	}
 
@@ -28,9 +29,10 @@ func fetchGitHubKeys(ctx context.Context, username string) ([]string, error) {
 	return fetchKeys(ctx, url, "GitHub")
 }
 
-// fetchGitLabKeys fetches SSH keys from GitLab for a user.
-func fetchGitLabKeys(ctx context.Context, username string) ([]string, error) {
-	if err := security.ValidateInput(username, validUsernamePattern); err != nil {
+// FetchGitLabKeys fetches SSH keys from GitLab for a user.
+func FetchGitLabKeys(ctx context.Context, username string) ([]string, error) {
+	err := security.ValidateInput(username, validUsernamePattern)
+	if err != nil {
 		return nil, fmt.Errorf("invalid GitLab username: %w", err)
 	}
 
@@ -54,7 +56,7 @@ func fetchKeys(ctx context.Context, url, provider string) ([]string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch %s keys: %s", provider, resp.Status)
+		return nil, ErrFailedToFetchKeys(provider, resp.Status)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -72,7 +74,8 @@ func fetchKeys(ctx context.Context, url, provider string) ([]string, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	err = scanner.Err()
+	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}
 

@@ -2,7 +2,6 @@ package stackit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -48,7 +47,7 @@ type Config struct {
 // NewClient creates a new STACKIT client.
 func NewClient(config *Config) (*Client, error) {
 	if config == nil {
-		return nil, errors.New("config is required")
+		return nil, ErrConfigIsRequired
 	}
 
 	// Set defaults
@@ -58,7 +57,7 @@ func NewClient(config *Config) (*Client, error) {
 	}
 
 	if config.Timeout == 0 {
-		config.Timeout = 30 * time.Second
+		config.Timeout = defaultHTTPTimeout
 	}
 
 	if config.MaxRetries == 0 {
@@ -66,7 +65,15 @@ func NewClient(config *Config) (*Client, error) {
 	}
 
 	client := &Client{
-		config: config,
+		config:       config,
+		network:      nil,
+		compute:      nil,
+		storage:      nil,
+		security:     nil,
+		loadBalancer: nil,
+		iaasClient:   nil,
+		lbClient:     nil,
+		objClient:    nil,
 	}
 
 	// Initialize resource managers
@@ -100,7 +107,8 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("failed to init IAAS client: %w", err)
 	}
 
-	if _, err := cli.ListNetworks(ctx, c.config.ProjectID).Execute(); err != nil {
+	_, err = cli.ListNetworks(ctx, c.config.ProjectID).Execute()
+	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -114,71 +122,79 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 	return c.Authenticate(ctx)
 }
 
-// buildConfigOptions builds common SDK configuration options based on client config.
-func (c *Client) buildConfigOptions() []stackitconfig.ConfigurationOption {
-	opts := []stackitconfig.ConfigurationOption{}
-
-	if c.config.Region != "" {
-		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
-	}
-
-	if c.config.BaseURL != "" {
-		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
-	}
-
-	switch {
-	case c.config.ServiceAccountJSON != "":
-		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
-	case c.config.ServiceAccountToken != "":
-		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
-	case c.config.AuthToken != "":
-		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
-	}
-
-	return opts
-}
-
-// httpClientConfigurer is implemented by SDK clients that expose GetConfig().
-type httpClientConfigurer interface {
-	GetConfig() *stackitconfig.Configuration
-}
-
-// applyTimeout configures the HTTP client timeout on a SDK client if set.
-func (c *Client) applyTimeout(cli httpClientConfigurer) {
-	if c.config.Timeout <= 0 {
-		return
-	}
-
-	if cli.GetConfig().HTTPClient == nil {
-		cli.GetConfig().HTTPClient = &http.Client{}
-	}
-
-	cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
-}
-
 // Network returns the network manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Network() cpi.NetworkManager {
 	return c.network
 }
 
 // Compute returns the compute manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Compute() cpi.ComputeManager {
 	return c.compute
 }
 
 // Storage returns the storage manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Storage() cpi.StorageManager {
 	return c.storage
 }
 
 // Security returns the security manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Security() cpi.SecurityManager {
 	return c.security
 }
 
 // LoadBalancer returns the load balancer manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
 	return c.loadBalancer
+}
+
+// NetworkManager returns the network manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) NetworkManager() cpi.NetworkManager {
+	return c.network
+}
+
+// ComputeManager returns the compute manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) ComputeManager() cpi.ComputeManager {
+	return c.compute
+}
+
+// StorageManager returns the storage manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) StorageManager() cpi.StorageManager {
+	return c.storage
+}
+
+// SecurityManager returns the security manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) SecurityManager() cpi.SecurityManager {
+	return c.security
+}
+
+// LoadBalancerManager returns the load balancer manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
+	return c.loadBalancer
+}
+
+// SupportsStorage returns true as STACKIT supports object storage.
+func (c *Client) SupportsStorage() bool {
+	return true
 }
 
 // Initialize initializes the provider with configuration.
@@ -193,7 +209,7 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 		// The client is already properly initialized with authentication
 		return nil
 	default:
-		return fmt.Errorf("invalid config type for STACKIT provider: %T", config)
+		return ErrInvalidConfigTypeForStackitProvider(config)
 	}
 
 	// Set defaults
@@ -203,7 +219,7 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	}
 
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = defaultHTTPTimeout
 	}
 
 	if cfg.MaxRetries == 0 {
@@ -245,6 +261,53 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 // Cleanup performs cleanup operations.
 func (c *Client) Cleanup(ctx context.Context) error {
 	return nil
+}
+
+// buildConfigOptions builds common SDK configuration options based on client config.
+func (c *Client) buildConfigOptions() []stackitconfig.ConfigurationOption {
+	opts := []stackitconfig.ConfigurationOption{}
+
+	if c.config.Region != "" {
+		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
+	}
+
+	if c.config.BaseURL != "" {
+		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
+	}
+
+	switch {
+	case c.config.ServiceAccountJSON != "":
+		opts = append(opts, stackitconfig.WithServiceAccountKey(c.config.ServiceAccountJSON))
+	case c.config.ServiceAccountToken != "":
+		opts = append(opts, stackitconfig.WithToken(c.config.ServiceAccountToken))
+	case c.config.AuthToken != "":
+		opts = append(opts, stackitconfig.WithToken(c.config.AuthToken))
+	}
+
+	return opts
+}
+
+// httpClientConfigurer is implemented by SDK clients that expose GetConfig().
+type httpClientConfigurer interface {
+	GetConfig() *stackitconfig.Configuration
+}
+
+// applyTimeout configures the HTTP client timeout on a SDK client if set.
+func (c *Client) applyTimeout(cli httpClientConfigurer) {
+	if c.config.Timeout <= 0 {
+		return
+	}
+
+	if cli.GetConfig().HTTPClient == nil {
+		cli.GetConfig().HTTPClient = &http.Client{
+			Transport:     nil,
+			CheckRedirect: nil,
+			Jar:           nil,
+			Timeout:       0,
+		}
+	}
+
+	cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
 }
 
 // getIAASClient returns a cached IAAS API client, initializing on first use.

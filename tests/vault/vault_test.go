@@ -21,9 +21,16 @@ func TestVaultClient(t *testing.T) {
 	t.Parallel()
 
 	cfg := &vault.Config{
-		Address: getTestVaultAddr(),
-		Token:   getTestVaultToken(),
-		TLSSkip: true,
+		Address:   getTestVaultAddr(),
+		Token:     getTestVaultToken(),
+		Namespace: "",
+		AuthType:  "",
+		Username:  "",
+		Password:  "",
+		RoleID:    "",
+		SecretID:  "",
+		CACert:    "",
+		TLSSkip:   true,
 	}
 
 	client, err := vault.NewClient(cfg)
@@ -191,7 +198,9 @@ func TestVaultManager(t *testing.T) {
 
 	// Test populate with dry run
 	opts := &vault.PopulateOptions{
-		DryRun: true,
+		Subcommand: "",
+		DryRun:     true,
+		Force:      false,
 	}
 
 	err = manager.Populate(opts)
@@ -310,10 +319,19 @@ func getTestVaultToken() string {
 
 // createTestClient creates a vault client for testing.
 func createTestClient(t *testing.T) *vault.Client {
+	t.Helper()
+
 	cfg := &vault.Config{
-		Address: getTestVaultAddr(),
-		Token:   getTestVaultToken(),
-		TLSSkip: true,
+		Address:   getTestVaultAddr(),
+		Token:     getTestVaultToken(),
+		Namespace: "",
+		AuthType:  "",
+		Username:  "",
+		Password:  "",
+		RoleID:    "",
+		SecretID:  "",
+		CACert:    "",
+		TLSSkip:   true,
 	}
 
 	client, err := vault.NewClient(cfg)
@@ -324,23 +342,93 @@ func createTestClient(t *testing.T) *vault.Client {
 
 // createTestConfig creates a test configuration.
 func createTestConfig() *config.Config {
-	return &config.Config{
+	cfg := &config.Config{
 		Name:      "test-bloc",
 		Provider:  "stackit",
-		Region:    "eu01",
 		ProjectID: "test-project",
-		DNS:       []string{"8.8.8.8", "8.8.4.4"},
-		Network: config.NetworkConfig{
-			CIDR: "10.0.0.0/16",
-		},
-		AZs: map[string]config.AvailabilityZone{
-			"eu01-1": {Zone: "eu01-1"},
-			"eu01-2": {Zone: "eu01-2"},
-		},
-		Subnets: []config.Subnet{
-			{Type: "ocfp", CIDR: "10.0.1.0/24"},
-			{Type: "services", CIDR: "10.0.2.0/24"},
-		},
+		Region:    "eu01",
+	}
+
+	cfg.Network = createVaultTestNetworkConfig()
+	cfg.Bastion = createVaultTestBastionConfig()
+	cfg.Genesis = createVaultTestGenesisConfig()
+	cfg.Deployment = createVaultTestDeploymentConfig()
+	cfg.AZs = createVaultTestAvailabilityZones()
+	cfg.Routers = createVaultTestComponentConfig()
+	cfg.Cells = createVaultTestComponentConfig()
+	cfg.Subnets = createVaultTestSubnets()
+	cfg.Blobstore = createVaultTestBlobstoreConfig()
+
+	cfg.DNS = []string{}
+	cfg.FQDNs = map[string]interface{}{}
+	cfg.S3 = map[string]string{}
+	cfg.AllowedIngressIPs = []string{}
+	cfg.LBs = map[string]config.LBService{}
+	cfg.Users = map[string]string{}
+
+	return cfg
+}
+
+func createVaultTestNetworkConfig() config.NetworkConfig {
+	return config.NetworkConfig{
+		NetworkCIDR: "10.0.0.0/16",
+		DNS:         []string{},
+	}
+}
+
+func createVaultTestBastionConfig() config.Bastion {
+	return config.Bastion{
+		Genesis:           createVaultTestGenesisConfig(),
+		Git:               createVaultTestGitConfig(),
+		Tools:             config.OverrideSets{},
+		CFPlugins:         config.OverrideSets{},
+		Snaps:             config.OverrideSets{},
+		ToolOverrides:     map[string]config.ToolOverride{},
+		CFPluginOverrides: map[string]config.CFPluginOverride{},
+		SnapOverrides:     map[string]config.SnapOverride{},
+	}
+}
+
+func createVaultTestGenesisConfig() config.Genesis {
+	return config.Genesis{Enabled: false}
+}
+
+func createVaultTestGitConfig() config.GitConfig {
+	return config.GitConfig{User: config.GitUser{}}
+}
+
+func createVaultTestDeploymentConfig() config.Deployment {
+	return config.Deployment{
+		HierarchyFiles:      false,
+		HierarchyVaultPaths: false,
+	}
+}
+
+func createVaultTestAvailabilityZones() map[string]config.AvailabilityZone {
+	return map[string]config.AvailabilityZone{
+		"eu01-1": {Zone: "eu01-1"},
+		"eu01-2": {Zone: "eu01-2"},
+	}
+}
+
+func createVaultTestComponentConfig() config.ComponentConfig {
+	return config.ComponentConfig{}
+}
+
+func createVaultTestSubnets() []config.Subnet {
+	return []config.Subnet{
+		{CIDR: "10.0.1.0/24", Type: "ocfp"},
+		{CIDR: "10.0.2.0/24", Type: "services"},
+	}
+}
+
+func createVaultTestBlobstoreConfig() config.BlobstoreConfig {
+	return config.BlobstoreConfig{
+		EnablePolicies: false,
+		BoshBlobstore:  config.BucketSettings{},
+		CFBuildpacks:   config.BucketSettings{},
+		CFDroplets:     config.BucketSettings{},
+		CFAppPackages:  config.BucketSettings{},
 	}
 }
 

@@ -2,7 +2,6 @@ package vault
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +10,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
+)
+
+const (
+	// Vault initialization defaults.
+	DefaultSecretShares    = 5
+	DefaultSecretThreshold = 3
+	MaxUnsealKeys          = 10
+	UnsealCheckInterval    = 2
 )
 
 // InitManager handles vault initialization and unsealing.
@@ -53,11 +60,13 @@ type InitResponse struct {
 // DefaultInitRequest returns sensible defaults for vault initialization.
 func DefaultInitRequest() *InitRequest {
 	return &InitRequest{
-		SecretShares:      5,
-		SecretThreshold:   3,
+		SecretShares:      DefaultSecretShares,
+		SecretThreshold:   DefaultSecretThreshold,
 		RecoveryShares:    0,
 		RecoveryThreshold: 0,
 		StoredShares:      0,
+		RootTokenPGPKey:   "",
+		PGPKeys:           nil,
 	}
 }
 
@@ -74,7 +83,14 @@ func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) 
 	if initialized {
 		im.logger.Info("Vault is already initialized")
 
-		return &InitResponse{Initialized: true}, nil
+		return &InitResponse{
+			Keys:            nil,
+			KeysBase64:      nil,
+			RecoveryKeys:    nil,
+			RecoveryKeysB64: nil,
+			RootToken:       "",
+			Initialized:     true,
+		}, nil
 	}
 
 	// Prepare init request
@@ -86,6 +102,7 @@ func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) 
 		StoredShares:      req.StoredShares,
 		RootTokenPGPKey:   req.RootTokenPGPKey,
 		PGPKeys:           req.PGPKeys,
+		RecoveryPGPKeys:   nil,
 	}
 
 	// Initialize vault
@@ -181,8 +198,7 @@ func (im *InitManager) UnsealVault(keys []string) error {
 	}
 
 	if finalStatus.Sealed {
-		return fmt.Errorf("vault still sealed after providing %d keys (needed %d out of %d)",
-			len(keys), finalStatus.T, finalStatus.N)
+		return ErrVaultStillSealedAfterKeys(len(keys), finalStatus.T, finalStatus.N)
 	}
 
 	im.logger.Info("Vault unseal completed successfully")
@@ -221,9 +237,9 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 	}
 
 	// Look for unseal keys in environment variables
-	keys := make([]string, 0, 10)
+	keys := make([]string, 0, MaxUnsealKeys)
 
-	for keyNumber := 1; keyNumber <= 10; keyNumber++ { // Check up to 10 keys
+	for keyNumber := 1; keyNumber <= MaxUnsealKeys; keyNumber++ { // Check up to max unseal keys
 		keyName := fmt.Sprintf("VAULT_UNSEAL_KEY_%d", keyNumber)
 		if key := getEnvOrDefault(keyName, ""); key != "" {
 			keys = append(keys, key)
@@ -242,7 +258,7 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 	}
 
 	if len(keys) == 0 {
-		return errors.New("no unseal keys found in environment variables")
+		return ErrNoUnsealKeysFoundInEnvVars
 	}
 
 	im.logger.Info("Found unseal keys in environment", "count", len(keys))
@@ -257,13 +273,13 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(UnsealCheckInterval * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return errors.New("timeout waiting for vault to be ready")
+			return ErrTimeoutWaitingForVaultReady
 		case <-ticker.C:
 			// Check if vault is initialized and unsealed
 			initialized, err := im.IsInitialized()
@@ -293,7 +309,8 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 			}
 
 			// Test authentication
-			if err := im.client.ValidateConnection(); err != nil {
+			err = im.client.ValidateConnection()
+			if err != nil {
 				im.logger.Debug("Vault authentication not ready", "error", err)
 
 				continue

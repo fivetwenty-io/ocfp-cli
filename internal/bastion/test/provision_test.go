@@ -1,4 +1,4 @@
-package test
+package test_test
 
 import (
 	"context"
@@ -13,12 +13,7 @@ import (
 func TestProvisioningConfigGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:      "test-bloc",
-		Provider:  "stackit",
-		ProjectID: "test-project",
-		Region:    "eu01",
-	}
+	cfg := config.NewTestConfig().WithRegion("eu01").WithProjectID("test-project").Build()
 
 	provConfig := provision.NewConfig("stackit", cfg)
 
@@ -86,12 +81,7 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 func TestScriptGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:      "test-bloc",
-		Provider:  "stackit",
-		ProjectID: "test-project",
-		Region:    "eu01",
-	}
+	cfg := config.NewTestConfig().WithRegion("eu01").WithProjectID("test-project").Build()
 
 	scriptGen := provision.NewScriptGenerator("stackit", cfg)
 	provConfig := provision.NewConfig("stackit", cfg)
@@ -148,10 +138,7 @@ func TestScriptGeneration(t *testing.T) {
 func TestSnapPackageGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	snapMgr := provision.NewSnapManager("stackit", cfg)
 
@@ -209,10 +196,7 @@ func TestSnapPackageGeneration(t *testing.T) {
 func TestAdvancedToolsGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	toolMgr := provision.NewAdvancedToolManager("stackit", cfg)
 
@@ -263,10 +247,7 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 func TestCPANModuleGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	cpanMgr := provision.NewCPANManager("stackit", cfg)
 
@@ -318,18 +299,7 @@ func TestCPANModuleGeneration(t *testing.T) {
 func TestConfigFileGeneration(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-		Bastion: config.Bastion{
-			Git: config.GitConfig{
-				User: config.GitUser{
-					Name:  "Test User",
-					Email: "test@example.com",
-				},
-			},
-		},
-	}
+	cfg := config.NewTestConfig().WithBastion(config.TestBastionConfig()).Build()
 
 	configMgr := provision.NewConfigFileManager("stackit", cfg)
 

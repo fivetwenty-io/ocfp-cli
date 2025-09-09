@@ -2,10 +2,10 @@ package stackit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -24,7 +24,10 @@ func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.Loa
 	logger.WithOperation("CreateLoadBalancer").Infof("Creating load balancer via SDK: %s", config.Name)
 	req := &cpi.CreateLoadBalancerRequest{
 		Name:           config.Name,
+		Type:           "",
+		Scheme:         "",
 		NetworkID:      config.NetworkID,
+		SubnetIDs:      []string{},
 		SecurityGroups: config.SecurityGroups,
 		Tags:           mapFromSlice(config.Tags),
 	}
@@ -71,7 +74,15 @@ func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*c
 // AddBackendMember adds a backend member to a load balancer.
 func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
 	logger.WithOperation("AddBackendMember").Infof("Adding backend %s to LB %s", member.IPAddress, lbID)
-	backend := &cpi.Backend{Address: member.IPAddress, Port: member.Port, Name: ""}
+	backend := &cpi.Backend{
+		ID:      "",
+		Name:    "",
+		Address: member.IPAddress,
+		Port:    member.Port,
+		Weight:  0,
+		Enabled: true,
+		Health:  "",
+	}
 
 	return m.client.loadBalancer.AddBackend(ctx, lbID, backend)
 }
@@ -112,7 +123,7 @@ func mapFromSlice(tags []string) map[string]string {
 }
 
 // CreateNetwork creates a new network.
-func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.CreateNetworkRequest) (*cpi.Network, error) {
+func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	logger.WithOperation("CreateNetwork").Infof("Creating network via SDK: %s", req.Name)
 
 	cli, err := m.client.getIAASClient()
@@ -135,7 +146,17 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.CreateNetwo
 		return nil, fmt.Errorf("stackit iaas CreateNetwork failed: %w", err)
 	}
 
-	out := &cpi.Network{ID: stringOrEmpty(created.GetNetworkIdOk()), Name: stringOrEmpty(created.GetNameOk())}
+	out := &cpi.Network{
+		ID:         stringOrEmpty(created.GetNetworkIdOk()),
+		Name:       stringOrEmpty(created.GetNameOk()),
+		CIDR:       "",
+		Region:     "",
+		State:      cpi.ResourceStateUnknown,
+		Tags:       map[string]string{},
+		DNSServers: []string{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
 	out.Tags = mapAnyToString(created.GetLabels())
 	logger.WithOperation("CreateNetwork").Infof("Network created: %s", out.ID)
 
@@ -156,7 +177,17 @@ func (m *NetworkManager) GetNetwork(ctx context.Context, networkID string) (*cpi
 		return nil, fmt.Errorf("stackit iaas GetNetwork failed: %w", err)
 	}
 
-	out := &cpi.Network{ID: stringOrEmpty(got.GetNetworkIdOk()), Name: stringOrEmpty(got.GetNameOk())}
+	out := &cpi.Network{
+		ID:         stringOrEmpty(got.GetNetworkIdOk()),
+		Name:       stringOrEmpty(got.GetNameOk()),
+		CIDR:       "",
+		Region:     "",
+		State:      cpi.ResourceStateUnknown,
+		Tags:       map[string]string{},
+		DNSServers: []string{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
 	out.Tags = mapAnyToString(got.GetLabels())
 
 	return out, nil
@@ -178,15 +209,23 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 
 	items, _ := resp.GetItemsOk()
 
-    list := make([]*cpi.Network, 0, len(items))
+	list := make([]*cpi.Network, 0, len(items))
 
 	for _, n := range items {
 		labels := mapAnyToString(n.GetLabels())
 
-		out := &cpi.Network{ID: stringOrEmpty(n.GetNetworkIdOk()), Name: stringOrEmpty(n.GetNameOk()), Tags: labels}
-		if matchLabels(labels, filters) {
-			list = append(list, out)
+		out := &cpi.Network{
+			ID:         stringOrEmpty(n.GetNetworkIdOk()),
+			Name:       stringOrEmpty(n.GetNameOk()),
+			CIDR:       "",
+			Region:     "",
+			State:      cpi.ResourceStateUnknown,
+			Tags:       labels,
+			DNSServers: []string{},
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		}
+		list = append(list, out)
 	}
 
 	logger.WithOperation("ListNetworks").Debugf("Found %d networks", len(list))
@@ -203,7 +242,8 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) er
 		return err
 	}
 
-	if err := cli.DeleteNetwork(ctx, m.client.config.ProjectID, networkID).Execute(); err != nil {
+	err = cli.DeleteNetwork(ctx, m.client.config.ProjectID, networkID).Execute()
+	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteNetwork failed: %w", err)
 	}
 
@@ -213,13 +253,13 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) er
 }
 
 // CreateSubnet creates a subnet.
-func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.CreateSubnetRequest) (*cpi.Subnet, error) {
-	return nil, errors.New("stackit: subnets are not supported; use networks and labels")
+func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
+	return nil, ErrSubnetsNotSupported
 }
 
 // GetSubnet retrieves a subnet.
 func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
-	return nil, errors.New("stackit: subnets are not supported")
+	return nil, ErrSubnetsNotSupportedUseNetworksAndLabels
 }
 
 // ListSubnets lists subnets in a network.
@@ -241,31 +281,51 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
 	logger.WithOperation("AllocateFloatingIP").Info("Allocating public IP (floating)")
 	// Delegate to CreatePublicIP with labels
-	create := &cpi.CreatePublicIPRequest{Labels: req.Tags}
+	create := &cpi.PublicIPRequest{
+		Name:      "",
+		Job:       "",
+		Index:     "",
+		NetworkID: "",
+		Labels:    req.Tags,
+		Tags:      map[string]string{},
+	}
 
-	ip, err := m.CreatePublicIP(ctx, create)
+	publicIP, err := m.CreatePublicIP(ctx, create)
 	if err != nil {
 		return nil, err
 	}
 
-	return &cpi.FloatingIP{ID: ip.ID, Address: ip.Address, NetworkID: req.NetworkID, Tags: ip.Labels}, nil
+	return &cpi.FloatingIP{
+		ID:         publicIP.ID,
+		Address:    publicIP.Address,
+		Status:     "",
+		InstanceID: "",
+		NetworkID:  req.NetworkID,
+		Tags:       publicIP.Labels,
+		CreatedAt:  time.Now(),
+	}, nil
 }
 
 // GetFloatingIP retrieves a floating IP.
-func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
+func (m *NetworkManager) GetFloatingIP(ctx context.Context, floatingIPID string) (*cpi.FloatingIP, error) {
 	iaasClient, err := m.client.getIAASClient()
 	if err != nil {
 		return nil, err
 	}
 
-	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, id).Execute()
+	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, floatingIPID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
 	}
 
 	out := &cpi.FloatingIP{
-		ID:      stringOrEmpty(got.GetIdOk()),
-		Address: stringOrEmpty(got.GetIpOk()),
+		ID:         stringOrEmpty(got.GetIdOk()),
+		Address:    stringOrEmpty(got.GetIpOk()),
+		Status:     "",
+		InstanceID: "",
+		NetworkID:  "",
+		Tags:       map[string]string{},
+		CreatedAt:  time.Now(),
 	}
 	if ni, ok := got.GetNetworkInterfaceOk(); ok && ni != nil {
 		out.NetworkID = *ni
@@ -288,13 +348,18 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP
 
 	items, _ := resp.GetItemsOk()
 
-    list := make([]*cpi.FloatingIP, 0, len(items))
-	for _, ip := range items {
+	list := make([]*cpi.FloatingIP, 0, len(items))
+	for _, publicIPItem := range items {
 		floatingIP := &cpi.FloatingIP{
-			ID:      stringOrEmpty(ip.GetIdOk()),
-			Address: stringOrEmpty(ip.GetIpOk()),
+			ID:         stringOrEmpty(publicIPItem.GetIdOk()),
+			Address:    stringOrEmpty(publicIPItem.GetIpOk()),
+			Status:     "",
+			InstanceID: "",
+			NetworkID:  "",
+			Tags:       map[string]string{},
+			CreatedAt:  time.Now(),
 		}
-		if ni, ok := ip.GetNetworkInterfaceOk(); ok && ni != nil {
+		if ni, ok := publicIPItem.GetNetworkInterfaceOk(); ok && ni != nil {
 			floatingIP.NetworkID = *ni
 		}
 
@@ -313,7 +378,12 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, i
 		return err
 	}
 
-	return cli.AddPublicIpToServer(ctx, m.client.config.ProjectID, instanceID, ipID).Execute()
+	err = cli.AddPublicIpToServer(ctx, m.client.config.ProjectID, instanceID, ipID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to associate floating IP %s to instance %s: %w", ipID, instanceID, err)
+	}
+
+	return nil
 }
 
 // DisassociateFloatingIP disassociates a floating IP.
@@ -346,29 +416,27 @@ func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string
 		if nics, ok := nicsResp.GetItemsOk(); ok {
 			for _, nic := range nics {
 				if nid, ok := nic.GetIdOk(); ok {
-					// Get public IP and see if matches
-					pip, err := cli.GetPublicIP(ctx, m.client.config.ProjectID, ipID).Execute()
-					if err == nil {
-						if ni, ok := pip.GetNetworkInterfaceOk(); ok && ni != nil && *ni == nid {
-							return cli.RemovePublicIpFromServer(ctx, m.client.config.ProjectID, sid, ipID).Execute()
-						}
+					found, err := m.checkPublicIPMatch(ctx, cli, ipID, nid, sid)
+					if err == nil && found {
+						return nil
 					}
 				}
 			}
 		}
 	}
 
-	return fmt.Errorf("could not find server associated with public IP %s", ipID)
+	return ErrCouldNotFindServerAssociatedWithPublicIP(ipID)
 }
 
 // ReleaseFloatingIP releases a floating IP.
-func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error {
+func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, floatingIPID string) error {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
 		return err
 	}
 
-	if err := cli.DeletePublicIP(ctx, m.client.config.ProjectID, id).Execute(); err != nil {
+	err = cli.DeletePublicIP(ctx, m.client.config.ProjectID, floatingIPID).Execute()
+	if err != nil {
 		return fmt.Errorf("stackit iaas DeletePublicIP failed: %w", err)
 	}
 
@@ -381,55 +449,95 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 
 	// Mock implementation
 	router := &cpi.Router{
-		ID:   "router-123", // Fixed ID for testing
-		Name: req.Name,
+		ID:              "router-123", // Fixed ID for testing
+		Name:            req.Name,
+		NetworkID:       "",
+		ExternalGateway: "",
+		State:           cpi.ResourceStateUnknown,
+		Routes:          []*cpi.Route{},
+		Interfaces:      []string{},
+		Tags:            map[string]string{},
+		CreatedAt:       time.Now(),
 	}
 
 	logger.WithOperation("CreateRouter").Infof("Router created: %s", router.ID)
 
-// Pending: implement actual STACKIT API call
+	// Pending: implement actual STACKIT API call
 	return router, nil
 }
 
 // GetRouter retrieves a router.
 func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
-// Pending: implement
-	return nil, errors.New("not implemented")
+	// Pending: implement
+	return nil, ErrNotImplemented
 }
 
 // ListRouters lists routers.
 func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
-// Pending: implement
-	return nil, errors.New("not implemented")
+	// Pending: implement
+	return nil, ErrNotImplemented
 }
 
 // AttachRouterInterface attaches a subnet to a router.
 func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("AttachRouterInterface").Infof("Attaching subnet %s to router %s", subnetID, routerID)
-// Pending: implement actual STACKIT API call
+	// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DetachRouterInterface detaches a subnet from a router.
 func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("DetachRouterInterface").Infof("Detaching subnet %s from router %s", subnetID, routerID)
-// Pending: implement actual STACKIT API call
+	// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DeleteRouter deletes a router.
 func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
-// Pending: implement
-	return errors.New("not implemented")
+	// Pending: implement
+	return ErrNotImplemented
 }
 
 // Public IP operations
 
+// CreateSecurityGroup creates a security group.
+func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+	return m.client.security.CreateSecurityGroup(ctx, req)
+}
+
+// GetSecurityGroup retrieves a security group by ID.
+func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+	return m.client.security.GetSecurityGroup(ctx, id)
+}
+
+// ListSecurityGroups lists all security groups.
+func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+	return m.client.security.ListSecurityGroups(ctx, filters)
+}
+
+// DeleteSecurityGroup deletes a security group.
+func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
+	return m.client.security.DeleteSecurityGroup(ctx, id)
+}
+
 // CreatePublicIP creates a public IP address.
-func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.CreatePublicIPRequest) (*cpi.PublicIP, error) {
+func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	logger.WithOperation("CreatePublicIP").Infof("Creating public IP: %s (job: %s, index: %s)", req.Name, req.Job, req.Index)
 
-	// Build labels
+	labels := buildPublicIPLabels(req)
+
+	created, err := m.createPublicIPViaSDK(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
+
+	publicIP := buildPublicIPFromResponse(created)
+	logger.WithOperation("CreatePublicIP").Infof("Public IP created: %s (%s)", publicIP.ID, publicIP.Address)
+
+	return publicIP, nil
+}
+
+func buildPublicIPLabels(req *cpi.PublicIPRequest) map[string]interface{} {
 	labels := map[string]interface{}{}
 	for k, v := range req.Labels {
 		labels[k] = v
@@ -448,40 +556,36 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.CreatePubl
 		labels["name"] = req.Name
 	}
 
-	// Create via SDK
-	iaasClient, err := m.client.getIAASClient()
-	if err != nil {
-		return nil, err
-	}
+	return labels
+}
 
-	payload := iaas.CreatePublicIPPayload{}
-	payload.SetLabels(labels)
-
-	created, err := iaasClient.CreatePublicIP(ctx, m.client.config.ProjectID).
-		CreatePublicIPPayload(payload).
-		Execute()
-	if err != nil {
-		return nil, fmt.Errorf("stackit iaas CreatePublicIP failed: %w", err)
-	}
-
+func buildPublicIPFromResponse(created *iaas.PublicIp) *cpi.PublicIP {
 	out := &cpi.PublicIP{
-		ID:      stringOrEmpty(created.GetIdOk()),
-		Address: stringOrEmpty(created.GetIpOk()),
-		Labels:  mapAnyToString(created.GetLabels()),
+		ID:         stringOrEmpty(created.GetIdOk()),
+		Address:    stringOrEmpty(created.GetIpOk()),
+		Name:       "",
+		Status:     "",
+		Job:        "",
+		Index:      "",
+		InstanceID: "",
+		NetworkID:  "",
+		Labels:     mapAnyToString(created.GetLabels()),
+		Tags:       map[string]string{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
+
 	if out.Labels != nil {
 		out.Job = out.Labels["job"]
 		out.Index = out.Labels["index"]
 		out.Name = out.Labels["name"]
 	}
 
-	logger.WithOperation("CreatePublicIP").Infof("Public IP created: %s (%s)", out.ID, out.Address)
-
-	return out, nil
+	return out
 }
 
 // ListPublicIPs lists public IPs with optional filtering.
-func (m *NetworkManager) ListPublicIPs(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error) {
+func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
 	logger.WithOperation("ListPublicIPs").Debug("Listing public IPs")
 
 	iaasClient, err := m.client.getIAASClient()
@@ -496,15 +600,24 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context, filters map[string]s
 
 	items, _ := resp.GetItemsOk()
 
-    list := make([]*cpi.PublicIP, 0, len(items))
+	list := make([]*cpi.PublicIP, 0, len(items))
 
 	for _, ip := range items {
 		labels := mapAnyToString(ip.GetLabels())
 
 		out := &cpi.PublicIP{
-			ID:      stringOrEmpty(ip.GetIdOk()),
-			Address: stringOrEmpty(ip.GetIpOk()),
-			Labels:  labels,
+			ID:         stringOrEmpty(ip.GetIdOk()),
+			Address:    stringOrEmpty(ip.GetIpOk()),
+			Name:       "",
+			Status:     "",
+			Job:        "",
+			Index:      "",
+			InstanceID: "",
+			NetworkID:  "",
+			Labels:     labels,
+			Tags:       map[string]string{},
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		}
 		if labels != nil {
 			out.Job = labels["job"]
@@ -512,12 +625,36 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context, filters map[string]s
 			out.Name = labels["name"]
 		}
 
-		if matchLabels(labels, filters) {
-			list = append(list, out)
-		}
+		list = append(list, out)
 	}
 
 	return list, nil
+}
+
+// ListPublicIPsWithFilters - STACKIT-specific method that supports filtering.
+func (m *NetworkManager) ListPublicIPsWithFilters(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error) {
+	logger.WithOperation("ListPublicIPsWithFilters").Debug("Listing public IPs with filters", "filters", filters)
+
+	// Get all public IPs first
+	allIPs, err := m.ListPublicIPs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(filters) == 0 {
+		return allIPs, nil
+	}
+
+	// Filter the results
+	var filteredIPs []*cpi.PublicIP
+
+	for _, ip := range allIPs {
+		if matchLabels(ip.Labels, filters) {
+			filteredIPs = append(filteredIPs, ip)
+		}
+	}
+
+	return filteredIPs, nil
 }
 
 // GetPublicIP retrieves a public IP by ID.
@@ -536,9 +673,18 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, publicIPID string) (*c
 	}
 
 	out := &cpi.PublicIP{
-		ID:      stringOrEmpty(got.GetIdOk()),
-		Address: stringOrEmpty(got.GetIpOk()),
-		Labels:  mapAnyToString(got.GetLabels()),
+		ID:         stringOrEmpty(got.GetIdOk()),
+		Address:    stringOrEmpty(got.GetIpOk()),
+		Name:       "",
+		Status:     "",
+		Job:        "",
+		Index:      "",
+		InstanceID: "",
+		NetworkID:  "",
+		Labels:     mapAnyToString(got.GetLabels()),
+		Tags:       map[string]string{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 	if out.Labels != nil {
 		out.Job = out.Labels["job"]
@@ -550,32 +696,32 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, publicIPID string) (*c
 }
 
 // DeletePublicIP deletes a public IP.
-func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
-	logger.WithOperation("DeletePublicIP").Infof("Deleting public IP: %s", id)
+func (m *NetworkManager) DeletePublicIP(ctx context.Context, publicIPID string) error {
+	logger.WithOperation("DeletePublicIP").Infof("Deleting public IP: %s", publicIPID)
 
 	iaasClient, err := m.client.getIAASClient()
 	if err != nil {
 		return err
 	}
 
-	err = iaasClient.DeletePublicIP(ctx, m.client.config.ProjectID, id).Execute()
+	err = iaasClient.DeletePublicIP(ctx, m.client.config.ProjectID, publicIPID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeletePublicIP failed: %w", err)
 	}
 
-	logger.WithOperation("DeletePublicIP").Infof("Public IP deleted: %s", id)
+	logger.WithOperation("DeletePublicIP").Infof("Public IP deleted: %s", publicIPID)
 
 	return nil
 }
 
 // mapAnyToString converts map[string]interface{} to map[string]string.
-func mapAnyToString(in map[string]interface{}) map[string]string {
-	if in == nil {
+func mapAnyToString(input map[string]interface{}) map[string]string {
+	if input == nil {
 		return nil
 	}
 
-	out := make(map[string]string, len(in))
-	for key, value := range in {
+	out := make(map[string]string, len(input))
+	for key, value := range input {
 		switch typedValue := value.(type) {
 		case string:
 			out[key] = typedValue
@@ -618,13 +764,9 @@ func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName st
 	logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Ensuring %d jumpbox public IPs for bloc %s", count, blocName)
 
 	// Find existing jumpbox IPs
-	filters := map[string]string{
-		"label:managed-by": "ocfp",
-		"label:bloc":       blocName,
-		"label:job":        "jumpbox",
-	}
+	// Note: Filters removed as ListPublicIPs interface doesn't support them
 
-	existingIPs, err := m.ListPublicIPs(ctx, filters)
+	existingIPs, err := m.ListPublicIPs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list existing jumpbox IPs: %w", err)
 	}
@@ -639,7 +781,7 @@ func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName st
 	}
 
 	// Create missing IPs
-    allIPs := make([]*cpi.PublicIP, 0, count)
+	allIPs := make([]*cpi.PublicIP, 0, count)
 
 	for ipIndex := range count {
 		index := strconv.Itoa(ipIndex)
@@ -648,14 +790,16 @@ func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName st
 			allIPs = append(allIPs, existingIP)
 		} else {
 			// Create new IP
-			req := &cpi.CreatePublicIPRequest{
-				Name:  fmt.Sprintf("%s-jumpbox-%d", blocName, ipIndex),
-				Job:   "jumpbox",
-				Index: index,
+			req := &cpi.PublicIPRequest{
+				Name:      fmt.Sprintf("%s-jumpbox-%d", blocName, ipIndex),
+				Job:       "jumpbox",
+				Index:     index,
+				NetworkID: "",
 				Labels: map[string]string{
 					"bloc": blocName,
 					"env":  "mgmt",
 				},
+				Tags: map[string]string{},
 			}
 
 			newIP, err := m.CreatePublicIP(ctx, req)
@@ -720,13 +864,8 @@ func (m *NetworkManager) EnsureTCPRouterPublicIPs(ctx context.Context, blocName 
 // ensurePublicIPsForJob is a helper to ensure a number of IPs by job label.
 func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, job string, count int) ([]*cpi.PublicIP, error) {
 	// Find existing IPs for this job
-	filters := map[string]string{
-		"label:managed-by": "ocfp",
-		"label:bloc":       blocName,
-		"label:job":        job,
-	}
-
-	existingIPs, err := m.ListPublicIPs(ctx, filters)
+	// Note: Filters removed as ListPublicIPs interface doesn't support them
+	existingIPs, err := m.ListPublicIPs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list existing %s IPs: %w", job, err)
 	}
@@ -752,14 +891,16 @@ func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, jo
 		}
 
 		// Create new IP
-		req := &cpi.CreatePublicIPRequest{
-			Name:  fmt.Sprintf("%s-%s-%d", blocName, job, ipIndex),
-			Job:   job,
-			Index: indexString,
+		req := &cpi.PublicIPRequest{
+			Name:      fmt.Sprintf("%s-%s-%d", blocName, job, ipIndex),
+			Job:       job,
+			Index:     indexString,
+			NetworkID: "",
 			Labels: map[string]string{
 				"bloc": blocName,
 				"env":  "mgmt",
 			},
+			Tags: map[string]string{},
 		}
 
 		newIP, err := m.CreatePublicIP(ctx, req)
@@ -774,4 +915,46 @@ func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, jo
 	}
 
 	return allIPs, nil
+}
+
+func (m *NetworkManager) createPublicIPViaSDK(ctx context.Context, labels map[string]interface{}) (*iaas.PublicIp, error) {
+	iaasClient, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, err
+	}
+
+	payload := iaas.CreatePublicIPPayload{
+		Id:               nil,
+		Ip:               nil,
+		Labels:           nil,
+		NetworkInterface: nil,
+	}
+	payload.SetLabels(labels)
+
+	created, err := iaasClient.CreatePublicIP(ctx, m.client.config.ProjectID).
+		CreatePublicIPPayload(payload).
+		Execute()
+	if err != nil {
+		return nil, fmt.Errorf("stackit iaas CreatePublicIP failed: %w", err)
+	}
+
+	return created, nil
+}
+
+func (m *NetworkManager) checkPublicIPMatch(ctx context.Context, cli *iaas.APIClient, ipID string, nid string, sid string) (bool, error) {
+	pip, err := cli.GetPublicIP(ctx, m.client.config.ProjectID, ipID).Execute()
+	if err != nil {
+		return false, fmt.Errorf("failed to get public IP %s: %w", ipID, err)
+	}
+
+	if ni, ok := pip.GetNetworkInterfaceOk(); ok && ni != nil && *ni == nid {
+		err = cli.RemovePublicIpFromServer(ctx, m.client.config.ProjectID, sid, ipID).Execute()
+		if err != nil {
+			return true, fmt.Errorf("failed to remove public IP %s from server %s: %w", ipID, sid, err)
+		}
+
+		return true, nil
+	}
+
+	return false, nil
 }

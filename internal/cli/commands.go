@@ -1,8 +1,8 @@
 package cli
 
 import (
-    "github.com/ocfp/ocfp-cli-go/internal/commands"
-    "github.com/spf13/cobra"
+	"github.com/ocfp/ocfp-cli-go/internal/commands"
+	"github.com/spf13/cobra"
 )
 
 // RegisterCommands adds all subcommands to the root command.

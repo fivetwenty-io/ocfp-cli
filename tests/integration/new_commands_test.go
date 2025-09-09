@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"os"
@@ -14,99 +14,31 @@ import (
 // TestProviderCommandIntegration tests the provider command integration.
 func TestProviderCommandIntegration(t *testing.T) {
 	t.Parallel()
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config.yml")
-
-	// Create test config with service account credentials
-	testConfig := `
-name: test-bloc
-provider: stackit
-service_account_token: "test-token-value"
-blocs:
-  - name: test
-    provider: stackit
-    environment: test
-    region: eu-de-1
-    project_id: test-project-123
-`
-
-	err := os.WriteFile(configFile, []byte(testConfig), 0644)
-	require.NoError(t, err)
+	configFile := setupProviderTestConfig(t)
 
 	t.Run("CreateProviderCommand", func(t *testing.T) {
 		t.Parallel()
-
-		cmd := commands.NewProviderCmd()
-		assert.NotNil(t, cmd)
-		assert.Equal(t, "provider <action>", cmd.Use)
-		assert.Equal(t, "Manage cloud provider operations", cmd.Short)
+		testProviderCreateCommand(t)
 	})
 
 	t.Run("ValidateProviderArgs", func(t *testing.T) {
 		t.Parallel()
-
-		cmd := commands.NewProviderCmd()
-
-		// Test with no args (should fail)
-		err := cmd.Args(cmd, []string{})
-		require.Error(t, err)
-
-		// Test with valid action
-		err = cmd.Args(cmd, []string{"login"})
-		require.NoError(t, err)
-
-		// Test with invalid action
-		err = cmd.Args(cmd, []string{"invalid-action"})
-		assert.NoError(t, err) // Args validator doesn't check action validity
+		testProviderValidateArgs(t)
 	})
 
 	t.Run("ProviderCommandFlags", func(t *testing.T) {
 		t.Parallel()
-
-		cmd := commands.NewProviderCmd()
-
-		// Test flag existence
-		assert.NotNil(t, cmd.Flags().Lookup("iaas"))
-		assert.NotNil(t, cmd.Flags().Lookup("bloc"))
-
-		// Test flag defaults
-		iaasFlag := cmd.Flags().Lookup("iaas")
-		assert.Equal(t, "string", iaasFlag.Value.Type())
-
-		blocFlag := cmd.Flags().Lookup("bloc")
-		assert.Equal(t, "string", blocFlag.Value.Type())
+		testProviderCommandFlags(t)
 	})
 
 	t.Run("ProviderLoginWithConfig", func(t *testing.T) {
 		t.Parallel()
-		// Set config file environment variable
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
-
-		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "aws", "--bloc", "test"})
-
-		// This should succeed with a warning for AWS (placeholder implementation)
-		err := cmd.Execute()
-		// AWS login is a placeholder, so it should succeed with warning
-		assert.NoError(t, err)
+		testProviderLoginWithConfig(t, configFile)
 	})
 
 	t.Run("ProviderLoginStackitValidation", func(t *testing.T) {
 		t.Parallel()
-		// Test STACKIT provider validation without actual credentials
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
-
-		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
-
-		// This should fail since we don't have real STACKIT credentials
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+		testProviderLoginStackitValidation(t, configFile)
 	})
 }
 
@@ -155,12 +87,11 @@ func TestTmuxCommandIntegration(t *testing.T) {
 }
 
 // TestBastionCommandIntegration tests the bastion command integration.
-func TestBastionCommandIntegration(t *testing.T) {
-	t.Parallel()
+func setupBastionTestConfig(t *testing.T) (string, string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
 
-	// Create test config with bastion configuration
 	testConfig := `
 name: test-bloc
 provider: stackit
@@ -176,106 +107,118 @@ blocs:
     region: eu-de-1
 `
 
-	err := os.WriteFile(configFile, []byte(testConfig), 0644)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
 	require.NoError(t, err)
 
-	t.Run("CreateBastionCommand", func(t *testing.T) {
-		t.Parallel()
+	return tmpDir, configFile
+}
 
-		cmd := commands.NewBastionCmd()
-		assert.NotNil(t, cmd)
-		assert.Equal(t, "bastion <action>", cmd.Use)
-		assert.Equal(t, "Bastion host management", cmd.Short)
-	})
+func testBastionCommandCreation(t *testing.T) {
+	t.Parallel()
 
-	t.Run("ValidateBastionArgs", func(t *testing.T) {
-		t.Parallel()
+	cmd := commands.NewBastionCmd()
+	assert.NotNil(t, cmd)
+	assert.Equal(t, "bastion <action>", cmd.Use)
+	assert.Equal(t, "Bastion host management", cmd.Short)
+}
 
-		cmd := commands.NewBastionCmd()
+func testBastionArgsValidation(t *testing.T) {
+	t.Parallel()
 
-		// Test with no args (should fail)
-		err := cmd.Args(cmd, []string{})
-		require.Error(t, err)
+	cmd := commands.NewBastionCmd()
 
-		// Test with valid actions
-		err = cmd.Args(cmd, []string{"init"})
-		require.NoError(t, err)
+	err := cmd.Args(cmd, []string{})
+	require.Error(t, err)
 
-		err = cmd.Args(cmd, []string{"provision"})
-		assert.NoError(t, err)
-	})
+	err = cmd.Args(cmd, []string{"init"})
+	require.NoError(t, err)
 
-	t.Run("BastionCommandFlags", func(t *testing.T) {
-		t.Parallel()
+	err = cmd.Args(cmd, []string{"provision"})
+	assert.NoError(t, err)
+}
 
-		cmd := commands.NewBastionCmd()
+func testBastionCommandFlags(t *testing.T) {
+	t.Parallel()
 
-		// Test flag existence
-		assert.NotNil(t, cmd.Flags().Lookup("user"))
-		assert.NotNil(t, cmd.Flags().Lookup("key"))
-		assert.NotNil(t, cmd.Flags().Lookup("iaas"))
-		assert.NotNil(t, cmd.Flags().Lookup("bloc"))
+	cmd := commands.NewBastionCmd()
 
-		// Test flag defaults
-		userFlag := cmd.Flags().Lookup("user")
-		assert.Equal(t, "ubuntu", userFlag.DefValue)
-	})
+	assert.NotNil(t, cmd.Flags().Lookup("user"))
+	assert.NotNil(t, cmd.Flags().Lookup("key"))
+	assert.NotNil(t, cmd.Flags().Lookup("iaas"))
+	assert.NotNil(t, cmd.Flags().Lookup("bloc"))
 
-	t.Run("BastionInitWithoutScript", func(t *testing.T) {
-		t.Parallel()
-		// Set config file environment variable
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	userFlag := cmd.Flags().Lookup("user")
+	assert.Equal(t, "ubuntu", userFlag.DefValue)
+}
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+func testBastionInitWithoutScript(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		cmd := commands.NewBastionCmd()
-		cmd.SetArgs([]string{"init", "--user", "testuser", "--key", "/tmp/nonexistent"})
+	cmd := commands.NewBastionCmd()
+	cmd.SetArgs([]string{"init", "--user", "testuser", "--key", "/tmp/nonexistent"})
 
-		// This should fail because no bastion-init script exists
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot find bastion-init script")
-	})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot find bastion-init script")
+}
 
-	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
-		t.Parallel()
+func testBastionProvisionWithoutScript(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	cmd := commands.NewBastionCmd()
+	cmd.SetArgs([]string{"provision", "--user", "testuser"})
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot find bastion provision script")
+}
 
-		cmd := commands.NewBastionCmd()
-		cmd.SetArgs([]string{"provision", "--user", "testuser"})
+func testBastionWithProvisionScript(t *testing.T, tmpDir, configFile string) {
+	t.Helper()
+	t.Parallel()
 
-		// This should fail because no provision script exists
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot find bastion provision script")
-	})
-
-	t.Run("BastionWithProvisionScript", func(t *testing.T) {
-		t.Parallel()
-
-		scriptContent := `#!/usr/bin/perl
+	scriptContent := `#!/usr/bin/perl
 # Test provision script
 print "Provision script executed successfully\n";
 exit 0;
 `
-		_ = createScript(t, tmpDir, filepath.Join("scripts", "provision"), "bastion", scriptContent, 0755)
+	createScript(t, tmpDir, filepath.Join("scripts", "provision"), "bastion", scriptContent, 0755)
 
-		cleanupChdir := chdir(t, tmpDir)
-		defer cleanupChdir()
+	cleanupChdir := chdir(t, tmpDir)
+	defer cleanupChdir()
 
-		cleanupEnv := withEnv(t, "OCFP_CONFIG", configFile)
-		defer cleanupEnv()
+	cleanupEnv := withEnv(t, "OCFP_CONFIG", configFile)
+	defer cleanupEnv()
 
-		cmd := commands.NewBastionCmd()
-		cmd.SetArgs([]string{"provision", "--user", "testuser", "--key", "/tmp/test-key"})
+	cmd := commands.NewBastionCmd()
+	cmd.SetArgs([]string{"provision", "--user", "testuser", "--key", "/tmp/test-key"})
 
-		// Current implementation uses placeholder functionality, so it succeeds
-		// In a real implementation, this would fail on SSH connection
-		err := cmd.Execute()
-		assert.NoError(t, err)
+	err := cmd.Execute()
+	assert.NoError(t, err)
+}
+
+func TestBastionCommandIntegration(t *testing.T) {
+	t.Parallel()
+	tmpDir, configFile := setupBastionTestConfig(t)
+
+	t.Run("CreateBastionCommand", testBastionCommandCreation)
+	t.Run("ValidateBastionArgs", testBastionArgsValidation)
+	t.Run("BastionCommandFlags", testBastionCommandFlags)
+	t.Run("BastionInitWithoutScript", func(t *testing.T) {
+		t.Parallel()
+		testBastionInitWithoutScript(t, configFile)
+	})
+	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
+		t.Parallel()
+		testBastionProvisionWithoutScript(t, configFile)
+	})
+	t.Run("BastionWithProvisionScript", func(t *testing.T) {
+		t.Parallel()
+		testBastionWithProvisionScript(t, tmpDir, configFile)
 	})
 }
 
@@ -283,6 +226,7 @@ exit 0;
 func TestCommandIntegrationWithVault(t *testing.T) {
 	t.Parallel()
 	t.Run("ProviderLoginWithVault", func(t *testing.T) {
+		t.Parallel()
 		// Check if 'safe' command is available (Vault wrapper)
 		_, err := exec.LookPath("safe")
 		if err != nil {
@@ -301,12 +245,10 @@ blocs:
     environment: test
 `
 
-		err = os.WriteFile(configFile, []byte(testConfig), 0644)
+		err = os.WriteFile(configFile, []byte(testConfig), 0600)
 		require.NoError(t, err)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+		t.Setenv("OCFP_CONFIG", configFile)
 
 		cmd := commands.NewProviderCmd()
 		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
@@ -319,13 +261,11 @@ blocs:
 	})
 }
 
-// TestCommandConfigIntegration tests configuration integration across commands.
-func TestCommandConfigIntegration(t *testing.T) {
-	t.Parallel()
+func setupCommandConfigTestData(t *testing.T) (string, string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "integration-config.yml")
 
-	// Create comprehensive test configuration
 	testConfig := `
 name: integration-test
 provider: stackit
@@ -362,10 +302,10 @@ blocs:
     region: eu-de-2
 `
 
-	err := os.WriteFile(configFile, []byte(testConfig), 0644)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
 	require.NoError(t, err)
 
-	// Create service account key file
+	// #nosec G101 -- Test fixture with mock credentials
 	serviceAccountContent := `{
   "type": "service_account",
   "project_id": "integration-test-project",
@@ -374,52 +314,57 @@ blocs:
 	err = os.WriteFile(filepath.Join(tmpDir, "service-account.json"), []byte(serviceAccountContent), 0600)
 	require.NoError(t, err)
 
+	return tmpDir, configFile
+}
+
+func testMultipleCommandsWithSameConfig(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
+
+	providerCmd := commands.NewProviderCmd()
+	assert.NotNil(t, providerCmd)
+
+	tmuxCmd := commands.NewTmuxCmd()
+	assert.NotNil(t, tmuxCmd)
+
+	bastionCmd := commands.NewBastionCmd()
+	assert.NotNil(t, bastionCmd)
+}
+
+func testBlocSpecificConfiguration(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
+
+	providerCmd := commands.NewProviderCmd()
+	providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "mgmt"})
+
+	err := providerCmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+
+	providerCmd2 := commands.NewProviderCmd()
+	providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "apps"})
+
+	err = providerCmd2.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+}
+
+// TestCommandConfigIntegration tests configuration integration across commands.
+func TestCommandConfigIntegration(t *testing.T) {
+	t.Parallel()
+	_, configFile := setupCommandConfigTestData(t)
+
 	t.Run("MultipleCommandsWithSameConfig", func(t *testing.T) {
 		t.Parallel()
-
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
-
-		// Test provider command
-		providerCmd := commands.NewProviderCmd()
-		assert.NotNil(t, providerCmd)
-
-		// Test tmux command
-		tmuxCmd := commands.NewTmuxCmd()
-		assert.NotNil(t, tmuxCmd)
-
-		// Test bastion command
-		bastionCmd := commands.NewBastionCmd()
-		assert.NotNil(t, bastionCmd)
-
-		// All commands should be able to access the same configuration
-		// This verifies config loading consistency across commands
+		testMultipleCommandsWithSameConfig(t, configFile)
 	})
 
 	t.Run("BlocSpecificConfiguration", func(t *testing.T) {
 		t.Parallel()
-
-		_ = os.Setenv("OCFP_CONFIG", configFile)
-
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
-
-		// Test provider command with mgmt bloc
-		providerCmd := commands.NewProviderCmd()
-		providerCmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "mgmt"})
-
-		// Should fail due to credentials but should find the bloc config
-		err := providerCmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
-
-		// Test provider command with apps bloc
-		providerCmd2 := commands.NewProviderCmd()
-		providerCmd2.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "apps"})
-
-		err = providerCmd2.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+		testBlocSpecificConfiguration(t, configFile)
 	})
 }
 
@@ -474,10 +419,7 @@ func TestCommandErrorHandling(t *testing.T) {
 	t.Run("TmuxCommandWithoutTmux", func(t *testing.T) {
 		t.Parallel()
 		// Temporarily hide tmux from PATH to test error handling
-		originalPath := os.Getenv("PATH")
-		_ = os.Setenv("PATH", "/nonexistent")
-
-		defer func() { _ = os.Setenv("PATH", originalPath) }()
+		t.Setenv("PATH", "/nonexistent")
 
 		cmd := commands.NewTmuxCmd()
 		err := cmd.Execute()
@@ -487,4 +429,91 @@ func TestCommandErrorHandling(t *testing.T) {
 			assert.Contains(t, err.Error(), "tmux")
 		}
 	})
+}
+
+func setupProviderTestConfig(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "test-config.yml")
+
+	testConfig := `
+name: test-bloc
+provider: stackit
+service_account_token: "test-token-value"
+blocs:
+  - name: test
+    provider: stackit
+    environment: test
+    region: eu-de-1
+    project_id: test-project-123
+`
+
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
+
+	return configFile
+}
+
+func testProviderCreateCommand(t *testing.T) {
+	t.Helper()
+
+	cmd := commands.NewProviderCmd()
+	assert.NotNil(t, cmd)
+	assert.Equal(t, "provider <action>", cmd.Use)
+	assert.Equal(t, "Manage cloud provider operations", cmd.Short)
+}
+
+func testProviderValidateArgs(t *testing.T) {
+	t.Helper()
+
+	cmd := commands.NewProviderCmd()
+
+	err := cmd.Args(cmd, []string{})
+	require.Error(t, err)
+
+	err = cmd.Args(cmd, []string{"login"})
+	require.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{"invalid-action"})
+	assert.NoError(t, err)
+}
+
+func testProviderCommandFlags(t *testing.T) {
+	t.Helper()
+
+	cmd := commands.NewProviderCmd()
+
+	assert.NotNil(t, cmd.Flags().Lookup("iaas"))
+	assert.NotNil(t, cmd.Flags().Lookup("bloc"))
+
+	iaasFlag := cmd.Flags().Lookup("iaas")
+	assert.Equal(t, "string", iaasFlag.Value.Type())
+
+	blocFlag := cmd.Flags().Lookup("bloc")
+	assert.Equal(t, "string", blocFlag.Value.Type())
+}
+
+func testProviderLoginWithConfig(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
+
+	cmd := commands.NewProviderCmd()
+	cmd.SetArgs([]string{"login", "--iaas", "aws", "--bloc", "test"})
+
+	err := cmd.Execute()
+	assert.NoError(t, err)
+}
+
+func testProviderLoginStackitValidation(t *testing.T, configFile string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_CONFIG", configFile)
+
+	cmd := commands.NewProviderCmd()
+	cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
 }

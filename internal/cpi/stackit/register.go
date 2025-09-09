@@ -1,19 +1,24 @@
 package stackit
 
 import (
-    "errors"
-    "fmt"
+	"fmt"
 
-    "github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
 // Register registers the STACKIT provider with the CPI registry.
 func Register() error {
-    return cpi.Register("stackit", NewProvider)
+	err := cpi.Register("stackit", NewProvider)
+	if err != nil {
+		return fmt.Errorf("failed to register STACKIT provider: %w", err)
+	}
+
+	return nil
 }
 
 // NewProvider creates a new STACKIT provider instance.
-//nolint:ireturn // returning Provider interface is intentional for registry API
+//
+//nolint:ireturn // Returns interface by design for provider abstraction
 func NewProvider(config interface{}) (cpi.Provider, error) {
 	// Convert generic config to STACKIT config
 	var stackitConfig *Config
@@ -30,18 +35,20 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 			ServiceAccountJSON:  getString(cfg, "service_account_json"),
 			Region:              getString(cfg, "region"),
 			BaseURL:             getString(cfg, "base_url"),
+			Timeout:             0,
+			MaxRetries:          0,
 		}
 	default:
-		return nil, fmt.Errorf("invalid config type for STACKIT provider: %T", config)
+		return nil, ErrInvalidConfigTypeForStackitProvider(config)
 	}
 
 	// Validate required fields
 	if stackitConfig.ProjectID == "" {
-		return nil, errors.New("project_id is required for STACKIT provider")
+		return nil, ErrProjectIDRequiredForStackitProvider
 	}
 
 	if stackitConfig.OrgID == "" {
-		return nil, errors.New("org_id is required for STACKIT provider")
+		return nil, ErrOrgIDRequiredForStackitProvider
 	}
 
 	// Check for authentication - prefer service_account_json, then service_account_token, then auth_token
@@ -50,7 +57,7 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 	hasAuthToken := stackitConfig.AuthToken != ""
 
 	if !hasServiceAccountJSON && !hasServiceAccountToken && !hasAuthToken {
-		return nil, errors.New("STACKIT provider requires either 'service_account_json', 'service_account_token' or 'auth_token' to be set")
+		return nil, ErrStackitAuthenticationRequired
 	}
 
 	return NewClient(stackitConfig)
