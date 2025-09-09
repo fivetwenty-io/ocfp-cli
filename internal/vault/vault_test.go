@@ -1,11 +1,10 @@
-package vault
+package vault_test
 
 import (
-	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,12 +13,15 @@ import (
 func TestPathBuilder(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-		Region:   "eu01",
-	}
-	pathBuilder := NewPathBuilder(cfg, "test-bloc")
+	cfg := config.NewTestConfig().
+		WithProvider("stackit").
+		WithRegion("eu01").
+		WithVaultNetwork().
+		WithVaultBastion().
+		WithVaultComponents().
+		WithVaultBlobstore().
+		Build()
+	pathBuilder := vault.NewPathBuilder(cfg, "test-bloc")
 
 	// Test basic paths
 	assert.Equal(t, "secret/config/test-bloc", pathBuilder.GetConfigPath())
@@ -54,8 +56,13 @@ func TestPathBuilder(t *testing.T) {
 func TestPathBuilderParsing(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Name: "test-bloc"}
-	pathBuilder := NewPathBuilder(cfg, "test-bloc")
+	cfg := config.NewTestConfig().
+		WithVaultNetwork().
+		WithVaultBastion().
+		WithVaultComponents().
+		WithVaultBlobstore().
+		Build()
+	pathBuilder := vault.NewPathBuilder(cfg, "test-bloc")
 
 	// Test config path parsing
 	info, err := pathBuilder.ParsePath("secret/config/test-bloc/mgmt/vpc/subnets")
@@ -81,7 +88,7 @@ func TestPathBuilderParsing(t *testing.T) {
 func TestSecretGenerator(t *testing.T) {
 	t.Parallel()
 
-	generator := NewSecretGenerator()
+	generator := vault.NewSecretGenerator()
 
 	// Test simple password generation
 	password, err := generator.GenerateSimplePassword(20)
@@ -90,7 +97,7 @@ func TestSecretGenerator(t *testing.T) {
 	assert.NotEmpty(t, password)
 
 	// Test password with options
-	opts := &PasswordOptions{
+	opts := &vault.PasswordOptions{
 		Length:           12,
 		IncludeUpper:     true,
 		IncludeLower:     true,
@@ -123,7 +130,7 @@ func TestSecretGenerator(t *testing.T) {
 func TestInceptionSecrets(t *testing.T) {
 	t.Parallel()
 
-	generator := NewSecretGenerator()
+	generator := vault.NewSecretGenerator()
 
 	secrets, err := generator.GenerateInceptionSecrets("test-deployment")
 	require.NoError(t, err)
@@ -153,7 +160,7 @@ func TestInceptionSecrets(t *testing.T) {
 func TestDefaultSecrets(t *testing.T) {
 	t.Parallel()
 
-	generator := NewSecretGenerator()
+	generator := vault.NewSecretGenerator()
 
 	secrets, err := generator.GenerateDefaultSecrets("test-deployment")
 	require.NoError(t, err)
@@ -181,36 +188,36 @@ func TestRetryLogic(t *testing.T) {
 	t.Parallel()
 	// Test successful operation (no retry needed)
 	attempts := 0
-	err := WithRetry(func() error {
+	err := vault.WithRetry(func() error {
 		attempts++
 
 		return nil
-	}, DefaultRetryConfig())
+	}, vault.DefaultRetryConfig())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, attempts)
 
 	// Test retryable error
 	attempts = 0
-	err = WithRetry(func() error {
+	err = vault.WithRetry(func() error {
 		attempts++
 		if attempts < 3 {
-			return errors.New("connection timeout") // Retryable error
+			return vault.ErrConnectionTimeout // Retryable error
 		}
 
 		return nil
-	}, DefaultRetryConfig())
+	}, vault.DefaultRetryConfig())
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, attempts)
 
 	// Test non-retryable error
 	attempts = 0
-	err = WithRetry(func() error {
+	err = vault.WithRetry(func() error {
 		attempts++
 
-		return errors.New("access denied") // Non-retryable error
-	}, DefaultRetryConfig())
+		return vault.ErrAccessDenied // Non-retryable error
+	}, vault.DefaultRetryConfig())
 
 	require.Error(t, err)
 	assert.Equal(t, 1, attempts) // Should not retry
@@ -230,8 +237,8 @@ func TestIsRetryable(t *testing.T) {
 	}
 
 	for _, errMsg := range retryableErrors {
-		err := fmt.Errorf("%s", errMsg)
-		assert.True(t, IsRetryable(err), "Error should be retryable: %s", errMsg)
+		err := vault.ErrDynamicTestMessage(errMsg)
+		assert.True(t, vault.IsRetryable(err), "Error should be retryable: %s", errMsg)
 	}
 
 	// Test non-retryable errors
@@ -243,52 +250,104 @@ func TestIsRetryable(t *testing.T) {
 	}
 
 	for _, errMsg := range nonRetryableErrors {
-		err := fmt.Errorf("%s", errMsg)
-		assert.False(t, IsRetryable(err), "Error should not be retryable: %s", errMsg)
+		err := vault.ErrDynamicTestMessage(errMsg)
+		assert.False(t, vault.IsRetryable(err), "Error should not be retryable: %s", errMsg)
 	}
 
 	// Test nil error
-	assert.False(t, IsRetryable(nil))
+	assert.False(t, vault.IsRetryable(nil))
 }
 
 // TestStackitProvider tests STACKIT provider functionality.
 func TestStackitProvider(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
+	cfg := createTestStackitConfig()
+	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
+	provider := vault.NewStackitVaultProvider(cfg, mockSafe, "stackit-test")
+
+	runStackitProviderTests(t, provider)
+}
+
+func createTestStackitConfig() *config.Config {
+	return &config.Config{
 		Name:                "stackit-test",
 		Provider:            "stackit",
 		Region:              "eu01",
 		ProjectID:           "test-project",
 		ServiceAccountToken: "test-token",
-		DNS:                 []string{"1.1.1.1", "8.8.8.8"},
 		Network: config.NetworkConfig{
 			CIDR: "10.0.0.0/16",
 		},
-		AZs: map[string]config.AvailabilityZone{
-			"eu01-1": {Zone: "eu01-1"},
-			"eu01-2": {Zone: "eu01-2"},
-		},
-		Subnets: []config.Subnet{
-			{Type: "ocfp", CIDR: "10.0.1.0/24"},
-			{Type: "services", CIDR: "10.0.2.0/24"},
-		},
+		Bastion:    createTestBastionConfig(),
+		Genesis:    createTestGenesisConfig(),
+		Deployment: createTestDeploymentConfig(),
+		DNS:        []string{"1.1.1.1", "8.8.8.8"},
+		AZs:        createTestAZConfig(),
+		Routers:    config.ComponentConfig{},
+		Cells:      config.ComponentConfig{},
+		Subnets:    createTestSubnetsConfig(),
+		Blobstore:  createTestBlobstoreConfig(),
 	}
+}
 
-	// Create mock safe (we can't test with real vault in unit tests)
-	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
-	provider := NewStackitVaultProvider(cfg, mockSafe, "stackit-test")
+func createTestBastionConfig() config.Bastion {
+	return config.Bastion{
+		Genesis: createTestGenesisConfig(),
+		Git: config.GitConfig{
+			User: config.GitUser{},
+		},
+		Tools:     config.OverrideSets{},
+		CFPlugins: config.OverrideSets{},
+		Snaps:     config.OverrideSets{},
+	}
+}
 
-	// Test provider name
+func createTestGenesisConfig() config.Genesis {
+	return config.Genesis{Enabled: false}
+}
+
+func createTestDeploymentConfig() config.Deployment {
+	return config.Deployment{
+		HierarchyFiles:      false,
+		HierarchyVaultPaths: false,
+	}
+}
+
+func createTestAZConfig() map[string]config.AvailabilityZone {
+	return map[string]config.AvailabilityZone{
+		"eu01-1": {Zone: "eu01-1"},
+		"eu01-2": {Zone: "eu01-2"},
+	}
+}
+
+func createTestSubnetsConfig() []config.Subnet {
+	return []config.Subnet{
+		{CIDR: "10.0.1.0/24", Type: "ocfp"},
+		{CIDR: "10.0.2.0/24", Type: "services"},
+	}
+}
+
+func createTestBlobstoreConfig() config.BlobstoreConfig {
+	return config.BlobstoreConfig{
+		EnablePolicies: false,
+		BoshBlobstore:  config.BucketSettings{},
+		CFBuildpacks:   config.BucketSettings{},
+		CFDroplets:     config.BucketSettings{},
+		CFAppPackages:  config.BucketSettings{},
+	}
+}
+
+func runStackitProviderTests(t *testing.T, provider *vault.StackitVaultProvider) {
+	t.Helper()
+
 	assert.Equal(t, "stackit", provider.GetProviderName())
 
-	// Test save config (should succeed with mock)
 	err := provider.SaveConfigToVault()
-	require.NoError(t, err) // Should succeed with mock
+	require.NoError(t, err)
 
-	// Test configure public IPs
 	err = provider.ConfigurePublicIPs()
-	require.NoError(t, err) // Should succeed with mock
+	require.NoError(t, err)
 }
 
 // MockSafe is a mock implementation of Safe for unit testing.
@@ -321,7 +380,7 @@ func (m *MockSafe) Get(path, key string) (interface{}, error) {
 		return pathData[key], nil
 	}
 
-	return nil, errors.New("path not found")
+	return nil, vault.ErrPathNotFound
 }
 
 func (m *MockSafe) GetAll(path string) (map[string]interface{}, error) {
@@ -329,7 +388,7 @@ func (m *MockSafe) GetAll(path string) (map[string]interface{}, error) {
 		return pathData, nil
 	}
 
-	return nil, errors.New("path not found")
+	return nil, vault.ErrPathNotFound
 }
 
 func (m *MockSafe) Exists(path string) (bool, error) {
@@ -386,8 +445,8 @@ func (m *MockSafe) Import(path string, data map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockSafe) GetEngineInfo(path string) (*EngineInfo, error) {
-	return &EngineInfo{
+func (m *MockSafe) GetEngineInfo(path string) (*vault.EngineInfo, error) {
+	return &vault.EngineInfo{
 		Type:    "kv-v2",
 		Version: "2",
 		Path:    "secret",
@@ -413,9 +472,9 @@ func (m *MockSafe) GetString(path, key string) (string, error) {
 		return str, nil
 	}
 
-	return "", errors.New("not a string")
+	return "", vault.ErrNotAString
 }
 
 func (m *MockSafe) GetJSON(path, key string) ([]byte, error) {
-	return nil, errors.New("not implemented in mock")
+	return nil, vault.ErrNotImplementedInMock
 }

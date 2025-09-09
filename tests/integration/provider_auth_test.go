@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"context"
@@ -18,21 +18,13 @@ import (
 )
 
 // TestProviderAuthenticationFlow tests the complete authentication flow.
-func TestProviderAuthenticationFlow(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping provider authentication integration tests in short mode")
-	}
-
+func testStackitAuthWithToken(t *testing.T, tmpDir string) {
+	t.Helper()
 	t.Parallel()
 
-	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "stackit-token-config.yml")
 
-	t.Run("StackitAuthWithToken", func(t *testing.T) {
-		t.Parallel()
-
-		configFile := filepath.Join(tmpDir, "stackit-token-config.yml")
-
-		testConfig := `
+	testConfig := `
 blocs:
   test:
     name: test
@@ -44,43 +36,48 @@ blocs:
     organization_id: test-org-456
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		// Test configuration loading
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Equal(t, "test-token-value", cfg.ServiceAccountToken)
+	assert.Equal(t, "stackit", cfg.Provider)
+	assert.Equal(t, "test-token-value", cfg.ServiceAccountToken)
 
-		// Test STACKIT client creation (without actual authentication)
-		stackitConfig := &stackit.Config{
-			AuthToken: cfg.ServiceAccountToken,
-			ProjectID: "test-project-123",
-			OrgID:     "test-org-456",
-			Region:    "eu-de-1",
-		}
+	stackitConfig := &stackit.Config{
+		ProjectID:           "test-project-123",
+		OrgID:               "test-org-456",
+		AuthToken:           cfg.ServiceAccountToken,
+		ServiceAccountToken: "",
+		ServiceAccountJSON:  "",
+		Region:              "eu-de-1",
+		BaseURL:             "",
+		Timeout:             0,
+		MaxRetries:          0,
+	}
 
-		client, err := stackit.NewClient(stackitConfig)
-		require.NoError(t, err)
-		assert.NotNil(t, client)
-		assert.Equal(t, "stackit", client.Name())
-		assert.Equal(t, "eu-de-1", client.Region())
-	})
+	client, err := stackit.NewClient(stackitConfig)
+	require.NoError(t, err)
+	assert.NotNil(t, client)
+	assert.Equal(t, "stackit", client.Name())
+	assert.Equal(t, "eu-de-1", client.Region())
+}
 
-	t.Run("StackitAuthWithJSON", func(t *testing.T) {
-		t.Parallel()
+func testStackitAuthWithJSON(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
 
-		configFile := filepath.Join(tmpDir, "stackit-json-config.yml")
-		serviceAccountJSON := `{
+	configFile := filepath.Join(tmpDir, "stackit-json-config.yml")
+	// #nosec G101 -- Test fixture with mock credentials
+	serviceAccountJSON := `{
   "type": "service_account",
   "project_id": "test-project-json",
   "private_key": "-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----",
   "client_email": "test@example.com"
 }`
 
-		testConfig := fmt.Sprintf(`
+	testConfig := fmt.Sprintf(`
 blocs:
   test:
     name: test
@@ -91,33 +88,35 @@ blocs:
     project_id: test-project-json
 `, strings.ReplaceAll(serviceAccountJSON, "'", "''"))
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Contains(t, cfg.ServiceAccountJSON, "service_account")
-		assert.Contains(t, cfg.ServiceAccountJSON, "test-project-json")
-	})
+	assert.Equal(t, "stackit", cfg.Provider)
+	assert.Contains(t, cfg.ServiceAccountJSON, "service_account")
+	assert.Contains(t, cfg.ServiceAccountJSON, "test-project-json")
+}
 
-	t.Run("StackitAuthWithKeyPath", func(t *testing.T) {
-		t.Parallel()
+func testStackitAuthWithKeyPath(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
 
-		keyPath := filepath.Join(tmpDir, "service-account-key.json")
-		serviceAccountContent := `{
+	keyPath := filepath.Join(tmpDir, "service-account-key.json")
+	// #nosec G101 -- Test fixture with mock credentials
+	serviceAccountContent := `{
   "type": "service_account",
   "project_id": "test-project-keypath",
   "private_key": "-----BEGIN PRIVATE KEY-----\ntest-key-content\n-----END PRIVATE KEY-----",
   "client_email": "service@test-project-keypath.iam.stackit.cloud"
 }`
 
-		err := os.WriteFile(keyPath, []byte(serviceAccountContent), 0600)
-		require.NoError(t, err)
+	err := os.WriteFile(keyPath, []byte(serviceAccountContent), 0600)
+	require.NoError(t, err)
 
-		configFile := filepath.Join(tmpDir, "stackit-keypath-config.yml")
-		testConfig := `
+	configFile := filepath.Join(tmpDir, "stackit-keypath-config.yml")
+	testConfig := `
 blocs:
   test:
     name: test
@@ -128,32 +127,32 @@ blocs:
     project_id: test-project-keypath
 `
 
-		err = os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err = os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Equal(t, keyPath, cfg.ServiceAccountKeyPath)
+	assert.Equal(t, "stackit", cfg.Provider)
+	assert.Equal(t, keyPath, cfg.ServiceAccountKeyPath)
 
-		// Verify the key file exists and is readable
-		keyContent, err := os.ReadFile(cfg.ServiceAccountKeyPath)
-		require.NoError(t, err)
-		assert.Contains(t, string(keyContent), "service_account")
-		assert.Contains(t, string(keyContent), "test-project-keypath")
-	})
+	keyContent, err := os.ReadFile(cfg.ServiceAccountKeyPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(keyContent), "service_account")
+	assert.Contains(t, string(keyContent), "test-project-keypath")
+}
 
-	t.Run("ProviderCommandWithStackitCLI", func(t *testing.T) {
-		t.Parallel()
-		// Check if stackit CLI is available
-		_, err := exec.LookPath("stackit")
-		if err != nil {
-			t.Skip("stackit CLI not available, skipping CLI integration test")
-		}
+func testProviderCommandWithStackitCLI(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
 
-		configFile := filepath.Join(tmpDir, "cli-integration-config.yml")
-		testConfig := `
+	_, err := exec.LookPath("stackit")
+	if err != nil {
+		t.Skip("stackit CLI not available, skipping CLI integration test")
+	}
+
+	configFile := filepath.Join(tmpDir, "cli-integration-config.yml")
+	testConfig := `
 name: cli-integration-test
 provider: stackit
 service_account_token: "fake-token-for-testing"
@@ -166,35 +165,56 @@ blocs:
     organization_id: fake-org-id
 `
 
-		err = os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err = os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+	cmd := commands.NewProviderCmd()
+	cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
 
-		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "stackit", "--bloc", "test"})
+	err = cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+}
 
-		// This will fail with authentication error, but should reach the stackit CLI
-		err = cmd.Execute()
-		require.Error(t, err)
-		// The error should be about authentication, not missing commands
-		assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+func TestProviderAuthenticationFlow(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping provider authentication integration tests in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	t.Run("StackitAuthWithToken", func(t *testing.T) {
+		t.Parallel()
+		testStackitAuthWithToken(t, tmpDir)
+	})
+
+	t.Run("StackitAuthWithJSON", func(t *testing.T) {
+		t.Parallel()
+		testStackitAuthWithJSON(t, tmpDir)
+	})
+
+	t.Run("StackitAuthWithKeyPath", func(t *testing.T) {
+		t.Parallel()
+		testStackitAuthWithKeyPath(t, tmpDir)
+	})
+
+	t.Run("ProviderCommandWithStackitCLI", func(t *testing.T) {
+		t.Parallel()
+		testProviderCommandWithStackitCLI(t, tmpDir)
 	})
 }
 
-// TestProviderValidationFlow tests provider validation logic.
-func TestProviderValidationFlow(t *testing.T) {
+func testValidateProviderTypes(t *testing.T, tmpDir string) {
+	t.Helper()
 	t.Parallel()
-	tmpDir := t.TempDir()
 
-	t.Run("ValidateProviderTypes", func(t *testing.T) {
-		t.Parallel()
+	configFile := filepath.Join(tmpDir, "validation-config.yml")
 
-		configFile := filepath.Join(tmpDir, "validation-config.yml")
-
-		testConfig := `
+	testConfig := `
 name: validation-test
 provider: stackit
 blocs:
@@ -215,44 +235,40 @@ blocs:
     environment: test
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+	providers := []string{"stackit", "aws", "openstack", "gcp", "azure"}
+	blocs := []string{"stackit-bloc", "aws-bloc", "openstack-bloc", "gcp-bloc", "azure-bloc"}
 
-		providers := []string{"stackit", "aws", "openstack", "gcp", "azure"}
-		blocs := []string{"stackit-bloc", "aws-bloc", "openstack-bloc", "gcp-bloc", "azure-bloc"}
+	for i, provider := range providers {
+		cmd := commands.NewProviderCmd()
+		cmd.SetArgs([]string{"login", "--iaas", provider, "--bloc", blocs[i]})
 
-		for i, provider := range providers {
-			cmd := commands.NewProviderCmd()
-			cmd.SetArgs([]string{"login", "--iaas", provider, "--bloc", blocs[i]})
+		err := cmd.Execute()
 
-			err := cmd.Execute()
-
-			if provider == "stackit" {
-				// STACKIT should fail with credential error
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
-			} else {
-				// Other providers should succeed with placeholder warning
-				assert.NoError(t, err)
-			}
+		if provider == "stackit" {
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "could not retrieve STACKIT service account credentials")
+		} else {
+			assert.NoError(t, err)
 		}
-	})
+	}
+}
 
-	t.Run("ValidateEnvironmentVariables", func(t *testing.T) {
-		t.Parallel()
-		// Test provider selection via environment variable
-		_ = os.Setenv("OCFP_PROVIDER", "aws")
-		_ = os.Setenv("OCFP_BLOC_NAME", "test-bloc")
+func testValidateEnvironmentVariables(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
+	t.Setenv("OCFP_PROVIDER", "aws")
+	t.Setenv("OCFP_BLOC_NAME", "test-bloc")
 
-		defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
-		defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
+	defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
+	defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
 
-		configFile := filepath.Join(tmpDir, "env-var-config.yml")
-		testConfig := `
+	configFile := filepath.Join(tmpDir, "env-var-config.yml")
+	testConfig := `
 name: env-var-test
 provider: stackit
 blocs:
@@ -261,26 +277,24 @@ blocs:
     environment: test
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+	cmd := commands.NewProviderCmd()
+	cmd.SetArgs([]string{"login"})
 
-		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login"})
+	err = cmd.Execute()
+	assert.NoError(t, err)
+}
 
-		// Should use environment variables for provider and bloc
-		err = cmd.Execute()
-		assert.NoError(t, err) // AWS placeholder should succeed
-	})
+func testInvalidProviderHandling(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
 
-	t.Run("InvalidProviderHandling", func(t *testing.T) {
-		t.Parallel()
-
-		configFile := filepath.Join(tmpDir, "invalid-provider-config.yml")
-		testConfig := `
+	configFile := filepath.Join(tmpDir, "invalid-provider-config.yml")
+	testConfig := `
 name: invalid-test
 provider: unknown-provider
 blocs:
@@ -289,115 +303,140 @@ blocs:
     environment: test
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		_ = os.Setenv("OCFP_CONFIG", configFile)
+	t.Setenv("OCFP_CONFIG", configFile)
 
-		defer func() { _ = os.Unsetenv("OCFP_CONFIG") }()
+	cmd := commands.NewProviderCmd()
+	cmd.SetArgs([]string{"login", "--iaas", "unknown-provider", "--bloc", "test"})
 
-		cmd := commands.NewProviderCmd()
-		cmd.SetArgs([]string{"login", "--iaas", "unknown-provider", "--bloc", "test"})
+	err = cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported provider")
+}
 
-		err = cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported provider")
+// TestProviderValidationFlow tests provider validation logic.
+func TestProviderValidationFlow(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	t.Run("ValidateProviderTypes", func(t *testing.T) {
+		t.Parallel()
+		testValidateProviderTypes(t, tmpDir)
 	})
+
+	t.Run("ValidateEnvironmentVariables", func(t *testing.T) {
+		t.Parallel()
+		testValidateEnvironmentVariables(t, tmpDir)
+	})
+
+	t.Run("InvalidProviderHandling", func(t *testing.T) {
+		t.Parallel()
+		testInvalidProviderHandling(t, tmpDir)
+	})
+}
+
+func testStackitClientNetworkOperations(t *testing.T) {
+	t.Parallel()
+
+	config := &stackit.Config{
+		ProjectID:           "test-project",
+		OrgID:               "test-org",
+		AuthToken:           "test-token",
+		ServiceAccountToken: "",
+		ServiceAccountJSON:  "",
+		Region:              "eu-de-1",
+		BaseURL:             "https://api.stackit.cloud",
+		Timeout:             30 * time.Second,
+		MaxRetries:          0,
+	}
+
+	client, err := stackit.NewClient(config)
+	require.NoError(t, err)
+
+	networkManager := client.Network()
+	assert.NotNil(t, networkManager)
+
+	computeManager := client.Compute()
+	assert.NotNil(t, computeManager)
+
+	storageManager := client.Storage()
+	assert.NotNil(t, storageManager)
+
+	securityManager := client.Security()
+	assert.NotNil(t, securityManager)
+
+	loadBalancerManager := client.LoadBalancer()
+	assert.NotNil(t, loadBalancerManager)
+}
+
+func testStackitClientInitialization(t *testing.T) {
+	t.Parallel()
+
+	config := &stackit.Config{
+		ProjectID:           "test-project",
+		OrgID:               "test-org",
+		AuthToken:           "test-token",
+		ServiceAccountToken: "",
+		ServiceAccountJSON:  "",
+		Region:              "eu-de-1",
+		BaseURL:             "",
+		Timeout:             0,
+		MaxRetries:          0,
+	}
+
+	client := &stackit.Client{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.Initialize(ctx, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize STACKIT provider")
+}
+
+func testStackitClientCleanup(t *testing.T) {
+	t.Parallel()
+
+	config := &stackit.Config{
+		ProjectID:           "test-project",
+		OrgID:               "test-org",
+		AuthToken:           "test-token",
+		ServiceAccountToken: "",
+		ServiceAccountJSON:  "",
+		Region:              "eu-de-1",
+		BaseURL:             "",
+		Timeout:             0,
+		MaxRetries:          0,
+	}
+
+	client, err := stackit.NewClient(config)
+	require.NoError(t, err)
+
+	err = client.Cleanup(context.Background())
+	assert.NoError(t, err)
 }
 
 // TestProviderNetworkFlow tests network-related provider functionality.
 func TestProviderNetworkFlow(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("skipping network flow tests in short mode")
 	}
 
-	t.Parallel()
-
-	t.Run("StackitClientNetworkOperations", func(t *testing.T) {
-		t.Parallel()
-		// Test STACKIT client network manager initialization
-		config := &stackit.Config{
-			AuthToken: "test-token",
-			ProjectID: "test-project",
-			OrgID:     "test-org",
-			Region:    "eu-de-1",
-			BaseURL:   "https://api.stackit.cloud",
-			Timeout:   30 * time.Second,
-		}
-
-		client, err := stackit.NewClient(config)
-		require.NoError(t, err)
-
-		networkManager := client.Network()
-		assert.NotNil(t, networkManager)
-
-		computeManager := client.Compute()
-		assert.NotNil(t, computeManager)
-
-		storageManager := client.Storage()
-		assert.NotNil(t, storageManager)
-
-		securityManager := client.Security()
-		assert.NotNil(t, securityManager)
-
-		loadBalancerManager := client.LoadBalancer()
-		assert.NotNil(t, loadBalancerManager)
-	})
-
-	t.Run("StackitClientInitialization", func(t *testing.T) {
-		t.Parallel()
-
-		config := &stackit.Config{
-			AuthToken: "test-token",
-			ProjectID: "test-project",
-			OrgID:     "test-org",
-			Region:    "eu-de-1",
-		}
-
-		client := &stackit.Client{}
-
-		// Test initialization without actual authentication
-		// This tests the initialization logic without making real API calls
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		err := client.Initialize(ctx, config)
-		// This should fail with authentication error, not initialization error
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to initialize STACKIT provider")
-	})
-
-	t.Run("StackitClientCleanup", func(t *testing.T) {
-		t.Parallel()
-
-		config := &stackit.Config{
-			AuthToken: "test-token",
-			ProjectID: "test-project",
-			OrgID:     "test-org",
-			Region:    "eu-de-1",
-		}
-
-		client, err := stackit.NewClient(config)
-		require.NoError(t, err)
-
-		// Test cleanup operations
-		err = client.Cleanup(context.Background())
-		assert.NoError(t, err)
-	})
+	t.Run("StackitClientNetworkOperations", testStackitClientNetworkOperations)
+	t.Run("StackitClientInitialization", testStackitClientInitialization)
+	t.Run("StackitClientCleanup", testStackitClientCleanup)
 }
 
-// TestProviderCredentialDiscovery tests credential discovery mechanisms.
-func TestProviderCredentialDiscovery(t *testing.T) {
+func testCredentialPriority(t *testing.T, tmpDir string) {
+	t.Helper()
 	t.Parallel()
-	tmpDir := t.TempDir()
 
-	t.Run("CredentialPriority", func(t *testing.T) {
-		t.Parallel()
-		// Test credential priority: config file > vault > environment
-
-		// Create config with token
-		configFile := filepath.Join(tmpDir, "priority-config.yml")
-		testConfig := `
+	configFile := filepath.Join(tmpDir, "priority-config.yml")
+	testConfig := `
 blocs:
   test:
     name: test
@@ -408,27 +447,28 @@ blocs:
     project_id: test-project
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		// Config file token should take priority
-		assert.Equal(t, "config-file-token", cfg.ServiceAccountToken)
-	})
+	assert.Equal(t, "config-file-token", cfg.ServiceAccountToken)
+}
 
-	t.Run("MultipleCredentialFormats", func(t *testing.T) {
-		t.Parallel()
-		// Test handling of multiple credential formats in same config
-		configFile := filepath.Join(tmpDir, "multi-format-config.yml")
-		keyPath := filepath.Join(tmpDir, "multi-key.json")
+func testMultipleCredentialFormats(t *testing.T, tmpDir string) {
+	t.Helper()
+	t.Parallel()
 
-		keyContent := `{"type": "service_account", "project_id": "multi-test"}`
-		err := os.WriteFile(keyPath, []byte(keyContent), 0600)
-		require.NoError(t, err)
+	configFile := filepath.Join(tmpDir, "multi-format-config.yml")
+	keyPath := filepath.Join(tmpDir, "multi-key.json")
 
-		testConfig := `
+	// #nosec G101 -- Test fixture with mock credentials
+	keyContent := `{"type": "service_account", "project_id": "multi-test"}`
+	err := os.WriteFile(keyPath, []byte(keyContent), 0600)
+	require.NoError(t, err)
+
+	testConfig := `
 blocs:
   test:
     name: test
@@ -440,30 +480,44 @@ blocs:
     environment: test
 `
 
-		err = os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err = os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		// All credential formats should be available
-		assert.Equal(t, "token-value", cfg.ServiceAccountToken)
-		assert.Contains(t, cfg.ServiceAccountJSON, "json-project")
-		assert.Equal(t, keyPath, cfg.ServiceAccountKeyPath)
-	})
+	assert.Equal(t, "token-value", cfg.ServiceAccountToken)
+	assert.Contains(t, cfg.ServiceAccountJSON, "json-project")
+	assert.Equal(t, keyPath, cfg.ServiceAccountKeyPath)
+}
 
-	t.Run("VaultIntegrationCheck", func(t *testing.T) {
+func testVaultIntegrationCheck(t *testing.T) {
+	t.Parallel()
+
+	_, safeErr := exec.LookPath("safe")
+	_, vaultErr := exec.LookPath("vault")
+
+	if safeErr != nil && vaultErr != nil {
+		t.Skip("neither safe nor vault CLI available, skipping vault integration test")
+	}
+
+	assert.True(t, safeErr == nil || vaultErr == nil, "at least one vault tool should be available")
+}
+
+// TestProviderCredentialDiscovery tests credential discovery mechanisms.
+func TestProviderCredentialDiscovery(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	t.Run("CredentialPriority", func(t *testing.T) {
 		t.Parallel()
-		// Check if vault integration tools are available
-		_, safeErr := exec.LookPath("safe")
-		_, vaultErr := exec.LookPath("vault")
-
-		if safeErr != nil && vaultErr != nil {
-			t.Skip("neither safe nor vault CLI available, skipping vault integration test")
-		}
-
-		// Test that the system has vault capabilities available
-		// This doesn't test actual vault operations, just availability
-		assert.True(t, safeErr == nil || vaultErr == nil, "at least one vault tool should be available")
+		testCredentialPriority(t, tmpDir)
 	})
+
+	t.Run("MultipleCredentialFormats", func(t *testing.T) {
+		t.Parallel()
+		testMultipleCredentialFormats(t, tmpDir)
+	})
+
+	t.Run("VaultIntegrationCheck", testVaultIntegrationCheck)
 }

@@ -21,6 +21,13 @@ const (
 	ErrorTypeTimeout       ErrorType = "timeout"
 	ErrorTypeRetryable     ErrorType = "retryable"
 	ErrorTypeUnknown       ErrorType = "unknown"
+
+	// Retry configuration.
+	defaultMaxRetries = 3
+	defaultBaseDelay  = 2 * time.Second
+
+	// Backoff limits.
+	maxBackoffDelay = 30 * time.Second
 )
 
 // BastionError represents an error with context and retry information.
@@ -56,8 +63,8 @@ type ErrorHandler struct {
 func NewErrorHandler() *ErrorHandler {
 	return &ErrorHandler{
 		log:        logger.Get(),
-		maxRetries: 3,
-		baseDelay:  2 * time.Second,
+		maxRetries: defaultMaxRetries,
+		baseDelay:  defaultBaseDelay,
 	}
 }
 
@@ -68,109 +75,28 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 	}
 
 	errMsg := strings.ToLower(err.Error())
-
 	bastionErr := &BastionError{
-		Phase:   phase,
-		Command: command,
-		Message: err.Error(),
-		Cause:   err,
+		Type:         "",
+		Phase:        phase,
+		Command:      command,
+		Message:      err.Error(),
+		Cause:        err,
+		Retryable:    false,
+		Suggestions:  nil,
+		AttemptCount: 0,
 	}
 
-	// Network-related errors
-	if eh.containsAny(errMsg, []string{
-		"connection refused", "network unreachable", "timeout",
-		"dial tcp", "no route to host", "connection timed out",
-		"temporary failure", "dns resolution",
-	}) {
-		bastionErr.Type = ErrorTypeNetwork
-		bastionErr.Retryable = true
-		bastionErr.Suggestions = []string{
-			"Check network connectivity",
-			"Verify bastion host is running",
-			"Check security group rules",
-			"Verify DNS resolution",
-		}
-
+	// Try each classifier in order
+	if eh.classifyNetworkError(errMsg, bastionErr) ||
+		eh.classifyPermissionError(errMsg, bastionErr) ||
+		eh.classifyConfigurationError(errMsg, bastionErr) ||
+		eh.classifyDependencyError(errMsg, bastionErr) ||
+		eh.classifyTimeoutError(errMsg, bastionErr) {
 		return bastionErr
 	}
 
-	// Permission errors
-	if eh.containsAny(errMsg, []string{
-		"permission denied", "access denied", "operation not permitted",
-		"sudo", "not allowed", "unauthorized", "authentication failed",
-	}) {
-		bastionErr.Type = ErrorTypePermission
-		bastionErr.Retryable = false
-		bastionErr.Suggestions = []string{
-			"Check SSH key permissions (600 for private key)",
-			"Verify SSH user has sudo access",
-			"Check file/directory permissions",
-			"Ensure SSH key matches bastion configuration",
-		}
-
-		return bastionErr
-	}
-
-	// Configuration errors
-	if eh.containsAny(errMsg, []string{
-		"config", "configuration", "not found", "missing",
-		"invalid", "parse", "yaml", "json",
-	}) {
-		bastionErr.Type = ErrorTypeConfiguration
-		bastionErr.Retryable = false
-		bastionErr.Suggestions = []string{
-			"Check OCFP configuration file exists",
-			"Verify configuration file syntax",
-			"Ensure all required fields are present",
-			"Check file paths and permissions",
-		}
-
-		return bastionErr
-	}
-
-	// Dependency errors
-	if eh.containsAny(errMsg, []string{
-		"command not found", "no such file", "package", "dependency",
-		"module", "library", "install", "apt-get", "snap",
-	}) {
-		bastionErr.Type = ErrorTypeDependency
-		bastionErr.Retryable = true
-		bastionErr.Suggestions = []string{
-			"Update package cache: sudo apt-get update",
-			"Check if package repositories are accessible",
-			"Verify sufficient disk space for installations",
-			"Check if conflicting packages are installed",
-		}
-
-		return bastionErr
-	}
-
-	// Timeout errors
-	if eh.containsAny(errMsg, []string{
-		"timeout", "deadline exceeded", "context canceled",
-		"operation timed out",
-	}) {
-		bastionErr.Type = ErrorTypeTimeout
-		bastionErr.Retryable = true
-		bastionErr.Suggestions = []string{
-			"Increase timeout values",
-			"Check network latency",
-			"Verify system load",
-			"Consider running during off-peak hours",
-		}
-
-		return bastionErr
-	}
-
-	// Default to retryable for unknown errors
-	bastionErr.Type = ErrorTypeUnknown
-	bastionErr.Retryable = true
-	bastionErr.Suggestions = []string{
-		"Check system logs for more details",
-		"Verify system resources (CPU, memory, disk)",
-		"Review recent system changes",
-		"Contact support if issue persists",
-	}
+	// Default to unknown error
+	eh.classifyUnknownError(bastionErr)
 
 	return bastionErr
 }
@@ -224,7 +150,7 @@ func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn f
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 		case <-time.After(delay):
 			// Continue to next attempt
 		}
@@ -237,44 +163,6 @@ func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn f
 	eh.logSuggestions(lastErr)
 
 	return fmt.Errorf("phase %s failed after %d attempts: %w", phase, eh.maxRetries, lastErr)
-}
-
-// calculateDelay calculates delay with exponential backoff.
-func (eh *ErrorHandler) calculateDelay(attempt int) time.Duration {
-	// Exponential backoff: 2s, 4s, 8s, 16s, ...
-	multiplier := 1 << (attempt - 1) // 2^(attempt-1)
-	delay := time.Duration(multiplier) * eh.baseDelay
-
-	// Cap at 30 seconds
-	if delay > 30*time.Second {
-		delay = 30 * time.Second
-	}
-
-	return delay
-}
-
-// logSuggestions logs helpful suggestions for error recovery.
-func (eh *ErrorHandler) logSuggestions(bastionErr *BastionError) {
-	if len(bastionErr.Suggestions) == 0 {
-		return
-	}
-
-	eh.log.Info("Suggested recovery actions:")
-
-	for i, suggestion := range bastionErr.Suggestions {
-		eh.log.Info(fmt.Sprintf("  %d. %s", i+1, suggestion))
-	}
-}
-
-// containsAny checks if a string contains any of the given substrings.
-func (eh *ErrorHandler) containsAny(text string, substrings []string) bool {
-	for _, substr := range substrings {
-		if strings.Contains(text, substr) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // RecoverableErrorWrapper wraps operations to provide error context and recovery.
@@ -307,8 +195,11 @@ func (rew *RecoverableErrorWrapper) ExecuteCommand(ctx context.Context, sshClien
 
 	operation := func() error {
 		result, err = sshClient.ExecuteCommand(ctx, cmd)
+		if err != nil {
+			return fmt.Errorf("SSH command execution failed: %w", err)
+		}
 
-		return err
+		return nil
 	}
 
 	execErr := rew.Execute(ctx, operation)
@@ -326,4 +217,160 @@ func (rew *RecoverableErrorWrapper) ExecuteTransfer(ctx context.Context, sshClie
 	}
 
 	return rew.Execute(ctx, operation)
+}
+
+// classifyNetworkError checks for network-related errors.
+func (eh *ErrorHandler) classifyNetworkError(errMsg string, bastionErr *BastionError) bool {
+	if !eh.containsAny(errMsg, []string{
+		"connection refused", "network unreachable", "timeout",
+		"dial tcp", "no route to host", "connection timed out",
+		"temporary failure", "dns resolution",
+	}) {
+		return false
+	}
+
+	bastionErr.Type = ErrorTypeNetwork
+	bastionErr.Retryable = true
+	bastionErr.Suggestions = []string{
+		"Check network connectivity",
+		"Verify bastion host is running",
+		"Check security group rules",
+		"Verify DNS resolution",
+	}
+
+	return true
+}
+
+// classifyPermissionError checks for permission-related errors.
+func (eh *ErrorHandler) classifyPermissionError(errMsg string, bastionErr *BastionError) bool {
+	if !eh.containsAny(errMsg, []string{
+		"permission denied", "access denied", "operation not permitted",
+		"sudo", "not allowed", "unauthorized", "authentication failed",
+	}) {
+		return false
+	}
+
+	bastionErr.Type = ErrorTypePermission
+	bastionErr.Retryable = false
+	bastionErr.Suggestions = []string{
+		"Check SSH key permissions (600 for private key)",
+		"Verify SSH user has sudo access",
+		"Check file/directory permissions",
+		"Ensure SSH key matches bastion configuration",
+	}
+
+	return true
+}
+
+// classifyConfigurationError checks for configuration-related errors.
+func (eh *ErrorHandler) classifyConfigurationError(errMsg string, bastionErr *BastionError) bool {
+	if !eh.containsAny(errMsg, []string{
+		"config", "configuration", "not found", "missing",
+		"invalid", "parse", "yaml", "json",
+	}) {
+		return false
+	}
+
+	bastionErr.Type = ErrorTypeConfiguration
+	bastionErr.Retryable = false
+	bastionErr.Suggestions = []string{
+		"Check OCFP configuration file exists",
+		"Verify configuration file syntax",
+		"Ensure all required fields are present",
+		"Check file paths and permissions",
+	}
+
+	return true
+}
+
+// classifyDependencyError checks for dependency-related errors.
+func (eh *ErrorHandler) classifyDependencyError(errMsg string, bastionErr *BastionError) bool {
+	if !eh.containsAny(errMsg, []string{
+		"command not found", "no such file", "package", "dependency",
+		"module", "library", "install", "apt-get", "snap",
+	}) {
+		return false
+	}
+
+	bastionErr.Type = ErrorTypeDependency
+	bastionErr.Retryable = true
+	bastionErr.Suggestions = []string{
+		"Update package cache: sudo apt-get update",
+		"Check if package repositories are accessible",
+		"Verify sufficient disk space for installations",
+		"Check if conflicting packages are installed",
+	}
+
+	return true
+}
+
+// classifyTimeoutError checks for timeout-related errors.
+func (eh *ErrorHandler) classifyTimeoutError(errMsg string, bastionErr *BastionError) bool {
+	if !eh.containsAny(errMsg, []string{
+		"timeout", "deadline exceeded", "context canceled",
+		"operation timed out",
+	}) {
+		return false
+	}
+
+	bastionErr.Type = ErrorTypeTimeout
+	bastionErr.Retryable = true
+	bastionErr.Suggestions = []string{
+		"Increase timeout values",
+		"Check network latency",
+		"Verify system load",
+		"Consider running during off-peak hours",
+	}
+
+	return true
+}
+
+// classifyUnknownError sets default values for unknown errors.
+func (eh *ErrorHandler) classifyUnknownError(bastionErr *BastionError) {
+	bastionErr.Type = ErrorTypeUnknown
+	bastionErr.Retryable = true
+	bastionErr.Suggestions = []string{
+		"Check system logs for more details",
+		"Verify system resources (CPU, memory, disk)",
+		"Review recent system changes",
+		"Contact support if issue persists",
+	}
+}
+
+// calculateDelay calculates delay with exponential backoff.
+func (eh *ErrorHandler) calculateDelay(attempt int) time.Duration {
+	// Exponential backoff: 2s, 4s, 8s, 16s, ...
+	multiplier := 1 << (attempt - 1) // 2^(attempt-1)
+	delay := time.Duration(multiplier) * eh.baseDelay
+
+	// Cap at maximum backoff delay
+	if delay > maxBackoffDelay {
+		delay = maxBackoffDelay
+	}
+
+	return delay
+}
+
+// logSuggestions logs helpful suggestions for error recovery.
+func (eh *ErrorHandler) logSuggestions(bastionErr *BastionError) {
+	if len(bastionErr.Suggestions) == 0 {
+		return
+	}
+
+	eh.log.Info("Suggested recovery actions:")
+
+	for i, suggestion := range bastionErr.Suggestions {
+		eh.log.Info(fmt.Sprintf("  %d. %s", i+1, suggestion))
+	}
+}
+
+// containsAny checks if a string contains any of the given substrings.
+func (eh *ErrorHandler) containsAny(text string, substrings []string) bool {
+	for _, substr := range substrings {
+		if strings.Contains(text, substr) {
+			return true
+		}
+	}
+
+	return false
 }

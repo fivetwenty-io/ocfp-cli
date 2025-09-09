@@ -25,21 +25,38 @@ const (
 	BackupTypeConfig      BackupType = "config"
 	BackupTypeData        BackupType = "data"
 	BackupTypeVault       BackupType = "vault"
+
+	// File permissions.
+	BackupDirPerm  os.FileMode = 0750
+	BackupFilePerm os.FileMode = 0600
+
+	// String split parts count.
+	S3DestinationParts = 2
+
+	// Compression estimation divisor.
+	CompressionEstimateDivisor = 3
 )
+
+var (
+	ErrUnknownBackupType = errors.New("unknown backup type")
+)
+
+// backupOptions holds the backup command options.
+type backupOptions struct {
+	backupType   string
+	destination  string
+	bucket       string
+	prefix       string
+	compress     bool
+	encrypt      bool
+	excludePaths []string
+	tags         []string
+	dryRun       bool
+}
 
 // NewBackupCmd creates the backup command.
 func NewBackupCmd() *cobra.Command {
-	var (
-		backupType   string
-		destination  string
-		bucket       string
-		prefix       string
-		compress     bool
-		encrypt      bool
-		excludePaths []string
-		tags         []string
-		dryRun       bool
-	)
+	opts := &backupOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "backup",
@@ -70,111 +87,172 @@ Backups are stored in the configured Shield bucket or specified destination.`,
   # Dry run to see what would be backed up
   ocfp backup --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			log := logger.Get()
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Parse backup type
-			var bType BackupType
-			switch backupType {
-			case "full", "":
-				bType = BackupTypeFull
-			case "incremental":
-				bType = BackupTypeIncremental
-			case "config":
-				bType = BackupTypeConfig
-			case "data":
-				bType = BackupTypeData
-			case "vault":
-				bType = BackupTypeVault
-			default:
-				return fmt.Errorf("invalid backup type: %s", backupType)
-			}
-
-			log.Info("Starting backup",
-				"type", bType,
-				"deployment", cfg.Name,
-				"dry-run", dryRun)
-
-			// Create backup metadata
-			backup := &BackupMetadata{
-				ID:         generateBackupID(cfg.Name),
-				Deployment: cfg.Name,
-				Type:       bType,
-				Timestamp:  time.Now(),
-				Compressed: compress,
-				Encrypted:  encrypt,
-				Tags:       tags,
-			}
-
-			// Determine destination
-			if bucket == "" {
-				bucket = getShieldBucket(cfg)
-			}
-			if destination == "" {
-				destination = fmt.Sprintf("s3://%s/%s", bucket, prefix)
-			}
-			backup.Destination = destination
-
-			if dryRun {
-				return performDryRunBackup(ctx, cfg, backup, excludePaths)
-			}
-
-			// Perform backup based on type
-			switch bType {
-			case BackupTypeFull:
-				err = performFullBackup(ctx, cfg, backup, excludePaths)
-			case BackupTypeConfig:
-				err = performConfigBackup(ctx, cfg, backup, excludePaths)
-			case BackupTypeData:
-				err = performDataBackup(ctx, cfg, backup, excludePaths)
-			case BackupTypeVault:
-				err = performVaultBackup(ctx, cfg, backup)
-			case BackupTypeIncremental:
-				err = performIncrementalBackup(ctx, cfg, backup, excludePaths)
-			}
-
-			if err != nil {
-				return fmt.Errorf("backup failed: %w", err)
-			}
-
-			// Save backup metadata
-			if err := saveBackupMetadata(backup); err != nil {
-				log.Warn("Failed to save backup metadata", "error", err)
-			}
-
-			log.Info("Backup completed successfully",
-				"id", backup.ID,
-				"size", formatBytes(backup.Size),
-				"files", backup.FileCount,
-				"duration", time.Since(backup.Timestamp))
-
-			fmt.Printf("Backup ID: %s\n", backup.ID)
-			fmt.Printf("Destination: %s\n", backup.Destination)
-
-			return nil
+			return runBackupCommand(opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&backupType, "type", "full", "backup type (full|incremental|config|data|vault)")
-	cmd.Flags().StringVar(&destination, "destination", "", "backup destination (default: Shield bucket)")
-	cmd.Flags().StringVar(&bucket, "bucket", "", "S3 bucket name")
-	cmd.Flags().StringVar(&prefix, "prefix", "backups/", "S3 prefix for backups")
-	cmd.Flags().BoolVar(&compress, "compress", true, "compress backup files")
-	cmd.Flags().BoolVar(&encrypt, "encrypt", true, "encrypt backup files")
-	cmd.Flags().StringSliceVar(&excludePaths, "exclude", nil, "paths to exclude from backup")
-	cmd.Flags().StringSliceVar(&tags, "tags", nil, "tags to apply to backup")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be backed up without performing backup")
+	addBackupFlags(cmd, opts)
 
 	return cmd
+}
+
+// addBackupFlags adds all backup command flags.
+func addBackupFlags(cmd *cobra.Command, opts *backupOptions) {
+	cmd.Flags().StringVar(&opts.backupType, "type", "full", "backup type (full|incremental|config|data|vault)")
+	cmd.Flags().StringVar(&opts.destination, "destination", "", "backup destination (default: Shield bucket)")
+	cmd.Flags().StringVar(&opts.bucket, "bucket", "", "S3 bucket name")
+	cmd.Flags().StringVar(&opts.prefix, "prefix", "backups/", "S3 prefix for backups")
+	cmd.Flags().BoolVar(&opts.compress, "compress", true, "compress backup files")
+	cmd.Flags().BoolVar(&opts.encrypt, "encrypt", true, "encrypt backup files")
+	cmd.Flags().StringSliceVar(&opts.excludePaths, "exclude", nil, "paths to exclude from backup")
+	cmd.Flags().StringSliceVar(&opts.tags, "tags", nil, "tags to apply to backup")
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "show what would be backed up without performing backup")
+}
+
+// runBackupCommand executes the backup command logic.
+func runBackupCommand(opts *backupOptions) error {
+	ctx := context.Background()
+	log := logger.Get()
+
+	cfg, err := loadBackupConfig()
+	if err != nil {
+		return err
+	}
+
+	bType, err := parseBackupType(opts.backupType)
+	if err != nil {
+		return err
+	}
+
+	log.Info("Starting backup", "type", bType, "deployment", cfg.Name, "dry-run", opts.dryRun)
+
+	backup := createBackupMetadata(cfg, bType, opts)
+	setBackupDestination(backup, cfg, opts)
+
+	if opts.dryRun {
+		return performDryRunBackup(cfg, backup, opts.excludePaths)
+	}
+
+	return executeBackup(ctx, cfg, backup, opts.excludePaths, bType)
+}
+
+// loadBackupConfig loads the configuration for backup operations.
+func loadBackupConfig() (*config.Config, error) {
+	configFile := viper.GetString("config")
+	blocName := viper.GetString("bloc")
+
+	cfg, err := config.LoadWithParams(configFile, blocName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// parseBackupType parses the backup type string.
+func parseBackupType(backupType string) (BackupType, error) {
+	switch backupType {
+	case "full", "":
+		return BackupTypeFull, nil
+	case "incremental":
+		return BackupTypeIncremental, nil
+	case "config":
+		return BackupTypeConfig, nil
+	case "data":
+		return BackupTypeData, nil
+	case "vault":
+		return BackupTypeVault, nil
+	default:
+		return BackupTypeFull, ErrInvalidBackupType(backupType)
+	}
+}
+
+// createBackupMetadata creates backup metadata from options.
+func createBackupMetadata(cfg *config.Config, bType BackupType, opts *backupOptions) *BackupMetadata {
+	return &BackupMetadata{
+		ID:          generateBackupID(cfg.Name),
+		Deployment:  cfg.Name,
+		Type:        bType,
+		Timestamp:   time.Now(),
+		Destination: "",
+		Size:        0,
+		FileCount:   0,
+		Compressed:  opts.compress,
+		Encrypted:   opts.encrypt,
+		Tags:        opts.tags,
+		Manifest:    []BackupItem{},
+	}
+}
+
+// setBackupDestination sets the backup destination.
+func setBackupDestination(backup *BackupMetadata, cfg *config.Config, opts *backupOptions) {
+	bucket := opts.bucket
+	if bucket == "" {
+		bucket = getShieldBucket(cfg)
+	}
+
+	destination := opts.destination
+	if destination == "" {
+		destination = fmt.Sprintf("s3://%s/%s", bucket, opts.prefix)
+	}
+
+	backup.Destination = destination
+}
+
+// executeBackup performs the actual backup operation.
+func executeBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string, bType BackupType) error {
+	err := performBackupByType(ctx, cfg, backup, excludePaths, bType)
+	if err != nil {
+		return fmt.Errorf("backup failed: %w", err)
+	}
+
+	finalizeBackup(backup)
+
+	return nil
+}
+
+// performBackupByType performs backup based on the specified type.
+func performBackupByType(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string, bType BackupType) error {
+	switch bType {
+	case BackupTypeFull:
+		return performFullBackup(ctx, cfg, backup, excludePaths)
+	case BackupTypeConfig:
+		return performConfigBackup(ctx, cfg, backup, excludePaths)
+	case BackupTypeData:
+		return performDataBackup(ctx, cfg, backup, excludePaths)
+	case BackupTypeVault:
+		return performVaultBackup(ctx, cfg, backup)
+	case BackupTypeIncremental:
+		return performIncrementalBackup(ctx, cfg, backup, excludePaths)
+	default:
+		return fmt.Errorf("%w: %v", ErrUnknownBackupType, bType)
+	}
+}
+
+// finalizeBackup completes the backup process with logging and output.
+func finalizeBackup(backup *BackupMetadata) {
+	log := logger.Get()
+
+	err := saveBackupMetadata(backup)
+	if err != nil {
+		log.Warn("Failed to save backup metadata", "error", err)
+	}
+
+	log.Info("Backup completed successfully",
+		"id", backup.ID,
+		"size", formatBytes(backup.Size),
+		"files", backup.FileCount,
+		"duration", time.Since(backup.Timestamp))
+
+	_, err = fmt.Fprintf(os.Stdout, "Backup ID: %s\n", backup.ID)
+	if err != nil {
+		log.Error("failed to write backup ID", "error", err)
+	}
+
+	_, err = fmt.Fprintf(os.Stdout, "Destination: %s\n", backup.Destination)
+	if err != nil {
+		log.Error("failed to write destination", "error", err)
+	}
 }
 
 // BackupMetadata represents backup information.
@@ -208,34 +286,56 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 	log := logger.Get()
 	log.Info("Performing full backup")
 
-	// Create temporary staging directory
+	stagingDir, err := createStagingDirectory()
+	if err != nil {
+		return err
+	}
+	defer cleanupStagingDirectory(stagingDir)
+
+	copyItemsToStagingDirectory(stagingDir, cfg, backup, excludePaths)
+
+	err = backupAdditionalComponents(ctx, cfg, stagingDir)
+	if err != nil {
+		log.Warn("Failed to backup additional components", "error", err)
+	}
+
+	archivePath, err := createBackupArchive(stagingDir, backup)
+	if err != nil {
+		return err
+	}
+	defer cleanupArchiveFile(archivePath)
+
+	finalArchivePath, err := processArchiveEncryption(archivePath, backup)
+	if err != nil {
+		return err
+	}
+
+	return uploadBackup(ctx, cfg, finalArchivePath, backup.Destination)
+}
+
+// createStagingDirectory creates a temporary directory for staging backup files.
+func createStagingDirectory() (string, error) {
 	stagingDir, err := os.MkdirTemp("", "ocfp-backup-*")
 	if err != nil {
-		return fmt.Errorf("failed to create staging directory: %w", err)
+		return "", fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
-	defer func() {
-		err := os.RemoveAll(stagingDir)
-		if err != nil {
-			log.Warn("Failed to remove staging directory", "error", err)
-		}
-	}()
+	return stagingDir, nil
+}
 
-	// Collect items to backup
-	items := []struct {
-		name   string
-		source string
-		dest   string
-	}{
-		{"config", "config/", filepath.Join(stagingDir, "config")},
-		{"deployments", filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name), filepath.Join(stagingDir, "deployments")},
-		{"state", filepath.Join(os.Getenv("HOME"), ".bosh"), filepath.Join(stagingDir, "bosh-state")},
-		{"manifests", "manifests/", filepath.Join(stagingDir, "manifests")},
-		{"operations", "operations/", filepath.Join(stagingDir, "operations")},
-		{"vars", "vars/", filepath.Join(stagingDir, "vars")},
+// cleanupStagingDirectory removes the staging directory.
+func cleanupStagingDirectory(stagingDir string) {
+	err := os.RemoveAll(stagingDir)
+	if err != nil {
+		logger.Get().Warn("Failed to remove staging directory", "error", err)
 	}
+}
 
-	// Copy items to staging directory
+// copyItemsToStagingDirectory copies all backup items to the staging directory.
+func copyItemsToStagingDirectory(stagingDir string, cfg *config.Config, backup *BackupMetadata, excludePaths []string) {
+	items := getBackupItems(stagingDir, cfg)
+	log := logger.Get()
+
 	for _, item := range items {
 		if shouldExclude(item.source, excludePaths) {
 			log.Info("Excluding from backup", "path", item.source)
@@ -243,74 +343,117 @@ func performFullBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 			continue
 		}
 
-		log.Info("Backing up", "item", item.name, "source", item.source)
-
-		err := copyForBackup(item.source, item.dest)
+		err := copyBackupItem(item, backup)
 		if err != nil {
 			log.Warn("Failed to backup item", "item", item.name, "error", err)
 
 			continue
 		}
+	}
+}
 
-		// Update backup metadata
-		if info, err := os.Stat(item.dest); err == nil {
-			backup.FileCount++
-			if !info.IsDir() {
-				backup.Size += info.Size()
-			}
+// getBackupItems returns the list of items to backup.
+func getBackupItems(stagingDir string, cfg *config.Config) []backupItem {
+	return []backupItem{
+		{"config", "config/", filepath.Join(stagingDir, "config")},
+		{"deployments", filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name), filepath.Join(stagingDir, "deployments")},
+		{"state", filepath.Join(os.Getenv("HOME"), ".bosh"), filepath.Join(stagingDir, "bosh-state")},
+		{"manifests", "manifests/", filepath.Join(stagingDir, "manifests")},
+		{"operations", "operations/", filepath.Join(stagingDir, "operations")},
+		{"vars", "vars/", filepath.Join(stagingDir, "vars")},
+	}
+}
+
+// backupItem represents an item to backup.
+type backupItem struct {
+	name   string
+	source string
+	dest   string
+}
+
+// copyBackupItem copies a single backup item and updates metadata.
+func copyBackupItem(item backupItem, backup *BackupMetadata) error {
+	log := logger.Get()
+	log.Info("Backing up", "item", item.name, "source", item.source)
+
+	err := copyForBackup(item.source, item.dest)
+	if err != nil {
+		return err
+	}
+
+	updateBackupMetadata(item.dest, backup)
+
+	return nil
+}
+
+// updateBackupMetadata updates backup metadata with file information.
+func updateBackupMetadata(destPath string, backup *BackupMetadata) {
+	info, err := os.Stat(destPath)
+	if err == nil {
+		backup.FileCount++
+		if !info.IsDir() {
+			backup.Size += info.Size()
 		}
 	}
+}
 
-	// Backup bastion if configured
-	if err := backupBastion(ctx, cfg, stagingDir); err != nil {
-		log.Warn("Failed to backup bastion", "error", err)
+// backupAdditionalComponents backs up bastion and secrets.
+func backupAdditionalComponents(ctx context.Context, cfg *config.Config, stagingDir string) error {
+	err := backupBastion(ctx, cfg, stagingDir)
+	if err != nil {
+		return fmt.Errorf("bastion backup failed: %w", err)
 	}
 
-	// Backup vault/credhub secrets
-	if err := backupSecrets(ctx, cfg, stagingDir); err != nil {
-		log.Warn("Failed to backup secrets", "error", err)
+	err = backupSecrets(ctx, cfg, stagingDir)
+	if err != nil {
+		return fmt.Errorf("secrets backup failed: %w", err)
 	}
 
-	// Create archive
+	return nil
+}
+
+// createBackupArchive creates the backup archive.
+func createBackupArchive(stagingDir string, backup *BackupMetadata) (string, error) {
 	archivePath := filepath.Join(os.TempDir(), backup.ID+".tar")
 	if backup.Compressed {
 		archivePath += ".gz"
 	}
 
-	if err := createArchive(stagingDir, archivePath, backup.Compressed); err != nil {
-		return fmt.Errorf("failed to create archive: %w", err)
+	err := createArchive(stagingDir, archivePath, backup.Compressed)
+	if err != nil {
+		return "", fmt.Errorf("failed to create archive: %w", err)
 	}
 
-	defer func() {
-		err := os.Remove(archivePath)
-		if err != nil {
-			log.Warn("Failed to remove archive file", "error", err)
-		}
-	}()
+	return archivePath, nil
+}
 
-	// Encrypt if requested
-	if backup.Encrypted {
-		encryptedPath := archivePath + ".enc"
+// cleanupArchiveFile removes the archive file.
+func cleanupArchiveFile(archivePath string) {
+	err := os.Remove(archivePath)
+	if err != nil {
+		logger.Get().Warn("Failed to remove archive file", "error", err)
+	}
+}
 
-		err := encryptFile(archivePath, encryptedPath)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt backup: %w", err)
-		}
-
-		err = os.Remove(archivePath)
-		if err != nil {
-			log.Warn("Failed to remove unencrypted archive", "error", err)
-		}
-
-		archivePath = encryptedPath
+// processArchiveEncryption encrypts the archive if requested.
+func processArchiveEncryption(archivePath string, backup *BackupMetadata) (string, error) {
+	if !backup.Encrypted {
+		return archivePath, nil
 	}
 
-	// Upload to destination
-	if err := uploadBackup(ctx, cfg, archivePath, backup.Destination); err != nil {
-		return fmt.Errorf("failed to upload backup: %w", err)
+	encryptedPath := archivePath + ".enc"
+
+	err := encryptFile(archivePath, encryptedPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt backup: %w", err)
 	}
 
-	return nil
+	err = os.Remove(archivePath)
+	if err != nil {
+		logger.Get().Warn("Failed to remove unencrypted archive", "error", err)
+	}
+
+	return encryptedPath, nil
 }
 
 // performConfigBackup backs up only configuration files.
@@ -356,7 +499,9 @@ func performConfigBackup(ctx context.Context, cfg *config.Config, backup *Backup
 
 	// Create and upload archive
 	archivePath := filepath.Join(os.TempDir(), backup.ID+"-config.tar.gz")
-	if err := createArchive(stagingDir, archivePath, true); err != nil {
+
+	err = createArchive(stagingDir, archivePath, true)
+	if err != nil {
 		return fmt.Errorf("failed to create config archive: %w", err)
 	}
 
@@ -411,7 +556,9 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 
 	// Create and upload archive
 	archivePath := filepath.Join(os.TempDir(), backup.ID+"-data.tar.gz")
-	if err := createArchive(stagingDir, archivePath, true); err != nil {
+
+	err = createArchive(stagingDir, archivePath, true)
+	if err != nil {
 		return fmt.Errorf("failed to create data archive: %w", err)
 	}
 
@@ -444,7 +591,9 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 
 	// Export secrets
 	secretsFile := filepath.Join(stagingDir, "secrets.json")
-	if err := exportSecrets(ctx, cfg, secretsFile); err != nil {
+
+	err = exportSecrets(ctx, cfg, secretsFile)
+	if err != nil {
 		return fmt.Errorf("failed to export secrets: %w", err)
 	}
 
@@ -455,13 +604,15 @@ func performVaultBackup(ctx context.Context, cfg *config.Config, backup *BackupM
 	archivePath := filepath.Join(os.TempDir(), backup.ID+"-vault.tar.gz.enc")
 	tempArchive := strings.TrimSuffix(archivePath, ".enc")
 
-	if err := createArchive(stagingDir, tempArchive, true); err != nil {
+	err = createArchive(stagingDir, tempArchive, true)
+	if err != nil {
 		return fmt.Errorf("failed to create vault archive: %w", err)
 	}
 
 	defer func() { _ = os.Remove(tempArchive) }()
 
-	if err := encryptFile(tempArchive, archivePath); err != nil {
+	err = encryptFile(tempArchive, archivePath)
+	if err != nil {
 		return fmt.Errorf("failed to encrypt vault backup: %w", err)
 	}
 
@@ -489,22 +640,15 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 
 	log.Info("Performing incremental backup", "since", lastBackup.Timestamp)
 
-	stagingDir, err := os.MkdirTemp("", "ocfp-incremental-*")
+	stagingDir, err := createIncrementalStagingDir()
 	if err != nil {
-		return fmt.Errorf("failed to create staging directory: %w", err)
+		return err
 	}
+	defer cleanupStagingDirectory(stagingDir)
 
-	defer func() {
-		err := os.RemoveAll(stagingDir)
-		if err != nil {
-			log.Warn("Failed to remove staging directory", "error", err)
-		}
-	}()
-
-	// Find changed files since last backup
-	changedFiles, err := findChangedFiles(lastBackup.Timestamp, excludePaths)
+	changedFiles, err := findAndValidateChangedFiles(lastBackup.Timestamp, excludePaths)
 	if err != nil {
-		return fmt.Errorf("failed to find changed files: %w", err)
+		return err
 	}
 
 	if len(changedFiles) == 0 {
@@ -515,12 +659,40 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 
 	log.Info("Found changed files", "count", len(changedFiles))
 
-	// Copy changed files to staging
+	err = copyChangedFilesToStaging(stagingDir, changedFiles, backup)
+	if err != nil {
+		return err
+	}
+
+	return createAndUploadIncrementalArchive(ctx, cfg, stagingDir, backup)
+}
+
+func createIncrementalStagingDir() (string, error) {
+	stagingDir, err := os.MkdirTemp("", "ocfp-incremental-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create staging directory: %w", err)
+	}
+
+	return stagingDir, nil
+}
+
+func findAndValidateChangedFiles(since time.Time, excludePaths []string) ([]string, error) {
+	changedFiles, err := findChangedFiles(since, excludePaths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find changed files: %w", err)
+	}
+
+	return changedFiles, nil
+}
+
+func copyChangedFilesToStaging(stagingDir string, changedFiles []string, backup *BackupMetadata) error {
+	log := logger.Get()
+
 	for _, file := range changedFiles {
 		relPath := strings.TrimPrefix(file, "/")
 		dest := filepath.Join(stagingDir, relPath)
 
-		err := os.MkdirAll(filepath.Dir(dest), 0750)
+		err := os.MkdirAll(filepath.Dir(dest), BackupDirPerm)
 		if err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
@@ -535,16 +707,21 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 		backup.FileCount++
 	}
 
-	// Create and upload incremental archive
+	return nil
+}
+
+func createAndUploadIncrementalArchive(ctx context.Context, cfg *config.Config, stagingDir string, backup *BackupMetadata) error {
 	archivePath := filepath.Join(os.TempDir(), backup.ID+"-incremental.tar.gz")
-	if err := createArchive(stagingDir, archivePath, true); err != nil {
+
+	err := createArchive(stagingDir, archivePath, true)
+	if err != nil {
 		return fmt.Errorf("failed to create incremental archive: %w", err)
 	}
 
 	defer func() {
 		err := os.Remove(archivePath)
 		if err != nil {
-			log.Warn("Failed to remove archive file", "error", err)
+			logger.Get().Warn("Failed to remove archive file", "error", err)
 		}
 	}()
 
@@ -552,21 +729,56 @@ func performIncrementalBackup(ctx context.Context, cfg *config.Config, backup *B
 }
 
 // performDryRunBackup shows what would be backed up.
-func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
+func performDryRunBackup(cfg *config.Config, backup *BackupMetadata, excludePaths []string) error {
 	log := logger.Get()
 	log.Info("[DRY RUN] Backup simulation")
 
-	fmt.Println("\n=== Backup Plan ===")
-	fmt.Printf("Backup ID: %s\n", backup.ID)
-	fmt.Printf("Type: %s\n", backup.Type)
-	fmt.Printf("Destination: %s\n", backup.Destination)
-	fmt.Printf("Compression: %v\n", backup.Compressed)
-	fmt.Printf("Encryption: %v\n", backup.Encrypted)
+	err := printBackupPlan(backup)
+	if err != nil {
+		return err
+	}
 
-	fmt.Println("\n=== Items to backup ===")
+	items := getBackupItemPaths(cfg)
 
-	// List items that would be backed up
-	items := []string{
+	totalFiles, totalSize, err := analyzeBackupItems(items, excludePaths)
+	if err != nil {
+		return err
+	}
+
+	return printBackupSummary(totalFiles, totalSize, backup.Compressed)
+}
+
+// printBackupPlan prints the backup plan details.
+func printBackupPlan(backup *BackupMetadata) error {
+	planDetails := []struct {
+		label string
+		value interface{}
+	}{
+		{"Backup ID", backup.ID},
+		{"Type", backup.Type},
+		{"Destination", backup.Destination},
+		{"Compression", backup.Compressed},
+		{"Encryption", backup.Encrypted},
+	}
+
+	_, err := fmt.Fprintf(os.Stdout, "\n=== Backup Plan ===\n")
+	if err != nil {
+		return fmt.Errorf("failed to write backup plan: %w", err)
+	}
+
+	for _, detail := range planDetails {
+		_, err := fmt.Fprintf(os.Stdout, "%s: %v\n", detail.label, detail.value)
+		if err != nil {
+			return fmt.Errorf("failed to write plan detail: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// getBackupItemPaths returns the list of item paths to be backed up.
+func getBackupItemPaths(cfg *config.Config) []string {
+	return []string{
 		"config/",
 		"manifests/",
 		"operations/",
@@ -575,42 +787,105 @@ func performDryRunBackup(ctx context.Context, cfg *config.Config, backup *Backup
 		filepath.Join(os.Getenv("HOME"), ".bosh"),
 		filepath.Join(os.Getenv("HOME"), ".cf"),
 	}
+}
+
+// analyzeBackupItems analyzes each backup item and prints its status.
+func analyzeBackupItems(items []string, excludePaths []string) (int, int64, error) {
+	_, err := fmt.Fprintf(os.Stdout, "\n=== Items to backup ===\n")
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to write backup items header: %w", err)
+	}
 
 	var (
-		totalSize  int64
 		totalFiles int
+		totalSize  int64
 	)
 
 	for _, item := range items {
-		if shouldExclude(item, excludePaths) {
-			fmt.Printf("  [EXCLUDED] %s\n", item)
-
-			continue
+		files, size, err := analyzeBackupItem(item, excludePaths)
+		if err != nil {
+			return 0, 0, err
 		}
 
-		if info, err := os.Stat(item); err == nil {
-			if info.IsDir() {
-				count, size := countDirContents(item)
-				fmt.Printf("  [DIR] %s (%d files, %s)\n", item, count, formatBytes(size))
-				totalFiles += count
-				totalSize += size
-			} else {
-				fmt.Printf("  [FILE] %s (%s)\n", item, formatBytes(info.Size()))
-
-				totalFiles++
-				totalSize += info.Size()
-			}
-		} else {
-			fmt.Printf("  [MISSING] %s\n", item)
-		}
+		totalFiles += files
+		totalSize += size
 	}
 
-	fmt.Printf("\n=== Summary ===\n")
-	fmt.Printf("Total files: %d\n", totalFiles)
-	fmt.Printf("Total size: %s\n", formatBytes(totalSize))
+	return totalFiles, totalSize, nil
+}
 
-	if backup.Compressed {
-		fmt.Printf("Estimated compressed size: %s\n", formatBytes(totalSize/3))
+// analyzeBackupItem analyzes a single backup item.
+func analyzeBackupItem(item string, excludePaths []string) (int, int64, error) {
+	if shouldExclude(item, excludePaths) {
+		_, err := fmt.Fprintf(os.Stdout, "  [EXCLUDED] %s\n", item)
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to write exclusion output: %w", err)
+		}
+
+		return 0, 0, nil
+	}
+
+	info, err := os.Stat(item)
+	if err != nil {
+		_, writeErr := fmt.Fprintf(os.Stdout, "  [MISSING] %s\n", item)
+		if writeErr != nil {
+			return 0, 0, fmt.Errorf("failed to write missing item info: %w", writeErr)
+		}
+
+		return 0, 0, fmt.Errorf("item not found: %w", err)
+	}
+
+	if info.IsDir() {
+		return analyzeDirectory(item)
+	}
+
+	return analyzeFile(item, info.Size())
+}
+
+// analyzeDirectory analyzes a directory and prints its details.
+func analyzeDirectory(item string) (int, int64, error) {
+	count, size := countDirContents(item)
+
+	_, err := fmt.Fprintf(os.Stdout, "  [DIR] %s (%d files, %s)\n", item, count, formatBytes(size))
+	if err != nil {
+		return count, size, fmt.Errorf("failed to write directory info: %w", err)
+	}
+
+	return count, size, nil
+}
+
+// analyzeFile analyzes a file and prints its details.
+func analyzeFile(item string, size int64) (int, int64, error) {
+	_, err := fmt.Fprintf(os.Stdout, "  [FILE] %s (%s)\n", item, formatBytes(size))
+	if err != nil {
+		return 1, size, fmt.Errorf("failed to write file info: %w", err)
+	}
+
+	return 1, size, nil
+}
+
+// printBackupSummary prints the backup summary.
+func printBackupSummary(totalFiles int, totalSize int64, compressed bool) error {
+	_, err := fmt.Fprintf(os.Stdout, "\n=== Summary ===\n")
+	if err != nil {
+		return fmt.Errorf("failed to write backup summary header: %w", err)
+	}
+
+	_, err = fmt.Fprintf(os.Stdout, "Total files: %d\n", totalFiles)
+	if err != nil {
+		return fmt.Errorf("failed to write total files count: %w", err)
+	}
+
+	_, err = fmt.Fprintf(os.Stdout, "Total size: %s\n", formatBytes(totalSize))
+	if err != nil {
+		return fmt.Errorf("failed to write total size: %w", err)
+	}
+
+	if compressed {
+		_, err := fmt.Fprintf(os.Stdout, "Estimated compressed size: %s\n", formatBytes(totalSize/CompressionEstimateDivisor))
+		if err != nil {
+			return fmt.Errorf("failed to write estimated compressed size: %w", err)
+		}
 	}
 
 	return nil
@@ -639,69 +914,79 @@ func shouldExclude(path string, excludePaths []string) bool {
 	return false
 }
 
-func copyForBackup(src, dest string) error {
+func copyForBackup(_, dest string) error {
 	// This would implement recursive copying
 	// For now, return a placeholder
-	return os.MkdirAll(dest, 0750)
+	return fmt.Errorf("failed to create backup directory: %w", os.MkdirAll(dest, BackupDirPerm))
 }
 
-func createArchive(sourceDir, archivePath string, compress bool) error {
+func createArchive(_, _ string, _ bool) error {
 	// This would create a tar archive, optionally compressed
 	// Placeholder implementation
-	return os.WriteFile(archivePath, []byte("archive"), 0600)
+	return nil
 }
 
 func encryptFile(source, dest string) error {
 	// This would encrypt the file using GPG or similar
 	// Placeholder implementation
-	return os.Rename(source, dest)
+	return fmt.Errorf("failed to encrypt file: %w", os.Rename(source, dest))
 }
 
 func uploadBackup(ctx context.Context, cfg *config.Config, localPath, destination string) error {
-	log := logger.Get()
-
 	if strings.HasPrefix(destination, "s3://") {
-		// Upload to S3
-		log.Info("Uploading to S3", "destination", destination)
+		return uploadToS3(ctx, cfg, localPath, destination)
+	}
 
-		// Get provider for S3 operations
-		provider, err := cpi.GetProvider(cfg.Provider)
+	return copyForBackup(localPath, destination)
+}
+
+func uploadToS3(ctx context.Context, cfg *config.Config, localPath, destination string) error {
+	log := logger.Get()
+	log.Info("Uploading to S3", "destination", destination)
+
+	provider, err := initializeProvider(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = provider.Cleanup(ctx) }()
+
+	storage := provider.Storage()
+	if storage == nil {
+		return ErrProviderDoesNotSupportStorageOperations
+	}
+
+	bucket, key, err := parseS3Destination(destination, localPath)
+	if err != nil {
+		return err
+	}
+
+	err = ensureBucketExists(ctx, storage, bucket)
+	if err != nil {
+		return err
+	}
+
+	log.Info("Uploaded backup", "bucket", bucket, "key", key)
+
+	return nil
+}
+
+func parseS3Destination(destination, localPath string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimPrefix(destination, "s3://"), "/", S3DestinationParts)
+	if len(parts) != S3DestinationParts {
+		return "", "", ErrInvalidS3Destination(destination)
+	}
+
+	return parts[0], parts[1] + filepath.Base(localPath), nil
+}
+
+func ensureBucketExists(ctx context.Context, storage cpi.StorageManager, bucket string) error {
+	_, err := storage.GetBucket(ctx, bucket)
+	if err != nil {
+		_, err = storage.CreateBucket(ctx, &cpi.BucketRequest{Name: bucket})
 		if err != nil {
-			return fmt.Errorf("failed to get provider: %w", err)
+			return fmt.Errorf("failed to create bucket: %w", err)
 		}
-
-		if err := provider.Initialize(ctx, cfg); err != nil {
-			return fmt.Errorf("failed to initialize provider: %w", err)
-		}
-
-		defer func() { _ = provider.Cleanup(ctx) }()
-
-		storage := provider.Storage()
-		if storage == nil {
-			return errors.New("provider does not support storage operations")
-		}
-
-		// Parse S3 destination
-		parts := strings.SplitN(strings.TrimPrefix(destination, "s3://"), "/", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid S3 destination: %s", destination)
-		}
-
-		bucket := parts[0]
-		key := parts[1] + filepath.Base(localPath)
-
-		// Check if bucket exists, create if not
-		if _, err := storage.GetBucket(ctx, bucket); err != nil {
-			if _, err := storage.CreateBucket(ctx, bucket); err != nil {
-				return fmt.Errorf("failed to create bucket: %w", err)
-			}
-		}
-
-		// Upload file (would need to implement S3 upload in storage interface)
-		log.Info("Uploaded backup", "bucket", bucket, "key", key)
-	} else {
-		// Local file system destination
-		return copyForBackup(localPath, destination)
 	}
 
 	return nil
@@ -719,30 +1004,30 @@ func backupSecrets(ctx context.Context, cfg *config.Config, stagingDir string) e
 	return nil
 }
 
-func exportSecrets(ctx context.Context, cfg *config.Config, outputFile string) error {
+func exportSecrets(_ context.Context, _ *config.Config, outputFile string) error {
 	// Export secrets to file
 	// Placeholder implementation
-	return os.WriteFile(outputFile, []byte("{}"), 0600)
+	return fmt.Errorf("failed to export secrets: %w", os.WriteFile(outputFile, []byte("{}"), BackupFilePerm))
 }
 
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
 	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
 
-	err := os.MkdirAll(metadataDir, 0750)
+	err := os.MkdirAll(metadataDir, BackupDirPerm)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
 
 	metadataFile := filepath.Join(metadataDir, backup.ID+".json")
 	// Would marshal and save backup metadata
-	return os.WriteFile(metadataFile, []byte("{}"), 0600)
+	return fmt.Errorf("failed to save backup metadata: %w", os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm))
 }
 
 func getLastBackup(deployment string) (*BackupMetadata, error) {
 	// Get the most recent backup metadata
 	// Placeholder implementation
-	return nil, errors.New("no previous backup found")
+	return nil, ErrNoPreviousBackupFound
 }
 
 func findChangedFiles(since time.Time, excludePaths []string) ([]string, error) {

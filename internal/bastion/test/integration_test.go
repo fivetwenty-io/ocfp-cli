@@ -1,15 +1,24 @@
-package test
+package test_test
 
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+)
+
+// Static errors for testing error classification.
+var (
+	errConnectionRefused       = errors.New("connection refused")
+	errPermissionDenied        = errors.New("permission denied")
+	errConfigFileNotFound      = errors.New("config file not found")
+	errCommandNotFoundBosh     = errors.New("command not found: bosh")
+	errContextDeadlineExceeded = errors.New("context deadline exceeded")
 )
 
 // TestFullDryRunIntegration tests complete dry run integration.
@@ -23,22 +32,12 @@ func TestFullDryRunIntegration(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	cfg := &config.Config{
-		Name:      "test-bloc",
-		Provider:  "stackit",
-		ProjectID: "test-project-id",
-		Region:    "eu01",
-		BastionIP: "192.168.1.100", // Mock IP
-		Bastion: config.Bastion{
-			SSHUser: "ubuntu",
-			Git: config.GitConfig{
-				User: config.GitUser{
-					Name:  "Test User",
-					Email: "test@example.com",
-				},
-			},
-		},
-	}
+	cfg := config.NewTestConfig().
+		WithRegion("eu01").
+		WithProjectID("test-project-id").
+		WithBastionIP("192.168.1.100"). // Mock IP
+		WithBastion(config.TestBastionConfig()).
+		Build()
 
 	// Capture output
 	var output bytes.Buffer
@@ -51,6 +50,7 @@ func TestFullDryRunIntegration(t *testing.T) {
 		Verbose:     true,
 		MaxWorkers:  2,
 		ProgressOut: &output,
+		LogFile:     "",
 	}
 
 	// Test mode-aware initialization
@@ -77,14 +77,21 @@ func TestCheckpointFunctionality(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
-
+	cfg := config.NewTestConfig().Build()
 	checkpointMgr := bastion.NewCheckpointManager(cfg)
 
-	// Test with no existing checkpoint
+	testInitialCheckpointState(t, checkpointMgr)
+
+	progress := createTestProgress()
+	metadata := createTestMetadata()
+	saveAndVerifyCheckpoint(t, checkpointMgr, progress, metadata, cfg)
+	testCheckpointRestoration(t, checkpointMgr, progress)
+	testCheckpointClearing(t, checkpointMgr)
+}
+
+func testInitialCheckpointState(t *testing.T, checkpointMgr *bastion.CheckpointManager) {
+	t.Helper()
+
 	checkpoint, err := checkpointMgr.Load()
 	if err != nil {
 		t.Fatalf("Failed to load checkpoint: %v", err)
@@ -93,31 +100,38 @@ func TestCheckpointFunctionality(t *testing.T) {
 	if checkpoint != nil {
 		t.Error("Expected no checkpoint initially")
 	}
+}
 
-	// Create and save progress
-	progress := &bastion.ProvisioningProgress{
+func createTestProgress() *bastion.ProvisioningProgress {
+	return &bastion.ProvisioningProgress{
 		TotalSteps:     10,
 		CompletedSteps: 5,
 		CurrentStep:    "test_phase",
 		StartTime:      time.Now().Add(-30 * time.Minute),
+		Errors:         []error{},
 		Checkpoints: map[string]bool{
 			"phase1": true,
 			"phase2": true,
 			"phase3": true,
 		},
 	}
+}
 
-	metadata := map[string]interface{}{
+func createTestMetadata() map[string]interface{} {
+	return map[string]interface{}{
 		"test": true,
 		"mode": "test",
 	}
+}
 
-	// Save checkpoint
-	if err := checkpointMgr.Save(progress, metadata); err != nil {
+func saveAndVerifyCheckpoint(t *testing.T, checkpointMgr *bastion.CheckpointManager, progress *bastion.ProvisioningProgress, metadata map[string]interface{}, cfg *config.Config) {
+	t.Helper()
+
+	err := checkpointMgr.Save(progress, metadata)
+	if err != nil {
 		t.Fatalf("Failed to save checkpoint: %v", err)
 	}
 
-	// Load checkpoint
 	loadedCheckpoint, err := checkpointMgr.Load()
 	if err != nil {
 		t.Fatalf("Failed to load saved checkpoint: %v", err)
@@ -127,38 +141,52 @@ func TestCheckpointFunctionality(t *testing.T) {
 		t.Fatal("Expected loaded checkpoint, got nil")
 	}
 
-	// Verify checkpoint data
-	if loadedCheckpoint.BlocName != cfg.Name {
-		t.Errorf("Expected bloc name %s, got %s", cfg.Name, loadedCheckpoint.BlocName)
+	verifyCheckpointData(t, loadedCheckpoint, progress, cfg)
+}
+
+func verifyCheckpointData(t *testing.T, checkpoint *bastion.CheckpointData, progress *bastion.ProvisioningProgress, cfg *config.Config) {
+	t.Helper()
+
+	if checkpoint.BlocName != cfg.Name {
+		t.Errorf("Expected bloc name %s, got %s", cfg.Name, checkpoint.BlocName)
 	}
 
-	if loadedCheckpoint.Provider != cfg.Provider {
-		t.Errorf("Expected provider %s, got %s", cfg.Provider, loadedCheckpoint.Provider)
+	if checkpoint.Provider != cfg.Provider {
+		t.Errorf("Expected provider %s, got %s", cfg.Provider, checkpoint.Provider)
 	}
 
-	if loadedCheckpoint.CompletedSteps != progress.CompletedSteps {
-		t.Errorf("Expected %d completed steps, got %d",
-			progress.CompletedSteps, loadedCheckpoint.CompletedSteps)
+	if checkpoint.CompletedSteps != progress.CompletedSteps {
+		t.Errorf("Expected %d completed steps, got %d", progress.CompletedSteps, checkpoint.CompletedSteps)
 	}
 
-	if len(loadedCheckpoint.CompletedPhases) != len(progress.Checkpoints) {
-		t.Errorf("Expected %d completed phases, got %d",
-			len(progress.Checkpoints), len(loadedCheckpoint.CompletedPhases))
+	if len(checkpoint.CompletedPhases) != len(progress.Checkpoints) {
+		t.Errorf("Expected %d completed phases, got %d", len(progress.Checkpoints), len(checkpoint.CompletedPhases))
+	}
+}
+
+func testCheckpointRestoration(t *testing.T, checkpointMgr *bastion.CheckpointManager, originalProgress *bastion.ProvisioningProgress) {
+	t.Helper()
+
+	loadedCheckpoint, err := checkpointMgr.Load()
+	if err != nil {
+		t.Fatalf("Failed to load checkpoint for restoration test: %v", err)
 	}
 
-	// Test restoration
 	restoredProgress := checkpointMgr.RestoreProgress(loadedCheckpoint)
-	if restoredProgress.CompletedSteps != progress.CompletedSteps {
+	if restoredProgress.CompletedSteps != originalProgress.CompletedSteps {
 		t.Errorf("Expected restored progress to have %d completed steps, got %d",
-			progress.CompletedSteps, restoredProgress.CompletedSteps)
+			originalProgress.CompletedSteps, restoredProgress.CompletedSteps)
 	}
+}
 
-	// Test clearing checkpoint
-	if err := checkpointMgr.Clear(); err != nil {
+func testCheckpointClearing(t *testing.T, checkpointMgr *bastion.CheckpointManager) {
+	t.Helper()
+
+	err := checkpointMgr.Clear()
+	if err != nil {
 		t.Fatalf("Failed to clear checkpoint: %v", err)
 	}
 
-	// Verify checkpoint is gone
 	clearedCheckpoint, err := checkpointMgr.Load()
 	if err != nil {
 		t.Fatalf("Failed to load after clear: %v", err)
@@ -174,65 +202,74 @@ func TestErrorClassification(t *testing.T) {
 	t.Parallel()
 
 	errorHandler := bastion.NewErrorHandler()
+	testCases := getErrorClassificationTestCases()
 
-	testCases := []struct {
-		name         string
-		error        string
-		expectedType bastion.ErrorType
-		retryable    bool
-	}{
+	for _, testCase := range testCases {
+		currentTestCase := testCase
+		t.Run(currentTestCase.name, func(t *testing.T) {
+			t.Parallel()
+			runErrorClassificationTest(t, errorHandler, currentTestCase)
+		})
+	}
+}
+
+type errorTestCase struct {
+	name         string
+	err          error
+	expectedType bastion.ErrorType
+	retryable    bool
+}
+
+func getErrorClassificationTestCases() []errorTestCase {
+	return []errorTestCase{
 		{
 			name:         "network error",
-			error:        "connection refused",
+			err:          errConnectionRefused,
 			expectedType: bastion.ErrorTypeNetwork,
 			retryable:    true,
 		},
 		{
 			name:         "permission error",
-			error:        "permission denied",
+			err:          errPermissionDenied,
 			expectedType: bastion.ErrorTypePermission,
 			retryable:    false,
 		},
 		{
 			name:         "configuration error",
-			error:        "config file not found",
+			err:          errConfigFileNotFound,
 			expectedType: bastion.ErrorTypeConfiguration,
 			retryable:    false,
 		},
 		{
 			name:         "dependency error",
-			error:        "command not found: bosh",
+			err:          errCommandNotFoundBosh,
 			expectedType: bastion.ErrorTypeDependency,
 			retryable:    true,
 		},
 		{
 			name:         "timeout error",
-			error:        "context deadline exceeded",
+			err:          errContextDeadlineExceeded,
 			expectedType: bastion.ErrorTypeTimeout,
 			retryable:    true,
 		},
 	}
+}
 
-	for _, testCase := range testCases {
-		tc := testCase
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+func runErrorClassificationTest(t *testing.T, errorHandler *bastion.ErrorHandler, testCase errorTestCase) {
+	t.Helper()
 
-			err := fmt.Errorf("%s", tc.error)
-			bastionErr := errorHandler.ClassifyError(err, "test_phase", "test_command")
+	bastionErr := errorHandler.ClassifyError(testCase.err, "test_phase", "test_command")
 
-			if bastionErr.Type != tc.expectedType {
-				t.Errorf("Expected error type %s, got %s", tc.expectedType, bastionErr.Type)
-			}
+	if bastionErr.Type != testCase.expectedType {
+		t.Errorf("Expected error type %s, got %s", testCase.expectedType, bastionErr.Type)
+	}
 
-			if bastionErr.Retryable != tc.retryable {
-				t.Errorf("Expected retryable %t, got %t", tc.retryable, bastionErr.Retryable)
-			}
+	if bastionErr.Retryable != testCase.retryable {
+		t.Errorf("Expected retryable %t, got %t", testCase.retryable, bastionErr.Retryable)
+	}
 
-			if len(bastionErr.Suggestions) == 0 {
-				t.Error("Expected error suggestions to be provided")
-			}
-		})
+	if len(bastionErr.Suggestions) == 0 {
+		t.Error("Expected error suggestions to be provided")
 	}
 }
 
@@ -247,6 +284,7 @@ func TestProgressReporting(t *testing.T) {
 		CompletedSteps: 3,
 		CurrentStep:    "test_phase",
 		StartTime:      time.Now().Add(-2 * time.Minute),
+		Errors:         []error{},
 		Checkpoints:    make(map[string]bool),
 	}
 
@@ -282,10 +320,7 @@ func TestStatusReporting(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-	}
+	cfg := config.NewTestConfig().Build()
 
 	checkpointMgr := bastion.NewCheckpointManager(cfg)
 	statusReporter := bastion.NewStatusReporter(checkpointMgr)
@@ -306,7 +341,9 @@ func TestStatusReporting(t *testing.T) {
 
 	// Test status printing
 	var output bytes.Buffer
-	if err := statusReporter.PrintStatus(&output); err != nil {
+
+	err = statusReporter.PrintStatus(&output)
+	if err != nil {
 		t.Fatalf("Failed to print status: %v", err)
 	}
 

@@ -17,11 +17,49 @@ import (
 // NewBastionCmd creates the bastion command.
 func NewBastionCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "bastion <action>",
-		Short: "Bastion host management",
-		Long:  `Manage bastion host operations and configuration.`,
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  runBastionCmd,
+		Use:                    "bastion <action>",
+		Short:                  "Bastion host management",
+		Long:                   `Manage bastion host operations and configuration.`,
+		Aliases:                []string{},
+		SuggestFor:             []string{},
+		GroupID:                "",
+		Example:                "",
+		ValidArgs:              []string{},
+		ValidArgsFunction:      nil,
+		Args:                   cobra.MinimumNArgs(1),
+		ArgAliases:             []string{},
+		BashCompletionFunction: "",
+		Deprecated:             "",
+		Annotations:            map[string]string{},
+		Version:                "",
+		PersistentPreRun:       nil,
+		PersistentPreRunE:      nil,
+		PreRun:                 nil,
+		PreRunE:                nil,
+		Run:                    nil,
+		RunE:                   runBastionCmd,
+		PostRun:                nil,
+		PostRunE:               nil,
+		PersistentPostRun:      nil,
+		PersistentPostRunE:     nil,
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: false,
+		},
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd:   false,
+			DisableNoDescFlag:   false,
+			DisableDescriptions: false,
+			HiddenDefaultCmd:    false,
+		},
+		TraverseChildren:           false,
+		Hidden:                     false,
+		SilenceErrors:              false,
+		SilenceUsage:               false,
+		DisableFlagParsing:         false,
+		DisableAutoGenTag:          false,
+		DisableFlagsInUseLine:      false,
+		DisableSuggestions:         false,
+		SuggestionsMinimumDistance: 0,
 	}
 
 	// Flags align with SSH/SCP commands for consistency
@@ -47,17 +85,17 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 	case "provision":
 		return bastionProvision(cmd, log)
 	default:
-		return fmt.Errorf("unknown bastion action: %s. Available actions: init, provision", action)
+		return ErrUnknownBastionAction(action)
 	}
 }
 
 func bastionInit(cmd *cobra.Command, log logger.Logger) error {
-	bastionContext, err := getBastionContext(cmd, log)
+	bastionContext, err := GetBastionContext(cmd, log)
 	if err != nil {
 		return fmt.Errorf("failed to get bastion context: %w", err)
 	}
 
-	scriptPath, err := findProvisionScript("bastion-init")
+	scriptPath, err := FindProvisionScript("bastion-init")
 	if err != nil {
 		return fmt.Errorf("cannot find bastion-init script: %w", err)
 	}
@@ -79,12 +117,12 @@ func bastionInit(cmd *cobra.Command, log logger.Logger) error {
 }
 
 func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
-	bastionContext, err := getBastionContext(cmd, log)
+	bastionContext, err := GetBastionContext(cmd, log)
 	if err != nil {
 		return fmt.Errorf("failed to get bastion context: %w", err)
 	}
 
-	scriptPath, err := findProvisionScript("bastion")
+	scriptPath, err := FindProvisionScript("bastion")
 	if err != nil {
 		return fmt.Errorf("cannot find bastion provision script: %w", err)
 	}
@@ -105,50 +143,23 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 	return nil
 }
 
-type bastionContext struct {
+type BastionContext struct {
 	IP           string
 	User         string
 	SSHOptions   string
 	SSHKeyOption string
 }
 
-func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, error) {
-	// Prefer real discovery; fall back to placeholder to keep CLI usable in dry runs/tests
+func GetBastionContext(cmd *cobra.Command, log logger.Logger) (*BastionContext, error) {
 	user := viper.GetString("ssh.user")
 	key := viper.GetString("ssh.key")
 	blocName := viper.GetString("bloc_name")
 
 	// Attempt discovery when bloc/provider are available
 	if blocName != "" {
-		cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
-		if err == nil {
-			if cfg.Provider != "" || cfg.IaaS != "" {
-				ctx := context.Background()
-
-				provider, perr := cpi.GetProvider(cfg.Provider)
-				if perr == nil {
-					ierr := provider.Initialize(ctx, cfg)
-					if ierr == nil {
-						// Reuse getBastionIP helper
-						bastionIP, err := getBastionIP(ctx, provider, blocName)
-						if err == nil && bastionIP != "" {
-							// Find key if not specified
-							if key == "" {
-								if k, kerr := findSSHKey(blocName, cfg); kerr == nil {
-									key = k
-								}
-							}
-
-							return &bastionContext{
-								IP:           bastionIP,
-								User:         user,
-								SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
-								SSHKeyOption: strings.TrimSpace(key),
-							}, nil
-						}
-					}
-				}
-			}
+		ctx, err := tryDiscoverBastionContext(blocName, key, user)
+		if err == nil && ctx != nil {
+			return ctx, nil
 		}
 	}
 
@@ -157,19 +168,76 @@ func getBastionContext(cmd *cobra.Command, log logger.Logger) (*bastionContext, 
 		log.Warnf("Bastion context discovery not fully available - using placeholder values")
 	}
 
-	return &bastionContext{
-		IP:           "placeholder-ip",
+	return buildPlaceholderContext(user, key), nil
+}
+
+func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, error) {
+	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if cfg.Provider == "" && cfg.IaaS == "" {
+		return nil, ErrNoProviderConfigured
+	}
+
+	ctx := context.Background()
+
+	provider, err := initializeBastionProvider(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	bastionIP, err := getBastionIP(ctx, provider, blocName)
+	if err != nil || bastionIP == "" {
+		return nil, err
+	}
+
+	// Find key if not specified
+	if key == "" {
+		k, kerr := findSSHKey(blocName, cfg)
+		if kerr == nil {
+			key = k
+		}
+	}
+
+	return &BastionContext{
+		IP:           bastionIP,
 		User:         user,
 		SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
 		SSHKeyOption: strings.TrimSpace(key),
 	}, nil
 }
 
-func findProvisionScript(scriptName string) (string, error) {
+//nolint:ireturn
+func initializeBastionProvider(ctx context.Context, cfg *config.Config) (cpi.Provider, error) {
+	provider, err := cpi.GetProvider(cfg.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize provider: %w", err)
+	}
+
+	return provider, nil
+}
+
+func buildPlaceholderContext(user, key string) *BastionContext {
+	return &BastionContext{
+		IP:           "placeholder-ip",
+		User:         user,
+		SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+		SSHKeyOption: strings.TrimSpace(key),
+	}
+}
+
+func FindProvisionScript(scriptName string) (string, error) {
 	// Get the directory where the binary is located
 	execPath, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
 
 	execDir := filepath.Dir(execPath)
@@ -183,15 +251,16 @@ func findProvisionScript(scriptName string) (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			return path, nil
 		}
 	}
 
-	return "", fmt.Errorf("script '%s' not found in any search paths", scriptName)
+	return "", ErrScriptNotFound(scriptName)
 }
 
-func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operationName, logPath string, log logger.Logger) error {
+func copyAndExecuteScript(ctx *BastionContext, scriptPath, remoteScript, operationName, logPath string, log logger.Logger) error {
 	// Copy the script to bastion
 	err := copyScriptToBastion(ctx, scriptPath, remoteScript, log)
 	if err != nil {
@@ -199,7 +268,7 @@ func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operati
 	}
 
 	// Prepare environment variables
-	envString := buildEnvironmentVariables(log)
+	envString := BuildEnvironmentVariables(log)
 
 	// Execute the script on bastion
 	err = executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log)
@@ -213,7 +282,7 @@ func copyAndExecuteScript(ctx *bastionContext, scriptPath, remoteScript, operati
 	return nil
 }
 
-func copyScriptToBastion(ctx *bastionContext, scriptPath, remoteScript string, log logger.Logger) error {
+func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, log logger.Logger) error {
 	// Build destination in scp format
 	dest := fmt.Sprintf("%s@%s:%s", ctx.User, ctx.IP, remoteScript)
 
@@ -226,7 +295,7 @@ func copyScriptToBastion(ctx *bastionContext, scriptPath, remoteScript string, l
 	return executeSCP(execCtx, scpCmd)
 }
 
-func executeRemoteScript(ctx *bastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
+func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
 	// Build SSH command and append remote execution string
 	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
 
@@ -241,13 +310,13 @@ func executeRemoteScript(ctx *bastionContext, remoteScript, envString, operation
 	return executeSSH(execCtx, sshCmd)
 }
 
-func cleanupRemoteScript(ctx *bastionContext, remoteScript string, log logger.Logger) {
+func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
 	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }
 
-func buildEnvironmentVariables(log logger.Logger) string {
+func BuildEnvironmentVariables(log logger.Logger) string {
 	// Build environment variables from environment for now
 	var envVars []string
 

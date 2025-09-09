@@ -8,11 +8,15 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
+
+// Tool provisioning errors.
+func ErrVersionNotFoundWithPattern(pattern string) error {
+	return fmt.Errorf("version not found with pattern: %s", pattern) //nolint:err113 // dynamic error with context
+}
 
 // AdvancedToolManager handles advanced binary tool installations with version detection.
 type AdvancedToolManager struct {
@@ -58,14 +62,98 @@ func NewAdvancedToolManager(provider string, cfg *config.Config) *AdvancedToolMa
 
 // GetAdvancedBinaryTools returns advanced binary tools configuration.
 func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
-	tools := []AdvancedBinaryTool{
+	tools := atm.getBaseTool()
+	tools = append(tools, atm.getBuildTools()...)
+	tools = append(tools, atm.getEditorTools()...)
+
+	if atm.config != nil {
+		tools = atm.applyConfigOverrides(tools)
+	}
+
+	return tools
+}
+
+// GenerateAdvancedToolScript generates script for advanced tool installation.
+func (atm *AdvancedToolManager) GenerateAdvancedToolScript(ctx context.Context) string {
+	tools := atm.GetAdvancedBinaryTools()
+	if len(tools) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, scriptBufferToolsBase+scriptBufferToolsPerItem*len(tools))
+
+	atm.addScriptHeader(&lines)
+	atm.addArchitectureDetection(&lines)
+	atm.addToolInstallations(&lines, tools)
+
+	return strings.Join(lines, "\n")
+}
+
+// GetVersionFromAPI fetches the latest version from a GitHub API URL.
+func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionURL, pattern string) (string, error) {
+	client := &http.Client{
+		Timeout:       httpClientTimeout,
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to build request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch version info: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Try JSON parsing first
+	var release struct {
+		TagName string `json:"tagName"`
+	}
+
+	err = json.Unmarshal(body, &release)
+	if err == nil && release.TagName != "" {
+		// Clean up version string
+		version := strings.TrimPrefix(release.TagName, "v")
+
+		return version, nil
+	}
+
+	// Fall back to regex pattern matching
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid version pattern: %w", err)
+	}
+
+	matches := re.FindStringSubmatch(string(body))
+	if len(matches) < minRegexMatches {
+		return "", ErrVersionNotFoundWithPattern(pattern)
+	}
+
+	version := strings.TrimPrefix(matches[1], "v")
+
+	return version, nil
+}
+
+// getBaseTool returns core utility tools.
+func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
+	return []AdvancedBinaryTool{
 		{
 			Name:          "yq",
 			Enabled:       true,
 			CheckCommand:  "yq",
 			URL:           "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64",
 			Dest:          "/usr/local/bin/yq",
-			Mode:          0755,
+			Mode:          fileModeExecutable,
 			Sudo:          true,
 			VerifyCommand: "yq --version",
 		},
@@ -81,6 +169,12 @@ func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 			Cleanup:        "/tmp/ripgrep*",
 			VerifyCommand:  "rg --version",
 		},
+	}
+}
+
+// getBuildTools returns development and build tools.
+func (atm *AdvancedToolManager) getBuildTools() []AdvancedBinaryTool {
+	return []AdvancedBinaryTool{
 		{
 			Name:           "fly",
 			Enabled:        true,
@@ -125,148 +219,226 @@ func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 			PathAddition:  "${NVM_DIR:-${HOME}/.nvm}",
 			PostInstall:   "install_nodejs_latest",
 		},
+	}
+}
+
+// getEditorTools returns text editors and development environments.
+func (atm *AdvancedToolManager) getEditorTools() []AdvancedBinaryTool {
+	return []AdvancedBinaryTool{
 		{
 			Name:          "nvim",
 			Enabled:       true,
 			CheckCommand:  "nvim",
 			URL:           "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.appimage",
 			Dest:          "/usr/local/bin/nvim",
-			Mode:          0755,
+			Mode:          fileModeExecutable,
 			Sudo:          true,
 			VerifyCommand: "nvim --version",
 		},
 	}
-	// Apply config overrides (enable/disable by name)
-	if atm.config != nil {
-		enable := make(map[string]struct{})
-		for _, n := range atm.config.Bastion.Tools.Enable {
-			enable[strings.ToLower(n)] = struct{}{}
+}
+
+// applyConfigOverrides applies configuration overrides to tools.
+func (atm *AdvancedToolManager) applyConfigOverrides(tools []AdvancedBinaryTool) []AdvancedBinaryTool {
+	enable := make(map[string]struct{})
+	for _, n := range atm.config.Bastion.Tools.Enable {
+		enable[strings.ToLower(n)] = struct{}{}
+	}
+
+	disable := make(map[string]struct{})
+	for _, n := range atm.config.Bastion.Tools.Disable {
+		disable[strings.ToLower(n)] = struct{}{}
+	}
+
+	if len(enable) > 0 || len(disable) > 0 {
+		atm.applyEnableDisableRules(tools, enable, disable)
+	}
+
+	return atm.applyToolOverrides(tools)
+}
+
+// applyEnableDisableRules applies enable/disable rules to tools.
+func (atm *AdvancedToolManager) applyEnableDisableRules(tools []AdvancedBinaryTool, enable, disable map[string]struct{}) {
+	for index := range tools {
+		name := strings.ToLower(tools[index].Name)
+		if _, ok := enable[name]; ok {
+			tools[index].Enabled = true
 		}
 
-		disable := make(map[string]struct{})
-		for _, n := range atm.config.Bastion.Tools.Disable {
-			disable[strings.ToLower(n)] = struct{}{}
+		if _, ok := disable[name]; ok {
+			tools[index].Enabled = false
 		}
+	}
+}
 
-		if len(enable) > 0 || len(disable) > 0 {
-			for index := range tools {
-				name := strings.ToLower(tools[index].Name)
-				if _, ok := enable[name]; ok {
-					tools[index].Enabled = true
-				}
+// applyToolOverrides applies per-tool overrides from config by name.
+func (atm *AdvancedToolManager) applyToolOverrides(tools []AdvancedBinaryTool) []AdvancedBinaryTool {
+	if !atm.hasToolOverrides() {
+		return tools
+	}
 
-				if _, ok := disable[name]; ok {
-					tools[index].Enabled = false
-				}
-			}
+	for toolIndex := range tools {
+		override := atm.findToolOverride(tools[toolIndex].Name)
+		if override != nil {
+			atm.applyOverrideToTool(&tools[toolIndex], override)
 		}
-		// Apply per-tool field overrides
-		tools = atm.applyToolOverrides(tools)
 	}
 
 	return tools
 }
 
-// GenerateAdvancedToolScript generates script for advanced tool installation.
-func (atm *AdvancedToolManager) GenerateAdvancedToolScript(ctx context.Context) string {
-	tools := atm.GetAdvancedBinaryTools()
-	if len(tools) == 0 {
-		return ""
-	}
+// addScriptHeader adds the script header.
+func (atm *AdvancedToolManager) addScriptHeader(lines *[]string) {
+	*lines = append(*lines, "# Advanced binary tool installation")
+	*lines = append(*lines, "")
+}
 
-	var lines []string
+// addArchitectureDetection adds architecture detection helper.
+func (atm *AdvancedToolManager) addArchitectureDetection(lines *[]string) {
+	*lines = append(*lines, "# Architecture detection")
+	*lines = append(*lines, "ARCH=$(uname -m)")
+	*lines = append(*lines, "case $ARCH in")
+	*lines = append(*lines, "    x86_64) ARCH_NORMALIZED=\"x86_64\" ;;")
+	*lines = append(*lines, "    aarch64) ARCH_NORMALIZED=\"aarch64\" ;;")
+	*lines = append(*lines, "    arm64) ARCH_NORMALIZED=\"arm64\" ;;")
+	*lines = append(*lines, "    *) ARCH_NORMALIZED=\"$ARCH\" ;;")
+	*lines = append(*lines, "esac")
+	*lines = append(*lines, "")
+}
 
-	lines = append(lines, "# Advanced binary tool installation")
-	lines = append(lines, "")
-
-	// Helper function for architecture detection
-	lines = append(lines, "# Architecture detection")
-	lines = append(lines, "ARCH=$(uname -m)")
-	lines = append(lines, "case $ARCH in")
-	lines = append(lines, "    x86_64) ARCH_NORMALIZED=\"x86_64\" ;;")
-	lines = append(lines, "    aarch64) ARCH_NORMALIZED=\"aarch64\" ;;")
-	lines = append(lines, "    arm64) ARCH_NORMALIZED=\"arm64\" ;;")
-	lines = append(lines, "    *) ARCH_NORMALIZED=\"$ARCH\" ;;")
-	lines = append(lines, "esac")
-	lines = append(lines, "")
-
+// addToolInstallations adds all tool installations.
+func (atm *AdvancedToolManager) addToolInstallations(lines *[]string, tools []AdvancedBinaryTool) {
 	for _, tool := range tools {
-		if !tool.Enabled || atm.shouldSkipCondition(tool.Condition) {
+		if atm.shouldSkipTool(tool) {
 			continue
 		}
 
-		lines = append(lines, "# Install advanced tool: "+tool.Name)
+		atm.addSingleToolInstallation(lines, tool)
+	}
+}
 
-		// Check if tool is already installed
-		checkCondition := ""
-		if tool.CheckCommand != "" {
-			checkCondition = fmt.Sprintf("command -v %s >/dev/null 2>&1", tool.CheckCommand)
-		} else if tool.CheckFile != "" {
-			expandedPath := atm.expandVariables(tool.CheckFile)
-			checkCondition = fmt.Sprintf("[ -f \"%s\" ]", expandedPath)
-		}
+// shouldSkipTool checks if a tool should be skipped.
+func (atm *AdvancedToolManager) shouldSkipTool(tool AdvancedBinaryTool) bool {
+	return !tool.Enabled || atm.shouldSkipCondition(tool.Condition)
+}
 
-		if checkCondition != "" {
-			lines = append(lines, fmt.Sprintf("if %s; then", checkCondition))
-			lines = append(lines, fmt.Sprintf("    log_info '%s already installed'", tool.Name))
-			lines = append(lines, "else")
-		}
+// addSingleToolInstallation adds installation script for a single tool.
+func (atm *AdvancedToolManager) addSingleToolInstallation(lines *[]string, tool AdvancedBinaryTool) {
+	*lines = append(*lines, "# Install advanced tool: "+tool.Name)
 
-		lines = append(lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
+	checkCondition := atm.getInstallCheckCondition(tool)
+	atm.addInstallCheckWrapper(lines, checkCondition, tool)
+}
 
-            switch {
-            case tool.InstallScript != "":
-                // Script-based installation
-                lines = append(lines, "    "+tool.InstallScript)
-
-                if tool.PathAddition != "" {
-                    expandedPath := atm.expandVariables(tool.PathAddition)
-                    lines = append(lines, fmt.Sprintf("    export PATH=\"%s:$PATH\"", expandedPath))
-                }
-            case tool.URLTemplate != "" && (tool.VersionURL != "" || tool.FixedVersion != ""):
-                // Version-based installation (supports fixed version override)
-                lines = append(lines, atm.generateVersionBasedInstall(tool)...)
-            case tool.URL != "":
-                // Direct URL installation
-                lines = append(lines, atm.generateDirectInstall(tool)...)
-            }
-
-		// Run post-install if specified
-		if tool.PostInstall != "" {
-			lines = append(lines, "    # Post-install for "+tool.Name)
-			lines = append(lines, "    "+atm.getPostInstallScript(tool.PostInstall))
-		}
-
-		// Verify installation
-		if tool.VerifyCommand != "" {
-			lines = append(lines, fmt.Sprintf("    if %s >/dev/null 2>&1; then", tool.VerifyCommand))
-			lines = append(lines, fmt.Sprintf("        log_success '%s installed and verified'", tool.Name))
-			lines = append(lines, "    else")
-			lines = append(lines, fmt.Sprintf("        log_warning '%s installation may have failed verification'", tool.Name))
-			lines = append(lines, "    fi")
-		}
-
-		// Cleanup if specified
-		if tool.Cleanup != "" {
-			lines = append(lines, fmt.Sprintf("    rm -rf %s 2>/dev/null || true", tool.Cleanup))
-		}
-
-		if checkCondition != "" {
-			lines = append(lines, "fi")
-		}
-
-		lines = append(lines, "")
+// getInstallCheckCondition builds the condition to check if tool is installed.
+func (atm *AdvancedToolManager) getInstallCheckCondition(tool AdvancedBinaryTool) string {
+	if tool.CheckCommand != "" {
+		return fmt.Sprintf("command -v %s >/dev/null 2>&1", tool.CheckCommand)
 	}
 
-	return strings.Join(lines, "\n")
+	if tool.CheckFile != "" {
+		expandedPath := atm.expandVariables(tool.CheckFile)
+
+		return fmt.Sprintf("[ -f \"%s\" ]", expandedPath)
+	}
+
+	return ""
+}
+
+// addInstallCheckWrapper adds the conditional wrapper for tool installation.
+func (atm *AdvancedToolManager) addInstallCheckWrapper(lines *[]string, checkCondition string, tool AdvancedBinaryTool) {
+	if checkCondition != "" {
+		*lines = append(*lines, fmt.Sprintf("if %s; then", checkCondition))
+		*lines = append(*lines, fmt.Sprintf("    log_info '%s already installed'", tool.Name))
+		*lines = append(*lines, "else")
+	}
+
+	atm.addToolInstallationSteps(lines, tool)
+
+	if checkCondition != "" {
+		*lines = append(*lines, "fi")
+	}
+
+	*lines = append(*lines, "")
+}
+
+// addToolInstallationSteps adds the actual installation steps for a tool.
+func (atm *AdvancedToolManager) addToolInstallationSteps(lines *[]string, tool AdvancedBinaryTool) {
+	*lines = append(*lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
+
+	atm.addInstallationMethod(lines, tool)
+	atm.addPostInstallSteps(lines, tool)
+	atm.addVerificationStep(lines, tool)
+	atm.addCleanupStep(lines, tool)
+}
+
+// addInstallationMethod adds the appropriate installation method.
+func (atm *AdvancedToolManager) addInstallationMethod(lines *[]string, tool AdvancedBinaryTool) {
+	switch {
+	case tool.InstallScript != "":
+		atm.addScriptInstallation(lines, tool)
+	case tool.URLTemplate != "" && (tool.VersionURL != "" || tool.FixedVersion != ""):
+		*lines = append(*lines, atm.generateVersionBasedInstall(tool)...)
+	case tool.URL != "":
+		*lines = append(*lines, atm.generateDirectInstall(tool)...)
+	}
+}
+
+// addScriptInstallation adds script-based installation.
+func (atm *AdvancedToolManager) addScriptInstallation(lines *[]string, tool AdvancedBinaryTool) {
+	*lines = append(*lines, "    "+tool.InstallScript)
+
+	if tool.PathAddition != "" {
+		expandedPath := atm.expandVariables(tool.PathAddition)
+		*lines = append(*lines, fmt.Sprintf("    export PATH=\"%s:$PATH\"", expandedPath))
+	}
+}
+
+// addPostInstallSteps adds post-installation steps.
+func (atm *AdvancedToolManager) addPostInstallSteps(lines *[]string, tool AdvancedBinaryTool) {
+	if tool.PostInstall != "" {
+		*lines = append(*lines, "    # Post-install for "+tool.Name)
+		*lines = append(*lines, "    "+atm.getPostInstallScript(tool.PostInstall))
+	}
+}
+
+// addVerificationStep adds verification step.
+func (atm *AdvancedToolManager) addVerificationStep(lines *[]string, tool AdvancedBinaryTool) {
+	if tool.VerifyCommand != "" {
+		*lines = append(*lines, fmt.Sprintf("    if %s >/dev/null 2>&1; then", tool.VerifyCommand))
+		*lines = append(*lines, fmt.Sprintf("        log_success '%s installed and verified'", tool.Name))
+		*lines = append(*lines, "    else")
+		*lines = append(*lines, fmt.Sprintf("        log_warning '%s installation may have failed verification'", tool.Name))
+		*lines = append(*lines, "    fi")
+	}
+}
+
+// addCleanupStep adds cleanup step.
+func (atm *AdvancedToolManager) addCleanupStep(lines *[]string, tool AdvancedBinaryTool) {
+	if tool.Cleanup != "" {
+		*lines = append(*lines, fmt.Sprintf("    rm -rf %s 2>/dev/null || true", tool.Cleanup))
+	}
 }
 
 // generateVersionBasedInstall generates installation commands for version-based tools.
 func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryTool) []string {
 	var lines []string
 
-	// Determine version
+	lines = append(lines, atm.generateVersionDetermination(tool)...)
+	lines = append(lines, "")
+	lines = append(lines, atm.generateArchitectureMapping(tool)...)
+	lines = append(lines, atm.generateDownloadCommands(tool)...)
+	lines = append(lines, atm.generateExtractionCommands(tool)...)
+	lines = append(lines, atm.generateInstallCommands(tool)...)
+
+	return lines
+}
+
+func (atm *AdvancedToolManager) generateVersionDetermination(tool AdvancedBinaryTool) []string {
+	var lines []string
+
 	lines = append(lines, "    # Determine version for "+tool.Name)
+
 	if tool.FixedVersion != "" {
 		lines = append(lines, fmt.Sprintf("    LATEST_VERSION='%s'", tool.FixedVersion))
 		lines = append(lines, "    log_info \"Using configured version: $LATEST_VERSION\"")
@@ -279,9 +451,12 @@ func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryT
 		lines = append(lines, "    log_info \"Latest version: $LATEST_VERSION\"")
 	}
 
-	lines = append(lines, "")
+	return lines
+}
 
-	// Handle architecture mapping
+func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryTool) []string {
+	var lines []string
+
 	if len(tool.ArchMap) > 0 {
 		lines = append(lines, "    # Map architecture")
 		lines = append(lines, "    MAPPED_ARCH=\"$ARCH_NORMALIZED\"")
@@ -302,7 +477,12 @@ func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryT
 	lines = append(lines, "    log_info \"Download URL: $DOWNLOAD_URL\"")
 	lines = append(lines, "")
 
-	// Download
+	return lines
+}
+
+func (atm *AdvancedToolManager) generateDownloadCommands(tool AdvancedBinaryTool) []string {
+	var lines []string
+
 	lines = append(lines, fmt.Sprintf("    curl -fsSL \"$DOWNLOAD_URL\" -o '/tmp/%s-download'", tool.Name))
 	lines = append(lines, "    if [ $? -ne 0 ]; then")
 	lines = append(lines, fmt.Sprintf("        log_error 'Failed to download %s'", tool.Name))
@@ -310,7 +490,12 @@ func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryT
 	lines = append(lines, "    fi")
 	lines = append(lines, "")
 
-	// Extract if needed
+	return lines
+}
+
+func (atm *AdvancedToolManager) generateExtractionCommands(tool AdvancedBinaryTool) []string {
+	var lines []string
+
 	if tool.Extract {
 		lines = append(lines, "    # Extract "+tool.Name)
 		lines = append(lines, "    cd /tmp")
@@ -324,28 +509,42 @@ func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryT
 		lines = append(lines, "")
 	}
 
-	// Install
+	return lines
+}
+
+func (atm *AdvancedToolManager) generateInstallCommands(tool AdvancedBinaryTool) []string {
+	var lines []string
+
 	if tool.InstallCommand != "" {
 		lines = append(lines, "    # Install "+tool.Name)
 		installCmd := strings.ReplaceAll(tool.InstallCommand, "${VERSION}", "$LATEST_VERSION")
 		lines = append(lines, "    "+installCmd)
 	} else if !tool.Extract {
-		// Direct binary installation
-		installCmd := fmt.Sprintf("mv '/tmp/%s-download' '%s'", tool.Name, tool.Dest)
+		lines = append(lines, atm.generateVersionBasedDirectInstallCommands(tool)...)
+	}
+
+	return lines
+}
+
+// generateVersionBasedDirectInstallCommands generates direct install commands for version-based tools.
+func (atm *AdvancedToolManager) generateVersionBasedDirectInstallCommands(tool AdvancedBinaryTool) []string {
+	var lines []string
+
+	// Direct binary installation
+	installCmd := fmt.Sprintf("mv '/tmp/%s-download' '%s'", tool.Name, tool.Dest)
+	if tool.Sudo {
+		installCmd = "sudo " + installCmd
+	}
+
+	lines = append(lines, "    "+installCmd)
+
+	if tool.Mode != 0 {
+		chmodCmd := fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest)
 		if tool.Sudo {
-			installCmd = "sudo " + installCmd
+			chmodCmd = "sudo " + chmodCmd
 		}
 
-		lines = append(lines, "    "+installCmd)
-
-		if tool.Mode != 0 {
-			chmodCmd := fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest)
-			if tool.Sudo {
-				chmodCmd = "sudo " + chmodCmd
-			}
-
-			lines = append(lines, "    "+chmodCmd)
-		}
+		lines = append(lines, "    "+chmodCmd)
 	}
 
 	return lines
@@ -411,55 +610,6 @@ fi`
 	}
 }
 
-// GetVersionFromAPI fetches the latest version from a GitHub API URL.
-func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionURL, pattern string) (string, error) {
-    client := &http.Client{Timeout: 10 * time.Second}
-
-    req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
-    if err != nil {
-        return "", fmt.Errorf("failed to build request: %w", err)
-    }
-
-    resp, err := client.Do(req)
-    if err != nil {
-        return "", fmt.Errorf("failed to fetch version info: %w", err)
-    }
-
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Try JSON parsing first
-	var release struct {
-		TagName string `json:"tagName"`
-	}
-
-	if err := json.Unmarshal(body, &release); err == nil && release.TagName != "" {
-		// Clean up version string
-		version := strings.TrimPrefix(release.TagName, "v")
-
-		return version, nil
-	}
-
-	// Fall back to regex pattern matching
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return "", fmt.Errorf("invalid version pattern: %w", err)
-	}
-
-	matches := re.FindStringSubmatch(string(body))
-	if len(matches) < 2 {
-		return "", fmt.Errorf("version not found with pattern: %s", pattern)
-	}
-
-	version := strings.TrimPrefix(matches[1], "v")
-
-	return version, nil
-}
-
 // expandVariables expands environment variables in strings.
 func (atm *AdvancedToolManager) expandVariables(text string) string {
 	// Simple variable expansion
@@ -477,102 +627,110 @@ func (atm *AdvancedToolManager) shouldSkipCondition(condition string) bool {
 	}
 
 	switch condition {
-	case "provider_is_stackit":
-		return atm.provider != "stackit"
-	case "provider_is_aws":
-		return atm.provider != "aws"
-	case "provider_is_azure":
-		return atm.provider != "azure"
-	case "provider_is_gcp":
-		return atm.provider != "gcp"
-	case "provider_is_openstack":
-		return atm.provider != "openstack"
-	case "provider_is_vmware":
-		return atm.provider != "vmware" && atm.provider != "vsphere"
+	case condProviderIsStackit:
+		return atm.provider != providerStackit
+	case condProviderIsAWS:
+		return atm.provider != providerAWS
+	case condProviderIsAzure:
+		return atm.provider != providerAzure
+	case condProviderIsGCP:
+		return atm.provider != providerGCP
+	case condProviderIsOpenstack:
+		return atm.provider != providerOpenStack
+	case condProviderIsVMware:
+		return atm.provider != providerVMware && atm.provider != providerVsphere
 	default:
 		return false
 	}
 }
 
-// apply per-tool overrides from config by name.
-func (atm *AdvancedToolManager) applyToolOverrides(tools []AdvancedBinaryTool) []AdvancedBinaryTool {
-	if atm.config == nil || atm.config.Bastion.ToolOverrides == nil {
-		return tools
-	}
+// hasToolOverrides checks if tool overrides are configured.
+func (atm *AdvancedToolManager) hasToolOverrides() bool {
+	return atm.config != nil && atm.config.Bastion.ToolOverrides != nil
+}
 
-	for toolIndex := range tools {
-		name := strings.ToLower(tools[toolIndex].Name)
-		// Find override key in case-insensitive manner
-		var override *config.ToolOverride
-		for k, v := range atm.config.Bastion.ToolOverrides {
-			if strings.ToLower(k) == name {
-				temp := v
-				override = &temp
+// findToolOverride finds the override configuration for a tool name.
+func (atm *AdvancedToolManager) findToolOverride(toolName string) *config.ToolOverride {
+	name := strings.ToLower(toolName)
+	for k, v := range atm.config.Bastion.ToolOverrides {
+		if strings.ToLower(k) == name {
+			temp := v
 
-				break
-			}
-		}
-
-		if override == nil {
-			continue
-		}
-
-		if override.URL != "" {
-			tools[toolIndex].URL = override.URL
-		}
-
-		if override.VersionURL != "" {
-			tools[toolIndex].VersionURL = override.VersionURL
-		}
-
-		if override.VersionPattern != "" {
-			tools[toolIndex].VersionPattern = override.VersionPattern
-		}
-
-		if override.URLTemplate != "" {
-			tools[toolIndex].URLTemplate = override.URLTemplate
-		}
-
-		if override.Version != "" {
-			tools[toolIndex].FixedVersion = override.Version
-		}
-
-		if override.Dest != "" {
-			tools[toolIndex].Dest = override.Dest
-		}
-
-		if override.Mode != 0 {
-			tools[toolIndex].Mode = override.Mode
-		}
-
-		if override.Sudo != nil {
-			tools[toolIndex].Sudo = *override.Sudo
-		}
-
-		if override.Extract != nil {
-			tools[toolIndex].Extract = *override.Extract
-		}
-
-		if override.InstallCommand != "" {
-			tools[toolIndex].InstallCommand = override.InstallCommand
-		}
-
-		if override.InstallScript != "" {
-			tools[toolIndex].InstallScript = override.InstallScript
-		}
-
-		if override.VerifyCommand != "" {
-			tools[toolIndex].VerifyCommand = override.VerifyCommand
-		}
-
-		if override.PathAddition != "" {
-			tools[toolIndex].PathAddition = override.PathAddition
-		}
-
-		if override.Cleanup != "" {
-			tools[toolIndex].Cleanup = override.Cleanup
+			return &temp
 		}
 	}
 
-	return tools
+	return nil
+}
+
+// applyOverrideToTool applies a specific override to a tool.
+func (atm *AdvancedToolManager) applyOverrideToTool(tool *AdvancedBinaryTool, override *config.ToolOverride) {
+	atm.applyURLOverrides(tool, override)
+	atm.applyInstallationOverrides(tool, override)
+	atm.applyBehaviorOverrides(tool, override)
+}
+
+// applyURLOverrides applies URL-related overrides to a tool.
+func (atm *AdvancedToolManager) applyURLOverrides(tool *AdvancedBinaryTool, override *config.ToolOverride) {
+	if override.URL != "" {
+		tool.URL = override.URL
+	}
+
+	if override.VersionURL != "" {
+		tool.VersionURL = override.VersionURL
+	}
+
+	if override.VersionPattern != "" {
+		tool.VersionPattern = override.VersionPattern
+	}
+
+	if override.URLTemplate != "" {
+		tool.URLTemplate = override.URLTemplate
+	}
+
+	if override.Version != "" {
+		tool.FixedVersion = override.Version
+	}
+}
+
+// applyInstallationOverrides applies installation-related overrides to a tool.
+func (atm *AdvancedToolManager) applyInstallationOverrides(tool *AdvancedBinaryTool, override *config.ToolOverride) {
+	if override.Dest != "" {
+		tool.Dest = override.Dest
+	}
+
+	if override.Mode != 0 {
+		tool.Mode = override.Mode
+	}
+
+	if override.Sudo != nil {
+		tool.Sudo = *override.Sudo
+	}
+
+	if override.Extract != nil {
+		tool.Extract = *override.Extract
+	}
+
+	if override.InstallCommand != "" {
+		tool.InstallCommand = override.InstallCommand
+	}
+
+	if override.InstallScript != "" {
+		tool.InstallScript = override.InstallScript
+	}
+}
+
+// applyBehaviorOverrides applies behavior-related overrides to a tool.
+func (atm *AdvancedToolManager) applyBehaviorOverrides(tool *AdvancedBinaryTool, override *config.ToolOverride) {
+	if override.VerifyCommand != "" {
+		tool.VerifyCommand = override.VerifyCommand
+	}
+
+	if override.PathAddition != "" {
+		tool.PathAddition = override.PathAddition
+	}
+
+	if override.Cleanup != "" {
+		tool.Cleanup = override.Cleanup
+	}
 }

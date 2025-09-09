@@ -16,8 +16,8 @@ import (
 )
 
 func setupTestNetworkManager(t *testing.T, handler http.HandlerFunc) (*NetworkManager, *httptest.Server) {
-    t.Helper()
-    server := httptest.NewServer(handler)
+	t.Helper()
+	server := httptest.NewServer(handler)
 
 	config := &Config{
 		ProjectID:  "test-project",

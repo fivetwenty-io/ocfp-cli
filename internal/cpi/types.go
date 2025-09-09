@@ -41,7 +41,9 @@ type Instance struct {
 	PublicIP         string
 	FloatingIP       string
 	SecurityGroups   []string
+	SecurityGroupIDs []string // Alternative field name used in bootstrap code
 	KeyPair          string
+	KeyPairName      string // Alternative field name used in bootstrap code
 	AvailabilityZone string
 	Tags             map[string]string
 	Volumes          []string
@@ -112,7 +114,8 @@ type FloatingIP struct {
 // PublicIP represents a public IP address.
 type PublicIP struct {
 	ID         string
-	Address    string
+	IPAddress  string // Use IPAddress for compatibility with bootstrap code
+	Address    string // Keep Address for other compatibility
 	Name       string
 	Status     string // available, associated, pending
 	Job        string // router, cf-ssh, jumpbox, tcp-router, ops
@@ -216,6 +219,7 @@ type HealthStatus struct {
 
 // KeyPair represents an SSH key pair.
 type KeyPair struct {
+	ID          string
 	Name        string
 	Fingerprint string
 	PublicKey   string
@@ -254,6 +258,7 @@ type Flavor struct {
 
 // Bucket represents an object storage bucket.
 type Bucket struct {
+	ID           string
 	Name         string
 	Region       string
 	StorageClass string
@@ -343,6 +348,97 @@ type CreatePublicIPRequest struct {
 	NetworkID string
 	Labels    map[string]string
 	Tags      map[string]string
+}
+
+// PublicIPRequest represents a request for creating/managing public IPs.
+type PublicIPRequest struct {
+	Name      string
+	Job       string // router, cf-ssh, jumpbox, tcp-router, ops
+	Index     string // 0-based index
+	NetworkID string
+	Labels    map[string]string
+	Tags      map[string]string
+}
+
+// NetworkRequest represents a request for creating/managing networks.
+type NetworkRequest struct {
+	Name        string
+	CIDR        string
+	DNSServers  []string
+	Description string
+	Tags        map[string]string
+}
+
+// SubnetRequest represents a request for creating subnets.
+type SubnetRequest struct {
+	Name             string
+	NetworkID        string
+	CIDR             string
+	AvailabilityZone string
+	Type             string // public, private
+	Tags             map[string]string
+}
+
+// SecurityGroupRequest represents a request for creating security groups.
+type SecurityGroupRequest struct {
+	Name        string
+	Description string
+	NetworkID   string
+	Rules       []*SecurityRule
+	Tags        map[string]string
+}
+
+// KeyPairRequest represents a request for creating key pairs.
+type KeyPairRequest struct {
+	Name string
+	Tags map[string]string
+}
+
+// VolumeRequest represents a request for creating volumes.
+type VolumeRequest struct {
+	Name             string
+	Size             int // Legacy field name
+	SizeGB           int
+	VolumeType       string
+	Type             string // Legacy field name
+	AvailabilityZone string
+	Encrypted        bool
+	Tags             map[string]string
+}
+
+// InstanceRequest represents a request for creating instances.
+type InstanceRequest struct {
+	Name             string
+	Flavor           string
+	Image            string
+	KeyPair          string // Legacy field name
+	KeyPairName      string
+	NetworkID        string
+	SubnetID         string
+	SecurityGroups   []string // Legacy field name
+	SecurityGroupIDs []string
+	UserData         string
+	AvailabilityZone string
+	Tags             map[string]string
+}
+
+// BucketRequest represents a request for creating buckets.
+type BucketRequest struct {
+	Name string
+	Tags map[string]string
+}
+
+// CredentialsGroupRequest represents a request for creating credentials groups.
+type CredentialsGroupRequest struct {
+	Name string
+	Tags map[string]string
+}
+
+// CredentialsGroup represents a credentials group.
+type CredentialsGroup struct {
+	ID        string
+	Name      string
+	CreatedAt time.Time
 }
 
 // CreateRouterRequest for creating a router.

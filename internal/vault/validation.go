@@ -1,7 +1,6 @@
 package vault
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +8,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
+)
+
+const (
+	// Secret count thresholds.
+	MinExpectedSecrets = 5
 )
 
 // Validator provides validation and safety features for vault operations.
@@ -53,11 +57,68 @@ func (vr *ValidationResult) HasIssues() bool {
 	return len(vr.Warnings) > 0 || len(vr.Errors) > 0
 }
 
+// CreateRollbackPoint creates a rollback point before dangerous operations.
+func (v *Validator) CreateRollbackPoint(paths []string) (*RollbackPoint, error) {
+	v.logger.Info("Creating rollback point", "paths", len(paths))
+
+	rollback := &RollbackPoint{
+		Timestamp: time.Now(),
+		Paths:     make(map[string]map[string]interface{}),
+	}
+
+	for _, path := range paths {
+		secrets, err := v.safe.Export(path)
+		if err != nil {
+			v.logger.Warn("Failed to backup path for rollback", "path", path, "error", err)
+
+			continue
+		}
+
+		rollback.Paths[path] = secrets
+		v.logger.Debug("Backed up path for rollback", "path", path, "secrets", len(secrets))
+	}
+
+	v.logger.Info("Rollback point created", "backed_up_paths", len(rollback.Paths))
+
+	return rollback, nil
+}
+
+// ExecuteRollback restores vault state from a rollback point.
+func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
+	v.logger.Info("Executing rollback", "timestamp", rollback.Timestamp, "paths", len(rollback.Paths))
+
+	errors := make([]string, 0, len(rollback.Paths))
+
+	for path, secrets := range rollback.Paths {
+		v.logger.Debug("Restoring path from rollback", "path", path)
+
+		err := v.safe.Import(path, secrets)
+		if err != nil {
+			errorMsg := fmt.Sprintf("Failed to restore path %s: %v", path, err)
+			errors = append(errors, errorMsg)
+			v.logger.Error(errorMsg)
+		}
+	}
+
+	if len(errors) > 0 {
+		return ErrRollbackPartiallyFailed(errors)
+	}
+
+	v.logger.Info("Rollback completed successfully")
+
+	return nil
+}
+
 // PreMigrationHealthCheck performs comprehensive health checks before migration.
 func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*ValidationResult, error) {
 	v.logger.Info("Starting pre-migration health check", "inception", inceptionPath, "target", targetPath)
 
-	result := &ValidationResult{Valid: true}
+	result := &ValidationResult{
+		Valid:      true,
+		Warnings:   nil,
+		Errors:     nil,
+		Suggestion: "",
+	}
 
 	// Check vault connectivity
 	err := v.validateVaultConnectivity(result)
@@ -72,13 +133,15 @@ func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*
 	}
 
 	// Check target vault accessibility
-	err = v.validateTargetVault(targetPath, result)
+	v.validateTargetVault(targetPath, result)
+
 	if err != nil {
 		return result, fmt.Errorf("target vault validation failed: %w", err)
 	}
 
 	// Check for active BOSH deployments
-	err = v.checkActiveBOSHDeployments(result)
+	v.checkActiveBOSHDeployments(result)
+
 	if err != nil {
 		v.logger.Warn("BOSH deployment check failed", "error", err)
 		result.AddWarning("Could not verify BOSH deployment status")
@@ -102,24 +165,109 @@ func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*
 	return result, nil
 }
 
-// validateVaultConnectivity checks basic vault connectivity.
-func (v *Validator) validateVaultConnectivity(result *ValidationResult) error {
-	v.logger.Debug("Validating vault connectivity")
+// ValidateVaultPath validates a vault path format and accessibility.
+func (v *Validator) ValidateVaultPath(path string) (*ValidationResult, error) {
+	result := &ValidationResult{
+		Valid:      true,
+		Warnings:   nil,
+		Errors:     nil,
+		Suggestion: "",
+	}
 
-	if err := v.client.ValidateConnection(); err != nil {
-		result.AddError(fmt.Sprintf("Vault connection failed: %v", err))
-		result.Suggestion = "Check VAULT_ADDR and VAULT_TOKEN environment variables"
+	// Basic path validation
+	if path == "" {
+		result.AddError("Path cannot be empty")
+
+		return result, nil
+	}
+
+	if strings.Contains(path, "//") {
+		result.AddError("Path contains double slashes")
+	}
+
+	if strings.Contains(path, " ") {
+		result.AddWarning("Path contains spaces")
+	}
+
+	// Check path accessibility
+	exists, err := v.safe.Exists(path)
+	if err != nil {
+		result.AddError(fmt.Sprintf("Cannot access path %s: %v", path, err))
+
+		return result, nil
+	}
+
+	if !exists {
+		result.AddWarning(fmt.Sprintf("Path %s does not exist", path))
+	}
+
+	return result, nil
+}
+
+// checkActiveBOSHDeployments checks for active BOSH deployments that might be affected.
+func (v *Validator) checkActiveBOSHDeployments(result *ValidationResult) {
+	v.logger.Debug("Checking for active BOSH deployments")
+
+	// This would typically query BOSH director for active deployments
+	// For now, we'll check for BOSH-related secrets in vault as an indicator
+
+	boshPaths := []string{
+		"secret/config/" + v.config.Name + "/mgmt/bosh",
+		"secret/config/" + v.config.Name + "/ocf/bosh",
+	}
+
+	for _, path := range boshPaths {
+		exists, err := v.safe.Exists(path)
+		if err != nil {
+			continue // Skip if we can't check
+		}
+
+		if exists {
+			result.AddWarning(fmt.Sprintf("Found BOSH configuration at %s - verify no active deployments", path))
+		}
+	}
+}
+
+// checkSecretConflicts checks for conflicting secrets between inception and target.
+func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, result *ValidationResult) error {
+	v.logger.Debug("Checking for secret conflicts", "inception", inceptionPath, "target", targetPath)
+
+	// Get inception secrets
+	inceptionSecrets, err := v.safe.GetAll(inceptionPath)
+	if err != nil {
+		return fmt.Errorf("failed to read inception secrets: %w", err)
+	}
+
+	// Check if target already has any of the same secret keys
+	targetExists, err := v.safe.Exists(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to check target existence: %w", err)
+	}
+
+	if !targetExists {
+		return nil // No conflicts if target doesn't exist
+	}
+
+	targetSecrets, err := v.safe.GetAll(targetPath)
+	if err != nil {
+		result.AddWarning(fmt.Sprintf("Could not read target secrets for conflict check: %v", err))
 
 		return err
 	}
 
-	// Check vault seal status
-	sealStatus, err := v.client.client.Sys().SealStatus()
-	if err != nil {
-		result.AddWarning(fmt.Sprintf("Could not check vault seal status: %v", err))
-	} else if sealStatus.Sealed {
-		result.AddError("Vault is sealed")
-		result.Suggestion = "Unseal the vault before proceeding"
+	// Check for overlapping keys
+	conflicts := make([]string, 0, len(inceptionSecrets))
+
+	for key := range inceptionSecrets {
+		if _, exists := targetSecrets[key]; exists {
+			conflicts = append(conflicts, key)
+		}
+	}
+
+	if len(conflicts) > 0 {
+		result.AddWarning(fmt.Sprintf("Found %d conflicting secret keys: %s",
+			len(conflicts), strings.Join(conflicts, ", ")))
+		result.AddWarning("These secrets will be overwritten in the target vault")
 	}
 
 	return nil
@@ -141,7 +289,7 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 		result.AddError("Inception vault not found at path: " + inceptionPath)
 		result.Suggestion = "Run 'ocfp vault inception' to create inception vault"
 
-		return nil
+		return err
 	}
 
 	// Check for required inception secrets
@@ -169,7 +317,7 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 
 		if secretCount == 0 {
 			result.AddError("Inception vault exists but contains no secrets")
-		} else if secretCount < 5 {
+		} else if secretCount < MinExpectedSecrets {
 			result.AddWarning(fmt.Sprintf("Inception vault contains only %d secrets, expected more", secretCount))
 		}
 	}
@@ -178,7 +326,7 @@ func (v *Validator) validateInceptionVault(inceptionPath string, result *Validat
 }
 
 // validateTargetVault checks target vault accessibility.
-func (v *Validator) validateTargetVault(targetPath string, result *ValidationResult) error {
+func (v *Validator) validateTargetVault(targetPath string, result *ValidationResult) {
 	v.logger.Debug("Validating target vault accessibility", "path", targetPath)
 
 	// Test write access by attempting to write a test secret
@@ -186,11 +334,12 @@ func (v *Validator) validateTargetVault(targetPath string, result *ValidationRes
 	testKey := "test"
 	testValue := fmt.Sprintf("migration-test-%d", time.Now().Unix())
 
-	if err := v.safe.Set(testPath, testKey, testValue); err != nil {
+	err := v.safe.Set(testPath, testKey, testValue)
+	if err != nil {
 		result.AddError(fmt.Sprintf("Cannot write to target vault path %s: %v", targetPath, err))
 		result.Suggestion = "Check vault permissions for the target path"
 
-		return nil
+		return
 	}
 
 	// Verify we can read it back
@@ -198,89 +347,41 @@ func (v *Validator) validateTargetVault(targetPath string, result *ValidationRes
 	if err != nil {
 		result.AddError(fmt.Sprintf("Cannot read from target vault path %s: %v", targetPath, err))
 
-		return nil
+		return
 	}
 
 	if retrievedValue != testValue {
 		result.AddError("Read/write test failed - retrieved value doesn't match written value")
 
-		return nil
+		return
 	}
 
 	// Clean up test secret
-	if err := v.safe.Delete(testPath, testKey); err != nil {
+	err = v.safe.Delete(testPath, testKey)
+	if err != nil {
 		result.AddWarning("Could not clean up test secret at " + testPath)
 	}
-
-	return nil
 }
 
-// checkActiveBOSHDeployments checks for active BOSH deployments that might be affected.
-func (v *Validator) checkActiveBOSHDeployments(result *ValidationResult) error {
-	v.logger.Debug("Checking for active BOSH deployments")
+// validateVaultConnectivity checks basic vault connectivity.
+func (v *Validator) validateVaultConnectivity(result *ValidationResult) error {
+	v.logger.Debug("Validating vault connectivity")
 
-	// This would typically query BOSH director for active deployments
-	// For now, we'll check for BOSH-related secrets in vault as an indicator
-
-	boshPaths := []string{
-		"secret/config/" + v.config.Name + "/mgmt/bosh",
-		"secret/config/" + v.config.Name + "/ocf/bosh",
-	}
-
-	for _, path := range boshPaths {
-		exists, err := v.safe.Exists(path)
-		if err != nil {
-			continue // Skip if we can't check
-		}
-
-		if exists {
-			result.AddWarning(fmt.Sprintf("Found BOSH configuration at %s - verify no active deployments", path))
-		}
-	}
-
-	return nil
-}
-
-// checkSecretConflicts checks for conflicting secrets between inception and target.
-func (v *Validator) checkSecretConflicts(inceptionPath, targetPath string, result *ValidationResult) error {
-	v.logger.Debug("Checking for secret conflicts", "inception", inceptionPath, "target", targetPath)
-
-	// Get inception secrets
-	inceptionSecrets, err := v.safe.GetAll(inceptionPath)
+	err := v.client.ValidateConnection()
 	if err != nil {
-		return fmt.Errorf("failed to read inception secrets: %w", err)
+		result.AddError(fmt.Sprintf("Vault connection failed: %v", err))
+		result.Suggestion = "Check VAULT_ADDR and VAULT_TOKEN environment variables"
+
+		return err
 	}
 
-	// Check if target already has any of the same secret keys
-	targetExists, err := v.safe.Exists(targetPath)
+	// Check vault seal status
+	sealStatus, err := v.client.client.Sys().SealStatus()
 	if err != nil {
-		return fmt.Errorf("failed to check target existence: %w", err)
-	}
-
-	if !targetExists {
-		return nil // No conflicts if target doesn't exist
-	}
-
-	targetSecrets, err := v.safe.GetAll(targetPath)
-	if err != nil {
-		result.AddWarning(fmt.Sprintf("Could not read target secrets for conflict check: %v", err))
-
-		return nil
-	}
-
-	// Check for overlapping keys
-	conflicts := make([]string, 0, len(inceptionSecrets))
-
-	for key := range inceptionSecrets {
-		if _, exists := targetSecrets[key]; exists {
-			conflicts = append(conflicts, key)
-		}
-	}
-
-	if len(conflicts) > 0 {
-		result.AddWarning(fmt.Sprintf("Found %d conflicting secret keys: %s",
-			len(conflicts), strings.Join(conflicts, ", ")))
-		result.AddWarning("These secrets will be overwritten in the target vault")
+		result.AddWarning(fmt.Sprintf("Could not check vault seal status: %v", err))
+	} else if sealStatus.Sealed {
+		result.AddError("Vault is sealed")
+		result.Suggestion = "Unseal the vault before proceeding"
 	}
 
 	return nil
@@ -297,7 +398,7 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	}
 
 	if secret == nil || secret.Data == nil {
-		return errors.New("no token data returned")
+		return ErrNoTokenDataReturned
 	}
 
 	// Check policies
@@ -339,94 +440,8 @@ func (v *Validator) validateVaultPolicies(result *ValidationResult) error {
 	return nil
 }
 
-// ValidateVaultPath validates a vault path format and accessibility.
-func (v *Validator) ValidateVaultPath(path string) (*ValidationResult, error) {
-	result := &ValidationResult{Valid: true}
-
-	// Basic path validation
-	if path == "" {
-		result.AddError("Path cannot be empty")
-
-		return result, nil
-	}
-
-	if strings.Contains(path, "//") {
-		result.AddError("Path contains double slashes")
-	}
-
-	if strings.Contains(path, " ") {
-		result.AddWarning("Path contains spaces")
-	}
-
-	// Check path accessibility
-	exists, err := v.safe.Exists(path)
-	if err != nil {
-		result.AddError(fmt.Sprintf("Cannot access path %s: %v", path, err))
-
-		return result, nil
-	}
-
-	if !exists {
-		result.AddWarning(fmt.Sprintf("Path %s does not exist", path))
-	}
-
-	return result, nil
-}
-
-// CreateRollbackPoint creates a rollback point before dangerous operations.
-func (v *Validator) CreateRollbackPoint(paths []string) (*RollbackPoint, error) {
-	v.logger.Info("Creating rollback point", "paths", len(paths))
-
-	rollback := &RollbackPoint{
-		Timestamp: time.Now(),
-		Paths:     make(map[string]map[string]interface{}),
-	}
-
-	for _, path := range paths {
-		secrets, err := v.safe.Export(path)
-		if err != nil {
-			v.logger.Warn("Failed to backup path for rollback", "path", path, "error", err)
-
-			continue
-		}
-
-		rollback.Paths[path] = secrets
-		v.logger.Debug("Backed up path for rollback", "path", path, "secrets", len(secrets))
-	}
-
-	v.logger.Info("Rollback point created", "backed_up_paths", len(rollback.Paths))
-
-	return rollback, nil
-}
-
 // RollbackPoint represents a point-in-time backup for rollback.
 type RollbackPoint struct {
 	Timestamp time.Time
 	Paths     map[string]map[string]interface{}
-}
-
-// ExecuteRollback restores vault state from a rollback point.
-func (v *Validator) ExecuteRollback(rollback *RollbackPoint) error {
-	v.logger.Info("Executing rollback", "timestamp", rollback.Timestamp, "paths", len(rollback.Paths))
-
-	errors := make([]string, 0, len(rollback.Paths))
-
-	for path, secrets := range rollback.Paths {
-		v.logger.Debug("Restoring path from rollback", "path", path)
-
-		err := v.safe.Import(path, secrets)
-		if err != nil {
-			errorMsg := fmt.Sprintf("Failed to restore path %s: %v", path, err)
-			errors = append(errors, errorMsg)
-			v.logger.Error(errorMsg)
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("rollback partially failed: %s", strings.Join(errors, "; "))
-	}
-
-	v.logger.Info("Rollback completed successfully")
-
-	return nil
 }

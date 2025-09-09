@@ -1,6 +1,10 @@
-package stackit
+package stackit_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
+)
 
 func TestParseBlocFromBucketName(t *testing.T) {
 	t.Parallel()
@@ -13,9 +17,9 @@ func TestParseBlocFromBucketName(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		got := parseBlocFromBucketName(c.in)
+		got := stackit.ParseBlocFromBucketName(c.in)
 		if got != c.want {
-			t.Fatalf("parseBlocFromBucketName(%q)=%q want %q", c.in, got, c.want)
+			t.Fatalf("stackit.ParseBlocFromBucketName(%q)=%q want %q", c.in, got, c.want)
 		}
 	}
 }

@@ -21,7 +21,7 @@ import (
 // validateCommand validates that only safe commands are executed.
 func validateCommand(cmdSlice []string) error {
 	if len(cmdSlice) == 0 {
-		return errors.New("empty command")
+		return ErrEmptyCommand
 	}
 
 	allowedCommands := map[string]bool{
@@ -30,13 +30,13 @@ func validateCommand(cmdSlice []string) error {
 	}
 
 	if !allowedCommands[cmdSlice[0]] {
-		return fmt.Errorf("command not allowed: %s", cmdSlice[0])
+		return ErrCommandNotAllowed(cmdSlice[0])
 	}
 
 	// Check for shell metacharacters in arguments
 	for _, arg := range cmdSlice[1:] {
 		if strings.Contains(arg, ";") || strings.Contains(arg, "|") || strings.Contains(arg, "&") || strings.Contains(arg, "`") {
-			return fmt.Errorf("argument contains shell metacharacters: %s", arg)
+			return ErrShellMetacharacters(arg)
 		}
 	}
 
@@ -58,7 +58,9 @@ func NewClient(config *ConnectionDetails, options *ProvisioningOptions) *Client 
 	return &Client{
 		config:     config,
 		options:    options,
+		client:     nil,
 		log:        logger.Get(),
+		connected:  false,
 		keyManager: NewKeyManager(),
 	}
 }
@@ -113,90 +115,28 @@ func (c *Client) Connect(ctx context.Context) error {
 // ExecuteCommand executes a command on the remote host.
 func (c *Client) ExecuteCommand(ctx context.Context, cmd string) (*CommandResult, error) {
 	if !c.connected {
-		return nil, errors.New("SSH client not connected")
+		return nil, ErrSSHClientNotConnected
 	}
 
 	startTime := time.Now()
 
 	c.log.Debug("Executing remote command", "command", cmd)
 
-	// Create session
-	session, err := c.client.NewSession()
+	session, err := c.createSession()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, err
 	}
+	defer c.closeSession(session)
 
-	defer func() {
-		err := session.Close()
-		if err != nil {
-			// Session close errors are typically not critical
-			_ = err
-		}
-	}()
+	stdout, stderr := c.setupOutputCapture(session)
 
-	// Set up output capture
-	var stdout, stderr strings.Builder
-
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-
-	// Execute command with context
-	done := make(chan error, 1)
-
-	go func() {
-		done <- session.Run(cmd)
-	}()
-
-	select {
-	case <-ctx.Done():
-		err := session.Signal(ssh.SIGTERM)
-		if err != nil {
-			// Signal errors are expected when session is already closing
-			_ = err
-		}
-
-		return nil, ctx.Err()
-	case err := <-done:
-		duration := time.Since(startTime)
-
-		result := &CommandResult{
-			Command:  cmd,
-			Stdout:   stdout.String(),
-			Stderr:   stderr.String(),
-			Duration: duration,
-		}
-
-		if err != nil {
-			exitErr := &ssh.ExitError{}
-			if errors.As(err, &exitErr) {
-				result.ExitCode = exitErr.ExitStatus()
-			} else {
-				result.ExitCode = 1
-			}
-
-			c.log.Debug("Command failed",
-				"command", cmd,
-				"exit_code", result.ExitCode,
-				"stderr", result.Stderr)
-
-			return result, fmt.Errorf("command failed with exit code %d: %w",
-				result.ExitCode, err)
-		}
-
-		result.ExitCode = 0
-
-		c.log.Debug("Command completed successfully",
-			"command", cmd,
-			"duration", duration.String())
-
-		return result, nil
-	}
+	return c.executeWithContext(ctx, session, cmd, startTime, stdout, stderr)
 }
 
 // TransferFile transfers a file between local and remote systems.
 func (c *Client) TransferFile(ctx context.Context, local, remote string, opts TransferOptions) error {
 	if !c.connected {
-		return errors.New("SSH client not connected")
+		return ErrSSHClientNotConnected
 	}
 
 	c.log.Info("Transferring file", "local", local, "remote", remote)
@@ -217,7 +157,7 @@ func (c *Client) TransferFile(ctx context.Context, local, remote string, opts Tr
 // CreateTunnel creates an SSH tunnel for port forwarding.
 func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
 	if !c.connected {
-		return errors.New("SSH client not connected")
+		return ErrSSHClientNotConnected
 	}
 
 	c.log.Info("Creating SSH tunnel",
@@ -225,9 +165,18 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		"remote_port", remotePort)
 
 	// Listen on local port with context
-	lc := &net.ListenConfig{}
+	listenConfig := &net.ListenConfig{
+		Control:   nil,
+		KeepAlive: 0,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   false,
+			Idle:     0,
+			Interval: 0,
+			Count:    0,
+		},
+	}
 
-	listener, err := lc.Listen(ctx, "tcp", fmt.Sprintf("localhost:%d", localPort))
+	listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf("localhost:%d", localPort))
 	if err != nil {
 		return fmt.Errorf("failed to listen on local port %d: %w", localPort, err)
 	}
@@ -266,7 +215,7 @@ func (c *Client) Close() error {
 	if c.client != nil {
 		c.connected = false
 
-		return c.client.Close()
+		return fmt.Errorf("failed to close SSH client: %w", c.client.Close())
 	}
 
 	return nil
@@ -282,7 +231,8 @@ func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
 
 	// Try to use known_hosts file for verification
-	if _, err := os.Stat(knownHostsPath); err == nil {
+	_, err = os.Stat(knownHostsPath)
+	if err == nil {
 		hostKeyCallback, err := knownhosts.New(knownHostsPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load known_hosts file: %w", err)
@@ -293,11 +243,13 @@ func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	}
 
 	// Create known_hosts file if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
+	err = os.MkdirAll(filepath.Dir(knownHostsPath), sshDirectoryMode)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create .ssh directory: %w", err)
 	}
 	// #nosec G304 - knownHostsPath is constructed from safe paths (user home directory)
-	if _, err := os.Create(knownHostsPath); err != nil {
+	_, err = os.Create(knownHostsPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create known_hosts file: %w", err)
 	}
 
@@ -358,12 +310,14 @@ func (c *Client) wrapHostKeyCallback(knownHostsCallback ssh.HostKeyCallback, kno
 func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) error {
 	// Ensure SSH directory exists
 	sshDir := filepath.Dir(knownHostsPath)
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
+
+	err := os.MkdirAll(sshDir, sshDirectoryMode)
+	if err != nil {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
 	// Open known_hosts file for appending
-	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 - safe path construction
+	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, privateKeyMode) // #nosec G304 - safe path construction
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file: %w", err)
 	}
@@ -379,7 +333,8 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	keyLine := knownhosts.Line([]string{hostname}, key)
 
 	// Write the key entry
-	if _, err := file.WriteString(keyLine + "\n"); err != nil {
+	_, err = file.WriteString(keyLine + "\n")
+	if err != nil {
 		return fmt.Errorf("failed to write host key: %w", err)
 	}
 
@@ -397,7 +352,8 @@ func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 		knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
 
 		// Try to verify against existing known_hosts
-		if _, err := os.Stat(knownHostsPath); err == nil {
+		_, err = os.Stat(knownHostsPath)
+		if err == nil {
 			hostKeyCallback, err := knownhosts.New(knownHostsPath)
 			if err == nil {
 				err := hostKeyCallback(hostname, remote, key)
@@ -410,7 +366,8 @@ func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 		// Host is unknown, add it to known_hosts
 		c.log.Info("Adding unknown host to known_hosts", "host", hostname)
 
-		if err := c.addHostKey(knownHostsPath, hostname, key); err != nil {
+		err = c.addHostKey(knownHostsPath, hostname, key)
+		if err != nil {
 			return fmt.Errorf("failed to add host key: %w", err)
 		}
 
@@ -427,9 +384,20 @@ func (c *Client) prepareSSHConfig() (*ssh.ClientConfig, error) {
 	}
 
 	config := &ssh.ClientConfig{
-		User:            c.config.User,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         30 * time.Second,
+		User:              c.config.User,
+		Auth:              nil,
+		HostKeyCallback:   hostKeyCallback,
+		BannerCallback:    nil,
+		ClientVersion:     "",
+		HostKeyAlgorithms: nil,
+		Timeout:           defaultCommandTimeout,
+		Config: ssh.Config{
+			Rand:           nil,
+			RekeyThreshold: 0,
+			KeyExchanges:   nil,
+			Ciphers:        nil,
+			MACs:           nil,
+		},
 	}
 
 	// Add authentication methods
@@ -465,7 +433,7 @@ func (c *Client) prepareAuthMethods() ([]ssh.AuthMethod, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, errors.New("no authentication methods available")
+		return nil, ErrNoAuthMethodsAvailable
 	}
 
 	return authMethods, nil
@@ -477,7 +445,22 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 
 	// Create dialer with context
 	dialer := net.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout:       shortTimeout,
+		Deadline:      time.Time{},
+		LocalAddr:     nil,
+		DualStack:     false,
+		FallbackDelay: 0,
+		KeepAlive:     0,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   false,
+			Idle:     0,
+			Interval: 0,
+			Count:    0,
+		},
+		Resolver:       nil,
+		Cancel:         nil,
+		ControlContext: nil,
+		Control:        nil,
 	}
 
 	conn, err := dialer.DialContext(ctx, "tcp", address)
@@ -504,55 +487,20 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 func (c *Client) connectWithExternalSSH(ctx context.Context, sshConfig *ssh.ClientConfig) (*ssh.Client, error) {
 	c.log.Debug("Attempting external SSH connection fallback")
 
-	// First validate connectivity using external SSH
-	if err := c.validateExternalSSHConnectivity(ctx); err != nil {
+	err := c.validateExternalSSHConnectivity(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("external SSH validation failed: %w", err)
 	}
 
-	// If external SSH works, try native connection again with relaxed settings
-	// This can help with certain SSH server configurations that are picky
-	relaxedConfig := &ssh.ClientConfig{
-		User:            sshConfig.User,
-		Auth:            sshConfig.Auth,
-		HostKeyCallback: c.createFallbackHostKeyCallback(), // Fallback uses host key verification with auto-add
-		Timeout:         45 * time.Second,                  // Longer timeout
-		ClientVersion:   "SSH-2.0-OCFP-Go-Client",          // Custom client version
-	}
-
-	// Try native connection with relaxed config
-	address := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
-
-	dialer := net.Dialer{
-		Timeout: 15 * time.Second,
-	}
-
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial with relaxed settings: %w", err)
-	}
-
-	// Perform SSH handshake with relaxed config
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, relaxedConfig)
-	if err != nil {
-		err := conn.Close()
-		if err != nil {
-			// Connection close errors are typically not critical
-			_ = err
-		}
-
-		return nil, fmt.Errorf("SSH handshake failed with relaxed settings: %w", err)
-	}
-
-	c.log.Info("External SSH fallback successful - connected with relaxed settings")
-
-	return ssh.NewClient(sshConn, chans, reqs), nil
+	return c.connectWithRelaxedConfig(ctx, sshConfig)
 }
 
 // validateExternalSSHConnectivity tests connectivity using external SSH command.
 func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 	// Check if SSH command is available
-	if _, err := exec.LookPath("ssh"); err != nil {
-		return errors.New("external SSH command not available")
+	_, err := exec.LookPath("ssh")
+	if err != nil {
+		return ErrExternalSSHNotAvailable
 	}
 
 	// Build SSH command arguments
@@ -565,7 +513,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 	}
 
 	// Add port if not default
-	if c.config.Port != 22 {
+	if c.config.Port != DefaultSSHPort {
 		args = append(args, "-p", strconv.Itoa(c.config.Port))
 	}
 
@@ -587,7 +535,8 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 
 	// Set up environment if password authentication is needed
 	if c.config.UseSSHPass && c.config.Password != "" {
-		if _, err := exec.LookPath("sshpass"); err == nil {
+		_, err := exec.LookPath("sshpass")
+		if err == nil {
 			// Use sshpass for password authentication
 			sshpassArgs := []string{"-p", c.config.Password, "ssh"}
 
@@ -611,7 +560,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 
 	expectedOutput := "connection-test"
 	if !strings.Contains(string(output), expectedOutput) {
-		return fmt.Errorf("external SSH test returned unexpected output: %s", string(output))
+		return ErrUnexpectedSSHOutput(string(output))
 	}
 
 	c.log.Debug("External SSH connectivity validated")
@@ -648,10 +597,11 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	}()
 
 	// Copy data bidirectionally
-	done := make(chan struct{}, 2)
+	done := make(chan struct{}, defaultChannelBuffer)
 
 	go func() {
-		if _, err := io.Copy(remoteConn, localConn); err != nil {
+		_, err := io.Copy(remoteConn, localConn)
+		if err != nil {
 			c.log.Debug("Tunnel copy error", "direction", "local->remote", "error", err)
 		}
 
@@ -659,7 +609,8 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	}()
 
 	go func() {
-		if _, err := io.Copy(localConn, remoteConn); err != nil {
+		_, err := io.Copy(localConn, remoteConn)
+		if err != nil {
 			c.log.Debug("Tunnel copy error", "direction", "remote->local", "error", err)
 		}
 
@@ -672,4 +623,161 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	case <-ctx.Done():
 		// Context cancelled
 	}
+}
+
+func (c *Client) createSession() (*ssh.Session, error) {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return session, nil
+}
+
+func (c *Client) closeSession(session *ssh.Session) {
+	err := session.Close()
+	if err != nil {
+		// Session close errors are typically not critical
+		_ = err
+	}
+}
+
+func (c *Client) setupOutputCapture(session *ssh.Session) (*strings.Builder, *strings.Builder) {
+	var stdout, stderr strings.Builder
+
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	return &stdout, &stderr
+}
+
+func (c *Client) executeWithContext(ctx context.Context, session *ssh.Session, cmd string, startTime time.Time, stdout, stderr *strings.Builder) (*CommandResult, error) {
+	done := make(chan error, 1)
+
+	go func() {
+		done <- session.Run(cmd)
+	}()
+
+	select {
+	case <-ctx.Done():
+		err := session.Signal(ssh.SIGTERM)
+		if err != nil {
+			// Signal errors are expected when session is already closing
+			_ = err
+		}
+
+		return nil, fmt.Errorf("context cancelled: %w", ctx.Err())
+	case err := <-done:
+		return c.buildCommandResult(cmd, err, startTime, stdout, stderr)
+	}
+}
+
+func (c *Client) buildCommandResult(cmd string, err error, startTime time.Time, stdout, stderr *strings.Builder) (*CommandResult, error) {
+	duration := time.Since(startTime)
+
+	result := &CommandResult{
+		Command:  cmd,
+		ExitCode: 0,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Duration: duration,
+	}
+
+	if err != nil {
+		exitErr := &ssh.ExitError{
+			Waitmsg: ssh.Waitmsg{},
+		}
+		if errors.As(err, &exitErr) {
+			result.ExitCode = exitErr.ExitStatus()
+		} else {
+			result.ExitCode = 1
+		}
+
+		c.log.Debug("Command failed",
+			"command", cmd,
+			"exit_code", result.ExitCode,
+			"stderr", result.Stderr)
+
+		return result, fmt.Errorf("command failed with exit code %d: %w",
+			result.ExitCode, err)
+	}
+
+	result.ExitCode = 0
+
+	c.log.Debug("Command completed successfully",
+		"command", cmd,
+		"duration", duration.String())
+
+	return result, nil
+}
+
+func (c *Client) connectWithRelaxedConfig(ctx context.Context, sshConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	relaxedConfig := c.createRelaxedSSHConfig(sshConfig)
+	address := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
+
+	dialer := c.createNetDialer()
+
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial with relaxed settings: %w", err)
+	}
+
+	return c.performSSHHandshake(conn, address, relaxedConfig)
+}
+
+func (c *Client) createRelaxedSSHConfig(sshConfig *ssh.ClientConfig) *ssh.ClientConfig {
+	return &ssh.ClientConfig{
+		User:              sshConfig.User,
+		Auth:              sshConfig.Auth,
+		HostKeyCallback:   c.createFallbackHostKeyCallback(),
+		BannerCallback:    nil,
+		ClientVersion:     "SSH-2.0-OCFP-Go-Client",
+		HostKeyAlgorithms: nil,
+		Timeout:           longTimeout,
+		Config: ssh.Config{
+			Rand:           nil,
+			RekeyThreshold: 0,
+			KeyExchanges:   nil,
+			Ciphers:        nil,
+			MACs:           nil,
+		},
+	}
+}
+
+func (c *Client) createNetDialer() net.Dialer {
+	return net.Dialer{
+		Timeout:       mediumTimeout,
+		Deadline:      time.Time{},
+		LocalAddr:     nil,
+		DualStack:     false,
+		FallbackDelay: 0,
+		KeepAlive:     0,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   false,
+			Idle:     0,
+			Interval: 0,
+			Count:    0,
+		},
+		Resolver:       nil,
+		Cancel:         nil,
+		ControlContext: nil,
+		Control:        nil,
+	}
+}
+
+func (c *Client) performSSHHandshake(conn net.Conn, address string, relaxedConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, relaxedConfig)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			// Connection close errors are typically not critical
+			_ = closeErr
+		}
+
+		return nil, fmt.Errorf("SSH handshake failed with relaxed settings: %w", err)
+	}
+
+	c.log.Info("External SSH fallback successful - connected with relaxed settings")
+
+	return ssh.NewClient(sshConn, chans, reqs), nil
 }

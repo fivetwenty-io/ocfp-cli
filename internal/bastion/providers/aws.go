@@ -11,6 +11,19 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// SSH connection defaults.
+	defaultSSHPort = 22
+)
+
+// AWS provider errors.
+var (
+	ErrAWSAccessKeyRequired       = errors.New("AWS access key ID is required")
+	ErrAWSSecretKeyRequired       = errors.New("AWS secret access key is required")
+	ErrAWSRegionRequired          = errors.New("AWS region is required")
+	ErrCouldNotDetermineBastionIP = errors.New("could not determine bastion IP address")
+)
+
 // AWSBastionInit implements bastion initialization for AWS.
 type AWSBastionInit struct {
 	config *config.Config
@@ -30,15 +43,15 @@ func (a *AWSBastionInit) Validate() error {
 	a.log.Debug("Validating AWS configuration")
 
 	if a.config.AccessKeyID == "" {
-		return errors.New("AWS access key ID is required")
+		return ErrAWSAccessKeyRequired
 	}
 
 	if a.config.SecretAccessKey == "" {
-		return errors.New("AWS secret access key is required")
+		return ErrAWSSecretKeyRequired
 	}
 
 	if a.config.Region == "" {
-		return errors.New("AWS region is required")
+		return ErrAWSRegionRequired
 	}
 
 	return nil
@@ -70,25 +83,7 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 	}
 
 	// Add Genesis-specific variables if configured
-	if a.config.Bastion.Genesis.Enabled {
-		if a.config.Bastion.Genesis.Branch != "" {
-			env["GENESIS_BRANCH"] = a.config.Bastion.Genesis.Branch
-		}
-
-		if a.config.Bastion.Genesis.Commit != "" {
-			env["GENESIS_COMMIT"] = a.config.Bastion.Genesis.Commit
-		}
-
-		if a.config.Bastion.Genesis.VersionPrefix != "" {
-			env["GENESIS_VERSION_PREFIX"] = a.config.Bastion.Genesis.VersionPrefix
-		}
-
-		if a.config.Bastion.Genesis.Repo != "" {
-			env["GENESIS_REPO"] = a.config.Bastion.Genesis.Repo
-		}
-	} else {
-		env["GENESIS_SKIP_INSTALL"] = "1"
-	}
+	a.addGenesisEnv(env)
 
 	// Add bastion git configuration
 	if a.config.Bastion.Git.User.Name != "" {
@@ -141,10 +136,12 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
-		Port:           22,
+		Port:           defaultSSHPort,
 		User:           sshUser,
 		PrivateKeyPath: privateKeyPath,
+		Password:       "",
 		SSHOptions:     sshOptions,
+		UseSSHPass:     false,
 	}
 
 	// Set password if key is encrypted
@@ -163,6 +160,31 @@ func (a *AWSBastionInit) Initialize(ctx context.Context) error {
 	return nil
 }
 
+// addGenesisEnv adds Genesis-specific environment variables to the provided map.
+func (a *AWSBastionInit) addGenesisEnv(env map[string]string) {
+	if !a.config.Bastion.Genesis.Enabled {
+		env["GENESIS_SKIP_INSTALL"] = "1"
+
+		return
+	}
+
+	if a.config.Bastion.Genesis.Branch != "" {
+		env["GENESIS_BRANCH"] = a.config.Bastion.Genesis.Branch
+	}
+
+	if a.config.Bastion.Genesis.Commit != "" {
+		env["GENESIS_COMMIT"] = a.config.Bastion.Genesis.Commit
+	}
+
+	if a.config.Bastion.Genesis.VersionPrefix != "" {
+		env["GENESIS_VERSION_PREFIX"] = a.config.Bastion.Genesis.VersionPrefix
+	}
+
+	if a.config.Bastion.Genesis.Repo != "" {
+		env["GENESIS_REPO"] = a.config.Bastion.Genesis.Repo
+	}
+}
+
 // getBastionIP retrieves the bastion host IP address.
 func (a *AWSBastionInit) getBastionIP() (string, error) {
 	if a.config.BastionIP != "" {
@@ -176,5 +198,5 @@ func (a *AWSBastionInit) getBastionIP() (string, error) {
 
 	// Try to get from AWS API (would need AWS SDK integration)
 	// For now, return an error
-	return "", errors.New("could not determine bastion IP address")
+	return "", ErrCouldNotDetermineBastionIP
 }

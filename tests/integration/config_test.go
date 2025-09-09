@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"os"
@@ -11,13 +11,20 @@ import (
 )
 
 func TestConfigLoading(t *testing.T) {
-    t.Parallel()
-    t.Run("LoadValidConfig", func(t *testing.T) {
-        t.Parallel()
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.yml")
+	t.Parallel()
+	t.Run("LoadValidConfig", testLoadValidConfig)
+	t.Run("LoadWithoutEnvironmentVariables", testLoadWithoutEnvironmentVariables)
+	t.Run("BlocConfiguration", testBlocConfiguration)
+	t.Run("NetworkConfiguration", testNetworkConfiguration)
+	t.Run("BastionConfiguration", testBastionConfiguration)
+}
 
-		testConfig := `
+func testLoadValidConfig(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	testConfig := `
 blocs:
   test:
     name: test
@@ -29,49 +36,46 @@ blocs:
     region: eu-de-1
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Equal(t, "test", cfg.Name)
-		assert.Equal(t, "/tmp/keys", cfg.SSHKeyStorageDir)
-		assert.Equal(t, "test-project", cfg.ProjectID)
-		assert.Equal(t, "test-key", cfg.AuthToken)
-	})
+	assert.Equal(t, "stackit", cfg.Provider)
+	assert.Equal(t, "test", cfg.Name)
+	assert.Equal(t, "/tmp/keys", cfg.SSHKeyStorageDir)
+	assert.Equal(t, "test-project", cfg.ProjectID)
+	assert.Equal(t, "test-key", cfg.AuthToken)
+}
 
-    t.Run("LoadWithoutEnvironmentVariables", func(t *testing.T) {
-        t.Parallel()
-		// The config loader doesn't expand environment variables
-		// This test just ensures config can be loaded with ${} syntax
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.yml")
+func testLoadWithoutEnvironmentVariables(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
 
-		testConfig := `
+	testConfig := `
 blocs:
   test-env:
     name: ${OCFP_TEST_VAR}
     provider: stackit
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test-env")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test-env")
+	require.NoError(t, err)
 
-		// Config loader doesn't expand env vars automatically
-		assert.Equal(t, "${OCFP_TEST_VAR}", cfg.Name)
-	})
+	assert.Equal(t, "${OCFP_TEST_VAR}", cfg.Name)
+}
 
-    t.Run("BlocConfiguration", func(t *testing.T) {
-        t.Parallel()
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.yml")
+func testBlocConfiguration(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
 
-		testConfig := `
+	testConfig := `
 blocs:
   mgmt:
     name: mgmt
@@ -91,25 +95,24 @@ blocs:
       cidr: 10.1.0.0/16
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "mgmt")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "mgmt")
+	require.NoError(t, err)
 
-		// Test that we loaded the correct bloc
-		assert.Equal(t, "mgmt", cfg.Name)
-		assert.Equal(t, "stackit", cfg.Provider)
-		assert.Equal(t, "management", cfg.Type)
-		assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
-	})
+	assert.Equal(t, "mgmt", cfg.Name)
+	assert.Equal(t, "stackit", cfg.Provider)
+	assert.Equal(t, "management", cfg.Type)
+	assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
+}
 
-    t.Run("NetworkConfiguration", func(t *testing.T) {
-        t.Parallel()
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.yml")
+func testNetworkConfiguration(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
 
-		testConfig := `
+	testConfig := `
 blocs:
   test:
     name: test
@@ -123,23 +126,23 @@ blocs:
         - 8.8.4.4
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "test-network", cfg.Network.Name)
-		assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
-		assert.Len(t, cfg.Network.DNS, 2)
-	})
+	assert.Equal(t, "test-network", cfg.Network.Name)
+	assert.Equal(t, "10.0.0.0/16", cfg.Network.CIDR)
+	assert.Len(t, cfg.Network.DNS, 2)
+}
 
-    t.Run("BastionConfiguration", func(t *testing.T) {
-        t.Parallel()
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.yml")
+func testBastionConfiguration(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
 
-		testConfig := `
+	testConfig := `
 blocs:
   test:
     name: test
@@ -153,14 +156,13 @@ blocs:
       ssh_user: ubuntu
 `
 
-		err := os.WriteFile(configFile, []byte(testConfig), 0644)
-		require.NoError(t, err)
+	err := os.WriteFile(configFile, []byte(testConfig), 0600)
+	require.NoError(t, err)
 
-		cfg, err := config.LoadWithParams(configFile, "test")
-		require.NoError(t, err)
+	cfg, err := config.LoadWithParams(configFile, "test")
+	require.NoError(t, err)
 
-		assert.Equal(t, "t3.small", cfg.Bastion.Flavor)
-		assert.Equal(t, "ubuntu-22.04", cfg.Bastion.Image)
-		assert.Equal(t, "ubuntu", cfg.Bastion.SSHUser)
-	})
+	assert.Equal(t, "t3.small", cfg.Bastion.Flavor)
+	assert.Equal(t, "ubuntu-22.04", cfg.Bastion.Image)
+	assert.Equal(t, "ubuntu", cfg.Bastion.SSHUser)
 }

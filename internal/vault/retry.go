@@ -7,6 +7,13 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// Vault retry defaults.
+	VaultMaxAttempts   = 3
+	VaultMaxDelaySec   = 30
+	VaultBackoffFactor = 2.0
+)
+
 // RetryConfig holds retry configuration.
 type RetryConfig struct {
 	MaxAttempts   int
@@ -18,10 +25,10 @@ type RetryConfig struct {
 // DefaultRetryConfig returns sensible retry defaults.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
-		MaxAttempts:   3,
+		MaxAttempts:   VaultMaxAttempts,
 		BaseDelay:     1 * time.Second,
-		MaxDelay:      30 * time.Second,
-		BackoffFactor: 2.0,
+		MaxDelay:      VaultMaxDelaySec * time.Second,
+		BackoffFactor: VaultBackoffFactor,
 	}
 }
 
@@ -123,6 +130,8 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 
 			return &VaultError{
 				Operation: "retry",
+				Path:      "",
+				Key:       "",
 				Err:       err,
 				Retryable: false,
 			}
@@ -137,6 +146,8 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 
 	return &VaultError{
 		Operation: "retry",
+		Path:      "",
+		Key:       "",
 		Err:       fmt.Errorf("operation failed after %d attempts: %w", config.MaxAttempts, lastErr),
 		Retryable: false,
 	}
@@ -165,6 +176,17 @@ type VaultError struct {
 	Retryable bool
 }
 
+// NewVaultError creates a new VaultError.
+func NewVaultError(operation, path, key string, err error) *VaultError {
+	return &VaultError{
+		Operation: operation,
+		Path:      path,
+		Key:       key,
+		Err:       err,
+		Retryable: IsRetryable(err),
+	}
+}
+
 func (ve *VaultError) Error() string {
 	if ve.Path != "" && ve.Key != "" {
 		return fmt.Sprintf("vault %s failed at %s:%s: %v", ve.Operation, ve.Path, ve.Key, ve.Err)
@@ -181,17 +203,6 @@ func (ve *VaultError) Unwrap() error {
 
 func (ve *VaultError) IsRetryable() bool {
 	return ve.Retryable
-}
-
-// NewVaultError creates a new VaultError.
-func NewVaultError(operation, path, key string, err error) *VaultError {
-	return &VaultError{
-		Operation: operation,
-		Path:      path,
-		Key:       key,
-		Err:       err,
-		Retryable: IsRetryable(err),
-	}
 }
 
 // RetryableVaultOperation wraps a vault operation with retry logic.

@@ -2,12 +2,25 @@ package stackit
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 	lb "github.com/stackitcloud/stackit-sdk-go/services/loadbalancer"
+)
+
+const (
+	// Timeout configurations.
+	defaultHTTPTimeout     = 30 * time.Second
+	instanceWaitTimeout    = 10 * time.Minute
+	volumeWaitTimeout      = 5 * time.Minute
+	volumeAttachTimeout    = 2 * time.Minute
+	snapshotWaitTimeout    = 10 * time.Minute
+	conditionCheckInterval = 5 * time.Second
+
+	// S3 lifecycle configuration.
+	s3LifecycleDays = 7
 )
 
 // ComputeManager handles STACKIT compute operations.
@@ -50,7 +63,15 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 		return nil, fmt.Errorf("stackit iaas CreateSecurityGroup failed: %w", err)
 	}
 
-	out := &cpi.SecurityGroup{ID: stringOrEmpty(created.GetIdOk()), Name: stringOrEmpty(created.GetNameOk()), Description: stringOrEmpty(created.GetDescriptionOk()), Tags: mapAnyToString(created.GetLabels())}
+	out := &cpi.SecurityGroup{
+		ID:          stringOrEmpty(created.GetIdOk()),
+		Name:        stringOrEmpty(created.GetNameOk()),
+		Description: stringOrEmpty(created.GetDescriptionOk()),
+		NetworkID:   "",
+		Rules:       []*cpi.SecurityRule{},
+		Tags:        mapAnyToString(created.GetLabels()),
+		CreatedAt:   time.Now(),
+	}
 	// Add initial rules if provided (best-effort)
 	for _, r := range req.Rules {
 		_ = m.AddSecurityRule(ctx, out.ID, r)
@@ -65,12 +86,20 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, groupID string) 
 		return nil, err
 	}
 
-	sg, err := cli.GetSecurityGroup(ctx, m.client.config.ProjectID, groupID).Execute()
+	securityGroup, err := cli.GetSecurityGroup(ctx, m.client.config.ProjectID, groupID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetSecurityGroup failed: %w", err)
 	}
 
-	out := &cpi.SecurityGroup{ID: stringOrEmpty(sg.GetIdOk()), Name: stringOrEmpty(sg.GetNameOk()), Description: stringOrEmpty(sg.GetDescriptionOk()), Tags: mapAnyToString(sg.GetLabels())}
+	out := &cpi.SecurityGroup{
+		ID:          stringOrEmpty(securityGroup.GetIdOk()),
+		Name:        stringOrEmpty(securityGroup.GetNameOk()),
+		Description: stringOrEmpty(securityGroup.GetDescriptionOk()),
+		NetworkID:   "",
+		Rules:       []*cpi.SecurityRule{},
+		Tags:        mapAnyToString(securityGroup.GetLabels()),
+		CreatedAt:   time.Now(),
+	}
 
 	return out, nil
 }
@@ -88,14 +117,22 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 
 	items, _ := resp.GetItemsOk()
 
-    out := make([]*cpi.SecurityGroup, 0, len(items))
+	out := make([]*cpi.SecurityGroup, 0, len(items))
 
-	for _, sg := range items {
-		labels := mapAnyToString(sg.GetLabels())
+	for _, securityGroupItem := range items {
+		labels := mapAnyToString(securityGroupItem.GetLabels())
 
-		g := &cpi.SecurityGroup{ID: stringOrEmpty(sg.GetIdOk()), Name: stringOrEmpty(sg.GetNameOk()), Description: stringOrEmpty(sg.GetDescriptionOk()), Tags: labels}
+		group := &cpi.SecurityGroup{
+			ID:          stringOrEmpty(securityGroupItem.GetIdOk()),
+			Name:        stringOrEmpty(securityGroupItem.GetNameOk()),
+			Description: stringOrEmpty(securityGroupItem.GetDescriptionOk()),
+			NetworkID:   "",
+			Rules:       []*cpi.SecurityRule{},
+			Tags:        labels,
+			CreatedAt:   time.Now(),
+		}
 		if matchLabels(labels, filters) {
-			out = append(out, g)
+			out = append(out, group)
 		}
 	}
 
@@ -105,10 +142,15 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID string) error {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IAAS client: %w", err)
 	}
 
-	return cli.DeleteSecurityGroup(ctx, m.client.config.ProjectID, groupID).Execute()
+	err = cli.DeleteSecurityGroup(ctx, m.client.config.ProjectID, groupID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete security group: %w", err)
+	}
+
+	return nil
 }
 
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
@@ -143,17 +185,25 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	}
 
 	_, err = cli.CreateSecurityGroupRule(ctx, m.client.config.ProjectID, groupID).CreateSecurityGroupRulePayload(*payload).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to create security group rule: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IAAS client: %w", err)
 	}
 
-	return cli.DeleteSecurityGroupRule(ctx, m.client.config.ProjectID, groupID, ruleID).Execute()
+	err = cli.DeleteSecurityGroupRule(ctx, m.client.config.ProjectID, groupID, ruleID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete security group rule: %w", err)
+	}
+
+	return nil
 }
 
 func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
@@ -169,7 +219,7 @@ func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string)
 
 	items, _ := resp.GetItemsOk()
 
-    out := make([]*cpi.SecurityRule, 0, len(items))
+	out := make([]*cpi.SecurityRule, 0, len(items))
 
 	for _, rule := range items {
 		proto := ""
@@ -177,14 +227,23 @@ func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string)
 			proto = fmt.Sprint(pv)
 		}
 
-		securityRule := &cpi.SecurityRule{ID: stringOrEmpty(rule.GetIdOk()), Direction: stringOrEmpty(rule.GetDirectionOk()), Protocol: proto, Description: stringOrEmpty(rule.GetDescriptionOk())}
+		securityRule := &cpi.SecurityRule{
+			ID:           stringOrEmpty(rule.GetIdOk()),
+			Direction:    stringOrEmpty(rule.GetDirectionOk()),
+			Protocol:     proto,
+			PortRangeMin: 0,
+			PortRangeMax: 0,
+			RemoteIPCIDR: "",
+			RemoteGroup:  "",
+			Description:  stringOrEmpty(rule.GetDescriptionOk()),
+		}
 		if pr, ok := rule.GetPortRangeOk(); ok {
-			if min, okm := pr.GetMinOk(); okm {
-				securityRule.PortRangeMin = int(min)
+			if minPort, okm := pr.GetMinOk(); okm {
+				securityRule.PortRangeMin = int(minPort)
 			}
 
-			if max, okx := pr.GetMaxOk(); okx {
-				securityRule.PortRangeMax = int(max)
+			if maxPort, okx := pr.GetMaxOk(); okx {
+				securityRule.PortRangeMax = int(maxPort)
 			}
 		}
 
@@ -223,7 +282,26 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 		return nil, fmt.Errorf("stackit lb CreateLoadBalancer failed: %w", err)
 	}
 
-	out := &cpi.LoadBalancer{ID: stringOrEmpty(created.GetNameOk()), Name: stringOrEmpty(created.GetNameOk())}
+	out := &cpi.LoadBalancer{
+		ID:             stringOrEmpty(created.GetNameOk()),
+		Name:           stringOrEmpty(created.GetNameOk()),
+		Type:           "",
+		Algorithm:      "",
+		IPAddress:      "",
+		Port:           0,
+		TargetPort:     0,
+		Protocol:       "",
+		Status:         "",
+		State:          cpi.ResourceStateUnknown,
+		NetworkID:      "",
+		SubnetIDs:      []string{},
+		SecurityGroups: []string{},
+		Backends:       []*cpi.Backend{},
+		HealthCheck:    nil,
+		Tags:           []string{},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
 	if ip, ok := created.GetExternalAddressOk(); ok {
 		out.IPAddress = ip
 	} else if pvt, ok := created.GetPrivateAddressOk(); ok {
@@ -244,7 +322,26 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, loadBalancerI
 		return nil, fmt.Errorf("stackit lb GetLoadBalancer failed: %w", err)
 	}
 
-	out := &cpi.LoadBalancer{ID: stringOrEmpty(got.GetNameOk()), Name: stringOrEmpty(got.GetNameOk())}
+	out := &cpi.LoadBalancer{
+		ID:             stringOrEmpty(got.GetNameOk()),
+		Name:           stringOrEmpty(got.GetNameOk()),
+		Type:           "",
+		Algorithm:      "",
+		IPAddress:      "",
+		Port:           0,
+		TargetPort:     0,
+		Protocol:       "",
+		Status:         "",
+		State:          cpi.ResourceStateUnknown,
+		NetworkID:      "",
+		SubnetIDs:      []string{},
+		SecurityGroups: []string{},
+		Backends:       []*cpi.Backend{},
+		HealthCheck:    nil,
+		Tags:           []string{},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
 	if ip, ok := got.GetExternalAddressOk(); ok {
 		out.IPAddress = ip
 	} else if pvt, ok := got.GetPrivateAddressOk(); ok {
@@ -277,9 +374,28 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 
 	items, _ := resp.GetLoadBalancersOk()
 
-	var list []*cpi.LoadBalancer
+	list := make([]*cpi.LoadBalancer, 0, len(items))
 	for _, lbm := range items {
-		lbOut := &cpi.LoadBalancer{ID: stringOrEmpty(lbm.GetNameOk()), Name: stringOrEmpty(lbm.GetNameOk())}
+		lbOut := &cpi.LoadBalancer{
+			ID:             stringOrEmpty(lbm.GetNameOk()),
+			Name:           stringOrEmpty(lbm.GetNameOk()),
+			Type:           "",
+			Algorithm:      "",
+			IPAddress:      "",
+			Port:           0,
+			TargetPort:     0,
+			Protocol:       "",
+			Status:         "",
+			State:          cpi.ResourceStateUnknown,
+			NetworkID:      "",
+			SubnetIDs:      []string{},
+			SecurityGroups: []string{},
+			Backends:       []*cpi.Backend{},
+			HealthCheck:    nil,
+			Tags:           []string{},
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
 		if ip, ok := lbm.GetExternalAddressOk(); ok {
 			lbOut.IPAddress = ip
 		} else if pvt, ok := lbm.GetPrivateAddressOk(); ok {
@@ -301,19 +417,25 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, loadBalanc
 	payload := lb.NewUpdateLoadBalancerPayload()
 	// No-op updates for now; extend when CPI includes listener fields
 	_, err = cli.UpdateLoadBalancer(ctx, m.client.config.ProjectID, m.client.config.Region, loadBalancerID).UpdateLoadBalancerPayload(*payload).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to update load balancer: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, loadBalancerID string) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get load balancer client: %w", err)
 	}
 
 	_, err = cli.DeleteLoadBalancer(ctx, m.client.config.ProjectID, m.client.config.Region, loadBalancerID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete load balancer: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backend *cpi.Backend) error {
@@ -321,86 +443,22 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 	if err != nil {
 		return err
 	}
+
 	// Fetch LB to inspect target pools
 	got, err := cli.GetLoadBalancer(ctx, m.client.config.ProjectID, m.client.config.Region, lbID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit lb GetLoadBalancer failed: %w", err)
 	}
-	// Choose a default pool name
+
 	poolName := lbID
-	// Build or update the pool
-	// If pool exists, update it; else create it by updating the LB with new target pool list
-	var pools []lb.TargetPool
-	if existing, ok := got.GetTargetPoolsOk(); ok {
-		pools = existing
-	}
-	// Try to find existing pool
-	var idx = -1
+	pools, _ := got.GetTargetPoolsOk()
+	poolIdx := m.findTargetPool(pools, poolName)
 
-	for i, p := range pools {
-		if name, ok := p.GetNameOk(); ok && name == poolName {
-			idx = i
-
-			break
-		}
+	if poolIdx == -1 {
+		return m.createNewPool(ctx, cli, lbID, poolName, pools, backend)
 	}
 
-	if idx == -1 {
-		// Create a new pool entry with targetPort from backend.Port
-		newPool := lb.NewTargetPool()
-		newPool.SetName(poolName)
-
-		if backend.Port > 0 {
-			newPool.SetTargetPort(int64(backend.Port))
-		}
-
-		tgt := lb.NewTarget()
-		tgt.SetIp(backend.Address)
-
-		if backend.Name != "" {
-			tgt.SetDisplayName(backend.Name)
-		}
-
-		newPool.SetTargets([]lb.Target{*tgt})
-		// Update LB with the new pool
-		up := lb.NewUpdateLoadBalancerPayload()
-		up.SetTargetPools(append(pools, *newPool))
-		_, err = cli.UpdateLoadBalancer(ctx, m.client.config.ProjectID, m.client.config.Region, lbID).UpdateLoadBalancerPayload(*up).Execute()
-
-		return err
-	}
-	// Pool exists: append or replace target list with added target
-	p := pools[idx]
-	// Collect current targets
-	list := []lb.Target{}
-	if t, ok := p.GetTargetsOk(); ok {
-		list = t
-	}
-	// Avoid duplicates by IP
-	for _, t := range list {
-		if ip, ok := t.GetIpOk(); ok && ip == backend.Address {
-			return nil
-		}
-	}
-
-	nt := lb.NewTarget()
-	nt.SetIp(backend.Address)
-
-	if backend.Name != "" {
-		nt.SetDisplayName(backend.Name)
-	}
-
-	list = append(list, *nt)
-	// Update target pool via UpdateTargetPool
-	up := lb.NewUpdateTargetPoolPayload()
-	if backend.Port > 0 {
-		up.SetTargetPort(int64(backend.Port))
-	}
-
-	up.SetTargets(list)
-	_, err = cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*up).Execute()
-
-	return err
+	return m.updateExistingPool(ctx, cli, lbID, poolName, pools[poolIdx], backend)
 }
 
 func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, backendID string) error {
@@ -447,17 +505,21 @@ func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, ba
 
 	up := lb.NewUpdateTargetPoolPayload()
 	up.SetTargets(out)
-	_, err = cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*up).Execute()
 
-	return err
+	_, err = cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*up).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to remove backend from target pool: %w", err)
+	}
+
+	return nil
 }
 
 func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
-	return errors.New("stackit: EnableBackend not yet implemented")
+	return ErrEnableBackendNotImplemented
 }
 
 func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
-	return errors.New("stackit: DisableBackend not yet implemented")
+	return ErrDisableBackendNotImplemented
 }
 
 func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
@@ -487,11 +549,96 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 	up.SetActiveHealthCheck(*healthCheck)
 
 	poolName := lbID
-	_, err = cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*up).Execute()
 
-	return err
+	_, err = cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*up).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to configure health check: %w", err)
+	}
+
+	return nil
 }
 
 func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
-	return nil, errors.New("stackit: GetHealthStatus not yet implemented")
+	return nil, ErrGetHealthStatusNotImplemented
+}
+
+// findTargetPool finds the index of a pool by name.
+func (m *LoadBalancerManager) findTargetPool(pools []lb.TargetPool, poolName string) int {
+	for i, p := range pools {
+		if name, ok := p.GetNameOk(); ok && name == poolName {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// createNewPool creates a new target pool with the backend.
+func (m *LoadBalancerManager) createNewPool(ctx context.Context, cli *lb.APIClient, lbID, poolName string, existingPools []lb.TargetPool, backend *cpi.Backend) error {
+	newPool := lb.NewTargetPool()
+	newPool.SetName(poolName)
+
+	if backend.Port > 0 {
+		newPool.SetTargetPort(int64(backend.Port))
+	}
+
+	tgt := m.createTarget(backend)
+	newPool.SetTargets([]lb.Target{*tgt})
+
+	// Update LB with the new pool
+	up := lb.NewUpdateLoadBalancerPayload()
+	up.SetTargetPools(append(existingPools, *newPool))
+
+	_, err := cli.UpdateLoadBalancer(ctx, m.client.config.ProjectID, m.client.config.Region, lbID).UpdateLoadBalancerPayload(*up).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to update load balancer with new pool: %w", err)
+	}
+
+	return nil
+}
+
+// updateExistingPool updates an existing target pool with the backend.
+func (m *LoadBalancerManager) updateExistingPool(ctx context.Context, cli *lb.APIClient, lbID, poolName string, pool lb.TargetPool, backend *cpi.Backend) error {
+	// Collect current targets
+	list := []lb.Target{}
+	if t, ok := pool.GetTargetsOk(); ok {
+		list = t
+	}
+
+	// Check for duplicates
+	for _, t := range list {
+		if ip, ok := t.GetIpOk(); ok && ip == backend.Address {
+			return nil
+		}
+	}
+
+	// Add new target
+	list = append(list, *m.createTarget(backend))
+
+	// Update target pool
+	updatePayload := lb.NewUpdateTargetPoolPayload()
+	if backend.Port > 0 {
+		updatePayload.SetTargetPort(int64(backend.Port))
+	}
+
+	updatePayload.SetTargets(list)
+
+	_, err := cli.UpdateTargetPool(ctx, m.client.config.ProjectID, m.client.config.Region, lbID, poolName).UpdateTargetPoolPayload(*updatePayload).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to update target pool: %w", err)
+	}
+
+	return nil
+}
+
+// createTarget creates a new target from backend.
+func (m *LoadBalancerManager) createTarget(backend *cpi.Backend) *lb.Target {
+	tgt := lb.NewTarget()
+	tgt.SetIp(backend.Address)
+
+	if backend.Name != "" {
+		tgt.SetDisplayName(backend.Name)
+	}
+
+	return tgt
 }

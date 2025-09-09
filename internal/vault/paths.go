@@ -1,12 +1,21 @@
 package vault
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+)
+
+const (
+	// Path parsing requirements.
+	MinVaultPathParts  = 3
+	MinConfigPathParts = 4
+	MinNetworkParts    = 4
+	MaxPathParts       = 5
+	NetworkPartsForIP  = 2
+	MaxPathsCapacity   = 30
 )
 
 // PathBuilder provides utilities for constructing vault paths according to OCFP conventions
@@ -32,8 +41,8 @@ const (
 
 // Environment types.
 const (
-    MgmtEnvType = "mgmt"
-    OCFEnvType  = "ocf"
+	MgmtEnvType = "mgmt"
+	OCFEnvType  = "ocf"
 )
 
 const inceptionComponent = "inception"
@@ -227,43 +236,24 @@ func (pb *PathBuilder) ParsePath(path string) (*PathInfo, error) {
 	path = filepath.Clean(path)
 
 	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid vault path format: %s", path)
+	if len(parts) < MinVaultPathParts {
+		return nil, ErrInvalidVaultPathFormat(path)
 	}
 
 	info := &PathInfo{
-		Path: path,
+		Path:        path,
+		Environment: "",
+		Component:   "",
+		Subpath:     "",
 	}
 
 	// Check if it's a config path
 	if parts[0] == SecretPrefix && parts[1] == ConfigPrefix {
-		if len(parts) < 4 {
-			return nil, fmt.Errorf("invalid config path format: %s", path)
-		}
+		return pb.parseConfigPath(parts, info, path)
+	}
 
-		// parts[2] is bloc name, parts[3] is environment or component
-		if parts[3] == MgmtEnvType || parts[3] == OCFEnvType {
-			info.Environment = parts[3]
-			if len(parts) > 4 {
-				info.Component = parts[4]
-				if len(parts) > 5 {
-					info.Subpath = strings.Join(parts[5:], "/")
-				}
-			}
-		} else {
-			info.Component = parts[3]
-			if len(parts) > 4 {
-				info.Subpath = strings.Join(parts[4:], "/")
-			}
-		}
-	} else if parts[0] == SecretPrefix {
-    // This might be an inception path
-    if strings.HasSuffix(parts[1], "-inception") {
-        info.Component = inceptionComponent
-        if len(parts) > 2 {
-            info.Subpath = strings.Join(parts[2:], "/")
-        }
-    }
+	if parts[0] == SecretPrefix {
+		return pb.parseSecretPath(parts, info)
 	}
 
 	return info, nil
@@ -280,14 +270,14 @@ func (pb *PathBuilder) IsConfigPath(path string) bool {
 func (pb *PathBuilder) IsInceptionPath(path string) bool {
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 
-    return len(parts) >= 2 && parts[0] == SecretPrefix &&
-        (parts[1] == inceptionComponent || strings.HasSuffix(parts[1], "-inception"))
+	return len(parts) >= 2 && parts[0] == SecretPrefix &&
+		(parts[1] == inceptionComponent || strings.HasSuffix(parts[1], "-inception"))
 }
 
 // GetAllStandardPaths returns all standard paths for the bloc.
 func (pb *PathBuilder) GetAllStandardPaths() []string {
-    // 2 envs * 13 paths each + 1 config + 1 publicIPs + 2 other = 30
-    paths := make([]string, 0, 30)
+	// 2 envs * 13 paths each + 1 config + 1 publicIPs + 2 other = 30
+	paths := make([]string, 0, MaxPathsCapacity)
 
 	// Config paths
 	paths = append(paths, pb.GetOCFPConfigPath())
@@ -322,7 +312,7 @@ func (pb *PathBuilder) GetAllStandardPaths() []string {
 // ValidatePath validates that a path follows OCFP conventions.
 func (pb *PathBuilder) ValidatePath(path string) error {
 	if path == "" {
-		return errors.New("path cannot be empty")
+		return ErrPathCannotBeEmpty
 	}
 
 	// Parse the path
@@ -339,4 +329,50 @@ func (pb *PathBuilder) NormalizePath(path string) string {
 	path = strings.TrimPrefix(path, "/")
 
 	return filepath.Clean(path)
+}
+
+func (pb *PathBuilder) parseConfigPath(parts []string, info *PathInfo, path string) (*PathInfo, error) {
+	if len(parts) < MinConfigPathParts {
+		return nil, ErrInvalidConfigPathFormat(path)
+	}
+
+	// parts[2] is bloc name, parts[3] is environment or component
+	if parts[3] == MgmtEnvType || parts[3] == OCFEnvType {
+		pb.setEnvironmentInfo(parts, info)
+
+		return info, nil
+	}
+
+	pb.setComponentInfo(parts, info)
+
+	return info, nil
+}
+
+func (pb *PathBuilder) parseSecretPath(parts []string, info *PathInfo) (*PathInfo, error) {
+	// This might be an inception path
+	if strings.HasSuffix(parts[1], "-inception") {
+		info.Component = inceptionComponent
+		if len(parts) > NetworkPartsForIP {
+			info.Subpath = strings.Join(parts[2:], "/")
+		}
+	}
+
+	return info, nil
+}
+
+func (pb *PathBuilder) setEnvironmentInfo(parts []string, info *PathInfo) {
+	info.Environment = parts[3]
+	if len(parts) > MinConfigPathParts {
+		info.Component = parts[4]
+		if len(parts) > MaxPathParts {
+			info.Subpath = strings.Join(parts[5:], "/")
+		}
+	}
+}
+
+func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
+	info.Component = parts[3]
+	if len(parts) > MinConfigPathParts {
+		info.Subpath = strings.Join(parts[4:], "/")
+	}
 }

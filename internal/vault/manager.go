@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -97,7 +96,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		// Full configuration populate
 		return m.populateFullConfiguration()
 	default:
-		return fmt.Errorf("unknown subcommand: %s", opts.Subcommand)
+		return ErrUnknownSubcommand(opts.Subcommand)
 	}
 }
 
@@ -111,7 +110,7 @@ type MigrateOptions struct {
 // This is the Go equivalent of the migrate method in OCFP::Vault::Manager.
 func (m *Manager) Migrate(opts *MigrateOptions) error {
 	if m.blocName == "" {
-		return errors.New("bloc_name is required for vault migrate operation")
+		return ErrBlocNameRequiredForVaultMigrate
 	}
 
 	inceptionName := m.getInceptionVaultName()
@@ -176,6 +175,25 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	m.logger.Info("Vault migration completed", "duration", duration)
 
 	return nil
+}
+
+// Close cleans up the manager.
+func (m *Manager) Close() error {
+	if m.client != nil {
+		return m.client.Close()
+	}
+
+	return nil
+}
+
+// GetSafe returns the safe wrapper for direct operations.
+func (m *Manager) GetSafe() *Safe {
+	return m.safe
+}
+
+// GetClient returns the vault client for advanced operations.
+func (m *Manager) GetClient() *Client {
+	return m.client
 }
 
 // getInceptionVaultName returns the inception vault name.
@@ -260,7 +278,7 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 			m.logger.Info("Suggestion", "suggestion", result.Suggestion)
 		}
 
-		return fmt.Errorf("validation failed with %d errors", len(result.Errors))
+		return ErrValidationFailedWithErrors(len(result.Errors))
 	}
 
 	if result.HasIssues() {
@@ -363,8 +381,7 @@ func (m *Manager) validateMigration(inceptionName, productionName string) error 
 
 	// Compare checksums
 	if inceptionChecksum != productionChecksum {
-		return fmt.Errorf("migration validation failed: checksums do not match (inception: %s, production: %s)",
-			inceptionChecksum[:8], productionChecksum[:8])
+		return ErrMigrationValidationFailedChecksumMismatch(inceptionChecksum[:8], productionChecksum[:8])
 	}
 
 	m.logger.Info("Migration validation successful", "checksum", inceptionChecksum[:8])
@@ -411,7 +428,8 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	}
 
 	// Delete the root inception path
-	if err := m.safe.Delete(inceptionPath, ""); err != nil {
+	err = m.safe.Delete(inceptionPath, "")
+	if err != nil {
 		m.logger.Warn("Failed to delete inception root", "path", inceptionPath, "error", err)
 	}
 
@@ -450,25 +468,6 @@ func (m *Manager) updateEnvironmentSecrets() error {
 	return nil
 }
 
-// Close cleans up the manager.
-func (m *Manager) Close() error {
-	if m.client != nil {
-		return m.client.Close()
-	}
-
-	return nil
-}
-
-// GetSafe returns the safe wrapper for direct operations.
-func (m *Manager) GetSafe() *Safe {
-	return m.safe
-}
-
-// GetClient returns the vault client for advanced operations.
-func (m *Manager) GetClient() *Client {
-	return m.client
-}
-
 // createVaultProvider creates a provider-specific vault implementation.
 //
 //nolint:ireturn // returning VaultProvider interface is intentional for provider pluggability
@@ -492,6 +491,6 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("vmware", m.config, m.safe, m.blocName), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", m.config.Provider)
+		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}
 }

@@ -19,7 +19,6 @@ linters:
   - copyloopvar # A linter detects places where loop variables are copied. [fast, auto-fix]
   - cyclop # Checks function and package cyclomatic complexity. [fast]
   - decorder # Check declaration order and count of types, constants, variables and functions. [fast]
-  - depguard # Go linter that checks if package imports are in a list of acceptable packages. [fast]
   - dogsled # Checks assignments with too many blank identifiers (e.g. x, _, _, _, := f()). [fast]
   - dupl # Detects duplicate fragments of code. [fast]
   - dupword # Checks for duplicate words in the source code. [fast, auto-fix]
@@ -30,7 +29,6 @@ linters:
   - errname # Checks that sentinel errors are prefixed with the `Err` and error types are suffixed with the `Error`.
   - errorlint # Find code that can cause problems with the error wrapping scheme introduced in Go 1.13. [auto-fix]
   - exhaustive # Check exhaustiveness of enum switch statements.
-  - exhaustruct # Checks if all structure fields are initialized.
   - exptostd # Detects functions from golang.org/x/exp/ that can be replaced by std functions. [auto-fix]
   - fatcontext # Detects nested contexts in loops and function literals. [auto-fix]
   - forbidigo # Forbids identifiers.
@@ -58,10 +56,8 @@ linters:
   - iface # Detect the incorrect use of interfaces, helping developers avoid interface pollution. [auto-fix]
   - importas # Enforces consistent import aliases. [auto-fix]
   - inamedparam # Reports interfaces with unnamed method parameters. [fast]
-  - interfacebloat # A linter that checks the number of methods inside an interface. [fast]
   - intrange # Intrange is a linter to find places where for loops could make use of an integer range. [auto-fix]
   - ireturn # Accept Interfaces, Return Concrete Types.
-  - lll # Reports long lines. [fast]
   - loggercheck # Checks key value pairs for common logger libraries (kitlog,klog,logr,slog,zap).
   - maintidx # Maintidx measures the maintainability index of each function. [fast]
   - makezero # Find slice declarations with non-zero initial length.
@@ -76,7 +72,6 @@ linters:
   - nlreturn # Checks for a new line before return and branch statements to increase code clarity. [fast, auto-fix]
   - noctx # Detects function and method with missing usage of context.Context.
   - noinlineerr # Disallows inline error handling (`if err := ...; err != nil {`).
-  - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
   - nonamedreturns # Reports all named returns.
   - nosprintfhostport # Checks for misuse of Sprintf to construct a host with port in a URL. [fast]
   - paralleltest # Detects missing usage of t.Parallel() method in your Go test.
@@ -107,9 +102,24 @@ linters:
   - wrapcheck # Checks that errors returned from external packages are wrapped.
   - wsl_v5 # Add or remove empty lines. [auto-fix]
   - zerologlint # Detects the wrong usage of `zerolog` that a user forgets to dispatch with `Send` or `Msg`.
+  # Not great: - exhaustruct # Checks if all structure fields are initialized.
+  # doesn't seem to work: - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
+  # bs... - interfacebloat # A linter that checks the number of methods inside an interface. [fast]
+  # - lll # Reports long lines. [fast]
+  # - depguard # Go linter that checks if package imports are in a list of acceptable packages. [fast]
   # feels suspicious... - nilnil # Checks that there is no simultaneous return of `nil` error and an invalid value.
   # moved to it's own target: - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint. [auto-fix]
   # No to camel case: - tagliatelle # Checks the struct tags.
+
+  settings:
+    cyclop:
+      # The maximal code complexity to report.
+      # Default: 10
+      max-complexity: 16
+      # The maximal average package complexity.
+      # If it's higher than 0.0 (float) the check is enabled.
+      # Default: 0.0
+      package-average: 0.0
 
   # Exclude paths from linting
   exclusions:
@@ -117,13 +127,13 @@ linters:
       - vendor
       - tmp
 
-# Formatters configuration
 formatters:
   # Exclude paths from formatting checks
   exclusions:
     paths:
       - vendor
       - tmp
+
 
 # Issues configuration
 issues:

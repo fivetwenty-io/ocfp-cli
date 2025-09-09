@@ -19,6 +19,24 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
+const (
+	// File permissions for local transfer.
+	localTransferDirMode = 0750
+
+	// Bastion detection thresholds.
+	minimumEnvVarsForBastionDetection = 2
+)
+
+// Mode execution errors.
+var (
+	ErrTunnelCreationNotApplicableForLocal = errors.New("tunnel creation not applicable for local execution")
+)
+
+// Dynamic error constructor.
+func ErrUnknownExecutionMode(mode int) error {
+	return fmt.Errorf("unknown execution mode: %d", mode) //nolint:err113 // dynamic error with context
+}
+
 // ExecutionMode represents the mode of bastion initialization.
 type ExecutionMode int
 
@@ -61,54 +79,70 @@ func (md *ModeDetector) DetectExecutionMode(ctx context.Context) (ExecutionMode,
 
 // isRunningOnBastion determines if we're currently running on the bastion host.
 func (md *ModeDetector) isRunningOnBastion() bool {
-	// Strategy 1: Check hostname pattern
-	if hostname, err := os.Hostname(); err == nil {
-		expectedHostname := md.config.Name + "-bastion"
-		if hostname == expectedHostname {
-			md.log.Debug("Hostname matches bastion pattern", "hostname", hostname)
+	return md.checkHostnamePattern() ||
+		md.checkMarkerFiles() ||
+		md.checkDirectoryStructure() ||
+		md.checkEnvironmentVariables()
+}
 
-			return true
-		}
+// checkHostnamePattern checks if hostname matches bastion pattern.
+func (md *ModeDetector) checkHostnamePattern() bool {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return false
 	}
 
-	// Strategy 2: Check for bastion marker files
+	expectedHostname := md.config.Name + "-bastion"
+	if hostname == expectedHostname {
+		md.log.Debug("Hostname matches bastion pattern", "hostname", hostname)
+
+		return true
+	}
+
+	return false
+}
+
+// checkMarkerFiles checks for bastion-specific marker files.
+func (md *ModeDetector) checkMarkerFiles() bool {
 	markerFiles := []string{
 		os.Getenv("HOME") + "/.ocfp/provisioned",
 		os.Getenv("HOME") + "/.ocfp/bastion-init-completed",
 	}
 
 	for _, marker := range markerFiles {
-		if _, err := os.Stat(marker); err == nil {
+		_, err := os.Stat(marker)
+		if err == nil {
 			md.log.Debug("Found bastion marker file", "file", marker)
 
 			return true
 		}
 	}
 
-	// Strategy 3: Check for OCFP directory structure
+	return false
+}
+
+// checkDirectoryStructure checks for OCFP directory structure.
+func (md *ModeDetector) checkDirectoryStructure() bool {
 	ocfpDirs := []string{
 		os.Getenv("HOME") + "/ocfp",
 		os.Getenv("HOME") + "/ocfp/deployments",
 		os.Getenv("HOME") + "/.ocfp",
 	}
 
-	allDirsExist := true
-
 	for _, dir := range ocfpDirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			allDirsExist = false
-
-			break
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return false
 		}
 	}
 
-	if allDirsExist {
-		md.log.Debug("Found complete OCFP directory structure")
+	md.log.Debug("Found complete OCFP directory structure")
 
-		return true
-	}
+	return true
+}
 
-	// Strategy 4: Check environment variables that would be set on bastion
+// checkEnvironmentVariables checks for bastion-specific environment variables.
+func (md *ModeDetector) checkEnvironmentVariables() bool {
 	bastionEnvVars := []string{
 		"OCFP_ROOT",
 		"DEPLOYMENTS_DIR",
@@ -123,7 +157,7 @@ func (md *ModeDetector) isRunningOnBastion() bool {
 		}
 	}
 
-	if envVarsSet >= 2 {
+	if envVarsSet >= minimumEnvVarsForBastionDetection {
 		md.log.Debug("Found bastion environment variables", "count", envVarsSet)
 
 		return true
@@ -159,20 +193,25 @@ func (le *LocalExecutor) Initialize(ctx context.Context) error {
 
 	// Create a manager that uses the local executor
 	manager := &Manager{
-		config:    le.config,
-		options:   le.options,
-		progress:  &ProvisioningProgress{},
-		sshClient: localExecutor,
-		log:       le.log,
+		config:  le.config,
+		options: le.options,
+		progress: &ProvisioningProgress{
+			TotalSteps:     0,
+			CompletedSteps: 0,
+			CurrentStep:    "",
+			StartTime:      time.Time{},
+			Errors:         nil,
+			Checkpoints:    nil,
+		},
+		sshClient:         localExecutor,
+		provConfig:        nil,
+		checkpointManager: nil,
+		errorHandler:      nil,
+		log:               le.log,
 	}
 
 	// Load provisioning configuration
-	var err error
-
-	manager.provConfig, err = manager.loadProvisioningConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load provisioning config: %w", err)
-	}
+	manager.provConfig = manager.loadProvisioningConfig()
 
 	// Execute local initialization
 	return le.executeLocalPhases(ctx, manager)
@@ -180,8 +219,29 @@ func (le *LocalExecutor) Initialize(ctx context.Context) error {
 
 // executeLocalPhases executes initialization phases locally.
 func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manager) error {
-	// Define local-specific phases (no SSH connection needed)
-	phases := []struct {
+	phases := le.getLocalPhases(manager)
+	manager.progress.TotalSteps = len(phases)
+
+	for phaseIndex, phase := range phases {
+		err := le.executeLocalPhase(ctx, manager, phase, phaseIndex, len(phases))
+		if err != nil {
+			return err
+		}
+	}
+
+	manager.progress.CompletedSteps = len(phases)
+
+	le.log.Info("Local bastion initialization completed successfully")
+
+	return nil
+}
+
+// getLocalPhases returns the list of local initialization phases.
+func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
+	name string
+	fn   func(context.Context) error
+} {
+	return []struct {
 		name string
 		fn   func(context.Context) error
 	}{
@@ -207,46 +267,56 @@ func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manage
 		{"verification", manager.verifyInstallation},
 		{"health_check", manager.runHealthCheck},
 	}
+}
 
-	manager.progress.TotalSteps = len(phases)
+// executeLocalPhase executes a single local phase.
+func (le *LocalExecutor) executeLocalPhase(ctx context.Context, manager *Manager, phase struct {
+	name string
+	fn   func(context.Context) error
+}, phaseIndex, totalPhases int) error {
+	if manager.shouldSkipPhase(phase.name) {
+		le.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
-	for phaseIndex, phase := range phases {
-		if manager.shouldSkipPhase(phase.name) {
-			le.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
-
-			continue
-		}
-
-		manager.progress.CurrentStep = phase.name
-		manager.progress.CompletedSteps = phaseIndex
-
-		le.log.Info("Executing local phase",
-			"phase", phase.name,
-			"progress", fmt.Sprintf("%d/%d", phaseIndex+1, len(phases)))
-
-		if le.options.DryRun {
-			le.log.Info("DRY RUN: Would execute local phase", "phase", phase.name)
-
-			continue
-		}
-
-		err := phase.fn(ctx)
-		if err != nil {
-			return fmt.Errorf("local phase %s failed: %w", phase.name, err)
-		}
-
-		// Create checkpoint
-		manager.progress.Checkpoints[phase.name] = true
-
-		err = manager.saveCheckpoint()
-		if err != nil {
-			le.log.Warn("Failed to save checkpoint", "error", err)
-		}
+		return nil
 	}
 
-	manager.progress.CompletedSteps = len(phases)
+	le.updateLocalPhaseProgress(manager, phase.name, phaseIndex, totalPhases)
 
-	le.log.Info("Local bastion initialization completed successfully")
+	if le.options.DryRun {
+		le.log.Info("DRY RUN: Would execute local phase", "phase", phase.name)
+
+		return nil
+	}
+
+	return le.runLocalPhaseWithCheckpoint(ctx, manager, phase)
+}
+
+// updateLocalPhaseProgress updates progress tracking for local phases.
+func (le *LocalExecutor) updateLocalPhaseProgress(manager *Manager, phaseName string, phaseIndex, totalPhases int) {
+	manager.progress.CurrentStep = phaseName
+	manager.progress.CompletedSteps = phaseIndex
+
+	le.log.Info("Executing local phase",
+		"phase", phaseName,
+		"progress", fmt.Sprintf("%d/%d", phaseIndex+1, totalPhases))
+}
+
+// runLocalPhaseWithCheckpoint executes a phase and saves checkpoint.
+func (le *LocalExecutor) runLocalPhaseWithCheckpoint(ctx context.Context, manager *Manager, phase struct {
+	name string
+	fn   func(context.Context) error
+}) error {
+	err := phase.fn(ctx)
+	if err != nil {
+		return fmt.Errorf("local phase %s failed: %w", phase.name, err)
+	}
+
+	manager.progress.Checkpoints[phase.name] = true
+
+	err = manager.saveCheckpoint()
+	if err != nil {
+		le.log.Warn("Failed to save checkpoint", "error", err)
+	}
 
 	return nil
 }
@@ -267,17 +337,18 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 
 	start := time.Now()
 
-	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	command := exec.CommandContext(ctx, "bash", "-lc", cmd)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 
-	c.Stdout = &stdoutBuf
-	c.Stderr = &stderrBuf
+	command.Stdout = &stdoutBuf
+	command.Stderr = &stderrBuf
 
-	err := c.Run()
+	err := command.Run()
 
 	res := &ssh.CommandResult{
 		Command:  cmd,
+		ExitCode: 0,
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 		Duration: time.Since(start),
@@ -285,7 +356,10 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 
 	if err != nil {
 		// Extract exit code if possible
-		exitErr := &exec.ExitError{}
+		exitErr := &exec.ExitError{
+			ProcessState: nil,
+			Stderr:       nil,
+		}
 		if errors.As(err, &exitErr) {
 			res.ExitCode = exitErr.ExitCode()
 		} else {
@@ -310,17 +384,21 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 	remote = strings.TrimPrefix(remote, "bastion:")
 
 	// Validate paths for security
-	if err := security.ValidatePath(local); err != nil {
+	err := security.ValidatePath(local)
+	if err != nil {
 		return fmt.Errorf("invalid source path: %w", err)
 	}
 
-	if err := security.ValidatePath(remote); err != nil {
+	err = security.ValidatePath(remote)
+	if err != nil {
 		return fmt.Errorf("invalid destination path: %w", err)
 	}
 
 	// Ensure destination directory exists
 	destDir := filepath.Dir(remote)
-	if err := os.MkdirAll(destDir, 0750); err != nil {
+
+	err = os.MkdirAll(destDir, localTransferDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
@@ -342,20 +420,14 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 		_ = out.Close()
 	}()
 
-	if _, err := io.Copy(out, inputFile); err != nil {
+	_, err = io.Copy(out, inputFile)
+	if err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
 	// Optionally verify copy by comparing sizes or checksum if requested
 	if opts.Verify {
-		srcInfo, err := os.Stat(local)
-		if err == nil {
-			if dstInfo, err2 := os.Stat(remote); err2 == nil {
-				if srcInfo.Size() != dstInfo.Size() {
-					lce.log.Warn("Local transfer size mismatch", "src", srcInfo.Size(), "dst", dstInfo.Size())
-				}
-			}
-		}
+		lce.verifyTransfer(local, remote)
 	}
 
 	return nil
@@ -363,7 +435,7 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 
 // CreateTunnel is not applicable for local execution.
 func (lce *LocalCommandExecutor) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
-	return errors.New("tunnel creation not applicable for local execution")
+	return ErrTunnelCreationNotApplicableForLocal
 }
 
 // Close is a no-op for local execution.
@@ -390,7 +462,7 @@ func InitializeBastionWithMode(ctx context.Context, cfg *config.Config, opts *Pr
 
 		return manager.Initialize(ctx)
 	default:
-		return fmt.Errorf("unknown execution mode: %d", mode)
+		return ErrUnknownExecutionMode(int(mode))
 	}
 }
 
@@ -418,16 +490,34 @@ func GetExecutionInfo(cfg *config.Config) map[string]interface{} {
 	return info
 }
 
-// Helper functions
+// verifyTransfer verifies the transfer was successful.
+func (lce *LocalCommandExecutor) verifyTransfer(local, remote string) {
+	srcInfo, err := os.Stat(local)
+	if err != nil {
+		return
+	}
 
+	dstInfo, err := os.Stat(remote)
+	if err != nil {
+		return
+	}
+
+	if srcInfo.Size() != dstInfo.Size() {
+		lce.log.Warn("Local transfer size mismatch", "src", srcInfo.Size(), "dst", dstInfo.Size())
+	}
+}
+
+// getHostname returns the system hostname.
 func getHostname() string {
-	if hostname, err := os.Hostname(); err == nil {
+	hostname, err := os.Hostname()
+	if err == nil {
 		return hostname
 	}
 
 	return "unknown"
 }
 
+// isOCFPProvisioned checks if OCFP is provisioned.
 func isOCFPProvisioned() bool {
 	markerFile := os.Getenv("HOME") + "/.ocfp/provisioned"
 	_, err := os.Stat(markerFile)

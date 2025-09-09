@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"errors"
 	"os"
 	"strings"
 
@@ -15,8 +14,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// File permissions.
+	VaultOutputFileMode = 0600
+)
+
 // NewVaultCmd creates the vault command.
 func NewVaultCmd() *cobra.Command {
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "vault",
 		Short: "Manage vault operations",
@@ -44,7 +49,7 @@ func newVaultPopulateCmd() *cobra.Command {
 		force     bool
 	)
 
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "populate",
 		Short: "Populate vault with secrets",
 		Long: `Populate vault with secrets from configuration or file.
@@ -60,51 +65,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
   # Populate to specific vault path
   ocfp vault populate --vault-path /concourse/main`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.Get()
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Create vault manager
-			manager, err := vault.NewManagerFromEnv(cfg, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to create vault manager: %w", err)
-			}
-			defer func() { _ = manager.Close() }()
-
-			// Handle subcommand (public-ips)
-			var subcommand string
-			if len(args) > 0 {
-				subcommand = args[0]
-			}
-
-			// Create populate options
-			opts := &vault.PopulateOptions{
-				Subcommand: subcommand,
-				DryRun:     dryRun,
-				Force:      force,
-			}
-
-			// Handle file input
-			if fromFile != "" {
-				return errors.New("populate from file not yet implemented")
-			}
-
-			// Perform populate operation
-			if err := manager.Populate(opts); err != nil {
-				return fmt.Errorf("failed to populate vault: %w", err)
-			}
-
-			log.Info("Vault populated successfully")
-
-			return nil
+			return runVaultPopulate(cmd, args, fromFile, force)
 		},
 	}
 
@@ -116,6 +77,48 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	return cmd
 }
 
+// runVaultPopulate executes the vault populate command.
+func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool) error {
+	log := logger.Get()
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	// Load configuration and create manager
+	_, manager, err := loadConfigAndManager()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = manager.Close() }()
+
+	// Handle subcommand (public-ips)
+	var subcommand string
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	// Create populate options
+	opts := &vault.PopulateOptions{
+		Subcommand: subcommand,
+		DryRun:     dryRun,
+		Force:      force,
+	}
+
+	// Handle file input
+	if fromFile != "" {
+		return ErrPopulateFromFileNotImplemented
+	}
+
+	// Perform populate operation
+	err = manager.Populate(opts)
+	if err != nil {
+		return fmt.Errorf("failed to populate vault: %w", err)
+	}
+
+	log.Info("Vault populated successfully")
+
+	return nil
+}
+
 // newVaultInceptionCmd creates the vault inception subcommand.
 func newVaultInceptionCmd() *cobra.Command {
 	var (
@@ -123,7 +126,7 @@ func newVaultInceptionCmd() *cobra.Command {
 		vaultPath      string
 	)
 
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "inception",
 		Short: "Initialize vault for new deployment",
 		Long: `Initialize vault with inception secrets for a new deployment.
@@ -137,52 +140,7 @@ and encryption keys.`,
   # Initialize with custom vault path
   ocfp vault inception --vault-path /secret/production`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.Get()
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			if deploymentName == "" {
-				deploymentName = cfg.Name
-			}
-
-			log.Info("Initializing vault for deployment", "deployment", deploymentName)
-
-			// Create vault manager
-			manager, err := vault.NewManagerFromEnv(cfg, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to create vault manager: %w", err)
-			}
-			defer func() { _ = manager.Close() }()
-
-			// Generate inception secrets using the secret generator
-			secretGen := vault.NewSecretGenerator()
-			inceptionSecrets, err := secretGen.GenerateInceptionSecrets(deploymentName)
-			if err != nil {
-				return fmt.Errorf("failed to generate inception secrets: %w", err)
-			}
-
-			// Store in vault using path builder
-			pathBuilder := vault.NewPathBuilder(cfg, blocName)
-			inceptionPath := pathBuilder.GetInceptionPath()
-			if vaultPath != "" {
-				inceptionPath = strings.TrimPrefix(vaultPath, "/")
-			}
-
-			safe := manager.GetSafe()
-			if err := safe.SetMultiple(inceptionPath, inceptionSecrets.ToMap()); err != nil {
-				return fmt.Errorf("failed to store inception secrets: %w", err)
-			}
-
-			log.Info("Vault inception completed", "path", inceptionPath)
-
-			return nil
+			return runVaultInception(deploymentName, vaultPath)
 		},
 	}
 
@@ -190,6 +148,53 @@ and encryption keys.`,
 	cmd.Flags().StringVar(&vaultPath, "vault-path", "", "vault path prefix")
 
 	return cmd
+}
+
+// runVaultInception executes the vault inception command.
+func runVaultInception(deploymentName, vaultPath string) error {
+	log := logger.Get()
+
+	// Load configuration and create manager
+	cfg, manager, err := loadConfigAndManager()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = manager.Close() }()
+
+	if deploymentName == "" {
+		deploymentName = cfg.Name
+	}
+
+	log.Info("Initializing vault for deployment", "deployment", deploymentName)
+
+	// Generate inception secrets using the secret generator
+	secretGen := vault.NewSecretGenerator()
+
+	inceptionSecrets, err := secretGen.GenerateInceptionSecrets(deploymentName)
+	if err != nil {
+		return fmt.Errorf("failed to generate inception secrets: %w", err)
+	}
+
+	// Store in vault using path builder
+	blocName := viper.GetString("bloc")
+	pathBuilder := vault.NewPathBuilder(cfg, blocName)
+
+	inceptionPath := pathBuilder.GetInceptionPath()
+	if vaultPath != "" {
+		inceptionPath = strings.TrimPrefix(vaultPath, "/")
+	}
+
+	safe := manager.GetSafe()
+
+	err = safe.SetMultiple(inceptionPath, inceptionSecrets.ToMap())
+	if err != nil {
+		return fmt.Errorf("failed to store inception secrets: %w", err)
+	}
+
+	log.Info("Vault inception completed", "path", inceptionPath)
+
+	return nil
 }
 
 // newVaultMigrateCmd creates the vault migrate subcommand.
@@ -200,7 +205,7 @@ func newVaultMigrateCmd() *cobra.Command {
 		dryRun     bool
 	)
 
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "migrate",
 		Short: "Migrate secrets between vault paths",
 		Long: `Migrate secrets from one vault path to another.
@@ -213,43 +218,7 @@ useful for migrating between environments or restructuring vault paths.`,
   # Dry run to preview migration
   ocfp vault migrate --source /secret/old --dest /secret/new --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.Get()
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-			force, _ := cmd.Flags().GetBool("force")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Create vault manager
-			manager, err := vault.NewManagerFromEnv(cfg, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to create vault manager: %w", err)
-			}
-			defer func() { _ = manager.Close() }()
-
-			// Handle manual migration if source/dest paths specified
-			if sourcePath != "" && destPath != "" {
-				return manualMigrateVault(manager, sourcePath, destPath, dryRun)
-			}
-
-			// Otherwise do standard inception->production migration
-			opts := &vault.MigrateOptions{
-				DryRun: dryRun,
-				Force:  force,
-			}
-
-			if err := manager.Migrate(opts); err != nil {
-				return fmt.Errorf("failed to migrate vault: %w", err)
-			}
-
-			log.Info("Vault migration completed")
-
-			return nil
+			return runVaultMigrate(cmd, sourcePath, destPath, dryRun)
 		},
 	}
 
@@ -261,6 +230,40 @@ useful for migrating between environments or restructuring vault paths.`,
 	return cmd
 }
 
+// runVaultMigrate executes the vault migrate command.
+func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun bool) error {
+	log := logger.Get()
+	force, _ := cmd.Flags().GetBool("force")
+
+	// Load configuration and create manager
+	_, manager, err := loadConfigAndManager()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = manager.Close() }()
+
+	// Handle manual migration if source/dest paths specified
+	if sourcePath != "" && destPath != "" {
+		return manualMigrateVault(manager, sourcePath, destPath, dryRun)
+	}
+
+	// Otherwise do standard inception->production migration
+	opts := &vault.MigrateOptions{
+		DryRun: dryRun,
+		Force:  force,
+	}
+
+	err = manager.Migrate(opts)
+	if err != nil {
+		return fmt.Errorf("failed to migrate vault: %w", err)
+	}
+
+	log.Info("Vault migration completed")
+
+	return nil
+}
+
 // newVaultExportCmd creates the vault export subcommand.
 func newVaultExportCmd() *cobra.Command {
 	var (
@@ -269,6 +272,7 @@ func newVaultExportCmd() *cobra.Command {
 		format     string
 	)
 
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export secrets from vault",
@@ -279,64 +283,7 @@ func newVaultExportCmd() *cobra.Command {
   # Export as JSON
   ocfp vault export --path /secret/production --output secrets.json --format json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.Get()
-
-			if vaultPath == "" {
-				return errors.New("vault path is required")
-			}
-
-			log.Info("Exporting vault secrets", "path", vaultPath)
-
-			// Load configuration
-			configFile := viper.GetString("config")
-			blocName := viper.GetString("bloc")
-
-			cfg, err := config.LoadWithParams(configFile, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Create vault manager
-			manager, err := vault.NewManagerFromEnv(cfg, blocName)
-			if err != nil {
-				return fmt.Errorf("failed to create vault manager: %w", err)
-			}
-			defer func() { _ = manager.Close() }()
-
-			// Export secrets
-			safe := manager.GetSafe()
-			secrets, err := safe.Export(strings.TrimPrefix(vaultPath, "/"))
-			if err != nil {
-				return fmt.Errorf("failed to export secrets: %w", err)
-			}
-
-			// Marshal to requested format
-			var data []byte
-			switch format {
-			case "json":
-				data, err = json.MarshalIndent(secrets, "", "  ")
-			case "yaml", "yml":
-				data, err = yaml.Marshal(secrets)
-			default:
-				return fmt.Errorf("unsupported format: %s", format)
-			}
-
-			if err != nil {
-				return fmt.Errorf("failed to marshal secrets: %w", err)
-			}
-
-			// Write to file or stdout
-			if outputFile != "" {
-				err := os.WriteFile(outputFile, data, 0600)
-				if err != nil {
-					return fmt.Errorf("failed to write file: %w", err)
-				}
-				log.Info("Secrets exported", "file", outputFile)
-			} else {
-				fmt.Println(string(data))
-			}
-
-			return nil
+			return runVaultExport(vaultPath, outputFile, format)
 		},
 	}
 
@@ -347,6 +294,56 @@ func newVaultExportCmd() *cobra.Command {
 	return cmd
 }
 
+// runVaultExport executes the vault export command.
+func runVaultExport(vaultPath, outputFile, format string) error {
+	log := logger.Get()
+
+	if vaultPath == "" {
+		return ErrVaultPathIsRequired
+	}
+
+	log.Info("Exporting vault secrets", "path", vaultPath)
+
+	// Load configuration and create manager
+	_, manager, err := loadConfigAndManager()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = manager.Close() }()
+
+	// Export secrets
+	safe := manager.GetSafe()
+
+	secrets, err := safe.Export(strings.TrimPrefix(vaultPath, "/"))
+	if err != nil {
+		return fmt.Errorf("failed to export secrets: %w", err)
+	}
+
+	// Marshal secrets to data
+	data, err := marshalSecrets(secrets, format)
+	if err != nil {
+		return err
+	}
+
+	// Write output
+	if outputFile != "" {
+		err := os.WriteFile(outputFile, data, VaultOutputFileMode)
+		if err != nil {
+			return fmt.Errorf("failed to write file: %w", err)
+		}
+
+		log.Info("Secrets exported", "file", outputFile)
+	} else {
+		_, err := fmt.Fprint(os.Stdout, string(data)+"\n")
+		if err != nil {
+			return fmt.Errorf("failed to write output: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // newVaultImportCmd creates the vault import subcommand.
 func newVaultImportCmd() *cobra.Command {
 	var (
@@ -355,6 +352,7 @@ func newVaultImportCmd() *cobra.Command {
 		force     bool
 	)
 
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "import",
 		Short: "Import secrets into vault",
@@ -368,7 +366,7 @@ func newVaultImportCmd() *cobra.Command {
 			log := logger.Get()
 
 			if vaultPath == "" || inputFile == "" {
-				return errors.New("vault path and input file are required")
+				return ErrVaultPathAndInputFileRequired
 			}
 
 			log.Info("Importing secrets to vault", "path", vaultPath, "file", inputFile)
@@ -397,7 +395,8 @@ func newVaultImportCmd() *cobra.Command {
 
 			// Import to vault
 			safe := manager.GetSafe()
-			if err := safe.Import(strings.TrimPrefix(vaultPath, "/"), secrets); err != nil {
+			err = safe.Import(strings.TrimPrefix(vaultPath, "/"), secrets)
+			if err != nil {
 				return fmt.Errorf("failed to import secrets: %w", err)
 			}
 
@@ -416,26 +415,69 @@ func newVaultImportCmd() *cobra.Command {
 
 // Helper functions
 
+// loadConfigAndManager loads configuration and creates vault manager.
+func loadConfigAndManager() (*config.Config, *vault.Manager, error) {
+	configFile := viper.GetString("config")
+	blocName := viper.GetString("bloc")
+
+	cfg, err := config.LoadWithParams(configFile, blocName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	manager, err := vault.NewManagerFromEnv(cfg, blocName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create vault manager: %w", err)
+	}
+
+	return cfg, manager, nil
+}
+
+// marshalSecrets marshals secrets to the specified format.
+func marshalSecrets(secrets map[string]interface{}, format string) ([]byte, error) {
+	var (
+		data []byte
+		err  error
+	)
+
+	switch format {
+	case "json":
+		data, err = json.MarshalIndent(secrets, "", "  ")
+	case "yaml", "yml":
+		data, err = yaml.Marshal(secrets)
+	default:
+		return nil, ErrUnsupportedFormat(format)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal secrets: %w", err)
+	}
+
+	return data, nil
+}
+
 // loadSecretsFromFile loads secrets from a YAML or JSON file.
 func loadSecretsFromFile(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path) // #nosec G304 - path comes from user input but is used for reading config
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read secrets file: %w", err)
 	}
 
 	var secrets map[string]interface{}
 
 	// Try YAML first
-	if err := yaml.Unmarshal(data, &secrets); err == nil {
+	err = yaml.Unmarshal(data, &secrets)
+	if err == nil {
 		return secrets, nil
 	}
 
 	// Try JSON
-	if err := json.Unmarshal(data, &secrets); err == nil {
+	err = json.Unmarshal(data, &secrets)
+	if err == nil {
 		return secrets, nil
 	}
 
-	return nil, errors.New("unable to parse file as YAML or JSON")
+	return nil, ErrUnableToParseFileAsYAMLOrJSON
 }
 
 // manualMigrateVault performs manual migration between specified paths.
@@ -463,7 +505,8 @@ func manualMigrateVault(manager *vault.Manager, sourcePath, destPath string, dry
 	}
 
 	// Import to destination
-	if err := safe.Import(strings.TrimPrefix(destPath, "/"), secrets); err != nil {
+	err = safe.Import(strings.TrimPrefix(destPath, "/"), secrets)
+	if err != nil {
 		return fmt.Errorf("failed to import to destination: %w", err)
 	}
 

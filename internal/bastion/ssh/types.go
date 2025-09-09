@@ -5,6 +5,32 @@ import (
 	"time"
 )
 
+const (
+	// SSH connection defaults.
+	DefaultSSHPort = 22
+
+	// File permissions.
+	sshDirectoryMode = 0700
+	privateKeyMode   = 0600
+	localDirMode     = 0750
+
+	// Timeouts.
+	defaultCommandTimeout = 30 * time.Second
+	shortTimeout          = 10 * time.Second
+	longTimeout           = 45 * time.Second
+	mediumTimeout         = 15 * time.Second
+
+	// Transfer configuration.
+	transferBufferSize = 32 * 1024 // 32KB
+	percentageBase     = 100
+
+	// SSH key configuration.
+	minKeySize = 2048
+
+	// Channel buffer sizes.
+	defaultChannelBuffer = 2
+)
+
 // ConnectionDetails holds SSH connection information.
 type ConnectionDetails struct {
 	Host           string

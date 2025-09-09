@@ -1,18 +1,22 @@
 package commands
 
 import (
-    "context"
-    "fmt"
-    "errors"
-    "os"
-    "os/exec"
-    "strings"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+const (
+	// Command arguments.
+	rsyncTwoArgs = 2
 )
 
 // NewRSyncCmd creates the rsync command.
@@ -23,17 +27,30 @@ func NewRSyncCmd() *cobra.Command {
 		archive      bool
 		compress     bool
 		verbose      bool
-		delete       bool
+		deleteFiles  bool
 		dryRun       bool
 		exclude      []string
 		include      []string
 		rsyncOptions string
 	)
 
-	cmd := &cobra.Command{
-		Use:   "rsync <source> <destination>",
-		Short: "Synchronize files to/from bastion host",
-		Long: `RSyncs files between the local machine and the bastion host using rsync.
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
+		Use:     "rsync <source> <destination>",
+		Short:   "Synchronize files to/from bastion host",
+		Long:    getRSyncLongDescription(),
+		Example: getRSyncExamples(),
+		Args:    cobra.ExactArgs(rsyncTwoArgs),
+		RunE:    runRSync,
+	}
+
+	addRSyncFlags(cmd, &user, &key, &archive, &compress, &verbose, &deleteFiles, &dryRun, &exclude, &include, &rsyncOptions)
+	bindRSyncViperFlags(cmd)
+
+	return cmd
+}
+
+func getRSyncLongDescription() string {
+	return `RSyncs files between the local machine and the bastion host using rsync.
 
 The command supports bidirectional synchronization with advanced options:
 - Archive mode preserves permissions, ownership, timestamps
@@ -41,8 +58,11 @@ The command supports bidirectional synchronization with advanced options:
 - Delete mode for mirror synchronization
 - Include/exclude patterns for selective sync
 
-The bastion host is automatically discovered using the bloc configuration.`,
-		Example: `  # Sync directory to bastion
+The bastion host is automatically discovered using the bloc configuration.`
+}
+
+func getRSyncExamples() string {
+	return `  # Sync directory to bastion
   ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/
 
   # Sync from bastion with compression
@@ -55,24 +75,23 @@ The bastion host is automatically discovered using the bloc configuration.`,
   ocfp rsync --bloc production --dry-run /local/dir/ bastion:/remote/dir/
 
   # Exclude certain files
-  ocfp rsync --bloc production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/`,
-            Args: cobra.ExactArgs(2),
-            RunE:   runRSync,
-	}
+  ocfp rsync --bloc production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/`
+}
 
-	// Command-specific flags
-	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for rsync")
-	cmd.Flags().StringVar(&key, "key", "", "path to SSH private key")
-	cmd.Flags().BoolVarP(&archive, "archive", "a", true, "archive mode (preserves permissions, etc)")
-	cmd.Flags().BoolVarP(&compress, "compress", "z", false, "compress data during transfer")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	cmd.Flags().BoolVar(&delete, "delete", false, "delete files in destination not present in source")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "perform a trial run with no changes made")
-	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "exclude files matching pattern")
-	cmd.Flags().StringSliceVar(&include, "include", nil, "include files matching pattern")
-	cmd.Flags().StringVar(&rsyncOptions, "rsync-options", "", "additional rsync options")
+func addRSyncFlags(cmd *cobra.Command, user, key *string, archive, compress, verbose, deleteFiles, dryRun *bool, exclude, include *[]string, rsyncOptions *string) {
+	cmd.Flags().StringVar(user, "user", "ubuntu", "username for rsync")
+	cmd.Flags().StringVar(key, "key", "", "path to SSH private key")
+	cmd.Flags().BoolVarP(archive, "archive", "a", true, "archive mode (preserves permissions, etc)")
+	cmd.Flags().BoolVarP(compress, "compress", "z", false, "compress data during transfer")
+	cmd.Flags().BoolVarP(verbose, "verbose", "v", false, "verbose output")
+	cmd.Flags().BoolVar(deleteFiles, "delete", false, "delete files in destination not present in source")
+	cmd.Flags().BoolVar(dryRun, "dry-run", false, "perform a trial run with no changes made")
+	cmd.Flags().StringSliceVar(exclude, "exclude", nil, "exclude files matching pattern")
+	cmd.Flags().StringSliceVar(include, "include", nil, "include files matching pattern")
+	cmd.Flags().StringVar(rsyncOptions, "rsync-options", "", "additional rsync options")
+}
 
-	// Bind flags to viper
+func bindRSyncViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("rsync.user", cmd.Flags().Lookup("user"))
 	_ = viper.BindPFlag("rsync.key", cmd.Flags().Lookup("key"))
 	_ = viper.BindPFlag("rsync.archive", cmd.Flags().Lookup("archive"))
@@ -83,93 +102,163 @@ The bastion host is automatically discovered using the bloc configuration.`,
 	_ = viper.BindPFlag("rsync.exclude", cmd.Flags().Lookup("exclude"))
 	_ = viper.BindPFlag("rsync.include", cmd.Flags().Lookup("include"))
 	_ = viper.BindPFlag("rsync.options", cmd.Flags().Lookup("rsync-options"))
-
-	return cmd
 }
 
 func runRSync(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("rsync")
 
-	// Get configuration values
-	blocName := viper.GetString("bloc_name")
-	user := viper.GetString("rsync.user")
-	keyPath := viper.GetString("rsync.key")
-	archive := viper.GetBool("rsync.archive")
-	compress := viper.GetBool("rsync.compress")
-	verbose := viper.GetBool("rsync.verbose")
-	deleteFlag := viper.GetBool("rsync.delete")
-	dryRun := viper.GetBool("rsync.dry_run")
-	exclude := viper.GetStringSlice("rsync.exclude")
-	include := viper.GetStringSlice("rsync.include")
-	rsyncOptions := viper.GetString("rsync.options")
-
-	source := args[0]
-	destination := args[1]
-
-	// Validate required configuration
-	if blocName == "" {
-		return errors.New("bloc is required")
+	config, err := parseRSyncConfig(args)
+	if err != nil {
+		return err
 	}
 
-	// Load configuration; provider and region come from bloc config
+	environment, err := setupRSyncEnvironment(ctx, config)
+	if err != nil {
+		return err
+	}
+
+	return executeRSyncWithEnvironment(ctx, log, config, environment)
+}
+
+type rsyncConfig struct {
+	blocName     string
+	user         string
+	keyPath      string
+	archive      bool
+	compress     bool
+	verbose      bool
+	deleteFlag   bool
+	dryRun       bool
+	exclude      []string
+	include      []string
+	rsyncOptions string
+	source       string
+	destination  string
+}
+
+type rsyncEnvironment struct {
+	provider  cpi.Provider
+	config    *config.Config
+	bastionIP string
+	keyPath   string
+}
+
+func parseRSyncConfig(args []string) (*rsyncConfig, error) {
+	blocName := viper.GetString("bloc_name")
+	if blocName == "" {
+		return nil, ErrBlocIsRequired
+	}
+
+	return &rsyncConfig{
+		blocName:     blocName,
+		user:         viper.GetString("rsync.user"),
+		keyPath:      viper.GetString("rsync.key"),
+		archive:      viper.GetBool("rsync.archive"),
+		compress:     viper.GetBool("rsync.compress"),
+		verbose:      viper.GetBool("rsync.verbose"),
+		deleteFlag:   viper.GetBool("rsync.delete"),
+		dryRun:       viper.GetBool("rsync.dry_run"),
+		exclude:      viper.GetStringSlice("rsync.exclude"),
+		include:      viper.GetStringSlice("rsync.include"),
+		rsyncOptions: viper.GetString("rsync.options"),
+		source:       args[0],
+		destination:  args[1],
+	}, nil
+}
+
+func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig) (*rsyncEnvironment, error) {
+	cfg, err := loadRSyncBlocConfig(config.blocName)
+	if err != nil {
+		return nil, err
+	}
+
+	provider, err := initializeRSyncProvider(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	bastionIP, err := getBastionIPForRSync(ctx, provider, config.blocName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
+	}
+
+	keyPath, err := resolveSSHKey(config.keyPath, config.blocName, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rsyncEnvironment{
+		provider:  provider,
+		config:    cfg,
+		bastionIP: bastionIP,
+		keyPath:   keyPath,
+	}, nil
+}
+
+func loadRSyncBlocConfig(blocName string) (*config.Config, error) {
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	if cfg.Provider == "" && cfg.IaaS == "" {
-		return errors.New("provider must be specified in bloc config")
+		return nil, ErrProviderMustBeSpecifiedInBlocConfig(blocName)
 	}
 
-	// Initialize provider using bloc configuration
+	return cfg, nil
+}
+
+//nolint:ireturn // Provider interface is needed for polymorphism
+func initializeRSyncProvider(ctx context.Context, cfg *config.Config) (cpi.Provider, error) {
 	provider, err := cpi.GetProvider(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
+		return nil, fmt.Errorf("failed to get provider %s: %w", cfg.Provider, err)
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
-	}
-
-	// Get bastion IP address
-	bastionIP, err := getBastionIPForRSync(ctx, provider, blocName)
+	err = provider.Initialize(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("failed to get bastion IP: %w", err)
+		return nil, fmt.Errorf("failed to initialize provider %s: %w", cfg.Provider, err)
 	}
 
-    // Find SSH key if not specified
-    if keyPath == "" {
-        keyPath, err = findSSHKey(blocName, cfg)
-        if err != nil {
-            return fmt.Errorf("failed to find SSH key: %w", err)
-        }
-    }
+	return provider, nil
+}
 
-    // Verify key exists and has correct permissions
-    if err := verifySSHKey(keyPath); err != nil {
-        return fmt.Errorf("SSH key verification failed: %w", err)
-    }
+func resolveSSHKey(keyPath, blocName string, cfg *config.Config) (string, error) {
+	if keyPath == "" {
+		resolvedKey, err := findSSHKey(blocName, cfg)
+		if err != nil {
+			return "", fmt.Errorf("failed to find SSH key: %w", err)
+		}
 
-	// Process source and destination paths
-	processedSource := processRSyncPath(source, bastionIP, user)
-	processedDest := processRSyncPath(destination, bastionIP, user)
+		keyPath = resolvedKey
+	}
 
-	// Build rsync command
-	rsyncCmd := buildRSyncCommand(processedSource, processedDest, keyPath, archive, compress,
-		verbose, deleteFlag, dryRun, exclude, include, rsyncOptions)
+	err := verifySSHKey(keyPath)
+	if err != nil {
+		return "", fmt.Errorf("SSH key verification failed: %w", err)
+	}
 
-	if dryRun {
-		log.Infof("Performing dry run: %s -> %s", source, destination)
+	return keyPath, nil
+}
+
+func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config *rsyncConfig, env *rsyncEnvironment) error {
+	processedSource := processRSyncPath(config.source, env.bastionIP, config.user)
+	processedDest := processRSyncPath(config.destination, env.bastionIP, config.user)
+
+	rsyncCmd := buildRSyncCommand(processedSource, processedDest, env.keyPath, config.archive, config.compress,
+		config.verbose, config.deleteFlag, config.dryRun, config.exclude, config.include, config.rsyncOptions)
+
+	if config.dryRun {
+		log.Infof("Performing dry run: %s -> %s", config.source, config.destination)
 	} else {
-		log.Infof("Synchronizing: %s -> %s", source, destination)
+		log.Infof("Synchronizing: %s -> %s", config.source, config.destination)
 	}
 
-	log.Debugf("Using SSH key: %s", keyPath)
-	log.Debugf("Bastion IP: %s", bastionIP)
+	log.Debugf("Using SSH key: %s", env.keyPath)
+	log.Debugf("Bastion IP: %s", env.bastionIP)
 
-	// Execute rsync command
-    return executeRSync(ctx, rsyncCmd)
+	return executeRSync(ctx, rsyncCmd)
 }
 
 // getBastionIPForRSync retrieves the bastion host's public IP address.
@@ -259,13 +348,13 @@ func executeRSync(ctx context.Context, rsyncCmd []string) error {
 
 	// Validate that the command is rsync
 	if len(rsyncCmd) == 0 || rsyncCmd[0] != "rsync" {
-		return errors.New("invalid rsync command")
+		return ErrInvalidRsyncCommand
 	}
 
-    cmd := exec.CommandContext(ctx, rsyncCmd[0], rsyncCmd[1:]...) // #nosec G204 - command is validated above
+	cmd := exec.CommandContext(ctx, rsyncCmd[0], rsyncCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	return fmt.Errorf("rsync command failed: %w", cmd.Run())
 }

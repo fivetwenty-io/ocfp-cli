@@ -45,16 +45,20 @@ func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 			Path:        "${HOME}/.tmux.conf",
 			CheckExists: true,
 			Content:     cfm.generateTmuxConfig(),
-			Mode:        0644,
+			Mode:        fileModeStandard,
 			Enabled:     true,
+			PreCommand:  "",
+			PostCommand: "",
 		},
 		{
 			Name:        "replyrc",
 			Path:        "${HOME}/.replyrc",
 			CheckExists: true,
 			Content:     cfm.generateReplyrcConfig(),
-			Mode:        0644,
+			Mode:        fileModeStandard,
 			Enabled:     true,
+			PreCommand:  "",
+			PostCommand: "",
 		},
 		{
 			Name:        "genesis",
@@ -62,24 +66,29 @@ func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 			CheckExists: true,
 			PreCommand:  "mkdir -p ${HOME}/.genesis/logs",
 			Content:     cfm.generateGenesisConfig(),
-			Mode:        0644,
+			Mode:        fileModeStandard,
 			Enabled:     true,
+			PostCommand: "",
 		},
 		{
 			Name:        "gitconfig",
 			Path:        "${HOME}/.gitconfig",
 			CheckExists: true,
 			Content:     cfm.generateGitConfig(),
-			Mode:        0644,
+			Mode:        fileModeStandard,
 			Enabled:     cfm.hasGitConfig(),
+			PreCommand:  "",
+			PostCommand: "",
 		},
 		{
 			Name:        "vimrc",
 			Path:        "${HOME}/.vimrc",
 			CheckExists: true,
 			Content:     cfm.generateVimConfig(),
-			Mode:        0644,
+			Mode:        fileModeStandard,
 			Enabled:     true,
+			PreCommand:  "",
+			PostCommand: "",
 		},
 	}
 }
@@ -91,62 +100,96 @@ func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) stri
 		return ""
 	}
 
-	var lines []string
-
-	lines = append(lines, "# Configuration file creation")
-	lines = append(lines, "")
+	lines := cfm.generateConfigFileHeader()
 
 	for _, file := range configFiles {
-		if !file.Enabled {
-			continue
+		if file.Enabled {
+			lines = append(lines, cfm.generateConfigFileSection(file)...)
 		}
-
-		lines = append(lines, "# Create configuration file: "+file.Name)
-
-		// Run pre-command if specified
-		if file.PreCommand != "" {
-			lines = append(lines, "# Pre-command for "+file.Name)
-			lines = append(lines, file.PreCommand)
-			lines = append(lines, "")
-		}
-
-		// Expand path variables
-		lines = append(lines, fmt.Sprintf("CONFIG_PATH='%s'", file.Path))
-		lines = append(lines, "CONFIG_PATH=$(echo \"$CONFIG_PATH\" | envsubst)")
-		lines = append(lines, "")
-
-		if file.CheckExists {
-			lines = append(lines, "if [ -f \"$CONFIG_PATH\" ]; then")
-			lines = append(lines, fmt.Sprintf("    log_info '%s configuration already exists at $CONFIG_PATH'", file.Name))
-			lines = append(lines, "else")
-		}
-
-		lines = append(lines, fmt.Sprintf("    log_info 'Creating %s configuration at $CONFIG_PATH'", file.Name))
-		lines = append(lines, "    mkdir -p \"$(dirname \"$CONFIG_PATH\")\"")
-		lines = append(lines, "    cat > \"$CONFIG_PATH\" << 'CONFIG_EOF'")
-		lines = append(lines, file.Content)
-		lines = append(lines, "CONFIG_EOF")
-
-		if file.Mode != 0 {
-			lines = append(lines, fmt.Sprintf("    chmod %o \"$CONFIG_PATH\"", file.Mode))
-		}
-
-		lines = append(lines, fmt.Sprintf("    log_success '%s configuration created'", file.Name))
-
-		if file.CheckExists {
-			lines = append(lines, "fi")
-		}
-
-		// Run post-command if specified
-		if file.PostCommand != "" {
-			lines = append(lines, "# Post-command for "+file.Name)
-			lines = append(lines, file.PostCommand)
-		}
-
-		lines = append(lines, "")
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (cfm *ConfigFileManager) generateConfigFileHeader() []string {
+	return []string{
+		"# Configuration file creation",
+		"",
+	}
+}
+
+func (cfm *ConfigFileManager) generateConfigFileSection(file ConfigFile) []string {
+	const perFile = 32
+
+	lines := make([]string, 0, perFile)
+
+	lines = append(lines, "# Create configuration file: "+file.Name)
+	lines = append(lines, cfm.generatePreCommand(file)...)
+	lines = append(lines, cfm.generatePathSetup(file)...)
+	lines = append(lines, cfm.generateFileCreation(file)...)
+	lines = append(lines, cfm.generatePostCommand(file)...)
+	lines = append(lines, "")
+
+	return lines
+}
+
+func (cfm *ConfigFileManager) generatePreCommand(file ConfigFile) []string {
+	if file.PreCommand == "" {
+		return nil
+	}
+
+	return []string{
+		"# Pre-command for " + file.Name,
+		file.PreCommand,
+		"",
+	}
+}
+
+func (cfm *ConfigFileManager) generatePathSetup(file ConfigFile) []string {
+	return []string{
+		fmt.Sprintf("CONFIG_PATH='%s'", file.Path),
+		"CONFIG_PATH=$(echo \"$CONFIG_PATH\" | envsubst)",
+		"",
+	}
+}
+
+func (cfm *ConfigFileManager) generateFileCreation(file ConfigFile) []string {
+	lines := []string{}
+
+	if file.CheckExists {
+		lines = append(lines, "if [ -f \"$CONFIG_PATH\" ]; then")
+		lines = append(lines, fmt.Sprintf("    log_info '%s configuration already exists at $CONFIG_PATH'", file.Name))
+		lines = append(lines, "else")
+	}
+
+	lines = append(lines, fmt.Sprintf("    log_info 'Creating %s configuration at $CONFIG_PATH'", file.Name))
+	lines = append(lines, "    mkdir -p \"$(dirname \"$CONFIG_PATH\")\"")
+	lines = append(lines, "    cat > \"$CONFIG_PATH\" << 'CONFIG_EOF'")
+	lines = append(lines, file.Content)
+	lines = append(lines, "CONFIG_EOF")
+
+	if file.Mode != 0 {
+		lines = append(lines, fmt.Sprintf("    chmod %o \"$CONFIG_PATH\"", file.Mode))
+	}
+
+	lines = append(lines, fmt.Sprintf("    log_success '%s configuration created'", file.Name))
+
+	if file.CheckExists {
+		lines = append(lines, "fi")
+	}
+
+	return lines
+}
+
+func (cfm *ConfigFileManager) generatePostCommand(file ConfigFile) []string {
+	if file.PostCommand == "" {
+		return nil
+	}
+
+	return []string{
+		"# Post-command for " + file.Name,
+		file.PostCommand,
+	}
 }
 
 // Configuration file content generators
@@ -313,16 +356,35 @@ func (cfm *ConfigFileManager) generateGitConfig() string {
 }
 
 func (cfm *ConfigFileManager) generateVimConfig() string {
+	sections := []string{
+		cfm.getVimHeader(),
+		cfm.getVimBasicSettings(),
+		cfm.getVimDisplaySettings(),
+		cfm.getVimFileTypeSettings(),
+		cfm.getVimMiscSettings(),
+		cfm.getVimKeyMappings(),
+	}
+
+	return strings.Join(sections, "\n\n")
+}
+
+func (cfm *ConfigFileManager) getVimHeader() string {
 	return `" OCFP Vim configuration
-set nocompatible
-set number
+set nocompatible`
+}
+
+func (cfm *ConfigFileManager) getVimBasicSettings() string {
+	return `set number
 set relativenumber
 set tabstop=4
 set shiftwidth=4
 set expandtab
 set autoindent
-set smartindent
-set hlsearch
+set smartindent`
+}
+
+func (cfm *ConfigFileManager) getVimDisplaySettings() string {
+	return `set hlsearch
 set incsearch
 set ignorecase
 set smartcase
@@ -336,14 +398,18 @@ set backspace=indent,eol,start
 syntax enable
 
 " Color scheme
-set background=dark
+set background=dark`
+}
 
-" File type detection
+func (cfm *ConfigFileManager) getVimFileTypeSettings() string {
+	return `" File type detection
 filetype on
 filetype plugin on
-filetype indent on
+filetype indent on`
+}
 
-" Show matching brackets
+func (cfm *ConfigFileManager) getVimMiscSettings() string {
+	return `" Show matching brackets
 set showmatch
 
 " Enable mouse support
@@ -351,7 +417,12 @@ set mouse=a
 
 " Persistent undo
 set undofile
-set undodir=~/.vim/undodir
+set undodir=~/.vim/undodir`
+}
+
+func (cfm *ConfigFileManager) getVimKeyMappings() string {
+	return `" Set leader key
+let mapleader = ","
 
 " Better search highlighting
 nnoremap <leader>h :nohlsearch<CR>
@@ -371,10 +442,7 @@ nnoremap <C-l> <C-w>l
 " Tab navigation
 nnoremap <leader>tn :tabnew<CR>
 nnoremap <leader>tc :tabclose<CR>
-nnoremap <leader>to :tabonly<CR>
-
-" Set leader key
-let mapleader = ","`
+nnoremap <leader>to :tabonly<CR>`
 }
 
 // hasGitConfig checks if Git configuration is available.

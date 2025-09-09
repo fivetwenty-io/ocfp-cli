@@ -12,6 +12,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// File permissions.
+	LogDirMode  = 0750
+	LogFileMode = 0600
+)
+
 var (
 	// Global logger instance.
 	log *zap.SugaredLogger //nolint:gochecknoglobals // shared logger singleton
@@ -45,18 +51,22 @@ func Initialize(cfg Config) error {
 
 	// Create encoder config
 	encoderConfig := zapcore.EncoderConfig{
-		TimeKey:        "timestamp",
-		LevelKey:       "level",
-		NameKey:        "logger",
-		CallerKey:      "caller",
-		FunctionKey:    zapcore.OmitKey,
-		MessageKey:     "msg",
-		StacktraceKey:  "stacktrace",
-		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.CapitalColorLevelEncoder,
-		EncodeTime:     zapcore.ISO8601TimeEncoder,
-		EncodeDuration: zapcore.SecondsDurationEncoder,
-		EncodeCaller:   zapcore.ShortCallerEncoder,
+		TimeKey:             "timestamp",
+		LevelKey:            "level",
+		NameKey:             "logger",
+		CallerKey:           "caller",
+		FunctionKey:         zapcore.OmitKey,
+		MessageKey:          "msg",
+		StacktraceKey:       "stacktrace",
+		SkipLineEnding:      false,
+		LineEnding:          zapcore.DefaultLineEnding,
+		EncodeLevel:         zapcore.CapitalColorLevelEncoder,
+		EncodeTime:          zapcore.ISO8601TimeEncoder,
+		EncodeDuration:      zapcore.SecondsDurationEncoder,
+		EncodeCaller:        zapcore.ShortCallerEncoder,
+		EncodeName:          zapcore.FullNameEncoder,
+		NewReflectedEncoder: nil,
+		ConsoleSeparator:    "",
 	}
 
 	// Always log to file (JSON) only; stdout/stderr reserved for user UX
@@ -102,14 +112,17 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	baseDir := cfg.LogDir
 	if baseDir == "" {
 		// Fallback to ~/.ocfp/log if not provided
-		if home, err := os.UserHomeDir(); err == nil {
+		home, err := os.UserHomeDir()
+		if err == nil {
 			baseDir = filepath.Join(home, ".ocfp", "log")
 		}
 	}
 	// Ensure per-command subdirectory
 	dir := filepath.Join(baseDir, cfg.Command)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return nil, err
+
+	err := os.MkdirAll(dir, LogDirMode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
 	// Generate filename by timestamp (and optional request ID)
@@ -123,13 +136,14 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	logPath := filepath.Join(dir, filename)
 
 	// Open log file
-	if err := security.ValidatePath(logPath); err != nil {
+	err = security.ValidatePath(logPath)
+	if err != nil {
 		return nil, fmt.Errorf("invalid log path: %w", err)
 	}
 
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 - logPath is validated above
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, LogFileMode) // #nosec G304 - logPath is validated above
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
 	// Create JSON encoder for file output
@@ -185,7 +199,18 @@ func SetLevel(level string) {
 func Get() *zap.SugaredLogger {
 	if log == nil {
 		// Initialize with defaults if not already initialized
-		err := Initialize(Config{Level: "info"})
+		err := Initialize(Config{
+			Level:      "info",
+			Debug:      false,
+			Verbose:    false,
+			Trace:      false,
+			NoLog:      false,
+			LogDir:     "",
+			BlocName:   "",
+			Command:    "",
+			RequestID:  "",
+			DirectorID: "",
+		})
 		if err != nil {
 			// Fallback to console logger if initialization fails
 			panic(fmt.Errorf("failed to initialize logger: %w", err))
@@ -268,7 +293,7 @@ func WithOperation(operation string) *zap.SugaredLogger {
 // Sync flushes any buffered log entries.
 func Sync() error {
 	if log != nil {
-		return log.Sync()
+		return fmt.Errorf("failed to sync logger: %w", log.Sync())
 	}
 
 	return nil
@@ -280,14 +305,15 @@ func ArchiveOldLogs(logDir string, daysOld int) error {
 	archiveDir := filepath.Join(logDir, "archive")
 
 	// Create archive directory if it doesn't exist
-	if err := os.MkdirAll(archiveDir, 0750); err != nil {
-		return err
+	err := os.MkdirAll(archiveDir, LogDirMode)
+	if err != nil {
+		return fmt.Errorf("failed to create archive directory: %w", err)
 	}
 
 	// Walk through log directory
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read log directory: %w", err)
 	}
 
 	for _, entry := range entries {

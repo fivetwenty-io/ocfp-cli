@@ -1,14 +1,16 @@
-package config
+package config_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
 // TestStackitDefaultRegion verifies that STACKIT defaults region to eu01 when unspecified.
 func TestStackitDefaultRegion(t *testing.T) {
-    t.Parallel()
+	t.Parallel()
 	// Create a temporary config file inside the repo workspace
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yml")
@@ -19,11 +21,13 @@ func TestStackitDefaultRegion(t *testing.T) {
 		"  test:\n" +
 		"    name: test\n" +
 		"    provider: stackit\n")
-	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+
+	err := os.WriteFile(cfgPath, yml, 0o600)
+	if err != nil {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
 
-	cfg, err := LoadWithParams(cfgPath, "test")
+	cfg, err := config.LoadWithParams(cfgPath, "test")
 	if err != nil {
 		t.Fatalf("LoadWithParams failed: %v", err)
 	}
@@ -35,7 +39,7 @@ func TestStackitDefaultRegion(t *testing.T) {
 
 // TestStackitRegionOverride verifies that a specified region is preserved.
 func TestStackitRegionOverride(t *testing.T) {
-    t.Parallel()
+	t.Parallel()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yml")
 
@@ -45,11 +49,13 @@ func TestStackitRegionOverride(t *testing.T) {
 		"    name: prod\n" +
 		"    provider: stackit\n" +
 		"    region: eu02\n")
-	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+
+	err := os.WriteFile(cfgPath, yml, 0o600)
+	if err != nil {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
 
-	cfg, err := LoadWithParams(cfgPath, "prod")
+	cfg, err := config.LoadWithParams(cfgPath, "prod")
 	if err != nil {
 		t.Fatalf("LoadWithParams failed: %v", err)
 	}

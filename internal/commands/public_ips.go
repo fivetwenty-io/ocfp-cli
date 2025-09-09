@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"errors"
 	"sort"
 	"strings"
 
@@ -15,8 +14,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	// Index parsing constants.
+	IndexParsingShift    = 10      // Shift for index parsing (* 10)
+	NonNumericIndexValue = 1 << 30 // Large value for non-numeric indices (1073741824)
+)
+
 // NewPublicIPsCmd creates the public-ips root command.
 func NewPublicIPsCmd() *cobra.Command {
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "public-ips",
 		Short: "Manage public IPs",
@@ -31,78 +37,119 @@ func NewPublicIPsCmd() *cobra.Command {
 func newPublicIPsListCmd() *cobra.Command {
 	var output string
 
+	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List public IPs",
 		Long:  "List current public IPs for the selected bloc (STACKIT only).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPublicIPsList(cmd, output)
+			return runPublicIPsList(output)
 		},
 	}
 
-    cmd.Flags().StringVar(&output, "output", OutputTable, "output format (table|json|yaml)")
+	cmd.Flags().StringVar(&output, "output", OutputTable, "output format (table|json|yaml)")
 	_ = viper.BindPFlag("public_ips.output", cmd.Flags().Lookup("output"))
 
 	return cmd
 }
 
-func runPublicIPsList(cmd *cobra.Command, output string) error {
+func runPublicIPsList(output string) error {
 	ctx := context.Background()
 	_ = logger.Get() // ensure logger initialized; UX goes to stdout
 
+	cfg, err := loadPublicIPsConfig()
+	if err != nil {
+		return err
+	}
+
+	lister, err := setupStackitPublicIPLister(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = lister.provider.Cleanup(ctx) }()
+
+	ips, err := fetchAndSortPublicIPs(ctx, lister.lister, cfg.Name)
+	if err != nil {
+		return err
+	}
+
+	return renderPublicIPsTable(ips, cfg.Name, output)
+}
+
+func loadPublicIPsConfig() (*config.Config, error) {
 	blocName := viper.GetString("bloc_name")
 	cfgFile := viper.GetString("config")
 
 	if blocName == "" {
-		return errors.New("bloc is required")
+		return nil, ErrBlocIsRequired
 	}
 
 	cfg, err := config.LoadWithParams(cfgFile, blocName)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	if strings.ToLower(cfg.Provider) != "stackit" {
-		return errors.New("public IP listing is currently supported for STACKIT only")
+		return nil, ErrPublicIPListingSupportedForStackitOnly
 	}
 
+	return cfg, nil
+}
+
+type stackitPublicIPLister interface {
+	ListPublicIPsWithFilters(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error)
+}
+
+type publicIPListerWrapper struct {
+	provider cpi.Provider
+	lister   stackitPublicIPLister
+}
+
+func setupStackitPublicIPLister(ctx context.Context, cfg *config.Config) (*publicIPListerWrapper, error) {
 	provider, err := cpi.GetProvider(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("failed to get provider: %w", err)
+		return nil, fmt.Errorf("failed to get provider: %w", err)
 	}
 
-	if err := provider.Initialize(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to initialize provider: %w", err)
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize provider: %w", err)
 	}
-
-	defer func() { _ = provider.Cleanup(ctx) }()
 
 	network := provider.Network()
 	if network == nil {
-		return fmt.Errorf("network manager not available for provider %s", cfg.Provider)
-	}
-
-	// STACKIT-specific public IP lister
-	type stackitPublicIPLister interface {
-		ListPublicIPs(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error)
+		return nil, ErrNetworkManagerNotAvailableForProvider(cfg.Provider)
 	}
 
 	stackitLister, ok := network.(stackitPublicIPLister)
 	if !ok {
-		return errors.New("provider does not support public IP listing")
+		return nil, ErrProviderDoesNotSupportPublicIPListing
 	}
 
+	return &publicIPListerWrapper{
+		provider: provider,
+		lister:   stackitLister,
+	}, nil
+}
+
+func fetchAndSortPublicIPs(ctx context.Context, lister stackitPublicIPLister, blocName string) ([]*cpi.PublicIP, error) {
 	filters := map[string]string{
 		"label:managed-by": "ocfp",
-		"label:bloc":       cfg.Name,
+		"label:bloc":       blocName,
 	}
 
-	ips, err := stackitLister.ListPublicIPs(ctx, filters)
+	ips, err := lister.ListPublicIPsWithFilters(ctx, filters)
 	if err != nil {
-		return fmt.Errorf("failed to list public IPs: %w", err)
+		return nil, fmt.Errorf("failed to list public IPs: %w", err)
 	}
 
-	// Sort by job then numeric index
+	sortPublicIPs(ips)
+
+	return ips, nil
+}
+
+func sortPublicIPs(ips []*cpi.PublicIP) {
 	sort.Slice(ips, func(iIndex, jIndex int) bool {
 		jobI, jobJ := ips[iIndex].Job, ips[jIndex].Job
 		if jobI == jobJ {
@@ -116,23 +163,39 @@ func runPublicIPsList(cmd *cobra.Command, output string) error {
 
 		return jobI < jobJ
 	})
+}
 
-	// Build a UI table so we can consistently render table/json/yaml
-	title := "Public IPs — bloc " + cfg.Name
-	t := &ui.Table{Title: title}
+func renderPublicIPsTable(ips []*cpi.PublicIP, blocName, output string) error {
+	table := buildPublicIPsTable(ips, blocName)
+
+	if output == "" {
+		output = OutputTable
+	}
+
+	err := ui.Render(table, strings.ToLower(output))
+	if err != nil {
+		return fmt.Errorf("failed to render public IPs output: %w", err)
+	}
+
+	return nil
+}
+
+func buildPublicIPsTable(ips []*cpi.PublicIP, blocName string) *ui.Table {
+	title := "Public IPs — bloc " + blocName
+	table := &ui.Table{
+		Title:    title,
+		Summary:  "",
+		Sections: nil,
+	}
 
 	rows := make([][]string, 0, len(ips))
 	for _, ip := range ips {
 		rows = append(rows, []string{ip.Job, ip.Index, ip.Address, ip.ID, ip.Name, ip.NetworkID, formatLabels(ip.Labels)})
 	}
 
-	t.Sections = append(t.Sections, ui.Section{Title: "IPs", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
+	table.Sections = append(table.Sections, ui.Section{Title: "IPs", Headers: []string{"JOB", "INDEX", "ADDRESS", "ID", "NAME", "NETWORK", "LABELS"}, Rows: rows})
 
-	if output == "" {
-        output = OutputTable
-	}
-
-	return ui.Render(t, strings.ToLower(output))
+	return table
 }
 
 // drop direct table rendering; handled by ui.Render above
@@ -163,10 +226,10 @@ func parseIndex(s string) int {
 
 	for _, ch := range s {
 		if ch < '0' || ch > '9' {
-			return 1 << 30 // non-numeric go to end
+			return NonNumericIndexValue // non-numeric go to end
 		}
 
-		index = index*10 + int(ch-'0')
+		index = index*IndexParsingShift + int(ch-'0')
 	}
 
 	return index

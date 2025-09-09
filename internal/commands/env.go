@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,9 +14,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// File permissions.
+	ConfigFilePerm os.FileMode = 0600
+	ConfigDirPerm  os.FileMode = 0750
+
+	// Tabwriter padding.
+	TabwriterPadding = 2
+)
+
 // NewEnvCmd creates the env command group.
 func NewEnvCmd() *cobra.Command {
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "env",
 		Short: "Manage OCFP environments",
 		Long: `Manage OCFP environments including listing, switching, and displaying information.
@@ -39,37 +47,37 @@ such as development, staging, and production.`,
 
 // newEnvListCmd creates the env list command.
 func newEnvListCmd() *cobra.Command {
-	return &cobra.Command{
+	return &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:     "list",
 		Short:   "List all available environments",
 		Long:    `List all environments defined in the configuration files.`,
 		Aliases: []string{"ls"},
-            RunE:   runEnvList,
+		RunE:    runEnvList,
 	}
 }
 
 // newEnvShowCmd creates the env show command.
 func newEnvShowCmd() *cobra.Command {
-	return &cobra.Command{
+	return &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "show [environment]",
 		Short: "Show environment details",
 		Long: `Display detailed information about an environment.
 If no environment is specified, shows the current environment.`,
 		Aliases: []string{"info", "get"},
 		Args:    cobra.MaximumNArgs(1),
-            RunE:   runEnvShow,
+		RunE:    runEnvShow,
 	}
 }
 
 // newEnvSetCmd creates the env set command.
 func newEnvSetCmd() *cobra.Command {
-	return &cobra.Command{
+	return &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:     "set <environment>",
 		Short:   "Set the active environment",
 		Long:    `Set the active environment for subsequent commands.`,
 		Aliases: []string{"use", "switch"},
 		Args:    cobra.ExactArgs(1),
-            RunE:   runEnvSet,
+		RunE:    runEnvSet,
 	}
 }
 
@@ -77,14 +85,14 @@ func newEnvSetCmd() *cobra.Command {
 func newEnvExportCmd() *cobra.Command {
 	var format string
 
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "export [environment]",
 		Short: "Export environment variables",
 		Long: `Export environment configuration as shell variables.
 If no environment is specified, exports the current environment.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvExport(cmd, args, format)
+			return runEnvExport(args, format)
 		},
 	}
 
@@ -98,13 +106,10 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-list")
 
 	// Find all configuration files
-	envs, err := findEnvironments()
-	if err != nil {
-		return fmt.Errorf("failed to find environments: %w", err)
-	}
+	envs := findEnvironments()
 
 	if len(envs) == 0 {
-		fmt.Println("No environments found")
+		_, _ = fmt.Fprint(os.Stdout, "No environments found\n")
 
 		return nil
 	}
@@ -116,7 +121,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create table writer
-	tableWriter := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	tableWriter := tabwriter.NewWriter(os.Stdout, 0, 0, TabwriterPadding, ' ', 0)
 	_, _ = fmt.Fprintln(tableWriter, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
 	_, _ = fmt.Fprintln(tableWriter, "----\t--------\t------\t------\t------")
 
@@ -141,69 +146,19 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 func runEnvShow(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-show")
 
-	// Determine which environment to show
-	envName := ""
-	if len(args) > 0 {
-		envName = args[0]
-	} else {
-		envName = viper.GetString("bloc_name")
-		if envName == "" {
-			return errors.New("no environment specified and no current environment set")
-		}
+	envName, err := getEnvironmentName(args)
+	if err != nil {
+		return err
 	}
 
-	// Load the environment configuration
 	cfg, err := config.LoadWithParams(viper.GetString("config.file"), envName)
 	if err != nil {
 		return fmt.Errorf("failed to load environment %s: %w", envName, err)
 	}
 
-	// Display environment details
-	fmt.Printf("Environment: %s\n", cfg.Name)
-	fmt.Printf("=====================================\n\n")
-
-	fmt.Printf("Provider Configuration:\n")
-	fmt.Printf("  Provider:    %s\n", cfg.Provider)
-	fmt.Printf("  IaaS:        %s\n", cfg.IaaS)
-	fmt.Printf("  Region:      %s\n", cfg.Region)
-	fmt.Printf("  Project ID:  %s\n", cfg.ProjectID)
-	fmt.Printf("  Org ID:      %s\n", cfg.OrgID)
-
-	if cfg.Network.Name != "" {
-		fmt.Printf("\nNetwork Configuration:\n")
-		fmt.Printf("  Name:        %s\n", cfg.Network.Name)
-		fmt.Printf("  CIDR:        %s\n", cfg.Network.CIDR)
-
-		if len(cfg.Network.DNS) > 0 {
-			fmt.Printf("  DNS:         %s\n", strings.Join(cfg.Network.DNS, ", "))
-		}
-	}
-
-	if cfg.Bastion.Flavor != "" {
-		fmt.Printf("\nBastion Configuration:\n")
-		fmt.Printf("  Flavor:      %s\n", cfg.Bastion.Flavor)
-		fmt.Printf("  Image:       %s\n", cfg.Bastion.Image)
-		fmt.Printf("  Key Pair:    %s\n", cfg.Bastion.Keypair)
-	}
-
-	// Print current bloc information
-	fmt.Printf("\nCurrent Bloc:\n")
-	fmt.Printf("  Name: %s\n", cfg.Name)
-
-	if cfg.Type != "" {
-		fmt.Printf("  Type: %s\n", cfg.Type)
-	}
-
-	if cfg.Environment != "" {
-		fmt.Printf("  Environment: %s\n", cfg.Environment)
-	}
-
-	if len(cfg.AZs) > 0 {
-		fmt.Printf("\nAvailability Zones:\n")
-
-		for name, az := range cfg.AZs {
-			fmt.Printf("  - %s: %s\n", name, az.Zone)
-		}
+	err = displayEnvironmentDetails(cfg)
+	if err != nil {
+		return err
 	}
 
 	log.Debugf("Displayed environment: %s", envName)
@@ -211,55 +166,291 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// getEnvironmentName determines which environment to show.
+func getEnvironmentName(args []string) (string, error) {
+	if len(args) > 0 {
+		return args[0], nil
+	}
+
+	envName := viper.GetString("bloc_name")
+	if envName == "" {
+		return "", ErrNoEnvironmentSpecifiedAndNoCurrentSet
+	}
+
+	return envName, nil
+}
+
+// displayEnvironmentDetails displays all environment configuration details.
+func displayEnvironmentDetails(cfg *config.Config) error {
+	err := printSection("Environment", cfg.Name, true)
+	if err != nil {
+		return err
+	}
+
+	err = displayProviderConfiguration(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = displayNetworkConfiguration(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = displayBastionConfiguration(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = displayBlocInformation(cfg)
+	if err != nil {
+		return err
+	}
+
+	return displayAvailabilityZones(cfg)
+}
+
+// printSection prints a section header with optional separator.
+func printSection(label, value string, withSeparator bool) error {
+	_, err := fmt.Fprintf(os.Stdout, "%s: %s\n", label, value)
+	if err != nil {
+		return fmt.Errorf("failed to write %s: %w", strings.ToLower(label), err)
+	}
+
+	if withSeparator {
+		_, err := fmt.Fprintf(os.Stdout, "=====================================\n\n")
+		if err != nil {
+			return fmt.Errorf("failed to write separator: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// printField prints a field with proper formatting.
+func printField(label, value string) error {
+	_, err := fmt.Fprintf(os.Stdout, "  %-12s %s\n", label+":", value)
+	if err != nil {
+		return fmt.Errorf("failed to write %s: %w", strings.ToLower(label), err)
+	}
+
+	return nil
+}
+
+// printHeader prints a section header.
+func printHeader(header string) error {
+	_, err := fmt.Fprintf(os.Stdout, "\n%s:\n", header)
+	if err != nil {
+		return fmt.Errorf("failed to write %s header: %w", strings.ToLower(header), err)
+	}
+
+	return nil
+}
+
+// displayProviderConfiguration displays provider-related configuration.
+func displayProviderConfiguration(cfg *config.Config) error {
+	_, err := fmt.Fprintf(os.Stdout, "Provider Configuration:\n")
+	if err != nil {
+		return fmt.Errorf("failed to write provider header: %w", err)
+	}
+
+	fields := []struct{ label, value string }{
+		{"Provider", cfg.Provider},
+		{"IaaS", cfg.IaaS},
+		{"Region", cfg.Region},
+		{"Project ID", cfg.ProjectID},
+		{"Org ID", cfg.OrgID},
+	}
+
+	for _, field := range fields {
+		err := printField(field.label, field.value)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// displayNetworkConfiguration displays network configuration if present.
+func displayNetworkConfiguration(cfg *config.Config) error {
+	if cfg.Network.Name == "" {
+		return nil
+	}
+
+	err := printHeader("Network Configuration")
+	if err != nil {
+		return err
+	}
+
+	err = printField("Name", cfg.Network.Name)
+	if err != nil {
+		return err
+	}
+
+	err = printField("CIDR", cfg.Network.CIDR)
+	if err != nil {
+		return err
+	}
+
+	if len(cfg.Network.DNS) > 0 {
+		return printField("DNS", strings.Join(cfg.Network.DNS, ", "))
+	}
+
+	return nil
+}
+
+// displayBastionConfiguration displays bastion configuration if present.
+func displayBastionConfiguration(cfg *config.Config) error {
+	if cfg.Bastion.Flavor == "" {
+		return nil
+	}
+
+	err := printHeader("Bastion Configuration")
+	if err != nil {
+		return err
+	}
+
+	fields := []struct{ label, value string }{
+		{"Flavor", cfg.Bastion.Flavor},
+		{"Image", cfg.Bastion.Image},
+		{"Key Pair", cfg.Bastion.Keypair},
+	}
+
+	for _, field := range fields {
+		err := printField(field.label, field.value)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// displayBlocInformation displays current bloc information.
+func displayBlocInformation(cfg *config.Config) error {
+	err := printHeader("Current Bloc")
+	if err != nil {
+		return err
+	}
+
+	err = printField("Name", cfg.Name)
+	if err != nil {
+		return err
+	}
+
+	if cfg.Type != "" {
+		err := printField("Type", cfg.Type)
+		if err != nil {
+			return err
+		}
+	}
+
+	if cfg.Environment != "" {
+		return printField("Environment", cfg.Environment)
+	}
+
+	return nil
+}
+
+// displayAvailabilityZones displays availability zones if present.
+func displayAvailabilityZones(cfg *config.Config) error {
+	if len(cfg.AZs) == 0 {
+		return nil
+	}
+
+	err := printHeader("Availability Zones")
+	if err != nil {
+		return err
+	}
+
+	for name, az := range cfg.AZs {
+		_, err := fmt.Fprintf(os.Stdout, "  - %s: %s\n", name, az.Zone)
+		if err != nil {
+			return fmt.Errorf("failed to write AZ: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // runEnvSet sets the active environment.
 func runEnvSet(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-set")
-
 	envName := args[0]
 
-	// Verify the environment exists
-	envs, err := findEnvironments()
+	targetEnv, err := findTargetEnvironment(envName)
 	if err != nil {
-		return fmt.Errorf("failed to find environments: %w", err)
+		return err
 	}
 
-	found := false
+	err = updateOCFPConfig(envName, targetEnv, log)
+	if err != nil {
+		return err
+	}
 
-	var targetEnv *environmentInfo
+	err = displayEnvironmentSwitch(envName, targetEnv)
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Set active environment to: %s", envName)
+
+	return nil
+}
+
+func findTargetEnvironment(envName string) (*environmentInfo, error) {
+	envs := findEnvironments()
 
 	for _, env := range envs {
 		if env.Name == envName {
-			found = true
-			targetEnv = &env
-
-			break
+			return &env, nil
 		}
 	}
 
-	if !found {
-		return fmt.Errorf("environment '%s' not found", envName)
-	}
+	return nil, ErrEnvironmentNotFound(envName)
+}
 
-	// Update the OCFP configuration file
+func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Logger) error {
 	ocfpConfigPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "config.yml")
 
-	// Read existing config or create new
-	ocfpConfig := make(map[string]interface{})
-	// #nosec G304 - ocfpConfigPath is constructed from safe paths
-	if data, err := os.ReadFile(ocfpConfigPath); err == nil {
-		err := yaml.Unmarshal(data, &ocfpConfig)
-		if err != nil {
-			log.Warnf("Failed to parse existing config: %v", err)
-		}
+	ocfpConfig, err := readExistingOCFPConfig(ocfpConfigPath, log)
+	if err != nil {
+		return err
 	}
 
-	// Update the current environment
 	ocfpConfig["current_environment"] = envName
 	ocfpConfig["bloc_name"] = envName
 	ocfpConfig["config_file"] = targetEnv.ConfigFile
 
-	// Write back the config
-	if err := os.MkdirAll(filepath.Dir(ocfpConfigPath), 0750); err != nil {
+	return writeOCFPConfig(ocfpConfigPath, ocfpConfig)
+}
+
+func readExistingOCFPConfig(ocfpConfigPath string, log logger.Logger) (map[string]interface{}, error) {
+	ocfpConfig := make(map[string]interface{})
+	// #nosec G304 - ocfpConfigPath is constructed from safe paths
+	data, err := os.ReadFile(ocfpConfigPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ocfpConfig, nil
+		}
+
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	err = yaml.Unmarshal(data, &ocfpConfig)
+	if err != nil {
+		log.Warnf("Failed to parse existing config: %v", err)
+
+		return ocfpConfig, nil
+	}
+
+	return ocfpConfig, nil
+}
+
+func writeOCFPConfig(ocfpConfigPath string, ocfpConfig map[string]interface{}) error {
+	err := os.MkdirAll(filepath.Dir(ocfpConfigPath), ConfigDirPerm)
+	if err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -268,30 +459,40 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(ocfpConfigPath, data, 0600); err != nil {
+	err = os.WriteFile(ocfpConfigPath, data, ConfigFilePerm)
+	if err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
-	fmt.Printf("Switched to environment: %s\n", envName)
-	fmt.Printf("Configuration file: %s\n", targetEnv.ConfigFile)
+	return nil
+}
 
-	log.Infof("Set active environment to: %s", envName)
+func displayEnvironmentSwitch(envName string, targetEnv *environmentInfo) error {
+	_, err := fmt.Fprintf(os.Stdout, "Switched to environment: %s\n", envName)
+	if err != nil {
+		return fmt.Errorf("failed to write switch message: %w", err)
+	}
+
+	_, err = fmt.Fprintf(os.Stdout, "Configuration file: %s\n", targetEnv.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
 
 	return nil
 }
 
 // runEnvExport exports environment variables.
-func runEnvExport(cmd *cobra.Command, args []string, format string) error {
+func runEnvExport(args []string, format string) error {
 	log := logger.WithOperation("env-export")
 
 	// Determine which environment to export
-	envName := ""
+	var envName string
 	if len(args) > 0 {
 		envName = args[0]
 	} else {
 		envName = viper.GetString("bloc_name")
 		if envName == "" {
-			return errors.New("no environment specified and no current environment set")
+			return ErrNoEnvironmentSpecifiedAndNoCurrentSet
 		}
 	}
 
@@ -304,13 +505,22 @@ func runEnvExport(cmd *cobra.Command, args []string, format string) error {
 	// Export based on format
 	switch format {
 	case "bash", "sh":
-		exportBash(cfg)
+		err := exportBash(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to export bash format: %w", err)
+		}
 	case "fish":
-		exportFish(cfg)
+		err := exportFish(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to export fish format: %w", err)
+		}
 	case "powershell", "ps1":
-		exportPowerShell(cfg)
+		err := exportPowerShell(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to export powershell format: %w", err)
+		}
 	default:
-		return fmt.Errorf("unsupported export format: %s", format)
+		return ErrUnsupportedExportFormat(format)
 	}
 
 	log.Debugf("Exported environment variables for: %s", envName)
@@ -327,7 +537,7 @@ type environmentInfo struct {
 }
 
 // findEnvironments searches for available environment configurations.
-func findEnvironments() ([]environmentInfo, error) {
+func findEnvironments() []environmentInfo {
 	var envs []environmentInfo
 
 	// Search paths for configuration files
@@ -355,7 +565,9 @@ func findEnvironments() ([]environmentInfo, error) {
 			}
 
 			var cfg config.Config
-			if err := yaml.Unmarshal(data, &cfg); err != nil {
+
+			err = yaml.Unmarshal(data, &cfg)
+			if err != nil {
 				continue
 			}
 
@@ -373,53 +585,91 @@ func findEnvironments() ([]environmentInfo, error) {
 		}
 	}
 
-	return envs, nil
+	return envs
+}
+
+// shellExporter defines the interface for different shell export formats.
+type shellExporter struct {
+	commentFormat string
+	varFormat     string
+	shellName     string
+}
+
+// exportEnvironment exports environment variables using the specified shell format.
+func (e *shellExporter) exportEnvironment(cfg *config.Config) error {
+	vars := []struct {
+		name  string
+		value string
+	}{
+		{"OCFP_BLOC_NAME", cfg.Name},
+		{"OCFP_PROVIDER", cfg.Provider},
+		{"OCFP_IAAS", cfg.IaaS},
+		{"OCFP_REGION", cfg.Region},
+		{"OCFP_PROJECT_ID", cfg.ProjectID},
+		{"OCFP_ORG_ID", cfg.OrgID},
+	}
+
+	_, err := fmt.Fprintf(os.Stdout, e.commentFormat, cfg.Name)
+	if err != nil {
+		return fmt.Errorf("failed to write %s environment header: %w", e.shellName, err)
+	}
+
+	for _, v := range vars {
+		_, err = fmt.Fprintf(os.Stdout, e.varFormat, v.name, v.value)
+		if err != nil {
+			return fmt.Errorf("failed to write %s %s export: %w", e.shellName, v.name, err)
+		}
+	}
+
+	if cfg.Network.Name != "" {
+		networkVars := []struct {
+			name  string
+			value string
+		}{
+			{"OCFP_NETWORK_NAME", cfg.Network.Name},
+			{"OCFP_NETWORK_CIDR", cfg.Network.CIDR},
+		}
+
+		for _, v := range networkVars {
+			_, err = fmt.Fprintf(os.Stdout, e.varFormat, v.name, v.value)
+			if err != nil {
+				return fmt.Errorf("failed to write %s %s export: %w", e.shellName, v.name, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // exportBash exports environment variables in bash format.
-func exportBash(cfg *config.Config) {
-	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
-	fmt.Printf("export OCFP_BLOC_NAME='%s'\n", cfg.Name)
-	fmt.Printf("export OCFP_PROVIDER='%s'\n", cfg.Provider)
-	fmt.Printf("export OCFP_IAAS='%s'\n", cfg.IaaS)
-	fmt.Printf("export OCFP_REGION='%s'\n", cfg.Region)
-	fmt.Printf("export OCFP_PROJECT_ID='%s'\n", cfg.ProjectID)
-	fmt.Printf("export OCFP_ORG_ID='%s'\n", cfg.OrgID)
-
-	if cfg.Network.Name != "" {
-		fmt.Printf("export OCFP_NETWORK_NAME='%s'\n", cfg.Network.Name)
-		fmt.Printf("export OCFP_NETWORK_CIDR='%s'\n", cfg.Network.CIDR)
+func exportBash(cfg *config.Config) error {
+	exporter := &shellExporter{
+		commentFormat: "# OCFP Environment: %s\n",
+		varFormat:     "export %s='%s'\n",
+		shellName:     "bash",
 	}
+
+	return exporter.exportEnvironment(cfg)
 }
 
 // exportFish exports environment variables in fish format.
-func exportFish(cfg *config.Config) {
-	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
-	fmt.Printf("set -x OCFP_BLOC_NAME '%s'\n", cfg.Name)
-	fmt.Printf("set -x OCFP_PROVIDER '%s'\n", cfg.Provider)
-	fmt.Printf("set -x OCFP_IAAS '%s'\n", cfg.IaaS)
-	fmt.Printf("set -x OCFP_REGION '%s'\n", cfg.Region)
-	fmt.Printf("set -x OCFP_PROJECT_ID '%s'\n", cfg.ProjectID)
-	fmt.Printf("set -x OCFP_ORG_ID '%s'\n", cfg.OrgID)
-
-	if cfg.Network.Name != "" {
-		fmt.Printf("set -x OCFP_NETWORK_NAME '%s'\n", cfg.Network.Name)
-		fmt.Printf("set -x OCFP_NETWORK_CIDR '%s'\n", cfg.Network.CIDR)
+func exportFish(cfg *config.Config) error {
+	exporter := &shellExporter{
+		commentFormat: "# OCFP Environment: %s\n",
+		varFormat:     "set -x %s '%s'\n",
+		shellName:     "fish",
 	}
+
+	return exporter.exportEnvironment(cfg)
 }
 
 // exportPowerShell exports environment variables in PowerShell format.
-func exportPowerShell(cfg *config.Config) {
-	fmt.Printf("# OCFP Environment: %s\n", cfg.Name)
-	fmt.Printf("$env:OCFP_BLOC_NAME = '%s'\n", cfg.Name)
-	fmt.Printf("$env:OCFP_PROVIDER = '%s'\n", cfg.Provider)
-	fmt.Printf("$env:OCFP_IAAS = '%s'\n", cfg.IaaS)
-	fmt.Printf("$env:OCFP_REGION = '%s'\n", cfg.Region)
-	fmt.Printf("$env:OCFP_PROJECT_ID = '%s'\n", cfg.ProjectID)
-	fmt.Printf("$env:OCFP_ORG_ID = '%s'\n", cfg.OrgID)
-
-	if cfg.Network.Name != "" {
-		fmt.Printf("$env:OCFP_NETWORK_NAME = '%s'\n", cfg.Network.Name)
-		fmt.Printf("$env:OCFP_NETWORK_CIDR = '%s'\n", cfg.Network.CIDR)
+func exportPowerShell(cfg *config.Config) error {
+	exporter := &shellExporter{
+		commentFormat: "# OCFP Environment: %s\n",
+		varFormat:     "$env:%s = '%s'\n",
+		shellName:     "PowerShell",
 	}
+
+	return exporter.exportEnvironment(cfg)
 }

@@ -1,23 +1,21 @@
 package security
 
 import (
-	"errors"
-	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
 
 var (
-    // Valid path characters: alphanumeric, dash, underscore, dot, slash.
+	// Valid path characters: alphanumeric, dash, underscore, dot, slash.
 
-    // Disallowed path patterns for security.
-    dangerousPatterns = []*regexp.Regexp{ //nolint:gochecknoglobals // compiled regexps reused for efficiency
-        regexp.MustCompile(`\.\.`),        // Directory traversal
-        regexp.MustCompile(`^/proc`),      // Process filesystem
-        regexp.MustCompile(`^/sys`),       // System filesystem
-        regexp.MustCompile(`^/dev`),       // Device filesystem
-        regexp.MustCompile(`/etc/passwd`), // System password file
+	// Disallowed path patterns for security.
+	dangerousPatterns = []*regexp.Regexp{ //nolint:gochecknoglobals // compiled regexps reused for efficiency
+		regexp.MustCompile(`\.\.`),        // Directory traversal
+		regexp.MustCompile(`^/proc`),      // Process filesystem
+		regexp.MustCompile(`^/sys`),       // System filesystem
+		regexp.MustCompile(`^/dev`),       // Device filesystem
+		regexp.MustCompile(`/etc/passwd`), // System password file
 		regexp.MustCompile(`/etc/shadow`), // System shadow file
 		regexp.MustCompile(`\.ssh/id_`),   // SSH private keys (unless specifically allowed)
 	}
@@ -26,7 +24,7 @@ var (
 // ValidatePath validates a file path for security.
 func ValidatePath(path string) error {
 	if path == "" {
-		return errors.New("empty path")
+		return ErrEmptyPath
 	}
 
 	// Clean the path
@@ -35,13 +33,13 @@ func ValidatePath(path string) error {
 	// Check for dangerous patterns
 	for _, pattern := range dangerousPatterns {
 		if pattern.MatchString(cleanPath) {
-			return fmt.Errorf("path contains dangerous pattern: %s", path)
+			return ErrPathContainsDangerousPattern(path)
 		}
 	}
 
 	// Check for shell metacharacters
 	if strings.ContainsAny(path, ";|&`$()") {
-		return fmt.Errorf("path contains shell metacharacters: %s", path)
+		return ErrPathContainsShellMetacharacters(path)
 	}
 
 	return nil
@@ -55,7 +53,7 @@ func ValidatePathWithPattern(path string, pattern *regexp.Regexp) error {
 	}
 
 	if pattern != nil && !pattern.MatchString(path) {
-		return fmt.Errorf("path does not match required pattern: %s", path)
+		return ErrPathDoesNotMatchPattern(path)
 	}
 
 	return nil
@@ -78,11 +76,11 @@ func ValidateSSHKeyPath(path string) error {
 // ValidateInput validates input for command injection prevention.
 func ValidateInput(input string, pattern *regexp.Regexp) error {
 	if pattern != nil && !pattern.MatchString(input) {
-		return fmt.Errorf("invalid input: %s", input)
+		return ErrInvalidInput(input)
 	}
 
 	if strings.Contains(input, ";") || strings.Contains(input, "|") || strings.Contains(input, "&") {
-		return fmt.Errorf("input contains shell metacharacters: %s", input)
+		return ErrInputContainsShellMetacharacters(input)
 	}
 
 	return nil

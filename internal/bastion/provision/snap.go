@@ -9,6 +9,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// averageScriptLinesPerPackage represents the estimated average number of script lines per snap package.
+	averageScriptLinesPerPackage = 10
+)
+
 // SnapManager handles snap package installations.
 type SnapManager struct {
 	config   *config.Config
@@ -39,91 +44,10 @@ func NewSnapManager(provider string, cfg *config.Config) *SnapManager {
 
 // GetSnapPackages returns snap packages configuration.
 func (sm *SnapManager) GetSnapPackages() []SnapPackage {
-	pkgs := []SnapPackage{
-		{
-			Name:         "go",
-			Enabled:      true,
-			CheckCommand: "go",
-			Channel:      "1.24/stable",
-			Classic:      true,
-		},
-		{
-			Name:         "node",
-			Enabled:      false, // Disabled by default, use nvm instead
-			CheckCommand: "node",
-			Channel:      "18/stable",
-			Classic:      false,
-		},
-		{
-			Name:         "kubectl",
-			Enabled:      true,
-			CheckCommand: "kubectl",
-			Channel:      "stable",
-			Classic:      true,
-		},
-		{
-			Name:         "helm",
-			Enabled:      true,
-			CheckCommand: "helm",
-			Channel:      "stable",
-			Classic:      false,
-		},
-	}
-	// Apply config overrides
+	pkgs := sm.getDefaultSnapPackages()
+
 	if sm.config != nil {
-		enable := make(map[string]struct{})
-		for _, n := range sm.config.Bastion.Snaps.Enable {
-			enable[strings.ToLower(n)] = struct{}{}
-		}
-
-		disable := make(map[string]struct{})
-		for _, n := range sm.config.Bastion.Snaps.Disable {
-			disable[strings.ToLower(n)] = struct{}{}
-		}
-
-		if len(enable) > 0 || len(disable) > 0 {
-			for pkgIndex := range pkgs {
-				name := strings.ToLower(pkgs[pkgIndex].Name)
-				if _, ok := enable[name]; ok {
-					pkgs[pkgIndex].Enabled = true
-				}
-
-				if _, ok := disable[name]; ok {
-					pkgs[pkgIndex].Enabled = false
-				}
-			}
-		}
-		// Per-snap overrides by name
-		if sm.config.Bastion.SnapOverrides != nil {
-			for index := range pkgs {
-				name := strings.ToLower(pkgs[index].Name)
-				for key, override := range sm.config.Bastion.SnapOverrides {
-					if strings.ToLower(key) != name {
-						continue
-					}
-
-					if override.Channel != "" {
-						pkgs[index].Channel = override.Channel
-					}
-
-					if override.Classic != nil {
-						pkgs[index].Classic = *override.Classic
-					}
-
-					if override.DevMode != nil {
-						pkgs[index].DevMode = *override.DevMode
-					}
-
-					if override.Dangerous != nil {
-						pkgs[index].Dangerous = *override.Dangerous
-					}
-
-					if override.CheckCommand != "" {
-						pkgs[index].CheckCommand = override.CheckCommand
-					}
-				}
-			}
-		}
+		sm.applyConfigOverrides(&pkgs)
 	}
 
 	return pkgs
@@ -136,29 +60,176 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, scriptBufferSnapBase+scriptBufferSnapPerPackage*len(packages))
 
 	lines = append(lines, "# Snap package installation")
 	lines = append(lines, "")
 
-	// Ensure snapd is installed and running
-	lines = append(lines, "# Ensure snapd is installed and running")
-	lines = append(lines, "if ! command -v snap >/dev/null 2>&1; then")
-	lines = append(lines, "    log_info 'Installing snapd'")
-	lines = append(lines, "    sudo apt-get update -qq")
-	lines = append(lines, "    sudo apt-get install -y snapd")
-	lines = append(lines, "    sudo systemctl enable --now snapd")
-	lines = append(lines, "    log_success 'snapd installed and enabled'")
-	lines = append(lines, "else")
-	lines = append(lines, "    log_info 'snapd already available'")
-	lines = append(lines, "fi")
-	lines = append(lines, "")
+	lines = append(lines, sm.generateSnapdSetup()...)
+	lines = append(lines, sm.generatePackageInstalls(packages)...)
+	lines = append(lines, sm.generatePathRefresh()...)
 
-	// Wait for snap to be ready
-	lines = append(lines, "# Wait for snap to be ready")
-	lines = append(lines, "log_info 'Waiting for snap daemon to be ready'")
-	lines = append(lines, "sudo snap wait system seed.loaded")
-	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+// getDefaultSnapPackages returns the default snap package configurations.
+func (sm *SnapManager) getDefaultSnapPackages() []SnapPackage {
+	return []SnapPackage{
+		{
+			Name:         "go",
+			Enabled:      true,
+			CheckCommand: "go",
+			Channel:      "1.24/stable",
+			Classic:      true,
+			Condition:    "",
+			DevMode:      false,
+			Dangerous:    false,
+		},
+		{
+			Name:         "node",
+			Enabled:      false, // Disabled by default, use nvm instead
+			CheckCommand: "node",
+			Channel:      "18/stable",
+			Classic:      false,
+			Condition:    "",
+			DevMode:      false,
+			Dangerous:    false,
+		},
+		{
+			Name:         "kubectl",
+			Enabled:      true,
+			CheckCommand: "kubectl",
+			Channel:      "stable",
+			Classic:      true,
+			Condition:    "",
+			DevMode:      false,
+			Dangerous:    false,
+		},
+		{
+			Name:         "helm",
+			Enabled:      true,
+			CheckCommand: "helm",
+			Channel:      "stable",
+			Classic:      false,
+			Condition:    "",
+			DevMode:      false,
+			Dangerous:    false,
+		},
+	}
+}
+
+// applyConfigOverrides applies configuration overrides to snap packages.
+func (sm *SnapManager) applyConfigOverrides(pkgs *[]SnapPackage) {
+	sm.applyEnableDisableOverrides(pkgs)
+	sm.applySnapSpecificOverrides(pkgs)
+}
+
+// applyEnableDisableOverrides applies enable/disable overrides to packages.
+func (sm *SnapManager) applyEnableDisableOverrides(pkgs *[]SnapPackage) {
+	enable := sm.createEnableDisableMap(sm.config.Bastion.Snaps.Enable)
+	disable := sm.createEnableDisableMap(sm.config.Bastion.Snaps.Disable)
+
+	if len(enable) == 0 && len(disable) == 0 {
+		return
+	}
+
+	for pkgIndex := range *pkgs {
+		name := strings.ToLower((*pkgs)[pkgIndex].Name)
+
+		if _, ok := enable[name]; ok {
+			(*pkgs)[pkgIndex].Enabled = true
+		}
+
+		if _, ok := disable[name]; ok {
+			(*pkgs)[pkgIndex].Enabled = false
+		}
+	}
+}
+
+// createEnableDisableMap creates a map for enable/disable snap names.
+func (sm *SnapManager) createEnableDisableMap(names []string) map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, n := range names {
+		result[strings.ToLower(n)] = struct{}{}
+	}
+
+	return result
+}
+
+// applySnapSpecificOverrides applies per-snap overrides by name.
+func (sm *SnapManager) applySnapSpecificOverrides(pkgs *[]SnapPackage) {
+	if sm.config.Bastion.SnapOverrides == nil {
+		return
+	}
+
+	for index := range *pkgs {
+		name := strings.ToLower((*pkgs)[index].Name)
+
+		override := sm.findSnapOverride(name)
+		if override != nil {
+			sm.applyOverrideToPackage(&(*pkgs)[index], override)
+		}
+	}
+}
+
+// findSnapOverride finds the override configuration for a snap package name.
+func (sm *SnapManager) findSnapOverride(name string) *config.SnapOverride {
+	for key, override := range sm.config.Bastion.SnapOverrides {
+		if strings.ToLower(key) == name {
+			temp := override
+
+			return &temp
+		}
+	}
+
+	return nil
+}
+
+// applyOverrideToPackage applies a specific override to a snap package.
+func (sm *SnapManager) applyOverrideToPackage(pkg *SnapPackage, override *config.SnapOverride) {
+	if override.Channel != "" {
+		pkg.Channel = override.Channel
+	}
+
+	if override.Classic != nil {
+		pkg.Classic = *override.Classic
+	}
+
+	if override.DevMode != nil {
+		pkg.DevMode = *override.DevMode
+	}
+
+	if override.Dangerous != nil {
+		pkg.Dangerous = *override.Dangerous
+	}
+
+	if override.CheckCommand != "" {
+		pkg.CheckCommand = override.CheckCommand
+	}
+}
+
+func (sm *SnapManager) generateSnapdSetup() []string {
+	return []string{
+		"# Ensure snapd is installed and running",
+		"if ! command -v snap >/dev/null 2>&1; then",
+		"    log_info 'Installing snapd'",
+		"    sudo apt-get update -qq",
+		"    sudo apt-get install -y snapd",
+		"    sudo systemctl enable --now snapd",
+		"    log_success 'snapd installed and enabled'",
+		"else",
+		"    log_info 'snapd already available'",
+		"fi",
+		"",
+		"# Wait for snap to be ready",
+		"log_info 'Waiting for snap daemon to be ready'",
+		"sudo snap wait system seed.loaded",
+		"",
+	}
+}
+
+func (sm *SnapManager) generatePackageInstalls(packages []SnapPackage) []string {
+	lines := make([]string, 0, len(packages)*averageScriptLinesPerPackage)
 
 	for _, pkg := range packages {
 		if !pkg.Enabled || sm.shouldSkipCondition(pkg.Condition) {
@@ -167,7 +238,6 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 
 		lines = append(lines, "# Install snap package: "+pkg.Name)
 
-		// Check if already installed
 		if pkg.CheckCommand != "" {
 			lines = append(lines, fmt.Sprintf("if command -v %s >/dev/null 2>&1; then", pkg.CheckCommand))
 			lines = append(lines, fmt.Sprintf("    log_info '%s already installed via snap or system package'", pkg.Name))
@@ -178,25 +248,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 			lines = append(lines, "else")
 		}
 
-		// Build snap install command
-		installCmd := "sudo snap install " + pkg.Name
-
-		if pkg.Channel != "" {
-			installCmd += " --channel=" + pkg.Channel
-		}
-
-		if pkg.Classic {
-			installCmd += " --classic"
-		}
-
-		if pkg.DevMode {
-			installCmd += " --devmode"
-		}
-
-		if pkg.Dangerous {
-			installCmd += " --dangerous"
-		}
-
+		installCmd := sm.buildSnapInstallCommand(pkg)
 		lines = append(lines, fmt.Sprintf("    log_info 'Installing snap package: %s'", pkg.Name))
 		lines = append(lines, "    "+installCmd)
 		lines = append(lines, "    if [ $? -eq 0 ]; then")
@@ -208,12 +260,37 @@ func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
 		lines = append(lines, "")
 	}
 
-	// Refresh PATH for snap binaries
-	lines = append(lines, "# Refresh PATH for snap binaries")
-	lines = append(lines, "export PATH=\"/snap/bin:$PATH\"")
-	lines = append(lines, "")
+	return lines
+}
 
-	return strings.Join(lines, "\n")
+func (sm *SnapManager) buildSnapInstallCommand(pkg SnapPackage) string {
+	installCmd := "sudo snap install " + pkg.Name
+
+	if pkg.Channel != "" {
+		installCmd += " --channel=" + pkg.Channel
+	}
+
+	if pkg.Classic {
+		installCmd += " --classic"
+	}
+
+	if pkg.DevMode {
+		installCmd += " --devmode"
+	}
+
+	if pkg.Dangerous {
+		installCmd += " --dangerous"
+	}
+
+	return installCmd
+}
+
+func (sm *SnapManager) generatePathRefresh() []string {
+	return []string{
+		"# Refresh PATH for snap binaries",
+		"export PATH=\"/snap/bin:$PATH\"",
+		"",
+	}
 }
 
 // shouldSkipCondition evaluates whether a condition should be skipped.
@@ -222,20 +299,20 @@ func (sm *SnapManager) shouldSkipCondition(condition string) bool {
 		return false
 	}
 
-    switch condition {
-    case condProviderIsStackit:
-        return sm.provider != providerStackit
-    case condProviderIsAWS:
-        return sm.provider != providerAWS
-    case condProviderIsAzure:
-        return sm.provider != providerAzure
-    case condProviderIsGCP:
-        return sm.provider != providerGCP
-    case condProviderIsOpenstack:
-        return sm.provider != providerOpenStack
-    case condProviderIsVMware:
-        return sm.provider != providerVMware && sm.provider != providerVsphere
-    default:
-        return false
-    }
+	switch condition {
+	case condProviderIsStackit:
+		return sm.provider != providerStackit
+	case condProviderIsAWS:
+		return sm.provider != providerAWS
+	case condProviderIsAzure:
+		return sm.provider != providerAzure
+	case condProviderIsGCP:
+		return sm.provider != providerGCP
+	case condProviderIsOpenstack:
+		return sm.provider != providerOpenStack
+	case condProviderIsVMware:
+		return sm.provider != providerVMware && sm.provider != providerVsphere
+	default:
+		return false
+	}
 }

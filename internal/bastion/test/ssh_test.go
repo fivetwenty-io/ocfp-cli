@@ -1,4 +1,4 @@
-package test
+package test_test
 
 import (
 	"os"
@@ -19,7 +19,9 @@ func TestKeyManagerKeyDiscovery(t *testing.T) {
 
 	// Create a test SSH key
 	sshDir := filepath.Join(tempDir, ".ssh")
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
+
+	err := os.MkdirAll(sshDir, 0700)
+	if err != nil {
 		t.Fatalf("Failed to create SSH directory: %v", err)
 	}
 
@@ -30,7 +32,8 @@ b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAFwAAAAdzc2gtcn
 NhAAAAAwEAAQAAAQEAtest-key-content-here
 -----END OPENSSH PRIVATE KEY-----`
 
-	if err := os.WriteFile(testKeyPath, []byte(testKeyContent), 0600); err != nil {
+	err = os.WriteFile(testKeyPath, []byte(testKeyContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to write test key: %v", err)
 	}
 
@@ -55,13 +58,21 @@ func TestSSHClientCreation(t *testing.T) {
 		Host:           "test-bastion",
 		Port:           22,
 		User:           "test-user",
+		Password:       "",
 		PrivateKeyPath: "/nonexistent/key",
+		UseSSHPass:     false,
 		SSHOptions:     []string{"-o", "StrictHostKeyChecking=no"},
 	}
 
 	opts := &ssh.ProvisioningOptions{
-		DryRun:  true,
-		Verbose: true,
+		DryRun:      true,
+		Force:       false,
+		Parallel:    false,
+		Resume:      false,
+		Verbose:     true,
+		MaxWorkers:  0,
+		ProgressOut: nil,
+		LogFile:     "",
 	}
 
 	client := ssh.NewClient(connDetails, opts)
@@ -82,7 +93,7 @@ func TestFileTransferManager(t *testing.T) {
 
 	testContent := "test file content"
 
-	err := os.WriteFile(testFile, []byte(testContent), 0644)
+	err := os.WriteFile(testFile, []byte(testContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -90,7 +101,8 @@ func TestFileTransferManager(t *testing.T) {
 	// NOTE: Transfer manager requires a real SSH client, not a mock
 	// This would need to be tested with an actual SSH connection
 	// For now, just verify the test file was created
-	if _, err := os.Stat(testFile); os.IsNotExist(err) {
+	_, err = os.Stat(testFile)
+	if os.IsNotExist(err) {
 		t.Error("Test file was not created")
 	}
 }
@@ -114,8 +126,9 @@ func TestKeyManagerKeyValidation(t *testing.T) {
 		t.Error("Expected false for non-existent key")
 	}
 
-	// Create a mock encrypted key
+	// Create a mock encrypted key for testing - NOT a real private key
 	encryptedKeyPath := filepath.Join(tempDir, "encrypted_key")
+	// #nosec G101 - This is test data, not a real private key
 	encryptedKeyContent := `-----BEGIN RSA PRIVATE KEY-----
 Proc-Type: 4,ENCRYPTED
 DEK-Info: AES-128-CBC,test
@@ -123,7 +136,8 @@ DEK-Info: AES-128-CBC,test
 mock-encrypted-key-content
 -----END RSA PRIVATE KEY-----`
 
-	if err := os.WriteFile(encryptedKeyPath, []byte(encryptedKeyContent), 0600); err != nil {
+	err = os.WriteFile(encryptedKeyPath, []byte(encryptedKeyContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to write encrypted key: %v", err)
 	}
 
@@ -143,7 +157,8 @@ mock-encrypted-key-content
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmU=
 -----END OPENSSH PRIVATE KEY-----`
 
-	if err := os.WriteFile(unencryptedKeyPath, []byte(unencryptedKeyContent), 0600); err != nil {
+	err = os.WriteFile(unencryptedKeyPath, []byte(unencryptedKeyContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to write unencrypted key: %v", err)
 	}
 

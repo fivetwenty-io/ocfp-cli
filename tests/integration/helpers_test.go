@@ -1,4 +1,4 @@
-package integration
+package integration_test
 
 import (
 	"os"
@@ -7,48 +7,38 @@ import (
 )
 
 // createScript creates a script under baseDir/subdir with the given name, content and mode.
-func createScript(t *testing.T, baseDir, subdir, name, content string, mode os.FileMode) string {
+func createScript(t *testing.T, baseDir, subdir, name, content string, mode os.FileMode) {
 	t.Helper()
 
 	dir := filepath.Join(baseDir, subdir)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
 		t.Fatalf("failed to create script dir: %v", err)
 	}
 
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+
+	err = os.WriteFile(path, []byte(content), mode)
+	if err != nil {
 		t.Fatalf("failed to write script: %v", err)
 	}
-
-	return path
 }
 
 // chdir changes to dir and returns a cleanup function to restore the previous working directory.
 func chdir(t *testing.T, dir string) func() {
 	t.Helper()
 
-	oldWd, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
+	t.Chdir(dir)
 
-	return func() { _ = os.Chdir(oldWd) }
+	return func() {} // t.Chdir automatically restores
 }
 
 // withEnv sets an environment variable and returns a cleanup to unset/restore it.
 func withEnv(t *testing.T, key, value string) func() {
 	t.Helper()
 
-	old, had := os.LookupEnv(key)
-	if err := os.Setenv(key, value); err != nil {
-		t.Fatalf("failed to set env %s: %v", key, err)
-	}
+	t.Setenv(key, value)
 
-	return func() {
-		if had {
-			_ = os.Setenv(key, old)
-		} else {
-			_ = os.Unsetenv(key)
-		}
-	}
+	return func() {} // t.Setenv automatically restores
 }

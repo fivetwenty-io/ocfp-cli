@@ -15,125 +15,184 @@ import (
 
 // Execute constructs the root command, configures flags, and runs it.
 func Execute() {
-	// Local flag variables (no globals)
-	var (
-		cfgFile     string
-		blocName    string
-		debug       bool
-		verbose     bool
-		trace       bool
-		noLog       bool
-		region      string
-		debugLookup bool
-		asciiTables bool
-	)
-
-	rootCmd := &cobra.Command{
-		Use:   "ocfp",
-		Short: "Open Cloud Foundry Platform CLI",
-		Long: `OCFP (Open Cloud Foundry Platform) is a toolkit for bootstrapping 
-and managing Cloud Foundry deployments across multiple cloud providers.
-
-It provides infrastructure provisioning, configuration management, and
-operational tooling for Cloud Foundry environments.`,
-		Version: version.Get().Short(),
-	}
+	flags := setupFlags()
+	rootCmd := createRootCommand()
 
 	// Set up config/init hooks
-	cobra.OnInitialize(func() { initConfig(cfgFile, debug || verbose) })
+	cobra.OnInitialize(func() { initConfig(*flags.cfgFile, *flags.debug || *flags.verbose) })
 
-	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "f", "", "config file path")
-	rootCmd.PersistentFlags().StringVar(&blocName, "bloc", "", "bloc name (key under blocs: in config)")
-	// Backwards-compat: deprecated alias for --bloc
-	rootCmd.PersistentFlags().StringVar(&blocName, "bloc-name", "", "deprecated: use --bloc instead")
-	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug output")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
-	rootCmd.PersistentFlags().BoolVar(&trace, "trace", false, "enable trace-level debugging")
-	rootCmd.PersistentFlags().BoolVar(&noLog, "no-log", false, "disable logging to ~/.ocfp/logs/")
-	rootCmd.PersistentFlags().StringVar(&region, "region", "", "cloud region")
-	// Provider is derived from bloc config; no global --iaas flag
-	rootCmd.PersistentFlags().BoolVar(&debugLookup, "debug-lookup", false, "print bastion lookup strategy matches")
-	// ASCII tables (global rendering toggle in ui package)
-	rootCmd.PersistentFlags().BoolVar(&asciiTables, "ascii", false, "use ASCII-only tables in output")
+	// Configure flags
+	defineFlags(rootCmd, flags)
+	bindFlagsToViper(rootCmd)
 
-	// Bind flags to viper
-	if err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config")); err != nil {
-		logger.Warnf("Failed to bind config flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("bloc_name", rootCmd.PersistentFlags().Lookup("bloc")); err != nil {
-		logger.Warnf("Failed to bind bloc flag: %v", err)
-	}
-
-	// Ensure viper sees the chosen bloc value even if only --bloc-name is used
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if blocName != "" {
-			viper.Set("bloc_name", blocName)
-		}
-		// Apply global UI settings
-		ui.SetASCII(viper.GetBool("ascii"))
-
-		// Initialize logger once flags and viper are available
-		_ = logger.Initialize(logger.Config{
-			Debug:    viper.GetBool("debug"),
-			Verbose:  viper.GetBool("verbose"),
-			Trace:    viper.GetBool("trace"),
-			NoLog:    viper.GetBool("no_log"),
-			BlocName: viper.GetString("bloc_name"),
-			Command:  cmd.Name(),
-		})
-	}
-
-	if err := viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug")); err != nil {
-		logger.Warnf("Failed to bind debug flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
-		logger.Warnf("Failed to bind verbose flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("trace", rootCmd.PersistentFlags().Lookup("trace")); err != nil {
-		logger.Warnf("Failed to bind trace flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("no_log", rootCmd.PersistentFlags().Lookup("no-log")); err != nil {
-		logger.Warnf("Failed to bind no-log flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region")); err != nil {
-		logger.Warnf("Failed to bind region flag: %v", err)
-	}
-	// No binding for iaas; provider should come from bloc config
-	if err := viper.BindPFlag("debug_lookup", rootCmd.PersistentFlags().Lookup("debug-lookup")); err != nil {
-		logger.Warnf("Failed to bind debug-lookup flag: %v", err)
-	}
-
-	if err := viper.BindPFlag("ascii", rootCmd.PersistentFlags().Lookup("ascii")); err != nil {
-		logger.Warnf("Failed to bind ascii flag: %v", err)
-	}
+	// Set prerun handler
+	rootCmd.PersistentPreRun = createPreRunHandler(flags.blocName)
 
 	// Set custom version template
 	rootCmd.SetVersionTemplate(version.Get().String() + "\n")
 
-	// Deprecated flags for backward compatibility
-	_ = rootCmd.PersistentFlags().MarkDeprecated("bloc-name", "use --bloc instead")
-	_ = rootCmd.PersistentFlags().MarkHidden("bloc-name")
-	rootCmd.PersistentFlags().StringVar(&blocName, "env-name", "", "deprecated: use --bloc instead")
-	_ = rootCmd.PersistentFlags().MarkDeprecated("env-name", "use --bloc instead")
-	_ = rootCmd.PersistentFlags().MarkHidden("env-name")
-
 	// Explicitly register providers
-	if err := stackit.Register(); err != nil {
+	err := stackit.Register()
+	if err != nil {
 		logger.Warnf("Failed to register STACKIT provider: %v", err)
 	}
 
 	// Register all commands
 	RegisterCommands(rootCmd)
 
-	if err := rootCmd.Execute(); err != nil {
+	err = rootCmd.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// flagConfig holds all flag values.
+type flagConfig struct {
+	cfgFile     *string
+	blocName    *string
+	debug       *bool
+	verbose     *bool
+	trace       *bool
+	noLog       *bool
+	region      *string
+	debugLookup *bool
+	asciiTables *bool
+}
+
+// setupFlags creates and returns flag configuration.
+func setupFlags() *flagConfig {
+	return &flagConfig{
+		cfgFile:     new(string),
+		blocName:    new(string),
+		debug:       new(bool),
+		verbose:     new(bool),
+		trace:       new(bool),
+		noLog:       new(bool),
+		region:      new(string),
+		debugLookup: new(bool),
+		asciiTables: new(bool),
+	}
+}
+
+// createRootCommand creates the root cobra command.
+func createRootCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:        "ocfp",
+		Aliases:    nil,
+		SuggestFor: nil,
+		Short:      "Open Cloud Foundry Platform CLI",
+		GroupID:    "",
+		Long: `OCFP (Open Cloud Foundry Platform) is a toolkit for bootstrapping
+and managing Cloud Foundry deployments across multiple cloud providers.
+
+It provides infrastructure provisioning, configuration management, and
+operational tooling for Cloud Foundry environments.`,
+		Example:                "",
+		ValidArgs:              nil,
+		ValidArgsFunction:      nil,
+		Args:                   nil,
+		ArgAliases:             nil,
+		BashCompletionFunction: "",
+		Deprecated:             "",
+		Annotations:            nil,
+		Version:                version.Get().Short(),
+		PersistentPreRun:       nil,
+		PersistentPreRunE:      nil,
+		PreRun:                 nil,
+		PreRunE:                nil,
+		Run:                    nil,
+		RunE:                   nil,
+		PostRun:                nil,
+		PostRunE:               nil,
+		PersistentPostRun:      nil,
+		PersistentPostRunE:     nil,
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: false,
+		},
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd:   false,
+			DisableNoDescFlag:   false,
+			DisableDescriptions: false,
+			HiddenDefaultCmd:    false,
+		},
+		TraverseChildren:           false,
+		Hidden:                     false,
+		SilenceErrors:              false,
+		SilenceUsage:               false,
+		DisableFlagParsing:         false,
+		DisableAutoGenTag:          false,
+		DisableFlagsInUseLine:      false,
+		DisableSuggestions:         false,
+		SuggestionsMinimumDistance: 0,
+	}
+}
+
+// defineFlags sets up command line flags.
+func defineFlags(cmd *cobra.Command, flags *flagConfig) {
+	cmd.PersistentFlags().StringVarP(flags.cfgFile, "config", "f", "", "config file path")
+	cmd.PersistentFlags().StringVar(flags.blocName, "bloc", "", "bloc name (key under blocs: in config)")
+	cmd.PersistentFlags().StringVar(flags.blocName, "bloc-name", "", "deprecated: use --bloc instead")
+	cmd.PersistentFlags().BoolVarP(flags.debug, "debug", "d", false, "enable debug output")
+	cmd.PersistentFlags().BoolVarP(flags.verbose, "verbose", "v", false, "enable verbose output")
+	cmd.PersistentFlags().BoolVar(flags.trace, "trace", false, "enable trace-level debugging")
+	cmd.PersistentFlags().BoolVar(flags.noLog, "no-log", false, "disable logging to ~/.ocfp/logs/")
+	cmd.PersistentFlags().StringVar(flags.region, "region", "", "cloud region")
+	cmd.PersistentFlags().BoolVar(flags.debugLookup, "debug-lookup", false, "print bastion lookup strategy matches")
+	cmd.PersistentFlags().BoolVar(flags.asciiTables, "ascii", false, "use ASCII-only tables in output")
+
+	// Deprecated flags for backward compatibility
+	_ = cmd.PersistentFlags().MarkDeprecated("bloc-name", "use --bloc instead")
+	_ = cmd.PersistentFlags().MarkHidden("bloc-name")
+	cmd.PersistentFlags().StringVar(flags.blocName, "env-name", "", "deprecated: use --bloc instead")
+	_ = cmd.PersistentFlags().MarkDeprecated("env-name", "use --bloc instead")
+	_ = cmd.PersistentFlags().MarkHidden("env-name")
+}
+
+// bindFlagsToViper binds command flags to viper configuration.
+func bindFlagsToViper(cmd *cobra.Command) {
+	flagBindings := map[string]string{
+		"config":       "config",
+		"bloc_name":    "bloc",
+		"debug":        "debug",
+		"verbose":      "verbose",
+		"trace":        "trace",
+		"no_log":       "no-log",
+		"region":       "region",
+		"debug_lookup": "debug-lookup",
+		"ascii":        "ascii",
+	}
+
+	for viperKey, flagName := range flagBindings {
+		err := viper.BindPFlag(viperKey, cmd.PersistentFlags().Lookup(flagName))
+		if err != nil {
+			logger.Warnf("Failed to bind %s flag: %v", flagName, err)
+		}
+	}
+}
+
+// createPreRunHandler creates the persistent pre-run handler.
+func createPreRunHandler(blocName *string) func(*cobra.Command, []string) {
+	return func(cmd *cobra.Command, args []string) {
+		if *blocName != "" {
+			viper.Set("bloc_name", *blocName)
+		}
+		// Apply global UI settings
+		ui.SetASCII(viper.GetBool("ascii"))
+
+		// Initialize logger once flags and viper are available
+		_ = logger.Initialize(logger.Config{
+			Level:      "",
+			Debug:      viper.GetBool("debug"),
+			Verbose:    viper.GetBool("verbose"),
+			Trace:      viper.GetBool("trace"),
+			NoLog:      viper.GetBool("no_log"),
+			LogDir:     "",
+			BlocName:   viper.GetString("bloc_name"),
+			Command:    cmd.Name(),
+			RequestID:  "",
+			DirectorID: "",
+		})
 	}
 }
 
@@ -168,7 +227,8 @@ func initConfig(cfgFile string, verbose bool) {
 	}
 
 	// Read config file if it exists
-	if err := viper.ReadInConfig(); err == nil {
+	err := viper.ReadInConfig()
+	if err == nil {
 		if verbose {
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		}
