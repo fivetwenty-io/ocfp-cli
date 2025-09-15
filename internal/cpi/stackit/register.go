@@ -20,6 +20,11 @@ func Register() error {
 //
 //nolint:ireturn // Returns interface by design for provider abstraction
 func NewProvider(config interface{}) (cpi.Provider, error) {
+	// If config is nil, return an uninitialized client that will be configured later via Initialize
+	if config == nil {
+		return NewClient(nil)
+	}
+
 	// Convert generic config to STACKIT config
 	var stackitConfig *Config
 

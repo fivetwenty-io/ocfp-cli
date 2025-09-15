@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	ocfpconfig "github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	stackitconfig "github.com/stackitcloud/stackit-sdk-go/core/config"
@@ -46,8 +47,21 @@ type Config struct {
 
 // NewClient creates a new STACKIT client.
 func NewClient(config *Config) (*Client, error) {
+	// Allow nil config for uninitialized client (will be configured via Initialize)
 	if config == nil {
-		return nil, ErrConfigIsRequired
+		client := &Client{
+			config:       nil,
+			network:      nil,
+			compute:      nil,
+			storage:      nil,
+			security:     nil,
+			loadBalancer: nil,
+			iaasClient:   nil,
+			lbClient:     nil,
+			objClient:    nil,
+		}
+		// Don't initialize managers yet since we don't have config
+		return client, nil
 	}
 
 	// Set defaults
@@ -198,18 +212,51 @@ func (c *Client) SupportsStorage() bool {
 }
 
 // Initialize initializes the provider with configuration.
+//
+//nolint:cyclop,funlen // Multiple config type checks and setup required
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	// Handle different config types
 	var cfg *Config
-	switch v := config.(type) {
+	switch configValue := config.(type) {
 	case *Config:
-		cfg = v
+		cfg = configValue
+	case *ocfpconfig.Config:
+		// Convert OCFP config to STACKIT config
+		cfg = &Config{
+			ProjectID:           configValue.ProjectID,
+			OrgID:               configValue.OrgID,
+			AuthToken:           configValue.AuthToken,
+			ServiceAccountToken: configValue.ServiceAccountToken,
+			ServiceAccountJSON:  configValue.ServiceAccountJSON,
+			Region:              configValue.Region,
+			BaseURL:             configValue.APIEndpoint,
+			Timeout:             0,
+			MaxRetries:          0,
+		}
 	case map[string]interface{}:
 		// Config was already parsed in NewProvider, just return success
 		// The client is already properly initialized with authentication
 		return nil
 	default:
 		return ErrInvalidConfigTypeForStackitProvider(config)
+	}
+
+	// Validate required fields
+	if cfg.ProjectID == "" {
+		return ErrProjectIDRequiredForStackitProvider
+	}
+
+	if cfg.OrgID == "" {
+		return ErrOrgIDRequiredForStackitProvider
+	}
+
+	// Check for authentication - prefer service_account_json, then service_account_token, then auth_token
+	hasServiceAccountJSON := cfg.ServiceAccountJSON != ""
+	hasServiceAccountToken := cfg.ServiceAccountToken != ""
+	hasAuthToken := cfg.AuthToken != ""
+
+	if !hasServiceAccountJSON && !hasServiceAccountToken && !hasAuthToken {
+		return ErrStackitAuthenticationRequired
 	}
 
 	// Set defaults

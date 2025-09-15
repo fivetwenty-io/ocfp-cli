@@ -525,6 +525,11 @@ func applyStackitDefaults(cfg *Config) {
 		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
 	}
 
+	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
+		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+	}
+
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "m1a.2d"
 	}

@@ -390,6 +390,7 @@ func generateSubnets(parent *net.IPNet, newPrefix, count int) []string {
 		if subnetIndex < 0 || subnetIndex > maxInt32 {
 			break // Additional safety check for gosec
 		}
+
 		index := uint32(subnetIndex)
 		subnets[subnetIndex] = createSubnetCIDR(base, index, size, newPrefix)
 	}
@@ -887,17 +888,19 @@ func (m *Manager) buildPlanTable(plan *bootstrapPlan) *ui.Table {
 	m.addVolumesSection(table, plan)
 	m.addBastionSection(table, plan)
 
-	table.AddSeparator()
-	table.AddRow([]string{"Total Resources", strconv.Itoa(plan.CreateCount)})
+	table.AddSection("Summary")
+	idx := len(table.Sections) - 1
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Total Resources", strconv.Itoa(plan.CreateCount)})
 
 	return table
 }
 
 func (m *Manager) addNetworkSection(t *ui.Table, plan *bootstrapPlan) {
 	t.AddSection("Network")
-	t.AddRow([]string{"Name", plan.Network.Name})
-	t.AddRow([]string{"CIDR", plan.Network.CIDR})
-	t.AddRow([]string{"DNS", strings.Join(plan.Network.DNS, ", ")})
+	idx := len(t.Sections) - 1
+	t.Sections[idx].Rows = append(t.Sections[idx].Rows, []string{"Name", plan.Network.Name})
+	t.Sections[idx].Rows = append(t.Sections[idx].Rows, []string{"CIDR", plan.Network.CIDR})
+	t.Sections[idx].Rows = append(t.Sections[idx].Rows, []string{"DNS", strings.Join(plan.Network.DNS, ", ")})
 }
 
 func (m *Manager) addSubnetsSection(table *ui.Table, plan *bootstrapPlan) {
@@ -906,9 +909,10 @@ func (m *Manager) addSubnetsSection(table *ui.Table, plan *bootstrapPlan) {
 	}
 
 	table.AddSection("Subnets")
+	idx := len(table.Sections) - 1
 
 	for _, subnet := range plan.Subnets {
-		table.AddRow([]string{
+		table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{
 			subnet.Name,
 			fmt.Sprintf("%s (%s)", subnet.CIDR, subnet.Type),
 		})
@@ -921,11 +925,12 @@ func (m *Manager) addPublicIPsSection(table *ui.Table, plan *bootstrapPlan) {
 	}
 
 	table.AddSection("Public IPs")
-	table.AddRow([]string{"Ops", strconv.Itoa(plan.PublicIPs.Ops)})
-	table.AddRow([]string{"Jumpbox", strconv.Itoa(plan.PublicIPs.Jumpbox)})
-	table.AddRow([]string{"Router", strconv.Itoa(plan.PublicIPs.Router)})
-	table.AddRow([]string{"CF SSH", strconv.Itoa(plan.PublicIPs.CFSSH)})
-	table.AddRow([]string{"TCP Router", strconv.Itoa(plan.PublicIPs.TCPRouter)})
+	idx := len(table.Sections) - 1
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Ops", strconv.Itoa(plan.PublicIPs.Ops)})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Jumpbox", strconv.Itoa(plan.PublicIPs.Jumpbox)})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Router", strconv.Itoa(plan.PublicIPs.Router)})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"CF SSH", strconv.Itoa(plan.PublicIPs.CFSSH)})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"TCP Router", strconv.Itoa(plan.PublicIPs.TCPRouter)})
 }
 
 func (m *Manager) addSecurityGroupsSection(table *ui.Table, plan *bootstrapPlan) {
@@ -934,9 +939,10 @@ func (m *Manager) addSecurityGroupsSection(table *ui.Table, plan *bootstrapPlan)
 	}
 
 	table.AddSection("Security Groups")
+	idx := len(table.Sections) - 1
 
 	for _, sg := range plan.SecurityGroups {
-		table.AddRow([]string{sg.Name, fmt.Sprintf("%d rules", sg.Rules)})
+		table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{sg.Name, fmt.Sprintf("%d rules", sg.Rules)})
 	}
 
 	// Add detailed rules section
@@ -945,15 +951,11 @@ func (m *Manager) addSecurityGroupsSection(table *ui.Table, plan *bootstrapPlan)
 
 func (m *Manager) addSecurityGroupRulesSection(table *ui.Table) {
 	table.AddSection("Security Group Rules")
-	table.SetHeaders([]string{"Group", "Direction", "Protocol", "Ports", "Remote", "Description"})
+	idx := len(table.Sections) - 1
+	table.Sections[idx].Headers = []string{"Group", "Direction", "Protocol", "Ports", "Remote", "Description"}
 
 	rows := m.buildSecurityGroupRuleRows()
-
-	for _, row := range rows {
-		table.AddRow(row)
-	}
-
-	table.SetHeaders(nil) // Reset headers
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, rows...)
 }
 
 func (m *Manager) buildSecurityGroupRuleRows() [][]string {
@@ -1008,9 +1010,10 @@ func (m *Manager) addBucketsSection(table *ui.Table, plan *bootstrapPlan) {
 	}
 
 	table.AddSection("Buckets")
+	idx := len(table.Sections) - 1
 
 	for _, bucket := range plan.Buckets {
-		table.AddRow([]string{bucket, "S3-compatible"})
+		table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{bucket, "S3-compatible"})
 	}
 }
 
@@ -1020,9 +1023,10 @@ func (m *Manager) addVolumesSection(table *ui.Table, plan *bootstrapPlan) {
 	}
 
 	table.AddSection("Volumes")
+	idx := len(table.Sections) - 1
 
 	for _, volume := range plan.Volumes {
-		table.AddRow([]string{
+		table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{
 			volume.Name,
 			fmt.Sprintf("%d GB (%s)", volume.SizeGB, volume.Type),
 		})
@@ -1031,11 +1035,12 @@ func (m *Manager) addVolumesSection(table *ui.Table, plan *bootstrapPlan) {
 
 func (m *Manager) addBastionSection(table *ui.Table, plan *bootstrapPlan) {
 	table.AddSection("Bastion")
-	table.AddRow([]string{"Name", plan.Bastion.Name})
-	table.AddRow([]string{"Flavor", plan.Bastion.Flavor})
-	table.AddRow([]string{"Image", plan.Bastion.Image})
-	table.AddRow([]string{"Network", plan.Bastion.Network})
-	table.AddRow([]string{"Subnet", plan.Bastion.Subnet})
+	idx := len(table.Sections) - 1
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Name", plan.Bastion.Name})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Flavor", plan.Bastion.Flavor})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Image", plan.Bastion.Image})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Network", plan.Bastion.Network})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Subnet", plan.Bastion.Subnet})
 }
 
 func (m *Manager) baseTags() map[string]string {

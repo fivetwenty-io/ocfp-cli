@@ -342,5 +342,10 @@ func executeSSH(ctx context.Context, sshCmd []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return fmt.Errorf("ssh command failed: %w", cmd.Run())
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("ssh command failed: %w", err)
+	}
+
+	return nil
 }
