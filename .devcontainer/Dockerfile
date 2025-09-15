@@ -35,8 +35,18 @@ ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
 
-# Add custom bash prompt
-RUN echo 'export PS1="\[\033[36m\]ocfp-dev\[\033[0m\]:\[\033[34m\]\w\[\033[0m\]$ "' >> /root/.bashrc
+# Create non-root user for development
+RUN addgroup -g 1000 developer && \
+    adduser -D -u 1000 -G developer -h /home/developer -s /bin/bash developer
+
+# Add custom bash prompt for developer user
+RUN echo 'export PS1="\[\033[36m\]ocfp-dev\[\033[0m\]:\[\033[34m\]\w\[\033[0m\]$ "' >> /home/developer/.bashrc
+
+# Set ownership of workspace to developer user
+RUN chown -R developer:developer /workspace
+
+# Switch to non-root user
+USER developer
 
 # Default command
 CMD ["/bin/bash"]
