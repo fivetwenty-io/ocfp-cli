@@ -1,4 +1,4 @@
-# golangci-lint v2 configuration
+# golangci-lint configuration
 version: "2"
 
 # Run configuration
