@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
@@ -57,6 +58,7 @@ type Manager struct {
 	provConfig        provision.ProvisionConfig
 	checkpointManager *CheckpointManager
 	errorHandler      *ErrorHandler
+	deploymentModes   *deployments.Resolver
 	log               logger.Logger
 }
 
@@ -117,6 +119,7 @@ func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
 		provConfig:        nil,
 		checkpointManager: checkpointMgr,
 		errorHandler:      NewErrorHandler(),
+		deploymentModes:   deployments.NewResolver(cfg),
 		log:               logger.Get(),
 	}
 }
@@ -205,6 +208,16 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	// Create SSH client
 	m.sshClient = m.createSSHClient(connDetails)
 
+	if m.options.DryRun {
+		m.log.Info("DRY RUN: skipping SSH connection")
+		m.provConfig = m.loadProvisioningConfig()
+		if err := m.deploymentModes.Validate(); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	// Connect to bastion
 	err = m.sshClient.Connect(ctx)
 	if err != nil {
@@ -214,7 +227,7 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	// Load provisioning configuration
 	m.provConfig = m.loadProvisioningConfig()
 
-	return nil
+	return m.deploymentModes.Validate()
 }
 
 // getInitializationPhases returns the list of initialization phases.
@@ -986,7 +999,7 @@ func (m *Manager) createSSHClient(details *ssh.ConnectionDetails) SSHClient {
 //
 //nolint:ireturn // returning interface type is intentional to abstract provision config
 func (m *Manager) loadProvisioningConfig() provision.ProvisionConfig {
-	return provision.NewConfig(m.config.Provider, m.config)
+	return provision.NewConfig(m.config.Provider, m.config, m.deploymentModes)
 }
 
 // shouldSkipPhase determines if a phase should be skipped based on checkpoints.

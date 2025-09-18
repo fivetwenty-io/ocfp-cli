@@ -10,8 +10,6 @@ import (
 
 // TestKeyManagerKeyDiscovery tests SSH key discovery functionality.
 func TestKeyManagerKeyDiscovery(t *testing.T) {
-	t.Parallel()
-
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -49,8 +47,6 @@ NhAAAAAwEAAQAAAQEAtest-key-content-here
 
 // TestSSHClientCreation tests SSH client creation.
 func TestSSHClientCreation(t *testing.T) {
-	t.Parallel()
-
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -83,8 +79,6 @@ func TestSSHClientCreation(t *testing.T) {
 
 // TestFileTransferManager tests file transfer functionality.
 func TestFileTransferManager(t *testing.T) {
-	t.Parallel()
-
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -109,8 +103,6 @@ func TestFileTransferManager(t *testing.T) {
 
 // TestKeyManagerKeyValidation tests SSH key validation.
 func TestKeyManagerKeyValidation(t *testing.T) {
-	t.Parallel()
-
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 

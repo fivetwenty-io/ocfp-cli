@@ -71,6 +71,9 @@ This includes:
 }
 
 func runBootstrap(cmd *cobra.Command, args []string) error {
+	// Silence usage on execution errors
+	cmd.SilenceUsage = true
+
 	// Determine blocs to run for
 	blocsFlag := viper.GetString("bootstrap.blocs")
 
@@ -316,6 +319,9 @@ func determineProviderAndRegion(cfg *config.Config) (string, string, error) {
 		return "", "", ErrProviderMustBeSpecifiedInBlocConfig("")
 	}
 
+	// Debug logging
+	logger.Debugf("Provider determined: iaas='%s' (from cfg.Provider='%s', cfg.IaaS='%s')", iaas, cfg.Provider, cfg.IaaS)
+
 	region := cfg.Region
 	if v := viper.GetString("region"); v != "" {
 		region = v
@@ -392,6 +398,12 @@ func createStateManager() (*state.Manager, error) {
 
 // executeBootstrap performs the actual bootstrap execution.
 func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, blocName, iaas, region string) error {
+	// Load state for the bloc
+	_, err := stateManager.Load(blocName)
+	if err != nil {
+		return fmt.Errorf("failed to load state for bloc %s: %w", blocName, err)
+	}
+
 	bootstrapOpts := &bootstrap.Options{
 		BlocName: blocName,
 		Provider: iaas,
@@ -405,7 +417,7 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
 	ctx := context.Background()
 
-	err := bootstrapManager.Execute(ctx)
+	err = bootstrapManager.Execute(ctx)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed for bloc %s: %w", blocName, err)
 	}

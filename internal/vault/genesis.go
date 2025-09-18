@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -247,7 +248,6 @@ func (gi *GenesisIntegration) createSecretsProviders(vaultURL string) []SecretsP
 
 // findGenesisDirectory locates the Genesis environments directory.
 func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
-	// Common Genesis directory locations
 	possiblePaths := []string{
 		filepath.Join(os.Getenv("HOME"), "ops", gi.blocName),
 		filepath.Join(os.Getenv("HOME"), "genesis", gi.blocName),
@@ -263,10 +263,16 @@ func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
 		}
 	}
 
-	// Check if GENESIS_ENVIRONMENT_PATH is set
 	if envPath := os.Getenv("GENESIS_ENVIRONMENT_PATH"); envPath != "" {
 		if gi.isGenesisDirectory(envPath) {
 			return envPath, nil
+		}
+	}
+
+	discovered := gi.discoverGenesisEnvironmentCandidates(context.Background())
+	for _, path := range discovered {
+		if gi.isGenesisDirectory(path) {
+			return path, nil
 		}
 	}
 

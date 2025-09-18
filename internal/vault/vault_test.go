@@ -279,15 +279,15 @@ func createTestStackitConfig() *config.Config {
 		Network: config.NetworkConfig{
 			CIDR: "10.0.0.0/16",
 		},
-		Bastion:    createTestBastionConfig(),
-		Genesis:    createTestGenesisConfig(),
-		Deployment: createTestDeploymentConfig(),
-		DNS:        []string{"1.1.1.1", "8.8.8.8"},
-		AZs:        createTestAZConfig(),
-		Routers:    config.ComponentConfig{},
-		Cells:      config.ComponentConfig{},
-		Subnets:    createTestSubnetsConfig(),
-		Blobstore:  createTestBlobstoreConfig(),
+		Bastion:     createTestBastionConfig(),
+		Genesis:     createTestGenesisConfig(),
+		Deployments: config.NewDeploymentSettings("", nil),
+		DNS:         []string{"1.1.1.1", "8.8.8.8"},
+		AZs:         createTestAZConfig(),
+		Routers:     config.ComponentConfig{},
+		Cells:       config.ComponentConfig{},
+		Subnets:     createTestSubnetsConfig(),
+		Blobstore:   createTestBlobstoreConfig(),
 	}
 }
 
@@ -305,13 +305,6 @@ func createTestBastionConfig() config.Bastion {
 
 func createTestGenesisConfig() config.Genesis {
 	return config.Genesis{Enabled: false}
-}
-
-func createTestDeploymentConfig() config.Deployment {
-	return config.Deployment{
-		HierarchyFiles:      false,
-		HierarchyVaultPaths: false,
-	}
 }
 
 func createTestAZConfig() map[string]config.AvailabilityZone {

@@ -633,7 +633,7 @@ func createOcfpTripleConfig() *config.Config {
 		Network:           createEmptyNetworkConfig(),
 		Bastion:           createEmptyBastionConfig(),
 		Genesis:           createEmptyGenesisConfig(),
-		Deployment:        createEmptyDeploymentConfig(),
+		Deployments:       config.NewDeploymentSettings("", nil),
 		Routers:           createEmptyComponentConfig(),
 		Cells:             createEmptyComponentConfig(),
 		Blobstore:         createEmptyBlobstoreConfig(),
@@ -667,10 +667,6 @@ func createEmptyBastionConfig() config.Bastion {
 
 func createEmptyGenesisConfig() config.Genesis {
 	return config.Genesis{}
-}
-
-func createEmptyDeploymentConfig() config.Deployment {
-	return config.Deployment{}
 }
 
 func createEmptyComponentConfig() config.ComponentConfig {

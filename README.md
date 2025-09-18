@@ -1,6 +1,7 @@
 # OCFP CLI - Go Implementation
 
-A modern, high-performance command-line interface for the Open Cloud Foundry Platform (OCFP), rewritten in Go for improved speed, cross-platform compatibility, and maintainability.
+A command-line interface for the Open Cloud Foundry Platform (OCFP), rewritten in Go for improved speed,
+cross-platform compatibility, and maintainability.
 
 ## Features
 
@@ -246,7 +247,24 @@ bastion:
   flavor: m1.small
   image: ubuntu-22.04
   keypair: bastion-key
-  
+
+## Deployments Repository
+
+Configure how Genesis deployments are sourced by adding a `deployments` block to your OCFP YAML:
+
+```yaml
+deployments:
+  url: git@github.com:example/ocfp-deployments.git  # optional global repo
+  bosh:
+    mode: release                                    # default when url is present
+  vault:
+    mode: dev                                        # stays local and symlinked into repo
+```
+
+- When `deployments.url` is set, the bastion clones (or updates) that repository under `~/ocfp/deployments` during dry runs and real provisioning.
+- Deployments marked `mode: dev` still use kits under `~/ocfp/kits/<name>`; the bastion keeps a `dev/` symlink inside the global repository so workflows remain unchanged.
+- Without a global URL, all deployments default to `dev` mode, matching the legacy behaviour.
+
 # Availability zones
 azs:
   z1:

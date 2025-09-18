@@ -3,6 +3,7 @@ package test_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,8 @@ func TestManagerInitialization(t *testing.T) {
 
 // TestManagerDryRun tests dry run functionality.
 func TestManagerDryRun(t *testing.T) {
-	t.Parallel()
+	_, cleanup := setupTestEnvironment(t)
+	defer cleanup()
 
 	cfg := config.NewTestConfig().WithProjectID("test-project").Build()
 
@@ -259,11 +261,16 @@ func setupTestEnvironment(t *testing.T) (string, func()) {
 	tempDir := t.TempDir()
 
 	// Set HOME environment variable for tests
-	t.Setenv("HOME", tempDir)
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", tempDir); err != nil {
+		t.Fatalf("failed to set HOME for test: %v", err)
+	}
 
 	cleanup := func() {
-		// TempDir and Setenv automatically clean up
+		_ = os.Setenv("HOME", prevHome)
 	}
+
+	t.Cleanup(cleanup)
 
 	return tempDir, cleanup
 }

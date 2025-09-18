@@ -150,6 +150,24 @@ func (m *StorageManager) buildVolumeResponse(created *iaas.Volume) *cpi.Volume {
 	return out
 }
 
+// mapVolumeStatus maps STACKIT volume status to cpi.ResourceState.
+func mapVolumeStatus(status string) cpi.ResourceState {
+	switch strings.ToUpper(status) {
+	case "AVAILABLE":
+		return cpi.ResourceStateAvailable
+	case "IN_USE", "IN-USE", "INUSE":
+		return cpi.ResourceStateInUse
+	case "CREATING":
+		return cpi.ResourceStateCreating
+	case "DELETING":
+		return cpi.ResourceStateDeleting
+	case "ERROR":
+		return cpi.ResourceStateError
+	default:
+		return cpi.ResourceState(status)
+	}
+}
+
 // GetVolume retrieves a volume by ID.
 func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.Volume, error) {
 	logger.WithOperation("GetVolume").Debugf("Getting volume via SDK: %s", volumeID)
@@ -178,6 +196,16 @@ func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.V
 	}
 	if size, ok := got.GetSizeOk(); ok {
 		out.Size = int(size)
+	}
+
+	// Map the status to cpi.ResourceState
+	if status, ok := got.GetStatusOk(); ok {
+		out.State = mapVolumeStatus(status)
+	}
+
+	// Include availability zone in tags
+	if az, ok := got.GetAvailabilityZoneOk(); ok {
+		out.Tags["az"] = az
 	}
 
 	return out, nil
@@ -215,6 +243,16 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 		}
 		if size, ok := volumeItem.GetSizeOk(); ok {
 			vol.Size = int(size)
+		}
+
+		// Map the status to cpi.ResourceState
+		if status, ok := volumeItem.GetStatusOk(); ok {
+			vol.State = mapVolumeStatus(status)
+		}
+
+		// Include availability zone in tags if available
+		if az, ok := volumeItem.GetAvailabilityZoneOk(); ok && az != "" {
+			vol.Tags["az"] = az
 		}
 
 		out = append(out, vol)

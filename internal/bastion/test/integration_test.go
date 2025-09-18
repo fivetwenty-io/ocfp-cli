@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
@@ -27,8 +30,6 @@ func TestFullDryRunIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	t.Parallel()
-
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
@@ -38,6 +39,17 @@ func TestFullDryRunIntegration(t *testing.T) {
 		WithBastionIP("192.168.1.100"). // Mock IP
 		WithBastion(config.TestBastionConfig()).
 		Build()
+
+	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("failed to create ssh dir: %v", err)
+	}
+
+	keyPath := filepath.Join(sshDir, cfg.Name+"-bastion")
+	keyManager := ssh.NewKeyManager()
+	if err := keyManager.GenerateKeyPair(keyPath, "ed25519", 0); err != nil {
+		t.Fatalf("failed to generate mock ssh key: %v", err)
+	}
 
 	// Capture output
 	var output bytes.Buffer
@@ -72,8 +84,6 @@ func TestFullDryRunIntegration(t *testing.T) {
 
 // TestCheckpointFunctionality tests checkpoint save/load functionality.
 func TestCheckpointFunctionality(t *testing.T) {
-	t.Parallel()
-
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
