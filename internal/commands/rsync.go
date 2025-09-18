@@ -356,5 +356,10 @@ func executeRSync(ctx context.Context, rsyncCmd []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return fmt.Errorf("rsync command failed: %w", cmd.Run())
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("rsync command failed: %w", err)
+	}
+
+	return nil
 }
