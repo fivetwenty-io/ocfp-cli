@@ -120,7 +120,7 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 func (m *Manager) setupVaultInception(ctx context.Context) error {
 	m.log.Info("Setting up vault inception")
 
-	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config)
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
 	script := ocfpMgr.GenerateVaultInceptionScript(ctx)
 
 	return m.executeScript(ctx, script, "vault-inception")
@@ -130,7 +130,7 @@ func (m *Manager) setupVaultInception(ctx context.Context) error {
 func (m *Manager) runOCFPConfigure(ctx context.Context) error {
 	m.log.Info("Running OCFP configure deployments")
 
-	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config)
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
 	script := ocfpMgr.GenerateOCFPConfigureScript(ctx)
 
 	return m.executeScript(ctx, script, "ocfp-configure")
@@ -140,7 +140,7 @@ func (m *Manager) runOCFPConfigure(ctx context.Context) error {
 func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	m.log.Info("Running vault populate")
 
-	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config)
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
 	script := ocfpMgr.GenerateVaultPopulateScript(ctx)
 
 	return m.executeScript(ctx, script, "vault-populate")

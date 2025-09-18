@@ -420,6 +420,8 @@ type InstanceRequest struct {
 	UserData         string
 	AvailabilityZone string
 	Tags             map[string]string
+	BootVolumeSize   int  // Size in GB for boot volume (for diskless flavors)
+	UseBootVolume    bool // Use boot volume instead of direct image (for STACKIT diskless flavors)
 }
 
 // BucketRequest represents a request for creating buckets.

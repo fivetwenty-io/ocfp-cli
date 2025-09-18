@@ -264,6 +264,10 @@ func (eh *ErrorHandler) classifyPermissionError(errMsg string, bastionErr *Basti
 
 // classifyConfigurationError checks for configuration-related errors.
 func (eh *ErrorHandler) classifyConfigurationError(errMsg string, bastionErr *BastionError) bool {
+	if strings.Contains(errMsg, "command not found") {
+		return false
+	}
+
 	if !eh.containsAny(errMsg, []string{
 		"config", "configuration", "not found", "missing",
 		"invalid", "parse", "yaml", "json",

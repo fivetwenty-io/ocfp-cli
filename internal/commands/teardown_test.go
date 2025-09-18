@@ -161,7 +161,6 @@ func createTestConfigForCredentials() *config.Config {
 		Network:               config.NetworkConfig{}, //nolint:exhaustruct // Test config using zero values
 		Bastion:               config.Bastion{},       //nolint:exhaustruct // Test config using zero values
 		Genesis:               config.Genesis{},       //nolint:exhaustruct // Test config using zero values
-		Deployment:            config.Deployment{},    //nolint:exhaustruct // Test config using zero values
 		DNS:                   []string{},
 		AZs:                   map[string]config.AvailabilityZone{},
 		SSHKeyStorageDir:      "",

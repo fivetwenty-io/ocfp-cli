@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
@@ -15,7 +16,7 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 
 	cfg := config.NewTestConfig().WithRegion("eu01").WithProjectID("test-project").Build()
 
-	provConfig := provision.NewConfig("stackit", cfg)
+	provConfig := provision.NewConfig("stackit", cfg, deployments.NewResolver(cfg))
 
 	// Test system configuration
 	sysConfig := provConfig.GetSystemConfig()
@@ -77,14 +78,61 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 	}
 }
 
-// TestScriptGeneration tests script generation functionality.
+func TestProvisionScriptIncludesDeploymentRepoSetup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.NewTestConfig().WithRegion("eu01").WithProjectID("test-project").Build()
+	cfg.Deployments = config.NewDeploymentSettings("git@example.com:ocfp/deployments.git", map[string]*config.DeploymentEntry{
+		"bosh":  {Mode: config.DeploymentModeRelease},
+		"vault": {Mode: config.DeploymentModeDev},
+	})
+
+	scriptGen := provision.NewScriptGenerator("stackit", cfg)
+	provConfig := provision.NewConfig("stackit", cfg, deployments.NewResolver(cfg))
+
+	envVars := map[string]string{
+		"OCFP_BLOC_NAME":     "test-bloc",
+		"OCFP_PROVIDER":      "stackit",
+		"STACKIT_PROJECT_ID": "test-project",
+		"STACKIT_REGION":     "eu01",
+	}
+
+	script, err := scriptGen.GenerateProvisioningScript(context.Background(), provConfig, envVars)
+	if err != nil {
+		t.Fatalf("failed to generate provisioning script: %v", err)
+	}
+
+	if !strings.Contains(script, `GLOBAL_DEPLOYMENTS_URL="git@example.com:ocfp/deployments.git"`) {
+		t.Fatalf("expected global deployments url in script\nscript: %s", script)
+	}
+
+	if !strings.Contains(script, `DEV_DEPLOYMENTS=("vault")`) {
+		t.Fatalf("expected dev deployments array to include vault\nscript: %s", script)
+	}
+
+	if !strings.Contains(script, `RELEASE_DEPLOYMENTS=("bosh"`) {
+		t.Fatalf("expected release deployments array to list bosh\nscript: %s", script)
+	}
+
+	if !strings.Contains(script, `git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"`) {
+		t.Fatalf("expected deployments repo clone command in script\nscript: %s", script)
+	}
+
+	if !strings.Contains(script, `ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`) {
+		t.Fatalf("expected dev kit symlink in script\nscript: %s", script)
+	}
+
+	if !strings.Contains(script, `"${OCFP_CLI_PATH}" configure deployments`) {
+		t.Fatalf("expected ocfp configure command in script\nscript: %s", script)
+	}
+}
+
 func TestScriptGeneration(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.NewTestConfig().WithRegion("eu01").WithProjectID("test-project").Build()
 
 	scriptGen := provision.NewScriptGenerator("stackit", cfg)
-	provConfig := provision.NewConfig("stackit", cfg)
+	provConfig := provision.NewConfig("stackit", cfg, deployments.NewResolver(cfg))
 
 	envVars := map[string]string{
 		"OCFP_BLOC_NAME":     "test-bloc",

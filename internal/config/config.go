@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,8 @@ type Config struct {
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion"`
 	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis"`
-	Deployment       Deployment                  `json:"deployments"         mapstructure:"deployments"         yaml:"deployments"`
+	DeploymentsData  map[string]interface{}      `json:"deployments" mapstructure:"deployments" yaml:"deployments"`
+	Deployments      *DeploymentSettings         `json:"-" mapstructure:"-" yaml:"-"`
 	DNS              []string                    `json:"dns"                 mapstructure:"dns"                 yaml:"dns"`
 	AZs              map[string]AvailabilityZone `json:"azs"                 mapstructure:"azs"                 yaml:"azs"`
 	SSHKeyStorageDir string                      `json:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir" yaml:"ssh_key_storage_dir"`
@@ -218,10 +220,181 @@ type SnapOverride struct {
 	CheckCommand string `mapstructure:"checkCommand" yaml:"checkCommand"`
 }
 
-// Deployment configuration.
-type Deployment struct {
-	HierarchyFiles      bool `mapstructure:"hierarchyFiles"      yaml:"hierarchyFiles"`
-	HierarchyVaultPaths bool `mapstructure:"hierarchyVaultPaths" yaml:"hierarchyVaultPaths"`
+const (
+	DeploymentModeDev     = "dev"
+	DeploymentModeRelease = "release"
+)
+
+// DeploymentSettings captures global deployment repository configuration and per-deployment overrides.
+type DeploymentSettings struct {
+	URL     string
+	Entries map[string]*DeploymentEntry
+}
+
+// DeploymentEntry stores per-deployment overrides (currently only mode) along with the raw configuration.
+type DeploymentEntry struct {
+	Mode string
+	Raw  map[string]interface{}
+}
+
+// NewDeploymentSettings creates a deployment settings structure with the provided values.
+func NewDeploymentSettings(url string, entries map[string]*DeploymentEntry) *DeploymentSettings {
+	if entries == nil {
+		entries = make(map[string]*DeploymentEntry)
+	}
+
+	return &DeploymentSettings{
+		URL:     url,
+		Entries: entries,
+	}
+}
+
+// ModeFor returns the effective mode (dev/release) for a deployment, respecting overrides and global defaults.
+func (d *DeploymentSettings) ModeFor(name string) string {
+	if d == nil {
+		return DeploymentModeDev
+	}
+
+	if entry, ok := d.Entries[name]; ok {
+		if entry != nil && entry.Mode != "" {
+			return entry.Mode
+		}
+	}
+
+	if d.URL != "" {
+		return DeploymentModeRelease
+	}
+
+	return DeploymentModeDev
+}
+
+// Configured returns all explicitly configured deployment names.
+func (d *DeploymentSettings) Configured() []string {
+	if d == nil {
+		return nil
+	}
+
+	names := make([]string, 0, len(d.Entries))
+	for name := range d.Entries {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
+// Entry returns the deployment entry if configured.
+func (d *DeploymentSettings) Entry(name string) *DeploymentEntry {
+	if d == nil {
+		return nil
+	}
+
+	return d.Entries[name]
+}
+
+func parseDeploymentSettings(raw map[string]interface{}) (*DeploymentSettings, error) {
+	settings := NewDeploymentSettings("", nil)
+
+	if raw == nil {
+		return settings, nil
+	}
+
+	for key, value := range raw {
+		if key == "url" {
+			if value != nil {
+				settings.URL = fmt.Sprint(value)
+			}
+			continue
+		}
+
+		entry, err := parseDeploymentEntry(value)
+		if err != nil {
+			return nil, fmt.Errorf("deployment %s: %w", key, err)
+		}
+
+		settings.Entries[key] = entry
+	}
+
+	return settings, nil
+}
+
+func parseDeploymentEntry(value interface{}) (*DeploymentEntry, error) {
+	entry := &DeploymentEntry{
+		Mode: "",
+		Raw:  make(map[string]interface{}),
+	}
+
+	switch v := value.(type) {
+	case nil:
+		// No overrides
+	case string:
+		entry.Mode = normalizeDeploymentMode(v)
+	case map[string]interface{}:
+		entry.Raw = copyStringInterfaceMap(v)
+		if mode, ok := extractString(v["mode"]); ok {
+			entry.Mode = normalizeDeploymentMode(mode)
+		}
+	case map[interface{}]interface{}:
+		expanded := convertInterfaceKeyMap(v)
+		entry.Raw = expanded
+		if mode, ok := extractString(expanded["mode"]); ok {
+			entry.Mode = normalizeDeploymentMode(mode)
+		}
+	default:
+		entry.Mode = normalizeDeploymentMode(fmt.Sprint(v))
+	}
+
+	return entry, nil
+}
+
+func copyStringInterfaceMap(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+
+	out := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
+}
+
+func convertInterfaceKeyMap(src map[interface{}]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		out[fmt.Sprint(k)] = v
+	}
+
+	return out
+}
+
+func extractString(value interface{}) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	default:
+		return fmt.Sprint(v), true
+	}
+}
+
+func normalizeDeploymentMode(value string) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	switch mode {
+	case DeploymentModeRelease:
+		return DeploymentModeRelease
+	case DeploymentModeDev:
+		return DeploymentModeDev
+	default:
+		return ""
+	}
 }
 
 // AvailabilityZone configuration.
@@ -327,7 +500,7 @@ func createEmptyConfig() *Config {
 			SnapOverrides:     map[string]SnapOverride{},
 		},
 		Genesis:           Genesis{},
-		Deployment:        Deployment{},
+		Deployments:       NewDeploymentSettings("", nil),
 		DNS:               []string{},
 		AZs:               map[string]AvailabilityZone{},
 		Routers:           ComponentConfig{},
@@ -373,6 +546,13 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 
 // processConfiguration applies defaults, overrides, and validates the config.
 func processConfiguration(cfg *Config) error {
+	var err error
+	cfg.Deployments, err = parseDeploymentSettings(cfg.DeploymentsData)
+	if err != nil {
+		return fmt.Errorf("invalid deployments configuration: %w", err)
+	}
+	cfg.DeploymentsData = nil
+
 	// Determine provider
 	provider := cfg.Provider
 	if provider == "" {
@@ -384,7 +564,7 @@ func processConfiguration(cfg *Config) error {
 	}
 
 	// Apply provider defaults
-	err := applyDefaults(cfg, provider)
+	err = applyDefaults(cfg, provider)
 	if err != nil {
 		return err
 	}
@@ -531,7 +711,7 @@ func applyStackitDefaults(cfg *Config) {
 	}
 
 	if cfg.Bastion.Flavor == "" {
-		cfg.Bastion.Flavor = "m1a.2d"
+		cfg.Bastion.Flavor = "g1a.2d"
 	}
 
 	if cfg.Bastion.Image == "" && cfg.Bastion.OS != "" && cfg.Bastion.OSVersion != "" {
@@ -596,6 +776,33 @@ func applyGCPDefaults(cfg *Config) {
 	if cfg.Bastion.Flavor == "" {
 		cfg.Bastion.Flavor = "e2-small"
 	}
+}
+
+// GetDeploymentsURL returns the global deployments repository URL if configured.
+func (cfg *Config) GetDeploymentsURL() string {
+	if cfg == nil || cfg.Deployments == nil {
+		return ""
+	}
+
+	return cfg.Deployments.URL
+}
+
+// GetDeploymentMode returns the effective deployment mode for the provided name.
+func (cfg *Config) GetDeploymentMode(name string) string {
+	if cfg == nil || cfg.Deployments == nil {
+		return DeploymentModeDev
+	}
+
+	return cfg.Deployments.ModeFor(name)
+}
+
+// GetConfiguredDeployments returns the configured deployment identifiers.
+func (cfg *Config) GetConfiguredDeployments() []string {
+	if cfg == nil || cfg.Deployments == nil {
+		return nil
+	}
+
+	return cfg.Deployments.Configured()
 }
 
 // validate validates the configuration.

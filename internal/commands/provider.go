@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
+	validPathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._:-]+$`)
 )
 
 const (
@@ -153,7 +153,7 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 
 func getSTACKITCredentials(blocName string, log *zap.Logger) (string, string, error) {
 	// Try config file first
-	authType, credentials, err := getSTACKITCredentialsFromConfig(log)
+	authType, credentials, err := getSTACKITCredentialsFromConfig(blocName, log)
 	if err != nil {
 		return "", "", err
 	}
@@ -166,15 +166,15 @@ func getSTACKITCredentials(blocName string, log *zap.Logger) (string, string, er
 	return getSTACKITCredentialsFromVault(blocName, log)
 }
 
-func getSTACKITCredentialsFromConfig(log *zap.Logger) (string, string, error) {
-	cfg, err := config.LoadWithParams("", "")
+func getSTACKITCredentialsFromConfig(blocName string, log *zap.Logger) (string, string, error) {
+	cfg, err := config.LoadWithParams("", blocName)
 	if err != nil {
 		log.Debug("Failed to load config", zap.Error(err))
 
 		return "", "", nil
 	}
 
-	log.Debug("Attempting to get credentials from config file")
+	log.Debug("Attempting to get credentials from config file", zap.String("bloc", blocName))
 
 	// Check if config has service account token
 	if cfg.ServiceAccountToken != "" {

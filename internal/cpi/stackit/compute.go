@@ -11,6 +11,10 @@ import (
 	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 )
 
+const (
+	defaultBootVolumeSize = 50 // Default boot volume size in GB
+)
+
 // CreateInstance creates a new compute instance.
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	logger.WithOperation("CreateInstance").Infof("Creating instance via SDK: %s", req.Name)
@@ -43,7 +47,33 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest) *iaas.CreateServerPayload {
 	payload := iaas.NewCreateServerPayload(req.Flavor, req.Name)
 
-	if req.Image != "" {
+	// For STACKIT diskless flavors, use boot volume instead of direct image
+	if req.UseBootVolume && req.Image != "" {
+		bootVolume := iaas.CreateServerPayloadBootVolume{}
+
+		// Set boot volume source (the image ID)
+		imageID := req.Image
+		sourceType := "image"
+		bootVolumeSource := iaas.BootVolumeSource{
+			Id:   &imageID,
+			Type: &sourceType,
+		}
+		bootVolume.SetSource(bootVolumeSource)
+
+		// Set boot volume size if specified, otherwise use default
+		bootVolumeSize := int64(defaultBootVolumeSize)
+		if req.BootVolumeSize > 0 {
+			bootVolumeSize = int64(req.BootVolumeSize)
+		}
+
+		bootVolume.SetSize(bootVolumeSize)
+
+		// Don't delete the volume on termination
+		bootVolume.SetDeleteOnTermination(false)
+
+		payload.SetBootVolume(bootVolume)
+	} else if req.Image != "" {
+		// Regular image-based creation for flavors with local disk
 		payload.SetImageId(req.Image)
 	}
 
@@ -692,12 +722,22 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 
 	out := make([]*cpi.Flavor, 0, len(items))
 	for _, machineType := range items {
+		flavorName := stringOrEmpty(machineType.GetNameOk())
+
+		diskSize := 0
+		if d, ok := machineType.GetDiskOk(); ok {
+			diskSize = int(d)
+		}
+
+		// Debug logging for STACKIT machine types
+		logger.Debugf("STACKIT Machine Type: name='%s', disk=%dGB", flavorName, diskSize)
+
 		flavor := &cpi.Flavor{
-			ID:          stringOrEmpty(machineType.GetNameOk()),
-			Name:        stringOrEmpty(machineType.GetNameOk()),
+			ID:          flavorName,
+			Name:        flavorName,
 			VCPUs:       0,
 			RAM:         0,
-			Disk:        0,
+			Disk:        diskSize,
 			Ephemeral:   0,
 			NetworkCap:  0,
 			Description: "",
@@ -708,10 +748,6 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 
 		if r, ok := machineType.GetRamOk(); ok {
 			flavor.RAM = int(r)
-		}
-
-		if d, ok := machineType.GetDiskOk(); ok {
-			flavor.Disk = int(d)
 		}
 
 		out = append(out, flavor)

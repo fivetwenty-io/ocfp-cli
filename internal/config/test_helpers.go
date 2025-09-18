@@ -21,7 +21,7 @@ func createDefaultTestConfig() *Config {
 	cfg.Network = createDefaultNetworkConfig()
 	cfg.Bastion = createDefaultBastionConfig()
 	cfg.Genesis = createDefaultGenesisConfig()
-	cfg.Deployment = createDefaultDeploymentConfig()
+	cfg.Deployments = NewDeploymentSettings("", nil)
 	cfg.Routers = createDefaultComponentConfig()
 	cfg.Cells = createDefaultComponentConfig()
 	cfg.Blobstore = createDefaultBlobstoreConfig()
@@ -73,13 +73,6 @@ func createDefaultOverrideSets() OverrideSets {
 	return OverrideSets{
 		Enable:  nil,
 		Disable: nil,
-	}
-}
-
-func createDefaultDeploymentConfig() Deployment {
-	return Deployment{
-		HierarchyFiles:      false,
-		HierarchyVaultPaths: false,
 	}
 }
 

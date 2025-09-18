@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
@@ -11,14 +12,25 @@ import (
 type Config struct {
 	provider string
 	config   *config.Config
+	modes    *deployments.Resolver
 }
 
 // NewConfig creates a new provisioning configuration.
-func NewConfig(provider string, cfg *config.Config) *Config {
+func NewConfig(provider string, cfg *config.Config, modes *deployments.Resolver) *Config {
+	if modes == nil {
+		modes = deployments.NewResolver(cfg)
+	}
+
 	return &Config{
 		provider: provider,
 		config:   cfg,
+		modes:    modes,
 	}
+}
+
+// DeploymentResolver returns the deployment mode resolver.
+func (c *Config) DeploymentResolver() *deployments.Resolver {
+	return c.modes
 }
 
 // GetSystemConfig returns system configuration.
@@ -57,7 +69,7 @@ func (c *Config) GetPackages() map[string]PackageGroup {
 
 // GetGenesisDeployments returns Genesis deployments to initialize.
 func (c *Config) GetGenesisDeployments() []GenesisDeployment {
-	deployments := []GenesisDeployment{
+	items := []GenesisDeployment{
 		{Name: "bosh", Kit: "bosh", Repo: "bosh-genesis-kit", Branch: "develop", Enabled: true, Condition: ""},
 		{Name: "vault", Kit: "vault", Repo: "vault-genesis-kit", Branch: "", Enabled: true, Condition: ""},
 		{Name: "concourse", Kit: "concourse", Repo: "concourse-genesis-kit", Branch: "", Enabled: true, Condition: ""},
@@ -71,7 +83,18 @@ func (c *Config) GetGenesisDeployments() []GenesisDeployment {
 		{Name: "jumpbox", Kit: "jumpbox", Repo: "jumpbox-genesis-kit", Branch: "", Enabled: true, Condition: ""},
 	}
 
-	return deployments
+	modes := c.modes
+	if modes == nil {
+		modes = deployments.NewResolver(c.config)
+	}
+
+	for i := range items {
+		if !modes.IsDev(items[i].Name) {
+			items[i].Enabled = false
+		}
+	}
+
+	return items
 }
 
 // GetBinaryTools returns binary tools to install.
@@ -148,17 +171,22 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 
 // GetGitRepositories returns Git repositories to clone.
 func (c *Config) GetGitRepositories() []GitRepository {
-	repos := []GitRepository{
-		{
-			Name:      "genesis-community-kits",
-			Enabled:   true,
-			Condition: "",
-			URL:       "https://github.com/genesis-community/genesis-community-kits.git",
-			Branch:    "main",
-			Dest:      "${HOME}/genesis-community-kits",
-			Depth:     1,
-		},
+	modes := c.modes
+	if modes == nil {
+		modes = deployments.NewResolver(c.config)
 	}
+
+	repos := []GitRepository{}
+
+	repos = append(repos, GitRepository{
+		Name:      "genesis-community-kits",
+		Enabled:   true,
+		Condition: "",
+		URL:       "https://github.com/genesis-community/genesis-community-kits.git",
+		Branch:    "main",
+		Dest:      "${HOME}/genesis-community-kits",
+		Depth:     1,
+	})
 
 	// Add genesis repository if configured
 	if c.config.Bastion.Genesis.Enabled {

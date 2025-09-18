@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
@@ -407,7 +408,7 @@ func (sg *ScriptGenerator) generateGenesisDeploymentScript(deployments []Genesis
 		lines = append(lines, fmt.Sprintf("log_info 'Initializing %s Genesis deployment'", deployment.Name))
 
 		// Create deployment directory
-		lines = append(lines, fmt.Sprintf("DEPLOY_DIR=\"${HOME}/deployments/%s\"", deployment.Name))
+		lines = append(lines, fmt.Sprintf("DEPLOY_DIR=\"${DEPLOYMENTS_DIR:-$HOME/ocfp/deployments}/%s\"", deployment.Name))
 		lines = append(lines, `mkdir -p "${DEPLOY_DIR}"`)
 		lines = append(lines, `cd "${DEPLOY_DIR}"`)
 
@@ -692,7 +693,7 @@ func (sg *ScriptGenerator) addEnvironmentSetup(ctx context.Context, scriptParts 
 
 // addOCFPIntegration adds OCFP integration components.
 func (sg *ScriptGenerator) addOCFPIntegration(ctx context.Context, scriptParts *[]string) {
-	ocfpMgr := NewOCFPManager(sg.provider, sg.config)
+	ocfpMgr := NewOCFPManager(sg.provider, sg.config, deployments.NewResolver(sg.config))
 	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateVaultInceptionScript(ctx))
 	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateOCFPConfigureScript(ctx))
 	sg.appendIfNotEmpty(scriptParts, ocfpMgr.GenerateVaultPopulateScript(ctx))

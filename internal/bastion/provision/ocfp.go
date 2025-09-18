@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
@@ -14,14 +15,20 @@ type OCFPManager struct {
 	config   *config.Config
 	provider string
 	log      logger.Logger
+	modes    *deployments.Resolver
 }
 
 // NewOCFPManager creates a new OCFP manager.
-func NewOCFPManager(provider string, cfg *config.Config) *OCFPManager {
+func NewOCFPManager(provider string, cfg *config.Config, modes *deployments.Resolver) *OCFPManager {
+	if modes == nil {
+		modes = deployments.NewResolver(cfg)
+	}
+
 	return &OCFPManager{
 		config:   cfg,
 		provider: provider,
 		log:      logger.Get(),
+		modes:    modes,
 	}
 }
 
@@ -40,25 +47,207 @@ func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string 
 
 // GenerateOCFPConfigureScript generates script for OCFP configure deployments.
 func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
-	var lines []string
+	resolver := om.resolver()
+	names := om.mergeDeploymentNames(defaultDeploymentNames, resolver.Configured())
+	devDeployments, releaseDeployments := om.partitionDeployments(names)
 
+	lines := make([]string, 0, scriptBufferOCFPBase)
 	lines = append(lines, "# OCFP deployments setup")
 	lines = append(lines, "")
 
 	lines = append(lines, om.generateOCFPCLILocator()...)
-	lines = append(lines, om.generateConfigFileLocator()...)
+
+	lines = append(lines, fmt.Sprintf("GLOBAL_DEPLOYMENTS_URL=%q", resolver.GlobalURL()))
+	lines = append(lines, `DEPLOYMENTS_ROOT="${HOME}/ocfp/deployments"`)
+	lines = append(lines, `KITS_ROOT="${HOME}/ocfp/kits"`)
+	lines = append(lines, fmt.Sprintf("DEV_DEPLOYMENTS=%s", formatShellArray(devDeployments)))
+	lines = append(lines, fmt.Sprintf("RELEASE_DEPLOYMENTS=%s", formatShellArray(releaseDeployments)))
+	lines = append(lines, "")
+
+	lines = append(lines, "log_info 'Preparing OCFP deployments'")
+	lines = append(lines, `mkdir -p "${DEPLOYMENTS_ROOT}"`)
+	lines = append(lines, `mkdir -p "${KITS_ROOT}"`)
+	lines = append(lines, "")
+
+	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
+	lines = append(lines, `    if [ -d "${DEPLOYMENTS_ROOT}/.git" ]; then`)
+	lines = append(lines, `        log_info 'Updating deployments repository'`)
+	lines = append(lines, `        if git -C "${DEPLOYMENTS_ROOT}" fetch --all --prune && git -C "${DEPLOYMENTS_ROOT}" pull --ff-only; then`)
+	lines = append(lines, `            log_success 'Deployments repository updated'`)
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_warning 'Failed to update deployments repository - please verify connectivity and credentials'`)
+	lines = append(lines, "        fi")
+	lines = append(lines, "    else")
+	lines = append(lines, `        log_info 'Cloning deployments repository'`)
+	lines = append(lines, `        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`)
+	lines = append(lines, `            log_success 'Deployments repository cloned'`)
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_error 'Failed to clone deployments repository'`)
+	lines = append(lines, "        fi")
+	lines = append(lines, "    fi")
+	lines = append(lines, "fi")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Verify release-mode deployments are present")
+	lines = append(lines, `for deployment in "${RELEASE_DEPLOYMENTS[@]}"; do`)
+	lines = append(lines, `    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`)
+	lines = append(lines, `    if [ -d "$DEPLOY_PATH" ]; then`)
+	lines = append(lines, `        log_success "Release deployment available: ${deployment}"`)
+	lines = append(lines, "    else")
+	lines = append(lines, `        log_warning "Release deployment directory missing: ${deployment}"`)
+	lines = append(lines, "    fi")
+	lines = append(lines, "done")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Ensure dev-mode deployment directories exist")
+	lines = append(lines, `for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
+	lines = append(lines, `    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`)
+	lines = append(lines, `    if [ ! -d "$DEPLOY_PATH" ]; then`)
+	lines = append(lines, `        log_info "Creating dev deployment directory: ${deployment}"`)
+	lines = append(lines, `        mkdir -p "$DEPLOY_PATH"`)
+	lines = append(lines, "    fi")
+	lines = append(lines, "done")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Setup dev kits when using global deployments repository")
+	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
+	lines = append(lines, `    for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
+	lines = append(lines, `        KIT_REPO="https://github.com/genesis-community/${deployment}-genesis-kit.git"`)
+	lines = append(lines, `        KIT_DIR="${KITS_ROOT}/${deployment}"`)
+	lines = append(lines, `        if [ -d "${KIT_DIR}/.git" ]; then`)
+	lines = append(lines, `            log_info "Updating ${deployment} genesis kit"`)
+	lines = append(lines, `            if git -C "${KIT_DIR}" pull --ff-only; then`)
+	lines = append(lines, `                log_success "${deployment} kit updated"`)
+	lines = append(lines, "            else")
+	lines = append(lines, `                log_warning "Failed to update ${deployment} kit"`)
+	lines = append(lines, "                continue")
+	lines = append(lines, "            fi")
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_info "Cloning ${deployment} genesis kit"`)
+	lines = append(lines, `            if git clone "$KIT_REPO" "$KIT_DIR"; then`)
+	lines = append(lines, `                log_success "${deployment} kit cloned"`)
+	lines = append(lines, "            else")
+	lines = append(lines, `                log_warning "Failed to clone ${deployment} kit from $KIT_REPO"`)
+	lines = append(lines, "                continue")
+	lines = append(lines, "            fi")
+	lines = append(lines, "        fi")
+	lines = append(lines, `        mkdir -p "${DEPLOYMENTS_ROOT}/${deployment}"`)
+	lines = append(lines, `        ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`)
+	lines = append(lines, `        log_info "Linked ${DEPLOYMENTS_ROOT}/${deployment}/dev -> ${KIT_DIR}"`)
+	lines = append(lines, "    done")
+	lines = append(lines, "fi")
+	lines = append(lines, "")
+
 	lines = append(lines, om.generateDeploymentConfiguration()...)
 
 	return strings.Join(lines, "\n")
 }
 
-// GenerateVaultPopulateScript generates script for vault population.
+var defaultDeploymentNames = []string{
+	"bosh",
+	"vault",
+	"concourse",
+	"cf",
+	"blacksmith",
+	"shield",
+	"prometheus",
+	"doomsday",
+	"scheduler",
+	"autoscaler",
+	"jumpbox",
+}
+
+func formatShellArray(values []string) string {
+	if len(values) == 0 {
+		return "()"
+	}
+
+	escaped := make([]string, len(values))
+	for i, v := range values {
+		escaped[i] = fmt.Sprintf("\"%s\"", v)
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(escaped, " "))
+}
+
+func (om *OCFPManager) partitionDeployments(names []string) (dev []string, release []string) {
+	resolver := om.resolver()
+
+	for _, name := range names {
+		if resolver.IsRelease(name) {
+			release = append(release, name)
+		} else {
+			dev = append(dev, name)
+		}
+	}
+
+	return dev, release
+}
+
+func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []string) []string {
+	seen := make(map[string]struct{}, len(defaults)+len(configured))
+	combined := make([]string, 0, len(defaults)+len(configured))
+
+	for _, name := range defaults {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		combined = append(combined, name)
+	}
+
+	for _, name := range configured {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		combined = append(combined, name)
+	}
+
+	return combined
+}
+
+func (om *OCFPManager) generateDeploymentConfiguration() []string {
+	return []string{
+		"# Run ocfp configure deployments",
+		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
+		"    log_warning 'OCFP CLI not found, skipping ocfp configure deployments'",
+		"else",
+		"    CONFIGURE_ARGS=()",
+		"    if [ -n \"${OCFP_BLOC_NAME}\" ]; then",
+		"        CONFIGURE_ARGS+=(\"--bloc\" \"${OCFP_BLOC_NAME}\")",
+		"    fi",
+		"    log_info \"Executing: ${OCFP_CLI_PATH} configure deployments ${CONFIGURE_ARGS[*]}\"",
+		"    if \"${OCFP_CLI_PATH}\" configure deployments \"${CONFIGURE_ARGS[@]}\"; then",
+		"        log_success 'Genesis deployments setup completed successfully'",
+		"    else",
+		"        log_warning 'Deployment setup completed with warnings'",
+		"    fi",
+		"fi",
+		"",
+	}
+}
+
+func (om *OCFPManager) resolver() *deployments.Resolver {
+	if om.modes == nil {
+		om.modes = deployments.NewResolver(om.config)
+	}
+
+	return om.modes
+}
 func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 	var lines []string
 
 	lines = append(lines, "# Vault population")
 	lines = append(lines, "")
 
+	lines = append(lines, om.generateOCFPCLILocator()...)
 	lines = append(lines, om.generateVaultPopulatePrerequisites()...)
 	lines = append(lines, om.generateVaultPreparation()...)
 	lines = append(lines, om.generateVaultPopulateExecution()...)
@@ -240,90 +429,6 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 	}
 }
 
-func (om *OCFPManager) generateOCFPCLILocator() []string {
-	return []string{
-		"# Check for OCFP CLI",
-		"OCFP_CLI_LOCATIONS=(",
-		`    "${HOME}/ocfp/ocfp-cli/bin/ocfp"`,
-		`    "${HOME}/ocfp/cli/bin/ocfp"`,
-		`    "${HOME}/bin/ocfp"`,
-		")",
-		"",
-		"OCFP_CLI_PATH=\"\"",
-		"for location in \"${OCFP_CLI_LOCATIONS[@]}\"; do",
-		"    if [ -f \"$location\" ]; then",
-		"        OCFP_CLI_PATH=\"$location\"",
-		"        log_info \"Found OCFP CLI at: $location\"",
-		"        break",
-		"    fi",
-		"done",
-		"",
-		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
-		"    log_warning 'OCFP CLI not found, skipping deployment setup'",
-		"    return 0",
-		"fi",
-		"",
-	}
-}
-
-func (om *OCFPManager) generateConfigFileLocator() []string {
-	return []string{
-		"# Find configuration file",
-		"CONFIG_FILE=\"\"",
-		"CONFIG_LOCATIONS=(",
-		`    "${HOME}/.ocfp/config.yml"`,
-		`    "${HOME}/.ocfp/config/config.yml"`,
-		")",
-		"",
-		"for location in \"${CONFIG_LOCATIONS[@]}\"; do",
-		"    if [ -f \"$location\" ]; then",
-		"        CONFIG_FILE=\"$location\"",
-		"        log_info \"Found config file at: $location\"",
-		"        break",
-		"    fi",
-		"done",
-		"",
-		"if [ -z \"$CONFIG_FILE\" ]; then",
-		"    log_warning 'Configuration file not found, skipping deployment setup'",
-		"    return 0",
-		"fi",
-		"",
-	}
-}
-
-func (om *OCFPManager) generateDeploymentConfiguration() []string {
-	return []string{
-		"# Change to OCFP CLI directory",
-		"OCFP_CLI_DIR=$(dirname \"$OCFP_CLI_PATH\")",
-		"OCFP_CLI_DIR=$(dirname \"$OCFP_CLI_DIR\")",
-		"log_info \"Changing to OCFP CLI directory: $OCFP_CLI_DIR\"",
-		"cd \"$OCFP_CLI_DIR\"",
-		"",
-		"# Run OCFP configure deployments",
-		"log_info 'Running OCFP configure to setup deployments'",
-		"CONFIGURE_CMD=\"perl bin/ocfp configure deployments --bloc '${OCFP_BLOC_NAME}'\"",
-		"log_info \"Executing: $CONFIGURE_CMD\"",
-		"",
-		"eval $CONFIGURE_CMD",
-		"CONFIGURE_EXIT=$?",
-		"",
-		"if [ $CONFIGURE_EXIT -eq 0 ]; then",
-		"    log_success 'Genesis deployments setup completed successfully'",
-		"    # List created deployments",
-		"    if [ -d \"$HOME/ocfp\" ]; then",
-		"        log_info 'Created ~/ocfp directories:'",
-		"        find \"$HOME/ocfp\" -maxdepth 1 -type d -not -name ocfp | while read deployment; do",
-		"            DEPLOY_NAME=$(basename \"$deployment\")",
-		"            [ \"$DEPLOY_NAME\" != \"ocfp-cli\" ] && log_info \"  - $DEPLOY_NAME\"",
-		"        done",
-		"    fi",
-		"else",
-		"    log_warning \"Deployment setup completed with warnings (exit code: $CONFIGURE_EXIT)\"",
-		"fi",
-		"",
-	}
-}
-
 func (om *OCFPManager) generateVaultPopulatePrerequisites() []string {
 	return []string{
 		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
@@ -339,6 +444,32 @@ func (om *OCFPManager) generateVaultPopulatePrerequisites() []string {
 		"fi",
 		"",
 		"log_info \"Running vault populate for bloc: $OCFP_BLOC_NAME\"",
+		"",
+	}
+}
+
+func (om *OCFPManager) generateOCFPCLILocator() []string {
+	return []string{
+		"# Locate OCFP CLI",
+		"OCFP_LOCATIONS=(",
+		"    \"${HOME}/ocfp/cli/bin/ocfp\"",
+		"    \"${HOME}/ocfp/cli/ocfp\"",
+		"    \"${HOME}/ocfp/ocfp-cli/bin/ocfp\"",
+		"    \"/usr/local/bin/ocfp\"",
+		")",
+		"",
+		"OCFP_CLI_PATH=\"\"",
+		"for location in \"${OCFP_LOCATIONS[@]}\"; do",
+		"    if [ -x \"$location\" ]; then",
+		"        OCFP_CLI_PATH=\"$location\"",
+		"        log_info \"Found OCFP CLI at: $location\"",
+		"        break",
+		"    fi",
+		"done",
+		"",
+		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
+		"    log_warning 'OCFP CLI not found - some operations may be skipped'",
+		"fi",
 		"",
 	}
 }
@@ -363,22 +494,19 @@ func (om *OCFPManager) generateVaultPreparation() []string {
 
 func (om *OCFPManager) generateVaultPopulateExecution() []string {
 	return []string{
-		"# Change to OCFP CLI directory",
-		"ORIGINAL_DIR=$(pwd)",
-		"OCFP_CLI_DIR=$(dirname \"$OCFP_CLI_PATH\")",
-		"OCFP_CLI_DIR=$(dirname \"$OCFP_CLI_DIR\")",
-		"cd \"$OCFP_CLI_DIR\"",
+		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
+		"    log_warning 'OCFP CLI not found, skipping vault populate execution'",
+		"    return 0",
+		"fi",
 		"",
-		"# Build vault populate command",
-		"VAULT_CMD=\"perl bin/ocfp vault populate --bloc '${OCFP_BLOC_NAME}'\"",
-		"log_info \"Running: $VAULT_CMD\"",
+		`VAULT_ARGS=("vault" "populate")`,
+		"if [ -n \"${OCFP_BLOC_NAME}\" ]; then",
+		`    VAULT_ARGS+=("--bloc" "${OCFP_BLOC_NAME}")`,
+		"fi",
 		"",
-		"# Execute vault populate",
-		"eval $VAULT_CMD",
+		"log_info \"Running: ${OCFP_CLI_PATH} ${VAULT_ARGS[*]}\"",
+		`"${OCFP_CLI_PATH}" "${VAULT_ARGS[@]}"`,
 		"VAULT_EXIT=$?",
-		"",
-		"# Return to original directory",
-		"cd \"$ORIGINAL_DIR\"",
 		"",
 		"if [ $VAULT_EXIT -eq 0 ]; then",
 		"    log_success 'Vault populate completed successfully'",
