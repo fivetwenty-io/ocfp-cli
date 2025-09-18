@@ -244,5 +244,10 @@ func executeSCP(ctx context.Context, scpCmd []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return fmt.Errorf("scp command failed: %w", cmd.Run())
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("scp command failed: %w", err)
+	}
+
+	return nil
 }
