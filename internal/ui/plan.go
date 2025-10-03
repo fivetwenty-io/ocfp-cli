@@ -114,6 +114,16 @@ func renderSection(section Section) error {
 		}
 	}
 
+	// If there are no rows, just print the title and skip table rendering
+	if len(section.Rows) == 0 {
+		_, err := fmt.Fprint(os.Stdout, "\n")
+		if err != nil {
+			return fmt.Errorf("failed to write newline: %w", err)
+		}
+
+		return nil
+	}
+
 	var buf bytes.Buffer
 
 	tableWriter := setupTableWriter(&buf, section)

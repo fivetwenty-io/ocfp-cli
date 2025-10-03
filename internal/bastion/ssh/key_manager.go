@@ -39,12 +39,20 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 
 	// Search paths in priority order
 	searchPaths := []string{
-		// Provider-specific key (bastion key from bootstrap)
+		// Provider-specific key (bastion key from bootstrap) - prefer ed25519
+		// Primary location: ~/.ocfp/{bloc}/ssh/
+		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_ed25519"),
+		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_rsa"),
+		// Legacy location: ~/.ssh/ocfp/{bloc}/
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_ed25519"),
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_rsa"),
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName),
+		filepath.Join(homeDir, ".ssh", blocName),
 		filepath.Join(homeDir, ".ssh", blocName+"-bastion"),
-		// Common SSH keys
+		// Common SSH keys - prefer ed25519
+		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_rsa"),
 		filepath.Join(homeDir, ".ssh", "id_ecdsa"),
-		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_dsa"),
 	}
 
@@ -53,15 +61,15 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 	for _, path := range searchPaths {
 		_, err := os.Stat(path)
 		if err == nil {
-			km.log.Debug("Found SSH key", "path", path)
+			km.log.Debugw("Found SSH key", "path", path)
 
 			// Verify the key is valid
 			if km.isValidPrivateKey(path) {
-				km.log.Info("Using SSH private key", "path", path)
+				km.log.Infow("Using SSH private key", "path", path)
 
 				return path, nil
 			} else {
-				km.log.Warn("Invalid SSH key", "path", path)
+				km.log.Warnw("Invalid SSH key", "path", path)
 			}
 		}
 	}

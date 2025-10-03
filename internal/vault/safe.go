@@ -35,14 +35,14 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Setting vault secret", "path", path, "key", key)
+	s.logger.Debugw("Setting vault secret", "path", path, "key", key)
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
 	secret, err := s.client.logical.Read(path)
 	if err != nil {
-		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
+		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if data, ok := secret.Data["data"].(map[string]interface{}); ok {
@@ -62,7 +62,7 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 
 	isKVv2, err := s.engine.IsKVv2(path)
 	if err != nil {
-		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
 
 		isKVv2 = false
 	}
@@ -87,7 +87,7 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 		return fmt.Errorf("failed to write secret to %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully set vault secret", "path", path, "key", key)
+	s.logger.Debugw("Successfully set vault secret", "path", path, "key", key)
 
 	return nil
 }
@@ -98,14 +98,14 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Setting multiple vault secrets", "path", path, "keys", len(data))
+	s.logger.Debugw("Setting multiple vault secrets", "path", path, "keys", len(data))
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
 	secret, err := s.client.logical.Read(path)
 	if err != nil {
-		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
+		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if secretData, ok := secret.Data["data"].(map[string]interface{}); ok {
@@ -127,7 +127,7 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 
 	isKVv2, err := s.engine.IsKVv2(path)
 	if err != nil {
-		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
 
 		isKVv2 = false
 	}
@@ -152,7 +152,7 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 		return fmt.Errorf("failed to write secrets to %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully set multiple vault secrets", "path", path, "keys", len(data))
+	s.logger.Debugw("Successfully set multiple vault secrets", "path", path, "keys", len(data))
 
 	return nil
 }
@@ -163,7 +163,7 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Getting vault secret", "path", path, "key", key)
+	s.logger.Debugw("Getting vault secret", "path", path, "key", key)
 
 	var secret *api.Secret
 
@@ -202,7 +202,7 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 		return nil, ErrKeyNotFoundAtPath(key, path)
 	}
 
-	s.logger.Debug("Successfully retrieved vault secret", "path", path, "key", key)
+	s.logger.Debugw("Successfully retrieved vault secret", "path", path, "key", key)
 
 	return value, nil
 }
@@ -232,7 +232,7 @@ func (s *Safe) Exists(path string) (bool, error) {
 	if err != nil {
 		// If we get a permission denied or similar, the path might exist
 		// but we can't read it. For now, treat any error as "doesn't exist"
-		s.logger.Debug("Error checking path existence", "path", path, "error", err)
+		s.logger.Debugw("Error checking path existence", "path", path, "error", err)
 
 		return false, nil
 	}
@@ -247,7 +247,7 @@ func (s *Safe) Delete(path, key string) error {
 
 	if key == "" {
 		// Delete entire path
-		s.logger.Debug("Deleting entire vault path", "path", path)
+		s.logger.Debugw("Deleting entire vault path", "path", path)
 
 		_, err := s.client.logical.Delete(path)
 		if err != nil {
@@ -258,7 +258,7 @@ func (s *Safe) Delete(path, key string) error {
 	}
 
 	// Delete specific key - need to read, modify, and write back
-	s.logger.Debug("Deleting vault secret key", "path", path, "key", key)
+	s.logger.Debugw("Deleting vault secret key", "path", path, "key", key)
 
 	data, err := s.GetAll(path)
 	if err != nil {
@@ -279,7 +279,7 @@ func (s *Safe) List(path string) ([]string, error) {
 		path += "/"
 	}
 
-	s.logger.Debug("Listing vault paths", "path", path)
+	s.logger.Debugw("Listing vault paths", "path", path)
 
 	secret, err := s.client.logical.List(path)
 	if err != nil {
@@ -302,7 +302,7 @@ func (s *Safe) List(path string) ([]string, error) {
 		}
 	}
 
-	s.logger.Debug("Successfully listed vault paths", "path", path, "count", len(paths))
+	s.logger.Debugw("Successfully listed vault paths", "path", path, "count", len(paths))
 
 	return paths, nil
 }
@@ -312,7 +312,7 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Exporting vault secrets", "path", path)
+	s.logger.Debugw("Exporting vault secrets", "path", path)
 
 	result := make(map[string]interface{})
 
@@ -321,7 +321,7 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to export from %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully exported vault secrets", "path", path, "entries", len(result))
+	s.logger.Debugw("Successfully exported vault secrets", "path", path, "entries", len(result))
 
 	return result, nil
 }
@@ -331,7 +331,7 @@ func (s *Safe) Import(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Importing vault secrets", "path", path, "entries", len(data))
+	s.logger.Debugw("Importing vault secrets", "path", path, "entries", len(data))
 
 	for subPath, value := range data {
 		fullPath := path
@@ -354,7 +354,7 @@ func (s *Safe) Import(path string, data map[string]interface{}) error {
 		}
 	}
 
-	s.logger.Debug("Successfully imported vault secrets", "path", path, "entries", len(data))
+	s.logger.Debugw("Successfully imported vault secrets", "path", path, "entries", len(data))
 
 	return nil
 }

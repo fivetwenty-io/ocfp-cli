@@ -11,6 +11,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
@@ -67,6 +68,7 @@ type initFlags struct {
 	dryRun     bool
 	resume     bool
 	verbose    bool
+	ocfpOnly   bool
 }
 
 // addFlags adds all flags to the command.
@@ -77,6 +79,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print actions without executing")
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "resume from last successful checkpoint")
 	cmd.Flags().BoolVar(&f.verbose, "verbose", false, "enable verbose logging")
+	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
 }
 
 // bindViperFlags binds flags to viper.
@@ -87,10 +90,14 @@ func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("init.dry_run", cmd.Flags().Lookup("dry-run"))
 	_ = viper.BindPFlag("init.resume", cmd.Flags().Lookup("resume"))
 	_ = viper.BindPFlag("init.verbose", cmd.Flags().Lookup("verbose"))
+	_ = viper.BindPFlag("init.ocfp_only", cmd.Flags().Lookup("ocfp"))
 }
 
 // runInit executes the init command.
 func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
+	// Silence usage on execution errors
+	cmd.SilenceUsage = true
+
 	ctx := context.Background()
 	log := logger.Get()
 
@@ -101,9 +108,9 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	log.Info("Starting initialization", "component", component, "bloc", cfg.Name)
+	log.Infow("Starting initialization", "component", component, "bloc", cfg.Name)
 
-	err = f.validatePrerequisitesIfNeeded(ctx, cfg)
+	err = f.validatePrerequisitesIfNeeded(ctx, cfg, component)
 	if err != nil {
 		return err
 	}
@@ -139,12 +146,12 @@ func (f *initFlags) loadConfig() (*config.Config, error) {
 }
 
 // validatePrerequisitesIfNeeded validates prerequisites if not skipped.
-func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *config.Config) error {
+func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *config.Config, component string) error {
 	if f.skipChecks {
 		return nil
 	}
 
-	err := validatePrerequisites(ctx, cfg)
+	err := validatePrerequisites(ctx, cfg, component)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
@@ -186,6 +193,10 @@ func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Confi
 	case "bosh":
 		return initializeBOSH(ctx, cfg)
 	case RoleBastion:
+		if f.ocfpOnly {
+			return initializeBastionOCFPOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
+		}
+
 		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
@@ -256,22 +267,35 @@ func getInitExamples() string {
 }
 
 // validatePrerequisites checks that required infrastructure is in place.
-func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
+func validatePrerequisites(ctx context.Context, cfg *config.Config, component string) error {
 	log := logger.Get()
-	log.Info("Validating prerequisites")
+	log.Infow("Validating prerequisites", "component", component)
 
-	// Check for bastion connectivity
+	// For bastion initialization, only check SSH connectivity
+	// Tools will be installed ON the bastion during provisioning
+	if component == RoleBastion {
+		err := checkBastionConnectivity(ctx, cfg)
+		if err != nil {
+			log.Warnw("Bastion connectivity check failed, will attempt provisioning anyway", "error", err)
+		}
+
+		return nil
+	}
+
+	// For other components, check bastion is already provisioned and accessible
 	err := checkBastionConnectivity(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("bastion check failed: %w", err)
 	}
 
-	// Check for required tools
-	requiredTools := []string{"bosh", "cf", "credhub", "uaa"}
-	for _, tool := range requiredTools {
-		_, err := exec.LookPath(tool)
-		if err != nil {
-			log.Warn("Required tool not found in PATH", "tool", tool)
+	// Check for required local tools for CF/BOSH operations
+	if component == "cf" || component == "bosh" || component == KeywordAll {
+		requiredTools := []string{"bosh", "cf", "credhub", "uaa"}
+		for _, tool := range requiredTools {
+			_, err := exec.LookPath(tool)
+			if err != nil {
+				log.Warnw("Required tool not found in PATH", "tool", tool)
+			}
 		}
 	}
 
@@ -280,7 +304,7 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 
 	_, err = os.Stat(deploymentDir)
 	if os.IsNotExist(err) {
-		log.Info("Creating deployment directory", "path", deploymentDir)
+		log.Infow("Creating deployment directory", "path", deploymentDir)
 
 		err = os.MkdirAll(deploymentDir, DeploymentDirPerm)
 		if err != nil {
@@ -295,16 +319,24 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config) error {
 func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 
-	// Get bastion IP from config
-	bastionIP := cfg.Bastion.SSHUser // This should be the floating IP
-	if bastionIP == "" {
-		log.Warn("Bastion IP not configured, skipping connectivity check")
+	// Get bastion IP using proper resolution
+	bastionIP, err := resolveBastionIPForCheck(ctx, cfg)
+	if err != nil {
+		log.Warnw("Could not resolve bastion IP, skipping connectivity check", "error", err)
+
+		return nil
+	}
+
+	// Find SSH key for bastion
+	keyPath, err := findSSHKey(cfg.Name, cfg)
+	if err != nil {
+		log.Warnw("Could not find SSH key for bastion, skipping connectivity check", "error", err)
 
 		return nil
 	}
 
 	// Try SSH connection with timeout
-	err := security.ValidateInput(cfg.Bastion.SSHUser, validUserPattern)
+	err = security.ValidateInput(cfg.Bastion.SSHUser, validUserPattern)
 	if err != nil {
 		return fmt.Errorf("invalid SSH user: %w", err)
 	}
@@ -314,10 +346,19 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid bastion IP: %w", err)
 	}
 
+	err = security.ValidateInput(keyPath, validFilePathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid key path: %w", err)
+	}
+
 	cmd := exec.CommandContext(ctx, "ssh", // #nosec G204 - input validated above
-		"-o", "ConnectTimeout=5",
+		"-i", keyPath,
+		"-o", "ConnectTimeout=30",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"-o", "IdentitiesOnly=yes",
+		"-o", "IdentityAgent=none",
 		fmt.Sprintf("%s@%s", cfg.Bastion.SSHUser, bastionIP),
 		"echo", "connected")
 
@@ -329,6 +370,33 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 	log.Info("Bastion connectivity verified")
 
 	return nil
+}
+
+// resolveBastionIPForCheck resolves the bastion IP for connectivity checking.
+func resolveBastionIPForCheck(ctx context.Context, cfg *config.Config) (string, error) {
+	// Check config first
+	if cfg.BastionIP != "" {
+		return cfg.BastionIP, nil
+	}
+
+	// Initialize provider for IP lookup
+	provider, err := cpi.GetProvider(cfg.Provider)
+	if err != nil {
+		return "", fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize provider: %w", err)
+	}
+
+	// Use the shared bastion IP finder
+	bastionIP, err := findBastionIP(ctx, provider, cfg.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to find bastion IP: %w", err)
+	}
+
+	return bastionIP, nil
 }
 
 // initializePostgreSQL sets up PostgreSQL for BOSH and CF.
@@ -346,7 +414,7 @@ func initializePostgreSQL() error {
 	databases := []string{"bosh", "uaa", "credhub", "cloud_controller", "diego", "routing_api"}
 
 	for _, db := range databases {
-		log.Info("Creating database", "name", db)
+		log.Infow("Creating database", "name", db)
 		// Pending: implement database creation via psql or Go postgres driver
 	}
 
@@ -373,7 +441,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	// Check if manifest exists
 	_, err := os.Stat(manifestPath)
 	if os.IsNotExist(err) {
-		log.Info("Creating BOSH manifest", "path", manifestPath)
+		log.Infow("Creating BOSH manifest", "path", manifestPath)
 
 		err = createBOSHManifest(cfg, manifestPath)
 		if err != nil {
@@ -442,7 +510,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 
 	err := cmd.Run()
 	if err != nil {
-		log.Warn("Failed to upload CF release", "error", err)
+		log.Warnw("Failed to upload CF release", "error", err)
 	}
 
 	// Deploy Cloud Foundry
@@ -577,28 +645,28 @@ func configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
 
 	err = cmd.Run()
 	if err != nil {
-		log.Warn("Failed to create org", "error", err)
+		log.Warnw("Failed to create org", "error", err)
 	}
 
 	cmd = exec.CommandContext(ctx, "cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
 
 	err = cmd.Run()
 	if err != nil {
-		log.Warn("Failed to create space", "error", err)
+		log.Warnw("Failed to create space", "error", err)
 	}
 
 	cmd = exec.CommandContext(ctx, "cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
 
 	err = cmd.Run()
 	if err != nil {
-		log.Warn("Failed to target org/space", "error", err)
+		log.Warnw("Failed to target org/space", "error", err)
 	}
 
 	return nil
 }
 
 // initializeBastion performs bastion host initialization.
-func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume bool, verbose bool) error {
+func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
 	log := logger.Get()
 	log.Info("Initializing bastion host")
 
@@ -612,6 +680,7 @@ func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel,
 		MaxWorkers:  DefaultMaxWorkers,
 		ProgressOut: os.Stdout,
 		LogFile:     "",
+		OCFPOnly:    false, // OCFPOnly is handled separately via --ocfp flag
 	}
 
 	// Use mode-aware initialization that detects local vs remote execution
@@ -621,6 +690,42 @@ func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel,
 	}
 
 	log.Info("Bastion initialization completed successfully")
+
+	return nil
+}
+
+// initializeBastionOCFPOnly performs OCFP CLI installation/update only.
+func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
+	log := logger.Get()
+	log.Info("Installing/updating OCFP CLI only")
+
+	// Provide user feedback
+	_, _ = fmt.Fprintf(os.Stdout, "\n🔧 Installing/updating OCFP CLI binary to bastion...\n")
+
+	// Create provisioning options with OCFPOnly flag set
+	options := &bastion.ProvisioningOptions{
+		DryRun:      dryRun,
+		Force:       force,
+		Parallel:    parallel,
+		Resume:      resume,
+		Verbose:     verbose,
+		MaxWorkers:  DefaultMaxWorkers,
+		ProgressOut: os.Stdout,
+		LogFile:     "",
+		OCFPOnly:    true,
+	}
+
+	// Use mode-aware initialization that detects local vs remote execution
+	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, "❌ OCFP CLI installation failed: %v\n\n", err)
+
+		return fmt.Errorf("OCFP CLI installation failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "✅ OCFP CLI installation completed successfully\n\n")
+
+	log.Info("OCFP CLI installation completed successfully")
 
 	return nil
 }

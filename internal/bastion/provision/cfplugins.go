@@ -73,6 +73,13 @@ func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) s
 
 	cfm.addVerificationSection(lines)
 
+	// Close the CF CLI availability check
+	*lines = append(*lines,
+		"else",
+		"    log_warning 'CF CLI not found, skipping plugin installation'",
+		"fi",
+		"")
+
 	return strings.Join(*lines, "\n")
 }
 
@@ -87,27 +94,37 @@ func (cfm *CFPluginManager) getDefaultPlugins() []CFPlugin {
 			GitHubRepo:        "cloudfoundry-community/cf-targets-plugin",
 			InstallFromGitHub: true,
 			Version:           "",
-			Force:             false,
+			Force:             true,
 		},
 		{
 			Name:              "top",
-			Enabled:           true,
+			Enabled:           false,
 			Repo:              "",
 			RepoURL:           "",
 			GitHubRepo:        "cloudfoundry-community/cf-top-plugin",
 			InstallFromGitHub: true,
 			Version:           "",
-			Force:             false,
+			Force:             true,
 		},
 		{
 			Name:              "logs",
-			Enabled:           true,
+			Enabled:           false,
 			Repo:              "",
 			RepoURL:           "",
 			GitHubRepo:        "cloudfoundry-incubator/cf-logs-plugin",
 			InstallFromGitHub: true,
 			Version:           "",
-			Force:             false,
+			Force:             true,
+		},
+		{
+			Name:              "app-autoscaler-plugin",
+			Enabled:           true,
+			Repo:              "CF-Community",
+			RepoURL:           "https://plugins.cloudfoundry.org",
+			GitHubRepo:        "",
+			InstallFromGitHub: false,
+			Version:           "",
+			Force:             true,
 		},
 	}
 }
@@ -202,10 +219,12 @@ func (cfm *CFPluginManager) addScriptHeader(lines *[]string) {
 func (cfm *CFPluginManager) addCLICheck(lines *[]string) {
 	*lines = append(*lines,
 		"# Ensure CF CLI is available",
-		"if ! command -v cf >/dev/null 2>&1; then",
-		"    log_error 'CF CLI not found, skipping plugin installation'",
-		"    return 0",
-		"fi",
+		"if command -v cf >/dev/null 2>&1; then",
+		"    # Add CF-Community plugin repository if not already added",
+		"    if ! cf list-plugin-repos | grep -q 'CF-Community'; then",
+		"        log_info 'Adding CF-Community plugin repository'",
+		"        cf add-plugin-repo CF-Community https://plugins.cloudfoundry.org",
+		"    fi",
 		"")
 }
 
@@ -239,25 +258,36 @@ func (cfm *CFPluginManager) addGitHubInstallCommands(lines *[]string, plugin CFP
 
 	cfm.addReleaseVersionCommands(lines, plugin)
 
+	// Construct binary name - use full plugin name format for CF plugins
+	binaryName := fmt.Sprintf("cf-%s-plugin-linux.amd64", plugin.Name)
 	*lines = append(*lines,
-		fmt.Sprintf("    PLUGIN_URL=\"https://github.com/%s/releases/download/${LATEST_RELEASE}/%s-linux-amd64\"", plugin.GitHubRepo, plugin.Name),
-		"    ",
-		"    # Download and install plugin",
-		fmt.Sprintf("    curl -fsSL \"$PLUGIN_URL\" -o \"/tmp/%s-plugin\"", plugin.Name),
-		"    if [ $? -eq 0 ]; then",
-		fmt.Sprintf("        chmod +x \"/tmp/%s-plugin\"", plugin.Name))
-
-	cfm.addInstallCommand(lines, plugin, fmt.Sprintf("/tmp/%s-plugin", plugin.Name))
-
-	*lines = append(*lines,
+		fmt.Sprintf("        PLUGIN_URL=\"https://github.com/%s/releases/download/${LATEST_RELEASE}/%s\"", plugin.GitHubRepo, binaryName),
+		"        ",
+		"        # Download and install plugin",
+		fmt.Sprintf("        curl -fsSL \"$PLUGIN_URL\" -o \"/tmp/%s-plugin\"", plugin.Name),
 		"        if [ $? -eq 0 ]; then",
-		fmt.Sprintf("            log_success 'CF plugin %s installed successfully'", plugin.Name),
+		fmt.Sprintf("            chmod +x \"/tmp/%s-plugin\"", plugin.Name))
+
+	// Install command with correct indentation (12 spaces for nested conditionals)
+	installCmd := fmt.Sprintf("cf install-plugin \"/tmp/%s-plugin\"", plugin.Name)
+	if plugin.Force {
+		installCmd += cfInstallForceFlag
+	}
+
+	*lines = append(*lines, "            "+installCmd)
+
+	*lines = append(*lines,
+		"            if [ $? -eq 0 ]; then",
+		fmt.Sprintf("                log_success 'CF plugin %s installed successfully'", plugin.Name),
+		"            else",
+		fmt.Sprintf("                log_error 'Failed to install CF plugin %s'", plugin.Name),
+		"            fi",
+		fmt.Sprintf("            rm -f \"/tmp/%s-plugin\"", plugin.Name),
 		"        else",
-		fmt.Sprintf("            log_error 'Failed to install CF plugin %s'", plugin.Name),
+		fmt.Sprintf("            log_error 'Failed to download CF plugin %s'", plugin.Name),
 		"        fi",
-		fmt.Sprintf("        rm -f \"/tmp/%s-plugin\"", plugin.Name),
 		"    else",
-		fmt.Sprintf("        log_error 'Failed to download CF plugin %s'", plugin.Name),
+		fmt.Sprintf("        log_warning 'Failed to fetch latest release for %s, skipping'", plugin.Name),
 		"    fi")
 }
 
@@ -266,44 +296,40 @@ func (cfm *CFPluginManager) addReleaseVersionCommands(lines *[]string, plugin CF
 	if plugin.Version != "" {
 		*lines = append(*lines, fmt.Sprintf("    LATEST_RELEASE='%s'", plugin.Version))
 	} else {
-		*lines = append(*lines, fmt.Sprintf("    LATEST_RELEASE=$(curl -s https://api.github.com/repos/%s/releases/latest | grep 'tag_name' | cut -d'\"' -f4)", plugin.GitHubRepo))
+		*lines = append(*lines, "    # Use GitHub token if available to avoid rate limiting")
+		*lines = append(*lines, `    GITHUB_AUTH_HEADER=""`)
+		*lines = append(*lines, `    if [ -n "${GITHUB_TOKEN:-}" ]; then`)
+		*lines = append(*lines, `        GITHUB_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"`)
+		*lines = append(*lines, `    fi`)
+		*lines = append(*lines, fmt.Sprintf("    LATEST_RELEASE=$(curl -sL -H \"${GITHUB_AUTH_HEADER}\" https://api.github.com/repos/%s/releases/latest | grep 'tag_name' | cut -d'\"' -f4)", plugin.GitHubRepo))
 	}
-}
-
-// addInstallCommand adds the cf install-plugin command.
-func (cfm *CFPluginManager) addInstallCommand(lines *[]string, plugin CFPlugin, path string) {
-	installCmd := fmt.Sprintf("cf install-plugin \"%s\"", path)
-	if plugin.Force {
-		installCmd += cfInstallForceFlag
-	}
-
-	*lines = append(*lines, "        "+installCmd)
+	// Open conditional for successful version fetch - caller will close it
+	*lines = append(*lines, `    if [ ! -z "${LATEST_RELEASE}" ] && [ "${LATEST_RELEASE}" != "null" ]; then`)
 }
 
 // addRepoInstallCommands adds commands for installing from CF repository.
 func (cfm *CFPluginManager) addRepoInstallCommands(lines *[]string, plugin CFPlugin) {
-	addRepoCmd := fmt.Sprintf("cf add-plugin-repo %s %s", plugin.Name, plugin.RepoURL)
-	if plugin.Force {
-		addRepoCmd += cfInstallForceFlag
-	}
-
-	*lines = append(*lines, "    "+addRepoCmd)
-
-	installCmd := "cf install-plugin " + plugin.Name
+	installCmd := fmt.Sprintf("cf install-plugin -r %s %s", plugin.Repo, plugin.Name)
 	if plugin.Force {
 		installCmd += cfInstallForceFlag
 	}
 
 	*lines = append(*lines, "    "+installCmd)
+	*lines = append(*lines,
+		"    if [ $? -eq 0 ]; then",
+		fmt.Sprintf("        log_success 'CF plugin %s installed successfully'", plugin.Name),
+		"    else",
+		fmt.Sprintf("        log_error 'Failed to install CF plugin %s from repository'", plugin.Name),
+		"    fi")
 }
 
 // addVerificationSection adds the plugin verification commands.
 func (cfm *CFPluginManager) addVerificationSection(lines *[]string) {
 	*lines = append(*lines,
-		"# Verify installed plugins",
-		"log_info 'Installed CF plugins:'",
-		"cf plugins | grep '^[a-zA-Z]' | while read plugin_line; do",
-		"    log_info \"  $plugin_line\"",
-		"done",
-		"")
+		"    # Verify installed plugins",
+		"    log_info 'Installed CF plugins:'",
+		"    cf plugins | grep '^[a-zA-Z]' | while read plugin_line; do",
+		"        log_info \"  $plugin_line\"",
+		"    done",
+		"    ")
 }

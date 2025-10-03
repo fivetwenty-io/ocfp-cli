@@ -62,7 +62,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	env := make(map[string]string)
 
 	// Add OCFP-specific variables
-	env["OCFP_BLOC_NAME"] = s.config.Name
+	env["OCFP_BLOC"] = s.config.Name
 	env["OCFP_PROVIDER"] = "stackit"
 
 	// Add STACKIT-specific variables
@@ -131,12 +131,13 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
 	}
 
-	// Prepare SSH options
+	// Prepare SSH options (just the option values, not the -o flag)
 	sshOptions := []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=30",
+		"StrictHostKeyChecking=no",
+		"UserKnownHostsFile=/dev/null",
+		"LogLevel=ERROR",
+		"ConnectTimeout=30",
+		"ForwardAgent=yes",
 	}
 
 	// Add custom SSH options if configured
@@ -214,7 +215,7 @@ func (s *StackitBastionInit) addGenesisEnv(env map[string]string) {
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
 	if s.config.BastionIP != "" {
-		s.log.Debug("Using configured bastion IP", "ip", s.config.BastionIP)
+		s.log.Debugw("Using configured bastion IP", "ip", s.config.BastionIP)
 
 		return s.config.BastionIP, nil
 	}
@@ -222,7 +223,7 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 2: Try to get from STACKIT API (would need to implement STACKIT client)
 	bastionIP, err := s.getBastionIPFromAPI()
 	if err == nil && bastionIP != "" {
-		s.log.Debug("Retrieved bastion IP from STACKIT API", "ip", bastionIP)
+		s.log.Debugw("Retrieved bastion IP from STACKIT API", "ip", bastionIP)
 
 		return bastionIP, nil
 	}
@@ -230,14 +231,14 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 3: Try to find in terraform state or other sources
 	ip, err := s.getBastionIPFromState()
 	if err == nil && ip != "" {
-		s.log.Debug("Retrieved bastion IP from state", "ip", ip)
+		s.log.Debugw("Retrieved bastion IP from state", "ip", ip)
 
 		return ip, nil
 	}
 
 	// Strategy 4: Check environment variable
 	if ip := os.Getenv("STACKIT_BASTION_IP"); ip != "" {
-		s.log.Debug("Using bastion IP from environment", "ip", ip)
+		s.log.Debugw("Using bastion IP from environment", "ip", ip)
 
 		return ip, nil
 	}
@@ -266,7 +267,7 @@ func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 		if err == nil {
 			// Parse state file to extract bastion IP
 			// This is a placeholder - would need actual terraform state parsing
-			s.log.Debug("Found terraform state file", "file", stateFile)
+			s.log.Debugw("Found terraform state file", "file", stateFile)
 			// return s.parseStateFile(stateFile)
 		}
 	}

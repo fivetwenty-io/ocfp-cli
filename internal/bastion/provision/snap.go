@@ -105,16 +105,6 @@ func (sm *SnapManager) getDefaultSnapPackages() []SnapPackage {
 			DevMode:      false,
 			Dangerous:    false,
 		},
-		{
-			Name:         "helm",
-			Enabled:      true,
-			CheckCommand: "helm",
-			Channel:      "stable",
-			Classic:      false,
-			Condition:    "",
-			DevMode:      false,
-			Dangerous:    false,
-		},
 	}
 }
 

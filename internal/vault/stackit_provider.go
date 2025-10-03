@@ -59,7 +59,7 @@ func NewStackitVaultProvider(cfg *config.Config, safe SafeInterface, blocName st
 
 // Configure performs full vault configuration for STACKIT.
 func (s *StackitVaultProvider) Configure() error {
-	s.logger.Info("Starting STACKIT vault configuration", "bloc", s.BlocName)
+	s.logger.Infow("Starting STACKIT vault configuration", "bloc", s.BlocName)
 
 	// Save OCFP configuration to vault first
 	err := s.SaveConfigToVault()
@@ -69,7 +69,7 @@ func (s *StackitVaultProvider) Configure() error {
 
 	// Configure both management and OCF environments
 	for _, envType := range []string{"mgmt", "ocf"} {
-		s.logger.Info("Configuring environment", "env_type", envType)
+		s.logger.Infow("Configuring environment", "env_type", envType)
 
 		envPath := s.PathBuilder.GetEnvironmentPath(envType)
 
@@ -119,14 +119,14 @@ func (s *StackitVaultProvider) Configure() error {
 		return fmt.Errorf("failed to configure public IPs: %w", err)
 	}
 
-	s.logger.Info("STACKIT vault configuration completed", "bloc", s.BlocName)
+	s.logger.Infow("STACKIT vault configuration completed", "bloc", s.BlocName)
 
 	return nil
 }
 
 // ConfigureBlobstores configures blobstore settings.
 func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string) error {
-	s.logger.Info("Configuring blobstores", "env_type", envType)
+	s.logger.Infow("Configuring blobstores", "env_type", envType)
 
 	// STACKIT uses S3-compatible object storage
 	// Configure blobstores for different systems
@@ -174,7 +174,7 @@ func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string) er
 
 // ConfigureDatabases configures database settings.
 func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string) error {
-	s.logger.Info("Configuring databases", "env_type", envType)
+	s.logger.Infow("Configuring databases", "env_type", envType)
 
 	// STACKIT database configuration - simplified
 	databases := s.getDatabasesForEnv(envType)
@@ -193,7 +193,7 @@ func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string) error
 
 // ConfigureFQDNs configures fully qualified domain names.
 func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
-	s.logger.Info("Configuring FQDNs", "env_type", envType)
+	s.logger.Infow("Configuring FQDNs", "env_type", envType)
 
 	// Get FQDNs from configuration
 	if s.Config.FQDNs == nil {
@@ -204,7 +204,7 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 
 	envFQDNs, exists := s.Config.FQDNs[envType]
 	if !exists {
-		s.logger.Info("No FQDNs configured for environment", "env_type", envType)
+		s.logger.Infow("No FQDNs configured for environment", "env_type", envType)
 
 		return nil
 	}
@@ -226,7 +226,7 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 
 // ConfigureIAAS configures IaaS-specific settings.
 func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
-	s.logger.Info("Configuring IaaS components", "env_type", envType)
+	s.logger.Infow("Configuring IaaS components", "env_type", envType)
 
 	// Configure VPC
 	err := s.configureVPC(envType)
@@ -257,7 +257,7 @@ func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
 
 // ConfigureLoadBalancers configures load balancer settings.
 func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string) error {
-	s.logger.Info("Configuring load balancers", "env_type", envType)
+	s.logger.Infow("Configuring load balancers", "env_type", envType)
 
 	// Export service targets backed by reserved IPs (STACKIT parity) for both envs
 	services := s.buildLBServiceTargetsFromState()
@@ -300,7 +300,7 @@ func (s *StackitVaultProvider) ConfigurePublicIPs() error {
 		return fmt.Errorf("failed to set public IPs: %w", err)
 	}
 
-	s.logger.Info("Public IP configuration completed", "path", publicIPsPath)
+	s.logger.Infow("Public IP configuration completed", "path", publicIPsPath)
 
 	return nil
 }
@@ -331,7 +331,7 @@ func (s *StackitVaultProvider) SaveConfigToVault() error {
 		return fmt.Errorf("failed to save config to vault: %w", err)
 	}
 
-	s.logger.Info("OCFP configuration saved to vault", "path", configPath)
+	s.logger.Infow("OCFP configuration saved to vault", "path", configPath)
 
 	return nil
 }
@@ -421,7 +421,7 @@ func (s *StackitVaultProvider) calculateSystemIPs(cidr string, envType string) m
 
 // configureBOSH configures BOSH-specific components.
 func (s *StackitVaultProvider) configureBOSH(envType string) error {
-	s.logger.Info("Configuring BOSH components", "env_type", envType)
+	s.logger.Infow("Configuring BOSH components", "env_type", envType)
 
 	// Configure IAM
 	err := s.configureIAM(envType)
@@ -516,7 +516,7 @@ func (s *StackitVaultProvider) configureRegion(envType string) error {
 
 // configureSecurityGroups configures security group settings.
 func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
-	s.logger.Info("Configuring security groups", "env_type", envType)
+	s.logger.Infow("Configuring security groups", "env_type", envType)
 
 	// Default security group
 	defaultSGPath := s.PathBuilder.GetSecurityGroupPath(envType, "default")
@@ -549,7 +549,7 @@ func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
 
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
 func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
-	s.logger.Info("Configuring reserved IPs", "subnet", fmt.Sprintf("%s-%d", subnetType, subnetNum))
+	s.logger.Infow("Configuring reserved IPs", "subnet", fmt.Sprintf("%s-%d", subnetType, subnetNum))
 
 	// This is a simplified implementation - in a real system, you'd calculate
 	// system IPs based on the systems configuration from data files
@@ -567,7 +567,7 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 
 // configureSubnets configures subnet settings in vault.
 func (s *StackitVaultProvider) configureSubnets(envType string) error {
-	s.logger.Info("Configuring subnets", "env_type", envType)
+	s.logger.Infow("Configuring subnets", "env_type", envType)
 
 	subnetsPath := s.PathBuilder.GetSubnetsPath(envType)
 
@@ -578,7 +578,7 @@ func (s *StackitVaultProvider) configureSubnets(envType string) error {
 		}
 	}
 
-	s.logger.Info("Subnets configuration completed", "path", subnetsPath)
+	s.logger.Infow("Subnets configuration completed", "path", subnetsPath)
 
 	return nil
 }
@@ -711,7 +711,7 @@ func (s *StackitVaultProvider) configureVPC(envType string) error {
 		}
 	}
 
-	s.logger.Info("VPC configuration completed", "path", vpcPath)
+	s.logger.Infow("VPC configuration completed", "path", vpcPath)
 
 	return nil
 }
@@ -768,7 +768,13 @@ func (s *StackitVaultProvider) buildLBServiceTargetsFromState() map[string]map[s
 }
 
 func (s *StackitVaultProvider) loadStateManager() *state.Manager {
-	stateManager, err := state.NewManager("")
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(s.BlocName)
+	if err != nil {
+		return nil
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return nil
 	}

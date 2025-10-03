@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	stackit "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
@@ -35,6 +36,11 @@ func Execute() {
 	err := stackit.Register()
 	if err != nil {
 		logger.Warnf("Failed to register STACKIT provider: %v", err)
+	}
+
+	err = aws.Register()
+	if err != nil {
+		logger.Warnf("Failed to register AWS provider: %v", err)
 	}
 
 	// Register all commands
@@ -118,7 +124,7 @@ operational tooling for Cloud Foundry environments.`,
 		},
 		TraverseChildren:           false,
 		Hidden:                     false,
-		SilenceErrors:              false,
+		SilenceErrors:              true,
 		SilenceUsage:               false,
 		DisableFlagParsing:         false,
 		DisableAutoGenTag:          false,
@@ -153,7 +159,7 @@ func defineFlags(cmd *cobra.Command, flags *flagConfig) {
 func bindFlagsToViper(cmd *cobra.Command) {
 	flagBindings := map[string]string{
 		"config":       "config",
-		"bloc_name":    "bloc",
+		"bloc":         "bloc",
 		"debug":        "debug",
 		"verbose":      "verbose",
 		"trace":        "trace",
@@ -175,10 +181,21 @@ func bindFlagsToViper(cmd *cobra.Command) {
 func createPreRunHandler(blocName *string) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, args []string) {
 		if *blocName != "" {
-			viper.Set("bloc_name", *blocName)
+			viper.Set("bloc", *blocName)
 		}
 		// Apply global UI settings
 		ui.SetASCII(viper.GetBool("ascii"))
+
+		// Extract command hierarchy for logging
+		commandName := cmd.Name()
+		subcommandName := ""
+
+		// Check if this command has a parent that isn't root
+		if cmd.Parent() != nil && cmd.Parent().Name() != "ocfp" {
+			// This is a subcommand
+			subcommandName = commandName
+			commandName = cmd.Parent().Name()
+		}
 
 		// Initialize logger once flags and viper are available
 		_ = logger.Initialize(logger.Config{
@@ -188,8 +205,9 @@ func createPreRunHandler(blocName *string) func(*cobra.Command, []string) {
 			Trace:      viper.GetBool("trace"),
 			NoLog:      viper.GetBool("no_log"),
 			LogDir:     "",
-			BlocName:   viper.GetString("bloc_name"),
-			Command:    cmd.Name(),
+			BlocName:   viper.GetString("bloc"),
+			Command:    commandName,
+			Subcommand: subcommandName,
 			RequestID:  "",
 			DirectorID: "",
 		})

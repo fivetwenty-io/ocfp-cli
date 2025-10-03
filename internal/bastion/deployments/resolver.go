@@ -130,6 +130,7 @@ func (r *Resolver) Validate(names ...string) error {
 	if url == "" {
 		for _, name := range names {
 			if r.IsRelease(name) {
+				//nolint:err113 // Dynamic error with deployment name context
 				return fmt.Errorf("deployment %s is set to release mode but deployments.url is not configured", name)
 			}
 		}

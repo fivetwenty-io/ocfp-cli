@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -70,7 +71,7 @@ func NewBastionCmd() *cobra.Command {
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
 	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("bloc_name", cmd.Flags().Lookup("bloc"))
+	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
 
 	return cmd
 }
@@ -90,28 +91,35 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 }
 
 func bastionInit(cmd *cobra.Command, log logger.Logger) error {
-	bastionContext, err := GetBastionContext(cmd, log)
-	if err != nil {
-		return fmt.Errorf("failed to get bastion context: %w", err)
+	ctx := cmd.Context()
+
+	// Get bloc name from viper (bound to --bloc flag)
+	blocName := viper.GetString("bloc")
+	if blocName == "" {
+		return ErrBlocIsRequired
 	}
 
-	scriptPath, err := FindProvisionScript("bastion-init")
+	// Load configuration
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
 	if err != nil {
-		return fmt.Errorf("cannot find bastion-init script: %w", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Copy and execute script
-	err = copyAndExecuteScript(
-		bastionContext,
-		scriptPath,
-		"/tmp/bastion-init.pl",
-		"bastion init",
-		"~/bastion-init.log",
-		log,
-	)
+	// Create bastion manager
+	bastionMgr := bastion.NewManager(cfg, &bastion.ProvisioningOptions{
+		DryRun:      false,
+		Resume:      false,
+		Parallel:    false,
+		ProgressOut: os.Stdout,
+	})
+
+	// Initialize bastion
+	err = bastionMgr.Initialize(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("bastion initialization failed: %w", err)
 	}
+
+	log.Info("Bastion initialization completed successfully")
 
 	return nil
 }
@@ -153,7 +161,7 @@ type BastionContext struct {
 func GetBastionContext(cmd *cobra.Command, log logger.Logger) (*BastionContext, error) {
 	user := viper.GetString("ssh.user")
 	key := viper.GetString("ssh.key")
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 
 	// Attempt discovery when bloc/provider are available
 	if blocName != "" {
@@ -172,7 +180,7 @@ func GetBastionContext(cmd *cobra.Command, log logger.Logger) (*BastionContext, 
 }
 
 func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, error) {
-	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -320,8 +328,8 @@ func BuildEnvironmentVariables(log logger.Logger) string {
 	// Build environment variables from environment for now
 	var envVars []string
 
-	if blocName := os.Getenv("OCFP_BLOC_NAME"); blocName != "" {
-		envVars = append(envVars, fmt.Sprintf("OCFP_BLOC_NAME='%s'", blocName))
+	if blocName := os.Getenv("OCFP_BLOC"); blocName != "" {
+		envVars = append(envVars, fmt.Sprintf("OCFP_BLOC='%s'", blocName))
 	}
 
 	if provider := os.Getenv("OCFP_PROVIDER"); provider != "" {

@@ -161,6 +161,7 @@ type StorageManager interface {
 	ListBuckets(ctx context.Context) ([]*Bucket, error)
 	DeleteBucket(ctx context.Context, name string) error
 	EmptyBucket(ctx context.Context, name string) error
+	IsBucketEmpty(ctx context.Context, name string) (bool, error)
 
 	// Credentials group operations
 	CreateCredentialsGroup(ctx context.Context, req *CredentialsGroupRequest) (*CredentialsGroup, error)

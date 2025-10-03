@@ -31,7 +31,7 @@ var (
 	ErrEd25519KeyGenerationNotImplemented     = errors.New("ed25519 key generation not yet implemented")
 	ErrNoUnsealKeysFoundInEnvVars             = errors.New("no unseal keys found in environment variables")
 	ErrTimeoutWaitingForVaultReady            = errors.New("timeout waiting for vault to be ready")
-	ErrBlocNameRequiredForVaultMigrate        = errors.New("bloc_name is required for vault migrate operation")
+	ErrBlocNameRequiredForVaultMigrate        = errors.New("bloc is required for vault migrate operation")
 	ErrConnectionTimeout                      = errors.New("connection timeout")
 	ErrAccessDenied                           = errors.New("access denied")
 	ErrPathNotFound                           = errors.New("path not found")

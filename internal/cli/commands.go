@@ -11,6 +11,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewBootstrapCmd())
 	root.AddCommand(commands.NewConfigureCmd())
 	root.AddCommand(commands.NewTeardownCmd())
+	root.AddCommand(commands.NewStateCmd()) // State command with sync subcommand
 
 	// Environment and access commands
 	root.AddCommand(commands.NewSSHCmd())

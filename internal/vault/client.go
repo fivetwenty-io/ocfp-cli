@@ -179,7 +179,7 @@ func (c *Client) ValidateConnection() error {
 		return ErrInvalidTokenResponse
 	}
 
-	c.logger.Debug("Vault connection validated", "token_policies", secret.Data["policies"])
+	c.logger.Debugw("Vault connection validated", "token_policies", secret.Data["policies"])
 
 	return nil
 }
@@ -254,7 +254,7 @@ func (c *Client) authenticateUserPass(ctx context.Context, cfg *Config) error {
 		return ErrNoAuthInfoReturned
 	}
 
-	c.logger.Debug("Authenticated with userpass", "lease_duration", authInfo.Auth.LeaseDuration)
+	c.logger.Debugw("Authenticated with userpass", "lease_duration", authInfo.Auth.LeaseDuration)
 
 	return nil
 }
@@ -283,7 +283,7 @@ func (c *Client) authenticateAppRole(ctx context.Context, cfg *Config) error {
 		return ErrNoAuthInfoReturned
 	}
 
-	c.logger.Debug("Authenticated with approle", "lease_duration", authInfo.Auth.LeaseDuration)
+	c.logger.Debugw("Authenticated with approle", "lease_duration", authInfo.Auth.LeaseDuration)
 
 	return nil
 }

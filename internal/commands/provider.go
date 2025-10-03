@@ -52,8 +52,9 @@ Examples:
   ocfp provider login --iaas stackit --bloc my-bloc  # explicit override
   ocfp provider login --iaas aws
   ocfp provider login --iaas gcp`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: runProviderCmd,
+		Args:         cobra.MinimumNArgs(1),
+		RunE:         runProviderCmd,
+		SilenceUsage: true,
 	}
 
 	cmd.Flags().String("iaas", "", "Cloud provider type (stackit, aws, openstack, gcp, azure) - optional if specified in bloc config")
@@ -83,19 +84,13 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 
 	// If not specified, try to get from config using bloc name
 	if providerName == "" {
-		blocName, _ := cmd.Flags().GetString("bloc")
-		if blocName == "" {
-			// fallback to global viper value (supports --bloc-name alias)
-			blocName = viper.GetString("bloc_name")
-		}
+		blocName := getBlocName(cmd)
 
-		if blocName == "" {
-			blocName = os.Getenv("OCFP_BLOC_NAME")
-		}
-
-		cfg, err := config.LoadWithParams("", blocName)
-		if err == nil && cfg.Provider != "" {
-			providerName = cfg.Provider
+		if blocName != "" {
+			cfg, err := config.LoadWithParams("", blocName)
+			if err == nil && cfg.Provider != "" {
+				providerName = cfg.Provider
+			}
 		}
 	}
 
@@ -111,7 +106,7 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	case ProviderStackit:
 		return loginSTACKIT(cmd, log)
 	case "aws":
-		return loginAWS(log)
+		return loginAWS(cmd, log)
 	case "openstack":
 		return loginOpenStack(log)
 	case "gcp":
@@ -123,12 +118,52 @@ func handleProviderLogin(cmd *cobra.Command, log *zap.Logger) error {
 	}
 }
 
+// getBlocName retrieves the bloc name from various sources in priority order.
+// It also strips the "-bastion" suffix if present, as users often append it
+// when referring to bastion operations but the actual bloc name in config
+// doesn't include this suffix.
+func getBlocName(cmd *cobra.Command) string {
+	var blocName string
+
+	// Try local flag first
+	blocName, _ = cmd.Flags().GetString("bloc")
+	if blocName != "" {
+		return stripBastionSuffix(blocName)
+	}
+
+	// Try global/parent flags (for commands where --bloc is defined on root)
+	if cmd.Parent() != nil {
+		blocName, _ = cmd.Parent().PersistentFlags().GetString("bloc")
+		if blocName != "" {
+			return stripBastionSuffix(blocName)
+		}
+	}
+
+	// Try viper (supports various sources including config files)
+	blocName = viper.GetString("bloc")
+	if blocName != "" {
+		return stripBastionSuffix(blocName)
+	}
+
+	// Try environment variable
+	blocName = os.Getenv("OCFP_BLOC")
+	if blocName != "" {
+		return stripBastionSuffix(blocName)
+	}
+
+	return ""
+}
+
+// stripBastionSuffix removes the "-bastion" suffix from a bloc name if present.
+// This allows users to use "my-bloc-bastion" as a shorthand when the actual
+// bloc name in the config is "my-bloc".
+func stripBastionSuffix(blocName string) string {
+	return strings.TrimSuffix(blocName, "-bastion")
+}
+
 // STACKIT Login Implementation.
 func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
-	blocName, _ := cmd.Flags().GetString("bloc")
-	if blocName == "" {
-		blocName = os.Getenv("OCFP_BLOC_NAME")
-	}
+	blocName := getBlocName(cmd)
 
 	if blocName == "" {
 		return ErrBlocFlagOrEnvVarRequired
@@ -351,42 +386,319 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	return nil
 }
 
-// Other Provider Login Implementations (Placeholder).
-func loginAWS(log *zap.Logger) error {
-	log.Warn("AWS provider login not implemented yet")
-	log.Info("AWS authentication typically uses:")
-	log.Info("  - AWS CLI profiles: aws configure")
-	log.Info("  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY")
-	log.Info("  - IAM roles for EC2 instances")
+// AWS Login Implementation.
+func loginAWS(cmd *cobra.Command, log *zap.Logger) error {
+	blocName := getBlocName(cmd)
+
+	if blocName == "" {
+		return ErrBlocFlagOrEnvVarRequired
+	}
+
+	// Get credentials from config or vault
+	credentials, err := getAWSCredentials(blocName, log)
+	if err != nil {
+		return fmt.Errorf("could not retrieve AWS credentials: %w", err)
+	}
+
+	if credentials == nil || credentials.AccessKeyID == "" || credentials.SecretAccessKey == "" {
+		return fmt.Errorf("%w for bloc: %s", ErrAWSCredentialsNotFound, blocName)
+	}
+
+	// Configure AWS CLI profile
+	return configureAWSProfile(blocName, credentials, log)
+}
+
+// AWSCredentials holds AWS authentication details.
+type AWSCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	Region          string
+}
+
+func getAWSCredentials(blocName string, log *zap.Logger) (*AWSCredentials, error) {
+	// Try config file first
+	credentials := getAWSCredentialsFromConfig(blocName, log)
+
+	if credentials != nil && credentials.AccessKeyID != "" {
+		return credentials, nil
+	}
+
+	// If not found in config, try vault
+	return getAWSCredentialsFromVault(blocName, log)
+}
+
+func getAWSCredentialsFromConfig(blocName string, log *zap.Logger) *AWSCredentials {
+	cfg, err := config.LoadWithParams("", blocName)
+	if err != nil {
+		log.Debug("Failed to load config", zap.Error(err))
+
+		return nil
+	}
+
+	log.Debug("Attempting to get AWS credentials from config file", zap.String("bloc", blocName))
+
+	// Check if config has AWS credentials
+	if cfg.AccessKeyID != "" && cfg.SecretAccessKey != "" {
+		log.Info("Retrieved AWS credentials from config file")
+
+		return &AWSCredentials{
+			AccessKeyID:     cfg.AccessKeyID,
+			SecretAccessKey: cfg.SecretAccessKey,
+			SessionToken:    cfg.SessionToken,
+			Region:          cfg.Region,
+		}
+	}
+
+	return nil
+}
+
+func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentials, error) {
+	// Check if safe command is available
+	_, err := exec.LookPath("safe")
+	if err != nil {
+		log.Debug("Safe command not available, skipping vault lookup")
+
+		return nil, nil
+	}
+
+	log.Debug("Attempting to retrieve AWS credentials from vault", zap.String("bloc", blocName))
+
+	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
+	defer cancel()
+
+	credentials := &AWSCredentials{}
+
+	// Get access key ID
+	accessKeyPath := fmt.Sprintf("secret/config/%s/aws:access_key_id", blocName)
+
+	err = security.ValidateInput(accessKeyPath, validPathPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid access key path: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "safe", "get", accessKeyPath) // #nosec G204 - input validated above
+
+	output, err := cmd.Output()
+	if err == nil {
+		credentials.AccessKeyID = strings.TrimSpace(string(output))
+	}
+
+	// Get secret access key
+	secretKeyPath := fmt.Sprintf("secret/config/%s/aws:secret_access_key", blocName)
+
+	err = security.ValidateInput(secretKeyPath, validPathPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid secret key path: %w", err)
+	}
+
+	cmd = exec.CommandContext(ctx, "safe", "get", secretKeyPath) // #nosec G204 - input validated above
+
+	output, err = cmd.Output()
+	if err == nil {
+		credentials.SecretAccessKey = strings.TrimSpace(string(output))
+	}
+
+	// Get optional session token
+	sessionTokenPath := fmt.Sprintf("secret/config/%s/aws:session_token", blocName)
+
+	err = security.ValidateInput(sessionTokenPath, validPathPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session token path: %w", err)
+	}
+
+	cmd = exec.CommandContext(ctx, "safe", "get", sessionTokenPath) // #nosec G204 - input validated above
+
+	output, err = cmd.Output()
+	if err == nil {
+		credentials.SessionToken = strings.TrimSpace(string(output))
+	}
+
+	// Get region
+	regionPath := fmt.Sprintf("secret/config/%s/aws:region", blocName)
+
+	err = security.ValidateInput(regionPath, validPathPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid region path: %w", err)
+	}
+
+	cmd = exec.CommandContext(ctx, "safe", "get", regionPath) // #nosec G204 - input validated above
+
+	output, err = cmd.Output()
+	if err == nil {
+		credentials.Region = strings.TrimSpace(string(output))
+	}
+
+	if credentials.AccessKeyID != "" && credentials.SecretAccessKey != "" {
+		log.Info("Retrieved AWS credentials from vault")
+
+		return credentials, nil
+	}
+
+	log.Debug("Vault retrieval failed or returned empty")
+
+	return nil, nil
+}
+
+func configureAWSProfile(profileName string, credentials *AWSCredentials, log *zap.Logger) error {
+	log.Info("Configuring AWS CLI profile", zap.String("profile", profileName))
+
+	// Validate profile name
+	err := security.ValidateInput(profileName, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid profile name: %w", err)
+	}
+
+	// Configure AWS access key ID
+	log.Debug("Setting AWS access key ID")
+
+	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", credentials.AccessKeyID, "--profile", profileName) // #nosec G204 - input validated above
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS access key ID: %w", err)
+	}
+
+	// Configure AWS secret access key
+	log.Debug("Setting AWS secret access key")
+
+	cmd = exec.CommandContext(ctx, "aws", "configure", "set", "aws_secret_access_key", credentials.SecretAccessKey, "--profile", profileName) // #nosec G204 - input validated above
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS secret access key", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
+	}
+
+	// Configure region if provided
+	if credentials.Region != "" {
+		log.Debug("Setting AWS region", zap.String("region", credentials.Region))
+
+		cmd = exec.CommandContext(ctx, "aws", "configure", "set", "region", credentials.Region, "--profile", profileName) // #nosec G204 - input validated above
+		cmd.Stderr = &stderr
+
+		err = cmd.Run()
+		if err != nil {
+			log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", stderr.String()))
+
+			return fmt.Errorf("failed to configure AWS region: %w", err)
+		}
+	}
+
+	// Configure session token if provided
+	if credentials.SessionToken != "" {
+		log.Debug("Setting AWS session token")
+
+		cmd = exec.CommandContext(ctx, "aws", "configure", "set", "aws_session_token", credentials.SessionToken, "--profile", profileName) // #nosec G204 - input validated above
+		cmd.Stderr = &stderr
+
+		err = cmd.Run()
+		if err != nil {
+			log.Error("Failed to configure AWS session token", zap.Error(err), zap.String("stderr", stderr.String()))
+
+			return fmt.Errorf("failed to configure AWS session token: %w", err)
+		}
+	}
+
+	// Validate credentials by calling AWS STS
+	log.Info("Validating AWS credentials...")
+
+	return validateAWSCredentials(profileName, log)
+}
+
+func validateAWSCredentials(profileName string, log *zap.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
+	defer cancel()
+
+	// Validate profile name
+	err := security.ValidateInput(profileName, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid profile name: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName) // #nosec G204 - input validated above
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		stderrStr := stderr.String()
+
+		// Check if it's a network connectivity issue vs credential issue
+		if strings.Contains(stderrStr, "Could not connect to the endpoint") {
+			log.Warn("AWS profile configured but validation skipped due to network connectivity",
+				zap.String("profile", profileName),
+				zap.String("error", stderrStr))
+
+			_, _ = fmt.Fprintf(os.Stdout, "Successfully configured AWS profile: %s\n", profileName)
+			_, _ = fmt.Fprintf(os.Stdout, "\n⚠️  Warning: Could not validate credentials due to network connectivity.\n")
+			_, _ = fmt.Fprintf(os.Stdout, "The profile has been configured with credentials from your config.\n")
+			_, _ = fmt.Fprintf(os.Stdout, "\nTo use this profile, run commands with: --profile %s\n", profileName)
+			_, _ = fmt.Fprintf(os.Stdout, "Or set environment variable: export AWS_PROFILE=%s\n", profileName)
+
+			return nil
+		}
+
+		log.Error("Failed to validate AWS credentials", zap.Error(err), zap.String("stderr", stderrStr))
+
+		return fmt.Errorf("AWS credential validation failed: %w", err)
+	}
+
+	log.Info("Successfully logged into AWS provider", zap.String("profile", profileName))
+
+	_, _ = fmt.Fprintf(os.Stdout, "Successfully configured AWS profile: %s\n", profileName)
+	_, _ = fmt.Fprintf(os.Stdout, "\nCaller Identity:\n%s\n", stdout.String())
+	_, _ = fmt.Fprintf(os.Stdout, "\nTo use this profile, run commands with: --profile %s\n", profileName)
+	_, _ = fmt.Fprintf(os.Stdout, "Or set environment variable: export AWS_PROFILE=%s\n", profileName)
 
 	return nil
 }
 
 func loginOpenStack(log *zap.Logger) error {
 	log.Warn("OpenStack provider login not implemented yet")
-	log.Info("OpenStack authentication typically uses:")
-	log.Info("  - OpenStack RC file: source openrc.sh")
-	log.Info("  - Environment variables: OS_AUTH_URL, OS_USERNAME, OS_PASSWORD, etc.")
+
+	_, _ = fmt.Fprintln(os.Stdout, "OpenStack provider login not implemented yet")
+	_, _ = fmt.Fprintln(os.Stdout, "\nOpenStack authentication typically uses:")
+	_, _ = fmt.Fprintln(os.Stdout, "  - OpenStack RC file: source openrc.sh")
+	_, _ = fmt.Fprintln(os.Stdout, "  - Environment variables: OS_AUTH_URL, OS_USERNAME, OS_PASSWORD, etc.")
 
 	return nil
 }
 
 func loginGCP(log *zap.Logger) error {
 	log.Warn("GCP provider login not implemented yet")
-	log.Info("GCP authentication typically uses:")
-	log.Info("  - gcloud auth login")
-	log.Info("  - Service account key files")
-	log.Info("  - Application default credentials")
+
+	_, _ = fmt.Fprintln(os.Stdout, "GCP provider login not implemented yet")
+	_, _ = fmt.Fprintln(os.Stdout, "\nGCP authentication typically uses:")
+	_, _ = fmt.Fprintln(os.Stdout, "  - gcloud auth login")
+	_, _ = fmt.Fprintln(os.Stdout, "  - Service account key files")
+	_, _ = fmt.Fprintln(os.Stdout, "  - Application default credentials")
 
 	return nil
 }
 
 func loginAzure(log *zap.Logger) error {
 	log.Warn("Azure provider login not implemented yet")
-	log.Info("Azure authentication typically uses:")
-	log.Info("  - az login")
-	log.Info("  - Service principal credentials")
-	log.Info("  - Managed identities")
+
+	_, _ = fmt.Fprintln(os.Stdout, "Azure provider login not implemented yet")
+	_, _ = fmt.Fprintln(os.Stdout, "\nAzure authentication typically uses:")
+	_, _ = fmt.Fprintln(os.Stdout, "  - az login")
+	_, _ = fmt.Fprintln(os.Stdout, "  - Service principal credentials")
+	_, _ = fmt.Fprintln(os.Stdout, "  - Managed identities")
 
 	return nil
 }

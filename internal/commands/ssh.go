@@ -48,9 +48,8 @@ The command automatically:
 - Uses the correct private key to establish connection
 
 SSH keys are searched in the following order:
-1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-2. ~/.ssh/{environment-name}-{bastion_keypair}
-3. Configured ssh_key_storage_dir`,
+1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
+2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`,
 		Example: `  # Connect to bastion host
   ocfp ssh --bloc production
 
@@ -65,6 +64,8 @@ SSH keys are searched in the following order:
 		Args: cobra.MaximumNArgs(1),
 		RunE: runSSH,
 	}
+
+	cmd.SilenceUsage = true
 
 	// Command-specific flags
 	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SSH login")
@@ -125,7 +126,7 @@ type sshConfig struct {
 }
 
 func getSSHConfig(args []string) (*sshConfig, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}
@@ -196,47 +197,32 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 }
 
 // findSSHKey locates the SSH private key for the bastion.
+//
+//nolint:unparam // cfg reserved for future use in provider-specific key resolution
 func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
 
-	// Search paths in order of preference
-	searchPaths := []string{
-		// 1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-		filepath.Join(os.Getenv("HOME"), ".ocfp", "keys", blocName+"-bastion", "id_rsa"),
-		// 2. ~/.ssh/{bloc_name}-bastion
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion"),
-		// 3. ~/.ssh/{bloc_name}-bastion.pem
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion.pem"),
-		// 4. From config ssh_key_storage_dir
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion"),
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion.pem"),
+	// Try Ed25519 key first (preferred)
+	keyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_ed25519")
+
+	info, err := os.Stat(keyPath)
+	if err == nil && info.Size() > 0 {
+		log.Debugf("Found SSH key at: %s", keyPath)
+
+		return keyPath, nil
 	}
 
-	for _, path := range searchPaths {
-		_, err := os.Stat(path)
-		if err == nil {
-			log.Debugf("Found SSH key at: %s", path)
+	// Fall back to RSA key
+	rsaKeyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_rsa")
 
-			return path, nil
-		}
+	rsaInfo, rsaErr := os.Stat(rsaKeyPath)
+	if rsaErr == nil && rsaInfo.Size() > 0 {
+		log.Debugf("Found SSH key at: %s", rsaKeyPath)
+
+		return rsaKeyPath, nil
 	}
 
-	// Try to find any key with bastion in the name
-	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
-
-	entries, err := os.ReadDir(sshDir)
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
-				path := filepath.Join(sshDir, entry.Name())
-				log.Debugf("Found SSH key at: %s", path)
-
-				return path, nil
-			}
-		}
-	}
-
-	return "", ErrCouldNotFindSSHKeyForBastion(searchPaths)
+	return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
@@ -293,6 +279,12 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
 	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
+	cmd = append(cmd, "-o", "IdentitiesOnly=yes")
+
+	// Enable SSH agent forwarding if SSH_AUTH_SOCK is set
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
+		cmd = append(cmd, "-A") // ForwardAgent yes
+	}
 
 	// Add key if specified
 	if keyPath != "" {
