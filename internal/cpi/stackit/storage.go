@@ -115,12 +115,9 @@ func (m *StorageManager) buildVolumePayload(req *cpi.VolumeRequest) *iaas.Create
 	}
 
 	if len(req.Tags) > 0 {
-		lm := make(map[string]interface{}, len(req.Tags))
-		for k, v := range req.Tags {
-			lm[k] = v
-		}
-
-		payload.SetLabels(lm)
+		// Use sanitization to ensure labels comply with STACKIT requirements
+		labels := sanitizeLabelsForStackit(req.Tags)
+		payload.SetLabels(labels)
 	}
 
 	return payload
@@ -229,6 +226,14 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 	out := make([]*cpi.Volume, 0, len(items))
 	for _, volumeItem := range items {
+		// Extract labels
+		labels := mapAnyToString(volumeItem.GetLabels())
+
+		// Apply label filtering - skip resources without required metadata
+		if !matchLabels(labels, filters) {
+			continue
+		}
+
 		vol := &cpi.Volume{
 			ID:         stringOrEmpty(volumeItem.GetIdOk()),
 			Name:       stringOrEmpty(volumeItem.GetNameOk()),
@@ -238,7 +243,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 			Encrypted:  false,
 			AttachedTo: "",
 			Device:     "",
-			Tags:       map[string]string{},
+			Tags:       labels, // Store labels as tags
 			CreatedAt:  time.Now(),
 		}
 		if size, ok := volumeItem.GetSizeOk(); ok {
@@ -257,6 +262,8 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 		out = append(out, vol)
 	}
+
+	logger.WithOperation("ListVolumes").Debugf("Found %d volumes (after filtering)", len(out))
 
 	return out, nil
 }
@@ -501,6 +508,53 @@ func (m *StorageManager) waitForSnapshotState(ctx context.Context, snapshotID st
 }
 
 // CreateBucket creates a new bucket in object storage using the official SDK.
+// handleBucketCreationError analyzes bucket creation errors and returns appropriate error messages.
+func (m *StorageManager) handleBucketCreationError(err error, bucketName string) error {
+	errStr := err.Error()
+
+	switch {
+	case strings.Contains(errStr, "already exists") ||
+		strings.Contains(errStr, "AlreadyExists") ||
+		strings.Contains(errStr, "BucketAlreadyExists") ||
+		strings.Contains(errStr, "409"):
+		// Check if bucket already exists - treat as success
+		logger.WithOperation("CreateBucket").Infof("Bucket %s already exists, treating as success", bucketName)
+
+		return nil
+	case strings.Contains(errStr, "404") ||
+		strings.Contains(errStr, "Not Found") ||
+		strings.Contains(errStr, "not enabled") ||
+		strings.Contains(errStr, "service not found") ||
+		strings.Contains(errStr, "service is not enabled"):
+		// Object storage not enabled - provide clear error message
+		return fmt.Errorf("is object storage enabled for the project?\n\nFailed to create bucket (service may not be enabled): %w\n\nTo enable object storage:\n1. Visit STACKIT portal: https://portal.stackit.cloud/\n2. Navigate to Project: %s\n3. Select Region: %s\n4. Enable Object Storage service",
+			err, m.client.config.ProjectID, m.client.config.Region)
+	default:
+		// Other error - fail
+		return fmt.Errorf("failed to create bucket: %w", err)
+	}
+}
+
+// initializeBucketTags sets up default tags for a bucket.
+func (m *StorageManager) initializeBucketTags(bucket *cpi.Bucket, bucketName string) {
+	// Add default tags if not provided
+	if bucket.Tags == nil {
+		bucket.Tags = make(map[string]string)
+	}
+
+	if _, exists := bucket.Tags["managed-by"]; !exists {
+		bucket.Tags["managed-by"] = "ocfp"
+	}
+
+	if bloc := ParseBlocFromBucketName(bucketName); bloc != "" {
+		if bucket.Tags == nil {
+			bucket.Tags = map[string]string{}
+		}
+
+		bucket.Tags["bloc"] = bloc
+	}
+}
+
 func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	logger.WithOperation("CreateBucket").Infof("Creating bucket: %s", req.Name)
 
@@ -509,10 +563,14 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 		return nil, err
 	}
 
-	// SDK call
+	// Try to create the bucket directly
 	_, err = cli.CreateBucket(ctx, m.client.config.ProjectID, m.client.config.Region, req.Name).Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create bucket: %w", err)
+		err = m.handleBucketCreationError(err, req.Name)
+		if err != nil {
+			return nil, err
+		}
+		// Continue to build and return bucket info if error was "already exists"
 	}
 
 	bucket := &cpi.Bucket{
@@ -529,24 +587,9 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 		CreatedAt:    time.Now(),
 	}
 
-	// Add default tags if not provided
-	if bucket.Tags == nil {
-		bucket.Tags = make(map[string]string)
-	}
+	m.initializeBucketTags(bucket, req.Name)
 
-	if _, exists := bucket.Tags["managed-by"]; !exists {
-		bucket.Tags["managed-by"] = "ocfp"
-	}
-
-	if bloc := ParseBlocFromBucketName(req.Name); bloc != "" {
-		if bucket.Tags == nil {
-			bucket.Tags = map[string]string{}
-		}
-
-		bucket.Tags["bloc"] = bloc
-	}
-
-	logger.WithOperation("CreateBucket").Infof("Bucket created: %s", req.Name)
+	logger.WithOperation("CreateBucket").Infof("Bucket created successfully: %s", req.Name)
 
 	return bucket, nil
 }
@@ -663,6 +706,67 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 	logger.WithOperation("DeleteBucket").Infof("Bucket deleted: %s", name)
 
 	return nil
+}
+
+// IsBucketEmpty checks if a bucket is empty (contains no objects).
+func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+	operation := logger.WithOperation("IsBucketEmpty")
+	operation.Debugf("Checking if bucket is empty: %s", name)
+
+	// Get bucket endpoint
+	endpoint, err := m.getBucketEndpoint(ctx, name)
+	if err != nil {
+		return false, err
+	}
+
+	// Create S3 client with temporary credentials
+	s3cli, cleanup, err := m.createS3ClientWithTempCreds(ctx, endpoint)
+	if err != nil {
+		return false, err
+	}
+	defer cleanup()
+
+	// Check for objects (with minimal result set for efficiency)
+	maxKeys := int32(1) // Only need to know if at least one object exists
+
+	listResp, err := listBucketObjects(ctx, s3cli, name, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to list objects in bucket: %w", err)
+	}
+
+	// If there are any objects, bucket is not empty
+	if listResp.KeyCount != nil && *listResp.KeyCount > 0 {
+		operation.Debugf("Bucket %s is not empty: found %d object(s)", name, *listResp.KeyCount)
+
+		return false, nil
+	}
+
+	// For versioned buckets, also check for versions and delete markers
+	listVersionsInput := &s3.ListObjectVersionsInput{
+		Bucket:  aws.String(name),
+		MaxKeys: &maxKeys,
+	}
+
+	versionsResp, err := s3cli.ListObjectVersions(ctx, listVersionsInput)
+	if err != nil {
+		// If versioning is not enabled, this might fail - treat as no versions
+		operation.Debugf("Could not list versions for bucket %s: %v", name, err)
+
+		return true, nil
+	}
+
+	// Check if there are any versions or delete markers
+	hasVersions := len(versionsResp.Versions) > 0 || len(versionsResp.DeleteMarkers) > 0
+
+	if hasVersions {
+		operation.Debugf("Bucket %s is not empty: found object versions or delete markers", name)
+
+		return false, nil
+	}
+
+	operation.Debugf("Bucket %s is empty", name)
+
+	return true, nil
 }
 
 // EmptyBucket removes all objects from a bucket.
@@ -924,10 +1028,8 @@ func batchDeleteObjects(ctx context.Context, s3cli *s3.Client, bucket string, co
 func buildObjectIdentifiers(contents []s3typesObject) []s3typesObjectIdentifier {
 	objs := make([]s3typesObjectIdentifier, 0, len(contents))
 	for _, o := range contents {
-		key := *o.Key
 		objs = append(objs, s3typesObjectIdentifier{
-			Key:  &key,
-			Size: aws.Int64(0),
+			Key: o.Key,
 		})
 	}
 
@@ -998,22 +1100,16 @@ func collectVersionIdentifiers(listVersionsResp *s3.ListObjectVersionsOutput) []
 	ids := make([]s3typesObjectIdentifier, 0, len(listVersionsResp.Versions)+len(listVersionsResp.DeleteMarkers))
 
 	for _, v := range listVersionsResp.Versions {
-		key := *v.Key
-		ver := *v.VersionId
 		ids = append(ids, s3typesObjectIdentifier{
-			Key:       &key,
-			VersionId: &ver,
-			Size:      aws.Int64(0),
+			Key:       v.Key,
+			VersionId: v.VersionId,
 		})
 	}
 
 	for _, dm := range listVersionsResp.DeleteMarkers {
-		key := *dm.Key
-		ver := *dm.VersionId
 		ids = append(ids, s3typesObjectIdentifier{
-			Key:       &key,
-			VersionId: &ver,
-			Size:      aws.Int64(0),
+			Key:       dm.Key,
+			VersionId: dm.VersionId,
 		})
 	}
 

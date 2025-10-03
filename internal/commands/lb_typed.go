@@ -242,7 +242,7 @@ func buildOpsLBDesiredIPs(config *opsLBConfig) map[string]bool {
 	for _, b := range backends {
 		backendIP, err := ResolveReservedIP(config.blocName, fmt.Sprintf("reserved:%s:%s", b.key, b.index))
 		if err != nil {
-			log.Warn("reserved not found", "key", b.key, "index", b.index, "err", err)
+			log.Warnw("reserved not found", "key", b.key, "index", b.index, "err", err)
 
 			continue
 		}
@@ -259,7 +259,7 @@ func addOpsBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID s
 
 	for memberIP := range desired {
 		if existing[memberIP] {
-			log.Info("Backend exists", "ip", memberIP)
+			log.Infow("Backend exists", "ip", memberIP)
 
 			continue
 		}
@@ -275,9 +275,9 @@ func addOpsBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID s
 
 		err := netMgr.AddBackendMember(ctx, lbID, member)
 		if err != nil {
-			log.Warn("failed adding backend", "ip", memberIP, "err", err)
+			log.Warnw("failed adding backend", "ip", memberIP, "err", err)
 		} else {
-			log.Info("Added backend", "ip", memberIP)
+			log.Infow("Added backend", "ip", memberIP)
 		}
 	}
 }
@@ -293,9 +293,9 @@ func removeOpsUnusedMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID
 				if !desired[member.IPAddress] {
 					err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
 					if err != nil {
-						log.Warn("failed remove backend", "ip", member.IPAddress, "err", err)
+						log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
 					} else {
-						log.Info("Removed backend", "ip", member.IPAddress)
+						log.Infow("Removed backend", "ip", member.IPAddress)
 					}
 				}
 			}
@@ -312,7 +312,7 @@ func executeOpsLBSync(ctx context.Context, config *opsLBConfig, lbMgr cpi.LoadBa
 		return err
 	}
 
-	log.Info("Ensured ops LB", "id", loadBalancer.ID, "name", loadBalancer.Name, "port", loadBalancer.Port)
+	log.Infow("Ensured ops LB", "id", loadBalancer.ID, "name", loadBalancer.Name, "port", loadBalancer.Port)
 
 	// Try to sync from config first
 	err = syncOpsLBFromConfig(ctx, config, netMgr, loadBalancer)
@@ -600,7 +600,7 @@ func ensureRouterLB(ctx context.Context, config *routersLBConfig, lbMgr cpi.Load
 		return err
 	}
 
-	log.Info("Ensured router LB", "name", name, "protocol", protocol)
+	log.Infow("Ensured router LB", "name", name, "protocol", protocol)
 
 	return nil
 }
@@ -915,6 +915,7 @@ func newLBTCPRoutersCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			configFile := viper.GetString("config")
+
 			blocName := viper.GetString("bloc")
 			if name == "" {
 				name = blocName + "-tcp-router"
@@ -1105,6 +1106,7 @@ func newLBCFSSHCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			configFile := viper.GetString("config")
+
 			blocName := viper.GetString("bloc")
 			if name == "" {
 				name = blocName + "-cf-ssh"
@@ -1201,7 +1203,7 @@ func buildDesiredTargets(blocName string, targets []string, log logger.Logger) m
 		if len(t) >= 9 && t[:9] == "reserved:" {
 			resolvedIP, err := ResolveReservedIP(blocName, t)
 			if err != nil {
-				log.Warn("reserved unresolved", "token", t, "err", err)
+				log.Warnw("reserved unresolved", "token", t, "err", err)
 
 				continue
 			}
@@ -1249,9 +1251,9 @@ func addMissingBackends(ctx context.Context, netMgr cpi.NetworkManager, lbID str
 
 		err := netMgr.AddBackendMember(ctx, lbID, member)
 		if err != nil {
-			log.Warn("failed add backend", "ip", ipAddress, "err", err)
+			log.Warnw("failed add backend", "ip", ipAddress, "err", err)
 		} else {
-			log.Info("added backend", "ip", ipAddress)
+			log.Infow("added backend", "ip", ipAddress)
 		}
 	}
 }
@@ -1267,9 +1269,9 @@ func removeUnusedBackends(ctx context.Context, netMgr cpi.NetworkManager, lbID s
 			if !desired[member.IPAddress] {
 				err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
 				if err != nil {
-					log.Warn("failed remove backend", "ip", member.IPAddress, "err", err)
+					log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
 				} else {
-					log.Info("removed backend", "ip", member.IPAddress)
+					log.Infow("removed backend", "ip", member.IPAddress)
 				}
 			}
 		}
@@ -1362,7 +1364,13 @@ func configureTCPFromPublicIPs(ctx context.Context, netMgr cpi.NetworkManager, l
 
 // getStatePublicIPsByJob returns a list of public IP addresses from state where job label matches.
 func getStatePublicIPsByJob(blocName, job string) []string {
-	stateManager, err := state.NewManager("")
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return nil
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return nil
 	}

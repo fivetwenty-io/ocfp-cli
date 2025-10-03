@@ -74,7 +74,7 @@ type PopulateOptions struct {
 // Populate performs vault populate operation
 // This is the Go equivalent of the populate method in OCFP::Vault::Manager.
 func (m *Manager) Populate(opts *PopulateOptions) error {
-	m.logger.Info("Starting vault populate", "provider", m.config.Provider)
+	m.logger.Infow("Starting vault populate", "provider", m.config.Provider)
 
 	if opts.DryRun {
 		m.logger.Info("[DRY RUN] Would populate vault configuration")
@@ -114,7 +114,7 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	}
 
 	inceptionName := m.getInceptionVaultName()
-	m.logger.Info("Starting vault migration", "from", inceptionName, "to", m.blocName)
+	m.logger.Infow("Starting vault migration", "from", inceptionName, "to", m.blocName)
 
 	// Step 1: Validate targets
 	if !opts.DryRun {
@@ -123,7 +123,7 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 			return fmt.Errorf("target validation failed: %w", err)
 		}
 	} else {
-		m.logger.Info("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", m.blocName)
+		m.logger.Infow("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", m.blocName)
 	}
 
 	// Step 2: Export/Import
@@ -133,7 +133,7 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 			return fmt.Errorf("export/import failed: %w", err)
 		}
 	} else {
-		m.logger.Info("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", m.blocName)
+		m.logger.Infow("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", m.blocName)
 	}
 
 	// Step 3: Validate migration
@@ -172,7 +172,7 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	}
 
 	duration := time.Since(m.startTime)
-	m.logger.Info("Vault migration completed", "duration", duration)
+	m.logger.Infow("Vault migration completed", "duration", duration)
 
 	return nil
 }
@@ -207,7 +207,7 @@ func (m *Manager) getInceptionVaultName() string {
 
 // populateFullConfiguration performs full vault configuration.
 func (m *Manager) populateFullConfiguration() error {
-	m.logger.Info("Populating full vault configuration", "provider", m.config.Provider)
+	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
 	provider, err := m.createVaultProvider()
@@ -228,7 +228,7 @@ func (m *Manager) populateFullConfiguration() error {
 
 // populatePublicIPs populates public IP information to vault.
 func (m *Manager) populatePublicIPs() error {
-	m.logger.Info("Populating public IPs to vault", "provider", m.config.Provider)
+	m.logger.Infow("Populating public IPs to vault", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
 	provider, err := m.createVaultProvider()
@@ -249,7 +249,7 @@ func (m *Manager) populatePublicIPs() error {
 
 // validateTargets validates that both inception and production vaults are accessible.
 func (m *Manager) validateTargets(inceptionName, productionName string) error {
-	m.logger.Info("Validating vault targets", "inception", inceptionName, "production", productionName)
+	m.logger.Infow("Validating vault targets", "inception", inceptionName, "production", productionName)
 
 	// Create validator
 	validator := NewValidator(m.client, m.safe, m.config)
@@ -265,7 +265,7 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 
 	// Log warnings
 	for _, warning := range result.Warnings {
-		m.logger.Warn("Validation warning", "warning", warning)
+		m.logger.Warnw("Validation warning", "warning", warning)
 	}
 
 	// Fail on errors
@@ -275,14 +275,14 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 		}
 
 		if result.Suggestion != "" {
-			m.logger.Info("Suggestion", "suggestion", result.Suggestion)
+			m.logger.Infow("Suggestion", "suggestion", result.Suggestion)
 		}
 
 		return ErrValidationFailedWithErrors(len(result.Errors))
 	}
 
 	if result.HasIssues() {
-		m.logger.Warn("Validation completed with warnings", "warnings", len(result.Warnings))
+		m.logger.Warnw("Validation completed with warnings", "warnings", len(result.Warnings))
 	} else {
 		m.logger.Info("Validation passed without issues")
 	}
@@ -292,7 +292,7 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 
 // exportImportVault exports secrets from inception and imports to production.
 func (m *Manager) exportImportVault(inceptionName, productionName string) error {
-	m.logger.Info("Exporting from inception vault", "vault", inceptionName)
+	m.logger.Infow("Exporting from inception vault", "vault", inceptionName)
 
 	// Create validator for rollback capability
 	validator := NewValidator(m.client, m.safe, m.config)
@@ -303,7 +303,7 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 
 	rollback, err := validator.CreateRollbackPoint([]string{productionPath})
 	if err != nil {
-		m.logger.Warn("Failed to create rollback point", "error", err)
+		m.logger.Warnw("Failed to create rollback point", "error", err)
 		// Continue anyway - rollback is a safety feature, not required
 	}
 
@@ -315,10 +315,10 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 		return fmt.Errorf("failed to export from inception: %w", err)
 	}
 
-	m.logger.Info("Exported secrets", "count", len(secrets))
+	m.logger.Infow("Exported secrets", "count", len(secrets))
 
 	// Import to production
-	m.logger.Info("Importing to production vault", "vault", productionName)
+	m.logger.Infow("Importing to production vault", "vault", productionName)
 
 	err = m.safe.Import(productionPath, secrets)
 	if err != nil {
@@ -339,11 +339,11 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 		return fmt.Errorf("failed to import to production: %w", err)
 	}
 
-	m.logger.Info("Successfully migrated secrets", "count", len(secrets))
+	m.logger.Infow("Successfully migrated secrets", "count", len(secrets))
 
 	// Store rollback point info for potential future use
 	if rollback != nil {
-		m.logger.Debug("Rollback point available if needed", "timestamp", rollback.Timestamp)
+		m.logger.Debugw("Rollback point available if needed", "timestamp", rollback.Timestamp)
 	}
 
 	return nil
@@ -384,7 +384,7 @@ func (m *Manager) validateMigration(inceptionName, productionName string) error 
 		return ErrMigrationValidationFailedChecksumMismatch(inceptionChecksum[:8], productionChecksum[:8])
 	}
 
-	m.logger.Info("Migration validation successful", "checksum", inceptionChecksum[:8])
+	m.logger.Infow("Migration validation successful", "checksum", inceptionChecksum[:8])
 
 	return nil
 }
@@ -405,7 +405,7 @@ func (m *Manager) calculateChecksum(secrets map[string]interface{}) (string, err
 
 // decommissionInception safely removes the inception vault.
 func (m *Manager) decommissionInception(inceptionName string) error {
-	m.logger.Info("Decommissioning inception vault", "vault", inceptionName)
+	m.logger.Infow("Decommissioning inception vault", "vault", inceptionName)
 
 	inceptionPath := "secret/" + inceptionName
 
@@ -421,19 +421,19 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 
 		err := m.safe.Delete(fullPath, "")
 		if err != nil {
-			m.logger.Warn("Failed to delete path", "path", fullPath, "error", err)
+			m.logger.Warnw("Failed to delete path", "path", fullPath, "error", err)
 		} else {
-			m.logger.Debug("Deleted path", "path", fullPath)
+			m.logger.Debugw("Deleted path", "path", fullPath)
 		}
 	}
 
 	// Delete the root inception path
 	err = m.safe.Delete(inceptionPath, "")
 	if err != nil {
-		m.logger.Warn("Failed to delete inception root", "path", inceptionPath, "error", err)
+		m.logger.Warnw("Failed to delete inception root", "path", inceptionPath, "error", err)
 	}
 
-	m.logger.Info("Inception vault decommissioned", "vault", inceptionName)
+	m.logger.Infow("Inception vault decommissioned", "vault", inceptionName)
 
 	return nil
 }

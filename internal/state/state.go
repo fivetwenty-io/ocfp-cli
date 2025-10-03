@@ -52,7 +52,24 @@ type Manager struct {
 	mu       sync.RWMutex
 }
 
+// GetStateDir returns the standard state directory path for a given bloc.
+// The directory structure is: ~/.ocfp/{blocName}/state/.
+func GetStateDir(blocName string) (string, error) {
+	if blocName == "" {
+		return "", ErrBlocNameEmpty
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	return filepath.Join(home, ".ocfp", blocName, "state"), nil
+}
+
 // NewManager creates a new state manager.
+// If stateDir is empty, it defaults to ~/.ocfp/state/ (legacy fallback).
+// For bloc-specific operations, use GetStateDir(blocName) to get the proper path.
 func NewManager(stateDir string) (*Manager, error) {
 	if stateDir == "" {
 		home, err := os.UserHomeDir()

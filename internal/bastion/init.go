@@ -16,7 +16,9 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/pmezard/go-difflib/difflib"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -42,6 +44,8 @@ var (
 	ErrProviderRequired                  = errors.New("provider is required")
 	ErrBastionProvisioningDidNotComplete = errors.New("bastion provisioning did not complete successfully")
 	ErrOCFPConfigurationFileNotFound     = errors.New("OCFP configuration file not found")
+	ErrBlocNotFoundInConfig              = errors.New("bloc not found in config file")
+	ErrScriptExecutionFailed             = errors.New("script execution failed")
 )
 
 // Dynamic error constructor.
@@ -126,9 +130,10 @@ func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
 
 // Initialize performs the complete bastion initialization process.
 func (m *Manager) Initialize(ctx context.Context) error {
-	m.log.Info("Starting bastion initialization",
+	m.log.Infow("Starting bastion initialization",
 		"bloc", m.config.Name,
-		"provider", m.config.Provider)
+		"provider", m.config.Provider,
+		"ocfp_only", m.options.OCFPOnly)
 
 	var err error
 
@@ -144,6 +149,38 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		}
 	}()
 
+	// If OCFPOnly flag is set, only run the OCFP CLI setup phase
+	if m.options.OCFPOnly {
+		m.log.Info("OCFP-only mode: installing/updating OCFP CLI binary only")
+
+		err = m.setupOCFPCLI(ctx)
+		if err != nil {
+			return fmt.Errorf("OCFP CLI setup failed: %w", err)
+		}
+
+		m.log.Info("OCFP CLI installation/update completed successfully")
+
+		return nil
+	}
+
+	// Check if bastion is already fully provisioned
+	if !m.options.DryRun {
+		alreadyProvisioned, err := m.isAlreadyProvisioned(ctx)
+		if err != nil {
+			m.log.Warnw("Failed to check provisioning status", "error", err)
+		} else if alreadyProvisioned {
+			m.log.Info("Bastion is already provisioned, skipping initialization")
+
+			// Report success immediately
+			if m.options.ProgressOut != nil {
+				message := "✓ Bastion already fully provisioned - skipping initialization\n"
+				_, _ = m.options.ProgressOut.Write([]byte(message))
+			}
+
+			return nil
+		}
+	}
+
 	// If dry-run, preview configuration file changes
 	if m.options.DryRun {
 		m.previewConfigChanges(ctx)
@@ -151,6 +188,9 @@ func (m *Manager) Initialize(ctx context.Context) error {
 
 	phases := m.getInitializationPhases()
 	m.progress.TotalSteps = len(phases)
+
+	// Set start time NOW, right before phases begin
+	m.progress.StartTime = time.Now()
 
 	// Start progress reporting if configured
 	var reporter *ProgressReporter
@@ -167,6 +207,37 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	m.finalizeInitialization(phases)
 
 	return nil
+}
+
+// isAlreadyProvisioned checks if the bastion has already been fully provisioned.
+// Returns true if the provisioning completion marker exists and is valid.
+func (m *Manager) isAlreadyProvisioned(ctx context.Context) (bool, error) {
+	if m.options.DryRun {
+		return false, nil
+	}
+
+	// Check for completion marker on remote system
+	markerPath := "${HOME}/.ocfp/provisioned"
+	cmd := fmt.Sprintf("test -f '%s' && cat '%s'", markerPath, markerPath)
+
+	result, err := m.sshClient.ExecuteCommand(ctx, cmd)
+	if err != nil {
+		// SSH command failed - return error for proper handling
+		return false, fmt.Errorf("failed to check provisioning marker: %w", err)
+	}
+
+	if result.ExitCode != 0 {
+		// Marker doesn't exist (expected for first-time provisioning)
+		return false, nil
+	}
+
+	// Marker exists and is readable
+	provisionedDate := strings.TrimSpace(result.Stdout)
+	m.log.Infow("Bastion already provisioned",
+		"provisioned_date", provisionedDate,
+		"marker_path", markerPath)
+
+	return true, nil
 }
 
 // setupInfrastructure handles provider setup, SSH connection, and configuration loading.
@@ -210,9 +281,12 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 
 	if m.options.DryRun {
 		m.log.Info("DRY RUN: skipping SSH connection")
+
 		m.provConfig = m.loadProvisioningConfig()
-		if err := m.deploymentModes.Validate(); err != nil {
-			return err
+
+		err := m.deploymentModes.Validate()
+		if err != nil {
+			return fmt.Errorf("deployment validation failed: %w", err)
 		}
 
 		return nil
@@ -227,7 +301,12 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	// Load provisioning configuration
 	m.provConfig = m.loadProvisioningConfig()
 
-	return m.deploymentModes.Validate()
+	err = m.deploymentModes.Validate()
+	if err != nil {
+		return fmt.Errorf("deployment validation failed: %w", err)
+	}
+
+	return nil
 }
 
 // getInitializationPhases returns the list of initialization phases.
@@ -239,6 +318,10 @@ func (m *Manager) getInitializationPhases() []struct {
 		name string
 		fn   func(context.Context) error
 	}{
+		// Phase 0: CRITICAL - SSH agent forwarding MUST be first
+		// This enables agent forwarding on the server before any git operations
+		{"ssh_agent_forwarding", m.setupSSHAgentForwarding},
+
 		// Phase 1: Prerequisites and system setup
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
@@ -295,10 +378,12 @@ func (m *Manager) executePhases(ctx context.Context, phases []struct {
 // executeParallelPhases handles parallel execution of initialization phases.
 func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter) error {
 	// Sequential pre-parallel phases
+	// CRITICAL: ssh_agent_forwarding MUST be first before anything else
 	pre := []struct {
 		name string
 		fn   func(context.Context) error
 	}{
+		{"ssh_agent_forwarding", m.setupSSHAgentForwarding}, // MUST BE FIRST
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
 		{"directories", m.createDirectories},
@@ -372,7 +457,7 @@ func (m *Manager) executePhase(ctx context.Context, phase struct {
 	fn   func(context.Context) error
 }, index, total int, reporter *ProgressReporter) error {
 	if m.shouldSkipPhase(phase.name) {
-		m.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+		m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
 		if reporter != nil {
 			reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
@@ -384,7 +469,7 @@ func (m *Manager) executePhase(ctx context.Context, phase struct {
 	m.updatePhaseProgress(phase.name, index, total, reporter)
 
 	if m.options.DryRun {
-		m.log.Info("DRY RUN: Would execute phase", "phase", phase.name)
+		m.log.Infow("DRY RUN: Would execute phase", "phase", phase.name)
 
 		return nil
 	}
@@ -397,7 +482,7 @@ func (m *Manager) updatePhaseProgress(phaseName string, index, total int, report
 	m.progress.CurrentStep = phaseName
 	m.progress.CompletedSteps = index
 
-	m.log.Info("Executing phase",
+	m.log.Infow("Executing phase",
 		"phase", phaseName,
 		"progress", fmt.Sprintf("%d/%d", index+1, total))
 
@@ -433,7 +518,7 @@ func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, rep
 
 	saveErr := m.checkpointManager.Save(m.progress, metadata)
 	if saveErr != nil {
-		m.log.Warn("Failed to save failure checkpoint", "error", saveErr.Error())
+		m.log.Warnw("Failed to save failure checkpoint", "error", saveErr.Error())
 	}
 
 	if reporter != nil {
@@ -455,7 +540,7 @@ func (m *Manager) handlePhaseSuccess(phaseName string, index, total int, reporte
 
 	err := m.checkpointManager.Save(m.progress, metadata)
 	if err != nil {
-		m.log.Warn("Failed to save checkpoint", "error", err)
+		m.log.Warnw("Failed to save checkpoint", "error", err)
 	}
 
 	if reporter != nil {
@@ -477,13 +562,13 @@ func (m *Manager) finalizeInitialization(phases []struct {
 	// Clear checkpoint on successful completion
 	err := m.checkpointManager.Clear()
 	if err != nil {
-		m.log.Warn("Failed to clear checkpoint", "error", err)
+		m.log.Warnw("Failed to clear checkpoint", "error", err)
 	}
 
 	// Cleanup old checkpoints (older than 7 days)
 	err = m.checkpointManager.CleanupOldCheckpoints(7 * 24 * time.Hour)
 	if err != nil {
-		m.log.Warn("Failed to cleanup old checkpoints", "error", err)
+		m.log.Warnw("Failed to cleanup old checkpoints", "error", err)
 	}
 
 	// Report final success
@@ -491,7 +576,7 @@ func (m *Manager) finalizeInitialization(phases []struct {
 		reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
 	}
 
-	m.log.Info("Bastion initialization completed successfully",
+	m.log.Infow("Bastion initialization completed successfully",
 		"duration", duration.String(),
 		"total_phases", len(phases),
 		"errors_encountered", len(m.progress.Errors))
@@ -515,7 +600,7 @@ func (m *Manager) validatePrerequisites() error {
 	for _, tool := range requiredTools {
 		_, err := exec.LookPath(tool)
 		if err != nil {
-			m.log.Warn("Required tool not found", "tool", tool)
+			m.log.Warnw("Required tool not found", "tool", tool)
 		}
 	}
 
@@ -559,7 +644,7 @@ func (m *Manager) validateOverrides() {
 	checkList := func(kind string, names map[string]struct{}, list []string) {
 		for _, n := range list {
 			if _, ok := names[strings.ToLower(n)]; !ok {
-				m.log.Warn("Unknown override name", "type", kind, "name", n)
+				m.log.Warnw("Unknown override name", "type", kind, "name", n)
 			}
 		}
 	}
@@ -575,19 +660,19 @@ func (m *Manager) validateOverrides() {
 	// Per-item override maps keys
 	for k := range m.config.Bastion.ToolOverrides {
 		if _, ok := toolNames[strings.ToLower(k)]; !ok {
-			m.log.Warn("Unknown tool override key", "name", k)
+			m.log.Warnw("Unknown tool override key", "name", k)
 		}
 	}
 
 	for k := range m.config.Bastion.SnapOverrides {
 		if _, ok := snapNames[strings.ToLower(k)]; !ok {
-			m.log.Warn("Unknown snap override key", "name", k)
+			m.log.Warnw("Unknown snap override key", "name", k)
 		}
 	}
 
 	for k := range m.config.Bastion.CFPluginOverrides {
 		if _, ok := pluginNames[strings.ToLower(k)]; !ok {
-			m.log.Warn("Unknown CF plugin override key", "name", k)
+			m.log.Warnw("Unknown CF plugin override key", "name", k)
 		}
 	}
 }
@@ -829,7 +914,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 }) error {
 	for index, phase := range phases {
 		if m.shouldSkipPhase(phase.name) {
-			m.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+			m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
 			if m.options.ProgressOut != nil {
 				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseSkipped(phase.name, "resumed and previously completed")
@@ -846,7 +931,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 		}
 
 		if m.options.DryRun {
-			m.log.Info("DRY RUN: Would execute phase", "phase", phase.name)
+			m.log.Infow("DRY RUN: Would execute phase", "phase", phase.name)
 
 			continue
 		}
@@ -920,7 +1005,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 		var err error
 
 		if m.options.DryRun {
-			m.log.Info("DRY RUN: Would execute phase", "phase", task.name)
+			m.log.Infow("DRY RUN: Would execute phase", "phase", task.name)
 		} else {
 			err = m.errorHandler.ExecuteWithRetry(ctx, task.name, func() error { return task.fn(ctx) })
 		}
@@ -1068,7 +1153,7 @@ func (m *Manager) configureHostname(ctx context.Context, pattern string) {
 	}
 
 	if current == desired {
-		m.log.Info("Hostname already set", "hostname", desired)
+		m.log.Infow("Hostname already set", "hostname", desired)
 
 		return
 	}
@@ -1092,8 +1177,103 @@ func (m *Manager) setHostname(ctx context.Context, desired string) {
 	if err != nil {
 		m.log.Warn("Failed to set hostname", "error", err.Error())
 	} else {
-		m.log.Info("Hostname set", "hostname", desired)
+		m.log.Infow("Hostname set", "hostname", desired)
 	}
+}
+
+func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
+	m.log.Info("Configuring SSH agent forwarding")
+
+	// Check if AllowAgentForwarding is already enabled
+	checkCmd := "grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config && echo 'enabled' || echo 'disabled'"
+
+	result, err := m.sshClient.ExecuteCommand(ctx, checkCmd)
+	if err != nil {
+		m.log.Warn("Failed to check SSH agent forwarding status", "error", err.Error())
+
+		return fmt.Errorf("failed to check SSH agent forwarding status: %w", err)
+	}
+
+	status := strings.TrimSpace(result.Stdout)
+	if status != "enabled" {
+		m.log.Info("Enabling SSH agent forwarding in sshd_config")
+
+		// Enable AllowAgentForwarding in sshd_config
+		configureCmd := `sudo bash -c "grep -q '^AllowAgentForwarding' /etc/ssh/sshd_config && sudo sed -i 's/^AllowAgentForwarding.*/AllowAgentForwarding yes/' /etc/ssh/sshd_config || echo 'AllowAgentForwarding yes' | sudo tee -a /etc/ssh/sshd_config >/dev/null"`
+
+		_, err = m.sshClient.ExecuteCommand(ctx, configureCmd)
+		if err != nil {
+			return fmt.Errorf("failed to configure SSH agent forwarding: %w", err)
+		}
+
+		m.log.Info("Restarting SSH server")
+
+		// Restart sshd service
+		restartCmd := "sudo systemctl restart sshd || sudo systemctl restart ssh"
+
+		_, err = m.sshClient.ExecuteCommand(ctx, restartCmd)
+		if err != nil {
+			m.log.Warn("Failed to restart SSH server", "error", err.Error())
+
+			return fmt.Errorf("failed to restart SSH server: %w", err)
+		}
+
+		// Wait for SSH service to stabilize
+		m.log.Info("Waiting for SSH service to stabilize...")
+		time.Sleep(3 * time.Second) //nolint:mnd // reasonable delay for SSH restart
+
+		// Close and reconnect SSH client to enable agent forwarding
+		m.log.Info("Reconnecting with agent forwarding enabled")
+
+		err = m.sshClient.Close()
+		if err != nil {
+			m.log.Warn("Failed to close SSH client during reconnection", "error", err.Error())
+		}
+
+		// Reconnect
+		err = m.sshClient.Connect(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to reconnect after SSH server restart: %w", err)
+		}
+	}
+
+	// Configure user SSH config to enable ForwardAgent for github.com
+	m.log.Info("Configuring SSH client config for agent forwarding")
+
+	sshConfigContent := `# Auto-generated by OCFP bastion init
+# Enable SSH agent forwarding for GitHub
+Host github.com
+    ForwardAgent yes
+    StrictHostKeyChecking accept-new
+`
+
+	createSSHConfigCmd := fmt.Sprintf(`mkdir -p ~/.ssh && cat > ~/.ssh/config << 'EOF'
+%s
+EOF
+chmod 600 ~/.ssh/config`, sshConfigContent)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, createSSHConfigCmd)
+	if err != nil {
+		m.log.Warn("Failed to create SSH client config", "error", err.Error())
+		// Non-fatal, continue
+	}
+
+	// Add GitHub host keys to known_hosts
+	m.log.Info("Adding GitHub host keys to known_hosts")
+
+	addGitHubKeysCmd := `mkdir -p ~/.ssh && ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null && chmod 600 ~/.ssh/known_hosts`
+
+	_, err = m.sshClient.ExecuteCommand(ctx, addGitHubKeysCmd)
+	if err != nil {
+		m.log.Warn("Failed to add GitHub host keys", "error", err.Error())
+		// Non-fatal, continue
+	} else {
+		m.log.Info("GitHub host keys added to known_hosts")
+	}
+
+	m.log.Info("SSH agent forwarding configured successfully")
+
+	return nil
 }
 
 func (m *Manager) createDirectories(ctx context.Context) error {
@@ -1117,7 +1297,7 @@ func (m *Manager) createDirectories(ctx context.Context) error {
 			return fmt.Errorf("failed to create directory %s: %w", expandedPath, err)
 		}
 
-		m.log.Debug("Directory created", "path", expandedPath)
+		m.log.Debugw("Directory created", "path", expandedPath)
 	}
 
 	return nil
@@ -1157,6 +1337,11 @@ func (m *Manager) setupRepositories(ctx context.Context) error {
 		return fmt.Errorf("failed to generate provisioning script: %w", err)
 	}
 
+	// Save script for debugging
+	debugScriptPath := filepath.Join(os.TempDir(), "bastion-provision-debug.sh")
+	_ = os.WriteFile(debugScriptPath, []byte(script), scriptFileMode)
+	m.log.Debugw("Generated provisioning script saved", "path", debugScriptPath)
+
 	return m.executeProvisioningScript(ctx, script)
 }
 
@@ -1180,8 +1365,8 @@ func (m *Manager) reportSnapPackages(reporter *ProgressReporter) {
 	snaps := snapMgr.GetSnapPackages()
 
 	enabledSnaps := filterEnabledSnaps(snaps)
-	for _, s := range enabledSnaps {
-		reporter.ReportSubtaskProgress("snap_packages", 0, len(enabledSnaps), s.Name)
+	for i, s := range enabledSnaps {
+		reporter.ReportSubtaskProgress("snap_packages", i, len(enabledSnaps), s.Name)
 	}
 }
 
@@ -1204,8 +1389,8 @@ func (m *Manager) reportCPANModules(reporter *ProgressReporter) {
 	mods := cpanMgr.GetCPANModules()
 
 	activeMods := filterActiveCPANModules(mods)
-	for _, mdu := range activeMods {
-		reporter.ReportSubtaskProgress("cpan_modules", 0, len(activeMods), mdu.Name)
+	for i, mdu := range activeMods {
+		reporter.ReportSubtaskProgress("cpan_modules", i, len(activeMods), mdu.Name)
 	}
 }
 
@@ -1228,8 +1413,8 @@ func (m *Manager) reportCFPlugins(reporter *ProgressReporter) {
 	plugins := cfMgr.GetCFPlugins()
 
 	enabledPlugins := filterEnabledCFPlugins(plugins)
-	for _, p := range enabledPlugins {
-		reporter.ReportSubtaskProgress("cf_plugins", 0, len(enabledPlugins), p.Name)
+	for i, p := range enabledPlugins {
+		reporter.ReportSubtaskProgress("cf_plugins", i, len(enabledPlugins), p.Name)
 	}
 }
 
@@ -1256,12 +1441,15 @@ func (m *Manager) reportBinaryTools(reporter *ProgressReporter) {
 	enabledAdv := filterEnabledAdvancedTools(advTools)
 	totalTools := len(enabledBase) + len(enabledAdv)
 
+	current := 0
 	for _, t := range enabledBase {
-		reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
+		reporter.ReportSubtaskProgress("binary_tools", current, totalTools, t.Name)
+		current++
 	}
 
 	for _, t := range enabledAdv {
-		reporter.ReportSubtaskProgress("binary_tools", 0, totalTools, t.Name)
+		reporter.ReportSubtaskProgress("binary_tools", current, totalTools, t.Name)
+		current++
 	}
 }
 
@@ -1335,9 +1523,10 @@ func (m *Manager) executeProvisioningScript(ctx context.Context, script string) 
 	if err != nil {
 		m.log.Error("Script execution failed",
 			"exit_code", result.ExitCode,
+			"stdout", result.Stdout,
 			"stderr", result.Stderr)
 
-		return fmt.Errorf("script execution failed: %w", err)
+		return fmt.Errorf("%w: exit code %d, stderr: %s", ErrScriptExecutionFailed, result.ExitCode, result.Stderr)
 	}
 
 	m.log.Info("Provisioning script executed successfully")
@@ -1417,7 +1606,7 @@ func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan
 			// Detect rate limit / transient
 			emsg := strings.ToLower(err.Error())
 			if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
-				m.log.Warn("Git op limited, backing off", "repo", job.name, "attempt", attempt, "delay", backoff.String())
+				m.log.Warnw("Git op limited, backing off", "repo", job.name, "attempt", attempt, "delay", backoff.String())
 
 				select {
 				case <-ctx.Done():
@@ -1509,15 +1698,15 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	}
 
 	// Verify key tools are available
-	tools := []string{"genesis", "safe", "spruce", "vault", "bosh", "cf"}
+	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
 	for _, tool := range tools {
 		cmd := "command -v " + tool
 
 		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
-			m.log.Warn("Tool not available", "tool", tool)
+			m.log.Warnw("Tool not available", "tool", tool)
 		} else {
-			m.log.Debug("Tool verified", "tool", tool)
+			m.log.Debugw("Tool verified", "tool", tool)
 		}
 	}
 
@@ -1526,7 +1715,23 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 
 // Helper methods
 
-func (m *Manager) copyOCFPConfig(ctx context.Context) error {
+// copyOCFPConfig transfers a filtered OCFP configuration to the bastion.
+// The filtered config includes global settings (debug, verbose) and only
+// the bloc configuration being initialized (m.config.Name).
+//
+// The filtering process:
+//  1. Loads the full ConfigFile from ~/.ocfp/config.yml
+//  2. Extracts global debug/verbose settings
+//  3. Includes only the bloc specified by m.config.Name
+//  4. Marshals filtered config to YAML
+//  5. Transfers via SSH to bastion ~/.ocfp/config.yml
+//
+// Returns an error if:
+//   - Config file not found
+//   - Bloc not present in config
+//   - YAML marshaling fails
+//   - SSH transfer fails
+func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen // multi-step config filtering process
 	homeDir := os.Getenv("HOME")
 	configPaths := []string{
 		homeDir + "/.ocfp/config.yml",
@@ -1548,6 +1753,90 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 		return ErrOCFPConfigurationFileNotFound
 	}
 
+	// Load full ConfigFile structure
+	configFileData := &config.ConfigFile{
+		Debug:   false,
+		Verbose: false,
+		Blocs:   map[string]*config.Config{},
+	}
+
+	m.log.Debug("Loading config for filtering",
+		"config_path", configPath,
+		"bloc_name", m.config.Name)
+
+	// Validate config path for security
+	if err := security.ValidatePath(configPath); err != nil {
+		return fmt.Errorf("invalid config path %s: %w", configPath, err)
+	}
+
+	configBytes, err := os.ReadFile(configPath) //nolint:gosec // path validated above
+	if err != nil {
+		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	err = yaml.Unmarshal(configBytes, configFileData)
+	if err != nil {
+		return fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+	}
+
+	m.log.Debug("Config file loaded",
+		"total_blocs", len(configFileData.Blocs),
+		"debug", configFileData.Debug,
+		"verbose", configFileData.Verbose)
+
+	// Verify the bloc being initialized exists
+	blocName := m.config.Name
+	blocConfig, exists := configFileData.Blocs[blocName]
+	if !exists {
+		return fmt.Errorf("%w: bloc '%s' in file %s", ErrBlocNotFoundInConfig, blocName, configPath)
+	}
+
+	// Create filtered config with globals + single bloc
+	filteredConfig := &config.ConfigFile{
+		Debug:   configFileData.Debug,
+		Verbose: configFileData.Verbose,
+		Blocs: map[string]*config.Config{
+			blocName: blocConfig,
+		},
+	}
+
+	m.log.Info("Created filtered config",
+		"bloc", blocName,
+		"included_blocs", 1)
+
+	// Marshal filtered config to YAML
+	yamlBytes, err := yaml.Marshal(filteredConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal filtered config: %w", err)
+	}
+
+	// Create temp file for transfer
+	tmpFile, err := os.CreateTemp("", "ocfp-config-*.yml")
+	if err != nil {
+		return fmt.Errorf("failed to create temp config file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			m.log.Warn("Failed to remove temp config file", "path", tmpPath, "error", removeErr)
+		}
+	}()
+
+	_, err = tmpFile.Write(yamlBytes)
+	if err != nil {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			m.log.Warn("Failed to close temp file after write error", "error", closeErr)
+		}
+
+		return fmt.Errorf("failed to write temp config file: %w", err)
+	}
+
+	err = tmpFile.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close temp config file: %w", err)
+	}
+
+	// Transfer filtered config
 	remoteConfigPath := "~/.ocfp/config.yml"
 	transferOpts := ssh.TransferOptions{
 		Recursive:    false,
@@ -1560,10 +1849,14 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 		BackupRemote: false,
 	}
 
-	err := m.sshClient.TransferFile(ctx, configPath, remoteConfigPath, transferOpts)
+	err = m.sshClient.TransferFile(ctx, tmpPath, remoteConfigPath, transferOpts)
 	if err != nil {
-		return fmt.Errorf("failed to transfer config file: %w", err)
+		return fmt.Errorf("failed to transfer filtered config file: %w", err)
 	}
+
+	m.log.Info("Transferred filtered config to bastion",
+		"bloc", blocName,
+		"remote_path", remoteConfigPath)
 
 	return nil
 }
@@ -1632,31 +1925,59 @@ func (m *Manager) getEnvironmentVariables() map[string]string {
 	// This would get environment variables from the provider initializer
 	// For now, return basic variables
 	env := map[string]string{
-		"OCFP_BLOC_NAME": m.config.Name,
-		"OCFP_PROVIDER":  m.config.Provider,
+		"OCFP_BLOC":     m.config.Name,
+		"OCFP_PROVIDER": m.config.Provider,
 	}
 
 	// Add provider-specific variables based on the provider
-	if m.config.Provider == "stackit" {
-		if m.config.ProjectID != "" {
-			env["STACKIT_PROJECT_ID"] = m.config.ProjectID
-		}
-
-		if m.config.OrgID != "" {
-			env["STACKIT_ORG_ID"] = m.config.OrgID
-		}
-
-		if m.config.Region != "" {
-			env["STACKIT_REGION"] = m.config.Region
-		}
-	}
+	m.addProviderEnvVars(env)
 
 	return env
 }
 
+// addProviderEnvVars adds provider-specific environment variables to the given map.
+func (m *Manager) addProviderEnvVars(env map[string]string) {
+	switch m.config.Provider {
+	case "stackit":
+		m.addStackitEnvVars(env)
+	case "aws":
+		m.addAWSEnvVars(env)
+	}
+}
+
+// addStackitEnvVars adds STACKIT-specific environment variables.
+func (m *Manager) addStackitEnvVars(env map[string]string) {
+	if m.config.ProjectID != "" {
+		env["STACKIT_PROJECT_ID"] = m.config.ProjectID
+	}
+
+	if m.config.OrgID != "" {
+		env["STACKIT_ORG_ID"] = m.config.OrgID
+	}
+
+	if m.config.Region != "" {
+		env["STACKIT_REGION"] = m.config.Region
+	}
+}
+
+// addAWSEnvVars adds AWS-specific environment variables.
+func (m *Manager) addAWSEnvVars(env map[string]string) {
+	if m.config.AccessKeyID != "" {
+		env["AWS_ACCESS_KEY_ID"] = m.config.AccessKeyID
+	}
+
+	if m.config.SecretAccessKey != "" {
+		env["AWS_SECRET_ACCESS_KEY"] = m.config.SecretAccessKey
+	}
+
+	if m.config.Region != "" {
+		env["AWS_DEFAULT_REGION"] = m.config.Region
+	}
+}
+
 func (m *Manager) expandVariables(text string) string {
 	// Simple variable expansion
-	text = strings.ReplaceAll(text, "${OCFP_BLOC_NAME}", m.config.Name)
+	text = strings.ReplaceAll(text, "${OCFP_BLOC}", m.config.Name)
 	text = strings.ReplaceAll(text, "${HOME}", "$HOME") // Let shell expand
 	text = strings.ReplaceAll(text, "${USER}", "$USER") // Let shell expand
 

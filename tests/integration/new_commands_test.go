@@ -13,13 +13,8 @@ import (
 
 // TestProviderCommandIntegration tests the provider command integration.
 func TestProviderCommandIntegration(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because subtests call helpers that use t.Setenv()
 	configFile := setupProviderTestConfig(t)
-
-	t.Run("CreateProviderCommand", func(t *testing.T) {
-		t.Parallel()
-		testProviderCreateCommand(t)
-	})
 
 	t.Run("ValidateProviderArgs", func(t *testing.T) {
 		t.Parallel()
@@ -32,12 +27,12 @@ func TestProviderCommandIntegration(t *testing.T) {
 	})
 
 	t.Run("ProviderLoginWithConfig", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testProviderLoginWithConfig(t, configFile)
 	})
 
 	t.Run("ProviderLoginStackitValidation", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testProviderLoginStackitValidation(t, configFile)
 	})
 }
@@ -75,15 +70,6 @@ func TestTmuxCommandIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("TmuxScriptGeneration", func(t *testing.T) {
-		t.Parallel()
-		// Test that the command can generate a basic tmux script
-		// This tests the internal script generation logic
-		cmd := commands.NewTmuxCmd()
-
-		// The command should be able to create its internal structures
-		assert.NotNil(t, cmd.RunE)
-	})
 }
 
 // TestBastionCommandIntegration tests the bastion command integration.
@@ -153,7 +139,7 @@ func testBastionCommandFlags(t *testing.T) {
 
 func testBastionInitWithoutScript(t *testing.T, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv()
 	t.Setenv("OCFP_CONFIG", configFile)
 
 	cmd := commands.NewBastionCmd()
@@ -166,7 +152,7 @@ func testBastionInitWithoutScript(t *testing.T, configFile string) {
 
 func testBastionProvisionWithoutScript(t *testing.T, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv()
 	t.Setenv("OCFP_CONFIG", configFile)
 
 	cmd := commands.NewBastionCmd()
@@ -179,7 +165,7 @@ func testBastionProvisionWithoutScript(t *testing.T, configFile string) {
 
 func testBastionWithProvisionScript(t *testing.T, tmpDir, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() because using withEnv helper for environment management
 
 	scriptContent := `#!/usr/bin/perl
 # Test provision script
@@ -202,31 +188,30 @@ exit 0;
 }
 
 func TestBastionCommandIntegration(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because subtests call helpers that use t.Setenv()
 	tmpDir, configFile := setupBastionTestConfig(t)
 
 	t.Run("CreateBastionCommand", testBastionCommandCreation)
 	t.Run("ValidateBastionArgs", testBastionArgsValidation)
 	t.Run("BastionCommandFlags", testBastionCommandFlags)
 	t.Run("BastionInitWithoutScript", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testBastionInitWithoutScript(t, configFile)
 	})
 	t.Run("BastionProvisionWithoutScript", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testBastionProvisionWithoutScript(t, configFile)
 	})
 	t.Run("BastionWithProvisionScript", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses environment management
 		testBastionWithProvisionScript(t, tmpDir, configFile)
 	})
 }
 
 // TestCommandIntegrationWithVault tests commands that integrate with Vault.
 func TestCommandIntegrationWithVault(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because subtests use t.Setenv()
 	t.Run("ProviderLoginWithVault", func(t *testing.T) {
-		t.Parallel()
 		// Check if 'safe' command is available (Vault wrapper)
 		_, err := exec.LookPath("safe")
 		if err != nil {
@@ -317,24 +302,9 @@ blocs:
 	return tmpDir, configFile
 }
 
-func testMultipleCommandsWithSameConfig(t *testing.T, configFile string) {
-	t.Helper()
-	t.Parallel()
-	t.Setenv("OCFP_CONFIG", configFile)
-
-	providerCmd := commands.NewProviderCmd()
-	assert.NotNil(t, providerCmd)
-
-	tmuxCmd := commands.NewTmuxCmd()
-	assert.NotNil(t, tmuxCmd)
-
-	bastionCmd := commands.NewBastionCmd()
-	assert.NotNil(t, bastionCmd)
-}
-
 func testBlocSpecificConfiguration(t *testing.T, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv()
 	t.Setenv("OCFP_CONFIG", configFile)
 
 	providerCmd := commands.NewProviderCmd()
@@ -354,23 +324,18 @@ func testBlocSpecificConfiguration(t *testing.T, configFile string) {
 
 // TestCommandConfigIntegration tests configuration integration across commands.
 func TestCommandConfigIntegration(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because subtests call helpers that use t.Setenv()
 	_, configFile := setupCommandConfigTestData(t)
 
-	t.Run("MultipleCommandsWithSameConfig", func(t *testing.T) {
-		t.Parallel()
-		testMultipleCommandsWithSameConfig(t, configFile)
-	})
-
 	t.Run("BlocSpecificConfiguration", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testBlocSpecificConfiguration(t, configFile)
 	})
 }
 
 // TestCommandErrorHandling tests error handling across all new commands.
 func TestCommandErrorHandling(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because TmuxCommandWithoutTmux subtest uses t.Setenv()
 	t.Run("ProviderCommandErrors", func(t *testing.T) {
 		t.Parallel()
 
@@ -417,7 +382,7 @@ func TestCommandErrorHandling(t *testing.T) {
 	})
 
 	t.Run("TmuxCommandWithoutTmux", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() with t.Setenv()
 		// Temporarily hide tmux from PATH to test error handling
 		t.Setenv("PATH", "/nonexistent")
 
@@ -454,15 +419,6 @@ blocs:
 	return configFile
 }
 
-func testProviderCreateCommand(t *testing.T) {
-	t.Helper()
-
-	cmd := commands.NewProviderCmd()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "provider <action>", cmd.Use)
-	assert.Equal(t, "Manage cloud provider operations", cmd.Short)
-}
-
 func testProviderValidateArgs(t *testing.T) {
 	t.Helper()
 
@@ -495,7 +451,7 @@ func testProviderCommandFlags(t *testing.T) {
 
 func testProviderLoginWithConfig(t *testing.T, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv()
 	t.Setenv("OCFP_CONFIG", configFile)
 
 	cmd := commands.NewProviderCmd()
@@ -507,7 +463,7 @@ func testProviderLoginWithConfig(t *testing.T, configFile string) {
 
 func testProviderLoginStackitValidation(t *testing.T, configFile string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv()
 	t.Setenv("OCFP_CONFIG", configFile)
 
 	cmd := commands.NewProviderCmd()

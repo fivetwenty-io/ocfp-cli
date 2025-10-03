@@ -12,6 +12,15 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// minRepoScriptLines is the minimum number of lines that should exist
+	// before adding apt-get update logic (accounts for NEED_APT_UPDATE initialization).
+	minRepoScriptLines = 2
+
+	// defaultScriptLineCapacity is the default capacity for preallocating script line slices.
+	defaultScriptLineCapacity = 10
+)
+
 // ScriptGenerator generates provisioning scripts from templates.
 type ScriptGenerator struct {
 	config   *config.Config
@@ -59,6 +68,17 @@ func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provC
 
 // generateScriptHeader generates the script header.
 func (sg *ScriptGenerator) generateScriptHeader() string {
+	header := sg.generateShebangAndComments()
+	colors := sg.generateColorCodes()
+	logging := sg.generateLoggingFunctions()
+	errorHandling := sg.generateErrorHandling()
+	postInstall := sg.generatePostInstallFunctions()
+
+	return header + colors + logging + errorHandling + postInstall
+}
+
+// generateShebangAndComments returns the shebang and initial comments.
+func (sg *ScriptGenerator) generateShebangAndComments() string {
 	return `#!/bin/bash
 
 # OCFP Bastion Provisioning Script
@@ -69,14 +89,33 @@ func (sg *ScriptGenerator) generateScriptHeader() string {
 
 set -euo pipefail
 
-# Color codes for output
+# Early exit if already provisioned (idempotency optimization)
+PROVISIONED_MARKER="${HOME}/.ocfp/provisioned"
+if [ -f "${PROVISIONED_MARKER}" ]; then
+    echo "[INFO] Bastion already provisioned (marker exists: ${PROVISIONED_MARKER})"
+    echo "[INFO] Provisioned at: $(cat ${PROVISIONED_MARKER})"
+    echo "[INFO] Skipping provisioning script - all tasks complete"
+    exit 0
+fi
+
+`
+}
+
+// generateColorCodes returns the color code definitions.
+func (sg *ScriptGenerator) generateColorCodes() string {
+	return `# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Logging functions
+`
+}
+
+// generateLoggingFunctions returns the logging function definitions.
+func (sg *ScriptGenerator) generateLoggingFunctions() string {
+	return `# Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1" | tee -a "${LOG_FILE}"
 }
@@ -93,7 +132,8 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1" | tee -a "${LOG_FILE}"
 }
 
-# Setup logging
+# Setup logging and timing
+start_time=$(date +%s)
 LOG_DIR="${HOME}/.ocfp/logs/provision"
 mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/bastion-init-$(date +%Y%m%d-%H%M%S).log"
@@ -101,7 +141,12 @@ LOG_FILE="${LOG_DIR}/bastion-init-$(date +%Y%m%d-%H%M%S).log"
 log_info "Starting bastion provisioning at $(date)"
 log_info "Log file: ${LOG_FILE}"
 
-# Error handling
+`
+}
+
+// generateErrorHandling returns the error handling setup.
+func (sg *ScriptGenerator) generateErrorHandling() string {
+	return `# Error handling
 handle_error() {
     local line_number=$1
     local exit_code=$2
@@ -111,6 +156,22 @@ handle_error() {
 }
 
 trap 'handle_error ${LINENO} $?' ERR
+
+`
+}
+
+// generatePostInstallFunctions returns post-install helper functions.
+func (sg *ScriptGenerator) generatePostInstallFunctions() string {
+	return `# Post-install functions
+install_aws_cli_v2() {
+    log_info "Installing AWS CLI v2"
+    cd /tmp
+    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -o -q awscliv2.zip
+    sudo ./aws/install --update
+    rm -rf awscliv2.zip aws/
+    log_success "AWS CLI v2 installed"
+}
 
 # Wait for system to stabilize after boot
 log_info "Waiting for system to stabilize..."
@@ -122,6 +183,12 @@ func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) s
 	lines := make([]string, 0, scriptBufferScriptBase+len(envVars))
 
 	lines = append(lines, "# Environment variables setup")
+	lines = append(lines, "")
+	lines = append(lines, "# Suppress interactive prompts and debconf warnings")
+	lines = append(lines, "export DEBIAN_FRONTEND=noninteractive")
+	lines = append(lines, "export NEEDRESTART_MODE=a")
+	lines = append(lines, "export NEEDRESTART_SUSPEND=1")
+	lines = append(lines, "")
 
 	for key, value := range envVars {
 		lines = append(lines, fmt.Sprintf("export %s='%s'", key, value))
@@ -129,7 +196,7 @@ func (sg *ScriptGenerator) generateEnvironmentSetup(envVars map[string]string) s
 
 	lines = append(lines, "")
 	lines = append(lines, "# Display environment info")
-	lines = append(lines, `log_info "Environment: ${OCFP_BLOC_NAME} (${OCFP_PROVIDER})"`)
+	lines = append(lines, `log_info "Environment: ${OCFP_BLOC} (${OCFP_PROVIDER})"`)
 
 	return strings.Join(lines, "\n")
 }
@@ -227,6 +294,7 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript4*len(repositories))
 
 	lines = append(lines, "# APT repository setup")
+	lines = append(lines, "NEED_APT_UPDATE=false")
 
 	for _, repo := range repositories {
 		if !repo.Enabled || sg.shouldSkipCondition(repo.Condition) {
@@ -235,39 +303,54 @@ func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository
 
 		lines = append(lines, "# Add repository: "+repo.Name)
 
-		// Download GPG key (atomic write)
+		// Download GPG key (atomic write) - with idempotency check
 		if repo.GPGKey.URL != "" {
-			lines = append(lines, fmt.Sprintf("log_info 'Adding GPG key for %s repository'", repo.Name))
-			lines = append(lines, fmt.Sprintf("sudo mkdir -p $(dirname '%s')", repo.GPGKey.Dest))
+			lines = append(lines, fmt.Sprintf("if [ ! -f '%s' ]; then", repo.GPGKey.Dest))
+			lines = append(lines, fmt.Sprintf("  log_info 'Adding GPG key for %s repository'", repo.Name))
+			lines = append(lines, fmt.Sprintf("  sudo mkdir -p $(dirname '%s')", repo.GPGKey.Dest))
 
-			lines = append(lines, "TMP_KEY=$(mktemp /tmp/ocfp-key-XXXXXX.gpg)")
+			lines = append(lines, "  TMP_KEY=$(mktemp /tmp/ocfp-key-XXXXXX.gpg)")
 			if repo.GPGKey.Dearmor {
-				lines = append(lines, fmt.Sprintf("curl -fsSL '%s' | gpg --dearmor > \"$TMP_KEY\"", repo.GPGKey.URL))
+				lines = append(lines, fmt.Sprintf("  curl -fsSL '%s' | gpg --dearmor > \"$TMP_KEY\"", repo.GPGKey.URL))
 			} else {
-				lines = append(lines, fmt.Sprintf("curl -fsSL '%s' -o \"$TMP_KEY\"", repo.GPGKey.URL))
+				lines = append(lines, fmt.Sprintf("  curl -fsSL '%s' -o \"$TMP_KEY\"", repo.GPGKey.URL))
 			}
 
-			lines = append(lines, fmt.Sprintf("sudo install -m 0644 \"$TMP_KEY\" '%s'", repo.GPGKey.Dest))
-			lines = append(lines, "rm -f \"$TMP_KEY\"")
-			lines = append(lines, fmt.Sprintf("if [ -f '%s' ]; then log_success 'GPG key installed'; else log_error 'Failed to install GPG key'; fi", repo.GPGKey.Dest))
+			lines = append(lines, fmt.Sprintf("  sudo install -m 0644 \"$TMP_KEY\" '%s'", repo.GPGKey.Dest))
+			lines = append(lines, "  rm -f \"$TMP_KEY\"")
+			lines = append(lines, fmt.Sprintf("  if [ -f '%s' ]; then log_success 'GPG key installed'; else log_error 'Failed to install GPG key'; fi", repo.GPGKey.Dest))
+			lines = append(lines, "  NEED_APT_UPDATE=true")
+			lines = append(lines, "else")
+			lines = append(lines, fmt.Sprintf("  log_info 'GPG key for %s already exists, skipping'", repo.Name))
+			lines = append(lines, "fi")
 		}
 
-		// Add repository (atomic write)
+		// Add repository (atomic write) - with idempotency check
 		if repo.SourceLine != "" && repo.SourceFile != "" {
-			lines = append(lines, fmt.Sprintf("log_info 'Adding %s repository'", repo.Name))
-			lines = append(lines, "TMP_LIST=$(mktemp /tmp/ocfp-list-XXXXXX.list)")
-			lines = append(lines, fmt.Sprintf("echo '%s' > \"$TMP_LIST\"", repo.SourceLine))
-			lines = append(lines, fmt.Sprintf("sudo install -m 0644 \"$TMP_LIST\" '%s'", repo.SourceFile))
-			lines = append(lines, "rm -f \"$TMP_LIST\"")
-			lines = append(lines, fmt.Sprintf("if grep -qF '%s' '%s'; then log_success '%s repository added'; else log_error 'Failed to add %s repository'; fi", repo.SourceLine, repo.SourceFile, repo.Name, repo.Name))
+			lines = append(lines, fmt.Sprintf("if ! grep -qF '%s' '%s' 2>/dev/null; then", repo.SourceLine, repo.SourceFile))
+			lines = append(lines, fmt.Sprintf("  log_info 'Adding %s repository'", repo.Name))
+			lines = append(lines, "  TMP_LIST=$(mktemp /tmp/ocfp-list-XXXXXX.list)")
+			lines = append(lines, fmt.Sprintf("  echo '%s' > \"$TMP_LIST\"", repo.SourceLine))
+			lines = append(lines, fmt.Sprintf("  sudo install -m 0644 \"$TMP_LIST\" '%s'", repo.SourceFile))
+			lines = append(lines, "  rm -f \"$TMP_LIST\"")
+			lines = append(lines, fmt.Sprintf("  if grep -qF '%s' '%s'; then log_success '%s repository added'; else log_error 'Failed to add %s repository'; fi", repo.SourceLine, repo.SourceFile, repo.Name, repo.Name))
+			lines = append(lines, "  NEED_APT_UPDATE=true")
+			lines = append(lines, "else")
+			lines = append(lines, fmt.Sprintf("  log_info '%s repository already configured, skipping'", repo.Name))
+			lines = append(lines, "fi")
 		}
 
 		lines = append(lines, "")
 	}
 
-	if len(lines) > 1 {
-		lines = append(lines, "# Update package cache after adding repositories")
-		lines = append(lines, "sudo apt-get update -qq")
+	if len(lines) > minRepoScriptLines {
+		lines = append(lines, "# Update package cache only if repositories were added")
+		lines = append(lines, "if [ \"$NEED_APT_UPDATE\" = \"true\" ]; then")
+		lines = append(lines, "  log_info 'Updating package cache'")
+		lines = append(lines, "  sudo apt-get update -qq")
+		lines = append(lines, "else")
+		lines = append(lines, "  log_info 'No repository changes, skipping apt-get update'")
+		lines = append(lines, "fi")
 		lines = append(lines, "")
 	}
 
@@ -293,17 +376,42 @@ func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGrou
 		lines = append(lines, fmt.Sprintf("# Install %s packages", groupName))
 
 		if len(group.Packages) > 0 {
-			pkgList := strings.Join(group.Packages, " ")
+			lines = append(lines, fmt.Sprintf("log_info 'Checking %s packages'", groupName))
+			lines = append(lines, "TO_INSTALL=\"\"")
 
-			lines = append(lines, fmt.Sprintf("log_info 'Installing %s packages'", groupName))
-			lines = append(lines, "sudo apt-get install -y "+pkgList)
+			for _, pkg := range group.Packages {
+				lines = append(lines, fmt.Sprintf("if ! dpkg-query -W -f='${Status}' '%s' 2>/dev/null | grep -q 'install ok installed'; then", pkg))
+				lines = append(lines, fmt.Sprintf("    TO_INSTALL=\"${TO_INSTALL} %s\"", pkg))
+				lines = append(lines, "else")
+				lines = append(lines, fmt.Sprintf("    log_info 'Package already installed: %s'", pkg))
+				lines = append(lines, "fi")
+			}
+
+			lines = append(lines, "if [ -n \"${TO_INSTALL}\" ]; then")
+			lines = append(lines, fmt.Sprintf("    log_info 'Installing missing %s packages: ${TO_INSTALL}'", groupName))
+			lines = append(lines, "    sudo apt-get install -y ${TO_INSTALL}")
+			lines = append(lines, "else")
+			lines = append(lines, fmt.Sprintf("    log_success 'All %s packages already installed'", groupName))
+			lines = append(lines, "fi")
 		}
 
 		if len(group.PipPackages) > 0 {
-			pipList := strings.Join(group.PipPackages, " ")
+			lines = append(lines, fmt.Sprintf("log_info 'Checking %s pip packages'", groupName))
 
-			lines = append(lines, fmt.Sprintf("log_info 'Installing %s pip packages'", groupName))
-			lines = append(lines, "pip3 install --user "+pipList)
+			for _, pkg := range group.PipPackages {
+				lines = append(lines, fmt.Sprintf("if ! pip3 show '%s' >/dev/null 2>&1; then", pkg))
+				lines = append(lines, fmt.Sprintf("    log_info 'Installing pip package: %s'", pkg))
+				lines = append(lines, fmt.Sprintf("    pip3 install --user '%s'", pkg))
+				lines = append(lines, "else")
+				lines = append(lines, fmt.Sprintf("    log_info 'Pip package already installed: %s'", pkg))
+				lines = append(lines, "fi")
+			}
+		}
+
+		// Run post-install script if specified
+		if group.PostInstall != "" {
+			lines = append(lines, fmt.Sprintf("log_info 'Running post-install for %s'", groupName))
+			lines = append(lines, group.PostInstall)
 		}
 
 		// Verify packages
@@ -493,13 +601,31 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 
 	// Add header
 	lines = append(lines, "# Install "+tool.Name)
-	lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
 
-	// Add download and installation steps
-	lines = append(lines, sg.generateDownloadSteps(tool)...)
+	// Check if tool already exists at destination
+	if tool.Dest != "" {
+		lines = append(lines, fmt.Sprintf("if [ -f '%s' ]; then", tool.Dest))
+		lines = append(lines, fmt.Sprintf("    log_info 'Binary tool already installed: %s'", tool.Name))
+		lines = append(lines, "else")
+		lines = append(lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
 
-	// Add verification step
-	lines = append(lines, sg.generateVerificationStep(tool)...)
+		// Add download and installation steps with proper indentation
+		for _, line := range sg.generateDownloadSteps(tool) {
+			lines = append(lines, "    "+line)
+		}
+
+		// Add verification step with proper indentation
+		for _, line := range sg.generateVerificationStep(tool) {
+			lines = append(lines, "    "+line)
+		}
+
+		lines = append(lines, "fi")
+	} else {
+		// No destination specified, install without check
+		lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
+		lines = append(lines, sg.generateDownloadSteps(tool)...)
+		lines = append(lines, sg.generateVerificationStep(tool)...)
+	}
 
 	// Add empty line separator
 	lines = append(lines, "")
@@ -538,23 +664,92 @@ func (sg *ScriptGenerator) generateDirectDownload(tool BinaryTool) []string {
 
 // generateVersionBasedDownload generates script lines for version-based download.
 func (sg *ScriptGenerator) generateVersionBasedDownload(tool BinaryTool) []string {
-	var lines []string
+	lines := make([]string, 0, defaultScriptLineCapacity) // Pre-allocate with reasonable capacity
 
-	// Get latest version
-	lines = append(lines, fmt.Sprintf("LATEST_VERSION=$(curl -s '%s' | grep -oP '%s' | head -1)", tool.VersionURL, tool.VersionPattern))
-	lines = append(lines, "DOWNLOAD_URL=$(echo \""+tool.URLTemplate+"\" | sed \"s/\\${VERSION}/${LATEST_VERSION}/g\")")
-	lines = append(lines, fmt.Sprintf("curl -fsSL \"${DOWNLOAD_URL}\" -o '/tmp/%s'", tool.Name))
+	// Get latest version - use GitHub token if available to avoid rate limiting
+	lines = append(lines, fmt.Sprintf("log_info 'Fetching latest version for %s from %s'", tool.Name, tool.VersionURL))
+	lines = append(lines, "# Use GitHub token if available to avoid rate limiting")
+	lines = append(lines, `GITHUB_AUTH_HEADER=""`)
+	lines = append(lines, `if [ -n "${GITHUB_TOKEN:-}" ]; then`)
+	lines = append(lines, `    GITHUB_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"`)
+	lines = append(lines, `fi`)
+	lines = append(lines, fmt.Sprintf("LATEST_VERSION=$(curl -sL -H \"${GITHUB_AUTH_HEADER}\" '%s' | jq -r '.tag_name' | sed 's/^v//')", tool.VersionURL))
+	lines = append(lines, `if [ ! -z "${LATEST_VERSION}" ] && [ "${LATEST_VERSION}" != "null" ]; then`)
+	lines = append(lines, fmt.Sprintf("    log_info \"Latest version for %s: ${LATEST_VERSION}\"", tool.Name))
+	lines = append(lines, "    # Use single quotes around URLTemplate to prevent bash from expanding ${VERSION}")
+	lines = append(lines, "    DOWNLOAD_URL=$(echo '"+tool.URLTemplate+"' | sed \"s/\\${VERSION}/${LATEST_VERSION}/g\")")
+	lines = append(lines, fmt.Sprintf("    log_info 'Download URL for %s: ${DOWNLOAD_URL}'", tool.Name))
+	lines = append(lines, fmt.Sprintf("    log_info 'Downloading %s...'", tool.Name))
+	lines = append(lines, fmt.Sprintf("    if curl -fsSL \"${DOWNLOAD_URL}\" -o '/tmp/%s'; then", tool.Name))
+	lines = append(lines, fmt.Sprintf("        log_success '%s downloaded successfully'", tool.Name))
 
-	// Extract if needed
+	// Extract if needed - add proper indentation (8 spaces for inside download success block)
 	if tool.Extract {
-		lines = append(lines, fmt.Sprintf("cd /tmp && tar -xf '%s'", tool.Name))
-		lines = append(lines, sg.generateMoveCommand(tool, tool.Name)...)
+		// Create temporary extraction directory to avoid permission issues with /tmp
+		extractDir := fmt.Sprintf("/tmp/ocfp-extract-%s-$$", tool.Name)
+		lines = append(lines, fmt.Sprintf("        EXTRACT_DIR='%s'", extractDir))
+		lines = append(lines, "        mkdir -p \"${EXTRACT_DIR}\"")
+
+		// Detect file type from URLTemplate and use appropriate extraction tool
+		switch {
+		case strings.HasSuffix(tool.URLTemplate, ".zip"):
+			lines = append(lines, fmt.Sprintf("        unzip -o '/tmp/%s' -d \"${EXTRACT_DIR}\"", tool.Name))
+		case strings.HasSuffix(tool.URLTemplate, ".deb"):
+			// Extract .deb package (ar archive containing data.tar.gz with binary at ./usr/bin/)
+			lines = append(lines, fmt.Sprintf("        cd \"${EXTRACT_DIR}\" && ar x '/tmp/%s' data.tar.gz", tool.Name))
+			lines = append(lines, "        tar --no-same-owner --no-same-permissions -C \"${EXTRACT_DIR}\" -xzf \"${EXTRACT_DIR}/data.tar.gz\" ./usr/bin/"+tool.Name)
+			lines = append(lines, fmt.Sprintf("        mv \"${EXTRACT_DIR}/usr/bin/%s\" \"${EXTRACT_DIR}/%s\"", tool.Name, tool.Name))
+			lines = append(lines, "        cd -")
+		default:
+			// Extract to temporary directory to avoid permission errors on /tmp
+			// Use --no-same-owner and --no-same-permissions to avoid permission inheritance
+			lines = append(lines, fmt.Sprintf("        tar --no-same-owner --no-same-permissions -C \"${EXTRACT_DIR}\" -xf '/tmp/%s'", tool.Name))
+
+			// For cf CLI, find and move the binary from versioned subdirectory (e.g., cf8/cf)
+			if tool.Name == "cf" {
+				lines = append(lines, "        # CF CLI extracts to versioned subdirectory (e.g., cf8/cf)")
+				lines = append(lines, "        find \"${EXTRACT_DIR}\" -name 'cf' -type f -executable -exec mv {} \"${EXTRACT_DIR}/cf\" \\; 2>/dev/null || true")
+			}
+		}
+
+		// Validate extraction succeeded before proceeding
+		lines = append(lines, fmt.Sprintf("        if [ ! -f \"${EXTRACT_DIR}/%s\" ]; then", tool.Name))
+		lines = append(lines, fmt.Sprintf("            log_error 'Extraction failed - %s binary not found in archive'", tool.Name))
+		lines = append(lines, "            log_error 'Archive contents: '")
+		lines = append(lines, "            ls -la \"${EXTRACT_DIR}\" || true")
+		lines = append(lines, "            rm -rf \"${EXTRACT_DIR}\"")
+		lines = append(lines, "            exit 1")
+		lines = append(lines, "        fi")
+
+		// Use literal ${EXTRACT_DIR} for shell expansion, not Go template interpolation
+		for _, line := range sg.generateMoveCommand(tool, "${EXTRACT_DIR}/"+tool.Name) {
+			lines = append(lines, "        "+line)
+		}
+
+		// Clean up extraction directory
+		lines = append(lines, "        rm -rf \"${EXTRACT_DIR}\"")
 	} else {
-		lines = append(lines, sg.generateMoveCommand(tool, "/tmp/"+tool.Name)...)
+		for _, line := range sg.generateMoveCommand(tool, "/tmp/"+tool.Name) {
+			lines = append(lines, "        "+line)
+		}
 	}
 
-	// Set permissions
-	lines = append(lines, sg.generatePermissionCommand(tool)...)
+	// Set permissions - add proper indentation
+	for _, line := range sg.generatePermissionCommand(tool) {
+		lines = append(lines, "        "+line)
+	}
+
+	// Close download success block, add failure handling
+	lines = append(lines, "    else")
+	lines = append(lines, fmt.Sprintf("        log_error 'Failed to download %s from ${DOWNLOAD_URL}'", tool.Name))
+	lines = append(lines, "    fi")
+
+	// Close version check block, add version fetch failure handling
+	lines = append(lines, "else")
+	lines = append(lines, fmt.Sprintf("    log_warning 'Failed to determine latest version for %s from GitHub API'", tool.Name))
+	lines = append(lines, fmt.Sprintf("    log_warning 'Check if %s is accessible or GITHUB_TOKEN is set'", tool.VersionURL))
+	lines = append(lines, fmt.Sprintf("    log_warning 'Skipping %s installation - install manually if needed'", tool.Name))
+	lines = append(lines, "fi")
 
 	return lines
 }
@@ -563,10 +758,14 @@ func (sg *ScriptGenerator) generateVersionBasedDownload(tool BinaryTool) []strin
 func (sg *ScriptGenerator) generateMoveCommand(tool BinaryTool, source string) []string {
 	var lines []string
 
+	// Remove any existing file, symlink (even dangling), or directory at destination
+	// Use rm -rf with error suppression to handle all cases including dangling symlinks
 	if tool.Sudo {
-		lines = append(lines, fmt.Sprintf("sudo mv '%s' '%s'", source, tool.Dest))
+		lines = append(lines, fmt.Sprintf("sudo rm -rf '%s' 2>/dev/null || true", tool.Dest))
+		lines = append(lines, fmt.Sprintf("sudo mv \"%s\" '%s'", source, tool.Dest))
 	} else {
-		lines = append(lines, fmt.Sprintf("mv '%s' '%s'", source, tool.Dest))
+		lines = append(lines, fmt.Sprintf("rm -rf '%s' 2>/dev/null || true", tool.Dest))
+		lines = append(lines, fmt.Sprintf("mv \"%s\" '%s'", source, tool.Dest))
 	}
 
 	return lines
@@ -577,11 +776,15 @@ func (sg *ScriptGenerator) generatePermissionCommand(tool BinaryTool) []string {
 	var lines []string
 
 	if tool.Mode != 0 {
+		// Only chmod if the destination file exists (not a dangling symlink)
+		lines = append(lines, fmt.Sprintf("if [ -e '%s' ]; then", tool.Dest))
 		if tool.Sudo {
-			lines = append(lines, fmt.Sprintf("sudo chmod %o '%s'", tool.Mode, tool.Dest))
+			lines = append(lines, fmt.Sprintf("    sudo chmod %o '%s'", tool.Mode, tool.Dest))
 		} else {
-			lines = append(lines, fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest))
+			lines = append(lines, fmt.Sprintf("    chmod %o '%s'", tool.Mode, tool.Dest))
 		}
+
+		lines = append(lines, "fi")
 	}
 
 	return lines
@@ -650,7 +853,6 @@ func (sg *ScriptGenerator) addThirdPartyPackageManagers(ctx context.Context, scr
 	// CPAN modules
 	cpanMgr := NewCPANManager(sg.provider, sg.config)
 	sg.appendIfNotEmpty(scriptParts, cpanMgr.GenerateCPANInstallScript(ctx))
-	sg.appendIfNotEmpty(scriptParts, cpanMgr.InstallOCFPPerlDependencies(ctx))
 
 	// Advanced binary tools
 	toolMgr := NewAdvancedToolManager(sg.provider, sg.config)

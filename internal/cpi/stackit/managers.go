@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 	lb "github.com/stackitcloud/stackit-sdk-go/services/loadbalancer"
 )
@@ -50,12 +51,9 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 	}
 
 	if len(req.Tags) > 0 {
-		lm := make(map[string]interface{}, len(req.Tags))
-		for k, v := range req.Tags {
-			lm[k] = v
-		}
-
-		payload.SetLabels(lm)
+		// Use sanitization to ensure labels comply with STACKIT requirements
+		labels := sanitizeLabelsForStackit(req.Tags)
+		payload.SetLabels(labels)
 	}
 
 	created, err := cli.CreateSecurityGroup(ctx, m.client.config.ProjectID).CreateSecurityGroupPayload(*payload).Execute()
@@ -122,6 +120,11 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	for _, securityGroupItem := range items {
 		labels := mapAnyToString(securityGroupItem.GetLabels())
 
+		// Apply label filtering - skip resources without required metadata
+		if !matchLabels(labels, filters) {
+			continue
+		}
+
 		group := &cpi.SecurityGroup{
 			ID:          stringOrEmpty(securityGroupItem.GetIdOk()),
 			Name:        stringOrEmpty(securityGroupItem.GetNameOk()),
@@ -131,10 +134,10 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 			Tags:        labels,
 			CreatedAt:   time.Now(),
 		}
-		if matchLabels(labels, filters) {
-			out = append(out, group)
-		}
+		out = append(out, group)
 	}
+
+	logger.WithOperation("ListSecurityGroups").Debugf("Found %d security groups (after filtering)", len(out))
 
 	return out, nil
 }
@@ -362,6 +365,15 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, loadBalancerI
 }
 
 func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+	// STACKIT load balancers do not support labels/tags.
+	// When metadata filters are provided, return empty list to enforce strict metadata requirements.
+	// This means load balancers without OCFP metadata are not in scope for management.
+	if len(filters) > 0 {
+		logger.WithOperation("ListLoadBalancers").Debug("STACKIT load balancers don't support labels - returning empty list due to metadata filter requirements")
+
+		return []*cpi.LoadBalancer{}, nil
+	}
+
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
 		return nil, err
@@ -404,6 +416,8 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 
 		list = append(list, lbOut)
 	}
+
+	logger.WithOperation("ListLoadBalancers").Debugf("Found %d load balancers", len(list))
 
 	return list, nil
 }

@@ -55,19 +55,21 @@ The lb command provides functionality to create, delete, and manage
 load balancers including adding/removing services and checking status.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize per-command file logger; keep stdout for UX
-			blocName := viper.GetString("bloc_name")
-			logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+			blocName := viper.GetString("bloc")
+			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
+			logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
 
 			return logger.Initialize(logger.Config{
-				Level:     viper.GetString("log_level"),
-				Debug:     viper.GetBool("debug"),
-				Verbose:   viper.GetBool("verbose"),
-				Trace:     viper.GetBool("trace"),
-				NoLog:     viper.GetBool("no_log"),
-				LogDir:    logDir,
-				BlocName:  blocName,
-				Command:   "lb",
-				RequestID: os.Getenv("OCFP_REQUEST_ID"),
+				Level:      viper.GetString("log_level"),
+				Debug:      viper.GetBool("debug"),
+				Verbose:    viper.GetBool("verbose"),
+				Trace:      viper.GetBool("trace"),
+				NoLog:      viper.GetBool("no_log"),
+				LogDir:     logDir,
+				BlocName:   blocName,
+				Command:    "lb",
+				Subcommand: "", // Will be set by subcommand prerun if applicable
+				RequestID:  os.Getenv("OCFP_REQUEST_ID"),
 			})
 		},
 	}
@@ -226,7 +228,7 @@ func createLoadBalancer(ctx context.Context, cfg *config.Config, opts *lbCreateO
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
 
-	log.Info("Creating load balancer", "name", opts.name, "type", opts.lbType)
+	log.Infow("Creating load balancer", "name", opts.name, "type", opts.lbType)
 
 	// Create load balancer configuration
 	lbConfig := &cpi.LoadBalancer{
@@ -255,7 +257,7 @@ func createLoadBalancer(ctx context.Context, cfg *config.Config, opts *lbCreateO
 	if opts.healthCheck {
 		err = configureLoadBalancerHealthCheck(ctx, network, loadBalancer.ID)
 		if err != nil {
-			log.Warn("Failed to configure health check", "error", err)
+			log.Warnw("Failed to configure health check", "error", err)
 		} else {
 			log.Info("Health check configured")
 		}
@@ -399,7 +401,7 @@ func getLBsToDelete(ctx context.Context, network cpi.NetworkManager, all bool, a
 			lbIDs = append(lbIDs, lb.ID)
 		}
 
-		log.Info("Found load balancers to delete", "count", len(lbIDs))
+		log.Infow("Found load balancers to delete", "count", len(lbIDs))
 
 		return lbIDs, nil
 	}
@@ -447,7 +449,7 @@ func showLBDeletePlan(ctx context.Context, network cpi.NetworkManager, all bool,
 func confirmLBDeletion(count int, log logger.Logger) bool {
 	_, err := fmt.Fprintf(os.Stdout, "This will delete %d load balancer(s). Continue? [y/N]: ", count)
 	if err != nil {
-		log.Error("failed to write confirmation prompt", "error", err)
+		log.Errorw("failed to write confirmation prompt", "error", err)
 
 		return false
 	}
@@ -467,13 +469,13 @@ func confirmLBDeletion(count int, log logger.Logger) bool {
 
 func executeLBDeletion(ctx context.Context, network cpi.NetworkManager, lbsToDelete []string, log logger.Logger) error {
 	for _, lbID := range lbsToDelete {
-		log.Info("Deleting load balancer", "id", lbID)
+		log.Infow("Deleting load balancer", "id", lbID)
 
 		err := network.DeleteLoadBalancer(ctx, lbID)
 		if err != nil {
-			log.Error("Failed to delete load balancer", "id", lbID, "error", err)
+			log.Errorw("Failed to delete load balancer", "id", lbID, "error", err)
 		} else {
-			log.Info("Load balancer deleted", "id", lbID)
+			log.Infow("Load balancer deleted", "id", lbID)
 		}
 	}
 
@@ -900,14 +902,9 @@ func ResolveReservedIP(blocName string, token string) (string, error) {
 	// Build output key: reserved_<bloc>-ocfp-<index>_<key>
 	stateKey := fmt.Sprintf("reserved_%s-ocfp-%s_%s", blocName, index, key)
 
-	stateManager, err := state.NewManager("")
+	stateManager, err := initStateManager(blocName)
 	if err != nil {
-		return "", fmt.Errorf("state manager: %w", err)
-	}
-
-	_, err = stateManager.Load(blocName)
-	if err != nil {
-		return "", fmt.Errorf("load state: %w", err)
+		return "", err
 	}
 
 	val, err := stateManager.GetOutput(stateKey)
@@ -992,7 +989,19 @@ func findPublicIPByJob(blocName, job, index string) (string, error) {
 }
 
 func initStateManager(blocName string) (*state.Manager, error) {
-	stateManager, err := state.NewManager("")
+	// Check for environment variable override first
+	stateDir := os.Getenv("OCFP_STATE_DIR")
+	if stateDir == "" {
+		// Use standard state directory for this bloc
+		var err error
+
+		stateDir, err = state.GetStateDir(blocName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine state directory: %w", err)
+		}
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("state manager: %w", err)
 	}
@@ -1146,6 +1155,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
 			if !confirmed {
 				return nil
 			}
@@ -1156,7 +1166,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
 				return err
 			}
 
-			log.Info("Removing service from load balancer", "lb", lbName, "service", serviceIP)
+			log.Infow("Removing service from load balancer", "lb", lbName, "service", serviceIP)
 
 			// Get load balancer
 			loadBalancer, err := network.GetLoadBalancer(ctx, lbName)
@@ -1212,7 +1222,7 @@ func newLBUpdateCmd() *cobra.Command {
 				return err
 			}
 
-			log.Info("Updating load balancer", "name", lbName)
+			log.Infow("Updating load balancer", "name", lbName)
 
 			loadBalancer, err := network.GetLoadBalancer(ctx, lbName)
 			if err != nil {

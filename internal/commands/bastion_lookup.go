@@ -34,7 +34,13 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 }
 
 func tryStateCache(blocName string, log logger.Logger) (string, bool) {
-	stateManager, err := state.NewManager("")
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return "", false
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return "", false
 	}
@@ -211,7 +217,13 @@ func cacheBastionIP(blocName, bastionIP string) {
 		return
 	}
 
-	stateManager, err := state.NewManager("")
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return
 	}

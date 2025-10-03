@@ -38,7 +38,7 @@ func (c *Config) GetSystemConfig() SystemConfig {
 	return SystemConfig{
 		Hostname: HostnameConfig{
 			Enabled: true,
-			Pattern: "${OCFP_BLOC_NAME}-bastion",
+			Pattern: "${OCFP_BLOC}-bastion",
 		},
 		WaitTime:    systemWaitTimeSeconds,
 		Timezone:    "UTC",
@@ -110,16 +110,16 @@ func (c *Config) GetBinaryTools() []BinaryTool {
 func (c *Config) GetAPTRepositories() []APTRepository {
 	repos := []APTRepository{
 		{
-			Name:      "cloudfoundry-community",
+			Name:      "cloudfoundry",
 			Enabled:   true,
 			Condition: "",
 			GPGKey: GPGKey{
-				URL:     "https://raw.githubusercontent.com/cloudfoundry-community/homebrew-cf/master/public.key",
-				Dest:    "/etc/apt/keyrings/cloudfoundry-community.key",
-				Dearmor: false,
+				URL:     "https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key",
+				Dest:    "/usr/share/keyrings/cli.cloudfoundry.org.gpg",
+				Dearmor: true,
 			},
-			SourceLine: "deb [signed-by=/etc/apt/keyrings/cloudfoundry-community.key] http://apt.community.cloudfoundry.org stable main",
-			SourceFile: "/etc/apt/sources.list.d/community.list",
+			SourceLine: "deb [signed-by=/usr/share/keyrings/cli.cloudfoundry.org.gpg] https://packages.cloudfoundry.org/debian stable main",
+			SourceFile: "/etc/apt/sources.list.d/cloudfoundry-cli.list",
 		},
 	}
 
@@ -175,18 +175,10 @@ func (c *Config) GetGitRepositories() []GitRepository {
 	if modes == nil {
 		modes = deployments.NewResolver(c.config)
 	}
+	//nolint:staticcheck // modes may be used for future validation
+	_ = modes
 
 	repos := []GitRepository{}
-
-	repos = append(repos, GitRepository{
-		Name:      "genesis-community-kits",
-		Enabled:   true,
-		Condition: "",
-		URL:       "https://github.com/genesis-community/genesis-community-kits.git",
-		Branch:    "main",
-		Dest:      "${HOME}/genesis-community-kits",
-		Depth:     1,
-	})
 
 	// Add genesis repository if configured
 	if c.config.Bastion.Genesis.Enabled {
@@ -290,15 +282,15 @@ func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:   true,
 		Condition: "",
-		DependsOn: []string{"cloudfoundry-community"},
+		DependsOn: []string{},
 		Packages: []string{
 			"zlib1g-dev", "ruby", "ruby-dev", "openssl",
 			"libxslt1-dev", "libxml2-dev", "libssl-dev", "libyaml-dev",
-			"libsqlite3-dev", "sqlite3", "safe", "spruce", "vault", "jq",
-			"credhub-cli", "bosh-cli", "cf7-cli", "uaa-cli", "tmux", "screen", "tree",
+			"libsqlite3-dev", "sqlite3", "jq",
+			"tmux", "screen", "tree",
 		},
 		PipPackages: []string{},
-		Verify:      []string{"safe", "spruce", "vault", "jq", "bosh", "cf", "credhub"},
+		Verify:      []string{"jq"},
 		PostInstall: "",
 	}
 }
@@ -340,10 +332,10 @@ func (c *Config) getAWSPackages() PackageGroup {
 		Enabled:     true,
 		Condition:   condProviderIsAWS,
 		DependsOn:   []string{},
-		Packages:    []string{"awscli"},
+		Packages:    []string{"unzip"}, // Required for AWS CLI v2 installation
 		PipPackages: []string{},
 		Verify:      []string{"aws"},
-		PostInstall: "configure_aws_cli",
+		PostInstall: "install_aws_cli_v2",
 	}
 }
 
@@ -418,6 +410,7 @@ func (c *Config) getGenesisTools() []BinaryTool {
 		c.getSafeTool(),
 		c.getSpruceTool(),
 		c.getVaultTool(),
+		c.getBaoTool(),
 	}
 }
 
@@ -440,12 +433,12 @@ func (c *Config) getGenesisTool() BinaryTool {
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/genesis-community/genesis/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/genesis-community/genesis/releases/download/v${VERSION}/genesis-${VERSION}-linux-amd64",
+		URLTemplate:    "https://github.com/genesis-community/genesis/releases/download/v${VERSION}/genesis",
 		Dest:           "/usr/local/bin/genesis",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
-		Verify:         "genesis --version",
+		Verify:         "[ -x /usr/local/bin/genesis ]",
 		Sudo:           true,
 	}
 }
@@ -457,9 +450,9 @@ func (c *Config) getSafeTool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/starkandwayne/safe/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry-community/safe/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/starkandwayne/safe/releases/download/v${VERSION}/safe-linux-amd64",
+		URLTemplate:    "https://github.com/cloudfoundry-community/safe/releases/download/v${VERSION}/safe-${VERSION}-linux-amd64",
 		Dest:           "/usr/local/bin/safe",
 		Mode:           fileModeExecutable,
 		Extract:        false,
@@ -513,34 +506,15 @@ func (c *Config) getBoshTool() BinaryTool {
 		Name:           "bosh",
 		Enabled:        true,
 		Condition:      "",
-		URL:            "https://github.com/cloudfoundry/bosh-cli/releases/latest/download/bosh-cli-*-linux-amd64",
-		VersionURL:     "",
-		VersionPattern: "",
-		URLTemplate:    "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/bosh-cli/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/cloudfoundry/bosh-cli/releases/download/v${VERSION}/bosh-cli-${VERSION}-linux-amd64",
 		Dest:           "/usr/local/bin/bosh",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
 		Verify:         "bosh --version",
-		Sudo:           true,
-	}
-}
-
-// getCFTool returns CF tool configuration.
-func (c *Config) getCFTool() BinaryTool {
-	return BinaryTool{
-		Name:           "cf",
-		Enabled:        true,
-		Condition:      "",
-		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
-		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry/cli/releases/download/v${VERSION}/cf7-cli_${VERSION}_linux_x86-64.tgz",
-		Dest:           "/usr/local/bin/cf",
-		Mode:           fileModeExecutable,
-		Extract:        true,
-		InstallCommand: "",
-		Verify:         "cf --version",
 		Sudo:           true,
 	}
 }
@@ -552,9 +526,9 @@ func (c *Config) getCredHubTool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry-incubator/credhub-cli/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/credhub-cli/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry-incubator/credhub-cli/releases/download/${VERSION}/credhub-linux-${VERSION}.tgz",
+		URLTemplate:    "https://github.com/cloudfoundry/credhub-cli/releases/download/${VERSION}/credhub-linux-amd64-${VERSION}.tgz",
 		Dest:           "/usr/local/bin/credhub",
 		Mode:           fileModeExecutable,
 		Extract:        true,
@@ -571,14 +545,52 @@ func (c *Config) getUAATool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry-incubator/uaa-cli/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/uaa-cli/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry-incubator/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
+		URLTemplate:    "https://github.com/cloudfoundry/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
 		Dest:           "/usr/local/bin/uaa",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
 		Verify:         "uaa --version",
+		Sudo:           true,
+	}
+}
+
+// getBaoTool returns Bao (OpenBao) tool configuration.
+func (c *Config) getBaoTool() BinaryTool {
+	return BinaryTool{
+		Name:           "bao",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/openbao/openbao/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/openbao/openbao/releases/download/v${VERSION}/bao_${VERSION}_linux_amd64.deb",
+		Dest:           "/usr/local/bin/bao",
+		Mode:           fileModeExecutable,
+		Extract:        true,
+		InstallCommand: "",
+		Verify:         "bao --version",
+		Sudo:           true,
+	}
+}
+
+// getCFTool returns CF CLI tool configuration.
+func (c *Config) getCFTool() BinaryTool {
+	return BinaryTool{
+		Name:           "cf",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/cloudfoundry/cli/releases/download/v${VERSION}/cf8-cli_${VERSION}_linux_x86-64.tgz",
+		Dest:           "/usr/local/bin/cf",
+		Mode:           fileModeExecutable,
+		Extract:        true,
+		InstallCommand: "",
+		Verify:         "cf --version",
 		Sudo:           true,
 	}
 }
@@ -594,7 +606,7 @@ func (c *Config) generateEnvironmentScript() string {
 	lines = append(lines, "")
 
 	// Add OCFP environment variables
-	lines = append(lines, fmt.Sprintf("export OCFP_BLOC_NAME='%s'", c.config.Name))
+	lines = append(lines, fmt.Sprintf("export OCFP_BLOC='%s'", c.config.Name))
 	lines = append(lines, fmt.Sprintf("export OCFP_PROVIDER='%s'", c.provider))
 
 	// Add provider-specific environment variables

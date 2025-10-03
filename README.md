@@ -112,11 +112,11 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | Flag | Shorthand | Description | Env Var | Default |
 |------|-----------|-------------|--------|---------|
 | `--config` | `-f` | Config file path | `OCFP_CONFIG` | – |
-| `--bloc` | – | Bloc/environment name (key under `blocs:`) | `OCFP_BLOC_NAME` | – |
+| `--bloc` | – | Bloc/environment name (key under `blocs:`) | `OCFP_BLOC` | – |
 | `--debug` | `-d` | Enable debug output | `OCFP_DEBUG` | `false` |
 | `--verbose` | `-v` | Enable verbose output | `OCFP_VERBOSE` | `false` |
 | `--trace` | – | Enable trace-level debugging | `OCFP_TRACE` | `false` |
-| `--no-log` | – | Disable logging to `~/.ocfp/logs/` | `OCFP_NO_LOG` | `false` |
+| `--no-log` | – | Disable logging to `~/.ocfp/{bloc}/logs/` | `OCFP_NO_LOG` | `false` |
 | `--region` | – | Cloud region | `OCFP_REGION` | – |
 | `--debug-lookup` | – | Print bastion lookup strategy matches | `OCFP_DEBUG_LOOKUP` | `false` |
 | `--ascii` | – | Use ASCII-only tables in output | `OCFP_ASCII` | `false` |
@@ -146,6 +146,128 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `scale` | Scale resources |
 | `backup` | Backup configurations |
 | `restore` | Restore from backup |
+
+### State Management
+
+The `state` command provides operations for viewing and synchronizing infrastructure state.
+
+#### Viewing State
+
+Display current infrastructure state for a bloc:
+
+```bash
+# Display all resources (default)
+ocfp state --bloc dev
+
+# Display specific resource types
+ocfp state --bloc dev --servers
+ocfp state --bloc dev --volumes --buckets
+ocfp state --bloc dev --networks --subnets --security-groups
+```
+
+#### State Sync
+
+Reconcile cloud infrastructure into state file:
+
+```bash
+# Sync all resources
+ocfp state sync --bloc dev
+
+# Preview sync changes without applying
+ocfp state sync --bloc dev --dry-run
+
+# Sync specific resource types
+ocfp state sync --bloc dev --servers --volumes
+ocfp state sync --bloc dev --networks --subnets --security-groups --dry-run
+```
+
+#### Resource Filtering Flags
+
+By default, all resources are displayed. Use flags to filter specific resource types:
+
+| Flag | Aliases | Description |
+|------|---------|-------------|
+| `--all` | – | Show all resources (default) |
+| `--servers` | `--instances` | Show compute instances |
+| `--volumes` | – | Show block volumes |
+| `--buckets` | – | Show object storage buckets |
+| `--load-balancers` | `--lbs` | Show load balancers |
+| `--public-ips` | – | Show public IP addresses |
+| `--keys` | `--key-pairs` | Show SSH key pairs |
+| `--networks` | `--nets` | Show networks/VPCs |
+| `--subnets` | – | Show subnets |
+| `--security-groups` | `--sgs` | Show security groups |
+| `--routers` | – | Show routers |
+| `--snapshots` | – | Show volume snapshots |
+
+Multiple flags can be combined to show multiple resource types:
+
+```bash
+# Show compute and storage resources
+ocfp state --bloc dev --servers --volumes --buckets
+
+# Show network infrastructure
+ocfp state --bloc dev --networks --subnets --security-groups
+
+# Sync only specific resources
+ocfp state sync --bloc dev --servers --volumes --dry-run
+```
+
+Each resource type is displayed in a separate table with emoji icons for easy identification:
+- 💻 Compute Instances
+- 💾 Block Volumes
+- 🗄️ Object Storage Buckets
+- ⚖️ Load Balancers
+- 🌐 Public IPs
+- 🔑 SSH Key Pairs
+- 📡 Networks
+- 🔌 Subnets
+- 🔒 Security Groups
+- 🔄 Routers
+- 📸 Volume Snapshots
+
+## Logging
+
+OCFP stores command logs in a bloc-specific hierarchical structure under `~/.ocfp/`:
+
+```
+~/.ocfp/
+  ├── {bloc}/
+  │   └── logs/
+  │       ├── {command}/
+  │       │   └── {timestamp}.log
+  │       └── {command}/
+  │           └── {subcommand}/
+  │               └── {timestamp}.log
+  └── logs/  # For commands without --bloc flag
+      ├── {command}/
+      │   └── {timestamp}.log
+      └── {command}/
+          └── {subcommand}/
+              └── {timestamp}.log
+```
+
+### Examples
+
+- Simple command with bloc: `ocfp --bloc dev bootstrap`
+  - Logs to: `~/.ocfp/dev/logs/bootstrap/20250122-143022.log`
+
+- Subcommand with bloc: `ocfp --bloc prod state sync`
+  - Logs to: `~/.ocfp/prod/logs/state/sync/20250122-143022.log`
+
+- Command without bloc: `ocfp teardown`
+  - Logs to: `~/.ocfp/logs/teardown/20250122-143022.log`
+
+- Complex subcommand: `ocfp --bloc staging lb ops`
+  - Logs to: `~/.ocfp/staging/logs/lb/ops/20250122-143022.log`
+
+Logs are stored in JSON format for structured parsing and contain:
+- Timestamp
+- Log level
+- Message
+- Contextual fields (bloc, operation, request ID, etc.)
+
+To disable file logging, use the `--no-log` flag or set `OCFP_NO_LOG=true`.
 
 ## Configuration
 
@@ -312,13 +434,13 @@ Alternatively, set `OCFP_ENABLE_BUCKET_POLICIES=1` to enable policies from the e
 | Variable | Description |
 |----------|-------------|
 | `OCFP_CONFIG` | Path to configuration file |
-| `OCFP_BLOC_NAME` | Current bloc/environment name |
+| `OCFP_BLOC` | Current bloc/environment name |
 | `OCFP_PROVIDER` | Cloud provider |
 | `OCFP_REGION` | Cloud region |
 | `OCFP_DEBUG` | Enable debug logging |
 | `OCFP_VERBOSE` | Enable verbose logging |
 | `OCFP_TRACE` | Enable trace-level logging |
-| `OCFP_NO_LOG` | Disable file logging to `~/.ocfp/logs/` |
+| `OCFP_NO_LOG` | Disable file logging to `~/.ocfp/{bloc}/logs/` |
 | `OCFP_DEBUG_LOOKUP` | Print bastion lookup strategy matches |
 | `OCFP_ASCII` | Use ASCII-only tables (equivalent to `--ascii`) |
 

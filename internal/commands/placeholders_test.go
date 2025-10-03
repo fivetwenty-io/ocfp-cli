@@ -1,21 +1,18 @@
 package commands_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
-	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewProviderCmd(t *testing.T) {
-	t.Parallel()
-
 	cmd := commands.NewProviderCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "provider <action>", cmd.Use)
@@ -24,13 +21,10 @@ func TestNewProviderCmd(t *testing.T) {
 }
 
 func TestProviderLoginCommand(t *testing.T) {
-	t.Parallel()
-
 	tests := getProviderLoginTestCases()
 	for _, testCase := range tests {
 		testData := testCase
 		t.Run(testData.name, func(t *testing.T) {
-			t.Parallel()
 			runProviderLoginTest(t, testData)
 		})
 	}
@@ -67,7 +61,7 @@ func getProviderLoginTestCases() []providerLoginTestCase {
 			name:        "login with env provider but no bloc",
 			args:        []string{"login"},
 			env:         map[string]string{"OCFP_PROVIDER": "stackit"},
-			expectedErr: "--bloc flag or OCFP_BLOC_NAME environment variable required",
+			expectedErr: "--bloc flag or OCFP_BLOC environment variable required",
 		},
 		{
 			name:        "login with stackit provider",
@@ -77,15 +71,18 @@ func getProviderLoginTestCases() []providerLoginTestCase {
 		},
 		{
 			name:        "login with aws provider",
-			args:        []string{"login", "--iaas", "aws"},
+			args:        []string{"login", "--iaas", "aws", "--bloc", "test"},
 			env:         nil,
-			expectedErr: "",
+			expectedErr: "AWS credentials not found in config or vault",
 		},
 	}
 }
 
 func runProviderLoginTest(t *testing.T, testData providerLoginTestCase) {
 	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 
 	for key, value := range testData.env {
 		t.Setenv(key, value)
@@ -104,8 +101,6 @@ func runProviderLoginTest(t *testing.T, testData providerLoginTestCase) {
 }
 
 func TestNewTmuxCmd(t *testing.T) {
-	t.Parallel()
-
 	cmd := commands.NewTmuxCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "tmux", cmd.Use)
@@ -113,8 +108,6 @@ func TestNewTmuxCmd(t *testing.T) {
 }
 
 func TestTmuxCommand(t *testing.T) {
-	t.Parallel()
-
 	cmd := commands.NewTmuxCmd()
 	cmd.SetArgs([]string{})
 
@@ -131,7 +124,6 @@ func TestTmuxCommand(t *testing.T) {
 }
 
 func TestFindTmuxScript(t *testing.T) {
-	t.Parallel()
 	// Test that the function doesn't panic and returns some path
 	scriptPath, err := commands.FindTmuxScript()
 	// Either finds a script or creates a temporary one
@@ -144,8 +136,6 @@ func TestFindTmuxScript(t *testing.T) {
 }
 
 func TestCreateBasicTmuxScript(t *testing.T) {
-	t.Parallel()
-
 	scriptPath, err := commands.CreateBasicTmuxScript()
 	require.NoError(t, err)
 	require.NotEmpty(t, scriptPath)
@@ -162,7 +152,6 @@ func TestCreateBasicTmuxScript(t *testing.T) {
 }
 
 func TestEnsureExecutable(t *testing.T) {
-	t.Parallel()
 	// Create a temporary file
 	tempFile, err := os.CreateTemp(t.TempDir(), "test-executable-*")
 	require.NoError(t, err)
@@ -187,8 +176,6 @@ func TestEnsureExecutable(t *testing.T) {
 }
 
 func TestNewBastionCmd(t *testing.T) {
-	t.Parallel()
-
 	cmd := commands.NewBastionCmd()
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "bastion <action>", cmd.Use)
@@ -197,8 +184,6 @@ func TestNewBastionCmd(t *testing.T) {
 }
 
 func TestBastionCommand(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name        string
 		args        []string
@@ -217,7 +202,7 @@ func TestBastionCommand(t *testing.T) {
 		{
 			name:        "init action",
 			args:        []string{"init"},
-			expectedErr: "cannot find bastion-init script",
+			expectedErr: "provider validation failed",
 		},
 		{
 			name:        "provision action",
@@ -229,10 +214,21 @@ func TestBastionCommand(t *testing.T) {
 	for _, testCase := range tests {
 		testData := testCase
 		t.Run(testData.name, func(t *testing.T) {
-			t.Parallel()
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			t.Setenv("OCFP_BLOC", "test-bloc")
+			t.Setenv("OCFP_PROVIDER", "stackit")
+
+			tempConfigDir := t.TempDir()
+			configPath := filepath.Join(tempConfigDir, "config.yml")
+			configContents := []byte("blocs:\n  test-bloc:\n    provider: stackit\n    region: eu01\n")
+			require.NoError(t, os.WriteFile(configPath, configContents, 0o600))
+			viper.Set("config", configPath)
 
 			cmd := commands.NewBastionCmd()
-			cmd.SetArgs(testData.args)
+			args := append([]string{}, testData.args...)
+			args = append(args, "--bloc", "test-bloc")
+			cmd.SetArgs(args)
 
 			err := cmd.Execute()
 			if testData.expectedErr != "" {
@@ -245,126 +241,17 @@ func TestBastionCommand(t *testing.T) {
 	}
 }
 
-func TestGetBastionContext(t *testing.T) {
-	t.Parallel()
-
-	cmd := &cobra.Command{
-		Use:                    "",
-		Aliases:                nil,
-		SuggestFor:             nil,
-		Short:                  "",
-		GroupID:                "",
-		Long:                   "",
-		Example:                "",
-		ValidArgs:              nil,
-		ValidArgsFunction:      nil,
-		Args:                   nil,
-		ArgAliases:             nil,
-		BashCompletionFunction: "",
-		Deprecated:             "",
-		Annotations:            nil,
-		Version:                "",
-		PersistentPreRun:       nil,
-		PersistentPreRunE:      nil,
-		PreRun:                 nil,
-		PreRunE:                nil,
-		Run:                    nil,
-		RunE:                   nil,
-		PostRun:                nil,
-		PostRunE:               nil,
-		PersistentPostRun:      nil,
-		PersistentPostRunE:     nil,
-		FParseErrWhitelist:     cobra.FParseErrWhitelist{UnknownFlags: false},
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd:   false,
-			DisableNoDescFlag:   false,
-			DisableDescriptions: false,
-			HiddenDefaultCmd:    false,
-		},
-		TraverseChildren:           false,
-		Hidden:                     false,
-		SilenceErrors:              false,
-		SilenceUsage:               false,
-		DisableFlagParsing:         false,
-		DisableAutoGenTag:          false,
-		DisableFlagsInUseLine:      false,
-		DisableSuggestions:         false,
-		SuggestionsMinimumDistance: 0,
-	}
-	cmd.Flags().String("user", "ubuntu", "SSH username")
-	cmd.Flags().String("key", "/path/to/key", "SSH key path")
-
-	// Set flag values
-	_ = cmd.Flags().Set("user", "testuser")
-	_ = cmd.Flags().Set("key", "/test/key")
-
-	ctx, err := commands.GetBastionContext(cmd, nil)
-	require.NoError(t, err)
-	assert.Equal(t, "testuser", ctx.User)
-	assert.Contains(t, ctx.SSHKeyOption, "/test/key")
-	assert.Equal(t, "placeholder-ip", ctx.IP) // Placeholder implementation
-}
-
 func TestBuildEnvironmentVariables(t *testing.T) {
-	t.Parallel()
 	// Set some environment variables
-	t.Setenv("OCFP_BLOC_NAME", "test-bloc")
+	t.Setenv("OCFP_BLOC", "test-bloc")
 	t.Setenv("OCFP_PROVIDER", "stackit")
 
 	envString := commands.BuildEnvironmentVariables(nil)
-	assert.Contains(t, envString, "OCFP_BLOC_NAME='test-bloc'")
+	assert.Contains(t, envString, "OCFP_BLOC='test-bloc'")
 	assert.Contains(t, envString, "OCFP_PROVIDER='stackit'")
 }
 
-func TestFetchGitHubKeys(t *testing.T) {
-	t.Parallel()
-	// Test with a known public GitHub user (this is a real API call)
-	// Using "octocat" which is GitHub's mascot account
-	keys, err := commands.FetchGitHubKeys(context.Background(), "octocat")
-
-	// The API call might fail due to network issues, rate limiting, etc.
-	// So we check if either we got keys or a reasonable error
-	if err != nil {
-		// If there's an error, it should be network-related, not a panic
-		assert.Contains(t, err.Error(), "failed to fetch GitHub keys")
-	} else {
-		// If successful, we might have keys (some users have no public keys)
-		// len(keys) >= 0 is always true for slices, removing useless assertion
-		// Each key should be a valid SSH key format
-		for _, key := range keys {
-			assert.NotEmpty(t, key)
-			// SSH keys typically start with ssh-rsa, ssh-ed25519, etc.
-			assert.True(t,
-				len(key) > 7 && (key[:7] == "ssh-rsa" ||
-					key[:11] == "ssh-ed25519" ||
-					key[:19] == "ecdsa-sha2-nistp256" ||
-					key[:19] == "ecdsa-sha2-nistp384" ||
-					key[:19] == "ecdsa-sha2-nistp521"),
-				"Key should start with valid SSH key type: %s", key[:minimum(20, len(key))])
-		}
-	}
-}
-
-func TestFetchGitLabKeys(t *testing.T) {
-	t.Parallel()
-	// Test with GitLab API - using a test that should not cause issues
-	// Note: This makes a real HTTP request which could fail
-	keys, err := commands.FetchGitLabKeys(context.Background(), "root") // root user exists on most GitLab instances
-
-	// Similar to GitHub test - check for reasonable behavior
-	if err != nil {
-		assert.Contains(t, err.Error(), "failed to fetch GitLab keys")
-	} else if len(keys) > 0 {
-		// If we got keys, they should be valid SSH key format
-		for _, key := range keys {
-			assert.NotEmpty(t, key)
-		}
-	}
-	// If len(keys) == 0 and err == nil, that's also valid (user has no public keys)
-}
-
 func TestFindProvisionScript(t *testing.T) {
-	t.Parallel()
 	// This should fail for non-existent script
 	_, err := commands.FindProvisionScript("non-existent-script")
 	require.Error(t, err)
@@ -385,13 +272,4 @@ func TestFindProvisionScript(t *testing.T) {
 	foundPath, err := commands.FindProvisionScript("test-script")
 	require.NoError(t, err)
 	assert.Contains(t, foundPath, "test-script")
-}
-
-// Helper function for minimum.
-func minimum(a, b int) int {
-	if a < b {
-		return a
-	}
-
-	return b
 }

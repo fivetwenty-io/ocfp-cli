@@ -186,7 +186,7 @@ func (r *TestRunner) Setup(ctx context.Context) error {
 // Execute runs the test suite.
 func (r *TestRunner) Execute(ctx context.Context) (*TestResults, error) {
 	log := logger.Get()
-	log.Info("Executing test suite", "suite", r.Suite)
+	log.Infow("Executing test suite", "suite", r.Suite)
 
 	results := r.initializeTestResults()
 
@@ -195,7 +195,7 @@ func (r *TestRunner) Execute(ctx context.Context) (*TestResults, error) {
 		return nil, fmt.Errorf("failed to get test list: %w", err)
 	}
 
-	log.Info("Running tests", "count", len(tests))
+	log.Infow("Running tests", "count", len(tests))
 	r.executeTestSuite(ctx, tests, results)
 	results.Duration = time.Since(results.StartTime)
 
@@ -210,19 +210,19 @@ func (r *TestRunner) Cleanup(ctx context.Context) error {
 	// Delete test apps
 	err := r.cleanupTestApps(ctx)
 	if err != nil {
-		log.Warn("Failed to cleanup test apps", "error", err)
+		log.Warnw("Failed to cleanup test apps", "error", err)
 	}
 
 	// Delete test org/space
 	err = r.cleanupTestOrgSpace(ctx)
 	if err != nil {
-		log.Warn("Failed to cleanup test org/space", "error", err)
+		log.Warnw("Failed to cleanup test org/space", "error", err)
 	}
 
 	// Cleanup test data
 	err = r.cleanupTestData()
 	if err != nil {
-		log.Warn("Failed to cleanup test data", "error", err)
+		log.Warnw("Failed to cleanup test data", "error", err)
 	}
 
 	return nil
@@ -271,7 +271,7 @@ func (r *TestRunner) executeTestSuite(ctx context.Context, tests []string, resul
 			continue
 		}
 
-		logger.Get().Info("Running test", "name", test)
+		logger.Get().Infow("Running test", "name", test)
 		result := r.runSingleTest(ctx, test)
 		r.processTestResult(result, results)
 	}
@@ -408,7 +408,7 @@ func runTestCommand(testType string, opts *testOptions) error {
 		return err
 	}
 
-	log.Info("Running tests", "suite", suite, "deployment", cfg.Name, "parallel", opts.parallel, "timeout", opts.timeout)
+	log.Infow("Running tests", "suite", suite, "deployment", cfg.Name, "parallel", opts.parallel, "timeout", opts.timeout)
 
 	runner := createTestRunner(cfg, suite, opts)
 
@@ -506,7 +506,7 @@ func prepareTestEnvironment(ctx context.Context, runner *TestRunner) error {
 func cleanupTestEnvironment(ctx context.Context, runner *TestRunner, log logger.Logger) {
 	err := runner.Cleanup(ctx)
 	if err != nil {
-		log.Warn("Test cleanup failed", "error", err)
+		log.Warnw("Test cleanup failed", "error", err)
 	}
 }
 
@@ -527,7 +527,7 @@ func handleTestResults(results *TestResults, opts *testOptions, runner *TestRunn
 	if opts.outputFile != "" {
 		err := runner.SaveResults(results, opts.outputFile)
 		if err != nil {
-			log.Warn("Failed to save test results", "error", err)
+			log.Warnw("Failed to save test results", "error", err)
 		}
 	}
 

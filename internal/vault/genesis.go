@@ -84,7 +84,7 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 		return fmt.Errorf("failed to write backup file: %w", err)
 	}
 
-	gi.logger.Debug("Created backup file", "original", filePath, "backup", backupPath)
+	gi.logger.Debugw("Created backup file", "original", filePath, "backup", backupPath)
 
 	return nil
 }
@@ -96,7 +96,7 @@ func (gi *GenesisIntegration) GetVaultPath(envType string) string {
 
 // UpdateEnvironmentSecrets updates Genesis environment files with new vault information.
 func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, vaultToken string) error {
-	gi.logger.Info("Updating Genesis environment secrets providers", "bloc", gi.blocName)
+	gi.logger.Infow("Updating Genesis environment secrets providers", "bloc", gi.blocName)
 
 	// Find Genesis environments directory
 	genesisDir, err := gi.findGenesisDirectory()
@@ -104,14 +104,14 @@ func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, vaultToken stri
 		return fmt.Errorf("failed to find Genesis directory: %w", err)
 	}
 
-	gi.logger.Debug("Found Genesis directory", "path", genesisDir)
+	gi.logger.Debugw("Found Genesis directory", "path", genesisDir)
 
 	// Update environment files for each environment type
 	environments := []string{"mgmt", "ocf"}
 	for _, envType := range environments {
 		err := gi.updateEnvironmentFile(genesisDir, envType, vaultURL)
 		if err != nil {
-			gi.logger.Warn("Failed to update environment file", "env_type", envType, "error", err)
+			gi.logger.Warnw("Failed to update environment file", "env_type", envType, "error", err)
 			// Don't fail completely - continue with other environments
 		}
 	}
@@ -152,7 +152,7 @@ func (gi *GenesisIntegration) ValidateEnvironmentFile(filePath string) error {
 		}
 	}
 
-	gi.logger.Debug("Environment file validation passed", "file", filePath)
+	gi.logger.Debugw("Environment file validation passed", "file", filePath)
 
 	return nil
 }
@@ -361,12 +361,12 @@ func (gi *GenesisIntegration) updateEnvironmentFile(genesisDir, envType, vaultUR
 	envFileName := gi.getEnvironmentFileName(envType)
 	envFilePath := filepath.Join(genesisDir, envFileName)
 
-	gi.logger.Debug("Updating environment file", "file", envFilePath)
+	gi.logger.Debugw("Updating environment file", "file", envFilePath)
 
 	// Check if file exists
 	_, err := os.Stat(envFilePath)
 	if os.IsNotExist(err) {
-		gi.logger.Info("Environment file does not exist, creating", "file", envFilePath)
+		gi.logger.Infow("Environment file does not exist, creating", "file", envFilePath)
 
 		return gi.createEnvironmentFile(envFilePath, envType, vaultURL)
 	}
@@ -386,7 +386,7 @@ func (gi *GenesisIntegration) updateEnvironmentFile(genesisDir, envType, vaultUR
 		return fmt.Errorf("failed to write environment file %s: %w", envFilePath, err)
 	}
 
-	gi.logger.Info("Updated environment file", "file", envFilePath)
+	gi.logger.Infow("Updated environment file", "file", envFilePath)
 
 	return nil
 }

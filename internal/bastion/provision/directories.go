@@ -236,7 +236,7 @@ func (dm *DirectoryManager) generateDirectoryStatusScript() []string {
 func (dm *DirectoryManager) expandVariables(text string) string {
 	text = strings.ReplaceAll(text, "${HOME}", "$HOME")
 	text = strings.ReplaceAll(text, "${USER}", "$USER")
-	text = strings.ReplaceAll(text, "${OCFP_BLOC_NAME}", "$OCFP_BLOC_NAME")
+	text = strings.ReplaceAll(text, "${OCFP_BLOC}", "$OCFP_BLOC")
 
 	return text
 }

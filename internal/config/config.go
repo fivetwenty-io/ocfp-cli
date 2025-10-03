@@ -49,11 +49,12 @@ type Config struct {
 	DomainName       string                      `json:"domain_name"         mapstructure:"domain_name"         yaml:"domain_name"`
 	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token"`
 	BastionIP        string                      `json:"bastion_ip"          mapstructure:"bastion_ip"          yaml:"bastion_ip"`
+	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion"`
 	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis"`
-	DeploymentsData  map[string]interface{}      `json:"deployments" mapstructure:"deployments" yaml:"deployments"`
-	Deployments      *DeploymentSettings         `json:"-" mapstructure:"-" yaml:"-"`
+	DeploymentsData  map[string]interface{}      `json:"deployments"         mapstructure:"deployments"         yaml:"deployments"`
+	Deployments      *DeploymentSettings         `json:"-"                   mapstructure:"-"                   yaml:"-"`
 	DNS              []string                    `json:"dns"                 mapstructure:"dns"                 yaml:"dns"`
 	AZs              map[string]AvailabilityZone `json:"azs"                 mapstructure:"azs"                 yaml:"azs"`
 	SSHKeyStorageDir string                      `json:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir" yaml:"ssh_key_storage_dir"`
@@ -128,18 +129,21 @@ type Subnet struct {
 
 // Bastion configuration.
 type Bastion struct {
-	Flavor     string    `mapstructure:"flavor"           yaml:"flavor"`
-	Image      string    `mapstructure:"image"            yaml:"image"`
-	OS         string    `mapstructure:"os"               yaml:"os"`
-	OSVersion  string    `mapstructure:"osVersion"        yaml:"osVersion"`
-	Keypair    string    `mapstructure:"keypair"          yaml:"keypair"`
-	SSHUser    string    `mapstructure:"sshUser"          yaml:"sshUser"`
-	SSHOptions string    `mapstructure:"sshOptions"       yaml:"sshOptions"`
-	SSHKeyDir  string    `mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir"`
-	SSHKeyName string    `mapstructure:"sshKeyName"       yaml:"sshKeyName"`
-	UserData   string    `mapstructure:"userData"         yaml:"userData"` // Custom user data for bastion
-	Genesis    Genesis   `mapstructure:"genesis"          yaml:"genesis"`
-	Git        GitConfig `mapstructure:"git"              yaml:"git"`
+	Flavor       string    `mapstructure:"flavor"           yaml:"flavor"`
+	InstanceType string    `mapstructure:"instanceType"     yaml:"instanceType"` // AWS alias for Flavor
+	Image        string    `mapstructure:"image"            yaml:"image"`
+	OS           string    `mapstructure:"os"               yaml:"os"`
+	OSVersion    string    `mapstructure:"osVersion"        yaml:"osVersion"`
+	Keypair      string    `mapstructure:"keypair"          yaml:"keypair"`
+	SSHUser      string    `mapstructure:"sshUser"          yaml:"sshUser"`
+	SSHOptions   string    `mapstructure:"sshOptions"       yaml:"sshOptions"`
+	SSHKeyDir    string    `mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir"`
+	SSHKeyName   string    `mapstructure:"sshKeyName"       yaml:"sshKeyName"`
+	UserData     string    `mapstructure:"userData"         yaml:"userData"` // Custom user data for bastion
+	RootDiskSize int       `mapstructure:"rootDiskSize"     yaml:"rootDiskSize"`
+	DataDiskSize int       `mapstructure:"dataDiskSize"     yaml:"dataDiskSize"`
+	Genesis      Genesis   `mapstructure:"genesis"          yaml:"genesis"`
+	Git          GitConfig `mapstructure:"git"              yaml:"git"`
 	// Optional overrides for tooling installation/selection
 	Tools     OverrideSets `mapstructure:"tools"     yaml:"tools"`
 	CFPlugins OverrideSets `mapstructure:"cfPlugins" yaml:"cfPlugins"`
@@ -305,6 +309,7 @@ func parseDeploymentSettings(raw map[string]interface{}) (*DeploymentSettings, e
 			if value != nil {
 				settings.URL = fmt.Sprint(value)
 			}
+
 			continue
 		}
 
@@ -319,12 +324,14 @@ func parseDeploymentSettings(raw map[string]interface{}) (*DeploymentSettings, e
 	return settings, nil
 }
 
+//nolint:unparam // error return for future validation
 func parseDeploymentEntry(value interface{}) (*DeploymentEntry, error) {
 	entry := &DeploymentEntry{
 		Mode: "",
 		Raw:  make(map[string]interface{}),
 	}
 
+	//nolint:varnamelen // v is idiomatic for type switch
 	switch v := value.(type) {
 	case nil:
 		// No overrides
@@ -337,6 +344,7 @@ func parseDeploymentEntry(value interface{}) (*DeploymentEntry, error) {
 		}
 	case map[interface{}]interface{}:
 		expanded := convertInterfaceKeyMap(v)
+
 		entry.Raw = expanded
 		if mode, ok := extractString(expanded["mode"]); ok {
 			entry.Mode = normalizeDeploymentMode(mode)
@@ -375,6 +383,7 @@ func extractString(value interface{}) (string, bool) {
 		return "", false
 	}
 
+	//nolint:varnamelen // v is idiomatic for type switch
 	switch v := value.(type) {
 	case string:
 		return v, true
@@ -547,10 +556,12 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 // processConfiguration applies defaults, overrides, and validates the config.
 func processConfiguration(cfg *Config) error {
 	var err error
+
 	cfg.Deployments, err = parseDeploymentSettings(cfg.DeploymentsData)
 	if err != nil {
 		return fmt.Errorf("invalid deployments configuration: %w", err)
 	}
+
 	cfg.DeploymentsData = nil
 
 	// Determine provider
@@ -747,12 +758,45 @@ func applyOpenStackDefaults(cfg *Config) {
 
 // applyAWSDefaults applies AWS-specific defaults.
 func applyAWSDefaults(cfg *Config) {
+	// Map vpc_cidr_block to Network.CIDR if specified
+	if cfg.VPCCIDRBlock != "" && cfg.Network.CIDR == "" {
+		cfg.Network.CIDR = cfg.VPCCIDRBlock
+	}
+
 	if cfg.Network.CIDR == "" && cfg.Network.NetworkCIDR == "" {
 		cfg.Network.NetworkCIDR = defaultNetworkCIDR
 	}
 
+	if len(cfg.DNS) == 0 {
+		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
+	}
+
+	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
+		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+	}
+
+	// Apply instanceType alias for AWS (prefer instanceType over flavor if both set)
+	if cfg.Bastion.InstanceType != "" {
+		cfg.Bastion.Flavor = cfg.Bastion.InstanceType
+	}
+
 	if cfg.Bastion.Flavor == "" {
-		cfg.Bastion.Flavor = "t3.small"
+		cfg.Bastion.Flavor = "t3.large"
+	}
+
+	if cfg.Bastion.RootDiskSize == 0 {
+		cfg.Bastion.RootDiskSize = 10
+	}
+
+	if cfg.Bastion.DataDiskSize == 0 {
+		cfg.Bastion.DataDiskSize = 50
+	}
+
+	if cfg.Bastion.Image == "" && cfg.Bastion.OS == "" {
+		cfg.Bastion.OS = "Ubuntu"
+		cfg.Bastion.OSVersion = "24.04"
+		cfg.Bastion.Image = "Ubuntu 24.04"
 	}
 }
 

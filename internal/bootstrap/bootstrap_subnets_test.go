@@ -17,8 +17,10 @@ import (
 
 // Fakes for network + compute.
 type fakeNet struct {
-	createdNetworks []*cpi.Network
-	createdSubnets  []*cpi.Subnet
+	createdNetworks        []*cpi.Network
+	createdSubnets         []*cpi.Subnet
+	createdSecurityGroups  []*cpi.SecurityGroup // Tracks NEW creations for test assertions
+	existingSecurityGroups []*cpi.SecurityGroup // Pre-existing SGs in "cloud" (for Get/List)
 }
 
 func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
@@ -70,14 +72,62 @@ func (f *fakeNet) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Sub
 func (f *fakeNet) DeleteSubnet(ctx context.Context, id string) error { return nil }
 
 // Security group operations.
-func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+	sg := &cpi.SecurityGroup{
+		ID:          "sg-" + req.Name,
+		Name:        req.Name,
+		Description: req.Description,
+		NetworkID:   req.NetworkID,
+		Rules:       req.Rules,
+		Tags:        req.Tags,
+	}
+
+	if f.createdSecurityGroups == nil {
+		f.createdSecurityGroups = make([]*cpi.SecurityGroup, 0)
+	}
+
+	f.createdSecurityGroups = append(f.createdSecurityGroups, sg)
+
+	return sg, nil
 }
-func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+	// Check both newly created and pre-existing security groups
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == id {
+			return sg, nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == id {
+			return sg, nil
+		}
+	}
+	return nil, fmt.Errorf("security group not found: %s", id)
 }
-func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+	// Combine both newly created and pre-existing security groups
+	allGroups := append([]*cpi.SecurityGroup{}, f.createdSecurityGroups...)
+	allGroups = append(allGroups, f.existingSecurityGroups...)
+
+	if filters == nil || len(filters) == 0 {
+		return allGroups, nil
+	}
+
+	// Filter by provided criteria
+	var filtered []*cpi.SecurityGroup
+	for _, sg := range allGroups {
+		match := true
+		if name, ok := filters["name"]; ok && sg.Name != name {
+			match = false
+		}
+		if networkID, ok := filters["network-id"]; ok && sg.NetworkID != networkID {
+			match = false
+		}
+		if match {
+			filtered = append(filtered, sg)
+		}
+	}
+	return filtered, nil
 }
 func (f *fakeNet) DeleteSecurityGroup(ctx context.Context, id string) error { return nil }
 

@@ -54,7 +54,7 @@ func (tm *TransferManager) Transfer(ctx context.Context, local, remote string) e
 
 // upload uploads a file to the bastion host.
 func (tm *TransferManager) upload(ctx context.Context, localPath, remotePath string) error {
-	tm.log.Info("Uploading file", "local", localPath, "remote", remotePath)
+	tm.log.Infow("Uploading file", "local", localPath, "remote", remotePath)
 
 	// Check if local file exists
 	localStat, err := os.Stat(localPath)
@@ -76,7 +76,7 @@ func (tm *TransferManager) upload(ctx context.Context, localPath, remotePath str
 	var lastErr error
 
 	for _, method := range methods {
-		tm.log.Debug("Attempting upload method", "method", method.name)
+		tm.log.Debugw("Attempting upload method", "method", method.name)
 
 		err := method.fn(ctx, localPath, remotePath, localStat)
 		if err != nil {
@@ -110,7 +110,7 @@ func (tm *TransferManager) upload(ctx context.Context, localPath, remotePath str
 
 // download downloads a file from the bastion host.
 func (tm *TransferManager) download(ctx context.Context, remotePath, localPath string) error {
-	tm.log.Info("Downloading file", "remote", remotePath, "local", localPath)
+	tm.log.Infow("Downloading file", "remote", remotePath, "local", localPath)
 
 	// Try transfer methods in order of preference
 	methods := []struct {
@@ -125,7 +125,7 @@ func (tm *TransferManager) download(ctx context.Context, remotePath, localPath s
 	var lastErr error
 
 	for _, method := range methods {
-		tm.log.Debug("Attempting download method", "method", method.name)
+		tm.log.Debugw("Attempting download method", "method", method.name)
 
 		err := method.fn(ctx, remotePath, localPath)
 		if err != nil {
@@ -475,7 +475,7 @@ func (tm *TransferManager) calculateFileHash(filePath string) (string, error) {
 
 // External command implementations.
 func (tm *TransferManager) uploadViaExternalSCP(ctx context.Context, local, remote string) error {
-	tm.log.Debug("Attempting upload via external SCP", "local", local, "remote", remote)
+	tm.log.Debugw("Attempting upload via external SCP", "local", local, "remote", remote)
 
 	err := tm.checkSCPAvailability()
 	if err != nil {
@@ -604,7 +604,7 @@ func (tm *TransferManager) executeSCPCommand(cmd *exec.Cmd, operation string) er
 }
 
 func (tm *TransferManager) downloadViaExternalSCP(ctx context.Context, remote, local string) error {
-	tm.log.Debug("Attempting download via external SCP", "remote", remote, "local", local)
+	tm.log.Debugw("Attempting download via external SCP", "remote", remote, "local", local)
 
 	err := tm.checkSCPAvailability()
 	if err != nil {

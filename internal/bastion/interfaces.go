@@ -169,4 +169,5 @@ type ProvisioningOptions struct {
 	MaxWorkers  int
 	ProgressOut io.Writer
 	LogFile     string
+	OCFPOnly    bool
 }

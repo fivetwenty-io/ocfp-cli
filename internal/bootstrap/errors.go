@@ -8,6 +8,11 @@ import (
 // Bootstrap errors.
 var (
 	ErrNoSuitableSubnetFoundForBastion = errors.New("no suitable subnet found for bastion; ensure subnets phase created at least one subnet")
+	errImageNotFound                   = errors.New("image not found")
+	errNoSuitableFlavor                = errors.New("no suitable flavor found")
+	errNoFlavorWithDisk                = errors.New("no flavor found with sufficient disk space")
+	errBastionPublicIPNotFound         = errors.New("bastion public IP not found in state")
+	errNetworkManagerNotAvailable      = errors.New("network manager not available")
 )
 
 // Dynamic error constructors.

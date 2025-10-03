@@ -17,8 +17,10 @@ var (
 )
 
 func defaultCommandExecutor(name string, args ...string) (string, error) {
+	//nolint:noctx // Legacy exec without context, refactor separately
 	cmd := exec.Command(name, args...) // #nosec G204 - arguments originate from controlled fallbacks
 	output, err := cmd.CombinedOutput()
+
 	return string(output), err
 }
 
@@ -35,7 +37,7 @@ func (gi *GenesisIntegration) discoverGenesisEnvironmentCandidates(_ context.Con
 
 	whichOutput, err := commandExecutor("which", "genesis")
 	if err != nil {
-		gi.logger.Debug("which genesis failed", "error", err)
+		gi.logger.Debugw("which genesis failed", "error", err)
 	} else {
 		bin := strings.TrimSpace(whichOutput)
 		if bin != "" {
@@ -69,19 +71,20 @@ func (gi *GenesisIntegration) tryGenesisCommand(command ...string) []string {
 	trimmedOutput := strings.TrimSpace(output)
 
 	if err != nil {
-		gi.logger.Debug("genesis command produced error", "command", strings.Join(command, " "), "error", err, "output", trimmedOutput)
+		gi.logger.Debugw("genesis command produced error", "command", strings.Join(command, " "), "error", err, "output", trimmedOutput)
 	} else {
-		gi.logger.Debug("genesis command executed", "command", strings.Join(command, " "))
+		gi.logger.Debugw("genesis command executed", "command", strings.Join(command, " "))
 	}
 
 	paths := gi.extractGenesisPaths(trimmedOutput)
 	if len(paths) > 0 {
-		gi.logger.Debug("discovered genesis environment paths", "paths", paths, "command", strings.Join(command, " "))
+		gi.logger.Debugw("discovered genesis environment paths", "paths", paths, "command", strings.Join(command, " "))
 	}
 
 	return paths
 }
 
+//nolint:gocognit,funlen // Complex path extraction logic requiring many statements
 func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 	if output == "" {
 		return nil
@@ -103,7 +106,9 @@ func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 		Environments []envEntry `json:"environments"`
 	}
 
-	if err := json.Unmarshal([]byte(output), &jsonPayload); err == nil {
+	err := json.Unmarshal([]byte(output), &jsonPayload)
+	//nolint:nestif // JSON unmarshaling with nested validation
+	if err == nil {
 		for _, entry := range jsonPayload.Environments {
 			paths = append(paths, gi.collectCandidatePaths(entry.Path, entry.Directory, entry.EnvPath, entry.EnvDir, entry.Workspace)...)
 
@@ -141,13 +146,16 @@ func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 
 		if info.IsDir() {
 			paths = append(paths, normalized)
+
 			continue
 		}
 
 		switch strings.ToLower(filepath.Ext(normalized)) {
 		case ".yml", ".yaml":
 			dir := filepath.Dir(normalized)
-			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+
+			info, statErr := os.Stat(dir)
+			if statErr == nil && info.IsDir() {
 				paths = append(paths, dir)
 			}
 		}
@@ -158,6 +166,7 @@ func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 
 func (gi *GenesisIntegration) collectCandidatePaths(values ...string) []string {
 	var paths []string
+
 	for _, value := range values {
 		normalized := gi.normalizeGenesisPath(value)
 		if normalized == "" {
@@ -171,6 +180,7 @@ func (gi *GenesisIntegration) collectCandidatePaths(values ...string) []string {
 
 		if info.IsDir() {
 			paths = append(paths, normalized)
+
 			continue
 		}
 
@@ -199,7 +209,9 @@ func (gi *GenesisIntegration) normalizeGenesisPath(raw string) string {
 	}
 
 	if strings.Contains(value, "=") {
-		parts := strings.SplitN(value, "=", 2)
+		const maxParts = 2
+
+		parts := strings.SplitN(value, "=", maxParts)
 		value = strings.TrimSpace(parts[len(parts)-1])
 	}
 
@@ -212,15 +224,18 @@ func (gi *GenesisIntegration) normalizeGenesisPath(raw string) string {
 
 	switch {
 	case strings.HasPrefix(value, "~/"):
-		if home, err := os.UserHomeDir(); err == nil {
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
 			value = filepath.Join(home, value[2:])
 		}
 	case value == "~":
-		if home, err := os.UserHomeDir(); err == nil {
-			value = home
+		home2, homeErr2 := os.UserHomeDir()
+		if homeErr2 == nil {
+			value = home2
 		}
 	case strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../"):
-		if abs, err := filepath.Abs(value); err == nil {
+		abs, absErr := filepath.Abs(value)
+		if absErr == nil {
 			value = abs
 		}
 	}
@@ -238,6 +253,7 @@ func uniquePaths(paths []string) []string {
 	}
 
 	seen := make(map[string]struct{}, len(paths))
+
 	ordered := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if path == "" {

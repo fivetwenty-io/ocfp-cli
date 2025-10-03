@@ -145,7 +145,7 @@ type rsyncEnvironment struct {
 }
 
 func parseRSyncConfig(args []string) (*rsyncConfig, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}
@@ -197,7 +197,7 @@ func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig) (*rsyncEnvi
 }
 
 func loadRSyncBlocConfig(blocName string) (*config.Config, error) {
-	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}

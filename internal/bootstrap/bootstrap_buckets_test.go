@@ -15,13 +15,24 @@ import (
 
 // fakeStorage implements cpi.StorageManager partially for testing createBuckets.
 type fakeStorage struct {
-	created []string
+	created        []string
+	enabledCalls   map[string]bool
+	lifecycleCalls map[string]int32
+}
+
+func newFakeStorage() *fakeStorage {
+	return &fakeStorage{
+		created:        nil,
+		enabledCalls:   make(map[string]bool),
+		lifecycleCalls: make(map[string]int32),
+	}
 }
 
 func (f *fakeStorage) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	f.created = append(f.created, req.Name)
 
 	return &cpi.Bucket{
+		ID:           req.Name + "-id",
 		Name:         req.Name,
 		Region:       "",
 		StorageClass: "",
@@ -71,23 +82,56 @@ func (f *fakeStorage) GetBucket(ctx context.Context, name string) (*cpi.Bucket, 
 }
 func (f *fakeStorage) DeleteBucket(ctx context.Context, name string) error { return nil }
 func (f *fakeStorage) EmptyBucket(ctx context.Context, name string) error  { return nil }
-func (f *fakeStorage) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeStorage) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+	return true, nil
+}
+func (f *fakeStorage) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+	return &cpi.CredentialsGroup{
+		ID:        "group-123",
+		Name:      req.Name,
+		CreatedAt: time.Now(),
+	}, nil
 }
 
-// Policy methods for tests.
-var (
-	enabledCalls   = make(map[string]bool)  //nolint:gochecknoglobals // test helper state
-	lifecycleCalls = make(map[string]int32) //nolint:gochecknoglobals // test helper state
-)
-
 func (f *fakeStorage) EnableBucketVersioning(ctx context.Context, name string) error {
-	enabledCalls[name] = true
+	if f.enabledCalls == nil {
+		f.enabledCalls = make(map[string]bool)
+	}
+
+	f.enabledCalls[name] = true
+
+	return nil
+}
+
+func (f *fakeStorage) SetBucketVersioning(ctx context.Context, name string, enabled bool) error {
+	if f.enabledCalls == nil {
+		f.enabledCalls = make(map[string]bool)
+	}
+
+	if enabled {
+		f.enabledCalls[name] = true
+	} else {
+		delete(f.enabledCalls, name)
+	}
 
 	return nil
 }
 func (f *fakeStorage) SetBucketLifecycleNoncurrentDays(ctx context.Context, name string, days int32) error {
-	lifecycleCalls[name] = days
+	if f.lifecycleCalls == nil {
+		f.lifecycleCalls = make(map[string]int32)
+	}
+
+	f.lifecycleCalls[name] = days
+
+	return nil
+}
+
+func (f *fakeStorage) SetBucketLifecycle(ctx context.Context, name string, days int) error {
+	if f.lifecycleCalls == nil {
+		f.lifecycleCalls = make(map[string]int32)
+	}
+
+	f.lifecycleCalls[name] = int32(days)
 
 	return nil
 }
@@ -154,9 +198,7 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	fakeStore := &fakeStorage{
-		created: nil,
-	}
+	fakeStore := newFakeStorage()
 	provider := &fakeProvider{s: fakeStore}
 	cfg := config.NewTestConfig().WithName("prod").WithRegion("eu01").WithBootstrapNetwork().WithBootstrapBastion().Build()
 	manager := bootstrap.NewManager(cfg, provider, stateManager, &bootstrap.Options{
@@ -177,13 +219,18 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"prod-bosh-blobstore":  true,
-		"prod-cf-app-packages": true,
-		"prod-cf-buildpacks":   true,
-		"prod-cf-droplets":     true,
-		"prod-cf-resources":    true,
-		"prod-artifacts":       true,
-		"prod-shield-backups":  true,
+		// mgmt environment buckets
+		"prod-mgmt-bosh":      true,
+		"prod-mgmt-artifacts": true,
+		"prod-mgmt-shield":    true,
+		// ocf environment buckets
+		"prod-ocf-bosh":         true,
+		"prod-ocf-artifacts":    true,
+		"prod-ocf-app-packages": true,
+		"prod-ocf-droplets":     true,
+		"prod-ocf-buildpacks":   true,
+		"prod-ocf-resources":    true,
+		"prod-ocf-shield":       true,
 	}
 	if len(fakeStore.created) != len(want) {
 		t.Fatalf("created %d buckets, want %d: %+v", len(fakeStore.created), len(want), fakeStore.created)
@@ -202,10 +249,8 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 	t.Parallel()
 
-	resetCallTrackers()
-
 	stateManager := setupTestStateManager(t)
-	provider := createFakeProvider()
+	provider, store := createFakeProvider()
 	cfg := createBlobstoreTestConfig()
 	manager := createTestBootstrapManager(cfg, provider, stateManager)
 
@@ -216,12 +261,7 @@ func TestCreateBucketsPoliciesAppliedWhenEnabled(t *testing.T) {
 		t.Fatalf("createBuckets: %v", err)
 	}
 
-	verifyPolicyCallsWhenEnabled(t)
-}
-
-func resetCallTrackers() {
-	enabledCalls = make(map[string]bool)
-	lifecycleCalls = make(map[string]int32)
+	verifyPolicyCallsWhenEnabled(t, store)
 }
 
 func setupTestStateManager(t *testing.T) *state.Manager {
@@ -242,10 +282,10 @@ func setupTestStateManager(t *testing.T) *state.Manager {
 	return stateManager
 }
 
-func createFakeProvider() *fakeProvider {
-	fakeStore := &fakeStorage{created: nil}
+func createFakeProvider() (*fakeProvider, *fakeStorage) {
+	fakeStore := newFakeStorage()
 
-	return &fakeProvider{s: fakeStore}
+	return &fakeProvider{s: fakeStore}, fakeStore
 }
 
 func createBlobstoreTestConfig() *config.Config {
@@ -275,35 +315,36 @@ func createTestBootstrapManager(cfg *config.Config, provider cpi.Provider, state
 	})
 }
 
-func verifyPolicyCallsWhenEnabled(t *testing.T) {
+func verifyPolicyCallsWhenEnabled(t *testing.T, store *fakeStorage) {
 	t.Helper()
 
-	if !enabledCalls["prod-cf-buildpacks"] || lifecycleCalls["prod-cf-buildpacks"] != 11 {
-		t.Fatalf("expected policies on cf-buildpacks: %+v %+v", enabledCalls, lifecycleCalls)
+	if !store.enabledCalls["prod-ocf-buildpacks"] || store.lifecycleCalls["prod-ocf-buildpacks"] != 11 {
+		t.Fatalf("expected policies on ocf-buildpacks: %+v %+v", store.enabledCalls, store.lifecycleCalls)
 	}
 
-	if !enabledCalls["prod-cf-droplets"] || lifecycleCalls["prod-cf-droplets"] != 5 {
-		t.Fatalf("expected policies on cf-droplets")
+	if !store.enabledCalls["prod-ocf-droplets"] || store.lifecycleCalls["prod-ocf-droplets"] != 5 {
+		t.Fatalf("expected policies on ocf-droplets")
 	}
 
-	if enabledCalls["prod-cf-app-packages"] {
-		t.Fatalf("did not expect versioning on cf-app-packages")
+	if store.enabledCalls["prod-ocf-app-packages"] {
+		t.Fatalf("did not expect versioning on ocf-app-packages")
 	}
 
-	if lifecycleCalls["prod-cf-app-packages"] != 3 {
-		t.Fatalf("expected noncurrent days on cf-app-packages = 3")
+	if store.lifecycleCalls["prod-ocf-app-packages"] != 3 {
+		t.Fatalf("expected noncurrent days on ocf-app-packages = 3")
 	}
 
-	if !enabledCalls["prod-bosh-blobstore"] || lifecycleCalls["prod-bosh-blobstore"] != 9 {
-		t.Fatalf("expected policies on bosh-blobstore")
+	if !store.enabledCalls["prod-ocf-bosh"] || store.lifecycleCalls["prod-ocf-bosh"] != 9 {
+		t.Fatalf("expected policies on ocf-bosh")
+	}
+
+	if !store.enabledCalls["prod-mgmt-bosh"] || store.lifecycleCalls["prod-mgmt-bosh"] != 9 {
+		t.Fatalf("expected policies on mgmt-bosh")
 	}
 }
 
 func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 	t.Parallel()
-
-	enabledCalls = make(map[string]bool)
-	lifecycleCalls = make(map[string]int32)
 
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".ocfp-state")
@@ -318,9 +359,7 @@ func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	fakeStore := &fakeStorage{
-		created: nil,
-	}
+	fakeStore := newFakeStorage()
 	provider := &fakeProvider{s: fakeStore}
 	cfg := config.NewTestConfig().WithName("prod").WithRegion("eu01").WithBootstrapNetwork().WithBootstrapBastion().Build()
 	// Do not enable cfg.Blobstore.EnablePolicies
@@ -342,7 +381,7 @@ func TestCreateBucketsPoliciesNotAppliedWhenDisabled(t *testing.T) {
 	}
 
 	// Expect no policy calls
-	if len(enabledCalls) != 0 || len(lifecycleCalls) != 0 {
-		t.Fatalf("no policies should be applied when disabled: enabled=%v lifecycle=%v", enabledCalls, lifecycleCalls)
+	if len(fakeStore.enabledCalls) != 0 || len(fakeStore.lifecycleCalls) != 0 {
+		t.Fatalf("no policies should be applied when disabled: enabled=%v lifecycle=%v", fakeStore.enabledCalls, fakeStore.lifecycleCalls)
 	}
 }

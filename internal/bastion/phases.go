@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 )
 
 // Phase execution errors.
@@ -55,15 +56,7 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
 
-	err := m.executeScript(ctx, script, "cpan-modules")
-	if err != nil {
-		return err
-	}
-
-	// Install OCFP Perl dependencies
-	ocfpScript := cpanMgr.InstallOCFPPerlDependencies(ctx)
-
-	return m.executeScript(ctx, ocfpScript, "ocfp-perl-deps")
+	return m.executeScript(ctx, script, "cpan-modules")
 }
 
 // installCFPlugins installs CloudFoundry plugins.
@@ -110,10 +103,88 @@ func (m *Manager) setupSystemEnvironment(ctx context.Context) error {
 func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	m.log.Info("Setting up OCFP CLI")
 
+	// Upload the OCFP binary to the bastion
+	err := m.uploadOCFPBinary(ctx)
+	if err != nil {
+		// In OCFPOnly mode, binary upload is critical
+		if m.options.OCFPOnly {
+			return fmt.Errorf("OCFP binary upload failed: %w", err)
+		}
+		// In full init mode, continue anyway - the binary might already be there
+		m.log.Warnw("Failed to upload OCFP binary, continuing with setup", "error", err)
+	}
+
 	dirMgr := provision.NewDirectoryManager(m.config.Provider, m.config)
 	script := dirMgr.GenerateOCFPCLISetupScript(ctx)
 
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
+}
+
+// uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
+func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
+	// TODO: Switch to installing official releases once available
+	localBinaryPath := "./build/ocfp-linux-amd64"
+	remoteTempPath := "/tmp/ocfp-upload"
+	remoteFinalPath := "/usr/local/bin/ocfp"
+
+	m.log.Infow("Uploading OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
+
+	// Provide user feedback
+	if m.options.ProgressOut != nil {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "  📤 Uploading %s to bastion...\n", localBinaryPath)
+	}
+
+	// Transfer to temporary location first (user has write permissions here)
+	transferOpts := ssh.TransferOptions{
+		Recursive:    false,
+		Preserve:     false,
+		Compress:     false,
+		Progress:     nil,
+		MaxRetries:   0,
+		ChunkSize:    0,
+		Verify:       true,
+		BackupRemote: false,
+	}
+
+	err := m.sshClient.TransferFile(ctx, localBinaryPath, remoteTempPath, transferOpts)
+	if err != nil {
+		if m.options.ProgressOut != nil {
+			_, _ = fmt.Fprintf(m.options.ProgressOut, "  ❌ Failed to transfer binary: %v\n", err)
+		}
+
+		return fmt.Errorf("failed to transfer OCFP binary to temporary location: %w", err)
+	}
+
+	if m.options.ProgressOut != nil {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "  ✅ Binary uploaded to temporary location\n")
+	}
+
+	// Move to final location with sudo and set permissions
+	if m.options.ProgressOut != nil {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "  🔐 Installing to %s with sudo...\n", remoteFinalPath)
+	}
+
+	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, cmd)
+	if err != nil {
+		if m.options.ProgressOut != nil {
+			_, _ = fmt.Fprintf(m.options.ProgressOut, "  ❌ Failed to install binary: %v\n", err)
+		}
+		// Clean up temp file on failure
+		cleanupCmd := fmt.Sprintf("rm -f '%s'", remoteTempPath)
+		_, _ = m.sshClient.ExecuteCommand(ctx, cleanupCmd)
+
+		return fmt.Errorf("failed to install OCFP binary to %s: %w", remoteFinalPath, err)
+	}
+
+	if m.options.ProgressOut != nil {
+		_, _ = fmt.Fprintf(m.options.ProgressOut, "  ✅ Binary installed successfully at %s\n", remoteFinalPath)
+	}
+
+	m.log.Info("OCFP binary uploaded and made executable")
+
+	return nil
 }
 
 // setupVaultInception runs vault inception.
@@ -159,13 +230,13 @@ func (m *Manager) runHealthCheck(ctx context.Context) error {
 // executeScript is a helper method to execute generated scripts.
 func (m *Manager) executeScript(ctx context.Context, script, scriptName string) error {
 	if script == "" {
-		m.log.Debug("Skipping empty script", "script", scriptName)
+		m.log.Debugw("Skipping empty script", "script", scriptName)
 
 		return nil
 	}
 
 	if m.options.DryRun {
-		m.log.Info("DRY RUN: Would execute script", "script", scriptName)
+		m.log.Infow("DRY RUN: Would execute script", "script", scriptName)
 		m.log.Debug("Script content preview",
 			"script", scriptName,
 			"lines", len(strings.Split(script, "\n")))
@@ -191,7 +262,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
-		m.log.Debug("Script executed successfully", "script", scriptName)
+		m.log.Debugw("Script executed successfully", "script", scriptName)
 
 		return nil
 	}
@@ -207,7 +278,7 @@ set -euo pipefail
 
 # Color codes for output
 RED='\033[0;31m'
-GREEN='\033[0;32m' 
+GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
@@ -241,7 +312,19 @@ log_info "Log file: ${LOG_FILE}"
 
 `
 
-	return functions + "\n" + script
+	// Export environment variables needed by the scripts
+	envVars := m.getEnvironmentVariables()
+
+	var envExports strings.Builder
+	envExports.WriteString("# Export OCFP environment variables\n")
+
+	for key, value := range envVars {
+		envExports.WriteString(fmt.Sprintf("export %s='%s'\n", key, value))
+	}
+
+	envExports.WriteString("\n")
+
+	return functions + envExports.String() + script
 }
 
 // escapeShellString escapes a string for safe shell execution.

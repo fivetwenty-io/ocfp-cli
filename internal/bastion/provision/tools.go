@@ -148,14 +148,16 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionUR
 func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
-			Name:          "yq",
-			Enabled:       true,
-			CheckCommand:  "yq",
-			URL:           "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64",
-			Dest:          "/usr/local/bin/yq",
-			Mode:          fileModeExecutable,
-			Sudo:          true,
-			VerifyCommand: "yq --version",
+			Name:           "yq",
+			Enabled:        true,
+			CheckCommand:   "yq",
+			VersionURL:     "https://api.github.com/repos/mikefarah/yq/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://github.com/mikefarah/yq/releases/download/v${VERSION}/yq_linux_amd64",
+			Dest:           "/usr/local/bin/yq",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			VerifyCommand:  "yq --version",
 		},
 		{
 			Name:           "ripgrep",
@@ -197,7 +199,7 @@ func (atm *AdvancedToolManager) getBuildTools() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "graft",
-			Enabled:        true,
+			Enabled:        false, // Disabled: architecture mapping issue
 			CheckCommand:   "graft",
 			VersionURL:     "https://api.github.com/repos/wayneeseguin/graft/releases/latest",
 			VersionPattern: `"tag_name":\s*"([^"]+)"`,
@@ -226,14 +228,17 @@ func (atm *AdvancedToolManager) getBuildTools() []AdvancedBinaryTool {
 func (atm *AdvancedToolManager) getEditorTools() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
-			Name:          "nvim",
-			Enabled:       true,
-			CheckCommand:  "nvim",
-			URL:           "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.appimage",
-			Dest:          "/usr/local/bin/nvim",
-			Mode:          fileModeExecutable,
-			Sudo:          true,
-			VerifyCommand: "nvim --version",
+			Name:           "nvim",
+			Enabled:        true,
+			CheckCommand:   "nvim",
+			URL:            "https://github.com/neovim/neovim/releases/download/v0.10.2/nvim-linux64.tar.gz",
+			Dest:           "/usr/local",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			Extract:        true,
+			InstallCommand: "sudo cp -r /tmp/nvim-linux64/* /usr/local/",
+			Cleanup:        "/tmp/nvim-linux64*",
+			VerifyCommand:  "nvim --version",
 		},
 	}
 }
@@ -443,12 +448,14 @@ func (atm *AdvancedToolManager) generateVersionDetermination(tool AdvancedBinary
 		lines = append(lines, fmt.Sprintf("    LATEST_VERSION='%s'", tool.FixedVersion))
 		lines = append(lines, "    log_info \"Using configured version: $LATEST_VERSION\"")
 	} else {
-		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -s '%s' | grep -oP '%s' | head -1)", tool.VersionURL, tool.VersionPattern))
-		lines = append(lines, "    if [ -z \"$LATEST_VERSION\" ]; then")
+		// Use jq to parse JSON and extract tag_name, then remove leading 'v'
+		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -sL '%s' | jq -r '.tag_name' | sed 's/^v//')", tool.VersionURL))
+		lines = append(lines, "    if [ ! -z \"$LATEST_VERSION\" ]; then")
+		lines = append(lines, "        log_info \"Latest version: $LATEST_VERSION\"")
+		lines = append(lines, "    else")
 		lines = append(lines, fmt.Sprintf("        log_error 'Failed to get latest version for %s'", tool.Name))
-		lines = append(lines, "        return 1")
+		lines = append(lines, fmt.Sprintf("        log_warning 'Skipping %s installation'", tool.Name))
 		lines = append(lines, "    fi")
-		lines = append(lines, "    log_info \"Latest version: $LATEST_VERSION\"")
 	}
 
 	return lines
@@ -457,24 +464,27 @@ func (atm *AdvancedToolManager) generateVersionDetermination(tool AdvancedBinary
 func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryTool) []string {
 	var lines []string
 
-	if len(tool.ArchMap) > 0 {
-		lines = append(lines, "    # Map architecture")
-		lines = append(lines, "    MAPPED_ARCH=\"$ARCH_NORMALIZED\"")
+	// Only proceed if version was determined successfully
+	lines = append(lines, "    if [ ! -z \"$LATEST_VERSION\" ]; then")
 
-		lines = append(lines, "    case $ARCH_NORMALIZED in")
+	if len(tool.ArchMap) > 0 {
+		lines = append(lines, "        # Map architecture")
+		lines = append(lines, "        MAPPED_ARCH=\"$ARCH_NORMALIZED\"")
+
+		lines = append(lines, "        case $ARCH_NORMALIZED in")
 		for arch, mapped := range tool.ArchMap {
-			lines = append(lines, fmt.Sprintf("        %s) MAPPED_ARCH=\"%s\" ;;", arch, mapped))
+			lines = append(lines, fmt.Sprintf("            %s) MAPPED_ARCH=\"%s\" ;;", arch, mapped))
 		}
 
-		lines = append(lines, "    esac")
+		lines = append(lines, "        esac")
 		urlTemplate := strings.ReplaceAll(tool.URLTemplate, "${ARCH}", "${MAPPED_ARCH}")
-		lines = append(lines, fmt.Sprintf("    DOWNLOAD_URL=\"%s\"", urlTemplate))
+		lines = append(lines, fmt.Sprintf("        DOWNLOAD_URL='%s'", urlTemplate))
 	} else {
-		lines = append(lines, fmt.Sprintf("    DOWNLOAD_URL=\"%s\"", tool.URLTemplate))
+		lines = append(lines, fmt.Sprintf("        DOWNLOAD_URL='%s'", tool.URLTemplate))
 	}
 
-	lines = append(lines, "    DOWNLOAD_URL=$(echo \"$DOWNLOAD_URL\" | sed \"s/\\${VERSION}/$LATEST_VERSION/g\")")
-	lines = append(lines, "    log_info \"Download URL: $DOWNLOAD_URL\"")
+	lines = append(lines, "        DOWNLOAD_URL=$(echo \"$DOWNLOAD_URL\" | sed \"s/\\${VERSION}/${LATEST_VERSION}/g\")")
+	lines = append(lines, "        log_info \"Download URL: $DOWNLOAD_URL\"")
 	lines = append(lines, "")
 
 	return lines
@@ -483,12 +493,8 @@ func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryT
 func (atm *AdvancedToolManager) generateDownloadCommands(tool AdvancedBinaryTool) []string {
 	var lines []string
 
-	lines = append(lines, fmt.Sprintf("    curl -fsSL \"$DOWNLOAD_URL\" -o '/tmp/%s-download'", tool.Name))
-	lines = append(lines, "    if [ $? -ne 0 ]; then")
-	lines = append(lines, fmt.Sprintf("        log_error 'Failed to download %s'", tool.Name))
-	lines = append(lines, "        return 1")
-	lines = append(lines, "    fi")
-	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("        if curl -fsSL \"$DOWNLOAD_URL\" -o '/tmp/%s-download'; then", tool.Name))
+	lines = append(lines, fmt.Sprintf("            log_success '%s downloaded successfully'", tool.Name))
 
 	return lines
 }
@@ -497,15 +503,14 @@ func (atm *AdvancedToolManager) generateExtractionCommands(tool AdvancedBinaryTo
 	var lines []string
 
 	if tool.Extract {
-		lines = append(lines, "    # Extract "+tool.Name)
-		lines = append(lines, "    cd /tmp")
-		lines = append(lines, fmt.Sprintf("    if file '%s-download' | grep -q 'gzip'; then", tool.Name))
-		lines = append(lines, fmt.Sprintf("        tar -xzf '%s-download'", tool.Name))
-		lines = append(lines, fmt.Sprintf("    elif file '%s-download' | grep -q 'bzip2'; then", tool.Name))
-		lines = append(lines, fmt.Sprintf("        tar -xjf '%s-download'", tool.Name))
-		lines = append(lines, "    else")
-		lines = append(lines, fmt.Sprintf("        tar -xf '%s-download'", tool.Name))
-		lines = append(lines, "    fi")
+		lines = append(lines, "            # Extract "+tool.Name)
+		lines = append(lines, fmt.Sprintf("            if file '/tmp/%s-download' | grep -q 'gzip'; then", tool.Name))
+		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xzf '/tmp/%s-download'", tool.Name))
+		lines = append(lines, fmt.Sprintf("            elif file '/tmp/%s-download' | grep -q 'bzip2'; then", tool.Name))
+		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xjf '/tmp/%s-download'", tool.Name))
+		lines = append(lines, "            else")
+		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xf '/tmp/%s-download'", tool.Name))
+		lines = append(lines, "            fi")
 		lines = append(lines, "")
 	}
 
@@ -516,12 +521,20 @@ func (atm *AdvancedToolManager) generateInstallCommands(tool AdvancedBinaryTool)
 	var lines []string
 
 	if tool.InstallCommand != "" {
-		lines = append(lines, "    # Install "+tool.Name)
+		lines = append(lines, "            # Install "+tool.Name)
 		installCmd := strings.ReplaceAll(tool.InstallCommand, "${VERSION}", "$LATEST_VERSION")
-		lines = append(lines, "    "+installCmd)
+		lines = append(lines, "            "+installCmd)
 	} else if !tool.Extract {
 		lines = append(lines, atm.generateVersionBasedDirectInstallCommands(tool)...)
 	}
+
+	// Close download success block, add failure handling
+	lines = append(lines, "        else")
+	lines = append(lines, fmt.Sprintf("            log_error 'Failed to download %s from ${DOWNLOAD_URL}'", tool.Name))
+	lines = append(lines, "        fi")
+
+	// Close version check block
+	lines = append(lines, "    fi")
 
 	return lines
 }
@@ -530,13 +543,13 @@ func (atm *AdvancedToolManager) generateInstallCommands(tool AdvancedBinaryTool)
 func (atm *AdvancedToolManager) generateVersionBasedDirectInstallCommands(tool AdvancedBinaryTool) []string {
 	var lines []string
 
-	// Direct binary installation
+	// Direct binary installation - needs 12 spaces for inside download success block
 	installCmd := fmt.Sprintf("mv '/tmp/%s-download' '%s'", tool.Name, tool.Dest)
 	if tool.Sudo {
 		installCmd = "sudo " + installCmd
 	}
 
-	lines = append(lines, "    "+installCmd)
+	lines = append(lines, "            "+installCmd)
 
 	if tool.Mode != 0 {
 		chmodCmd := fmt.Sprintf("chmod %o '%s'", tool.Mode, tool.Dest)
@@ -544,7 +557,7 @@ func (atm *AdvancedToolManager) generateVersionBasedDirectInstallCommands(tool A
 			chmodCmd = "sudo " + chmodCmd
 		}
 
-		lines = append(lines, "    "+chmodCmd)
+		lines = append(lines, "            "+chmodCmd)
 	}
 
 	return lines
@@ -555,11 +568,7 @@ func (atm *AdvancedToolManager) generateDirectInstall(tool AdvancedBinaryTool) [
 	var lines []string
 
 	lines = append(lines, "    # Direct install "+tool.Name)
-	lines = append(lines, fmt.Sprintf("    curl -fsSL '%s' -o '/tmp/%s'", tool.URL, tool.Name))
-	lines = append(lines, "    if [ $? -ne 0 ]; then")
-	lines = append(lines, fmt.Sprintf("        log_error 'Failed to download %s'", tool.Name))
-	lines = append(lines, "        return 1")
-	lines = append(lines, "    fi")
+	lines = append(lines, fmt.Sprintf("    if curl -fsSL '%s' -o '/tmp/%s'; then", tool.URL, tool.Name))
 
 	// Install
 	installCmd := fmt.Sprintf("mv '/tmp/%s' '%s'", tool.Name, tool.Dest)
@@ -567,7 +576,7 @@ func (atm *AdvancedToolManager) generateDirectInstall(tool AdvancedBinaryTool) [
 		installCmd = "sudo " + installCmd
 	}
 
-	lines = append(lines, "    "+installCmd)
+	lines = append(lines, "        "+installCmd)
 
 	// Set permissions
 	if tool.Mode != 0 {
@@ -576,8 +585,13 @@ func (atm *AdvancedToolManager) generateDirectInstall(tool AdvancedBinaryTool) [
 			chmodCmd = "sudo " + chmodCmd
 		}
 
-		lines = append(lines, "    "+chmodCmd)
+		lines = append(lines, "        "+chmodCmd)
 	}
+
+	lines = append(lines, fmt.Sprintf("        log_success '%s installed successfully'", tool.Name))
+	lines = append(lines, "    else")
+	lines = append(lines, fmt.Sprintf("        log_error 'Failed to download %s'", tool.Name))
+	lines = append(lines, "    fi")
 
 	return lines
 }
@@ -601,7 +615,7 @@ if [ -d "$HOME/.config/nvim" ]; then
     log_info "LazyVim configuration already exists"
 else
     log_info "Setting up LazyVim configuration"
-    git clone https://github.com/LazyVim/starter "$HOME/.config/nvim"
+    git clone git@github.com:LazyVim/starter "$HOME/.config/nvim"
     rm -rf "$HOME/.config/nvim/.git"
     log_success "LazyVim configured"
 fi`

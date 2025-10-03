@@ -303,16 +303,16 @@ func (cfm *ConfigFileManager) generateGenesisConfig() string {
 		config.WriteString(fmt.Sprintf("  author_email: %s\n", cfm.config.Bastion.Git.User.Email))
 	}
 
-	config.WriteString("  env: ${OCFP_BLOC_NAME:-development}\n")
+	config.WriteString("  env: ${OCFP_BLOC:-development}\n")
 	config.WriteString("  vault:\n")
 	config.WriteString("    url: https://127.0.0.1:8200\n")
 	config.WriteString("    verify: false\n")
 	config.WriteString("  bosh:\n")
-	config.WriteString("    env: ${OCFP_BLOC_NAME:-bosh}\n")
+	config.WriteString("    env: ${OCFP_BLOC:-bosh}\n")
 	config.WriteString("  kit_repos:\n")
 	config.WriteString("    - https://github.com/genesis-community\n")
 	config.WriteString("  secrets:\n")
-	config.WriteString("    base: secret/${OCFP_BLOC_NAME:-development}\n")
+	config.WriteString("    base: secret/${OCFP_BLOC:-development}\n")
 
 	return config.String()
 }
