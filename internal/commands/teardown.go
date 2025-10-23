@@ -53,6 +53,7 @@ const (
 
 var (
 	ErrTeardownCancelled = errors.New("teardown cancelled by user")
+	ErrResourceSkipped   = errors.New("resource skipped (not an error)")
 )
 
 // NewTeardownCmd creates the teardown command.
@@ -700,6 +701,13 @@ func (m *TeardownManager) executeResourceDeletion(ctx context.Context, sortedRes
 
 		err := m.deleteResourceWithRetry(ctx, resource, log)
 		if err != nil {
+			// Check if resource was skipped (not an actual error)
+			if errors.Is(err, ErrResourceSkipped) {
+				// Resource was skipped (e.g., non-empty bucket without --empty flag)
+				// Warning already printed, just continue without counting as deleted or failed
+				continue
+			}
+
 			_, _ = fmt.Fprintf(os.Stderr, "  ✗ Failed to delete %s %s: %v\n", resource.Type, resource.Name, err)
 			log.Errorw("Failed to delete resource", "type", resource.Type, "name", resource.Name, "error", err)
 			failedResources = append(failedResources, resource)
@@ -729,9 +737,10 @@ func (m *TeardownManager) executeResourceDeletion(ctx context.Context, sortedRes
 func (m *TeardownManager) deleteResourceWithRetry(ctx context.Context, resource *ResourceToDelete, log logger.Logger) error {
 	var lastErr error
 
+	maxAttempts := MaxRetryAttempts
 	retryDelay := InitialRetryDelay
 
-	for attempt := 1; attempt <= MaxRetryAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		err := m.DeleteResource(ctx, resource)
 		if err == nil {
 			return nil
@@ -752,16 +761,16 @@ func (m *TeardownManager) deleteResourceWithRetry(ctx context.Context, resource 
 			return err
 		}
 
-		if attempt < MaxRetryAttempts {
+		if attempt < maxAttempts {
 			log.Debugw("Resource deletion failed with conflict, retrying",
 				"resource", resource.Name,
 				"type", resource.Type,
 				"attempt", attempt,
-				"max_attempts", MaxRetryAttempts,
+				"max_attempts", maxAttempts,
 				"retry_delay", retryDelay)
 
 			_, _ = fmt.Fprintf(os.Stdout, "  ⏳ Resource in use, waiting %v before retry (attempt %d/%d)...\n",
-				retryDelay, attempt, MaxRetryAttempts)
+				retryDelay, attempt, maxAttempts)
 
 			time.Sleep(retryDelay)
 
@@ -773,7 +782,7 @@ func (m *TeardownManager) deleteResourceWithRetry(ctx context.Context, resource 
 		}
 	}
 
-	return fmt.Errorf("failed after %d attempts: %w", MaxRetryAttempts, lastErr)
+	return fmt.Errorf("failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // retryFailedResources attempts to delete previously failed resources after other resources are deleted.
@@ -848,6 +857,28 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 	return m.filterResources(resources), nil
 }
 
+// normalizeResourceType converts state file resource types to canonical handler types.
+// This handles the mismatch between how resources are stored in state (e.g., "compute_instance")
+// and how they're identified in the DeleteResource handler (e.g., "instance").
+func normalizeResourceType(stateType string) string {
+	typeMap := map[string]string{
+		"compute_instance":      ResourceInstance,      // "compute_instance" -> "instance"
+		"block_volume":          ResourceVolume,        // "block_volume" -> "volume"
+		"ssh_key_pair":          "keypair",             // "ssh_key_pair" -> "keypair"
+		"object_storage_bucket": ResourceBucket,        // "object_storage_bucket" -> "bucket"
+		"public_ip":             ResourcePublicIP,      // Ensure consistency
+		"floating_ip":           ResourceFloatingIP,    // Ensure consistency
+		"security_group":        ResourceSecurityGroup, // Already matches but include for completeness
+	}
+
+	if normalized, ok := typeMap[stateType]; ok {
+		return normalized
+	}
+
+	// Return as-is if no mapping exists (already canonical or unknown type)
+	return stateType
+}
+
 // getResourcesFromState retrieves resources from the state file.
 func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 	log := logger.Get()
@@ -865,8 +896,11 @@ func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 			continue
 		}
 
+		// Normalize resource type from state format to canonical format
+		resourceType := normalizeResourceType(parts[0])
+
 		// Skip if resource type should be skipped
-		if m.shouldSkipResourceType(parts[0]) {
+		if m.shouldSkipResourceType(resourceType) {
 			continue
 		}
 
@@ -890,7 +924,7 @@ func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 		deps, _ := m.stateManager.GetDependencies(key)
 
 		resources = append(resources, &ResourceToDelete{
-			Type:         parts[0],
+			Type:         resourceType,
 			ID:           resource.ID,
 			Name:         parts[1],
 			Dependencies: deps,
@@ -1477,14 +1511,16 @@ func (m *TeardownManager) shouldIncludeResource(resource *ResourceToDelete, bast
 		return false
 	}
 
-	// Skip floating IPs unless explicitly requested
-	if resource.Type == ResourceFloatingIP && !m.options.PublicIPs {
-		return false
-	}
+	// In selective mode, skip floating/public IPs unless explicitly requested
+	// In "delete all" mode (no flags), include all resources
+	if selectiveModeActive {
+		if resource.Type == ResourceFloatingIP && !m.options.PublicIPs {
+			return false
+		}
 
-	// Skip public IPs unless explicitly requested
-	if resource.Type == ResourcePublicIP && !m.options.PublicIPs {
-		return false
+		if resource.Type == ResourcePublicIP && !m.options.PublicIPs {
+			return false
+		}
 	}
 
 	return true
@@ -1772,10 +1808,10 @@ func (m *TeardownManager) deleteBucket(ctx context.Context, storage cpi.StorageM
 
 	// If bucket is not empty and --empty flag is not set, skip deletion
 	if !isEmpty && !m.options.Empty {
-		_, _ = fmt.Fprintf(os.Stderr, "  ⚠️  Bucket %s is not empty, skipping deletion. Use --empty to empty and delete.\n", resource.Name)
+		_, _ = fmt.Fprintf(os.Stderr, "  ⚠️  Bucket %s is not empty, skipped. Use --empty to empty and delete.\n", resource.Name)
 		log.Infow("Skipping non-empty bucket deletion", "bucket", resource.ID, "name", resource.Name)
 
-		return nil // Not an error, just skip
+		return ErrResourceSkipped
 	}
 
 	// If bucket is not empty but --empty flag is set, empty it first

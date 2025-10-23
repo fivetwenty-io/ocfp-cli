@@ -1368,7 +1368,7 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 	// Copy OCFP configuration file
 	err := m.copyOCFPConfig(ctx)
 	if err != nil {
-		m.log.Warn("Failed to copy OCFP config", "error", err.Error())
+		return fmt.Errorf("failed to copy OCFP config: %w", err)
 	}
 
 	// Copy SSH keys
@@ -1901,8 +1901,20 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 		return fmt.Errorf("failed to close temp config file: %w", err)
 	}
 
-	// Transfer filtered config
-	remoteConfigPath := "~/.ocfp/config.yml"
+	// Get remote home directory for absolute path (tilde expansion may not work in TransferFile)
+	homeResult, err := m.sshClient.ExecuteCommand(ctx, "echo $HOME")
+	if err != nil {
+		return fmt.Errorf("failed to get remote home directory: %w", err)
+	}
+
+	remoteHome := strings.TrimSpace(homeResult.Stdout)
+	if remoteHome == "" {
+		// Fallback to constructing from SSH user
+		remoteHome = "/home/" + m.config.Bastion.SSHUser
+	}
+
+	// Transfer filtered config using absolute path
+	remoteConfigPath := remoteHome + "/.ocfp/config.yml"
 	transferOpts := ssh.TransferOptions{
 		Recursive:    false,
 		Preserve:     false,

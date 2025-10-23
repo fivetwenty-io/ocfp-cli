@@ -819,6 +819,17 @@ func loadConfigAndManager() (*vault.Manager, error) {
 	configFile := viper.GetString("config")
 	blocName := viper.GetString("bloc")
 
+	// Fallback to environment variable if viper doesn't have it
+	// This handles cases where config file might override env var binding
+	if blocName == "" {
+		blocName = os.Getenv("OCFP_BLOC")
+	}
+
+	// Validate bloc name is provided
+	if blocName == "" {
+		return nil, ErrBlocFlagOrEnvVarRequired
+	}
+
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)

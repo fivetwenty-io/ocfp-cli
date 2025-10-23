@@ -22,10 +22,10 @@ import (
 
 // Vault operation timing constants.
 const (
-	gracefulShutdownWaitSeconds = 2 // Seconds to wait for graceful shutdown after Ctrl-C
+	gracefulShutdownWaitSeconds   = 2 // Seconds to wait for graceful shutdown after Ctrl-C
 	processTerminationWaitSeconds = 3 // Seconds to wait after SIGTERM before force kill
-	pathKeyDelimiterParts = 2 // Expected parts when splitting path:key format
-	minPsAuxFields = 2 // Minimum fields in ps aux output to extract PID
+	pathKeyDelimiterParts         = 2 // Expected parts when splitting path:key format
+	minPsAuxFields                = 2 // Minimum fields in ps aux output to extract PID
 )
 
 // Common errors.
@@ -684,8 +684,7 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("openstack", m.config, m.safe, m.blocName), nil
 	case "aws":
-		// Placeholder - return a not-implemented provider
-		return providers.NewPlaceholderProvider("aws", m.config, m.safe, m.blocName), nil
+		return NewAWSVaultProvider(m.config, m.safe, m.blocName), nil
 	case "azure":
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("azure", m.config, m.safe, m.blocName), nil

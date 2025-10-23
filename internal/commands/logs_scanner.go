@@ -12,9 +12,9 @@ import (
 
 // Log path structure constants.
 const (
-	pathDepthSimpleCommand     = 2  // Simple command path depth: {command}/{filename}
-	pathDepthWithSubcommand    = 3  // With subcommand depth: {command}/{subcommand}/{filename}
-	minTimestampLength         = 15 // Minimum filename length for YYYYMMDD-HHMMSS format
+	pathDepthSimpleCommand  = 2  // Simple command path depth: {command}/{filename}
+	pathDepthWithSubcommand = 3  // With subcommand depth: {command}/{subcommand}/{filename}
+	minTimestampLength      = 15 // Minimum filename length for YYYYMMDD-HHMMSS format
 )
 
 // Static errors for log scanner.

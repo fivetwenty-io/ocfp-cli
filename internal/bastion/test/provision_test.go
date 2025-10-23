@@ -36,7 +36,7 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 	}
 
 	// Check for required directories
-	requiredDirs := []string{"${HOME}/ocfp/cli", "${HOME}/.ocfp/config", "${HOME}/bin"}
+	requiredDirs := []string{"${HOME}/ocfp/cli", "${HOME}/.ocfp", "${HOME}/bin"}
 	foundDirs := make(map[string]bool)
 
 	for _, dir := range directories {
