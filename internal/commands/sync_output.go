@@ -425,75 +425,87 @@ func convertDiffToChanges(diffs []*state.ResourceDiff) []ResourceChange {
 	return changes
 }
 
-// formatTableOutput formats the output as a human-readable table.
-func formatTableOutput(output *SyncOutput) string {
-	var builder strings.Builder
-
-	// Header
+// writeTableHeader writes the header section to the builder.
+func writeTableHeader(builder *strings.Builder, output *SyncOutput) {
 	builder.WriteString("\n")
 	builder.WriteString("=== Reconciliation Summary ===\n")
-	builder.WriteString(fmt.Sprintf("Bloc:               %s\n", output.Summary.BlocName))
-	builder.WriteString(fmt.Sprintf("Strategy:           %s\n", output.Summary.Strategy))
+	fmt.Fprintf(builder, "Bloc:               %s\n", output.Summary.BlocName)
+	fmt.Fprintf(builder, "Strategy:           %s\n", output.Summary.Strategy)
 
 	if output.Summary.DryRun {
 		builder.WriteString("Mode:               DRY RUN (no changes will be made)\n")
 	}
 
 	builder.WriteString("\n")
+}
 
-	// Statistics
-	builder.WriteString(fmt.Sprintf("Resources discovered: %d\n", output.Summary.TotalDiscovered))
-	builder.WriteString(fmt.Sprintf("Resources added:      %d\n", output.Summary.ResourcesAdded))
-	builder.WriteString(fmt.Sprintf("Resources updated:    %d\n", output.Summary.ResourcesUpdated))
-	builder.WriteString(fmt.Sprintf("Resources removed:    %d\n", output.Summary.ResourcesRemoved))
-	builder.WriteString(fmt.Sprintf("Resources unchanged:  %d\n", output.Summary.ResourcesUnchanged))
-	builder.WriteString(fmt.Sprintf("Duration:             %s\n", output.Summary.Duration))
+// writeTableStatistics writes the statistics section to the builder.
+func writeTableStatistics(builder *strings.Builder, output *SyncOutput) {
+	fmt.Fprintf(builder, "Resources discovered: %d\n", output.Summary.TotalDiscovered)
+	fmt.Fprintf(builder, "Resources added:      %d\n", output.Summary.ResourcesAdded)
+	fmt.Fprintf(builder, "Resources updated:    %d\n", output.Summary.ResourcesUpdated)
+	fmt.Fprintf(builder, "Resources removed:    %d\n", output.Summary.ResourcesRemoved)
+	fmt.Fprintf(builder, "Resources unchanged:  %d\n", output.Summary.ResourcesUnchanged)
+	fmt.Fprintf(builder, "Duration:             %s\n", output.Summary.Duration)
+}
 
-	// Detailed changes
-	if output.Changes != nil {
-		// Added resources
-		if len(output.Changes.Added) > 0 {
-			builder.WriteString("\n=== Added Resources ===\n")
+// writeTableChanges writes the detailed changes sections to the builder.
+func writeTableChanges(builder *strings.Builder, changes *SyncChanges) {
+	if changes == nil {
+		return
+	}
 
-			for _, change := range output.Changes.Added {
-				builder.WriteString(fmt.Sprintf("  + %s: %s (%s)\n",
-					change.ResourceType,
-					change.ResourceName,
-					change.ResourceID))
-			}
+	// Added resources
+	if len(changes.Added) > 0 {
+		builder.WriteString("\n=== Added Resources ===\n")
+
+		for _, change := range changes.Added {
+			fmt.Fprintf(builder, "  + %s: %s (%s)\n",
+				change.ResourceType,
+				change.ResourceName,
+				change.ResourceID)
 		}
+	}
 
-		// Modified resources
-		if len(output.Changes.Modified) > 0 {
-			builder.WriteString("\n=== Modified Resources ===\n")
+	// Modified resources
+	if len(changes.Modified) > 0 {
+		builder.WriteString("\n=== Modified Resources ===\n")
 
-			for _, change := range output.Changes.Modified {
-				builder.WriteString(fmt.Sprintf("  ~ %s: %s (%s)\n",
-					change.ResourceType,
-					change.ResourceName,
-					change.ResourceID))
+		for _, change := range changes.Modified {
+			fmt.Fprintf(builder, "  ~ %s: %s (%s)\n",
+				change.ResourceType,
+				change.ResourceName,
+				change.ResourceID)
 
-				for _, pc := range change.Changes {
-					builder.WriteString(fmt.Sprintf("      %s: %v → %v\n",
-						pc.Property,
-						formatValue(pc.OldValue),
-						formatValue(pc.NewValue)))
-				}
-			}
-		}
-
-		// Removed resources
-		if len(output.Changes.Removed) > 0 {
-			builder.WriteString("\n=== Removed Resources ===\n")
-
-			for _, change := range output.Changes.Removed {
-				builder.WriteString(fmt.Sprintf("  - %s: %s (%s)\n",
-					change.ResourceType,
-					change.ResourceName,
-					change.ResourceID))
+			for _, pc := range change.Changes {
+				fmt.Fprintf(builder, "      %s: %v → %v\n",
+					pc.Property,
+					formatValue(pc.OldValue),
+					formatValue(pc.NewValue))
 			}
 		}
 	}
+
+	// Removed resources
+	if len(changes.Removed) > 0 {
+		builder.WriteString("\n=== Removed Resources ===\n")
+
+		for _, change := range changes.Removed {
+			fmt.Fprintf(builder, "  - %s: %s (%s)\n",
+				change.ResourceType,
+				change.ResourceName,
+				change.ResourceID)
+		}
+	}
+}
+
+// formatTableOutput formats the output as a human-readable table.
+func formatTableOutput(output *SyncOutput) string {
+	var builder strings.Builder
+
+	writeTableHeader(&builder, output)
+	writeTableStatistics(&builder, output)
+	writeTableChanges(&builder, output.Changes)
 
 	// Errors
 	if len(output.Errors) > 0 {

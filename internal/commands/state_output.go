@@ -17,13 +17,8 @@ const (
 	outputMaxNameLength = 50
 )
 
-// FormatStateOutput formats the state for display in table format.
-func FormatStateOutput(currentState *state.State) *ui.Table {
-	// Create table with title
-	title := "State for Bloc: " + currentState.BlocName
-	table := ui.NewTable(title)
-
-	// Build summary section
+// buildStateSummary builds the summary section for state output.
+func buildStateSummary(currentState *state.State) string {
 	summary := "Provider:     " + currentState.Provider
 	if currentState.Region != "" {
 		summary += "\nRegion:       " + currentState.Region
@@ -37,7 +32,49 @@ func FormatStateOutput(currentState *state.State) *ui.Table {
 		summary += "\nLast Updated: " + currentState.UpdatedAt.Format(time.RFC3339)
 	}
 
-	table.Summary = summary
+	return summary
+}
+
+// addCategorySectionToTable adds a category section with resources to the table.
+func addCategorySectionToTable(table *ui.Table, category state.ResourceCategory, resources []*state.Resource) {
+	// Sort resources by type and then by name
+	sort.Slice(resources, func(i, j int) bool {
+		if resources[i].Type != resources[j].Type {
+			return resources[i].Type < resources[j].Type
+		}
+
+		return resources[i].Name < resources[j].Name
+	})
+
+	// Create section for this category
+	sectionTitle := fmt.Sprintf("%s Resources (%d)", categoryName(category), len(resources))
+	table.AddSection(sectionTitle)
+
+	// Get current section and set headers
+	currentSection := &table.Sections[len(table.Sections)-1]
+	currentSection.Headers = []string{"ID", "Type", "Name", "State"}
+
+	// Add resource rows
+	for _, resource := range resources {
+		resourceID := truncate(resource.ID, outputMaxIDLength)
+		resType := truncate(resource.Type, outputMaxTypeLength)
+		name := truncate(resource.Name, outputMaxNameLength)
+		resState := getResourceState(resource)
+
+		currentSection.Rows = append(currentSection.Rows, []string{
+			resourceID, resType, name, resState,
+		})
+	}
+}
+
+// FormatStateOutput formats the state for display in table format.
+func FormatStateOutput(currentState *state.State) *ui.Table {
+	// Create table with title
+	title := "State for Bloc: " + currentState.BlocName
+	table := ui.NewTable(title)
+
+	// Build and set summary section
+	table.Summary = buildStateSummary(currentState)
 
 	// Group resources by category
 	resourcesByCategory := groupResourcesByCategory(currentState.Resources)
@@ -58,35 +95,7 @@ func FormatStateOutput(currentState *state.State) *ui.Table {
 		}
 
 		totalResources += len(resources)
-
-		// Sort resources by type and then by name
-		sort.Slice(resources, func(i, j int) bool {
-			if resources[i].Type != resources[j].Type {
-				return resources[i].Type < resources[j].Type
-			}
-
-			return resources[i].Name < resources[j].Name
-		})
-
-		// Create section for this category
-		sectionTitle := fmt.Sprintf("%s Resources (%d)", categoryName(category), len(resources))
-		table.AddSection(sectionTitle)
-
-		// Get current section and set headers
-		currentSection := &table.Sections[len(table.Sections)-1]
-		currentSection.Headers = []string{"ID", "Type", "Name", "State"}
-
-		// Add resource rows
-		for _, resource := range resources {
-			resourceID := truncate(resource.ID, outputMaxIDLength)
-			resType := truncate(resource.Type, outputMaxTypeLength)
-			name := truncate(resource.Name, outputMaxNameLength)
-			resState := getResourceState(resource)
-
-			currentSection.Rows = append(currentSection.Rows, []string{
-				resourceID, resType, name, resState,
-			})
-		}
+		addCategorySectionToTable(table, category, resources)
 	}
 
 	// Add summary section at the end (always add, even if 0 resources)

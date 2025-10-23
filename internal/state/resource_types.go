@@ -44,87 +44,100 @@ type ResourceTypeInfo struct {
 
 // initResourceTypeRegistry initializes the resource type registry.
 func initResourceTypeRegistry() map[string]ResourceTypeInfo {
-	return map[string]ResourceTypeInfo{
-		// Network resources
-		ResourceTypeNetwork: {
-			Type:     ResourceTypeNetwork,
-			Category: CategoryNetwork,
-			Name:     "Network/VPC",
-		},
-		ResourceTypeSubnet: {
-			Type:     ResourceTypeSubnet,
-			Category: CategoryNetwork,
-			Name:     "Subnet",
-		},
-		ResourceTypeSecurityGroup: {
-			Type:     ResourceTypeSecurityGroup,
-			Category: CategoryNetwork,
-			Name:     "Security Group",
-		},
-		ResourceTypePublicIP: {
-			Type:     ResourceTypePublicIP,
-			Category: CategoryNetwork,
-			Name:     "Public IP",
-		},
-		ResourceTypeFloatingIP: {
-			Type:     ResourceTypeFloatingIP,
-			Category: CategoryNetwork,
-			Name:     "Floating IP",
-		},
-		ResourceTypeRouter: {
-			Type:     ResourceTypeRouter,
-			Category: CategoryNetwork,
-			Name:     "Router",
-		},
-		ResourceTypeLoadBalancer: {
-			Type:     ResourceTypeLoadBalancer,
-			Category: CategoryNetwork,
-			Name:     "Load Balancer",
-		},
+	registry := make(map[string]ResourceTypeInfo)
 
-		// Compute resources
-		ResourceTypeInstance: {
-			Type:     ResourceTypeInstance,
-			Category: CategoryCompute,
-			Name:     "Compute Instance",
-		},
-		ResourceTypeKeyPair: {
-			Type:     ResourceTypeKeyPair,
-			Category: CategoryCompute,
-			Name:     "SSH Key Pair",
-		},
-		ResourceTypeVolume: {
-			Type:     ResourceTypeVolume,
-			Category: CategoryCompute,
-			Name:     "Block Volume",
-		},
-		ResourceTypeImage: {
-			Type:     ResourceTypeImage,
-			Category: CategoryCompute,
-			Name:     "Compute Image",
-		},
-		ResourceTypeFlavor: {
-			Type:     ResourceTypeFlavor,
-			Category: CategoryCompute,
-			Name:     "Compute Flavor",
-		},
+	// Add resource types by category
+	addNetworkResourceTypes(registry)
+	addComputeResourceTypes(registry)
+	addStorageResourceTypes(registry)
 
-		// Storage resources
-		ResourceTypeBucket: {
-			Type:     ResourceTypeBucket,
-			Category: CategoryStorage,
-			Name:     "Object Storage Bucket",
-		},
-		ResourceTypeSnapshot: {
-			Type:     ResourceTypeSnapshot,
-			Category: CategoryStorage,
-			Name:     "Volume Snapshot",
-		},
-		ResourceTypeCredentialsGroup: {
-			Type:     ResourceTypeCredentialsGroup,
-			Category: CategoryStorage,
-			Name:     "Credentials Group",
-		},
+	return registry
+}
+
+// addNetworkResourceTypes adds network resource type definitions to the registry.
+func addNetworkResourceTypes(registry map[string]ResourceTypeInfo) {
+	registry[ResourceTypeNetwork] = ResourceTypeInfo{
+		Type:     ResourceTypeNetwork,
+		Category: CategoryNetwork,
+		Name:     "Network/VPC",
+	}
+	registry[ResourceTypeSubnet] = ResourceTypeInfo{
+		Type:     ResourceTypeSubnet,
+		Category: CategoryNetwork,
+		Name:     "Subnet",
+	}
+	registry[ResourceTypeSecurityGroup] = ResourceTypeInfo{
+		Type:     ResourceTypeSecurityGroup,
+		Category: CategoryNetwork,
+		Name:     "Security Group",
+	}
+	registry[ResourceTypePublicIP] = ResourceTypeInfo{
+		Type:     ResourceTypePublicIP,
+		Category: CategoryNetwork,
+		Name:     "Public IP",
+	}
+	registry[ResourceTypeFloatingIP] = ResourceTypeInfo{
+		Type:     ResourceTypeFloatingIP,
+		Category: CategoryNetwork,
+		Name:     "Floating IP",
+	}
+	registry[ResourceTypeRouter] = ResourceTypeInfo{
+		Type:     ResourceTypeRouter,
+		Category: CategoryNetwork,
+		Name:     "Router",
+	}
+	registry[ResourceTypeLoadBalancer] = ResourceTypeInfo{
+		Type:     ResourceTypeLoadBalancer,
+		Category: CategoryNetwork,
+		Name:     "Load Balancer",
+	}
+}
+
+// addComputeResourceTypes adds compute resource type definitions to the registry.
+func addComputeResourceTypes(registry map[string]ResourceTypeInfo) {
+	registry[ResourceTypeInstance] = ResourceTypeInfo{
+		Type:     ResourceTypeInstance,
+		Category: CategoryCompute,
+		Name:     "Compute Instance",
+	}
+	registry[ResourceTypeKeyPair] = ResourceTypeInfo{
+		Type:     ResourceTypeKeyPair,
+		Category: CategoryCompute,
+		Name:     "SSH Key Pair",
+	}
+	registry[ResourceTypeVolume] = ResourceTypeInfo{
+		Type:     ResourceTypeVolume,
+		Category: CategoryCompute,
+		Name:     "Block Volume",
+	}
+	registry[ResourceTypeImage] = ResourceTypeInfo{
+		Type:     ResourceTypeImage,
+		Category: CategoryCompute,
+		Name:     "Compute Image",
+	}
+	registry[ResourceTypeFlavor] = ResourceTypeInfo{
+		Type:     ResourceTypeFlavor,
+		Category: CategoryCompute,
+		Name:     "Compute Flavor",
+	}
+}
+
+// addStorageResourceTypes adds storage resource type definitions to the registry.
+func addStorageResourceTypes(registry map[string]ResourceTypeInfo) {
+	registry[ResourceTypeBucket] = ResourceTypeInfo{
+		Type:     ResourceTypeBucket,
+		Category: CategoryStorage,
+		Name:     "Object Storage Bucket",
+	}
+	registry[ResourceTypeSnapshot] = ResourceTypeInfo{
+		Type:     ResourceTypeSnapshot,
+		Category: CategoryStorage,
+		Name:     "Volume Snapshot",
+	}
+	registry[ResourceTypeCredentialsGroup] = ResourceTypeInfo{
+		Type:     ResourceTypeCredentialsGroup,
+		Category: CategoryStorage,
+		Name:     "Credentials Group",
 	}
 }
 

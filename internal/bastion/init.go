@@ -135,71 +135,94 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		"provider", m.config.Provider,
 		"ocfp_only", m.options.OCFPOnly)
 
-	var err error
-
-	err = m.setupInfrastructure(ctx)
+	err := m.setupInfrastructure(ctx)
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		err := m.sshClient.Close()
-		if err != nil {
-			m.log.Warn("Failed to close SSH client", "error", err.Error())
-		}
-	}()
+	defer m.closeSSHClient()
 
-	// If OCFPOnly flag is set, only run the OCFP CLI setup phase
+	// Handle OCFP-only mode
 	if m.options.OCFPOnly {
-		m.log.Info("OCFP-only mode: installing/updating OCFP CLI binary only")
+		return m.runOCFPOnlyMode(ctx)
+	}
 
-		err = m.setupOCFPCLI(ctx)
-		if err != nil {
-			return fmt.Errorf("OCFP CLI setup failed: %w", err)
-		}
-
-		m.log.Info("OCFP CLI installation/update completed successfully")
-
+	// Check if already provisioned
+	if m.checkAndSkipIfProvisioned(ctx) {
 		return nil
 	}
 
-	// Check if bastion is already fully provisioned
-	if !m.options.DryRun {
-		alreadyProvisioned, err := m.isAlreadyProvisioned(ctx)
-		if err != nil {
-			m.log.Warnw("Failed to check provisioning status", "error", err)
-		} else if alreadyProvisioned {
-			m.log.Info("Bastion is already provisioned, skipping initialization")
-
-			// Report success immediately
-			if m.options.ProgressOut != nil {
-				message := "✓ Bastion already fully provisioned - skipping initialization\n"
-				_, _ = m.options.ProgressOut.Write([]byte(message))
-			}
-
-			return nil
-		}
-	}
-
-	// If dry-run, preview configuration file changes
+	// Handle dry-run preview
 	if m.options.DryRun {
 		m.previewConfigChanges(ctx)
 	}
 
+	return m.executeInitializationPhases(ctx)
+}
+
+// closeSSHClient safely closes the SSH client connection.
+func (m *Manager) closeSSHClient() {
+	err := m.sshClient.Close()
+	if err != nil {
+		m.log.Warn("Failed to close SSH client", "error", err.Error())
+	}
+}
+
+// runOCFPOnlyMode handles the OCFP-only installation mode.
+func (m *Manager) runOCFPOnlyMode(ctx context.Context) error {
+	m.log.Info("OCFP-only mode: installing/updating OCFP CLI binary only")
+
+	err := m.setupOCFPCLI(ctx)
+	if err != nil {
+		return fmt.Errorf("OCFP CLI setup failed: %w", err)
+	}
+
+	m.log.Info("OCFP CLI installation/update completed successfully")
+
+	return nil
+}
+
+// checkAndSkipIfProvisioned checks if bastion is already provisioned and reports status.
+// Returns true if already provisioned (should skip), false to continue.
+func (m *Manager) checkAndSkipIfProvisioned(ctx context.Context) bool {
+	if m.options.DryRun {
+		return false
+	}
+
+	alreadyProvisioned, err := m.isAlreadyProvisioned(ctx)
+	if err != nil {
+		m.log.Warnw("Failed to check provisioning status", "error", err)
+
+		return false // Continue despite check failure
+	}
+
+	if !alreadyProvisioned {
+		return false
+	}
+
+	m.log.Info("Bastion is already provisioned, skipping initialization")
+
+	if m.options.ProgressOut != nil {
+		message := "✓ Bastion already fully provisioned - skipping initialization\n"
+		_, _ = m.options.ProgressOut.Write([]byte(message))
+	}
+
+	return true
+}
+
+// executeInitializationPhases sets up and executes all initialization phases.
+func (m *Manager) executeInitializationPhases(ctx context.Context) error {
 	phases := m.getInitializationPhases()
 	m.progress.TotalSteps = len(phases)
-
-	// Set start time NOW, right before phases begin
 	m.progress.StartTime = time.Now()
 
-	// Start progress reporting if configured
 	var reporter *ProgressReporter
 	if m.options.ProgressOut != nil {
 		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
 		reporter.Start(ctx)
 	}
 
-	err = m.executePhases(ctx, phases, reporter)
+	err := m.executePhases(ctx, phases, reporter)
 	if err != nil {
 		return err
 	}
@@ -1184,7 +1207,21 @@ func (m *Manager) setHostname(ctx context.Context, desired string) {
 func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
 	m.log.Info("Configuring SSH agent forwarding")
 
-	// Check if AllowAgentForwarding is already enabled
+	err := m.enableSSHDAgentForwarding(ctx)
+	if err != nil {
+		return err
+	}
+
+	m.configureSSHClientForwarding(ctx)
+	m.addGitHubHostKeys(ctx)
+
+	m.log.Info("SSH agent forwarding configured successfully")
+
+	return nil
+}
+
+// enableSSHDAgentForwarding enables AllowAgentForwarding in sshd_config and restarts the SSH server.
+func (m *Manager) enableSSHDAgentForwarding(ctx context.Context) error {
 	checkCmd := "grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config && echo 'enabled' || echo 'disabled'"
 
 	result, err := m.sshClient.ExecuteCommand(ctx, checkCmd)
@@ -1194,50 +1231,55 @@ func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
 		return fmt.Errorf("failed to check SSH agent forwarding status: %w", err)
 	}
 
-	status := strings.TrimSpace(result.Stdout)
-	if status != "enabled" {
-		m.log.Info("Enabling SSH agent forwarding in sshd_config")
-
-		// Enable AllowAgentForwarding in sshd_config
-		configureCmd := `sudo bash -c "grep -q '^AllowAgentForwarding' /etc/ssh/sshd_config && sudo sed -i 's/^AllowAgentForwarding.*/AllowAgentForwarding yes/' /etc/ssh/sshd_config || echo 'AllowAgentForwarding yes' | sudo tee -a /etc/ssh/sshd_config >/dev/null"`
-
-		_, err = m.sshClient.ExecuteCommand(ctx, configureCmd)
-		if err != nil {
-			return fmt.Errorf("failed to configure SSH agent forwarding: %w", err)
-		}
-
-		m.log.Info("Restarting SSH server")
-
-		// Restart sshd service
-		restartCmd := "sudo systemctl restart sshd || sudo systemctl restart ssh"
-
-		_, err = m.sshClient.ExecuteCommand(ctx, restartCmd)
-		if err != nil {
-			m.log.Warn("Failed to restart SSH server", "error", err.Error())
-
-			return fmt.Errorf("failed to restart SSH server: %w", err)
-		}
-
-		// Wait for SSH service to stabilize
-		m.log.Info("Waiting for SSH service to stabilize...")
-		time.Sleep(3 * time.Second) //nolint:mnd // reasonable delay for SSH restart
-
-		// Close and reconnect SSH client to enable agent forwarding
-		m.log.Info("Reconnecting with agent forwarding enabled")
-
-		err = m.sshClient.Close()
-		if err != nil {
-			m.log.Warn("Failed to close SSH client during reconnection", "error", err.Error())
-		}
-
-		// Reconnect
-		err = m.sshClient.Connect(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to reconnect after SSH server restart: %w", err)
-		}
+	if strings.TrimSpace(result.Stdout) == "enabled" {
+		return nil
 	}
 
-	// Configure user SSH config to enable ForwardAgent for github.com
+	m.log.Info("Enabling SSH agent forwarding in sshd_config")
+
+	configureCmd := `sudo bash -c "grep -q '^AllowAgentForwarding' /etc/ssh/sshd_config && sudo sed -i 's/^AllowAgentForwarding.*/AllowAgentForwarding yes/' /etc/ssh/sshd_config || echo 'AllowAgentForwarding yes' | sudo tee -a /etc/ssh/sshd_config >/dev/null"`
+
+	_, err = m.sshClient.ExecuteCommand(ctx, configureCmd)
+	if err != nil {
+		return fmt.Errorf("failed to configure SSH agent forwarding: %w", err)
+	}
+
+	return m.restartSSHDAndReconnect(ctx)
+}
+
+// restartSSHDAndReconnect restarts the SSH server and reconnects the client.
+func (m *Manager) restartSSHDAndReconnect(ctx context.Context) error {
+	m.log.Info("Restarting SSH server")
+
+	restartCmd := "sudo systemctl restart sshd || sudo systemctl restart ssh"
+
+	_, err := m.sshClient.ExecuteCommand(ctx, restartCmd)
+	if err != nil {
+		m.log.Warn("Failed to restart SSH server", "error", err.Error())
+
+		return fmt.Errorf("failed to restart SSH server: %w", err)
+	}
+
+	m.log.Info("Waiting for SSH service to stabilize...")
+	time.Sleep(3 * time.Second) //nolint:mnd // reasonable delay for SSH restart
+
+	m.log.Info("Reconnecting with agent forwarding enabled")
+
+	err = m.sshClient.Close()
+	if err != nil {
+		m.log.Warn("Failed to close SSH client during reconnection", "error", err.Error())
+	}
+
+	err = m.sshClient.Connect(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to reconnect after SSH server restart: %w", err)
+	}
+
+	return nil
+}
+
+// configureSSHClientForwarding creates SSH client config to enable ForwardAgent for github.com.
+func (m *Manager) configureSSHClientForwarding(ctx context.Context) {
 	m.log.Info("Configuring SSH client config for agent forwarding")
 
 	sshConfigContent := `# Auto-generated by OCFP bastion init
@@ -1252,28 +1294,24 @@ Host github.com
 EOF
 chmod 600 ~/.ssh/config`, sshConfigContent)
 
-	_, err = m.sshClient.ExecuteCommand(ctx, createSSHConfigCmd)
+	_, err := m.sshClient.ExecuteCommand(ctx, createSSHConfigCmd)
 	if err != nil {
 		m.log.Warn("Failed to create SSH client config", "error", err.Error())
-		// Non-fatal, continue
 	}
+}
 
-	// Add GitHub host keys to known_hosts
+// addGitHubHostKeys adds GitHub host keys to known_hosts.
+func (m *Manager) addGitHubHostKeys(ctx context.Context) {
 	m.log.Info("Adding GitHub host keys to known_hosts")
 
 	addGitHubKeysCmd := `mkdir -p ~/.ssh && ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null && chmod 600 ~/.ssh/known_hosts`
 
-	_, err = m.sshClient.ExecuteCommand(ctx, addGitHubKeysCmd)
+	_, err := m.sshClient.ExecuteCommand(ctx, addGitHubKeysCmd)
 	if err != nil {
 		m.log.Warn("Failed to add GitHub host keys", "error", err.Error())
-		// Non-fatal, continue
 	} else {
 		m.log.Info("GitHub host keys added to known_hosts")
 	}
-
-	m.log.Info("SSH agent forwarding configured successfully")
-
-	return nil
 }
 
 func (m *Manager) createDirectories(ctx context.Context) error {
@@ -1765,7 +1803,8 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 		"bloc_name", m.config.Name)
 
 	// Validate config path for security
-	if err := security.ValidatePath(configPath); err != nil {
+	err := security.ValidatePath(configPath)
+	if err != nil {
 		return fmt.Errorf("invalid config path %s: %w", configPath, err)
 	}
 
@@ -1786,6 +1825,7 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 
 	// Verify the bloc being initialized exists
 	blocName := m.config.Name
+
 	blocConfig, exists := configFileData.Blocs[blocName]
 	if !exists {
 		return fmt.Errorf("%w: bloc '%s' in file %s", ErrBlocNotFoundInConfig, blocName, configPath)
@@ -1815,16 +1855,20 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 	if err != nil {
 		return fmt.Errorf("failed to create temp config file: %w", err)
 	}
+
 	tmpPath := tmpFile.Name()
+
 	defer func() {
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
+		removeErr := os.Remove(tmpPath)
+		if removeErr != nil {
 			m.log.Warn("Failed to remove temp config file", "path", tmpPath, "error", removeErr)
 		}
 	}()
 
 	_, err = tmpFile.Write(yamlBytes)
 	if err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
+		closeErr := tmpFile.Close()
+		if closeErr != nil {
 			m.log.Warn("Failed to close temp file after write error", "error", closeErr)
 		}
 

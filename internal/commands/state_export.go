@@ -232,6 +232,54 @@ func applyExportFiltersAndSorting(cmd *cobra.Command, currentState *state.State)
 	return currentState, nil
 }
 
+// formatStateForExport formats state according to output format.
+func formatStateForExport(currentState *state.State, outputFormat string) (string, error) {
+	var (
+		output string
+		err    error
+	)
+
+	switch outputFormat {
+	case OutputFormatJSON:
+		output, err = FormatStateJSON(currentState, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to format state as JSON: %w", err)
+		}
+
+	case OutputFormatYAML:
+		output, err = FormatStateYAML(currentState, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to format state as YAML: %w", err)
+		}
+
+	case OutputFormatTable:
+		allFilter := NewResourceFilter(ResourceDisplayFlags{All: true})
+		table := FormatStateOutputFiltered(currentState, allFilter)
+		output = fmt.Sprintf("%s", table)
+
+	default:
+		return "", fmt.Errorf("%w: %s", ErrUnsupportedOutputFormat, outputFormat)
+	}
+
+	return output, nil
+}
+
+// writeExportOutput writes formatted output to file or stdout.
+func writeExportOutput(output, outputFile, outputFormat string) error {
+	if outputFile == "-" {
+		_, _ = fmt.Fprint(os.Stdout, output)
+	} else {
+		err := os.WriteFile(outputFile, []byte(output), exportFilePermissions)
+		if err != nil {
+			return fmt.Errorf("failed to write to file %q: %w", outputFile, err)
+		}
+
+		_, _ = fmt.Fprintf(os.Stdout, "State exported to %q (%s format)\n", outputFile, outputFormat)
+	}
+
+	return nil
+}
+
 // runStateExport is the execution handler for 'state export' command.
 func runStateExport(cmd *cobra.Command, args []string) error {
 	blocName := viper.GetString("bloc")
@@ -272,44 +320,10 @@ func runStateExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Format output
-	var output string
-
-	switch outputFormat {
-	case OutputFormatJSON:
-		output, err = FormatStateJSON(currentState, nil)
-		if err != nil {
-			return fmt.Errorf("failed to format state as JSON: %w", err)
-		}
-
-	case OutputFormatYAML:
-		output, err = FormatStateYAML(currentState, nil)
-		if err != nil {
-			return fmt.Errorf("failed to format state as YAML: %w", err)
-		}
-
-	case OutputFormatTable:
-		allFilter := NewResourceFilter(ResourceDisplayFlags{All: true})
-		table := FormatStateOutputFiltered(currentState, allFilter)
-
-		// Render table to string
-		output = fmt.Sprintf("%s", table)
-
-	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedOutputFormat, outputFormat)
+	output, err := formatStateForExport(currentState, outputFormat)
+	if err != nil {
+		return err
 	}
 
-	// Write to file or stdout
-	if outputFile == "-" {
-		_, _ = fmt.Fprint(os.Stdout, output)
-	} else {
-		err := os.WriteFile(outputFile, []byte(output), exportFilePermissions)
-		if err != nil {
-			return fmt.Errorf("failed to write to file %q: %w", outputFile, err)
-		}
-
-		_, _ = fmt.Fprintf(os.Stdout, "State exported to %q (%s format)\n", outputFile, outputFormat)
-	}
-
-	return nil
+	return writeExportOutput(output, outputFile, outputFormat)
 }

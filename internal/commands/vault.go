@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 const (
 	// File permissions.
 	VaultOutputFileMode = 0600
+	VaultDirMode        = 0750
 
 	// Vault inception constants.
 	VaultInceptionPort     = 8234
@@ -30,15 +32,22 @@ const (
 	VaultInceptionLogDir   = ".ocfp/logs/vault"
 	VaultInceptionLogFile  = "vault-inception.log"
 	MaxVaultReadyAttempts  = 30
+
+	// Vault cleanup wait duration after process termination.
+	VaultCleanupWait = 2 * time.Second
+	// Vault initialization wait duration after startup.
+	VaultInitWait = 5 * time.Second
 )
 
 var (
 	// Vault inception errors.
-	ErrSafeNotFound  = errors.New("'safe' command not found - please install safe CLI")
-	ErrTmuxNotFound  = errors.New("'tmux' command not found - please install tmux")
-	ErrVaultNotFound = errors.New("'vault' command not found - please install vault")
-	ErrVaultNotReady = errors.New("vault did not become ready within timeout")
-	ErrTmuxFailed    = errors.New("failed to create tmux session")
+	ErrSafeNotFound        = errors.New("'safe' command not found - please install safe CLI")
+	ErrTmuxNotFound        = errors.New("'tmux' command not found - please install tmux")
+	ErrVaultNotFound       = errors.New("'vault' command not found - please install vault")
+	ErrVaultNotReady       = errors.New("vault did not become ready within timeout")
+	ErrTmuxFailed          = errors.New("failed to create tmux session")
+	ErrVaultStartupError   = errors.New("vault startup error detected in tmux output")
+	ErrVaultTargetVerify   = errors.New("failed to verify inception vault target")
 )
 
 // NewVaultCmd creates the vault command.
@@ -139,7 +148,7 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	// Load configuration and create manager
-	_, manager, err := loadConfigAndManager()
+	manager, err := loadConfigAndManager()
 	if err != nil {
 		return err
 	}
@@ -264,29 +273,34 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 }
 
 // cleanupExistingVault removes any existing vault processes and files.
-func cleanupExistingVault(paths map[string]string, log *zap.SugaredLogger) error {
+func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
 	log.Info("Cleaning up existing vault processes...")
 
 	// Kill tmux session (ignore errors if it doesn't exist)
-	cmd := exec.Command("tmux", "kill-session", "-t", paths["tmuxSession"])
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
 	_ = cmd.Run()
 
 	// Kill any process listening on the vault port
-	cmd = exec.Command("sh", "-c", "lsof -ti :"+paths["port"]+" | xargs kill -9 2>/dev/null")
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd = exec.CommandContext(ctx, "sh", "-c", "lsof -ti :"+paths["port"]+" | xargs kill -9 2>/dev/null")
 	_ = cmd.Run()
 
 	// Also try to kill safe local processes by pattern
-	cmd = exec.Command("pkill", "-f", "safe local.*--port "+paths["port"])
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd = exec.CommandContext(ctx, "pkill", "-f", "safe local.*--port "+paths["port"])
 	_ = cmd.Run()
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(VaultCleanupWait)
 
 	// Remove safe target if it exists
-	cmd = exec.Command("safe", "target", "delete", paths["vaultName"])
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd = exec.CommandContext(ctx, "safe", "target", "delete", paths["vaultName"])
 	_ = cmd.Run() // Ignore errors if target doesn't exist
 
 	// Remove vault data directory and all its contents
-	if err := os.RemoveAll(paths["vaultDir"]); err != nil && !os.IsNotExist(err) {
+	err := os.RemoveAll(paths["vaultDir"])
+	if err != nil && !os.IsNotExist(err) {
 		log.Warnw("Failed to remove vault data directory", "error", err)
 	}
 
@@ -299,7 +313,8 @@ func cleanupExistingVault(paths map[string]string, log *zap.SugaredLogger) error
 	if err == nil {
 		vaultMetaDir := filepath.Join(homeDir, ".vault", paths["vaultName"])
 
-		if err := os.RemoveAll(vaultMetaDir); err != nil && !os.IsNotExist(err) {
+		err = os.RemoveAll(vaultMetaDir)
+		if err != nil && !os.IsNotExist(err) {
 			log.Warnw("Failed to remove vault metadata", "error", err)
 		}
 	}
@@ -310,17 +325,18 @@ func cleanupExistingVault(paths map[string]string, log *zap.SugaredLogger) error
 	_ = os.Remove(paths["unsealKeysFile"])
 
 	log.Info("Cleanup completed")
-
-	return nil
 }
 
 // startVaultInTmux starts the vault in a tmux session.
-func startVaultInTmux(paths map[string]string, log *zap.SugaredLogger) error {
+func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Starting vault in tmux session...")
 
 	// Create tmux session
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", paths["tmuxSession"])
-	if err := cmd.Run(); err != nil {
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", paths["tmuxSession"])
+
+	err := cmd.Run()
+	if err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
@@ -331,30 +347,34 @@ func startVaultInTmux(paths map[string]string, log *zap.SugaredLogger) error {
 		paths["vaultName"],
 		paths["port"])
 
-	cmd = exec.Command("tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m")
-	if err := cmd.Run(); err != nil {
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd = exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m")
+
+	err = cmd.Run()
+	if err != nil {
 		return fmt.Errorf("failed to send command to tmux: %w", err)
 	}
 
 	log.Infow("Vault started in tmux", "session", paths["tmuxSession"])
-	time.Sleep(5 * time.Second) // Give vault time to initialize
+	time.Sleep(VaultInitWait) // Give vault time to initialize
 
 	return nil
 }
 
 // waitForVaultReady waits for the vault to become ready.
-func waitForVaultReady(paths map[string]string, log *zap.SugaredLogger) error {
+func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Waiting for vault to initialize...")
 
 	vaultAddr := "http://127.0.0.1:" + paths["port"]
 
 	for attempt := range MaxVaultReadyAttempts {
 		if attempt > 0 && attempt%5 == 0 {
-			fmt.Print(".")
+			log.Info(".")
 		}
 
 		// Check tmux output for success indicators first (more reliable for safe local)
-		cmd := exec.Command("tmux", "capture-pane", "-t", paths["tmuxSession"], "-p")
+		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p")
 
 		output, err := cmd.Output()
 		if err == nil {
@@ -364,13 +384,13 @@ func waitForVaultReady(paths map[string]string, log *zap.SugaredLogger) error {
 			if strings.Contains(outputStr, "ERROR:") ||
 				strings.Contains(outputStr, "fatal:") ||
 				strings.Contains(outputStr, "Unable to initialize") {
-				return errors.New("vault startup error detected in tmux output")
+				return ErrVaultStartupError
 			}
 
 			// Check for success indicators
 			if strings.Contains(outputStr, "Now targeting") &&
 				strings.Contains(outputStr, "MEMORY-BACKED") {
-				fmt.Println()
+				log.Info("")
 				log.Info("Vault initialized successfully!")
 
 				return nil
@@ -378,11 +398,13 @@ func waitForVaultReady(paths map[string]string, log *zap.SugaredLogger) error {
 		}
 
 		// Also try vault status as a fallback
-		cmd = exec.Command("vault", "status")
+		cmd = exec.CommandContext(ctx, "vault", "status")
 
 		cmd.Env = append(os.Environ(), "VAULT_ADDR="+vaultAddr)
-		if err := cmd.Run(); err == nil {
-			fmt.Println()
+
+		err = cmd.Run()
+		if err == nil {
+			log.Info("")
 			log.Info("Vault is ready!")
 
 			return nil
@@ -395,26 +417,32 @@ func waitForVaultReady(paths map[string]string, log *zap.SugaredLogger) error {
 }
 
 // targetInceptionVault sets the safe target to the inception vault.
-func targetInceptionVault(paths map[string]string, log *zap.SugaredLogger) error {
+func targetInceptionVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Targeting inception vault...")
 
 	vaultURL := "http://127.0.0.1:" + paths["port"]
 
-	cmd := exec.Command("safe", "target", paths["vaultName"], vaultURL)
-	if err := cmd.Run(); err != nil {
+	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+	cmd := exec.CommandContext(ctx, "safe", "target", paths["vaultName"], vaultURL)
+
+	err := cmd.Run()
+	if err != nil {
 		// Try without URL (might already be configured)
-		cmd = exec.Command("safe", "target", paths["vaultName"])
-		if err := cmd.Run(); err != nil {
+		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+		cmd = exec.CommandContext(ctx, "safe", "target", paths["vaultName"])
+
+		err = cmd.Run()
+		if err != nil {
 			return fmt.Errorf("failed to target inception vault: %w", err)
 		}
 	}
 
 	// Verify target was set (safe target outputs to stderr)
-	cmd = exec.Command("safe", "target")
+	cmd = exec.CommandContext(ctx, "safe", "target")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), paths["vaultName"]) {
-		return errors.New("failed to verify inception vault target")
+		return ErrVaultTargetVerify
 	}
 
 	log.Infow("Successfully targeting inception vault", "vault", paths["vaultName"])
@@ -423,21 +451,20 @@ func targetInceptionVault(paths map[string]string, log *zap.SugaredLogger) error
 }
 
 // saveVaultKeys saves vault keys to appropriate files.
-func saveVaultKeys(paths map[string]string, log *zap.SugaredLogger) error {
+func saveVaultKeys(paths map[string]string, log *zap.SugaredLogger) {
 	// For inception vault, keys are managed by safe local in memory mode
-	// TODO: In the future, capture keys from tmux output and save to:
-	// - paths["rootKeyFile"] for root token
-	// - paths["unsealKeysFile"] for unseal keys
+	// FUTURE ENHANCEMENT: For non-inception vaults, implement key capture from tmux output.
+	// This would save root token to paths["rootKeyFile"] and unseal keys to paths["unsealKeysFile"].
+	// Track implementation in issue: https://github.com/ocfp/ocfp-cli-go/issues/XXX
 	if strings.Contains(paths["vaultName"], "inception") {
 		log.Info("Inception vault uses pre-configured authentication (memory mode)")
 		log.Info("Keys are managed automatically by safe")
 
-		return nil
+		return
 	}
 
 	// For non-inception vaults, we would save keys here
 	// This is left for future implementation
-	return nil
 }
 
 // printVaultInfo displays information about the running vault.
@@ -479,46 +506,48 @@ func runVaultInception() error {
 	)
 
 	// Step 1: Check prerequisites
-	if err := checkVaultInceptionPrerequisites(log); err != nil {
+	err := checkVaultInceptionPrerequisites(log)
+	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
 
 	// Step 2: Cleanup any existing vault
-	if err := cleanupExistingVault(paths, log); err != nil {
-		return fmt.Errorf("cleanup failed: %w", err)
-	}
+	cleanupExistingVault(context.TODO(), paths, log)
 
 	// Step 3: Create vault directory
-	if err := os.MkdirAll(paths["vaultDir"], 0755); err != nil {
+	err = os.MkdirAll(paths["vaultDir"], VaultDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create vault directory: %w", err)
 	}
 
 	log.Infow("Created vault directory", "path", paths["vaultDir"])
 
 	// Step 4: Create log directory
-	if err := os.MkdirAll(paths["logDir"], 0755); err != nil {
+	err = os.MkdirAll(paths["logDir"], VaultDirMode)
+	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
 	// Step 5: Start vault in tmux session
-	if err := startVaultInTmux(paths, log); err != nil {
+	err = startVaultInTmux(context.TODO(), paths, log)
+	if err != nil {
 		return fmt.Errorf("failed to start vault: %w", err)
 	}
 
 	// Step 6: Wait for vault to be ready
-	if err := waitForVaultReady(paths, log); err != nil {
+	err = waitForVaultReady(context.TODO(), paths, log)
+	if err != nil {
 		return fmt.Errorf("vault did not become ready: %w", err)
 	}
 
 	// Step 7: Target the inception vault
-	if err := targetInceptionVault(paths, log); err != nil {
+	err = targetInceptionVault(context.TODO(), paths, log)
+	if err != nil {
 		return fmt.Errorf("failed to target vault: %w", err)
 	}
 
 	// Step 8: Save vault keys
-	if err := saveVaultKeys(paths, log); err != nil {
-		log.Warnw("Failed to save vault keys (non-fatal for inception)", "error", err)
-	}
+	saveVaultKeys(paths, log)
 
 	log.Info("=== Vault Inception Completed Successfully ===")
 	printVaultInfo(paths, log)
@@ -555,9 +584,7 @@ func runVaultTeardown() error {
 
 	log.Info("=== Tearing Down Inception Vault ===")
 
-	if err := cleanupExistingVault(paths, log); err != nil {
-		return fmt.Errorf("teardown failed: %w", err)
-	}
+	cleanupExistingVault(context.TODO(), paths, log)
 
 	log.Info("=== Teardown Completed ===")
 
@@ -603,7 +630,7 @@ func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun boo
 	force, _ := cmd.Flags().GetBool("force")
 
 	// Load configuration and create manager
-	_, manager, err := loadConfigAndManager()
+	manager, err := loadConfigAndManager()
 	if err != nil {
 		return err
 	}
@@ -672,7 +699,7 @@ func runVaultExport(vaultPath, outputFile, format string) error {
 	log.Infow("Exporting vault secrets", "path", vaultPath)
 
 	// Load configuration and create manager
-	_, manager, err := loadConfigAndManager()
+	manager, err := loadConfigAndManager()
 	if err != nil {
 		return err
 	}
@@ -787,21 +814,21 @@ func newVaultImportCmd() *cobra.Command {
 // Helper functions
 
 // loadConfigAndManager loads configuration and creates vault manager.
-func loadConfigAndManager() (*config.Config, *vault.Manager, error) {
+func loadConfigAndManager() (*vault.Manager, error) {
 	configFile := viper.GetString("config")
 	blocName := viper.GetString("bloc")
 
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	manager, err := vault.NewManagerFromEnv(cfg, blocName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create vault manager: %w", err)
+		return nil, fmt.Errorf("failed to create vault manager: %w", err)
 	}
 
-	return cfg, manager, nil
+	return manager, nil
 }
 
 // marshalSecrets marshals secrets to the specified format.

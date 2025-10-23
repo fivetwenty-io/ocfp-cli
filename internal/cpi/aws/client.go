@@ -117,52 +117,17 @@ func (c *Client) Region() string {
 // Initialize configures the AWS client with the provided configuration.
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	// Handle different config types
-	var cfg *Config
-	switch configValue := config.(type) {
-	case *Config:
-		cfg = configValue
-	case *ocfpconfig.Config:
-		// Convert OCFP config to AWS config
-		cfg = &Config{
-			AccessKeyID:     configValue.AccessKeyID,
-			SecretAccessKey: configValue.SecretAccessKey,
-			SessionToken:    configValue.SessionToken,
-			Profile:         "", // Will be set to bloc name below if not specified
-			Region:          configValue.Region,
-		}
-
-		// Default profile to bloc name if no credentials provided
-		if cfg.AccessKeyID == "" && cfg.SecretAccessKey == "" && cfg.SessionToken == "" {
-			cfg.Profile = configValue.Name
-		}
-	case map[string]interface{}:
-		// Config was already parsed in NewProvider and stored in c.config
-		// Now we need to initialize the AWS SDK config if not already done
-		if c.config != nil && c.awsConfig.Region == "" {
-			err := c.initializeAWSConfig(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to initialize AWS configuration: %w", err)
-			}
-
-			// Initialize resource managers if not already done
-			if c.network == nil {
-				c.network = &NetworkManager{client: c}
-				c.compute = &ComputeManager{client: c}
-				c.storage = &StorageManager{client: c}
-				c.security = &SecurityManager{client: c}
-				c.loadBalancer = &LoadBalancerManager{client: c}
-			}
-
-			logger.Debugw("AWS provider initialized from map config", "region", c.config.Region)
-		}
-
-		return nil
-	default:
-		//nolint:err113 // Dynamic error with type info is appropriate here
-		return fmt.Errorf("invalid config type for AWS provider: expected *aws.Config or *config.Config, got %T", config)
+	cfg, err := c.parseConfig(ctx, config)
+	if err != nil {
+		return err
 	}
 
-	err := cfg.Validate()
+	// Early return for map config type (already initialized)
+	if cfg == nil {
+		return nil
+	}
+
+	err = cfg.Validate()
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -178,11 +143,7 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	}
 
 	// Initialize resource managers
-	c.network = &NetworkManager{client: c}
-	c.compute = &ComputeManager{client: c}
-	c.storage = &StorageManager{client: c}
-	c.security = &SecurityManager{client: c}
-	c.loadBalancer = &LoadBalancerManager{client: c}
+	c.initializeResourceManagers()
 
 	logger.Debugw("AWS provider initialized", "region", c.config.Region)
 
@@ -228,7 +189,204 @@ func (c *Client) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-//nolint:funcorder,cyclop,funlen // Helper method after interface methods, initialization requires length
+// NetworkManager returns the network manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) NetworkManager() cpi.NetworkManager {
+	return c.network
+}
+
+// Network returns the network manager (legacy).
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) Network() cpi.NetworkManager {
+	return c.network
+}
+
+// ComputeManager returns the compute manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) ComputeManager() cpi.ComputeManager {
+	return c.compute
+}
+
+// Compute returns the compute manager (legacy).
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) Compute() cpi.ComputeManager {
+	return c.compute
+}
+
+// StorageManager returns the storage manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) StorageManager() cpi.StorageManager {
+	return c.storage
+}
+
+// Storage returns the storage manager (legacy).
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) Storage() cpi.StorageManager {
+	return c.storage
+}
+
+// SecurityManager returns the security manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) SecurityManager() cpi.SecurityManager {
+	return c.security
+}
+
+// Security returns the security manager (legacy).
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) Security() cpi.SecurityManager {
+	return c.security
+}
+
+// LoadBalancerManager returns the load balancer manager.
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
+	return c.loadBalancer
+}
+
+// LoadBalancer returns the load balancer manager (legacy).
+//
+//nolint:ireturn // Returns interface by design for manager abstraction
+func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
+	return c.loadBalancer
+}
+
+// SupportsStorage indicates whether this provider supports storage operations.
+func (c *Client) SupportsStorage() bool {
+	return true
+}
+
+// parseConfig parses the configuration based on type and returns a Config or nil for map types.
+func (c *Client) parseConfig(ctx context.Context, config interface{}) (*Config, error) {
+	switch configValue := config.(type) {
+	case *Config:
+		return configValue, nil
+	case *ocfpconfig.Config:
+		return c.convertOCFPConfig(configValue), nil
+	case map[string]interface{}:
+		return c.handleMapConfig(ctx)
+	default:
+		//nolint:err113 // Dynamic error with type info is appropriate here
+		return nil, fmt.Errorf("invalid config type for AWS provider: expected *aws.Config or *config.Config, got %T", config)
+	}
+}
+
+// convertOCFPConfig converts OCFP config to AWS config.
+func (c *Client) convertOCFPConfig(configValue *ocfpconfig.Config) *Config {
+	cfg := &Config{
+		AccessKeyID:     configValue.AccessKeyID,
+		SecretAccessKey: configValue.SecretAccessKey,
+		SessionToken:    configValue.SessionToken,
+		Profile:         "", // Will be set to bloc name below if not specified
+		Region:          configValue.Region,
+	}
+
+	// Default profile to bloc name if no credentials provided
+	if cfg.AccessKeyID == "" && cfg.SecretAccessKey == "" && cfg.SessionToken == "" {
+		cfg.Profile = configValue.Name
+	}
+
+	return cfg
+}
+
+// handleMapConfig handles map[string]interface{} configuration type.
+func (c *Client) handleMapConfig(ctx context.Context) (*Config, error) {
+	// Config was already parsed in NewProvider and stored in c.config
+	// Now we need to initialize the AWS SDK config if not already done
+	if c.config != nil && c.awsConfig.Region == "" {
+		err := c.initializeAWSConfig(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize AWS configuration: %w", err)
+		}
+
+		// Initialize resource managers if not already done
+		if c.network == nil {
+			c.initializeResourceManagers()
+		}
+
+		logger.Debugw("AWS provider initialized from map config", "region", c.config.Region)
+	}
+
+	return nil, nil
+}
+
+// initializeResourceManagers initializes all resource managers.
+func (c *Client) initializeResourceManagers() {
+	c.network = &NetworkManager{client: c}
+	c.compute = &ComputeManager{client: c}
+	c.storage = &StorageManager{client: c}
+	c.security = &SecurityManager{client: c}
+	c.loadBalancer = &LoadBalancerManager{client: c}
+}
+
+func (c *Client) initializeAWSConfig(ctx context.Context) error {
+	return c.realInitializeAWSConfig(ctx)
+}
+
+func (c *Client) ensureClientsLoaded(ctx context.Context) error {
+	return c.realEnsureClientsLoaded(ctx)
+}
+
+func (c *Client) getEC2Client(ctx context.Context) (*ec2.Client, error) {
+	err := c.ensureClientsLoaded(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.ec2Client == nil {
+		//nolint:err113 // Dynamic error acceptable for uninitialized client
+		return nil, errors.New("EC2 client not initialized")
+	}
+
+	return c.ec2Client, nil
+}
+
+func (c *Client) getS3Client(ctx context.Context) (*s3.Client, error) {
+	err := c.ensureClientsLoaded(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.s3Client == nil {
+		//nolint:err113 // Dynamic error acceptable for uninitialized client
+		return nil, errors.New("S3 client not initialized")
+	}
+
+	return c.s3Client, nil
+}
+
+func (c *Client) getELBClient(ctx context.Context) (*elasticloadbalancingv2.Client, error) {
+	err := c.ensureClientsLoaded(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.elbClient == nil {
+		//nolint:err113 // Dynamic error acceptable for uninitialized client
+		return nil, errors.New("ELB client not initialized")
+	}
+
+	return c.elbClient, nil
+}
+
+//nolint:cyclop,funlen // Helper method after interface methods, initialization requires length
 func (c *Client) realInitializeAWSConfig(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -346,7 +504,7 @@ func (c *Client) realInitializeAWSConfig(ctx context.Context) error {
 
 // configureAssumeRole sets up STS assume role credentials.
 //
-//nolint:funcorder,unparam // Helper method after main initialization
+//nolint:unparam // Helper method after main initialization
 func (c *Client) configureAssumeRole(_ context.Context) error {
 	// Skip if no role ARN configured
 	if c.config.RoleARN == "" {
@@ -393,7 +551,7 @@ func (c *Client) configureAssumeRole(_ context.Context) error {
 	return nil
 }
 
-//nolint:funcorder,unparam,funlen // Helper method after interface methods, client init requires length
+//nolint:unparam,funlen // Helper method after interface methods, client init requires length
 func (c *Client) realEnsureClientsLoaded(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -467,7 +625,7 @@ func (c *Client) realEnsureClientsLoaded(ctx context.Context) error {
 
 // validateRegion validates the configured AWS region.
 //
-//nolint:funcorder,unparam // Helper method after client loading
+//nolint:unparam // Helper method after client loading
 func (c *Client) validateRegion(_ context.Context) error {
 	// List of valid AWS regions (as of 2024)
 	validRegions := map[string]bool{
@@ -539,146 +697,6 @@ func (c *Client) validateRegion(_ context.Context) error {
 	return nil
 }
 
-// NetworkManager returns the network manager.
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) NetworkManager() cpi.NetworkManager {
-	return c.network
-}
-
-// Network returns the network manager (legacy).
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) Network() cpi.NetworkManager {
-	return c.network
-}
-
-// ComputeManager returns the compute manager.
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) ComputeManager() cpi.ComputeManager {
-	return c.compute
-}
-
-// Compute returns the compute manager (legacy).
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) Compute() cpi.ComputeManager {
-	return c.compute
-}
-
-// StorageManager returns the storage manager.
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) StorageManager() cpi.StorageManager {
-	return c.storage
-}
-
-// Storage returns the storage manager (legacy).
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) Storage() cpi.StorageManager {
-	return c.storage
-}
-
-// SecurityManager returns the security manager.
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) SecurityManager() cpi.SecurityManager {
-	return c.security
-}
-
-// Security returns the security manager (legacy).
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) Security() cpi.SecurityManager {
-	return c.security
-}
-
-// LoadBalancerManager returns the load balancer manager.
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
-	return c.loadBalancer
-}
-
-// LoadBalancer returns the load balancer manager (legacy).
-//
-//nolint:ireturn // Returns interface by design for manager abstraction
-func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
-	return c.loadBalancer
-}
-
-// SupportsStorage indicates whether this provider supports storage operations.
-func (c *Client) SupportsStorage() bool {
-	return true
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
-func (c *Client) initializeAWSConfig(ctx context.Context) error {
-	return c.realInitializeAWSConfig(ctx)
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
-func (c *Client) ensureClientsLoaded(ctx context.Context) error {
-	return c.realEnsureClientsLoaded(ctx)
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
-func (c *Client) getEC2Client(ctx context.Context) (*ec2.Client, error) {
-	err := c.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.ec2Client == nil {
-		//nolint:err113 // Dynamic error acceptable for uninitialized client
-		return nil, errors.New("EC2 client not initialized")
-	}
-
-	return c.ec2Client, nil
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
-func (c *Client) getS3Client(ctx context.Context) (*s3.Client, error) {
-	err := c.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.s3Client == nil {
-		//nolint:err113 // Dynamic error acceptable for uninitialized client
-		return nil, errors.New("S3 client not initialized")
-	}
-
-	return c.s3Client, nil
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
-func (c *Client) getELBClient(ctx context.Context) (*elasticloadbalancingv2.Client, error) {
-	err := c.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.elbClient == nil {
-		//nolint:err113 // Dynamic error acceptable for uninitialized client
-		return nil, errors.New("ELB client not initialized")
-	}
-
-	return c.elbClient, nil
-}
-
-//nolint:funcorder // Private helper methods placed after public interface methods
 func wrapError(err error, message string) error {
 	if err == nil {
 		return nil

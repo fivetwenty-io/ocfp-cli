@@ -932,7 +932,37 @@ func (m *Manager) handleStaleKeypairState(keypairName string) {
 
 // createStackitKeyPair handles STACKIT-specific keypair creation.
 func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, error) {
-	// Generate SSH key pair locally using KeyManager
+	// Generate SSH key pair locally
+	privateKeyData, publicKeyData, err := m.generateLocalSSHKeyPair()
+	if err != nil {
+		return nil, err
+	}
+
+	publicKeyStr := strings.TrimSpace(string(publicKeyData))
+
+	// Check if keypair already exists in STACKIT
+	existingKey, err := m.checkExistingStackitKeypair(ctx, computeMgr, keypairName, publicKeyStr, privateKeyData)
+	if err == nil && existingKey != nil {
+		return existingKey, nil
+	}
+
+	// Import the public key to STACKIT
+	err = m.importPublicKeyToStackit(ctx, computeMgr, keypairName, publicKeyStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a KeyPair object for consistency
+	return &cpi.KeyPair{
+		ID:         keypairName, // STACKIT uses name as ID
+		Name:       keypairName,
+		PublicKey:  publicKeyStr,
+		PrivateKey: string(privateKeyData),
+	}, nil
+}
+
+// generateLocalSSHKeyPair generates an Ed25519 SSH key pair and returns the private and public key data.
+func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, error) {
 	keyManager := ssh.NewKeyManager()
 	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().Unix()))
 
@@ -946,7 +976,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 
 	err := keyManager.GenerateKeyPair(tempKeyPath, "ed25519", 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate SSH keypair: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate SSH keypair: %w", err)
 	}
 
 	// Read the generated keys
@@ -954,25 +984,27 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 
 	privateKeyData, err := os.ReadFile(privateKeyPath) // #nosec G304 -- path is generated internally
 	if err != nil {
-		return nil, fmt.Errorf("failed to read private key: %w", err)
+		return nil, nil, fmt.Errorf("failed to read private key: %w", err)
 	}
 
 	publicKeyPath := filepath.Clean(tempKeyPath + ".pub")
 
 	publicKeyData, err := os.ReadFile(publicKeyPath) // #nosec G304 -- path is generated internally
 	if err != nil {
-		return nil, fmt.Errorf("failed to read public key: %w", err)
+		return nil, nil, fmt.Errorf("failed to read public key: %w", err)
 	}
 
-	// Import the public key to STACKIT
-	publicKeyStr := strings.TrimSpace(string(publicKeyData))
+	return privateKeyData, publicKeyData, nil
+}
 
-	// Try to get existing keypair first
+// checkExistingStackitKeypair checks if a keypair already exists in STACKIT and returns it if found.
+func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string, privateKeyData []byte) (*cpi.KeyPair, error) {
 	existingKey, getErr := computeMgr.GetKeyPair(ctx, keypairName)
 	if getErr == nil && existingKey != nil {
 		logger.Infof("Keypair %s already exists in STACKIT, skipping import", keypairName)
 
 		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT, skipping upload\n")
+
 		// Create a KeyPair object for consistency
 		return &cpi.KeyPair{
 			ID:         keypairName, // STACKIT uses name as ID
@@ -982,30 +1014,34 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 		}, nil
 	}
 
-	// Import only if it doesn't exist
+	if getErr != nil {
+		return nil, fmt.Errorf("failed to check existing keypair: %w", getErr)
+	}
+
+	return nil, nil
+}
+
+// importPublicKeyToStackit imports a public key to STACKIT, handling conflicts gracefully.
+func (m *Manager) importPublicKeyToStackit(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string) error {
 	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Uploading public key to STACKIT...\n")
 
-	err = computeMgr.ImportKeyPair(ctx, keypairName, publicKeyStr)
+	err := computeMgr.ImportKeyPair(ctx, keypairName, publicKeyStr)
 	if err != nil {
 		// Check if it's a conflict error (already exists)
 		if strings.Contains(err.Error(), "409") || strings.Contains(err.Error(), "already exists") {
 			logger.Infof("Keypair %s already exists in STACKIT (conflict), continuing", keypairName)
 
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT (continuing)\n")
-		} else {
-			return nil, fmt.Errorf("failed to import keypair to STACKIT: %w", err)
+
+			return nil
 		}
-	} else {
-		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Public key imported to STACKIT successfully\n")
+
+		return fmt.Errorf("failed to import keypair to STACKIT: %w", err)
 	}
 
-	// Create a KeyPair object for consistency
-	return &cpi.KeyPair{
-		ID:         keypairName, // STACKIT uses name as ID
-		Name:       keypairName,
-		PublicKey:  publicKeyStr,
-		PrivateKey: string(privateKeyData),
-	}, nil
+	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Public key imported to STACKIT successfully\n")
+
+	return nil
 }
 
 // saveKeyPairToState saves the keypair to state and sets outputs.

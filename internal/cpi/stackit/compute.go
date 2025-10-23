@@ -70,36 +70,59 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest, nicID string) *iaas.CreateServerPayload {
 	payload := iaas.NewCreateServerPayload(req.Flavor, req.Name)
 
+	m.configureBootVolumeOrImage(payload, req)
+	m.configureServerMetadata(payload, req)
+	m.configureServerNetworking(payload, req, nicID)
+
+	if req.UserData != "" {
+		// SDK expects bytes; it will base64-encode for transport
+		payload.SetUserData([]byte(req.UserData))
+	}
+
+	return payload
+}
+
+// configureBootVolumeOrImage configures boot volume for diskless flavors or image for regular flavors.
+func (m *ComputeManager) configureBootVolumeOrImage(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest) {
 	// For STACKIT diskless flavors, use boot volume instead of direct image
 	if req.UseBootVolume && req.Image != "" {
-		bootVolume := iaas.CreateServerPayloadBootVolume{}
-
-		// Set boot volume source (the image ID)
-		imageID := req.Image
-		sourceType := "image"
-		bootVolumeSource := iaas.BootVolumeSource{
-			Id:   &imageID,
-			Type: &sourceType,
-		}
-		bootVolume.SetSource(bootVolumeSource)
-
-		// Set boot volume size if specified, otherwise use default
-		bootVolumeSize := int64(defaultBootVolumeSize)
-		if req.BootVolumeSize > 0 {
-			bootVolumeSize = int64(req.BootVolumeSize)
-		}
-
-		bootVolume.SetSize(bootVolumeSize)
-
-		// Don't delete the volume on termination
-		bootVolume.SetDeleteOnTermination(false)
-
+		bootVolume := m.buildBootVolume(req)
 		payload.SetBootVolume(bootVolume)
 	} else if req.Image != "" {
 		// Regular image-based creation for flavors with local disk
 		payload.SetImageId(req.Image)
 	}
+}
 
+// buildBootVolume builds boot volume configuration for diskless flavors.
+func (m *ComputeManager) buildBootVolume(req *cpi.InstanceRequest) iaas.CreateServerPayloadBootVolume {
+	bootVolume := iaas.CreateServerPayloadBootVolume{}
+
+	// Set boot volume source (the image ID)
+	imageID := req.Image
+	sourceType := "image"
+	bootVolumeSource := iaas.BootVolumeSource{
+		Id:   &imageID,
+		Type: &sourceType,
+	}
+	bootVolume.SetSource(bootVolumeSource)
+
+	// Set boot volume size if specified, otherwise use default
+	bootVolumeSize := int64(defaultBootVolumeSize)
+	if req.BootVolumeSize > 0 {
+		bootVolumeSize = int64(req.BootVolumeSize)
+	}
+
+	bootVolume.SetSize(bootVolumeSize)
+
+	// Don't delete the volume on termination
+	bootVolume.SetDeleteOnTermination(false)
+
+	return bootVolume
+}
+
+// configureServerMetadata configures server metadata (keypair, zone, labels).
+func (m *ComputeManager) configureServerMetadata(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest) {
 	if req.KeyPair != "" {
 		payload.SetKeypairName(req.KeyPair)
 	}
@@ -113,7 +136,10 @@ func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest, nicI
 		labels := sanitizeLabelsForStackit(req.Tags)
 		payload.SetLabels(labels)
 	}
+}
 
+// configureServerNetworking configures server networking (NIC or DHCP).
+func (m *ComputeManager) configureServerNetworking(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest, nicID string) {
 	// Configure networking - either with pre-created NIC (static IP) or default DHCP
 	if nicID != "" {
 		// Use pre-created NIC with static IP (matching STACKIT CLI pattern)
@@ -134,13 +160,6 @@ func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest, nicI
 		networking := iaas.CreateServerNetworkingAsCreateServerPayloadNetworking(net)
 		payload.SetNetworking(networking)
 	}
-
-	if req.UserData != "" {
-		// SDK expects bytes; it will base64-encode for transport
-		payload.SetUserData([]byte(req.UserData))
-	}
-
-	return payload
 }
 
 // serverResponseToInstance converts a server response to an instance.
