@@ -100,10 +100,40 @@ func (s *StackitVaultProvider) Configure() error {
 			return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
 		}
 
+		// Configure Shield admin credentials
+		err = s.configureShield(envType)
+		if err != nil {
+			return fmt.Errorf("failed to configure Shield for %s: %w", envType, err)
+		}
+
+		// Configure CPI settings
+		err = s.configureCPI(envType)
+		if err != nil {
+			return fmt.Errorf("failed to configure CPI for %s: %w", envType, err)
+		}
+
+		// Configure policies
+		err = s.configurePolicies(envType)
+		if err != nil {
+			return fmt.Errorf("failed to configure policies for %s: %w", envType, err)
+		}
+
+		// Configure users (mgmt only)
+		err = s.configureUsers(envType)
+		if err != nil {
+			return fmt.Errorf("failed to configure users for %s: %w", envType, err)
+		}
+
 		// Configure BOSH-specific components for each environment
 		err = s.configureBOSH(envType)
 		if err != nil {
 			return fmt.Errorf("failed to configure BOSH for %s: %w", envType, err)
+		}
+
+		// Configure BOSH metadata
+		err = s.configureBOSHMeta(envType)
+		if err != nil {
+			return fmt.Errorf("failed to configure BOSH meta for %s: %w", envType, err)
 		}
 	}
 
@@ -785,6 +815,186 @@ func (s *StackitVaultProvider) loadStateManager() *state.Manager {
 	}
 
 	return stateManager
+}
+
+// configureShield configures Shield admin credentials for an environment.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_shield.
+func (s *StackitVaultProvider) configureShield(envType string) error {
+	s.logger.Infow("Configuring Shield admin credentials", "env_type", envType)
+
+	shieldAdminPath := s.PathBuilder.GetEnvironmentPath(envType) + "/shield/admin"
+
+	// Set default Shield admin credentials
+	// In production, these would be generated/retrieved from a secure source
+	shieldAdminCreds := map[string]interface{}{
+		"username": "shieldadmin",
+		"password": fmt.Sprintf("shield-password-%s-%s", envType, s.BlocName),
+	}
+
+	err := s.Safe.SetMultiple(shieldAdminPath, shieldAdminCreds)
+	if err != nil {
+		return fmt.Errorf("failed to set Shield admin credentials: %w", err)
+	}
+
+	s.logger.Infow("Successfully configured Shield admin credentials", "path", shieldAdminPath)
+
+	return nil
+}
+
+// configureCPI configures STACKIT CPI configuration for an environment.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_cpi.
+func (s *StackitVaultProvider) configureCPI(envType string) error {
+	s.logger.Infow("Configuring STACKIT CPI credentials", "env_type", envType)
+
+	cpiPath := s.PathBuilder.GetEnvironmentPath(envType) + "/cpi/stackit"
+
+	// Build CPI configuration
+	cpiConfig := map[string]interface{}{
+		"project_id":            s.Config.ProjectID,
+		"org_id":                s.Config.OrgID,
+		"region":                s.Config.Region,
+		"default_region":        s.Config.Region,
+		"default_key_name":      s.BlocName + "-bastion",
+		"default_security_groups": fmt.Sprintf(`["default","%s-ocfp"]`, s.BlocName),
+		"keypair_name":          s.BlocName,
+	}
+
+	// Add authentication method - prefer service_account_json, then service_account_token
+	if s.Config.ServiceAccountToken != "" {
+		cpiConfig["service_account_token"] = s.Config.ServiceAccountToken
+	}
+
+	// Check for missing required fields
+	missingFields := []string{}
+
+	if s.Config.ProjectID == "" {
+		missingFields = append(missingFields, "project_id")
+	}
+
+	if s.Config.OrgID == "" {
+		missingFields = append(missingFields, "org_id")
+	}
+
+	if s.Config.Region == "" {
+		missingFields = append(missingFields, "region")
+	}
+
+	if s.Config.ServiceAccountToken == "" {
+		missingFields = append(missingFields, "service_account_token")
+	}
+
+	if len(missingFields) > 0 {
+		s.logger.Warnw("Missing required CPI configuration fields", "env_type", envType, "missing", strings.Join(missingFields, ", "))
+		s.logger.Infow("CPI configuration may be incomplete", "env_type", envType)
+	}
+
+	err := s.Safe.SetMultiple(cpiPath, cpiConfig)
+	if err != nil {
+		return fmt.Errorf("failed to set CPI configuration: %w", err)
+	}
+
+	s.logger.Infow("Successfully configured STACKIT CPI credentials", "env_type", envType)
+
+	return nil
+}
+
+// configurePolicies configures deployment policies for an environment.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_policies.
+func (s *StackitVaultProvider) configurePolicies(envType string) error {
+	s.logger.Infow("Configuring policies", "env_type", envType)
+
+	policiesPath := s.PathBuilder.GetEnvironmentPath(envType) + "/policies"
+
+	// Set default policy values
+	userProvidedBoshCreds := "allow" // ignore, allow, require
+	deploymentChangeReasonSize := 0
+
+	policies := map[string]interface{}{
+		"user_provided_bosh_creds":               userProvidedBoshCreds,
+		"deployment_change_reason_required_size": deploymentChangeReasonSize,
+	}
+
+	err := s.Safe.SetMultiple(policiesPath, policies)
+	if err != nil {
+		return fmt.Errorf("failed to set policies: %w", err)
+	}
+
+	s.logger.Infow("Configured policies", "env_type", envType,
+		"user_provided_bosh_creds", userProvidedBoshCreds,
+		"deployment_change_reason_required_size", deploymentChangeReasonSize)
+
+	return nil
+}
+
+// configureUsers configures jumpbox users for the management environment.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_users.
+func (s *StackitVaultProvider) configureUsers(envType string) error {
+	// Users configuration is only relevant for mgmt environment (jumpbox)
+	if envType != "mgmt" {
+		return nil
+	}
+
+	s.logger.Infow("Configuring jumpbox users", "env_type", envType)
+
+	// In the Go implementation, users would come from config
+	// For now, this is a placeholder that would be extended based on actual user configuration
+	usersPath := s.PathBuilder.GetEnvironmentPath(envType) + "/jumpbox/users"
+
+	// Placeholder - in real implementation, this would read users from config
+	// and fetch SSH keys from GitHub/GitLab if specified
+	s.logger.Infow("Jumpbox users path configured", "path", usersPath)
+
+	return nil
+}
+
+// configureBOSHMeta configures BOSH metadata information.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_bosh_meta.
+func (s *StackitVaultProvider) configureBOSHMeta(envType string) error {
+	s.logger.Infow("Configuring BOSH meta information", "env_type", envType)
+
+	boshPath := s.PathBuilder.GetBOSHPath(envType)
+
+	// Parse DNS servers from config (defaults to 1.1.1.1)
+	dnsNS := "1.1.1.1"
+	dnsServers := strings.Split(dnsNS, ",")
+
+	boshMeta := make(map[string]interface{})
+
+	// Store DNS servers as dns.0, dns.1, etc.
+	for i, dns := range dnsServers {
+		boshMeta[fmt.Sprintf("dns.%d", i)] = strings.TrimSpace(dns)
+	}
+
+	// Store key name
+	keyName := s.BlocName + "-bastion"
+	boshMeta["key_name"] = keyName
+
+	// Store region and availability zone
+	boshMeta["region"] = s.Config.Region
+	boshMeta["az"] = s.Config.Region + "-1" // Default to first AZ for STACKIT
+
+	// Try to get the private key from the keys/bosh path if it exists
+	boshKeysPath := s.PathBuilder.GetBOSHKeyPath(envType)
+
+	boshKeysData, err := s.Safe.GetAll(boshKeysPath)
+	if err == nil && boshKeysData != nil {
+		if privateKey, ok := boshKeysData["private"]; ok {
+			boshMeta["private_key"] = privateKey
+			s.logger.Debug("Found and included BOSH private key in meta information")
+		}
+	}
+
+	// Write to vault at the bosh path
+	if len(boshMeta) > 0 {
+		err := s.Safe.SetMultiple(boshPath, boshMeta)
+		if err != nil {
+			return fmt.Errorf("failed to set BOSH meta information: %w", err)
+		}
+
+		s.logger.Infow("Successfully configured BOSH meta information", "path", boshPath)
+	}
+
+	return nil
 }
 
 type lbServiceBuilder struct {

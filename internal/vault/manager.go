@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +16,15 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
+)
+
+// Common errors
+var (
+	ErrValidationFailed    = fmt.Errorf("vault validation failed")
+	ErrEnvironmentUpdate   = fmt.Errorf("environment update failed")
+	ErrPortInUse           = fmt.Errorf("port is still in use")
+	ErrHomeNotSet          = fmt.Errorf("HOME environment variable not set")
+	ErrInvalidPathFormat   = fmt.Errorf("invalid path format")
 )
 
 // Manager provides core vault management operations
@@ -24,6 +36,27 @@ type Manager struct {
 	blocName  string
 	startTime time.Time
 	logger    *zap.SugaredLogger
+}
+
+// pathValidationFailure represents a failed path validation.
+type pathValidationFailure struct {
+	Path               string
+	InceptionChecksum  string
+	ProductionChecksum string
+	Error              string
+}
+
+// environmentUpdate represents a successfully updated environment.
+type environmentUpdate struct {
+	Kit    string
+	Target string
+}
+
+// environmentFailure represents a failed environment update.
+type environmentFailure struct {
+	Kit    string
+	Target string
+	Error  string
 }
 
 // NewManager creates a new vault manager instance.
@@ -349,88 +382,149 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) error 
 	return nil
 }
 
-// validateMigration validates that all secrets were migrated correctly using checksums.
+// validateMigration validates that all secrets were migrated correctly using per-path checksums.
+// This matches the Perl implementation in OCFP::Vault::Manager::validate_migration.
 func (m *Manager) validateMigration(inceptionName, productionName string) error {
 	m.logger.Info("Validating migration with checksums")
 
-	// Export from both vaults
 	inceptionPath := "secret/" + inceptionName
-
-	inceptionSecrets, err := m.safe.Export(inceptionPath)
-	if err != nil {
-		return fmt.Errorf("failed to export inception for validation: %w", err)
-	}
-
 	productionPath := "secret/config/" + productionName
 
-	productionSecrets, err := m.safe.Export(productionPath)
+	// Get all paths from inception vault (matching Perl get_vault_paths)
+	paths, err := m.getVaultPathsWithKeys(inceptionPath)
 	if err != nil {
-		return fmt.Errorf("failed to export production for validation: %w", err)
+		return fmt.Errorf("failed to get vault paths: %w", err)
 	}
 
-	// Calculate checksums
-	inceptionChecksum, err := m.calculateChecksum(inceptionSecrets)
-	if err != nil {
-		return fmt.Errorf("failed to calculate inception checksum: %w", err)
+	m.logger.Infow("Found keys to validate", "count", len(paths))
+
+	var failedPaths []pathValidationFailure
+	validatedCount := 0
+
+	// Validate each path individually (matching Perl line-by-line validation)
+	for _, path := range paths {
+		// Calculate checksum for inception
+		inceptionChecksum, err := m.calculatePathChecksum(inceptionPath, path)
+		if err != nil {
+			m.logger.Errorw("✗ Failed to get inception checksum", "path", path, "error", err)
+			failedPaths = append(failedPaths, pathValidationFailure{
+				Path:  path,
+				Error: fmt.Sprintf("failed to get inception checksum: %v", err),
+			})
+
+			continue
+		}
+
+		// Calculate checksum for production
+		productionChecksum, err := m.calculatePathChecksum(productionPath, path)
+		if err != nil {
+			m.logger.Errorw("✗ Failed to get production checksum", "path", path, "error", err)
+			failedPaths = append(failedPaths, pathValidationFailure{
+				Path:  path,
+				Error: fmt.Sprintf("failed to get production checksum: %v", err),
+			})
+
+			continue
+		}
+
+		// Compare checksums
+		if inceptionChecksum == productionChecksum {
+			m.logger.Infow("✓ Validated", "path", path)
+			validatedCount++
+		} else {
+			m.logger.Errorw("✗ Checksum mismatch", "path", path,
+				"inception", inceptionChecksum[:8],
+				"production", productionChecksum[:8])
+			failedPaths = append(failedPaths, pathValidationFailure{
+				Path:              path,
+				InceptionChecksum: inceptionChecksum[:8],
+				ProductionChecksum: productionChecksum[:8],
+			})
+		}
 	}
 
-	productionChecksum, err := m.calculateChecksum(productionSecrets)
-	if err != nil {
-		return fmt.Errorf("failed to calculate production checksum: %w", err)
+	// Report results
+	if len(failedPaths) > 0 {
+		m.logger.Errorw("Validation failed for paths", "failed_count", len(failedPaths))
+
+		for _, failed := range failedPaths {
+			if failed.Error != "" {
+				m.logger.Errorw("Failed path", "path", failed.Path, "error", failed.Error)
+			} else {
+				m.logger.Errorw("Failed path", "path", failed.Path,
+					"inception", failed.InceptionChecksum,
+					"production", failed.ProductionChecksum)
+			}
+		}
+
+		return fmt.Errorf("%w: validation failed for %d paths", ErrValidationFailed, len(failedPaths))
 	}
 
-	// Compare checksums
-	if inceptionChecksum != productionChecksum {
-		return ErrMigrationValidationFailedChecksumMismatch(inceptionChecksum[:8], productionChecksum[:8])
-	}
-
-	m.logger.Infow("Migration validation successful", "checksum", inceptionChecksum[:8])
+	m.logger.Infow("All keys validated successfully!", "count", validatedCount)
 
 	return nil
 }
 
-// calculateChecksum calculates SHA256 checksum of secret data.
-func (m *Manager) calculateChecksum(secrets map[string]interface{}) (string, error) {
-	// Convert to JSON for consistent hashing
-	jsonData, err := json.Marshal(secrets)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal secrets: %w", err)
-	}
-
-	// Calculate SHA256
-	hash := sha256.Sum256(jsonData)
-
-	return hex.EncodeToString(hash[:]), nil
-}
-
 // decommissionInception safely removes the inception vault.
+// This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
 func (m *Manager) decommissionInception(inceptionName string) error {
 	m.logger.Infow("Decommissioning inception vault", "vault", inceptionName)
 
+	// Step 1: Find and kill tmux sessions (matching Perl Manager.pm:423-459)
+	err := m.killInceptionTmuxSessions(inceptionName)
+	if err != nil {
+		m.logger.Warnw("Failed to kill tmux sessions", "error", err)
+		// Continue anyway - this is a cleanup operation
+	}
+
+	// Step 2: Kill safe local processes on port 8234 (matching Perl Manager.pm:465-489)
+	vaultPort := 8234
+	err = m.killSafeProcesses(vaultPort)
+	if err != nil {
+		m.logger.Warnw("Failed to kill safe processes", "error", err)
+		// Continue anyway
+	}
+
+	// Step 3: Verify port is freed (matching Perl Manager.pm:492-500)
+	err = m.verifyPortFreed(vaultPort)
+	if err != nil {
+		m.logger.Warnw("Port verification warning", "error", err)
+		// This is just a warning, continue
+	}
+
+	// Step 4: Delete vault secrets paths
 	inceptionPath := "secret/" + inceptionName
 
 	// List all paths under inception
 	paths, err := m.safe.List(inceptionPath)
 	if err != nil {
-		return fmt.Errorf("failed to list inception paths: %w", err)
-	}
+		m.logger.Warnw("Failed to list inception paths", "error", err)
+		// Continue with file cleanup even if vault paths cannot be listed
+	} else {
+		// Delete each path
+		for _, path := range paths {
+			fullPath := fmt.Sprintf("%s/%s", inceptionPath, strings.TrimSuffix(path, "/"))
 
-	// Delete each path
-	for _, path := range paths {
-		fullPath := fmt.Sprintf("%s/%s", inceptionPath, strings.TrimSuffix(path, "/"))
+			err := m.safe.Delete(fullPath, "")
+			if err != nil {
+				m.logger.Warnw("Failed to delete path", "path", fullPath, "error", err)
+			} else {
+				m.logger.Debugw("Deleted path", "path", fullPath)
+			}
+		}
 
-		err := m.safe.Delete(fullPath, "")
+		// Delete the root inception path
+		err = m.safe.Delete(inceptionPath, "")
 		if err != nil {
-			m.logger.Warnw("Failed to delete path", "path", fullPath, "error", err)
-		} else {
-			m.logger.Debugw("Deleted path", "path", fullPath)
+			m.logger.Warnw("Failed to delete inception root", "path", inceptionPath, "error", err)
 		}
 	}
 
-	// Delete the root inception path
-	err = m.safe.Delete(inceptionPath, "")
+	// Step 5: File cleanup (matching Perl Manager.pm:502-524)
+	err = m.cleanupVaultFiles(inceptionName)
 	if err != nil {
-		m.logger.Warnw("Failed to delete inception root", "path", inceptionPath, "error", err)
+		m.logger.Warnw("File cleanup had errors", "error", err)
+		// Continue - partial cleanup is better than none
 	}
 
 	m.logger.Infow("Inception vault decommissioned", "vault", inceptionName)
@@ -439,28 +533,87 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 }
 
 // updateEnvironmentSecrets updates environment secrets-providers configuration.
+// This matches the Perl implementation in OCFP::Vault::Manager::update_environment_secrets_providers.
 func (m *Manager) updateEnvironmentSecrets() error {
 	m.logger.Info("Updating environment secrets-providers")
 
-	// Create Genesis integration
-	genesis := NewGenesisIntegration(m.config, m.blocName)
-
-	// Get vault URL from environment or config
-	vaultURL := os.Getenv("VAULT_ADDR")
-	if vaultURL == "" {
-		vaultURL = "https://127.0.0.1:8200" // Default vault URL
-	}
-
-	vaultToken := os.Getenv("VAULT_TOKEN")
-	if vaultToken == "" {
-		m.logger.Warn("No vault token available for Genesis integration")
-		// Continue anyway - Genesis can handle token-less scenarios
-	}
-
-	// Update Genesis environment files
-	err := genesis.UpdateEnvironmentSecrets(vaultURL, vaultToken)
+	// Get list of deployed environments using Genesis
+	environments, err := m.getGenesisEnvironments()
 	if err != nil {
-		return fmt.Errorf("failed to update Genesis environment secrets: %w", err)
+		m.logger.Warnw("Failed to get Genesis environments", "error", err)
+
+		return fmt.Errorf("failed to get Genesis environments: %w", err)
+	}
+
+	if len(environments) == 0 {
+		m.logger.Warn("No deployed environments found to update")
+
+		return nil
+	}
+
+	m.logger.Infow("Found environments to update", "count", len(environments))
+
+	// Track results
+	var updatedEnvs []environmentUpdate
+	var failedEnvs []environmentFailure
+
+	vaultName := m.blocName + "-mgmt"
+
+	// Update each environment
+	for _, env := range environments {
+		// Determine target types based on kit (matching Perl logic)
+		targets := m.getTargetTypesForKit(env.Kit)
+
+		// Update secrets-provider for each target
+		for _, target := range targets {
+			genesisEnv := fmt.Sprintf("@%s-%s:%s", m.blocName, target, env.Kit)
+
+			m.logger.Infow("Running Genesis command",
+				"command", fmt.Sprintf("genesis %s secrets-provider %s", genesisEnv, vaultName))
+
+			// Execute genesis command
+			cmd := exec.Command("genesis", genesisEnv, "secrets-provider", vaultName)
+
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				m.logger.Errorw("✗ Failed to update", "env", genesisEnv, "error", string(output))
+				failedEnvs = append(failedEnvs, environmentFailure{
+					Kit:    env.Kit,
+					Target: target,
+					Error:  string(output),
+				})
+			} else {
+				m.logger.Infow("✓ Successfully updated", "env", genesisEnv)
+				updatedEnvs = append(updatedEnvs, environmentUpdate{
+					Kit:    env.Kit,
+					Target: target,
+				})
+			}
+		}
+	}
+
+	// Report results
+	if len(updatedEnvs) > 0 {
+		m.logger.Infow("Successfully updated environments", "count", len(updatedEnvs))
+
+		for _, env := range updatedEnvs {
+			m.logger.Infow("Updated", "env", fmt.Sprintf("@%s:%s", env.Target, env.Kit))
+		}
+	}
+
+	if len(failedEnvs) > 0 {
+		m.logger.Errorw("Failed to update environments", "count", len(failedEnvs))
+
+		for _, failed := range failedEnvs {
+			m.logger.Errorw("Failed", "env", fmt.Sprintf("@%s:%s", failed.Target, failed.Kit))
+		}
+
+		m.logger.Warn("\nYou may need to manually update these environments using:")
+		m.logger.Warn("  genesis @type:kit secrets-provider <vault-name>")
+		m.logger.Warn("\nFor example:")
+		m.logger.Warnf("  genesis @mgmt:bosh secrets-provider %s-mgmt", m.blocName)
+
+		return fmt.Errorf("%w: failed to update %d environments", ErrEnvironmentUpdate, len(failedEnvs))
 	}
 
 	m.logger.Info("Environment secrets-providers updated successfully")
@@ -493,4 +646,535 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 	default:
 		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}
+}
+
+// killInceptionTmuxSessions finds and kills tmux sessions for the inception vault.
+// This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
+func (m *Manager) killInceptionTmuxSessions(inceptionName string) error {
+	// List all tmux sessions
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+
+	output, err := cmd.Output()
+	if err != nil {
+		// No tmux sessions found or tmux not running
+		m.logger.Debug("No tmux sessions found or tmux not running")
+
+		return nil
+	}
+
+	// Find sessions matching inception pattern
+	sessions := strings.Split(string(output), "\n")
+	expectedSession := inceptionName + "-vault"
+	matchedSessions := []string{}
+
+	for _, session := range sessions {
+		session = strings.TrimSpace(session)
+		if session == "" {
+			continue
+		}
+
+		// First, exact match for expected session
+		if session == expectedSession {
+			matchedSessions = append(matchedSessions, session)
+
+			continue
+		}
+
+		// Then, legacy pattern as fallback
+		if strings.Contains(session, "inception") && strings.Contains(session, "vault") {
+			matchedSessions = append(matchedSessions, session)
+		}
+	}
+
+	if len(matchedSessions) == 0 {
+		m.logger.Debug("No inception vault tmux sessions found")
+
+		return nil
+	}
+
+	// Kill each matched session
+	for _, session := range matchedSessions {
+		m.logger.Infow("Found inception vault tmux session", "session", session)
+
+		// Send Ctrl-C to session
+		cmd = exec.Command("tmux", "send-keys", "-t", session, "C-c")
+
+		err := cmd.Run()
+		if err != nil {
+			m.logger.Warnw("Failed to send Ctrl-C to tmux session", "session", session, "error", err)
+		}
+
+		// Wait 2 seconds for graceful shutdown
+		time.Sleep(2 * time.Second)
+
+		// Kill the tmux session
+		cmd = exec.Command("tmux", "kill-session", "-t", session)
+
+		err = cmd.Run()
+		if err != nil {
+			m.logger.Warnw("Failed to kill tmux session", "session", session, "error", err)
+		} else {
+			m.logger.Infow("Stopped inception vault tmux session", "session", session)
+		}
+	}
+
+	return nil
+}
+
+// killSafeProcesses kills safe local processes running on the specified port.
+// This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
+func (m *Manager) killSafeProcesses(port int) error {
+	// Find processes using ps and grep
+	findCmd := fmt.Sprintf("ps aux | grep -E 'safe local.*--port %d' | grep -v grep", port)
+
+	cmd := exec.Command("sh", "-c", findCmd)
+
+	output, err := cmd.Output()
+	if err != nil {
+		// No processes found
+		m.logger.Debug("No safe local processes found on port", "port", port)
+
+		return nil
+	}
+
+	if len(output) == 0 {
+		m.logger.Debug("No safe local processes found")
+
+		return nil
+	}
+
+	// Extract PIDs from ps output
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		// Parse PID from ps aux output (second column)
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		pid := fields[1]
+		m.logger.Infow("Found safe local process", "pid", pid, "port", port)
+
+		// Send SIGTERM first
+		killCmd := fmt.Sprintf("kill -TERM %s", pid)
+
+		cmd := exec.Command("sh", "-c", killCmd)
+
+		err := cmd.Run()
+		if err != nil {
+			m.logger.Warnw("Failed to send SIGTERM to process", "pid", pid, "error", err)
+		}
+	}
+
+	// Wait 3 seconds for graceful shutdown
+	time.Sleep(3 * time.Second)
+
+	// Check if processes are still running
+	cmd = exec.Command("sh", "-c", findCmd)
+
+	output, err = cmd.Output()
+	if err == nil && len(output) > 0 {
+		m.logger.Warn("Some processes didn't shutdown gracefully, forcing kill")
+
+		// Force kill with SIGKILL
+		forceKillCmd := fmt.Sprintf("pkill -9 -f 'safe local.*--port %d'", port)
+
+		cmd := exec.Command("sh", "-c", forceKillCmd)
+		_ = cmd.Run() // Ignore errors - best effort
+	}
+
+	m.logger.Infow("Killed safe local processes", "port", port)
+
+	return nil
+}
+
+// verifyPortFreed checks if the vault port has been freed.
+// This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
+func (m *Manager) verifyPortFreed(port int) error {
+	// Check if port is still in use
+	checkCmd := fmt.Sprintf("lsof -i :%d 2>/dev/null | grep LISTEN", port)
+
+	cmd := exec.Command("sh", "-c", checkCmd)
+
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		// Port is free
+		m.logger.Infow("Port is now free", "port", port)
+
+		return nil
+	}
+
+	// Port is still in use
+	m.logger.Warnw("Port is still in use after cleanup attempt", "port", port)
+	m.logger.Warn("You may need to manually kill the process using the port")
+
+	return fmt.Errorf("%w: port %d is still in use", ErrPortInUse, port)
+}
+
+// cleanupVaultFiles removes vault-related files from the filesystem.
+// This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
+func (m *Manager) cleanupVaultFiles(inceptionName string) error {
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return ErrHomeNotSet
+	}
+
+	removedFiles := 0
+
+	// Remove ~/.vault.key
+	vaultKeyFile := filepath.Join(homeDir, ".vault.key")
+	if _, err := os.Stat(vaultKeyFile); err == nil {
+		err := os.Remove(vaultKeyFile)
+		if err != nil {
+			m.logger.Warnw("Failed to remove vault key file", "file", vaultKeyFile, "error", err)
+		} else {
+			m.logger.Infow("Removed vault key file", "file", vaultKeyFile)
+			removedFiles++
+		}
+	}
+
+	// Remove ~/.vault directory
+	vaultDir := filepath.Join(homeDir, ".vault")
+	if _, err := os.Stat(vaultDir); err == nil {
+		err := os.RemoveAll(vaultDir)
+		if err != nil {
+			m.logger.Warnw("Failed to remove vault directory", "dir", vaultDir, "error", err)
+		} else {
+			m.logger.Infow("Removed vault directory", "dir", vaultDir)
+			removedFiles++
+		}
+	}
+
+	// Remove bloc-specific vault key if different from default
+	if m.blocName != "" {
+		blocVaultKeyFile := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "root.key")
+		if _, err := os.Stat(blocVaultKeyFile); err == nil {
+			err := os.Remove(blocVaultKeyFile)
+			if err != nil {
+				m.logger.Warnw("Failed to remove bloc vault key", "file", blocVaultKeyFile, "error", err)
+			} else {
+				m.logger.Infow("Removed bloc vault key", "file", blocVaultKeyFile)
+				removedFiles++
+			}
+		}
+
+		// Remove unseal keys file
+		unsealKeysFile := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "unseal.keys")
+		if _, err := os.Stat(unsealKeysFile); err == nil {
+			err := os.Remove(unsealKeysFile)
+			if err != nil {
+				m.logger.Warnw("Failed to remove unseal keys", "file", unsealKeysFile, "error", err)
+			} else {
+				m.logger.Infow("Removed unseal keys", "file", unsealKeysFile)
+				removedFiles++
+			}
+		}
+
+		// Remove vault data directory
+		blocVaultDataDir := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "data")
+		if _, err := os.Stat(blocVaultDataDir); err == nil {
+			err := os.RemoveAll(blocVaultDataDir)
+			if err != nil {
+				m.logger.Warnw("Failed to remove vault data dir", "dir", blocVaultDataDir, "error", err)
+			} else {
+				m.logger.Infow("Removed vault data directory", "dir", blocVaultDataDir)
+				removedFiles++
+			}
+		}
+	}
+
+	if removedFiles > 0 {
+		m.logger.Infow("File cleanup completed", "removed", removedFiles)
+	} else {
+		m.logger.Info("No vault files found to remove")
+	}
+
+	return nil
+}
+
+// getVaultPathsWithKeys gets all secret paths from a vault target with keys.
+// This matches the Perl implementation in OCFP::Vault::Manager::get_vault_paths.
+func (m *Manager) getVaultPathsWithKeys(basePath string) ([]string, error) {
+	// Use safe paths command to list all paths with keys
+	// In the Perl version, this uses: safe -T target paths secret/ --keys
+	// We'll recursively walk the vault tree and build path:key combinations
+
+	var paths []string
+
+	err := m.walkVaultPaths(basePath, "", &paths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk vault paths: %w", err)
+	}
+
+	// Remove duplicates and sort
+	uniquePaths := make(map[string]bool)
+	for _, path := range paths {
+		uniquePaths[path] = true
+	}
+
+	sortedPaths := make([]string, 0, len(uniquePaths))
+	for path := range uniquePaths {
+		sortedPaths = append(sortedPaths, path)
+	}
+
+	// Sort for consistent ordering
+	sort := func(paths []string) {
+		for i := 0; i < len(paths); i++ {
+			for j := i + 1; j < len(paths); j++ {
+				if paths[i] > paths[j] {
+					paths[i], paths[j] = paths[j], paths[i]
+				}
+			}
+		}
+	}
+
+	sort(sortedPaths)
+
+	return sortedPaths, nil
+}
+
+// walkVaultPaths recursively walks vault paths and collects path:key combinations.
+func (m *Manager) walkVaultPaths(basePath, currentPath string, paths *[]string) error {
+	fullPath := basePath
+	if currentPath != "" {
+		fullPath = basePath + "/" + currentPath
+	}
+
+	// Try to read as a secret first
+	data, err := m.safe.GetAll(fullPath)
+	if err == nil {
+		// This is a secret with keys - add each key as a path:key combination
+		for key := range data {
+			if currentPath == "" {
+				*paths = append(*paths, fullPath+":"+key)
+			} else {
+				*paths = append(*paths, currentPath+":"+key)
+			}
+		}
+
+		return nil
+	}
+
+	// Try to list as a directory
+	subPaths, err := m.safe.List(fullPath)
+	if err != nil {
+		// Neither a secret nor a directory - this is ok, might be empty
+		return nil
+	}
+
+	// Process each sub-path
+	for _, subPath := range subPaths {
+		subPath = strings.TrimSuffix(subPath, "/")
+
+		var newCurrentPath string
+		if currentPath == "" {
+			newCurrentPath = subPath
+		} else {
+			newCurrentPath = currentPath + "/" + subPath
+		}
+
+		err := m.walkVaultPaths(basePath, newCurrentPath, paths)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// calculatePathChecksum calculates SHA256 checksum of a specific path:key value.
+// This matches the Perl implementation in OCFP::Vault::Manager::calculate_checksum.
+func (m *Manager) calculatePathChecksum(basePath, pathWithKey string) (string, error) {
+	// Parse path:key format
+	parts := strings.SplitN(pathWithKey, ":", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("%w: %s (expected path:key)", ErrInvalidPathFormat, pathWithKey)
+	}
+
+	path := parts[0]
+	key := parts[1]
+
+	// Build full path
+	fullPath := basePath
+	if path != "" {
+		fullPath = basePath + "/" + path
+	}
+
+	// Get the value from vault
+	value, err := m.safe.Get(fullPath, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to get value for %s: %w", pathWithKey, err)
+	}
+
+	// Convert value to string for consistent hashing
+	var valueStr string
+	switch v := value.(type) {
+	case string:
+		valueStr = v
+	case []byte:
+		valueStr = string(v)
+	default:
+		// For other types, marshal to JSON
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal value: %w", err)
+		}
+
+		valueStr = string(jsonBytes)
+	}
+
+	// Calculate SHA256 of the value
+	hash := sha256.Sum256([]byte(valueStr))
+
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// getTargetTypesForKit determines which target types (mgmt/ocf) apply to a given kit.
+// This matches the Perl implementation in OCFP::Vault::Manager::update_environment_secrets_providers.
+func (m *Manager) getTargetTypesForKit(kit string) []string {
+	// mgmt-only kits
+	mgmtKits := map[string]bool{
+		"concourse": true,
+		"doomsday":  true,
+		"jumpbox":   true,
+		"shield":    true,
+		"vault":     true,
+		"bosh":      true,
+	}
+
+	// Kits that support both mgmt and ocf
+	bothKits := map[string]bool{
+		"prometheus": true,
+	}
+
+	if mgmtKits[kit] {
+		return []string{"mgmt"}
+	}
+
+	if bothKits[kit] {
+		return []string{"mgmt", "ocf"}
+	}
+
+	// Default to ocf for all other kits (cf, autoscaler, blacksmith, scheduler, etc.)
+	return []string{"ocf"}
+}
+
+// parsedGenesisEnv represents a parsed Genesis environment from genesis envs output.
+type parsedGenesisEnv struct {
+	Kit  string
+	Name string
+	Type string
+}
+
+// getGenesisEnvironments gets the list of deployed Genesis environments.
+// This matches the Perl implementation in OCFP::Vault::Manager::get_genesis_environments.
+func (m *Manager) getGenesisEnvironments() ([]parsedGenesisEnv, error) {
+	// Run genesis envs command
+	cmd := exec.Command("genesis", "envs")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try with full path
+		m.logger.Debug("genesis envs failed, trying with full path")
+
+		whichCmd := exec.Command("which", "genesis")
+
+		whichOutput, whichErr := whichCmd.Output()
+		if whichErr == nil {
+			genesisPath := strings.TrimSpace(string(whichOutput))
+			if genesisPath != "" {
+				m.logger.Infof("Found genesis at: %s", genesisPath)
+
+				cmd = exec.Command(genesisPath, "envs")
+
+				output, err = cmd.CombinedOutput()
+			}
+		}
+
+		// Try shell fallback
+		if err != nil {
+			m.logger.Debug("Attempting shell fallback: sh -c 'genesis envs 2>&1'")
+
+			cmd = exec.Command("sh", "-c", "genesis envs 2>&1")
+
+			output, err = cmd.CombinedOutput()
+		}
+
+		// If still failing, return empty list
+		if err != nil {
+			m.logger.Warnw("Failed to get genesis environments", "error", err, "output", string(output))
+
+			return []parsedGenesisEnv{}, nil
+		}
+	}
+
+	// Parse the output
+	var environments []parsedGenesisEnv
+
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		// Skip empty lines and headers
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		if strings.Contains(line, "Deployment root") || strings.Contains(line, "contains the following") {
+			continue
+		}
+
+		// Look for lines like: "    bosh/scf-stackit-eu01-004-sb-mgmt"
+		// Format: whitespace + kit/environment-name
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+
+		lastPart := parts[len(parts)-1]
+		if strings.Contains(lastPart, "/") {
+			kitAndEnv := strings.SplitN(lastPart, "/", 2)
+			if len(kitAndEnv) != 2 {
+				continue
+			}
+
+			kit := strings.TrimSpace(kitAndEnv[0])
+			envName := strings.TrimSpace(kitAndEnv[1])
+
+			// Remove ANSI color codes
+			kit = stripANSI(kit)
+			envName = stripANSI(envName)
+
+			// Skip blank entries
+			if kit == "" || envName == "" {
+				continue
+			}
+
+			// Determine type based on environment name suffix
+			envType := "ocf" // default
+			if strings.Contains(envName, "-mgmt") {
+				envType = "mgmt"
+			}
+
+			environments = append(environments, parsedGenesisEnv{
+				Kit:  kit,
+				Name: envName,
+				Type: envType,
+			})
+		}
+	}
+
+	return environments, nil
+}
+
+// stripANSI removes ANSI escape codes from a string.
+func stripANSI(str string) string {
+	// Simple ANSI escape sequence pattern: \x1b[...m
+	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+	return re.ReplaceAllString(str, "")
 }
