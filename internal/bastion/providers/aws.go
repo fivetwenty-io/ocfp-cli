@@ -118,7 +118,21 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		// Try to restore key from config if it exists
+		keypairName := a.config.Name + "-bastion"
+		if configKey, exists := a.config.Keys[keypairName]; exists && configKey != "" {
+			restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(a.config.Name, configKey)
+			if restoreErr == nil && restoredPath != "" {
+				a.log.Info("Restored SSH key from config", "path", restoredPath)
+				privateKeyPath = restoredPath
+			} else {
+				a.log.Warn("Failed to restore key from config", "error", restoreErr)
+
+				return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		}
 	}
 
 	// Check if key is password protected

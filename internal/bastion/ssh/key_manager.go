@@ -274,6 +274,41 @@ func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) s
 	return keyStr
 }
 
+// RestoreKeyFromConfig attempts to restore an SSH key from config if it exists.
+// Returns the path to the restored key file, or empty string if no key found in config.
+func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (string, error) {
+	if privateKeyPEM == "" {
+		return "", nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Restore to primary location: ~/.ocfp/{bloc}/ssh/id_ed25519
+	keyDir := filepath.Join(homeDir, ".ocfp", blocName, "ssh")
+	keyPath := filepath.Join(keyDir, "id_ed25519")
+
+	// Create directory if it doesn't exist
+	err = os.MkdirAll(keyDir, sshDirectoryMode)
+	if err != nil {
+		return "", fmt.Errorf("failed to create SSH key directory: %w", err)
+	}
+
+	// Write the private key from config
+	err = os.WriteFile(keyPath, []byte(privateKeyPEM), privateKeyMode)
+	if err != nil {
+		return "", fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	km.log.Info("Restored SSH private key from config",
+		"path", keyPath,
+		"bloc", blocName)
+
+	return keyPath, nil
+}
+
 // keysEqual compares two SSH public keys for equality.
 func keysEqual(key1, key2 ssh.PublicKey) bool {
 	if key1 == nil || key2 == nil {

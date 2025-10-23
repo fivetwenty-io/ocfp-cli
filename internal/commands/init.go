@@ -69,6 +69,7 @@ type initFlags struct {
 	resume     bool
 	verbose    bool
 	ocfpOnly   bool
+	configOnly bool
 }
 
 // addFlags adds all flags to the command.
@@ -80,6 +81,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "resume from last successful checkpoint")
 	cmd.Flags().BoolVar(&f.verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
+	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only sync configuration files to bastion (for bastion init)")
 }
 
 // bindViperFlags binds flags to viper.
@@ -91,6 +93,7 @@ func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("init.resume", cmd.Flags().Lookup("resume"))
 	_ = viper.BindPFlag("init.verbose", cmd.Flags().Lookup("verbose"))
 	_ = viper.BindPFlag("init.ocfp_only", cmd.Flags().Lookup("ocfp"))
+	_ = viper.BindPFlag("init.config_only", cmd.Flags().Lookup("config"))
 }
 
 // runInit executes the init command.
@@ -197,6 +200,10 @@ func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Confi
 			return initializeBastionOCFPOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
 		}
 
+		if f.configOnly {
+			return initializeBastionConfigOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
+		}
+
 		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
@@ -258,6 +265,9 @@ func getInitExamples() string {
 
   # Initialize bastion host
   ocfp init bastion
+
+  # Sync configuration files to bastion only (fast, ~1-5 seconds)
+  ocfp init bastion --config
 
   # Force initialization, skipping confirmation
   ocfp init all --force
@@ -726,6 +736,43 @@ func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, p
 	_, _ = fmt.Fprintf(os.Stdout, "✅ OCFP CLI installation completed successfully\n\n")
 
 	log.Info("OCFP CLI installation completed successfully")
+
+	return nil
+}
+
+// initializeBastionConfigOnly performs configuration file sync only.
+func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
+	log := logger.Get()
+	log.Info("Syncing configuration files only")
+
+	// Provide user feedback
+	_, _ = fmt.Fprintf(os.Stdout, "\n📝 Syncing configuration files to bastion...\n")
+
+	// Create provisioning options with ConfigOnly flag set
+	options := &bastion.ProvisioningOptions{
+		DryRun:      dryRun,
+		Force:       force,
+		Parallel:    parallel,
+		Resume:      resume,
+		Verbose:     verbose,
+		MaxWorkers:  DefaultMaxWorkers,
+		ProgressOut: os.Stdout,
+		LogFile:     "",
+		OCFPOnly:    false,
+		ConfigOnly:  true,
+	}
+
+	// Use mode-aware initialization that detects local vs remote execution
+	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, "❌ Configuration sync failed: %v\n\n", err)
+
+		return fmt.Errorf("configuration sync failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "✅ Configuration sync completed successfully\n\n")
+
+	log.Info("Configuration sync completed successfully")
 
 	return nil
 }

@@ -147,6 +147,11 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return m.runOCFPOnlyMode(ctx)
 	}
 
+	// Handle config-only mode
+	if m.options.ConfigOnly {
+		return m.runConfigOnlyMode(ctx)
+	}
+
 	// Check if already provisioned
 	if m.checkAndSkipIfProvisioned(ctx) {
 		return nil
@@ -178,6 +183,20 @@ func (m *Manager) runOCFPOnlyMode(ctx context.Context) error {
 	}
 
 	m.log.Info("OCFP CLI installation/update completed successfully")
+
+	return nil
+}
+
+// runConfigOnlyMode handles the config-only sync mode.
+func (m *Manager) runConfigOnlyMode(ctx context.Context) error {
+	m.log.Info("Config-only mode: syncing configuration files only")
+
+	err := m.copyConfigFiles(ctx)
+	if err != nil {
+		return fmt.Errorf("config sync failed: %w", err)
+	}
+
+	m.log.Info("Configuration sync completed successfully")
 
 	return nil
 }

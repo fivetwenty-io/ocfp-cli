@@ -1181,6 +1181,21 @@ func (m *Manager) createNewKeyPair(ctx context.Context, keypairName string) erro
 		if err != nil {
 			return fmt.Errorf("failed to save private key: %w", err)
 		}
+
+		// Save private key to config for portability
+		if m.config.Keys == nil {
+			m.config.Keys = make(map[string]string)
+		}
+
+		m.config.Keys[keypairName] = keypair.PrivateKey
+
+		err = config.SaveConfig("", m.options.BlocName, m.config)
+		if err != nil {
+			// Log warning but don't fail - config save is best-effort
+			logger.Warnf("Failed to save SSH key to config: %v", err)
+		} else {
+			logger.Infof("Saved SSH key to config file for portability")
+		}
 	}
 
 	// Save keypair to state and set outputs
