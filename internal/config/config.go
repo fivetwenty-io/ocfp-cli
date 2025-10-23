@@ -954,7 +954,7 @@ func SaveConfig(configPath, blocName string, cfg *Config) error {
 	if configPath == "" {
 		configPath = determineConfigPath("")
 		if configPath == "" {
-			return fmt.Errorf("no config file path available")
+			return ErrNoConfigPath
 		}
 	}
 

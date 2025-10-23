@@ -129,6 +129,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 
   # Populate to specific vault path
   ocfp vault populate --vault-path /concourse/main`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVaultPopulate(cmd, args, fromFile, force)
 		},

@@ -179,7 +179,7 @@ func (gi *GenesisIntegration) createDefaultParams(envType string) map[string]int
 	// Add environment-specific parameters
 	switch envType {
 	case MgmtEnvType:
-		params["bosh_env"] = "mgmt"
+		params["bosh_env"] = MgmtEnvType
 		params["features"] = []string{"bosh-dns", "jumpbox"}
 	case OCFEnvType:
 		params["cf_env"] = "ocf"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 // Client wraps the HashiCorp Vault API client with OCFP-specific functionality.
@@ -130,10 +132,32 @@ func buildVaultClient(client *api.Client, cfg *Config) *Client {
 }
 
 // NewClientFromEnv creates a vault client using environment variables.
+// If VAULT_TOKEN is not set, it will try to read from ~/.saferc.
 func NewClientFromEnv() (*Client, error) {
+	// Try to get token and address from environment first
+	token := os.Getenv("VAULT_TOKEN")
+	address := os.Getenv("VAULT_ADDR")
+
+	// If token is not in environment, try reading from ~/.saferc
+	if token == "" {
+		safeAddr, safeToken, err := readSafeConfig()
+		if err == nil {
+			token = safeToken
+			// Also use safe's vault address if VAULT_ADDR not set
+			if address == "" {
+				address = safeAddr
+			}
+		}
+	}
+
+	// Default to localhost if still not set
+	if address == "" {
+		address = "https://127.0.0.1:8200"
+	}
+
 	cfg := &Config{
-		Address:   getEnvOrDefault("VAULT_ADDR", "https://127.0.0.1:8200"),
-		Token:     os.Getenv("VAULT_TOKEN"),
+		Address:   address,
+		Token:     token,
 		Namespace: os.Getenv("VAULT_NAMESPACE"),
 		AuthType:  getEnvOrDefault("VAULT_AUTH_TYPE", "token"),
 		Username:  os.Getenv("VAULT_USERNAME"),
@@ -148,12 +172,32 @@ func NewClientFromEnv() (*Client, error) {
 }
 
 // NewClientFromConfig creates a vault client from OCFP config.
+// If VAULT_TOKEN is not set, it will try to read from ~/.saferc.
 func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
-	// Extract vault configuration from OCFP config
-	// This would be expanded based on how vault config is stored in OCFP
+	// Try to get token and address from environment first
+	token := os.Getenv("VAULT_TOKEN")
+	address := os.Getenv("VAULT_ADDR")
+
+	// If token is not in environment, try reading from ~/.saferc
+	if token == "" {
+		safeAddr, safeToken, err := readSafeConfig()
+		if err == nil {
+			token = safeToken
+			// Also use safe's vault address if VAULT_ADDR not set
+			if address == "" {
+				address = safeAddr
+			}
+		}
+	}
+
+	// Default to localhost if still not set
+	if address == "" {
+		address = "https://127.0.0.1:8200"
+	}
+
 	cfg := &Config{
-		Address:   getEnvOrDefault("VAULT_ADDR", "https://127.0.0.1:8200"),
-		Token:     os.Getenv("VAULT_TOKEN"),
+		Address:   address,
+		Token:     token,
 		Namespace: os.Getenv("VAULT_NAMESPACE"),
 		AuthType:  getEnvOrDefault("VAULT_AUTH_TYPE", "token"),
 		Username:  "",
@@ -286,4 +330,60 @@ func (c *Client) authenticateAppRole(ctx context.Context, cfg *Config) error {
 	c.logger.Debugw("Authenticated with approle", "lease_duration", authInfo.Auth.LeaseDuration)
 
 	return nil
+}
+
+// safeConfig represents the structure of ~/.saferc file.
+type safeConfig struct {
+	Version string `yaml:"version"`
+	Current string `yaml:"current"`
+	Vaults  map[string]struct {
+		URL   string `yaml:"url"`
+		Token string `yaml:"token"`
+	} `yaml:"vaults"`
+}
+
+// readSafeConfig reads the ~/.saferc file and returns the vault address and token.
+// Returns the URL and token for the current vault target.
+func readSafeConfig() (string, string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Sanitize and validate the path to prevent directory traversal
+	safeRcPath := filepath.Clean(filepath.Join(homeDir, ".saferc"))
+
+	// Ensure the resolved path is still within the user's home directory
+	cleanHomeDir := filepath.Clean(homeDir)
+	if !strings.HasPrefix(safeRcPath, cleanHomeDir) {
+		return "", "", ErrSafercMustBeInHomeDirectory
+	}
+
+	data, err := os.ReadFile(safeRcPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read ~/.saferc: %w", err)
+	}
+
+	var cfg safeConfig
+
+	err = yaml.Unmarshal(data, &cfg)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse ~/.saferc: %w", err)
+	}
+
+	// Get the current vault
+	if cfg.Current == "" {
+		return "", "", ErrNoCurrentVaultSet()
+	}
+
+	vault, ok := cfg.Vaults[cfg.Current]
+	if !ok {
+		return "", "", ErrVaultNotFoundInSaferc(cfg.Current)
+	}
+
+	if vault.Token == "" {
+		return "", "", ErrNoTokenFoundForVault(cfg.Current)
+	}
+
+	return vault.URL, vault.Token, nil
 }

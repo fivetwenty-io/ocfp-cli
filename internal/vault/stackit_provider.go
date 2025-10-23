@@ -69,84 +69,16 @@ func (s *StackitVaultProvider) Configure() error {
 
 	// Configure both management and OCF environments
 	for _, envType := range []string{"mgmt", "ocf"} {
-		s.logger.Infow("Configuring environment", "env_type", envType)
-
-		envPath := s.PathBuilder.GetEnvironmentPath(envType)
-
-		// Configure IaaS components
-		err := s.ConfigureIAAS(envPath, envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure IaaS for %s: %w", envType, err)
-		}
-
-		// Configure services
-		err = s.ConfigureBlobstores(envPath, envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
-		}
-
-		err = s.ConfigureDatabases(envPath, envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure databases for %s: %w", envType, err)
-		}
-
-		err = s.ConfigureLoadBalancers(envPath, envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure load balancers for %s: %w", envType, err)
-		}
-
-		err = s.ConfigureFQDNs(envPath, envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
-		}
-
-		// Configure Shield admin credentials
-		err = s.configureShield(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure Shield for %s: %w", envType, err)
-		}
-
-		// Configure CPI settings
-		err = s.configureCPI(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure CPI for %s: %w", envType, err)
-		}
-
-		// Configure policies
-		err = s.configurePolicies(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure policies for %s: %w", envType, err)
-		}
-
-		// Configure users (mgmt only)
-		err = s.configureUsers(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure users for %s: %w", envType, err)
-		}
-
-		// Configure BOSH-specific components for each environment
-		err = s.configureBOSH(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure BOSH for %s: %w", envType, err)
-		}
-
-		// Configure BOSH metadata
-		err = s.configureBOSHMeta(envType)
-		if err != nil {
-			return fmt.Errorf("failed to configure BOSH meta for %s: %w", envType, err)
+		//nolint:noinlineerr // error is returned directly from configureEnvironment
+		if err := s.configureEnvironment(envType); err != nil {
+			return err
 		}
 	}
 
-	// Configure certificates (shared between environments)
-	err = s.ConfigureCertificates("", "")
+	// Configure shared components
+	err = s.configureSharedComponents()
 	if err != nil {
-		return fmt.Errorf("failed to configure certificates: %w", err)
-	}
-
-	// Configure public IPs (OCF environment only)
-	err = s.ConfigurePublicIPs()
-	if err != nil {
-		return fmt.Errorf("failed to configure public IPs: %w", err)
+		return err
 	}
 
 	s.logger.Infow("STACKIT vault configuration completed", "bloc", s.BlocName)
@@ -362,6 +294,116 @@ func (s *StackitVaultProvider) SaveConfigToVault() error {
 	}
 
 	s.logger.Infow("OCFP configuration saved to vault", "path", configPath)
+
+	return nil
+}
+
+// configureEnvironment configures a single environment (mgmt or ocf).
+func (s *StackitVaultProvider) configureEnvironment(envType string) error {
+	s.logger.Infow("Configuring environment", "env_type", envType)
+
+	envPath := s.PathBuilder.GetEnvironmentPath(envType)
+
+	// Configure IaaS components
+	err := s.ConfigureIAAS(envPath, envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure IaaS for %s: %w", envType, err)
+	}
+
+	// Configure services
+	err = s.configureServices(envPath, envType)
+	if err != nil {
+		return err
+	}
+
+	// Configure environment-specific components
+	err = s.configureEnvironmentComponents(envType)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// configureServices configures all service components for an environment.
+func (s *StackitVaultProvider) configureServices(envPath, envType string) error {
+	err := s.ConfigureBlobstores(envPath, envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
+	}
+
+	err = s.ConfigureDatabases(envPath, envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure databases for %s: %w", envType, err)
+	}
+
+	err = s.ConfigureLoadBalancers(envPath, envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure load balancers for %s: %w", envType, err)
+	}
+
+	err = s.ConfigureFQDNs(envPath, envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
+	}
+
+	return nil
+}
+
+// configureEnvironmentComponents configures environment-specific components.
+func (s *StackitVaultProvider) configureEnvironmentComponents(envType string) error {
+	// Configure Shield admin credentials
+	err := s.configureShield(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure Shield for %s: %w", envType, err)
+	}
+
+	// Configure CPI settings
+	err = s.configureCPI(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure CPI for %s: %w", envType, err)
+	}
+
+	// Configure policies
+	err = s.configurePolicies(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure policies for %s: %w", envType, err)
+	}
+
+	// Configure users (mgmt only)
+	err = s.configureUsers(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure users for %s: %w", envType, err)
+	}
+
+	// Configure BOSH-specific components
+	err = s.configureBOSH(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure BOSH for %s: %w", envType, err)
+	}
+
+	// Configure BOSH metadata
+	err = s.configureBOSHMeta(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure BOSH meta for %s: %w", envType, err)
+	}
+
+	return nil
+}
+
+// configureSharedComponents configures components shared between environments.
+func (s *StackitVaultProvider) configureSharedComponents() error {
+	// Configure certificates (shared between environments)
+	err := s.ConfigureCertificates("", "")
+	if err != nil {
+		return fmt.Errorf("failed to configure certificates: %w", err)
+	}
+
+	// Configure public IPs (OCF environment only)
+	err = s.ConfigurePublicIPs()
+	if err != nil {
+		return fmt.Errorf("failed to configure public IPs: %w", err)
+	}
 
 	return nil
 }
@@ -850,13 +892,13 @@ func (s *StackitVaultProvider) configureCPI(envType string) error {
 
 	// Build CPI configuration
 	cpiConfig := map[string]interface{}{
-		"project_id":            s.Config.ProjectID,
-		"org_id":                s.Config.OrgID,
-		"region":                s.Config.Region,
-		"default_region":        s.Config.Region,
-		"default_key_name":      s.BlocName + "-bastion",
+		"project_id":              s.Config.ProjectID,
+		"org_id":                  s.Config.OrgID,
+		"region":                  s.Config.Region,
+		"default_region":          s.Config.Region,
+		"default_key_name":        s.BlocName + "-bastion",
 		"default_security_groups": fmt.Sprintf(`["default","%s-ocfp"]`, s.BlocName),
-		"keypair_name":          s.BlocName,
+		"keypair_name":            s.BlocName,
 	}
 
 	// Add authentication method - prefer service_account_json, then service_account_token
@@ -928,6 +970,8 @@ func (s *StackitVaultProvider) configurePolicies(envType string) error {
 
 // configureUsers configures jumpbox users for the management environment.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_users.
+//
+//nolint:unparam // error return for future implementation; maintains interface consistency
 func (s *StackitVaultProvider) configureUsers(envType string) error {
 	// Users configuration is only relevant for mgmt environment (jumpbox)
 	if envType != "mgmt" {
@@ -980,6 +1024,7 @@ func (s *StackitVaultProvider) configureBOSHMeta(envType string) error {
 	if err == nil && boshKeysData != nil {
 		if privateKey, ok := boshKeysData["private"]; ok {
 			boshMeta["private_key"] = privateKey
+
 			s.logger.Debug("Found and included BOSH private key in meta information")
 		}
 	}

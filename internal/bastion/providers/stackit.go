@@ -103,64 +103,20 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	s.log.Debug("Getting STACKIT bastion connection details")
 
-	// In a real implementation, this would query the STACKIT API to get the bastion IP
-	// For now, we'll use configuration or make assumptions
-
 	bastionIP, err := s.getBastionIP()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	// Get SSH user
-	sshUser := s.config.Bastion.SSHUser
-	if sshUser == "" {
-		sshUser = "ubuntu" // Default for STACKIT
-	}
+	sshUser := s.getSSHUser()
 
-	// Find SSH private key
-	keyManager := ssh.NewKeyManager()
-
-	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
+	privateKeyPath, err := s.findSSHPrivateKey()
 	if err != nil {
-		// Try to restore key from config if it exists
-		keypairName := s.config.Name + "-bastion"
-		if configKey, exists := s.config.Keys[keypairName]; exists && configKey != "" {
-			restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(s.config.Name, configKey)
-			if restoreErr == nil && restoredPath != "" {
-				s.log.Info("Restored SSH key from config", "path", restoredPath)
-				privateKeyPath = restoredPath
-			} else {
-				s.log.Warn("Failed to restore key from config", "error", restoreErr)
-
-				return nil, fmt.Errorf("failed to find SSH private key: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
-		}
+		return nil, err
 	}
 
-	// Check if key is password protected
-	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
-	if err != nil {
-		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
-	}
-
-	// Prepare SSH options (just the option values, not the -o flag)
-	sshOptions := []string{
-		"StrictHostKeyChecking=no",
-		"UserKnownHostsFile=/dev/null",
-		"LogLevel=ERROR",
-		"ConnectTimeout=30",
-		"ForwardAgent=yes",
-	}
-
-	// Add custom SSH options if configured
-	if s.config.Bastion.SSHOptions != "" {
-		// Parse custom options (this is a simplified implementation)
-		// In practice, you'd want to properly parse the SSH options string
-		customOptions := []string{s.config.Bastion.SSHOptions}
-		sshOptions = append(sshOptions, customOptions...)
-	}
+	isEncrypted := s.checkKeyEncryption(privateKeyPath)
+	sshOptions := s.buildSSHOptions()
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
@@ -172,19 +128,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 		UseSSHPass:     false,
 	}
 
-	// Set password if key is encrypted (use bloc name as password)
-	if isEncrypted {
-		details.Password = s.config.Name
-		details.UseSSHPass = true
-
-		// Check if sshpass is available
-		_, err = exec.LookPath("sshpass")
-		if err != nil {
-			s.log.Warn("SSH key is encrypted but sshpass is not available")
-
-			details.UseSSHPass = false
-		}
-	}
+	s.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
 }
@@ -198,6 +142,94 @@ func (s *StackitBastionInit) Initialize(ctx context.Context) error {
 	// can perform STACKIT-specific setup if needed
 
 	return nil
+}
+
+// getSSHUser returns the SSH user for bastion connection.
+func (s *StackitBastionInit) getSSHUser() string {
+	if s.config.Bastion.SSHUser != "" {
+		return s.config.Bastion.SSHUser
+	}
+
+	return "ubuntu" // Default for STACKIT
+}
+
+// findSSHPrivateKey locates the SSH private key, restoring from config if needed.
+func (s *StackitBastionInit) findSSHPrivateKey() (string, error) {
+	keyManager := ssh.NewKeyManager()
+
+	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
+	if err == nil {
+		return privateKeyPath, nil
+	}
+
+	// Try to restore key from config if it exists
+	keypairName := s.config.Name + "-bastion"
+
+	configKey, exists := s.config.Keys[keypairName]
+	if !exists || configKey == "" {
+		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+	}
+
+	restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(s.config.Name, configKey)
+	if restoreErr != nil || restoredPath == "" {
+		s.log.Warn("Failed to restore key from config", "error", restoreErr)
+
+		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+	}
+
+	s.log.Info("Restored SSH key from config", "path", restoredPath)
+
+	return restoredPath, nil
+}
+
+// checkKeyEncryption checks if the SSH key is password protected.
+func (s *StackitBastionInit) checkKeyEncryption(privateKeyPath string) bool {
+	keyManager := ssh.NewKeyManager()
+
+	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
+	if err != nil {
+		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
+
+		return false
+	}
+
+	return isEncrypted
+}
+
+// buildSSHOptions constructs the SSH options list.
+func (s *StackitBastionInit) buildSSHOptions() []string {
+	sshOptions := []string{
+		"StrictHostKeyChecking=no",
+		"UserKnownHostsFile=/dev/null",
+		"LogLevel=ERROR",
+		"ConnectTimeout=30",
+		"ForwardAgent=yes",
+	}
+
+	if s.config.Bastion.SSHOptions != "" {
+		customOptions := []string{s.config.Bastion.SSHOptions}
+		sshOptions = append(sshOptions, customOptions...)
+	}
+
+	return sshOptions
+}
+
+// configurePasswordIfEncrypted sets up password authentication if key is encrypted.
+func (s *StackitBastionInit) configurePasswordIfEncrypted(details *ConnectionDetails, isEncrypted bool) {
+	if !isEncrypted {
+		return
+	}
+
+	details.Password = s.config.Name
+
+	details.UseSSHPass = true
+
+	_, err := exec.LookPath("sshpass")
+	if err != nil {
+		s.log.Warn("SSH key is encrypted but sshpass is not available")
+
+		details.UseSSHPass = false
+	}
 }
 
 // addGenesisEnv adds Genesis-specific environment variables to the provided map.
