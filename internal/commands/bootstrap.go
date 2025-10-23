@@ -44,9 +44,22 @@ func NewBootstrapCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "bootstrap",
-		Short: "Bootstrap new environment",
-		Long: `Bootstrap provisions the basic infrastructure for a new OCFP environment.
+		Use:     "bootstrap",
+		Short:   "Bootstrap new environment",
+		Long:    getBootstrapLongDescription(),
+		Example: getBootstrapExamples(),
+		RunE:    runBootstrap,
+	}
+
+	addBootstrapFlags(cmd, &blocs, &output, &force, &yes, &dryRun, &all, &servers, &volumes, &snapshots, &buckets, &secGroups, &network, &publicIPs, &bastion, &keypairs)
+	bindBootstrapViperFlags(cmd)
+
+	return cmd
+}
+
+// getBootstrapLongDescription returns the long description for the bootstrap command.
+func getBootstrapLongDescription() string {
+	return `Bootstrap provisions the basic infrastructure for a new OCFP environment.
 
 The command supports different modes:
 - Default (--all): Create all bootstrap resources (network, security, compute, storage)
@@ -69,8 +82,12 @@ This includes (when --all or no flags specified):
 - Security group setup with default rules
 - Volume provisioning
 - Bastion host deployment
-- SSH keypair management`,
-		Example: `  # Bootstrap using a specific config file
+- SSH keypair management`
+}
+
+// getBootstrapExamples returns the examples for the bootstrap command.
+func getBootstrapExamples() string {
+	return `  # Bootstrap using a specific config file
   ocfp bootstrap --config config/production.yml
 
   # Bootstrap using bloc name (creates all resources)
@@ -101,29 +118,31 @@ This includes (when --all or no flags specified):
   ocfp bootstrap --bloc dev --key-pairs
 
   # Bootstrap compute and storage
-  ocfp bootstrap --bloc dev --servers --volumes --buckets`,
-		RunE: runBootstrap,
-	}
+  ocfp bootstrap --bloc dev --servers --volumes --buckets`
+}
 
-	// Command-specific flags
-	cmd.Flags().StringVarP(&blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
-	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt and proceed immediately")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview actions without making changes")
-	cmd.Flags().BoolVar(&all, "all", false, "create all bootstrap resources (default)")
-	cmd.Flags().BoolVar(&servers, "servers", false, "create compute instances and keypairs")
-	cmd.Flags().BoolVar(&volumes, "volumes", false, "create persistent volumes")
-	cmd.Flags().BoolVar(&snapshots, "snapshots", false, "create volume snapshots")
-	cmd.Flags().BoolVar(&buckets, "buckets", false, "create storage buckets")
-	cmd.Flags().BoolVar(&secGroups, "security-groups", false, "create security groups")
-	cmd.Flags().BoolVar(&network, "network", false, "create networks, subnets, routers, and public IPs")
-	cmd.Flags().BoolVar(&publicIPs, "public-ips", false, "create public IP addresses")
-	cmd.Flags().BoolVar(&bastion, "bastion", false, "create only bastion instance")
-	cmd.Flags().BoolVar(&keypairs, "key-pairs", false, "create only SSH key pairs")
-	cmd.Flags().BoolVar(&keypairs, "keys", false, "alias for --key-pairs")
-	cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
+// addBootstrapFlags adds all command flags to the bootstrap command.
+func addBootstrapFlags(cmd *cobra.Command, blocs, output *string, force, yes, dryRun, all, servers, volumes, snapshots, buckets, secGroups, network, publicIPs, bastion, keypairs *bool) {
+	cmd.Flags().StringVarP(blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
+	cmd.Flags().BoolVar(force, "force", false, "skip confirmation prompts")
+	cmd.Flags().BoolVarP(yes, "yes", "y", false, "skip confirmation prompt and proceed immediately")
+	cmd.Flags().BoolVar(dryRun, "dry-run", false, "preview actions without making changes")
+	cmd.Flags().BoolVar(all, "all", false, "create all bootstrap resources (default)")
+	cmd.Flags().BoolVar(servers, "servers", false, "create compute instances and keypairs")
+	cmd.Flags().BoolVar(volumes, "volumes", false, "create persistent volumes")
+	cmd.Flags().BoolVar(snapshots, "snapshots", false, "create volume snapshots")
+	cmd.Flags().BoolVar(buckets, "buckets", false, "create storage buckets")
+	cmd.Flags().BoolVar(secGroups, "security-groups", false, "create security groups")
+	cmd.Flags().BoolVar(network, "network", false, "create networks, subnets, routers, and public IPs")
+	cmd.Flags().BoolVar(publicIPs, "public-ips", false, "create public IP addresses")
+	cmd.Flags().BoolVar(bastion, "bastion", false, "create only bastion instance")
+	cmd.Flags().BoolVar(keypairs, "key-pairs", false, "create only SSH key pairs")
+	cmd.Flags().BoolVar(keypairs, "keys", false, "alias for --key-pairs")
+	cmd.Flags().StringVar(output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
+}
 
-	// Bind flags to viper
+// bindBootstrapViperFlags binds all bootstrap flags to viper.
+func bindBootstrapViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
 	_ = viper.BindPFlag("bootstrap.force", cmd.Flags().Lookup("force"))
 	_ = viper.BindPFlag("bootstrap.yes", cmd.Flags().Lookup("yes"))
@@ -139,8 +158,6 @@ This includes (when --all or no flags specified):
 	_ = viper.BindPFlag("bootstrap.bastion", cmd.Flags().Lookup("bastion"))
 	_ = viper.BindPFlag("bootstrap.key_pairs", cmd.Flags().Lookup("key-pairs"))
 	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
-
-	return cmd
 }
 
 func runBootstrap(cmd *cobra.Command, args []string) error {

@@ -125,7 +125,41 @@ func mergeUpdate(currentState *State, diffSet *DiffSet, opts MergeOptions) *Merg
 	logger.Debug("Applying update merge strategy")
 
 	// Add new resources
-	for _, diff := range diffSet.Added {
+	mergeAddedResources(currentState, diffSet.Added, opts, result)
+
+	// Update modified resources
+	mergeModifiedResources(currentState, diffSet.Modified, opts, result)
+
+	// Skip deleted resources
+	if len(diffSet.Deleted) > 0 {
+		result.ResourcesSkipped += len(diffSet.Deleted)
+		logger.Debugf("Skipped %d deleted resources (update strategy preserves deleted)", len(diffSet.Deleted))
+	}
+
+	return result
+}
+
+// mergeFull applies all changes: adds new, updates existing, deletes removed.
+func mergeFull(currentState *State, diffSet *DiffSet, opts MergeOptions) *MergeResult {
+	result := &MergeResult{Errors: make([]error, 0)}
+
+	logger.Debug("Applying full merge strategy")
+
+	// Add new resources
+	mergeAddedResources(currentState, diffSet.Added, opts, result)
+
+	// Update modified resources
+	mergeModifiedResources(currentState, diffSet.Modified, opts, result)
+
+	// Delete removed resources (unless PreserveDeleted is set)
+	mergeDeletedResources(currentState, diffSet.Deleted, opts, result)
+
+	return result
+}
+
+// mergeAddedResources adds new resources to the current state.
+func mergeAddedResources(currentState *State, added []*ResourceDiff, opts MergeOptions, result *MergeResult) {
+	for _, diff := range added {
 		if diff.DiscoveredResource == nil {
 			logger.Warnf("Skipping added resource %s: no discovered resource data", diff.ResourceID)
 
@@ -147,9 +181,11 @@ func mergeUpdate(currentState *State, diffSet *DiffSet, opts MergeOptions) *Merg
 
 		logger.Debugf("Added resource %s (%s)", resource.ID, resource.Type)
 	}
+}
 
-	// Update modified resources
-	for _, diff := range diffSet.Modified {
+// mergeModifiedResources updates existing resources in the current state.
+func mergeModifiedResources(currentState *State, modified []*ResourceDiff, opts MergeOptions, result *MergeResult) {
+	for _, diff := range modified {
 		if diff.DiscoveredResource == nil || diff.StateResource == nil {
 			logger.Warnf("Skipping modified resource %s: missing resource data", diff.ResourceID)
 
@@ -188,88 +224,12 @@ func mergeUpdate(currentState *State, diffSet *DiffSet, opts MergeOptions) *Merg
 		logger.Debugf("Updated resource %s (%s) with %d property changes",
 			diff.ResourceID, diff.ResourceType, len(diff.PropertyChanges))
 	}
-
-	// Skip deleted resources
-	if len(diffSet.Deleted) > 0 {
-		result.ResourcesSkipped += len(diffSet.Deleted)
-		logger.Debugf("Skipped %d deleted resources (update strategy preserves deleted)", len(diffSet.Deleted))
-	}
-
-	return result
 }
 
-// mergeFull applies all changes: adds new, updates existing, deletes removed.
-func mergeFull(currentState *State, diffSet *DiffSet, opts MergeOptions) *MergeResult {
-	result := &MergeResult{Errors: make([]error, 0)}
-
-	logger.Debug("Applying full merge strategy")
-
-	// Add new resources
-	for _, diff := range diffSet.Added {
-		if diff.DiscoveredResource == nil {
-			logger.Warnf("Skipping added resource %s: no discovered resource data", diff.ResourceID)
-
-			result.ResourcesSkipped++
-
-			continue
-		}
-
-		resource := copyResource(diff.DiscoveredResource)
-
-		if opts.UpdateTimestamps {
-			now := time.Now()
-			resource.CreatedAt = now
-			resource.UpdatedAt = now
-		}
-
-		currentState.Resources[resource.ID] = resource
-		result.ResourcesAdded++
-
-		logger.Debugf("Added resource %s (%s)", resource.ID, resource.Type)
-	}
-
-	// Update modified resources
-	for _, diff := range diffSet.Modified {
-		if diff.DiscoveredResource == nil || diff.StateResource == nil {
-			logger.Warnf("Skipping modified resource %s: missing resource data", diff.ResourceID)
-
-			result.ResourcesSkipped++
-
-			continue
-		}
-
-		stateResource, exists := currentState.Resources[diff.ResourceID]
-		if !exists {
-			logger.Warnf("Modified resource %s not found in state, adding instead", diff.ResourceID)
-			resource := copyResource(diff.DiscoveredResource)
-
-			if opts.UpdateTimestamps {
-				now := time.Now()
-				resource.CreatedAt = now
-				resource.UpdatedAt = now
-			}
-
-			currentState.Resources[resource.ID] = resource
-			result.ResourcesAdded++
-
-			continue
-		}
-
-		UpdateResourceFromDiscovered(stateResource, diff.DiscoveredResource)
-
-		if opts.UpdateTimestamps {
-			stateResource.UpdatedAt = time.Now()
-		}
-
-		result.ResourcesUpdated++
-
-		logger.Debugf("Updated resource %s (%s) with %d property changes",
-			diff.ResourceID, diff.ResourceType, len(diff.PropertyChanges))
-	}
-
-	// Delete removed resources (unless PreserveDeleted is set)
+// mergeDeletedResources removes deleted resources from the current state.
+func mergeDeletedResources(currentState *State, deleted []*ResourceDiff, opts MergeOptions, result *MergeResult) {
 	if !opts.PreserveDeleted {
-		for _, diff := range diffSet.Deleted {
+		for _, diff := range deleted {
 			if _, exists := currentState.Resources[diff.ResourceID]; exists {
 				delete(currentState.Resources, diff.ResourceID)
 
@@ -279,11 +239,9 @@ func mergeFull(currentState *State, diffSet *DiffSet, opts MergeOptions) *MergeR
 			}
 		}
 	} else {
-		result.ResourcesSkipped += len(diffSet.Deleted)
-		logger.Debugf("Preserved %d deleted resources (PreserveDeleted=true)", len(diffSet.Deleted))
+		result.ResourcesSkipped += len(deleted)
+		logger.Debugf("Preserved %d deleted resources (PreserveDeleted=true)", len(deleted))
 	}
-
-	return result
 }
 
 // copyResource creates a deep copy of a resource to avoid mutation issues.

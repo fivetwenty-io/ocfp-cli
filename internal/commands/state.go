@@ -28,7 +28,24 @@ func NewStateCmd() *cobra.Command {
 		Use:          "state",
 		Short:        "Manage infrastructure state",
 		SilenceUsage: true,
-		Long: `Manage infrastructure state files for OCFP blocs.
+		Long:         getStateLongDescription(),
+		Example:      getStateExamples(),
+		RunE:         runStateDisplay,
+	}
+
+	addStateFlags(cmd, &displayFlags, &outputFormat, &filterBy, &sortBy, &search)
+	bindStateViperFlags(cmd)
+
+	// Add subcommands
+	cmd.AddCommand(newStateSyncCmd())
+	cmd.AddCommand(newStateExportCmd())
+
+	return cmd
+}
+
+// getStateLongDescription returns the long description for the state command.
+func getStateLongDescription() string {
+	return `Manage infrastructure state files for OCFP blocs.
 
 The state command provides operations for viewing and synchronizing infrastructure
 state. State files track all resources managed by OCFP for a given bloc.
@@ -55,8 +72,12 @@ Flags can be combined to show multiple resource types.
 
 Available subcommands:
 - sync: Reconcile cloud infrastructure into state file
-- export: Export state to file with filtering and formatting options`,
-		Example: `  # Display all resources (default table format)
+- export: Export state to file with filtering and formatting options`
+}
+
+// getStateExamples returns the examples for the state command.
+func getStateExamples() string {
+	return `  # Display all resources (default table format)
   ocfp state --bloc dev
 
   # Display as JSON
@@ -91,36 +112,24 @@ Available subcommands:
   ocfp state sync --bloc dev
 
   # Preview sync changes without applying
-  ocfp state sync --bloc dev --dry-run`,
-		RunE: runStateDisplay,
-	}
+  ocfp state sync --bloc dev --dry-run`
+}
 
-	// Add resource display flags
-	AddResourceDisplayFlags(cmd, &displayFlags)
+// addStateFlags adds all command flags to the state command.
+func addStateFlags(cmd *cobra.Command, displayFlags *ResourceDisplayFlags, outputFormat *string, filterBy *[]string, sortBy, search *string) {
+	AddResourceDisplayFlags(cmd, displayFlags)
+	cmd.Flags().StringVarP(outputFormat, "output", "o", OutputFormatTable, "output format: table|json|yaml")
+	cmd.Flags().StringArrayVar(filterBy, "filter-by", []string{}, "filter by property (e.g., name=web-*, state=running, tags.env=prod)")
+	cmd.Flags().StringVar(sortBy, "sort-by", "", "sort by field (name, date, state, type) with optional :asc or :desc (e.g., name:desc)")
+	cmd.Flags().StringVar(search, "search", "", "search resources by keyword (searches name, ID, type, state, properties, and tags)")
+}
 
-	// Add output format flag
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", OutputFormatTable, "output format: table|json|yaml")
-
-	// Add property filter flag
-	cmd.Flags().StringArrayVar(&filterBy, "filter-by", []string{}, "filter by property (e.g., name=web-*, state=running, tags.env=prod)")
-
-	// Add sort flag
-	cmd.Flags().StringVar(&sortBy, "sort-by", "", "sort by field (name, date, state, type) with optional :asc or :desc (e.g., name:desc)")
-
-	// Add search flag
-	cmd.Flags().StringVar(&search, "search", "", "search resources by keyword (searches name, ID, type, state, properties, and tags)")
-
-	// Bind flags to viper
+// bindStateViperFlags binds all state flags to viper.
+func bindStateViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("state.output", cmd.Flags().Lookup("output"))
 	_ = viper.BindPFlag("state.filter_by", cmd.Flags().Lookup("filter-by"))
 	_ = viper.BindPFlag("state.sort_by", cmd.Flags().Lookup("sort-by"))
 	_ = viper.BindPFlag("state.search", cmd.Flags().Lookup("search"))
-
-	// Add subcommands
-	cmd.AddCommand(newStateSyncCmd())
-	cmd.AddCommand(newStateExportCmd())
-
-	return cmd
 }
 
 // stateDisplayContext holds configuration for displaying state.
@@ -360,7 +369,20 @@ func newStateSyncCmd() *cobra.Command {
 		Use:          "sync",
 		Short:        "Reconcile infrastructure state from cloud provider",
 		SilenceUsage: true,
-		Long: `Reconcile discovers all existing infrastructure resources from the cloud
+		Long:         getStateSyncLongDescription(),
+		Example:      getStateSyncExamples(),
+		RunE:         runStateSyncCommand,
+	}
+
+	addStateSyncFlags(cmd, &displayFlags, &dryRun, &force, &output, &strategy)
+	bindStateSyncViperFlags(cmd)
+
+	return cmd
+}
+
+// getStateSyncLongDescription returns the long description for the state sync command.
+func getStateSyncLongDescription() string {
+	return `Reconcile discovers all existing infrastructure resources from the cloud
 provider and synchronizes them into the local state file for the specified bloc.
 
 This command:
@@ -392,8 +414,12 @@ By default, all resources are displayed. Use flags to filter which resources to 
   --subnets                 Sync/show subnets
   --security-groups, --sgs  Sync/show security groups
   --routers                 Sync/show routers
-  --snapshots               Sync/show volume snapshots`,
-		Example: `  # Sync all resources for development environment
+  --snapshots               Sync/show volume snapshots`
+}
+
+// getStateSyncExamples returns the examples for the state sync command.
+func getStateSyncExamples() string {
+	return `  # Sync all resources for development environment
   ocfp state sync --bloc dev
 
   # Preview changes without modifying state
@@ -409,45 +435,57 @@ By default, all resources are displayed. Use flags to filter which resources to 
   ocfp state sync --bloc dev --force
 
   # Output sync plan as JSON
-  ocfp state sync --bloc dev --dry-run --output json`,
-		RunE: runStateSyncCommand,
-	}
+  ocfp state sync --bloc dev --dry-run --output json`
+}
 
-	// Command-specific flags
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview sync changes without modifying state")
-	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
-	cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml")
-	cmd.Flags().StringVar(&strategy, "strategy", "full", "merge strategy: add-only|update|full")
+// addStateSyncFlags adds all command flags to the state sync command.
+func addStateSyncFlags(cmd *cobra.Command, displayFlags *ResourceDisplayFlags, dryRun, force *bool, output, strategy *string) {
+	cmd.Flags().BoolVar(dryRun, "dry-run", false, "preview sync changes without modifying state")
+	cmd.Flags().BoolVar(force, "force", false, "skip confirmation prompts")
+	cmd.Flags().StringVar(output, "output", OutputTable, "output format: table|json|yaml")
+	cmd.Flags().StringVar(strategy, "strategy", "full", "merge strategy: add-only|update|full")
+	AddResourceDisplayFlags(cmd, displayFlags)
+}
 
-	// Add resource display flags
-	AddResourceDisplayFlags(cmd, &displayFlags)
-
-	// Bind flags to viper
+// bindStateSyncViperFlags binds all state sync flags to viper.
+func bindStateSyncViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("state.sync.dry_run", cmd.Flags().Lookup("dry-run"))
 	_ = viper.BindPFlag("state.sync.force", cmd.Flags().Lookup("force"))
 	_ = viper.BindPFlag("state.sync.output", cmd.Flags().Lookup("output"))
 	_ = viper.BindPFlag("state.sync.strategy", cmd.Flags().Lookup("strategy"))
-
-	return cmd
 }
 
-// runStateSyncCommand is the execution handler for 'state sync' command.
-func runStateSyncCommand(cmd *cobra.Command, args []string) error {
-	blocName := viper.GetString("bloc")
-	if blocName == "" {
-		return ErrBlocRequired
+// stateSyncParams holds parameters for state sync operation.
+type stateSyncParams struct {
+	blocName    string
+	configFile  string
+	dryRun      bool
+	output      string
+	strategyStr string
+	strategy    state.MergeStrategy
+}
+
+// validateAndParseStateSyncParams validates and parses state sync parameters.
+func validateAndParseStateSyncParams() (*stateSyncParams, error) {
+	params := &stateSyncParams{
+		blocName:    viper.GetString("bloc"),
+		configFile:  viper.GetString("config"),
+		dryRun:      viper.GetBool("state.sync.dry_run"),
+		output:      viper.GetString("state.sync.output"),
+		strategyStr: viper.GetString("state.sync.strategy"),
 	}
 
-	configFile := viper.GetString("config")
-	dryRun := viper.GetBool("state.sync.dry_run")
-	output := viper.GetString("state.sync.output")
-	strategyStr := viper.GetString("state.sync.strategy")
+	if params.blocName == "" {
+		return nil, ErrBlocRequired
+	}
 
 	// Validate merge strategy
-	mergeStrategy, err := state.ParseMergeStrategy(strategyStr)
+	strategy, err := state.ParseMergeStrategy(params.strategyStr)
 	if err != nil {
-		return fmt.Errorf("%w %q: must be add-only, update, or full", ErrInvalidMergeStrategy, strategyStr)
+		return nil, fmt.Errorf("%w %q: must be add-only, update, or full", ErrInvalidMergeStrategy, params.strategyStr)
 	}
+
+	params.strategy = strategy
 
 	// Validate output format
 	validOutputs := map[string]bool{
@@ -455,73 +493,99 @@ func runStateSyncCommand(cmd *cobra.Command, args []string) error {
 		OutputJSON:  true,
 		"yaml":      true,
 	}
-	if !validOutputs[output] {
-		return fmt.Errorf("%w %q: must be table, json, or yaml", ErrInvalidOutputFormat, output)
+	if !validOutputs[params.output] {
+		return nil, fmt.Errorf("%w %q: must be table, json, or yaml", ErrInvalidOutputFormat, params.output)
+	}
+
+	return params, nil
+}
+
+// displayStateSyncConfig displays sync configuration to stdout.
+func displayStateSyncConfig(params *stateSyncParams) {
+	_, _ = fmt.Fprintf(os.Stdout, "Syncing state for bloc: %s\n", params.blocName)
+	_, _ = fmt.Fprintf(os.Stdout, "Merge strategy: %s\n", params.strategyStr)
+
+	if params.dryRun {
+		_, _ = fmt.Fprintln(os.Stdout, "Mode: DRY RUN (no changes will be made)")
+	}
+
+	_, _ = fmt.Fprintln(os.Stdout)
+}
+
+// initializeStateSyncReconciler creates and initializes the reconciler.
+func initializeStateSyncReconciler(ctx context.Context, params *stateSyncParams) (*state.Reconciler, func(), error) {
+	// Load bloc configuration
+	cfg, err := config.LoadWithParams(params.configFile, params.blocName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load configuration for bloc %s: %w", params.blocName, err)
+	}
+
+	// Determine provider and region
+	iaas, region, err := determineProviderFromConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	logger.Infof("Using provider: %s (region: %s)", iaas, region)
+
+	// Create and initialize provider
+	provider, err := cpi.GetProvider(iaas)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	err = provider.Initialize(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize provider: %w", err)
+	}
+
+	cleanup := func() { _ = provider.Cleanup(ctx) }
+
+	// Create state manager
+	stateDir, err := state.GetStateDir(params.blocName)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("failed to determine state directory: %w", err)
+	}
+
+	stateManager, err := state.NewManager(stateDir)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("failed to create state manager: %w", err)
+	}
+
+	// Create reconciler
+	reconciler, err := state.NewReconciler(provider, stateManager, params.blocName)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("failed to create reconciler: %w", err)
+	}
+
+	return reconciler, cleanup, nil
+}
+
+// runStateSyncCommand is the execution handler for 'state sync' command.
+func runStateSyncCommand(cmd *cobra.Command, args []string) error {
+	params, err := validateAndParseStateSyncParams()
+	if err != nil {
+		return err
 	}
 
 	// Initialize logger for this bloc
-	err = initializeStateLogger(blocName, "sync")
+	err = initializeStateLogger(params.blocName, "sync")
 	if err != nil {
 		return err
 	}
 
 	defer func() { _ = logger.Sync() }()
 
-	// Display configuration
-	_, _ = fmt.Fprintf(os.Stdout, "Syncing state for bloc: %s\n", blocName)
-	_, _ = fmt.Fprintf(os.Stdout, "Merge strategy: %s\n", strategyStr)
+	displayStateSyncConfig(params)
 
-	if dryRun {
-		_, _ = fmt.Fprintln(os.Stdout, "Mode: DRY RUN (no changes will be made)")
-	}
+	ctx := context.Background()
 
-	_, _ = fmt.Fprintln(os.Stdout)
-
-	// Load bloc configuration
-	cfg, err := config.LoadWithParams(configFile, blocName)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration for bloc %s: %w", blocName, err)
-	}
-
-	// Determine provider and region
-	iaas, region, err := determineProviderFromConfig(cfg)
+	reconciler, cleanup, err := initializeStateSyncReconciler(ctx, params)
 	if err != nil {
 		return err
 	}
 
-	logger.Infof("Using provider: %s (region: %s)", iaas, region)
-
-	// Create provider
-	ctx := context.Background()
-
-	provider, err := cpi.GetProvider(iaas)
-	if err != nil {
-		return fmt.Errorf("failed to get provider: %w", err)
-	}
-
-	err = provider.Initialize(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize provider: %w", err)
-	}
-
-	defer func() { _ = provider.Cleanup(ctx) }()
-
-	// Create state manager with standard state directory
-	stateDir, err := state.GetStateDir(blocName)
-	if err != nil {
-		return fmt.Errorf("failed to determine state directory: %w", err)
-	}
-
-	stateManager, err := state.NewManager(stateDir)
-	if err != nil {
-		return fmt.Errorf("failed to create state manager: %w", err)
-	}
-
-	// Create reconciler
-	reconciler, err := state.NewReconciler(provider, stateManager, blocName)
-	if err != nil {
-		return fmt.Errorf("failed to create reconciler: %w", err)
-	}
+	defer cleanup()
 
 	// Validate provider credentials
 	err = reconciler.ValidateProvider(ctx)
@@ -531,8 +595,8 @@ func runStateSyncCommand(cmd *cobra.Command, args []string) error {
 
 	// Run reconciliation
 	opts := state.ReconcileOptions{
-		DryRun:   dryRun,
-		Strategy: mergeStrategy,
+		DryRun:   params.dryRun,
+		Strategy: params.strategy,
 		Force:    viper.GetBool("state.sync.force"),
 	}
 
@@ -546,7 +610,7 @@ func runStateSyncCommand(cmd *cobra.Command, args []string) error {
 	filter := NewResourceFilter(displayFlags)
 
 	// Display results using formatter with filtering
-	formattedOutput, err := FormatSyncOutputFiltered(result, result.DiffSet, blocName, strategyStr, dryRun, output, filter)
+	formattedOutput, err := FormatSyncOutputFiltered(result, result.DiffSet, params.blocName, params.strategyStr, params.dryRun, params.output, filter)
 	if err != nil {
 		return fmt.Errorf("failed to format output: %w", err)
 	}

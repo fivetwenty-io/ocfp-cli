@@ -469,64 +469,24 @@ func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentia
 
 	credentials := &AWSCredentials{}
 
-	// Get access key ID
-	accessKeyPath := fmt.Sprintf("secret/config/%s/aws:access_key_id", blocName)
-
-	err = security.ValidateInput(accessKeyPath, validPathPattern)
+	err = retrieveAWSAccessKeyFromVault(ctx, blocName, credentials)
 	if err != nil {
-		return nil, fmt.Errorf("invalid access key path: %w", err)
+		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", accessKeyPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
-	if err == nil {
-		credentials.AccessKeyID = strings.TrimSpace(string(output))
-	}
-
-	// Get secret access key
-	secretKeyPath := fmt.Sprintf("secret/config/%s/aws:secret_access_key", blocName)
-
-	err = security.ValidateInput(secretKeyPath, validPathPattern)
+	err = retrieveAWSSecretKeyFromVault(ctx, blocName, credentials)
 	if err != nil {
-		return nil, fmt.Errorf("invalid secret key path: %w", err)
+		return nil, err
 	}
 
-	cmd = exec.CommandContext(ctx, "safe", "get", secretKeyPath) // #nosec G204 - input validated above
-
-	output, err = cmd.Output()
-	if err == nil {
-		credentials.SecretAccessKey = strings.TrimSpace(string(output))
-	}
-
-	// Get optional session token
-	sessionTokenPath := fmt.Sprintf("secret/config/%s/aws:session_token", blocName)
-
-	err = security.ValidateInput(sessionTokenPath, validPathPattern)
+	err = retrieveAWSSessionTokenFromVault(ctx, blocName, credentials)
 	if err != nil {
-		return nil, fmt.Errorf("invalid session token path: %w", err)
+		return nil, err
 	}
 
-	cmd = exec.CommandContext(ctx, "safe", "get", sessionTokenPath) // #nosec G204 - input validated above
-
-	output, err = cmd.Output()
-	if err == nil {
-		credentials.SessionToken = strings.TrimSpace(string(output))
-	}
-
-	// Get region
-	regionPath := fmt.Sprintf("secret/config/%s/aws:region", blocName)
-
-	err = security.ValidateInput(regionPath, validPathPattern)
+	err = retrieveAWSRegionFromVault(ctx, blocName, credentials)
 	if err != nil {
-		return nil, fmt.Errorf("invalid region path: %w", err)
-	}
-
-	cmd = exec.CommandContext(ctx, "safe", "get", regionPath) // #nosec G204 - input validated above
-
-	output, err = cmd.Output()
-	if err == nil {
-		credentials.Region = strings.TrimSpace(string(output))
+		return nil, err
 	}
 
 	if credentials.AccessKeyID != "" && credentials.SecretAccessKey != "" {
@@ -540,6 +500,82 @@ func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentia
 	return nil, nil
 }
 
+// retrieveAWSAccessKeyFromVault retrieves the AWS access key from vault.
+func retrieveAWSAccessKeyFromVault(ctx context.Context, blocName string, credentials *AWSCredentials) error {
+	accessKeyPath := fmt.Sprintf("secret/config/%s/aws:access_key_id", blocName)
+
+	err := security.ValidateInput(accessKeyPath, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid access key path: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "safe", "get", accessKeyPath) // #nosec G204 - input validated above
+
+	output, err := cmd.Output()
+	if err == nil {
+		credentials.AccessKeyID = strings.TrimSpace(string(output))
+	}
+
+	return nil
+}
+
+// retrieveAWSSecretKeyFromVault retrieves the AWS secret access key from vault.
+func retrieveAWSSecretKeyFromVault(ctx context.Context, blocName string, credentials *AWSCredentials) error {
+	secretKeyPath := fmt.Sprintf("secret/config/%s/aws:secret_access_key", blocName)
+
+	err := security.ValidateInput(secretKeyPath, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid secret key path: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "safe", "get", secretKeyPath) // #nosec G204 - input validated above
+
+	output, err := cmd.Output()
+	if err == nil {
+		credentials.SecretAccessKey = strings.TrimSpace(string(output))
+	}
+
+	return nil
+}
+
+// retrieveAWSSessionTokenFromVault retrieves the AWS session token from vault.
+func retrieveAWSSessionTokenFromVault(ctx context.Context, blocName string, credentials *AWSCredentials) error {
+	sessionTokenPath := fmt.Sprintf("secret/config/%s/aws:session_token", blocName)
+
+	err := security.ValidateInput(sessionTokenPath, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid session token path: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "safe", "get", sessionTokenPath) // #nosec G204 - input validated above
+
+	output, err := cmd.Output()
+	if err == nil {
+		credentials.SessionToken = strings.TrimSpace(string(output))
+	}
+
+	return nil
+}
+
+// retrieveAWSRegionFromVault retrieves the AWS region from vault.
+func retrieveAWSRegionFromVault(ctx context.Context, blocName string, credentials *AWSCredentials) error {
+	regionPath := fmt.Sprintf("secret/config/%s/aws:region", blocName)
+
+	err := security.ValidateInput(regionPath, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid region path: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "safe", "get", regionPath) // #nosec G204 - input validated above
+
+	output, err := cmd.Output()
+	if err == nil {
+		credentials.Region = strings.TrimSpace(string(output))
+	}
+
+	return nil
+}
+
 func configureAWSProfile(profileName string, credentials *AWSCredentials, log *zap.Logger) error {
 	log.Info("Configuring AWS CLI profile", zap.String("profile", profileName))
 
@@ -549,65 +585,30 @@ func configureAWSProfile(profileName string, credentials *AWSCredentials, log *z
 		return fmt.Errorf("invalid profile name: %w", err)
 	}
 
-	// Configure AWS access key ID
-	log.Debug("Setting AWS access key ID")
-
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", credentials.AccessKeyID, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	err = setAWSAccessKeyID(ctx, profileName, credentials.AccessKeyID, log)
 	if err != nil {
-		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", stderr.String()))
-
-		return fmt.Errorf("failed to configure AWS access key ID: %w", err)
+		return err
 	}
 
-	// Configure AWS secret access key
-	log.Debug("Setting AWS secret access key")
-
-	cmd = exec.CommandContext(ctx, "aws", "configure", "set", "aws_secret_access_key", credentials.SecretAccessKey, "--profile", profileName) // #nosec G204 - input validated above
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	err = setAWSSecretAccessKey(ctx, profileName, credentials.SecretAccessKey, log)
 	if err != nil {
-		log.Error("Failed to configure AWS secret access key", zap.Error(err), zap.String("stderr", stderr.String()))
-
-		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
+		return err
 	}
 
-	// Configure region if provided
 	if credentials.Region != "" {
-		log.Debug("Setting AWS region", zap.String("region", credentials.Region))
-
-		cmd = exec.CommandContext(ctx, "aws", "configure", "set", "region", credentials.Region, "--profile", profileName) // #nosec G204 - input validated above
-		cmd.Stderr = &stderr
-
-		err = cmd.Run()
+		err = setAWSRegion(ctx, profileName, credentials.Region, log)
 		if err != nil {
-			log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", stderr.String()))
-
-			return fmt.Errorf("failed to configure AWS region: %w", err)
+			return err
 		}
 	}
 
-	// Configure session token if provided
 	if credentials.SessionToken != "" {
-		log.Debug("Setting AWS session token")
-
-		cmd = exec.CommandContext(ctx, "aws", "configure", "set", "aws_session_token", credentials.SessionToken, "--profile", profileName) // #nosec G204 - input validated above
-		cmd.Stderr = &stderr
-
-		err = cmd.Run()
+		err = setAWSSessionToken(ctx, profileName, credentials.SessionToken, log)
 		if err != nil {
-			log.Error("Failed to configure AWS session token", zap.Error(err), zap.String("stderr", stderr.String()))
-
-			return fmt.Errorf("failed to configure AWS session token: %w", err)
+			return err
 		}
 	}
 
@@ -615,6 +616,86 @@ func configureAWSProfile(profileName string, credentials *AWSCredentials, log *z
 	log.Info("Validating AWS credentials...")
 
 	return validateAWSCredentials(profileName, log)
+}
+
+// setAWSAccessKeyID configures the AWS access key ID for a profile.
+func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log *zap.Logger) error {
+	log.Debug("Setting AWS access key ID")
+
+	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName) // #nosec G204 - input validated above
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS access key ID: %w", err)
+	}
+
+	return nil
+}
+
+// setAWSSecretAccessKey configures the AWS secret access key for a profile.
+func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey string, log *zap.Logger) error {
+	log.Debug("Setting AWS secret access key")
+
+	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_secret_access_key", secretAccessKey, "--profile", profileName) // #nosec G204 - input validated above
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS secret access key", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
+	}
+
+	return nil
+}
+
+// setAWSRegion configures the AWS region for a profile.
+func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logger) error {
+	log.Debug("Setting AWS region", zap.String("region", region))
+
+	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "region", region, "--profile", profileName) // #nosec G204 - input validated above
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS region: %w", err)
+	}
+
+	return nil
+}
+
+// setAWSSessionToken configures the AWS session token for a profile.
+func setAWSSessionToken(ctx context.Context, profileName, sessionToken string, log *zap.Logger) error {
+	log.Debug("Setting AWS session token")
+
+	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_session_token", sessionToken, "--profile", profileName) // #nosec G204 - input validated above
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure AWS session token", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("failed to configure AWS session token: %w", err)
+	}
+
+	return nil
 }
 
 func validateAWSCredentials(profileName string, log *zap.Logger) error {

@@ -1584,9 +1584,8 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 	return resources
 }
 
-// showDeletionPlan displays what will be deleted.
-func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error {
-	// Group by type
+// groupResourcesByType groups resources by their type for deletion plan.
+func groupResourcesByType(resources []*ResourceToDelete) (map[string][]*ResourceToDelete, []string) {
 	typeGroups := make(map[string][]*ResourceToDelete)
 	types := []string{}
 
@@ -1600,6 +1599,46 @@ func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error 
 
 	sort.Strings(types)
 
+	return typeGroups, types
+}
+
+// buildResourceSection builds a table section for a specific resource type.
+func buildResourceSection(typ string, resources []*ResourceToDelete) ui.Section {
+	sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
+
+	// Use different headers for subnets to include CIDR and Type
+	var headers []string
+	if typ == ResourceSubnet {
+		headers = []string{"NAME", "ID", "CIDR", "TYPE", "STATE", "METADATA"}
+	} else {
+		headers = []string{"NAME", "ID", "STATE", "METADATA"}
+	}
+
+	rows := make([][]string, 0, len(resources))
+	for _, resource := range resources {
+		state := resource.State
+		metadata := formatMetadataForDisplay(resource.Tags)
+
+		// Include CIDR and Type for subnets
+		if typ == ResourceSubnet {
+			cidr, subnetType := extractSubnetProperties(resource)
+			rows = append(rows, []string{resource.Name, resource.ID, cidr, subnetType, state, metadata})
+		} else {
+			rows = append(rows, []string{resource.Name, resource.ID, state, metadata})
+		}
+	}
+
+	return ui.Section{
+		Title:   fmt.Sprintf("%s (%d)", strings.ToUpper(typ), len(resources)),
+		Headers: headers,
+		Rows:    rows,
+	}
+}
+
+// showDeletionPlan displays what will be deleted.
+func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error {
+	typeGroups, types := groupResourcesByType(resources)
+
 	// Build plan table
 	title := fmt.Sprintf("DRY RUN — Teardown Plan for bloc '%s' (%s)", m.options.BlocName, m.options.Mode)
 	summary := fmt.Sprintf("Delete %d resources across %d types", len(resources), len(types))
@@ -1610,36 +1649,8 @@ func (m *TeardownManager) showDeletionPlan(resources []*ResourceToDelete) error 
 	}
 
 	for _, typ := range types {
-		list := typeGroups[typ]
-		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-
-		// Use different headers for subnets to include CIDR and Type
-		var headers []string
-		if typ == ResourceSubnet {
-			headers = []string{"NAME", "ID", "CIDR", "TYPE", "STATE", "METADATA"}
-		} else {
-			headers = []string{"NAME", "ID", "STATE", "METADATA"}
-		}
-
-		rows := make([][]string, 0, len(list))
-		for _, resource := range list {
-			state := resource.State
-			metadata := formatMetadataForDisplay(resource.Tags)
-
-			// Include CIDR and Type for subnets
-			if typ == ResourceSubnet {
-				cidr, subnetType := extractSubnetProperties(resource)
-				rows = append(rows, []string{resource.Name, resource.ID, cidr, subnetType, state, metadata})
-			} else {
-				rows = append(rows, []string{resource.Name, resource.ID, state, metadata})
-			}
-		}
-
-		planTable.Sections = append(planTable.Sections, ui.Section{
-			Title:   fmt.Sprintf("%s (%d)", strings.ToUpper(typ), len(list)),
-			Headers: headers,
-			Rows:    rows,
-		})
+		section := buildResourceSection(typ, typeGroups[typ])
+		planTable.Sections = append(planTable.Sections, section)
 	}
 
 	if len(m.options.Skip) > 0 {

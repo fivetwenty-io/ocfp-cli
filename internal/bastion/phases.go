@@ -122,7 +122,9 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 
 // uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
 func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
-	// TODO: Switch to installing official releases once available
+	// NOTE: Currently uploading from local build until official OCFP releases are published.
+	// Once official releases are available via GitHub releases or package repositories,
+	// this should be updated to download and install from the official source.
 	localBinaryPath := "./build/ocfp-linux-amd64"
 	remoteTempPath := "/tmp/ocfp-upload"
 	remoteFinalPath := "/usr/local/bin/ocfp"

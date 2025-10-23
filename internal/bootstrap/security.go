@@ -52,98 +52,139 @@ func (m *Manager) CreateSecurityGroups(ctx context.Context) error {
 	for _, group := range groups {
 		groupName := fmt.Sprintf("%s-%s", m.options.BlocName, group.name)
 
-		// Layer 1: Check if already exists in state AND verify it exists in cloud
-		if existingSG, _ := m.stateManager.GetResource("security_group", groupName); existingSG != nil {
-			// Verify the security group actually exists in the cloud provider
-			existingInCloud, err := netMgr.GetSecurityGroup(ctx, existingSG.ID)
-			if err == nil && existingInCloud != nil {
-				logger.Infof("Security group %s already exists (verified in cloud: %s), skipping creation", groupName, existingSG.ID)
-				// Set output even if skipping
-				_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", group.name), existingSG.ID)
-
-				continue
-			}
-
-			// Security group exists in state but NOT in cloud - remove from state and recreate
-			logger.Warnf("Security group %s found in state (ID: %s) but not in cloud, will recreate", groupName, existingSG.ID)
-			_ = m.stateManager.RemoveResource("security_group", groupName)
-		}
-
-		// Layer 2: Check if already exists in AWS (state may be out of sync)
-		existingFilters := map[string]string{
-			"name":       groupName,
-			"network-id": networkIDStr,
-		}
-
-		existingGroups, _ := netMgr.ListSecurityGroups(ctx, existingFilters)
-		if len(existingGroups) > 0 {
-			// Security group exists in AWS but not in state - sync state
-			existingGroup := existingGroups[0]
-			logger.Infof("Security group %s already exists in AWS (id=%s), syncing to state", groupName, existingGroup.ID)
-			_, _ = fmt.Fprintf(os.Stdout, "    • Security group %s already exists, recording in state...\n", groupName)
-
-			// Add to state
-			err = m.stateManager.AddResource(&state.Resource{
-				ID:         existingGroup.ID,
-				Type:       "security_group",
-				Name:       groupName,
-				Provider:   m.options.Provider,
-				State:      string(cpi.ResourceStateActive),
-				Properties: map[string]interface{}{"rules": len(existingGroup.Rules)},
-				Tags:       m.baseTags(),
-				CreatedAt:  existingGroup.CreatedAt,
-				UpdatedAt:  time.Now(),
-			})
-			if err != nil {
-				return fmt.Errorf("failed to save existing security group to state: %w", err)
-			}
-
-			// Set output
-			_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", group.name), existingGroup.ID)
-
+		// Check if already exists in state and verify it exists in cloud
+		if handled := m.handleExistingSecurityGroupInState(ctx, netMgr, groupName, group.name); handled {
 			continue
 		}
 
-		// Layer 3: Create new security group (doesn't exist in state or AWS)
-		logger.Infof("Creating security group: name=%s rules=%d", groupName, len(group.rules))
-		_, _ = fmt.Fprintf(os.Stdout, "    • Creating security group %s (%d rules)...\n", groupName, len(group.rules))
-
-		// Add Name tag for AWS console display
-		tags := m.baseTags()
-		tags["Name"] = groupName
-
-		securityGroup, err := netMgr.CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
-			Name:        groupName,
-			Description: group.description,
-			NetworkID:   networkIDStr,
-			Rules:       group.rules,
-			Tags:        tags,
-		})
+		// Check if already exists in cloud (state may be out of sync)
+		handled, err := m.handleExistingSecurityGroupInCloud(ctx, netMgr, groupName, group.name, networkIDStr)
 		if err != nil {
-			return fmt.Errorf("failed to create security group %s: %w", groupName, err)
+			return err
+		} else if handled {
+			continue
 		}
 
-		// Save to state
-		err = m.stateManager.AddResource(&state.Resource{
-			ID:         securityGroup.ID,
-			Type:       "security_group",
-			Name:       groupName,
-			Provider:   m.options.Provider,
-			State:      string(cpi.ResourceStateActive),
-			Properties: map[string]interface{}{"rules": len(group.rules)},
-			Tags:       m.baseTags(),
-			CreatedAt:  time.Now(),
-			UpdatedAt:  time.Now(),
-		})
+		// Create new security group (doesn't exist in state or cloud)
+		err = m.createNewSecurityGroup(ctx, netMgr, groupName, &group)
 		if err != nil {
-			return fmt.Errorf("failed to save security group to state: %w", err)
+			return err
 		}
-
-		// Set output
-		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", group.name), securityGroup.ID)
-
-		logger.Infof("Security group created successfully: id=%s name=%s", securityGroup.ID, groupName)
 	}
+
+	return nil
+}
+
+// handleExistingSecurityGroupInState checks if a security group exists in state and verifies it in cloud.
+// Returns true if the security group was handled (exists and verified), false if it needs to be created.
+func (m *Manager) handleExistingSecurityGroupInState(ctx context.Context, netMgr cpi.NetworkManager, groupName, shortName string) bool {
+	existingSG, _ := m.stateManager.GetResource("security_group", groupName)
+	if existingSG == nil {
+		return false
+	}
+
+	// Verify the security group actually exists in the cloud provider
+	existingInCloud, err := netMgr.GetSecurityGroup(ctx, existingSG.ID)
+	if err == nil && existingInCloud != nil {
+		logger.Infof("Security group %s already exists (verified in cloud: %s), skipping creation", groupName, existingSG.ID)
+		// Set output even if skipping
+		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", shortName), existingSG.ID)
+
+		return true
+	}
+
+	// Security group exists in state but NOT in cloud - remove from state and recreate
+	logger.Warnf("Security group %s found in state (ID: %s) but not in cloud, will recreate", groupName, existingSG.ID)
+	_ = m.stateManager.RemoveResource("security_group", groupName)
+
+	return false
+}
+
+// handleExistingSecurityGroupInCloud checks if a security group exists in cloud and syncs it to state.
+// Returns true if the security group was handled (exists in cloud), false if it needs to be created.
+func (m *Manager) handleExistingSecurityGroupInCloud(ctx context.Context, netMgr cpi.NetworkManager, groupName, shortName, networkIDStr string) (bool, error) {
+	existingFilters := map[string]string{
+		"name":       groupName,
+		"network-id": networkIDStr,
+	}
+
+	existingGroups, _ := netMgr.ListSecurityGroups(ctx, existingFilters)
+	if len(existingGroups) == 0 {
+		return false, nil
+	}
+
+	// Security group exists in cloud but not in state - sync state
+	existingGroup := existingGroups[0]
+	logger.Infof("Security group %s already exists in cloud (id=%s), syncing to state", groupName, existingGroup.ID)
+	_, _ = fmt.Fprintf(os.Stdout, "    • Security group %s already exists, recording in state...\n", groupName)
+
+	// Add to state
+	err := m.stateManager.AddResource(&state.Resource{
+		ID:         existingGroup.ID,
+		Type:       "security_group",
+		Name:       groupName,
+		Provider:   m.options.Provider,
+		State:      string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{"rules": len(existingGroup.Rules)},
+		Tags:       m.baseTags(),
+		CreatedAt:  existingGroup.CreatedAt,
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to save existing security group to state: %w", err)
+	}
+
+	// Set output
+	_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", shortName), existingGroup.ID)
+
+	return true, nil
+}
+
+// createNewSecurityGroup creates a new security group and saves it to state.
+func (m *Manager) createNewSecurityGroup(ctx context.Context, netMgr cpi.NetworkManager, groupName string, group *securityGroupDef) error {
+	networkIDStr, err := m.getNetworkIDFromState()
+	if err != nil {
+		return err
+	}
+
+	logger.Infof("Creating security group: name=%s rules=%d", groupName, len(group.rules))
+	_, _ = fmt.Fprintf(os.Stdout, "    • Creating security group %s (%d rules)...\n", groupName, len(group.rules))
+
+	// Add Name tag for AWS console display
+	tags := m.baseTags()
+	tags["Name"] = groupName
+
+	securityGroup, err := netMgr.CreateSecurityGroup(ctx, &cpi.CreateSecurityGroupRequest{
+		Name:        groupName,
+		Description: group.description,
+		NetworkID:   networkIDStr,
+		Rules:       group.rules,
+		Tags:        tags,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create security group %s: %w", groupName, err)
+	}
+
+	// Save to state
+	err = m.stateManager.AddResource(&state.Resource{
+		ID:         securityGroup.ID,
+		Type:       "security_group",
+		Name:       groupName,
+		Provider:   m.options.Provider,
+		State:      string(cpi.ResourceStateActive),
+		Properties: map[string]interface{}{"rules": len(group.rules)},
+		Tags:       m.baseTags(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save security group to state: %w", err)
+	}
+
+	// Set output
+	_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", group.name), securityGroup.ID)
+
+	logger.Infof("Security group created successfully: id=%s name=%s", securityGroup.ID, groupName)
 
 	return nil
 }
