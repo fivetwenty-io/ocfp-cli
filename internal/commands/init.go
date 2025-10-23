@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +32,8 @@ var (
 	validFilePathPattern = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 	validDNSPattern      = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 	validUserPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
+
+	ErrInitCancelled = errors.New("initialization cancelled by user")
 )
 
 // NewInitCmd creates the init command.
@@ -180,7 +183,7 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
 		logger.Get().Info("Initialization cancelled by user")
 
-		return nil
+		return ErrInitCancelled
 	}
 
 	return nil

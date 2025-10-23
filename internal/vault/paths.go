@@ -376,3 +376,51 @@ func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
 		info.Subpath = strings.Join(parts[4:], "/")
 	}
 }
+
+// HostnameFormatter is a function type that generates database hostnames.
+type HostnameFormatter func(envType string) string
+
+// BuildDatabasesForEnv returns database configuration for an environment.
+// The hostnameFormatter function allows provider-specific hostname generation.
+func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
+	databases := make(map[string]map[string]interface{})
+
+	switch envType {
+	case MgmtEnvType:
+		databases["bosh"] = map[string]interface{}{
+			"hostname":          hostnameFormatter(MgmtEnvType),
+			"postgres_username": "bosh",
+			"postgres_password": "((postgres_password))", // Genesis will generate
+			"bosh_username":     "bosh",
+			"bosh_password":     "((bosh_db_password))",
+			"uaa_username":      "uaa",
+			"uaa_password":      "((uaa_db_password))",
+			"credhub_username":  "credhub",
+			"credhub_password":  "((credhub_db_password))",
+		}
+	case OCFEnvType:
+		databases["cf"] = map[string]interface{}{
+			"hostname":                      hostnameFormatter(OCFEnvType),
+			"postgres_username":             "postgres",
+			"postgres_password":             "((postgres_password))",
+			"cloud_controller_username":     "cloud_controller",
+			"cloud_controller_password":     "((cc_db_password))",
+			"diego_username":                "diego",
+			"diego_password":                "((diego_db_password))",
+			"routing_api_username":          "routing_api",
+			"routing_api_password":          "((routing_api_db_password))",
+			"uaa_username":                  "uaa",
+			"uaa_password":                  "((uaa_db_password))",
+			"locket_username":               "locket",
+			"locket_password":               "((locket_db_password))",
+			"credhub_username":              "credhub",
+			"credhub_password":              "((credhub_db_password))",
+			"network_policy_username":       "network_policy",
+			"network_policy_password":       "((network_policy_db_password))",
+			"network_connectivity_username": "network_connectivity",
+			"network_connectivity_password": "((network_connectivity_db_password))",
+		}
+	}
+
+	return databases
+}

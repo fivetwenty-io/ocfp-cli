@@ -16,10 +16,10 @@ const (
 
 // Static errors for logs command.
 var (
-	ErrNoActiveCommands     = errors.New("no active commands running")
-	ErrNoLogsFound          = errors.New("no logs found")
-	ErrNoLogsFoundCommand   = errors.New("no logs found for commands")
-	ErrLogFileDoesNotExist  = errors.New("log file does not exist")
+	ErrNoActiveCommands    = errors.New("no active commands running")
+	ErrNoLogsFound         = errors.New("no logs found")
+	ErrNoLogsFoundCommand  = errors.New("no logs found for commands")
+	ErrLogFileDoesNotExist = errors.New("log file does not exist")
 )
 
 // LogsFlags holds flags for the logs command.

@@ -195,9 +195,23 @@ func bindFlagsToViper(cmd *cobra.Command) {
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, args []string) {
-		if *blocName != "" {
-			viper.Set("bloc", *blocName)
+		// Determine bloc name: flag takes precedence, then env var, then viper config
+		effectiveBlocName := *blocName
+		if effectiveBlocName == "" {
+			// Try environment variable first
+			if envBloc := os.Getenv("OCFP_BLOC"); envBloc != "" {
+				effectiveBlocName = envBloc
+			} else {
+				// Fall back to viper config
+				effectiveBlocName = viper.GetString("bloc")
+			}
 		}
+
+		// Set in viper for other components to use
+		if effectiveBlocName != "" {
+			viper.Set("bloc", effectiveBlocName)
+		}
+
 		// Apply global UI settings
 		ui.SetASCII(viper.GetBool("ascii"))
 
@@ -213,6 +227,7 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 		}
 
 		// Initialize logger once flags and viper are available
+		// Use effectiveBlocName directly to ensure correct value
 		_ = logger.Initialize(logger.Config{
 			Level:      "",
 			Debug:      viper.GetBool("debug"),
@@ -220,7 +235,7 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			Trace:      viper.GetBool("trace"),
 			NoLog:      viper.GetBool("no_log"),
 			LogDir:     "",
-			BlocName:   viper.GetString("bloc"),
+			BlocName:   effectiveBlocName,
 			Command:    commandName,
 			Subcommand: subcommandName,
 			RequestID:  "",
@@ -242,6 +257,7 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 		if viper.GetBool("debug") {
 			fmt.Fprintf(os.Stderr, "DEBUG: Failed to get base directory for command tracking: %v\n", err)
 		}
+
 		return
 	}
 
@@ -260,7 +276,7 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 	}
 
 	if viper.GetBool("debug") {
-		fmt.Fprintf(os.Stderr, "DEBUG: Creating lock file for %s/%s at expected log path: %s\n", 
+		fmt.Fprintf(os.Stderr, "DEBUG: Creating lock file for %s/%s at expected log path: %s\n",
 			commandName, subcommandName, logPath)
 	}
 
@@ -274,23 +290,14 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 		}
 		// Clear tracker to prevent cleanup attempts
 		lock.tracker = nil
+
 		return
 	}
 
 	if viper.GetBool("debug") {
-		fmt.Fprintf(os.Stderr, "DEBUG: Successfully created lock file for command tracking: %s/%s\n", 
+		fmt.Fprintf(os.Stderr, "DEBUG: Successfully created lock file for command tracking: %s/%s\n",
 			commandName, subcommandName)
 	}
-
-	// Ensure lock file is cleaned up on ungraceful exit
-	defer func() {
-		if r := recover(); r != nil {
-			if lock.tracker != nil {
-				_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
-			}
-			panic(r) // Re-panic after cleanup
-		}
-	}()
 }
 
 // createPostRunHandler creates the persistent post-run handler.
@@ -298,6 +305,11 @@ func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, args []string) {
 		// Clean up lock file
 		if lock.tracker != nil && !lock.timestamp.IsZero() {
+			if viper.GetBool("debug") {
+				fmt.Fprintf(os.Stderr, "DEBUG: PostRun cleanup: Removing lock file for timestamp %v, pid %d\n",
+					lock.timestamp, lock.pid)
+			}
+
 			_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
 		}
 	}
@@ -338,6 +350,10 @@ func initConfig(cfgFile string, verbose bool) {
 	// Set environment variable prefix
 	viper.SetEnvPrefix("OCFP")
 	viper.AutomaticEnv()
+
+	// Explicitly bind bloc to environment variable
+	// This ensures OCFP_BLOC takes precedence over config file
+	_ = viper.BindEnv("bloc", "OCFP_BLOC")
 
 	// Set default config path
 	if os.Getenv("OCFP_CONFIG_PATH") == "" {

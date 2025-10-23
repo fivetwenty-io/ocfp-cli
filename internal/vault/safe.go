@@ -37,10 +37,24 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 
 	s.logger.Debugw("Setting vault secret", "path", path, "key", key)
 
+	// Determine if we're using KV v1 or v2
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	// Determine read path based on engine version
+	readPath := path
+	if isKVv2 {
+		readPath = s.convertToKVv2WritePath(path)
+	}
+
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
-	secret, err := s.client.logical.Read(path)
+	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
 		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
@@ -57,31 +71,31 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Update with new key-value
 	existingData[key] = value
 
-	// Determine if we're using KV v1 or v2
+	// Determine write path and data format based on engine version
+	var writePath string
+
 	var writeData map[string]interface{}
 
-	isKVv2, err := s.engine.IsKVv2(path)
-	if err != nil {
-		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
-
-		isKVv2 = false
-	}
-
 	if isKVv2 {
-		// KV v2 format - wrap in "data" field
+		// KV v2: convert path and wrap data
+		writePath = s.convertToKVv2WritePath(path)
 		writeData = map[string]interface{}{
 			"data": existingData,
 		}
 	} else {
-		// KV v1 format - use data directly
+		// KV v1: use path and data directly
+		writePath = path
 		writeData = existingData
 	}
 
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set", path, key, func() error {
-		_, writeErr := s.client.logical.Write(path, writeData)
+		_, writeErr := s.client.logical.Write(writePath, writeData)
+		if writeErr != nil {
+			return fmt.Errorf("vault write operation failed: %w", writeErr)
+		}
 
-		return fmt.Errorf("vault write operation failed: %w", writeErr)
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secret to %s: %w", path, err)
@@ -94,16 +108,30 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 
 // SetMultiple stores multiple key-value pairs at the specified path
 // This is more efficient than calling Set multiple times.
-func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
+func (s *Safe) SetMultiple(path string, data map[string]interface{}) error { //nolint:funlen // KV v2 support requires additional logic
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
 	s.logger.Debugw("Setting multiple vault secrets", "path", path, "keys", len(data))
 
+	// Determine if we're using KV v1 or v2
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	// Determine read path based on engine version
+	readPath := path
+	if isKVv2 {
+		readPath = s.convertToKVv2WritePath(path)
+	}
+
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
-	secret, err := s.client.logical.Read(path)
+	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
 		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
@@ -122,31 +150,31 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 		existingData[key] = value
 	}
 
-	// Determine if we're using KV v1 or v2
+	// Determine write path and data format based on engine version
+	var writePath string
+
 	var writeData map[string]interface{}
 
-	isKVv2, err := s.engine.IsKVv2(path)
-	if err != nil {
-		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
-
-		isKVv2 = false
-	}
-
 	if isKVv2 {
-		// KV v2 format - wrap in "data" field
+		// KV v2: convert path and wrap data
+		writePath = s.convertToKVv2WritePath(path)
 		writeData = map[string]interface{}{
 			"data": existingData,
 		}
 	} else {
-		// KV v1 format - use data directly
+		// KV v1: use path and data directly
+		writePath = path
 		writeData = existingData
 	}
 
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set_multiple", path, "", func() error {
-		_, writeErr := s.client.logical.Write(path, writeData)
+		_, writeErr := s.client.logical.Write(writePath, writeData)
+		if writeErr != nil {
+			return fmt.Errorf("vault write operation failed: %w", writeErr)
+		}
 
-		return fmt.Errorf("vault write operation failed: %w", writeErr)
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secrets to %s: %w", path, err)
@@ -165,12 +193,26 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 
 	s.logger.Debugw("Getting vault secret", "path", path, "key", key)
 
+	// Determine read path based on engine version
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type for read, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	readPath := path
+	if isKVv2 {
+		// KV v2: convert path for read
+		readPath = s.convertToKVv2WritePath(path)
+	}
+
 	var secret *api.Secret
 
-	err := RetryableVaultOperation("get", path, key, func() error {
+	err = RetryableVaultOperation("get", path, key, func() error {
 		var readErr error
 
-		secret, readErr = s.client.logical.Read(path)
+		secret, readErr = s.client.logical.Read(readPath)
 
 		return fmt.Errorf("vault read operation failed: %w", readErr)
 	})
@@ -401,6 +443,25 @@ func (s *Safe) GetJSON(path, key string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// convertToKVv2WritePath converts a logical path to the API write path for KV v2
+// For KV v2, writes go to mount/data/path instead of mount/path.
+func (s *Safe) convertToKVv2WritePath(logicalPath string) string {
+	const minPartsForSubpath = 2
+
+	// Split path into mount and rest
+	parts := strings.SplitN(logicalPath, "/", minPartsForSubpath)
+	if len(parts) < minPartsForSubpath {
+		// Path has no subpath, just add /data
+		return logicalPath + "/data"
+	}
+
+	mount := parts[0]
+	rest := parts[1]
+
+	// Insert /data/ after mount
+	return mount + "/data/" + rest
 }
 
 // exportRecursive recursively exports secrets from a path.

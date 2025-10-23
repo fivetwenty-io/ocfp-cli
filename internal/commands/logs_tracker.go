@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -68,6 +69,12 @@ func (t *CommandTracker) CreateLockFile(info ActiveCommand) error {
 	err = os.WriteFile(lockPath, data, filePermUserRW)
 	if err != nil {
 		return fmt.Errorf("failed to write lock file: %w", err)
+	}
+
+	// Debug: Verify file was written
+	_, err = os.Stat(lockPath)
+	if err != nil {
+		return fmt.Errorf("lock file verification failed - file does not exist after write: %w", err)
 	}
 
 	return nil
@@ -149,7 +156,7 @@ func (t *CommandTracker) IsProcessRunning(pid int) bool {
 
 	// On Unix, FindProcess always succeeds, so we need to send a signal
 	// Signal 0 doesn't actually send a signal but checks if we can
-	err = process.Signal(os.Signal(nil))
+	err = process.Signal(syscall.Signal(0))
 
 	return err == nil
 }

@@ -410,46 +410,19 @@ func (s *StackitVaultProvider) configureSharedComponents() error {
 
 // getDatabasesForEnv returns database configuration for an environment.
 func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map[string]interface{} {
-	databases := make(map[string]map[string]interface{})
-
-	switch envType {
-	case MgmtEnvType:
-		databases["bosh"] = map[string]interface{}{
-			"hostname":          fmt.Sprintf("postgres-%s-mgmt.%s", s.BlocName, s.Config.Region),
-			"postgres_username": "bosh",
-			"postgres_password": "((postgres_password))", // Genesis will generate
-			"bosh_username":     "bosh",
-			"bosh_password":     "((bosh_db_password))",
-			"uaa_username":      "uaa",
-			"uaa_password":      "((uaa_db_password))",
-			"credhub_username":  "credhub",
-			"credhub_password":  "((credhub_db_password))",
-		}
-	case OCFEnvType:
-		databases["cf"] = map[string]interface{}{
-			"hostname":                      fmt.Sprintf("postgres-%s-cf.%s", s.BlocName, s.Config.Region),
-			"postgres_username":             "postgres",
-			"postgres_password":             "((postgres_password))",
-			"cloud_controller_username":     "cloud_controller",
-			"cloud_controller_password":     "((cc_db_password))",
-			"diego_username":                "diego",
-			"diego_password":                "((diego_db_password))",
-			"routing_api_username":          "routing_api",
-			"routing_api_password":          "((routing_api_db_password))",
-			"uaa_username":                  "uaa",
-			"uaa_password":                  "((uaa_db_password))",
-			"locket_username":               "locket",
-			"locket_password":               "((locket_db_password))",
-			"credhub_username":              "credhub",
-			"credhub_password":              "((credhub_db_password))",
-			"network_policy_username":       "network_policy",
-			"network_policy_password":       "((network_policy_db_password))",
-			"network_connectivity_username": "network_connectivity",
-			"network_connectivity_password": "((network_connectivity_db_password))",
+	// StackIT-specific hostname formatter
+	hostnameFormatter := func(env string) string {
+		switch env {
+		case MgmtEnvType:
+			return fmt.Sprintf("postgres-%s-mgmt.%s", s.BlocName, s.Config.Region)
+		case OCFEnvType:
+			return fmt.Sprintf("postgres-%s-cf.%s", s.BlocName, s.Config.Region)
+		default:
+			return ""
 		}
 	}
 
-	return databases
+	return BuildDatabasesForEnv(envType, hostnameFormatter)
 }
 
 // buildTargetsFromIPs builds targets from a list of IPs.

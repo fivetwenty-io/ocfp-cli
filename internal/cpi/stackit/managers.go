@@ -70,9 +70,13 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 		Tags:        mapAnyToString(created.GetLabels()),
 		CreatedAt:   time.Now(),
 	}
-	// Add initial rules if provided (best-effort)
-	for _, r := range req.Rules {
-		_ = m.AddSecurityRule(ctx, out.ID, r)
+	// Add initial rules (critical for network access)
+	for i, r := range req.Rules {
+		err = m.AddSecurityRule(ctx, out.ID, r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add rule %d/%d to security group %s: %w",
+				i+1, len(req.Rules), out.ID, err)
+		}
 	}
 
 	return out, nil
@@ -157,6 +161,9 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID strin
 }
 
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+	logger.Debugf("Adding security group rule: group=%s direction=%s protocol=%s ports=%d-%d cidr=%s",
+		groupID, rule.Direction, rule.Protocol, rule.PortRangeMin, rule.PortRangeMax, rule.RemoteIPCIDR)
+
 	cli, err := m.client.getIAASClient()
 	if err != nil {
 		return err
@@ -165,10 +172,13 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	payload := iaas.NewCreateSecurityGroupRulePayload(rule.Direction)
 	payload.SetSecurityGroupId(groupID)
 
-	if rule.Protocol != "" {
+	// StackIT API: omit protocol field to allow all protocols (per StackIT docs)
+	// "If not explicitly specified, a security group rule will match all IPs, ports and protocols"
+	if rule.Protocol != "" && rule.Protocol != "all" {
 		p := rule.Protocol
 		payload.SetProtocol(iaas.StringAsCreateProtocol(&p))
 	}
+	// If Protocol is "all" or empty, omit SetProtocol to match all protocols
 
 	if rule.Description != "" {
 		payload.SetDescription(rule.Description)

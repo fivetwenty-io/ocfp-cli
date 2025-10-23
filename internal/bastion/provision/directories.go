@@ -37,7 +37,6 @@ func (dm *DirectoryManager) GetOCFPDirectories() []DirectoryConfig {
 		{Path: ocfpPath + "/artifacts", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: ocfpPath + "/kits", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
-		{Path: "${HOME}/.ocfp/config", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
