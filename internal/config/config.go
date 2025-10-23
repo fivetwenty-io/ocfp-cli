@@ -84,6 +84,9 @@ type Config struct {
 
 	// Blobstore policies (optional, for object storage buckets)
 	Blobstore BlobstoreConfig `json:"blobstore" mapstructure:"blobstore" yaml:"blobstore"`
+
+	// SSH Keys storage for portability (bloc-name -> ed25519 private key)
+	Keys map[string]string `json:"keys" mapstructure:"keys" yaml:"keys"`
 }
 
 // BlobstoreConfig controls versioning/lifecycle policies for expected buckets.
@@ -98,7 +101,10 @@ type BlobstoreConfig struct {
 }
 
 // Common default network CIDR for several providers.
-const defaultNetworkCIDR = "10.0.0.0/16"
+const (
+	defaultNetworkCIDR = "10.0.0.0/16"
+	configFileMode     = 0o600
+)
 
 // BucketSettings specify data-plane policies.
 type BucketSettings struct {
@@ -526,6 +532,7 @@ func createEmptyConfig() *Config {
 			CFDroplets:    BucketSettings{},
 			CFAppPackages: BucketSettings{},
 		},
+		Keys: map[string]string{},
 	}
 }
 
@@ -939,4 +946,59 @@ type PublicIPsConfig struct {
 // BucketConfig represents bucket configuration.
 type BucketConfig struct {
 	Name string `mapstructure:"name" yaml:"name"`
+}
+
+// SaveConfig saves the config back to the YAML file.
+// It updates the specific bloc within the config file while preserving other blocs.
+func SaveConfig(configPath, blocName string, cfg *Config) error {
+	if configPath == "" {
+		configPath = determineConfigPath("")
+		if configPath == "" {
+			return fmt.Errorf("no config file path available")
+		}
+	}
+
+	// Load the entire config file to preserve all blocs
+	configFileData := &ConfigFile{
+		Debug:   false,
+		Verbose: false,
+		Blocs:   map[string]*Config{},
+	}
+
+	// Try to load existing config file
+	data, err := os.ReadFile(configPath) // #nosec G304 - path is controlled
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if len(data) > 0 {
+		err = yaml.Unmarshal(data, configFileData)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal existing config: %w", err)
+		}
+	}
+
+	// Update the specific bloc
+	configFileData.Blocs[blocName] = cfg
+
+	// Marshal back to YAML
+	updatedData, err := yaml.Marshal(configFileData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Write to file with secure permissions
+	err = os.WriteFile(configPath, updatedData, configFileMode)
+	if err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	// Invalidate cache for this config
+	configMutex.Lock()
+
+	cacheKey := configPath + ":" + blocName
+	delete(cachedConfigs, cacheKey)
+	configMutex.Unlock()
+
+	return nil
 }

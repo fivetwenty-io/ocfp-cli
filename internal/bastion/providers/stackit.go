@@ -122,7 +122,21 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 
 	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		// Try to restore key from config if it exists
+		keypairName := s.config.Name + "-bastion"
+		if configKey, exists := s.config.Keys[keypairName]; exists && configKey != "" {
+			restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(s.config.Name, configKey)
+			if restoreErr == nil && restoredPath != "" {
+				s.log.Info("Restored SSH key from config", "path", restoredPath)
+				privateKeyPath = restoredPath
+			} else {
+				s.log.Warn("Failed to restore key from config", "error", restoreErr)
+
+				return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		}
 	}
 
 	// Check if key is password protected

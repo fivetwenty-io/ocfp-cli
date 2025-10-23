@@ -41,13 +41,13 @@ const (
 
 var (
 	// Vault inception errors.
-	ErrSafeNotFound        = errors.New("'safe' command not found - please install safe CLI")
-	ErrTmuxNotFound        = errors.New("'tmux' command not found - please install tmux")
-	ErrVaultNotFound       = errors.New("'vault' command not found - please install vault")
-	ErrVaultNotReady       = errors.New("vault did not become ready within timeout")
-	ErrTmuxFailed          = errors.New("failed to create tmux session")
-	ErrVaultStartupError   = errors.New("vault startup error detected in tmux output")
-	ErrVaultTargetVerify   = errors.New("failed to verify inception vault target")
+	ErrSafeNotFound      = errors.New("'safe' command not found - please install safe CLI")
+	ErrTmuxNotFound      = errors.New("'tmux' command not found - please install tmux")
+	ErrVaultNotFound     = errors.New("'vault' command not found - please install vault")
+	ErrVaultNotReady     = errors.New("vault did not become ready within timeout")
+	ErrTmuxFailed        = errors.New("failed to create tmux session")
+	ErrVaultStartupError = errors.New("vault startup error detected in tmux output")
+	ErrVaultTargetVerify = errors.New("failed to verify inception vault target")
 )
 
 // NewVaultCmd creates the vault command.

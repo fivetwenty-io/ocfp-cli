@@ -74,4 +74,5 @@ type ProvisioningOptions struct {
 	ProgressOut io.Writer
 	LogFile     string
 	OCFPOnly    bool
+	ConfigOnly  bool
 }
