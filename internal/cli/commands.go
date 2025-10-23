@@ -35,6 +35,9 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewProviderCmd())
 	root.AddCommand(commands.NewTmuxCmd())
 	root.AddCommand(commands.NewBastionCmd())
+
+	// Logging and diagnostics
+	root.AddCommand(commands.NewLogsCmd())
 }
 
 // Placeholder implementations for commands not yet created

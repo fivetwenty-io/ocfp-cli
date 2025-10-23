@@ -392,11 +392,13 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"shell_environment", m.setupShellEnvironment},
 		{"system_environment", m.setupSystemEnvironment},
 
-		// Phase 7: OCFP CLI and integration
+		// Phase 7: OCFP CLI and Vault operations
+		// CRITICAL: vault_populate MUST run immediately after vault_inception
+		// as it requires the inception vault to exist
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"vault_inception", m.setupVaultInception},
-		{"ocfp_configure", m.runOCFPConfigure},
 		{"vault_populate", m.runVaultPopulate},
+		{"ocfp_configure", m.runOCFPConfigure},
 
 		// Phase 8: Custom scripts and verification
 		{"custom_scripts", m.runCustomScripts},

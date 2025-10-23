@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -15,14 +14,6 @@ import (
 const (
 	// SSH connection defaults.
 	defaultSSHPort = 22
-)
-
-// AWS provider errors.
-var (
-	ErrAWSAccessKeyRequired       = errors.New("AWS access key ID is required")
-	ErrAWSSecretKeyRequired       = errors.New("AWS secret access key is required")
-	ErrAWSRegionRequired          = errors.New("AWS region is required")
-	ErrCouldNotDetermineBastionIP = errors.New("could not determine bastion IP address")
 )
 
 // AWSBastionInit implements bastion initialization for AWS.
@@ -118,21 +109,12 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
-		// Try to restore key from config if it exists
-		keypairName := a.config.Name + "-bastion"
-		if configKey, exists := a.config.Keys[keypairName]; exists && configKey != "" {
-			restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(a.config.Name, configKey)
-			if restoreErr == nil && restoredPath != "" {
-				a.log.Info("Restored SSH key from config", "path", restoredPath)
-				privateKeyPath = restoredPath
-			} else {
-				a.log.Warn("Failed to restore key from config", "error", restoreErr)
-
-				return nil, fmt.Errorf("failed to find SSH private key: %w", err)
-			}
-		} else {
+		restoredPath, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
+		if restoreErr != nil {
 			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
 		}
+
+		privateKeyPath = restoredPath
 	}
 
 	// Check if key is password protected
@@ -272,4 +254,29 @@ func (a *AWSBastionInit) getBastionIPFromState() (string, error) {
 	a.log.Debugw("Found bastion IP in state resource", "ip", publicIP)
 
 	return publicIP, nil
+}
+
+// tryRestoreKeyFromConfig attempts to restore an SSH key from the configuration.
+func (a *AWSBastionInit) tryRestoreKeyFromConfig(keyManager *ssh.KeyManager) (string, error) {
+	keypairName := a.config.Name + "-bastion"
+	configKey, exists := a.config.Keys[keypairName]
+
+	if !exists || configKey == "" {
+		return "", ErrNoKeyFoundInConfig(keypairName)
+	}
+
+	restoredPath, err := keyManager.RestoreKeyFromConfig(a.config.Name, configKey)
+	if err != nil {
+		a.log.Warn("Failed to restore key from config", "error", err)
+
+		return "", fmt.Errorf("failed to restore key from config: %w", err)
+	}
+
+	if restoredPath == "" {
+		return "", ErrRestoredPathEmpty
+	}
+
+	a.log.Info("Restored SSH key from config", "path", restoredPath)
+
+	return restoredPath, nil
 }

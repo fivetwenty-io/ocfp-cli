@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/commands"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	stackit "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -13,6 +15,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// lockInfo stores information about the command lock file for cleanup.
+type lockInfo struct {
+	timestamp time.Time
+	pid       int
+	tracker   *commands.CommandTracker
+}
 
 // Execute constructs the root command, configures flags, and runs it.
 func Execute() {
@@ -26,8 +35,14 @@ func Execute() {
 	defineFlags(rootCmd, flags)
 	bindFlagsToViper(rootCmd)
 
+	// Lock info for tracking active commands
+	lock := &lockInfo{}
+
 	// Set prerun handler
-	rootCmd.PersistentPreRun = createPreRunHandler(flags.blocName)
+	rootCmd.PersistentPreRun = createPreRunHandler(flags.blocName, lock)
+
+	// Set postrun handler
+	rootCmd.PersistentPostRun = createPostRunHandler(lock)
 
 	// Set custom version template
 	rootCmd.SetVersionTemplate(version.Get().String() + "\n")
@@ -136,7 +151,7 @@ operational tooling for Cloud Foundry environments.`,
 
 // defineFlags sets up command line flags.
 func defineFlags(cmd *cobra.Command, flags *flagConfig) {
-	cmd.PersistentFlags().StringVarP(flags.cfgFile, "config", "f", "", "config file path")
+	cmd.PersistentFlags().StringVar(flags.cfgFile, "config", "", "config file path")
 	cmd.PersistentFlags().StringVar(flags.blocName, "bloc", "", "bloc name (key under blocs: in config)")
 	cmd.PersistentFlags().StringVar(flags.blocName, "bloc-name", "", "deprecated: use --bloc instead")
 	cmd.PersistentFlags().BoolVarP(flags.debug, "debug", "d", false, "enable debug output")
@@ -178,7 +193,7 @@ func bindFlagsToViper(cmd *cobra.Command) {
 }
 
 // createPreRunHandler creates the persistent pre-run handler.
-func createPreRunHandler(blocName *string) func(*cobra.Command, []string) {
+func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, args []string) {
 		if *blocName != "" {
 			viper.Set("bloc", *blocName)
@@ -211,7 +226,111 @@ func createPreRunHandler(blocName *string) func(*cobra.Command, []string) {
 			RequestID:  "",
 			DirectorID: "",
 		})
+
+		// Create lock file for active command tracking
+		// Skip if no-log is enabled or if this is the logs command itself
+		if !viper.GetBool("no_log") && commandName != "logs" {
+			setupCommandTracking(lock, commandName, subcommandName)
+		}
 	}
+}
+
+// setupCommandTracking initializes command tracking and lock file creation.
+func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
+	baseDir, err := getBaseDir()
+	if err != nil {
+		if viper.GetBool("debug") {
+			fmt.Fprintf(os.Stderr, "DEBUG: Failed to get base directory for command tracking: %v\n", err)
+		}
+		return
+	}
+
+	lock.timestamp = time.Now()
+	lock.pid = os.Getpid()
+	lock.tracker = commands.NewCommandTracker(baseDir)
+
+	logPath := getExpectedLogPath(baseDir, viper.GetString("bloc"), commandName, subcommandName, lock.timestamp)
+	activeCmd := commands.ActiveCommand{
+		Timestamp:  lock.timestamp,
+		PID:        lock.pid,
+		Bloc:       viper.GetString("bloc"),
+		Command:    commandName,
+		Subcommand: subcommandName,
+		LogPath:    logPath,
+	}
+
+	if viper.GetBool("debug") {
+		fmt.Fprintf(os.Stderr, "DEBUG: Creating lock file for %s/%s at expected log path: %s\n", 
+			commandName, subcommandName, logPath)
+	}
+
+	err = lock.tracker.CreateLockFile(activeCmd)
+	if err != nil {
+		// Log the error but don't fail the command
+		// This allows commands to continue even if tracking fails
+		if viper.GetBool("debug") {
+			fmt.Fprintf(os.Stderr, "DEBUG: Failed to create lock file for command tracking: %v\n", err)
+			fmt.Fprintf(os.Stderr, "DEBUG: Active command tracking will not be available for this execution\n")
+		}
+		// Clear tracker to prevent cleanup attempts
+		lock.tracker = nil
+		return
+	}
+
+	if viper.GetBool("debug") {
+		fmt.Fprintf(os.Stderr, "DEBUG: Successfully created lock file for command tracking: %s/%s\n", 
+			commandName, subcommandName)
+	}
+
+	// Ensure lock file is cleaned up on ungraceful exit
+	defer func() {
+		if r := recover(); r != nil {
+			if lock.tracker != nil {
+				_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
+			}
+			panic(r) // Re-panic after cleanup
+		}
+	}()
+}
+
+// createPostRunHandler creates the persistent post-run handler.
+func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
+	return func(cmd *cobra.Command, args []string) {
+		// Clean up lock file
+		if lock.tracker != nil && !lock.timestamp.IsZero() {
+			_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
+		}
+	}
+}
+
+// getBaseDir returns the base directory for OCFP data.
+func getBaseDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	return filepath.Join(home, ".ocfp"), nil
+}
+
+// getExpectedLogPath constructs the expected log path for a command.
+func getExpectedLogPath(baseDir, bloc, command, subcommand string, timestamp time.Time) string {
+	var pathParts []string
+	if bloc != "" {
+		pathParts = append(pathParts, baseDir, bloc, "logs", command)
+	} else {
+		pathParts = append(pathParts, baseDir, "logs", command)
+	}
+
+	if subcommand != "" {
+		pathParts = append(pathParts, subcommand)
+	}
+
+	dir := filepath.Join(pathParts...)
+	timestampStr := timestamp.Format("20060102-150405")
+	filename := timestampStr + ".log"
+
+	return filepath.Join(dir, filename)
 }
 
 // initConfig reads in config file and ENV variables if set.

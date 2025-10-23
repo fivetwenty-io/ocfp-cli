@@ -315,6 +315,7 @@ func getTeardownConfig() *teardownConfig {
 	buckets := viper.GetBool("teardown.buckets")
 	securityGroups := viper.GetBool("teardown.security_groups")
 	network := viper.GetBool("teardown.network")
+	publicIPs := viper.GetBool("teardown.public_ips")
 	keypairs := viper.GetBool("teardown.key_pairs") || viper.GetBool("teardown.keys")
 
 	return &teardownConfig{
@@ -324,7 +325,7 @@ func getTeardownConfig() *teardownConfig {
 		DryRun:         viper.GetBool("teardown.dry_run"),
 		Nuke:           nuke,
 		All:            all,
-		PublicIPs:      viper.GetBool("teardown.public_ips"),
+		PublicIPs:      publicIPs,
 		Bastion:        bastion,
 		Servers:        servers,
 		Volumes:        volumes,
@@ -335,7 +336,7 @@ func getTeardownConfig() *teardownConfig {
 		KeyPairs:       keypairs,
 		Empty:          viper.GetBool("teardown.empty"),
 		Skip:           viper.GetStringSlice("teardown.skip"),
-		Mode:           getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, securityGroups, network),
+		Mode:           getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, securityGroups, network, publicIPs),
 		Output:         viper.GetString("teardown.output"),
 	}
 }
@@ -441,7 +442,7 @@ func createTeardownManager(cfg *config.Config, provider cpi.Provider, stateManag
 	return NewTeardownManager(cfg, provider, stateManager, teardownOpts)
 }
 
-func getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, securityGroups, network bool) string {
+func getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, securityGroups, network, publicIPs bool) string {
 	if nuke {
 		return "NUKE (delete ALL resources)"
 	}
@@ -451,8 +452,8 @@ func getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, s
 	}
 
 	// Check if any selective resource type flags are set (including bastion)
-	if bastion || servers || volumes || snapshots || buckets || securityGroups || network {
-		selectedTypes := collectTeardownTypes(bastion, servers, volumes, snapshots, buckets, securityGroups, network)
+	if bastion || servers || volumes || snapshots || buckets || securityGroups || network || publicIPs {
+		selectedTypes := collectTeardownTypes(bastion, servers, volumes, snapshots, buckets, securityGroups, network, publicIPs)
 
 		return "SELECTIVE (delete: " + strings.Join(selectedTypes, ", ") + ")"
 	}
@@ -461,7 +462,7 @@ func getTeardownMode(all, nuke, bastion, servers, volumes, snapshots, buckets, s
 }
 
 // collectTeardownTypes returns a list of selected resource types for teardown.
-func collectTeardownTypes(bastion, servers, volumes, snapshots, buckets, securityGroups, network bool) []string {
+func collectTeardownTypes(bastion, servers, volumes, snapshots, buckets, securityGroups, network, publicIPs bool) []string {
 	selectedTypes := []string{}
 
 	if bastion {
@@ -490,6 +491,10 @@ func collectTeardownTypes(bastion, servers, volumes, snapshots, buckets, securit
 
 	if network {
 		selectedTypes = append(selectedTypes, "networks")
+	}
+
+	if publicIPs {
+		selectedTypes = append(selectedTypes, "public-ips")
 	}
 
 	return selectedTypes
@@ -1447,7 +1452,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 // isSelectiveModeActive checks if any selective resource type flags are set.
 func (m *TeardownManager) isSelectiveModeActive() bool {
 	return m.options.Bastion || m.options.Servers || m.options.Volumes ||
-		m.options.Snapshots || m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.KeyPairs
+		m.options.Snapshots || m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.KeyPairs || m.options.PublicIPs
 }
 
 // shouldIncludeResource checks if a resource should be included based on all filters.
@@ -1518,9 +1523,9 @@ func (m *TeardownManager) shouldIncludeResourceInSelectiveMode(resource *Resourc
 		return m.options.KeyPairs
 	default:
 		// For other resource types (like floating_ips), include them based on related flags
-		// Floating/public IPs are network-related
+		// Floating/public IPs require explicit --public-ips flag
 		if resource.Type == ResourceFloatingIP || resource.Type == ResourcePublicIP {
-			return m.options.Network && m.options.PublicIPs
+			return m.options.PublicIPs
 		}
 		// Load balancers are network-related
 		if resource.Type == "loadbalancer" {

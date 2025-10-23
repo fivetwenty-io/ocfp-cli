@@ -8,6 +8,7 @@ import (
 // Config errors.
 var (
 	ErrProviderOrIaasRequired = errors.New("provider or iaas must be specified")
+	ErrNoConfigPath           = errors.New("no config file path available")
 )
 
 // Dynamic error constructors.

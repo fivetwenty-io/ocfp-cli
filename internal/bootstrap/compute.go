@@ -1141,70 +1141,83 @@ func (m *Manager) createNewKeyPair(ctx context.Context, keypairName string) erro
 	_, _ = fmt.Fprintf(os.Stdout, "    • Creating SSH keypair %s (ed25519)...\n", keypairName)
 	logger.Infof("Creating keypair: name=%s", keypairName)
 
-	computeMgr := m.provider.ComputeManager()
+	keypair, shouldSavePrivKey, err := m.createKeypairWithProvider(ctx, keypairName)
+	if err != nil {
+		return err
+	}
 
-	var (
-		keypair           *cpi.KeyPair
-		err               error
-		shouldSavePrivKey = true
-	)
-
-	//nolint:nestif // STACKIT-specific key management requires comprehensive conditional logic
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		keypair, err = m.createStackitKeyPair(ctx, computeMgr, keypairName)
+	if shouldSavePrivKey {
+		err = m.savePrivateKeyAndConfig(keypair.PrivateKey, keypairName)
 		if err != nil {
 			return err
 		}
-	} else {
-		// Standard CreateKeyPair for other providers
-		keypair, err = computeMgr.CreateKeyPair(ctx, &cpi.KeyPairRequest{
-			Name:    keypairName,
-			KeyType: "ed25519",
-			Tags:    m.baseTags(),
-		})
-		if err != nil {
-			// Handle duplicate keypair error
-			if strings.Contains(err.Error(), "InvalidKeyPair.Duplicate") {
-				keypair, shouldSavePrivKey, err = m.handleDuplicateKeyPair(ctx, computeMgr, keypairName)
-				if err != nil {
-					return fmt.Errorf("failed to handle duplicate keypair: %w", err)
-				}
-			} else {
-				return fmt.Errorf("failed to create keypair: %w", err)
-			}
-		}
 	}
 
-	// Save private key to file if needed
-	if shouldSavePrivKey {
-		err = m.savePrivateKey(keypair.PrivateKey)
-		if err != nil {
-			return fmt.Errorf("failed to save private key: %w", err)
-		}
-
-		// Save private key to config for portability
-		if m.config.Keys == nil {
-			m.config.Keys = make(map[string]string)
-		}
-
-		m.config.Keys[keypairName] = keypair.PrivateKey
-
-		err = config.SaveConfig("", m.options.BlocName, m.config)
-		if err != nil {
-			// Log warning but don't fail - config save is best-effort
-			logger.Warnf("Failed to save SSH key to config: %v", err)
-		} else {
-			logger.Infof("Saved SSH key to config file for portability")
-		}
-	}
-
-	// Save keypair to state and set outputs
 	err = m.saveKeyPairToState(keypair, keypairName)
 	if err != nil {
 		return err
 	}
 
 	logger.Infof("Keypair created successfully: id=%s", keypair.ID)
+
+	return nil
+}
+
+// createKeypairWithProvider creates a keypair using the appropriate provider logic.
+func (m *Manager) createKeypairWithProvider(ctx context.Context, keypairName string) (*cpi.KeyPair, bool, error) {
+	computeMgr := m.provider.ComputeManager()
+
+	if strings.EqualFold(m.options.Provider, "stackit") {
+		keypair, err := m.createStackitKeyPair(ctx, computeMgr, keypairName)
+
+		return keypair, true, err
+	}
+
+	return m.createStandardKeyPair(ctx, computeMgr, keypairName)
+}
+
+// createStandardKeyPair creates a keypair for non-STACKIT providers.
+func (m *Manager) createStandardKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
+	keypair, err := computeMgr.CreateKeyPair(ctx, &cpi.KeyPairRequest{
+		Name:    keypairName,
+		KeyType: "ed25519",
+		Tags:    m.baseTags(),
+	})
+	if err == nil {
+		return keypair, true, nil
+	}
+
+	if !strings.Contains(err.Error(), "InvalidKeyPair.Duplicate") {
+		return nil, false, fmt.Errorf("failed to create keypair: %w", err)
+	}
+
+	keypair, shouldSavePrivKey, err := m.handleDuplicateKeyPair(ctx, computeMgr, keypairName)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to handle duplicate keypair: %w", err)
+	}
+
+	return keypair, shouldSavePrivKey, nil
+}
+
+// savePrivateKeyAndConfig saves the private key to file and config.
+func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error {
+	err := m.savePrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to save private key: %w", err)
+	}
+
+	if m.config.Keys == nil {
+		m.config.Keys = make(map[string]string)
+	}
+
+	m.config.Keys[keypairName] = privateKey
+
+	err = config.SaveConfig("", m.options.BlocName, m.config)
+	if err != nil {
+		logger.Warnf("Failed to save SSH key to config: %v", err)
+	} else {
+		logger.Infof("Saved SSH key to config file for portability")
+	}
 
 	return nil
 }
