@@ -1,6 +1,8 @@
 package vault
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -104,6 +106,7 @@ func (a *AWSVaultProvider) GetProviderName() string {
 }
 
 // SaveConfigToVault saves the OCFP configuration to vault.
+// Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
 func (a *AWSVaultProvider) SaveConfigToVault() error {
 	a.logger.Info("Saving OCFP configuration to vault")
 
@@ -113,8 +116,26 @@ func (a *AWSVaultProvider) SaveConfigToVault() error {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}
 
-	// Base64 encode
-	encoded := base64.StdEncoding.EncodeToString(jsonConfig)
+	// Compress with gzip (level 9 - maximum compression) to match Perl implementation
+	var compressedBuf bytes.Buffer
+	gzipWriter, err := gzip.NewWriterLevel(&compressedBuf, gzip.BestCompression)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip writer: %w", err)
+	}
+
+	_, err = gzipWriter.Write(jsonConfig)
+	if err != nil {
+		gzipWriter.Close()
+		return fmt.Errorf("failed to write to gzip: %w", err)
+	}
+
+	err = gzipWriter.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Base64 encode the compressed data
+	encoded := base64.StdEncoding.EncodeToString(compressedBuf.Bytes())
 
 	// Save to vault at secret/config/{bloc}/ocfp:config
 	configPath := a.PathBuilder.GetOCFPConfigPath()
@@ -390,7 +411,7 @@ func (a *AWSVaultProvider) configureSharedComponents() error {
 
 // configureVPC configures VPC settings in vault.
 func (a *AWSVaultProvider) configureVPC(envType string) error {
-	vpcPath := a.PathBuilder.GetVPCPath(envType)
+	vpcPath := a.PathBuilder.GetNetPath(envType)
 
 	// AWS VPC configuration
 	// Use VPCCIDRBlock if available, otherwise fall back to Network.CIDR
@@ -618,7 +639,7 @@ func (a *AWSVaultProvider) configureSecurityGroups(envType string) error {
 
 // configureRegion configures region settings.
 func (a *AWSVaultProvider) configureRegion(envType string) error {
-	vpcPath := a.PathBuilder.GetVPCPath(envType)
+	vpcPath := a.PathBuilder.GetNetPath(envType)
 	regionData := map[string]interface{}{
 		"region": a.Config.Region,
 	}
@@ -655,7 +676,7 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 
 // configureIAM configures AWS IAM credentials.
 func (a *AWSVaultProvider) configureIAM(envType string) error {
-	s3Path := a.PathBuilder.GetS3IAMPath(envType)
+	s3Path := a.PathBuilder.GetS3Path(envType)
 
 	// Use AWS credentials from config
 	accessKey := a.Config.AccessKeyID
