@@ -623,7 +623,7 @@ func TestIntegration_EBSSnapshotLifecycle(t *testing.T) {
 
 	// List Snapshots
 	t.Log("Listing snapshots")
-	snapshots, err := sm.ListSnapshots(ctx, volume.ID)
+	snapshots, err := sm.ListSnapshots(ctx, volume.ID, nil)
 	if err != nil {
 		t.Fatalf("Failed to list snapshots: %v", err)
 	}

@@ -418,8 +418,8 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*c
 	return out, nil
 }
 
-// ListSnapshots lists all snapshots for a volume.
-func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) {
+// ListSnapshots lists all snapshots for a volume with optional filters.
+func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
 	logger.WithOperation("ListSnapshots").Debug("Listing snapshots via SDK")
 
 	cli, err := m.client.getIAASClient()
@@ -431,6 +431,10 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]
 	if volumeID != "" {
 		req = req.LabelSelector("volumeId=" + volumeID)
 	}
+
+	// Note: STACKIT uses label selectors, not tag filters like AWS
+	// Tag filters would need to be applied client-side for STACKIT
+	// For now, we maintain the existing behavior
 
 	resp, err := req.Execute()
 	if err != nil {

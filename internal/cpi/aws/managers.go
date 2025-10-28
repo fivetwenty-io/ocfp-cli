@@ -88,7 +88,7 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.Publi
 }
 
 func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
-	floatingIPs, err := m.ListFloatingIPs(ctx)
+	floatingIPs, err := m.ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

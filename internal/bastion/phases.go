@@ -312,6 +312,11 @@ LOG_FILE="${LOG_DIR}/bastion-init-$(date +%Y%m%d-%H%M%S).log"
 log_info "Starting script execution at $(date)"
 log_info "Log file: ${LOG_FILE}"
 
+# Suppress interactive prompts and debconf warnings
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
 `
 
 	// Export environment variables needed by the scripts

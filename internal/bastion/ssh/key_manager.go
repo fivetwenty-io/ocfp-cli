@@ -326,21 +326,23 @@ func keysEqual(key1, key2 ssh.PublicKey) bool {
 
 // writePrivateKey writes a private key to file in the appropriate format.
 func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, keyType string) error {
-	var (
-		keyBytes  []byte
-		keyFormat string
-	)
+	var keyBlock *pem.Block
 
 	switch keyType {
 	case "ed25519":
-		// Ed25519 private key
+		// Ed25519 private key - use OpenSSH format for compatibility
 		ed25519Key, ok := privateKey.(ed25519.PrivateKey)
 		if !ok {
 			return ErrInvalidEd25519KeyType
 		}
 
-		keyBytes, _ = x509.MarshalPKCS8PrivateKey(ed25519Key)
-		keyFormat = "PRIVATE KEY"
+		// MarshalPrivateKey returns OpenSSH format PEM block
+		var err error
+
+		keyBlock, err = ssh.MarshalPrivateKey(ed25519Key, "")
+		if err != nil {
+			return fmt.Errorf("failed to marshal ed25519 private key: %w", err)
+		}
 
 	case "rsa":
 		// RSA private key
@@ -349,18 +351,15 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 			return ErrInvalidRSAKeyType
 		}
 
-		keyBytes = x509.MarshalPKCS1PrivateKey(rsaKey)
-		keyFormat = "RSA PRIVATE KEY"
+		keyBytes := x509.MarshalPKCS1PrivateKey(rsaKey)
+		keyBlock = &pem.Block{
+			Type:    "RSA PRIVATE KEY",
+			Headers: nil,
+			Bytes:   keyBytes,
+		}
 
 	default:
 		return ErrUnsupportedKeyTypeForWriting(keyType)
-	}
-
-	// Create PEM block
-	keyBlock := &pem.Block{
-		Type:    keyFormat,
-		Headers: nil,
-		Bytes:   keyBytes,
 	}
 
 	// Write to file

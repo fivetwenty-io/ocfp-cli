@@ -268,7 +268,7 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, dryRun boo
 	}
 
 	// List floating IPs
-	ips, err := network.ListFloatingIPs(ctx)
+	ips, err := network.ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to list floating IPs: %w", err)
 	}

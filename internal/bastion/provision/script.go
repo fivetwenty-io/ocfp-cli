@@ -260,8 +260,7 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 		}
 
 		lines = append(lines, "# Create directory: "+dir.Path)
-		lines = append(lines, fmt.Sprintf("DIR_PATH='%s'", dir.Path))
-		lines = append(lines, "DIR_PATH=$(echo \"${DIR_PATH}\" | envsubst)")
+		lines = append(lines, fmt.Sprintf("DIR_PATH=\"%s\"", dir.Path))
 		lines = append(lines, `log_info "Creating directory: ${DIR_PATH}"`)
 
 		if dir.Mode != 0 {
@@ -510,8 +509,7 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		}
 
 		lines = append(lines, fmt.Sprintf("# Clone %s repository", repo.Name))
-		lines = append(lines, fmt.Sprintf("REPO_DEST='%s'", repo.Dest))
-		lines = append(lines, "REPO_DEST=$(echo \"${REPO_DEST}\" | envsubst)")
+		lines = append(lines, fmt.Sprintf("REPO_DEST=\"%s\"", repo.Dest))
 		lines = append(lines, fmt.Sprintf("log_info 'Cloning %s repository to ${REPO_DEST}'", repo.Name))
 
 		lines = append(lines, `if [ -d "${REPO_DEST}" ]; then`)
@@ -531,6 +529,14 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		cloneCmd += ` "${REPO_DEST}"`
 
 		lines = append(lines, cloneCmd)
+
+		// Checkout specific commit if specified
+		if repo.Commit != "" {
+			lines = append(lines, `    cd "${REPO_DEST}"`)
+			lines = append(lines, `    git checkout `+repo.Commit)
+			lines = append(lines, fmt.Sprintf("    log_info 'Checked out %s repository at commit %s'", repo.Name, repo.Commit))
+		}
+
 		lines = append(lines, "fi")
 
 		lines = append(lines, fmt.Sprintf("log_success '%s repository ready'", repo.Name))
@@ -645,8 +651,15 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 	// Add header
 	lines = append(lines, "# Install "+tool.Name)
 
-	// Check if tool already exists at destination
-	if tool.Dest != "" {
+	// Check if tool has custom installation command
+	if tool.InstallCommand != "" {
+		return sg.generateCustomInstallation(tool)
+	}
+
+	// Determine installation strategy based on tool characteristics
+	switch {
+	case tool.Dest != "":
+		// Check if tool already exists at destination
 		lines = append(lines, fmt.Sprintf("if [ -f '%s' ]; then", tool.Dest))
 		lines = append(lines, fmt.Sprintf("    log_info 'Binary tool already installed: %s'", tool.Name))
 		lines = append(lines, "else")
@@ -663,7 +676,8 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 		}
 
 		lines = append(lines, "fi")
-	} else {
+
+	default:
 		// No destination specified, install without check
 		lines = append(lines, fmt.Sprintf("log_info 'Installing %s'", tool.Name))
 		lines = append(lines, sg.generateDownloadSteps(tool)...)
@@ -671,6 +685,30 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 	}
 
 	// Add empty line separator
+	lines = append(lines, "")
+
+	return lines
+}
+
+// generateCustomInstallation generates installation script for tools with custom InstallCommand.
+func (sg *ScriptGenerator) generateCustomInstallation(tool BinaryTool) []string {
+	var lines []string
+
+	lines = append(lines, "# Custom installation for "+tool.Name)
+	lines = append(lines, fmt.Sprintf("log_info 'Installing %s (custom method)'", tool.Name))
+	lines = append(lines, "")
+
+	// Add the custom installation command
+	// Split by newlines and add each line
+	installLines := strings.Split(strings.TrimSpace(tool.InstallCommand), "\n")
+	lines = append(lines, installLines...)
+	lines = append(lines, "")
+
+	// Add verification if specified
+	if tool.Verify != "" {
+		lines = append(lines, sg.generateVerificationStep(tool)...)
+	}
+
 	lines = append(lines, "")
 
 	return lines

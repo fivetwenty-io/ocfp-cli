@@ -281,14 +281,18 @@ func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
 	cmd = append(cmd, "-o", "IdentitiesOnly=yes")
 
-	// Enable SSH agent forwarding if SSH_AUTH_SOCK is set
-	if os.Getenv("SSH_AUTH_SOCK") != "" {
-		cmd = append(cmd, "-A") // ForwardAgent yes
-	}
-
 	// Add key if specified
 	if keyPath != "" {
 		cmd = append(cmd, "-i", keyPath)
+		// Disable SSH agent to prevent "too many authentication failures"
+		// when agent has many keys loaded
+		cmd = append(cmd, "-o", "IdentityAgent=none")
+	}
+
+	// Enable SSH agent forwarding if SSH_AUTH_SOCK is set
+	// Only if we're not disabling the agent for authentication
+	if os.Getenv("SSH_AUTH_SOCK") != "" && keyPath == "" {
+		cmd = append(cmd, "-A") // ForwardAgent yes
 	}
 
 	// Add extra options if provided - sanitize by only allowing safe SSH options

@@ -170,36 +170,14 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 
 // GetGitRepositories returns Git repositories to clone.
 func (c *Config) GetGitRepositories() []GitRepository {
-	modes := c.modes
-	if modes == nil {
-		modes = deployments.NewResolver(c.config)
-	}
-	//nolint:staticcheck // modes may be used for future validation
-	_ = modes
-
 	repos := []GitRepository{}
 
-	// Add genesis repository if configured
-	if c.config.Bastion.Genesis.Enabled {
-		repo := GitRepository{
-			Name:      "genesis",
-			Enabled:   true,
-			Condition: "",
-			URL:       c.config.Bastion.Genesis.Repo,
-			Branch:    c.config.Bastion.Genesis.Branch,
-			Dest:      "${HOME}/ocfp/genesis",
-			Depth:     1,
+	// Add Genesis repository if using source-based installation
+	if c.shouldInstallGenesisFromSource() {
+		genesisRepo := c.getGenesisRepository()
+		if genesisRepo.Enabled {
+			repos = append(repos, genesisRepo)
 		}
-
-		if repo.URL == "" {
-			repo.URL = "git@github.com:genesis-community/genesis.git"
-		}
-
-		if repo.Branch == "" {
-			repo.Branch = "v3.1.x-dev"
-		}
-
-		repos = append(repos, repo)
 	}
 
 	return repos
@@ -243,6 +221,67 @@ func (c *Config) GetCustomScripts() []CustomScript {
 	}
 
 	return scripts
+}
+
+// shouldInstallGenesisFromSource determines if Genesis should be installed from source.
+// Returns true if:
+// 1. Genesis is enabled in config
+// 2. No binary URL override is specified
+// 3. Branch or commit configuration indicates source-based installation.
+func (c *Config) shouldInstallGenesisFromSource() bool {
+	genesisConfig := c.getGenesisConfig()
+
+	if !genesisConfig.Enabled {
+		return false
+	}
+
+	// Check for binary download override
+	if override, exists := c.config.Bastion.ToolOverrides["genesis"]; exists {
+		if override.URL != "" {
+			return false // Binary download mode
+		}
+	}
+
+	return true // Default to source-based
+}
+
+// getGenesisConfig returns the effective Genesis configuration.
+// Bastion-specific config takes precedence over global config.
+func (c *Config) getGenesisConfig() config.Genesis {
+	genesisConfig := c.config.Genesis
+
+	// Bastion-specific overrides take precedence
+	if c.config.Bastion.Genesis.Enabled {
+		genesisConfig = c.config.Bastion.Genesis
+	}
+
+	return genesisConfig
+}
+
+// getGenesisRepository returns Git repository configuration for Genesis.
+func (c *Config) getGenesisRepository() GitRepository {
+	genesisConfig := c.getGenesisConfig()
+
+	repo := "git@github.com:genesis-community/genesis"
+	if genesisConfig.Repo != "" {
+		repo = genesisConfig.Repo
+	}
+
+	branch := genesisConfig.Branch
+	if branch == "" {
+		branch = "v3.1.x-dev" // Default from applyDefaults
+	}
+
+	return GitRepository{
+		Name:      "genesis",
+		Enabled:   true,
+		Condition: "",
+		URL:       repo,
+		Branch:    branch,
+		Commit:    genesisConfig.Commit,
+		Dest:      "${HOME}/ocfp/genesis",
+		Depth:     0, // Full clone for building
+	}
 }
 
 // getCorePackages returns core package groups.
@@ -424,21 +463,136 @@ func (c *Config) getCloudFoundryTools() []BinaryTool {
 }
 
 // getGenesisTool returns Genesis tool configuration.
+// Downloads genesis v3.1.0-rc.1 binary directly from GitHub release.
 func (c *Config) getGenesisTool() BinaryTool {
+	genesisConfig := c.getGenesisConfig()
+
+	version := genesisConfig.VersionPrefix
+	if version == "" {
+		version = "3.1.0"
+	}
+
+	// Check for binary download mode (tool override with URL)
+	if override, exists := c.config.Bastion.ToolOverrides["genesis"]; exists {
+		if override.URL != "" {
+			return c.getGenesisBinaryDownload(override)
+		}
+
+		if override.InstallCommand != "" {
+			return c.getGenesisCustomInstall(override, version)
+		}
+	}
+
+	// Default: source-based installation
+	return c.getGenesisSourceBuild(version)
+}
+
+// getGenesisSourceBuild returns Genesis tool configuration for source-based installation.
+func (c *Config) getGenesisSourceBuild(version string) BinaryTool {
+	installCmd := fmt.Sprintf(`# Genesis source-based installation
+if [ ! -d ~/ocfp/genesis/.git ]; then
+    log_error "Genesis repository not cloned. This should not happen."
+    exit 1
+fi
+
+pushd ~/ocfp/genesis > /dev/null
+
+# Clean previous builds
+rm -rf genesis-*
+
+# Build genesis
+log_info "Building genesis version %s"
+if ! ./pack %s; then
+    log_error "Failed to build genesis"
+    popd > /dev/null
+    exit 1
+fi
+
+# Install genesis binary
+GENESIS_BIN="genesis-%s"
+if [ ! -f "$GENESIS_BIN" ]; then
+    log_error "Genesis binary not found: $GENESIS_BIN"
+    popd > /dev/null
+    exit 1
+fi
+
+# Determine installation path
+if command -v genesis > /dev/null 2>&1; then
+    INSTALL_PATH=$(command -v genesis)
+else
+    INSTALL_PATH="/usr/local/bin/genesis"
+fi
+
+log_info "Installing genesis to $INSTALL_PATH"
+sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
+sudo chmod +x "$INSTALL_PATH"
+
+popd > /dev/null`, version, version, version)
+
 	return BinaryTool{
 		Name:           "genesis",
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/genesis-community/genesis/releases/latest",
-		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/genesis-community/genesis/releases/download/v${VERSION}/genesis",
+		VersionURL:     "",
+		VersionPattern: "",
+		URLTemplate:    "",
+		Dest:           "/usr/local/bin/genesis",
+		Mode:           fileModeExecutable,
+		Extract:        false,
+		InstallCommand: installCmd,
+		Verify:         fmt.Sprintf("genesis --version | grep -q '%s'", version),
+		Sudo:           false, // Sudo handled within InstallCommand
+	}
+}
+
+// getGenesisBinaryDownload returns Genesis tool configuration for binary download mode.
+// This mode is intended for future use when Genesis releases stable binaries.
+func (c *Config) getGenesisBinaryDownload(override config.ToolOverride) BinaryTool {
+	verifyCmd := override.VerifyCommand
+	if verifyCmd == "" {
+		verifyCmd = "genesis --version"
+	}
+
+	return BinaryTool{
+		Name:           "genesis",
+		Enabled:        true,
+		Condition:      "",
+		URL:            override.URL,
+		VersionURL:     override.VersionURL,
+		VersionPattern: override.VersionPattern,
+		URLTemplate:    override.URLTemplate,
 		Dest:           "/usr/local/bin/genesis",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
-		Verify:         "[ -x /usr/local/bin/genesis ]",
+		Verify:         verifyCmd,
 		Sudo:           true,
+	}
+}
+
+// getGenesisCustomInstall returns Genesis tool configuration for custom installation.
+// This allows users to provide their own installation script via config.
+func (c *Config) getGenesisCustomInstall(override config.ToolOverride, version string) BinaryTool {
+	verifyCmd := override.VerifyCommand
+	if verifyCmd == "" {
+		verifyCmd = fmt.Sprintf("genesis --version | grep -q '%s'", version)
+	}
+
+	return BinaryTool{
+		Name:           "genesis",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "",
+		VersionPattern: "",
+		URLTemplate:    "",
+		Dest:           "/usr/local/bin/genesis",
+		Mode:           fileModeExecutable,
+		Extract:        false,
+		InstallCommand: override.InstallCommand,
+		Verify:         verifyCmd,
+		Sudo:           false,
 	}
 }
 

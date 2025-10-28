@@ -74,6 +74,15 @@ func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest, nicI
 	m.configureServerMetadata(payload, req)
 	m.configureServerNetworking(payload, req, nicID)
 
+	// Configure security groups when NOT using pre-created NIC
+	// (when using NIC, security groups are attached to the NIC itself)
+	if nicID == "" && len(req.SecurityGroupIDs) > 0 {
+		payload.SetSecurityGroups(req.SecurityGroupIDs)
+		logger.WithOperation("buildCreateServerPayload").Infof("Set security groups on payload: %v", req.SecurityGroupIDs)
+	} else {
+		logger.WithOperation("buildCreateServerPayload").Debugf("NOT setting security groups: nicID=%s, sgCount=%d", nicID, len(req.SecurityGroupIDs))
+	}
+
 	if req.UserData != "" {
 		// SDK expects bytes; it will base64-encode for transport
 		payload.SetUserData([]byte(req.UserData))
@@ -123,8 +132,15 @@ func (m *ComputeManager) buildBootVolume(req *cpi.InstanceRequest) iaas.CreateSe
 
 // configureServerMetadata configures server metadata (keypair, zone, labels).
 func (m *ComputeManager) configureServerMetadata(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest) {
-	if req.KeyPair != "" {
-		payload.SetKeypairName(req.KeyPair)
+	// Use KeyPairName (preferred) or fall back to KeyPair (legacy)
+	keypairName := req.KeyPairName
+	if keypairName == "" {
+		keypairName = req.KeyPair
+	}
+
+	if keypairName != "" {
+		payload.SetKeypairName(keypairName)
+		logger.WithOperation("configureServerMetadata").Infof("Set keypair: %s", keypairName)
 	}
 
 	if req.AvailabilityZone != "" {
@@ -172,6 +188,7 @@ func (m *ComputeManager) serverResponseToInstance(server interface {
 	GetKeypairNameOk() (string, bool)
 	GetLabelsOk() (map[string]interface{}, bool)
 	GetStatusOk() (string, bool)
+	GetSecurityGroupsOk() ([]string, bool)
 }) *cpi.Instance {
 	return m.populateInstanceFromServer(server)
 }
@@ -283,10 +300,10 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	// Build NIC->PublicIP map once
 	publicIPsByNIC := m.buildPublicIPMap(ctx, cli)
 
-	// Convert servers to instances
-	instances := m.serversToInstances(ctx, cli, resp, publicIPsByNIC)
+	// Convert servers to instances with client-side filtering for defense-in-depth
+	instances := m.serversToInstances(ctx, cli, resp, publicIPsByNIC, filters)
 
-	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(instances))
+	logger.WithOperation("ListInstances").Debugf("Found %d instances (after client-side filtering)", len(instances))
 
 	return instances, nil
 }
@@ -309,26 +326,40 @@ func (m *ComputeManager) listServersWithFilters(ctx context.Context, cli *iaas.A
 }
 
 // buildLabelSelector builds a label selector from filters.
+// Handles filters with "label:" or "label." prefixes, as well as plain keys.
+// Plain keys (like "bloc", "managed-by") are treated as label selectors.
 func (m *ComputeManager) buildLabelSelector(filters map[string]string) string {
 	selectors := make([]string, 0, len(filters))
 
 	for k, v := range filters {
+		var key string
 		if strings.HasPrefix(k, "label.") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label."), v))
+			key = strings.TrimPrefix(k, "label.")
 		} else if strings.HasPrefix(k, "label:") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label:"), v))
+			key = strings.TrimPrefix(k, "label:")
+		} else {
+			// Treat plain keys as label selectors (e.g., "bloc", "managed-by")
+			key = k
 		}
+		selectors = append(selectors, fmt.Sprintf("%s=%s", key, v))
 	}
 
 	return strings.Join(selectors, ",")
 }
 
-// serversToInstances converts server responses to instances.
-func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APIClient, resp *iaas.ServerListResponse, publicIPsByNIC map[string]string) []*cpi.Instance {
+// serversToInstances converts server responses to instances with client-side label filtering.
+// This provides defense-in-depth protection against returning instances from wrong blocs.
+func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APIClient, resp *iaas.ServerListResponse, publicIPsByNIC map[string]string, filters map[string]string) []*cpi.Instance {
 	items, _ := resp.GetItemsOk()
 	out := make([]*cpi.Instance, 0, len(items))
 
 	for _, server := range items {
+		// Client-side label filtering for safety (defense-in-depth)
+		labels := mapAnyToString(server.GetLabels())
+		if !matchLabels(labels, filters) {
+			continue
+		}
+
 		inst := m.serverToInstance(server)
 
 		// Populate networking for each instance
@@ -359,6 +390,7 @@ func (m *ComputeManager) populateInstanceFromServer(server interface {
 	GetKeypairNameOk() (string, bool)
 	GetLabelsOk() (map[string]interface{}, bool)
 	GetStatusOk() (string, bool)
+	GetSecurityGroupsOk() ([]string, bool)
 }) *cpi.Instance {
 	inst := &cpi.Instance{
 		ID:               "",
@@ -402,6 +434,13 @@ func (m *ComputeManager) populateInstanceFromServer(server interface {
 
 	if keypairName, ok := server.GetKeypairNameOk(); ok {
 		inst.KeyPair = keypairName
+	}
+
+	if securityGroups, ok := server.GetSecurityGroupsOk(); ok {
+		inst.SecurityGroups = securityGroups
+		logger.WithOperation("populateInstanceFromServer").Infof("Retrieved security groups from API: %v", securityGroups)
+	} else {
+		logger.WithOperation("populateInstanceFromServer").Warnf("No security groups returned from API for instance %s", inst.ID)
 	}
 
 	if labels, ok := server.GetLabelsOk(); ok {
@@ -468,6 +507,51 @@ func mapServerStatus(status string) cpi.ResourceState {
 	}
 }
 
+// deleteServerNICs attempts to delete all NICs associated with a server.
+// This is done before server deletion to avoid "in use" errors on security groups/networks.
+// Failures are logged but don't prevent server deletion since partial cleanup is better than none.
+func (m *ComputeManager) deleteServerNICs(ctx context.Context, cli *iaas.APIClient, instanceID string) {
+	nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		logger.WithOperation("DeleteInstance").Warnf("Failed to list NICs for cleanup: %v", err)
+
+		return
+	}
+
+	nics, ok := nicsResp.GetItemsOk()
+	if !ok || nics == nil {
+		return
+	}
+
+	for _, nic := range nics {
+		m.deleteNIC(ctx, cli, nic)
+	}
+}
+
+// deleteNIC deletes a single NIC, logging any errors but not propagating them.
+func (m *ComputeManager) deleteNIC(ctx context.Context, cli *iaas.APIClient, nic iaas.NIC) {
+	nicID, nicIDExists := nic.GetIdOk()
+	if !nicIDExists || nicID == "" {
+		return
+	}
+
+	networkID, networkIDExists := nic.GetNetworkIdOk()
+	if !networkIDExists || networkID == "" {
+		return
+	}
+
+	logger.WithOperation("DeleteInstance").Debugf("Deleting NIC %s from network %s", nicID, networkID)
+
+	err := cli.DeleteNic(ctx, m.client.config.ProjectID, networkID, nicID).Execute()
+	if err != nil {
+		logger.WithOperation("DeleteInstance").Warnf("Failed to delete NIC %s: %v", nicID, err)
+
+		return
+	}
+
+	logger.WithOperation("DeleteInstance").Debugf("Successfully deleted NIC %s", nicID)
+}
+
 // DeleteInstance deletes an instance.
 func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) error {
 	logger.WithOperation("DeleteInstance").Infof("Deleting instance: %s", instanceID)
@@ -476,6 +560,9 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) 
 	if err != nil {
 		return err
 	}
+
+	// Delete all NICs before deleting the server to avoid "in use" errors
+	m.deleteServerNICs(ctx, cli, instanceID)
 
 	err = cli.DeleteServer(ctx, m.client.config.ProjectID, instanceID).Execute()
 	if err != nil {

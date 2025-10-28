@@ -68,7 +68,7 @@ func NewClient(config *ConnectionDetails, options *ProvisioningOptions) *Client 
 	}
 }
 
-// Connect establishes an SSH connection to the bastion host.
+// Connect establishes an SSH connection to the bastion host with retry logic.
 func (c *Client) Connect(ctx context.Context) error {
 	if c.connected {
 		return nil
@@ -78,45 +78,76 @@ func (c *Client) Connect(ctx context.Context) error {
 		"host", c.config.Host,
 		"user", c.config.User)
 
-	// Prepare SSH client configuration
-	sshConfig, err := c.prepareSSHConfig()
-	if err != nil {
-		return fmt.Errorf("failed to prepare SSH config: %w", err)
-	}
-
-	// Try multiple connection strategies
-	strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
-		c.connectWithNativeClient,
-		c.connectWithExternalSSH,
-	}
+	// Retry configuration
+	maxRetries := 5
+	retryInterval := 3 * time.Second
+	maxRetryInterval := 30 * time.Second
 
 	var lastErr error
-
-	for index, strategy := range strategies {
-		c.log.Debugw("Attempting connection strategy", "strategy", index+1)
-
-		client, err := strategy(ctx, sshConfig)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Prepare SSH client configuration
+		sshConfig, err := c.prepareSSHConfig()
 		if err != nil {
-			lastErr = err
-			c.log.Warnw("Connection strategy failed",
-				"strategy", index+1,
-				"error", err.Error())
-
-			continue
+			return fmt.Errorf("failed to prepare SSH config: %w", err)
 		}
 
-		c.client = client
-		c.connected = true
+		// Try multiple connection strategies
+		strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
+			c.connectWithNativeClient,
+			c.connectWithExternalSSH,
+		}
 
-		// Set up SSH agent forwarding if available
-		c.setupAgentForwarding(ctx)
+		for index, strategy := range strategies {
+			c.log.Debugw("Attempting connection strategy",
+				"strategy", index+1,
+				"attempt", attempt,
+				"max_attempts", maxRetries)
 
-		c.log.Info("Successfully connected to bastion host")
+			client, err := strategy(ctx, sshConfig)
+			if err != nil {
+				lastErr = err
+				c.log.Debugw("Connection strategy failed",
+					"strategy", index+1,
+					"attempt", attempt,
+					"error", err.Error())
 
-		return nil
+				continue
+			}
+
+			c.client = client
+			c.connected = true
+
+			// Set up SSH agent forwarding if available
+			c.setupAgentForwarding(ctx)
+
+			c.log.Infof("Successfully connected to bastion host on attempt %d", attempt)
+
+			return nil
+		}
+
+		// All strategies failed for this attempt
+		if attempt < maxRetries {
+			c.log.Warnw("Connection attempt failed, retrying",
+				"attempt", attempt,
+				"max_attempts", maxRetries,
+				"retry_delay", retryInterval,
+				"error", lastErr.Error())
+
+			// Wait before next attempt, respecting context cancellation
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("SSH connection cancelled: %w", ctx.Err())
+			case <-time.After(retryInterval):
+				// Exponential backoff
+				retryInterval = time.Duration(float64(retryInterval) * 1.5)
+				if retryInterval > maxRetryInterval {
+					retryInterval = maxRetryInterval
+				}
+			}
+		}
 	}
 
-	return fmt.Errorf("all connection strategies failed, last error: %w", lastErr)
+	return fmt.Errorf("failed to connect after %d attempts, last error: %w", maxRetries, lastErr)
 }
 
 // ExecuteCommand executes a command on the remote host.
