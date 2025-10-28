@@ -219,11 +219,20 @@ func (m *Manager) runGenesisOnlyMode(ctx context.Context) error {
 
 	// Check for binary download mode
 	if override, exists := m.config.Bastion.ToolOverrides["genesis"]; exists && override.URL != "" {
-		return m.upgradeGenesisBinary(ctx, override)
+		err := m.upgradeGenesisBinary(ctx, override)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Default: source-based upgrade
+		err := m.upgradeGenesisFromSource(ctx, genesisConfig)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Default: source-based upgrade
-	return m.upgradeGenesisFromSource(ctx, genesisConfig)
+	// Create Genesis configuration file
+	return m.createConfigFiles(ctx)
 }
 
 // upgradeGenesisFromSource performs Genesis upgrade from source repository.
@@ -588,6 +597,7 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"ocfp_configure", m.runOCFPConfigure},
 
 		// Phase 8: Custom scripts and verification
@@ -661,6 +671,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"ocfp_configure", m.runOCFPConfigure},
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
