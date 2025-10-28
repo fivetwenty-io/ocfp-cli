@@ -43,7 +43,7 @@ func TestGenerateGenesisConfig(t *testing.T) {
 		"  oversized_secrets: false",
 		"  bosh_target: true",
 		"embedded_genesis: warn",
-		"automatic_config_upgrade: yes",
+		"automatic_config_upgrade: \"yes\"",
 		"logs:",
 	}
 

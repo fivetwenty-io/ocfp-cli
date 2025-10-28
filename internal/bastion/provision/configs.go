@@ -333,7 +333,7 @@ func (cfm *ConfigFileManager) writeGenesisBasicSettings(config *strings.Builder)
 	// Genesis behavior
 	config.WriteString("# Genesis behavior\n")
 	config.WriteString("embedded_genesis: warn\n")
-	config.WriteString("automatic_config_upgrade: yes\n\n")
+	config.WriteString("automatic_config_upgrade: \"yes\"\n\n")
 }
 
 // writeGenesisLoggingConfig writes Genesis logging configuration.
