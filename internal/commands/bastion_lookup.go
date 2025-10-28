@@ -115,7 +115,7 @@ func tryNameBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName 
 	}
 
 	// Check floating IPs for bastion-named instances
-	fips, err := provider.Network().ListFloatingIPs(ctx)
+	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return "", false
 	}
@@ -152,7 +152,7 @@ func findDirectPublicIP(instances []*cpi.Instance, key string, log logger.Logger
 }
 
 func findFloatingIPForInstances(ctx context.Context, provider cpi.Provider, instances []*cpi.Instance, key string, log logger.Logger, blocName string) string {
-	fips, err := provider.Network().ListFloatingIPs(ctx)
+	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return ""
 	}

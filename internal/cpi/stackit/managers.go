@@ -3,6 +3,7 @@ package stackit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -170,7 +171,8 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	}
 
 	payload := iaas.NewCreateSecurityGroupRulePayload(rule.Direction)
-	payload.SetSecurityGroupId(groupID)
+	// Note: SecurityGroupId is NOT set in payload as it's a read-only field
+	// The groupID is passed as a URL path parameter in CreateSecurityGroupRule()
 
 	// StackIT API: omit protocol field to allow all protocols (per StackIT docs)
 	// "If not explicitly specified, a security group rule will match all IPs, ports and protocols"
@@ -199,6 +201,15 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 	_, err = cli.CreateSecurityGroupRule(ctx, m.client.config.ProjectID, groupID).CreateSecurityGroupRulePayload(*payload).Execute()
 	if err != nil {
+		// Check if rule already exists (409 Conflict) - treat as success (idempotent operation)
+		errStr := err.Error()
+		if strings.Contains(errStr, "already exists") ||
+			strings.Contains(errStr, "409") {
+			logger.Debugf("Security group rule already exists in group %s, treating as success", groupID)
+
+			return nil
+		}
+
 		return fmt.Errorf("failed to create security group rule: %w", err)
 	}
 

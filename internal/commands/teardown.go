@@ -609,7 +609,8 @@ func (m *TeardownManager) DeleteResource(ctx context.Context, resource *Resource
 
 // ResourceToDelete represents a resource marked for deletion.
 type ResourceToDelete struct {
-	Type         string
+	Type         string // Normalized type for deletion handlers (e.g., "instance", "volume")
+	StateType    string // Original type from state file (e.g., "compute_instance", "block_volume")
 	ID           string
 	Name         string
 	Dependencies []string
@@ -812,11 +813,17 @@ func (m *TeardownManager) retryFailedResources(ctx context.Context, failedResour
 }
 
 func (m *TeardownManager) updateStateAfterDeletion(resource *ResourceToDelete, log logger.Logger) {
-	err := m.stateManager.RemoveResource(resource.Type, resource.Name)
+	// Use StateType if available (resources from state), otherwise fall back to Type (resources from cloud)
+	typeForRemoval := resource.Type
+	if resource.StateType != "" {
+		typeForRemoval = resource.StateType
+	}
+
+	err := m.stateManager.RemoveResource(typeForRemoval, resource.Name)
 	if err != nil {
 		// This can happen when resources are discovered from cloud but not in state
 		// or when duplicate resources were filtered. It's informational, not an error.
-		log.Debugw("Resource not found in state (may have been discovered from cloud)", "resource", resource.Name, "type", resource.Type)
+		log.Debugw("Resource not found in state (may have been discovered from cloud)", "resource", resource.Name, "type", typeForRemoval)
 	}
 
 	err = m.stateManager.Save()
@@ -924,7 +931,8 @@ func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 		deps, _ := m.stateManager.GetDependencies(key)
 
 		resources = append(resources, &ResourceToDelete{
-			Type:         resourceType,
+			Type:         resourceType, // Normalized type for deletion handler
+			StateType:    parts[0],     // Original type from state for RemoveResource()
 			ID:           resource.ID,
 			Name:         parts[1],
 			Dependencies: deps,
@@ -1100,8 +1108,8 @@ func (m *TeardownManager) discoverStorageResources(ctx context.Context, tagFilte
 		log.Infow("Discovered volumes", "count", len(volumes))
 	}
 
-	// Discover snapshots
-	snapshots, err := storage.ListSnapshots(ctx, "")
+	// Discover snapshots with tag filtering
+	snapshots, err := storage.ListSnapshots(ctx, "", tagFilter)
 	if err == nil {
 		for _, snapshot := range snapshots {
 			*resources = append(*resources, &ResourceToDelete{
@@ -1145,7 +1153,7 @@ func (m *TeardownManager) discoverNetworkResources(ctx context.Context, tagFilte
 	}
 
 	m.discoverNetworks(ctx, network, tagFilter, resources, log)
-	m.discoverFloatingIPs(ctx, network, resources, log)
+	m.discoverFloatingIPs(ctx, network, tagFilter, resources, log)
 
 	if m.options.PublicIPs {
 		m.discoverStackitPublicIPs(ctx, network, resources, log)
@@ -1201,8 +1209,8 @@ func (m *TeardownManager) discoverSubnetsForNetwork(ctx context.Context, network
 	log.Infow("Discovered subnets for network", "network", net.Name, "count", len(subnets))
 }
 
-func (m *TeardownManager) discoverFloatingIPs(ctx context.Context, network cpi.NetworkManager, resources *[]*ResourceToDelete, log logger.Logger) {
-	floatingIPs, err := network.ListFloatingIPs(ctx)
+func (m *TeardownManager) discoverFloatingIPs(ctx context.Context, network cpi.NetworkManager, tagFilter map[string]string, resources *[]*ResourceToDelete, log logger.Logger) {
+	floatingIPs, err := network.ListFloatingIPs(ctx, tagFilter)
 	if err != nil {
 		return
 	}

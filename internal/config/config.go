@@ -697,12 +697,33 @@ func applyDefaults(cfg *Config, provider string) error {
 		cfg.Bastion.SSHUser = "ubuntu"
 	}
 
-	if cfg.Genesis.Enabled && cfg.Genesis.Branch == "" {
+	// Enable Genesis by default if not explicitly configured
+	if !cfg.Genesis.Enabled && cfg.Bastion.Genesis.Enabled {
+		// Bastion-specific Genesis config takes precedence
+		cfg.Genesis = cfg.Bastion.Genesis
+	} else if !cfg.Genesis.Enabled && !cfg.Bastion.Genesis.Enabled {
+		// Neither global nor bastion-specific is explicitly enabled, enable by default
+		cfg.Genesis.Enabled = true
+	}
+
+	// Apply Genesis defaults
+	if cfg.Genesis.Branch == "" {
 		cfg.Genesis.Branch = "v3.1.x-dev"
 	}
 
 	if cfg.Genesis.VersionPrefix == "" {
 		cfg.Genesis.VersionPrefix = "3.1.0"
+	}
+
+	// Apply Bastion-specific Genesis defaults
+	if cfg.Bastion.Genesis.Enabled {
+		if cfg.Bastion.Genesis.Branch == "" {
+			cfg.Bastion.Genesis.Branch = "v3.1.x-dev"
+		}
+
+		if cfg.Bastion.Genesis.VersionPrefix == "" {
+			cfg.Bastion.Genesis.VersionPrefix = "3.1.0"
+		}
 	}
 
 	return nil

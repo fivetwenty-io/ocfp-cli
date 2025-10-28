@@ -71,7 +71,7 @@ type NetworkManager interface {
 	// Floating IP operations
 	AllocateFloatingIP(ctx context.Context, req *AllocateFloatingIPRequest) (*FloatingIP, error)
 	GetFloatingIP(ctx context.Context, id string) (*FloatingIP, error)
-	ListFloatingIPs(ctx context.Context) ([]*FloatingIP, error)
+	ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*FloatingIP, error)
 	AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error
 	DisassociateFloatingIP(ctx context.Context, ipID string) error
 	ReleaseFloatingIP(ctx context.Context, id string) error
@@ -152,7 +152,7 @@ type StorageManager interface {
 	// Snapshot operations
 	CreateSnapshot(ctx context.Context, volumeID string, name string) (*Snapshot, error)
 	GetSnapshot(ctx context.Context, id string) (*Snapshot, error)
-	ListSnapshots(ctx context.Context, volumeID string) ([]*Snapshot, error)
+	ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*Snapshot, error)
 	DeleteSnapshot(ctx context.Context, id string) error
 
 	// Object storage operations

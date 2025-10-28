@@ -100,6 +100,16 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 		if err != nil {
 			logger.Warnf("Failed to attach public IP to bastion: %v", err)
 			// Don't fail the entire bootstrap if public IP attachment fails
+		} else {
+			// Wait for network configuration to stabilize and propagate
+			// STACKIT needs time for:
+			// - NIC/public IP association to complete
+			// - Network routing tables to update
+			// - Instance network stack to recognize the new IP
+			logger.Info("Waiting 30 seconds for network configuration to propagate...")
+			_, _ = fmt.Fprintf(os.Stdout, "    • Waiting for network configuration to stabilize...\n")
+			time.Sleep(30 * time.Second)
+			logger.Info("Network wait period completed")
 		}
 	}
 
@@ -931,38 +941,85 @@ func (m *Manager) handleStaleKeypairState(keypairName string) {
 }
 
 // createStackitKeyPair handles STACKIT-specific keypair creation.
-func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, error) {
-	// Generate SSH key pair locally
-	privateKeyData, publicKeyData, err := m.generateLocalSSHKeyPair()
+// Returns (keypair, shouldSavePrivateKey, error).
+// shouldSavePrivateKey is true when keys were newly generated, false when read from existing files.
+func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
+	// Generate SSH key pair locally (or read from existing files)
+	privateKeyData, publicKeyData, wasReadFromFile, err := m.generateLocalSSHKeyPair()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	publicKeyStr := strings.TrimSpace(string(publicKeyData))
 
+	// DEBUG: Log first 50 bytes of privateKeyData for verification
+	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))]))
+	logger.Debugf("generateLocalSSHKeyPair returned publicKeyStr: %s", publicKeyStr)
+	logger.Debugf("Keys were read from existing file: %v", wasReadFromFile)
+
 	// Check if keypair already exists in STACKIT
 	existingKey, err := m.checkExistingStackitKeypair(ctx, computeMgr, keypairName, publicKeyStr, privateKeyData)
 	if err == nil && existingKey != nil {
-		return existingKey, nil
+		// Keypair exists and matches - don't save private key (already on disk)
+		return existingKey, false, nil
 	}
 
 	// Import the public key to STACKIT
 	err = m.importPublicKeyToStackit(ctx, computeMgr, keypairName, publicKeyStr)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Create a KeyPair object for consistency
-	return &cpi.KeyPair{
+	keypair := &cpi.KeyPair{
 		ID:         keypairName, // STACKIT uses name as ID
 		Name:       keypairName,
 		PublicKey:  publicKeyStr,
 		PrivateKey: string(privateKeyData),
-	}, nil
+	}
+
+	// DEBUG: Log keypair.PrivateKey that will be saved
+	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))])
+
+	// Return the inverse of wasReadFromFile:
+	// - If read from existing file (wasReadFromFile=true), DON'T save again (return false)
+	// - If newly generated (wasReadFromFile=false), MUST save (return true)
+	shouldSavePrivKey := !wasReadFromFile
+	logger.Debugf("shouldSavePrivKey=%v (wasReadFromFile=%v)", shouldSavePrivKey, wasReadFromFile)
+
+	return keypair, shouldSavePrivKey, nil
 }
 
 // generateLocalSSHKeyPair generates an Ed25519 SSH key pair and returns the private and public key data.
-func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, error) {
+// Returns (privateKeyData, publicKeyData, wasReadFromExistingFile, error).
+// wasReadFromExistingFile is true when keys were read from existing local files, false when newly generated.
+func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
+	// Check if local keypair already exists
+	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	existingKeyPath := filepath.Join(keyDir, "id_ed25519")
+	existingPubPath := filepath.Join(keyDir, "id_ed25519.pub")
+
+	// If local keypair exists, reuse it
+	if _, err := os.Stat(existingKeyPath); err == nil {
+		if _, pubErr := os.Stat(existingPubPath); pubErr == nil {
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
+
+			privateKeyData, err := os.ReadFile(existingKeyPath) // #nosec G304 -- path is controlled
+			if err != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", err)
+			}
+
+			publicKeyData, err := os.ReadFile(existingPubPath) // #nosec G304 -- path is controlled
+			if err != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", err)
+			}
+
+			// Return true to indicate keys were read from existing files - DON'T save them again!
+			return privateKeyData, publicKeyData, true, nil
+		}
+	}
+
+	// No existing keypair - generate a new one
 	keyManager := ssh.NewKeyManager()
 	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().Unix()))
 
@@ -976,7 +1033,7 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, error) {
 
 	err := keyManager.GenerateKeyPair(tempKeyPath, "ed25519", 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate SSH keypair: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to generate SSH keypair: %w", err)
 	}
 
 	// Read the generated keys
@@ -984,26 +1041,51 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, error) {
 
 	privateKeyData, err := os.ReadFile(privateKeyPath) // #nosec G304 -- path is generated internally
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read private key: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to read private key: %w", err)
 	}
 
 	publicKeyPath := filepath.Clean(tempKeyPath + ".pub")
 
 	publicKeyData, err := os.ReadFile(publicKeyPath) // #nosec G304 -- path is generated internally
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read public key: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to read public key: %w", err)
 	}
 
-	return privateKeyData, publicKeyData, nil
+	// Return false to indicate keys were newly generated - MUST save them!
+	return privateKeyData, publicKeyData, false, nil
 }
 
 // checkExistingStackitKeypair checks if a keypair already exists in STACKIT and returns it if found.
+// If the cloud keypair doesn't match the local public key, it deletes the cloud keypair and returns nil
+// to force regeneration and re-upload, ensuring bootstrap always works with synchronized keys.
 func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string, privateKeyData []byte) (*cpi.KeyPair, error) {
 	existingKey, getErr := computeMgr.GetKeyPair(ctx, keypairName)
 	if getErr == nil && existingKey != nil {
-		logger.Infof("Keypair %s already exists in STACKIT, skipping import", keypairName)
+		// Verify that the cloud public key matches our local public key
+		localPubKey := strings.TrimSpace(publicKeyStr)
+		cloudPubKey := strings.TrimSpace(existingKey.PublicKey)
 
-		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT, skipping upload\n")
+		if localPubKey != cloudPubKey {
+			// Keys don't match - delete cloud keypair and force regeneration
+			logger.Warnf("Keypair %s exists in STACKIT but public key doesn't match local key", keypairName)
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair exists in STACKIT but doesn't match local key\n")
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Deleting cloud keypair and re-uploading local public key\n")
+
+			// Delete the mismatched keypair from STACKIT
+			deleteErr := computeMgr.DeleteKeyPair(ctx, keypairName)
+			if deleteErr != nil {
+				return nil, fmt.Errorf("failed to delete mismatched keypair from STACKIT: %w", deleteErr)
+			}
+
+			logger.Infof("Deleted mismatched keypair %s from STACKIT, will re-upload", keypairName)
+
+			// Return nil to trigger re-upload of the local public key
+			return nil, nil
+		}
+
+		// Keys match - reuse existing keypair
+		logger.Infof("Keypair %s already exists in STACKIT and matches local key, skipping import", keypairName)
+		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT and matches local key, skipping upload\n")
 
 		// Create a KeyPair object for consistency
 		return &cpi.KeyPair{
@@ -1168,9 +1250,7 @@ func (m *Manager) createKeypairWithProvider(ctx context.Context, keypairName str
 	computeMgr := m.provider.ComputeManager()
 
 	if strings.EqualFold(m.options.Provider, "stackit") {
-		keypair, err := m.createStackitKeyPair(ctx, computeMgr, keypairName)
-
-		return keypair, true, err
+		return m.createStackitKeyPair(ctx, computeMgr, keypairName)
 	}
 
 	return m.createStandardKeyPair(ctx, computeMgr, keypairName)
@@ -1225,6 +1305,9 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 func (m *Manager) savePrivateKey(privateKey string) error {
 	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
 	keyFile := filepath.Join(keyDir, "id_ed25519")
+
+	// DEBUG: Log what we're about to save
+	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))])
 
 	// Create directory if it doesn't exist
 	err := os.MkdirAll(keyDir, sshKeyDirMode)

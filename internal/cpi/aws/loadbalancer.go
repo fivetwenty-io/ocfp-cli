@@ -947,6 +947,13 @@ func (m *LoadBalancerManager) matchFilters(loadBalancer *cpi.LoadBalancer, filte
 			if loadBalancer.NetworkID != value {
 				return false
 			}
+		default:
+			// For all other keys (like "bloc", "managed-by"), check tags
+			// Note: LoadBalancer.Tags is currently []string, not map[string]string
+			// Until tags are properly populated from AWS, tag filters will cause
+			// load balancers to be excluded (which is safer than including all)
+			// TODO: Fetch and populate tags in convertLoadBalancer
+			return false
 		}
 	}
 

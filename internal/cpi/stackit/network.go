@@ -310,12 +310,14 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, floatingIPID string)
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
 	iaasClient, err := m.client.getIAASClient()
 	if err != nil {
 		return nil, err
 	}
 
+	// Note: STACKIT doesn't support server-side filtering for public IPs via tags
+	// Filters would need to be applied client-side if needed
 	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListPublicIPs failed: %w", err)

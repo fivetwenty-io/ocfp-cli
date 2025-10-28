@@ -73,7 +73,7 @@ func (f *fakeStorage) CreateSnapshot(ctx context.Context, volumeID string, name 
 func (f *fakeStorage) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorage) DeleteSnapshot(ctx context.Context, id string) error { return nil }

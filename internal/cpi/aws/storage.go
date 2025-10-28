@@ -200,16 +200,9 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 	input := &ec2.DescribeVolumesInput{}
 
-	// Add filters
-	if len(filters) > 0 {
-		ec2Filters := make([]types.Filter, 0, len(filters))
-		for k, v := range filters {
-			ec2Filters = append(ec2Filters, types.Filter{
-				Name:   aws.String(k),
-				Values: []string{v},
-			})
-		}
-
+	// Add filters with proper tag handling
+	ec2Filters := buildAWSTagFilters(filters)
+	if len(ec2Filters) > 0 {
 		input.Filters = ec2Filters
 	}
 
@@ -465,8 +458,8 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*c
 	return m.mapSnapshot(&result.Snapshots[0]), nil
 }
 
-// ListSnapshots lists snapshots for a volume or all snapshots.
-func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) {
+// ListSnapshots lists snapshots for a volume or all snapshots with optional tag filtering.
+func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
 	logger.WithOperation("ListSnapshots").Debug("Listing snapshots")
 
 	cli, err := m.client.getEC2Client(ctx)
@@ -478,14 +471,22 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string) ([]
 		OwnerIds: []string{"self"}, // Only list snapshots owned by this account
 	}
 
-	// Filter by volume ID if specified
+	// Build filters: combine volume-id filter (if specified) with tag filters
+	combinedFilters := make(map[string]string)
+
+	// Add volume-id filter if specified
 	if volumeID != "" {
-		input.Filters = []types.Filter{
-			{
-				Name:   aws.String("volume-id"),
-				Values: []string{volumeID},
-			},
-		}
+		combinedFilters["volume-id"] = volumeID
+	}
+
+	// Add any additional filters (including bloc, managed-by tags)
+	for k, v := range filters {
+		combinedFilters[k] = v
+	}
+
+	// Apply filters with proper tag handling
+	if len(combinedFilters) > 0 {
+		input.Filters = buildAWSTagFilters(combinedFilters)
 	}
 
 	result, err := cli.DescribeSnapshots(ctx, input)

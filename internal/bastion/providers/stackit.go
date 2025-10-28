@@ -163,7 +163,7 @@ func (s *StackitBastionInit) findSSHPrivateKey() (string, error) {
 	}
 
 	// Try to restore key from config if it exists
-	keypairName := s.config.Name + "-bastion"
+	keypairName := s.config.Name + "-keypair"
 
 	configKey, exists := s.config.Keys[keypairName]
 	if !exists || configKey == "" {

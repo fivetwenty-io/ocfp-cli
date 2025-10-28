@@ -53,12 +53,12 @@ func (m *Manager) CreateSecurityGroups(ctx context.Context) error {
 		groupName := fmt.Sprintf("%s-%s", m.options.BlocName, group.name)
 
 		// Check if already exists in state and verify it exists in cloud
-		if handled := m.handleExistingSecurityGroupInState(ctx, netMgr, groupName, group.name); handled {
+		if handled := m.handleExistingSecurityGroupInState(ctx, netMgr, groupName, &group); handled {
 			continue
 		}
 
 		// Check if already exists in cloud (state may be out of sync)
-		handled, err := m.handleExistingSecurityGroupInCloud(ctx, netMgr, groupName, group.name, networkIDStr)
+		handled, err := m.handleExistingSecurityGroupInCloud(ctx, netMgr, groupName, &group, networkIDStr)
 		if err != nil {
 			return err
 		} else if handled {
@@ -77,7 +77,7 @@ func (m *Manager) CreateSecurityGroups(ctx context.Context) error {
 
 // handleExistingSecurityGroupInState checks if a security group exists in state and verifies it in cloud.
 // Returns true if the security group was handled (exists and verified), false if it needs to be created.
-func (m *Manager) handleExistingSecurityGroupInState(ctx context.Context, netMgr cpi.NetworkManager, groupName, shortName string) bool {
+func (m *Manager) handleExistingSecurityGroupInState(ctx context.Context, netMgr cpi.NetworkManager, groupName string, groupDef *securityGroupDef) bool {
 	existingSG, _ := m.stateManager.GetResource("security_group", groupName)
 	if existingSG == nil {
 		return false
@@ -86,9 +86,34 @@ func (m *Manager) handleExistingSecurityGroupInState(ctx context.Context, netMgr
 	// Verify the security group actually exists in the cloud provider
 	existingInCloud, err := netMgr.GetSecurityGroup(ctx, existingSG.ID)
 	if err == nil && existingInCloud != nil {
-		logger.Infof("Security group %s already exists (verified in cloud: %s), skipping creation", groupName, existingSG.ID)
+		logger.Infof("Security group %s already exists (verified in cloud: %s), ensuring rules", groupName, existingSG.ID)
+
+		// Ensure security group has all required rules
+		err = m.ensureSecurityGroupRules(ctx, existingSG.ID, groupDef)
+		if err != nil {
+			logger.Warnf("Failed to ensure rules for security group %s: %v", groupName, err)
+			// Continue anyway, don't fail bootstrap
+		}
+
+		// Update state resource with current timestamp and properties
+		err = m.stateManager.AddResource(&state.Resource{
+			ID:         existingSG.ID,
+			Type:       "security_group",
+			Name:       groupName,
+			Provider:   m.options.Provider,
+			State:      string(cpi.ResourceStateActive),
+			Properties: map[string]interface{}{"rules": len(groupDef.rules)},
+			Tags:       m.baseTags(),
+			CreatedAt:  existingSG.CreatedAt,
+			UpdatedAt:  time.Now(),
+		})
+		if err != nil {
+			logger.Warnf("Failed to update security group state for %s: %v", groupName, err)
+			// Continue anyway, don't fail bootstrap
+		}
+
 		// Set output even if skipping
-		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", shortName), existingSG.ID)
+		_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", groupDef.name), existingSG.ID)
 
 		return true
 	}
@@ -102,7 +127,7 @@ func (m *Manager) handleExistingSecurityGroupInState(ctx context.Context, netMgr
 
 // handleExistingSecurityGroupInCloud checks if a security group exists in cloud and syncs it to state.
 // Returns true if the security group was handled (exists in cloud), false if it needs to be created.
-func (m *Manager) handleExistingSecurityGroupInCloud(ctx context.Context, netMgr cpi.NetworkManager, groupName, shortName, networkIDStr string) (bool, error) {
+func (m *Manager) handleExistingSecurityGroupInCloud(ctx context.Context, netMgr cpi.NetworkManager, groupName string, groupDef *securityGroupDef, networkIDStr string) (bool, error) {
 	existingFilters := map[string]string{
 		"name":       groupName,
 		"network-id": networkIDStr,
@@ -115,17 +140,23 @@ func (m *Manager) handleExistingSecurityGroupInCloud(ctx context.Context, netMgr
 
 	// Security group exists in cloud but not in state - sync state
 	existingGroup := existingGroups[0]
-	logger.Infof("Security group %s already exists in cloud (id=%s), syncing to state", groupName, existingGroup.ID)
-	_, _ = fmt.Fprintf(os.Stdout, "    • Security group %s already exists, recording in state...\n", groupName)
+	logger.Infof("Security group %s already exists in cloud (id=%s), syncing to state and ensuring rules", groupName, existingGroup.ID)
+	_, _ = fmt.Fprintf(os.Stdout, "    • Security group %s already exists, ensuring rules...\n", groupName)
+
+	// Ensure security group has all required rules
+	err := m.ensureSecurityGroupRules(ctx, existingGroup.ID, groupDef)
+	if err != nil {
+		return false, fmt.Errorf("failed to ensure rules for security group %s: %w", groupName, err)
+	}
 
 	// Add to state
-	err := m.stateManager.AddResource(&state.Resource{
+	err = m.stateManager.AddResource(&state.Resource{
 		ID:         existingGroup.ID,
 		Type:       "security_group",
 		Name:       groupName,
 		Provider:   m.options.Provider,
 		State:      string(cpi.ResourceStateActive),
-		Properties: map[string]interface{}{"rules": len(existingGroup.Rules)},
+		Properties: map[string]interface{}{"rules": len(groupDef.rules)},
 		Tags:       m.baseTags(),
 		CreatedAt:  existingGroup.CreatedAt,
 		UpdatedAt:  time.Now(),
@@ -135,7 +166,7 @@ func (m *Manager) handleExistingSecurityGroupInCloud(ctx context.Context, netMgr
 	}
 
 	// Set output
-	_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", shortName), existingGroup.ID)
+	_ = m.stateManager.SetOutput(fmt.Sprintf("sg_%s_id", groupDef.name), existingGroup.ID)
 
 	return true, nil
 }
@@ -304,6 +335,92 @@ func (m *Manager) cfSSHSecurityGroupDef() securityGroupDef {
 			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
 		},
 	}
+}
+
+// ==============================================================================
+// Security Group Rules Reconciliation
+// ==============================================================================
+
+// ensureSecurityGroupRules ensures a security group has all required rules from its definition.
+// This fixes security groups that exist but have missing or incomplete rules.
+func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, groupDef *securityGroupDef) error {
+	secMgr := m.provider.Security()
+
+	// List current rules
+	currentRules, err := secMgr.ListSecurityRules(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to list security rules for group %s: %w", groupID, err)
+	}
+
+	// Find and add missing rules
+	addedCount := 0
+	for _, expectedRule := range groupDef.rules {
+		if !m.ruleExists(currentRules, expectedRule) {
+			logger.Infof("Adding missing rule to security group %s: %s %s port %d-%d",
+				groupID, expectedRule.Direction, expectedRule.Protocol,
+				expectedRule.PortRangeMin, expectedRule.PortRangeMax)
+
+			err = secMgr.AddSecurityRule(ctx, groupID, expectedRule)
+			if err != nil {
+				return fmt.Errorf("failed to add security rule to group %s: %w", groupID, err)
+			}
+			addedCount++
+		}
+	}
+
+	if addedCount > 0 {
+		logger.Infof("Added %d missing rules to security group %s", addedCount, groupID)
+		_, _ = fmt.Fprintf(os.Stdout, "    • Added %d missing rules to security group\n", addedCount)
+	} else {
+		logger.Debugf("Security group %s already has all required rules", groupID)
+	}
+
+	return nil
+}
+
+// ruleExists checks if a rule exists in the list of current rules.
+func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi.SecurityRule) bool {
+	for _, current := range currentRules {
+		if m.rulesMatch(current, expectedRule) {
+			return true
+		}
+	}
+	return false
+}
+
+// rulesMatch compares two security rules for equivalence.
+func (m *Manager) rulesMatch(r1, r2 *cpi.SecurityRule) bool {
+	// Direction must match
+	if r1.Direction != r2.Direction {
+		return false
+	}
+
+	// Protocol must match (treat empty and "all" as equivalent)
+	proto1 := r1.Protocol
+	proto2 := r2.Protocol
+	if proto1 == "" {
+		proto1 = "all"
+	}
+	if proto2 == "" {
+		proto2 = "all"
+	}
+	if proto1 != proto2 {
+		return false
+	}
+
+	// For protocol "all", ports don't matter
+	if proto1 == "all" || proto2 == "all" {
+		// Check CIDR or remote group
+		return r1.RemoteIPCIDR == r2.RemoteIPCIDR && r1.RemoteGroup == r2.RemoteGroup
+	}
+
+	// Port ranges must match
+	if r1.PortRangeMin != r2.PortRangeMin || r1.PortRangeMax != r2.PortRangeMax {
+		return false
+	}
+
+	// Remote CIDR or remote group must match
+	return r1.RemoteIPCIDR == r2.RemoteIPCIDR && r1.RemoteGroup == r2.RemoteGroup
 }
 
 // ==============================================================================

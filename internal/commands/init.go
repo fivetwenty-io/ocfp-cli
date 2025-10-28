@@ -45,6 +45,7 @@ func NewInitCmd() *cobra.Command {
 		dryRun:     false,
 		resume:     false,
 		verbose:    false,
+		reboot:     false,
 	}
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
@@ -65,14 +66,16 @@ func NewInitCmd() *cobra.Command {
 
 // initFlags holds all command flags for init.
 type initFlags struct {
-	force      bool
-	skipChecks bool
-	parallel   bool
-	dryRun     bool
-	resume     bool
-	verbose    bool
-	ocfpOnly   bool
-	configOnly bool
+	force       bool
+	skipChecks  bool
+	parallel    bool
+	dryRun      bool
+	resume      bool
+	verbose     bool
+	ocfpOnly    bool
+	configOnly  bool
+	genesisOnly bool
+	reboot      bool
 }
 
 // addFlags adds all flags to the command.
@@ -85,18 +88,24 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
 	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only sync configuration files to bastion (for bastion init)")
+	cmd.Flags().BoolVar(&f.genesisOnly, "genesis", false, "only install/update Genesis and related components (for bastion init)")
+	cmd.Flags().BoolVar(&f.reboot, "reboot", false, "reboot bastion after successful initialization (applies updates)")
 }
 
 // bindViperFlags binds flags to viper.
 func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
-	_ = viper.BindPFlag("init.force", cmd.Flags().Lookup("force"))
-	_ = viper.BindPFlag("init.skip_checks", cmd.Flags().Lookup("skip-checks"))
-	_ = viper.BindPFlag("init.parallel", cmd.Flags().Lookup("parallel"))
-	_ = viper.BindPFlag("init.dry_run", cmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("init.resume", cmd.Flags().Lookup("resume"))
-	_ = viper.BindPFlag("init.verbose", cmd.Flags().Lookup("verbose"))
-	_ = viper.BindPFlag("init.ocfp_only", cmd.Flags().Lookup("ocfp"))
-	_ = viper.BindPFlag("init.config_only", cmd.Flags().Lookup("config"))
+	bindFlagsToViper(cmd, map[string]string{
+		"init.force":        "force",
+		"init.skip_checks":  "skip-checks",
+		"init.parallel":     "parallel",
+		"init.dry_run":      "dry-run",
+		"init.resume":       "resume",
+		"init.verbose":      "verbose",
+		"init.ocfp_only":    "ocfp",
+		"init.config_only":  "config",
+		"init.genesis_only": "genesis",
+		"init.reboot":       "reboot",
+	})
 }
 
 // runInit executes the init command.
@@ -136,6 +145,34 @@ func (f *initFlags) getComponent(args []string) string {
 	}
 
 	return KeywordAll
+}
+
+var ErrMutuallyExclusiveFlags = errors.New("mutually exclusive flags")
+
+// validateModeFlags validates that mutually exclusive mode flags are not used together.
+func (f *initFlags) validateModeFlags() error {
+	modeFlags := []struct {
+		name  string
+		value bool
+	}{
+		{"genesis", f.genesisOnly},
+		{"ocfp", f.ocfpOnly},
+		{"config", f.configOnly},
+	}
+
+	var activeModes []string
+
+	for _, flag := range modeFlags {
+		if flag.value {
+			activeModes = append(activeModes, flag.name)
+		}
+	}
+
+	if len(activeModes) > 1 {
+		return fmt.Errorf("%w: --%s and --%s", ErrMutuallyExclusiveFlags, activeModes[0], activeModes[1])
+	}
+
+	return nil
 }
 
 // loadConfig loads the configuration.
@@ -191,6 +228,12 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 
 // executeInitialization performs the actual initialization based on component.
 func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Config, component string) error {
+	// Validate mutually exclusive flags
+	err := f.validateModeFlags()
+	if err != nil {
+		return err
+	}
+
 	switch component {
 	case "pg":
 		return initializePostgreSQL()
@@ -199,15 +242,19 @@ func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Confi
 	case "bosh":
 		return initializeBOSH(ctx, cfg)
 	case RoleBastion:
+		if f.genesisOnly {
+			return initializeBastionGenesisOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
+		}
+
 		if f.ocfpOnly {
-			return initializeBastionOCFPOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
+			return initializeBastionOCFPOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
 		}
 
 		if f.configOnly {
-			return initializeBastionConfigOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
+			return initializeBastionConfigOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
 		}
 
-		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose)
+		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
 	default:
@@ -224,7 +271,9 @@ func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Con
 		name string
 		fn   func() error
 	}{
-		{"bastion", func() error { return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose) }},
+		{"bastion", func() error {
+			return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
+		}},
 		{"PostgreSQL", initializePostgreSQL},
 		{"BOSH", func() error { return initializeBOSH(ctx, cfg) }},
 		{"Cloud Foundry", func() error { return initializeCloudFoundry(ctx, cfg) }},
@@ -253,6 +302,13 @@ Components:
   bastion - Initialize bastion host
   all     - Initialize all components (default)
 
+Bastion Initialization Modes:
+  --genesis  - Install/update only Genesis and related components
+               (genesis CLI, yq, genesis kits, genesis config, deployments)
+  --ocfp     - Install/update only OCFP CLI binary
+  --config   - Sync only configuration files to bastion
+  (default)  - Full bastion initialization with all components
+
 The init command prepares and initializes the core components required
 for a Cloud Foundry deployment. It ensures proper ordering of component
 initialization and validates prerequisites.`
@@ -266,8 +322,14 @@ func getInitExamples() string {
   # Initialize only PostgreSQL
   ocfp init pg
 
-  # Initialize bastion host
+  # Initialize bastion host (full installation)
   ocfp init bastion
+
+  # Install/update Genesis and related components only
+  ocfp init bastion --genesis
+
+  # Install/update Genesis with verbose output
+  ocfp init bastion --genesis --verbose
 
   # Sync configuration files to bastion only (fast, ~1-5 seconds)
   ocfp init bastion --config
@@ -679,21 +741,22 @@ func configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
 }
 
 // initializeBastion performs bastion host initialization.
-func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
+func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
 	log := logger.Get()
 	log.Info("Initializing bastion host")
 
 	// Create provisioning options
 	options := &bastion.ProvisioningOptions{
-		DryRun:      dryRun,
-		Force:       force,
-		Parallel:    parallel,
-		Resume:      resume,
-		Verbose:     verbose,
-		MaxWorkers:  DefaultMaxWorkers,
-		ProgressOut: os.Stdout,
-		LogFile:     "",
-		OCFPOnly:    false, // OCFPOnly is handled separately via --ocfp flag
+		DryRun:          dryRun,
+		Force:           force,
+		Parallel:        parallel,
+		Resume:          resume,
+		Verbose:         verbose,
+		MaxWorkers:      DefaultMaxWorkers,
+		ProgressOut:     os.Stdout,
+		LogFile:         "",
+		OCFPOnly:        false, // OCFPOnly is handled separately via --ocfp flag
+		RebootAfterInit: reboot,
 	}
 
 	// Use mode-aware initialization that detects local vs remote execution
@@ -708,7 +771,7 @@ func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel,
 }
 
 // initializeBastionOCFPOnly performs OCFP CLI installation/update only.
-func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
+func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
 	log := logger.Get()
 	log.Info("Installing/updating OCFP CLI only")
 
@@ -717,15 +780,16 @@ func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, p
 
 	// Create provisioning options with OCFPOnly flag set
 	options := &bastion.ProvisioningOptions{
-		DryRun:      dryRun,
-		Force:       force,
-		Parallel:    parallel,
-		Resume:      resume,
-		Verbose:     verbose,
-		MaxWorkers:  DefaultMaxWorkers,
-		ProgressOut: os.Stdout,
-		LogFile:     "",
-		OCFPOnly:    true,
+		DryRun:          dryRun,
+		Force:           force,
+		Parallel:        parallel,
+		Resume:          resume,
+		Verbose:         verbose,
+		MaxWorkers:      DefaultMaxWorkers,
+		ProgressOut:     os.Stdout,
+		LogFile:         "",
+		OCFPOnly:        true,
+		RebootAfterInit: reboot,
 	}
 
 	// Use mode-aware initialization that detects local vs remote execution
@@ -743,8 +807,45 @@ func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, p
 	return nil
 }
 
+// initializeBastionGenesisOnly performs Genesis installation/update only.
+func initializeBastionGenesisOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
+	log := logger.Get()
+	log.Info("Installing/updating Genesis and related components only")
+
+	// Provide user feedback
+	_, _ = fmt.Fprintf(os.Stdout, "\n⚙️  Installing/updating Genesis and related components...\n")
+
+	// Create provisioning options with GenesisOnly flag set
+	options := &bastion.ProvisioningOptions{
+		DryRun:          dryRun,
+		Force:           force,
+		Parallel:        parallel,
+		Resume:          resume,
+		Verbose:         verbose,
+		MaxWorkers:      DefaultMaxWorkers,
+		ProgressOut:     os.Stdout,
+		LogFile:         "",
+		GenesisOnly:     true,
+		RebootAfterInit: reboot,
+	}
+
+	// Use mode-aware initialization that detects local vs remote execution
+	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, "❌ Genesis installation failed: %v\n\n", err)
+
+		return fmt.Errorf("genesis installation failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "✅ Genesis installation completed successfully\n\n")
+
+	log.Info("Genesis installation completed successfully")
+
+	return nil
+}
+
 // initializeBastionConfigOnly performs configuration file sync only.
-func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose bool) error {
+func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
 	log := logger.Get()
 	log.Info("Syncing configuration files only")
 
@@ -753,16 +854,17 @@ func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force,
 
 	// Create provisioning options with ConfigOnly flag set
 	options := &bastion.ProvisioningOptions{
-		DryRun:      dryRun,
-		Force:       force,
-		Parallel:    parallel,
-		Resume:      resume,
-		Verbose:     verbose,
-		MaxWorkers:  DefaultMaxWorkers,
-		ProgressOut: os.Stdout,
-		LogFile:     "",
-		OCFPOnly:    false,
-		ConfigOnly:  true,
+		DryRun:          dryRun,
+		Force:           force,
+		Parallel:        parallel,
+		Resume:          resume,
+		Verbose:         verbose,
+		MaxWorkers:      DefaultMaxWorkers,
+		ProgressOut:     os.Stdout,
+		LogFile:         "",
+		OCFPOnly:        false,
+		ConfigOnly:      true,
+		RebootAfterInit: reboot,
 	}
 
 	// Use mode-aware initialization that detects local vs remote execution

@@ -334,3 +334,64 @@ func TestComputeManager_ListFlavors(t *testing.T) {
 	assert.Equal(t, expectedFlavors[0].ID, flavors[0].ID)
 	assert.Equal(t, expectedFlavors[1].RAM, flavors[1].RAM)
 }
+
+func TestComputeManager_buildCreateServerPayload_SecurityGroups(t *testing.T) {
+	tests := []struct {
+		name           string
+		nicID          string
+		securityGroups []string
+		wantSGSet      bool
+		description    string
+	}{
+		{
+			name:           "DHCP path sets security groups",
+			nicID:          "",
+			securityGroups: []string{"sg-123", "sg-456"},
+			wantSGSet:      true,
+			description:    "When nicID is empty (DHCP), security groups should be set on server payload",
+		},
+		{
+			name:           "NIC path does NOT set security groups",
+			nicID:          "nic-789",
+			securityGroups: []string{"sg-123", "sg-456"},
+			wantSGSet:      false,
+			description:    "When nicID is provided, security groups are on NIC, not server payload",
+		},
+		{
+			name:           "DHCP path with no security groups",
+			nicID:          "",
+			securityGroups: []string{},
+			wantSGSet:      false,
+			description:    "When no security groups provided, payload should not have them set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, server := setupTestComputeManager(t, func(w http.ResponseWriter, r *http.Request) {})
+			defer server.Close()
+
+			req := &cpi.InstanceRequest{
+				Name:             "test-instance",
+				Flavor:           "m1.small",
+				Image:            "ubuntu-20.04",
+				NetworkID:        "net-123",
+				SecurityGroupIDs: tt.securityGroups,
+			}
+
+			payload := manager.buildCreateServerPayload(req, tt.nicID)
+
+			if tt.wantSGSet {
+				require.NotNil(t, payload.SecurityGroups, tt.description)
+				// Check that security groups were set correctly
+				sgList := *payload.SecurityGroups
+				assert.Equal(t, tt.securityGroups, sgList, "Security groups should match request")
+			} else {
+				if payload.SecurityGroups != nil {
+					sgList := *payload.SecurityGroups
+					assert.Empty(t, sgList, tt.description)
+				}
+			}
+		})
+	}
+}

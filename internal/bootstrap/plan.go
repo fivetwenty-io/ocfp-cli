@@ -653,27 +653,38 @@ func (m *Manager) confirmBootstrap(resourceCount int) bool {
 
 // shouldShowNetwork determines if network resources should be displayed.
 func (m *Manager) shouldShowNetwork() bool {
-	// Show if explicitly creating network, or if bastion/servers need it, or if no selective flags (all mode)
+	// Determine if we're in selective mode (any specific flags set)
 	selectiveMode := m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Bastion
 
+	// If no selective flags and not --all, show everything (default all mode)
 	if !selectiveMode && !m.options.All {
-		return true // Default all mode
+		return true
 	}
 
-	return m.options.Network || m.options.Servers || m.options.Bastion
+	// In selective mode, only show network if explicitly requested
+	// OR if --servers flag is set (servers need network infrastructure)
+	// Note: --bastion alone does NOT require showing network (may already exist)
+	return m.options.Network || m.options.Servers
 }
 
 // shouldShowSecurity determines if security group resources should be displayed.
 func (m *Manager) shouldShowSecurity() bool {
+	// Determine if we're in selective mode (any specific flags set)
 	selectiveMode := m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Bastion
 
+	// If no selective flags and not --all, show everything (default all mode)
 	if !selectiveMode && !m.options.All {
-		return true // Default all mode
+		return true
 	}
 
-	return m.options.SecurityGroups || m.options.Servers || m.options.Bastion
+	// In selective mode, only show security groups if explicitly requested
+	// OR if --servers flag is set (servers need security groups)
+	// Note: --bastion alone does NOT require showing security groups (may already exist)
+	return m.options.SecurityGroups || m.options.Servers
 }
 
 // shouldShowBuckets determines if bucket resources should be displayed.
@@ -714,15 +725,19 @@ func (m *Manager) shouldShowCompute() bool {
 
 // shouldShowPublicIPs determines if public IP resources should be displayed.
 func (m *Manager) shouldShowPublicIPs() bool {
+	// Determine if we're in selective mode (any specific flags set)
 	selectiveMode := m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.Bastion || m.options.KeyPairs
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.Bastion || m.options.KeyPairs
 
+	// If no selective flags and not --all, show everything (default all mode)
 	if !selectiveMode && !m.options.All {
-		return true // Default all mode
+		return true
 	}
 
-	// Show public IPs if explicitly requested OR if network is being created
-	return m.options.PublicIPs || m.options.Network
+	// In selective mode, only show public IPs if explicitly requested
+	// Note: removed dependency on --network flag to prevent showing existing IPs
+	return m.options.PublicIPs
 }
 
 // ==============================================================================

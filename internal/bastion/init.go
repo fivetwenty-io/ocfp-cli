@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,6 +153,11 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return m.runConfigOnlyMode(ctx)
 	}
 
+	// Handle genesis-only mode
+	if m.options.GenesisOnly {
+		return m.runGenesisOnlyMode(ctx)
+	}
+
 	// Check if already provisioned
 	if m.checkAndSkipIfProvisioned(ctx) {
 		return nil
@@ -201,6 +207,139 @@ func (m *Manager) runConfigOnlyMode(ctx context.Context) error {
 	return nil
 }
 
+// runGenesisOnlyMode handles the genesis-only installation mode.
+func (m *Manager) runGenesisOnlyMode(ctx context.Context) error {
+	m.log.Info("Genesis-only mode: installing/updating Genesis and related components only")
+
+	// Determine installation mode and execute appropriate upgrade
+	genesisConfig := m.config.Genesis
+	if m.config.Bastion.Genesis.Enabled {
+		genesisConfig = m.config.Bastion.Genesis
+	}
+
+	// Check for binary download mode
+	if override, exists := m.config.Bastion.ToolOverrides["genesis"]; exists && override.URL != "" {
+		return m.upgradeGenesisBinary(ctx, override)
+	}
+
+	// Default: source-based upgrade
+	return m.upgradeGenesisFromSource(ctx, genesisConfig)
+}
+
+// upgradeGenesisFromSource performs Genesis upgrade from source repository.
+func (m *Manager) upgradeGenesisFromSource(ctx context.Context, genesisConfig config.Genesis) error {
+	m.log.Info("Upgrading Genesis from source")
+
+	version, branch, repo := m.extractGenesisConfig(genesisConfig)
+	upgradeScript := m.buildGenesisUpgradeScript(version, branch, repo)
+
+	_, err := m.sshClient.ExecuteCommand(ctx, upgradeScript)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade Genesis from source: %w", err)
+	}
+
+	m.log.Info("Genesis source-based upgrade completed successfully")
+
+	return nil
+}
+
+// extractGenesisConfig extracts and applies defaults to Genesis configuration values.
+func (m *Manager) extractGenesisConfig(genesisConfig config.Genesis) (string, string, string) {
+	version := genesisConfig.VersionPrefix
+	if version == "" {
+		version = "3.1.0"
+	}
+
+	branch := genesisConfig.Branch
+	if branch == "" {
+		branch = "v3.1.x-dev"
+	}
+
+	repo := genesisConfig.Repo
+	if repo == "" {
+		repo = "git@github.com:genesis-community/genesis"
+	}
+
+	return version, branch, repo
+}
+
+// buildGenesisUpgradeScript generates the shell script for upgrading Genesis from source.
+func (m *Manager) buildGenesisUpgradeScript(version, branch, repo string) string {
+	return fmt.Sprintf(`set -e
+
+# Define logging functions
+log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
+log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
+log_error() { echo -e "\033[0;31m[ERROR]\033[0m $1"; }
+
+# Clone Genesis repository if it doesn't exist
+if [ ! -d ~/ocfp/genesis/.git ]; then
+    log_info "Cloning Genesis repository from %s"
+    mkdir -p ~/ocfp
+    git clone -b %s %s ~/ocfp/genesis
+fi
+
+pushd ~/ocfp/genesis
+
+log_info "Checking out branch: %s"
+git checkout %s
+
+log_info "Pulling latest changes"
+git pull origin
+
+log_info "Cleaning previous builds"
+rm -rf genesis-*
+
+log_info "Building genesis version %s"
+./pack %s
+
+log_info "Installing genesis"
+GENESIS_BIN="genesis-%s"
+INSTALL_PATH=$(command -v genesis || echo "/usr/local/bin/genesis")
+sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
+sudo chmod +x "$INSTALL_PATH"
+
+log_info "Verifying installation"
+genesis --version
+
+popd
+
+log_success "Genesis upgraded successfully to version %s"`, repo, branch, repo, branch, branch, version, version, version, version)
+}
+
+// upgradeGenesisBinary performs Genesis upgrade from binary download.
+func (m *Manager) upgradeGenesisBinary(ctx context.Context, override config.ToolOverride) error {
+	m.log.Info("Upgrading Genesis from binary download")
+
+	upgradeScript := fmt.Sprintf(`set -e
+
+# Define logging functions
+log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
+log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
+log_error() { echo -e "\033[0;31m[ERROR]\033[0m $1"; }
+
+log_info "Downloading genesis from %s"
+curl -fsSL "%s" -o /tmp/genesis
+
+log_info "Installing genesis"
+chmod +x /tmp/genesis
+sudo mv /tmp/genesis /usr/local/bin/genesis
+
+log_info "Verifying installation"
+genesis --version
+
+log_success "Genesis upgraded successfully"`, override.URL, override.URL)
+
+	_, err := m.sshClient.ExecuteCommand(ctx, upgradeScript)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade Genesis from binary: %w", err)
+	}
+
+	m.log.Info("Genesis binary upgrade completed successfully")
+
+	return nil
+}
+
 // checkAndSkipIfProvisioned checks if bastion is already provisioned and reports status.
 // Returns true if already provisioned (should skip), false to continue.
 func (m *Manager) checkAndSkipIfProvisioned(ctx context.Context) bool {
@@ -246,7 +385,7 @@ func (m *Manager) executeInitializationPhases(ctx context.Context) error {
 		return err
 	}
 
-	m.finalizeInitialization(phases)
+	m.finalizeInitialization(ctx, phases)
 
 	return nil
 }
@@ -334,6 +473,13 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 		return nil
 	}
 
+	// Wait for SSH port to be ready
+	m.log.Info("Waiting for SSH service to be ready...")
+	err = m.waitForSSHReady(ctx, connDetails.Host, 3*time.Minute)
+	if err != nil {
+		return fmt.Errorf("SSH service did not become ready: %w", err)
+	}
+
 	// Connect to bastion
 	err = m.sshClient.Connect(ctx)
 	if err != nil {
@@ -349,6 +495,50 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// waitForSSHReady waits for SSH port 22 to be reachable on the target host.
+// It attempts TCP connections with exponential backoff until the timeout is reached.
+func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	retryInterval := 5 * time.Second
+	maxRetryInterval := 30 * time.Second
+
+	attempt := 0
+	for time.Now().Before(deadline) {
+		attempt++
+
+		// Try to establish TCP connection to port 22
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "22"), 10*time.Second)
+		if err == nil {
+			// Connection successful
+			conn.Close()
+			m.log.Infof("SSH port 22 is reachable on %s after %d attempts", host, attempt)
+			return nil
+		}
+
+		// Log the connection attempt failure
+		remainingTime := time.Until(deadline)
+		if remainingTime <= 0 {
+			break
+		}
+
+		m.log.Debugf("SSH port 22 not ready yet (attempt %d): %v. Retrying in %v...", attempt, err, retryInterval)
+
+		// Wait before next attempt, respecting context cancellation
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("SSH readiness check cancelled: %w", ctx.Err())
+		case <-time.After(retryInterval):
+			// Exponential backoff up to maxRetryInterval
+			retryInterval = time.Duration(float64(retryInterval) * 1.5)
+			if retryInterval > maxRetryInterval {
+				retryInterval = maxRetryInterval
+			}
+		}
+	}
+
+	return fmt.Errorf("SSH port 22 on %s did not become reachable within %v (tried %d times)", host, timeout, attempt)
 }
 
 // getInitializationPhases returns the list of initialization phases.
@@ -595,7 +785,7 @@ func (m *Manager) handlePhaseSuccess(phaseName string, index, total int, reporte
 }
 
 // finalizeInitialization handles completion tasks like checkpointing and reporting.
-func (m *Manager) finalizeInitialization(phases []struct {
+func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 	name string
 	fn   func(context.Context) error
 }) {
@@ -624,6 +814,50 @@ func (m *Manager) finalizeInitialization(phases []struct {
 		"duration", duration.String(),
 		"total_phases", len(phases),
 		"errors_encountered", len(m.progress.Errors))
+
+	// Reboot if requested after successful initialization
+	m.performRebootIfRequested(ctx)
+}
+
+// performRebootIfRequested reboots the bastion if the RebootAfterInit option is set.
+func (m *Manager) performRebootIfRequested(ctx context.Context) {
+	if !m.options.RebootAfterInit {
+		return
+	}
+
+	m.log.Info("Reboot requested, rebooting bastion to apply updates...")
+
+	if m.options.DryRun {
+		m.log.Info("DRY RUN: Would reboot bastion")
+
+		return
+	}
+
+	// Only reboot for remote execution mode (when SSH client is available)
+	if m.sshClient == nil {
+		m.log.Info("Local execution mode detected, skipping reboot")
+		m.log.Info("Please manually reboot if needed for updates to take effect")
+
+		return
+	}
+
+	m.executeRebootCommand(ctx)
+}
+
+// executeRebootCommand executes the reboot command on the remote bastion host.
+func (m *Manager) executeRebootCommand(ctx context.Context) {
+	rebootCmd := "sudo reboot"
+
+	_, err := m.sshClient.ExecuteCommand(ctx, rebootCmd)
+	if err != nil {
+		m.log.Warnw("Failed to initiate reboot", "error", err)
+		m.log.Info("You may need to manually reboot the bastion for updates to take effect")
+
+		return
+	}
+
+	m.log.Info("Reboot initiated. Bastion will be unavailable briefly.")
+	m.log.Info("Wait 1-2 minutes then verify with: ocfp ssh bastion")
 }
 
 // validatePrerequisites checks that required prerequisites are met.
@@ -1342,9 +1576,9 @@ func (m *Manager) createDirectories(ctx context.Context) error {
 	for _, dir := range directories {
 		expandedPath := m.expandVariables(dir.Path)
 
-		cmd := fmt.Sprintf("mkdir -p '%s'", expandedPath)
+		cmd := fmt.Sprintf("mkdir -p \"%s\"", expandedPath)
 		if dir.Mode != 0 {
-			cmd += fmt.Sprintf(" && chmod %o '%s'", dir.Mode, expandedPath)
+			cmd += fmt.Sprintf(" && chmod %o \"%s\"", dir.Mode, expandedPath)
 		}
 
 		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
@@ -1720,9 +1954,9 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 		}
 
 		if branch != "" {
-			cmd = fmt.Sprintf("if [ -d '%s/.git' ]; then cd '%s' && git fetch --all --prune && git checkout '%s' && git pull --ff-only; else git clone '%s' -b '%s' --depth %d '%s'; fi", dest, dest, branch, repo.URL, branch, depth, dest)
+			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && git fetch --all --prune && git checkout '%s' && git pull --ff-only; else git clone '%s' -b '%s' --depth %d \"%s\"; fi", dest, dest, branch, repo.URL, branch, depth, dest)
 		} else {
-			cmd = fmt.Sprintf("if [ -d '%s/.git' ]; then cd '%s' && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d '%s'; fi", dest, dest, repo.URL, depth, dest)
+			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d \"%s\"; fi", dest, dest, repo.URL, depth, dest)
 		}
 
 		jobs <- job{index: index, name: repo.Name, cmd: cmd}
@@ -1790,29 +2024,55 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 //   - Bloc not present in config
 //   - YAML marshaling fails
 //   - SSH transfer fails
-func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen // multi-step config filtering process
+func (m *Manager) copyOCFPConfig(ctx context.Context) error {
+	// Find and load config file
+	configPath, err := m.findConfigFile()
+	if err != nil {
+		return err
+	}
+
+	// Load and filter config data
+	configFileData, err := m.loadConfigFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Create filtered config for this bloc
+	filteredConfig, err := m.createFilteredConfig(configFileData, configPath)
+	if err != nil {
+		return err
+	}
+
+	// Marshal to YAML
+	yamlBytes, err := yaml.Marshal(filteredConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal filtered config: %w", err)
+	}
+
+	// Write to temp file and transfer
+	return m.transferConfigToBastion(ctx, yamlBytes)
+}
+
+// findConfigFile locates the OCFP configuration file from standard paths.
+func (m *Manager) findConfigFile() (string, error) {
 	homeDir := os.Getenv("HOME")
 	configPaths := []string{
 		homeDir + "/.ocfp/config.yml",
 		"config/config.yml",
 	}
 
-	var configPath string
-
 	for _, path := range configPaths {
 		_, err := os.Stat(path)
 		if err == nil {
-			configPath = path
-
-			break
+			return path, nil
 		}
 	}
 
-	if configPath == "" {
-		return ErrOCFPConfigurationFileNotFound
-	}
+	return "", ErrOCFPConfigurationFileNotFound
+}
 
-	// Load full ConfigFile structure
+// loadConfigFile reads and parses the OCFP configuration file.
+func (m *Manager) loadConfigFile(configPath string) (*config.ConfigFile, error) {
 	configFileData := &config.ConfigFile{
 		Debug:   false,
 		Verbose: false,
@@ -1826,17 +2086,17 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 	// Validate config path for security
 	err := security.ValidatePath(configPath)
 	if err != nil {
-		return fmt.Errorf("invalid config path %s: %w", configPath, err)
+		return nil, fmt.Errorf("invalid config path %s: %w", configPath, err)
 	}
 
 	configBytes, err := os.ReadFile(configPath) //nolint:gosec // path validated above
 	if err != nil {
-		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
+		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
 
 	err = yaml.Unmarshal(configBytes, configFileData)
 	if err != nil {
-		return fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
 	m.log.Debug("Config file loaded",
@@ -1844,15 +2104,18 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 		"debug", configFileData.Debug,
 		"verbose", configFileData.Verbose)
 
-	// Verify the bloc being initialized exists
+	return configFileData, nil
+}
+
+// createFilteredConfig creates a filtered config containing only the target bloc.
+func (m *Manager) createFilteredConfig(configFileData *config.ConfigFile, configPath string) (*config.ConfigFile, error) {
 	blocName := m.config.Name
 
 	blocConfig, exists := configFileData.Blocs[blocName]
 	if !exists {
-		return fmt.Errorf("%w: bloc '%s' in file %s", ErrBlocNotFoundInConfig, blocName, configPath)
+		return nil, fmt.Errorf("%w: bloc '%s' in file %s", ErrBlocNotFoundInConfig, blocName, configPath)
 	}
 
-	// Create filtered config with globals + single bloc
 	filteredConfig := &config.ConfigFile{
 		Debug:   configFileData.Debug,
 		Verbose: configFileData.Verbose,
@@ -1865,12 +2128,11 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 		"bloc", blocName,
 		"included_blocs", 1)
 
-	// Marshal filtered config to YAML
-	yamlBytes, err := yaml.Marshal(filteredConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal filtered config: %w", err)
-	}
+	return filteredConfig, nil
+}
 
+// transferConfigToBastion writes YAML config to temp file and transfers to bastion.
+func (m *Manager) transferConfigToBastion(ctx context.Context, yamlBytes []byte) error {
 	// Create temp file for transfer
 	tmpFile, err := os.CreateTemp("", "ocfp-config-*.yml")
 	if err != nil {
@@ -1886,35 +2148,18 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 		}
 	}()
 
-	_, err = tmpFile.Write(yamlBytes)
+	// Write YAML to temp file
+	err = m.writeTempConfigFile(tmpFile, yamlBytes)
 	if err != nil {
-		closeErr := tmpFile.Close()
-		if closeErr != nil {
-			m.log.Warn("Failed to close temp file after write error", "error", closeErr)
-		}
-
-		return fmt.Errorf("failed to write temp config file: %w", err)
+		return err
 	}
 
-	err = tmpFile.Close()
+	// Get remote path and transfer
+	remoteConfigPath, err := m.getRemoteConfigPath(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to close temp config file: %w", err)
+		return err
 	}
 
-	// Get remote home directory for absolute path (tilde expansion may not work in TransferFile)
-	homeResult, err := m.sshClient.ExecuteCommand(ctx, "echo $HOME")
-	if err != nil {
-		return fmt.Errorf("failed to get remote home directory: %w", err)
-	}
-
-	remoteHome := strings.TrimSpace(homeResult.Stdout)
-	if remoteHome == "" {
-		// Fallback to constructing from SSH user
-		remoteHome = "/home/" + m.config.Bastion.SSHUser
-	}
-
-	// Transfer filtered config using absolute path
-	remoteConfigPath := remoteHome + "/.ocfp/config.yml"
 	transferOpts := ssh.TransferOptions{
 		Recursive:    false,
 		Preserve:     false,
@@ -1932,10 +2177,46 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error { //nolint:funlen //
 	}
 
 	m.log.Info("Transferred filtered config to bastion",
-		"bloc", blocName,
+		"bloc", m.config.Name,
 		"remote_path", remoteConfigPath)
 
 	return nil
+}
+
+// writeTempConfigFile writes YAML bytes to a temporary file.
+func (m *Manager) writeTempConfigFile(tmpFile *os.File, yamlBytes []byte) error {
+	_, err := tmpFile.Write(yamlBytes)
+	if err != nil {
+		closeErr := tmpFile.Close()
+		if closeErr != nil {
+			m.log.Warn("Failed to close temp file after write error", "error", closeErr)
+		}
+
+		return fmt.Errorf("failed to write temp config file: %w", err)
+	}
+
+	err = tmpFile.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close temp config file: %w", err)
+	}
+
+	return nil
+}
+
+// getRemoteConfigPath determines the remote config file path on the bastion.
+func (m *Manager) getRemoteConfigPath(ctx context.Context) (string, error) {
+	homeResult, err := m.sshClient.ExecuteCommand(ctx, "echo $HOME")
+	if err != nil {
+		return "", fmt.Errorf("failed to get remote home directory: %w", err)
+	}
+
+	remoteHome := strings.TrimSpace(homeResult.Stdout)
+	if remoteHome == "" {
+		// Fallback to constructing from SSH user
+		remoteHome = "/home/" + m.config.Bastion.SSHUser
+	}
+
+	return remoteHome + "/.ocfp/config.yml", nil
 }
 
 func (m *Manager) copySSHKeys(ctx context.Context) error {

@@ -135,7 +135,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 	input := &ec2.DescribeVpcsInput{}
 
 	if len(filters) > 0 {
-		input.Filters = buildEC2Filters(filters)
+		input.Filters = buildAWSTagFilters(filters)
 	}
 
 	output, err := ec2Client.DescribeVpcs(ctx, input)
@@ -793,20 +793,6 @@ func extractTags(awsTags []types.Tag) map[string]string {
 	return tags
 }
 
-// buildEC2Filters builds EC2 filters from filter map.
-func buildEC2Filters(filters map[string]string) []types.Filter {
-	ec2Filters := make([]types.Filter, 0, len(filters))
-
-	for k, v := range filters {
-		ec2Filters = append(ec2Filters, types.Filter{
-			Name:   aws.String(k),
-			Values: []string{v},
-		})
-	}
-
-	return ec2Filters
-}
-
 // validateCIDR validates a CIDR block.
 func validateCIDR(cidr string) error {
 	_, network, err := net.ParseCIDR(cidr)
@@ -892,13 +878,20 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, allocationID string)
 }
 
 // ListFloatingIPs lists all Elastic IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
 	ec2Client, err := m.client.getEC2Client(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	output, err := ec2Client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
+	input := &ec2.DescribeAddressesInput{}
+
+	// Apply tag filters
+	if len(filters) > 0 {
+		input.Filters = buildAWSTagFilters(filters)
+	}
+
+	output, err := ec2Client.DescribeAddresses(ctx, input)
 	if err != nil {
 		return nil, wrapError(err, "failed to list elastic IPs")
 	}

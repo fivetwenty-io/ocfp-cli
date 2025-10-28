@@ -137,37 +137,27 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 		return nil, wrapError(err, "get EC2 client")
 	}
 
-	// Build AWS filters
-	awsFilters := make([]types.Filter, 0)
-
-	// Add tag filters
+	// Preprocess filters to handle security-group-specific mappings
+	processedFilters := make(map[string]string, len(filters))
 	for key, value := range filters {
-		if strings.HasPrefix(key, "tag:") {
-			awsFilters = append(awsFilters, types.Filter{
-				Name:   aws.String(key),
-				Values: []string{value},
-			})
-		} else {
-			// Map common filter names
-			switch key {
-			case "network-id", "vpc-id":
-				awsFilters = append(awsFilters, types.Filter{
-					Name:   aws.String("vpc-id"),
-					Values: []string{value},
-				})
-			case "name":
-				awsFilters = append(awsFilters, types.Filter{
-					Name:   aws.String("group-name"),
-					Values: []string{value},
-				})
-			case "description":
-				awsFilters = append(awsFilters, types.Filter{
-					Name:   aws.String("description"),
-					Values: []string{value},
-				})
-			}
+		switch key {
+		case "network-id":
+			// Map network-id to vpc-id for security groups
+			processedFilters["vpc-id"] = value
+		case "name":
+			// Security groups use "group-name" filter
+			processedFilters["group-name"] = value
+		case "description":
+			// Description is an AWS-specific filter
+			processedFilters["description"] = value
+		default:
+			// All other filters (including bloc, managed-by) are passed through
+			processedFilters[key] = value
 		}
 	}
+
+	// Build AWS filters with proper tag handling
+	awsFilters := buildAWSTagFilters(processedFilters)
 
 	input := &ec2.DescribeSecurityGroupsInput{}
 	if len(awsFilters) > 0 {
