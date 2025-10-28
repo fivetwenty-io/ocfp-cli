@@ -39,7 +39,8 @@ func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string 
 	lines = append(lines, "# Vault inception setup")
 	lines = append(lines, "")
 
-	lines = append(lines, om.generateVaultInceptionScriptLocator()...)
+	// Use OCFP CLI locator to find the installed binary
+	lines = append(lines, om.generateOCFPCLILocator()...)
 	lines = append(lines, om.generateVaultInceptionExecution()...)
 
 	return strings.Join(lines, "\n")
@@ -400,42 +401,18 @@ func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) str
 }
 
 func (om *OCFPManager) generateVaultInceptionScriptLocator() []string {
-	return []string{
-		"# Check for vault-inception script",
-		"VAULT_INCEPTION_LOCATIONS=(",
-		`    "${HOME}/ocfp/cli/scripts/provision/vault-inception"`,
-		`    "${HOME}/ocfp/ocfp-cli/scripts/provision/vault-inception"`,
-		")",
-		"",
-		"VAULT_INCEPTION_SCRIPT=\"\"",
-		"for location in \"${VAULT_INCEPTION_LOCATIONS[@]}\"; do",
-		"    if [ -f \"$location\" ]; then",
-		"        VAULT_INCEPTION_SCRIPT=\"$location\"",
-		"        log_info \"Found vault-inception script at: $location\"",
-		"        break",
-		"    fi",
-		"done",
-		"",
-		"if [ -z \"$VAULT_INCEPTION_SCRIPT\" ]; then",
-		"    log_warning 'vault-inception script not found!'",
-		"    log_warning 'Expected at: ~/ocfp/cli/scripts/provision/vault-inception'",
-		"    log_warning 'Vault will need manual initialization - skipping vault inception'",
-		"fi",
-		"",
-	}
+	// Vault inception now uses the OCFP CLI binary installed on the bastion
+	// This function is kept for compatibility but returns empty - the CLI locator
+	// is called separately in GenerateVaultInceptionScript
+	return []string{}
 }
 
 func (om *OCFPManager) generateVaultInceptionExecution() []string {
 	return []string{
-		"# Only run if vault-inception script was found",
-		"if [ -n \"$VAULT_INCEPTION_SCRIPT\" ]; then",
-		"    if [ ! -x \"$VAULT_INCEPTION_SCRIPT\" ]; then",
-		"        log_info 'Making vault-inception script executable'",
-		"        chmod +x \"$VAULT_INCEPTION_SCRIPT\"",
-		"    fi",
-		"    ",
-		"    log_info 'Running vault-inception script'",
-		"    perl \"$VAULT_INCEPTION_SCRIPT\"",
+		"# Run vault inception using OCFP CLI binary on bastion",
+		"if [ -n \"$OCFP_CLI_PATH\" ]; then",
+		"    log_info 'Running vault inception via OCFP CLI'",
+		"    \"${OCFP_CLI_PATH}\" vault inception",
 		"    VAULT_INCEPTION_EXIT=$?",
 		"    ",
 		"    if [ $VAULT_INCEPTION_EXIT -eq 0 ]; then",
@@ -446,11 +423,14 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 		"        if safe target 2>&1 | grep -q 'inception\\|production'; then",
 		"            log_success 'Vault already configured'",
 		"        else",
-		"            log_warning 'Vault inception failed - vault may need manual setup'",
+		"            log_error 'Vault inception failed - vault may need manual setup'",
+		"            exit 1",
 		"        fi",
 		"    fi",
 		"else",
-		"    log_info 'Skipping vault inception - script not found'",
+		"    log_error 'OCFP CLI not found at expected locations'",
+		"    log_error 'Cannot proceed without vault initialization'",
+		"    exit 1",
 		"fi",
 		"",
 	}
