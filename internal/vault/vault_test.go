@@ -1,6 +1,10 @@
 package vault_test
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -29,19 +33,19 @@ func TestPathBuilder(t *testing.T) {
 	assert.Equal(t, "secret/config/test-bloc/mgmt", pathBuilder.GetEnvironmentPath("mgmt"))
 	assert.Equal(t, "secret/config/test-bloc/ocf", pathBuilder.GetEnvironmentPath("ocf"))
 
-	// Test VPC paths
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc", pathBuilder.GetVPCPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/ocf/vpc", pathBuilder.GetVPCPath("ocf"))
+	// Test network paths
+	assert.Equal(t, "secret/config/test-bloc/mgmt/net", pathBuilder.GetNetPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/ocf/net", pathBuilder.GetNetPath("ocf"))
 
 	// Test subnet paths
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets", pathBuilder.GetSubnetsPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/vpc/subnets/ocfp-0", pathBuilder.GetSubnetPath("mgmt", "ocfp", 0))
-	assert.Equal(t, "secret/config/test-bloc/ocf/vpc/subnets/services-1", pathBuilder.GetSubnetPath("ocf", "services", 1))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/net/subnets", pathBuilder.GetSubnetsPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/net/subnets/ocfp-0", pathBuilder.GetSubnetPath("mgmt", "ocfp", 0))
+	assert.Equal(t, "secret/config/test-bloc/ocf/net/subnets/services-1", pathBuilder.GetSubnetPath("ocf", "services", 1))
 
 	// Test BOSH paths
 	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh", pathBuilder.GetBOSHPath("mgmt"))
 	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam", pathBuilder.GetIAMPath("mgmt"))
-	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/iam/s3", pathBuilder.GetS3IAMPath("mgmt"))
+	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/s3", pathBuilder.GetS3Path("mgmt"))
 	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys", pathBuilder.GetKeysPath("mgmt"))
 	assert.Equal(t, "secret/config/test-bloc/mgmt/bosh/keys/bosh", pathBuilder.GetBOSHKeyPath("mgmt"))
 
@@ -65,10 +69,10 @@ func TestPathBuilderParsing(t *testing.T) {
 	pathBuilder := vault.NewPathBuilder(cfg, "test-bloc")
 
 	// Test config path parsing
-	info, err := pathBuilder.ParsePath("secret/config/test-bloc/mgmt/vpc/subnets")
+	info, err := pathBuilder.ParsePath("secret/config/test-bloc/mgmt/net/subnets")
 	require.NoError(t, err)
 	assert.Equal(t, "mgmt", info.Environment)
-	assert.Equal(t, "vpc", info.Component)
+	assert.Equal(t, "net", info.Component)
 	assert.Equal(t, "subnets", info.Subpath)
 
 	// Test inception path parsing
@@ -470,4 +474,194 @@ func (m *MockSafe) GetString(path, key string) (string, error) {
 
 func (m *MockSafe) GetJSON(path, key string) ([]byte, error) {
 	return nil, vault.ErrNotImplementedInMock
+}
+
+// TestConfigCompressionFormat tests that SaveConfigToVault uses gzip compression.
+// This test verifies the format matches Perl implementation: Base64(gzip(JSON))
+func TestConfigCompressionFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider string
+	}{
+		{
+			name:     "STACKIT provider config compression",
+			provider: "stackit",
+		},
+		{
+			name:     "AWS provider config compression",
+			provider: "aws",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Create test config
+			cfg := createTestConfigForProvider(tt.provider)
+			mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
+
+			// Create provider based on type
+			var err error
+			switch tt.provider {
+			case "stackit":
+				stackitProvider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+				err = stackitProvider.SaveConfigToVault()
+			case "aws":
+				awsProvider := vault.NewAWSVaultProvider(cfg, mockSafe, "test-bloc")
+				err = awsProvider.SaveConfigToVault()
+			}
+
+			require.NoError(t, err)
+
+			// Get the stored config value
+			configPath := "secret/config/test-bloc/ocfp"
+			pathData, exists := mockSafe.data[configPath]
+			require.True(t, exists, "Config path should exist in vault")
+
+			encodedValue, ok := pathData["config"].(string)
+			require.True(t, ok, "Config value should be a string")
+			require.NotEmpty(t, encodedValue, "Encoded value should not be empty")
+
+			// Step 1: Decode Base64
+			compressedData, err := base64.StdEncoding.DecodeString(encodedValue)
+			require.NoError(t, err, "Should successfully decode base64")
+			require.NotEmpty(t, compressedData, "Compressed data should not be empty")
+
+			// Step 2: Decompress gzip
+			gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
+			require.NoError(t, err, "Should successfully create gzip reader")
+
+			var decompressedBuf bytes.Buffer
+			_, err = decompressedBuf.ReadFrom(gzipReader)
+			require.NoError(t, err, "Should successfully decompress gzip data")
+			err = gzipReader.Close()
+			require.NoError(t, err, "Should successfully close gzip reader")
+
+			// Step 3: Parse JSON
+			var decodedConfig config.Config
+			err = json.Unmarshal(decompressedBuf.Bytes(), &decodedConfig)
+			require.NoError(t, err, "Should successfully parse JSON from decompressed data")
+
+			// Verify the config matches what we saved
+			assert.Equal(t, cfg.Name, decodedConfig.Name, "Config name should match")
+			assert.Equal(t, cfg.Provider, decodedConfig.Provider, "Config provider should match")
+			assert.Equal(t, cfg.Region, decodedConfig.Region, "Config region should match")
+
+			// Verify compression actually happened (compressed should be smaller than original)
+			originalJSON, _ := json.Marshal(cfg)
+			compressionRatio := float64(len(compressedData)) / float64(len(originalJSON))
+			t.Logf("Compression ratio for %s: %.2f%% (%d bytes -> %d bytes)",
+				tt.provider, compressionRatio*100, len(originalJSON), len(compressedData))
+
+			// Compression should reduce size for typical configs
+			// Allow up to 120% in case config is too small to compress effectively
+			assert.LessOrEqual(t, compressionRatio, 1.2,
+				"Compressed data should not be significantly larger than original")
+		})
+	}
+}
+
+// TestCompressionLevel tests that gzip uses maximum compression (level 9).
+func TestCompressionLevel(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestStackitConfig()
+	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
+	provider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+
+	err := provider.SaveConfigToVault()
+	require.NoError(t, err)
+
+	// Get the stored config
+	configPath := "secret/config/test-bloc/ocfp"
+	pathData, exists := mockSafe.data[configPath]
+	require.True(t, exists)
+
+	encodedValue, ok := pathData["config"].(string)
+	require.True(t, ok)
+
+	// Decode to get compressed data
+	compressedData, err := base64.StdEncoding.DecodeString(encodedValue)
+	require.NoError(t, err)
+
+	// Create a reference compression at different levels
+	jsonData, _ := json.Marshal(cfg)
+
+	var level1Buf, level9Buf bytes.Buffer
+
+	// Level 1 (fastest)
+	writer1, _ := gzip.NewWriterLevel(&level1Buf, gzip.BestSpeed)
+	writer1.Write(jsonData)
+	writer1.Close()
+
+	// Level 9 (best compression)
+	writer9, _ := gzip.NewWriterLevel(&level9Buf, gzip.BestCompression)
+	writer9.Write(jsonData)
+	writer9.Close()
+
+	// The actual compressed data should match level 9 size more closely than level 1
+	actualSize := len(compressedData)
+	level1Size := level1Buf.Len()
+	level9Size := level9Buf.Len()
+
+	t.Logf("Compression sizes - Level 1: %d, Level 9: %d, Actual: %d",
+		level1Size, level9Size, actualSize)
+
+	// Actual size should be closer to level 9 than level 1
+	// (or equal to level 9 for small data)
+	assert.LessOrEqual(t, actualSize, level1Size,
+		"Compressed data should be at least as small as level 1 compression")
+	assert.Equal(t, level9Size, actualSize,
+		"Compressed data should match level 9 (maximum compression)")
+}
+
+// TestErrorHandlingInCompression tests error handling during compression.
+func TestErrorHandlingInCompression(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies that compression errors are properly handled
+	// For now, we test successful compression
+	// Future enhancement: test with mock writer that fails
+	cfg := createTestStackitConfig()
+	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
+	provider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+
+	err := provider.SaveConfigToVault()
+	require.NoError(t, err, "SaveConfigToVault should succeed with valid config")
+}
+
+// createTestConfigForProvider creates a test config for a specific provider.
+func createTestConfigForProvider(provider string) *config.Config {
+	cfg := &config.Config{
+		Name:     "test-bloc",
+		Provider: provider,
+		Region:   "test-region",
+		Network: config.NetworkConfig{
+			CIDR: "10.0.0.0/16",
+		},
+		Bastion:     createTestBastionConfig(),
+		Genesis:     createTestGenesisConfig(),
+		Deployments: config.NewDeploymentSettings("", nil),
+		DNS:         []string{"1.1.1.1", "8.8.8.8"},
+		AZs:         createTestAZConfig(),
+		Routers:     config.ComponentConfig{},
+		Cells:       config.ComponentConfig{},
+		Subnets:     createTestSubnetsConfig(),
+		Blobstore:   createTestBlobstoreConfig(),
+	}
+
+	// Add provider-specific fields
+	switch provider {
+	case "stackit":
+		cfg.ProjectID = "test-project"
+		cfg.ServiceAccountToken = "test-token"
+	case "aws":
+		cfg.AccessKeyID = "test-access-key"
+		cfg.SecretAccessKey = "test-secret-key"
+	}
+
+	return cfg
 }

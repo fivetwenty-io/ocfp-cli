@@ -1,13 +1,23 @@
 package vault
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	stackitcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
@@ -20,7 +30,7 @@ const (
 	NetworkPrefix     = 3
 	LastOctet         = 254
 
-	// IP allocation offsets.
+	// IP allocation offsets (used by AWS provider).
 	JumpboxOffset    = 5
 	CFRouterOffset   = 10
 	DiegoCellOffset  = 20
@@ -178,22 +188,92 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 		return ErrInvalidFQDNsConfigType(envType, envFQDNs)
 	}
 
-	err := s.Safe.SetMultiple(fqdnPath, data)
-	if err != nil {
-		return fmt.Errorf("failed to set FQDNs: %w", err)
+	// Make a copy to avoid modifying the original config
+	fqdns := make(map[string]interface{})
+	for k, v := range data {
+		fqdns[k] = v
+	}
+
+	// For mgmt environment, skip CF-related FQDNs
+	if envType == MgmtEnvType {
+		for system := range fqdns {
+			if s.shouldSkipCFForEnvType(envType, system) {
+				delete(fqdns, system)
+				s.logger.Debugw("Skipped CF-related FQDN for mgmt environment", "system", system)
+			}
+		}
+	}
+
+	// For OCF environment, ensure shield FQDN exists (generate if missing)
+	if envType == OCFEnvType {
+		if _, exists := fqdns["shield"]; !exists {
+			// Generate default shield FQDN
+			// Try DomainName from config (Go equivalent of base_domain/system_domain)
+			baseDomain := s.Config.DomainName
+			if baseDomain == "" {
+				baseDomain = "example.com"
+			}
+			fqdns["shield"] = fmt.Sprintf("shield.%s", baseDomain)
+			s.logger.Infow("Added default shield FQDN for OCF environment", "fqdn", fqdns["shield"])
+		}
+	}
+
+	// Only write to vault if we have FQDNs to write
+	if len(fqdns) > 0 {
+		err := s.Safe.SetMultiple(fqdnPath, fqdns)
+		if err != nil {
+			return fmt.Errorf("failed to set FQDNs: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::should_skip_cf_for_env_type (lines 29-50).
+func (s *StackitVaultProvider) shouldSkipCFForEnvType(envType, system string) bool {
+	// Only skip CF systems for mgmt environment
+	if envType != MgmtEnvType {
+		return false
+	}
+
+	// CF-specific systems that should be skipped in mgmt
+	cfSystems := map[string]bool{
+		"cf":               true,
+		"cloud_controller": true,
+		"api":              true,
+		"uaa":              true,
+		"diego":            true,
+		"credhub":          true,
+		"loggregator":      true,
+		"router":           true,
+		"doppler":          true,
+		"log-api":          true,
+		"syslog-scheduler": true,
+	}
+
+	// Direct match
+	if cfSystems[system] {
+		return true
+	}
+
+	// Pattern match: cf- prefix or -cf suffix (with - or _ separator)
+	if strings.HasPrefix(system, "cf-") || strings.HasPrefix(system, "cf_") ||
+		strings.HasSuffix(system, "-cf") || strings.HasSuffix(system, "_cf") {
+		return true
+	}
+
+	return false
 }
 
 // ConfigureIAAS configures IaaS-specific settings.
 func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
 	s.logger.Infow("Configuring IaaS components", "env_type", envType)
 
-	// Configure VPC
-	err := s.configureVPC(envType)
+	// Configure network
+	err := s.configureNetwork(envType)
 	if err != nil {
-		return fmt.Errorf("failed to configure VPC: %w", err)
+		return fmt.Errorf("failed to configure network: %w", err)
 	}
 
 	// Configure subnets
@@ -237,34 +317,325 @@ func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string) e
 	return nil
 }
 
-// ConfigurePublicIPs configures public IP addresses.
+// ConfigurePublicIPs configures public IP addresses by querying the STACKIT API.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_public_ips (lines 499-533).
 func (s *StackitVaultProvider) ConfigurePublicIPs() error {
-	s.logger.Info("Configuring public IPs")
+	s.logger.Info("Configuring public IPs for bloc", "bloc", s.BlocName)
 
-	// This would typically query the STACKIT API for public IPs
-	// For now, we'll create placeholder configuration
-	publicIPsPath := s.PathBuilder.GetPublicIPsPath()
-
-	// Standard public IP assignments for Cloud Foundry
-	publicIPs := map[string]interface{}{
-		"cf_router_0":     fmt.Sprintf("router-0-%s.%s", s.BlocName, s.Config.Region),
-		"cf_router_1":     fmt.Sprintf("router-1-%s.%s", s.BlocName, s.Config.Region),
-		"cf_tcp_router_0": fmt.Sprintf("tcp-router-0-%s.%s", s.BlocName, s.Config.Region),
-	}
-
-	// In a real implementation, this would:
-	// 1. Query STACKIT API for existing public IPs
-	// 2. Match them to CF components based on tags/names
-	// 3. Store the actual IP addresses
-
-	err := s.Safe.SetMultiple(publicIPsPath, publicIPs)
+	// Get STACKIT CPI client
+	client, err := s.getStackitClient()
 	if err != nil {
-		return fmt.Errorf("failed to set public IPs: %w", err)
+		s.logger.Warnw("Failed to get STACKIT client, skipping public IPs configuration", "error", err)
+		return nil
 	}
 
-	s.logger.Infow("Public IP configuration completed", "path", publicIPsPath)
+	// Fetch all public IPs from STACKIT API
+	allIPs, err := s.fetchAllPublicIPs(client)
+	if err != nil {
+		s.logger.Warnw("Failed to fetch public IPs from API, skipping", "error", err)
+		return nil
+	}
+
+	if len(allIPs) == 0 {
+		s.logger.Info("No public IPs found in STACKIT API")
+		return nil
+	}
+
+	s.logger.Infow("Found public IPs from API", "total_count", len(allIPs))
+
+	// Filter IPs by bloc and managed-by label
+	blocIPs := s.filterBlocIPs(allIPs)
+	if len(blocIPs) == 0 {
+		s.logger.Infow("No public IPs found for bloc", "bloc", s.BlocName)
+		return nil
+	}
+
+	s.logger.Infow("Filtered public IPs for bloc", "bloc", s.BlocName, "count", len(blocIPs))
+
+	// Group IPs by job type
+	ipsByJob := s.groupIPsByJob(blocIPs)
+
+	// Prepare vault data for mgmt and ocf environments
+	mgmtVaultData, ocfVaultData := s.preparePublicIPVaultData(ipsByJob)
+
+	// Store IPs in vault
+	err = s.storePublicIPsInVault(mgmtVaultData, ocfVaultData)
+	if err != nil {
+		return err
+	}
+
+	// Display summary
+	s.displayPublicIPSummary(mgmtVaultData, ocfVaultData)
 
 	return nil
+}
+
+// getStackitClient retrieves or creates a STACKIT CPI client.
+func (s *StackitVaultProvider) getStackitClient() (cpi.NetworkManager, error) {
+	// Create STACKIT config from OCFP config
+	stackitConfig := &stackitcpi.Config{
+		ProjectID:           s.Config.ProjectID,
+		OrgID:               s.Config.OrgID,
+		AuthToken:           s.Config.AuthToken,
+		ServiceAccountToken: s.Config.ServiceAccountToken,
+		ServiceAccountJSON:  s.Config.ServiceAccountJSON,
+		Region:              s.Config.Region,
+		BaseURL:             s.Config.APIEndpoint,
+	}
+
+	// Create STACKIT client
+	client, err := stackitcpi.NewClient(stackitConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create STACKIT client: %w", err)
+	}
+
+	// Initialize client
+	ctx := context.Background()
+	err = client.Initialize(ctx, stackitConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize STACKIT client: %w", err)
+	}
+
+	return client.Network(), nil
+}
+
+// fetchAllPublicIPs queries the STACKIT API for all public IPs in the project.
+// This matches the Perl implementation in _fetch_all_public_ips (lines 535-554).
+func (s *StackitVaultProvider) fetchAllPublicIPs(networkManager cpi.NetworkManager) ([]*cpi.PublicIP, error) {
+	ctx := context.Background()
+
+	// Call ListPublicIPs to get all IPs
+	publicIPs, err := networkManager.ListPublicIPs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list public IPs: %w", err)
+	}
+
+	return publicIPs, nil
+}
+
+// filterBlocIPs filters public IPs by bloc name and managed-by=ocfp label.
+// This matches the Perl implementation in _filter_bloc_ips (lines 556-573).
+func (s *StackitVaultProvider) filterBlocIPs(allIPs []*cpi.PublicIP) []*cpi.PublicIP {
+	blocIPs := make([]*cpi.PublicIP, 0)
+
+	for _, ip := range allIPs {
+		if ip.Labels == nil {
+			continue
+		}
+
+		// Skip if not managed by OCFP
+		managedBy, hasManagedBy := ip.Labels["managed-by"]
+		if !hasManagedBy || managedBy != "ocfp" {
+			continue
+		}
+
+		// Skip if belongs to different bloc
+		bloc, hasBloc := ip.Labels["bloc"]
+		if !hasBloc || bloc != s.BlocName {
+			continue
+		}
+
+		blocIPs = append(blocIPs, ip)
+	}
+
+	return blocIPs
+}
+
+// groupIPsByJob groups public IPs by job type from labels.
+// This matches the Perl implementation in _group_ips_by_job (lines 575-595).
+func (s *StackitVaultProvider) groupIPsByJob(blocIPs []*cpi.PublicIP) map[string][]*cpi.PublicIP {
+	ipsByJob := make(map[string][]*cpi.PublicIP)
+
+	for _, ip := range blocIPs {
+		// Get job from labels or use "unknown"
+		job := "unknown"
+		if ip.Labels != nil {
+			if jobLabel, exists := ip.Labels["job"]; exists {
+				job = jobLabel
+			}
+		}
+
+		// Use Job field if available (preferred)
+		if ip.Job != "" {
+			job = ip.Job
+		}
+
+		ipsByJob[job] = append(ipsByJob[job], ip)
+	}
+
+	return ipsByJob
+}
+
+// jobTypeMapping defines the mapping of job types to vault key prefixes and environments.
+// This matches the Perl implementation %JOB_TYPE_MAP (lines 629-637).
+var jobTypeMapping = map[string]struct {
+	prefix      string
+	environment string
+}{
+	"bastion":    {prefix: "bastion_", environment: "mgmt"},
+	"ops":        {prefix: "ops_", environment: "mgmt"},
+	"router":     {prefix: "cf_router_", environment: "ocf"},
+	"tcp-router": {prefix: "cf_tcp_router_", environment: "ocf"},
+	"jumpbox":    {prefix: "jumpbox_", environment: "mgmt"},
+}
+
+// preparePublicIPVaultData prepares vault data for mgmt and ocf environments.
+// This matches the Perl implementation in _prepare_vault_data (lines 597-626).
+func (s *StackitVaultProvider) preparePublicIPVaultData(ipsByJob map[string][]*cpi.PublicIP) (map[string]interface{}, map[string]interface{}) {
+	mgmtVaultData := make(map[string]interface{})
+	ocfVaultData := make(map[string]interface{})
+
+	// Process each job type
+	for job, ips := range ipsByJob {
+		// Sort by index (if available)
+		sortedIPs := s.sortIPsByIndex(ips)
+
+		// Determine vault key and environment for each IP
+		for _, ip := range sortedIPs {
+			key, environment := s.determineVaultKeyAndEnvironment(job, ip.Index)
+
+			// Store in appropriate environment
+			if environment == "mgmt" {
+				mgmtVaultData[key] = ip.IPAddress
+				s.logger.Infow("Prepared mgmt IP", "key", key, "ip", ip.IPAddress)
+			} else {
+				ocfVaultData[key] = ip.IPAddress
+				s.logger.Infow("Prepared ocf IP", "key", key, "ip", ip.IPAddress)
+			}
+		}
+	}
+
+	return mgmtVaultData, ocfVaultData
+}
+
+// sortIPsByIndex sorts IPs by their index field.
+func (s *StackitVaultProvider) sortIPsByIndex(ips []*cpi.PublicIP) []*cpi.PublicIP {
+	// Create a copy to avoid modifying original
+	sorted := make([]*cpi.PublicIP, len(ips))
+	copy(sorted, ips)
+
+	// Simple bubble sort by index (small arrays, simplicity over efficiency)
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := 0; j < len(sorted)-i-1; j++ {
+			// Compare indices (treat empty as "unknown")
+			idx1 := sorted[j].Index
+			idx2 := sorted[j+1].Index
+
+			if idx1 == "" {
+				idx1 = "unknown"
+			}
+
+			if idx2 == "" {
+				idx2 = "unknown"
+			}
+
+			if idx1 > idx2 {
+				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
+			}
+		}
+	}
+
+	return sorted
+}
+
+// determineVaultKeyAndEnvironment determines the vault key and environment for a job and index.
+// This matches the Perl implementation in _determine_vault_key_and_env (lines 639-659).
+func (s *StackitVaultProvider) determineVaultKeyAndEnvironment(job, index string) (string, string) {
+	// Use index or "unknown" if not set
+	if index == "" {
+		index = "unknown"
+	}
+
+	// Check if job type is in the mapping
+	if mapping, exists := jobTypeMapping[job]; exists {
+		key := mapping.prefix + index
+		environment := mapping.environment
+		return key, environment
+	}
+
+	// Unknown job type - determine environment based on prefix
+	s.logger.Warnw("Unknown job type for public IP", "job", job)
+
+	key := fmt.Sprintf("%s_%s", job, index)
+
+	// If it starts with cf_, put it in ocf, otherwise mgmt
+	environment := "mgmt"
+	if strings.HasPrefix(job, "cf_") || strings.HasPrefix(job, "cf-") {
+		environment = "ocf"
+	}
+
+	return key, environment
+}
+
+// storePublicIPsInVault stores public IPs in vault at appropriate paths.
+// This matches the Perl implementation in _store_ips_in_vault (lines 661-687).
+func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData map[string]interface{}) error {
+	// Store management IPs in vault
+	if len(mgmtVaultData) > 0 {
+		mgmtPath := fmt.Sprintf("secret/config/%s/mgmt/public-ips", s.BlocName)
+		s.logger.Infow("Storing management public IPs in vault",
+			"count", len(mgmtVaultData),
+			"path", mgmtPath)
+
+		err := s.Safe.SetMultiple(mgmtPath, mgmtVaultData)
+		if err != nil {
+			return fmt.Errorf("failed to store management public IPs: %w", err)
+		}
+
+		s.logger.Info("Successfully stored management public IPs in vault")
+	}
+
+	// Store OCF IPs in vault
+	if len(ocfVaultData) > 0 {
+		ocfPath := fmt.Sprintf("secret/config/%s/ocf/public-ips", s.BlocName)
+		s.logger.Infow("Storing OCF public IPs in vault",
+			"count", len(ocfVaultData),
+			"path", ocfPath)
+
+		err := s.Safe.SetMultiple(ocfPath, ocfVaultData)
+		if err != nil {
+			return fmt.Errorf("failed to store OCF public IPs: %w", err)
+		}
+
+		s.logger.Info("Successfully stored OCF public IPs in vault")
+	}
+
+	return nil
+}
+
+// displayPublicIPSummary displays a summary of configured public IPs.
+// This matches the Perl implementation in _display_ip_summary (lines 689-703).
+func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultData map[string]interface{}) {
+	if len(mgmtVaultData) == 0 && len(ocfVaultData) == 0 {
+		s.logger.Warnw("No public IPs configured for bloc", "bloc", s.BlocName)
+		return
+	}
+
+	s.logger.Info("Public IPs summary:")
+
+	// Count by job type
+	bastionCount := s.countKeysWithPrefix(mgmtVaultData, "bastion_")
+	opsCount := s.countKeysWithPrefix(mgmtVaultData, "ops_")
+	jumpboxCount := s.countKeysWithPrefix(mgmtVaultData, "jumpbox_")
+	routerCount := s.countKeysWithPrefix(ocfVaultData, "cf_router_")
+	tcpRouterCount := s.countKeysWithPrefix(ocfVaultData, "cf_tcp_router_")
+
+	s.logger.Infow("  bastion IPs", "count", bastionCount)
+	s.logger.Infow("  ops IPs", "count", opsCount)
+	s.logger.Infow("  jumpbox IPs", "count", jumpboxCount)
+	s.logger.Infow("  cf_router IPs", "count", routerCount)
+	s.logger.Infow("  cf_tcp_router IPs", "count", tcpRouterCount)
+}
+
+// countKeysWithPrefix counts keys in a map that start with a given prefix.
+func (s *StackitVaultProvider) countKeysWithPrefix(data map[string]interface{}, prefix string) int {
+	count := 0
+	for key := range data {
+		if strings.HasPrefix(key, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 // GetProviderName returns the provider name.
@@ -273,6 +644,7 @@ func (s *StackitVaultProvider) GetProviderName() string {
 }
 
 // SaveConfigToVault saves the OCFP configuration to vault.
+// Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
 func (s *StackitVaultProvider) SaveConfigToVault() error {
 	s.logger.Info("Saving OCFP configuration to vault")
 
@@ -282,8 +654,26 @@ func (s *StackitVaultProvider) SaveConfigToVault() error {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}
 
-	// Base64 encode (compression removed for simplicity as noted in Perl)
-	encoded := base64.StdEncoding.EncodeToString(jsonConfig)
+	// Compress with gzip (level 9 - maximum compression) to match Perl implementation
+	var compressedBuf bytes.Buffer
+	gzipWriter, err := gzip.NewWriterLevel(&compressedBuf, gzip.BestCompression)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip writer: %w", err)
+	}
+
+	_, err = gzipWriter.Write(jsonConfig)
+	if err != nil {
+		gzipWriter.Close()
+		return fmt.Errorf("failed to write to gzip: %w", err)
+	}
+
+	err = gzipWriter.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Base64 encode the compressed data
+	encoded := base64.StdEncoding.EncodeToString(compressedBuf.Bytes())
 
 	// Save to vault at secret/config/{bloc}/ocfp:config
 	configPath := s.PathBuilder.GetOCFPConfigPath()
@@ -438,32 +828,6 @@ func (b *lbServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []ma
 	return targets
 }
 
-// calculateSystemIPs calculates IP addresses for system components.
-func (s *StackitVaultProvider) calculateSystemIPs(cidr string, envType string) map[string]interface{} {
-	// Simplified system IP calculation
-	// In the Perl version, this reads from data files to determine system mappings
-	cidrParts := strings.Split(cidr, "/")
-	network := cidrParts[0]
-	networkParts := strings.Split(network, ".")
-	baseIP := strings.Join(networkParts[:NetworkPrefix], ".")
-
-	systemIPs := make(map[string]interface{})
-
-	// Standard system IP assignments (simplified)
-	switch envType {
-	case MgmtEnvType:
-		systemIPs["bosh_ip"] = baseIP + ".6"
-		systemIPs["jumpbox_ip"] = baseIP + "." + strconv.Itoa(JumpboxOffset)
-	case OCFEnvType:
-		systemIPs["cf_router_0_ip"] = baseIP + "." + strconv.Itoa(CFRouterOffset)
-		systemIPs["cf_router_1_ip"] = baseIP + ".11"
-		systemIPs["diego_cell_0_ip"] = baseIP + "." + strconv.Itoa(DiegoCellOffset)
-		systemIPs["diego_cell_1_ip"] = baseIP + "." + strconv.Itoa(DiegoCell1Offset)
-	}
-
-	return systemIPs
-}
-
 // configureBOSH configures BOSH-specific components.
 func (s *StackitVaultProvider) configureBOSH(envType string) error {
 	s.logger.Infow("Configuring BOSH components", "env_type", envType)
@@ -489,7 +853,7 @@ func (s *StackitVaultProvider) configureBOSH(envType string) error {
 // configureIAM configures IAM credentials.
 func (s *StackitVaultProvider) configureIAM(envType string) error {
 	// For STACKIT, we use service account credentials for S3-compatible storage
-	s3Path := s.PathBuilder.GetS3IAMPath(envType)
+	s3Path := s.PathBuilder.GetS3Path(envType)
 
 	// Use service account token or key from config
 	accessKey := s.Config.ServiceAccountToken
@@ -526,14 +890,72 @@ func (s *StackitVaultProvider) configureKeys(envType string) error {
 	// For STACKIT, we configure the bastion keypair for BOSH
 	boshKeyPath := s.PathBuilder.GetBOSHKeyPath(envType)
 
-	// This would typically read the actual keypair from the bastion
-	// For now, we'll store placeholder information
+	keypairName := s.BlocName + "-bastion"
+
+	// Initialize key data with required fields
 	keyData := map[string]interface{}{
-		"id":           s.BlocName + "-bosh-key",
-		"keypair_name": s.BlocName + "-bastion",
-		"private":      s.BlocName + "-bastion", // Reference to key name
-		"type":         "ssh-rsa",
-		"user_id":      s.Config.ProjectID,
+		"keypair_name": keypairName,
+	}
+
+	// Try to get keypair information from state
+	stateManager := s.loadStateManager()
+	if stateManager != nil {
+		// Look for keypair resource in state
+		keypairs, err := stateManager.ListResources("keypair")
+		if err == nil && len(keypairs) > 0 {
+			// Use the first keypair (should be the bastion keypair)
+			keypair := keypairs[0]
+
+			// Set ID from state
+			if keypair.ID != "" {
+				keyData["id"] = keypair.ID
+			}
+
+			// Set fingerprint from keypair properties
+			if fingerprint, ok := keypair.Properties["fingerprint"].(string); ok && fingerprint != "" {
+				keyData["fingerprint"] = fingerprint
+			}
+
+			// Set type from keypair properties or default to ssh-rsa
+			if keyType, ok := keypair.Properties["type"].(string); ok && keyType != "" {
+				keyData["type"] = keyType
+			} else {
+				keyData["type"] = "ssh-rsa"
+			}
+		}
+	}
+
+	// Set defaults if not found in state
+	if _, exists := keyData["id"]; !exists {
+		keyData["id"] = s.BlocName + "-bosh-key"
+	}
+
+	if _, exists := keyData["fingerprint"]; !exists {
+		keyData["fingerprint"] = ""
+	}
+
+	if _, exists := keyData["type"]; !exists {
+		keyData["type"] = "ssh-rsa"
+	}
+
+	// Determine private key path
+	// Try standard locations
+	privateKeyPath := s.getPrivateKeyPath(keypairName)
+	if privateKeyPath != "" {
+		keyData["private_key_path"] = privateKeyPath
+
+		// Read private key content
+		privateKeyContent, err := s.readPrivateKeyContent(privateKeyPath)
+		if err == nil && privateKeyContent != "" {
+			keyData["private"] = privateKeyContent
+		} else {
+			// If we can't read it, store error indicator
+			keyData["private"] = "PRIVATE_KEY_READ_ERROR"
+			s.logger.Warnw("Failed to read private key content", "path", privateKeyPath, "error", err)
+		}
+	} else {
+		// No private key path found - store reference to key name
+		keyData["private"] = keypairName
 	}
 
 	err := s.Safe.SetMultiple(boshKeyPath, keyData)
@@ -544,14 +966,53 @@ func (s *StackitVaultProvider) configureKeys(envType string) error {
 	return nil
 }
 
+// getPrivateKeyPath attempts to find the private key path for the given keypair name.
+func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
+	// Try standard OCFP location first
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return ""
+	}
+
+	// Try Ed25519 key (preferred)
+	ed25519Path := filepath.Join(homeDir, ".ocfp", s.BlocName, "ssh", "id_ed25519")
+	if _, err := os.Stat(ed25519Path); err == nil {
+		return ed25519Path
+	}
+
+	// Try RSA key
+	rsaPath := filepath.Join(homeDir, ".ocfp", s.BlocName, "ssh", "id_rsa")
+	if _, err := os.Stat(rsaPath); err == nil {
+		return rsaPath
+	}
+
+	// Try standard .ssh directory with bloc name
+	sshPath := filepath.Join(homeDir, ".ssh", keypairName)
+	if _, err := os.Stat(sshPath); err == nil {
+		return sshPath
+	}
+
+	return ""
+}
+
+// readPrivateKeyContent reads the private key content from the given path.
+func (s *StackitVaultProvider) readPrivateKeyContent(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	return string(content), nil
+}
+
 // configureRegion configures region settings.
 func (s *StackitVaultProvider) configureRegion(envType string) error {
-	vpcPath := s.PathBuilder.GetVPCPath(envType)
+	netPath := s.PathBuilder.GetNetPath(envType)
 	regionData := map[string]interface{}{
 		"region": s.Config.Region,
 	}
 
-	err := s.Safe.SetMultiple(vpcPath, regionData)
+	err := s.Safe.SetMultiple(netPath, regionData)
 	if err != nil {
 		return fmt.Errorf("failed to set region data: %w", err)
 	}
@@ -560,54 +1021,655 @@ func (s *StackitVaultProvider) configureRegion(envType string) error {
 }
 
 // configureSecurityGroups configures security group settings.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_sgs (lines 1543-1697).
 func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
 	s.logger.Infow("Configuring security groups", "env_type", envType)
 
-	// Default security group
-	defaultSGPath := s.PathBuilder.GetSecurityGroupPath(envType, "default")
-	defaultSGData := map[string]interface{}{
-		"id":          s.BlocName + "-default",
-		"name":        "default",
-		"description": "Default security group",
-	}
+	// Build security group mapping (Perl: _build_sg_mapping, lines 1582-1612)
+	sgMapping := s.buildSecurityGroupMapping()
 
-	err := s.Safe.SetMultiple(defaultSGPath, defaultSGData)
-	if err != nil {
-		return fmt.Errorf("failed to set default security group: %w", err)
-	}
+	// Get network path for vault storage
+	netPath := s.PathBuilder.GetNetPath(envType)
 
-	// Environment-specific security group
-	envSGPath := s.PathBuilder.GetSecurityGroupPath(envType, envType)
-	envSGData := map[string]interface{}{
-		"id":          fmt.Sprintf("%s-%s", s.BlocName, envType),
-		"name":        envType,
-		"description": fmt.Sprintf("Security group for %s environment", envType),
-	}
+	// Load state manager to check for security group data
+	stateManager := s.loadStateManager()
 
-	err = s.Safe.SetMultiple(envSGPath, envSGData)
-	if err != nil {
-		return fmt.Errorf("failed to set %s security group: %w", envType, err)
+	// Process each security group type
+	for sgType, sgFullName := range sgMapping {
+		// Try to find the security group from state or other sources
+		sg := s.findSecurityGroup(stateManager, sgType, sgFullName)
+
+		// Store in vault if found
+		if sg != nil {
+			err := s.storeSecurityGroupToVault(sg, sgType, sgFullName, netPath)
+			if err != nil {
+				// Log error but continue with other security groups
+				s.logger.Warnw("Failed to store security group",
+					"type", sgType,
+					"name", sgFullName,
+					"error", err)
+				continue
+			}
+			s.logger.Infow("Stored security group",
+				"type", sgType,
+				"name", sgFullName,
+				"id", sg["id"])
+		} else {
+			// Security group not found - skip with debug message
+			s.logger.Debugw("Security group not found - skipping",
+				"type", sgType,
+				"name", sgFullName)
+		}
 	}
 
 	return nil
 }
 
+// buildSecurityGroupMapping builds the mapping of security group types to full names.
+// This matches the Perl implementation in _build_sg_mapping (lines 1582-1612).
+func (s *StackitVaultProvider) buildSecurityGroupMapping() map[string]string {
+	// Define standard security group types (Perl: lines 1586-1594)
+	sgTypes := []string{
+		"bastion",
+		"infra",
+		"ocfp",
+		"lb-ext",
+		"ocf-cf-router-ingress",
+		"ocf-cf-tcp-router-ingress",
+		"ocf-cf-ssh-proxy-ingress",
+	}
+
+	// Create mapping from type to full name
+	sgMapping := make(map[string]string)
+	for _, sgType := range sgTypes {
+		// Map type to full prefixed name: {bloc}-{type}
+		fullName := fmt.Sprintf("%s-%s", s.BlocName, sgType)
+		sgMapping[sgType] = fullName
+	}
+
+	// Add default security group (Perl: lines 1608-1609)
+	sgMapping["default"] = "default"
+
+	return sgMapping
+}
+
+// findSecurityGroup attempts to find a security group from state manager or provider data.
+// This matches the Perl implementation in _find_security_group (lines 1614-1645).
+func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sgType, sgFullName string) map[string]interface{} {
+	// First try to get from state manager
+	if stateManager != nil {
+		// Look for security group resources in state
+		resources, err := stateManager.ListResources("security_group")
+		if err == nil && len(resources) > 0 {
+			// Find matching security group by name
+			for _, resource := range resources {
+				// Check if name matches
+				if name, ok := resource.Properties["name"].(string); ok && name == sgFullName {
+					// Found matching security group
+					sg := make(map[string]interface{})
+					sg["id"] = resource.ID
+					sg["name"] = name
+
+					// Add description if available
+					if desc, ok := resource.Properties["description"].(string); ok {
+						sg["description"] = desc
+					} else {
+						sg["description"] = fmt.Sprintf("Security group for %s", sgType)
+					}
+
+					s.logger.Debugw("Found security group in state",
+						"type", sgType,
+						"name", sgFullName,
+						"id", resource.ID)
+
+					return sg
+				}
+			}
+		}
+
+		// Also try to get from outputs (for provider data compatibility)
+		sgKey := fmt.Sprintf("security_group_%s_id", sgType)
+		if sgID, err := stateManager.GetOutput(sgKey); err == nil {
+			if id, ok := sgID.(string); ok && id != "" {
+				sg := make(map[string]interface{})
+				sg["id"] = id
+				sg["name"] = sgFullName
+				sg["description"] = fmt.Sprintf("Security group for %s", sgType)
+
+				s.logger.Debugw("Found security group in state outputs",
+					"type", sgType,
+					"name", sgFullName,
+					"id", id)
+
+				return sg
+			}
+		}
+	}
+
+	// Security group not found
+	return nil
+}
+
+// storeSecurityGroupToVault stores a security group to vault with proper path handling.
+// This matches the Perl implementation in _store_sg_to_vault (lines 1667-1697).
+//
+// CRITICAL: CF-specific security groups are stored directly under net/ path,
+// NOT under net/sgs/, for deployment compatibility (Perl: lines 1676-1685).
+func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]interface{}, sgType, sgFullName, netPath string) error {
+	// Get security group ID
+	sgID, ok := sg["id"].(string)
+	if !ok || sgID == "" {
+		return fmt.Errorf("security group missing ID")
+	}
+
+	// Build security group data
+	sgData := map[string]interface{}{
+		"id":   sgID,
+		"name": sgFullName,
+	}
+
+	// Add description if available
+	if desc, ok := sg["description"].(string); ok && desc != "" {
+		sgData["description"] = desc
+	} else {
+		sgData["description"] = fmt.Sprintf("Security group for %s", sgType)
+	}
+
+	// Determine vault path based on security group type
+	// CRITICAL PATH LOGIC (Perl: lines 1676-1696):
+	// - CF-specific groups (starting with "cf-" or "ocf-cf-"): store at {net_path}/{sg_type}
+	// - Standard groups: store at {net_path}/sgs/{sg_type}
+	var vaultPath string
+	if strings.HasPrefix(sgType, "cf-") || strings.HasPrefix(sgType, "ocf-cf-") {
+		// CF-specific: Store directly under net/ path (NOT in sgs/)
+		vaultPath = fmt.Sprintf("%s/%s", netPath, sgType)
+		s.logger.Debugw("Using CF-specific path (directly under net/)",
+			"type", sgType,
+			"path", vaultPath)
+	} else {
+		// Standard: Store under net/sgs/
+		vaultPath = fmt.Sprintf("%s/sgs/%s", netPath, sgType)
+		s.logger.Debugw("Using standard path (under net/sgs/)",
+			"type", sgType,
+			"path", vaultPath)
+	}
+
+	// Store in vault
+	err := s.Safe.SetMultiple(vaultPath, sgData)
+	if err != nil {
+		return fmt.Errorf("failed to set security group data: %w", err)
+	}
+
+	s.logger.Infow("Saved security group to vault",
+		"name", sgFullName,
+		"id", sgID,
+		"path", vaultPath)
+
+	return nil
+}
+
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
+// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_subnet_reserved_ips (lines 1197-1279).
 func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
-	s.logger.Infow("Configuring reserved IPs", "subnet", fmt.Sprintf("%s-%d", subnetType, subnetNum))
+	// Skip non-ocfp subnets (only process ocfp subnets)
+	if subnetType != "ocfp" {
+		return nil
+	}
 
-	// This is a simplified implementation - in a real system, you'd calculate
-	// system IPs based on the systems configuration from data files
-	systemIPs := s.calculateSystemIPs(cidr, envType)
+	subnetName := fmt.Sprintf("%s-%d", subnetType, subnetNum)
+	s.logger.Infow("Configuring reserved IPs", "subnet", subnetName)
 
+	// Get default IP assignments for this environment
+	assignments := getDefaultReservedIPAssignments()
+
+	// Calculate IPs based on CIDR and assignments
+	vaultIPs, err := s.calculateReservedIPs(cidr, assignments, envType, subnetNum)
+	if err != nil {
+		return fmt.Errorf("failed to calculate reserved IPs: %w", err)
+	}
+
+	// Write to vault
 	reservedPath := s.PathBuilder.GetReservedIPsPath(envType, subnetType, subnetNum)
+	s.logger.Debugw("Writing reserved IPs to vault",
+		"path", reservedPath,
+		"count", len(vaultIPs))
 
-	err := s.Safe.SetMultiple(reservedPath, systemIPs)
+	err = s.Safe.SetMultiple(reservedPath, vaultIPs)
 	if err != nil {
 		return fmt.Errorf("failed to set reserved IPs: %w", err)
 	}
 
+	s.logger.Infow("Successfully configured reserved IPs",
+		"subnet", subnetName,
+		"count", len(vaultIPs))
+
 	return nil
+}
+
+// reservedIPAssignment represents an IP allocation configuration.
+type reservedIPAssignment struct {
+	// Simple offset for single IP
+	Offset int
+
+	// Environment-specific subnet assignments: offset -> [subnet_nums]
+	SubnetMapping map[int][]int
+
+	// Range specification (e.g., "11-29" or "0-10,30->")
+	RangeSpec string
+
+	// Environment-specific range specs
+	SubnetRanges map[string][]int // "range-spec" -> [subnet_nums]
+}
+
+// getDefaultReservedIPAssignments returns the default IP assignment map.
+// This matches the Perl implementation in default_reserved_ip_assignments (lines 2339-2394).
+func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignment {
+	return map[string]map[string]*reservedIPAssignment{
+		"bosh": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{4: {0}},
+			},
+			"ocf": {
+				SubnetMapping: map[int][]int{31: {0}},
+			},
+			"other": {
+				Offset: 10,
+			},
+		},
+		"vault": {
+			"mgmt": {Offset: 5},
+			"ocf":  {Offset: 32},
+		},
+		"jumpbox": {
+			"mgmt": {Offset: 6},
+			"ocf":  {Offset: 33},
+		},
+		"concourse": {
+			"mgmt": {Offset: 7},
+			"ocf":  {Offset: 34},
+		},
+		"prometheus": {
+			"mgmt": {Offset: 8},
+			"ocf":  {Offset: 35},
+		},
+		"shield": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{9: {0}},
+			},
+			"ocf": {
+				SubnetMapping: map[int][]int{36: {0}},
+			},
+		},
+		"doomsday": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{9: {1}},
+			},
+		},
+		"ocfp_ui": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{9: {2}},
+			},
+			"ocf": {
+				SubnetMapping: map[int][]int{36: {2}},
+			},
+		},
+		"bastion": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{3: {0}},
+			},
+			"ocf": {
+				SubnetMapping: map[int][]int{37: {0}},
+			},
+			"other": {
+				Offset: 3,
+			},
+		},
+		"blacksmith": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{10: {0}},
+			},
+			"ocf": {
+				SubnetMapping: map[int][]int{36: {1}},
+			},
+			"other": {
+				Offset: 10,
+			},
+		},
+		"available": {
+			"mgmt": {
+				RangeSpec: "11-29",
+			},
+			"ocf": {
+				SubnetRanges: map[string][]int{
+					"38->": {0},
+					"37->": {1, 2},
+				},
+			},
+		},
+		"reserved": {
+			"mgmt": {
+				RangeSpec: "0-10,30->",
+			},
+			"ocf": {
+				SubnetRanges: map[string][]int{
+					"0-36": {1, 2},
+					"0-37": {0},
+				},
+			},
+			"other": {
+				RangeSpec: "0-15",
+			},
+		},
+	}
+}
+
+// calculateReservedIPs calculates all reserved IPs for a subnet based on assignments.
+func (s *StackitVaultProvider) calculateReservedIPs(
+	cidr string,
+	assignments map[string]map[string]*reservedIPAssignment,
+	envType string,
+	subnetNum int,
+) (map[string]interface{}, error) {
+	// Parse CIDR to get base IP
+	baseIP, networkBits, err := parseCIDR(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR %s: %w", cidr, err)
+	}
+
+	vaultIPs := make(map[string]interface{})
+	usedIPs := make(map[string]bool)
+
+	// Process each assignment type in sorted order for consistency
+	assignmentTypes := make([]string, 0, len(assignments))
+	for assignmentType := range assignments {
+		assignmentTypes = append(assignmentTypes, assignmentType)
+	}
+
+	// Sort for deterministic output
+	sortAssignmentTypes(assignmentTypes)
+
+	for _, assignmentType := range assignmentTypes {
+		envMap := assignments[assignmentType]
+
+		// Get assignment for this environment (or fallback to "other")
+		assignment := envMap[envType]
+		if assignment == nil {
+			assignment = envMap["other"]
+		}
+
+		if assignment == nil {
+			continue
+		}
+
+		// Process simple offset (single IP)
+		if assignment.Offset > 0 {
+			ip := addOffsetToIP(baseIP, assignment.Offset)
+			if !usedIPs[ip] {
+				vaultIPs[assignmentType+"_ip"] = ip
+				usedIPs[ip] = true
+				s.logger.Debugw("Reserved IP",
+					"type", assignmentType,
+					"ip", ip,
+					"offset", assignment.Offset)
+			}
+			continue
+		}
+
+		// Process subnet mapping (offset -> [subnet_nums])
+		if len(assignment.SubnetMapping) > 0 {
+			for offset, subnets := range assignment.SubnetMapping {
+				// Check if this subnet number is in the list
+				if containsInt(subnets, subnetNum) {
+					ip := addOffsetToIP(baseIP, offset)
+					if !usedIPs[ip] {
+						vaultIPs[assignmentType+"_ip"] = ip
+						usedIPs[ip] = true
+						s.logger.Debugw("Reserved IP from subnet mapping",
+							"type", assignmentType,
+							"ip", ip,
+							"offset", offset,
+							"subnet_num", subnetNum)
+					}
+					break
+				}
+			}
+			continue
+		}
+
+		// Process range specification
+		if assignment.RangeSpec != "" {
+			ranges, err := parseIPRangeSpec(assignment.RangeSpec, baseIP, networkBits)
+			if err != nil {
+				s.logger.Warnw("Failed to parse range spec",
+					"type", assignmentType,
+					"spec", assignment.RangeSpec,
+					"error", err)
+				continue
+			}
+
+			// Store range boundaries
+			idx := 0
+			for _, ipRange := range ranges {
+				vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = ipRange.Start
+				idx++
+				vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = ipRange.End
+				idx++
+
+				s.logger.Debugw("Reserved IP range",
+					"type", assignmentType,
+					"start", ipRange.Start,
+					"end", ipRange.End)
+			}
+			continue
+		}
+
+		// Process subnet-specific ranges
+		if len(assignment.SubnetRanges) > 0 {
+			for rangeSpec, subnets := range assignment.SubnetRanges {
+				// Check if this subnet number is in the list
+				if containsInt(subnets, subnetNum) {
+					ranges, err := parseIPRangeSpec(rangeSpec, baseIP, networkBits)
+					if err != nil {
+						s.logger.Warnw("Failed to parse subnet range spec",
+							"type", assignmentType,
+							"spec", rangeSpec,
+							"error", err)
+						continue
+					}
+
+					// Store range boundaries
+					idx := 0
+					for _, ipRange := range ranges {
+						vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = ipRange.Start
+						idx++
+						vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = ipRange.End
+						idx++
+
+						s.logger.Debugw("Reserved IP range from subnet mapping",
+							"type", assignmentType,
+							"start", ipRange.Start,
+							"end", ipRange.End,
+							"subnet_num", subnetNum)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return vaultIPs, nil
+}
+
+// ipRange represents an IP address range.
+type ipRange struct {
+	Start string
+	End   string
+}
+
+// parseCIDR parses a CIDR notation and returns base IP and network bits.
+func parseCIDR(cidr string) (string, int, error) {
+	parts := strings.Split(cidr, "/")
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("invalid CIDR format")
+	}
+
+	baseIP := parts[0]
+	networkBits := 0
+
+	_, err := fmt.Sscanf(parts[1], "%d", &networkBits)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid network bits: %w", err)
+	}
+
+	// Validate IP address format
+	octets := strings.Split(baseIP, ".")
+	if len(octets) != 4 {
+		return "", 0, fmt.Errorf("invalid IP address format")
+	}
+
+	return baseIP, networkBits, nil
+}
+
+// addOffsetToIP adds an offset to an IP address.
+func addOffsetToIP(baseIP string, offset int) string {
+	octets := strings.Split(baseIP, ".")
+	if len(octets) != 4 {
+		return baseIP
+	}
+
+	// Convert last octet to int
+	lastOctet, err := strconv.Atoi(octets[3])
+	if err != nil {
+		return baseIP
+	}
+
+	// Add offset
+	newOctet := lastOctet + offset
+
+	// Handle overflow into third octet if needed
+	if newOctet > 255 {
+		thirdOctet, err := strconv.Atoi(octets[2])
+		if err != nil {
+			return baseIP
+		}
+		thirdOctet += newOctet / 256
+		newOctet = newOctet % 256
+		octets[2] = strconv.Itoa(thirdOctet)
+	}
+
+	octets[3] = strconv.Itoa(newOctet)
+
+	return strings.Join(octets, ".")
+}
+
+// parseIPRangeSpec parses a range specification like "11-29" or "0-10,30->".
+// This matches the Perl implementation in _parse_ip_range_string (lines 1476-1497).
+func parseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]ipRange, error) {
+	var ranges []ipRange
+
+	// Split by comma for multiple ranges
+	subranges := strings.Split(rangeSpec, ",")
+
+	for _, subrange := range subranges {
+		subrange = strings.TrimSpace(subrange)
+
+		// Parse range like "11-29" or "30->" or "10"
+		var lower, upper int
+
+		if strings.Contains(subrange, "->") {
+			// Open-ended range like "30->"
+			parts := strings.Split(subrange, "->")
+			lower, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+			upper = calculateLastHostOffset(networkBits)
+		} else if strings.Contains(subrange, "-") {
+			// Closed range like "11-29"
+			parts := strings.Split(subrange, "-")
+			lower, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+			upper, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
+		} else {
+			// Single value like "10"
+			lower, _ = strconv.Atoi(strings.TrimSpace(subrange))
+			upper = lower
+		}
+
+		startIP := addOffsetToIP(baseIP, lower)
+		endIP := addOffsetToIP(baseIP, upper)
+
+		ranges = append(ranges, ipRange{
+			Start: startIP,
+			End:   endIP,
+		})
+	}
+
+	return ranges, nil
+}
+
+// calculateLastHostOffset calculates the last usable host offset for a network.
+func calculateLastHostOffset(networkBits int) int {
+	// Calculate number of hosts: 2^(32-networkBits) - 1
+	hostBits := 32 - networkBits
+	if hostBits <= 0 {
+		return 0
+	}
+
+	// For typical /24 network: 2^8 - 1 = 255
+	// But we want last usable host (254)
+	maxHosts := (1 << uint(hostBits)) - 2
+
+	return maxHosts
+}
+
+// containsInt checks if a slice contains an integer.
+func containsInt(slice []int, value int) bool {
+	for _, v := range slice {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
+// sortAssignmentTypes sorts assignment types for deterministic output.
+// Order matches the Perl implementation's processing order.
+func sortAssignmentTypes(types []string) {
+	// Define priority order matching Perl implementation
+	priority := map[string]int{
+		"bosh":       1,
+		"vault":      2,
+		"jumpbox":    3,
+		"concourse":  4,
+		"prometheus": 5,
+		"shield":     6,
+		"doomsday":   7,
+		"ocfp_ui":    8,
+		"bastion":    9,
+		"blacksmith": 10,
+		"available":  11,
+		"reserved":   12,
+	}
+
+	// Sort by priority
+	for i := 0; i < len(types)-1; i++ {
+		for j := i + 1; j < len(types); j++ {
+			pri1 := priority[types[i]]
+			pri2 := priority[types[j]]
+
+			// If not in priority map, sort alphabetically
+			if pri1 == 0 {
+				pri1 = 1000
+			}
+			if pri2 == 0 {
+				pri2 = 1000
+			}
+
+			if pri1 > pri2 {
+				types[i], types[j] = types[j], types[i]
+			} else if pri1 == pri2 && types[i] > types[j] {
+				// Alphabetical for same priority
+				types[i], types[j] = types[j], types[i]
+			}
+		}
+	}
 }
 
 // configureSubnets configures subnet settings in vault.
@@ -711,7 +1773,17 @@ func (s *StackitVaultProvider) getAvailabilityZone(subnetNum int) string {
 }
 
 func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
-	return map[string]interface{}{
+	// Get master network CIDR
+	netCIDR := s.Config.Network.CIDR
+
+	// Calculate net_prefix (first 3 octets of master network)
+	netPrefix := s.calculateNetworkPrefix(netCIDR)
+
+	// Get network_id from state if available
+	networkID := s.getNetworkIDFromState()
+
+	// Build base subnet data
+	subnetData := map[string]interface{}{
 		"id":          fmt.Sprintf("%s-%s-%d", s.BlocName, subnetType, subnetNum),
 		"cidr_block":  cidr,
 		"cidr_prefix": networkInfo.cidrPrefix,
@@ -721,33 +1793,134 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 		"dns":         s.Config.DNS,
 		"az":          availabilityZone,
 		"type":        subnetType,
+
+		// New fields for Perl parity
+		"subnet_cidr":   cidr,                                        // Virtual subnet's specific CIDR
+		"subnet_prefix": networkInfo.cidrPrefix,                      // First 3 octets of subnet CIDR
+		"net_cidr":      netCIDR,                                     // Master network CIDR
+		"net_prefix":    netPrefix,                                   // First 3 octets of master network
+		"name":          fmt.Sprintf("%s-%d", subnetType, subnetNum), // Subnet name: {type}-{num}
+		"subnet_num":    subnetNum,                                   // Subnet number within type
+		"provider":      "stackit",                                   // Provider name
+		"provider_type": "virtual_subnet",                            // Provider type
+		"parent_cidr":   cidr,                                        // Same as subnet_cidr
+		"environment":   s.BlocName,                                  // Bloc name
+		"region":        s.Config.Region,                             // STACKIT region
 	}
+
+	// Add network_id if available
+	if networkID != "" {
+		subnetData["network_id"] = networkID
+	}
+
+	// Add 'virtual' flag only for non-reserved subnets
+	if subnetType != "reserved" {
+		subnetData["virtual"] = "true"
+	}
+
+	return subnetData
 }
 
-// configureVPC configures VPC settings in vault.
-func (s *StackitVaultProvider) configureVPC(envType string) error {
-	vpcPath := s.PathBuilder.GetVPCPath(envType)
-
-	// STACKIT network configuration
-	networkData := map[string]interface{}{
-		"id":         s.Config.ProjectID, // Use project ID as network identifier
-		"cidr_block": s.Config.Network.CIDR,
-		"dns":        s.Config.DNS,
-		"region":     s.Config.Region,
+// calculateNetworkPrefix extracts the first 3 octets from a CIDR.
+func (s *StackitVaultProvider) calculateNetworkPrefix(cidr string) string {
+	// Split CIDR to get network address
+	parts := strings.Split(cidr, "/")
+	if len(parts) != CIDRPartsCount {
+		return ""
 	}
 
-	err := s.Safe.SetMultiple(vpcPath, networkData)
+	networkAddr := parts[0]
+	octets := strings.Split(networkAddr, ".")
+
+	if len(octets) < NetworkPrefix {
+		return ""
+	}
+
+	// Join first 3 octets
+	return strings.Join(octets[:NetworkPrefix], ".")
+}
+
+// getNetworkIDFromState retrieves the network_id from state manager.
+func (s *StackitVaultProvider) getNetworkIDFromState() string {
+	stateManager := s.loadStateManager()
+	if stateManager == nil {
+		return ""
+	}
+
+	networkID, err := stateManager.GetOutput("network_id")
 	if err != nil {
-		return fmt.Errorf("failed to set VPC data: %w", err)
+		return ""
+	}
+
+	if id, ok := networkID.(string); ok {
+		return id
+	}
+
+	return ""
+}
+
+// configureNetwork configures network settings in vault.
+func (s *StackitVaultProvider) configureNetwork(envType string) error {
+	netPath := s.PathBuilder.GetNetPath(envType)
+
+	// STACKIT network configuration with all required fields matching Perl implementation
+	networkData := map[string]interface{}{
+		"id":          s.Config.ProjectID, // Use project ID as network identifier
+		"cidr_block":  s.Config.Network.CIDR,
+		"dns":         s.Config.DNS,
+		"region":      s.Config.Region,
+		"provider":    "stackit",
+		"name":        fmt.Sprintf("%s-net", s.BlocName),
+		"ipv4_cidr":   s.Config.Network.CIDR, // IPv4 CIDR (same as cidr_block for STACKIT)
+		"project_id":  s.Config.ProjectID,
+		"description": fmt.Sprintf("Primary STACKIT network for environment %s", s.BlocName),
+	}
+
+	// Try to fetch additional fields from STACKIT API if network ID is available
+	networkID := s.getNetworkIDFromState()
+	if networkID != "" {
+		s.logger.Debugw("Fetching network details from API", "network_id", networkID)
+
+		networkManager, err := s.getStackitClient()
+		if err != nil {
+			// Log warning but don't fail - gracefully degrade to basic fields
+			s.logger.Warnw("Failed to create STACKIT client, using basic network fields only", "error", err)
+		} else {
+			ctx := context.Background()
+			network, err := networkManager.GetNetwork(ctx, networkID)
+			if err != nil {
+				// Log warning but don't fail - gracefully degrade to basic fields
+				s.logger.Warnw("Failed to fetch network details from API, using basic fields only",
+					"network_id", networkID, "error", err)
+			} else if network != nil {
+				// Add status field if available from API
+				if network.State != "" {
+					networkData["status"] = network.State
+					s.logger.Debugw("Added network status from API", "status", network.State)
+				}
+
+				// Add created_at field if available from API
+				if !network.CreatedAt.IsZero() {
+					networkData["created_at"] = network.CreatedAt.Format(time.RFC3339)
+					s.logger.Debugw("Added network created_at from API", "created_at", network.CreatedAt)
+				}
+			}
+		}
+	}
+
+	err := s.Safe.SetMultiple(netPath, networkData)
+	if err != nil {
+		return fmt.Errorf("failed to set network data: %w", err)
 	}
 
 	// Configure availability zones
 	for azName, azData := range s.Config.AZs {
 		azPath := s.PathBuilder.GetAZPath(envType, azName)
 
+		// Format cloud_properties as JSON string matching Perl format:
+		// { cloud_properties => sprintf( '{"availability_zone": "%s"}', $az_name ) }
 		azInfo := map[string]interface{}{
-			"name": azName,
-			"zone": azData.Zone,
+			"cloud_properties": fmt.Sprintf(`{"availability_zone": "%s"}`, azData.Zone),
 		}
 
 		err := s.Safe.SetMultiple(azPath, azInfo)
@@ -756,7 +1929,7 @@ func (s *StackitVaultProvider) configureVPC(envType string) error {
 		}
 	}
 
-	s.logger.Infow("VPC configuration completed", "path", vpcPath)
+	s.logger.Infow("Network configuration completed", "path", netPath)
 
 	return nil
 }
@@ -875,8 +2048,16 @@ func (s *StackitVaultProvider) configureCPI(envType string) error {
 	}
 
 	// Add authentication method - prefer service_account_json, then service_account_token
-	if s.Config.ServiceAccountToken != "" {
+	// This matches the Perl implementation priority logic (Vault.pm:2245-2257)
+	authMethodConfigured := false
+	if s.Config.ServiceAccountJSON != "" {
+		cpiConfig["service_account_json"] = s.Config.ServiceAccountJSON
+		s.logger.Debugw("Using service_account_json for authentication (preferred)")
+		authMethodConfigured = true
+	} else if s.Config.ServiceAccountToken != "" {
 		cpiConfig["service_account_token"] = s.Config.ServiceAccountToken
+		s.logger.Debugw("Using service_account_token for authentication")
+		authMethodConfigured = true
 	}
 
 	// Check for missing required fields
@@ -894,8 +2075,8 @@ func (s *StackitVaultProvider) configureCPI(envType string) error {
 		missingFields = append(missingFields, "region")
 	}
 
-	if s.Config.ServiceAccountToken == "" {
-		missingFields = append(missingFields, "service_account_token")
+	if !authMethodConfigured {
+		missingFields = append(missingFields, "service_account_json or service_account_token")
 	}
 
 	if len(missingFields) > 0 {
@@ -951,17 +2132,184 @@ func (s *StackitVaultProvider) configureUsers(envType string) error {
 		return nil
 	}
 
-	s.logger.Infow("Configuring jumpbox users", "env_type", envType)
+	// Check if users are defined in the configuration
+	if s.Config.Users == nil || len(s.Config.Users) == 0 {
+		s.logger.Infow("No users configured, skipping jumpbox user configuration")
+		return nil
+	}
 
-	// In the Go implementation, users would come from config
-	// For now, this is a placeholder that would be extended based on actual user configuration
-	usersPath := s.PathBuilder.GetEnvironmentPath(envType) + "/jumpbox/users"
+	usersPath := s.PathBuilder.GetJumpboxUsersPath()
+	s.logger.Infow("Configuring jumpbox users", "path", usersPath, "user_count", len(s.Config.Users))
 
-	// Placeholder - in real implementation, this would read users from config
-	// and fetch SSH keys from GitHub/GitLab if specified
-	s.logger.Infow("Jumpbox users path configured", "path", usersPath)
+	// HTTP client for fetching keys from GitHub/GitLab
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Valid SSH key prefixes for validation
+	validSSHKeyPrefixes := []string{
+		"ssh-rsa",
+		"ssh-ed25519",
+		"ecdsa-sha2-nistp256",
+		"ecdsa-sha2-nistp384",
+		"ecdsa-sha2-nistp521",
+	}
+
+	// Process each user
+	userCount := 0
+	for username, keySpec := range s.Config.Users {
+		if keySpec == "" {
+			s.logger.Warnw("No SSH key provided for user, skipping", "username", username)
+			continue
+		}
+
+		var sshKeys string
+		var err error
+
+		// Check if this is a GitHub/GitLab lookup
+		if strings.HasPrefix(keySpec, "github/") {
+			remoteUser := strings.TrimPrefix(keySpec, "github/")
+			sshKeys, err = s.fetchSSHKeysFromProvider(httpClient, "github", remoteUser, username, validSSHKeyPrefixes)
+			if err != nil {
+				s.logger.Warnw("Failed to fetch SSH keys from GitHub, skipping user",
+					"username", username,
+					"remote_user", remoteUser,
+					"error", err)
+				continue
+			}
+		} else if strings.HasPrefix(keySpec, "gitlab/") {
+			remoteUser := strings.TrimPrefix(keySpec, "gitlab/")
+			sshKeys, err = s.fetchSSHKeysFromProvider(httpClient, "gitlab", remoteUser, username, validSSHKeyPrefixes)
+			if err != nil {
+				s.logger.Warnw("Failed to fetch SSH keys from GitLab, skipping user",
+					"username", username,
+					"remote_user", remoteUser,
+					"error", err)
+				continue
+			}
+		} else {
+			// Direct SSH key - validate format
+			if !s.isValidSSHKey(keySpec, validSSHKeyPrefixes) {
+				s.logger.Warnw("Invalid SSH key format for user, skipping",
+					"username", username)
+				continue
+			}
+			sshKeys = keySpec
+		}
+
+		// Store user SSH key(s) in vault
+		if sshKeys != "" {
+			userData := map[string]interface{}{
+				username: sshKeys,
+			}
+			if err := s.Safe.SetMultiple(usersPath, userData); err != nil {
+				s.logger.Errorw("Failed to write user SSH keys to vault",
+					"username", username,
+					"path", usersPath,
+					"error", err)
+				return fmt.Errorf("failed to write user %s to vault: %w", username, err)
+			}
+			s.logger.Infow("Stored SSH key(s) for user", "username", username)
+			userCount++
+		}
+	}
+
+	if userCount > 0 {
+		s.logger.Infow("Successfully configured jumpbox users", "count", userCount)
+	} else {
+		s.logger.Infow("No valid users configured for jumpbox")
+	}
 
 	return nil
+}
+
+// fetchSSHKeysFromProvider fetches SSH keys from GitHub or GitLab.
+func (s *StackitVaultProvider) fetchSSHKeysFromProvider(
+	client *http.Client,
+	provider string,
+	remoteUser string,
+	username string,
+	validPrefixes []string,
+) (string, error) {
+	// Construct URL based on provider
+	var url string
+	switch provider {
+	case "github":
+		url = fmt.Sprintf("https://github.com/%s.keys", remoteUser)
+	case "gitlab":
+		url = fmt.Sprintf("https://gitlab.com/%s.keys", remoteUser)
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", provider)
+	}
+
+	s.logger.Infow("Fetching SSH keys from provider",
+		"username", username,
+		"provider", provider,
+		"remote_user", remoteUser)
+
+	// Fetch keys
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch keys from %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP error fetching keys: status %d", resp.StatusCode)
+	}
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	fetchedKeys := strings.TrimSpace(string(body))
+	if fetchedKeys == "" {
+		return "", fmt.Errorf("no keys returned from %s", provider)
+	}
+
+	// Validate and filter SSH keys
+	var validKeys []string
+	for _, line := range strings.Split(fetchedKeys, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if s.isValidSSHKey(line, validPrefixes) {
+			validKeys = append(validKeys, line)
+		}
+	}
+
+	if len(validKeys) == 0 {
+		return "", fmt.Errorf("no valid SSH keys found for %s user %s", provider, remoteUser)
+	}
+
+	s.logger.Infow("Fetched SSH keys from provider",
+		"username", username,
+		"provider", provider,
+		"key_count", len(validKeys))
+
+	return strings.Join(validKeys, "\n"), nil
+}
+
+// isValidSSHKey validates that a string is a properly formatted SSH public key.
+func (s *StackitVaultProvider) isValidSSHKey(key string, validPrefixes []string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+
+	for _, prefix := range validPrefixes {
+		if strings.HasPrefix(key, prefix+" ") {
+			// Basic validation: must have at least the key type and key data
+			parts := strings.Fields(key)
+			if len(parts) >= 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // configureBOSHMeta configures BOSH metadata information.
