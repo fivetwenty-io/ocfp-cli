@@ -255,6 +255,14 @@ func (c *Config) getGenesisConfig() config.Genesis {
 		genesisConfig = c.config.Bastion.Genesis
 	}
 
+	// Apply defaults if Genesis is not explicitly configured
+	if !genesisConfig.Enabled && genesisConfig.Branch == "" && genesisConfig.Repo == "" {
+		// No Genesis configuration found, apply defaults
+		genesisConfig.Enabled = true
+		genesisConfig.Branch = "v3.1.x-dev"
+		genesisConfig.Repo = "git@github.com:genesis-community/genesis"
+	}
+
 	return genesisConfig
 }
 

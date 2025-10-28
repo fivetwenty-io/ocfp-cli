@@ -173,6 +173,44 @@ install_aws_cli_v2() {
     log_success "AWS CLI v2 installed"
 }
 
+configure_stackit_cli() {
+    log_info "Configuring STACKIT CLI"
+    if [ -n "${STACKIT_PROJECT_ID:-}" ]; then
+        stackit config set --project-id "${STACKIT_PROJECT_ID}"
+        log_success "STACKIT CLI configured with project ID: ${STACKIT_PROJECT_ID}"
+    else
+        log_warning "STACKIT_PROJECT_ID not set, skipping STACKIT CLI configuration"
+    fi
+}
+
+configure_azure_cli() {
+    log_info "Configuring Azure CLI"
+    # Azure CLI configuration is handled via environment variables
+    log_success "Azure CLI ready (configured via environment variables)"
+}
+
+configure_gcp_cli() {
+    log_info "Configuring GCP CLI"
+    if [ -n "${GCP_PROJECT_ID:-}" ]; then
+        gcloud config set project "${GCP_PROJECT_ID}"
+        log_success "GCP CLI configured with project ID: ${GCP_PROJECT_ID}"
+    else
+        log_warning "GCP_PROJECT_ID not set, skipping GCP CLI configuration"
+    fi
+}
+
+configure_openstack_cli() {
+    log_info "Configuring OpenStack CLI"
+    # OpenStack CLI configuration is handled via environment variables
+    log_success "OpenStack CLI ready (configured via environment variables)"
+}
+
+configure_vmware_cli() {
+    log_info "Configuring VMware CLI"
+    # VMware CLI configuration is handled via environment variables
+    log_success "VMware CLI ready (configured via environment variables)"
+}
+
 # Wait for system to stabilize after boot
 log_info "Waiting for system to stabilize..."
 sleep 10`
@@ -529,6 +567,11 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		cloneCmd += ` "${REPO_DEST}"`
 
 		lines = append(lines, cloneCmd)
+		lines = append(lines, `    if [ $? -ne 0 ]; then`)
+		lines = append(lines, fmt.Sprintf(`        log_error "Failed to clone %s repository"`, repo.Name))
+		lines = append(lines, `        log_error "Ensure SSH agent forwarding is enabled and GitHub SSH key is configured"`)
+		lines = append(lines, `        exit 1`)
+		lines = append(lines, `    fi`)
 
 		// Checkout specific commit if specified
 		if repo.Commit != "" {
@@ -538,6 +581,12 @@ func (sg *ScriptGenerator) generateGitRepositoryScript(repos []GitRepository) st
 		}
 
 		lines = append(lines, "fi")
+
+		// Verify repository was cloned successfully
+		lines = append(lines, `if [ ! -d "${REPO_DEST}/.git" ]; then`)
+		lines = append(lines, fmt.Sprintf(`    log_error "%s repository not found at ${REPO_DEST}"`, repo.Name))
+		lines = append(lines, `    exit 1`)
+		lines = append(lines, `fi`)
 
 		lines = append(lines, fmt.Sprintf("log_success '%s repository ready'", repo.Name))
 		lines = append(lines, "")
@@ -954,13 +1003,13 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	packages := provConfig.GetPackages()
 	sg.appendIfNotEmpty(scriptParts, sg.generatePackageScript(packages))
 
-	// Binary tools installation
-	tools := provConfig.GetBinaryTools()
-	sg.appendIfNotEmpty(scriptParts, sg.generateBinaryToolScript(tools))
-
-	// Git repositories
+	// Git repositories (MUST come before binary tools that depend on them)
 	repos := provConfig.GetGitRepositories()
 	sg.appendIfNotEmpty(scriptParts, sg.generateGitRepositoryScript(repos))
+
+	// Binary tools installation (some tools build from cloned git repos)
+	tools := provConfig.GetBinaryTools()
+	sg.appendIfNotEmpty(scriptParts, sg.generateBinaryToolScript(tools))
 
 	// Genesis deployments
 	deployments := provConfig.GetGenesisDeployments()

@@ -852,6 +852,10 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 
 		// Discover subnets for any networks found in state (subnets not always in state)
 		m.discoverSubnetsForNetworks(ctx, stateResources, &resources, log)
+
+		// Discover network interfaces for any networks found in state (NICs not always in state)
+		// This is critical to avoid 409 conflicts when deleting networks and security groups
+		m.discoverNetworkInterfacesForNetworks(ctx, stateResources, &resources, log)
 	} else {
 		log.Info("No state found or state is empty, discovering from cloud")
 		// Fallback: discover from cloud using tags
@@ -1379,6 +1383,89 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 
 			if addedCount > 0 {
 				log.Infow("Discovered subnets for network", "network", resource.Name, "count", addedCount)
+			}
+		}
+	}
+}
+
+// discoverNetworkInterfacesForNetworks discovers and adds network interfaces for networks found in state.
+// This is critical to avoid 409 conflicts when deleting networks and security groups, as orphaned NICs
+// can block deletion even after their associated servers are deleted.
+//
+// NOTE: NICs may not have OCFP labels/tags (especially when created pre-attached to servers),
+// so we discover them per-network without tag filtering, similar to subnet discovery.
+func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Context, stateResources []*ResourceToDelete, allResources *[]*ResourceToDelete, log logger.Logger) {
+	network := m.provider.Network()
+	if network == nil {
+		return
+	}
+
+	// Type assertion to check if NetworkManager supports ListNetworkInterfaces
+	type networkInterfaceLister interface {
+		ListNetworkInterfaces(ctx context.Context, filters map[string]string) ([]*cpi.NetworkInterface, error)
+	}
+
+	niLister, ok := network.(networkInterfaceLister)
+	if !ok {
+		// Provider doesn't support network interface listing (e.g., AWS manages NICs with instances)
+		log.Debug("Provider does not support network interface discovery")
+
+		return
+	}
+
+	// Build set of existing NIC IDs to prevent duplicates
+	existingNICIDs := make(map[string]bool)
+
+	for _, resource := range *allResources {
+		if resource.Type == "network_interface" {
+			existingNICIDs[resource.ID] = true
+		}
+	}
+
+	// Find all network resources in state and discover their NICs
+	// We don't use tag filters because NICs may not have OCFP labels (created pre-attached to servers)
+	for _, resource := range stateResources {
+		if resource.Type == "network" {
+			// Discover NICs for this network WITHOUT tag filtering
+			// This ensures we catch orphaned NICs without labels
+			nics, err := niLister.ListNetworkInterfaces(ctx, nil)
+			if err != nil {
+				log.Warnw("Failed to discover network interfaces for network", "network", resource.Name, "error", err)
+
+				continue
+			}
+
+			addedCount := 0
+
+			for _, nic := range nics {
+				// Only include NICs that belong to this network
+				if nic.NetworkID != resource.ID {
+					continue
+				}
+
+				// Skip if NIC is already in the resources list
+				if existingNICIDs[nic.ID] {
+					continue
+				}
+
+				*allResources = append(*allResources, &ResourceToDelete{
+					Type:         "network_interface",
+					ID:           nic.ID,
+					Name:         nic.Name,
+					Dependencies: nil,
+					State:        "",
+					Properties: map[string]interface{}{
+						"network_id":  nic.NetworkID,
+						"instance_id": nic.InstanceID,
+						"ipv4":        nic.IPv4,
+					},
+				})
+				existingNICIDs[nic.ID] = true
+				addedCount++
+			}
+
+			if addedCount > 0 {
+				log.Infow("Discovered network interfaces for network", "network", resource.Name, "count", addedCount)
 			}
 		}
 	}
