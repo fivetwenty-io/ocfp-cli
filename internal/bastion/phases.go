@@ -219,6 +219,16 @@ func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	return m.executeScript(ctx, script, "vault-populate")
 }
 
+// setupGenesisSecretsProviders configures genesis deployments to use inception vault.
+func (m *Manager) setupGenesisSecretsProviders(ctx context.Context) error {
+	m.log.Info("Configuring Genesis secrets providers for deployments")
+
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
+	script := ocfpMgr.GenerateGenesisSecretsProvidersScript(ctx)
+
+	return m.executeScript(ctx, script, "genesis-secrets-providers")
+}
+
 // runHealthCheck performs comprehensive health check.
 func (m *Manager) runHealthCheck(ctx context.Context) error {
 	m.log.Info("Running health check")
