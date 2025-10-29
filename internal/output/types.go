@@ -47,6 +47,9 @@ type PhaseInfo struct {
 
 	// StartTime records when this phase began.
 	StartTime time.Time
+
+	// CumulativeDuration is the total time elapsed across all completed phases.
+	CumulativeDuration time.Duration
 }
 
 // ProgressInfo describes incremental progress within a phase.

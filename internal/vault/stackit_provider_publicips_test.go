@@ -210,7 +210,7 @@ func TestFilterBlocIPs(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -296,14 +296,13 @@ func TestGroupIPsByJob(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -391,14 +390,13 @@ func TestDetermineVaultKeyAndEnvironment(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -480,14 +478,13 @@ func TestPreparePublicIPVaultData(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -555,14 +552,13 @@ func TestSortIPsByIndex(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -612,14 +608,13 @@ func TestCountKeysWithPrefix(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {
@@ -668,14 +663,13 @@ func TestFetchAllPublicIPs(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	defer func() { _ = logger.Sync() }()
 
-
 	cfg := &config.Config{
 		Name: "test-bloc",
 	}
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
-		logger:   logger,
+		logger:            logger,
 	}
 
 	tests := []struct {

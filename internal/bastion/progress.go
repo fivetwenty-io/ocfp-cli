@@ -15,9 +15,13 @@ import (
 
 // ProgressReporter handles real-time progress reporting.
 type ProgressReporter struct {
-	renderer output.Renderer
-	progress *ProvisioningProgress
-	log      logger.Logger
+	renderer       output.Renderer
+	progress       *ProvisioningProgress
+	log            logger.Logger
+	currentNumber  int           // Current phase number for completion messages
+	currentTotal   int           // Total phases for completion messages
+	cumulativeTime time.Duration // Cumulative time across all completed phases
+	phaseStartTime time.Time     // Start time of current phase for accurate duration
 }
 
 // SelectOutputMode determines the appropriate output mode based on environment.
@@ -85,12 +89,17 @@ func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 
 	pr.UpdateProgress(phase, index, total)
 
+	// Store current phase info for completion message and track start time
+	pr.currentNumber = index + 1
+	pr.currentTotal = total
+	pr.phaseStartTime = time.Now()
+
 	phaseInfo := output.PhaseInfo{
 		ID:        phase,
 		Name:      phase,
 		Number:    index + 1,
 		Total:     total,
-		StartTime: time.Now(),
+		StartTime: pr.phaseStartTime,
 	}
 
 	if err := pr.renderer.PhaseStart(phaseInfo); err != nil {
@@ -107,10 +116,22 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 		return
 	}
 
+	// Calculate actual phase duration from tracked start time
+	actualDuration := duration
+	if !pr.phaseStartTime.IsZero() {
+		actualDuration = time.Since(pr.phaseStartTime)
+	}
+
+	// Update cumulative time with actual duration
+	pr.cumulativeTime += actualDuration
+
 	phaseInfo := output.PhaseInfo{
-		ID:        phase,
-		Name:      phase,
-		StartTime: time.Now().Add(-duration), // Approximate start time
+		ID:                 phase,
+		Name:               phase,
+		Number:             pr.currentNumber,
+		Total:              pr.currentTotal,
+		StartTime:          pr.phaseStartTime,
+		CumulativeDuration: pr.cumulativeTime,
 	}
 
 	if err := pr.renderer.PhaseComplete(phaseInfo); err != nil {
@@ -361,4 +382,3 @@ func (sr *StatusReporter) PrintDetailedStatus(output io.Writer) error {
 
 	return nil
 }
-

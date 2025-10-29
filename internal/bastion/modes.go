@@ -252,7 +252,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"system_setup", manager.setupSystem},
 		{"directories", manager.createDirectories},
 		{"ocfp_directories", manager.setupOCFPDirectories},
-		{"repositories", manager.setupRepositories},
+		{"apt_repositories", manager.setupAPTRepositories},
 		{"packages", manager.installPackages},
 		{"snap_packages", manager.installSnapPackages},
 		{"binary_tools", manager.installBinaryTools},

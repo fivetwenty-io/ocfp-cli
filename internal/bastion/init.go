@@ -64,6 +64,7 @@ type Manager struct {
 	checkpointManager *CheckpointManager
 	errorHandler      *ErrorHandler
 	deploymentModes   *deployments.Resolver
+	reporter          *ProgressReporter // Shared reporter for all phases
 	log               logger.Logger
 }
 
@@ -383,13 +384,13 @@ func (m *Manager) executeInitializationPhases(ctx context.Context) error {
 	m.progress.TotalSteps = len(phases)
 	m.progress.StartTime = time.Now()
 
-	var reporter *ProgressReporter
+	// Initialize shared reporter for all phases
 	if m.options.ProgressOut != nil {
-		reporter = m.getProgressReporter()
-		reporter.Start(ctx)
+		m.reporter = m.getProgressReporter()
+		m.reporter.Start(ctx)
 	}
 
-	err := m.executePhases(ctx, phases, reporter)
+	err := m.executePhases(ctx, phases, m.reporter)
 	if err != nil {
 		return err
 	}
@@ -573,15 +574,15 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
 
-		// Phase 3: Repositories and package management
-		{"repositories", m.setupRepositories},
+		// Phase 3: Package repositories and system packages
+		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},
-		{"snap_packages", m.installSnapPackages},
 
-		// Phase 4: Binary tools and advanced installations
-		{"binary_tools", m.installBinaryTools},
+		// Phase 4: Package managers and tools
+		{"snap_packages", m.installSnapPackages},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
+		{"binary_tools", m.installBinaryTools},
 
 		// Phase 5: Git repositories and Genesis
 		{"git_repos", m.cloneGitRepositories},
@@ -634,7 +635,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"config_files", m.copyConfigFiles},
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
-		{"repositories", m.setupRepositories},
+		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages}, // avoid dpkg lock issues
 	}
 
@@ -800,7 +801,6 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 	name string
 	fn   func(context.Context) error
 }) {
-	reporter := m.getProgressReporter()
 	m.progress.CompletedSteps = len(phases)
 	duration := time.Since(m.progress.StartTime)
 
@@ -817,8 +817,8 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 	}
 
 	// Report final success
-	if reporter != nil {
-		reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
+	if m.reporter != nil {
+		m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
 	}
 
 	m.log.Infow("Bastion initialization completed successfully",
@@ -1205,8 +1205,8 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 		if m.shouldSkipPhase(phase.name) {
 			m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
-			if m.options.ProgressOut != nil {
-				m.getProgressReporter().ReportPhaseSkipped(phase.name, "resumed and previously completed")
+			if m.reporter != nil {
+				m.reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
 			}
 
 			continue
@@ -1215,8 +1215,8 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 		m.progress.CurrentStep = phase.name
 
 		m.progress.CompletedSteps++
-		if m.options.ProgressOut != nil {
-			m.getProgressReporter().ReportPhaseStart(phase.name, index, m.progress.TotalSteps)
+		if m.reporter != nil {
+			m.reporter.ReportPhaseStart(phase.name, index, m.progress.TotalSteps)
 		}
 
 		if m.options.DryRun {
@@ -1237,8 +1237,8 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 		m.checkpointManager.MarkPhaseCompleted(m.progress, phase.name)
 
 		_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": phase.name, "timestamp": time.Now()})
-		if m.options.ProgressOut != nil {
-			m.getProgressReporter().ReportPhaseComplete(phase.name, time.Since(m.progress.StartTime))
+		if m.reporter != nil {
+			m.reporter.ReportPhaseComplete(phase.name, time.Since(m.progress.StartTime))
 		}
 	}
 
@@ -1278,8 +1278,8 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<- error) {
 	for task := range tasks {
 		if m.shouldSkipPhase(task.name) {
-			if m.options.ProgressOut != nil {
-				m.getProgressReporter().ReportPhaseSkipped(task.name, "resumed and previously completed")
+			if m.reporter != nil {
+				m.reporter.ReportPhaseSkipped(task.name, "resumed and previously completed")
 			}
 
 			errs <- nil
@@ -1287,8 +1287,8 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 			continue
 		}
 
-		if m.options.ProgressOut != nil {
-			m.getProgressReporter().ReportPhaseStart(task.name, 0, 0)
+		if m.reporter != nil {
+			m.reporter.ReportPhaseStart(task.name, 0, 0)
 		}
 
 		var err error
@@ -1303,8 +1303,8 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 			m.checkpointManager.MarkPhaseCompleted(m.progress, task.name)
 
 			_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": task.name, "timestamp": time.Now()})
-			if m.options.ProgressOut != nil {
-				m.getProgressReporter().ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
+			if m.reporter != nil {
+				m.reporter.ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
 			}
 		} else {
 			m.progress.Errors = append(m.progress.Errors, err)
@@ -1474,12 +1474,28 @@ func (m *Manager) setHostname(ctx context.Context, desired string) {
 func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
 	m.log.Info("Configuring SSH agent forwarding")
 
+	// Step 1: Enable SSHD agent forwarding
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 1, 3, "Enabling SSHD agent forwarding")
+	}
+
 	err := m.enableSSHDAgentForwarding(ctx)
 	if err != nil {
 		return err
 	}
 
+	// Step 2: Configure SSH client forwarding
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 2, 3, "Configuring SSH client forwarding")
+	}
+
 	m.configureSSHClientForwarding(ctx)
+
+	// Step 3: Add GitHub host keys
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 3, 3, "Adding GitHub host keys")
+	}
+
 	m.addGitHubHostKeys(ctx)
 
 	m.log.Info("SSH agent forwarding configured successfully")
@@ -1585,8 +1601,14 @@ func (m *Manager) createDirectories(ctx context.Context) error {
 	m.log.Info("Creating directories")
 
 	directories := m.provConfig.GetDirectories()
-	for _, dir := range directories {
+	total := len(directories)
+
+	for i, dir := range directories {
 		expandedPath := m.expandVariables(dir.Path)
+
+		if m.reporter != nil {
+			m.reporter.ReportSubtaskProgress("directories", i+1, total, expandedPath)
+		}
 
 		cmd := fmt.Sprintf("mkdir -p \"%s\"", expandedPath)
 		if dir.Mode != 0 {
@@ -1626,53 +1648,14 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) setupRepositories(ctx context.Context) error {
-	m.log.Info("Setting up repositories")
+// setupAPTRepositories sets up APT repositories only.
+func (m *Manager) setupAPTRepositories(ctx context.Context) error {
+	m.log.Info("Setting up APT repositories")
 
-	// Generate and execute repository setup script
-	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
-	envVars := m.getEnvironmentVariables()
-
-	// Report progress for phases executed by the script
-	m.reportRepositoryProgress()
-
-	// Generate and execute provisioning script
-	script, err := scriptGen.GenerateProvisioningScript(ctx, m.provConfig, envVars)
-	if err != nil {
-		return fmt.Errorf("failed to generate provisioning script: %w", err)
-	}
-
-	// Save script for debugging
-	debugScriptPath := filepath.Join(os.TempDir(), "bastion-provision-debug.sh")
-	_ = os.WriteFile(debugScriptPath, []byte(script), scriptFileMode)
-	m.log.Debugw("Generated provisioning script saved", "path", debugScriptPath)
-
-	return m.executeProvisioningScript(ctx, script)
-}
-
-// reportRepositoryProgress emits subtask planning progress for phases executed by the script.
-func (m *Manager) reportRepositoryProgress() {
-	if m.options.ProgressOut == nil {
-		return
-	}
-
-	reporter := m.getProgressReporter()
-
-	m.reportSnapPackages(reporter)
-	m.reportCPANModules(reporter)
-	m.reportCFPlugins(reporter)
-	m.reportBinaryTools(reporter)
-}
-
-// reportSnapPackages reports progress for snap packages.
-func (m *Manager) reportSnapPackages(reporter *ProgressReporter) {
-	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-	snaps := snapMgr.GetSnapPackages()
-
-	enabledSnaps := filterEnabledSnaps(snaps)
-	for i, s := range enabledSnaps {
-		reporter.ReportSubtaskProgress("snap_packages", i, len(enabledSnaps), s.Name)
-	}
+	// For now, this is a minimal implementation
+	// APT repository setup is typically handled by the provisioning script
+	// or is already configured on the system
+	return nil
 }
 
 // filterEnabledSnaps returns only enabled snap packages.
@@ -1688,17 +1671,6 @@ func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
 	return enabled
 }
 
-// reportCPANModules reports progress for CPAN modules.
-func (m *Manager) reportCPANModules(reporter *ProgressReporter) {
-	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-	mods := cpanMgr.GetCPANModules()
-
-	activeMods := filterActiveCPANModules(mods)
-	for i, mdu := range activeMods {
-		reporter.ReportSubtaskProgress("cpan_modules", i, len(activeMods), mdu.Name)
-	}
-}
-
 // filterActiveCPANModules returns CPAN modules that are enabled or have a name.
 func filterActiveCPANModules(mods []provision.CPANModule) []provision.CPANModule {
 	var active []provision.CPANModule
@@ -1712,15 +1684,17 @@ func filterActiveCPANModules(mods []provision.CPANModule) []provision.CPANModule
 	return active
 }
 
-// reportCFPlugins reports progress for CF plugins.
-func (m *Manager) reportCFPlugins(reporter *ProgressReporter) {
-	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
-	plugins := cfMgr.GetCFPlugins()
+// filterEnabledCPANModules returns only enabled CPAN modules.
+func filterEnabledCPANModules(mods []provision.CPANModule) []provision.CPANModule {
+	var enabled []provision.CPANModule
 
-	enabledPlugins := filterEnabledCFPlugins(plugins)
-	for i, p := range enabledPlugins {
-		reporter.ReportSubtaskProgress("cf_plugins", i, len(enabledPlugins), p.Name)
+	for _, mdu := range mods {
+		if mdu.Enabled {
+			enabled = append(enabled, mdu)
+		}
 	}
+
+	return enabled
 }
 
 // filterEnabledCFPlugins returns only enabled CF plugins.
@@ -1734,28 +1708,6 @@ func filterEnabledCFPlugins(plugins []provision.CFPlugin) []provision.CFPlugin {
 	}
 
 	return enabled
-}
-
-// reportBinaryTools reports progress for binary tools.
-func (m *Manager) reportBinaryTools(reporter *ProgressReporter) {
-	baseTools := m.provConfig.GetBinaryTools()
-	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
-	advTools := advMgr.GetAdvancedBinaryTools()
-
-	enabledBase := filterEnabledBinaryTools(baseTools)
-	enabledAdv := filterEnabledAdvancedTools(advTools)
-	totalTools := len(enabledBase) + len(enabledAdv)
-
-	current := 0
-	for _, t := range enabledBase {
-		reporter.ReportSubtaskProgress("binary_tools", current, totalTools, t.Name)
-		current++
-	}
-
-	for _, t := range enabledAdv {
-		reporter.ReportSubtaskProgress("binary_tools", current, totalTools, t.Name)
-		current++
-	}
 }
 
 // filterEnabledBinaryTools returns only enabled binary tools.
@@ -1845,8 +1797,35 @@ func (m *Manager) installPackages(ctx context.Context) error {
 }
 
 func (m *Manager) installBinaryTools(ctx context.Context) error {
-	// This is handled by the provisioning script
-	return nil
+	m.log.Info("Installing binary tools")
+
+	// Report progress for binary tools
+	if m.reporter != nil {
+		baseTools := m.provConfig.GetBinaryTools()
+		advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+		advTools := advMgr.GetAdvancedBinaryTools()
+
+		enabledBase := filterEnabledBinaryTools(baseTools)
+		enabledAdv := filterEnabledAdvancedTools(advTools)
+		totalTools := len(enabledBase) + len(enabledAdv)
+
+		current := 0
+		for _, t := range enabledBase {
+			m.reporter.ReportSubtaskProgress("binary_tools", current+1, totalTools, t.Name)
+			current++
+		}
+
+		for _, t := range enabledAdv {
+			m.reporter.ReportSubtaskProgress("binary_tools", current+1, totalTools, t.Name)
+			current++
+		}
+	}
+
+	// Generate and execute binary tools installation script
+	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+	script := advMgr.GenerateAdvancedToolScript(ctx)
+
+	return m.executeScript(ctx, script, "binary-tools")
 }
 
 func (m *Manager) cloneGitRepositories(ctx context.Context) error {
@@ -1860,11 +1839,6 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 	total := len(repos)
 	completed := 0
 
-	var reporter *ProgressReporter
-	if m.options.ProgressOut != nil {
-		reporter = m.getProgressReporter()
-	}
-
 	// Worker pool setup
 	workers := m.options.MaxWorkers
 	if workers <= 0 {
@@ -1876,7 +1850,7 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 
 	// Start workers
 	for range workers {
-		go m.gitCloneWorker(ctx, jobs, errs, reporter, total, &completed)
+		go m.gitCloneWorker(ctx, jobs, errs, m.reporter, total, &completed)
 	}
 
 	// Create and enqueue jobs
@@ -1991,6 +1965,10 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	m.log.Info("Verifying installation")
 
 	// Check if provisioning completed successfully
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("verification", 1, 10, "Checking provisioning marker")
+	}
+
 	cmd := "test -f ~/.ocfp/provisioned && echo 'provisioned' || echo 'not-provisioned'"
 
 	result, err := m.sshClient.ExecuteCommand(ctx, cmd)
@@ -2004,7 +1982,11 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 
 	// Verify key tools are available
 	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
-	for _, tool := range tools {
+	for i, tool := range tools {
+		if m.reporter != nil {
+			m.reporter.ReportSubtaskProgress("verification", i+2, 10, fmt.Sprintf("Verifying %s", tool))
+		}
+
 		cmd := "command -v " + tool
 
 		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
