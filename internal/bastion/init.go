@@ -385,7 +385,7 @@ func (m *Manager) executeInitializationPhases(ctx context.Context) error {
 
 	var reporter *ProgressReporter
 	if m.options.ProgressOut != nil {
-		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
+		reporter = m.getProgressReporter()
 		reporter.Start(ctx)
 	}
 
@@ -1206,7 +1206,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 			m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
 			if m.options.ProgressOut != nil {
-				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseSkipped(phase.name, "resumed and previously completed")
+				m.getProgressReporter().ReportPhaseSkipped(phase.name, "resumed and previously completed")
 			}
 
 			continue
@@ -1216,7 +1216,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 
 		m.progress.CompletedSteps++
 		if m.options.ProgressOut != nil {
-			NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseStart(phase.name, index, m.progress.TotalSteps)
+			m.getProgressReporter().ReportPhaseStart(phase.name, index, m.progress.TotalSteps)
 		}
 
 		if m.options.DryRun {
@@ -1238,7 +1238,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 
 		_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": phase.name, "timestamp": time.Now()})
 		if m.options.ProgressOut != nil {
-			NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseComplete(phase.name, time.Since(m.progress.StartTime))
+			m.getProgressReporter().ReportPhaseComplete(phase.name, time.Since(m.progress.StartTime))
 		}
 	}
 
@@ -1279,7 +1279,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 	for task := range tasks {
 		if m.shouldSkipPhase(task.name) {
 			if m.options.ProgressOut != nil {
-				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseSkipped(task.name, "resumed and previously completed")
+				m.getProgressReporter().ReportPhaseSkipped(task.name, "resumed and previously completed")
 			}
 
 			errs <- nil
@@ -1288,7 +1288,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 		}
 
 		if m.options.ProgressOut != nil {
-			NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseStart(task.name, 0, 0)
+			m.getProgressReporter().ReportPhaseStart(task.name, 0, 0)
 		}
 
 		var err error
@@ -1304,7 +1304,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 
 			_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"completed_phase": task.name, "timestamp": time.Now()})
 			if m.options.ProgressOut != nil {
-				NewProgressReporter(m.options.ProgressOut, m.progress).ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
+				m.getProgressReporter().ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
 			}
 		} else {
 			m.progress.Errors = append(m.progress.Errors, err)
@@ -1388,7 +1388,8 @@ func (m *Manager) shouldSkipPhase(phase string) bool {
 // getProgressReporter returns a progress reporter if configured.
 func (m *Manager) getProgressReporter() *ProgressReporter {
 	if m.options.ProgressOut != nil {
-		return NewProgressReporter(m.options.ProgressOut, m.progress)
+		mode := SelectOutputMode(m.options.ProgressOut)
+		return NewProgressReporter(m.options.ProgressOut, mode, m.progress)
 	}
 
 	return nil
@@ -1655,7 +1656,7 @@ func (m *Manager) reportRepositoryProgress() {
 		return
 	}
 
-	reporter := NewProgressReporter(m.options.ProgressOut, m.progress)
+	reporter := m.getProgressReporter()
 
 	m.reportSnapPackages(reporter)
 	m.reportCPANModules(reporter)
@@ -1861,7 +1862,7 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 
 	var reporter *ProgressReporter
 	if m.options.ProgressOut != nil {
-		reporter = NewProgressReporter(m.options.ProgressOut, m.progress)
+		reporter = m.getProgressReporter()
 	}
 
 	// Worker pool setup

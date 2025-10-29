@@ -4,45 +4,70 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/output"
 )
 
-const (
-	// Progress reporting configuration.
-	progressUpdateInterval = 500 * time.Millisecond
-	progressBarWidth       = 30
-	subtaskBarWidth        = 20
-
-	// Time thresholds.
-	elapsedTimeDisplayThreshold = 30 * time.Second
-)
+// No constants needed - renderers handle all configuration
 
 // ProgressReporter handles real-time progress reporting.
 type ProgressReporter struct {
-	output         io.Writer
-	progress       *ProvisioningProgress
-	log            logger.Logger
-	lastUpdate     time.Time
-	updateInterval time.Duration
+	renderer output.Renderer
+	progress *ProvisioningProgress
+	log      logger.Logger
 }
 
-// NewProgressReporter creates a new progress reporter.
-func NewProgressReporter(output io.Writer, progress *ProvisioningProgress) *ProgressReporter {
+// SelectOutputMode determines the appropriate output mode based on environment.
+// It checks for explicit mode flags first, then falls back to environment detection.
+func SelectOutputMode(w io.Writer) output.Mode {
+	env := output.DetectEnvironment(w)
+
+	// Check for explicit mode flag from environment
+	if modeStr := os.Getenv("OUTPUT_MODE"); modeStr != "" {
+		if mode, err := output.ParseMode(modeStr); err == nil {
+			return mode
+		}
+	}
+
+	// Use environment default
+	return env.DefaultMode()
+}
+
+// NewProgressReporter creates a new progress reporter with the specified output mode.
+func NewProgressReporter(w io.Writer, mode output.Mode, progress *ProvisioningProgress) *ProgressReporter {
+	log := logger.Get()
+
+	renderer, err := output.NewRenderer(w, mode)
+	if err != nil {
+		// Fallback to concise mode on error
+		log.Warnw("Failed to create renderer, falling back to concise mode",
+			"error", err,
+			"requested_mode", mode.String(),
+		)
+		renderer, _ = output.NewRenderer(w, output.ModeConcise)
+	}
+
 	return &ProgressReporter{
-		output:         output,
-		progress:       progress,
-		log:            logger.Get(),
-		lastUpdate:     time.Time{},
-		updateInterval: progressUpdateInterval,
+		renderer: renderer,
+		progress: progress,
+		log:      log,
 	}
 }
 
+// NewProgressReporterCompat creates a reporter with auto-detected mode.
+// Deprecated: Use NewProgressReporter with explicit mode for better control.
+func NewProgressReporterCompat(w io.Writer, progress *ProvisioningProgress) *ProgressReporter {
+	mode := SelectOutputMode(w)
+	return NewProgressReporter(w, mode, progress)
+}
+
 // Start begins progress reporting.
+// Deprecated: Progress updates are now handled by the renderer automatically.
 func (pr *ProgressReporter) Start(ctx context.Context) {
-	go pr.reportLoop(ctx)
+	// No-op: Renderers handle their own update timing
 }
 
 // UpdateProgress updates the current progress state.
@@ -50,119 +75,164 @@ func (pr *ProgressReporter) UpdateProgress(step string, completed int, total int
 	pr.progress.CurrentStep = step
 	pr.progress.CompletedSteps = completed
 	pr.progress.TotalSteps = total
-
-	// Force immediate update for significant progress
-	pr.reportProgress()
 }
 
 // ReportPhaseStart reports the start of a new phase.
 func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
 
 	pr.UpdateProgress(phase, index, total)
 
-	message := fmt.Sprintf("\n[%d/%d] Starting phase: %s\n",
-		index+1, total, phase)
-	_, _ = pr.output.Write([]byte(message))
+	phaseInfo := output.PhaseInfo{
+		ID:        phase,
+		Name:      phase,
+		Number:    index + 1,
+		Total:     total,
+		StartTime: time.Now(),
+	}
+
+	if err := pr.renderer.PhaseStart(phaseInfo); err != nil {
+		pr.log.Warnw("Failed to report phase start",
+			"phase", phase,
+			"error", err,
+		)
+	}
 }
 
 // ReportPhaseComplete reports completion of a phase.
 func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Duration) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
 
-	message := fmt.Sprintf("\n✓ Phase completed: %s (%s)\n",
-		phase, duration.Round(time.Millisecond))
-	_, _ = pr.output.Write([]byte(message))
+	phaseInfo := output.PhaseInfo{
+		ID:        phase,
+		Name:      phase,
+		StartTime: time.Now().Add(-duration), // Approximate start time
+	}
+
+	if err := pr.renderer.PhaseComplete(phaseInfo); err != nil {
+		pr.log.Warnw("Failed to report phase complete",
+			"phase", phase,
+			"error", err,
+		)
+	}
 }
 
 // ReportSubtaskProgress reports subtask progress within a phase.
 func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total int, label string) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
+
 	// Clamp values
 	if total <= 0 {
 		total = 1
 	}
-
 	if current < 0 {
 		current = 0
 	}
-
 	if current > total {
 		current = total
 	}
 
-	barWidth := subtaskBarWidth
+	percentage := float64(current) / float64(total) * 100.0
 
-	filled := int(float64(current) / float64(total) * float64(barWidth))
-	if filled > barWidth {
-		filled = barWidth
+	progressInfo := output.ProgressInfo{
+		Category:   phase,
+		Current:    current,
+		Total:      total,
+		Item:       label,
+		Status:     output.StatusRunning,
+		Percentage: percentage,
 	}
 
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-	msg := fmt.Sprintf("  [%s] %d/%d %s (%s)\n", bar, current, total, label, phase)
-	_, _ = pr.output.Write([]byte(msg))
+	if err := pr.renderer.PhaseProgress(progressInfo); err != nil {
+		pr.log.Warnw("Failed to report phase progress",
+			"phase", phase,
+			"error", err,
+		)
+	}
 }
 
 // ReportPhaseSkipped reports that a phase was skipped.
 func (pr *ProgressReporter) ReportPhaseSkipped(phase string, reason string) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
 
-	message := fmt.Sprintf("\n⤷ Phase skipped: %s (%s)\n", phase, reason)
-	_, _ = pr.output.Write([]byte(message))
+	phaseInfo := output.PhaseInfo{
+		ID:   phase,
+		Name: phase,
+	}
+
+	if err := pr.renderer.PhaseSkipped(phaseInfo, reason); err != nil {
+		pr.log.Warnw("Failed to report phase skipped",
+			"phase", phase,
+			"reason", reason,
+			"error", err,
+		)
+	}
 }
 
 // ReportError reports an error with context.
 func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAttempts int) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
 
-	var message string
 	if attempt < maxAttempts {
-		message = fmt.Sprintf("\n⚠ Phase failed (attempt %d/%d): %s - %s (retrying...)\n",
-			attempt, maxAttempts, phase, err.Error())
+		// Still retrying - just log, don't report as failed yet
+		pr.log.Warnw("Phase error, retrying",
+			"phase", phase,
+			"error", err,
+			"attempt", attempt,
+			"max_attempts", maxAttempts,
+		)
 	} else {
-		message = fmt.Sprintf("\n✗ Phase failed: %s - %s\n", phase, err.Error())
-	}
+		// Final failure - report to renderer
+		phaseInfo := output.PhaseInfo{
+			ID:   phase,
+			Name: phase,
+		}
 
-	_, _ = pr.output.Write([]byte(message))
+		if renderErr := pr.renderer.PhaseFailed(phaseInfo, err); renderErr != nil {
+			pr.log.Errorw("Failed to report phase failure",
+				"phase", phase,
+				"error", err,
+				"render_error", renderErr,
+			)
+		}
+	}
 }
 
 // ReportFinalSummary reports the final summary.
 func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Duration, phases int, errors int) {
-	if pr.output == nil {
+	if pr.renderer == nil {
 		return
 	}
 
-	_, _ = pr.output.Write([]byte("\n"))
-
-	if success {
-		message := "🎉 Bastion initialization completed successfully!\n"
-		message += fmt.Sprintf("   Duration: %s\n", duration.Round(time.Second))
-
-		message += fmt.Sprintf("   Phases completed: %d\n", phases)
-		if errors > 0 {
-			message += fmt.Sprintf("   Errors encountered: %d (resolved)\n", errors)
-		}
-
-		_, _ = pr.output.Write([]byte(message))
-	} else {
-		message := "❌ Bastion initialization failed\n"
-		message += fmt.Sprintf("   Duration: %s\n", duration.Round(time.Second))
-		message += fmt.Sprintf("   Errors: %d\n", errors)
-		_, _ = pr.output.Write([]byte(message))
+	summary := output.Summary{
+		TotalPhases:     phases,
+		CompletedPhases: phases - errors,
+		FailedPhases:    errors,
+		Duration:        duration,
+		Success:         success,
 	}
 
-	_, _ = pr.output.Write([]byte("\n"))
+	if err := pr.renderer.Finalize(summary); err != nil {
+		pr.log.Warnw("Failed to report final summary",
+			"success", success,
+			"error", err,
+		)
+	}
+
+	// Close renderer to release resources
+	if err := pr.renderer.Close(); err != nil {
+		pr.log.Warnw("Failed to close renderer", "error", err)
+	}
 }
 
 // StatusReporter provides detailed status information.
@@ -292,86 +362,3 @@ func (sr *StatusReporter) PrintDetailedStatus(output io.Writer) error {
 	return nil
 }
 
-// reportLoop runs the progress reporting loop.
-func (pr *ProgressReporter) reportLoop(ctx context.Context) {
-	ticker := time.NewTicker(pr.updateInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if time.Since(pr.lastUpdate) >= pr.updateInterval {
-				pr.reportProgress()
-			}
-		}
-	}
-}
-
-// reportProgress outputs current progress information.
-func (pr *ProgressReporter) reportProgress() {
-	if pr.output == nil {
-		return
-	}
-
-	now := time.Now()
-	elapsed := now.Sub(pr.progress.StartTime)
-
-	// Calculate progress percentage
-	var progressPercent float64
-	if pr.progress.TotalSteps > 0 {
-		progressPercent = float64(pr.progress.CompletedSteps) / float64(pr.progress.TotalSteps) * percentageMultiplier
-	}
-
-	// Estimate remaining time
-	var eta string
-
-	if progressPercent > 0 && progressPercent < percentageMultiplier {
-		rate := progressPercent / elapsed.Seconds()
-		remainingSeconds := (percentageMultiplier - progressPercent) / rate
-		eta = fmt.Sprintf(" (ETA: %s)", time.Duration(remainingSeconds*float64(time.Second)).Round(time.Second))
-	}
-
-	// Create progress bar
-	progressBar := pr.createProgressBar(progressPercent)
-
-	// Format current step
-	currentStep := pr.progress.CurrentStep
-	if currentStep == "" {
-		currentStep = "initializing"
-	}
-
-	// Create status line
-	statusLine := fmt.Sprintf("\r[%s] %.1f%% - %s%s",
-		progressBar,
-		progressPercent,
-		currentStep,
-		eta)
-
-	// Add timing information
-	if elapsed > elapsedTimeDisplayThreshold {
-		statusLine += fmt.Sprintf(" [%s]", elapsed.Round(time.Second))
-	}
-
-	_, _ = pr.output.Write([]byte(statusLine))
-	pr.lastUpdate = now
-}
-
-// createProgressBar creates a visual progress bar.
-func (pr *ProgressReporter) createProgressBar(percent float64) string {
-	barWidth := progressBarWidth
-	filled := int(percent / percentageMultiplier * float64(barWidth))
-
-	if filled > barWidth {
-		filled = barWidth
-	}
-
-	if filled < 0 {
-		filled = 0
-	}
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-	return bar
-}
