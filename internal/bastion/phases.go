@@ -41,6 +41,17 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 func (m *Manager) installSnapPackages(ctx context.Context) error {
 	m.log.Info("Installing snap packages")
 
+	// Report progress for snap packages
+	if m.reporter != nil {
+		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
+		snaps := snapMgr.GetSnapPackages()
+		enabledSnaps := filterEnabledSnaps(snaps)
+
+		for i, s := range enabledSnaps {
+			m.reporter.ReportSubtaskProgress("snap_packages", i+1, len(enabledSnaps), s.Name)
+		}
+	}
+
 	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
 	script := snapMgr.GenerateSnapInstallScript(ctx)
 
@@ -50,6 +61,17 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 // installCPANModules installs CPAN modules.
 func (m *Manager) installCPANModules(ctx context.Context) error {
 	m.log.Info("Installing CPAN modules")
+
+	// Report progress for CPAN modules
+	if m.reporter != nil {
+		cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
+		modules := cpanMgr.GetCPANModules()
+		enabledModules := filterEnabledCPANModules(modules)
+
+		for i, mod := range enabledModules {
+			m.reporter.ReportSubtaskProgress("cpan_modules", i+1, len(enabledModules), mod.Name)
+		}
+	}
 
 	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
 
@@ -62,6 +84,17 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 // installCFPlugins installs CloudFoundry plugins.
 func (m *Manager) installCFPlugins(ctx context.Context) error {
 	m.log.Info("Installing CloudFoundry plugins")
+
+	// Report progress for CF plugins
+	if m.reporter != nil {
+		cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
+		plugins := cfMgr.GetCFPlugins()
+		enabledPlugins := filterEnabledCFPlugins(plugins)
+
+		for i, plugin := range enabledPlugins {
+			m.reporter.ReportSubtaskProgress("cf_plugins", i+1, len(enabledPlugins), plugin.Name)
+		}
+	}
 
 	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
 	script := cfMgr.GenerateCFPluginInstallScript(ctx)
@@ -131,9 +164,9 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	m.log.Infow("Uploading OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
 
-	// Provide user feedback
-	if m.options.ProgressOut != nil {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "  📤 Uploading %s to bastion...\n", localBinaryPath)
+	// Step 1: Transfer binary
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 3, fmt.Sprintf("Uploading %s", localBinaryPath))
 	}
 
 	// Transfer to temporary location first (user has write permissions here)
@@ -150,38 +183,28 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	err := m.sshClient.TransferFile(ctx, localBinaryPath, remoteTempPath, transferOpts)
 	if err != nil {
-		if m.options.ProgressOut != nil {
-			_, _ = fmt.Fprintf(m.options.ProgressOut, "  ❌ Failed to transfer binary: %v\n", err)
-		}
-
 		return fmt.Errorf("failed to transfer OCFP binary to temporary location: %w", err)
 	}
 
-	if m.options.ProgressOut != nil {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "  ✅ Binary uploaded to temporary location\n")
+	// Step 2: Binary uploaded
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 3, "Binary uploaded to temporary location")
 	}
 
-	// Move to final location with sudo and set permissions
-	if m.options.ProgressOut != nil {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "  🔐 Installing to %s with sudo...\n", remoteFinalPath)
+	// Step 3: Install binary with sudo
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 3, fmt.Sprintf("Installing to %s", remoteFinalPath))
 	}
 
 	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
 
 	_, err = m.sshClient.ExecuteCommand(ctx, cmd)
 	if err != nil {
-		if m.options.ProgressOut != nil {
-			_, _ = fmt.Fprintf(m.options.ProgressOut, "  ❌ Failed to install binary: %v\n", err)
-		}
 		// Clean up temp file on failure
 		cleanupCmd := fmt.Sprintf("rm -f '%s'", remoteTempPath)
 		_, _ = m.sshClient.ExecuteCommand(ctx, cleanupCmd)
 
 		return fmt.Errorf("failed to install OCFP binary to %s: %w", remoteFinalPath, err)
-	}
-
-	if m.options.ProgressOut != nil {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "  ✅ Binary installed successfully at %s\n", remoteFinalPath)
 	}
 
 	m.log.Info("OCFP binary uploaded and made executable")

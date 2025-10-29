@@ -24,14 +24,14 @@ func TestBuildSecurityGroupMapping(t *testing.T) {
 
 	// Verify standard security groups have bloc prefix
 	expectedMappings := map[string]string{
-		"bastion":                     "test-bloc-bastion",
-		"infra":                       "test-bloc-infra",
-		"ocfp":                        "test-bloc-ocfp",
-		"lb-ext":                      "test-bloc-lb-ext",
-		"ocf-cf-router-ingress":       "test-bloc-ocf-cf-router-ingress",
-		"ocf-cf-tcp-router-ingress":   "test-bloc-ocf-cf-tcp-router-ingress",
-		"ocf-cf-ssh-proxy-ingress":    "test-bloc-ocf-cf-ssh-proxy-ingress",
-		"default":                     "default", // default has no prefix
+		"bastion":                   "test-bloc-bastion",
+		"infra":                     "test-bloc-infra",
+		"ocfp":                      "test-bloc-ocfp",
+		"lb-ext":                    "test-bloc-lb-ext",
+		"ocf-cf-router-ingress":     "test-bloc-ocf-cf-router-ingress",
+		"ocf-cf-tcp-router-ingress": "test-bloc-ocf-cf-tcp-router-ingress",
+		"ocf-cf-ssh-proxy-ingress":  "test-bloc-ocf-cf-ssh-proxy-ingress",
+		"default":                   "default", // default has no prefix
 	}
 
 	for sgType, expectedFullName := range expectedMappings {

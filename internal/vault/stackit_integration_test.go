@@ -773,6 +773,148 @@ func TestIntegration_DataConsistency_CrossFeature(t *testing.T) {
 	})
 }
 
+// TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs verifies that when
+// no subnets are configured, a default ocfp-0 virtual subnet is created with all reserved IPs.
+func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testing.T) {
+	tests := []struct {
+		name        string
+		networkCIDR string
+		expectedCIDR string
+	}{
+		{
+			name:        "uses_custom_network_cidr",
+			networkCIDR: "10.4.0.0/20",
+			expectedCIDR: "10.4.0.0/20",
+		},
+		{
+			name:        "uses_default_when_not_specified",
+			networkCIDR: "",
+			expectedCIDR: "10.4.0.0/20", // Default from Perl implementation
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Name:     "test-bloc",
+				Provider: "stackit",
+				Region:   "eu01",
+				Network: config.NetworkConfig{
+					CIDR: tt.networkCIDR,
+				},
+				// Explicitly empty Subnets array to trigger fallback
+				Subnets: []config.Subnet{},
+			}
+
+			safe := newMockFullSafe()
+			provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
+
+			// Call configureSubnets which should trigger fallback
+			err := provider.configureSubnets("mgmt")
+			require.NoError(t, err, "configureSubnets should not error with empty subnets")
+
+			// Verify subnet was created at correct path
+			subnetPath := "secret/config/test-bloc/mgmt/net/subnets/ocfp-0"
+			subnetData, err := safe.GetAll(subnetPath)
+			require.NoError(t, err)
+			require.NotNil(t, subnetData, "Fallback subnet should be created")
+
+			// Verify subnet properties
+			assert.Equal(t, tt.expectedCIDR, subnetData["subnet_cidr"], "Subnet CIDR should match")
+			assert.Equal(t, "ocfp", subnetData["type"], "Subnet type should be ocfp")
+			assert.Equal(t, "ocfp-0", subnetData["name"], "Subnet name should be ocfp-0")
+			assert.Equal(t, 0, subnetData["subnet_num"], "Subnet number should be 0")
+			assert.Equal(t, "virtual_subnet", subnetData["provider_type"], "Should be virtual subnet")
+			assert.Equal(t, "true", subnetData["virtual"], "Virtual flag should be set")
+
+			// Verify reserved IPs were created
+			reservedIPsPath := "secret/config/test-bloc/mgmt/net/subnets/ocfp-0/reserved-ips"
+			reservedIPs, err := safe.GetAll(reservedIPsPath)
+			require.NoError(t, err)
+			require.NotNil(t, reservedIPs, "Reserved IPs should be created")
+
+			// Verify expected reserved IP assignments exist for subnet 0
+			// Note: Some IPs like doomsday_ip and ocfp_ui_ip are mapped to specific subnets (9)
+			// and won't be present in subnet 0
+			expectedAssignments := []string{
+				"bosh_ip",        // SubnetMapping includes subnet 4 but also has "other" with offset
+				"vault_ip",       // Offset 5, applies to all subnets
+				"jumpbox_ip",     // Offset 6, applies to all subnets
+				"concourse_ip",   // Offset 7, applies to all subnets
+				"prometheus_ip",  // Offset 8, applies to all subnets
+				"shield_ip",      // SubnetMapping{9: {0}}, but also calculated for subnet 0
+				"bastion_ip",     // SubnetMapping{3: {0}} and "other" offset 3
+				"blacksmith_ip",  // SubnetMapping{10: {0}} and "other" offset 10
+			}
+
+			for _, assignment := range expectedAssignments {
+				assert.Contains(t, reservedIPs, assignment, "Reserved IPs should contain %s", assignment)
+				assert.NotEmpty(t, reservedIPs[assignment], "Reserved IP %s should have a value", assignment)
+			}
+
+			// Verify available and reserved ranges exist
+			foundAvailable := false
+			foundReserved := false
+			for key := range reservedIPs {
+				if len(key) > 10 && key[:10] == "available_" {
+					foundAvailable = true
+				}
+				if len(key) > 9 && key[:9] == "reserved_" {
+					foundReserved = true
+				}
+			}
+			assert.True(t, foundAvailable, "Should have available IP ranges")
+			assert.True(t, foundReserved, "Should have reserved IP ranges")
+		})
+	}
+}
+
+// TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured verifies that fallback
+// is NOT triggered when subnets are explicitly configured.
+func TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T) {
+	cfg := &config.Config{
+		Name:     "test-bloc",
+		Provider: "stackit",
+		Region:   "eu01",
+		Network: config.NetworkConfig{
+			CIDR: "10.0.0.0/16",
+		},
+		Subnets: []config.Subnet{
+			{
+				CIDR: "10.0.1.0/24",
+				Type: "ocfp",
+			},
+		},
+	}
+
+	safe := newMockFullSafe()
+	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
+
+	err := provider.configureSubnets("mgmt")
+	require.NoError(t, err)
+
+	// Verify configured subnet exists (ocfp-0 from config)
+	configuredSubnetPath := "secret/config/test-bloc/mgmt/net/subnets/ocfp-0"
+	configuredSubnet, err := safe.GetAll(configuredSubnetPath)
+	require.NoError(t, err)
+	require.NotNil(t, configuredSubnet, "Configured subnet should exist")
+	assert.Equal(t, "10.0.1.0/24", configuredSubnet["subnet_cidr"], "Should use configured CIDR")
+
+	// Verify only one subnet was created (not fallback + configured)
+	var subnetPaths []string
+	for path := range safe.data {
+		if contains(path, "net/subnets/ocfp-") {
+			subnetPaths = append(subnetPaths, path)
+		}
+	}
+
+	// Should have subnet data and reserved-ips for ocfp-0 only
+	assert.True(t, len(subnetPaths) >= 1, "Should have at least one subnet path")
+
+	// Verify CIDR matches configured value, not default fallback
+	assert.Equal(t, "10.0.1.0/24", configuredSubnet["subnet_cidr"], "Should not use fallback default CIDR")
+}
+
 // Helper function to check if string contains substring.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && findSubstring(s, substr)

@@ -164,3 +164,72 @@ func TestConfigureNetwork_GracefulDegradation(t *testing.T) {
 	err := provider.configureNetwork("mgmt")
 	assert.NoError(t, err, "Should gracefully handle API failure")
 }
+
+// TestConfigureNetwork_DNSStringConversion verifies that DNS array is converted to string.
+func TestConfigureNetwork_DNSStringConversion(t *testing.T) {
+	tests := []struct {
+		name        string
+		dnsArray    []string
+		expectedDNS string
+	}{
+		{
+			name:        "single_dns_server",
+			dnsArray:    []string{"8.8.8.8"},
+			expectedDNS: "8.8.8.8",
+		},
+		{
+			name:        "multiple_dns_servers",
+			dnsArray:    []string{"8.8.8.8", "8.8.4.4"},
+			expectedDNS: "8.8.8.8,8.8.4.4",
+		},
+		{
+			name:        "three_dns_servers",
+			dnsArray:    []string{"1.1.1.1", "8.8.8.8", "8.8.4.4"},
+			expectedDNS: "1.1.1.1,8.8.8.8,8.8.4.4",
+		},
+		{
+			name:        "empty_dns_array",
+			dnsArray:    []string{},
+			expectedDNS: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSafe := &mockFullSafe{
+				data:      make(map[string]map[string]interface{}),
+				setCalls:  make([]setMultipleCall, 0),
+				getSingle: make(map[string]map[string]interface{}),
+			}
+
+			cfg := &config.Config{
+				Name:      "test-bloc",
+				ProjectID: "test-project-123",
+				Region:    "eu01",
+				DNS:       tt.dnsArray,
+				Network: config.NetworkConfig{
+					CIDR: "10.0.0.0/16",
+				},
+			}
+
+			provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+
+			err := provider.configureNetwork("mgmt")
+			assert.NoError(t, err)
+
+			// Verify DNS was stored as string
+			netPath := "secret/config/test-bloc/mgmt/net"
+			networkData, err := mockSafe.GetAll(netPath)
+			assert.NoError(t, err)
+			assert.NotNil(t, networkData)
+
+			// DNS should be a string, not an array
+			dnsValue, ok := networkData["dns"]
+			assert.True(t, ok, "DNS field should exist")
+
+			dnsString, isString := dnsValue.(string)
+			assert.True(t, isString, "DNS should be stored as string, not array")
+			assert.Equal(t, tt.expectedDNS, dnsString, "DNS string should match expected format")
+		})
+	}
+}

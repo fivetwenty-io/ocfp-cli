@@ -216,10 +216,10 @@ func TestContract_SecurityGroups_PerlCompatibility(t *testing.T) {
 func TestContract_AZFormat_PerlCompatibility(t *testing.T) {
 	// Perl expects cloud_properties as JSON string, not object
 	tests := []struct {
-		name          string
-		az            string
-		expectedJSON  string
-		mustBeString  bool
+		name         string
+		az           string
+		expectedJSON string
+		mustBeString bool
 	}{
 		{
 			name:         "eu01-1",

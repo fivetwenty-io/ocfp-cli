@@ -22,6 +22,9 @@ type ConciseRenderer struct {
 	currentPhase    *PhaseInfo
 	phaseStartTime  time.Time
 	completedPhases []string
+
+	// Track written subtask states to prevent repetition (phaseID -> category:item -> state)
+	writtenSubtasks map[string]map[string]subtaskState
 }
 
 // subtaskInfo tracks subtask state for tree rendering
@@ -42,6 +45,7 @@ func NewConciseRenderer(w io.Writer) *ConciseRenderer {
 		log:             log,
 		phaseSubtasks:   make(map[string][]subtaskInfo),
 		completedPhases: make([]string, 0),
+		writtenSubtasks: make(map[string]map[string]subtaskState),
 	}
 
 	log.Infow("Concise renderer created",
@@ -61,6 +65,7 @@ func (r *ConciseRenderer) PhaseStart(info PhaseInfo) error {
 	r.currentPhase = &info
 	r.phaseStartTime = time.Now()
 	r.phaseSubtasks[info.ID] = make([]subtaskInfo, 0)
+	r.writtenSubtasks[info.ID] = make(map[string]subtaskState)
 
 	r.log.Debugw("Phase started",
 		"phase_id", info.ID,
@@ -106,23 +111,7 @@ func (r *ConciseRenderer) PhaseProgress(progress ProgressInfo) error {
 		)
 	}
 
-	// Calculate elapsed time
-	elapsed := time.Since(r.phaseStartTime)
-
-	// Write progress line with elapsed time
-	line := fmt.Sprintf("[%02d/%d] %s %s (%s)\n",
-		r.currentPhase.Number,
-		r.currentPhase.Total,
-		r.statusIcon(progress.Status),
-		progress.Category,
-		r.formatDuration(elapsed),
-	)
-
-	if _, err := r.writer.Write([]byte(line)); err != nil {
-		return fmt.Errorf("failed to write progress: %w", err)
-	}
-
-	// Write subtask tree
+	// Write subtask tree (phase status line is written at PhaseStart and PhaseComplete only)
 	if err := r.writeSubtaskTree(phaseID); err != nil {
 		return err
 	}
@@ -137,9 +126,10 @@ func (r *ConciseRenderer) PhaseComplete(info PhaseInfo) error {
 
 	duration := time.Since(r.phaseStartTime)
 
-	line := fmt.Sprintf("[%02d/%d] %s Phase completed: %s (%s)\n",
+	// Format: [N/Total] ✓ Phase completed: name (phase_duration) (cumulative_duration)
+	line := fmt.Sprintf("[%02d/%d] %s Phase completed: %s (%s) (%s)\n",
 		info.Number, info.Total, r.statusIcon(StatusCompleted),
-		info.Name, r.formatDuration(duration))
+		info.Name, r.formatDuration(duration), r.formatDuration(info.CumulativeDuration))
 
 	if _, err := r.writer.Write([]byte(line)); err != nil {
 		return fmt.Errorf("failed to write phase complete: %w", err)
@@ -154,6 +144,7 @@ func (r *ConciseRenderer) PhaseComplete(info PhaseInfo) error {
 		"phase_name", info.Name,
 		"phase_number", info.Number,
 		"duration_ms", duration.Milliseconds(),
+		"cumulative_ms", info.CumulativeDuration.Milliseconds(),
 	)
 
 	return nil
@@ -293,6 +284,13 @@ func (r *ConciseRenderer) Close() error {
 func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 	subtasks := r.phaseSubtasks[phaseID]
 
+	// Subtasks always show as running (white), never completed (green)
+	// Only the "Phase completed" line should be green
+	actualStatus := progress.Status
+	if actualStatus == StatusCompleted {
+		actualStatus = StatusRunning
+	}
+
 	// Find existing subtask by category and item
 	found := false
 	for i, st := range subtasks {
@@ -300,7 +298,7 @@ func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 			// Update existing
 			subtasks[i].current = progress.Current
 			subtasks[i].total = progress.Total
-			subtasks[i].status = progress.Status
+			subtasks[i].status = actualStatus
 			found = true
 			break
 		}
@@ -313,14 +311,14 @@ func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 			item:     progress.Item,
 			current:  progress.Current,
 			total:    progress.Total,
-			status:   progress.Status,
+			status:   actualStatus,
 		})
 	}
 
 	r.phaseSubtasks[phaseID] = subtasks
 }
 
-// writeSubtaskTree writes the subtask tree with proper indentation and tree characters.
+// writeSubtaskTree writes only new or changed subtasks to prevent repetition.
 func (r *ConciseRenderer) writeSubtaskTree(phaseID string) error {
 	if r.currentPhase == nil {
 		return nil
@@ -331,35 +329,63 @@ func (r *ConciseRenderer) writeSubtaskTree(phaseID string) error {
 		return nil
 	}
 
+	writtenStates := r.writtenSubtasks[phaseID]
+
 	// Group by category
 	categoryMap := make(map[string][]subtaskInfo)
 	for _, st := range subtasks {
 		categoryMap[st.category] = append(categoryMap[st.category], st)
 	}
 
-	// Write each category's subtasks
+	// Write only new or changed subtasks
 	for category, items := range categoryMap {
-		for i, item := range items {
-			// Determine tree character
+		// First pass: collect items that need to be written
+		var itemsToWrite []subtaskInfo
+		for _, item := range items {
+			key := category + ":" + item.item
+
+			// Check if this subtask has changed since last write
+			lastWritten, exists := writtenStates[key]
+			hasChanged := !exists ||
+				lastWritten.current != item.current ||
+				lastWritten.total != item.total ||
+				lastWritten.status != item.status
+
+			if hasChanged {
+				itemsToWrite = append(itemsToWrite, item)
+			}
+		}
+
+		// Second pass: write items with correct tree characters
+		for i, item := range itemsToWrite {
+			key := category + ":" + item.item
+
+			// Determine tree character based on items actually being written
 			treeChar := "├─"
-			if i == len(items)-1 {
+			if i == len(itemsToWrite)-1 {
 				treeChar = "└─"
 			}
 
-			// Format: [08/25]   ├─ category: item (⟳ current/total)
-			line := fmt.Sprintf("[%02d/%d]   %s %s: %s (%s %d/%d)\n",
+			// Format: [08/25]   ├─ category: item (current/total)
+			line := fmt.Sprintf("[%02d/%d]   %s %s: %s (%d/%d)\n",
 				r.currentPhase.Number,
 				r.currentPhase.Total,
 				treeChar,
 				category,
 				item.item,
-				r.statusIcon(item.status),
 				item.current,
 				item.total,
 			)
 
 			if _, err := r.writer.Write([]byte(line)); err != nil {
 				return fmt.Errorf("failed to write subtask: %w", err)
+			}
+
+			// Update written state
+			writtenStates[key] = subtaskState{
+				current: item.current,
+				total:   item.total,
+				status:  item.status,
 			}
 		}
 	}

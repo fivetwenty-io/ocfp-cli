@@ -778,6 +778,12 @@ func (s *StackitVaultProvider) configureEnvironmentComponents(envType string) er
 		return fmt.Errorf("failed to configure BOSH meta for %s: %w", envType, err)
 	}
 
+	// Configure blobstores for BOSH (and CF if ocf env)
+	err = s.configureBlobstores(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
+	}
+
 	return nil
 }
 
@@ -1095,6 +1101,7 @@ func (s *StackitVaultProvider) buildSecurityGroupMapping() map[string]string {
 
 // findSecurityGroup attempts to find a security group from state manager or provider data.
 // This matches the Perl implementation in _find_security_group (lines 1614-1645).
+// Falls back to API query if not found in state (matching Perl's robustness).
 func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sgType, sgFullName string) map[string]interface{} {
 	// First try to get from state manager
 	if stateManager != nil {
@@ -1146,7 +1153,50 @@ func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sg
 		}
 	}
 
-	// Security group not found
+	// Fallback: Query API directly (matches Perl's robustness)
+	// Perl calls: $client->_call('security-group', 'list') as fallback
+	s.logger.Debugw("Security group not in state, querying API",
+		"type", sgType,
+		"name", sgFullName)
+
+	client, err := s.getStackitClient()
+	if err != nil {
+		s.logger.Warnw("Failed to create STACKIT client for SG lookup", "error", err)
+		return nil
+	}
+
+	ctx := context.Background()
+	sgs, err := client.ListSecurityGroups(ctx, nil) // nil filters = get all
+	if err != nil {
+		s.logger.Warnw("Failed to list security groups from API", "error", err)
+		return nil
+	}
+
+	// Find matching security group by name
+	for _, apiSg := range sgs {
+		if apiSg.Name == sgFullName {
+			sg := make(map[string]interface{})
+			sg["id"] = apiSg.ID
+			sg["name"] = apiSg.Name
+			if apiSg.Description != "" {
+				sg["description"] = apiSg.Description
+			} else {
+				sg["description"] = fmt.Sprintf("Security group for %s", sgType)
+			}
+
+			s.logger.Infow("Found security group via API fallback",
+				"type", sgType,
+				"name", sgFullName,
+				"id", apiSg.ID)
+
+			return sg
+		}
+	}
+
+	// Security group not found in state or API
+	s.logger.Debugw("Security group not found in state or API",
+		"type", sgType,
+		"name", sgFullName)
 	return nil
 }
 
@@ -1678,6 +1728,12 @@ func (s *StackitVaultProvider) configureSubnets(envType string) error {
 
 	subnetsPath := s.PathBuilder.GetSubnetsPath(envType)
 
+	// If no subnets configured, create default virtual subnet for STACKIT
+	if len(s.Config.Subnets) == 0 {
+		s.logger.Warn("No subnets configured, creating default ocfp-0 virtual subnet")
+		return s.configureFallbackSubnet(envType)
+	}
+
 	for i, subnet := range s.Config.Subnets {
 		err := s.configureSubnet(envType, i, subnet)
 		if err != nil {
@@ -1688,6 +1744,27 @@ func (s *StackitVaultProvider) configureSubnets(envType string) error {
 	s.logger.Infow("Subnets configuration completed", "path", subnetsPath)
 
 	return nil
+}
+
+// configureFallbackSubnet creates a default virtual subnet when no subnets are configured.
+// This ensures reserved IPs are always written to vault for STACKIT deployments.
+func (s *StackitVaultProvider) configureFallbackSubnet(envType string) error {
+	// Use configured Network CIDR or default to match Perl implementation
+	cidr := s.Config.Network.CIDR
+	if cidr == "" {
+		cidr = "10.4.0.0/20" // Default CIDR from Perl reference
+	}
+
+	// Create default virtual subnet with type "ocfp"
+	fallbackSubnet := config.Subnet{
+		CIDR: cidr,
+		Type: "ocfp",
+	}
+
+	s.logger.Infow("Creating fallback virtual subnet", "cidr", cidr, "type", "ocfp", "index", 0)
+
+	// Use existing configureSubnet logic which will create reserved IPs
+	return s.configureSubnet(envType, 0, fallbackSubnet)
 }
 
 func (s *StackitVaultProvider) configureSubnet(envType string, subnetNum int, subnet config.Subnet) error {
@@ -1779,8 +1856,18 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 	// Calculate net_prefix (first 3 octets of master network)
 	netPrefix := s.calculateNetworkPrefix(netCIDR)
 
-	// Get network_id from state if available
-	networkID := s.getNetworkIDFromState()
+	// Get network_id from API (fallback to state, then ProjectID)
+	// This ensures subnets get the correct parent network UUID
+	networkID, err := s.getNetworkIDFromAPI()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Debugw("Failed to fetch network ID from API for subnet, using ProjectID", "error", err)
+		}
+		networkID = s.Config.ProjectID
+	}
+	if networkID == "" {
+		networkID = s.Config.ProjectID
+	}
 
 	// Build base subnet data
 	subnetData := map[string]interface{}{
@@ -1806,11 +1893,7 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 		"parent_cidr":   cidr,                                        // Same as subnet_cidr
 		"environment":   s.BlocName,                                  // Bloc name
 		"region":        s.Config.Region,                             // STACKIT region
-	}
-
-	// Add network_id if available
-	if networkID != "" {
-		subnetData["network_id"] = networkID
+		"network_id":    networkID,                                   // Parent network ID (required by Perl contract)
 	}
 
 	// Add 'virtual' flag only for non-reserved subnets
@@ -1859,26 +1942,122 @@ func (s *StackitVaultProvider) getNetworkIDFromState() string {
 	return ""
 }
 
+// getNetworkCIDRFromState retrieves the network_cidr from state manager.
+func (s *StackitVaultProvider) getNetworkCIDRFromState() string {
+	stateManager := s.loadStateManager()
+	if stateManager == nil {
+		return ""
+	}
+
+	networkCIDR, err := stateManager.GetOutput("network_cidr")
+	if err != nil {
+		return ""
+	}
+
+	if cidr, ok := networkCIDR.(string); ok {
+		return cidr
+	}
+
+	return ""
+}
+
+// getNetworkIDFromAPI fetches the network ID from STACKIT API by network name.
+// This matches the Perl implementation in _get_network_id (lines 290-324).
+func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
+	// First try to get from state
+	networkID := s.getNetworkIDFromState()
+	if networkID != "" {
+		if s.logger != nil {
+			s.logger.Debugw("Using network ID from state", "network_id", networkID)
+		}
+		return networkID, nil
+	}
+
+	// Network name follows the pattern: <bloc>-net
+	networkName := fmt.Sprintf("%s-net", s.BlocName)
+	if s.logger != nil {
+		s.logger.Debugw("Fetching network ID from API", "network_name", networkName)
+	}
+
+	// Get STACKIT client
+	networkManager, err := s.getStackitClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to create STACKIT client: %w", err)
+	}
+
+	// List all networks with name filter
+	ctx := context.Background()
+	networks, err := networkManager.ListNetworks(ctx, map[string]string{
+		"name": networkName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	// Find matching network by name (case-insensitive)
+	for _, network := range networks {
+		if strings.EqualFold(network.Name, networkName) {
+			if s.logger != nil {
+				s.logger.Debugw("Found network ID from API", "network_id", network.ID, "network_name", network.Name)
+			}
+			return network.ID, nil
+		}
+	}
+
+	// If no match found, return empty string (will be populated during bootstrap)
+	if s.logger != nil {
+		s.logger.Warnw("Network not found in STACKIT API, will be populated during bootstrap", "network_name", networkName)
+	}
+	return "", nil
+}
+
 // configureNetwork configures network settings in vault.
 func (s *StackitVaultProvider) configureNetwork(envType string) error {
 	netPath := s.PathBuilder.GetNetPath(envType)
 
+	// Convert DNS array to comma-separated string for Genesis compatibility
+	// Genesis expects a string value, not an array
+	dnsString := ""
+	if len(s.Config.DNS) > 0 {
+		dnsString = strings.Join(s.Config.DNS, ",")
+	}
+
+	// Fetch the actual network ID from STACKIT API (not ProjectID)
+	// This matches the Perl implementation which fetches the real network UUID
+	networkID, err := s.getNetworkIDFromAPI()
+	if err != nil {
+		s.logger.Warnw("Failed to fetch network ID from API, using ProjectID as fallback", "error", err)
+		networkID = s.Config.ProjectID // Fallback to project ID if API call fails
+	}
+
+	// Resolve network CIDR from multiple sources in priority order:
+	// 1. From state (populated during bootstrap)
+	// 2. From config
+	// 3. From API (will be populated below if network exists)
+	// 4. Default fallback
+	networkCIDR := s.getNetworkCIDRFromState()
+	if networkCIDR == "" {
+		networkCIDR = s.Config.Network.CIDR
+	}
+	if networkCIDR == "" && s.Config.Network.NetworkCIDR != "" {
+		networkCIDR = s.Config.Network.NetworkCIDR
+	}
+
 	// STACKIT network configuration with all required fields matching Perl implementation
 	networkData := map[string]interface{}{
-		"id":          s.Config.ProjectID, // Use project ID as network identifier
-		"cidr_block":  s.Config.Network.CIDR,
-		"dns":         s.Config.DNS,
+		"id":          networkID, // Use actual network UUID from API, not project ID
+		"cidr_block":  networkCIDR,
+		"dns":         dnsString, // Store as string, not array
 		"region":      s.Config.Region,
 		"provider":    "stackit",
 		"name":        fmt.Sprintf("%s-net", s.BlocName),
-		"ipv4_cidr":   s.Config.Network.CIDR, // IPv4 CIDR (same as cidr_block for STACKIT)
+		"ipv4_cidr":   networkCIDR, // IPv4 CIDR (same as cidr_block for STACKIT)
 		"project_id":  s.Config.ProjectID,
 		"description": fmt.Sprintf("Primary STACKIT network for environment %s", s.BlocName),
 	}
 
 	// Try to fetch additional fields from STACKIT API if network ID is available
-	networkID := s.getNetworkIDFromState()
-	if networkID != "" {
+	if networkID != "" && networkID != s.Config.ProjectID {
 		s.logger.Debugw("Fetching network details from API", "network_id", networkID)
 
 		networkManager, err := s.getStackitClient()
@@ -1893,6 +2072,14 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 				s.logger.Warnw("Failed to fetch network details from API, using basic fields only",
 					"network_id", networkID, "error", err)
 			} else if network != nil {
+				// Populate CIDR from API if not already set from state/config
+				if networkCIDR == "" && network.CIDR != "" {
+					networkCIDR = network.CIDR
+					networkData["cidr_block"] = networkCIDR
+					networkData["ipv4_cidr"] = networkCIDR
+					s.logger.Debugw("Populated network CIDR from API", "cidr", networkCIDR)
+				}
+
 				// Add status field if available from API
 				if network.State != "" {
 					networkData["status"] = network.State
@@ -1908,8 +2095,15 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 		}
 	}
 
-	err := s.Safe.SetMultiple(netPath, networkData)
-	if err != nil {
+	// Apply default CIDR if still empty after all attempts
+	if cidr, ok := networkData["cidr_block"].(string); !ok || cidr == "" {
+		defaultCIDR := "10.4.0.0/20" // STACKIT default CIDR
+		networkData["cidr_block"] = defaultCIDR
+		networkData["ipv4_cidr"] = defaultCIDR
+		s.logger.Warnw("Using default network CIDR as fallback", "cidr", defaultCIDR)
+	}
+
+	if err := s.Safe.SetMultiple(netPath, networkData); err != nil {
 		return fmt.Errorf("failed to set network data: %w", err)
 	}
 
@@ -1934,13 +2128,52 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 	return nil
 }
 
+// configureBlobstores configures blobstore settings for systems (BOSH, CF).
+// This writes blobstore configuration to vault paths that Genesis expects.
+// Path format: /config/{bloc}/{env}/{system}/blobstores/{name}
+func (s *StackitVaultProvider) configureBlobstores(envType string) error {
+	s.logger.Infow("Configuring blobstores", "env_type", envType)
+
+	// Determine which systems need blobstores
+	systems := []string{"bosh"}
+	if envType == "ocf" {
+		systems = append(systems, "cf")
+	}
+
+	for _, system := range systems {
+		systemBlobstores := s.getBlobstoresForSystem(system, envType)
+
+		for blobstoreName, blobstoreConfig := range systemBlobstores {
+			// CRITICAL: Use system-direct path, NOT services path
+			// Genesis expects: /config/{bloc}/{env}/{system}/blobstores/{name}
+			// Example: /config/scf-stackit-eu01-004-migration/mgmt/bosh/blobstores/bosh
+			blobstorePath := fmt.Sprintf("secret/config/%s/%s/%s/blobstores/%s",
+				s.BlocName, envType, system, blobstoreName)
+
+			s.logger.Infow("Writing blobstore configuration",
+				"system", system,
+				"name", blobstoreName,
+				"path", blobstorePath)
+
+			err := s.Safe.SetMultiple(blobstorePath, blobstoreConfig)
+			if err != nil {
+				return fmt.Errorf("failed to set blobstore %s for %s: %w", blobstoreName, system, err)
+			}
+		}
+	}
+
+	s.logger.Infow("Blobstores configuration completed", "env_type", envType)
+	return nil
+}
+
 // getBlobstoresForSystem returns blobstore configuration for a system.
 func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
 
 	switch system {
 	case "bosh":
-		blobstores["artifacts"] = map[string]interface{}{
+		// BOSH uses a single blobstore named "bosh" for artifacts
+		blobstores["bosh"] = map[string]interface{}{
 			"name":   fmt.Sprintf("%s-%s-bosh-artifacts", s.BlocName, envType),
 			"region": s.Config.Region,
 			"type":   "s3",
