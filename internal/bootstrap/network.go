@@ -179,9 +179,15 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 		return fmt.Errorf("failed to import network to state: %w", err)
 	}
 
-	_ = m.stateManager.SetOutput("network_id", network.ID)
-	_ = m.stateManager.SetOutput("network_cidr", network.CIDR)
-	_ = m.stateManager.SetOutput("network_name", networkName)
+	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
+		logger.Warnf("Failed to set network_id output: %v", err)
+	}
+	if err := m.stateManager.SetOutput("network_cidr", network.CIDR); err != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", err)
+	}
+	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
+		logger.Warnf("Failed to set network_name output: %v", err)
+	}
 
 	return nil
 }
@@ -218,9 +224,15 @@ func (m *Manager) createNewNetwork(ctx context.Context, netMgr cpi.NetworkManage
 		return fmt.Errorf("failed to save network to state: %w", err)
 	}
 
-	_ = m.stateManager.SetOutput("network_name", networkName)
-	_ = m.stateManager.SetOutput("network_id", network.ID)
-	_ = m.stateManager.SetOutput("network_cidr", cidr)
+	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
+		logger.Warnf("Failed to set network_name output: %v", err)
+	}
+	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
+		logger.Warnf("Failed to set network_id output: %v", err)
+	}
+	if err := m.stateManager.SetOutput("network_cidr", cidr); err != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", err)
+	}
 
 	logger.Infof("Network created successfully: id=%s", network.ID)
 
