@@ -771,6 +771,118 @@ func applyStackitDefaults(cfg *Config) {
 
 		// No default lifecycle/versioning; leave disabled unless configured
 	}
+
+	// Auto-generate 3 ocfp subnets if not configured
+	// This ensures vault populate has the correct subnet structure
+	if len(cfg.Subnets) == 0 {
+		// First try to copy from Network.Subnets (populated by bootstrap)
+		if len(cfg.Network.Subnets) > 0 {
+			cfg.Subnets = cfg.Network.Subnets
+		} else {
+			// Generate 3 default ocfp subnets carved from network CIDR
+			cfg.Subnets = generateDefaultStackitSubnets(cfg)
+		}
+	}
+}
+
+// generateDefaultStackitSubnets generates 3 ocfp subnets carved from the network CIDR.
+// This matches the Perl implementation behavior of creating ocfp-0, ocfp-1, ocfp-2
+// subnets across 3 availability zones.
+func generateDefaultStackitSubnets(cfg *Config) []Subnet {
+	// Determine parent network CIDR
+	parentCIDR := cfg.Network.CIDR
+	if parentCIDR == "" {
+		parentCIDR = cfg.Network.NetworkCIDR
+	}
+	if parentCIDR == "" {
+		parentCIDR = "10.4.0.0/20" // Default STACKIT network
+	}
+
+	// Carve parent /20 network into 4 /22 subnets, skip first (reserved)
+	carvedSubnets := splitNetworkCIDR(parentCIDR, 4)
+	if len(carvedSubnets) < 4 {
+		// Fallback: use full network if carving fails
+		return []Subnet{{Name: "ocfp-0", CIDR: parentCIDR, Type: "ocfp", AvailabilityZone: cfg.Region + "-1"}}
+	}
+
+	// Use subnets [1], [2], [3] (skip [0] as reserved)
+	subnets := make([]Subnet, 0, 3)
+	azSuffixes := []string{"1", "2", "3"}
+
+	for i := 0; i < 3; i++ {
+		subnets = append(subnets, Subnet{
+			Name:             fmt.Sprintf("ocfp-%d", i),
+			CIDR:             carvedSubnets[i+1], // Skip first subnet
+			Type:             "ocfp",
+			AvailabilityZone: cfg.Region + "-" + azSuffixes[i],
+		})
+	}
+
+	return subnets
+}
+
+// splitNetworkCIDR splits a parent CIDR into N equal subnets.
+// This is a simplified version for config layer use without circular dependencies.
+func splitNetworkCIDR(parentCIDR string, count int) []string {
+	// Parse parent CIDR
+	parts := strings.Split(parentCIDR, "/")
+	if len(parts) != 2 {
+		return nil
+	}
+
+	// Parse prefix length
+	var prefixLen int
+	_, err := fmt.Sscanf(parts[1], "%d", &prefixLen)
+	if err != nil {
+		return nil
+	}
+
+	// Calculate new prefix length for carved subnets
+	// For /20 split into 4 subnets = /22 (20 + 2 bits)
+	bitsNeeded := 0
+	for (1 << bitsNeeded) < count {
+		bitsNeeded++
+	}
+	newPrefixLen := prefixLen + bitsNeeded
+
+	if newPrefixLen > 32 {
+		return nil // Invalid split
+	}
+
+	// Parse base IP
+	ipParts := strings.Split(parts[0], ".")
+	if len(ipParts) != 4 {
+		return nil
+	}
+
+	var octets [4]int
+	for i, part := range ipParts {
+		_, err := fmt.Sscanf(part, "%d", &octets[i])
+		if err != nil {
+			return nil
+		}
+	}
+
+	// Convert to uint32
+	baseIP := uint32(octets[0])<<24 | uint32(octets[1])<<16 | uint32(octets[2])<<8 | uint32(octets[3])
+
+	// Calculate subnet size
+	subnetSize := uint32(1) << (32 - newPrefixLen)
+
+	// Generate carved subnets
+	result := make([]string, count)
+	for i := 0; i < count; i++ {
+		subnetIP := baseIP + uint32(i)*subnetSize
+		result[i] = fmt.Sprintf("%d.%d.%d.%d/%d",
+			(subnetIP>>24)&0xFF,
+			(subnetIP>>16)&0xFF,
+			(subnetIP>>8)&0xFF,
+			subnetIP&0xFF,
+			newPrefixLen,
+		)
+	}
+
+	return result
 }
 
 // applyOpenStackDefaults applies OpenStack-specific defaults.
