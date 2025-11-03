@@ -68,27 +68,40 @@ func NewStackitVaultProvider(cfg *config.Config, safe SafeInterface, blocName st
 }
 
 // Configure performs full vault configuration for STACKIT.
-func (s *StackitVaultProvider) Configure() error {
+func (s *StackitVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	s.logger.Infow("Starting STACKIT vault configuration", "bloc", s.BlocName)
 
-	// Save OCFP configuration to vault first
-	err := s.SaveConfigToVault()
+	// Track phase numbers across entire configuration (0-based for ReportPhaseStart)
+	phaseIndex := 0
+
+	// Total phases: 1 (config) + 7 (mgmt: networks, subnets, security-groups, blobstores, databases, load-balancers, fqdns)
+	//               + 7 (ocf: same) + 2 (shared: certificates, public-ips) = 17
+	totalPhases := 17
+
+	// Save OCFP configuration to vault first (phase 1)
+	err := s.SaveConfigToVault(reporter, phaseIndex, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to save config to vault: %w", err)
 	}
+	phaseIndex++
 
 	// Configure both management and OCF environments
 	for _, envType := range []string{"mgmt", "ocf"} {
 		//nolint:noinlineerr // error is returned directly from configureEnvironment
-		if err := s.configureEnvironment(envType); err != nil {
+		if err := s.configureEnvironment(envType, reporter, &phaseIndex, totalPhases); err != nil {
 			return err
 		}
 	}
 
 	// Configure shared components
-	err = s.configureSharedComponents()
+	err = s.configureSharedComponents(reporter, &phaseIndex, totalPhases)
 	if err != nil {
 		return err
+	}
+
+	// Report final summary
+	if reporter != nil {
+		reporter.ReportFinalSummary(true, 0, totalPhases, 0)
 	}
 
 	s.logger.Infow("STACKIT vault configuration completed", "bloc", s.BlocName)
@@ -97,7 +110,14 @@ func (s *StackitVaultProvider) Configure() error {
 }
 
 // ConfigureBlobstores configures blobstore settings.
-func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("blobstores-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring blobstores", "env_type", envType)
 
 	// STACKIT uses S3-compatible object storage
@@ -107,9 +127,23 @@ func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string) erro
 		systems = append(systems, "cf")
 	}
 
+	totalBlobstores := 0
+	for _, system := range systems {
+		systemBlobstores := s.getBlobstoresForSystem(system, envType)
+		totalBlobstores += len(systemBlobstores)
+	}
+
+	currentBlobstore := 0
 	for _, system := range systems {
 		systemBlobstores := s.getBlobstoresForSystem(system, envType)
 		for blobstoreName, blobstoreConfig := range systemBlobstores {
+			currentBlobstore++
+
+			if reporter != nil {
+				label := fmt.Sprintf("Writing %s/%s", system, blobstoreName)
+				reporter.ReportSubtaskProgress(phaseName, currentBlobstore, totalBlobstores, label)
+			}
+
 			blobstorePath := s.PathBuilder.GetSystemBlobstorePath(envType, system, blobstoreName)
 
 			err := s.Safe.SetMultiple(blobstorePath, blobstoreConfig)
@@ -119,12 +153,27 @@ func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string) erro
 		}
 	}
 
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
 	return nil
 }
 
 // ConfigureCertificates configures TLS certificates.
-func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "certificates"
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Info("Configuring certificates")
+
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing certificate configuration")
+	}
 
 	// Certificate configuration for STACKIT
 	// This is typically handled by Let's Encrypt or other certificate providers
@@ -141,17 +190,38 @@ func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string) er
 		return fmt.Errorf("failed to set certificate configuration: %w", err)
 	}
 
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
 	return nil
 }
 
 // ConfigureDatabases configures database settings.
-func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("databases-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring databases", "env_type", envType)
 
 	// STACKIT database configuration - simplified
 	databases := s.getDatabasesForEnv(envType)
 
+	totalDatabases := len(databases)
+	currentDatabase := 0
+
 	for dbName, dbConfig := range databases {
+		currentDatabase++
+
+		if reporter != nil {
+			label := fmt.Sprintf("Writing %s", dbName)
+			reporter.ReportSubtaskProgress(phaseName, currentDatabase, totalDatabases, label)
+		}
+
 		dbPath := s.PathBuilder.GetDatabasePath(envType, dbName)
 
 		err := s.Safe.SetMultiple(dbPath, dbConfig)
@@ -160,16 +230,31 @@ func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string) error
 		}
 	}
 
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
 	return nil
 }
 
 // ConfigureFQDNs configures fully qualified domain names.
-func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("fqdns-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring FQDNs", "env_type", envType)
 
 	// Get FQDNs from configuration
 	if s.Config.FQDNs == nil {
 		s.logger.Info("No FQDNs configured")
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
 
 		return nil
 	}
@@ -177,6 +262,10 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 	envFQDNs, exists := s.Config.FQDNs[envType]
 	if !exists {
 		s.logger.Infow("No FQDNs configured for environment", "env_type", envType)
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
 
 		return nil
 	}
@@ -220,10 +309,18 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 
 	// Only write to vault if we have FQDNs to write
 	if len(fqdns) > 0 {
+		if reporter != nil {
+			reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing FQDNs configuration")
+		}
+
 		err := s.Safe.SetMultiple(fqdnPath, fqdns)
 		if err != nil {
 			return fmt.Errorf("failed to set FQDNs: %w", err)
 		}
+	}
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
 	}
 
 	return nil
@@ -267,28 +364,31 @@ func (s *StackitVaultProvider) shouldSkipCFForEnvType(envType, system string) bo
 }
 
 // ConfigureIAAS configures IaaS-specific settings.
-func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	s.logger.Infow("Configuring IaaS components", "env_type", envType)
 
-	// Configure network
-	err := s.configureNetwork(envType)
+	// Configure network (phase)
+	err := s.configureNetwork(envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure network: %w", err)
 	}
+	*phaseNum++
 
-	// Configure subnets
-	err = s.configureSubnets(envType)
+	// Configure subnets (phase)
+	err = s.configureSubnets(envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure subnets: %w", err)
 	}
+	*phaseNum++
 
-	// Configure security groups
-	err = s.configureSecurityGroups(envType)
+	// Configure security groups (phase)
+	err = s.configureSecurityGroups(envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure security groups: %w", err)
 	}
+	*phaseNum++
 
-	// Configure region
+	// Configure region (not a separate phase, internal operation)
 	err = s.configureRegion(envType)
 	if err != nil {
 		return fmt.Errorf("failed to configure region: %w", err)
@@ -298,13 +398,30 @@ func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string) error {
 }
 
 // ConfigureLoadBalancers configures load balancer settings.
-func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string) error {
+func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("load-balancers-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring load balancers", "env_type", envType)
 
 	// Export service targets backed by reserved IPs (STACKIT parity) for both envs
 	services := s.buildLBServiceTargetsFromState()
 	if len(services) > 0 {
+		totalServices := len(services)
+		currentService := 0
+
 		for serviceName, cfg := range services {
+			currentService++
+
+			if reporter != nil {
+				label := fmt.Sprintf("Writing %s", serviceName)
+				reporter.ReportSubtaskProgress(phaseName, currentService, totalServices, label)
+			}
+
 			svcPath := s.PathBuilder.GetLoadBalancerPath(envType, serviceName)
 
 			err := s.Safe.SetMultiple(svcPath, cfg)
@@ -314,51 +431,102 @@ func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string) e
 		}
 	}
 
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
 	return nil
 }
 
 // ConfigurePublicIPs configures public IP addresses by querying the STACKIT API.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_public_ips (lines 499-533).
-func (s *StackitVaultProvider) ConfigurePublicIPs() error {
+func (s *StackitVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "public-ips"
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Info("Configuring public IPs for bloc", "bloc", s.BlocName)
 
 	// Get STACKIT CPI client
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 1, 5, "Initializing STACKIT client")
+	}
+
 	client, err := s.getStackitClient()
 	if err != nil {
 		s.logger.Warnw("Failed to get STACKIT client, skipping public IPs configuration", "error", err)
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
 		return nil
 	}
 
 	// Fetch all public IPs from STACKIT API
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 2, 5, "Fetching public IPs from API")
+	}
+
 	allIPs, err := s.fetchAllPublicIPs(client)
 	if err != nil {
 		s.logger.Warnw("Failed to fetch public IPs from API, skipping", "error", err)
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
 		return nil
 	}
 
 	if len(allIPs) == 0 {
 		s.logger.Info("No public IPs found in STACKIT API")
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
 		return nil
 	}
 
 	s.logger.Infow("Found public IPs from API", "total_count", len(allIPs))
 
 	// Filter IPs by bloc and managed-by label
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 3, 5, "Filtering IPs by bloc")
+	}
+
 	blocIPs := s.filterBlocIPs(allIPs)
 	if len(blocIPs) == 0 {
 		s.logger.Infow("No public IPs found for bloc", "bloc", s.BlocName)
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
 		return nil
 	}
 
 	s.logger.Infow("Filtered public IPs for bloc", "bloc", s.BlocName, "count", len(blocIPs))
 
 	// Group IPs by job type
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 4, 5, "Grouping IPs by job type")
+	}
+
 	ipsByJob := s.groupIPsByJob(blocIPs)
 
 	// Prepare vault data for mgmt and ocf environments
 	mgmtVaultData, ocfVaultData := s.preparePublicIPVaultData(ipsByJob)
 
 	// Store IPs in vault
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 5, 5, "Writing IPs to vault")
+	}
+
 	err = s.storePublicIPsInVault(mgmtVaultData, ocfVaultData)
 	if err != nil {
 		return err
@@ -366,6 +534,10 @@ func (s *StackitVaultProvider) ConfigurePublicIPs() error {
 
 	// Display summary
 	s.displayPublicIPSummary(mgmtVaultData, ocfVaultData)
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
 
 	return nil
 }
@@ -645,10 +817,21 @@ func (s *StackitVaultProvider) GetProviderName() string {
 
 // SaveConfigToVault saves the OCFP configuration to vault.
 // Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
-func (s *StackitVaultProvider) SaveConfigToVault() error {
+func (s *StackitVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "config"
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Info("Saving OCFP configuration to vault")
 
 	// Convert config to JSON
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing OCFP configuration")
+	}
+
 	jsonConfig, err := json.Marshal(s.Config) //nolint:musttag // Config struct has json tags
 	if err != nil {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
@@ -685,28 +868,32 @@ func (s *StackitVaultProvider) SaveConfigToVault() error {
 
 	s.logger.Infow("OCFP configuration saved to vault", "path", configPath)
 
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
 	return nil
 }
 
 // configureEnvironment configures a single environment (mgmt or ocf).
-func (s *StackitVaultProvider) configureEnvironment(envType string) error {
+func (s *StackitVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	s.logger.Infow("Configuring environment", "env_type", envType)
 
 	envPath := s.PathBuilder.GetEnvironmentPath(envType)
 
-	// Configure IaaS components
-	err := s.ConfigureIAAS(envPath, envType)
+	// Configure IaaS components (4 phases: networks, subnets, security-groups, region)
+	err := s.ConfigureIAAS(envPath, envType, reporter, phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure IaaS for %s: %w", envType, err)
 	}
 
-	// Configure services
-	err = s.configureServices(envPath, envType)
+	// Configure services (4 phases: blobstores, databases, load-balancers, fqdns)
+	err = s.configureServices(envPath, envType, reporter, phaseNum, totalPhases)
 	if err != nil {
 		return err
 	}
 
-	// Configure environment-specific components
+	// Configure environment-specific components (not phase-tracked yet, internal operations)
 	err = s.configureEnvironmentComponents(envType)
 	if err != nil {
 		return err
@@ -716,26 +903,30 @@ func (s *StackitVaultProvider) configureEnvironment(envType string) error {
 }
 
 // configureServices configures all service components for an environment.
-func (s *StackitVaultProvider) configureServices(envPath, envType string) error {
-	err := s.ConfigureBlobstores(envPath, envType)
+func (s *StackitVaultProvider) configureServices(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+	err := s.ConfigureBlobstores(envPath, envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
 	}
+	*phaseNum++
 
-	err = s.ConfigureDatabases(envPath, envType)
+	err = s.ConfigureDatabases(envPath, envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure databases for %s: %w", envType, err)
 	}
+	*phaseNum++
 
-	err = s.ConfigureLoadBalancers(envPath, envType)
+	err = s.ConfigureLoadBalancers(envPath, envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure load balancers for %s: %w", envType, err)
 	}
+	*phaseNum++
 
-	err = s.ConfigureFQDNs(envPath, envType)
+	err = s.ConfigureFQDNs(envPath, envType, reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
 	}
+	*phaseNum++
 
 	return nil
 }
@@ -788,18 +979,20 @@ func (s *StackitVaultProvider) configureEnvironmentComponents(envType string) er
 }
 
 // configureSharedComponents configures components shared between environments.
-func (s *StackitVaultProvider) configureSharedComponents() error {
+func (s *StackitVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	// Configure certificates (shared between environments)
-	err := s.ConfigureCertificates("", "")
+	err := s.ConfigureCertificates("", "", reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure certificates: %w", err)
 	}
+	*phaseNum++
 
 	// Configure public IPs (OCF environment only)
-	err = s.ConfigurePublicIPs()
+	err = s.ConfigurePublicIPs(reporter, *phaseNum, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure public IPs: %w", err)
 	}
+	*phaseNum++
 
 	return nil
 }
@@ -1032,7 +1225,14 @@ func (s *StackitVaultProvider) configureRegion(envType string) error {
 
 // configureSecurityGroups configures security group settings.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_sgs (lines 1543-1697).
-func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
+func (s *StackitVaultProvider) configureSecurityGroups(envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("security-groups-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring security groups", "env_type", envType)
 
 	// Build security group mapping (Perl: _build_sg_mapping, lines 1582-1612)
@@ -1044,8 +1244,18 @@ func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
 	// Load state manager to check for security group data
 	stateManager := s.loadStateManager()
 
+	totalGroups := len(sgMapping)
+	currentGroup := 0
+
 	// Process each security group type
 	for sgType, sgFullName := range sgMapping {
+		currentGroup++
+
+		if reporter != nil {
+			label := fmt.Sprintf("Writing %s", sgFullName)
+			reporter.ReportSubtaskProgress(phaseName, currentGroup, totalGroups, label)
+		}
+
 		// Try to find the security group from state or other sources
 		sg := s.findSecurityGroup(stateManager, sgType, sgFullName)
 
@@ -1070,6 +1280,10 @@ func (s *StackitVaultProvider) configureSecurityGroups(envType string) error {
 				"type", sgType,
 				"name", sgFullName)
 		}
+	}
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
 	}
 
 	return nil
@@ -1727,7 +1941,14 @@ func sortAssignmentTypes(types []string) {
 }
 
 // configureSubnets configures subnet settings in vault.
-func (s *StackitVaultProvider) configureSubnets(envType string) error {
+func (s *StackitVaultProvider) configureSubnets(envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("subnets-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	s.logger.Infow("Configuring subnets", "env_type", envType)
 
 	subnetsPath := s.PathBuilder.GetSubnetsPath(envType)
@@ -1735,10 +1956,27 @@ func (s *StackitVaultProvider) configureSubnets(envType string) error {
 	// If no subnets configured, create default virtual subnet for STACKIT
 	if len(s.Config.Subnets) == 0 {
 		s.logger.Warn("No subnets configured, creating default ocfp-0 virtual subnet")
-		return s.configureFallbackSubnet(envType)
+
+		if reporter != nil {
+			reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing default subnet ocfp-0")
+		}
+
+		err := s.configureFallbackSubnet(envType)
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
+		return err
 	}
 
+	totalSubnets := len(s.Config.Subnets)
 	for i, subnet := range s.Config.Subnets {
+		if reporter != nil {
+			label := fmt.Sprintf("Writing subnet %s-%d", subnet.Type, i)
+			reporter.ReportSubtaskProgress(phaseName, i+1, totalSubnets, label)
+		}
+
 		err := s.configureSubnet(envType, i, subnet)
 		if err != nil {
 			return err
@@ -1746,6 +1984,10 @@ func (s *StackitVaultProvider) configureSubnets(envType string) error {
 	}
 
 	s.logger.Infow("Subnets configuration completed", "path", subnetsPath)
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
 
 	return nil
 }
@@ -2044,7 +2286,14 @@ func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
 }
 
 // configureNetwork configures network settings in vault.
-func (s *StackitVaultProvider) configureNetwork(envType string) error {
+func (s *StackitVaultProvider) configureNetwork(envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := fmt.Sprintf("networks-%s", envType)
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
 	netPath := s.PathBuilder.GetNetPath(envType)
 
 	// Convert DNS array to comma-separated string for Genesis compatibility
@@ -2056,6 +2305,10 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 
 	// Fetch the actual network ID from STACKIT API (not ProjectID)
 	// This matches the Perl implementation which fetches the real network UUID
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 1, 2, fmt.Sprintf("Writing %s-net", s.BlocName))
+	}
+
 	s.logger.Infow("Fetching network ID for vault populate",
 		"env_type", envType,
 		"bloc", s.BlocName,
@@ -2163,6 +2416,10 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 	}
 
 	// Configure availability zones
+	if reporter != nil {
+		reporter.ReportSubtaskProgress(phaseName, 2, 2, "Writing availability zones")
+	}
+
 	for azName, azData := range s.Config.AZs {
 		azPath := s.PathBuilder.GetAZPath(envType, azName)
 
@@ -2179,6 +2436,10 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 	}
 
 	s.logger.Infow("Network configuration completed", "path", netPath)
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
 
 	return nil
 }
@@ -2270,17 +2531,17 @@ func (s *StackitVaultProvider) createBlobstoreConfig(
 	virtualHostedURL := fmt.Sprintf("https://%s.object.storage.%s.onstackit.cloud", bucketName, region)
 
 	return map[string]interface{}{
-		"name":                       bucketName,
-		"provider":                   "stackit",
-		"region":                     region,
-		"access_key_id":              accessKeyID,
-		"secret_access_key":          secretAccessKey,
-		"host":                       host,
-		"storage_class":              "STANDARD",
-		"pathstyle":                  "true",
-		"url":                        baseURL,
-		"url_path_style":             pathStyleURL,
-		"url_virtual_hosted_style":   virtualHostedURL,
+		"name":                     bucketName,
+		"provider":                 "stackit",
+		"region":                   region,
+		"access_key_id":            accessKeyID,
+		"secret_access_key":        secretAccessKey,
+		"host":                     host,
+		"storage_class":            "STANDARD",
+		"pathstyle":                "true",
+		"url":                      baseURL,
+		"url_path_style":           pathStyleURL,
+		"url_virtual_hosted_style": virtualHostedURL,
 	}
 }
 
