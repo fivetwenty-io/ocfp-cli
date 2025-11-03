@@ -858,28 +858,32 @@ func (s *StackitVaultProvider) configureBOSH(envType string) error {
 
 // configureIAM configures IAM credentials.
 func (s *StackitVaultProvider) configureIAM(envType string) error {
-	// For STACKIT, we use service account credentials for S3-compatible storage
+	// For STACKIT, we use S3-compatible storage credentials
 	s3Path := s.PathBuilder.GetS3Path(envType)
 
-	// Use service account token or key from config
-	accessKey := s.Config.ServiceAccountToken
-	secretKey := s.Config.ServiceAccountToken // Simplified - would be different in real implementation
+	// Get S3 credentials from config
+	accessKeyID := s.Config.AccessKeyID
+	secretAccessKey := s.Config.SecretAccessKey
 
-	if accessKey == "" {
-		s.logger.Warn("No service account credentials found for S3 access")
+	if accessKeyID == "" || secretAccessKey == "" {
+		s.logger.Warn("No S3 credentials found (access_key_id or secret_access_key missing)")
 
 		return nil
 	}
 
+	// Write S3 credentials with all required fields to match Perl output
 	s3Data := map[string]interface{}{
-		"access_key": accessKey,
-		"secret_key": secretKey,
+		"access_key_id":     accessKeyID,
+		"secret_access_key": secretAccessKey,
+		"region":            s.Config.Region,
 	}
 
 	err := s.Safe.SetMultiple(s3Path, s3Data)
 	if err != nil {
 		return fmt.Errorf("failed to set S3 IAM credentials: %w", err)
 	}
+
+	s.logger.Infow("Configured S3 IAM credentials", "env_type", envType, "region", s.Config.Region)
 
 	return nil
 }
@@ -1964,41 +1968,66 @@ func (s *StackitVaultProvider) getNetworkCIDRFromState() string {
 // getNetworkIDFromAPI fetches the network ID from STACKIT API by network name.
 // This matches the Perl implementation in _get_network_id (lines 290-324).
 func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
-	// First try to get from state
-	networkID := s.getNetworkIDFromState()
-	if networkID != "" {
-		if s.logger != nil {
-			s.logger.Debugw("Using network ID from state", "network_id", networkID)
-		}
-		return networkID, nil
-	}
-
 	// Network name follows the pattern: <bloc>-net
 	networkName := fmt.Sprintf("%s-net", s.BlocName)
+
 	if s.logger != nil {
-		s.logger.Debugw("Fetching network ID from API", "network_name", networkName)
+		s.logger.Infow("Fetching network ID from STACKIT API",
+			"network_name", networkName,
+			"project_id", s.Config.ProjectID)
 	}
 
 	// Get STACKIT client
 	networkManager, err := s.getStackitClient()
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Errorw("Failed to create STACKIT client for network lookup",
+				"error", err,
+				"network_name", networkName,
+				"help", "Ensure STACKIT credentials are configured correctly")
+		}
 		return "", fmt.Errorf("failed to create STACKIT client: %w", err)
 	}
 
-	// List all networks with name filter
+	// List all networks (no filters - filters are for labels, not name)
+	// We filter by name in the results instead
 	ctx := context.Background()
-	networks, err := networkManager.ListNetworks(ctx, map[string]string{
-		"name": networkName,
-	})
+	if s.logger != nil {
+		s.logger.Infow("Querying STACKIT API for all networks in project",
+			"project_id", s.Config.ProjectID)
+	}
+
+	networks, err := networkManager.ListNetworks(ctx, nil)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Errorw("Failed to list networks from STACKIT API",
+				"error", err,
+				"network_name", networkName,
+				"project_id", s.Config.ProjectID,
+				"help", "Verify network access and API permissions")
+		}
 		return "", fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	if s.logger != nil {
+		s.logger.Infow("STACKIT API returned networks", "count", len(networks))
+		for i, net := range networks {
+			s.logger.Debugw("Network from API",
+				"index", i,
+				"id", net.ID,
+				"name", net.Name,
+				"state", net.State)
+		}
 	}
 
 	// Find matching network by name (case-insensitive)
 	for _, network := range networks {
 		if strings.EqualFold(network.Name, networkName) {
 			if s.logger != nil {
-				s.logger.Debugw("Found network ID from API", "network_id", network.ID, "network_name", network.Name)
+				s.logger.Infow("Found matching network from STACKIT API",
+					"network_id", network.ID,
+					"network_name", network.Name,
+					"state", network.State)
 			}
 			return network.ID, nil
 		}
@@ -2006,7 +2035,10 @@ func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
 
 	// If no match found, return empty string (will be populated during bootstrap)
 	if s.logger != nil {
-		s.logger.Warnw("Network not found in STACKIT API, will be populated during bootstrap", "network_name", networkName)
+		s.logger.Warnw("Network not found in STACKIT API - ID will be empty until network is created",
+			"network_name", networkName,
+			"searched_count", len(networks),
+			"help", "Network will be created during bootstrap, then run 'vault populate' again")
 	}
 	return "", nil
 }
@@ -2024,11 +2056,34 @@ func (s *StackitVaultProvider) configureNetwork(envType string) error {
 
 	// Fetch the actual network ID from STACKIT API (not ProjectID)
 	// This matches the Perl implementation which fetches the real network UUID
+	s.logger.Infow("Fetching network ID for vault populate",
+		"env_type", envType,
+		"bloc", s.BlocName,
+		"expected_network_name", fmt.Sprintf("%s-net", s.BlocName))
+
 	networkID, err := s.getNetworkIDFromAPI()
 	if err != nil {
-		s.logger.Warnw("Failed to fetch network ID from API, using ProjectID as fallback", "error", err)
-		networkID = s.Config.ProjectID // Fallback to project ID if API call fails
+		s.logger.Errorw("Failed to fetch network ID from API - vault populate will fail",
+			"error", err,
+			"env_type", envType,
+			"help", "Ensure: 1) Network exists in STACKIT 2) API credentials are correct 3) API permissions allow network access")
+		// Don't use ProjectID as fallback - this causes BOSH deployment failures
+		// Return error to make the problem visible
+		return fmt.Errorf("network ID is required but could not be fetched: %w", err)
 	}
+
+	if networkID == "" {
+		// API call succeeded but network not found - this is a critical error
+		s.logger.Errorw("Network not found in STACKIT - cannot populate vault",
+			"expected_network_name", fmt.Sprintf("%s-net", s.BlocName),
+			"env_type", envType,
+			"help", "Run 'ocfp bootstrap' first to create the network, then run 'vault populate' again")
+		return fmt.Errorf("network '%s-net' not found in STACKIT project %s", s.BlocName, s.Config.ProjectID)
+	}
+
+	s.logger.Infow("Successfully retrieved network ID",
+		"network_id", networkID,
+		"env_type", envType)
 
 	// Resolve network CIDR from multiple sources in priority order:
 	// 1. From state (populated during bootstrap)
@@ -2135,7 +2190,9 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 	s.logger.Infow("Configuring blobstores", "env_type", envType)
 
 	// Determine which systems need blobstores
-	systems := []string{"bosh"}
+	// BOSH and OCFP blobstores are needed for both mgmt and ocf
+	// CF blobstores are only needed for ocf environment
+	systems := []string{"bosh", "ocfp"}
 	if envType == "ocf" {
 		systems = append(systems, "cf")
 	}
@@ -2146,7 +2203,8 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 		for blobstoreName, blobstoreConfig := range systemBlobstores {
 			// CRITICAL: Use system-direct path, NOT services path
 			// Genesis expects: /config/{bloc}/{env}/{system}/blobstores/{name}
-			// Example: /config/scf-stackit-eu01-004-migration/mgmt/bosh/blobstores/bosh
+			// Example: /config/scf-stackit-eu01-004-dev/mgmt/bosh/blobstores/bosh
+			// Example: /config/scf-stackit-eu01-004-dev/mgmt/ocfp/blobstores/artifacts
 			blobstorePath := fmt.Sprintf("secret/config/%s/%s/%s/blobstores/%s",
 				s.BlocName, envType, system, blobstoreName)
 
@@ -2170,26 +2228,60 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
 
+	// Get S3 credentials from config
+	accessKeyID := s.Config.AccessKeyID
+	secretAccessKey := s.Config.SecretAccessKey
+	region := s.Config.Region
+
+	// S3 host configuration for STACKIT
+	host := fmt.Sprintf("s3.%s.stackit.cloud", region)
+
 	switch system {
 	case "bosh":
-		// BOSH uses a single blobstore named "bosh" for artifacts
-		blobstores["bosh"] = map[string]interface{}{
-			"name":   fmt.Sprintf("%s-%s-bosh-artifacts", s.BlocName, envType),
-			"region": s.Config.Region,
-			"type":   "s3",
-		}
+		// BOSH uses a single blobstore named "bosh"
+		bucketName := fmt.Sprintf("%s-%s-bosh", s.BlocName, envType)
+		blobstores["bosh"] = s.createBlobstoreConfig(bucketName, region, host, accessKeyID, secretAccessKey)
+
 	case "cf":
-		cfBlobstores := []string{"buildpacks", "droplets", "packages", "resources"}
+		// Cloud Foundry uses separate blobstores for different artifact types
+		cfBlobstores := []string{"buildpacks", "droplets", "app-packages", "resources"}
 		for _, name := range cfBlobstores {
-			blobstores[name] = map[string]interface{}{
-				"name":   fmt.Sprintf("%s-%s-cf-%s", s.BlocName, envType, name),
-				"region": s.Config.Region,
-				"type":   "s3",
-			}
+			bucketName := fmt.Sprintf("%s-%s-cf-%s", s.BlocName, envType, name)
+			blobstores[name] = s.createBlobstoreConfig(bucketName, region, host, accessKeyID, secretAccessKey)
 		}
+
+	case "ocfp":
+		// OCFP artifacts blobstore
+		bucketName := fmt.Sprintf("%s-%s-artifacts", s.BlocName, envType)
+		blobstores["artifacts"] = s.createBlobstoreConfig(bucketName, region, host, accessKeyID, secretAccessKey)
 	}
 
 	return blobstores
+}
+
+// createBlobstoreConfig creates a complete blobstore configuration with all required fields.
+// This matches the Perl implementation which generates all 11 fields for S3-compatible storage.
+func (s *StackitVaultProvider) createBlobstoreConfig(
+	bucketName, region, host, accessKeyID, secretAccessKey string) map[string]interface{} {
+
+	// Generate all URL variants for STACKIT S3-compatible storage
+	baseURL := fmt.Sprintf("https://%s/%s", host, bucketName)
+	pathStyleURL := fmt.Sprintf("https://object.storage.%s.onstackit.cloud/%s", region, bucketName)
+	virtualHostedURL := fmt.Sprintf("https://%s.object.storage.%s.onstackit.cloud", bucketName, region)
+
+	return map[string]interface{}{
+		"name":                       bucketName,
+		"provider":                   "stackit",
+		"region":                     region,
+		"access_key_id":              accessKeyID,
+		"secret_access_key":          secretAccessKey,
+		"host":                       host,
+		"storage_class":              "STANDARD",
+		"pathstyle":                  "true",
+		"url":                        baseURL,
+		"url_path_style":             pathStyleURL,
+		"url_virtual_hosted_style":   virtualHostedURL,
+	}
 }
 
 // (Removed unused getLoadBalancersForEnv helper)
