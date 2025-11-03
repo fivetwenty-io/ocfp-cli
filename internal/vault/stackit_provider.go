@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1953,12 +1954,22 @@ func (s *StackitVaultProvider) configureSubnets(envType string, reporter provide
 
 	subnetsPath := s.PathBuilder.GetSubnetsPath(envType)
 
-	// If no subnets configured, create default virtual subnet for STACKIT
-	if len(s.Config.Subnets) == 0 {
-		s.logger.Warn("No subnets configured, creating default ocfp-0 virtual subnet")
+	// Determine which subnet list to use
+	subnets := s.Config.Subnets
+
+	// Fallback: check Network.Subnets if top-level Subnets is empty
+	// This handles cases where bootstrap populated Network.Subnets but it wasn't copied
+	if len(subnets) == 0 && len(s.Config.Network.Subnets) > 0 {
+		s.logger.Infow("Using subnets from Network.Subnets", "count", len(s.Config.Network.Subnets))
+		subnets = s.Config.Network.Subnets
+	}
+
+	// If still no subnets, create default virtual subnet for STACKIT
+	if len(subnets) == 0 {
+		s.logger.Warn("No subnets configured in Config.Subnets or Network.Subnets, using fallback")
 
 		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing default subnet ocfp-0")
+			reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing fallback subnets")
 		}
 
 		err := s.configureFallbackSubnet(envType)
@@ -1970,8 +1981,8 @@ func (s *StackitVaultProvider) configureSubnets(envType string, reporter provide
 		return err
 	}
 
-	totalSubnets := len(s.Config.Subnets)
-	for i, subnet := range s.Config.Subnets {
+	totalSubnets := len(subnets)
+	for i, subnet := range subnets {
 		if reporter != nil {
 			label := fmt.Sprintf("Writing subnet %s-%d", subnet.Type, i)
 			reporter.ReportSubtaskProgress(phaseName, i+1, totalSubnets, label)
@@ -2087,6 +2098,10 @@ func (s *StackitVaultProvider) getAvailabilityZone(subnetNum int) string {
 	for name := range s.Config.AZs {
 		azNames = append(azNames, name)
 	}
+
+	// Sort AZ names to ensure deterministic ordering (Go map iteration is random)
+	// This ensures the first AZ is always consistently selected for BOSH directors
+	sort.Strings(azNames)
 
 	if subnetNum < len(azNames) {
 		return azNames[subnetNum]

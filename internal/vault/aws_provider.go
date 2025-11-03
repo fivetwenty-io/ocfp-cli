@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -548,6 +549,10 @@ func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 	for name := range a.Config.AZs {
 		azNames = append(azNames, name)
 	}
+
+	// Sort AZ names to ensure deterministic ordering (Go map iteration is random)
+	// This ensures the first AZ is always consistently selected for BOSH directors
+	sort.Strings(azNames)
 
 	if subnetNum < len(azNames) {
 		return azNames[subnetNum]
