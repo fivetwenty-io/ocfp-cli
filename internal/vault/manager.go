@@ -109,9 +109,19 @@ func NewManagerFromEnv(cfg *config.Config, blocName string) (*Manager, error) {
 
 // PopulateOptions holds options for the populate operation.
 type PopulateOptions struct {
-	Subcommand string
-	DryRun     bool
-	Force      bool
+	Subcommand       string
+	DryRun           bool
+	Force            bool
+	ProgressReporter ProgressReporter
+}
+
+// ProgressReporter defines the interface for progress reporting during vault operations.
+type ProgressReporter interface {
+	ReportPhaseStart(phase string, index, total int)
+	ReportPhaseComplete(phase string, duration time.Duration)
+	ReportSubtaskProgress(phase string, current, total int, label string)
+	ReportError(phase string, err error, attempt, maxAttempts int)
+	ReportFinalSummary(success bool, duration time.Duration, phases int, errors int)
 }
 
 // Populate performs vault populate operation
@@ -121,7 +131,12 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 
 	if opts.DryRun {
 		m.logger.Info("[DRY RUN] Would populate vault configuration")
-
+		// For dry-run, still report basic progress
+		if opts.ProgressReporter != nil {
+			opts.ProgressReporter.ReportPhaseStart("dry-run", 0, 1)
+			opts.ProgressReporter.ReportPhaseComplete("dry-run", 0)
+			opts.ProgressReporter.ReportFinalSummary(true, 0, 1, 0)
+		}
 		return nil
 	}
 
@@ -132,15 +147,22 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 	}
 
 	// Handle subcommands
+	var populateErr error
 	switch opts.Subcommand {
 	case "public-ips":
-		return m.populatePublicIPs()
+		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
-		// Full configuration populate
-		return m.populateFullConfiguration()
+		// Full configuration populate (provider reports all phases)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
+
+	if populateErr != nil {
+		return populateErr
+	}
+
+	return nil
 }
 
 // MigrateOptions holds options for the migrate operation.
@@ -249,7 +271,7 @@ func (m *Manager) getInceptionVaultName() string {
 }
 
 // populateFullConfiguration performs full vault configuration.
-func (m *Manager) populateFullConfiguration() error {
+func (m *Manager) populateFullConfiguration(reporter ProgressReporter) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
@@ -258,8 +280,8 @@ func (m *Manager) populateFullConfiguration() error {
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
-	// Perform full configuration
-	err = provider.Configure()
+	// Perform full configuration (provider reports all phases)
+	err = provider.Configure(reporter)
 	if err != nil {
 		return fmt.Errorf("provider configuration failed: %w", err)
 	}
@@ -270,7 +292,7 @@ func (m *Manager) populateFullConfiguration() error {
 }
 
 // populatePublicIPs populates public IP information to vault.
-func (m *Manager) populatePublicIPs() error {
+func (m *Manager) populatePublicIPs(reporter ProgressReporter) error {
 	m.logger.Infow("Populating public IPs to vault", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
@@ -279,8 +301,8 @@ func (m *Manager) populatePublicIPs() error {
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
-	// Configure public IPs
-	err = provider.ConfigurePublicIPs()
+	// Configure public IPs (provider reports phase progress)
+	err = provider.ConfigurePublicIPs(reporter, 1, 1)
 	if err != nil {
 		return fmt.Errorf("public IPs configuration failed: %w", err)
 	}

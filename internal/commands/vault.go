@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
@@ -162,11 +163,25 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 		subcommand = args[0]
 	}
 
+	// Detect output mode for progress reporting
+	mode := bastion.SelectOutputMode(os.Stdout)
+
+	// Create progress tracking structure (the provider will report detailed phases)
+	progress := &bastion.ProvisioningProgress{
+		CurrentStep:    "",
+		CompletedSteps: 0,
+		TotalSteps:     0, // Will be determined by provider
+	}
+
+	// Create progress reporter
+	reporter := bastion.NewProgressReporter(os.Stdout, mode, progress)
+
 	// Create populate options
 	opts := &vault.PopulateOptions{
-		Subcommand: subcommand,
-		DryRun:     dryRun,
-		Force:      force,
+		Subcommand:       subcommand,
+		DryRun:           dryRun,
+		Force:            force,
+		ProgressReporter: reporter,
 	}
 
 	// Handle file input
@@ -174,7 +189,7 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 		return ErrPopulateFromFileNotImplemented
 	}
 
-	// Perform populate operation
+	// Perform populate operation (provider will report all phases)
 	err = manager.Populate(opts)
 	if err != nil {
 		return fmt.Errorf("failed to populate vault: %w", err)

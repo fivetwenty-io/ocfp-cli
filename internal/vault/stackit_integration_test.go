@@ -777,18 +777,18 @@ func TestIntegration_DataConsistency_CrossFeature(t *testing.T) {
 // no subnets are configured, a default ocfp-0 virtual subnet is created with all reserved IPs.
 func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testing.T) {
 	tests := []struct {
-		name        string
-		networkCIDR string
+		name         string
+		networkCIDR  string
 		expectedCIDR string
 	}{
 		{
-			name:        "uses_custom_network_cidr",
-			networkCIDR: "10.4.0.0/20",
+			name:         "uses_custom_network_cidr",
+			networkCIDR:  "10.4.0.0/20",
 			expectedCIDR: "10.4.0.0/20",
 		},
 		{
-			name:        "uses_default_when_not_specified",
-			networkCIDR: "",
+			name:         "uses_default_when_not_specified",
+			networkCIDR:  "",
 			expectedCIDR: "10.4.0.0/20", // Default from Perl implementation
 		},
 	}
@@ -837,14 +837,14 @@ func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testi
 			// Note: Some IPs like doomsday_ip and ocfp_ui_ip are mapped to specific subnets (9)
 			// and won't be present in subnet 0
 			expectedAssignments := []string{
-				"bosh_ip",        // SubnetMapping includes subnet 4 but also has "other" with offset
-				"vault_ip",       // Offset 5, applies to all subnets
-				"jumpbox_ip",     // Offset 6, applies to all subnets
-				"concourse_ip",   // Offset 7, applies to all subnets
-				"prometheus_ip",  // Offset 8, applies to all subnets
-				"shield_ip",      // SubnetMapping{9: {0}}, but also calculated for subnet 0
-				"bastion_ip",     // SubnetMapping{3: {0}} and "other" offset 3
-				"blacksmith_ip",  // SubnetMapping{10: {0}} and "other" offset 10
+				"bosh_ip",       // SubnetMapping includes subnet 4 but also has "other" with offset
+				"vault_ip",      // Offset 5, applies to all subnets
+				"jumpbox_ip",    // Offset 6, applies to all subnets
+				"concourse_ip",  // Offset 7, applies to all subnets
+				"prometheus_ip", // Offset 8, applies to all subnets
+				"shield_ip",     // SubnetMapping{9: {0}}, but also calculated for subnet 0
+				"bastion_ip",    // SubnetMapping{3: {0}} and "other" offset 3
+				"blacksmith_ip", // SubnetMapping{10: {0}} and "other" offset 10
 			}
 
 			for _, assignment := range expectedAssignments {

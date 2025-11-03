@@ -43,11 +43,14 @@ func NewAWSVaultProvider(cfg *config.Config, safe SafeInterface, blocName string
 
 // Configure performs full vault configuration for AWS.
 // This is the main entry point that orchestrates all configuration steps.
-func (a *AWSVaultProvider) Configure() error {
+func (a *AWSVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	a.logger.Infow("Starting AWS vault configuration", "bloc", a.BlocName)
 
+	// TODO: Implement detailed progress reporting for AWS provider (similar to STACKIT)
+	// For now, just accept the reporter parameter
+
 	// Save OCFP configuration to vault first
-	err := a.SaveConfigToVault()
+	err := a.SaveConfigToVault(reporter, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to save config to vault: %w", err)
 	}
@@ -72,7 +75,7 @@ func (a *AWSVaultProvider) Configure() error {
 }
 
 // ConfigurePublicIPs configures public IP addresses (AWS Elastic IPs).
-func (a *AWSVaultProvider) ConfigurePublicIPs() error {
+func (a *AWSVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Info("Configuring AWS Elastic IPs")
 
 	publicIPsPath := a.PathBuilder.GetPublicIPsPath()
@@ -107,7 +110,7 @@ func (a *AWSVaultProvider) GetProviderName() string {
 
 // SaveConfigToVault saves the OCFP configuration to vault.
 // Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
-func (a *AWSVaultProvider) SaveConfigToVault() error {
+func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Info("Saving OCFP configuration to vault")
 
 	// Convert config to JSON
@@ -151,7 +154,7 @@ func (a *AWSVaultProvider) SaveConfigToVault() error {
 }
 
 // ConfigureBlobstores configures blobstore settings (AWS S3).
-func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring S3 blobstores", "env_type", envType)
 
 	// AWS uses S3 for blobstore
@@ -176,7 +179,7 @@ func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string) error {
 }
 
 // ConfigureCertificates configures TLS certificates (AWS ACM or Let's Encrypt).
-func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Info("Configuring certificates")
 
 	certsPath := a.PathBuilder.GetCertsPath()
@@ -198,7 +201,7 @@ func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string) error 
 }
 
 // ConfigureDatabases configures database settings (AWS RDS).
-func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring RDS databases", "env_type", envType)
 
 	databases := a.getDatabasesForEnv(envType)
@@ -216,7 +219,7 @@ func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string) error {
 }
 
 // ConfigureFQDNs configures fully qualified domain names (AWS Route53).
-func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring FQDNs", "env_type", envType)
 
 	// Get FQDNs from configuration
@@ -249,7 +252,7 @@ func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string) error {
 }
 
 // ConfigureIAAS configures IaaS-specific settings (AWS VPC, Subnets, Security Groups).
-func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	a.logger.Infow("Configuring AWS IaaS components", "env_type", envType)
 
 	// Configure VPC
@@ -280,7 +283,7 @@ func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string) error {
 }
 
 // ConfigureLoadBalancers configures load balancer settings (AWS ELB/ALB).
-func (a *AWSVaultProvider) ConfigureLoadBalancers(envPath, envType string) error {
+func (a *AWSVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring AWS load balancers", "env_type", envType)
 
 	// Export service targets backed by reserved IPs (AWS ELB/ALB)
@@ -306,7 +309,9 @@ func (a *AWSVaultProvider) configureEnvironment(envType string) error {
 	envPath := a.PathBuilder.GetEnvironmentPath(envType)
 
 	// Configure IaaS components
-	err := a.ConfigureIAAS(envPath, envType)
+	// TODO: Implement proper phase tracking for AWS provider
+	dummyPhase := 1
+	err := a.ConfigureIAAS(envPath, envType, nil, &dummyPhase, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure IaaS for %s: %w", envType, err)
 	}
@@ -328,22 +333,23 @@ func (a *AWSVaultProvider) configureEnvironment(envType string) error {
 
 // configureServices configures all service components for an environment.
 func (a *AWSVaultProvider) configureServices(envPath, envType string) error {
-	err := a.ConfigureBlobstores(envPath, envType)
+	// TODO: Implement proper phase tracking for AWS provider
+	err := a.ConfigureBlobstores(envPath, envType, nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
 	}
 
-	err = a.ConfigureDatabases(envPath, envType)
+	err = a.ConfigureDatabases(envPath, envType, nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure databases for %s: %w", envType, err)
 	}
 
-	err = a.ConfigureLoadBalancers(envPath, envType)
+	err = a.ConfigureLoadBalancers(envPath, envType, nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure load balancers for %s: %w", envType, err)
 	}
 
-	err = a.ConfigureFQDNs(envPath, envType)
+	err = a.ConfigureFQDNs(envPath, envType, nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure FQDNs for %s: %w", envType, err)
 	}
@@ -394,14 +400,15 @@ func (a *AWSVaultProvider) configureEnvironmentComponents(envType string) error 
 
 // configureSharedComponents configures components shared between environments.
 func (a *AWSVaultProvider) configureSharedComponents() error {
+	// TODO: Implement proper phase tracking for AWS provider
 	// Configure certificates (shared between environments)
-	err := a.ConfigureCertificates("", "")
+	err := a.ConfigureCertificates("", "", nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure certificates: %w", err)
 	}
 
 	// Configure public IPs (OCF environment only)
-	err = a.ConfigurePublicIPs()
+	err = a.ConfigurePublicIPs(nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure public IPs: %w", err)
 	}
