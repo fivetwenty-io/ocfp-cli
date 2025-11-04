@@ -2,8 +2,12 @@ package bastion
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
@@ -162,11 +166,41 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	remoteTempPath := "/tmp/ocfp-upload"
 	remoteFinalPath := "/usr/local/bin/ocfp"
 
-	m.log.Infow("Uploading OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
+	m.log.Infow("Setting up OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
 
-	// Step 1: Transfer binary
+	// Step 1: Check if remote binary exists and compare checksums
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 3, fmt.Sprintf("Uploading %s", localBinaryPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary")
+	}
+
+	// Calculate local checksum
+	localChecksum, err := calculateFileSHA256(localBinaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to calculate local binary checksum: %w", err)
+	}
+
+	// Check if remote binary exists and get its checksum
+	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
+	remoteResult, err := m.sshClient.ExecuteCommand(ctx, remoteChecksumCmd)
+	if err != nil {
+		m.log.Debugw("Could not check remote binary checksum", "error", err)
+	}
+	remoteChecksum := strings.TrimSpace(remoteResult.Stdout)
+
+	// If checksums match, skip upload
+	if remoteChecksum != "" && remoteChecksum == localChecksum {
+		m.log.Infow("Remote binary already up to date", "checksum", localChecksum)
+		if m.reporter != nil {
+			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)")
+		}
+		return nil
+	}
+
+	m.log.Infow("Binary update needed", "local_checksum", localChecksum, "remote_checksum", remoteChecksum)
+
+	// Step 2: Transfer binary
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, fmt.Sprintf("Uploading %s", localBinaryPath))
 	}
 
 	// Transfer to temporary location first (user has write permissions here)
@@ -181,19 +215,19 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 		BackupRemote: false,
 	}
 
-	err := m.sshClient.TransferFile(ctx, localBinaryPath, remoteTempPath, transferOpts)
+	err = m.sshClient.TransferFile(ctx, localBinaryPath, remoteTempPath, transferOpts)
 	if err != nil {
 		return fmt.Errorf("failed to transfer OCFP binary to temporary location: %w", err)
 	}
 
-	// Step 2: Binary uploaded
+	// Step 3: Binary uploaded
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 3, "Binary uploaded to temporary location")
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location")
 	}
 
-	// Step 3: Install binary with sudo
+	// Step 4: Install binary with sudo
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 3, fmt.Sprintf("Installing to %s", remoteFinalPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, fmt.Sprintf("Installing to %s", remoteFinalPath))
 	}
 
 	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
@@ -207,7 +241,7 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 		return fmt.Errorf("failed to install OCFP binary to %s: %w", remoteFinalPath, err)
 	}
 
-	m.log.Info("OCFP binary uploaded and made executable")
+	m.log.Infow("OCFP binary uploaded and made executable", "checksum", localChecksum)
 
 	return nil
 }
@@ -373,4 +407,20 @@ func (m *Manager) escapeShellString(script string) string {
 	escaped := strings.ReplaceAll(script, "'", "'\"'\"'")
 
 	return fmt.Sprintf("'%s'", escaped)
+}
+
+// calculateFileSHA256 calculates the SHA256 checksum of a file.
+func calculateFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("failed to calculate hash: %w", err)
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

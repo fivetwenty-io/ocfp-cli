@@ -277,12 +277,18 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 	}
 
 	for cmd, cmdErr := range requiredCommands {
-		_, err := exec.LookPath(cmd)
+		// First try the PATH
+		cmdPath, err := exec.LookPath(cmd)
 		if err != nil {
-			return cmdErr
+			// If not in PATH, try /usr/local/bin explicitly (where bastion tools are installed)
+			explicitPath := filepath.Join("/usr/local/bin", cmd)
+			if _, statErr := os.Stat(explicitPath); statErr != nil {
+				return cmdErr
+			}
+			cmdPath = explicitPath
 		}
 
-		log.Infow("Found required command", "command", cmd)
+		log.Infow("Found required command", "command", cmd, "path", cmdPath)
 	}
 
 	return nil

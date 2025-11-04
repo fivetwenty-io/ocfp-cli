@@ -511,8 +511,8 @@ func (sg *ScriptGenerator) appendVerifyScript(lines []string, groupName string, 
 	return lines
 }
 
-// generateBinaryToolScript generates binary tool installation script.
-func (sg *ScriptGenerator) generateBinaryToolScript(tools []BinaryTool) string {
+// GenerateBinaryToolScript generates binary tool installation script.
+func (sg *ScriptGenerator) GenerateBinaryToolScript(tools []BinaryTool) string {
 	if len(tools) == 0 {
 		return ""
 	}
@@ -1009,7 +1009,7 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 
 	// Binary tools installation (some tools build from cloned git repos)
 	tools := provConfig.GetBinaryTools()
-	sg.appendIfNotEmpty(scriptParts, sg.generateBinaryToolScript(tools))
+	sg.appendIfNotEmpty(scriptParts, sg.GenerateBinaryToolScript(tools))
 
 	// Genesis deployments
 	deployments := provConfig.GetGenesisDeployments()
