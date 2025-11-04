@@ -1792,8 +1792,87 @@ func (m *Manager) executeProvisioningScript(ctx context.Context, script string) 
 }
 
 func (m *Manager) installPackages(ctx context.Context) error {
-	// This is handled by the provisioning script
-	return nil
+	m.log.Info("Installing system packages")
+
+	// Get package configuration
+	packages := m.provConfig.GetPackages()
+	if len(packages) == 0 {
+		m.log.Info("No packages to install")
+		return nil
+	}
+
+	// Report progress for packages
+	if m.reporter != nil {
+		total := 0
+		for _, group := range packages {
+			if group.Enabled {
+				total += len(group.Packages)
+			}
+		}
+
+		current := 0
+		for _, group := range packages {
+			if !group.Enabled {
+				continue
+			}
+			for _, pkg := range group.Packages {
+				m.reporter.ReportSubtaskProgress("packages", current+1, total, pkg)
+				current++
+			}
+		}
+	}
+
+	// Generate package installation script
+	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
+
+	// Build a minimal script with header and package installation
+	var scriptLines []string
+
+	// Add basic logging functions and post-install helper functions (needed by generatePackageScript)
+	scriptLines = append(scriptLines, `#!/bin/bash
+set -euo pipefail
+
+# Logging functions
+log_info() {
+    echo -e "\033[0;34m[INFO]\033[0m $1"
+}
+
+log_success() {
+    echo -e "\033[0;32m[SUCCESS]\033[0m $1"
+}
+
+log_error() {
+    echo -e "\033[0;31m[ERROR]\033[0m $1"
+}
+
+`)
+
+	// Add post-install helper functions that might be referenced by package post-install scripts
+	scriptLines = append(scriptLines, scriptGen.GeneratePostInstallFunctions())
+
+	// Add APT repository setup (required for provider-specific packages like stackit)
+	repositories := m.provConfig.GetAPTRepositories()
+	if len(repositories) > 0 {
+		scriptLines = append(scriptLines, "\n")
+		scriptLines = append(scriptLines, scriptGen.GenerateRepositoryScript(repositories))
+		scriptLines = append(scriptLines, "\n")
+	}
+
+	scriptLines = append(scriptLines, `
+
+# Ensure apt cache is up to date
+log_info 'Updating package cache'
+sudo apt-get update -qq
+
+`)
+
+	// Generate and append package installation script
+	packageScript := scriptGen.GeneratePackageScript(packages)
+	scriptLines = append(scriptLines, packageScript)
+
+	script := strings.Join(scriptLines, "\n")
+
+	return m.executeScript(ctx, script, "packages")
 }
 
 func (m *Manager) installBinaryTools(ctx context.Context) error {
