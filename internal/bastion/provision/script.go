@@ -72,7 +72,7 @@ func (sg *ScriptGenerator) generateScriptHeader() string {
 	colors := sg.generateColorCodes()
 	logging := sg.generateLoggingFunctions()
 	errorHandling := sg.generateErrorHandling()
-	postInstall := sg.generatePostInstallFunctions()
+	postInstall := sg.GeneratePostInstallFunctions()
 
 	return header + colors + logging + errorHandling + postInstall
 }
@@ -160,8 +160,8 @@ trap 'handle_error ${LINENO} $?' ERR
 `
 }
 
-// generatePostInstallFunctions returns post-install helper functions.
-func (sg *ScriptGenerator) generatePostInstallFunctions() string {
+// GeneratePostInstallFunctions returns post-install helper functions.
+func (sg *ScriptGenerator) GeneratePostInstallFunctions() string {
 	return `# Post-install functions
 install_aws_cli_v2() {
     log_info "Installing AWS CLI v2"
@@ -322,8 +322,8 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 	return strings.Join(lines, "\n")
 }
 
-// generateRepositoryScript generates APT repository setup.
-func (sg *ScriptGenerator) generateRepositoryScript(repositories []APTRepository) string {
+// GenerateRepositoryScript generates APT repository setup.
+func (sg *ScriptGenerator) GenerateRepositoryScript(repositories []APTRepository) string {
 	if len(repositories) == 0 {
 		return ""
 	}
@@ -414,8 +414,8 @@ func (sg *ScriptGenerator) appendAptUpdateScript(lines []string) []string {
 	)
 }
 
-// generatePackageScript generates package installation script.
-func (sg *ScriptGenerator) generatePackageScript(packages map[string]PackageGroup) string {
+// GeneratePackageScript generates package installation script.
+func (sg *ScriptGenerator) GeneratePackageScript(packages map[string]PackageGroup) string {
 	if len(packages) == 0 {
 		return ""
 	}
@@ -994,14 +994,14 @@ func (sg *ScriptGenerator) addSystemProvisioningSections(provConfig ProvisionCon
 
 	// APT repositories setup
 	repositories := provConfig.GetAPTRepositories()
-	sg.appendIfNotEmpty(scriptParts, sg.generateRepositoryScript(repositories))
+	sg.appendIfNotEmpty(scriptParts, sg.GenerateRepositoryScript(repositories))
 }
 
 // addPackageManagementSections adds package installation and tool management.
 func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, provConfig ProvisionConfig, scriptParts *[]string) {
 	// Package installation
 	packages := provConfig.GetPackages()
-	sg.appendIfNotEmpty(scriptParts, sg.generatePackageScript(packages))
+	sg.appendIfNotEmpty(scriptParts, sg.GeneratePackageScript(packages))
 
 	// Git repositories (MUST come before binary tools that depend on them)
 	repos := provConfig.GetGitRepositories()
