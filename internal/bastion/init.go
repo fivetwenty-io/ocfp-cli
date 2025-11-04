@@ -1900,11 +1900,31 @@ func (m *Manager) installBinaryTools(ctx context.Context) error {
 		}
 	}
 
-	// Generate and execute binary tools installation script
-	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
-	script := advMgr.GenerateAdvancedToolScript(ctx)
+	// Generate and execute binary tools installation scripts
+	// 1. Base tools (genesis, safe, spruce, vault, bosh, cf, etc.)
+	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
+	baseTools := m.provConfig.GetBinaryTools()
+	baseScript := scriptGen.GenerateBinaryToolScript(baseTools)
 
-	return m.executeScript(ctx, script, "binary-tools")
+	if baseScript != "" {
+		err := m.executeScript(ctx, baseScript, "binary-tools-base")
+		if err != nil {
+			return fmt.Errorf("failed to install base binary tools: %w", err)
+		}
+	}
+
+	// 2. Advanced tools (neovim, etc.)
+	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+	advScript := advMgr.GenerateAdvancedToolScript(ctx)
+
+	if advScript != "" {
+		err := m.executeScript(ctx, advScript, "binary-tools-advanced")
+		if err != nil {
+			return fmt.Errorf("failed to install advanced binary tools: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (m *Manager) cloneGitRepositories(ctx context.Context) error {
@@ -2031,12 +2051,23 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 }
 
 func (m *Manager) setupGenesis(ctx context.Context) error {
-	// This is handled by the provisioning script
+	// Genesis is now installed as part of the binary_tools phase
+	// This phase is kept for main installation once genesis 3.1 has an official release.
 	return nil
 }
 
 func (m *Manager) runCustomScripts(ctx context.Context) error {
-	// This is handled by the provisioning script
+	m.log.Info("Creating completion markers")
+
+	// Create the provisioned marker file
+	cmd := `mkdir -p ~/.ocfp && touch ~/.ocfp/provisioned && echo "$(date)" > ~/.ocfp/provisioned`
+
+	_, err := m.sshClient.ExecuteCommand(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to create provisioned marker: %w", err)
+	}
+
+	m.log.Info("Provisioned marker created successfully")
 	return nil
 }
 

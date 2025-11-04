@@ -148,6 +148,30 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionUR
 func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
+			Name:           "vault",
+			Enabled:        true,
+			CheckCommand:   "vault",
+			VersionURL:     "https://api.github.com/repos/hashicorp/vault/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://releases.hashicorp.com/vault/${VERSION}/vault_${VERSION}_linux_amd64.zip",
+			Extract:        true,
+			InstallCommand: "sudo install /tmp/vault /usr/local/bin/vault",
+			Cleanup:        "/tmp/vault*",
+			VerifyCommand:  "vault version",
+		},
+		{
+			Name:           "safe",
+			Enabled:        true,
+			CheckCommand:   "safe",
+			VersionURL:     "https://api.github.com/repos/cloudfoundry-community/safe/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://github.com/cloudfoundry-community/safe/releases/download/v${VERSION}/safe-${VERSION}-linux-amd64",
+			Dest:           "/usr/local/bin/safe",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			VerifyCommand:  "safe --version",
+		},
+		{
 			Name:           "yq",
 			Enabled:        true,
 			CheckCommand:   "yq",
@@ -504,7 +528,9 @@ func (atm *AdvancedToolManager) generateExtractionCommands(tool AdvancedBinaryTo
 
 	if tool.Extract {
 		lines = append(lines, "            # Extract "+tool.Name)
-		lines = append(lines, fmt.Sprintf("            if file '/tmp/%s-download' | grep -q 'gzip'; then", tool.Name))
+		lines = append(lines, fmt.Sprintf("            if file '/tmp/%s-download' | grep -q 'Zip archive'; then", tool.Name))
+		lines = append(lines, fmt.Sprintf("                unzip -o -q '/tmp/%s-download' -d /tmp/", tool.Name))
+		lines = append(lines, fmt.Sprintf("            elif file '/tmp/%s-download' | grep -q 'gzip'; then", tool.Name))
 		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xzf '/tmp/%s-download'", tool.Name))
 		lines = append(lines, fmt.Sprintf("            elif file '/tmp/%s-download' | grep -q 'bzip2'; then", tool.Name))
 		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xjf '/tmp/%s-download'", tool.Name))
