@@ -62,6 +62,7 @@ var (
 	ErrInvalidCIDROffsetNegative = errors.New("CIDR offset must be non-negative")
 	ErrInvalidCIDR               = errors.New("invalid CIDR")
 	ErrOffsetOutOfRange          = errors.New("offset out of range for uint32")
+	errSubnetOutOfBounds         = errors.New("subnet is outside parent network bounds")
 )
 
 // CreateNetwork creates the network/VPC.
@@ -351,6 +352,9 @@ func generateSubnets(parent *net.IPNet, newPrefix, count int) []string {
 	size := uint32(1) << (ipv4Bits - newPrefix)
 	subnets := make([]string, count)
 
+	// Get parent CIDR string for validation
+	parentCIDR := parent.String()
+
 	for subnetIndex := range count {
 		if !isValidIndex(subnetIndex) {
 			break
@@ -363,7 +367,16 @@ func generateSubnets(parent *net.IPNet, newPrefix, count int) []string {
 		}
 
 		index := uint32(subnetIndex)
-		subnets[subnetIndex] = createSubnetCIDR(base, index, size, newPrefix)
+		subnetCIDR := createSubnetCIDR(base, index, size, newPrefix)
+
+		// Validate subnet is within parent network bounds
+		if !IsSubnetWithinParent(parentCIDR, subnetCIDR) {
+			logger.Errorf("Generated subnet %s is outside parent network %s bounds", subnetCIDR, parentCIDR)
+			// Return only valid subnets generated so far
+			return subnets[:subnetIndex]
+		}
+
+		subnets[subnetIndex] = subnetCIDR
 	}
 
 	return subnets
@@ -416,6 +429,41 @@ func CIDRGatewayIP(parentCIDR string) string {
 	base := ipToUint32(ipnet.IP.Mask(ipnet.Mask))
 
 	return uint32ToIP(base + 1).String()
+}
+
+// IsSubnetWithinParent validates that a child subnet CIDR is completely contained
+// within the parent network CIDR. This ensures carved subnets don't overflow the
+// parent network boundaries.
+// Exported for testing and validation use.
+func IsSubnetWithinParent(parentCIDR, childCIDR string) bool {
+	// Parse parent network
+	_, parentNet, err := net.ParseCIDR(parentCIDR)
+	if err != nil || parentNet == nil {
+		return false
+	}
+
+	// Parse child subnet
+	childIP, childNet, err := net.ParseCIDR(childCIDR)
+	if err != nil || childNet == nil {
+		return false
+	}
+
+	// Calculate parent network boundaries
+	parentBase := ipToUint32(parentNet.IP.Mask(parentNet.Mask))
+	parentMask, _ := parentNet.Mask.Size()
+	parentSize := uint32(1) << (ipv4Bits - parentMask)
+	parentLast := parentBase + parentSize - 1
+
+	// Calculate child subnet boundaries
+	childBase := ipToUint32(childIP.Mask(childNet.Mask))
+	childMask, _ := childNet.Mask.Size()
+	childSize := uint32(1) << (ipv4Bits - childMask)
+	childLast := childBase + childSize - 1
+
+	// Validate child is within parent
+	// Child's first IP must be >= parent's first IP
+	// Child's last IP must be <= parent's last IP
+	return childBase >= parentBase && childLast <= parentLast
 }
 
 func firstChild24(parentCIDR string) string {
