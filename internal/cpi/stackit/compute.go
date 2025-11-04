@@ -28,7 +28,9 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	if req.StaticPrivateIP != "" && req.NetworkID != "" {
 		logger.WithOperation("CreateInstance").Infof("Creating NIC with static IP %s before server creation", req.StaticPrivateIP)
 
-		nicID, err := m.createNICWithStaticIP(ctx, req.NetworkID, req.StaticPrivateIP, req.SecurityGroupIDs)
+		// Use instance name as NIC name for easier identification (e.g., "bastion", "bosh")
+		nicName := req.Name
+		nicID, err := m.createNICWithStaticIP(ctx, req.NetworkID, req.StaticPrivateIP, nicName, req.SecurityGroupIDs)
 		if err != nil {
 			logger.WithOperation("CreateInstance").Warnf("Failed to create NIC with static IP: %v, falling back to DHCP", err)
 			// Continue with regular server creation (DHCP) as fallback
@@ -972,8 +974,8 @@ func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 
 // createNICWithStaticIP creates a network interface with a specific IPv4 address.
 // This matches the Perl implementation's behavior of creating NICs with predetermined IPs.
-func (m *ComputeManager) createNICWithStaticIP(ctx context.Context, networkID, ipv4 string, securityGroups []string) (string, error) {
-	logger.WithOperation("createNICWithStaticIP").Infof("Creating NIC with static IP %s on network %s", ipv4, networkID)
+func (m *ComputeManager) createNICWithStaticIP(ctx context.Context, networkID, ipv4, nicName string, securityGroups []string) (string, error) {
+	logger.WithOperation("createNICWithStaticIP").Infof("Creating NIC '%s' with static IP %s on network %s", nicName, ipv4, networkID)
 
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -985,6 +987,11 @@ func (m *ComputeManager) createNICWithStaticIP(ctx context.Context, networkID, i
 	// STACKIT API returns 400 "readOnly property networkId" if included in payload
 	nicPayload := iaas.NewCreateNicPayload()
 	nicPayload.SetIpv4(ipv4) // Static IP assignment!
+
+	// Set NIC name for easier identification in STACKIT console
+	if nicName != "" {
+		nicPayload.SetName(nicName)
+	}
 
 	if len(securityGroups) > 0 {
 		sgList := make([]string, len(securityGroups))
