@@ -1676,6 +1676,14 @@ func (s *StackitVaultProvider) calculateReservedIPs(
 			if !usedIPs[ip] {
 				vaultIPs[assignmentType+"_ip"] = ip
 				usedIPs[ip] = true
+
+				// Add IP bounds (_a and _b) for Genesis compatibility
+				// Perl implementation: lines 1343-1346
+				ipBefore := addOffsetToIP(baseIP, assignment.Offset-1)
+				ipAfter := addOffsetToIP(baseIP, assignment.Offset+1)
+				vaultIPs[assignmentType+"_a"] = ipBefore
+				vaultIPs[assignmentType+"_b"] = ipAfter
+
 				s.logger.Debugw("Reserved IP",
 					"type", assignmentType,
 					"ip", ip,
@@ -1693,6 +1701,13 @@ func (s *StackitVaultProvider) calculateReservedIPs(
 					if !usedIPs[ip] {
 						vaultIPs[assignmentType+"_ip"] = ip
 						usedIPs[ip] = true
+
+						// Add IP bounds (_a and _b) for Genesis compatibility
+						ipBefore := addOffsetToIP(baseIP, offset-1)
+						ipAfter := addOffsetToIP(baseIP, offset+1)
+						vaultIPs[assignmentType+"_a"] = ipBefore
+						vaultIPs[assignmentType+"_b"] = ipAfter
+
 						s.logger.Debugw("Reserved IP from subnet mapping",
 							"type", assignmentType,
 							"ip", ip,
@@ -2130,6 +2145,12 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 		networkID = s.Config.ProjectID
 	}
 
+	// Use first DNS entry or default to '1.1.1.1' (matches Perl implementation)
+	dnsString := "1.1.1.1"
+	if len(s.Config.DNS) > 0 {
+		dnsString = s.Config.DNS[0]
+	}
+
 	// Build base subnet data
 	subnetData := map[string]interface{}{
 		"id":          fmt.Sprintf("%s-%s-%d", s.BlocName, subnetType, subnetNum),
@@ -2138,7 +2159,7 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 		"ip_0":        networkInfo.network,
 		"ip_n":        networkInfo.lastHost,
 		"gateway":     networkInfo.gateway,
-		"dns":         s.Config.DNS,
+		"dns":         dnsString,
 		"az":          availabilityZone,
 		"type":        subnetType,
 
@@ -2311,11 +2332,10 @@ func (s *StackitVaultProvider) configureNetwork(envType string, reporter provide
 
 	netPath := s.PathBuilder.GetNetPath(envType)
 
-	// Convert DNS array to comma-separated string for Genesis compatibility
-	// Genesis expects a string value, not an array
-	dnsString := ""
+	// Use first DNS entry or default to '1.1.1.1' (matches Perl implementation)
+	dnsString := "1.1.1.1"
 	if len(s.Config.DNS) > 0 {
-		dnsString = strings.Join(s.Config.DNS, ",")
+		dnsString = s.Config.DNS[0]
 	}
 
 	// Fetch the actual network ID from STACKIT API (not ProjectID)

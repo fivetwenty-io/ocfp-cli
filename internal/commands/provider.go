@@ -169,6 +169,12 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 		return ErrBlocFlagOrEnvVarRequired
 	}
 
+	// Load config to get project ID
+	cfg, err := config.LoadWithParams("", blocName)
+	if err != nil {
+		return fmt.Errorf("failed to load config for bloc %s: %w", blocName, err)
+	}
+
 	// Get credentials (either JSON or token)
 	authType, credentials, err := getSTACKITCredentials(blocName, log)
 	if err != nil {
@@ -179,11 +185,25 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 		return ErrCouldNotRetrieveStackitCredentials
 	}
 
+	// Authenticate with service account
 	if authType == authTypeToken {
-		return authenticateSTACKITToken(credentials, log)
+		err = authenticateSTACKITToken(credentials, log)
+	} else {
+		err = authenticateSTACKIT(credentials, log)
 	}
 
-	return authenticateSTACKIT(credentials, log)
+	if err != nil {
+		return err
+	}
+
+	// Configure project ID if available
+	if cfg.ProjectID != "" {
+		return configureSTACKITProject(cfg.ProjectID, log)
+	}
+
+	log.Warn("No project ID found in config - STACKIT CLI may require explicit project ID in commands")
+
+	return nil
 }
 
 func getSTACKITCredentials(blocName string, log *zap.Logger) (string, string, error) {
@@ -378,6 +398,40 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
+
+	if stdout.Len() > 0 {
+		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	}
+
+	return nil
+}
+
+func configureSTACKITProject(projectID string, log *zap.Logger) error {
+	log.Info("Configuring STACKIT CLI project", zap.String("projectID", projectID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
+	defer cancel()
+
+	err := security.ValidateInput(projectID, validPathPattern)
+	if err != nil {
+		return fmt.Errorf("invalid project ID: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "stackit", "config", "set", "--project-id", projectID) // #nosec G204 - input validated above
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		log.Error("Failed to configure STACKIT project", zap.Error(err), zap.String("stderr", stderr.String()))
+
+		return fmt.Errorf("STACKIT project configuration failed: %w", err)
+	}
+
+	log.Info("Successfully configured STACKIT project", zap.String("projectID", projectID))
 
 	if stdout.Len() > 0 {
 		_, _ = fmt.Fprint(os.Stdout, stdout.String())

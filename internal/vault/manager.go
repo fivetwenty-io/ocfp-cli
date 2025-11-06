@@ -18,6 +18,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 // Vault operation timing constants.
@@ -174,59 +175,108 @@ type MigrateOptions struct {
 // Migrate performs vault migration from inception to production
 // This is the Go equivalent of the migrate method in OCFP::Vault::Manager.
 func (m *Manager) Migrate(opts *MigrateOptions) error {
-	if m.blocName == "" {
-		return ErrBlocNameRequiredForVaultMigrate
+	inceptionName := m.getInceptionVaultName()
+
+	// Get production vault name from .saferc current target
+	productionName, err := m.getProductionVaultName()
+	if err != nil {
+		return fmt.Errorf("failed to determine production vault: %w", err)
 	}
 
-	inceptionName := m.getInceptionVaultName()
-	m.logger.Infow("Starting vault migration", "from", inceptionName, "to", m.blocName)
+	m.logger.Infow("Starting vault migration", "from", inceptionName, "to", productionName)
 
 	// Step 1: Validate targets
 	if !opts.DryRun {
-		err := m.validateTargets(inceptionName, m.blocName)
+		err := m.validateTargets(inceptionName, productionName)
 		if err != nil {
 			return fmt.Errorf("target validation failed: %w", err)
 		}
 	} else {
-		m.logger.Infow("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", m.blocName)
+		m.logger.Infow("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", productionName)
 	}
 
-	// Step 2: Export/Import
+	// Step 2: Create snapshot of inception vault for safety
+	var snapshotPath string
 	if !opts.DryRun {
-		err := m.exportImportVault(inceptionName, m.blocName+"-mgmt")
+		m.logger.Info("Creating safety snapshot of inception vault...")
+		snapshotPath, err = m.snapshotInceptionVault(inceptionName)
+		if err != nil {
+			return fmt.Errorf("snapshot creation failed: %w", err)
+		}
+		m.logger.Infow("✓ Snapshot created successfully", "path", snapshotPath)
+	} else {
+		m.logger.Info("[DRY RUN] Would create snapshot of inception vault")
+	}
+
+	// Step 3: Export/Import
+	var secretCount int
+	if !opts.DryRun {
+		secretCount, err = m.exportImportVault(inceptionName, productionName)
 		if err != nil {
 			return fmt.Errorf("export/import failed: %w", err)
 		}
+		// CRITICAL: Ensure we actually exported something
+		if secretCount == 0 {
+			return fmt.Errorf("CRITICAL: export returned 0 secrets - refusing to proceed (snapshot saved at: %s)", snapshotPath)
+		}
+		m.logger.Infow("✓ Export/Import completed", "secrets", secretCount)
 	} else {
-		m.logger.Infow("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", m.blocName)
+		m.logger.Infow("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", productionName)
 	}
 
-	// Step 3: Validate migration
+	// Step 4: Validate migration with checksums
+	var validatedCount int
 	if !opts.DryRun {
-		err := m.validateMigration(inceptionName, m.blocName+"-mgmt")
+		m.logger.Info("\nValidating migration with SHA256 checksums...")
+		validatedCount, err = m.validateMigration(inceptionName, productionName)
 		if err != nil {
-			return fmt.Errorf("migration validation failed: %w", err)
+			return fmt.Errorf("migration validation failed: %w (snapshot available at: %s)", err, snapshotPath)
 		}
+		// CRITICAL: Ensure validation actually validated something
+		if validatedCount == 0 {
+			return fmt.Errorf("CRITICAL: validation checked 0 secrets - refusing to proceed (snapshot saved at: %s)", snapshotPath)
+		}
+		// CRITICAL: Ensure validation count matches export count
+		if validatedCount != secretCount {
+			return fmt.Errorf("CRITICAL: validation mismatch - exported %d secrets but validated %d (snapshot saved at: %s)",
+				secretCount, validatedCount, snapshotPath)
+		}
+		m.logger.Infow("✓ All secrets validated successfully", "validated", validatedCount)
 	} else {
 		m.logger.Info("[DRY RUN] Would validate migration with checksums")
 	}
 
-	// Step 4: Decommission inception (with confirmation)
+	// Step 5: Confirmation prompt before decommission
 	if !opts.DryRun {
 		if !opts.Force {
-			// In a real implementation, this would prompt for user confirmation
-			m.logger.Info("Would prompt for confirmation to decommission inception vault")
+			m.logger.Warn("\n⚠️  CRITICAL OPERATION: About to decommission inception vault")
+			m.logger.Infow("Migration Summary",
+				"exported", secretCount,
+				"validated", validatedCount,
+				"snapshot", snapshotPath)
+
+			confirmed, err := m.confirmDecommission()
+			if err != nil {
+				return fmt.Errorf("confirmation failed: %w", err)
+			}
+			if !confirmed {
+				m.logger.Info("Decommission cancelled by user - inception vault preserved")
+				m.logger.Infow("Migration completed but inception vault NOT decommissioned", "snapshot", snapshotPath)
+				return nil
+			}
 		}
 
+		// ONLY NOW is it safe to decommission
 		err := m.decommissionInception(inceptionName)
 		if err != nil {
 			return fmt.Errorf("decommission failed: %w", err)
 		}
+		m.logger.Infow("✓ Inception vault decommissioned", "vault", inceptionName)
 	} else {
-		m.logger.Info("[DRY RUN] Would decommission inception vault")
+		m.logger.Info("[DRY RUN] Would prompt for confirmation to decommission inception vault")
 	}
 
-	// Step 5: Update environment secrets-providers
+	// Step 6: Update environment secrets-providers
 	if !opts.DryRun {
 		err := m.updateEnvironmentSecrets()
 		if err != nil {
@@ -237,7 +287,10 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	}
 
 	duration := time.Since(m.startTime)
-	m.logger.Infow("Vault migration completed", "duration", duration)
+	m.logger.Infow("Vault migration completed successfully", "duration", duration)
+	if snapshotPath != "" {
+		m.logger.Infow("Snapshot can be safely deleted", "path", snapshotPath)
+	}
 
 	return nil
 }
@@ -261,13 +314,84 @@ func (m *Manager) GetClient() *Client {
 	return m.client
 }
 
-// getInceptionVaultName returns the inception vault name.
+// getInceptionVaultName returns the inception vault name with fallback logic.
+// Tries bloc-specific name first, then falls back to simple "inception".
 func (m *Manager) getInceptionVaultName() string {
+	// Try bloc-specific name first if we have a bloc
 	if m.blocName != "" {
-		return m.blocName + "-inception"
+		blocInception := m.blocName + "-inception"
+		// Check if this target exists in .saferc
+		if m.targetExistsInSaferc(blocInception) {
+			return blocInception
+		}
 	}
 
+	// Fall back to simple "inception" name
 	return "inception"
+}
+
+// getProductionVaultName returns the production vault name by reading current target from .saferc.
+func (m *Manager) getProductionVaultName() (string, error) {
+	// Read current target from .saferc
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return "", ErrHomeNotSet
+	}
+
+	saferc := filepath.Join(homeDir, ".saferc")
+
+	data, err := os.ReadFile(saferc)
+	if err != nil {
+		return "", fmt.Errorf("failed to read .saferc: %w", err)
+	}
+
+	// Parse .saferc YAML
+	var config struct {
+		Current string `yaml:"current"`
+	}
+
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse .saferc: %w", err)
+	}
+
+	if config.Current == "" {
+		// Fall back to bloc-mgmt if no current target set
+		if m.blocName != "" {
+			return m.blocName + "-mgmt", nil
+		}
+		return "", fmt.Errorf("no current vault target set in .saferc")
+	}
+
+	return config.Current, nil
+}
+
+// targetExistsInSaferc checks if a vault target exists in .saferc.
+func (m *Manager) targetExistsInSaferc(targetName string) bool {
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return false
+	}
+
+	saferc := filepath.Join(homeDir, ".saferc")
+
+	data, err := os.ReadFile(saferc)
+	if err != nil {
+		return false
+	}
+
+	// Parse .saferc YAML
+	var config struct {
+		Vaults map[string]interface{} `yaml:"vaults"`
+	}
+
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return false
+	}
+
+	_, exists := config.Vaults[targetName]
+	return exists
 }
 
 // populateFullConfiguration performs full vault configuration.
@@ -312,144 +436,175 @@ func (m *Manager) populatePublicIPs(reporter ProgressReporter) error {
 	return nil
 }
 
-// validateTargets validates that both inception and production vaults are accessible.
+// validateTargets validates that both inception and production vault instances are accessible.
+// This checks TWO DIFFERENT VAULT INSTANCES can be reached.
 func (m *Manager) validateTargets(inceptionName, productionName string) error {
 	m.logger.Infow("Validating vault targets", "inception", inceptionName, "production", productionName)
 
-	// Create validator
-	validator := NewValidator(m.client, m.safe, m.config)
+	// Validate inception vault target
+	m.logger.Infow("Checking inception vault target", "target", inceptionName)
 
-	// Perform comprehensive pre-migration health check
-	inceptionPath := "secret/" + inceptionName
-	productionPath := "secret/config/" + productionName
-
-	result, err := validator.PreMigrationHealthCheck(inceptionPath, productionPath)
+	inceptionClient, err := m.createClientForTarget(inceptionName)
 	if err != nil {
-		return fmt.Errorf("health check failed: %w", err)
+		return fmt.Errorf("failed to connect to inception vault: %w", err)
+	}
+	defer inceptionClient.Close()
+
+	err = inceptionClient.ValidateConnection()
+	if err != nil {
+		return fmt.Errorf("inception vault validation failed: %w", err)
 	}
 
-	// Log warnings
-	for _, warning := range result.Warnings {
-		m.logger.Warnw("Validation warning", "warning", warning)
+	m.logger.Infow("✓ Inception vault accessible", "target", inceptionName)
+
+	// Validate production vault target
+	m.logger.Infow("Checking production vault target", "target", productionName)
+
+	productionClient, err := m.createClientForTarget(productionName)
+	if err != nil {
+		return fmt.Errorf("failed to connect to production vault: %w", err)
+	}
+	defer productionClient.Close()
+
+	err = productionClient.ValidateConnection()
+	if err != nil {
+		return fmt.Errorf("production vault validation failed: %w", err)
 	}
 
-	// Fail on errors
-	if len(result.Errors) > 0 {
-		for _, errMsg := range result.Errors {
-			m.logger.Error("Validation error", "error", errMsg)
-		}
+	m.logger.Infow("✓ Production vault accessible", "target", productionName)
 
-		if result.Suggestion != "" {
-			m.logger.Infow("Suggestion", "suggestion", result.Suggestion)
-		}
-
-		return ErrValidationFailedWithErrors(len(result.Errors))
-	}
-
-	if result.HasIssues() {
-		m.logger.Warnw("Validation completed with warnings", "warnings", len(result.Warnings))
-	} else {
-		m.logger.Info("Validation passed without issues")
-	}
+	m.logger.Info("All vault targets validated successfully")
 
 	return nil
 }
 
-// exportImportVault exports secrets from inception and imports to production.
-func (m *Manager) exportImportVault(inceptionName, productionName string) error {
-	m.logger.Infow("Exporting from inception vault", "vault", inceptionName)
+// exportImportVault exports secrets from inception vault and imports to production vault.
+// This migrates data between TWO DIFFERENT VAULT INSTANCES (not just paths in one vault).
+// Returns the count of secrets migrated.
+func (m *Manager) exportImportVault(inceptionName, productionName string) (int, error) {
+	m.logger.Infow("Migrating from inception vault to production vault",
+		"from", inceptionName, "to", productionName)
 
-	// Create validator for rollback capability
-	validator := NewValidator(m.client, m.safe, m.config)
-	productionPath := "secret/config/" + productionName
-
-	// Create rollback point before making changes
-	m.logger.Info("Creating rollback point before migration")
-
-	rollback, err := validator.CreateRollbackPoint([]string{productionPath})
+	// Create clients for BOTH vault targets (two different vault instances)
+	inceptionClient, err := m.createClientForTarget(inceptionName)
 	if err != nil {
-		m.logger.Warnw("Failed to create rollback point", "error", err)
-		// Continue anyway - rollback is a safety feature, not required
+		return 0, fmt.Errorf("failed to create inception vault client: %w", err)
 	}
+	defer inceptionClient.Close()
 
-	// Export from inception
-	inceptionPath := "secret/" + inceptionName
-
-	secrets, err := m.safe.Export(inceptionPath)
+	productionClient, err := m.createClientForTarget(productionName)
 	if err != nil {
-		return fmt.Errorf("failed to export from inception: %w", err)
+		return 0, fmt.Errorf("failed to create production vault client: %w", err)
 	}
+	defer productionClient.Close()
 
-	m.logger.Infow("Exported secrets", "count", len(secrets))
+	// Create Safe wrappers for each vault instance
+	inceptionSafe := NewSafe(inceptionClient)
+	productionSafe := NewSafe(productionClient)
 
-	// Import to production
-	m.logger.Infow("Importing to production vault", "vault", productionName)
+	// Export from inception vault instance
+	m.logger.Info("\nExporting secrets from inception vault...")
+	fmt.Println()
 
-	err = m.safe.Import(productionPath, secrets)
+	secrets, err := inceptionSafe.Export("secret/")
 	if err != nil {
-		// Attempt rollback on failure
-		if rollback != nil {
-			m.logger.Error("Import failed, attempting rollback", "error", err)
-
-			rollbackErr := validator.ExecuteRollback(rollback)
-			if rollbackErr != nil {
-				m.logger.Error("Rollback also failed", "rollback_error", rollbackErr)
-
-				return fmt.Errorf("import failed and rollback failed: import=%w, rollback=%w", err, rollbackErr)
-			}
-
-			m.logger.Info("Rollback completed successfully")
-		}
-
-		return fmt.Errorf("failed to import to production: %w", err)
+		return 0, fmt.Errorf("failed to export from inception vault: %w", err)
 	}
 
-	m.logger.Infow("Successfully migrated secrets", "count", len(secrets))
+	// Count the number of secret paths (nested maps need recursive counting)
+	secretCount := m.countSecretPaths(secrets)
 
-	// Store rollback point info for potential future use
-	if rollback != nil {
-		m.logger.Debugw("Rollback point available if needed", "timestamp", rollback.Timestamp)
+	// Print detailed export results
+	m.printExportedPaths(secrets, 0)
+	fmt.Println()
+
+	m.logger.Infow("✓ Exported secrets from inception", "paths", secretCount)
+
+	// SAFETY CHECK: Warn if no secrets were found
+	if secretCount == 0 {
+		m.logger.Warn("⚠️  WARNING: No secrets found in inception vault at secret/ path")
+		m.logger.Warn("⚠️  This may indicate the vault is empty or the path is incorrect")
+		return 0, nil // Return 0, not an error - let caller decide what to do
 	}
 
-	return nil
+	// Import to production vault instance
+	m.logger.Info("\nImporting secrets to production vault...")
+	fmt.Println()
+
+	err = m.importWithProgress(productionSafe, "secret/", secrets)
+	if err != nil {
+		return 0, fmt.Errorf("failed to import to production vault: %w", err)
+	}
+
+	fmt.Println()
+	m.logger.Infow("✓ Successfully migrated secrets between vault instances", "paths", secretCount)
+
+	return secretCount, nil
 }
 
 // validateMigration validates that all secrets were migrated correctly using per-path checksums.
-// This matches the Perl implementation in OCFP::Vault::Manager::validate_migration.
-func (m *Manager) validateMigration(inceptionName, productionName string) error {
-	m.logger.Info("Validating migration with checksums")
-
-	inceptionPath := "secret/" + inceptionName
-	productionPath := "secret/config/" + productionName
-
-	paths, err := m.getVaultPathsWithKeys(inceptionPath)
+// This validates across TWO DIFFERENT VAULT INSTANCES.
+// Returns the count of successfully validated secrets.
+func (m *Manager) validateMigration(inceptionName, productionName string) (int, error) {
+	// Create clients for both vault instances
+	inceptionClient, err := m.createClientForTarget(inceptionName)
 	if err != nil {
-		return fmt.Errorf("failed to get vault paths: %w", err)
+		return 0, fmt.Errorf("failed to create inception client: %w", err)
+	}
+	defer inceptionClient.Close()
+
+	productionClient, err := m.createClientForTarget(productionName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create production client: %w", err)
+	}
+	defer productionClient.Close()
+
+	// Create Safe wrappers for each vault instance
+	inceptionSafe := NewSafe(inceptionClient)
+	productionSafe := NewSafe(productionClient)
+
+	// Get all paths from inception vault
+	paths, err := m.getVaultPathsWithKeysFromSafe(inceptionSafe, "secret/")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get vault paths from inception: %w", err)
 	}
 
 	m.logger.Infow("Found keys to validate", "count", len(paths))
 
-	failedPaths, validatedCount := m.validateAllPaths(inceptionPath, productionPath, paths)
+	// SAFETY CHECK: Warn if no paths were found
+	if len(paths) == 0 {
+		m.logger.Warn("⚠️  WARNING: No secret paths found in inception vault for validation")
+		m.logger.Warn("⚠️  This indicates the vault is empty or paths are inaccessible")
+		return 0, nil // Return 0, not an error - let caller decide
+	}
+
+	// Validate checksums across the two vault instances
+	failedPaths, validatedCount := m.validateAllPathsAcrossVaults(
+		inceptionSafe, productionSafe, "secret/", "secret/", paths)
 
 	if len(failedPaths) > 0 {
 		m.reportValidationFailures(failedPaths)
 
-		return fmt.Errorf("%w: validation failed for %d paths", ErrValidationFailed, len(failedPaths))
+		return validatedCount, fmt.Errorf("%w: validation failed for %d paths", ErrValidationFailed, len(failedPaths))
 	}
 
-	m.logger.Infow("All keys validated successfully!", "count", validatedCount)
+	m.logger.Infow("✓ All keys validated successfully!", "validated", validatedCount)
 
-	return nil
+	return validatedCount, nil
 }
 
-// validateAllPaths validates checksums for all paths and returns failures and success count.
-func (m *Manager) validateAllPaths(inceptionPath, productionPath string, paths []string) ([]pathValidationFailure, int) {
+// validateAllPathsAcrossVaults validates checksums for all paths across two vault instances.
+func (m *Manager) validateAllPathsAcrossVaults(
+	inceptionSafe, productionSafe *Safe,
+	inceptionPath, productionPath string,
+	paths []string) ([]pathValidationFailure, int) {
 	var failedPaths []pathValidationFailure
 
 	validatedCount := 0
 
 	for _, path := range paths {
-		failure := m.validateSinglePath(inceptionPath, productionPath, path)
+		failure := m.validateSinglePathAcrossVaults(
+			inceptionSafe, productionSafe, inceptionPath, productionPath, path)
 		if failure != nil {
 			failedPaths = append(failedPaths, *failure)
 		} else {
@@ -462,11 +617,16 @@ func (m *Manager) validateAllPaths(inceptionPath, productionPath string, paths [
 	return failedPaths, validatedCount
 }
 
-// validateSinglePath validates a single path's checksums, returns failure if validation fails.
-func (m *Manager) validateSinglePath(inceptionPath, productionPath, path string) *pathValidationFailure {
-	inceptionChecksum, err := m.calculatePathChecksum(inceptionPath, path)
+// validateSinglePathAcrossVaults validates a single path's checksums across two vault instances.
+func (m *Manager) validateSinglePathAcrossVaults(
+	inceptionSafe, productionSafe *Safe,
+	inceptionPath, productionPath, path string) *pathValidationFailure {
+	// Print path being validated (without newline, we'll add status after)
+	fmt.Printf("  %-60s ", path)
+
+	inceptionChecksum, err := m.calculatePathChecksumFromSafe(inceptionSafe, inceptionPath, path)
 	if err != nil {
-		m.logger.Errorw("✗ Failed to get inception checksum", "path", path, "error", err)
+		fmt.Printf("\033[31m✗\033[0m (failed to get inception checksum: %v)\n", err)
 
 		return &pathValidationFailure{
 			Path:  path,
@@ -474,9 +634,9 @@ func (m *Manager) validateSinglePath(inceptionPath, productionPath, path string)
 		}
 	}
 
-	productionChecksum, err := m.calculatePathChecksum(productionPath, path)
+	productionChecksum, err := m.calculatePathChecksumFromSafe(productionSafe, productionPath, path)
 	if err != nil {
-		m.logger.Errorw("✗ Failed to get production checksum", "path", path, "error", err)
+		fmt.Printf("\033[31m✗\033[0m (failed to get production checksum: %v)\n", err)
 
 		return &pathValidationFailure{
 			Path:  path,
@@ -485,12 +645,13 @@ func (m *Manager) validateSinglePath(inceptionPath, productionPath, path string)
 	}
 
 	if inceptionChecksum == productionChecksum {
+		// Print checksums and success marker
+		fmt.Printf("%s → %s \033[32m✓\033[0m\n", inceptionChecksum[:8], productionChecksum[:8])
 		return nil
 	}
 
-	m.logger.Errorw("✗ Checksum mismatch", "path", path,
-		"inception", inceptionChecksum[:8],
-		"production", productionChecksum[:8])
+	// Print checksums and failure marker
+	fmt.Printf("%s → %s \033[31m✗\033[0m (mismatch)\n", inceptionChecksum[:8], productionChecksum[:8])
 
 	return &pathValidationFailure{
 		Path:               path,
@@ -1103,12 +1264,10 @@ func (m *Manager) walkVaultPaths(basePath, currentPath string, paths *[]string) 
 	data, getErr := m.safe.GetAll(fullPath)
 	if getErr == nil {
 		// This is a secret with keys - add each key as a path:key combination
+		// Store as relative path from basePath (or empty string if at base)
 		for key := range data {
-			if currentPath == "" {
-				*paths = append(*paths, fullPath+":"+key)
-			} else {
-				*paths = append(*paths, currentPath+":"+key)
-			}
+			// Always use currentPath (relative to basePath), never fullPath
+			*paths = append(*paths, currentPath+":"+key)
 		}
 
 		return nil
@@ -1150,13 +1309,14 @@ func (m *Manager) calculatePathChecksum(basePath, pathWithKey string) (string, e
 		return "", fmt.Errorf("%w: %s (expected path:key)", ErrInvalidPathFormat, pathWithKey)
 	}
 
-	path := parts[0]
+	relativePath := parts[0]
 	key := parts[1]
 
-	// Build full path
+	// Build full path from base + relative path
+	// relativePath is relative to basePath (may be empty for base-level secrets)
 	fullPath := basePath
-	if path != "" {
-		fullPath = basePath + "/" + path
+	if relativePath != "" && !strings.HasPrefix(relativePath, ":") {
+		fullPath = basePath + "/" + relativePath
 	}
 
 	// Get the value from vault
@@ -1366,4 +1526,463 @@ func stripANSI(str string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 	return re.ReplaceAllString(str, "")
+}
+
+// createClientForTarget creates a vault client for a specific safe target by reading ~/.saferc.
+func (m *Manager) createClientForTarget(targetName string) (*Client, error) {
+	m.logger.Debugw("Creating client for vault target", "target", targetName)
+
+	// Read .saferc to get target configuration
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return nil, ErrHomeNotSet
+	}
+
+	saferc := filepath.Join(homeDir, ".saferc")
+
+	data, err := os.ReadFile(saferc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .saferc: %w", err)
+	}
+
+	// Parse .saferc YAML
+	var config struct {
+		Vaults map[string]struct {
+			URL        string `yaml:"url"`
+			Token      string `yaml:"token"`
+			SkipVerify bool   `yaml:"skip_verify"`
+		} `yaml:"vaults"`
+	}
+
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse .saferc: %w", err)
+	}
+
+	// Look up the target
+	target, ok := config.Vaults[targetName]
+	if !ok {
+		return nil, fmt.Errorf("vault target '%s' not found in .saferc", targetName)
+	}
+
+	if target.URL == "" {
+		return nil, fmt.Errorf("vault target '%s' has no URL configured", targetName)
+	}
+
+	m.logger.Infow("Found vault target", "target", targetName, "url", target.URL, "skip_verify", target.SkipVerify)
+
+	// Create client for this specific vault instance
+	vaultConfig := &Config{
+		Address:   target.URL,
+		Token:     target.Token,
+		Namespace: "", // Targets typically don't use namespaces
+		TLSSkip:   target.SkipVerify,
+	}
+
+	client, err := NewClient(vaultConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client for target '%s': %w", targetName, err)
+	}
+
+	return client, nil
+}
+
+// getVaultPathsWithKeysFromSafe gets all secret paths from a specific Safe instance.
+func (m *Manager) getVaultPathsWithKeysFromSafe(safe *Safe, basePath string) ([]string, error) {
+	var paths []string
+
+	err := m.walkVaultPathsFromSafe(safe, basePath, "", &paths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk vault paths: %w", err)
+	}
+
+	// Remove duplicates and sort
+	uniquePaths := make(map[string]bool)
+	for _, path := range paths {
+		uniquePaths[path] = true
+	}
+
+	sortedPaths := make([]string, 0, len(uniquePaths))
+	for path := range uniquePaths {
+		sortedPaths = append(sortedPaths, path)
+	}
+
+	// Sort for consistent ordering
+	sort := func(paths []string) {
+		for i := 0; i < len(paths); i++ {
+			for j := i + 1; j < len(paths); j++ {
+				if paths[i] > paths[j] {
+					paths[i], paths[j] = paths[j], paths[i]
+				}
+			}
+		}
+	}
+
+	sort(sortedPaths)
+
+	return sortedPaths, nil
+}
+
+// walkVaultPathsFromSafe recursively walks vault paths from a specific Safe instance.
+func (m *Manager) walkVaultPathsFromSafe(safe *Safe, basePath, currentPath string, paths *[]string) error {
+	fullPath := basePath
+	if currentPath != "" {
+		fullPath = basePath + "/" + currentPath
+	}
+
+	// Try to read as a secret first
+	data, getErr := safe.GetAll(fullPath)
+	if getErr == nil {
+		// This is a secret with keys - add each key as a path:key combination
+		// Store as relative path from basePath (or empty string if at base)
+		for key := range data {
+			// Always use currentPath (relative to basePath), never fullPath
+			*paths = append(*paths, currentPath+":"+key)
+		}
+
+		return nil
+	}
+
+	// Try to list as a directory
+	subPaths, listErr := safe.List(fullPath)
+	if listErr != nil {
+		// Neither a secret nor a directory - intentionally not an error
+		return nil //nolint:nilerr // Empty or non-existent paths are expected during vault walk
+	}
+
+	// Process each sub-path
+	for _, subPath := range subPaths {
+		subPath = strings.TrimSuffix(subPath, "/")
+
+		var newCurrentPath string
+		if currentPath == "" {
+			newCurrentPath = subPath
+		} else {
+			newCurrentPath = currentPath + "/" + subPath
+		}
+
+		err := m.walkVaultPathsFromSafe(safe, basePath, newCurrentPath, paths)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// calculatePathChecksumFromSafe calculates SHA256 checksum from a specific Safe instance.
+func (m *Manager) calculatePathChecksumFromSafe(safe *Safe, basePath, pathWithKey string) (string, error) {
+	// Parse path:key format
+	parts := strings.SplitN(pathWithKey, ":", pathKeyDelimiterParts)
+	if len(parts) != pathKeyDelimiterParts {
+		return "", fmt.Errorf("%w: %s (expected path:key)", ErrInvalidPathFormat, pathWithKey)
+	}
+
+	relativePath := parts[0]
+	key := parts[1]
+
+	// Build full path from base + relative path
+	// relativePath is relative to basePath (may be empty for base-level secrets)
+	fullPath := basePath
+	if relativePath != "" && !strings.HasPrefix(relativePath, ":") {
+		fullPath = basePath + "/" + relativePath
+	}
+
+	// Get the value from vault
+	value, err := safe.Get(fullPath, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to get value for %s: %w", pathWithKey, err)
+	}
+
+	// Convert value to string for consistent hashing
+	var valueStr string
+	switch typedValue := value.(type) {
+	case string:
+		valueStr = typedValue
+	case []byte:
+		valueStr = string(typedValue)
+	default:
+		// For other types, marshal to JSON
+		jsonBytes, err := json.Marshal(typedValue)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal value: %w", err)
+		}
+
+		valueStr = string(jsonBytes)
+	}
+
+	// Calculate SHA256 of the value
+	hash := sha256.Sum256([]byte(valueStr))
+
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// countSecretPaths recursively counts the number of secret paths in the export map structure.
+// The export structure can be nested, so we need to recursively count all leaf nodes.
+func (m *Manager) countSecretPaths(data map[string]interface{}) int {
+	if len(data) == 0 {
+		return 0
+	}
+
+	count := 0
+
+	for _, value := range data {
+		switch typedValue := value.(type) {
+		case map[string]interface{}:
+			// Check if this looks like a secret (has non-map values) or a path (has only map values)
+			hasLeafValues := false
+			for _, v := range typedValue {
+				if _, isMap := v.(map[string]interface{}); !isMap {
+					hasLeafValues = true
+					break
+				}
+			}
+
+			if hasLeafValues {
+				// This is a secret with key-value pairs
+				count++
+			} else {
+				// This is a path with sub-paths, recurse
+				count += m.countSecretPaths(typedValue)
+			}
+		default:
+			// This is a leaf value, count it as a secret
+			count++
+		}
+	}
+
+	return count
+}
+
+// snapshotInceptionVault creates a safety snapshot of the inception vault before migration.
+// The snapshot is saved to ~/.ocfp/{bloc}/vault/snapshots/inception/{timestamp}.json
+// Returns the path to the snapshot file.
+func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
+	// Create snapshot directory
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return "", ErrHomeNotSet
+	}
+
+	snapshotDir := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "snapshots", "inception")
+	err := os.MkdirAll(snapshotDir, 0700)
+	if err != nil {
+		return "", fmt.Errorf("failed to create snapshot directory: %w", err)
+	}
+
+	// Generate snapshot filename with timestamp
+	timestamp := time.Now().Format("20060102-150405")
+	snapshotPath := filepath.Join(snapshotDir, fmt.Sprintf("%s.json", timestamp))
+
+	// Create inception client
+	inceptionClient, err := m.createClientForTarget(inceptionName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create inception client: %w", err)
+	}
+	defer inceptionClient.Close()
+
+	// Export all secrets from inception
+	inceptionSafe := NewSafe(inceptionClient)
+	secrets, err := inceptionSafe.Export("secret/")
+	if err != nil {
+		return "", fmt.Errorf("failed to export inception vault for snapshot: %w", err)
+	}
+
+	// Marshal to JSON with indentation for human readability
+	jsonData, err := json.MarshalIndent(secrets, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal snapshot data: %w", err)
+	}
+
+	// Write to file
+	err = os.WriteFile(snapshotPath, jsonData, 0600)
+	if err != nil {
+		return "", fmt.Errorf("failed to write snapshot file: %w", err)
+	}
+
+	m.logger.Infow("Created snapshot", "path", snapshotPath, "size_bytes", len(jsonData))
+
+	return snapshotPath, nil
+}
+
+// confirmDecommission prompts the user for confirmation before decommissioning the inception vault.
+// Returns true if the user confirms, false if they decline.
+func (m *Manager) confirmDecommission() (bool, error) {
+	// Check if we're in an interactive terminal
+	// If stdin is not a terminal, we can't prompt
+	if !m.isInteractiveTerminal() {
+		m.logger.Warn("Non-interactive terminal detected - use --force to skip confirmation")
+		return false, fmt.Errorf("interactive confirmation required but terminal is non-interactive")
+	}
+
+	// Print confirmation prompt
+	fmt.Println()
+	fmt.Println("╔═══════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    ⚠️  CRITICAL OPERATION ⚠️                       ║")
+	fmt.Println("║                                                                   ║")
+	fmt.Println("║  About to PERMANENTLY DECOMMISSION the inception vault:          ║")
+	fmt.Println("║                                                                   ║")
+	fmt.Println("║  This will:                                                       ║")
+	fmt.Println("║    • Kill all inception vault processes                           ║")
+	fmt.Println("║    • Delete all inception vault data                              ║")
+	fmt.Println("║    • Remove all inception vault files                             ║")
+	fmt.Println("║                                                                   ║")
+	fmt.Println("║  This operation CANNOT be undone!                                 ║")
+	fmt.Println("╚═══════════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Print("Type 'yes' to proceed with decommission: ")
+
+	// Read user input
+	var response string
+	_, err := fmt.Scanln(&response)
+	if err != nil {
+		return false, fmt.Errorf("failed to read confirmation: %w", err)
+	}
+
+	// Check for exact "yes" response
+	response = strings.TrimSpace(strings.ToLower(response))
+	if response == "yes" {
+		m.logger.Info("User confirmed decommission")
+		return true, nil
+	}
+
+	m.logger.Info("User declined decommission")
+	return false, nil
+}
+
+// isInteractiveTerminal checks if the program is running in an interactive terminal.
+func (m *Manager) isInteractiveTerminal() bool {
+	// Check if stdin is a terminal
+	fileInfo, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+
+	// If stdin is a character device, it's interactive
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+// printExportedPaths recursively prints exported secret paths for visibility.
+func (m *Manager) printExportedPaths(data map[string]interface{}, depth int) {
+	if len(data) == 0 {
+		return
+	}
+
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	// Simple bubble sort
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] > keys[j] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+
+	indent := strings.Repeat("  ", depth)
+
+	for _, key := range keys {
+		value := data[key]
+		switch typedValue := value.(type) {
+		case map[string]interface{}:
+			// Check if this is a secret (has non-map values) or a path (has only map values)
+			hasLeafValues := false
+			for _, v := range typedValue {
+				if _, isMap := v.(map[string]interface{}); !isMap {
+					hasLeafValues = true
+					break
+				}
+			}
+
+			if hasLeafValues {
+				// This is a secret with key-value pairs
+				fmt.Printf("%s\033[32m✓\033[0m secret/%s\n", indent, key)
+			} else {
+				// This is a path with sub-paths, recurse
+				if depth == 0 {
+					fmt.Printf("%s\033[34m→\033[0m secret/%s/\n", indent, key)
+				} else {
+					fmt.Printf("%s\033[34m→\033[0m %s/\n", indent, key)
+				}
+				m.printExportedPaths(typedValue, depth+1)
+			}
+		default:
+			// Leaf value
+			fmt.Printf("%s\033[32m✓\033[0m secret/%s\n", indent, key)
+		}
+	}
+}
+
+// importWithProgress imports secrets with progress output.
+func (m *Manager) importWithProgress(safe *Safe, basePath string, data map[string]interface{}) error {
+	return m.importRecursiveWithProgress(safe, basePath, data, 0)
+}
+
+// importRecursiveWithProgress recursively imports secrets with progress output.
+func (m *Manager) importRecursiveWithProgress(safe *Safe, basePath string, data map[string]interface{}, depth int) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	// Simple bubble sort
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] > keys[j] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+
+	indent := strings.Repeat("  ", depth)
+
+	for _, subPath := range keys {
+		value := data[subPath]
+		fullPath := filepath.Join(basePath, subPath)
+
+		if valueMap, ok := value.(map[string]interface{}); ok {
+			// Check if this is a secret (has non-map values) or a path (has only map values)
+			hasLeafValues := false
+			for _, v := range valueMap {
+				if _, isMap := v.(map[string]interface{}); !isMap {
+					hasLeafValues = true
+					break
+				}
+			}
+
+			if hasLeafValues {
+				// This is a secret with key-value pairs, import it
+				fmt.Printf("%s\033[32m✓\033[0m %s\n", indent, fullPath)
+				err := safe.SetMultiple(fullPath, valueMap)
+				if err != nil {
+					fmt.Printf("%s\033[31m✗\033[0m %s (error: %v)\n", indent, fullPath, err)
+					return fmt.Errorf("failed to import to %s: %w", fullPath, err)
+				}
+			} else {
+				// This is a path with sub-paths, recurse
+				fmt.Printf("%s\033[34m→\033[0m %s/\n", indent, fullPath)
+				err := m.importRecursiveWithProgress(safe, basePath, valueMap, depth+1)
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			// This is a single value, import as a single key
+			fmt.Printf("%s\033[32m✓\033[0m %s\n", indent, fullPath)
+			err := safe.Set(fullPath, "value", value)
+			if err != nil {
+				fmt.Printf("%s\033[31m✗\033[0m %s (error: %v)\n", indent, fullPath, err)
+				return fmt.Errorf("failed to import single value to %s: %w", fullPath, err)
+			}
+		}
+	}
+
+	return nil
 }

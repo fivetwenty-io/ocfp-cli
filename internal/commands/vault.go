@@ -623,16 +623,22 @@ func newVaultMigrateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "migrate",
-		Short: "Migrate secrets between vault paths",
-		Long: `Migrate secrets from one vault path to another.
+		Short: "Migrate secrets between vault instances",
+		Long: `Migrate secrets from inception vault to production vault.
 
-This command copies secrets from a source path to a destination path,
-useful for migrating between environments or restructuring vault paths.`,
-		Example: `  # Migrate secrets between paths
-  ocfp vault migrate --source /secret/old --dest /secret/new
+This command migrates all secrets from the temporary inception vault to the
+permanent production vault. The inception vault is typically a local vault
+used during bootstrap, while the production vault is the permanent vault
+managed by Genesis/BOSH.`,
+		Example: `  # Migrate from inception to production vault
+  ocfp vault migrate
 
   # Dry run to preview migration
-  ocfp vault migrate --source /secret/old --dest /secret/new --dry-run`,
+  ocfp vault migrate --dry-run
+
+  # Manual migration between specific vault paths (advanced)
+  ocfp vault migrate --source /secret/old --dest /secret/new`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVaultMigrate(cmd, sourcePath, destPath, dryRun)
 		},
