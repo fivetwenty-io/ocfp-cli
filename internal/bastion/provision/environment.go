@@ -294,22 +294,48 @@ func (em *EnvironmentManager) getSystemEnvironmentVars() map[string]string {
 		"OCFP_PROVIDER": em.provider,
 	}
 
-	// Add provider-specific variables
+	// Add provider-specific variables from config
 	switch em.provider {
 	case providerStackit:
-		vars["STACKIT_PROJECT_ID"] = "${STACKIT_PROJECT_ID}"
-		vars["STACKIT_ORG_ID"] = "${STACKIT_ORG_ID}"
-		vars["STACKIT_REGION"] = "${STACKIT_REGION}"
+		if em.config.ProjectID != "" {
+			vars["STACKIT_PROJECT_ID"] = em.config.ProjectID
+		}
+
+		if em.config.OrgID != "" {
+			vars["STACKIT_ORG_ID"] = em.config.OrgID
+		}
+
+		if em.config.Region != "" {
+			vars["STACKIT_REGION"] = em.config.Region
+		}
 	case providerAWS:
-		vars["AWS_ACCESS_KEY_ID"] = "${AWS_ACCESS_KEY_ID}"
-		vars["AWS_SECRET_ACCESS_KEY"] = "${AWS_SECRET_ACCESS_KEY}"
-		vars["AWS_DEFAULT_REGION"] = "${AWS_DEFAULT_REGION}"
+		if em.config.AccessKeyID != "" {
+			vars["AWS_ACCESS_KEY_ID"] = em.config.AccessKeyID
+		}
+
+		if em.config.SecretAccessKey != "" {
+			vars["AWS_SECRET_ACCESS_KEY"] = em.config.SecretAccessKey
+		}
+
+		if em.config.Region != "" {
+			vars["AWS_DEFAULT_REGION"] = em.config.Region
+		}
 	case providerAzure:
-		vars["AZURE_SUBSCRIPTION_ID"] = "${AZURE_SUBSCRIPTION_ID}"
-		vars["AZURE_TENANT_ID"] = "${AZURE_TENANT_ID}"
-		vars["AZURE_CLIENT_ID"] = "${AZURE_CLIENT_ID}"
+		if em.config.SubscriptionID != "" {
+			vars["AZURE_SUBSCRIPTION_ID"] = em.config.SubscriptionID
+		}
+
+		if em.config.TenantID != "" {
+			vars["AZURE_TENANT_ID"] = em.config.TenantID
+		}
+
+		if em.config.ClientID != "" {
+			vars["AZURE_CLIENT_ID"] = em.config.ClientID
+		}
 	case providerGCP:
-		vars["GCP_PROJECT_ID"] = "${GCP_PROJECT_ID}"
+		if em.config.ProjectID != "" {
+			vars["GCP_PROJECT_ID"] = em.config.ProjectID
+		}
 	}
 
 	return vars

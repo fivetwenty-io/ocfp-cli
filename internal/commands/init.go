@@ -54,7 +54,7 @@ func NewInitCmd() *cobra.Command {
 		Long:      getInitLongDescription(),
 		Example:   getInitExamples(),
 		ValidArgs: []string{"pg", "cf", "bosh", RoleBastion, KeywordAll},
-		Args:      cobra.MaximumNArgs(1),
+		Args:      cobra.ExactArgs(1),
 		RunE:      initFlags.runInit,
 	}
 
@@ -140,11 +140,8 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 
 // getComponent determines which component to initialize.
 func (f *initFlags) getComponent(args []string) string {
-	if len(args) > 0 {
-		return strings.ToLower(args[0])
-	}
-
-	return KeywordAll
+	// Args validation ensures we always have exactly one argument
+	return strings.ToLower(args[0])
 }
 
 var ErrMutuallyExclusiveFlags = errors.New("mutually exclusive flags")
@@ -317,7 +314,7 @@ initialization and validates prerequisites.`
 // getInitExamples returns the examples for the init command.
 func getInitExamples() string {
 	return `  # Initialize all components
-  ocfp init
+  ocfp init all
 
   # Initialize only PostgreSQL
   ocfp init pg
@@ -338,7 +335,7 @@ func getInitExamples() string {
   ocfp init all --force
 
   # Initialize with parallel execution where possible
-  ocfp init --parallel`
+  ocfp init all --parallel`
 }
 
 // validatePrerequisites checks that required infrastructure is in place.
