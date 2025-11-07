@@ -654,6 +654,31 @@ managed by Genesis/BOSH.`,
 
 // runVaultMigrate executes the vault migrate command.
 func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun bool) error {
+	// Use OCFP_BLOC for logging path (not the vault target name from .saferc)
+	// The bloc name determines the log directory structure: ~/.ocfp/{bloc}/logs/vault/migrate/
+	blocName := viper.GetString("bloc")
+	if blocName == "" {
+		blocName = os.Getenv("OCFP_BLOC")
+	}
+
+	// Reinitialize logger with migrate subcommand for proper log path
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	err := logger.Initialize(logger.Config{
+		Level:      viper.GetString("log_level"),
+		Debug:      viper.GetBool("debug"),
+		Verbose:    viper.GetBool("verbose"),
+		Trace:      viper.GetBool("trace"),
+		NoLog:      viper.GetBool("no_log"),
+		LogDir:     logDir,
+		BlocName:   blocName,
+		Command:    "vault",
+		Subcommand: "migrate",
+		RequestID:  os.Getenv("OCFP_REQUEST_ID"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
 	log := logger.Get()
 	force, _ := cmd.Flags().GetBool("force")
 

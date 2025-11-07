@@ -138,11 +138,15 @@ func NewClientFromEnv() (*Client, error) {
 	token := os.Getenv("VAULT_TOKEN")
 	address := os.Getenv("VAULT_ADDR")
 
+	// Default skip_verify from environment
+	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == "true"
+
 	// If token is not in environment, try reading from ~/.saferc
 	if token == "" {
-		safeAddr, safeToken, err := readSafeConfig()
+		safeAddr, safeToken, safeSkipVerify, err := readSafeConfig()
 		if err == nil {
 			token = safeToken
+			skipVerify = safeSkipVerify
 			// Also use safe's vault address if VAULT_ADDR not set
 			if address == "" {
 				address = safeAddr
@@ -165,7 +169,7 @@ func NewClientFromEnv() (*Client, error) {
 		RoleID:    os.Getenv("VAULT_ROLE_ID"),
 		SecretID:  os.Getenv("VAULT_SECRET_ID"),
 		CACert:    os.Getenv("VAULT_CACERT"),
-		TLSSkip:   os.Getenv("VAULT_SKIP_VERIFY") == "true",
+		TLSSkip:   skipVerify,
 	}
 
 	return NewClient(cfg)
@@ -178,11 +182,15 @@ func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
 	token := os.Getenv("VAULT_TOKEN")
 	address := os.Getenv("VAULT_ADDR")
 
+	// Default skip_verify from environment
+	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == "true"
+
 	// If token is not in environment, try reading from ~/.saferc
 	if token == "" {
-		safeAddr, safeToken, err := readSafeConfig()
+		safeAddr, safeToken, safeSkipVerify, err := readSafeConfig()
 		if err == nil {
 			token = safeToken
+			skipVerify = safeSkipVerify
 			// Also use safe's vault address if VAULT_ADDR not set
 			if address == "" {
 				address = safeAddr
@@ -205,7 +213,7 @@ func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
 		RoleID:    "",
 		SecretID:  "",
 		CACert:    "",
-		TLSSkip:   os.Getenv("VAULT_SKIP_VERIFY") == "true",
+		TLSSkip:   skipVerify,
 	}
 
 	return NewClient(cfg)
@@ -337,17 +345,18 @@ type safeConfig struct {
 	Version string `yaml:"version"`
 	Current string `yaml:"current"`
 	Vaults  map[string]struct {
-		URL   string `yaml:"url"`
-		Token string `yaml:"token"`
+		URL        string `yaml:"url"`
+		Token      string `yaml:"token"`
+		SkipVerify bool   `yaml:"skip_verify"`
 	} `yaml:"vaults"`
 }
 
-// readSafeConfig reads the ~/.saferc file and returns the vault address and token.
-// Returns the URL and token for the current vault target.
-func readSafeConfig() (string, string, error) {
+// readSafeConfig reads the ~/.saferc file and returns the vault address, token, and skip_verify.
+// Returns the URL, token, and skip_verify for the current vault target.
+func readSafeConfig() (string, string, bool, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", "", false, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	// Sanitize and validate the path to prevent directory traversal
@@ -356,34 +365,34 @@ func readSafeConfig() (string, string, error) {
 	// Ensure the resolved path is still within the user's home directory
 	cleanHomeDir := filepath.Clean(homeDir)
 	if !strings.HasPrefix(safeRcPath, cleanHomeDir) {
-		return "", "", ErrSafercMustBeInHomeDirectory
+		return "", "", false, ErrSafercMustBeInHomeDirectory
 	}
 
 	data, err := os.ReadFile(safeRcPath)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read ~/.saferc: %w", err)
+		return "", "", false, fmt.Errorf("failed to read ~/.saferc: %w", err)
 	}
 
 	var cfg safeConfig
 
 	err = yaml.Unmarshal(data, &cfg)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to parse ~/.saferc: %w", err)
+		return "", "", false, fmt.Errorf("failed to parse ~/.saferc: %w", err)
 	}
 
 	// Get the current vault
 	if cfg.Current == "" {
-		return "", "", ErrNoCurrentVaultSet()
+		return "", "", false, ErrNoCurrentVaultSet()
 	}
 
 	vault, ok := cfg.Vaults[cfg.Current]
 	if !ok {
-		return "", "", ErrVaultNotFoundInSaferc(cfg.Current)
+		return "", "", false, ErrVaultNotFoundInSaferc(cfg.Current)
 	}
 
 	if vault.Token == "" {
-		return "", "", ErrNoTokenFoundForVault(cfg.Current)
+		return "", "", false, ErrNoTokenFoundForVault(cfg.Current)
 	}
 
-	return vault.URL, vault.Token, nil
+	return vault.URL, vault.Token, vault.SkipVerify, nil
 }
