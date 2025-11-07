@@ -217,9 +217,9 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 		}
 		// CRITICAL: Ensure we actually exported something
 		if secretCount == 0 {
-			return fmt.Errorf("CRITICAL: export returned 0 secrets - refusing to proceed (snapshot saved at: %s)", snapshotPath)
+			return fmt.Errorf("CRITICAL: export returned 0 secret keys - refusing to proceed (snapshot saved at: %s)", snapshotPath)
 		}
-		m.logger.Infow("✓ Export/Import completed", "secrets", secretCount)
+		m.logger.Infow("✓ Export/Import completed", "keys", secretCount)
 	} else {
 		m.logger.Infow("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", productionName)
 	}
@@ -234,14 +234,14 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 		}
 		// CRITICAL: Ensure validation actually validated something
 		if validatedCount == 0 {
-			return fmt.Errorf("CRITICAL: validation checked 0 secrets - refusing to proceed (snapshot saved at: %s)", snapshotPath)
+			return fmt.Errorf("CRITICAL: validation checked 0 secret keys - refusing to proceed (snapshot saved at: %s)", snapshotPath)
 		}
 		// CRITICAL: Ensure validation count matches export count
 		if validatedCount != secretCount {
-			return fmt.Errorf("CRITICAL: validation mismatch - exported %d secrets but validated %d (snapshot saved at: %s)",
+			return fmt.Errorf("CRITICAL: validation mismatch - exported %d secret keys but validated %d keys (snapshot saved at: %s)",
 				secretCount, validatedCount, snapshotPath)
 		}
-		m.logger.Infow("✓ All secrets validated successfully", "validated", validatedCount)
+		m.logger.Infow("✓ All secret keys validated successfully", "validated", validatedCount)
 	} else {
 		m.logger.Info("[DRY RUN] Would validate migration with checksums")
 	}
@@ -511,18 +511,19 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) (int, 
 		return 0, fmt.Errorf("failed to export from inception vault: %w", err)
 	}
 
-	// Count the number of secret paths (nested maps need recursive counting)
+	// Count the number of individual keys (nested maps need recursive counting)
+	// This counts path:key combinations, matching what validation will check
 	secretCount := m.countSecretPaths(secrets)
 
 	// Print detailed export results
 	m.printExportedPaths(secrets, 0)
 	fmt.Println()
 
-	m.logger.Infow("✓ Exported secrets from inception", "paths", secretCount)
+	m.logger.Infow("✓ Exported secrets from inception", "keys", secretCount)
 
 	// SAFETY CHECK: Warn if no secrets were found
 	if secretCount == 0 {
-		m.logger.Warn("⚠️  WARNING: No secrets found in inception vault at secret/ path")
+		m.logger.Warn("⚠️  WARNING: No secret keys found in inception vault at secret/ path")
 		m.logger.Warn("⚠️  This may indicate the vault is empty or the path is incorrect")
 		return 0, nil // Return 0, not an error - let caller decide what to do
 	}
@@ -537,7 +538,7 @@ func (m *Manager) exportImportVault(inceptionName, productionName string) (int, 
 	}
 
 	fmt.Println()
-	m.logger.Infow("✓ Successfully migrated secrets between vault instances", "paths", secretCount)
+	m.logger.Infow("✓ Successfully migrated secrets between vault instances", "keys", secretCount)
 
 	return secretCount, nil
 }
@@ -1632,20 +1633,27 @@ func (m *Manager) walkVaultPathsFromSafe(safe *Safe, basePath, currentPath strin
 
 	// Try to read as a secret first
 	data, getErr := safe.GetAll(fullPath)
-	if getErr == nil {
+	secretFound := (getErr == nil)
+
+	if secretFound {
 		// This is a secret with keys - add each key as a path:key combination
 		// Store as relative path from basePath (or empty string if at base)
 		for key := range data {
 			// Always use currentPath (relative to basePath), never fullPath
 			*paths = append(*paths, currentPath+":"+key)
 		}
-
-		return nil
+		// DON'T return yet - this path might ALSO have subdirectories
+		// In Vault, a path can contain BOTH keys AND subdirectories
 	}
 
-	// Try to list as a directory
+	// Try to list as a directory (even if we found a secret above)
+	// In Vault, a path can contain BOTH keys AND subdirectories
 	subPaths, listErr := safe.List(fullPath)
 	if listErr != nil {
+		if secretFound {
+			// We got the secret data, so this is not an error - just no subdirectories
+			return nil
+		}
 		// Neither a secret nor a directory - intentionally not an error
 		return nil //nolint:nilerr // Empty or non-existent paths are expected during vault walk
 	}
@@ -1717,8 +1725,9 @@ func (m *Manager) calculatePathChecksumFromSafe(safe *Safe, basePath, pathWithKe
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// countSecretPaths recursively counts the number of secret paths in the export map structure.
-// The export structure can be nested, so we need to recursively count all leaf nodes.
+// countSecretPaths recursively counts the number of individual keys in the export map structure.
+// This matches the validation counting which counts path:key combinations.
+// The export structure is nested: each secret path contains a map of key-value pairs.
 func (m *Manager) countSecretPaths(data map[string]interface{}) int {
 	if len(data) == 0 {
 		return 0
@@ -1739,14 +1748,14 @@ func (m *Manager) countSecretPaths(data map[string]interface{}) int {
 			}
 
 			if hasLeafValues {
-				// This is a secret with key-value pairs
-				count++
+				// This is a secret with key-value pairs - count each key
+				count += len(typedValue)
 			} else {
 				// This is a path with sub-paths, recurse
 				count += m.countSecretPaths(typedValue)
 			}
 		default:
-			// This is a leaf value, count it as a secret
+			// This is a leaf value, count it as a single key
 			count++
 		}
 	}
@@ -1818,9 +1827,9 @@ func (m *Manager) confirmDecommission() (bool, error) {
 	// Print confirmation prompt
 	fmt.Println()
 	fmt.Println("╔═══════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                    ⚠️  CRITICAL OPERATION ⚠️                       ║")
+	fmt.Println("║                    ⚠️  CRITICAL OPERATION ⚠️                      ║")
 	fmt.Println("║                                                                   ║")
-	fmt.Println("║  About to PERMANENTLY DECOMMISSION the inception vault:          ║")
+	fmt.Println("║  About to PERMANENTLY DECOMMISSION the inception vault:           ║")
 	fmt.Println("║                                                                   ║")
 	fmt.Println("║  This will:                                                       ║")
 	fmt.Println("║    • Kill all inception vault processes                           ║")

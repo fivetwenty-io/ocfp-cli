@@ -213,8 +213,11 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 		var readErr error
 
 		secret, readErr = s.client.logical.Read(readPath)
+		if readErr != nil {
+			return fmt.Errorf("vault read operation failed: %w", readErr)
+		}
 
-		return fmt.Errorf("vault read operation failed: %w", readErr)
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret from %s: %w", path, err)
@@ -321,9 +324,25 @@ func (s *Safe) List(path string) ([]string, error) {
 		path += "/"
 	}
 
-	s.logger.Debugw("Listing vault paths", "path", path)
+	s.logger.Infow("Listing vault paths", "path", path)
 
-	secret, err := s.client.logical.List(path)
+	// Determine list path based on engine version
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type for list, assuming KV v1", "path", path, "error", err)
+		isKVv2 = false
+	}
+
+	listPath := path
+	if isKVv2 {
+		// KV v2: convert path for list (use metadata)
+		listPath = s.convertToKVv2ListPath(path)
+		s.logger.Infow("Using KV v2 - converted to metadata path", "logical", path, "api", listPath)
+	} else {
+		s.logger.Infow("Using KV v1 - no path conversion", "path", path)
+	}
+
+	secret, err := s.client.logical.List(listPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list paths under %s: %w", path, err)
 	}
@@ -354,16 +373,17 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debugw("Exporting vault secrets", "path", path)
+	s.logger.Infow("Starting export from vault", "path", path)
 
 	result := make(map[string]interface{})
 
 	err := s.exportRecursive(path, "", result)
 	if err != nil {
+		s.logger.Errorw("Export failed", "path", path, "error", err)
 		return nil, fmt.Errorf("failed to export from %s: %w", path, err)
 	}
 
-	s.logger.Debugw("Successfully exported vault secrets", "path", path, "entries", len(result))
+	s.logger.Infow("Successfully exported vault secrets", "path", path, "total_entries", len(result))
 
 	return result, nil
 }
@@ -464,6 +484,30 @@ func (s *Safe) convertToKVv2WritePath(logicalPath string) string {
 	return mount + "/data/" + rest
 }
 
+// convertToKVv2ListPath converts a logical path to the API list path for KV v2
+// For KV v2, list operations go to mount/metadata/path instead of mount/path.
+func (s *Safe) convertToKVv2ListPath(logicalPath string) string {
+	const minPartsForSubpath = 2
+
+	// Ensure path ends with / for list operations
+	if !strings.HasSuffix(logicalPath, "/") {
+		logicalPath += "/"
+	}
+
+	// Split path into mount and rest
+	parts := strings.SplitN(logicalPath, "/", minPartsForSubpath)
+	if len(parts) < minPartsForSubpath {
+		// Path has no subpath, just add /metadata/
+		return strings.TrimSuffix(logicalPath, "/") + "/metadata/"
+	}
+
+	mount := parts[0]
+	rest := parts[1]
+
+	// Insert /metadata/ after mount
+	return mount + "/metadata/" + rest
+}
+
 // exportRecursive recursively exports secrets from a path.
 func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]interface{}) error {
 	fullPath := basePath
@@ -471,10 +515,15 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		fullPath = filepath.Join(basePath, currentPath)
 	}
 
+	s.logger.Debugw("exportRecursive processing", "basePath", basePath, "currentPath", currentPath, "fullPath", fullPath)
+
 	// Try to read as a secret first
 	data, err := s.GetAll(fullPath)
-	if err == nil {
+	secretFound := (err == nil)
+
+	if secretFound {
 		// This is a secret, store it
+		s.logger.Debugw("Found secret at path", "fullPath", fullPath, "keys", len(data))
 		if currentPath == "" {
 			// Root level
 			for k, v := range data {
@@ -483,16 +532,27 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		} else {
 			result[currentPath] = data
 		}
-
-		return nil
+		// DON'T return yet - this path might ALSO have subdirectories
+	} else {
+		s.logger.Debugw("Not a secret, trying to list as directory", "fullPath", fullPath, "getError", err)
 	}
 
-	// Try to list as a directory
-	paths, err := s.List(fullPath)
-	if err != nil {
+	// Try to list as a directory (even if we found a secret above)
+	// In Vault, a path can contain BOTH keys AND subdirectories
+	paths, listErr := s.List(fullPath)
+	if listErr != nil {
+		// Failed to list as directory
+		if secretFound {
+			// We got the secret data, so this is not an error - just no subdirectories
+			s.logger.Debugw("Path has secret but no subdirectories", "fullPath", fullPath)
+			return nil
+		}
 		// Neither a secret nor a directory we can list
-		return err
+		s.logger.Errorw("Failed to list directory", "fullPath", fullPath, "error", listErr)
+		return listErr
 	}
+
+	s.logger.Infow("Listed directory", "fullPath", fullPath, "subpaths", len(paths), "also_has_secret", secretFound)
 
 	// Process each sub-path
 	for _, subPath := range paths {
@@ -503,11 +563,15 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 			newCurrentPath = filepath.Join(currentPath, strings.TrimSuffix(subPath, "/"))
 		}
 
+		s.logger.Debugw("Recursing into subpath", "subPath", subPath, "newCurrentPath", newCurrentPath)
+
 		err := s.exportRecursive(basePath, newCurrentPath, result)
 		if err != nil {
 			return err
 		}
 	}
+
+	s.logger.Debugw("Finished processing path", "fullPath", fullPath, "total_results", len(result))
 
 	return nil
 }
