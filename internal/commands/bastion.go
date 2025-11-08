@@ -305,7 +305,7 @@ func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, l
 
 func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
 	// Build SSH command and append remote execution string
-	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
+	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 
 	remote := fmt.Sprintf("bash -lc 'set -euo pipefail; %s perl %s | tee %s'", envString, remoteScript, logPath)
 	sshCmd = append(sshCmd, remote)
@@ -319,7 +319,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 }
 
 func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
-	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "")
+	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }

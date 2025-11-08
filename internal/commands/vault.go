@@ -626,18 +626,50 @@ func newVaultMigrateCmd() *cobra.Command {
 		Short: "Migrate secrets between vault instances",
 		Long: `Migrate secrets from inception vault to production vault.
 
-This command migrates all secrets from the temporary inception vault to the
-permanent production vault. The inception vault is typically a local vault
-used during bootstrap, while the production vault is the permanent vault
-managed by Genesis/BOSH.`,
+This command performs streaming key-by-key migration from the temporary
+inception vault to the permanent production vault. Each secret key is:
+
+  1. Exported from inception vault
+  2. Imported to production vault
+  3. Validated with SHA256 checksums
+  4. Displayed in real-time tree format
+
+The migration stops on first error and a snapshot is created before
+migration begins for safety. All keys are migrated with inline validation.
+
+Expected output format:
+  secret/
+  ├─ config/
+  │  ├─ :domains 370f7e38 → 370f7e38 ✓
+  │  └─ :provider 4d434f6d → 4d434f6d ✓
+
+Checksum format: first 8 characters of SHA256 hash
+Status indicators: ✓ success | ✗ failure
+
+Output Modes:
+  Interactive: Full tree display with colors and Unicode box-drawing characters
+  Concise:     Tree display without colors (for logging/CI)
+  JSON:        Structured JSON output for programmatic consumption
+  YAML:        Structured YAML output for programmatic consumption
+
+The output mode is automatically detected based on terminal capabilities.`,
 		Example: `  # Migrate from inception to production vault
   ocfp vault migrate
 
   # Dry run to preview migration
   ocfp vault migrate --dry-run
 
+  # Force migration without confirmation
+  ocfp vault migrate --force
+
   # Manual migration between specific vault paths (advanced)
-  ocfp vault migrate --source /secret/old --dest /secret/new`,
+  ocfp vault migrate --source /secret/old --dest /secret/new
+
+  # Output to JSON for automation
+  OUTPUT_MODE=json ocfp vault migrate
+
+  # Output to YAML for automation
+  OUTPUT_MODE=yaml ocfp vault migrate`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVaultMigrate(cmd, sourcePath, destPath, dryRun)
@@ -695,10 +727,14 @@ func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun boo
 		return manualMigrateVault(manager, sourcePath, destPath, dryRun)
 	}
 
+	// Detect output mode
+	outputMode := bastion.SelectOutputMode(os.Stdout)
+
 	// Otherwise do standard inception->production migration
 	opts := &vault.MigrateOptions{
-		DryRun: dryRun,
-		Force:  force,
+		DryRun:     dryRun,
+		Force:      force,
+		OutputMode: outputMode,
 	}
 
 	err = manager.Migrate(opts)
