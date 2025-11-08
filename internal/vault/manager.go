@@ -527,6 +527,7 @@ func (m *Manager) streamingMigrateWithValidation(
 	fmt.Println("secret/")
 
 	// Walk tree and migrate key-by-key
+	visited := make(map[string]bool)
 	err = m.walkAndStreamMigrate(
 		inceptionSafe,
 		productionSafe,
@@ -534,6 +535,7 @@ func (m *Manager) streamingMigrateWithValidation(
 		"",
 		renderer,
 		&migratedCount,
+		visited,
 	)
 
 	// Check for validation failures
@@ -1348,17 +1350,7 @@ func (m *Manager) getVaultPathsWithKeys(basePath string) ([]string, error) {
 	}
 
 	// Sort for consistent ordering
-	sort := func(paths []string) {
-		for i := 0; i < len(paths); i++ {
-			for j := i + 1; j < len(paths); j++ {
-				if paths[i] > paths[j] {
-					paths[i], paths[j] = paths[j], paths[i]
-				}
-			}
-		}
-	}
-
-	sort(sortedPaths)
+	sort.Strings(sortedPaths)
 
 	return sortedPaths, nil
 }
@@ -1718,17 +1710,7 @@ func (m *Manager) getVaultPathsWithKeysFromSafe(safe *Safe, basePath string) ([]
 	}
 
 	// Sort for consistent ordering
-	sort := func(paths []string) {
-		for i := 0; i < len(paths); i++ {
-			for j := i + 1; j < len(paths); j++ {
-				if paths[i] > paths[j] {
-					paths[i], paths[j] = paths[j], paths[i]
-				}
-			}
-		}
-	}
-
-	sort(sortedPaths)
+	sort.Strings(sortedPaths)
 
 	return sortedPaths, nil
 }
@@ -2006,11 +1988,18 @@ func (m *Manager) walkAndStreamMigrate(
 	basePath, currentPath string,
 	renderer *TreeRenderer,
 	migratedCount *int,
+	visited map[string]bool,
 ) error {
 	fullPath := basePath
 	if currentPath != "" {
 		fullPath = basePath + currentPath
 	}
+
+	// Skip if we've already processed this path
+	if visited[fullPath] {
+		return nil
+	}
+	visited[fullPath] = true
 
 	// Try to read as a secret first (check for keys at this path)
 	data, getErr := inceptionSafe.GetAll(fullPath)
@@ -2068,6 +2057,7 @@ func (m *Manager) walkAndStreamMigrate(
 			newCurrentPath,
 			renderer,
 			migratedCount,
+			visited,
 		)
 		if err != nil {
 			// Error in subdirectory - continue to siblings
