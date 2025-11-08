@@ -11,11 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/output"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -68,6 +70,20 @@ type environmentFailure struct {
 	Kit    string
 	Target string
 	Error  string
+}
+
+// TreeNode represents a node in the vault hierarchy.
+type TreeNode struct {
+	Name     string              // Path segment or key name
+	IsKey    bool                // true if this is a key, false if directory
+	FullPath string              // Complete vault path
+	Children map[string]*TreeNode // Child nodes (sorted for consistent order)
+	Keys     []string            // Key names at this path (if not IsKey)
+}
+
+// VaultTree is the root of the hierarchy.
+type VaultTree struct {
+	Root *TreeNode
 }
 
 // NewManager creates a new vault manager instance.
@@ -168,8 +184,9 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 
 // MigrateOptions holds options for the migrate operation.
 type MigrateOptions struct {
-	DryRun bool
-	Force  bool
+	DryRun     bool
+	Force      bool
+	OutputMode output.Mode
 }
 
 // Migrate performs vault migration from inception to production
@@ -208,42 +225,28 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 		m.logger.Info("[DRY RUN] Would create snapshot of inception vault")
 	}
 
-	// Step 3: Export/Import
-	var secretCount int
+	// Step 3: Streaming migration with inline validation
+	var migratedCount int
 	if !opts.DryRun {
-		secretCount, err = m.exportImportVault(inceptionName, productionName)
+		m.logger.Info("\nStarting streaming key-by-key migration...")
+		migratedCount, err = m.streamingMigrateWithValidation(inceptionName, productionName, opts.OutputMode)
 		if err != nil {
-			return fmt.Errorf("export/import failed: %w", err)
+			return fmt.Errorf("migration failed: %w (snapshot available at: %s)", err, snapshotPath)
 		}
-		// CRITICAL: Ensure we actually exported something
-		if secretCount == 0 {
-			return fmt.Errorf("CRITICAL: export returned 0 secret keys - refusing to proceed (snapshot saved at: %s)", snapshotPath)
+		// CRITICAL: Ensure we actually migrated something
+		if migratedCount == 0 {
+			return fmt.Errorf("CRITICAL: migrated 0 secret keys - refusing to proceed (snapshot saved at: %s)", snapshotPath)
 		}
-		m.logger.Infow("✓ Export/Import completed", "keys", secretCount)
+		m.logger.Infow("✓ All secret keys migrated successfully", "migrated", migratedCount)
 	} else {
-		m.logger.Infow("[DRY RUN] Would export/import vault data", "from", inceptionName, "to", productionName)
-	}
-
-	// Step 4: Validate migration with checksums
-	var validatedCount int
-	if !opts.DryRun {
-		m.logger.Info("\nValidating migration with SHA256 checksums...")
-		validatedCount, err = m.validateMigration(inceptionName, productionName)
+		m.logger.Info("[DRY RUN] Would perform streaming migration with validation")
+		// For dry-run, still do the walk but don't write to production
+		// This validates inception vault is accessible and shows what would happen
+		migratedCount, err = m.streamingMigrateWithValidation(inceptionName, inceptionName, opts.OutputMode)
 		if err != nil {
-			return fmt.Errorf("migration validation failed: %w (snapshot available at: %s)", err, snapshotPath)
+			return fmt.Errorf("dry-run validation failed: %w", err)
 		}
-		// CRITICAL: Ensure validation actually validated something
-		if validatedCount == 0 {
-			return fmt.Errorf("CRITICAL: validation checked 0 secret keys - refusing to proceed (snapshot saved at: %s)", snapshotPath)
-		}
-		// CRITICAL: Ensure validation count matches export count
-		if validatedCount != secretCount {
-			return fmt.Errorf("CRITICAL: validation mismatch - exported %d secret keys but validated %d keys (snapshot saved at: %s)",
-				secretCount, validatedCount, snapshotPath)
-		}
-		m.logger.Infow("✓ All secret keys validated successfully", "validated", validatedCount)
-	} else {
-		m.logger.Info("[DRY RUN] Would validate migration with checksums")
+		m.logger.Infow("[DRY RUN] Would migrate %d keys", "count", migratedCount)
 	}
 
 	// Step 5: Confirmation prompt before decommission
@@ -251,8 +254,7 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 		if !opts.Force {
 			m.logger.Warn("\n⚠️  CRITICAL OPERATION: About to decommission inception vault")
 			m.logger.Infow("Migration Summary",
-				"exported", secretCount,
-				"validated", validatedCount,
+				"migrated", migratedCount,
 				"snapshot", snapshotPath)
 
 			confirmed, err := m.confirmDecommission()
@@ -478,75 +480,21 @@ func (m *Manager) validateTargets(inceptionName, productionName string) error {
 	return nil
 }
 
-// exportImportVault exports secrets from inception vault and imports to production vault.
-// This migrates data between TWO DIFFERENT VAULT INSTANCES (not just paths in one vault).
-// Returns the count of secrets migrated.
-func (m *Manager) exportImportVault(inceptionName, productionName string) (int, error) {
-	m.logger.Infow("Migrating from inception vault to production vault",
-		"from", inceptionName, "to", productionName)
-
-	// Create clients for BOTH vault targets (two different vault instances)
-	inceptionClient, err := m.createClientForTarget(inceptionName)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create inception vault client: %w", err)
-	}
-	defer inceptionClient.Close()
-
-	productionClient, err := m.createClientForTarget(productionName)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create production vault client: %w", err)
-	}
-	defer productionClient.Close()
-
-	// Create Safe wrappers for each vault instance
-	inceptionSafe := NewSafe(inceptionClient)
-	productionSafe := NewSafe(productionClient)
-
-	// Export from inception vault instance
-	m.logger.Info("\nExporting secrets from inception vault...")
-	fmt.Println()
-
-	secrets, err := inceptionSafe.Export("secret/")
-	if err != nil {
-		return 0, fmt.Errorf("failed to export from inception vault: %w", err)
-	}
-
-	// Count the number of individual keys (nested maps need recursive counting)
-	// This counts path:key combinations, matching what validation will check
-	secretCount := m.countSecretPaths(secrets)
-
-	// Print detailed export results
-	m.printExportedPaths(secrets, 0)
-	fmt.Println()
-
-	m.logger.Infow("✓ Exported secrets from inception", "keys", secretCount)
-
-	// SAFETY CHECK: Warn if no secrets were found
-	if secretCount == 0 {
-		m.logger.Warn("⚠️  WARNING: No secret keys found in inception vault at secret/ path")
-		m.logger.Warn("⚠️  This may indicate the vault is empty or the path is incorrect")
-		return 0, nil // Return 0, not an error - let caller decide what to do
-	}
-
-	// Import to production vault instance
-	m.logger.Info("\nImporting secrets to production vault...")
-	fmt.Println()
-
-	err = m.importWithProgress(productionSafe, "secret/", secrets)
-	if err != nil {
-		return 0, fmt.Errorf("failed to import to production vault: %w", err)
-	}
-
-	fmt.Println()
-	m.logger.Infow("✓ Successfully migrated secrets between vault instances", "keys", secretCount)
-
-	return secretCount, nil
-}
-
-// validateMigration validates that all secrets were migrated correctly using per-path checksums.
-// This validates across TWO DIFFERENT VAULT INSTANCES.
-// Returns the count of successfully validated secrets.
-func (m *Manager) validateMigration(inceptionName, productionName string) (int, error) {
+// streamingMigrateWithValidation performs key-by-key migration with inline validation.
+// This replaces the previous batch export → import → validate approach.
+//
+// For each key in inception vault:
+//  1. Export from inception
+//  2. Calculate inception checksum
+//  3. Import to production
+//  4. Read back and verify
+//  5. Display result in tree format
+//
+// Returns count of successfully migrated keys.
+func (m *Manager) streamingMigrateWithValidation(
+	inceptionName, productionName string,
+	mode output.Mode,
+) (int, error) {
 	// Create clients for both vault instances
 	inceptionClient, err := m.createClientForTarget(inceptionName)
 	if err != nil {
@@ -564,34 +512,195 @@ func (m *Manager) validateMigration(inceptionName, productionName string) (int, 
 	inceptionSafe := NewSafe(inceptionClient)
 	productionSafe := NewSafe(productionClient)
 
-	// Get all paths from inception vault
-	paths, err := m.getVaultPathsWithKeysFromSafe(inceptionSafe, "secret/")
+	// Handle structured output modes (JSON/YAML)
+	// These need to collect all data first for proper formatting
+	if mode == output.ModeJSON || mode == output.ModeYAML {
+		return m.streamingMigrateStructured(inceptionSafe, productionSafe, mode)
+	}
+
+	// Initialize tree renderer for interactive/concise modes
+	renderer := NewTreeRenderer(mode)
+	migratedCount := 0
+
+	m.logger.Info("\nMigrating secrets with real-time validation...")
+	fmt.Println()
+	fmt.Println("secret/")
+
+	// Walk tree and migrate key-by-key
+	err = m.walkAndStreamMigrate(
+		inceptionSafe,
+		productionSafe,
+		"secret/",
+		"",
+		renderer,
+		&migratedCount,
+	)
+
+	// Check for validation failures
+	hasFailures := len(renderer.failures) > 0
+
+	// Display failure summary if any
+	if hasFailures {
+		fmt.Println()
+		if err := renderer.RenderFailureSummary(); err != nil {
+			return migratedCount, err
+		}
+	}
+
+	// Print final summary
+	totalAttempted := migratedCount + len(renderer.failures)
+	fmt.Printf("\nSummary: %d/%d keys migrated successfully\n",
+		migratedCount, totalAttempted)
+
+	// Return error if any failures occurred
+	if hasFailures {
+		return migratedCount, fmt.Errorf("migration completed with %d failure(s)", len(renderer.failures))
+	}
+
+	return migratedCount, nil
+}
+
+// streamingMigrateStructured handles JSON/YAML output modes.
+// These require collecting all data first for proper structure.
+func (m *Manager) streamingMigrateStructured(
+	inceptionSafe, productionSafe *Safe,
+	mode output.Mode,
+) (int, error) {
+	// For structured output, we still need to collect paths first
+	// to build proper JSON/YAML structure
+	pathsWithKeys, err := m.getVaultPathsWithKeysFromSafe(inceptionSafe, "secret/")
 	if err != nil {
-		return 0, fmt.Errorf("failed to get vault paths from inception: %w", err)
+		return 0, fmt.Errorf("failed to get vault paths: %w", err)
 	}
 
-	m.logger.Infow("Found keys to validate", "count", len(paths))
-
-	// SAFETY CHECK: Warn if no paths were found
-	if len(paths) == 0 {
-		m.logger.Warn("⚠️  WARNING: No secret paths found in inception vault for validation")
-		m.logger.Warn("⚠️  This indicates the vault is empty or paths are inaccessible")
-		return 0, nil // Return 0, not an error - let caller decide
+	if len(pathsWithKeys) == 0 {
+		m.logger.Warn("⚠️  WARNING: No secret paths found in inception vault")
+		return 0, nil
 	}
 
-	// Validate checksums across the two vault instances
-	failedPaths, validatedCount := m.validateAllPathsAcrossVaults(
-		inceptionSafe, productionSafe, "secret/", "secret/", paths)
-
-	if len(failedPaths) > 0 {
-		m.reportValidationFailures(failedPaths)
-
-		return validatedCount, fmt.Errorf("%w: validation failed for %d paths", ErrValidationFailed, len(failedPaths))
+	// Build tree for structured output
+	tree, err := m.buildVaultTree(pathsWithKeys)
+	if err != nil {
+		return 0, fmt.Errorf("failed to build vault tree: %w", err)
 	}
 
-	m.logger.Infow("✓ All keys validated successfully!", "validated", validatedCount)
+	// Migrate each key while building validation tree
+	migratedCount := 0
+	for _, pathWithKey := range pathsWithKeys {
+		_, _, err := m.migrateAndValidateSingleKey(
+			inceptionSafe,
+			productionSafe,
+			"secret/",
+			pathWithKey,
+		)
+		if err == nil {
+			migratedCount++
+		}
+		// Continue on error for structured output as well
+	}
 
-	return validatedCount, nil
+	// Use existing structured output validation for display
+	// Note: This validates again, but ensures consistent output format
+	return m.validateWithStructuredOutput(tree, inceptionSafe, productionSafe, mode)
+}
+
+// traverseAndValidateTree performs DFS traversal with validation.
+func (m *Manager) traverseAndValidateTree(
+	node *TreeNode,
+	inceptionSafe, productionSafe *Safe,
+	renderer *TreeRenderer,
+	validatedCount *int,
+) error {
+	if node == nil {
+		return nil
+	}
+
+	// Get sorted child names for consistent ordering
+	childNames := make([]string, 0, len(node.Children))
+	for name := range node.Children {
+		childNames = append(childNames, name)
+	}
+	sort.Strings(childNames)
+
+	// Sort keys
+	sort.Strings(node.Keys)
+
+	// Calculate total items (children + keys) for isLast determination
+	totalItems := len(childNames) + len(node.Keys)
+	currentItem := 0
+
+	// Process child directories first
+	for _, childName := range childNames {
+		child := node.Children[childName]
+		currentItem++
+		isLast := currentItem == totalItems
+
+		// Render directory node
+		renderer.StartDirectory(child.Name, isLast)
+
+		// Recursively traverse
+		if err := m.traverseAndValidateTree(
+			child,
+			inceptionSafe,
+			productionSafe,
+			renderer,
+			validatedCount,
+		); err != nil {
+			return err
+		}
+
+		renderer.EndDirectory()
+	}
+
+	// Process keys at current path
+	for _, key := range node.Keys {
+		currentItem++
+		isLast := currentItem == totalItems
+
+		// Validate this key
+		pathWithKey := strings.TrimPrefix(node.FullPath, "secret/") + ":" + key
+		inceptionHash, productionHash, err := m.validateSinglePath(
+			inceptionSafe,
+			productionSafe,
+			"secret/",
+			pathWithKey,
+		)
+
+		// Render validation result
+		renderer.RenderKeyValidation(key, inceptionHash, productionHash, err, isLast)
+
+		if err == nil {
+			*validatedCount++
+		}
+	}
+
+	return nil
+}
+
+// validateSinglePath validates one path:key combination by reading from both vaults.
+// This is used by structured output validation (not migration).
+func (m *Manager) validateSinglePath(
+	inceptionSafe, productionSafe *Safe,
+	basePath, pathWithKey string,
+) (inceptionHash, productionHash string, err error) {
+	// Calculate inception checksum
+	inceptionHash, err = m.calculatePathChecksumFromSafe(inceptionSafe, basePath, pathWithKey)
+	if err != nil {
+		return "", "", fmt.Errorf("inception checksum failed: %w", err)
+	}
+
+	// Calculate production checksum
+	productionHash, err = m.calculatePathChecksumFromSafe(productionSafe, basePath, pathWithKey)
+	if err != nil {
+		return inceptionHash, "", fmt.Errorf("production checksum failed: %w", err)
+	}
+
+	// Compare
+	if inceptionHash != productionHash {
+		return inceptionHash, productionHash, fmt.Errorf("checksum mismatch")
+	}
+
+	return inceptionHash, productionHash, nil
 }
 
 // validateAllPathsAcrossVaults validates checksums for all paths across two vault instances.
@@ -1678,6 +1787,68 @@ func (m *Manager) walkVaultPathsFromSafe(safe *Safe, basePath, currentPath strin
 	return nil
 }
 
+// buildVaultTree converts flat path:key list to hierarchical tree.
+func (m *Manager) buildVaultTree(pathsWithKeys []string) (*VaultTree, error) {
+	root := &TreeNode{
+		Name:     "secret",
+		IsKey:    false,
+		Children: make(map[string]*TreeNode),
+		Keys:     []string{},
+	}
+
+	for _, pathWithKey := range pathsWithKeys {
+		parts := strings.SplitN(pathWithKey, ":", 2)
+		if len(parts) != 2 {
+			continue // Skip malformed entries
+		}
+
+		path := parts[0]
+		key := parts[1]
+
+		// Split path into segments
+		segments := strings.Split(path, "/")
+		if len(segments) > 0 && segments[0] == "" {
+			segments = segments[1:] // Remove leading empty segment from absolute paths
+		}
+
+		// Navigate/create tree structure
+		current := root
+		currentPath := "secret"
+
+		for _, segment := range segments {
+			if segment == "" {
+				continue
+			}
+
+			currentPath += "/" + segment
+
+			if current.Children == nil {
+				current.Children = make(map[string]*TreeNode)
+			}
+
+			if _, exists := current.Children[segment]; !exists {
+				current.Children[segment] = &TreeNode{
+					Name:     segment,
+					IsKey:    false,
+					FullPath: currentPath,
+					Children: make(map[string]*TreeNode),
+					Keys:     []string{},
+				}
+			}
+
+			current = current.Children[segment]
+		}
+
+		// Add key to current path
+		if current.Keys == nil {
+			current.Keys = []string{}
+		}
+		current.Keys = append(current.Keys, key)
+	}
+
+	return &VaultTree{Root: root}, nil
+}
+
 // calculatePathChecksumFromSafe calculates SHA256 checksum from a specific Safe instance.
 func (m *Manager) calculatePathChecksumFromSafe(safe *Safe, basePath, pathWithKey string) (string, error) {
 	// Parse path:key format
@@ -1723,6 +1894,218 @@ func (m *Manager) calculatePathChecksumFromSafe(safe *Safe, basePath, pathWithKe
 	hash := sha256.Sum256([]byte(valueStr))
 
 	return hex.EncodeToString(hash[:]), nil
+}
+
+// checksumValue calculates SHA256 checksum of a vault value.
+// Handles different value types (string, []byte, other JSON-serializable).
+func (m *Manager) checksumValue(value interface{}) (string, error) {
+	var valueStr string
+
+	switch typedValue := value.(type) {
+	case string:
+		valueStr = typedValue
+	case []byte:
+		valueStr = string(typedValue)
+	default:
+		// For other types, marshal to JSON
+		jsonBytes, err := json.Marshal(typedValue)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal value: %w", err)
+		}
+		valueStr = string(jsonBytes)
+	}
+
+	// Calculate SHA256 of the value
+	hash := sha256.Sum256([]byte(valueStr))
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// migrateAndValidateSingleKey migrates a single key from inception to production
+// with inline validation. Returns checksums from both vaults for display.
+//
+// Algorithm:
+//  1. Export value from inception vault
+//  2. Calculate inception checksum
+//  3. Import value to production vault
+//  4. Read back from production (verify write succeeded)
+//  5. Calculate production checksum
+//  6. Validate checksums match
+//
+// Returns: (inceptionHash, productionHash, error)
+func (m *Manager) migrateAndValidateSingleKey(
+	inceptionSafe, productionSafe *Safe,
+	basePath, pathWithKey string,
+) (inceptionHash, productionHash string, err error) {
+	// Parse path:key format
+	parts := strings.SplitN(pathWithKey, ":", pathKeyDelimiterParts)
+	if len(parts) != pathKeyDelimiterParts {
+		return "", "", fmt.Errorf("%w: %s (expected path:key)", ErrInvalidPathFormat, pathWithKey)
+	}
+
+	relativePath := parts[0]
+	key := parts[1]
+
+	// Build full path from base + relative path
+	fullPath := basePath
+	if relativePath != "" && !strings.HasPrefix(relativePath, ":") {
+		fullPath = basePath + "/" + relativePath
+	}
+
+	// STEP 1: EXPORT from inception vault
+	value, err := inceptionSafe.Get(fullPath, key)
+	if err != nil {
+		return "", "", fmt.Errorf("export failed: %w", err)
+	}
+
+	// STEP 2: CHECKSUM inception value
+	inceptionHash, err = m.checksumValue(value)
+	if err != nil {
+		return "", "", fmt.Errorf("inception checksum failed: %w", err)
+	}
+
+	// STEP 3: IMPORT to production vault
+	err = productionSafe.Set(fullPath, key, value)
+	if err != nil {
+		return inceptionHash, "", fmt.Errorf("import failed: %w", err)
+	}
+
+	// STEP 4: VERIFY by reading back from production
+	// This confirms the write actually succeeded and vault is consistent
+	verifyValue, err := productionSafe.Get(fullPath, key)
+	if err != nil {
+		return inceptionHash, "", fmt.Errorf("verification read failed: %w", err)
+	}
+
+	// STEP 5: CHECKSUM production value
+	productionHash, err = m.checksumValue(verifyValue)
+	if err != nil {
+		return inceptionHash, "", fmt.Errorf("production checksum failed: %w", err)
+	}
+
+	// STEP 6: VALIDATE checksums match
+	if inceptionHash != productionHash {
+		return inceptionHash, productionHash, fmt.Errorf("checksum mismatch")
+	}
+
+	return inceptionHash, productionHash, nil
+}
+
+// walkAndStreamMigrate walks vault tree and migrates keys as encountered.
+// This is the core of streaming migration - no upfront path collection.
+//
+// Algorithm:
+//  1. Check current path for keys and subdirectories
+//  2. Process subdirectories first (DFS, maintains tree structure)
+//  3. For each key at current path:
+//     - Migrate and validate inline
+//     - Render result immediately
+//     - Collect errors but continue (per user requirement)
+//  4. Return nil (errors collected in renderer)
+func (m *Manager) walkAndStreamMigrate(
+	inceptionSafe, productionSafe *Safe,
+	basePath, currentPath string,
+	renderer *TreeRenderer,
+	migratedCount *int,
+) error {
+	fullPath := basePath
+	if currentPath != "" {
+		fullPath = basePath + currentPath
+	}
+
+	// Try to read as a secret first (check for keys at this path)
+	data, getErr := inceptionSafe.GetAll(fullPath)
+	hasKeys := (getErr == nil && len(data) > 0)
+
+	// Try to list as a directory (check for subdirectories)
+	subPaths, listErr := inceptionSafe.List(fullPath)
+	hasSubPaths := (listErr == nil && len(subPaths) > 0)
+
+	// If neither keys nor subdirectories, this path is empty/inaccessible
+	if !hasKeys && !hasSubPaths {
+		return nil
+	}
+
+	// Get sorted subdirectories
+	var childNames []string
+	if hasSubPaths {
+		for _, subPath := range subPaths {
+			childNames = append(childNames, strings.TrimSuffix(subPath, "/"))
+		}
+		sort.Strings(childNames)
+	}
+
+	// Get sorted keys
+	var keys []string
+	if hasKeys {
+		for key := range data {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+	}
+
+	// Calculate total items for isLast determination
+	totalItems := len(childNames) + len(keys)
+	currentItem := 0
+
+	// Process subdirectories first (DFS - maintains tree structure)
+	for _, childName := range childNames {
+		currentItem++
+		isLast := currentItem == totalItems
+
+		// Render directory node
+		renderer.StartDirectory(childName, isLast)
+
+		// Recursively walk subdirectory
+		newCurrentPath := currentPath + "/" + childName
+		if currentPath == "" {
+			newCurrentPath = childName
+		}
+
+		err := m.walkAndStreamMigrate(
+			inceptionSafe,
+			productionSafe,
+			basePath,
+			newCurrentPath,
+			renderer,
+			migratedCount,
+		)
+		if err != nil {
+			// Error in subdirectory - continue to siblings
+			// Errors are collected in renderer
+		}
+
+		renderer.EndDirectory()
+	}
+
+	// Process keys at current path
+	for _, key := range keys {
+		currentItem++
+		isLast := currentItem == totalItems
+
+		// Build path:key format
+		pathWithKey := strings.TrimPrefix(currentPath, "/") + ":" + key
+		if currentPath == "" {
+			pathWithKey = ":" + key
+		}
+
+		// MIGRATE + VALIDATE inline
+		inceptionHash, prodHash, err := m.migrateAndValidateSingleKey(
+			inceptionSafe,
+			productionSafe,
+			basePath,
+			pathWithKey,
+		)
+
+		// RENDER immediately (real-time feedback)
+		renderer.RenderKeyValidation(key, inceptionHash, prodHash, err, isLast)
+
+		if err == nil {
+			*migratedCount++
+		}
+		// Continue on error (collect all errors per user requirement)
+	}
+
+	return nil
 }
 
 // countSecretPaths recursively counts the number of individual keys in the export map structure.
@@ -1923,75 +2306,4 @@ func (m *Manager) printExportedPaths(data map[string]interface{}, depth int) {
 			fmt.Printf("%s\033[32m✓\033[0m secret/%s\n", indent, key)
 		}
 	}
-}
-
-// importWithProgress imports secrets with progress output.
-func (m *Manager) importWithProgress(safe *Safe, basePath string, data map[string]interface{}) error {
-	return m.importRecursiveWithProgress(safe, basePath, data, 0)
-}
-
-// importRecursiveWithProgress recursively imports secrets with progress output.
-func (m *Manager) importRecursiveWithProgress(safe *Safe, basePath string, data map[string]interface{}, depth int) error {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Sort keys for consistent output
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	// Simple bubble sort
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[i] > keys[j] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
-	}
-
-	indent := strings.Repeat("  ", depth)
-
-	for _, subPath := range keys {
-		value := data[subPath]
-		fullPath := filepath.Join(basePath, subPath)
-
-		if valueMap, ok := value.(map[string]interface{}); ok {
-			// Check if this is a secret (has non-map values) or a path (has only map values)
-			hasLeafValues := false
-			for _, v := range valueMap {
-				if _, isMap := v.(map[string]interface{}); !isMap {
-					hasLeafValues = true
-					break
-				}
-			}
-
-			if hasLeafValues {
-				// This is a secret with key-value pairs, import it
-				fmt.Printf("%s\033[32m✓\033[0m %s\n", indent, fullPath)
-				err := safe.SetMultiple(fullPath, valueMap)
-				if err != nil {
-					fmt.Printf("%s\033[31m✗\033[0m %s (error: %v)\n", indent, fullPath, err)
-					return fmt.Errorf("failed to import to %s: %w", fullPath, err)
-				}
-			} else {
-				// This is a path with sub-paths, recurse
-				fmt.Printf("%s\033[34m→\033[0m %s/\n", indent, fullPath)
-				err := m.importRecursiveWithProgress(safe, basePath, valueMap, depth+1)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			// This is a single value, import as a single key
-			fmt.Printf("%s\033[32m✓\033[0m %s\n", indent, fullPath)
-			err := safe.Set(fullPath, "value", value)
-			if err != nil {
-				fmt.Printf("%s\033[31m✗\033[0m %s (error: %v)\n", indent, fullPath, err)
-				return fmt.Errorf("failed to import single value to %s: %w", fullPath, err)
-			}
-		}
-	}
-
-	return nil
 }
