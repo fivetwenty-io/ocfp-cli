@@ -1978,11 +1978,22 @@ func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan
 		maxAttempts := gitMaxAttempts
 
 		var err error
+		var result *ssh.CommandResult
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			_, err = m.sshClient.ExecuteCommand(ctx, job.cmd)
+			result, err = m.sshClient.ExecuteCommand(ctx, job.cmd)
 			if err == nil {
 				break
 			}
+			// Log the actual error details
+			if result != nil {
+				m.log.Errorw("Git operation failed",
+					"repo", job.name,
+					"attempt", attempt,
+					"exit_code", result.ExitCode,
+					"stdout", result.Stdout,
+					"stderr", result.Stderr)
+			}
+			
 			// Detect rate limit / transient
 			emsg := strings.ToLower(err.Error())
 			if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
