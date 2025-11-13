@@ -323,9 +323,10 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
-			m.log.Error("Script execution failed",
+			m.log.Errorw("Script execution failed",
 				"script", scriptName,
 				"exit_code", result.ExitCode,
+				"stdout", result.Stdout,
 				"stderr", result.Stderr)
 
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
