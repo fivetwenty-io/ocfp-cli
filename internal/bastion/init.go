@@ -578,21 +578,23 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},
 
-		// Phase 4: Package managers and tools
+		// Phase 4: Git repositories (must run before binary_tools that depend on them)
+		{"git_repos", m.cloneGitRepositories},
+
+		// Phase 5: Package managers and tools
 		{"snap_packages", m.installSnapPackages},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
 		{"binary_tools", m.installBinaryTools},
 
-		// Phase 5: Git repositories and Genesis
-		{"git_repos", m.cloneGitRepositories},
+		// Phase 6: Genesis setup
 		{"genesis", m.setupGenesis},
 
-		// Phase 6: Environment configuration
+		// Phase 7: Environment configuration
 		{"shell_environment", m.setupShellEnvironment},
 		{"system_environment", m.setupSystemEnvironment},
 
-		// Phase 7: OCFP CLI and Vault operations
+		// Phase 8: OCFP CLI and Vault operations
 		// CRITICAL: vault_populate MUST run immediately after vault_inception
 		// as it requires the inception vault to exist
 		{"ocfp_cli_setup", m.setupOCFPCLI},
@@ -601,7 +603,7 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"ocfp_configure", m.runOCFPConfigure},
 
-		// Phase 8: Custom scripts and verification
+		// Phase 9: Custom scripts and verification
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
@@ -637,6 +639,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages}, // avoid dpkg lock issues
+		{"git_repos", m.cloneGitRepositories}, // must run before binary_tools that depend on git repos
 	}
 
 	err := m.runPhasesSequential(ctx, pre)
@@ -644,7 +647,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		return err
 	}
 
-	// Parallel-safe phases (no apt/dpkg)
+	// Parallel-safe phases (no apt/dpkg, no git dependencies)
 	par := []struct {
 		name string
 		fn   func(context.Context) error
@@ -653,7 +656,6 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"binary_tools", m.installBinaryTools},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
-		{"git_repos", m.cloneGitRepositories},
 	}
 
 	err = m.runPhasesParallel(ctx, par)
