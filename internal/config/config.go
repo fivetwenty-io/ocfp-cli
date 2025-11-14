@@ -330,6 +330,56 @@ func parseDeploymentSettings(raw map[string]interface{}) (*DeploymentSettings, e
 	return settings, nil
 }
 
+// serializeDeploymentSettings converts DeploymentSettings back to map[string]interface{}
+// for marshaling to YAML. This is the inverse operation of parseDeploymentSettings.
+func serializeDeploymentSettings(settings *DeploymentSettings) map[string]interface{} {
+	if settings == nil {
+		return nil
+	}
+
+	result := make(map[string]interface{})
+
+	// Add the URL if present
+	if settings.URL != "" {
+		result["url"] = settings.URL
+	}
+
+	// Add each deployment entry
+	for name, entry := range settings.Entries {
+		if entry == nil {
+			continue
+		}
+
+		// If there's raw data, use it (preserving any unknown fields)
+		if len(entry.Raw) > 0 {
+			entryMap := make(map[string]interface{})
+			for k, v := range entry.Raw {
+				entryMap[k] = v
+			}
+
+			// Override or add mode if explicitly set
+			if entry.Mode != "" {
+				entryMap["mode"] = entry.Mode
+			}
+
+			result[name] = entryMap
+		} else if entry.Mode != "" {
+			// If only mode is set, just use the string
+			result[name] = entry.Mode
+		} else {
+			// Empty entry, use nil
+			result[name] = nil
+		}
+	}
+
+	// Return nil if the result would be empty
+	if len(result) == 0 {
+		return nil
+	}
+
+	return result
+}
+
 //nolint:unparam // error return for future validation
 func parseDeploymentEntry(value interface{}) (*DeploymentEntry, error) {
 	entry := &DeploymentEntry{
@@ -1113,6 +1163,12 @@ func SaveConfig(configPath, blocName string, cfg *Config) error {
 
 	// Update the specific bloc
 	configFileData.Blocs[blocName] = cfg
+
+	// Serialize Deployments back to DeploymentsData before marshaling
+	// This ensures the deployments configuration is preserved when saving
+	if cfg.Deployments != nil {
+		cfg.DeploymentsData = serializeDeploymentSettings(cfg.Deployments)
+	}
 
 	// Marshal back to YAML
 	updatedData, err := yaml.Marshal(configFileData)
