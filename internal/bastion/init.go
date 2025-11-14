@@ -597,11 +597,13 @@ func (m *Manager) getInitializationPhases() []struct {
 		// Phase 8: OCFP CLI and Vault operations
 		// CRITICAL: vault_populate MUST run immediately after vault_inception
 		// as it requires the inception vault to exist
+		// CRITICAL: ocfp_configure MUST run before genesis_secrets_providers
+		// as it clones the deployment repositories containing .genesis directories
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
-		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"ocfp_configure", m.runOCFPConfigure},
+		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 
 		// Phase 9: Custom scripts and verification
 		{"custom_scripts", m.runCustomScripts},
@@ -638,7 +640,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
-		{"packages", m.installPackages}, // avoid dpkg lock issues
+		{"packages", m.installPackages},       // avoid dpkg lock issues
 		{"git_repos", m.cloneGitRepositories}, // must run before binary_tools that depend on git repos
 	}
 
@@ -674,8 +676,8 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
-		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"ocfp_configure", m.runOCFPConfigure},
+		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
@@ -1993,7 +1995,7 @@ func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan
 					"stdout", result.Stdout,
 					"stderr", result.Stderr)
 			}
-			
+
 			// Detect rate limit / transient
 			emsg := strings.ToLower(err.Error())
 			if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
