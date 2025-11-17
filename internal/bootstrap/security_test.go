@@ -377,12 +377,13 @@ func TestSecurityGroupRules_BastionHasSSH(t *testing.T) {
 	}
 
 	// Verify SSH rule exists (port 22)
+	// Note: When no allowed_ingress_ips are configured, it falls back to 0.0.0.0/0
 	sshRuleFound := false
 	for _, rule := range bastionSG.Rules {
 		if rule.Direction == "ingress" && rule.Protocol == "tcp" && rule.PortRangeMin == 22 {
 			sshRuleFound = true
 			if rule.RemoteIPCIDR != "0.0.0.0/0" {
-				t.Errorf("SSH rule RemoteIPCIDR = %v, want 0.0.0.0/0", rule.RemoteIPCIDR)
+				t.Errorf("SSH rule RemoteIPCIDR = %v, want 0.0.0.0/0 (fallback when no allowed_ingress_ips configured)", rule.RemoteIPCIDR)
 			}
 			break
 		}
@@ -390,6 +391,190 @@ func TestSecurityGroupRules_BastionHasSSH(t *testing.T) {
 
 	if !sshRuleFound {
 		t.Error("SSH ingress rule not found in bastion security group")
+	}
+}
+
+func TestSecurityGroupRules_BastionUsesAllowedIngressIPs(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = stateManager.Load("prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure allowed ingress IPs
+	allowedIPs := []string{"192.168.1.100/32", "10.0.0.0/24", "203.0.113.5/32"}
+	cfg := &config.Config{
+		Name:   "prod",
+		Region: "eu01",
+		Network: config.NetworkConfig{
+			NetworkCIDR: "10.4.0.0/20",
+		},
+		AllowedIngressIPs: allowedIPs,
+	}
+
+	fakeNetwork := &fakeNet{
+		createdSecurityGroups: make([]*cpi.SecurityGroup, 0),
+	}
+
+	fakeCompute := newFakeComputeEnhanced()
+	fakeProvider := &fakeProv{n: fakeNetwork, c: fakeCompute}
+
+	manager := bootstrap.NewManager(cfg, fakeProvider, stateManager, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "stackit",
+		Region:   "eu01",
+	})
+
+	// Pre-add network resource to state
+	err = stateManager.AddResource(&state.Resource{
+		ID:   "net-test-123",
+		Type: "network",
+		Name: "prod-network",
+	})
+	if err != nil {
+		t.Fatalf("Failed to add network: %v", err)
+	}
+
+	// Set network_id output (required by security group creation)
+	err = stateManager.SetOutput("network_id", "net-test-123")
+	if err != nil {
+		t.Fatalf("Failed to set network_id output: %v", err)
+	}
+
+	ctx := context.Background()
+	err = manager.CreateSecurityGroups(ctx)
+	if err != nil {
+		t.Fatalf("CreateSecurityGroups failed: %v", err)
+	}
+
+	// Find bastion security group
+	var bastionSG *cpi.SecurityGroup
+	for _, sg := range fakeNetwork.createdSecurityGroups {
+		if sg.Name == "prod-bastion" {
+			bastionSG = sg
+			break
+		}
+	}
+
+	if bastionSG == nil {
+		t.Fatal("Bastion security group not found")
+	}
+
+	// Verify SSH rules exist for each allowed IP
+	sshRulesFound := 0
+	for _, rule := range bastionSG.Rules {
+		if rule.Direction == "ingress" && rule.Protocol == "tcp" && rule.PortRangeMin == 22 {
+			// Check if this IP is in our allowed list
+			found := false
+			for _, allowedIP := range allowedIPs {
+				if rule.RemoteIPCIDR == allowedIP {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("SSH rule has unexpected RemoteIPCIDR = %v, not in allowed list", rule.RemoteIPCIDR)
+			}
+			sshRulesFound++
+		}
+	}
+
+	if sshRulesFound != len(allowedIPs) {
+		t.Errorf("Found %d SSH rules, want %d (one for each allowed IP)", sshRulesFound, len(allowedIPs))
+	}
+}
+
+func TestSecurityGroupRules_BastionNormalizesCIDR(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = stateManager.Load("prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure allowed ingress IPs WITHOUT /32 suffix (plain IPs)
+	allowedIPs := []string{"192.168.1.100", "203.0.113.5"}
+	cfg := &config.Config{
+		Name:   "prod",
+		Region: "eu01",
+		Network: config.NetworkConfig{
+			NetworkCIDR: "10.4.0.0/20",
+		},
+		AllowedIngressIPs: allowedIPs,
+	}
+
+	fakeNetwork := &fakeNet{
+		createdSecurityGroups: make([]*cpi.SecurityGroup, 0),
+	}
+
+	fakeCompute := newFakeComputeEnhanced()
+	fakeProvider := &fakeProv{n: fakeNetwork, c: fakeCompute}
+
+	manager := bootstrap.NewManager(cfg, fakeProvider, stateManager, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "stackit",
+		Region:   "eu01",
+	})
+
+	err = stateManager.SetOutput("network_id", "net-test-123")
+	if err != nil {
+		t.Fatalf("Failed to set network_id output: %v", err)
+	}
+
+	ctx := context.Background()
+	err = manager.CreateSecurityGroups(ctx)
+	if err != nil {
+		t.Fatalf("CreateSecurityGroups failed: %v", err)
+	}
+
+	// Find bastion security group
+	var bastionSG *cpi.SecurityGroup
+	for _, sg := range fakeNetwork.createdSecurityGroups {
+		if sg.Name == "prod-bastion" {
+			bastionSG = sg
+			break
+		}
+	}
+
+	if bastionSG == nil {
+		t.Fatal("Bastion security group not found")
+	}
+
+	// Verify SSH rules have /32 appended
+	expectedCIDRs := []string{"192.168.1.100/32", "203.0.113.5/32"}
+	sshRulesFound := 0
+	for _, rule := range bastionSG.Rules {
+		if rule.Direction == "ingress" && rule.Protocol == "tcp" && rule.PortRangeMin == 22 {
+			// Check if this CIDR is in our expected list
+			found := false
+			for _, expectedCIDR := range expectedCIDRs {
+				if rule.RemoteIPCIDR == expectedCIDR {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("SSH rule has unexpected RemoteIPCIDR = %v, expected one of %v", rule.RemoteIPCIDR, expectedCIDRs)
+			}
+			sshRulesFound++
+		}
+	}
+
+	if sshRulesFound != len(expectedCIDRs) {
+		t.Errorf("Found %d SSH rules, want %d (one for each allowed IP with /32)", sshRulesFound, len(expectedCIDRs))
 	}
 }
 
