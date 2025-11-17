@@ -19,6 +19,7 @@ const (
 	httpAltPort            = 8080
 	httpsAltPort           = 8443
 	credhubPort            = 8844
+	vaultPort              = 8484
 	boshPort               = 25555
 	boshAgentPort          = 6868
 	cfSSHPort              = 2222
@@ -288,6 +289,7 @@ func (m *Manager) ocfpSecurityGroupDef() securityGroupDef {
 			{Direction: "ingress", Protocol: "tcp", PortRangeMin: httpsAltPort, PortRangeMax: httpsAltPort, Description: "UAA/HTTPS-ALT"},
 			{Direction: "ingress", Protocol: "tcp", PortRangeMin: credhubPort, PortRangeMax: credhubPort, Description: "CredHub"},
 			{Direction: "ingress", Protocol: "tcp", PortRangeMin: boshPort, PortRangeMax: boshPort, Description: "BOSH Director"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: vaultPort, PortRangeMax: vaultPort, Description: "Vault"},
 			{Direction: "ingress", Protocol: "tcp", PortRangeMin: boshAgentPort, PortRangeMax: boshAgentPort, Description: "BOSH Agent"},
 			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
 		},

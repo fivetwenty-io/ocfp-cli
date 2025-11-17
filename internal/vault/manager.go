@@ -74,11 +74,11 @@ type environmentFailure struct {
 
 // TreeNode represents a node in the vault hierarchy.
 type TreeNode struct {
-	Name     string              // Path segment or key name
-	IsKey    bool                // true if this is a key, false if directory
-	FullPath string              // Complete vault path
+	Name     string               // Path segment or key name
+	IsKey    bool                 // true if this is a key, false if directory
+	FullPath string               // Complete vault path
 	Children map[string]*TreeNode // Child nodes (sorted for consistent order)
-	Keys     []string            // Key names at this path (if not IsKey)
+	Keys     []string             // Key names at this path (if not IsKey)
 }
 
 // VaultTree is the root of the hierarchy.
@@ -802,16 +802,16 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	}
 
 	// Step 2: Kill safe local processes on port 8234 (matching Perl Manager.pm:465-489)
-	vaultPort := 8234
+	inceptionVaultPort := 8234
 
-	err = m.killSafeProcesses(vaultPort)
+	err = m.killSafeProcesses(inceptionVaultPort)
 	if err != nil {
 		m.logger.Warnw("Failed to kill safe processes", "error", err)
 		// Continue anyway
 	}
 
 	// Step 3: Verify port is freed (matching Perl Manager.pm:492-500)
-	err = m.verifyPortFreed(vaultPort)
+	err = m.verifyPortFreed(inceptionVaultPort)
 	if err != nil {
 		m.logger.Warnw("Port verification warning", "error", err)
 		// This is just a warning, continue
