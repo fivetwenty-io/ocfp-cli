@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -253,14 +254,58 @@ func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
 }
 
 func (m *Manager) bastionSecurityGroupDef() securityGroupDef {
+	// Build SSH ingress rules based on allowed_ingress_ips from config
+	var sshRules []*cpi.SecurityRule
+
+	if len(m.config.AllowedIngressIPs) > 0 {
+		// Create a rule for each allowed IP/CIDR
+		for _, allowedIP := range m.config.AllowedIngressIPs {
+			// Normalize IP to CIDR format (add /32 if missing)
+			cidr := m.normalizeToCIDR(allowedIP)
+			sshRules = append(sshRules, &cpi.SecurityRule{
+				Direction:    "ingress",
+				Protocol:     "tcp",
+				PortRangeMin: sshPort,
+				PortRangeMax: sshPort,
+				RemoteIPCIDR: cidr,
+				Description:  fmt.Sprintf("Allow SSH from %s", cidr),
+			})
+		}
+	} else {
+		// Fallback to allow from anywhere if no IPs are configured
+		logger.Warnf("No allowed_ingress_ips configured, bastion SSH will be open to 0.0.0.0/0")
+		sshRules = append(sshRules, &cpi.SecurityRule{
+			Direction:    "ingress",
+			Protocol:     "tcp",
+			PortRangeMin: sshPort,
+			PortRangeMax: sshPort,
+			RemoteIPCIDR: "0.0.0.0/0",
+			Description:  "SSH",
+		})
+	}
+
+	// Add egress rule
+	sshRules = append(sshRules, &cpi.SecurityRule{
+		Direction:    "egress",
+		Protocol:     "all",
+		RemoteIPCIDR: "0.0.0.0/0",
+		Description:  "Allow all outbound",
+	})
+
 	return securityGroupDef{
 		name:        "bastion",
 		description: "Security group for bastion host",
-		rules: []*cpi.SecurityRule{
-			{Direction: "ingress", Protocol: "tcp", PortRangeMin: sshPort, PortRangeMax: sshPort, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH"},
-			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
-		},
+		rules:       sshRules,
 	}
+}
+
+// normalizeToCIDR ensures an IP address has CIDR notation.
+// If the IP doesn't contain a '/', it appends /32 for single host.
+func (m *Manager) normalizeToCIDR(ip string) string {
+	if !strings.Contains(ip, "/") {
+		return ip + "/32"
+	}
+	return ip
 }
 
 func (m *Manager) infraSecurityGroupDef() securityGroupDef {

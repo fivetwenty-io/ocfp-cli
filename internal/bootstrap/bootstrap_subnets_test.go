@@ -109,7 +109,7 @@ func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]str
 	allGroups := append([]*cpi.SecurityGroup{}, f.createdSecurityGroups...)
 	allGroups = append(allGroups, f.existingSecurityGroups...)
 
-	if filters == nil || len(filters) == 0 {
+	if len(filters) == 0 {
 		return allGroups, nil
 	}
 
@@ -131,6 +131,42 @@ func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]str
 }
 func (f *fakeNet) DeleteSecurityGroup(ctx context.Context, id string) error { return nil }
 
+// SecurityManager interface methods (for rule management).
+func (f *fakeNet) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+	// Find the security group and add the rule
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == groupID {
+			sg.Rules = append(sg.Rules, rule)
+			return nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == groupID {
+			sg.Rules = append(sg.Rules, rule)
+			return nil
+		}
+	}
+	return fmt.Errorf("security group not found: %s", groupID)
+}
+
+func (f *fakeNet) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
+	return nil
+}
+
+func (f *fakeNet) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == groupID {
+			return sg.Rules, nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == groupID {
+			return sg.Rules, nil
+		}
+	}
+	return nil, fmt.Errorf("security group not found: %s", groupID)
+}
+
 // Public IP operations.
 func (f *fakeNet) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
@@ -148,7 +184,7 @@ func (f *fakeNet) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloat
 func (f *fakeNet) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
 func (f *fakeNet) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
@@ -285,7 +321,10 @@ func (f *fakeCompute) ListVolumes(ctx context.Context, filters map[string]string
 func (f *fakeCompute) DeleteVolume(ctx context.Context, id string) error { return nil }
 
 type fakeProv struct {
-	n cpi.NetworkManager
+	n interface {
+		cpi.NetworkManager
+		cpi.SecurityManager
+	}
 	c cpi.ComputeManager
 }
 
@@ -301,10 +340,10 @@ func (p *fakeProv) Network() cpi.NetworkManager { return p.n }
 func (p *fakeProv) Compute() cpi.ComputeManager { return p.c }
 
 //nolint:ireturn
-func (p *fakeProv) Storage() cpi.StorageManager { return nil }
+func (p *fakeProv) Security() cpi.SecurityManager { return p.n }
 
 //nolint:ireturn
-func (p *fakeProv) Security() cpi.SecurityManager { return nil }
+func (p *fakeProv) Storage() cpi.StorageManager { return nil }
 
 //nolint:ireturn
 func (p *fakeProv) LoadBalancer() cpi.LoadBalancerManager { return nil }
