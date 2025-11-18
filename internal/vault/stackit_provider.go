@@ -1055,17 +1055,18 @@ func (s *StackitVaultProvider) configureIAM(envType string) error {
 	// For STACKIT, we use S3-compatible storage credentials
 	s3Path := s.PathBuilder.GetS3Path(envType)
 
-	// Get S3 credentials from config
-	accessKeyID := s.Config.AccessKeyID
-	secretAccessKey := s.Config.SecretAccessKey
-
-	if accessKeyID == "" || secretAccessKey == "" {
-		s.logger.Warn("No S3 credentials found (access_key_id or secret_access_key missing)")
-
-		return nil
+	// Get S3 credentials from config s3 map
+	var accessKeyID, secretAccessKey string
+	if s.Config.S3 != nil {
+		accessKeyID = s.Config.S3["access_key_id"]
+		secretAccessKey = s.Config.S3["secret_access_key"]
 	}
 
-	// Write S3 credentials with all required fields to match Perl output
+	if accessKeyID == "" || secretAccessKey == "" {
+		s.logger.Warn("No S3 credentials found (access_key_id or secret_access_key missing in s3 config)")
+
+		return nil
+	} // Write S3 credentials with all required fields to match Perl output
 	s3Data := map[string]interface{}{
 		"access_key_id":     accessKeyID,
 		"secret_access_key": secretAccessKey,
@@ -2524,9 +2525,13 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
 
-	// Get S3 credentials from config
-	accessKeyID := s.Config.AccessKeyID
-	secretAccessKey := s.Config.SecretAccessKey
+	// Get S3 credentials from config s3 map
+	var accessKeyID, secretAccessKey string
+	if s.Config.S3 != nil {
+		accessKeyID = s.Config.S3["access_key_id"]
+		secretAccessKey = s.Config.S3["secret_access_key"]
+	}
+
 	region := s.Config.Region
 
 	// S3 host configuration for STACKIT

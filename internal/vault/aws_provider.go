@@ -690,12 +690,15 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 func (a *AWSVaultProvider) configureIAM(envType string) error {
 	s3Path := a.PathBuilder.GetS3Path(envType)
 
-	// Use AWS credentials from config
-	accessKey := a.Config.AccessKeyID
-	secretKey := a.Config.SecretAccessKey
+	// Get AWS credentials from config s3 map
+	var accessKey, secretKey string
+	if a.Config.S3 != nil {
+		accessKey = a.Config.S3["access_key_id"]
+		secretKey = a.Config.S3["secret_access_key"]
+	}
 
 	if accessKey == "" || secretKey == "" {
-		a.logger.Warn("No AWS credentials found for S3 access")
+		a.logger.Warn("No AWS credentials found for S3 access (check s3 config)")
 
 		return nil
 	}
@@ -844,17 +847,22 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 
 	cpiPath := a.PathBuilder.GetEnvironmentPath(envType) + "/cpi/aws"
 
+	// Get credentials from config s3 map
+	var accessKeyID, secretAccessKey string
+	if a.Config.S3 != nil {
+		accessKeyID = a.Config.S3["access_key_id"]
+		secretAccessKey = a.Config.S3["secret_access_key"]
+	}
+
 	// Build CPI configuration
 	cpiConfig := map[string]interface{}{
-		"access_key_id":           a.Config.AccessKeyID,
-		"secret_access_key":       a.Config.SecretAccessKey,
+		"access_key_id":           accessKeyID,
+		"secret_access_key":       secretAccessKey,
 		"region":                  a.Config.Region,
 		"default_region":          a.Config.Region,
 		"default_key_name":        a.BlocName + "-bastion",
 		"default_security_groups": fmt.Sprintf(`["default","%s-%s"]`, a.BlocName, DefaultSubnetType),
-	}
-
-	// Add session token if available
+	} // Add session token if available
 	if a.Config.SessionToken != "" {
 		cpiConfig["session_token"] = a.Config.SessionToken
 	}
@@ -862,11 +870,11 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 	// Check for missing required fields
 	missingFields := []string{}
 
-	if a.Config.AccessKeyID == "" {
+	if accessKeyID == "" {
 		missingFields = append(missingFields, "access_key_id")
 	}
 
-	if a.Config.SecretAccessKey == "" {
+	if secretAccessKey == "" {
 		missingFields = append(missingFields, "secret_access_key")
 	}
 
