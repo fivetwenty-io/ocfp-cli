@@ -872,8 +872,10 @@ func (sg *ScriptGenerator) appendExtractionByType(lines []string, tool BinaryToo
 		lines = append(lines, fmt.Sprintf("        tar --no-same-owner --no-same-permissions -C \"${EXTRACT_DIR}\" -xf '/tmp/%s'", tool.Name))
 		if tool.Name == "cf" {
 			lines = append(lines,
-				"        # CF CLI extracts to versioned subdirectory (e.g., cf8/cf)",
-				"        find \"${EXTRACT_DIR}\" -name 'cf' -type f -executable -exec mv {} \"${EXTRACT_DIR}/cf\" \\; 2>/dev/null || true",
+				"        # CF CLI tarball contains cf8 binary and cf symlink - move the actual binary",
+				"        if [ -f \"${EXTRACT_DIR}/cf8\" ]; then",
+				"            mv \"${EXTRACT_DIR}/cf8\" \"${EXTRACT_DIR}/cf\"",
+				"        fi",
 			)
 		}
 
