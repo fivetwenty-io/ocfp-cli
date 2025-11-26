@@ -309,6 +309,9 @@ INSTALL_PATH=$(command -v genesis || echo "/usr/local/bin/genesis")
 sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
 sudo chmod +x "$INSTALL_PATH"
 
+log_info "Creating symbolic link 'g' for genesis"
+sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
+
 log_info "Verifying installation"
 genesis --version
 
@@ -334,6 +337,9 @@ curl -fsSL "%s" -o /tmp/genesis
 log_info "Installing genesis"
 chmod +x /tmp/genesis
 sudo mv /tmp/genesis /usr/local/bin/genesis
+
+log_info "Creating symbolic link 'g' for genesis"
+sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
 
 log_info "Verifying installation"
 genesis --version
