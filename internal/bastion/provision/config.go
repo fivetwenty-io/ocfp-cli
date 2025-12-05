@@ -535,6 +535,9 @@ log_info "Installing genesis to $INSTALL_PATH"
 sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
 sudo chmod +x "$INSTALL_PATH"
 
+log_info "Creating symbolic link 'g' for genesis"
+sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
+
 popd > /dev/null`, version, version, version)
 
 	return BinaryTool{
