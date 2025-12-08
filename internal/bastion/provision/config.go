@@ -315,7 +315,7 @@ func (c *Config) getEssentialPackages() PackageGroup {
 			"snapd", "libreadline-dev", "apt-rdepends", "gpg", "htop",
 			"libssl-dev", "libtool", "libyaml-dev", "libyaml-libyaml-perl",
 			"libyaml-perl", "python3-dev", "python3-setuptools", "s3cmd",
-			"vim", "vim-common", "libfuse2",
+			"vim", "vim-common", "libfuse2", "neovim",
 		},
 		PipPackages: []string{},
 		Verify:      []string{},

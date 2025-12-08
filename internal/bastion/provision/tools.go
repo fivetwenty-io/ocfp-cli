@@ -253,7 +253,7 @@ func (atm *AdvancedToolManager) getEditorTools() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
 			Name:           "nvim",
-			Enabled:        true,
+			Enabled:        false, // Disabled: installed via APT package instead
 			CheckCommand:   "nvim",
 			VersionURL:     "https://api.github.com/repos/neovim/neovim/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
