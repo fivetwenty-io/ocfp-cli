@@ -262,9 +262,9 @@ func (m *Manager) ensureAndRecordPublicIPs(
 	baseLabels map[string]string,
 ) []*cpi.PublicIP {
 	ips := make([]*cpi.PublicIP, 0, count)
-	createdCount := 0
+	const maxRetriesPerIP = 3
 
-	for index := 0; index < count && createdCount < count; index++ {
+	for index := 0; index < count; index++ {
 		// Format name - if nameFormat contains %d, use index; otherwise use as-is
 		var formattedName string
 		if strings.Contains(nameFormat, "%") {
@@ -275,10 +275,21 @@ func (m *Manager) ensureAndRecordPublicIPs(
 
 		name := fmt.Sprintf("%s-%s", m.options.BlocName, formattedName)
 
-		ip := m.getOrCreatePublicIP(ctx, netMgr, name, job, index, baseLabels)
-		if ip != nil {
-			ips = append(ips, ip)
-			createdCount++
+		var ip *cpi.PublicIP
+		for attempt := 0; attempt < maxRetriesPerIP; attempt++ {
+			ip = m.getOrCreatePublicIP(ctx, netMgr, name, job, index, baseLabels)
+			if ip != nil {
+				// Success! Add to list and break retry loop
+				ips = append(ips, ip)
+				break
+			}
+
+			// Failed - log and retry (unless it's the last attempt)
+			if attempt < maxRetriesPerIP-1 {
+				logger.Warnf("Failed to create public IP %s (attempt %d/%d), retrying...", name, attempt+1, maxRetriesPerIP)
+			} else {
+				logger.Errorf("Failed to create public IP %s after %d attempts, skipping", name, maxRetriesPerIP)
+			}
 		}
 	}
 

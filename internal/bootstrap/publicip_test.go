@@ -79,6 +79,12 @@ func newFakeNetEnhanced() *fakeNetEnhanced {
 }
 
 func (f *fakeNetEnhanced) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+	// Simulate failure for specific IP names
+	if f.shouldFailNext == req.Name {
+		f.shouldFailNext = ""
+		return nil, fmt.Errorf("fake CreatePublicIP error for %s", req.Name)
+	}
+
 	f.publicIPCounter++
 	ipAddress := "203.0.113." + string(rune(f.publicIPCounter))
 	ip := &cpi.PublicIP{
@@ -557,5 +563,56 @@ func TestCreatePublicIPs_Idempotency(t *testing.T) {
 	// Should not create duplicates
 	if secondCount != firstCount {
 		t.Errorf("Second run created %d IPs, expected %d (idempotent)", secondCount, firstCount)
+	}
+}
+
+// ==============================================================================
+// Test: Public IP Index Numbering with Failures
+// ==============================================================================
+
+func TestCreatePublicIPs_FailureIndexNumbering(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeNet, _ := setupPublicIPTest(t, "stackit")
+	ctx := context.Background()
+
+	// Get the expected counts from the config used in setupPublicIPTest
+	// Config is: Ops: 1, Jumpbox: 2, Router: 4, CFSSH: 1, TCPRouter: 2, plus 1 bastion always
+	expectedRouterCount := 4 // From setupPublicIPTest config
+	expectedTotalCount := 11 // 1 + 2 + 4 + 1 + 2 + 1 = 11
+
+	// Simulate failure for router-0 on first attempt only
+	// (shouldFailNext only triggers once, then gets cleared)
+	fakeNet.shouldFailNext = "prod-router-0"
+
+	err := manager.CreatePublicIPs(ctx)
+	if err != nil {
+		t.Fatalf("CreatePublicIPs failed: %v", err)
+	}
+
+	// Should still have created all IPs (router-0 retried and succeeded on 2nd attempt)
+	if len(fakeNet.createdPublicIPs) != expectedTotalCount {
+		t.Errorf("Created %d public IPs, want %d", len(fakeNet.createdPublicIPs), expectedTotalCount)
+	}
+
+	// Verify that all router IPs exist with correct indices starting from 0
+	routerNames := make(map[string]bool)
+	for _, ip := range fakeNet.createdPublicIPs {
+		if ip.Labels["job"] == "router" {
+			routerNames[ip.Name] = true
+		}
+	}
+
+	// Verify we have router-0 through router-(n-1) where n is the configured count
+	for i := 0; i < expectedRouterCount; i++ {
+		expectedName := fmt.Sprintf("prod-router-%d", i)
+		if !routerNames[expectedName] {
+			t.Errorf("Expected router IP %s to be created (router-0 should have retried and succeeded)", expectedName)
+		}
+	}
+
+	// Verify we have exactly the expected number of router IPs
+	if len(routerNames) != expectedRouterCount {
+		t.Errorf("Created %d router IPs, want %d", len(routerNames), expectedRouterCount)
 	}
 }
