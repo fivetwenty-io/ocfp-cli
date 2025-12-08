@@ -188,7 +188,7 @@ func TestExecute_Success_STACKIT(t *testing.T) {
 	}
 
 	// Verify bastion was created
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Error("Expected bastion to be created")
 	}
@@ -243,7 +243,7 @@ func TestExecute_Success_AWS(t *testing.T) {
 	}
 
 	// Verify bastion was still created
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Error("Expected bastion to be created")
 	}
@@ -379,7 +379,7 @@ func TestExecute_FailsOnBastionCreation(t *testing.T) {
 	}
 
 	// Bastion should NOT be in state
-	bastion, _ := sm.GetResource("instance", "prod-bastion")
+	bastion, _ := sm.GetResource("compute_instance", "prod-bastion")
 	if bastion != nil {
 		t.Error("Bastion should not be in state after creation failure")
 	}
@@ -677,6 +677,7 @@ func TestFilterSteps_BastionOnly(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		Bastion:  true, // Only bastion
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -686,9 +687,9 @@ func TestFilterSteps_BastionOnly(t *testing.T) {
 	}
 
 	// Verify bastion was created
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
-		t.Error("Expected bastion to be created")
+		t.Errorf("Expected bastion to be created (err: %v)", err)
 	}
 
 	// Verify compute manager was called for bastion
@@ -716,6 +717,7 @@ func TestFilterSteps_NetworkOnly(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		Network:  true, // Only network resources
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -741,7 +743,7 @@ func TestFilterSteps_NetworkOnly(t *testing.T) {
 	}
 
 	// Verify bastion was NOT created
-	bastion, _ := sm.GetResource("instance", "prod-bastion")
+	bastion, _ := sm.GetResource("compute_instance", "prod-bastion")
 	if bastion != nil {
 		t.Error("Expected bastion NOT to be created with network-only flag")
 	}
@@ -765,6 +767,7 @@ func TestFilterSteps_ServersOnly(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		Servers:  true, // Only servers (bastion)
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -774,9 +777,9 @@ func TestFilterSteps_ServersOnly(t *testing.T) {
 	}
 
 	// Verify bastion was created
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
-		t.Error("Expected bastion to be created")
+		t.Errorf("Expected bastion to be created (err: %v)", err)
 	}
 
 	// Verify compute manager was called
@@ -801,7 +804,7 @@ func TestFilterSteps_ServersOnly(t *testing.T) {
 		t.Error("Expected volumes NOT to be created with servers-only flag")
 	}
 
-	buckets, _ := sm.GetResourcesByType("bucket")
+	buckets, _ := sm.GetResourcesByType("object_storage_bucket")
 	if len(buckets) > 0 {
 		t.Error("Expected buckets NOT to be created with servers-only flag")
 	}
@@ -815,6 +818,7 @@ func TestFilterSteps_VolumesOnly(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		Volumes:  true, // Only volumes
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -823,14 +827,15 @@ func TestFilterSteps_VolumesOnly(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	// Verify volumes were created
+	// TODO: Volume creation is now disabled (volumes never attached to bastion)
+	// Verify volumes were NOT created (volumes disabled)
 	volumes, _ := sm.GetResourcesByType("volume")
-	if len(volumes) == 0 {
-		t.Error("Expected volumes to be created")
+	if len(volumes) > 0 {
+		t.Error("Expected volumes NOT to be created (volume creation is now disabled)")
 	}
 
 	// Verify bastion was NOT created
-	bastion, _ := sm.GetResource("instance", "prod-bastion")
+	bastion, _ := sm.GetResource("compute_instance", "prod-bastion")
 	if bastion != nil {
 		t.Error("Expected bastion NOT to be created with volumes-only flag")
 	}
@@ -849,6 +854,7 @@ func TestFilterSteps_BucketsOnly(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		Buckets:  true, // Only buckets
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -858,13 +864,13 @@ func TestFilterSteps_BucketsOnly(t *testing.T) {
 	}
 
 	// Verify buckets were created
-	buckets, _ := sm.GetResourcesByType("bucket")
+	buckets, _ := sm.GetResourcesByType("object_storage_bucket")
 	if len(buckets) == 0 {
 		t.Error("Expected buckets to be created")
 	}
 
 	// Verify bastion was NOT created
-	bastion, _ := sm.GetResource("instance", "prod-bastion")
+	bastion, _ := sm.GetResource("compute_instance", "prod-bastion")
 	if bastion != nil {
 		t.Error("Expected bastion NOT to be created with buckets-only flag")
 	}
@@ -883,6 +889,7 @@ func TestFilterSteps_SecurityGroupsOnly(t *testing.T) {
 		Provider:       "stackit",
 		Region:         "eu01",
 		SecurityGroups: true, // Only security groups
+		Yes:            true, // Skip confirmation
 	})
 
 	// Pre-create network in state (security groups require existing network)
@@ -914,7 +921,7 @@ func TestFilterSteps_SecurityGroupsOnly(t *testing.T) {
 	}
 
 	// Verify bastion was NOT created
-	bastion, _ := sm.GetResource("instance", "prod-bastion")
+	bastion, _ := sm.GetResource("compute_instance", "prod-bastion")
 	if bastion != nil {
 		t.Error("Expected bastion NOT to be created with security-groups-only flag")
 	}
@@ -934,6 +941,7 @@ func TestFilterSteps_MultipleFlags_NetworkAndServers(t *testing.T) {
 		Region:   "eu01",
 		Network:  true, // Network resources
 		Servers:  true, // Server resources
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -959,7 +967,7 @@ func TestFilterSteps_MultipleFlags_NetworkAndServers(t *testing.T) {
 	}
 
 	// Verify bastion was created
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Error("Expected bastion to be created")
 	}
@@ -979,7 +987,7 @@ func TestFilterSteps_MultipleFlags_NetworkAndServers(t *testing.T) {
 		t.Error("Expected volumes NOT to be created with network+servers flags only")
 	}
 
-	buckets, _ := sm.GetResourcesByType("bucket")
+	buckets, _ := sm.GetResourcesByType("object_storage_bucket")
 	if len(buckets) > 0 {
 		t.Error("Expected buckets NOT to be created with network+servers flags only")
 	}
@@ -993,6 +1001,7 @@ func TestFilterSteps_AllFlag(t *testing.T) {
 		Provider: "stackit",
 		Region:   "eu01",
 		All:      true, // All resources
+		Yes:      true, // Skip confirmation
 	})
 
 	ctx := context.Background()
@@ -1022,12 +1031,12 @@ func TestFilterSteps_AllFlag(t *testing.T) {
 		t.Error("Expected public IPs to be created with --all flag")
 	}
 
-	bastion, err := sm.GetResource("instance", "prod-bastion")
+	bastion, err := sm.GetResource("compute_instance", "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Error("Expected bastion to be created with --all flag")
 	}
 
-	buckets, _ := sm.GetResourcesByType("bucket")
+	buckets, _ := sm.GetResourcesByType("object_storage_bucket")
 	if len(buckets) == 0 {
 		t.Error("Expected buckets to be created with --all flag")
 	}

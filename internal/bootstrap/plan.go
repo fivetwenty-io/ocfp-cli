@@ -186,20 +186,24 @@ func (m *Manager) setupBucketsPlan(plan *bootstrapPlan) {
 }
 
 func (m *Manager) setupVolumesPlan(plan *bootstrapPlan) {
-	rootDiskSize := m.config.Bastion.RootDiskSize
-	if rootDiskSize == 0 {
-		rootDiskSize = bastionRootDiskSize
-	}
+	// TODO: Volume creation disabled - volumes are never attached to bastion
+	// Both AWS and STACKIT handle volumes inline during instance creation
+	// (via BlockDeviceMappings for AWS and bootVolume for STACKIT)
+	plan.Volumes = []volumePreview{}
 
-	dataDiskSize := m.config.Bastion.DataDiskSize
-	if dataDiskSize == 0 {
-		dataDiskSize = bastionDataDiskSize
-	}
-
-	plan.Volumes = []volumePreview{
-		{Name: m.options.BlocName + "-bastion-root", SizeGB: rootDiskSize, Type: "gp3"},
-		{Name: m.options.BlocName + "-bastion-data", SizeGB: dataDiskSize, Type: "gp3"},
-	}
+	// Original code (disabled):
+	// rootDiskSize := m.config.Bastion.RootDiskSize
+	// if rootDiskSize == 0 {
+	// 	rootDiskSize = bastionRootDiskSize
+	// }
+	// dataDiskSize := m.config.Bastion.DataDiskSize
+	// if dataDiskSize == 0 {
+	// 	dataDiskSize = bastionDataDiskSize
+	// }
+	// plan.Volumes = []volumePreview{
+	// 	{Name: m.options.BlocName + "-bastion-root", SizeGB: rootDiskSize, Type: "gp3"},
+	// 	{Name: m.options.BlocName + "-bastion-data", SizeGB: dataDiskSize, Type: "gp3"},
+	// }
 }
 
 func (m *Manager) setupKeypairPlan(plan *bootstrapPlan) {

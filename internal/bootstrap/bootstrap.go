@@ -93,7 +93,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		{"Create Security Groups", m.CreateSecurityGroups, "security", true},
 		{"Create Public IPs", m.CreatePublicIPs, "network", false},
 		{"Create Key Pair", m.createKeyPair, "servers", true},
-		{"Create Volumes", m.createVolumes, "volumes", false},
+		// {"Create Volumes", m.createVolumes, "volumes", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
 		{"Create Buckets", m.CreateBuckets, "buckets", false},
 	}
