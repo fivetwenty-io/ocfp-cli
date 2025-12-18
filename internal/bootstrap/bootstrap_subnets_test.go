@@ -728,7 +728,7 @@ func createOcfpTripleConfig() *config.Config {
 		Blobstore:         createEmptyBlobstoreConfig(),
 		DNS:               []string{},
 		AZs:               map[string]config.AvailabilityZone{},
-		FQDNs:             map[string]interface{}{},
+		FQDNs:             &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}},
 		S3:                map[string]string{},
 		AllowedIngressIPs: []string{},
 		Subnets:           []config.Subnet{},

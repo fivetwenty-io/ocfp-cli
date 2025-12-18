@@ -2027,11 +2027,11 @@ func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan
 
 		if err != nil {
 			// Include stderr in error message so error classification can detect permission issues
-			errMsg := fmt.Sprintf("git op failed for %s: %w", job.name, err)
 			if result != nil && result.Stderr != "" {
-				errMsg = fmt.Sprintf("git op failed for %s: %v (stderr: %s)", job.name, err, result.Stderr)
+				errs <- fmt.Errorf("git op failed for %s: %w (stderr: %s)", job.name, err, result.Stderr)
+			} else {
+				errs <- fmt.Errorf("git op failed for %s: %w", job.name, err)
 			}
-			errs <- fmt.Errorf(errMsg)
 		} else {
 			errs <- nil
 		}

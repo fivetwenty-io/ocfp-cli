@@ -171,8 +171,8 @@ func TestConfigureFQDNs_MgmtFiltering(t *testing.T) {
 		Name:     "test-bloc",
 		Provider: "stackit",
 		Region:   "eu01",
-		FQDNs: map[string]interface{}{
-			MgmtEnvType: map[string]interface{}{
+		FQDNs: &config.FQDNConfig{
+			Mgmt: map[string]string{
 				// CF systems - should be filtered out
 				"cf":               "cf.example.com",
 				"cloud_controller": "api.example.com",
@@ -193,7 +193,7 @@ func TestConfigureFQDNs_MgmtFiltering(t *testing.T) {
 	safe := newMockSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-	err := provider.ConfigureFQDNs("", MgmtEnvType)
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
 	require.NoError(t, err)
 
 	// Verify CF systems were filtered out
@@ -226,8 +226,8 @@ func TestConfigureFQDNs_OCFNoFiltering(t *testing.T) {
 		Name:     "test-bloc",
 		Provider: "stackit",
 		Region:   "eu01",
-		FQDNs: map[string]interface{}{
-			OCFEnvType: map[string]interface{}{
+		FQDNs: &config.FQDNConfig{
+			OCF: map[string]string{
 				// CF systems - should be kept for OCF
 				"cf":               "cf.example.com",
 				"cloud_controller": "api.example.com",
@@ -246,7 +246,7 @@ func TestConfigureFQDNs_OCFNoFiltering(t *testing.T) {
 	safe := newMockSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-	err := provider.ConfigureFQDNs("", OCFEnvType)
+	err := provider.ConfigureFQDNs("", OCFEnvType, nil, 1, 1)
 	require.NoError(t, err)
 
 	// Verify ALL systems were kept (no filtering)
@@ -271,114 +271,138 @@ func TestConfigureFQDNs_OCFNoFiltering(t *testing.T) {
 	assert.Equal(t, "shield.example.com", storedData["shield"])
 }
 
-// TestConfigureFQDNs_ShieldGeneration verifies shield FQDN is generated for OCF if missing.
-func TestConfigureFQDNs_ShieldGeneration(t *testing.T) {
+// TestConfigureFQDNs_BaseFQDNDerivation verifies FQDN derivation from base domain.
+func TestConfigureFQDNs_BaseFQDNDerivation(t *testing.T) {
 	tests := []struct {
 		name           string
-		domainName     string
-		inputFQDNs     map[string]interface{}
+		base           string
+		explicitOCF    map[string]string
 		expectedShield string
+		expectedCF     string
 	}{
 		{
-			name:       "with DomainName",
-			domainName: "test.stackit.cloud",
-			inputFQDNs: map[string]interface{}{
-				"cf":  "cf.test.stackit.cloud",
-				"uaa": "uaa.test.stackit.cloud",
-				// no shield
-			},
+			name:           "derive from base",
+			base:           "test.stackit.cloud",
+			explicitOCF:    map[string]string{},
 			expectedShield: "shield.test.stackit.cloud",
+			expectedCF:     "cf.test.stackit.cloud",
 		},
 		{
-			name:       "without DomainName - use default",
-			domainName: "",
-			inputFQDNs: map[string]interface{}{
-				"cf":  "cf.example.com",
-				"uaa": "uaa.example.com",
-				// no shield
+			name: "explicit overrides base",
+			base: "test.stackit.cloud",
+			explicitOCF: map[string]string{
+				"shield": "custom-shield.example.com",
 			},
-			expectedShield: "shield.example.com",
+			expectedShield: "custom-shield.example.com",
+			expectedCF:     "cf.test.stackit.cloud",
 		},
 		{
-			name:       "shield already exists - don't override",
-			domainName: "test.stackit.cloud",
-			inputFQDNs: map[string]interface{}{
-				"cf":     "cf.test.stackit.cloud",
-				"shield": "custom-shield.test.stackit.cloud",
+			name: "all explicit, no derivation needed",
+			base: "",
+			explicitOCF: map[string]string{
+				"cf":     "cf.explicit.com",
+				"shield": "shield.explicit.com",
 			},
-			expectedShield: "custom-shield.test.stackit.cloud",
+			expectedShield: "shield.explicit.com",
+			expectedCF:     "cf.explicit.com",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Name:       "test-bloc",
-				Provider:   "stackit",
-				Region:     "eu01",
-				DomainName: tt.domainName,
-				FQDNs: map[string]interface{}{
-					OCFEnvType: tt.inputFQDNs,
+				Name:     "test-bloc",
+				Provider: "stackit",
+				Region:   "eu01",
+				FQDNs: &config.FQDNConfig{
+					Base: tt.base,
+					OCF:  tt.explicitOCF,
 				},
 			}
 
 			safe := newMockSafe()
 			provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-			err := provider.ConfigureFQDNs("", OCFEnvType)
+			err := provider.ConfigureFQDNs("", OCFEnvType, nil, 1, 1)
 			require.NoError(t, err)
 
-			// Verify shield FQDN
 			fqdnPath := provider.PathBuilder.GetFQDNsPath(OCFEnvType)
 			storedData, _ := safe.GetAll(fqdnPath)
-			require.NotNil(t, storedData, "FQDNs should be stored")
 
-			assert.Contains(t, storedData, "shield", "shield FQDN should exist")
-			assert.Equal(t, tt.expectedShield, storedData["shield"])
+			if tt.base != "" || len(tt.explicitOCF) > 0 {
+				require.NotNil(t, storedData, "FQDNs should be stored")
+				assert.Equal(t, tt.expectedShield, storedData["shield"])
+				assert.Equal(t, tt.expectedCF, storedData["cf"])
+			}
 		})
 	}
 }
 
-// TestConfigureFQDNs_MgmtNoShieldGeneration verifies shield is NOT generated for mgmt.
-func TestConfigureFQDNs_MgmtNoShieldGeneration(t *testing.T) {
+// TestConfigureFQDNs_BaseFQDNStoredAtSharedPath verifies base FQDN is stored at shared path.
+func TestConfigureFQDNs_BaseFQDNStoredAtSharedPath(t *testing.T) {
 	cfg := &config.Config{
-		Name:       "test-bloc",
-		Provider:   "stackit",
-		Region:     "eu01",
-		DomainName: "test.stackit.cloud",
-		FQDNs: map[string]interface{}{
-			MgmtEnvType: map[string]interface{}{
-				"vault":      "vault.test.stackit.cloud",
-				"prometheus": "prometheus.test.stackit.cloud",
-				// no shield
-			},
+		Name:     "test-bloc",
+		Provider: "stackit",
+		Region:   "eu01",
+		FQDNs: &config.FQDNConfig{
+			Base: "example.com",
+			Mgmt: map[string]string{},
 		},
 	}
 
 	safe := newMockSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-	err := provider.ConfigureFQDNs("", MgmtEnvType)
+	// Base is only stored on first env type (mgmt)
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 2)
 	require.NoError(t, err)
 
-	// Verify shield was NOT generated for mgmt
-	fqdnPath := provider.PathBuilder.GetFQDNsPath(MgmtEnvType)
-	storedData, _ := safe.GetAll(fqdnPath)
-	require.NotNil(t, storedData, "FQDNs should be stored")
+	// Verify base FQDN was stored at shared path
+	basePath := provider.PathBuilder.GetBaseFQDNPath()
+	baseData, _ := safe.GetAll(basePath)
+	require.NotNil(t, baseData, "Base FQDN should be stored")
+	assert.Equal(t, "example.com", baseData["value"])
+}
 
-	assert.NotContains(t, storedData, "shield", "shield should NOT be auto-generated for mgmt")
+// TestConfigureFQDNs_PrePopulatesAllKnownServices verifies all known services are pre-populated.
+func TestConfigureFQDNs_PrePopulatesAllKnownServices(t *testing.T) {
+	cfg := &config.Config{
+		Name:     "test-bloc",
+		Provider: "stackit",
+		Region:   "eu01",
+		FQDNs: &config.FQDNConfig{
+			Base: "example.com",
+			OCF:  map[string]string{}, // Empty explicit, rely on base derivation
+		},
+	}
+
+	safe := newMockSafe()
+	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
+
+	err := provider.ConfigureFQDNs("", OCFEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	fqdnPath := provider.PathBuilder.GetFQDNsPath(OCFEnvType)
+	storedData, _ := safe.GetAll(fqdnPath)
+	require.NotNil(t, storedData)
+
+	// Verify all OCF services are populated
+	for _, service := range OCFServices {
+		assert.Contains(t, storedData, service, "Service %s should be pre-populated", service)
+		expectedFQDN := service + ".example.com"
+		assert.Equal(t, expectedFQDN, storedData[service], "Service %s should have derived FQDN", service)
+	}
 }
 
 // TestConfigureFQDNs_EmptyFQDNs verifies handling of empty FQDN configs.
 func TestConfigureFQDNs_EmptyFQDNs(t *testing.T) {
 	tests := []struct {
 		name    string
-		fqdns   map[string]interface{}
+		fqdns   *config.FQDNConfig
 		envType string
 	}{
 		{"nil FQDNs", nil, MgmtEnvType},
-		{"empty FQDNs map", map[string]interface{}{}, MgmtEnvType},
-		{"env not in FQDNs", map[string]interface{}{"other": map[string]interface{}{}}, MgmtEnvType},
+		{"empty FQDNConfig", &config.FQDNConfig{}, MgmtEnvType},
 	}
 
 	for _, tt := range tests {
@@ -393,7 +417,7 @@ func TestConfigureFQDNs_EmptyFQDNs(t *testing.T) {
 			safe := newMockSafe()
 			provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-			err := provider.ConfigureFQDNs("", tt.envType)
+			err := provider.ConfigureFQDNs("", tt.envType, nil, 1, 1)
 			require.NoError(t, err)
 
 			// Should not have stored anything
@@ -404,33 +428,30 @@ func TestConfigureFQDNs_EmptyFQDNs(t *testing.T) {
 	}
 }
 
-// TestConfigureFQDNs_OriginalConfigUnmodified verifies original config is not modified.
-func TestConfigureFQDNs_OriginalConfigUnmodified(t *testing.T) {
-	originalFQDNs := map[string]interface{}{
-		"cf":     "cf.example.com",
-		"uaa":    "uaa.example.com",
-		"shield": "shield.example.com",
-		"vault":  "vault.example.com",
-	}
-
+// TestConfigureFQDNs_FallbackToDomainName verifies fallback to DomainName when base not set.
+func TestConfigureFQDNs_FallbackToDomainName(t *testing.T) {
 	cfg := &config.Config{
-		Name:     "test-bloc",
-		Provider: "stackit",
-		Region:   "eu01",
-		FQDNs: map[string]interface{}{
-			MgmtEnvType: originalFQDNs,
+		Name:       "test-bloc",
+		Provider:   "stackit",
+		Region:     "eu01",
+		DomainName: "domain.example.com",
+		FQDNs: &config.FQDNConfig{
+			// No Base set, should fallback to DomainName
+			OCF: map[string]string{},
 		},
 	}
 
 	safe := newMockSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-	err := provider.ConfigureFQDNs("", MgmtEnvType)
+	err := provider.ConfigureFQDNs("", OCFEnvType, nil, 1, 1)
 	require.NoError(t, err)
 
-	// Verify original config map was not modified
-	envFQDNs := cfg.FQDNs[MgmtEnvType].(map[string]interface{})
-	assert.Contains(t, envFQDNs, "cf", "Original config should still contain CF entries")
-	assert.Contains(t, envFQDNs, "uaa", "Original config should still contain CF entries")
-	assert.Equal(t, 4, len(envFQDNs), "Original config should have all 4 entries")
+	fqdnPath := provider.PathBuilder.GetFQDNsPath(OCFEnvType)
+	storedData, _ := safe.GetAll(fqdnPath)
+	require.NotNil(t, storedData)
+
+	// Should derive from DomainName
+	assert.Equal(t, "shield.domain.example.com", storedData["shield"])
+	assert.Equal(t, "cf.domain.example.com", storedData["cf"])
 }

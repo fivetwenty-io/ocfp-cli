@@ -193,6 +193,12 @@ func (pb *PathBuilder) GetFQDNsPath(envType string) string {
 	return filepath.Join(pb.GetEnvironmentPath(envType), "fqdns")
 }
 
+// GetBaseFQDNPath returns the shared base FQDN path
+// Format: secret/config/{bloc}/fqdns/base.
+func (pb *PathBuilder) GetBaseFQDNPath() string {
+	return filepath.Join(pb.GetConfigPath(), "fqdns", "base")
+}
+
 // GetPublicIPsPath returns the public IPs path
 // Format: secret/config/{bloc}/ocf/public-ips.
 func (pb *PathBuilder) GetPublicIPsPath() string {

@@ -15,6 +15,7 @@ func TestBuildSecurityGroupMapping(t *testing.T) {
 		BaseVaultProvider: &providers.BaseVaultProvider{
 			BlocName: "test-bloc",
 		},
+		logger: logger.Get(),
 	}
 
 	sgMapping := provider.buildSecurityGroupMapping()
@@ -200,6 +201,7 @@ func TestFindSecurityGroup_NotFound(t *testing.T) {
 			Config:   &config.Config{},
 			BlocName: "test-bloc",
 		},
+		logger: logger.Get(),
 	}
 
 	// No state manager - should return nil gracefully
@@ -221,7 +223,7 @@ func TestConfigureSecurityGroups_Integration(t *testing.T) {
 	}
 
 	// Run configuration (will skip SGs not found in state - that's OK)
-	err := provider.configureSecurityGroups("mgmt")
+	err := provider.configureSecurityGroups("mgmt", nil, 1, 1)
 
 	// Should not error even when SGs are not found
 	assert.NoError(t, err, "Should handle missing SGs gracefully")

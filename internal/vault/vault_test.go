@@ -340,10 +340,10 @@ func runStackitProviderTests(t *testing.T, provider *vault.StackitVaultProvider)
 
 	assert.Equal(t, "stackit", provider.GetProviderName())
 
-	err := provider.SaveConfigToVault()
+	err := provider.SaveConfigToVault(nil, 1, 1)
 	require.NoError(t, err)
 
-	err = provider.ConfigurePublicIPs()
+	err = provider.ConfigurePublicIPs(nil, 1, 1)
 	require.NoError(t, err)
 }
 
@@ -508,10 +508,10 @@ func TestConfigCompressionFormat(t *testing.T) {
 			switch tt.provider {
 			case "stackit":
 				stackitProvider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
-				err = stackitProvider.SaveConfigToVault()
+				err = stackitProvider.SaveConfigToVault(nil, 1, 1)
 			case "aws":
 				awsProvider := vault.NewAWSVaultProvider(cfg, mockSafe, "test-bloc")
-				err = awsProvider.SaveConfigToVault()
+				err = awsProvider.SaveConfigToVault(nil, 1, 1)
 			}
 
 			require.NoError(t, err)
@@ -572,7 +572,7 @@ func TestCompressionLevel(t *testing.T) {
 	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
 	provider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
 
-	err := provider.SaveConfigToVault()
+	err := provider.SaveConfigToVault(nil, 1, 1)
 	require.NoError(t, err)
 
 	// Get the stored config
@@ -629,7 +629,7 @@ func TestErrorHandlingInCompression(t *testing.T) {
 	mockSafe := &MockSafe{data: make(map[string]map[string]interface{})}
 	provider := vault.NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
 
-	err := provider.SaveConfigToVault()
+	err := provider.SaveConfigToVault(nil, 1, 1)
 	require.NoError(t, err, "SaveConfigToVault should succeed with valid config")
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,7 @@ func TestContract_SubnetStructure_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	networkInfo := &subnetNetworkInfo{
@@ -158,6 +160,7 @@ func TestContract_SecurityGroups_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	t.Run("all_8_security_groups_defined", func(t *testing.T) {
@@ -258,7 +261,9 @@ func TestContract_AZFormat_PerlCompatibility(t *testing.T) {
 
 // TestContract_ReservedIPs_PerlCompatibility verifies IP allocation matches Perl.
 func TestContract_ReservedIPs_PerlCompatibility(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{
+		logger: logger.Get(),
+	}
 	assignments := getDefaultReservedIPAssignments()
 
 	// Perl contract: Specific IP offsets for each environment
@@ -410,20 +415,21 @@ func TestContract_FQDNFiltering_PerlCompatibility(t *testing.T) {
 		safe := newMockFullSafe()
 		provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-		cfg.FQDNs = map[string]interface{}{
-			"ocf": map[string]interface{}{
+		cfg.FQDNs = &config.FQDNConfig{
+			Base: "test.stackit.cloud",
+			OCF: map[string]string{
 				"cf": "cf.test.stackit.cloud",
-				// No shield - should be generated
+				// No shield - should be derived from base
 			},
 		}
 
-		err := provider.ConfigureFQDNs("", "ocf")
+		err := provider.ConfigureFQDNs("", "ocf", nil, 1, 1)
 		require.NoError(t, err)
 
 		fqdnPath := provider.PathBuilder.GetFQDNsPath("ocf")
 		data, _ := safe.GetAll(fqdnPath)
 
-		// Perl auto-generates shield for OCF
+		// Shield should be derived from base as shield.{base}
 		assert.Contains(t, data, "shield")
 		assert.Equal(t, "shield.test.stackit.cloud", data["shield"])
 	})
@@ -465,6 +471,7 @@ func TestContract_PublicIPKeys_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	// Perl formats: {job}_{index}
@@ -547,6 +554,7 @@ func TestContract_VirtualSubnetFlag_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	networkInfo := &subnetNetworkInfo{
@@ -581,6 +589,7 @@ func TestContract_SubnetNumbering_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	networkInfo := &subnetNetworkInfo{
@@ -624,6 +633,7 @@ func TestContract_ProviderTypeFields_PerlCompatibility(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	networkInfo := &subnetNetworkInfo{

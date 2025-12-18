@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
 )
@@ -22,6 +23,7 @@ func TestBuildSubnetDataContainsAllRequiredFields(t *testing.T) {
 			Config:   cfg,
 			BlocName: "test-bloc",
 		},
+		logger: logger.Get(),
 	}
 
 	// Create test network info
@@ -78,6 +80,7 @@ func TestBuildSubnetDataReservedSubnetNoVirtualFlag(t *testing.T) {
 			Config:   cfg,
 			BlocName: "test-bloc",
 		},
+		logger: logger.Get(),
 	}
 
 	networkInfo := &subnetNetworkInfo{
@@ -100,6 +103,7 @@ func TestCalculateNetworkPrefix(t *testing.T) {
 		BaseVaultProvider: &providers.BaseVaultProvider{
 			Config: cfg,
 		},
+		logger: logger.Get(),
 	}
 
 	tests := []struct {
@@ -144,6 +148,7 @@ func TestGetNetworkIDFromStateReturnsEmptyWhenNoState(t *testing.T) {
 			Config:   cfg,
 			BlocName: "test-bloc",
 		},
+		logger: logger.Get(),
 	}
 
 	// When no state manager exists, should return empty string
