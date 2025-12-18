@@ -11,7 +11,6 @@ import (
 // Provider implementation errors.
 var (
 	ErrAzureProviderNotImplemented     = errors.New("azure provider not fully implemented")
-	ErrGCPProviderNotImplemented       = errors.New("GCP provider not fully implemented")
 	ErrOpenStackProviderNotImplemented = errors.New("OpenStack provider not fully implemented")
 	ErrVMwareProviderNotImplemented    = errors.New("VMware provider not fully implemented")
 )
@@ -45,31 +44,7 @@ func (a *AzureBastionInit) Initialize(ctx context.Context) error {
 	return ErrAzureProviderNotImplemented
 }
 
-// GCPBastionInit implements bastion initialization for GCP.
-type GCPBastionInit struct {
-	config *config.Config
-	log    logger.Logger
-}
-
-func NewGCPBastionInit(cfg *config.Config) *GCPBastionInit {
-	return &GCPBastionInit{config: cfg, log: logger.Get()}
-}
-
-func (g *GCPBastionInit) Validate() error {
-	return ErrGCPProviderNotImplemented
-}
-
-func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
-	return map[string]string{"OCFP_PROVIDER": "gcp"}
-}
-
-func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
-	return nil, ErrGCPProviderNotImplemented
-}
-
-func (g *GCPBastionInit) Initialize(ctx context.Context) error {
-	return ErrGCPProviderNotImplemented
-}
+// NOTE: GCPBastionInit is implemented in gcp.go
 
 // OpenStackBastionInit implements bastion initialization for OpenStack.
 type OpenStackBastionInit struct {

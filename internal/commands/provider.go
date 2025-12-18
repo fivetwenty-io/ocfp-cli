@@ -815,13 +815,62 @@ func loginOpenStack(log *zap.Logger) error {
 }
 
 func loginGCP(log *zap.Logger) error {
-	log.Warn("GCP provider login not implemented yet")
+	log.Info("Setting up GCP authentication")
 
-	_, _ = fmt.Fprintln(os.Stdout, "GCP provider login not implemented yet")
-	_, _ = fmt.Fprintln(os.Stdout, "\nGCP authentication typically uses:")
-	_, _ = fmt.Fprintln(os.Stdout, "  - gcloud auth login")
-	_, _ = fmt.Fprintln(os.Stdout, "  - Service account key files")
-	_, _ = fmt.Fprintln(os.Stdout, "  - Application default credentials")
+	// Check for service account credentials
+	credPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credPath == "" {
+		// Try to get from config
+		configFile := viper.GetString("config")
+		blocName := viper.GetString("bloc")
+		cfg, err := config.LoadWithParams(configFile, blocName)
+		if err == nil && cfg != nil {
+			if cfg.ServiceAccountKeyPath != "" {
+				credPath = cfg.ServiceAccountKeyPath
+			} else if cfg.ServiceAccountJSON != "" {
+				// Write inline JSON to temp file and set env
+				tmpFile, err := os.CreateTemp("", "gcp-credentials-*.json")
+				if err != nil {
+					return fmt.Errorf("failed to create temp credentials file: %w", err)
+				}
+				if _, err := tmpFile.WriteString(cfg.ServiceAccountJSON); err != nil {
+					return fmt.Errorf("failed to write credentials file: %w", err)
+				}
+				tmpFile.Close()
+				credPath = tmpFile.Name()
+				log.Info("Created temporary credentials file", zap.String("path", credPath))
+			}
+		}
+	}
+
+	if credPath != "" {
+		// Set environment variable for GCP SDK
+		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credPath)
+		log.Info("Using service account credentials", zap.String("path", credPath))
+
+		// Try to activate using gcloud if available
+		if _, err := exec.LookPath("gcloud"); err == nil {
+			cmd := exec.Command("gcloud", "auth", "activate-service-account", "--key-file", credPath)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Warn("gcloud auth failed (may not be required)", zap.Error(err), zap.String("output", string(output)))
+			} else {
+				log.Info("Activated service account with gcloud")
+				_, _ = fmt.Fprintln(os.Stdout, "GCP service account activated successfully")
+			}
+		}
+
+		_, _ = fmt.Fprintln(os.Stdout, "GCP credentials configured")
+		_, _ = fmt.Fprintf(os.Stdout, "  GOOGLE_APPLICATION_CREDENTIALS=%s\n", credPath)
+		return nil
+	}
+
+	// No service account found, provide guidance
+	_, _ = fmt.Fprintln(os.Stdout, "GCP authentication not configured")
+	_, _ = fmt.Fprintln(os.Stdout, "\nTo configure GCP authentication:")
+	_, _ = fmt.Fprintln(os.Stdout, "  1. Set GOOGLE_APPLICATION_CREDENTIALS to your service account key file")
+	_, _ = fmt.Fprintln(os.Stdout, "  2. Or configure service_account_key_path in your OCFP config")
+	_, _ = fmt.Fprintln(os.Stdout, "  3. Or run: gcloud auth application-default login")
 
 	return nil
 }

@@ -984,8 +984,7 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("azure", m.config, m.safe, m.blocName), nil
 	case "gcp":
-		// Placeholder - return a not-implemented provider
-		return providers.NewPlaceholderProvider("gcp", m.config, m.safe, m.blocName), nil
+		return NewGCPVaultProvider(m.config, m.safe, m.blocName), nil
 	case "vmware":
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("vmware", m.config, m.safe, m.blocName), nil
