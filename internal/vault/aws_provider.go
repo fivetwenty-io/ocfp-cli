@@ -220,36 +220,114 @@ func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter 
 }
 
 // ConfigureFQDNs configures fully qualified domain names (AWS Route53).
+// It supports a base FQDN that is used to derive service FQDNs when not explicitly set.
+// The base FQDN is stored at a shared path, while environment-specific FQDNs are stored
+// under their respective environment paths.
 func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring FQDNs", "env_type", envType)
 
-	// Get FQDNs from configuration
-	if a.Config.FQDNs == nil {
+	// Get FQDNs configuration
+	fqdnConfig := a.Config.FQDNs
+	if fqdnConfig == nil {
 		a.logger.Info("No FQDNs configured")
 
 		return nil
 	}
 
-	envFQDNs, exists := a.Config.FQDNs[envType]
-	if !exists {
-		a.logger.Infow("No FQDNs configured for environment", "env_type", envType)
+	// Store base FQDN at shared path if configured (only do this once, for first env type)
+	if fqdnConfig.Base != "" && envType == MgmtEnvType {
+		basePath := a.PathBuilder.GetBaseFQDNPath()
+		err := a.Safe.Set(basePath, "value", fqdnConfig.Base)
+		if err != nil {
+			return fmt.Errorf("failed to set base FQDN: %w", err)
+		}
+		a.logger.Infow("Stored base FQDN", "path", basePath, "base", fqdnConfig.Base)
+	}
+
+	// Get explicit FQDNs for this environment
+	var explicit map[string]string
+	switch envType {
+	case MgmtEnvType:
+		explicit = fqdnConfig.Mgmt
+	case OCFEnvType:
+		explicit = fqdnConfig.OCF
+	}
+
+	// Get base FQDN for derivation (fallback to DomainName if not set)
+	base := fqdnConfig.Base
+	if base == "" {
+		base = a.Config.DomainName
+	}
+
+	// If no base and no explicit FQDNs, nothing to do
+	if base == "" && len(explicit) == 0 {
+		a.logger.Infow("No base FQDN or explicit FQDNs configured for environment", "env_type", envType)
 
 		return nil
 	}
 
-	fqdnPath := a.PathBuilder.GetFQDNsPath(envType)
+	// Pre-populate all known services for this environment
+	fqdns := PopulateFQDNsForEnv(envType, explicit, base)
 
-	data, ok := envFQDNs.(map[string]interface{})
-	if !ok {
-		return ErrInvalidFQDNsConfigType(envType, envFQDNs)
+	// For mgmt environment, skip CF-related FQDNs (same as STACKIT)
+	if envType == MgmtEnvType {
+		for system := range fqdns {
+			if a.shouldSkipCFForEnvType(envType, system) {
+				delete(fqdns, system)
+				a.logger.Debugw("Skipped CF-related FQDN for mgmt environment", "system", system)
+			}
+		}
 	}
 
-	err := a.Safe.SetMultiple(fqdnPath, data)
-	if err != nil {
-		return fmt.Errorf("failed to set FQDNs: %w", err)
+	// Only write to vault if we have FQDNs to write
+	if len(fqdns) > 0 {
+		fqdnPath := a.PathBuilder.GetFQDNsPath(envType)
+
+		err := a.Safe.SetMultiple(fqdnPath, fqdns)
+		if err != nil {
+			return fmt.Errorf("failed to set FQDNs: %w", err)
+		}
+
+		a.logger.Infow("Stored FQDNs for environment", "env_type", envType, "count", len(fqdns))
 	}
 
 	return nil
+}
+
+// shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
+func (a *AWSVaultProvider) shouldSkipCFForEnvType(envType, system string) bool {
+	// Only skip CF systems for mgmt environment
+	if envType != MgmtEnvType {
+		return false
+	}
+
+	// CF-specific systems that should be skipped in mgmt
+	cfSystems := map[string]bool{
+		"cf":               true,
+		"cloud_controller": true,
+		"api":              true,
+		"uaa":              true,
+		"diego":            true,
+		"credhub":          true,
+		"loggregator":      true,
+		"router":           true,
+		"doppler":          true,
+		"log-api":          true,
+		"syslog-scheduler": true,
+	}
+
+	// Direct match
+	if cfSystems[system] {
+		return true
+	}
+
+	// Pattern match: cf- prefix or -cf suffix (with - or _ separator)
+	if strings.HasPrefix(system, "cf-") || strings.HasPrefix(system, "cf_") ||
+		strings.HasSuffix(system, "-cf") || strings.HasSuffix(system, "_cf") {
+		return true
+	}
+
+	return false
 }
 
 // ConfigureIAAS configures IaaS-specific settings (AWS VPC, Subnets, Security Groups).

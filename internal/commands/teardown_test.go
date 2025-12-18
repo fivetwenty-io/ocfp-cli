@@ -169,7 +169,7 @@ func createTestConfigForCredentials() *config.Config {
 		SSHKeyStorageDir:      "",
 		Routers:               config.ComponentConfig{}, //nolint:exhaustruct // Test config using zero values
 		Cells:                 config.ComponentConfig{}, //nolint:exhaustruct // Test config using zero values
-		FQDNs:                 map[string]interface{}{},
+		FQDNs:                 &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}},
 		S3:                    map[string]string{},
 		AllowedIngressIPs:     []string{},
 		Type:                  "",

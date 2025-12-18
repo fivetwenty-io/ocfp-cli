@@ -35,7 +35,7 @@ func TestConfigureNetwork_WithAPIFields(t *testing.T) {
 
 	// Test without API (basic fields only)
 	t.Run("BasicFieldsWithoutAPI", func(t *testing.T) {
-		err := provider.configureNetwork("mgmt")
+		err := provider.configureNetwork("mgmt", nil, 1, 1)
 		assert.NoError(t, err)
 
 		// Verify basic fields were set
@@ -85,7 +85,7 @@ func TestConfigureNetwork_FieldCompleteness(t *testing.T) {
 
 	provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
 
-	err := provider.configureNetwork("ocf")
+	err := provider.configureNetwork("ocf", nil, 1, 1)
 	assert.NoError(t, err)
 
 	// Verify all basic required fields present
@@ -161,7 +161,7 @@ func TestConfigureNetwork_GracefulDegradation(t *testing.T) {
 	provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
 
 	// Should not fail even if API call fails (graceful degradation)
-	err := provider.configureNetwork("mgmt")
+	err := provider.configureNetwork("mgmt", nil, 1, 1)
 	assert.NoError(t, err, "Should gracefully handle API failure")
 }
 
@@ -214,7 +214,7 @@ func TestConfigureNetwork_DNSStringConversion(t *testing.T) {
 
 			provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
 
-			err := provider.configureNetwork("mgmt")
+			err := provider.configureNetwork("mgmt", nil, 1, 1)
 			assert.NoError(t, err)
 
 			// Verify DNS was stored as string

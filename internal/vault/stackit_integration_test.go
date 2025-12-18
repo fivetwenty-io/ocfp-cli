@@ -160,19 +160,20 @@ func TestIntegration_PathStructure_AllPathsUseCorrectFormat(t *testing.T) {
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
 	// Configure FQDNs to generate vault paths
-	cfg.FQDNs = map[string]interface{}{
-		"mgmt": map[string]interface{}{
+	cfg.FQDNs = &config.FQDNConfig{
+		Base: "example.com",
+		Mgmt: map[string]string{
 			"shield": "shield.example.com",
 		},
-		"ocf": map[string]interface{}{
+		OCF: map[string]string{
 			"shield": "shield.example.com",
 		},
 	}
 
-	err := provider.ConfigureFQDNs("", "mgmt")
+	err := provider.ConfigureFQDNs("", "mgmt", nil, 1, 2)
 	require.NoError(t, err)
 
-	err = provider.ConfigureFQDNs("", "ocf")
+	err = provider.ConfigureFQDNs("", "ocf", nil, 2, 2)
 	require.NoError(t, err)
 
 	// Verify net/ paths (NOT vpc/)
@@ -439,8 +440,8 @@ func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 		safe := newMockFullSafe()
 		provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-		cfg.FQDNs = map[string]interface{}{
-			"mgmt": map[string]interface{}{
+		cfg.FQDNs = &config.FQDNConfig{
+			Mgmt: map[string]string{
 				"cf":         "cf.example.com",
 				"uaa":        "uaa.example.com",
 				"router":     "router.example.com",
@@ -449,7 +450,7 @@ func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 			},
 		}
 
-		err := provider.ConfigureFQDNs("", "mgmt")
+		err := provider.ConfigureFQDNs("", "mgmt", nil, 1, 1)
 		require.NoError(t, err)
 
 		fqdnPath := provider.PathBuilder.GetFQDNsPath("mgmt")
@@ -470,17 +471,18 @@ func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 		safe := newMockFullSafe()
 		provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-		cfg.FQDNs = map[string]interface{}{
-			"ocf": map[string]interface{}{
+		cfg.FQDNs = &config.FQDNConfig{
+			Base: "test.stackit.cloud",
+			OCF: map[string]string{
 				"cf":         "cf.test.stackit.cloud",
 				"uaa":        "uaa.test.stackit.cloud",
 				"router":     "router.test.stackit.cloud",
 				"prometheus": "prometheus.test.stackit.cloud",
-				// No shield - should be auto-generated
+				// No shield - should be derived from base
 			},
 		}
 
-		err := provider.ConfigureFQDNs("", "ocf")
+		err := provider.ConfigureFQDNs("", "ocf", nil, 1, 1)
 		require.NoError(t, err)
 
 		fqdnPath := provider.PathBuilder.GetFQDNsPath("ocf")
@@ -501,7 +503,9 @@ func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 
 // TestIntegration_ReservedIPs_MgmtVsOCF verifies reserved IP calculations.
 func TestIntegration_ReservedIPs_MgmtVsOCF(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{
+		logger: logger.Get(),
+	}
 	assignments := getDefaultReservedIPAssignments()
 
 	t.Run("mgmt_subnet0_offsets", func(t *testing.T) {
@@ -644,13 +648,13 @@ func TestIntegration_ErrorHandling_GracefulDegradation(t *testing.T) {
 
 	t.Run("missing_security_groups_no_error", func(t *testing.T) {
 		// Configure SGs with no state - should not error
-		err := provider.configureSecurityGroups("mgmt")
+		err := provider.configureSecurityGroups("mgmt", nil, 1, 1)
 		assert.NoError(t, err, "Should handle missing SGs gracefully")
 	})
 
 	t.Run("empty_fqdns_no_error", func(t *testing.T) {
 		cfg.FQDNs = nil
-		err := provider.ConfigureFQDNs("", "mgmt")
+		err := provider.ConfigureFQDNs("", "mgmt", nil, 1, 1)
 		assert.NoError(t, err, "Should handle empty FQDNs gracefully")
 	})
 
@@ -676,13 +680,14 @@ func TestIntegration_FullVaultPopulate_EndToEnd(t *testing.T) {
 		Network: config.NetworkConfig{
 			CIDR: "10.0.0.0/16",
 		},
-		FQDNs: map[string]interface{}{
-			"mgmt": map[string]interface{}{
+		FQDNs: &config.FQDNConfig{
+			Base: "test.stackit.cloud",
+			Mgmt: map[string]string{
 				"shield":     "shield.example.com",
 				"prometheus": "prometheus.example.com",
 				"cf":         "cf.example.com", // Should be filtered
 			},
-			"ocf": map[string]interface{}{
+			OCF: map[string]string{
 				"cf":     "cf.test.stackit.cloud",
 				"router": "router.test.stackit.cloud",
 			},
@@ -694,7 +699,7 @@ func TestIntegration_FullVaultPopulate_EndToEnd(t *testing.T) {
 
 	// Configure both environments
 	t.Run("configure_mgmt_environment", func(t *testing.T) {
-		err := provider.ConfigureFQDNs("", "mgmt")
+		err := provider.ConfigureFQDNs("", "mgmt", nil, 1, 2)
 		assert.NoError(t, err)
 
 		// Verify mgmt FQDNs stored correctly
@@ -706,7 +711,7 @@ func TestIntegration_FullVaultPopulate_EndToEnd(t *testing.T) {
 	})
 
 	t.Run("configure_ocf_environment", func(t *testing.T) {
-		err := provider.ConfigureFQDNs("", "ocf")
+		err := provider.ConfigureFQDNs("", "ocf", nil, 2, 2)
 		assert.NoError(t, err)
 
 		// Verify OCF FQDNs stored correctly
@@ -810,7 +815,7 @@ func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testi
 			provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
 			// Call configureSubnets which should trigger fallback
-			err := provider.configureSubnets("mgmt")
+			err := provider.configureSubnets("mgmt", nil, 1, 1)
 			require.NoError(t, err, "configureSubnets should not error with empty subnets")
 
 			// Verify subnet was created at correct path
@@ -890,7 +895,7 @@ func TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T)
 	safe := newMockFullSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
 
-	err := provider.configureSubnets("mgmt")
+	err := provider.configureSubnets("mgmt", nil, 1, 1)
 	require.NoError(t, err)
 
 	// Verify configured subnet exists (ocfp-0 from config)

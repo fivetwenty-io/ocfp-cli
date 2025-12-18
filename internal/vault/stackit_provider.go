@@ -239,6 +239,9 @@ func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string, repor
 }
 
 // ConfigureFQDNs configures fully qualified domain names.
+// It supports a base FQDN that is used to derive service FQDNs when not explicitly set.
+// The base FQDN is stored at a shared path, while environment-specific FQDNs are stored
+// under their respective environment paths.
 func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := fmt.Sprintf("fqdns-%s", envType)
 	phaseStart := time.Now()
@@ -249,8 +252,9 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 
 	s.logger.Infow("Configuring FQDNs", "env_type", envType)
 
-	// Get FQDNs from configuration
-	if s.Config.FQDNs == nil {
+	// Get FQDNs configuration
+	fqdnConfig := s.Config.FQDNs
+	if fqdnConfig == nil {
 		s.logger.Info("No FQDNs configured")
 
 		if reporter != nil {
@@ -260,9 +264,34 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 		return nil
 	}
 
-	envFQDNs, exists := s.Config.FQDNs[envType]
-	if !exists {
-		s.logger.Infow("No FQDNs configured for environment", "env_type", envType)
+	// Store base FQDN at shared path if configured (only do this once, for first env type)
+	if fqdnConfig.Base != "" && envType == MgmtEnvType {
+		basePath := s.PathBuilder.GetBaseFQDNPath()
+		err := s.Safe.Set(basePath, "value", fqdnConfig.Base)
+		if err != nil {
+			return fmt.Errorf("failed to set base FQDN: %w", err)
+		}
+		s.logger.Infow("Stored base FQDN", "path", basePath, "base", fqdnConfig.Base)
+	}
+
+	// Get explicit FQDNs for this environment
+	var explicit map[string]string
+	switch envType {
+	case MgmtEnvType:
+		explicit = fqdnConfig.Mgmt
+	case OCFEnvType:
+		explicit = fqdnConfig.OCF
+	}
+
+	// Get base FQDN for derivation (fallback to DomainName if not set)
+	base := fqdnConfig.Base
+	if base == "" {
+		base = s.Config.DomainName
+	}
+
+	// If no base and no explicit FQDNs, nothing to do
+	if base == "" && len(explicit) == 0 {
+		s.logger.Infow("No base FQDN or explicit FQDNs configured for environment", "env_type", envType)
 
 		if reporter != nil {
 			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
@@ -271,18 +300,8 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 		return nil
 	}
 
-	fqdnPath := s.PathBuilder.GetFQDNsPath(envType)
-
-	data, ok := envFQDNs.(map[string]interface{})
-	if !ok {
-		return ErrInvalidFQDNsConfigType(envType, envFQDNs)
-	}
-
-	// Make a copy to avoid modifying the original config
-	fqdns := make(map[string]interface{})
-	for k, v := range data {
-		fqdns[k] = v
-	}
+	// Pre-populate all known services for this environment
+	fqdns := PopulateFQDNsForEnv(envType, explicit, base)
 
 	// For mgmt environment, skip CF-related FQDNs
 	if envType == MgmtEnvType {
@@ -294,22 +313,10 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 		}
 	}
 
-	// For OCF environment, ensure shield FQDN exists (generate if missing)
-	if envType == OCFEnvType {
-		if _, exists := fqdns["shield"]; !exists {
-			// Generate default shield FQDN
-			// Try DomainName from config (Go equivalent of base_domain/system_domain)
-			baseDomain := s.Config.DomainName
-			if baseDomain == "" {
-				baseDomain = "example.com"
-			}
-			fqdns["shield"] = fmt.Sprintf("shield.%s", baseDomain)
-			s.logger.Infow("Added default shield FQDN for OCF environment", "fqdn", fqdns["shield"])
-		}
-	}
-
 	// Only write to vault if we have FQDNs to write
 	if len(fqdns) > 0 {
+		fqdnPath := s.PathBuilder.GetFQDNsPath(envType)
+
 		if reporter != nil {
 			reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing FQDNs configuration")
 		}
@@ -318,6 +325,8 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 		if err != nil {
 			return fmt.Errorf("failed to set FQDNs: %w", err)
 		}
+
+		s.logger.Infow("Stored FQDNs for environment", "env_type", envType, "count", len(fqdns))
 	}
 
 	if reporter != nil {

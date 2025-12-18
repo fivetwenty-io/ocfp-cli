@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,7 @@ func TestStackitProvider_BOSHMetaAZ_FirstAZ_Deterministic(t *testing.T) {
 
 			provider := &StackitVaultProvider{
 				BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+				logger:            logger.Get(),
 			}
 
 			// Run multiple times to ensure deterministic behavior
@@ -85,6 +87,7 @@ func TestStackitProvider_BOSHSubnetAZ_MgmtAndOCF(t *testing.T) {
 
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, "test-bloc"),
+		logger:            logger.Get(),
 	}
 
 	t.Run("mgmt_bosh_uses_first_az", func(t *testing.T) {

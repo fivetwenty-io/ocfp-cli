@@ -3,6 +3,7 @@ package vault
 import (
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -364,7 +365,7 @@ func TestGetDefaultReservedIPAssignments(t *testing.T) {
 
 // TestCalculateReservedIPs_MgmtSubnet tests mgmt environment IP allocation.
 func TestCalculateReservedIPs_MgmtSubnet(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{logger: logger.Get()}
 	assignments := getDefaultReservedIPAssignments()
 
 	cidr := "10.10.1.0/24"
@@ -425,7 +426,7 @@ func TestCalculateReservedIPs_MgmtSubnet(t *testing.T) {
 
 // TestCalculateReservedIPs_MgmtSubnet1 tests mgmt environment subnet 1.
 func TestCalculateReservedIPs_MgmtSubnet1(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{logger: logger.Get()}
 	assignments := getDefaultReservedIPAssignments()
 
 	cidr := "10.10.2.0/24"
@@ -449,7 +450,7 @@ func TestCalculateReservedIPs_MgmtSubnet1(t *testing.T) {
 
 // TestCalculateReservedIPs_OCFSubnet tests ocf environment IP allocation.
 func TestCalculateReservedIPs_OCFSubnet(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{logger: logger.Get()}
 	assignments := getDefaultReservedIPAssignments()
 
 	cidr := "10.20.1.0/24"
@@ -504,7 +505,7 @@ func TestCalculateReservedIPs_OCFSubnet(t *testing.T) {
 
 // TestCalculateReservedIPs_OCFSubnet1 tests ocf environment subnet 1.
 func TestCalculateReservedIPs_OCFSubnet1(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{logger: logger.Get()}
 	assignments := getDefaultReservedIPAssignments()
 
 	cidr := "10.20.2.0/24"
@@ -535,7 +536,7 @@ func TestCalculateReservedIPs_OCFSubnet1(t *testing.T) {
 
 // TestCalculateReservedIPs_DifferentCIDRs tests various CIDR ranges.
 func TestCalculateReservedIPs_DifferentCIDRs(t *testing.T) {
-	provider := &StackitVaultProvider{}
+	provider := &StackitVaultProvider{logger: logger.Get()}
 	assignments := getDefaultReservedIPAssignments()
 
 	tests := []struct {

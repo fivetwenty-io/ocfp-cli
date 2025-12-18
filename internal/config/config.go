@@ -61,7 +61,7 @@ type Config struct {
 	Routers          ComponentConfig             `json:"routers"             mapstructure:"routers"             yaml:"routers,omitempty"`
 	Cells            ComponentConfig             `json:"cells"               mapstructure:"cells"               yaml:"cells,omitempty"`
 	// Additional fields from the example config
-	FQDNs             map[string]interface{} `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns,omitempty"`
+	FQDNs             *FQDNConfig            `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns,omitempty"`
 	S3                map[string]string      `json:"s3"                  mapstructure:"s3"                  yaml:"s3,omitempty"`
 	AllowedIngressIPs []string               `json:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips" yaml:"allowed_ingress_ips,omitempty"`
 	Type              string                 `json:"type"                mapstructure:"type"                yaml:"type,omitempty"`
@@ -468,6 +468,13 @@ type AvailabilityZone struct {
 	CloudProperties string `mapstructure:"cloudProperties" yaml:"cloudProperties,omitempty"`
 }
 
+// FQDNConfig represents the FQDN configuration with base domain and per-environment FQDNs.
+type FQDNConfig struct {
+	Base string            `json:"base" mapstructure:"base" yaml:"base,omitempty"`
+	Mgmt map[string]string `json:"mgmt" mapstructure:"mgmt" yaml:"mgmt,omitempty"`
+	OCF  map[string]string `json:"ocf"  mapstructure:"ocf"  yaml:"ocf,omitempty"`
+}
+
 // Configuration caching for performance optimization.
 var (
 	configMutex   sync.RWMutex                     //nolint:gochecknoglobals // package-level cache lock for performance
@@ -570,7 +577,7 @@ func createEmptyConfig() *Config {
 		AZs:               map[string]AvailabilityZone{},
 		Routers:           ComponentConfig{},
 		Cells:             ComponentConfig{},
-		FQDNs:             map[string]interface{}{},
+		FQDNs:             &FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}},
 		S3:                map[string]string{},
 		AllowedIngressIPs: []string{},
 		Subnets:           []Subnet{},

@@ -28,7 +28,7 @@ func createDefaultTestConfig() *Config {
 
 	cfg.DNS = []string{}
 	cfg.AZs = map[string]AvailabilityZone{}
-	cfg.FQDNs = map[string]interface{}{}
+	cfg.FQDNs = &FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}}
 	cfg.S3 = map[string]string{}
 	cfg.AllowedIngressIPs = []string{}
 	cfg.Subnets = []Subnet{}
