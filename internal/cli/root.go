@@ -8,6 +8,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/proxmox"
 	stackit "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -62,6 +63,11 @@ func Execute() {
 	err = proxmox.Register()
 	if err != nil {
 		logger.Warnf("Failed to register Proxmox provider: %v", err)
+	}
+
+	err = azure.Register()
+	if err != nil {
+		logger.Warnf("Failed to register Azure provider: %v", err)
 	}
 
 	// Register all commands

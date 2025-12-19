@@ -876,13 +876,81 @@ func loginGCP(log *zap.Logger) error {
 }
 
 func loginAzure(log *zap.Logger) error {
-	log.Warn("Azure provider login not implemented yet")
+	log.Info("Setting up Azure authentication")
 
-	_, _ = fmt.Fprintln(os.Stdout, "Azure provider login not implemented yet")
-	_, _ = fmt.Fprintln(os.Stdout, "\nAzure authentication typically uses:")
-	_, _ = fmt.Fprintln(os.Stdout, "  - az login")
-	_, _ = fmt.Fprintln(os.Stdout, "  - Service principal credentials")
-	_, _ = fmt.Fprintln(os.Stdout, "  - Managed identities")
+	// Check for existing Azure credentials in environment
+	subscriptionID := os.Getenv("AZURE_SUBSCRIPTION_ID")
+	clientID := os.Getenv("AZURE_CLIENT_ID")
+	tenantID := os.Getenv("AZURE_TENANT_ID")
+	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
+
+	// If service principal credentials are set, validate them
+	if subscriptionID != "" && clientID != "" && tenantID != "" && clientSecret != "" {
+		log.Info("Azure service principal credentials found in environment")
+		_, _ = fmt.Fprintln(os.Stdout, "Azure credentials configured via environment variables:")
+		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_SUBSCRIPTION_ID=%s\n", subscriptionID)
+		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_TENANT_ID=%s\n", tenantID)
+		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s\n", clientID)
+		_, _ = fmt.Fprintln(os.Stdout, "  AZURE_CLIENT_SECRET=***")
+		return nil
+	}
+
+	// Check for Azure CLI
+	if _, err := exec.LookPath("az"); err == nil {
+		log.Info("Azure CLI found, checking authentication status")
+
+		// Check if already logged in
+		ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		if err == nil {
+			log.Info("Already authenticated with Azure CLI")
+			_, _ = fmt.Fprintln(os.Stdout, "Azure CLI authentication active")
+			_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", stdout.String())
+			return nil
+		}
+
+		// Not logged in, provide instructions
+		_, _ = fmt.Fprintln(os.Stdout, "Azure CLI is installed but not authenticated")
+		_, _ = fmt.Fprintln(os.Stdout, "\nTo authenticate, run one of:")
+		_, _ = fmt.Fprintln(os.Stdout, "  az login                        # Interactive browser login")
+		_, _ = fmt.Fprintln(os.Stdout, "  az login --use-device-code      # Device code flow (for headless)")
+		_, _ = fmt.Fprintln(os.Stdout, "  az login --service-principal -u <client-id> -p <secret> --tenant <tenant>")
+		return nil
+	}
+
+	// Check for managed identity
+	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == "true" || useMI == "1" {
+		log.Info("Managed identity mode enabled")
+		_, _ = fmt.Fprintln(os.Stdout, "Azure Managed Identity authentication enabled")
+		_, _ = fmt.Fprintln(os.Stdout, "  AZURE_USE_MANAGED_IDENTITY=true")
+		if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
+			_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s (user-assigned)\n", clientID)
+		} else {
+			_, _ = fmt.Fprintln(os.Stdout, "  Using system-assigned managed identity")
+		}
+		return nil
+	}
+
+	// No authentication found, provide guidance
+	_, _ = fmt.Fprintln(os.Stdout, "Azure authentication not configured")
+	_, _ = fmt.Fprintln(os.Stdout, "\nTo configure Azure authentication, choose one of:")
+	_, _ = fmt.Fprintln(os.Stdout, "\n1. Service Principal (recommended for automation):")
+	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_SUBSCRIPTION_ID=<subscription-id>")
+	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_TENANT_ID=<tenant-id>")
+	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_CLIENT_ID=<client-id>")
+	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_CLIENT_SECRET=<client-secret>")
+	_, _ = fmt.Fprintln(os.Stdout, "\n2. Azure CLI (for development):")
+	_, _ = fmt.Fprintln(os.Stdout, "   az login")
+	_, _ = fmt.Fprintln(os.Stdout, "\n3. Managed Identity (for Azure-hosted workloads):")
+	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_USE_MANAGED_IDENTITY=true")
 
 	return nil
 }
