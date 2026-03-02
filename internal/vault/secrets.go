@@ -137,7 +137,7 @@ func (sg *SecretGenerator) GeneratePassword(opts *PasswordOptions) (string, erro
 		password[index] = charset[randomIndex.Int64()]
 	}
 
-	sg.logger.Debug("Generated password", "length", opts.Length)
+	sg.logger.Debugw("Generated password", "length", opts.Length)
 
 	return string(password), nil
 }
@@ -236,7 +236,7 @@ type InceptionSecrets struct {
 // GenerateInceptionSecrets generates all secrets needed for inception
 // This matches the functionality in Perl's generateInceptionSecrets.
 func (sg *SecretGenerator) GenerateInceptionSecrets(deploymentName string) (*InceptionSecrets, error) {
-	sg.logger.Info("Generating inception secrets", "deployment", deploymentName)
+	sg.logger.Infow("Generating inception secrets", "deployment", deploymentName)
 
 	secrets := sg.createInceptionSecretsTemplate(deploymentName)
 
@@ -260,7 +260,7 @@ func (sg *SecretGenerator) GenerateInceptionSecrets(deploymentName string) (*Inc
 		return nil, err
 	}
 
-	sg.logger.Info("Successfully generated inception secrets", "deployment", deploymentName)
+	sg.logger.Infow("Successfully generated inception secrets", "deployment", deploymentName)
 
 	return secrets, nil
 }
@@ -299,7 +299,7 @@ type DefaultSecrets struct {
 // GenerateDefaultSecrets generates default secrets for a deployment
 // This matches the functionality in Perl's generateDefaultSecrets.
 func (sg *SecretGenerator) GenerateDefaultSecrets(deploymentName string) (*DefaultSecrets, error) {
-	sg.logger.Info("Generating default secrets", "deployment", deploymentName)
+	sg.logger.Infow("Generating default secrets", "deployment", deploymentName)
 
 	secrets := &DefaultSecrets{
 		AdminPassword:            "",
@@ -345,7 +345,7 @@ func (sg *SecretGenerator) GenerateDefaultSecrets(deploymentName string) (*Defau
 		return nil, fmt.Errorf("failed to generate blobstore secret: %w", err)
 	}
 
-	sg.logger.Info("Successfully generated default secrets", "deployment", deploymentName)
+	sg.logger.Infow("Successfully generated default secrets", "deployment", deploymentName)
 
 	return secrets, nil
 }
@@ -490,7 +490,7 @@ func (sg *SecretGenerator) generateRSAKeyPair(opts *KeyPairOptions) (string, str
 	}
 	publicKeyStr := string(pem.EncodeToMemory(publicKeyPEM))
 
-	sg.logger.Debug("Generated RSA key pair", "size", keySize, "comment", opts.Comment)
+	sg.logger.Debugw("Generated RSA key pair", "size", keySize, "comment", opts.Comment)
 
 	return publicKeyStr, privateKeyStr, nil
 }

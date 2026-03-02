@@ -86,6 +86,7 @@ type GitRepository struct {
 	Condition string `yaml:"condition"`
 	URL       string `yaml:"url"`
 	Branch    string `yaml:"branch"`
+	Commit    string `yaml:"commit"`
 	Dest      string `yaml:"dest"`
 	Depth     int    `yaml:"depth"`
 }

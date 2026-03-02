@@ -65,20 +65,20 @@ func (pb *PathBuilder) GetEnvironmentPath(envType string) string {
 	return filepath.Join(pb.GetConfigPath(), envType)
 }
 
-// GetVPCPath returns the VPC configuration path for an environment
-// Format: secret/config/{bloc}/{env-type}/vpc.
-func (pb *PathBuilder) GetVPCPath(envType string) string {
-	return filepath.Join(pb.GetEnvironmentPath(envType), "vpc")
+// GetNetPath returns the network configuration path for an environment
+// Format: secret/config/{bloc}/{env-type}/net.
+func (pb *PathBuilder) GetNetPath(envType string) string {
+	return filepath.Join(pb.GetEnvironmentPath(envType), "net")
 }
 
 // GetSubnetsPath returns the subnets configuration path
-// Format: secret/config/{bloc}/{env-type}/vpc/subnets.
+// Format: secret/config/{bloc}/{env-type}/net/subnets.
 func (pb *PathBuilder) GetSubnetsPath(envType string) string {
-	return filepath.Join(pb.GetVPCPath(envType), "subnets")
+	return filepath.Join(pb.GetNetPath(envType), "subnets")
 }
 
 // GetSubnetPath returns the path for a specific subnet
-// Format: secret/config/{bloc}/{env-type}/vpc/subnets/{subnet-type}-{subnet-num}.
+// Format: secret/config/{bloc}/{env-type}/net/subnets/{subnet-type}-{subnet-num}.
 func (pb *PathBuilder) GetSubnetPath(envType, subnetType string, subnetNum int) string {
 	subnetName := fmt.Sprintf("%s-%d", subnetType, subnetNum)
 
@@ -86,31 +86,31 @@ func (pb *PathBuilder) GetSubnetPath(envType, subnetType string, subnetNum int) 
 }
 
 // GetReservedIPsPath returns the path for reserved IPs in a subnet
-// Format: secret/config/{bloc}/{env-type}/vpc/subnets/{subnet-type}-{subnet-num}/reserved-ips.
+// Format: secret/config/{bloc}/{env-type}/net/subnets/{subnet-type}-{subnet-num}/reserved-ips.
 func (pb *PathBuilder) GetReservedIPsPath(envType, subnetType string, subnetNum int) string {
 	return filepath.Join(pb.GetSubnetPath(envType, subnetType, subnetNum), "reserved-ips")
 }
 
 // GetSecurityGroupsPath returns the security groups path
-// Format: secret/config/{bloc}/{env-type}/vpc/sgs.
+// Format: secret/config/{bloc}/{env-type}/net/sgs.
 func (pb *PathBuilder) GetSecurityGroupsPath(envType string) string {
-	return filepath.Join(pb.GetVPCPath(envType), "sgs")
+	return filepath.Join(pb.GetNetPath(envType), "sgs")
 }
 
 // GetSecurityGroupPath returns the path for a specific security group
-// Format: secret/config/{bloc}/{env-type}/vpc/sgs/{sg-name}.
+// Format: secret/config/{bloc}/{env-type}/net/sgs/{sg-name}.
 func (pb *PathBuilder) GetSecurityGroupPath(envType, sgName string) string {
 	return filepath.Join(pb.GetSecurityGroupsPath(envType), sgName)
 }
 
 // GetAZsPath returns the availability zones path
-// Format: secret/config/{bloc}/{env-type}/vpc/azs.
+// Format: secret/config/{bloc}/{env-type}/net/azs.
 func (pb *PathBuilder) GetAZsPath(envType string) string {
-	return filepath.Join(pb.GetVPCPath(envType), "azs")
+	return filepath.Join(pb.GetNetPath(envType), "azs")
 }
 
 // GetAZPath returns the path for a specific availability zone
-// Format: secret/config/{bloc}/{env-type}/vpc/azs/{az-name}.
+// Format: secret/config/{bloc}/{env-type}/net/azs/{az-name}.
 func (pb *PathBuilder) GetAZPath(envType, azName string) string {
 	return filepath.Join(pb.GetAZsPath(envType), azName)
 }
@@ -127,10 +127,10 @@ func (pb *PathBuilder) GetIAMPath(envType string) string {
 	return filepath.Join(pb.GetBOSHPath(envType), "iam")
 }
 
-// GetS3IAMPath returns the S3 IAM credentials path
-// Format: secret/config/{bloc}/{env-type}/bosh/iam/s3.
-func (pb *PathBuilder) GetS3IAMPath(envType string) string {
-	return filepath.Join(pb.GetIAMPath(envType), "s3")
+// GetS3Path returns the S3 credentials path
+// Format: secret/config/{bloc}/{env-type}/bosh/s3.
+func (pb *PathBuilder) GetS3Path(envType string) string {
+	return filepath.Join(pb.GetBOSHPath(envType), "s3")
 }
 
 // GetKeysPath returns the keys configuration path
@@ -191,6 +191,12 @@ func (pb *PathBuilder) GetLoadBalancerPath(envType, lbName string) string {
 // Format: secret/config/{bloc}/{env-type}/fqdns.
 func (pb *PathBuilder) GetFQDNsPath(envType string) string {
 	return filepath.Join(pb.GetEnvironmentPath(envType), "fqdns")
+}
+
+// GetBaseFQDNPath returns the shared base FQDN path
+// Format: secret/config/{bloc}/fqdns/base.
+func (pb *PathBuilder) GetBaseFQDNPath() string {
+	return filepath.Join(pb.GetConfigPath(), "fqdns", "base")
 }
 
 // GetPublicIPsPath returns the public IPs path
@@ -285,7 +291,7 @@ func (pb *PathBuilder) GetAllStandardPaths() []string {
 	// Environment paths
 	for _, envType := range []string{MgmtEnvType, OCFEnvType} {
 		paths = append(paths, pb.GetEnvironmentPath(envType))
-		paths = append(paths, pb.GetVPCPath(envType))
+		paths = append(paths, pb.GetNetPath(envType))
 		paths = append(paths, pb.GetSubnetsPath(envType))
 		paths = append(paths, pb.GetSecurityGroupsPath(envType))
 		paths = append(paths, pb.GetAZsPath(envType))
@@ -375,4 +381,52 @@ func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
 	if len(parts) > MinConfigPathParts {
 		info.Subpath = strings.Join(parts[4:], "/")
 	}
+}
+
+// HostnameFormatter is a function type that generates database hostnames.
+type HostnameFormatter func(envType string) string
+
+// BuildDatabasesForEnv returns database configuration for an environment.
+// The hostnameFormatter function allows provider-specific hostname generation.
+func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
+	databases := make(map[string]map[string]interface{})
+
+	switch envType {
+	case MgmtEnvType:
+		databases["bosh"] = map[string]interface{}{
+			"hostname":          hostnameFormatter(MgmtEnvType),
+			"postgres_username": "bosh",
+			"postgres_password": "((postgres_password))", // Genesis will generate
+			"bosh_username":     "bosh",
+			"bosh_password":     "((bosh_db_password))",
+			"uaa_username":      "uaa",
+			"uaa_password":      "((uaa_db_password))",
+			"credhub_username":  "credhub",
+			"credhub_password":  "((credhub_db_password))",
+		}
+	case OCFEnvType:
+		databases["cf"] = map[string]interface{}{
+			"hostname":                      hostnameFormatter(OCFEnvType),
+			"postgres_username":             "postgres",
+			"postgres_password":             "((postgres_password))",
+			"cloud_controller_username":     "cloud_controller",
+			"cloud_controller_password":     "((cc_db_password))",
+			"diego_username":                "diego",
+			"diego_password":                "((diego_db_password))",
+			"routing_api_username":          "routing_api",
+			"routing_api_password":          "((routing_api_db_password))",
+			"uaa_username":                  "uaa",
+			"uaa_password":                  "((uaa_db_password))",
+			"locket_username":               "locket",
+			"locket_password":               "((locket_db_password))",
+			"credhub_username":              "credhub",
+			"credhub_password":              "((credhub_db_password))",
+			"network_policy_username":       "network_policy",
+			"network_policy_password":       "((network_policy_db_password))",
+			"network_connectivity_username": "network_connectivity",
+			"network_connectivity_password": "((network_connectivity_db_password))",
+		}
+	}
+
+	return databases
 }

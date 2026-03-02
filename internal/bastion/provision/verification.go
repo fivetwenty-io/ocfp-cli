@@ -145,7 +145,7 @@ func (vm *VerificationManager) GeneratePreRequisiteCheckScript(ctx context.Conte
 	lines = append(lines, "else")
 	lines = append(lines, "    log_error 'No internet connectivity detected'")
 	lines = append(lines, "    log_error 'Internet access is required for package installation'")
-	lines = append(lines, "    return 1")
+	lines = append(lines, "    exit 1")
 	lines = append(lines, "fi")
 	lines = append(lines, "")
 
@@ -200,8 +200,8 @@ func (vm *VerificationManager) getEssentialToolsVerification() ToolVerification 
 func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerification {
 	return ToolVerification{
 		Name:            "cloudfoundry-tools",
-		Commands:        []string{"safe", "spruce", "vault", "jq", "bosh", "cf", "credhub", "uaa"},
-		VersionCommand:  "safe --version && spruce --version && vault --version && bosh --version && cf --version",
+		Commands:        []string{"safe", "spruce", "vault", "bao", "jq", "bosh", "cf", "credhub", "uaa"},
+		VersionCommand:  "safe --version && spruce --version && vault --version && bao --version && bosh --version && cf --version",
 		Required:        true,
 		ConfigCheck:     "",
 		ServiceCheck:    "",
@@ -467,13 +467,12 @@ func (vm *VerificationManager) getVerificationScriptFooter() []string {
 		"# Final verification result",
 		"if [ \"$VERIFICATION_FAILED\" = \"true\" ]; then",
 		"    log_error 'Verification failed - required tools or configurations are missing'",
-		"    return 1",
+		"    log_error 'Please review errors above and re-run provisioning if needed'",
 		"elif [ \"$VERIFICATION_WARNINGS\" = \"true\" ]; then",
 		"    log_warning 'Verification completed with warnings'",
-		"    return 0",
+		"    log_warning 'Review warnings above - some optional components may be missing'",
 		"else",
 		"    log_success 'All verifications passed'",
-		"    return 0",
 		"fi",
 		"",
 	}

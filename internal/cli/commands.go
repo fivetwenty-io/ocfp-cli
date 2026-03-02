@@ -11,6 +11,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewBootstrapCmd())
 	root.AddCommand(commands.NewConfigureCmd())
 	root.AddCommand(commands.NewTeardownCmd())
+	root.AddCommand(commands.NewStateCmd()) // State command with sync subcommand
 
 	// Environment and access commands
 	root.AddCommand(commands.NewSSHCmd())
@@ -34,6 +35,9 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewProviderCmd())
 	root.AddCommand(commands.NewTmuxCmd())
 	root.AddCommand(commands.NewBastionCmd())
+
+	// Logging and diagnostics
+	root.AddCommand(commands.NewLogsCmd())
 }
 
 // Placeholder implementations for commands not yet created

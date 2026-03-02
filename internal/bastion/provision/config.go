@@ -38,7 +38,7 @@ func (c *Config) GetSystemConfig() SystemConfig {
 	return SystemConfig{
 		Hostname: HostnameConfig{
 			Enabled: true,
-			Pattern: "${OCFP_BLOC_NAME}-bastion",
+			Pattern: "${OCFP_BLOC}-bastion",
 		},
 		WaitTime:    systemWaitTimeSeconds,
 		Timezone:    "UTC",
@@ -51,7 +51,6 @@ func (c *Config) GetSystemConfig() SystemConfig {
 func (c *Config) GetDirectories() []DirectoryConfig {
 	return []DirectoryConfig{
 		{Path: "${HOME}/ocfp/cli", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
-		{Path: "${HOME}/.ocfp/config", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/deployments", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
@@ -110,16 +109,16 @@ func (c *Config) GetBinaryTools() []BinaryTool {
 func (c *Config) GetAPTRepositories() []APTRepository {
 	repos := []APTRepository{
 		{
-			Name:      "cloudfoundry-community",
+			Name:      "cloudfoundry",
 			Enabled:   true,
 			Condition: "",
 			GPGKey: GPGKey{
-				URL:     "https://raw.githubusercontent.com/cloudfoundry-community/homebrew-cf/master/public.key",
-				Dest:    "/etc/apt/keyrings/cloudfoundry-community.key",
-				Dearmor: false,
+				URL:     "https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key",
+				Dest:    "/usr/share/keyrings/cli.cloudfoundry.org.gpg",
+				Dearmor: true,
 			},
-			SourceLine: "deb [signed-by=/etc/apt/keyrings/cloudfoundry-community.key] http://apt.community.cloudfoundry.org stable main",
-			SourceFile: "/etc/apt/sources.list.d/community.list",
+			SourceLine: "deb [signed-by=/usr/share/keyrings/cli.cloudfoundry.org.gpg] https://packages.cloudfoundry.org/debian stable main",
+			SourceFile: "/etc/apt/sources.list.d/cloudfoundry-cli.list",
 		},
 	}
 
@@ -171,44 +170,14 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 
 // GetGitRepositories returns Git repositories to clone.
 func (c *Config) GetGitRepositories() []GitRepository {
-	modes := c.modes
-	if modes == nil {
-		modes = deployments.NewResolver(c.config)
-	}
-
 	repos := []GitRepository{}
 
-	repos = append(repos, GitRepository{
-		Name:      "genesis-community-kits",
-		Enabled:   true,
-		Condition: "",
-		URL:       "https://github.com/genesis-community/genesis-community-kits.git",
-		Branch:    "main",
-		Dest:      "${HOME}/genesis-community-kits",
-		Depth:     1,
-	})
-
-	// Add genesis repository if configured
-	if c.config.Bastion.Genesis.Enabled {
-		repo := GitRepository{
-			Name:      "genesis",
-			Enabled:   true,
-			Condition: "",
-			URL:       c.config.Bastion.Genesis.Repo,
-			Branch:    c.config.Bastion.Genesis.Branch,
-			Dest:      "${HOME}/ocfp/genesis",
-			Depth:     1,
+	// Add Genesis repository if using source-based installation
+	if c.shouldInstallGenesisFromSource() {
+		genesisRepo := c.getGenesisRepository()
+		if genesisRepo.Enabled {
+			repos = append(repos, genesisRepo)
 		}
-
-		if repo.URL == "" {
-			repo.URL = "git@github.com:genesis-community/genesis.git"
-		}
-
-		if repo.Branch == "" {
-			repo.Branch = "v3.1.x-dev"
-		}
-
-		repos = append(repos, repo)
 	}
 
 	return repos
@@ -254,6 +223,75 @@ func (c *Config) GetCustomScripts() []CustomScript {
 	return scripts
 }
 
+// shouldInstallGenesisFromSource determines if Genesis should be installed from source.
+// Returns true if:
+// 1. Genesis is enabled in config
+// 2. No binary URL override is specified
+// 3. Branch or commit configuration indicates source-based installation.
+func (c *Config) shouldInstallGenesisFromSource() bool {
+	genesisConfig := c.getGenesisConfig()
+
+	if !genesisConfig.Enabled {
+		return false
+	}
+
+	// Check for binary download override
+	if override, exists := c.config.Bastion.ToolOverrides["genesis"]; exists {
+		if override.URL != "" {
+			return false // Binary download mode
+		}
+	}
+
+	return true // Default to source-based
+}
+
+// getGenesisConfig returns the effective Genesis configuration.
+// Bastion-specific config takes precedence over global config.
+func (c *Config) getGenesisConfig() config.Genesis {
+	genesisConfig := c.config.Genesis
+
+	// Bastion-specific overrides take precedence
+	if c.config.Bastion.Genesis.Enabled {
+		genesisConfig = c.config.Bastion.Genesis
+	}
+
+	// Apply default values for Branch and Repo if not set (but don't override Enabled)
+	if genesisConfig.Branch == "" {
+		genesisConfig.Branch = "v3.1.x-dev"
+	}
+	if genesisConfig.Repo == "" {
+		genesisConfig.Repo = "git@github.com:genesis-community/genesis"
+	}
+
+	return genesisConfig
+}
+
+// getGenesisRepository returns Git repository configuration for Genesis.
+func (c *Config) getGenesisRepository() GitRepository {
+	genesisConfig := c.getGenesisConfig()
+
+	repo := "git@github.com:genesis-community/genesis"
+	if genesisConfig.Repo != "" {
+		repo = genesisConfig.Repo
+	}
+
+	branch := genesisConfig.Branch
+	if branch == "" {
+		branch = "v3.1.x-dev" // Default from applyDefaults
+	}
+
+	return GitRepository{
+		Name:      "genesis",
+		Enabled:   true,
+		Condition: "",
+		URL:       repo,
+		Branch:    branch,
+		Commit:    genesisConfig.Commit,
+		Dest:      "${HOME}/ocfp/genesis",
+		Depth:     0, // Full clone for building
+	}
+}
+
 // getCorePackages returns core package groups.
 func (c *Config) getCorePackages() map[string]PackageGroup {
 	return map[string]PackageGroup{
@@ -277,7 +315,7 @@ func (c *Config) getEssentialPackages() PackageGroup {
 			"snapd", "libreadline-dev", "apt-rdepends", "gpg", "htop",
 			"libssl-dev", "libtool", "libyaml-dev", "libyaml-libyaml-perl",
 			"libyaml-perl", "python3-dev", "python3-setuptools", "s3cmd",
-			"vim", "vim-common", "libfuse2",
+			"vim", "vim-common", "libfuse2", "neovim",
 		},
 		PipPackages: []string{},
 		Verify:      []string{},
@@ -290,15 +328,15 @@ func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:   true,
 		Condition: "",
-		DependsOn: []string{"cloudfoundry-community"},
+		DependsOn: []string{},
 		Packages: []string{
 			"zlib1g-dev", "ruby", "ruby-dev", "openssl",
 			"libxslt1-dev", "libxml2-dev", "libssl-dev", "libyaml-dev",
-			"libsqlite3-dev", "sqlite3", "safe", "spruce", "vault", "jq",
-			"credhub-cli", "bosh-cli", "cf7-cli", "uaa-cli", "tmux", "screen", "tree",
+			"libsqlite3-dev", "sqlite3", "jq",
+			"tmux", "screen", "tree",
 		},
 		PipPackages: []string{},
-		Verify:      []string{"safe", "spruce", "vault", "jq", "bosh", "cf", "credhub"},
+		Verify:      []string{"jq"},
 		PostInstall: "",
 	}
 }
@@ -340,10 +378,10 @@ func (c *Config) getAWSPackages() PackageGroup {
 		Enabled:     true,
 		Condition:   condProviderIsAWS,
 		DependsOn:   []string{},
-		Packages:    []string{"awscli"},
+		Packages:    []string{"unzip"}, // Required for AWS CLI v2 installation
 		PipPackages: []string{},
 		Verify:      []string{"aws"},
-		PostInstall: "configure_aws_cli",
+		PostInstall: "install_aws_cli_v2",
 	}
 }
 
@@ -418,6 +456,7 @@ func (c *Config) getGenesisTools() []BinaryTool {
 		c.getSafeTool(),
 		c.getSpruceTool(),
 		c.getVaultTool(),
+		c.getBaoTool(),
 	}
 }
 
@@ -432,21 +471,139 @@ func (c *Config) getCloudFoundryTools() []BinaryTool {
 }
 
 // getGenesisTool returns Genesis tool configuration.
+// Downloads genesis v3.1.0-rc.1 binary directly from GitHub release.
 func (c *Config) getGenesisTool() BinaryTool {
+	genesisConfig := c.getGenesisConfig()
+
+	version := genesisConfig.VersionPrefix
+	if version == "" {
+		version = "3.1.0"
+	}
+
+	// Check for binary download mode (tool override with URL)
+	if override, exists := c.config.Bastion.ToolOverrides["genesis"]; exists {
+		if override.URL != "" {
+			return c.getGenesisBinaryDownload(override)
+		}
+
+		if override.InstallCommand != "" {
+			return c.getGenesisCustomInstall(override, version)
+		}
+	}
+
+	// Default: source-based installation
+	return c.getGenesisSourceBuild(version)
+}
+
+// getGenesisSourceBuild returns Genesis tool configuration for source-based installation.
+func (c *Config) getGenesisSourceBuild(version string) BinaryTool {
+	installCmd := fmt.Sprintf(`# Genesis source-based installation
+if [ ! -d ~/ocfp/genesis/.git ]; then
+    log_error "Genesis repository not cloned. This should not happen."
+    exit 1
+fi
+
+pushd ~/ocfp/genesis > /dev/null
+
+# Clean previous builds
+rm -rf genesis-*
+
+# Build genesis
+log_info "Building genesis version %s"
+if ! ./pack %s; then
+    log_error "Failed to build genesis"
+    popd > /dev/null
+    exit 1
+fi
+
+# Install genesis binary
+GENESIS_BIN="genesis-%s"
+if [ ! -f "$GENESIS_BIN" ]; then
+    log_error "Genesis binary not found: $GENESIS_BIN"
+    popd > /dev/null
+    exit 1
+fi
+
+# Determine installation path
+if command -v genesis > /dev/null 2>&1; then
+    INSTALL_PATH=$(command -v genesis)
+else
+    INSTALL_PATH="/usr/local/bin/genesis"
+fi
+
+log_info "Installing genesis to $INSTALL_PATH"
+sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
+sudo chmod +x "$INSTALL_PATH"
+
+log_info "Creating symbolic link 'g' for genesis"
+sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
+
+popd > /dev/null`, version, version, version)
+
 	return BinaryTool{
 		Name:           "genesis",
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/genesis-community/genesis/releases/latest",
-		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/genesis-community/genesis/releases/download/v${VERSION}/genesis-${VERSION}-linux-amd64",
+		VersionURL:     "",
+		VersionPattern: "",
+		URLTemplate:    "",
+		Dest:           "/usr/local/bin/genesis",
+		Mode:           fileModeExecutable,
+		Extract:        false,
+		InstallCommand: installCmd,
+		Verify:         fmt.Sprintf("genesis --version | grep -q '%s'", version),
+		Sudo:           false, // Sudo handled within InstallCommand
+	}
+}
+
+// getGenesisBinaryDownload returns Genesis tool configuration for binary download mode.
+// This mode is intended for future use when Genesis releases stable binaries.
+func (c *Config) getGenesisBinaryDownload(override config.ToolOverride) BinaryTool {
+	verifyCmd := override.VerifyCommand
+	if verifyCmd == "" {
+		verifyCmd = "genesis --version"
+	}
+
+	return BinaryTool{
+		Name:           "genesis",
+		Enabled:        true,
+		Condition:      "",
+		URL:            override.URL,
+		VersionURL:     override.VersionURL,
+		VersionPattern: override.VersionPattern,
+		URLTemplate:    override.URLTemplate,
 		Dest:           "/usr/local/bin/genesis",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
-		Verify:         "genesis --version",
+		Verify:         verifyCmd,
 		Sudo:           true,
+	}
+}
+
+// getGenesisCustomInstall returns Genesis tool configuration for custom installation.
+// This allows users to provide their own installation script via config.
+func (c *Config) getGenesisCustomInstall(override config.ToolOverride, version string) BinaryTool {
+	verifyCmd := override.VerifyCommand
+	if verifyCmd == "" {
+		verifyCmd = fmt.Sprintf("genesis --version | grep -q '%s'", version)
+	}
+
+	return BinaryTool{
+		Name:           "genesis",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "",
+		VersionPattern: "",
+		URLTemplate:    "",
+		Dest:           "/usr/local/bin/genesis",
+		Mode:           fileModeExecutable,
+		Extract:        false,
+		InstallCommand: override.InstallCommand,
+		Verify:         verifyCmd,
+		Sudo:           false,
 	}
 }
 
@@ -457,9 +614,9 @@ func (c *Config) getSafeTool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/starkandwayne/safe/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry-community/safe/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/starkandwayne/safe/releases/download/v${VERSION}/safe-linux-amd64",
+		URLTemplate:    "https://github.com/cloudfoundry-community/safe/releases/download/v${VERSION}/safe-${VERSION}-linux-amd64",
 		Dest:           "/usr/local/bin/safe",
 		Mode:           fileModeExecutable,
 		Extract:        false,
@@ -513,34 +670,15 @@ func (c *Config) getBoshTool() BinaryTool {
 		Name:           "bosh",
 		Enabled:        true,
 		Condition:      "",
-		URL:            "https://github.com/cloudfoundry/bosh-cli/releases/latest/download/bosh-cli-*-linux-amd64",
-		VersionURL:     "",
-		VersionPattern: "",
-		URLTemplate:    "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/bosh-cli/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/cloudfoundry/bosh-cli/releases/download/v${VERSION}/bosh-cli-${VERSION}-linux-amd64",
 		Dest:           "/usr/local/bin/bosh",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
 		Verify:         "bosh --version",
-		Sudo:           true,
-	}
-}
-
-// getCFTool returns CF tool configuration.
-func (c *Config) getCFTool() BinaryTool {
-	return BinaryTool{
-		Name:           "cf",
-		Enabled:        true,
-		Condition:      "",
-		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
-		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry/cli/releases/download/v${VERSION}/cf7-cli_${VERSION}_linux_x86-64.tgz",
-		Dest:           "/usr/local/bin/cf",
-		Mode:           fileModeExecutable,
-		Extract:        true,
-		InstallCommand: "",
-		Verify:         "cf --version",
 		Sudo:           true,
 	}
 }
@@ -552,9 +690,9 @@ func (c *Config) getCredHubTool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry-incubator/credhub-cli/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/credhub-cli/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry-incubator/credhub-cli/releases/download/${VERSION}/credhub-linux-${VERSION}.tgz",
+		URLTemplate:    "https://github.com/cloudfoundry/credhub-cli/releases/download/${VERSION}/credhub-linux-amd64-${VERSION}.tgz",
 		Dest:           "/usr/local/bin/credhub",
 		Mode:           fileModeExecutable,
 		Extract:        true,
@@ -571,14 +709,52 @@ func (c *Config) getUAATool() BinaryTool {
 		Enabled:        true,
 		Condition:      "",
 		URL:            "",
-		VersionURL:     "https://api.github.com/repos/cloudfoundry-incubator/uaa-cli/releases/latest",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/uaa-cli/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
-		URLTemplate:    "https://github.com/cloudfoundry-incubator/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
+		URLTemplate:    "https://github.com/cloudfoundry/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
 		Dest:           "/usr/local/bin/uaa",
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
 		Verify:         "uaa --version",
+		Sudo:           true,
+	}
+}
+
+// getBaoTool returns Bao (OpenBao) tool configuration.
+func (c *Config) getBaoTool() BinaryTool {
+	return BinaryTool{
+		Name:           "bao",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/openbao/openbao/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/openbao/openbao/releases/download/v${VERSION}/bao_${VERSION}_linux_amd64.deb",
+		Dest:           "/usr/local/bin/bao",
+		Mode:           fileModeExecutable,
+		Extract:        true,
+		InstallCommand: "",
+		Verify:         "bao --version",
+		Sudo:           true,
+	}
+}
+
+// getCFTool returns CF CLI tool configuration.
+func (c *Config) getCFTool() BinaryTool {
+	return BinaryTool{
+		Name:           "cf",
+		Enabled:        true,
+		Condition:      "",
+		URL:            "",
+		VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
+		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+		URLTemplate:    "https://github.com/cloudfoundry/cli/releases/download/v${VERSION}/cf8-cli_${VERSION}_linux_x86-64.tgz",
+		Dest:           "/usr/local/bin/cf",
+		Mode:           fileModeExecutable,
+		Extract:        true,
+		InstallCommand: "",
+		Verify:         "cf --version",
 		Sudo:           true,
 	}
 }
@@ -594,7 +770,7 @@ func (c *Config) generateEnvironmentScript() string {
 	lines = append(lines, "")
 
 	// Add OCFP environment variables
-	lines = append(lines, fmt.Sprintf("export OCFP_BLOC_NAME='%s'", c.config.Name))
+	lines = append(lines, fmt.Sprintf("export OCFP_BLOC='%s'", c.config.Name))
 	lines = append(lines, fmt.Sprintf("export OCFP_PROVIDER='%s'", c.provider))
 
 	// Add provider-specific environment variables

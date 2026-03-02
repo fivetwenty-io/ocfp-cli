@@ -66,7 +66,7 @@ func (ed *EngineDetector) DetectEngineForPath(path string) (*EngineInfo, error) 
 	ed.cache[mountPath] = info
 	ed.mutex.Unlock()
 
-	ed.logger.Debug("Detected vault engine", "path", path, "mount", mountPath, "type", info.Type, "version", info.Version)
+	ed.logger.Debugw("Detected vault engine", "path", path, "mount", mountPath, "type", info.Type, "version", info.Version)
 
 	return info, nil
 }
@@ -232,7 +232,7 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 	kvV2Mounts := []string{"secret", "kv"}
 	for _, mount := range kvV2Mounts {
 		if mountPath == mount {
-			ed.logger.Debug("Inferred KV v2 engine from common mount path", "path", mountPath)
+			ed.logger.Debugw("Inferred KV v2 engine from common mount path", "path", mountPath)
 
 			return &EngineInfo{
 				Path:    mountPath,
@@ -243,7 +243,7 @@ func (ed *EngineDetector) inferEngineFromPath(mountPath string) (*EngineInfo, er
 	}
 
 	// Default to KV v1 for unknown mounts
-	ed.logger.Debug("Defaulting to KV v1 engine", "path", mountPath)
+	ed.logger.Debugw("Defaulting to KV v1 engine", "path", mountPath)
 
 	return &EngineInfo{
 		Path:    mountPath,

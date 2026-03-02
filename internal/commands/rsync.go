@@ -92,16 +92,18 @@ func addRSyncFlags(cmd *cobra.Command, user, key *string, archive, compress, ver
 }
 
 func bindRSyncViperFlags(cmd *cobra.Command) {
-	_ = viper.BindPFlag("rsync.user", cmd.Flags().Lookup("user"))
-	_ = viper.BindPFlag("rsync.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("rsync.archive", cmd.Flags().Lookup("archive"))
-	_ = viper.BindPFlag("rsync.compress", cmd.Flags().Lookup("compress"))
-	_ = viper.BindPFlag("rsync.verbose", cmd.Flags().Lookup("verbose"))
-	_ = viper.BindPFlag("rsync.delete", cmd.Flags().Lookup("delete"))
-	_ = viper.BindPFlag("rsync.dry_run", cmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("rsync.exclude", cmd.Flags().Lookup("exclude"))
-	_ = viper.BindPFlag("rsync.include", cmd.Flags().Lookup("include"))
-	_ = viper.BindPFlag("rsync.options", cmd.Flags().Lookup("rsync-options"))
+	bindFlagsToViper(cmd, map[string]string{
+		"rsync.user":     "user",
+		"rsync.key":      "key",
+		"rsync.archive":  "archive",
+		"rsync.compress": "compress",
+		"rsync.verbose":  "verbose",
+		"rsync.delete":   "delete",
+		"rsync.dry_run":  "dry-run",
+		"rsync.exclude":  "exclude",
+		"rsync.include":  "include",
+		"rsync.options":  "rsync-options",
+	})
 }
 
 func runRSync(cmd *cobra.Command, args []string) error {
@@ -145,7 +147,7 @@ type rsyncEnvironment struct {
 }
 
 func parseRSyncConfig(args []string) (*rsyncConfig, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}
@@ -197,7 +199,7 @@ func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig) (*rsyncEnvi
 }
 
 func loadRSyncBlocConfig(blocName string) (*config.Config, error) {
-	cfg, err := config.LoadWithParams(viper.GetString("config.file"), blocName)
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}

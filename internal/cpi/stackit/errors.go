@@ -20,6 +20,9 @@ var (
 	ErrCouldNotDetermineCreatedCredentialsGroupID = errors.New("could not determine created credentials group id")
 	ErrBucketInfoMissing                          = errors.New("bucket info missing")
 	ErrConfigIsRequired                           = errors.New("config is required")
+	ErrNICCreatedButNoID                          = errors.New("NIC created but no ID returned")
+	ErrNoNetworksFound                            = errors.New("no networks found")
+	ErrNetworkInterfaceNotFound                   = errors.New("network interface not found in any network")
 )
 
 // Dynamic error constructors.

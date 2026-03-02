@@ -36,16 +36,18 @@ const (
 
 	RoleBastion = "bastion"
 
-	ResourceRouter     = "router"
-	ResourceRouters    = "routers"
-	ResourceInstance   = "instance"
-	ResourceInstances  = "instances"
-	ResourceFloatingIP = "floating_ip"
-	ResourcePublicIP   = "public_ip"
-	ResourceBucket     = "bucket"
-	ResourceSnapshot   = "snapshot"
-	ResourceVolume     = "volume"
-	ResourceSubnet     = "subnet"
+	ResourceRouter        = "router"
+	ResourceRouters       = "routers"
+	ResourceInstance      = "instance"
+	ResourceInstances     = "instances"
+	ResourceFloatingIP    = "floating_ip"
+	ResourcePublicIP      = "public_ip"
+	ResourceBucket        = "bucket"
+	ResourceSnapshot      = "snapshot"
+	ResourceVolume        = "volume"
+	ResourceSubnet        = "subnet"
+	ResourceLoadBalancer  = "loadbalancer"
+	ResourceSecurityGroup = "security_group"
 
 	CategoryNetwork = "network"
 

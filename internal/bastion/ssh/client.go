@@ -15,6 +15,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -45,12 +46,14 @@ func validateCommand(cmdSlice []string) error {
 
 // Client implements the SSHClient interface using Go's native SSH library.
 type Client struct {
-	config     *ConnectionDetails
-	options    *ProvisioningOptions
-	client     *ssh.Client
-	log        logger.Logger
-	connected  bool
-	keyManager *KeyManager
+	config                 *ConnectionDetails
+	options                *ProvisioningOptions
+	client                 *ssh.Client
+	log                    logger.Logger
+	connected              bool
+	keyManager             *KeyManager
+	agentConn              net.Conn // Connection to SSH agent - must stay alive for forwarding
+	agentForwardingEnabled bool     // Track if agent forwarding channel handler is set up
 }
 
 // NewClient creates a new SSH client.
@@ -65,51 +68,86 @@ func NewClient(config *ConnectionDetails, options *ProvisioningOptions) *Client 
 	}
 }
 
-// Connect establishes an SSH connection to the bastion host.
+// Connect establishes an SSH connection to the bastion host with retry logic.
 func (c *Client) Connect(ctx context.Context) error {
 	if c.connected {
 		return nil
 	}
 
-	c.log.Info("Connecting to bastion host",
+	c.log.Infow("Connecting to bastion host",
 		"host", c.config.Host,
 		"user", c.config.User)
 
-	// Prepare SSH client configuration
-	sshConfig, err := c.prepareSSHConfig()
-	if err != nil {
-		return fmt.Errorf("failed to prepare SSH config: %w", err)
-	}
-
-	// Try multiple connection strategies
-	strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
-		c.connectWithNativeClient,
-		c.connectWithExternalSSH,
-	}
+	// Retry configuration
+	maxRetries := 5
+	retryInterval := 3 * time.Second
+	maxRetryInterval := 30 * time.Second
 
 	var lastErr error
-
-	for index, strategy := range strategies {
-		c.log.Debug("Attempting connection strategy", "strategy", index+1)
-
-		client, err := strategy(ctx, sshConfig)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Prepare SSH client configuration
+		sshConfig, err := c.prepareSSHConfig()
 		if err != nil {
-			lastErr = err
-			c.log.Warn("Connection strategy failed",
-				"strategy", index+1,
-				"error", err.Error())
-
-			continue
+			return fmt.Errorf("failed to prepare SSH config: %w", err)
 		}
 
-		c.client = client
-		c.connected = true
-		c.log.Info("Successfully connected to bastion host")
+		// Try multiple connection strategies
+		strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
+			c.connectWithNativeClient,
+			c.connectWithExternalSSH,
+		}
 
-		return nil
+		for index, strategy := range strategies {
+			c.log.Debugw("Attempting connection strategy",
+				"strategy", index+1,
+				"attempt", attempt,
+				"max_attempts", maxRetries)
+
+			client, err := strategy(ctx, sshConfig)
+			if err != nil {
+				lastErr = err
+				c.log.Debugw("Connection strategy failed",
+					"strategy", index+1,
+					"attempt", attempt,
+					"error", err.Error())
+
+				continue
+			}
+
+			c.client = client
+			c.connected = true
+
+			// Set up SSH agent forwarding if available
+			c.setupAgentForwarding(ctx)
+
+			c.log.Infof("Successfully connected to bastion host on attempt %d", attempt)
+
+			return nil
+		}
+
+		// All strategies failed for this attempt
+		if attempt < maxRetries {
+			c.log.Warnw("Connection attempt failed, retrying",
+				"attempt", attempt,
+				"max_attempts", maxRetries,
+				"retry_delay", retryInterval,
+				"error", lastErr.Error())
+
+			// Wait before next attempt, respecting context cancellation
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("SSH connection cancelled: %w", ctx.Err())
+			case <-time.After(retryInterval):
+				// Exponential backoff
+				retryInterval = time.Duration(float64(retryInterval) * 1.5)
+				if retryInterval > maxRetryInterval {
+					retryInterval = maxRetryInterval
+				}
+			}
+		}
 	}
 
-	return fmt.Errorf("all connection strategies failed, last error: %w", lastErr)
+	return fmt.Errorf("failed to connect after %d attempts, last error: %w", maxRetries, lastErr)
 }
 
 // ExecuteCommand executes a command on the remote host.
@@ -120,7 +158,7 @@ func (c *Client) ExecuteCommand(ctx context.Context, cmd string) (*CommandResult
 
 	startTime := time.Now()
 
-	c.log.Debug("Executing remote command", "command", cmd)
+	c.log.Debugw("Executing remote command", "command", cmd)
 
 	session, err := c.createSession()
 	if err != nil {
@@ -139,7 +177,7 @@ func (c *Client) TransferFile(ctx context.Context, local, remote string, opts Tr
 		return ErrSSHClientNotConnected
 	}
 
-	c.log.Info("Transferring file", "local", local, "remote", remote)
+	c.log.Infow("Transferring file", "local", local, "remote", remote)
 
 	// Create transfer manager
 	transferMgr := NewTransferManager(c, opts)
@@ -160,7 +198,7 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		return ErrSSHClientNotConnected
 	}
 
-	c.log.Info("Creating SSH tunnel",
+	c.log.Infow("Creating SSH tunnel",
 		"local_port", localPort,
 		"remote_port", remotePort)
 
@@ -186,7 +224,7 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		defer func() {
 			err := listener.Close()
 			if err != nil {
-				c.log.Warn("Failed to close listener", "error", err)
+				c.log.Warnw("Failed to close listener", "error", err)
 			}
 		}()
 
@@ -197,7 +235,7 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 			default:
 				conn, err := listener.Accept()
 				if err != nil {
-					c.log.Error("Failed to accept connection", "error", err)
+					c.log.Errorw("Failed to accept connection", "error", err)
 
 					continue
 				}
@@ -212,10 +250,33 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 
 // Close closes the SSH connection.
 func (c *Client) Close() error {
+	var errs []error
+
+	// Close agent connection first if it exists
+	if c.agentConn != nil {
+		err := c.agentConn.Close()
+		if err != nil {
+			c.log.Debug("Failed to close agent connection", "error", err.Error())
+
+			errs = append(errs, fmt.Errorf("failed to close agent connection: %w", err))
+		}
+
+		c.agentConn = nil
+		c.agentForwardingEnabled = false
+	}
+
+	// Close SSH client connection
 	if c.client != nil {
 		c.connected = false
 
-		return fmt.Errorf("failed to close SSH client: %w", c.client.Close())
+		err := c.client.Close()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to close SSH client: %w", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 
 	return nil
@@ -271,7 +332,7 @@ func (c *Client) wrapHostKeyCallback(knownHostsCallback ssh.HostKeyCallback, kno
 
 			// Check if this is a host key mismatch error
 			if strings.Contains(errStr, "mismatch") || strings.Contains(errStr, "differs") {
-				c.log.Error("Host key has changed! Possible security breach detected",
+				c.log.Errorw("Host key has changed! Possible security breach detected",
 					"host", hostname,
 					"error", err.Error())
 
@@ -280,19 +341,19 @@ func (c *Client) wrapHostKeyCallback(knownHostsCallback ssh.HostKeyCallback, kno
 
 			// Check if this is an unknown host error
 			if strings.Contains(errStr, "not in known_hosts") || strings.Contains(errStr, "unknown") {
-				c.log.Warn("Unknown host, automatically adding to known_hosts",
+				c.log.Warnw("Unknown host, automatically adding to known_hosts",
 					"host", hostname,
 					"fingerprint", ssh.FingerprintSHA256(key))
 
 				// Auto-add the host key (bastion provisioning context)
 				addErr := c.addHostKey(knownHostsPath, hostname, key)
 				if addErr != nil {
-					c.log.Error("Failed to add host key", "error", addErr.Error())
+					c.log.Errorw("Failed to add host key", "error", addErr.Error())
 
 					return fmt.Errorf("failed to add host key: %w", addErr)
 				}
 
-				c.log.Info("Host key added to known_hosts", "host", hostname)
+				c.log.Infow("Host key added to known_hosts", "host", hostname)
 
 				return nil
 			}
@@ -364,7 +425,7 @@ func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 		}
 
 		// Host is unknown, add it to known_hosts
-		c.log.Info("Adding unknown host to known_hosts", "host", hostname)
+		c.log.Infow("Adding unknown host to known_hosts", "host", hostname)
 
 		err = c.addHostKey(knownHostsPath, hostname, key)
 		if err != nil {
@@ -424,7 +485,7 @@ func (c *Client) prepareAuthMethods() ([]ssh.AuthMethod, error) {
 	if c.config.PrivateKeyPath != "" {
 		keyAuth, err := c.keyManager.CreatePublicKeyAuth(c.config.PrivateKeyPath, c.config.Password)
 		if err != nil {
-			c.log.Warn("Failed to create public key auth",
+			c.log.Warnw("Failed to create public key auth",
 				"key_path", c.config.PrivateKeyPath,
 				"error", err.Error())
 		} else {
@@ -582,7 +643,7 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 
 	remoteConn, err := c.client.Dial("tcp", remoteAddr)
 	if err != nil {
-		c.log.Error("Failed to dial remote address",
+		c.log.Errorw("Failed to dial remote address",
 			"address", remoteAddr,
 			"error", err)
 
@@ -602,7 +663,7 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	go func() {
 		_, err := io.Copy(remoteConn, localConn)
 		if err != nil {
-			c.log.Debug("Tunnel copy error", "direction", "local->remote", "error", err)
+			c.log.Debugw("Tunnel copy error", "direction", "local->remote", "error", err)
 		}
 
 		done <- struct{}{}
@@ -611,7 +672,7 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	go func() {
 		_, err := io.Copy(localConn, remoteConn)
 		if err != nil {
-			c.log.Debug("Tunnel copy error", "direction", "remote->local", "error", err)
+			c.log.Debugw("Tunnel copy error", "direction", "remote->local", "error", err)
 		}
 
 		done <- struct{}{}
@@ -625,10 +686,82 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	}
 }
 
+func (c *Client) setupAgentForwarding(ctx context.Context) {
+	// Check if SSH_AUTH_SOCK is set (agent is available)
+	authSock := os.Getenv("SSH_AUTH_SOCK")
+	if authSock == "" {
+		c.log.Debug("SSH agent not available (SSH_AUTH_SOCK not set)")
+
+		return
+	}
+
+	c.log.Debugw("Setting up SSH agent forwarding", "auth_sock", authSock)
+
+	// Connect to local SSH agent with context
+	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Second) //nolint:mnd // reasonable timeout for agent connection
+	defer cancel()
+
+	var d net.Dialer
+
+	conn, err := d.DialContext(agentCtx, "unix", authSock)
+	if err != nil {
+		c.log.Warn("Failed to connect to SSH agent", "error", err.Error(), "auth_sock", authSock)
+
+		return
+	}
+
+	// Create agent client
+	agentClient := agent.NewClient(conn)
+
+	// Verify agent is working by listing keys
+	keys, err := agentClient.List()
+	if err != nil {
+		c.log.Warn("Failed to list SSH agent keys", "error", err.Error())
+
+		_ = conn.Close()
+
+		return
+	}
+
+	c.log.Debugw("SSH agent has keys available", "key_count", len(keys))
+
+	// Set up agent forwarding channel handler on the SSH client
+	// This registers a handler for "auth-agent@openssh.com" channels from the server
+	err = agent.ForwardToAgent(c.client, agentClient)
+	if err != nil {
+		c.log.Warn("Failed to set up agent forwarding handler", "error", err.Error())
+
+		_ = conn.Close()
+
+		return
+	}
+
+	// CRITICAL: Keep the agent connection alive for the SSH client's lifetime
+	// If we close this, agent forwarding will fail on subsequent sessions
+	c.agentConn = conn
+	c.agentForwardingEnabled = true
+
+	c.log.Infow("SSH agent forwarding channel handler established", "keys_available", len(keys))
+}
+
 func (c *Client) createSession() (*ssh.Session, error) {
 	session, err := c.client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Agent forwarding is handled via the channel handler established in setupAgentForwarding
+	// CRITICAL: Also request agent forwarding per-session for OpenSSH compatibility
+	// Some SSH servers require BOTH the channel handler AND the session request
+	if c.agentForwardingEnabled {
+		err := agent.RequestAgentForwarding(session)
+		if err != nil {
+			// Non-fatal - channel handler is already active and will handle forwarding
+			// Some servers deny the per-session request when channel handler is sufficient
+			c.log.Debug("Per-session agent forwarding request denied (channel handler active)", "error", err.Error())
+		} else {
+			c.log.Debug("Session created with SSH agent forwarding enabled (channel handler + session request)")
+		}
 	}
 
 	return session, nil
@@ -693,7 +826,7 @@ func (c *Client) buildCommandResult(cmd string, err error, startTime time.Time, 
 			result.ExitCode = 1
 		}
 
-		c.log.Debug("Command failed",
+		c.log.Debugw("Command failed",
 			"command", cmd,
 			"exit_code", result.ExitCode,
 			"stderr", result.Stderr)
@@ -704,7 +837,7 @@ func (c *Client) buildCommandResult(cmd string, err error, startTime time.Time, 
 
 	result.ExitCode = 0
 
-	c.log.Debug("Command completed successfully",
+	c.log.Debugw("Command completed successfully",
 		"command", cmd,
 		"duration", duration.String())
 

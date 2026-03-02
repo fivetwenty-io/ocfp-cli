@@ -7,9 +7,16 @@ import (
 
 // State management errors.
 var (
-	ErrNoStateLoaded      = errors.New("no state loaded")
-	ErrResourceIDRequired = errors.New("resource ID is required")
-	ErrStateIsLocked      = errors.New("state is locked")
+	ErrNoStateLoaded        = errors.New("no state loaded")
+	ErrResourceIDRequired   = errors.New("resource ID is required")
+	ErrStateIsLocked        = errors.New("state is locked")
+	ErrNoBackupsAvailable   = errors.New("no backups available for rollback")
+	ErrCurrentStateNil      = errors.New("current state cannot be nil")
+	ErrDiffSetNil           = errors.New("diff set cannot be nil")
+	ErrUnknownMergeStrategy = errors.New("unknown merge strategy")
+	ErrProviderNil          = errors.New("provider cannot be nil")
+	ErrStateManagerNil      = errors.New("state manager cannot be nil")
+	ErrBlocNameEmpty        = errors.New("bloc name cannot be empty")
 )
 
 // Dynamic error constructors.

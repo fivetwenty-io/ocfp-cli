@@ -94,7 +94,7 @@ func (md *ModeDetector) checkHostnamePattern() bool {
 
 	expectedHostname := md.config.Name + "-bastion"
 	if hostname == expectedHostname {
-		md.log.Debug("Hostname matches bastion pattern", "hostname", hostname)
+		md.log.Debugw("Hostname matches bastion pattern", "hostname", hostname)
 
 		return true
 	}
@@ -112,7 +112,7 @@ func (md *ModeDetector) checkMarkerFiles() bool {
 	for _, marker := range markerFiles {
 		_, err := os.Stat(marker)
 		if err == nil {
-			md.log.Debug("Found bastion marker file", "file", marker)
+			md.log.Debugw("Found bastion marker file", "file", marker)
 
 			return true
 		}
@@ -158,7 +158,7 @@ func (md *ModeDetector) checkEnvironmentVariables() bool {
 	}
 
 	if envVarsSet >= minimumEnvVarsForBastionDetection {
-		md.log.Debug("Found bastion environment variables", "count", envVarsSet)
+		md.log.Debugw("Found bastion environment variables", "count", envVarsSet)
 
 		return true
 	}
@@ -222,6 +222,9 @@ func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manage
 	phases := le.getLocalPhases(manager)
 	manager.progress.TotalSteps = len(phases)
 
+	// Set start time before executing phases
+	manager.progress.StartTime = time.Now()
+
 	for phaseIndex, phase := range phases {
 		err := le.executeLocalPhase(ctx, manager, phase, phaseIndex, len(phases))
 		if err != nil {
@@ -249,7 +252,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"system_setup", manager.setupSystem},
 		{"directories", manager.createDirectories},
 		{"ocfp_directories", manager.setupOCFPDirectories},
-		{"repositories", manager.setupRepositories},
+		{"apt_repositories", manager.setupAPTRepositories},
 		{"packages", manager.installPackages},
 		{"snap_packages", manager.installSnapPackages},
 		{"binary_tools", manager.installBinaryTools},
@@ -275,7 +278,7 @@ func (le *LocalExecutor) executeLocalPhase(ctx context.Context, manager *Manager
 	fn   func(context.Context) error
 }, phaseIndex, totalPhases int) error {
 	if manager.shouldSkipPhase(phase.name) {
-		le.log.Info("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+		le.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
 
 		return nil
 	}
@@ -283,7 +286,7 @@ func (le *LocalExecutor) executeLocalPhase(ctx context.Context, manager *Manager
 	le.updateLocalPhaseProgress(manager, phase.name, phaseIndex, totalPhases)
 
 	if le.options.DryRun {
-		le.log.Info("DRY RUN: Would execute local phase", "phase", phase.name)
+		le.log.Infow("DRY RUN: Would execute local phase", "phase", phase.name)
 
 		return nil
 	}
@@ -315,7 +318,7 @@ func (le *LocalExecutor) runLocalPhaseWithCheckpoint(ctx context.Context, manage
 
 	err = manager.saveCheckpoint()
 	if err != nil {
-		le.log.Warn("Failed to save checkpoint", "error", err)
+		le.log.Warnw("Failed to save checkpoint", "error", err)
 	}
 
 	return nil
@@ -333,7 +336,7 @@ func (lce *LocalCommandExecutor) Connect(ctx context.Context) error {
 
 // ExecuteCommand executes a command locally.
 func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
-	lce.log.Debug("Executing local command", "command", cmd)
+	lce.log.Debugw("Executing local command", "command", cmd)
 
 	start := time.Now()
 
@@ -366,13 +369,13 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 			res.ExitCode = 1
 		}
 
-		lce.log.Debug("Local command failed", "exit_code", res.ExitCode, "stderr", res.Stderr)
+		lce.log.Debugw("Local command failed", "exit_code", res.ExitCode, "stderr", res.Stderr)
 
 		return res, fmt.Errorf("command failed with exit code %d: %w", res.ExitCode, err)
 	}
 
 	res.ExitCode = 0
-	lce.log.Debug("Local command completed successfully", "duration", res.Duration.String())
+	lce.log.Debugw("Local command completed successfully", "duration", res.Duration.String())
 
 	return res, nil
 }
@@ -503,7 +506,7 @@ func (lce *LocalCommandExecutor) verifyTransfer(local, remote string) {
 	}
 
 	if srcInfo.Size() != dstInfo.Size() {
-		lce.log.Warn("Local transfer size mismatch", "src", srcInfo.Size(), "dst", dstInfo.Size())
+		lce.log.Warnw("Local transfer size mismatch", "src", srcInfo.Size(), "dst", dstInfo.Size())
 	}
 }
 

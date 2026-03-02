@@ -53,11 +53,19 @@ help: ## Display this help message
 ##@ Build
 
 .PHONY: build
-build: ## Build binary for current platform
+build: ## Build macOS ARM64 and Linux AMD64 binaries
 	@echo "$(GREEN)Building $(BINARY_NAME)...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
-	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
-	@echo "$(GREEN)✓ Build complete: $(BUILD_DIR)/$(BINARY_NAME)$(RESET)"
+
+	@echo "$(WHITE)  Building macOS ARM64...$(RESET)"
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+
+	@echo "$(WHITE)  Building Linux AMD64...$(RESET)"
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
+
+	@echo "$(GREEN)✓ Build complete:$(RESET)"
+	@echo "$(WHITE)  - $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64$(RESET)"
+	@echo "$(WHITE)  - $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64$(RESET)"
 
 .PHONY: build-linux
 build-linux: ## Build Linux binary (amd64)
@@ -182,11 +190,25 @@ lint: ## Run golangci-lint
 		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
 	}
+	@golangci-lint cache clean
 	@golangci-lint run --timeout=5m ./...
 	@echo "$(GREEN)✓ Lint check complete$(RESET)"
 
 .PHONY: golangci
 golangci: lint ## Alias for lint (runs golangci-lint)
+
+.PHONY: golangci-autofix
+golangci-autofix: ## Run golangci-lint auto-fixers for specific linters
+	@echo "$(GREEN)Running golangci-lint auto-fixers...$(RESET)"
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+	}
+	@for target in canonicalheader copyloopvar dupword errorlint exptostd fatcontext ginkgolinter godot goheader importas intrange mirror misspell nakedret nlreturn perfsprint protogetter sloglint tagalign usestdlibvars usetesting wsl_v5; do \
+		echo "$(WHITE)  Fixing $$target...$(RESET)"; \
+		golangci-lint run --max-same-issues 50 --enable-only $$target --fix; \
+	done
+	@echo "$(GREEN)✓ Auto-fix complete$(RESET)"
 
 .PHONY: staticcheck
 staticcheck: ## Run staticcheck static analysis

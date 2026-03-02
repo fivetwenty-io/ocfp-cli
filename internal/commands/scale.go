@@ -111,7 +111,7 @@ func runScaleCommand(args []string, opts *scaleOptions) error {
 		return err
 	}
 
-	log.Info("Scaling resource", "resource", resource, "count", count, "dry-run", opts.dryRun)
+	log.Infow("Scaling resource", "resource", resource, "count", count, "dry-run", opts.dryRun)
 
 	confirmScaling(resource, count, opts.force, opts.dryRun, log)
 
@@ -144,8 +144,9 @@ func parseScaleArgs(args []string) (string, int, error) {
 
 // initializeScaleLogger initializes logging for the scale command.
 func initializeScaleLogger() (logger.Logger, error) {
-	blocName := viper.GetString("bloc_name")
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+	blocName := viper.GetString("bloc")
+	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),
@@ -156,6 +157,7 @@ func initializeScaleLogger() (logger.Logger, error) {
 		LogDir:     logDir,
 		BlocName:   blocName,
 		Command:    "scale",
+		Subcommand: "", // Scale has no subcommands
 		RequestID:  os.Getenv("OCFP_REQUEST_ID"),
 		DirectorID: "",
 	})
@@ -169,7 +171,7 @@ func initializeScaleLogger() (logger.Logger, error) {
 // loadScaleConfig loads configuration for scaling operations.
 func loadScaleConfig() (*config.Config, error) {
 	configFile := viper.GetString("config")
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
@@ -250,7 +252,7 @@ func performResourceScaling(ctx context.Context, resource string, count int, opt
 // scaleRouters scales router instances.
 func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
 	log := logger.Get()
-	log.Info("Scaling routers", "target_count", count)
+	log.Infow("Scaling routers", "target_count", count)
 
 	if dryRun {
 		return nil
@@ -267,7 +269,7 @@ func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config
 	}
 
 	currentCount := len(instances)
-	log.Info("Current router count", "count", currentCount)
+	log.Infow("Current router count", "count", currentCount)
 
 	if currentCount == count {
 		log.Info("Already at desired count")
@@ -297,19 +299,19 @@ func scaleRouterInstances(ctx context.Context, compute cpi.ComputeManager, cfg *
 
 func scaleUpRouters(ctx context.Context, compute cpi.ComputeManager, cfg *config.Config, currentCount, targetCount int, log logger.Logger) error {
 	toCreate := targetCount - currentCount
-	log.Info("Scaling up routers", "creating", toCreate)
+	log.Infow("Scaling up routers", "creating", toCreate)
 
 	for i := range toCreate {
 		req := createRouterInstanceRequest(cfg, currentCount+i+1)
 
 		instance, err := compute.CreateInstance(ctx, req)
 		if err != nil {
-			log.Error("Failed to create router instance", "error", err)
+			log.Errorw("Failed to create router instance", "error", err)
 
 			continue
 		}
 
-		log.Info("Created router instance", "id", instance.ID, "name", instance.Name)
+		log.Infow("Created router instance", "id", instance.ID, "name", instance.Name)
 	}
 
 	return nil
@@ -317,15 +319,15 @@ func scaleUpRouters(ctx context.Context, compute cpi.ComputeManager, cfg *config
 
 func scaleDownRouters(ctx context.Context, compute cpi.ComputeManager, instances []*cpi.Instance, currentCount, targetCount int, log logger.Logger) error {
 	toRemove := currentCount - targetCount
-	log.Info("Scaling down routers", "removing", toRemove)
+	log.Infow("Scaling down routers", "removing", toRemove)
 
 	for i := 0; i < toRemove && i < len(instances); i++ {
 		instance := instances[len(instances)-1-i]
-		log.Info("Removing router instance", "id", instance.ID, "name", instance.Name)
+		log.Infow("Removing router instance", "id", instance.ID, "name", instance.Name)
 
 		err := compute.DeleteInstance(ctx, instance.ID)
 		if err != nil {
-			log.Error("Failed to delete router instance", "id", instance.ID, "error", err)
+			log.Errorw("Failed to delete router instance", "id", instance.ID, "error", err)
 
 			continue
 		}
@@ -354,7 +356,7 @@ func createRouterInstanceRequest(cfg *config.Config, instanceNum int) *cpi.Insta
 // scaleCells scales Diego cell instances.
 func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, count int, dryRun bool, wait bool) error {
 	log := logger.Get()
-	log.Info("Scaling Diego cells", "target_count", count)
+	log.Infow("Scaling Diego cells", "target_count", count)
 
 	if dryRun {
 		return nil
@@ -371,7 +373,7 @@ func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, 
 	}
 
 	currentCount := len(instances)
-	log.Info("Current Diego cell count", "count", currentCount)
+	log.Infow("Current Diego cell count", "count", currentCount)
 
 	if currentCount == count {
 		log.Info("Already at desired count")
@@ -401,19 +403,19 @@ func scaleCellInstances(ctx context.Context, compute cpi.ComputeManager, cfg *co
 
 func scaleUpCells(ctx context.Context, compute cpi.ComputeManager, cfg *config.Config, currentCount, targetCount int, log logger.Logger) error {
 	toCreate := targetCount - currentCount
-	log.Info("Scaling up Diego cells", "creating", toCreate)
+	log.Infow("Scaling up Diego cells", "creating", toCreate)
 
 	for i := range toCreate {
 		req := createCellInstanceRequest(cfg, currentCount+i+1)
 
 		instance, err := compute.CreateInstance(ctx, req)
 		if err != nil {
-			log.Error("Failed to create Diego cell instance", "error", err)
+			log.Errorw("Failed to create Diego cell instance", "error", err)
 
 			continue
 		}
 
-		log.Info("Created Diego cell instance", "id", instance.ID, "name", instance.Name)
+		log.Infow("Created Diego cell instance", "id", instance.ID, "name", instance.Name)
 	}
 
 	return nil
@@ -421,16 +423,16 @@ func scaleUpCells(ctx context.Context, compute cpi.ComputeManager, cfg *config.C
 
 func scaleDownCells(ctx context.Context, compute cpi.ComputeManager, instances []*cpi.Instance, currentCount, targetCount int, log logger.Logger) error {
 	toRemove := currentCount - targetCount
-	log.Info("Scaling down Diego cells", "removing", toRemove)
+	log.Infow("Scaling down Diego cells", "removing", toRemove)
 
 	for i := 0; i < toRemove && i < len(instances); i++ {
 		instance := instances[len(instances)-1-i]
-		log.Info("Removing Diego cell instance", "id", instance.ID, "name", instance.Name)
-		log.Info("Draining apps from cell", "id", instance.ID)
+		log.Infow("Removing Diego cell instance", "id", instance.ID, "name", instance.Name)
+		log.Infow("Draining apps from cell", "id", instance.ID)
 
 		err := compute.DeleteInstance(ctx, instance.ID)
 		if err != nil {
-			log.Error("Failed to delete Diego cell instance", "id", instance.ID, "error", err)
+			log.Errorw("Failed to delete Diego cell instance", "id", instance.ID, "error", err)
 
 			continue
 		}
@@ -459,10 +461,10 @@ func createCellInstanceRequest(cfg *config.Config, instanceNum int) *cpi.Instanc
 // scaleInstances scales generic instances.
 func scaleInstances(count int, dryRun bool) error {
 	log := logger.Get()
-	log.Info("Scaling instances", "target_count", count)
+	log.Infow("Scaling instances", "target_count", count)
 
 	if dryRun {
-		log.Info("[DRY RUN] Would scale instances", "count", count)
+		log.Infow("[DRY RUN] Would scale instances", "count", count)
 
 		return nil
 	}
@@ -476,7 +478,7 @@ func scaleInstances(count int, dryRun bool) error {
 // scaleLoadBalancer scales load balancer backend members.
 func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, count int, dryRun bool, wait bool) error {
 	log := logger.Get()
-	log.Info("Scaling load balancer backends", "target_count", count)
+	log.Infow("Scaling load balancer backends", "target_count", count)
 
 	if dryRun {
 		return nil
@@ -493,7 +495,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, count int, dr
 	}
 
 	currentCount := len(pool.Members)
-	log.Info("Current backend count", "count", currentCount)
+	log.Infow("Current backend count", "count", currentCount)
 
 	if currentCount == count {
 		log.Info("Already at desired count")
@@ -524,7 +526,7 @@ func getFirstLoadBalancerPool(ctx context.Context, network cpi.NetworkManager, l
 	}
 
 	loadBalancer := lbs[0]
-	log.Info("Scaling backends for load balancer", "name", loadBalancer.Name)
+	log.Infow("Scaling backends for load balancer", "name", loadBalancer.Name)
 
 	pools, err := network.GetBackendPools(ctx, loadBalancer.ID)
 	if err != nil {
@@ -550,7 +552,7 @@ func scaleBackendMembers(ctx context.Context, network cpi.NetworkManager, lbID s
 
 func scaleUpBackendMembers(ctx context.Context, network cpi.NetworkManager, lbID string, currentCount, targetCount int, log logger.Logger) error {
 	toAdd := targetCount - currentCount
-	log.Info("Adding backend members", "count", toAdd)
+	log.Infow("Adding backend members", "count", toAdd)
 
 	for i := range toAdd {
 		member := &cpi.BackendMember{
@@ -561,12 +563,12 @@ func scaleUpBackendMembers(ctx context.Context, network cpi.NetworkManager, lbID
 
 		err := network.AddBackendMember(ctx, lbID, member)
 		if err != nil {
-			log.Error("Failed to add backend member", "error", err)
+			log.Errorw("Failed to add backend member", "error", err)
 
 			continue
 		}
 
-		log.Info("Added backend member", "ip", member.IPAddress)
+		log.Infow("Added backend member", "ip", member.IPAddress)
 	}
 
 	return nil
@@ -574,19 +576,19 @@ func scaleUpBackendMembers(ctx context.Context, network cpi.NetworkManager, lbID
 
 func scaleDownBackendMembers(ctx context.Context, network cpi.NetworkManager, lbID string, pool *cpi.BackendPool, currentCount, targetCount int, log logger.Logger) error {
 	toRemove := currentCount - targetCount
-	log.Info("Removing backend members", "count", toRemove)
+	log.Infow("Removing backend members", "count", toRemove)
 
 	for i := 0; i < toRemove && i < len(pool.Members); i++ {
 		member := pool.Members[len(pool.Members)-1-i]
 
 		err := network.RemoveBackendMember(ctx, lbID, member.IPAddress)
 		if err != nil {
-			log.Error("Failed to remove backend member", "error", err)
+			log.Errorw("Failed to remove backend member", "error", err)
 
 			continue
 		}
 
-		log.Info("Removed backend member", "ip", member.IPAddress)
+		log.Infow("Removed backend member", "ip", member.IPAddress)
 	}
 
 	return nil
@@ -595,7 +597,7 @@ func scaleDownBackendMembers(ctx context.Context, network cpi.NetworkManager, lb
 // scaleDatabase scales database instances.
 func scaleDatabase(count int, dryRun bool) error {
 	log := logger.Get()
-	log.Info("Scaling database instances", "target_count", count)
+	log.Infow("Scaling database instances", "target_count", count)
 
 	if dryRun {
 		// No-op here; dry-run handled at command layer with a plan
@@ -603,7 +605,7 @@ func scaleDatabase(count int, dryRun bool) error {
 	}
 
 	if count > 1 {
-		log.Info("Setting up PostgreSQL replication", "replicas", count-1)
+		log.Infow("Setting up PostgreSQL replication", "replicas", count-1)
 		// Pending: implement PostgreSQL replication setup
 		// This would involve:
 		// 1. Creating replica instances
@@ -627,13 +629,13 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 	var err error
 
 	switch strings.ToLower(resource) {
-	case "routers", "router":
+	case ResourceRouters, ResourceRouter:
 		err = buildRouterScalePlan(ctx, planTable, provider, cfg, target)
 	case "cells", "cell", "diego-cells":
 		err = buildCellScalePlan(ctx, planTable, provider, cfg, target)
 	case "load-balancer", "lb":
 		err = buildLBScalePlan(ctx, planTable, provider, target)
-	case "instances", "instance":
+	case ResourceInstances, ResourceInstance:
 		planTable.Summary = "Generic instance scaling not yet implemented"
 	case "database", "db", "postgres":
 		planTable.Summary = "Database scaling not yet implemented"

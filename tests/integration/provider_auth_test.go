@@ -20,7 +20,7 @@ import (
 // TestProviderAuthenticationFlow tests the complete authentication flow.
 func testStackitAuthWithToken(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions
 
 	configFile := filepath.Join(tmpDir, "stackit-token-config.yml")
 
@@ -66,7 +66,7 @@ blocs:
 
 func testStackitAuthWithJSON(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions
 
 	configFile := filepath.Join(tmpDir, "stackit-json-config.yml")
 	// #nosec G101 -- Test fixture with mock credentials
@@ -101,7 +101,7 @@ blocs:
 
 func testStackitAuthWithKeyPath(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions
 
 	keyPath := filepath.Join(tmpDir, "service-account-key.json")
 	// #nosec G101 -- Test fixture with mock credentials
@@ -144,7 +144,7 @@ blocs:
 
 func testProviderCommandWithStackitCLI(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions (also uses t.Setenv)
 
 	_, err := exec.LookPath("stackit")
 	if err != nil {
@@ -203,14 +203,14 @@ func TestProviderAuthenticationFlow(t *testing.T) {
 	})
 
 	t.Run("ProviderCommandWithStackitCLI", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testProviderCommandWithStackitCLI(t, tmpDir)
 	})
 }
 
 func testValidateProviderTypes(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions (also uses t.Setenv)
 
 	configFile := filepath.Join(tmpDir, "validation-config.yml")
 
@@ -260,12 +260,12 @@ blocs:
 
 func testValidateEnvironmentVariables(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions (also uses t.Setenv)
 	t.Setenv("OCFP_PROVIDER", "aws")
-	t.Setenv("OCFP_BLOC_NAME", "test-bloc")
+	t.Setenv("OCFP_BLOC", "test-bloc")
 
 	defer func() { _ = os.Unsetenv("OCFP_PROVIDER") }()
-	defer func() { _ = os.Unsetenv("OCFP_BLOC_NAME") }()
+	defer func() { _ = os.Unsetenv("OCFP_BLOC") }()
 
 	configFile := filepath.Join(tmpDir, "env-var-config.yml")
 	testConfig := `
@@ -291,7 +291,7 @@ blocs:
 
 func testInvalidProviderHandling(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions (also uses t.Setenv)
 
 	configFile := filepath.Join(tmpDir, "invalid-provider-config.yml")
 	testConfig := `
@@ -322,17 +322,17 @@ func TestProviderValidationFlow(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	t.Run("ValidateProviderTypes", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testValidateProviderTypes(t, tmpDir)
 	})
 
 	t.Run("ValidateEnvironmentVariables", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testValidateEnvironmentVariables(t, tmpDir)
 	})
 
 	t.Run("InvalidProviderHandling", func(t *testing.T) {
-		t.Parallel()
+		// Cannot use t.Parallel() because helper uses t.Setenv()
 		testInvalidProviderHandling(t, tmpDir)
 	})
 }
@@ -433,7 +433,7 @@ func TestProviderNetworkFlow(t *testing.T) {
 
 func testCredentialPriority(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions
 
 	configFile := filepath.Join(tmpDir, "priority-config.yml")
 	testConfig := `
@@ -458,7 +458,7 @@ blocs:
 
 func testMultipleCredentialFormats(t *testing.T, tmpDir string) {
 	t.Helper()
-	t.Parallel()
+	// Cannot use t.Parallel() in helper functions
 
 	configFile := filepath.Join(tmpDir, "multi-format-config.yml")
 	keyPath := filepath.Join(tmpDir, "multi-key.json")

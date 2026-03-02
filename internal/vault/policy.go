@@ -49,7 +49,7 @@ type PolicyRule struct {
 
 // CreateOCFPPolicies creates all necessary policies for OCFP operations.
 func (pm *PolicyManager) CreateOCFPPolicies() error {
-	pm.logger.Info("Creating OCFP vault policies", "bloc", pm.blocName)
+	pm.logger.Infow("Creating OCFP vault policies", "bloc", pm.blocName)
 
 	policies := pm.getOCFPPolicyTemplates()
 
@@ -60,14 +60,14 @@ func (pm *PolicyManager) CreateOCFPPolicies() error {
 		}
 	}
 
-	pm.logger.Info("OCFP policies created successfully", "count", len(policies))
+	pm.logger.Infow("OCFP policies created successfully", "count", len(policies))
 
 	return nil
 }
 
 // CreatePolicy creates a vault policy.
 func (pm *PolicyManager) CreatePolicy(template *PolicyTemplate) error {
-	pm.logger.Debug("Creating vault policy", "name", template.Name)
+	pm.logger.Debugw("Creating vault policy", "name", template.Name)
 
 	// Generate policy HCL
 	policyHCL := pm.generatePolicyHCL(template)
@@ -78,7 +78,7 @@ func (pm *PolicyManager) CreatePolicy(template *PolicyTemplate) error {
 		return fmt.Errorf("failed to create policy: %w", err)
 	}
 
-	pm.logger.Info("Created vault policy", "name", template.Name, "rules", len(template.Rules))
+	pm.logger.Infow("Created vault policy", "name", template.Name, "rules", len(template.Rules))
 
 	return nil
 }
@@ -105,21 +105,21 @@ func (pm *PolicyManager) GetPolicy(name string) (string, error) {
 
 // DeletePolicy deletes a vault policy.
 func (pm *PolicyManager) DeletePolicy(name string) error {
-	pm.logger.Info("Deleting vault policy", "name", name)
+	pm.logger.Infow("Deleting vault policy", "name", name)
 
 	err := pm.client.client.Sys().DeletePolicy(name)
 	if err != nil {
 		return fmt.Errorf("failed to delete policy %s: %w", name, err)
 	}
 
-	pm.logger.Info("Deleted vault policy", "name", name)
+	pm.logger.Infow("Deleted vault policy", "name", name)
 
 	return nil
 }
 
 // UpdatePolicy updates an existing vault policy.
 func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
-	pm.logger.Debug("Updating vault policy", "name", template.Name)
+	pm.logger.Debugw("Updating vault policy", "name", template.Name)
 
 	// Check if policy exists
 	existing, err := pm.GetPolicy(template.Name)
@@ -137,7 +137,7 @@ func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 
 	// Only update if content has changed
 	if strings.TrimSpace(existing) == strings.TrimSpace(newPolicyHCL) {
-		pm.logger.Debug("Policy content unchanged, skipping update", "name", template.Name)
+		pm.logger.Debugw("Policy content unchanged, skipping update", "name", template.Name)
 
 		return nil
 	}
@@ -148,21 +148,21 @@ func (pm *PolicyManager) UpdatePolicy(template *PolicyTemplate) error {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
-	pm.logger.Info("Updated vault policy", "name", template.Name)
+	pm.logger.Infow("Updated vault policy", "name", template.Name)
 
 	return nil
 }
 
 // ValidateTokenPolicies validates that a token has the required policies.
 func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error {
-	pm.logger.Debug("Validating token policies", "required", requiredPolicies)
+	pm.logger.Debugw("Validating token policies", "required", requiredPolicies)
 
 	tokenPolicies, err := pm.getTokenPolicies()
 	if err != nil {
 		return err
 	}
 
-	pm.logger.Debug("Token policies", "policies", tokenPolicies)
+	pm.logger.Debugw("Token policies", "policies", tokenPolicies)
 
 	if pm.hasRootPolicy(tokenPolicies) {
 		pm.logger.Debug("Token has root policy, validation passed")
@@ -175,7 +175,7 @@ func (pm *PolicyManager) ValidateTokenPolicies(requiredPolicies []string) error 
 
 // CreateTokenWithPolicies creates a new token with specific policies.
 func (pm *PolicyManager) CreateTokenWithPolicies(policies []string, ttl string, renewable bool) (string, error) {
-	pm.logger.Info("Creating token with policies", "policies", policies, "ttl", ttl)
+	pm.logger.Infow("Creating token with policies", "policies", policies, "ttl", ttl)
 
 	// Prepare token creation request
 	tokenReq := map[string]interface{}{
@@ -199,7 +199,7 @@ func (pm *PolicyManager) CreateTokenWithPolicies(policies []string, ttl string, 
 
 	token := secret.Auth.ClientToken
 
-	pm.logger.Info("Created token successfully", "policies", len(policies))
+	pm.logger.Infow("Created token successfully", "policies", len(policies))
 
 	return token, nil
 }
@@ -217,14 +217,14 @@ func (pm *PolicyManager) EnsureOCFPPoliciesExist() error {
 		}
 	}
 
-	pm.logger.Info("OCFP policies are current", "count", len(policies))
+	pm.logger.Infow("OCFP policies are current", "count", len(policies))
 
 	return nil
 }
 
 // CleanupOCFPPolicies removes all OCFP policies for this bloc.
 func (pm *PolicyManager) CleanupOCFPPolicies() error {
-	pm.logger.Info("Cleaning up OCFP policies", "bloc", pm.blocName)
+	pm.logger.Infow("Cleaning up OCFP policies", "bloc", pm.blocName)
 
 	// List all policies
 	allPolicies, err := pm.ListPolicies()
@@ -247,11 +247,11 @@ func (pm *PolicyManager) CleanupOCFPPolicies() error {
 	for _, policy := range ocfpPolicies {
 		err := pm.DeletePolicy(policy)
 		if err != nil {
-			pm.logger.Warn("Failed to delete policy", "policy", policy, "error", err)
+			pm.logger.Warnw("Failed to delete policy", "policy", policy, "error", err)
 		}
 	}
 
-	pm.logger.Info("OCFP policy cleanup completed", "deleted", len(ocfpPolicies))
+	pm.logger.Infow("OCFP policy cleanup completed", "deleted", len(ocfpPolicies))
 
 	return nil
 }

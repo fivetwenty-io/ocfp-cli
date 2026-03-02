@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/security"
@@ -24,6 +25,8 @@ var (
 
 	// Atom for dynamic log level changes.
 	atom zap.AtomicLevel //nolint:gochecknoglobals // shared logging level controller
+
+	loggerMu sync.RWMutex //nolint:gochecknoglobals // shared mutex for thread-safe logger access
 )
 
 // Logger type alias for consistent usage across the codebase.
@@ -39,12 +42,16 @@ type Config struct {
 	LogDir     string
 	BlocName   string
 	Command    string
+	Subcommand string // Subcommand name for hierarchical commands (e.g., "sync" in "state sync")
 	RequestID  string
 	DirectorID string
 }
 
 // Initialize sets up the global logger.
 func Initialize(cfg Config) error {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+
 	// Determine log level
 	level := determineLogLevel(cfg)
 	atom = zap.NewAtomicLevelAt(level)
@@ -60,7 +67,7 @@ func Initialize(cfg Config) error {
 		StacktraceKey:       "stacktrace",
 		SkipLineEnding:      false,
 		LineEnding:          zapcore.DefaultLineEnding,
-		EncodeLevel:         zapcore.CapitalColorLevelEncoder,
+		EncodeLevel:         zapcore.CapitalLevelEncoder,
 		EncodeTime:          zapcore.ISO8601TimeEncoder,
 		EncodeDuration:      zapcore.SecondsDurationEncoder,
 		EncodeCaller:        zapcore.ShortCallerEncoder,
@@ -108,17 +115,30 @@ func Initialize(cfg Config) error {
 //
 //nolint:ireturn // returning zapcore.Core interface is intentional (zap API)
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
-	// Place logs under {LogDir}/{command}/{timestamp}.log
+	// Place logs under ~/.ocfp/{bloc}/logs/{command}/[{subcommand}/]
 	baseDir := cfg.LogDir
 	if baseDir == "" {
-		// Fallback to ~/.ocfp/log if not provided
+		// Fallback to ~/.ocfp if not provided
 		home, err := os.UserHomeDir()
 		if err == nil {
-			baseDir = filepath.Join(home, ".ocfp", "log")
+			baseDir = filepath.Join(home, ".ocfp")
 		}
 	}
-	// Ensure per-command subdirectory
-	dir := filepath.Join(baseDir, cfg.Command)
+
+	// Build path components
+	var pathParts []string
+	if cfg.BlocName != "" {
+		pathParts = append(pathParts, baseDir, cfg.BlocName, "logs", cfg.Command)
+	} else {
+		pathParts = append(pathParts, baseDir, "logs", cfg.Command)
+	}
+
+	// Add subcommand directory if present
+	if cfg.Subcommand != "" {
+		pathParts = append(pathParts, cfg.Subcommand)
+	}
+
+	dir := filepath.Join(pathParts...)
 
 	err := os.MkdirAll(dir, LogDirMode)
 	if err != nil {
@@ -192,30 +212,43 @@ func SetLevel(level string) {
 		return
 	}
 
+	loggerMu.RLock()
 	atom.SetLevel(zapLevel)
+	loggerMu.RUnlock()
 }
 
 // Get returns the global logger instance.
 func Get() *zap.SugaredLogger {
-	if log == nil {
-		// Initialize with defaults if not already initialized
-		err := Initialize(Config{
-			Level:      "info",
-			Debug:      false,
-			Verbose:    false,
-			Trace:      false,
-			NoLog:      false,
-			LogDir:     "",
-			BlocName:   "",
-			Command:    "",
-			RequestID:  "",
-			DirectorID: "",
-		})
-		if err != nil {
-			// Fallback to console logger if initialization fails
-			panic(fmt.Errorf("failed to initialize logger: %w", err))
-		}
+	loggerMu.RLock()
+
+	current := log
+
+	loggerMu.RUnlock()
+
+	if current != nil {
+		return current
 	}
+
+	// Initialize with defaults if not already initialized
+	err := Initialize(Config{
+		Level:      "info",
+		Debug:      false,
+		Verbose:    false,
+		Trace:      false,
+		NoLog:      false,
+		LogDir:     os.TempDir(),
+		BlocName:   "",
+		Command:    "",
+		Subcommand: "",
+		RequestID:  "",
+		DirectorID: "",
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to initialize logger: %w", err))
+	}
+
+	loggerMu.RLock()
+	defer loggerMu.RUnlock()
 
 	return log
 }
@@ -230,6 +263,11 @@ func Debugf(format string, args ...interface{}) {
 	Get().Debugf(format, args...)
 }
 
+// Debugw logs a debug message with structured key-value pairs.
+func Debugw(msg string, keysAndValues ...interface{}) {
+	Get().Debugw(msg, keysAndValues...)
+}
+
 // Info logs an info message.
 func Info(args ...interface{}) {
 	Get().Info(args...)
@@ -238,6 +276,11 @@ func Info(args ...interface{}) {
 // Infof logs a formatted info message.
 func Infof(format string, args ...interface{}) {
 	Get().Infof(format, args...)
+}
+
+// Infow logs an info message with structured key-value pairs.
+func Infow(msg string, keysAndValues ...interface{}) {
+	Get().Infow(msg, keysAndValues...)
 }
 
 // Warn logs a warning message.
@@ -250,6 +293,11 @@ func Warnf(format string, args ...interface{}) {
 	Get().Warnf(format, args...)
 }
 
+// Warnw logs a warning message with structured key-value pairs.
+func Warnw(msg string, keysAndValues ...interface{}) {
+	Get().Warnw(msg, keysAndValues...)
+}
+
 // Error logs an error message.
 func Error(args ...interface{}) {
 	Get().Error(args...)
@@ -258,6 +306,11 @@ func Error(args ...interface{}) {
 // Errorf logs a formatted error message.
 func Errorf(format string, args ...interface{}) {
 	Get().Errorf(format, args...)
+}
+
+// Errorw logs an error message with structured key-value pairs.
+func Errorw(msg string, keysAndValues ...interface{}) {
+	Get().Errorw(msg, keysAndValues...)
 }
 
 // Fatal logs a fatal message and exits.
@@ -292,9 +345,15 @@ func WithOperation(operation string) *zap.SugaredLogger {
 
 // Sync flushes any buffered log entries.
 func Sync() error {
+	loggerMu.RLock()
+
 	if log != nil {
+		defer loggerMu.RUnlock()
+
 		return fmt.Errorf("failed to sync logger: %w", log.Sync())
 	}
+
+	loggerMu.RUnlock()
 
 	return nil
 }

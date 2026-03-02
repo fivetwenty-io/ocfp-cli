@@ -12,9 +12,10 @@ import (
 const testBloc = "prod"
 
 func TestResolveReservedIP(t *testing.T) {
-	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".state")
+	t.Setenv("OCFP_STATE_DIR", stateDir)
 	// Prepare state
-	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +28,9 @@ func TestResolveReservedIP(t *testing.T) {
 	}
 	// Inject output
 	_ = stateManager.SetOutput("reserved_prod-ocfp-0_vault_ip", "10.4.0.5")
+	if err := stateManager.Save(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
 
 	reservedIP, err := commands.ResolveReservedIP(bloc, "reserved:vault_ip")
 	if err != nil {
@@ -39,9 +43,10 @@ func TestResolveReservedIP(t *testing.T) {
 }
 
 func TestResolvePublicIPToken(t *testing.T) {
-	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".state")
+	t.Setenv("OCFP_STATE_DIR", stateDir)
 
-	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +74,10 @@ func TestResolvePublicIPToken(t *testing.T) {
 		UpdatedAt: time.Time{},
 	})
 
+	if err := stateManager.Save(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
 	targetIP, err := commands.ResolveTargetIP(bloc, "public-ip:router:0")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -80,9 +89,10 @@ func TestResolvePublicIPToken(t *testing.T) {
 }
 
 func TestResolveReservedIPWithIndex(t *testing.T) {
-	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".state")
+	t.Setenv("OCFP_STATE_DIR", stateDir)
 
-	stateManager, err := state.NewManager(filepath.Join(t.TempDir(), ".state"))
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +106,9 @@ func TestResolveReservedIPWithIndex(t *testing.T) {
 
 	// With index
 	_ = stateManager.SetOutput("reserved_prod-ocfp-1_doomsday_ip", "10.4.4.9")
+	if err := stateManager.Save(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
 
 	reservedIP, err := commands.ResolveReservedIP(bloc, "reserved:doomsday_ip:1")
 	if err != nil {

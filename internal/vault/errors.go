@@ -31,12 +31,13 @@ var (
 	ErrEd25519KeyGenerationNotImplemented     = errors.New("ed25519 key generation not yet implemented")
 	ErrNoUnsealKeysFoundInEnvVars             = errors.New("no unseal keys found in environment variables")
 	ErrTimeoutWaitingForVaultReady            = errors.New("timeout waiting for vault to be ready")
-	ErrBlocNameRequiredForVaultMigrate        = errors.New("bloc_name is required for vault migrate operation")
+	ErrBlocNameRequiredForVaultMigrate        = errors.New("bloc is required for vault migrate operation")
 	ErrConnectionTimeout                      = errors.New("connection timeout")
 	ErrAccessDenied                           = errors.New("access denied")
 	ErrPathNotFound                           = errors.New("path not found")
 	ErrNotAString                             = errors.New("not a string")
 	ErrNotImplementedInMock                   = errors.New("not implemented in mock")
+	ErrSafercMustBeInHomeDirectory            = errors.New("invalid path: .saferc must be in home directory")
 )
 
 // Dynamic error constructors.
@@ -126,4 +127,16 @@ func ErrMigrationValidationFailedChecksumMismatch(inception, production string) 
 
 func ErrUnsupportedProvider(provider string) error {
 	return fmt.Errorf("unsupported provider: %s", provider) //nolint:err113 // dynamic error with context
+}
+
+func ErrNoCurrentVaultSet() error {
+	return errors.New("no current vault set in ~/.saferc") //nolint:err113 // dynamic error with context
+}
+
+func ErrVaultNotFoundInSaferc(vaultName string) error {
+	return fmt.Errorf("vault %q not found in ~/.saferc", vaultName) //nolint:err113 // dynamic error with context
+}
+
+func ErrNoTokenFoundForVault(vaultName string) error {
+	return fmt.Errorf("no token found for vault %q", vaultName) //nolint:err113 // dynamic error with context
 }

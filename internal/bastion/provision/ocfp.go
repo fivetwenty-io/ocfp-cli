@@ -39,13 +39,16 @@ func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string 
 	lines = append(lines, "# Vault inception setup")
 	lines = append(lines, "")
 
-	lines = append(lines, om.generateVaultInceptionScriptLocator()...)
+	// Use OCFP CLI locator to find the installed binary
+	lines = append(lines, om.generateOCFPCLILocator()...)
 	lines = append(lines, om.generateVaultInceptionExecution()...)
 
 	return strings.Join(lines, "\n")
 }
 
 // GenerateOCFPConfigureScript generates script for OCFP configure deployments.
+//
+//nolint:funlen // Script generation requires many statements
 func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	resolver := om.resolver()
 	names := om.mergeDeploymentNames(defaultDeploymentNames, resolver.Configured())
@@ -60,8 +63,8 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	lines = append(lines, fmt.Sprintf("GLOBAL_DEPLOYMENTS_URL=%q", resolver.GlobalURL()))
 	lines = append(lines, `DEPLOYMENTS_ROOT="${HOME}/ocfp/deployments"`)
 	lines = append(lines, `KITS_ROOT="${HOME}/ocfp/kits"`)
-	lines = append(lines, fmt.Sprintf("DEV_DEPLOYMENTS=%s", formatShellArray(devDeployments)))
-	lines = append(lines, fmt.Sprintf("RELEASE_DEPLOYMENTS=%s", formatShellArray(releaseDeployments)))
+	lines = append(lines, "DEV_DEPLOYMENTS="+formatShellArray(devDeployments))
+	lines = append(lines, "RELEASE_DEPLOYMENTS="+formatShellArray(releaseDeployments))
 	lines = append(lines, "")
 
 	lines = append(lines, "log_info 'Preparing OCFP deployments'")
@@ -71,13 +74,26 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 
 	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
 	lines = append(lines, `    if [ -d "${DEPLOYMENTS_ROOT}/.git" ]; then`)
+	lines = append(lines, `        # Valid git repository exists, update it`)
 	lines = append(lines, `        log_info 'Updating deployments repository'`)
 	lines = append(lines, `        if git -C "${DEPLOYMENTS_ROOT}" fetch --all --prune && git -C "${DEPLOYMENTS_ROOT}" pull --ff-only; then`)
 	lines = append(lines, `            log_success 'Deployments repository updated'`)
 	lines = append(lines, "        else")
 	lines = append(lines, `            log_warning 'Failed to update deployments repository - please verify connectivity and credentials'`)
 	lines = append(lines, "        fi")
+	lines = append(lines, `    elif [ -d "${DEPLOYMENTS_ROOT}" ]; then`)
+	lines = append(lines, `        # Directory exists but is not a valid git repository`)
+	lines = append(lines, `        log_warning 'Deployments directory exists but is not a valid git repository'`)
+	lines = append(lines, `        log_info 'Removing invalid deployments directory'`)
+	lines = append(lines, `        rm -rf "${DEPLOYMENTS_ROOT}"`)
+	lines = append(lines, `        log_info 'Cloning deployments repository'`)
+	lines = append(lines, `        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`)
+	lines = append(lines, `            log_success 'Deployments repository cloned'`)
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_error 'Failed to clone deployments repository'`)
+	lines = append(lines, "        fi")
 	lines = append(lines, "    else")
+	lines = append(lines, `        # No directory exists, clone fresh`)
 	lines = append(lines, `        log_info 'Cloning deployments repository'`)
 	lines = append(lines, `        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`)
 	lines = append(lines, `            log_success 'Deployments repository cloned'`)
@@ -112,7 +128,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	lines = append(lines, "# Setup dev kits when using global deployments repository")
 	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
 	lines = append(lines, `    for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
-	lines = append(lines, `        KIT_REPO="https://github.com/genesis-community/${deployment}-genesis-kit.git"`)
+	lines = append(lines, `        KIT_REPO="git@github.com:genesis-community/${deployment}-genesis-kit.git"`)
 	lines = append(lines, `        KIT_DIR="${KITS_ROOT}/${deployment}"`)
 	lines = append(lines, `        if [ -d "${KIT_DIR}/.git" ]; then`)
 	lines = append(lines, `            log_info "Updating ${deployment} genesis kit"`)
@@ -143,6 +159,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
+//nolint:gochecknoglobals // Default deployment list is package-level constant
 var defaultDeploymentNames = []string{
 	"bosh",
 	"vault",
@@ -170,6 +187,7 @@ func formatShellArray(values []string) string {
 	return fmt.Sprintf("(%s)", strings.Join(escaped, " "))
 }
 
+//nolint:funcorder,nonamedreturns // Helper method placed after exported methods; named returns for clarity
 func (om *OCFPManager) partitionDeployments(names []string) (dev []string, release []string) {
 	resolver := om.resolver()
 
@@ -184,6 +202,7 @@ func (om *OCFPManager) partitionDeployments(names []string) (dev []string, relea
 	return dev, release
 }
 
+//nolint:funcorder // Helper method placed after exported methods
 func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []string) []string {
 	seen := make(map[string]struct{}, len(defaults)+len(configured))
 	combined := make([]string, 0, len(defaults)+len(configured))
@@ -192,9 +211,11 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 		if name == "" {
 			continue
 		}
+
 		if _, ok := seen[name]; ok {
 			continue
 		}
+
 		seen[name] = struct{}{}
 		combined = append(combined, name)
 	}
@@ -203,9 +224,11 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 		if name == "" {
 			continue
 		}
+
 		if _, ok := seen[name]; ok {
 			continue
 		}
+
 		seen[name] = struct{}{}
 		combined = append(combined, name)
 	}
@@ -213,6 +236,7 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 	return combined
 }
 
+//nolint:funcorder // Helper method placed after exported methods
 func (om *OCFPManager) generateDeploymentConfiguration() []string {
 	return []string{
 		"# Run ocfp configure deployments",
@@ -220,8 +244,8 @@ func (om *OCFPManager) generateDeploymentConfiguration() []string {
 		"    log_warning 'OCFP CLI not found, skipping ocfp configure deployments'",
 		"else",
 		"    CONFIGURE_ARGS=()",
-		"    if [ -n \"${OCFP_BLOC_NAME}\" ]; then",
-		"        CONFIGURE_ARGS+=(\"--bloc\" \"${OCFP_BLOC_NAME}\")",
+		"    if [ -n \"${OCFP_BLOC}\" ]; then",
+		"        CONFIGURE_ARGS+=(\"--bloc\" \"${OCFP_BLOC}\")",
 		"    fi",
 		"    log_info \"Executing: ${OCFP_CLI_PATH} configure deployments ${CONFIGURE_ARGS[*]}\"",
 		"    if \"${OCFP_CLI_PATH}\" configure deployments \"${CONFIGURE_ARGS[@]}\"; then",
@@ -234,6 +258,7 @@ func (om *OCFPManager) generateDeploymentConfiguration() []string {
 	}
 }
 
+//nolint:funcorder // Helper method placed after exported methods
 func (om *OCFPManager) resolver() *deployments.Resolver {
 	if om.modes == nil {
 		om.modes = deployments.NewResolver(om.config)
@@ -255,9 +280,90 @@ func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
+// GenerateGenesisSecretsProvidersScript generates script to configure genesis deployments to use inception vault.
+func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(ctx context.Context) string {
+	var lines []string
+
+	lines = append(lines, "# Configure Genesis secrets providers for deployments")
+	lines = append(lines, "")
+
+	lines = append(lines, `DEPLOYMENTS_ROOT="${HOME}/ocfp/deployments"`)
+	lines = append(lines, "")
+
+	lines = append(lines, "if [ ! -d \"$DEPLOYMENTS_ROOT\" ]; then")
+	lines = append(lines, "    log_warning \"Deployments directory not found: $DEPLOYMENTS_ROOT\"")
+	lines = append(lines, "    log_warning 'Skipping genesis secrets-provider configuration'")
+	lines = append(lines, "else")
+	lines = append(lines, "    log_info 'Configuring Genesis secrets providers for deployments'")
+	lines = append(lines, "    ")
+	lines = append(lines, "    CONFIGURED_COUNT=0")
+	lines = append(lines, "    SKIPPED_COUNT=0")
+	lines = append(lines, "    FAILED_COUNT=0")
+	lines = append(lines, "    ")
+	lines = append(lines, "    for deployment_dir in \"$DEPLOYMENTS_ROOT\"/*; do")
+	lines = append(lines, "        if [ ! -d \"$deployment_dir\" ]; then")
+	lines = append(lines, "            continue")
+	lines = append(lines, "        fi")
+	lines = append(lines, "        ")
+	lines = append(lines, "        if [ ! -d \"$deployment_dir/.genesis\" ]; then")
+	lines = append(lines, "            continue")
+	lines = append(lines, "        fi")
+	lines = append(lines, "        ")
+	lines = append(lines, "        deployment_name=$(basename \"$deployment_dir\")")
+	lines = append(lines, "        log_info \"Configuring secrets provider for deployment: $deployment_name\"")
+	lines = append(lines, "        ")
+	lines = append(lines, "        # Change to deployment directory for genesis command context")
+	lines = append(lines, "        if ! cd \"$deployment_dir\"; then")
+	lines = append(lines, "            log_warning \"  Failed to enter directory: $deployment_dir\"")
+	lines = append(lines, "            SKIPPED_COUNT=$((SKIPPED_COUNT + 1))")
+	lines = append(lines, "            continue")
+	lines = append(lines, "        fi")
+	lines = append(lines, "        ")
+	lines = append(lines, "        # Run genesis secrets-provider inception")
+	lines = append(lines, "        if genesis secrets-provider inception >/dev/null 2>&1; then")
+	lines = append(lines, "            log_success \"  Configured secrets provider for: $deployment_name\"")
+	lines = append(lines, "            CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))")
+	lines = append(lines, "        else")
+	lines = append(lines, "            # Check if it was already configured")
+	lines = append(lines, "            if grep -q 'vault_target: inception' .genesis/config 2>/dev/null; then")
+	lines = append(lines, "                log_success \"  Secrets provider already configured for: $deployment_name\"")
+	lines = append(lines, "                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))")
+	lines = append(lines, "            else")
+	lines = append(lines, "                log_warning \"  Failed to configure secrets provider for: $deployment_name\"")
+	lines = append(lines, "                FAILED_COUNT=$((FAILED_COUNT + 1))")
+	lines = append(lines, "            fi")
+	lines = append(lines, "        fi")
+	lines = append(lines, "    done")
+	lines = append(lines, "    ")
+	lines = append(lines, "    # Return to original directory")
+	lines = append(lines, "    cd ~ || true")
+	lines = append(lines, "    ")
+	lines = append(lines, "    # Summary logging")
+	lines = append(lines, "    log_info 'Genesis secrets provider configuration summary:'")
+	lines = append(lines, "    log_info \"  Configured: $CONFIGURED_COUNT\"")
+	lines = append(lines, "    if [ $SKIPPED_COUNT -gt 0 ]; then")
+	lines = append(lines, "        log_info \"  Skipped: $SKIPPED_COUNT\"")
+	lines = append(lines, "    fi")
+	lines = append(lines, "    if [ $FAILED_COUNT -gt 0 ]; then")
+	lines = append(lines, "        log_warning \"  Failed: $FAILED_COUNT\"")
+	lines = append(lines, "    fi")
+	lines = append(lines, "    ")
+	lines = append(lines, "    if [ $CONFIGURED_COUNT -gt 0 ]; then")
+	lines = append(lines, "        log_success 'Genesis secrets providers configured successfully'")
+	lines = append(lines, "    elif [ $FAILED_COUNT -gt 0 ]; then")
+	lines = append(lines, "        log_warning 'Some deployments failed to configure - manual intervention may be required'")
+	lines = append(lines, "    else")
+	lines = append(lines, "        log_info 'No Genesis deployments found to configure'")
+	lines = append(lines, "    fi")
+	lines = append(lines, "fi")
+	lines = append(lines, "")
+
+	return strings.Join(lines, "\n")
+}
+
 // GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
 func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) string {
-	requiredTools := []string{"safe", "vault", "bosh", "spruce", "yq", "go", "genesis"}
+	requiredTools := []string{"safe", "vault", "bao", "bosh", "cf", "credhub", "uaa", "spruce", "yq", "go", "genesis"}
 	lines := make([]string, 0, scriptBufferOCFPBase+scriptBufferOCFPPerTool*len(requiredTools))
 
 	lines = append(lines, "# Verify bastion-init prerequisites")
@@ -281,11 +387,9 @@ func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) s
 	lines = append(lines, "")
 	lines = append(lines, "if [ \"$ALL_TOOLS_FOUND\" = \"true\" ]; then")
 	lines = append(lines, "    log_success 'All required tools are available'")
-	lines = append(lines, "    return 0")
 	lines = append(lines, "else")
 	lines = append(lines, "    log_error 'Some required tools are missing'")
 	lines = append(lines, "    log_error 'Please ensure bastion-init provisioning completed successfully'")
-	lines = append(lines, "    return 1")
 	lines = append(lines, "fi")
 	lines = append(lines, "")
 
@@ -309,7 +413,7 @@ func (om *OCFPManager) GenerateScriptCommandVerificationScript(ctx context.Conte
 	lines = append(lines, "        log_success 'script command installed successfully'")
 	lines = append(lines, "    else")
 	lines = append(lines, "        log_error 'Failed to install script command'")
-	lines = append(lines, "        return 1")
+	lines = append(lines, "        log_warning 'script command may be required for some operations'")
 	lines = append(lines, "    fi")
 	lines = append(lines, "fi")
 	lines = append(lines, "")
@@ -324,13 +428,10 @@ func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) s
 	lines = append(lines, "# Hostname verification")
 	lines = append(lines, "")
 
-	lines = append(lines, "if [ -z \"$OCFP_BLOC_NAME\" ]; then")
-	lines = append(lines, "    log_info 'No OCFP_BLOC_NAME provided, skipping hostname verification'")
-	lines = append(lines, "    return 0")
-	lines = append(lines, "fi")
+	lines = append(lines, "if [ -n \"$OCFP_BLOC\" ]; then")
 	lines = append(lines, "")
 
-	lines = append(lines, "EXPECTED_HOSTNAME=\"${OCFP_BLOC_NAME}-bastion\"")
+	lines = append(lines, "EXPECTED_HOSTNAME=\"${OCFP_BLOC}-bastion\"")
 	lines = append(lines, "CURRENT_HOSTNAME=$(hostname)")
 	lines = append(lines, "")
 
@@ -358,6 +459,9 @@ func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) s
 	lines = append(lines, "        log_warning 'Hostname not found in /etc/hosts'")
 	lines = append(lines, "    fi")
 	lines = append(lines, "fi")
+	lines = append(lines, "else")
+	lines = append(lines, "    log_info 'No OCFP_BLOC provided, skipping hostname verification'")
+	lines = append(lines, "fi")
 	lines = append(lines, "")
 
 	return strings.Join(lines, "\n")
@@ -378,52 +482,38 @@ func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) str
 }
 
 func (om *OCFPManager) generateVaultInceptionScriptLocator() []string {
-	return []string{
-		"# Check for vault-inception script",
-		"VAULT_INCEPTION_LOCATIONS=(",
-		`    "${HOME}/ocfp/cli/scripts/provision/vault-inception"`,
-		`    "${HOME}/ocfp/ocfp-cli/scripts/provision/vault-inception"`,
-		")",
-		"",
-		"VAULT_INCEPTION_SCRIPT=\"\"",
-		"for location in \"${VAULT_INCEPTION_LOCATIONS[@]}\"; do",
-		"    if [ -f \"$location\" ]; then",
-		"        VAULT_INCEPTION_SCRIPT=\"$location\"",
-		"        log_info \"Found vault-inception script at: $location\"",
-		"        break",
-		"    fi",
-		"done",
-		"",
-		"if [ -z \"$VAULT_INCEPTION_SCRIPT\" ]; then",
-		"    log_error 'vault-inception script not found!'",
-		"    log_error 'Expected at: ~/ocfp/cli/scripts/provision/vault-inception'",
-		"    return 1",
-		"fi",
-		"",
-	}
+	// Vault inception now uses the OCFP CLI binary installed on the bastion
+	// This function is kept for compatibility but returns empty - the CLI locator
+	// is called separately in GenerateVaultInceptionScript
+	return []string{}
 }
 
 func (om *OCFPManager) generateVaultInceptionExecution() []string {
 	return []string{
-		"if [ ! -x \"$VAULT_INCEPTION_SCRIPT\" ]; then",
-		"    log_info 'Making vault-inception script executable'",
-		"    chmod +x \"$VAULT_INCEPTION_SCRIPT\"",
-		"fi",
-		"",
-		"log_info 'Running vault-inception script'",
-		"perl \"$VAULT_INCEPTION_SCRIPT\"",
-		"VAULT_INCEPTION_EXIT=$?",
-		"",
-		"if [ $VAULT_INCEPTION_EXIT -eq 0 ]; then",
-		"    log_success 'Vault inception completed successfully'",
-		"else",
-		"    log_error \"Vault inception failed with exit code $VAULT_INCEPTION_EXIT\"",
-		"    # Check if it's because vault is already set up",
-		"    if safe target 2>&1 | grep -q 'inception\\|production'; then",
-		"        log_success 'Vault already configured'",
+		"# Run vault inception using OCFP CLI binary on bastion",
+		"if [ -n \"$OCFP_CLI_PATH\" ]; then",
+		"    log_info 'Running vault inception via OCFP CLI'",
+		"    # Ensure /usr/local/bin is in PATH for vault and safe commands",
+		"    export PATH=\"/usr/local/bin:${PATH}\"",
+		"    PATH=\"/usr/local/bin:${PATH}\" \"${OCFP_CLI_PATH}\" vault inception",
+		"    VAULT_INCEPTION_EXIT=$?",
+		"    ",
+		"    if [ $VAULT_INCEPTION_EXIT -eq 0 ]; then",
+		"        log_success 'Vault inception completed successfully'",
 		"    else",
-		"        return 1",
+		"        log_error \"Vault inception failed with exit code $VAULT_INCEPTION_EXIT\"",
+		"        # Check if it's because vault is already set up",
+		"        if safe target 2>&1 | grep -q 'inception\\|production'; then",
+		"            log_success 'Vault already configured'",
+		"        else",
+		"            log_error 'Vault inception failed - vault may need manual setup'",
+		"            exit 1",
+		"        fi",
 		"    fi",
+		"else",
+		"    log_error 'OCFP CLI not found at expected locations'",
+		"    log_error 'Cannot proceed without vault initialization'",
+		"    exit 1",
 		"fi",
 		"",
 	}
@@ -431,19 +521,15 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 
 func (om *OCFPManager) generateVaultPopulatePrerequisites() []string {
 	return []string{
+		"# Check prerequisites for vault populate",
 		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
 		"    log_warning 'OCFP CLI not found, skipping vault populate'",
-		"    return 0",
-		"fi",
-		"",
-		"if [ -z \"$OCFP_BLOC_NAME\" ] || [ -z \"$OCFP_PROVIDER\" ]; then",
+		"elif [ -z \"$OCFP_BLOC\" ] || [ -z \"$OCFP_PROVIDER\" ]; then",
 		"    log_warning 'Missing required environment variables for vault populate'",
-		"    log_warning \"OCFP_BLOC_NAME: ${OCFP_BLOC_NAME:-not set}\"",
+		"    log_warning \"OCFP_BLOC: ${OCFP_BLOC:-not set}\"",
 		"    log_warning \"OCFP_PROVIDER: ${OCFP_PROVIDER:-not set}\"",
-		"    return 0",
-		"fi",
-		"",
-		"log_info \"Running vault populate for bloc: $OCFP_BLOC_NAME\"",
+		"else",
+		"    log_info \"Running vault populate for bloc: $OCFP_BLOC\"",
 		"",
 	}
 }
@@ -494,35 +580,32 @@ func (om *OCFPManager) generateVaultPreparation() []string {
 
 func (om *OCFPManager) generateVaultPopulateExecution() []string {
 	return []string{
-		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
-		"    log_warning 'OCFP CLI not found, skipping vault populate execution'",
-		"    return 0",
-		"fi",
-		"",
-		`VAULT_ARGS=("vault" "populate")`,
-		"if [ -n \"${OCFP_BLOC_NAME}\" ]; then",
-		`    VAULT_ARGS+=("--bloc" "${OCFP_BLOC_NAME}")`,
-		"fi",
-		"",
-		"log_info \"Running: ${OCFP_CLI_PATH} ${VAULT_ARGS[*]}\"",
-		`"${OCFP_CLI_PATH}" "${VAULT_ARGS[@]}"`,
-		"VAULT_EXIT=$?",
-		"",
-		"if [ $VAULT_EXIT -eq 0 ]; then",
-		"    log_success 'Vault populate completed successfully'",
-		"    ",
-		"    # Verify vault populate results",
-		"    log_info 'Verifying vault populate...'",
-		"    VERIFY_OUTPUT=$(safe tree \"secret/config/${OCFP_BLOC_NAME}\" 2>&1 | head -10 || echo 'verification-failed')",
-		"    if echo \"$VERIFY_OUTPUT\" | grep -q 'secret/config'; then",
-		"        log_success 'Vault populate verification passed'",
-		"        log_info \"Found paths in vault: $(echo \"$VERIFY_OUTPUT\" | head -3)\"",
-		"    else",
-		"        log_warning 'Could not verify vault populate results'",
+		"    # Execute vault populate",
+		`    VAULT_ARGS=("vault" "populate")`,
+		"    if [ -n \"${OCFP_BLOC}\" ]; then",
+		`        VAULT_ARGS+=("--bloc" "${OCFP_BLOC}")`,
 		"    fi",
-		"else",
-		"    log_error \"Vault populate failed with exit code $VAULT_EXIT\"",
-		"    log_warning 'Continuing without vault populate. You may need to run \"ocfp vault populate\" manually later.'",
+		"    ",
+		"    log_info \"Running: ${OCFP_CLI_PATH} ${VAULT_ARGS[*]}\"",
+		`    "${OCFP_CLI_PATH}" "${VAULT_ARGS[@]}"`,
+		"    VAULT_EXIT=$?",
+		"    ",
+		"    if [ $VAULT_EXIT -eq 0 ]; then",
+		"        log_success 'Vault populate completed successfully'",
+		"        ",
+		"        # Verify vault populate results",
+		"        log_info 'Verifying vault populate...'",
+		"        VERIFY_OUTPUT=$(safe tree \"secret/config/${OCFP_BLOC}\" 2>&1 | head -10 || echo 'verification-failed')",
+		"        if echo \"$VERIFY_OUTPUT\" | grep -q 'secret/config'; then",
+		"            log_success 'Vault populate verification passed'",
+		"            log_info \"Found paths in vault: $(echo \"$VERIFY_OUTPUT\" | head -3)\"",
+		"        else",
+		"            log_warning 'Could not verify vault populate results'",
+		"        fi",
+		"    else",
+		"        log_error \"Vault populate failed with exit code $VAULT_EXIT\"",
+		"        log_warning 'Continuing without vault populate. You may need to run \"ocfp vault populate\" manually later.'",
+		"    fi",
 		"fi",
 		"",
 	}

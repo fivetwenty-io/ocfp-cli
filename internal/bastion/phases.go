@@ -2,11 +2,16 @@ package bastion
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 )
 
 // Phase execution errors.
@@ -40,6 +45,17 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 func (m *Manager) installSnapPackages(ctx context.Context) error {
 	m.log.Info("Installing snap packages")
 
+	// Report progress for snap packages
+	if m.reporter != nil {
+		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
+		snaps := snapMgr.GetSnapPackages()
+		enabledSnaps := filterEnabledSnaps(snaps)
+
+		for i, s := range enabledSnaps {
+			m.reporter.ReportSubtaskProgress("snap_packages", i+1, len(enabledSnaps), s.Name)
+		}
+	}
+
 	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
 	script := snapMgr.GenerateSnapInstallScript(ctx)
 
@@ -50,25 +66,39 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 func (m *Manager) installCPANModules(ctx context.Context) error {
 	m.log.Info("Installing CPAN modules")
 
+	// Report progress for CPAN modules
+	if m.reporter != nil {
+		cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
+		modules := cpanMgr.GetCPANModules()
+		enabledModules := filterEnabledCPANModules(modules)
+
+		for i, mod := range enabledModules {
+			m.reporter.ReportSubtaskProgress("cpan_modules", i+1, len(enabledModules), mod.Name)
+		}
+	}
+
 	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
 
 	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
 
-	err := m.executeScript(ctx, script, "cpan-modules")
-	if err != nil {
-		return err
-	}
-
-	// Install OCFP Perl dependencies
-	ocfpScript := cpanMgr.InstallOCFPPerlDependencies(ctx)
-
-	return m.executeScript(ctx, ocfpScript, "ocfp-perl-deps")
+	return m.executeScript(ctx, script, "cpan-modules")
 }
 
 // installCFPlugins installs CloudFoundry plugins.
 func (m *Manager) installCFPlugins(ctx context.Context) error {
 	m.log.Info("Installing CloudFoundry plugins")
+
+	// Report progress for CF plugins
+	if m.reporter != nil {
+		cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
+		plugins := cfMgr.GetCFPlugins()
+		enabledPlugins := filterEnabledCFPlugins(plugins)
+
+		for i, plugin := range enabledPlugins {
+			m.reporter.ReportSubtaskProgress("cf_plugins", i+1, len(enabledPlugins), plugin.Name)
+		}
+	}
 
 	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
 	script := cfMgr.GenerateCFPluginInstallScript(ctx)
@@ -110,10 +140,110 @@ func (m *Manager) setupSystemEnvironment(ctx context.Context) error {
 func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	m.log.Info("Setting up OCFP CLI")
 
+	// Upload the OCFP binary to the bastion
+	err := m.uploadOCFPBinary(ctx)
+	if err != nil {
+		// In OCFPOnly mode, binary upload is critical
+		if m.options.OCFPOnly {
+			return fmt.Errorf("OCFP binary upload failed: %w", err)
+		}
+		// In full init mode, continue anyway - the binary might already be there
+		m.log.Warnw("Failed to upload OCFP binary, continuing with setup", "error", err)
+	}
+
 	dirMgr := provision.NewDirectoryManager(m.config.Provider, m.config)
 	script := dirMgr.GenerateOCFPCLISetupScript(ctx)
 
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
+}
+
+// uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
+func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
+	// NOTE: Currently uploading from local build until official OCFP releases are published.
+	// Once official releases are available via GitHub releases or package repositories,
+	// this should be updated to download and install from the official source.
+	localBinaryPath := "./build/ocfp-linux-amd64"
+	remoteTempPath := "/tmp/ocfp-upload"
+	remoteFinalPath := "/usr/local/bin/ocfp"
+
+	m.log.Infow("Setting up OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
+
+	// Step 1: Check if remote binary exists and compare checksums
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary")
+	}
+
+	// Calculate local checksum
+	localChecksum, err := calculateFileSHA256(localBinaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to calculate local binary checksum: %w", err)
+	}
+
+	// Check if remote binary exists and get its checksum
+	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
+	remoteResult, err := m.sshClient.ExecuteCommand(ctx, remoteChecksumCmd)
+	if err != nil {
+		m.log.Debugw("Could not check remote binary checksum", "error", err)
+	}
+	remoteChecksum := strings.TrimSpace(remoteResult.Stdout)
+
+	// If checksums match, skip upload
+	if remoteChecksum != "" && remoteChecksum == localChecksum {
+		m.log.Infow("Remote binary already up to date", "checksum", localChecksum)
+		if m.reporter != nil {
+			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)")
+		}
+		return nil
+	}
+
+	m.log.Infow("Binary update needed", "local_checksum", localChecksum, "remote_checksum", remoteChecksum)
+
+	// Step 2: Transfer binary
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, fmt.Sprintf("Uploading %s", localBinaryPath))
+	}
+
+	// Transfer to temporary location first (user has write permissions here)
+	transferOpts := ssh.TransferOptions{
+		Recursive:    false,
+		Preserve:     false,
+		Compress:     false,
+		Progress:     nil,
+		MaxRetries:   0,
+		ChunkSize:    0,
+		Verify:       true,
+		BackupRemote: false,
+	}
+
+	err = m.sshClient.TransferFile(ctx, localBinaryPath, remoteTempPath, transferOpts)
+	if err != nil {
+		return fmt.Errorf("failed to transfer OCFP binary to temporary location: %w", err)
+	}
+
+	// Step 3: Binary uploaded
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location")
+	}
+
+	// Step 4: Install binary with sudo
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, fmt.Sprintf("Installing to %s", remoteFinalPath))
+	}
+
+	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, cmd)
+	if err != nil {
+		// Clean up temp file on failure
+		cleanupCmd := fmt.Sprintf("rm -f '%s'", remoteTempPath)
+		_, _ = m.sshClient.ExecuteCommand(ctx, cleanupCmd)
+
+		return fmt.Errorf("failed to install OCFP binary to %s: %w", remoteFinalPath, err)
+	}
+
+	m.log.Infow("OCFP binary uploaded and made executable", "checksum", localChecksum)
+
+	return nil
 }
 
 // setupVaultInception runs vault inception.
@@ -146,6 +276,16 @@ func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	return m.executeScript(ctx, script, "vault-populate")
 }
 
+// setupGenesisSecretsProviders configures genesis deployments to use inception vault.
+func (m *Manager) setupGenesisSecretsProviders(ctx context.Context) error {
+	m.log.Info("Configuring Genesis secrets providers for deployments")
+
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
+	script := ocfpMgr.GenerateGenesisSecretsProvidersScript(ctx)
+
+	return m.executeScript(ctx, script, "genesis-secrets-providers")
+}
+
 // runHealthCheck performs comprehensive health check.
 func (m *Manager) runHealthCheck(ctx context.Context) error {
 	m.log.Info("Running health check")
@@ -159,13 +299,13 @@ func (m *Manager) runHealthCheck(ctx context.Context) error {
 // executeScript is a helper method to execute generated scripts.
 func (m *Manager) executeScript(ctx context.Context, script, scriptName string) error {
 	if script == "" {
-		m.log.Debug("Skipping empty script", "script", scriptName)
+		m.log.Debugw("Skipping empty script", "script", scriptName)
 
 		return nil
 	}
 
 	if m.options.DryRun {
-		m.log.Info("DRY RUN: Would execute script", "script", scriptName)
+		m.log.Infow("DRY RUN: Would execute script", "script", scriptName)
 		m.log.Debug("Script content preview",
 			"script", scriptName,
 			"lines", len(strings.Split(script, "\n")))
@@ -183,15 +323,16 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
-			m.log.Error("Script execution failed",
+			m.log.Errorw("Script execution failed",
 				"script", scriptName,
 				"exit_code", result.ExitCode,
+				"stdout", result.Stdout,
 				"stderr", result.Stderr)
 
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
-		m.log.Debug("Script executed successfully", "script", scriptName)
+		m.log.Debugw("Script executed successfully", "script", scriptName)
 
 		return nil
 	}
@@ -207,7 +348,7 @@ set -euo pipefail
 
 # Color codes for output
 RED='\033[0;31m'
-GREEN='\033[0;32m' 
+GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
@@ -239,9 +380,26 @@ LOG_FILE="${LOG_DIR}/bastion-init-$(date +%Y%m%d-%H%M%S).log"
 log_info "Starting script execution at $(date)"
 log_info "Log file: ${LOG_FILE}"
 
+# Suppress interactive prompts and debconf warnings
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
 `
 
-	return functions + "\n" + script
+	// Export environment variables needed by the scripts
+	envVars := m.getEnvironmentVariables()
+
+	var envExports strings.Builder
+	envExports.WriteString("# Export OCFP environment variables\n")
+
+	for key, value := range envVars {
+		envExports.WriteString(fmt.Sprintf("export %s='%s'\n", key, value))
+	}
+
+	envExports.WriteString("\n")
+
+	return functions + envExports.String() + script
 }
 
 // escapeShellString escapes a string for safe shell execution.
@@ -250,4 +408,20 @@ func (m *Manager) escapeShellString(script string) string {
 	escaped := strings.ReplaceAll(script, "'", "'\"'\"'")
 
 	return fmt.Sprintf("'%s'", escaped)
+}
+
+// calculateFileSHA256 calculates the SHA256 checksum of a file.
+func calculateFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("failed to calculate hash: %w", err)
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

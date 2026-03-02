@@ -78,7 +78,7 @@ func runPublicIPsList(output string) error {
 }
 
 func loadPublicIPsConfig() (*config.Config, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	cfgFile := viper.GetString("config")
 
 	if blocName == "" {

@@ -48,7 +48,7 @@ environments:
 
 		cmd := commands.NewSSHCmd()
 		assert.NotNil(t, cmd)
-		assert.Equal(t, "ssh [target]", cmd.Use)
+		assert.Equal(t, "ssh [target] [command...]", cmd.Use)
 	})
 
 	t.Run("ValidateArgs", func(t *testing.T) {

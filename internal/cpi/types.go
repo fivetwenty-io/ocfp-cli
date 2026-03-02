@@ -128,6 +128,22 @@ type PublicIP struct {
 	UpdatedAt  time.Time
 }
 
+// NetworkInterface represents a network interface card (NIC).
+type NetworkInterface struct {
+	ID               string
+	Name             string
+	IPv4             string
+	IPv6             string
+	MAC              string
+	NetworkID        string
+	InstanceID       string
+	SecurityGroupIDs []string
+	AllowedAddresses []string
+	Labels           map[string]string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 // Router represents a network router.
 type Router struct {
 	ID              string
@@ -390,8 +406,9 @@ type SecurityGroupRequest struct {
 
 // KeyPairRequest represents a request for creating key pairs.
 type KeyPairRequest struct {
-	Name string
-	Tags map[string]string
+	Name    string
+	KeyType string // Key type: ed25519 (default) or rsa
+	Tags    map[string]string
 }
 
 // VolumeRequest represents a request for creating volumes.
@@ -420,8 +437,9 @@ type InstanceRequest struct {
 	UserData         string
 	AvailabilityZone string
 	Tags             map[string]string
-	BootVolumeSize   int  // Size in GB for boot volume (for diskless flavors)
-	UseBootVolume    bool // Use boot volume instead of direct image (for STACKIT diskless flavors)
+	BootVolumeSize   int    // Size in GB for boot volume (for diskless flavors)
+	UseBootVolume    bool   // Use boot volume instead of direct image (for STACKIT diskless flavors)
+	StaticPrivateIP  string // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
 }
 
 // BucketRequest represents a request for creating buckets.
