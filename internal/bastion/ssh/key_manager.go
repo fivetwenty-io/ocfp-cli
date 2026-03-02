@@ -39,12 +39,20 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 
 	// Search paths in priority order
 	searchPaths := []string{
-		// Provider-specific key (bastion key from bootstrap)
+		// Provider-specific key (bastion key from bootstrap) - prefer ed25519
+		// Primary location: ~/.ocfp/{bloc}/ssh/
+		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_ed25519"),
+		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_rsa"),
+		// Legacy location: ~/.ssh/ocfp/{bloc}/
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_ed25519"),
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_rsa"),
+		filepath.Join(homeDir, ".ssh", "ocfp", blocName),
+		filepath.Join(homeDir, ".ssh", blocName),
 		filepath.Join(homeDir, ".ssh", blocName+"-bastion"),
-		// Common SSH keys
+		// Common SSH keys - prefer ed25519
+		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_rsa"),
 		filepath.Join(homeDir, ".ssh", "id_ecdsa"),
-		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_dsa"),
 	}
 
@@ -53,15 +61,15 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 	for _, path := range searchPaths {
 		_, err := os.Stat(path)
 		if err == nil {
-			km.log.Debug("Found SSH key", "path", path)
+			km.log.Debugw("Found SSH key", "path", path)
 
 			// Verify the key is valid
 			if km.isValidPrivateKey(path) {
-				km.log.Info("Using SSH private key", "path", path)
+				km.log.Infow("Using SSH private key", "path", path)
 
 				return path, nil
 			} else {
-				km.log.Warn("Invalid SSH key", "path", path)
+				km.log.Warnw("Invalid SSH key", "path", path)
 			}
 		}
 	}
@@ -266,6 +274,41 @@ func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) s
 	return keyStr
 }
 
+// RestoreKeyFromConfig attempts to restore an SSH key from config if it exists.
+// Returns the path to the restored key file, or empty string if no key found in config.
+func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (string, error) {
+	if privateKeyPEM == "" {
+		return "", nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Restore to primary location: ~/.ocfp/{bloc}/ssh/id_ed25519
+	keyDir := filepath.Join(homeDir, ".ocfp", blocName, "ssh")
+	keyPath := filepath.Join(keyDir, "id_ed25519")
+
+	// Create directory if it doesn't exist
+	err = os.MkdirAll(keyDir, sshDirectoryMode)
+	if err != nil {
+		return "", fmt.Errorf("failed to create SSH key directory: %w", err)
+	}
+
+	// Write the private key from config
+	err = os.WriteFile(keyPath, []byte(privateKeyPEM), privateKeyMode)
+	if err != nil {
+		return "", fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	km.log.Info("Restored SSH private key from config",
+		"path", keyPath,
+		"bloc", blocName)
+
+	return keyPath, nil
+}
+
 // keysEqual compares two SSH public keys for equality.
 func keysEqual(key1, key2 ssh.PublicKey) bool {
 	if key1 == nil || key2 == nil {
@@ -283,21 +326,23 @@ func keysEqual(key1, key2 ssh.PublicKey) bool {
 
 // writePrivateKey writes a private key to file in the appropriate format.
 func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, keyType string) error {
-	var (
-		keyBytes  []byte
-		keyFormat string
-	)
+	var keyBlock *pem.Block
 
 	switch keyType {
 	case "ed25519":
-		// Ed25519 private key
+		// Ed25519 private key - use OpenSSH format for compatibility
 		ed25519Key, ok := privateKey.(ed25519.PrivateKey)
 		if !ok {
 			return ErrInvalidEd25519KeyType
 		}
 
-		keyBytes, _ = x509.MarshalPKCS8PrivateKey(ed25519Key)
-		keyFormat = "PRIVATE KEY"
+		// MarshalPrivateKey returns OpenSSH format PEM block
+		var err error
+
+		keyBlock, err = ssh.MarshalPrivateKey(ed25519Key, "")
+		if err != nil {
+			return fmt.Errorf("failed to marshal ed25519 private key: %w", err)
+		}
 
 	case "rsa":
 		// RSA private key
@@ -306,18 +351,15 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 			return ErrInvalidRSAKeyType
 		}
 
-		keyBytes = x509.MarshalPKCS1PrivateKey(rsaKey)
-		keyFormat = "RSA PRIVATE KEY"
+		keyBytes := x509.MarshalPKCS1PrivateKey(rsaKey)
+		keyBlock = &pem.Block{
+			Type:    "RSA PRIVATE KEY",
+			Headers: nil,
+			Bytes:   keyBytes,
+		}
 
 	default:
 		return ErrUnsupportedKeyTypeForWriting(keyType)
-	}
-
-	// Create PEM block
-	keyBlock := &pem.Block{
-		Type:    keyFormat,
-		Headers: nil,
-		Bytes:   keyBytes,
 	}
 
 	// Write to file

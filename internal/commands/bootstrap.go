@@ -26,48 +26,138 @@ const (
 // NewBootstrapCmd creates the bootstrap command.
 func NewBootstrapCmd() *cobra.Command {
 	var (
-		blocs  string
-		force  bool
-		dryRun bool
-		output string
+		blocs     string
+		force     bool
+		yes       bool
+		dryRun    bool
+		all       bool
+		servers   bool
+		volumes   bool
+		snapshots bool
+		buckets   bool
+		secGroups bool
+		network   bool
+		publicIPs bool
+		bastion   bool
+		keypairs  bool
+		output    string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "bootstrap",
-		Short: "Bootstrap new environment",
-		Long: `Bootstrap provisions the basic infrastructure for a new OCFP environment.
+		Use:     "bootstrap",
+		Short:   "Bootstrap new environment",
+		Long:    getBootstrapLongDescription(),
+		Example: getBootstrapExamples(),
+		RunE:    runBootstrap,
+	}
 
-This includes:
+	addBootstrapFlags(cmd, &blocs, &output, &force, &yes, &dryRun, &all, &servers, &volumes, &snapshots, &buckets, &secGroups, &network, &publicIPs, &bastion, &keypairs)
+	bindBootstrapViperFlags(cmd)
+
+	return cmd
+}
+
+// getBootstrapLongDescription returns the long description for the bootstrap command.
+func getBootstrapLongDescription() string {
+	return `Bootstrap provisions the basic infrastructure for a new OCFP environment.
+
+The command supports different modes:
+- Default (--all): Create all bootstrap resources (network, security, compute, storage)
+- Selective: Create only specified resource types
+- Bastion only: Create only the bastion instance (--bastion)
+
+Selective mode allows you to specify one or more resource types to create:
+- --servers: Create compute instances (bastion) and associated keypairs
+- --volumes: Create persistent volumes
+- --snapshots: Create volume snapshots (if applicable)
+- --buckets: Create storage buckets
+- --security-groups: Create security groups
+- --network: Create networks, subnets, and routers
+- --public-ips: Create public IP addresses
+- --key-pairs, --keys: Create only SSH key pairs
+
+This includes (when --all or no flags specified):
 - VPC/Network creation
 - Subnet provisioning
 - Security group setup with default rules
 - Volume provisioning
 - Bastion host deployment
-- SSH keypair management`,
-		Example: `  # Bootstrap using a specific config file
+- SSH keypair management`
+}
+
+// getBootstrapExamples returns the examples for the bootstrap command.
+func getBootstrapExamples() string {
+	return `  # Bootstrap using a specific config file
   ocfp bootstrap --config config/production.yml
 
-  # Bootstrap using bloc name
+  # Bootstrap using bloc name (creates all resources)
   ocfp bootstrap --bloc dev
 
+  # Bootstrap without confirmation prompt (for automation)
+  ocfp bootstrap --bloc dev -y
+
   # Bootstrap specific blocs
-  ocfp bootstrap --bloc dev --blocs mgmt,ocf`,
-		RunE: runBootstrap,
-	}
+  ocfp bootstrap --bloc dev --blocs mgmt,ocf
 
-	// Command-specific flags
-	cmd.Flags().StringVarP(&blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
-	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompts")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview actions without making changes")
-	cmd.Flags().StringVar(&output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
+  # Bootstrap only network infrastructure
+  ocfp bootstrap --bloc dev --network
 
-	// Bind flags to viper
+  # Bootstrap network and security groups
+  ocfp bootstrap --bloc dev --network --security-groups
+
+  # Bootstrap only public IPs (requires existing network)
+  ocfp bootstrap --bloc dev --public-ips
+
+  # Bootstrap network and public IPs together
+  ocfp bootstrap --bloc dev --network --public-ips
+
+  # Bootstrap only the bastion instance
+  ocfp bootstrap --bloc dev --bastion
+
+  # Bootstrap only SSH key pairs
+  ocfp bootstrap --bloc dev --key-pairs
+
+  # Bootstrap compute and storage
+  ocfp bootstrap --bloc dev --servers --volumes --buckets`
+}
+
+// addBootstrapFlags adds all command flags to the bootstrap command.
+func addBootstrapFlags(cmd *cobra.Command, blocs, output *string, force, yes, dryRun, all, servers, volumes, snapshots, buckets, secGroups, network, publicIPs, bastion, keypairs *bool) {
+	cmd.Flags().StringVarP(blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
+	cmd.Flags().BoolVar(force, "force", false, "skip confirmation prompts")
+	cmd.Flags().BoolVarP(yes, "yes", "y", false, "skip confirmation prompt and proceed immediately")
+	cmd.Flags().BoolVar(dryRun, "dry-run", false, "preview actions without making changes")
+	cmd.Flags().BoolVar(all, "all", false, "create all bootstrap resources (default)")
+	cmd.Flags().BoolVar(servers, "servers", false, "create compute instances and keypairs")
+	cmd.Flags().BoolVar(volumes, "volumes", false, "create persistent volumes")
+	cmd.Flags().BoolVar(snapshots, "snapshots", false, "create volume snapshots")
+	cmd.Flags().BoolVar(buckets, "buckets", false, "create storage buckets")
+	cmd.Flags().BoolVar(secGroups, "security-groups", false, "create security groups")
+	cmd.Flags().BoolVar(network, "network", false, "create networks, subnets, routers, and public IPs")
+	cmd.Flags().BoolVar(publicIPs, "public-ips", false, "create public IP addresses")
+	cmd.Flags().BoolVar(bastion, "bastion", false, "create only bastion instance")
+	cmd.Flags().BoolVar(keypairs, "key-pairs", false, "create only SSH key pairs")
+	cmd.Flags().BoolVar(keypairs, "keys", false, "alias for --key-pairs")
+	cmd.Flags().StringVar(output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
+}
+
+// bindBootstrapViperFlags binds all bootstrap flags to viper.
+func bindBootstrapViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("bootstrap.blocs", cmd.Flags().Lookup("blocs"))
 	_ = viper.BindPFlag("bootstrap.force", cmd.Flags().Lookup("force"))
+	_ = viper.BindPFlag("bootstrap.yes", cmd.Flags().Lookup("yes"))
 	_ = viper.BindPFlag("dry_run", cmd.Flags().Lookup("dry-run"))
+	_ = viper.BindPFlag("bootstrap.all", cmd.Flags().Lookup("all"))
+	_ = viper.BindPFlag("bootstrap.servers", cmd.Flags().Lookup("servers"))
+	_ = viper.BindPFlag("bootstrap.volumes", cmd.Flags().Lookup("volumes"))
+	_ = viper.BindPFlag("bootstrap.snapshots", cmd.Flags().Lookup("snapshots"))
+	_ = viper.BindPFlag("bootstrap.buckets", cmd.Flags().Lookup("buckets"))
+	_ = viper.BindPFlag("bootstrap.security_groups", cmd.Flags().Lookup("security-groups"))
+	_ = viper.BindPFlag("bootstrap.network", cmd.Flags().Lookup("network"))
+	_ = viper.BindPFlag("bootstrap.public_ips", cmd.Flags().Lookup("public-ips"))
+	_ = viper.BindPFlag("bootstrap.bastion", cmd.Flags().Lookup("bastion"))
+	_ = viper.BindPFlag("bootstrap.key_pairs", cmd.Flags().Lookup("key-pairs"))
 	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
-
-	return cmd
 }
 
 func runBootstrap(cmd *cobra.Command, args []string) error {
@@ -138,7 +228,7 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 // getSingleBlocIfNoSelection returns single bloc name if no selection provided.
 func getSingleBlocIfNoSelection(selected []string) string {
 	if len(selected) == 0 {
-		return viper.GetString("bloc_name")
+		return viper.GetString("bloc")
 	}
 
 	return ""
@@ -167,7 +257,7 @@ func loadConfigData(configFile string) (*struct {
 
 // handleNoBlocsInConfig handles the case when no blocs are defined in config.
 func handleNoBlocsInConfig(configFile string) error {
-	single := viper.GetString("bloc_name")
+	single := viper.GetString("bloc")
 	if single == "" {
 		return ErrNoBlocsFoundInConfigAndBlocNotProvided
 	}
@@ -260,7 +350,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 
 	defer func() { _ = provider.Cleanup(context.Background()) }()
 
-	stateManager, err := createStateManager()
+	stateManager, err := createStateManager(blocName)
 	if err != nil {
 		return err
 	}
@@ -277,7 +367,8 @@ func runBootstrapForBloc(configFile, blocName string) error {
 
 // initializeBlocLogger initializes the logger for a specific bloc.
 func initializeBlocLogger(blocName string) error {
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "log")
+	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
+	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),
@@ -288,6 +379,7 @@ func initializeBlocLogger(blocName string) error {
 		LogDir:     logDir,
 		BlocName:   blocName,
 		Command:    "bootstrap",
+		Subcommand: "", // Bootstrap has no subcommands
 		RequestID:  os.Getenv("OCFP_REQUEST_ID"),
 		DirectorID: "",
 	})
@@ -339,6 +431,19 @@ func buildProviderConfig(cfg *config.Config, region string) map[string]interface
 		"region":     region,
 	}
 
+	// Add AWS-specific configuration
+	if cfg.AccessKeyID != "" {
+		providerConfig["access_key_id"] = cfg.AccessKeyID
+	}
+
+	if cfg.SecretAccessKey != "" {
+		providerConfig["secret_access_key"] = cfg.SecretAccessKey
+	}
+
+	if cfg.SessionToken != "" {
+		providerConfig["session_token"] = cfg.SessionToken
+	}
+
 	addServiceAccountConfig(providerConfig, cfg)
 	addAPIEndpointConfig(providerConfig, cfg)
 
@@ -386,9 +491,15 @@ func createProvider(iaas string, providerConfig map[string]interface{}) (cpi.Pro
 	return provider, nil
 }
 
-// createStateManager initializes the state manager.
-func createStateManager() (*state.Manager, error) {
-	stateManager, err := state.NewManager("")
+// createStateManager initializes the state manager for the given bloc.
+func createStateManager(blocName string) (*state.Manager, error) {
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine state directory: %w", err)
+	}
+
+	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create state manager: %w", err)
 	}
@@ -405,13 +516,24 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	}
 
 	bootstrapOpts := &bootstrap.Options{
-		BlocName: blocName,
-		Provider: iaas,
-		Region:   region,
-		Force:    viper.GetBool("bootstrap.force"),
-		DryRun:   viper.GetBool("dry_run"),
-		Output:   viper.GetString("bootstrap.output"),
-		Timeout:  BootstrapTimeoutMinutes * time.Minute,
+		BlocName:       blocName,
+		Provider:       iaas,
+		Region:         region,
+		Force:          viper.GetBool("bootstrap.force"),
+		Yes:            viper.GetBool("bootstrap.yes"),
+		DryRun:         viper.GetBool("dry_run"),
+		All:            viper.GetBool("bootstrap.all"),
+		Bastion:        viper.GetBool("bootstrap.bastion"),
+		Servers:        viper.GetBool("bootstrap.servers"),
+		Volumes:        viper.GetBool("bootstrap.volumes"),
+		Snapshots:      viper.GetBool("bootstrap.snapshots"),
+		Buckets:        viper.GetBool("bootstrap.buckets"),
+		SecurityGroups: viper.GetBool("bootstrap.security_groups"),
+		Network:        viper.GetBool("bootstrap.network"),
+		PublicIPs:      viper.GetBool("bootstrap.public_ips"),
+		KeyPairs:       viper.GetBool("bootstrap.key_pairs") || viper.GetBool("bootstrap.keys"),
+		Output:         viper.GetString("bootstrap.output"),
+		Timeout:        BootstrapTimeoutMinutes * time.Minute,
 	}
 
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)

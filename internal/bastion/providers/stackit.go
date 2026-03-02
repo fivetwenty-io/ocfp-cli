@@ -11,7 +11,9 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 // STACKIT provider errors.
@@ -62,7 +64,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 	env := make(map[string]string)
 
 	// Add OCFP-specific variables
-	env["OCFP_BLOC_NAME"] = s.config.Name
+	env["OCFP_BLOC"] = s.config.Name
 	env["OCFP_PROVIDER"] = "stackit"
 
 	// Add STACKIT-specific variables
@@ -103,49 +105,20 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	s.log.Debug("Getting STACKIT bastion connection details")
 
-	// In a real implementation, this would query the STACKIT API to get the bastion IP
-	// For now, we'll use configuration or make assumptions
-
 	bastionIP, err := s.getBastionIP()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	// Get SSH user
-	sshUser := s.config.Bastion.SSHUser
-	if sshUser == "" {
-		sshUser = "ubuntu" // Default for STACKIT
-	}
+	sshUser := s.getSSHUser()
 
-	// Find SSH private key
-	keyManager := ssh.NewKeyManager()
-
-	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
+	privateKeyPath, err := s.findSSHPrivateKey()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		return nil, err
 	}
 
-	// Check if key is password protected
-	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
-	if err != nil {
-		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
-	}
-
-	// Prepare SSH options
-	sshOptions := []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=30",
-	}
-
-	// Add custom SSH options if configured
-	if s.config.Bastion.SSHOptions != "" {
-		// Parse custom options (this is a simplified implementation)
-		// In practice, you'd want to properly parse the SSH options string
-		customOptions := []string{s.config.Bastion.SSHOptions}
-		sshOptions = append(sshOptions, customOptions...)
-	}
+	isEncrypted := s.checkKeyEncryption(privateKeyPath)
+	sshOptions := s.buildSSHOptions()
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
@@ -157,19 +130,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 		UseSSHPass:     false,
 	}
 
-	// Set password if key is encrypted (use bloc name as password)
-	if isEncrypted {
-		details.Password = s.config.Name
-		details.UseSSHPass = true
-
-		// Check if sshpass is available
-		_, err = exec.LookPath("sshpass")
-		if err != nil {
-			s.log.Warn("SSH key is encrypted but sshpass is not available")
-
-			details.UseSSHPass = false
-		}
-	}
+	s.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
 }
@@ -183,6 +144,94 @@ func (s *StackitBastionInit) Initialize(ctx context.Context) error {
 	// can perform STACKIT-specific setup if needed
 
 	return nil
+}
+
+// getSSHUser returns the SSH user for bastion connection.
+func (s *StackitBastionInit) getSSHUser() string {
+	if s.config.Bastion.SSHUser != "" {
+		return s.config.Bastion.SSHUser
+	}
+
+	return "ubuntu" // Default for STACKIT
+}
+
+// findSSHPrivateKey locates the SSH private key, restoring from config if needed.
+func (s *StackitBastionInit) findSSHPrivateKey() (string, error) {
+	keyManager := ssh.NewKeyManager()
+
+	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
+	if err == nil {
+		return privateKeyPath, nil
+	}
+
+	// Try to restore key from config if it exists
+	keypairName := s.config.Name + "-keypair"
+
+	configKey, exists := s.config.Keys[keypairName]
+	if !exists || configKey == "" {
+		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+	}
+
+	restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(s.config.Name, configKey)
+	if restoreErr != nil || restoredPath == "" {
+		s.log.Warn("Failed to restore key from config", "error", restoreErr)
+
+		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+	}
+
+	s.log.Info("Restored SSH key from config", "path", restoredPath)
+
+	return restoredPath, nil
+}
+
+// checkKeyEncryption checks if the SSH key is password protected.
+func (s *StackitBastionInit) checkKeyEncryption(privateKeyPath string) bool {
+	keyManager := ssh.NewKeyManager()
+
+	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
+	if err != nil {
+		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
+
+		return false
+	}
+
+	return isEncrypted
+}
+
+// buildSSHOptions constructs the SSH options list.
+func (s *StackitBastionInit) buildSSHOptions() []string {
+	sshOptions := []string{
+		"StrictHostKeyChecking=no",
+		"UserKnownHostsFile=/dev/null",
+		"LogLevel=ERROR",
+		"ConnectTimeout=30",
+		"ForwardAgent=yes",
+	}
+
+	if s.config.Bastion.SSHOptions != "" {
+		customOptions := []string{s.config.Bastion.SSHOptions}
+		sshOptions = append(sshOptions, customOptions...)
+	}
+
+	return sshOptions
+}
+
+// configurePasswordIfEncrypted sets up password authentication if key is encrypted.
+func (s *StackitBastionInit) configurePasswordIfEncrypted(details *ConnectionDetails, isEncrypted bool) {
+	if !isEncrypted {
+		return
+	}
+
+	details.Password = s.config.Name
+
+	details.UseSSHPass = true
+
+	_, err := exec.LookPath("sshpass")
+	if err != nil {
+		s.log.Warn("SSH key is encrypted but sshpass is not available")
+
+		details.UseSSHPass = false
+	}
 }
 
 // addGenesisEnv adds Genesis-specific environment variables to the provided map.
@@ -214,30 +263,49 @@ func (s *StackitBastionInit) addGenesisEnv(env map[string]string) {
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
 	if s.config.BastionIP != "" {
-		s.log.Debug("Using configured bastion IP", "ip", s.config.BastionIP)
+		s.log.Debugw("Using configured bastion IP", "ip", s.config.BastionIP)
 
 		return s.config.BastionIP, nil
 	}
 
-	// Strategy 2: Try to get from STACKIT API (would need to implement STACKIT client)
+	// Strategy 2: Check state cache first (fast path)
+	stateDir, err := state.GetStateDir(s.config.Name)
+	if err == nil {
+		stateManager, err := state.NewManager(stateDir)
+		if err == nil {
+			_, err := stateManager.Load(s.config.Name)
+			if err == nil {
+				v, err := stateManager.GetOutput("bastion_public_ip")
+				if err == nil {
+					if bastionIP, ok := v.(string); ok && bastionIP != "" {
+						s.log.Debugw("Retrieved bastion IP from state cache", "ip", bastionIP)
+
+						return bastionIP, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Strategy 3: Try to get from STACKIT API
 	bastionIP, err := s.getBastionIPFromAPI()
 	if err == nil && bastionIP != "" {
-		s.log.Debug("Retrieved bastion IP from STACKIT API", "ip", bastionIP)
+		s.log.Debugw("Retrieved bastion IP from STACKIT API", "ip", bastionIP)
 
 		return bastionIP, nil
 	}
 
-	// Strategy 3: Try to find in terraform state or other sources
+	// Strategy 4: Try to find in terraform state or other sources
 	ip, err := s.getBastionIPFromState()
 	if err == nil && ip != "" {
-		s.log.Debug("Retrieved bastion IP from state", "ip", ip)
+		s.log.Debugw("Retrieved bastion IP from state", "ip", ip)
 
 		return ip, nil
 	}
 
-	// Strategy 4: Check environment variable
+	// Strategy 5: Check environment variable
 	if ip := os.Getenv("STACKIT_BASTION_IP"); ip != "" {
-		s.log.Debug("Using bastion IP from environment", "ip", ip)
+		s.log.Debugw("Using bastion IP from environment", "ip", ip)
 
 		return ip, nil
 	}
@@ -247,9 +315,64 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 
 // getBastionIPFromAPI retrieves bastion IP from STACKIT API.
 func (s *StackitBastionInit) getBastionIPFromAPI() (string, error) {
-	// This would implement calls to STACKIT API to find the bastion server
-	// For now, return an error to fall back to other methods
-	return "", ErrStackitAPIIntegrationNotImplemented
+	s.log.Debug("Attempting to retrieve bastion IP from STACKIT API")
+
+	// Get the STACKIT provider instance
+	provider, err := cpi.GetProvider("stackit")
+	if err != nil {
+		s.log.Debugw("Failed to get STACKIT provider", "error", err)
+
+		return "", fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	// Initialize the provider with our config
+	err = provider.Initialize(context.Background(), s.config)
+	if err != nil {
+		s.log.Debugw("Failed to initialize STACKIT provider", "error", err)
+
+		return "", fmt.Errorf("failed to initialize provider: %w", err)
+	}
+
+	// Search for bastion instance by name pattern
+	bastionName := s.config.Name + "-bastion"
+	filters := map[string]string{
+		"name": bastionName,
+	}
+
+	s.log.Debugw("Searching for bastion instance", "name", bastionName)
+
+	instances, err := provider.Compute().ListInstances(context.Background(), filters)
+	if err != nil {
+		s.log.Debugw("Failed to list instances", "error", err)
+
+		return "", fmt.Errorf("failed to list instances: %w", err)
+	}
+
+	// Find the bastion instance
+	for _, inst := range instances {
+		if inst.Name == bastionName {
+			// Prefer public IP, fall back to floating IP
+			if inst.PublicIP != "" {
+				s.log.Debugw("Found bastion with public IP", "name", inst.Name, "ip", inst.PublicIP)
+
+				return inst.PublicIP, nil
+			}
+
+			if inst.FloatingIP != "" {
+				s.log.Debugw("Found bastion with floating IP", "name", inst.Name, "ip", inst.FloatingIP)
+
+				return inst.FloatingIP, nil
+			}
+
+			s.log.Debugw("Found bastion but no public IP assigned", "name", inst.Name)
+
+			return "", fmt.Errorf("bastion instance %s has no public IP", bastionName)
+		}
+	}
+
+	s.log.Debugw("No bastion instance found", "name", bastionName)
+
+	return "", fmt.Errorf("bastion instance not found: %s", bastionName)
 }
 
 // getBastionIPFromState retrieves bastion IP from terraform state or similar.
@@ -266,7 +389,7 @@ func (s *StackitBastionInit) getBastionIPFromState() (string, error) {
 		if err == nil {
 			// Parse state file to extract bastion IP
 			// This is a placeholder - would need actual terraform state parsing
-			s.log.Debug("Found terraform state file", "file", stateFile)
+			s.log.Debugw("Found terraform state file", "file", stateFile)
 			// return s.parseStateFile(stateFile)
 		}
 	}

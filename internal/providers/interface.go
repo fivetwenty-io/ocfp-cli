@@ -2,39 +2,49 @@ package providers
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
+
+// ProgressReporter defines the interface for progress reporting during vault operations.
+type ProgressReporter interface {
+	ReportPhaseStart(phase string, index, total int)
+	ReportPhaseComplete(phase string, duration time.Duration)
+	ReportSubtaskProgress(phase string, current, total int, label string)
+	ReportError(phase string, err error, attempt, maxAttempts int)
+	ReportFinalSummary(success bool, duration time.Duration, phases int, errors int)
+}
 
 // VaultProvider defines the interface that all cloud providers must implement
 // for vault-related operations.
 type VaultProvider interface {
 	// Configure performs full vault configuration for the provider
-	Configure() error
+	Configure(reporter ProgressReporter) error
 
 	// ConfigurePublicIPs configures public IP addresses in vault
-	ConfigurePublicIPs() error
+	ConfigurePublicIPs(reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// SaveConfigToVault saves the OCFP configuration to vault
-	SaveConfigToVault() error
+	SaveConfigToVault(reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// ConfigureIAAS configures IaaS-specific settings (VPC, subnets, etc.)
-	ConfigureIAAS(envPath, envType string) error
+	ConfigureIAAS(envPath, envType string, reporter ProgressReporter, phaseNum *int, totalPhases int) error
 
 	// ConfigureBlobstores configures blobstore settings
-	ConfigureBlobstores(envPath, envType string) error
+	ConfigureBlobstores(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// ConfigureDatabases configures database settings
-	ConfigureDatabases(envPath, envType string) error
+	ConfigureDatabases(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// ConfigureLoadBalancers configures load balancer settings
-	ConfigureLoadBalancers(envPath, envType string) error
+	ConfigureLoadBalancers(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// ConfigureFQDNs configures fully qualified domain names
-	ConfigureFQDNs(envPath, envType string) error
+	ConfigureFQDNs(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// ConfigureCertificates configures TLS certificates
-	ConfigureCertificates(envPath, envType string) error
+	ConfigureCertificates(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error
 
 	// GetProviderName returns the provider name
 	GetProviderName() string

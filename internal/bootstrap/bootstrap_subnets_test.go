@@ -17,8 +17,10 @@ import (
 
 // Fakes for network + compute.
 type fakeNet struct {
-	createdNetworks []*cpi.Network
-	createdSubnets  []*cpi.Subnet
+	createdNetworks        []*cpi.Network
+	createdSubnets         []*cpi.Subnet
+	createdSecurityGroups  []*cpi.SecurityGroup // Tracks NEW creations for test assertions
+	existingSecurityGroups []*cpi.SecurityGroup // Pre-existing SGs in "cloud" (for Get/List)
 }
 
 func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
@@ -70,16 +72,100 @@ func (f *fakeNet) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Sub
 func (f *fakeNet) DeleteSubnet(ctx context.Context, id string) error { return nil }
 
 // Security group operations.
-func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+	sg := &cpi.SecurityGroup{
+		ID:          "sg-" + req.Name,
+		Name:        req.Name,
+		Description: req.Description,
+		NetworkID:   req.NetworkID,
+		Rules:       req.Rules,
+		Tags:        req.Tags,
+	}
+
+	if f.createdSecurityGroups == nil {
+		f.createdSecurityGroups = make([]*cpi.SecurityGroup, 0)
+	}
+
+	f.createdSecurityGroups = append(f.createdSecurityGroups, sg)
+
+	return sg, nil
 }
-func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+	// Check both newly created and pre-existing security groups
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == id {
+			return sg, nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == id {
+			return sg, nil
+		}
+	}
+	return nil, fmt.Errorf("security group not found: %s", id)
 }
-func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+	// Combine both newly created and pre-existing security groups
+	allGroups := append([]*cpi.SecurityGroup{}, f.createdSecurityGroups...)
+	allGroups = append(allGroups, f.existingSecurityGroups...)
+
+	if len(filters) == 0 {
+		return allGroups, nil
+	}
+
+	// Filter by provided criteria
+	var filtered []*cpi.SecurityGroup
+	for _, sg := range allGroups {
+		match := true
+		if name, ok := filters["name"]; ok && sg.Name != name {
+			match = false
+		}
+		if networkID, ok := filters["network-id"]; ok && sg.NetworkID != networkID {
+			match = false
+		}
+		if match {
+			filtered = append(filtered, sg)
+		}
+	}
+	return filtered, nil
 }
 func (f *fakeNet) DeleteSecurityGroup(ctx context.Context, id string) error { return nil }
+
+// SecurityManager interface methods (for rule management).
+func (f *fakeNet) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+	// Find the security group and add the rule
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == groupID {
+			sg.Rules = append(sg.Rules, rule)
+			return nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == groupID {
+			sg.Rules = append(sg.Rules, rule)
+			return nil
+		}
+	}
+	return fmt.Errorf("security group not found: %s", groupID)
+}
+
+func (f *fakeNet) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
+	return nil
+}
+
+func (f *fakeNet) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
+	for _, sg := range f.createdSecurityGroups {
+		if sg.ID == groupID {
+			return sg.Rules, nil
+		}
+	}
+	for _, sg := range f.existingSecurityGroups {
+		if sg.ID == groupID {
+			return sg.Rules, nil
+		}
+	}
+	return nil, fmt.Errorf("security group not found: %s", groupID)
+}
 
 // Public IP operations.
 func (f *fakeNet) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
@@ -98,7 +184,7 @@ func (f *fakeNet) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloat
 func (f *fakeNet) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
 func (f *fakeNet) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
@@ -235,7 +321,10 @@ func (f *fakeCompute) ListVolumes(ctx context.Context, filters map[string]string
 func (f *fakeCompute) DeleteVolume(ctx context.Context, id string) error { return nil }
 
 type fakeProv struct {
-	n cpi.NetworkManager
+	n interface {
+		cpi.NetworkManager
+		cpi.SecurityManager
+	}
 	c cpi.ComputeManager
 }
 
@@ -251,10 +340,10 @@ func (p *fakeProv) Network() cpi.NetworkManager { return p.n }
 func (p *fakeProv) Compute() cpi.ComputeManager { return p.c }
 
 //nolint:ireturn
-func (p *fakeProv) Storage() cpi.StorageManager { return nil }
+func (p *fakeProv) Security() cpi.SecurityManager { return p.n }
 
 //nolint:ireturn
-func (p *fakeProv) Security() cpi.SecurityManager { return nil }
+func (p *fakeProv) Storage() cpi.StorageManager { return nil }
 
 //nolint:ireturn
 func (p *fakeProv) LoadBalancer() cpi.LoadBalancerManager { return nil }
@@ -639,7 +728,7 @@ func createOcfpTripleConfig() *config.Config {
 		Blobstore:         createEmptyBlobstoreConfig(),
 		DNS:               []string{},
 		AZs:               map[string]config.AvailabilityZone{},
-		FQDNs:             map[string]interface{}{},
+		FQDNs:             &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}},
 		S3:                map[string]string{},
 		AllowedIngressIPs: []string{},
 		Subnets:           []config.Subnet{},

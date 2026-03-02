@@ -145,7 +145,7 @@ func (cm *CheckpointManager) Load() (*CheckpointData, error) {
 	// Check if checkpoint file exists
 	_, err := os.Stat(checkpointFile)
 	if os.IsNotExist(err) {
-		cm.log.Debug("No checkpoint file found", "file", checkpointFile)
+		cm.log.Debugw("No checkpoint file found", "file", checkpointFile)
 
 		return nil, nil //nolint:nilnil // explicit: no checkpoint is not an error
 	}
@@ -195,7 +195,7 @@ func (cm *CheckpointManager) Clear() error {
 		return fmt.Errorf("failed to remove checkpoint file: %w", err)
 	}
 
-	cm.log.Debug("Checkpoint cleared", "file", checkpointFile)
+	cm.log.Debugw("Checkpoint cleared", "file", checkpointFile)
 
 	return nil
 }

@@ -2,6 +2,7 @@ package stackit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -108,20 +109,6 @@ func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string)
 	return m.client.loadBalancer.GetHealthStatus(ctx, lbID)
 }
 
-// helper: convert []string tags into a map for requests
-func mapFromSlice(tags []string) map[string]string {
-	if len(tags) == 0 {
-		return nil
-	}
-
-	m := make(map[string]string, len(tags))
-	for _, t := range tags {
-		m[t] = "true"
-	}
-
-	return m
-}
-
 // CreateNetwork creates a new network.
 func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	logger.WithOperation("CreateNetwork").Infof("Creating network via SDK: %s", req.Name)
@@ -131,34 +118,17 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 		return nil, err
 	}
 
-	payload := iaas.NewCreateNetworkPayload(req.Name)
-	if len(req.Tags) > 0 {
-		lm := make(map[string]interface{}, len(req.Tags))
-		for k, v := range req.Tags {
-			lm[k] = v
-		}
+	payload := m.buildNetworkPayload(req)
 
-		payload.SetLabels(lm)
-	}
-
-	created, err := cli.CreateNetwork(ctx, m.client.config.ProjectID).CreateNetworkPayload(*payload).Execute()
+	created, err := cli.CreateNetwork(ctx, m.client.config.ProjectID).CreateNetworkPayload(payload).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas CreateNetwork failed: %w", err)
 	}
 
-	out := &cpi.Network{
-		ID:         stringOrEmpty(created.GetNetworkIdOk()),
-		Name:       stringOrEmpty(created.GetNameOk()),
-		CIDR:       "",
-		Region:     "",
-		State:      cpi.ResourceStateUnknown,
-		Tags:       map[string]string{},
-		DNSServers: []string{},
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-	out.Tags = mapAnyToString(created.GetLabels())
-	logger.WithOperation("CreateNetwork").Infof("Network created: %s", out.ID)
+	networkID := stringOrEmpty(created.GetNetworkIdOk())
+	logger.WithOperation("CreateNetwork").Infof("Network created: %s with CIDR: %s", networkID, req.CIDR)
+
+	out := m.buildNetworkFromResponse(created, req)
 
 	return out, nil
 }
@@ -211,12 +181,17 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 
 	list := make([]*cpi.Network, 0, len(items))
 
-	for _, n := range items {
-		labels := mapAnyToString(n.GetLabels())
+	for _, network := range items {
+		labels := mapAnyToString(network.GetLabels())
+
+		// Apply label filtering - skip resources without required metadata
+		if !matchLabels(labels, filters) {
+			continue
+		}
 
 		out := &cpi.Network{
-			ID:         stringOrEmpty(n.GetNetworkIdOk()),
-			Name:       stringOrEmpty(n.GetNameOk()),
+			ID:         stringOrEmpty(network.GetNetworkIdOk()),
+			Name:       stringOrEmpty(network.GetNameOk()),
 			CIDR:       "",
 			Region:     "",
 			State:      cpi.ResourceStateUnknown,
@@ -228,7 +203,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 		list = append(list, out)
 	}
 
-	logger.WithOperation("ListNetworks").Debugf("Found %d networks", len(list))
+	logger.WithOperation("ListNetworks").Debugf("Found %d networks (after filtering)", len(list))
 
 	return list, nil
 }
@@ -335,12 +310,14 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, floatingIPID string)
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
 	iaasClient, err := m.client.getIAASClient()
 	if err != nil {
 		return nil, err
 	}
 
+	// Note: STACKIT doesn't support server-side filtering for public IPs via tags
+	// Filters would need to be applied client-side if needed
 	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListPublicIPs failed: %w", err)
@@ -537,53 +514,6 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 	return publicIP, nil
 }
 
-func buildPublicIPLabels(req *cpi.PublicIPRequest) map[string]interface{} {
-	labels := map[string]interface{}{}
-	for k, v := range req.Labels {
-		labels[k] = v
-	}
-
-	labels["managed-by"] = "ocfp"
-	if req.Job != "" {
-		labels["job"] = req.Job
-	}
-
-	if req.Index != "" {
-		labels["index"] = req.Index
-	}
-
-	if req.Name != "" {
-		labels["name"] = req.Name
-	}
-
-	return labels
-}
-
-func buildPublicIPFromResponse(created *iaas.PublicIp) *cpi.PublicIP {
-	out := &cpi.PublicIP{
-		ID:         stringOrEmpty(created.GetIdOk()),
-		Address:    stringOrEmpty(created.GetIpOk()),
-		Name:       "",
-		Status:     "",
-		Job:        "",
-		Index:      "",
-		InstanceID: "",
-		NetworkID:  "",
-		Labels:     mapAnyToString(created.GetLabels()),
-		Tags:       map[string]string{},
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-
-	if out.Labels != nil {
-		out.Job = out.Labels["job"]
-		out.Index = out.Labels["index"]
-		out.Name = out.Labels["name"]
-	}
-
-	return out
-}
-
 // ListPublicIPs lists public IPs with optional filtering.
 func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
 	logger.WithOperation("ListPublicIPs").Debug("Listing public IPs")
@@ -604,10 +534,12 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 
 	for _, ip := range items {
 		labels := mapAnyToString(ip.GetLabels())
+		ipAddress := stringOrEmpty(ip.GetIpOk())
 
 		out := &cpi.PublicIP{
 			ID:         stringOrEmpty(ip.GetIdOk()),
-			Address:    stringOrEmpty(ip.GetIpOk()),
+			IPAddress:  ipAddress, // Set IPAddress for bootstrap code compatibility
+			Address:    ipAddress, // Set Address for other code compatibility
 			Name:       "",
 			Status:     "",
 			Job:        "",
@@ -633,7 +565,7 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 
 // ListPublicIPsWithFilters - STACKIT-specific method that supports filtering.
 func (m *NetworkManager) ListPublicIPsWithFilters(ctx context.Context, filters map[string]string) ([]*cpi.PublicIP, error) {
-	logger.WithOperation("ListPublicIPsWithFilters").Debug("Listing public IPs with filters", "filters", filters)
+	logger.WithOperation("ListPublicIPsWithFilters").Debugw("Listing public IPs with filters", "filters", filters)
 
 	// Get all public IPs first
 	allIPs, err := m.ListPublicIPs(ctx)
@@ -672,9 +604,12 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, publicIPID string) (*c
 		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
 	}
 
+	ipAddress := stringOrEmpty(got.GetIpOk())
+
 	out := &cpi.PublicIP{
 		ID:         stringOrEmpty(got.GetIdOk()),
-		Address:    stringOrEmpty(got.GetIpOk()),
+		IPAddress:  ipAddress, // Set IPAddress for bootstrap code compatibility
+		Address:    ipAddress, // Set Address for other code compatibility
 		Name:       "",
 		Status:     "",
 		Job:        "",
@@ -714,47 +649,6 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, publicIPID string) 
 	return nil
 }
 
-// mapAnyToString converts map[string]interface{} to map[string]string.
-func mapAnyToString(input map[string]interface{}) map[string]string {
-	if input == nil {
-		return nil
-	}
-
-	out := make(map[string]string, len(input))
-	for key, value := range input {
-		switch typedValue := value.(type) {
-		case string:
-			out[key] = typedValue
-		case fmt.Stringer:
-			out[key] = typedValue.String()
-		default:
-			out[key] = fmt.Sprintf("%v", value)
-		}
-	}
-
-	return out
-}
-
-func stringOrEmpty(val string, _ bool) string { return val }
-
-// matchLabels filters by label:foo=value filters.
-func matchLabels(labels map[string]string, filters map[string]string) bool {
-	if len(filters) == 0 {
-		return true
-	}
-
-	for k, v := range filters {
-		if strings.HasPrefix(k, "label:") {
-			key := strings.TrimPrefix(k, "label:")
-			if labels == nil || labels[key] != v {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
 // EnsureJumpboxPublicIPs ensures the required number of jumpbox public IPs exist.
 func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName string, count int) ([]*cpi.PublicIP, error) {
 	if count <= 0 {
@@ -763,58 +657,7 @@ func (m *NetworkManager) EnsureJumpboxPublicIPs(ctx context.Context, blocName st
 
 	logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Ensuring %d jumpbox public IPs for bloc %s", count, blocName)
 
-	// Find existing jumpbox IPs
-	// Note: Filters removed as ListPublicIPs interface doesn't support them
-
-	existingIPs, err := m.ListPublicIPs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list existing jumpbox IPs: %w", err)
-	}
-
-	// Index existing IPs
-	ipsByIndex := make(map[string]*cpi.PublicIP)
-
-	for _, ip := range existingIPs {
-		if ip.Labels != nil && ip.Labels["index"] != "" {
-			ipsByIndex[ip.Labels["index"]] = ip
-		}
-	}
-
-	// Create missing IPs
-	allIPs := make([]*cpi.PublicIP, 0, count)
-
-	for ipIndex := range count {
-		index := strconv.Itoa(ipIndex)
-		if existingIP, exists := ipsByIndex[index]; exists {
-			logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Jumpbox IP with index %s already exists: %s", index, existingIP.Address)
-			allIPs = append(allIPs, existingIP)
-		} else {
-			// Create new IP
-			req := &cpi.PublicIPRequest{
-				Name:      fmt.Sprintf("%s-jumpbox-%d", blocName, ipIndex),
-				Job:       "jumpbox",
-				Index:     index,
-				NetworkID: "",
-				Labels: map[string]string{
-					"bloc": blocName,
-					"env":  "mgmt",
-				},
-				Tags: map[string]string{},
-			}
-
-			newIP, err := m.CreatePublicIP(ctx, req)
-			if err != nil {
-				logger.WithOperation("EnsureJumpboxPublicIPs").Errorf("Failed to create jumpbox IP with index %s: %v", index, err)
-
-				continue
-			}
-
-			logger.WithOperation("EnsureJumpboxPublicIPs").Infof("Created jumpbox IP with index %s: %s", index, newIP.Address)
-			allIPs = append(allIPs, newIP)
-		}
-	}
-
-	return allIPs, nil
+	return m.ensurePublicIPsForJob(ctx, blocName, "jumpbox", count)
 }
 
 // EnsureOpsPublicIPs ensures there is at least one ops public IP.
@@ -861,60 +704,407 @@ func (m *NetworkManager) EnsureTCPRouterPublicIPs(ctx context.Context, blocName 
 	return m.ensurePublicIPsForJob(ctx, blocName, "tcp-router", count)
 }
 
+// ListNetworkInterfaces lists all network interfaces in the project.
+func (m *NetworkManager) ListNetworkInterfaces(ctx context.Context, filters map[string]string) ([]*cpi.NetworkInterface, error) {
+	logger.WithOperation("ListNetworkInterfaces").Debug("Listing network interfaces via SDK")
+
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IAAS client: %w", err)
+	}
+
+	networks, err := m.fetchNetworkList(ctx, cli)
+	if err != nil {
+		return nil, err
+	}
+
+	networkInterfaces := m.collectNetworkInterfaces(ctx, cli, networks, filters)
+
+	logger.WithOperation("ListNetworkInterfaces").Debugf("Found %d network interfaces", len(networkInterfaces))
+
+	return networkInterfaces, nil
+}
+
+// DeleteNetworkInterface deletes a network interface.
+func (m *NetworkManager) DeleteNetworkInterface(ctx context.Context, nicID string) error {
+	logger.WithOperation("DeleteNetworkInterface").Debugf("Deleting network interface: %s", nicID)
+
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return fmt.Errorf("failed to get IAAS client: %w", err)
+	}
+
+	// List all networks to find which network this NIC belongs to
+	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	networks, ok := networksResp.GetItemsOk()
+	if !ok {
+		return ErrNoNetworksFound
+	}
+
+	// Find the network that contains this NIC
+	var foundNetworkID string
+
+	for _, network := range networks {
+		networkID, exists := network.GetNetworkIdOk()
+		if !exists || networkID == "" {
+			continue
+		}
+
+		nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, networkID).Execute()
+		if err != nil {
+			continue
+		}
+
+		items, ok := nicsResp.GetItemsOk()
+		if !ok {
+			continue
+		}
+
+		for _, nic := range items {
+			if nicIDVal, ok := nic.GetIdOk(); ok && nicIDVal == nicID {
+				foundNetworkID = networkID
+
+				break
+			}
+		}
+
+		if foundNetworkID != "" {
+			break
+		}
+	}
+
+	if foundNetworkID == "" {
+		return fmt.Errorf("%w: %s", ErrNetworkInterfaceNotFound, nicID)
+	}
+
+	// Delete the NIC from its network
+	err = cli.DeleteNic(ctx, m.client.config.ProjectID, foundNetworkID, nicID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete network interface: %w", err)
+	}
+
+	logger.WithOperation("DeleteNetworkInterface").Debugf("Network interface deleted: %s", nicID)
+
+	return nil
+}
+
+// helper: convert []string tags into a map for requests
+func mapFromSlice(tags []string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t] = "true"
+	}
+
+	return m
+}
+
+// buildNetworkPayload builds the network creation payload.
+func (m *NetworkManager) buildNetworkPayload(req *cpi.NetworkRequest) iaas.CreateNetworkPayload {
+	// Build payload with direct struct initialization (matching STACKIT CLI pattern)
+	namePtr := req.Name
+	routed := true
+
+	payload := iaas.CreateNetworkPayload{
+		Name:   &namePtr,
+		Routed: &routed,
+	}
+
+	// Set labels using setter with STACKIT sanitization
+	if len(req.Tags) > 0 {
+		labels := sanitizeLabelsForStackit(req.Tags)
+		payload.SetLabels(labels)
+	}
+
+	// Configure address family with CIDR if provided
+	if req.CIDR != "" {
+		addressFamily := m.buildAddressFamily(req)
+		payload.AddressFamily = addressFamily
+	}
+
+	return payload
+}
+
+// buildAddressFamily builds address family configuration with CIDR and DNS.
+func (m *NetworkManager) buildAddressFamily(req *cpi.NetworkRequest) *iaas.CreateNetworkAddressFamily {
+	logger.WithOperation("CreateNetwork").Infof("Setting network CIDR: %s", req.CIDR)
+
+	// Convert CIDR string to pointer
+	cidrPtr := req.CIDR
+
+	// Create IPv4 body with direct struct initialization
+	ipv4Body := &iaas.CreateNetworkIPv4Body{
+		Prefix: &cidrPtr,
+	}
+
+	// Set DNS nameservers if provided
+	if len(req.DNSServers) > 0 {
+		nameservers := req.DNSServers
+		ipv4Body.Nameservers = &nameservers
+	}
+
+	// Assign Ipv4 directly to AddressFamily (not using setter)
+	addressFamily := &iaas.CreateNetworkAddressFamily{
+		Ipv4: ipv4Body,
+	}
+
+	return addressFamily
+}
+
+// buildNetworkFromResponse converts API response to CPI Network.
+func (m *NetworkManager) buildNetworkFromResponse(created *iaas.Network, req *cpi.NetworkRequest) *cpi.Network {
+	out := &cpi.Network{
+		ID:         stringOrEmpty(created.GetNetworkIdOk()),
+		Name:       stringOrEmpty(created.GetNameOk()),
+		CIDR:       req.CIDR,
+		Region:     "",
+		State:      cpi.ResourceStateUnknown,
+		Tags:       map[string]string{},
+		DNSServers: req.DNSServers,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	out.Tags = mapAnyToString(created.GetLabels())
+
+	return out
+}
+
+// mapAnyToString converts map[string]interface{} to map[string]string.
+func mapAnyToString(input map[string]interface{}) map[string]string {
+	if input == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		switch typedValue := value.(type) {
+		case string:
+			out[key] = typedValue
+		case fmt.Stringer:
+			out[key] = typedValue.String()
+		default:
+			out[key] = fmt.Sprintf("%v", value)
+		}
+	}
+
+	return out
+}
+
+func stringOrEmpty(val string, _ bool) string { return val }
+
+// sanitizeLabelsForStackit converts tags/labels to STACKIT-compliant format.
+// STACKIT labels must match regex for values: ^(-|_|[a-z0-9]){0,63}$
+// This means: lowercase alphanumeric, hyphens, underscores only - NO colons or special chars.
+// Timestamp labels (created-at, updated-at) are filtered out as they cannot be represented in valid format.
+func sanitizeLabelsForStackit(tags map[string]string) map[string]interface{} {
+	if tags == nil {
+		return map[string]interface{}{}
+	}
+
+	labels := make(map[string]interface{}, len(tags))
+	for key, value := range tags {
+		// Skip timestamp labels - STACKIT doesn't support them in label values
+		// STACKIT label values must match regex: ^(-|_|[a-z0-9]){0,63}$
+		if key == "created-at" || key == "updated-at" || key == "created_at" || key == "updated_at" {
+			continue
+		}
+
+		labels[key] = value
+	}
+
+	return labels
+}
+
+// matchLabels filters by label:foo=value filters.
+// matchLabels filters by label:foo=value or plain foo=value filters.
+// All filters are treated as label filters for STACKIT resources.
+func matchLabels(labels map[string]string, filters map[string]string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+
+	for filterKey, filterValue := range filters {
+		var key string
+
+		switch {
+		case strings.HasPrefix(filterKey, "label:"):
+			key = strings.TrimPrefix(filterKey, "label:")
+		case strings.HasPrefix(filterKey, "label."):
+			key = strings.TrimPrefix(filterKey, "label.")
+		default:
+			// Treat unprefixed filters as label filters
+			key = filterKey
+		}
+
+		if labels == nil || labels[key] != filterValue {
+			return false
+		}
+	}
+
+	return true
+}
+
 // ensurePublicIPsForJob is a helper to ensure a number of IPs by job label.
 func (m *NetworkManager) ensurePublicIPsForJob(ctx context.Context, blocName, job string, count int) ([]*cpi.PublicIP, error) {
 	// Find existing IPs for this job
-	// Note: Filters removed as ListPublicIPs interface doesn't support them
 	existingIPs, err := m.ListPublicIPs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list existing %s IPs: %w", job, err)
 	}
 
-	// Index existing IPs by index label
-	ipsByIndex := make(map[string]*cpi.PublicIP)
+	ipsByKey := m.indexExistingIPsByJob(existingIPs, job)
+	allIPs, errs := m.createMissingPublicIPs(ctx, blocName, job, count, ipsByKey)
 
-	for _, ip := range existingIPs {
-		if ip.Labels != nil && ip.Labels["index"] != "" {
-			ipsByIndex[ip.Labels["index"]] = ip
+	// Return partial results with errors if any creation failed
+	if len(errs) > 0 {
+		return allIPs, fmt.Errorf("partial failure creating %s IPs (%d/%d created): %w", job, len(allIPs), count, errors.Join(errs...))
+	}
+
+	return allIPs, nil
+}
+
+// indexExistingIPsByJob indexes existing public IPs by job and index.
+func (m *NetworkManager) indexExistingIPsByJob(existingIPs []*cpi.PublicIP, job string) map[string]*cpi.PublicIP {
+	ipsByKey := make(map[string]*cpi.PublicIP)
+
+	for _, publicIP := range existingIPs {
+		if publicIP.Labels == nil {
+			continue
+		}
+
+		// Validate this IP belongs to the correct job
+		ipJob, hasJob := publicIP.Labels["job"]
+		ipIndex, hasIndex := publicIP.Labels["index"]
+
+		if !hasJob || !hasIndex {
+			continue
+		}
+
+		// Only index IPs that match this specific job
+		if ipJob == job {
+			key := fmt.Sprintf("%s-%s", job, ipIndex)
+			ipsByKey[key] = publicIP
 		}
 	}
 
-	allIPs := make([]*cpi.PublicIP, 0, count)
+	return ipsByKey
+}
+
+// createMissingPublicIPs creates public IPs that don't already exist.
+func (m *NetworkManager) createMissingPublicIPs(ctx context.Context, blocName, job string, count int, ipsByKey map[string]*cpi.PublicIP) ([]*cpi.PublicIP, []error) {
+	result := make([]*cpi.PublicIP, 0, count)
+
+	var errs []error
 
 	for ipIndex := range count {
 		indexString := strconv.Itoa(ipIndex)
-		if existingIP, ok := ipsByIndex[indexString]; ok {
+		key := fmt.Sprintf("%s-%s", job, indexString)
+
+		// Check if IP already exists with correct job and index
+		if existingIP, ok := ipsByKey[key]; ok {
 			logger.WithOperation("ensurePublicIPsForJob").Infof("%s IP with index %s already exists: %s", job, indexString, existingIP.Address)
-			allIPs = append(allIPs, existingIP)
+			result = append(result, existingIP)
 
 			continue
 		}
 
 		// Create new IP
-		req := &cpi.PublicIPRequest{
-			Name:      fmt.Sprintf("%s-%s-%d", blocName, job, ipIndex),
-			Job:       job,
-			Index:     indexString,
-			NetworkID: "",
-			Labels: map[string]string{
-				"bloc": blocName,
-				"env":  "mgmt",
-			},
-			Tags: map[string]string{},
-		}
-
-		newIP, err := m.CreatePublicIP(ctx, req)
+		newIP, err := m.createNewPublicIP(ctx, blocName, job, ipIndex, indexString)
 		if err != nil {
 			logger.WithOperation("ensurePublicIPsForJob").Errorf("Failed to create %s IP with index %s: %v", job, indexString, err)
+			errs = append(errs, fmt.Errorf("failed to create %s IP index %s: %w", job, indexString, err))
 
 			continue
 		}
 
 		logger.WithOperation("ensurePublicIPsForJob").Infof("Created %s IP with index %s: %s", job, indexString, newIP.Address)
-		allIPs = append(allIPs, newIP)
+		result = append(result, newIP)
 	}
 
-	return allIPs, nil
+	return result, errs
+}
+
+// createNewPublicIP creates a new public IP with the specified labels.
+func (m *NetworkManager) createNewPublicIP(ctx context.Context, blocName, job string, ipIndex int, indexString string) (*cpi.PublicIP, error) {
+	req := &cpi.PublicIPRequest{
+		Name:      fmt.Sprintf("%s-%s-%d", blocName, job, ipIndex),
+		Job:       job,
+		Index:     indexString,
+		NetworkID: "",
+		Labels: map[string]string{
+			"bloc": blocName,
+			"env":  "mgmt",
+		},
+		Tags: map[string]string{},
+	}
+
+	return m.CreatePublicIP(ctx, req)
+}
+
+func buildPublicIPLabels(req *cpi.PublicIPRequest) map[string]interface{} {
+	// Merge labels and tags into a single map
+	mergedTags := make(map[string]string)
+
+	// First, copy all labels from the request
+	for k, v := range req.Labels {
+		mergedTags[k] = v
+	}
+
+	// Then, merge in all tags (which contain bloc and other metadata)
+	for k, v := range req.Tags {
+		mergedTags[k] = v
+	}
+
+	// Add/override with required metadata
+	mergedTags["managed-by"] = "ocfp"
+	if req.Job != "" {
+		mergedTags["job"] = req.Job
+	}
+
+	if req.Index != "" {
+		mergedTags["index"] = req.Index
+	}
+
+	if req.Name != "" {
+		mergedTags["name"] = req.Name
+	}
+
+	// Sanitize for STACKIT (handles timestamp conversion)
+	return sanitizeLabelsForStackit(mergedTags)
+}
+
+func buildPublicIPFromResponse(created *iaas.PublicIp) *cpi.PublicIP {
+	ipAddress := stringOrEmpty(created.GetIpOk())
+	out := &cpi.PublicIP{
+		ID:         stringOrEmpty(created.GetIdOk()),
+		IPAddress:  ipAddress, // Set IPAddress for bootstrap code compatibility
+		Address:    ipAddress, // Set Address for other code compatibility
+		Name:       "",
+		Status:     "",
+		Job:        "",
+		Index:      "",
+		InstanceID: "",
+		NetworkID:  "",
+		Labels:     mapAnyToString(created.GetLabels()),
+		Tags:       map[string]string{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	if out.Labels != nil {
+		out.Job = out.Labels["job"]
+		out.Index = out.Labels["index"]
+		out.Name = out.Labels["name"]
+	}
+
+	return out
 }
 
 func (m *NetworkManager) createPublicIPViaSDK(ctx context.Context, labels map[string]interface{}) (*iaas.PublicIp, error) {
@@ -957,4 +1147,155 @@ func (m *NetworkManager) checkPublicIPMatch(ctx context.Context, cli *iaas.APICl
 	}
 
 	return false, nil
+}
+
+// fetchNetworkList retrieves the list of networks from the API.
+func (m *NetworkManager) fetchNetworkList(ctx context.Context, cli *iaas.APIClient) ([]iaas.Network, error) {
+	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	networks, ok := networksResp.GetItemsOk()
+	if !ok {
+		logger.WithOperation("ListNetworkInterfaces").Debug("No networks found")
+
+		return []iaas.Network{}, nil
+	}
+
+	return networks, nil
+}
+
+// collectNetworkInterfaces collects NICs from all networks with filtering.
+func (m *NetworkManager) collectNetworkInterfaces(ctx context.Context, cli *iaas.APIClient, networks []iaas.Network, filters map[string]string) []*cpi.NetworkInterface {
+	networkInterfaces := make([]*cpi.NetworkInterface, 0)
+
+	for _, network := range networks {
+		networkID, exists := network.GetNetworkIdOk()
+		if !exists || networkID == "" {
+			continue
+		}
+
+		nics := m.fetchNICsForNetwork(ctx, cli, networkID)
+		filtered := m.filterAndConvertNICs(nics, networkID, filters)
+		networkInterfaces = append(networkInterfaces, filtered...)
+	}
+
+	return networkInterfaces
+}
+
+// fetchNICsForNetwork retrieves NICs for a specific network.
+func (m *NetworkManager) fetchNICsForNetwork(ctx context.Context, cli *iaas.APIClient, networkID string) []iaas.NIC {
+	nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, networkID).Execute()
+	if err != nil {
+		logger.WithOperation("ListNetworkInterfaces").Warnf("Failed to list NICs for network %s: %v", networkID, err)
+
+		return []iaas.NIC{}
+	}
+
+	items, ok := nicsResp.GetItemsOk()
+	if !ok {
+		return []iaas.NIC{}
+	}
+
+	return items
+}
+
+// filterAndConvertNICs filters provider-managed NICs and applies user filters.
+func (m *NetworkManager) filterAndConvertNICs(nics []iaas.NIC, networkID string, filters map[string]string) []*cpi.NetworkInterface {
+	result := make([]*cpi.NetworkInterface, 0)
+
+	for _, nic := range nics {
+		// Skip metadata and gateway port NICs - they are provider-managed and cannot be deleted
+		nicType, hasType := nic.GetTypeOk()
+		if hasType && (nicType == "metadata" || nicType == "gateway") {
+			logger.WithOperation("ListNetworkInterfaces").Debugf("Skipping provider-managed NIC type: %s (ID: %s)",
+				nicType, stringOrEmpty(nic.GetIdOk()))
+
+			continue
+		}
+
+		// Apply filters if provided
+		if len(filters) > 0 {
+			if !matchesNICFilters(nic, filters) {
+				continue
+			}
+		}
+
+		networkInterface := buildNetworkInterfaceFromSDK(nic, networkID)
+		result = append(result, networkInterface)
+	}
+
+	return result
+}
+
+// buildNetworkInterfaceFromSDK converts STACKIT SDK NIC to CPI NetworkInterface.
+func buildNetworkInterfaceFromSDK(nic iaas.NIC, networkID string) *cpi.NetworkInterface {
+	netInterface := &cpi.NetworkInterface{
+		ID:               stringOrEmpty(nic.GetIdOk()),
+		Name:             stringOrEmpty(nic.GetNameOk()),
+		IPv4:             stringOrEmpty(nic.GetIpv4Ok()),
+		IPv6:             stringOrEmpty(nic.GetIpv6Ok()),
+		MAC:              stringOrEmpty(nic.GetMacOk()),
+		NetworkID:        networkID,
+		SecurityGroupIDs: []string{},
+		AllowedAddresses: []string{},
+		Labels:           map[string]string{},
+	}
+
+	// Extract security group IDs
+	if sgs, ok := nic.GetSecurityGroupsOk(); ok {
+		netInterface.SecurityGroupIDs = append(netInterface.SecurityGroupIDs, sgs...)
+	}
+
+	// Extract allowed addresses
+	if addrs, ok := nic.GetAllowedAddressesOk(); ok {
+		for _, addr := range addrs {
+			if addr.String != nil {
+				netInterface.AllowedAddresses = append(netInterface.AllowedAddresses, *addr.String)
+			}
+		}
+	}
+
+	// Extract labels
+	if labels, ok := nic.GetLabelsOk(); ok {
+		for k, v := range labels {
+			if strVal, ok := v.(string); ok {
+				netInterface.Labels[k] = strVal
+			}
+		}
+	}
+
+	return netInterface
+}
+
+// matchesNICFilters checks if a NIC matches the provided filters.
+func matchesNICFilters(nic iaas.NIC, filters map[string]string) bool {
+	// Extract NIC labels
+	labels := mapAnyToString(nic.GetLabels())
+
+	// Apply label filtering using the standard matchLabels function
+	// This enforces metadata requirements: resources without proper labels are filtered out
+	if !matchLabels(labels, filters) {
+		return false
+	}
+
+	// Additional filter checks for specific fields
+	for key, value := range filters {
+		switch key {
+		case "network_id":
+			// Network ID is passed separately in the context, so skip this filter
+			continue
+		case "instance_id":
+			// Note: STACKIT NICs don't directly expose instance_id in the NIC object
+			// This would require additional API calls to determine attachment
+			continue
+		case "name":
+			if name, ok := nic.GetNameOk(); !ok || name != value {
+				return false
+			}
+		}
+	}
+
+	return true
 }

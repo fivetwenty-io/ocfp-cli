@@ -1,0 +1,38 @@
+Example Concise Renderer Output
+================================
+
+Phase Start:
+[01/25] Starting phase: ssh_agent_forwarding
+
+Phase Progress (with subtasks):
+[08/25] ⟳ repositories (1m12s)
+[08/25]   ├─ snap_packages: kubectl (⟳ 1/2)
+[08/25]   ├─ cpan_modules: Smart::Comments (✓ 2/3)
+[08/25]   ├─ cf_plugins: app-autoscaler-plugin (✓ 1/2)
+[08/25]   └─ binary_tools: nvim (⟳ 14/15)
+
+Phase Complete:
+[08/25] ✓ Phase completed: repositories (2m05s)
+
+Phase Failed:
+[15/25] ✗ Phase failed: database_setup - connection timeout
+
+Phase Skipped:
+[22/25] ⤷ Phase skipped: optional_feature (already configured)
+
+Final Summary:
+===== Summary =====
+Status: Success
+Duration: 3m45s
+Phases completed: 23
+Phases failed: 0
+Phases skipped: 2
+
+Key Features:
+- NO ANSI escape codes (strictly append-only)
+- Phase numbers prefix every line ([NN/Total]) for grep-ability
+- Full subtask tree with indentation
+- Unicode status icons: ⟳ running, ✓ completed, ✗ failed, ⤷ skipped, ⏳ pending
+- Tree characters: ├─ for middle items, └─ for last item
+- Elapsed time tracking in human-readable format
+- Clean, structured summary output

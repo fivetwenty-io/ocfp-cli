@@ -298,7 +298,8 @@ func TestProgressReporting(t *testing.T) {
 		Checkpoints:    make(map[string]bool),
 	}
 
-	reporter := bastion.NewProgressReporter(&output, progress)
+	mode := bastion.SelectOutputMode(&output)
+	reporter := bastion.NewProgressReporter(&output, mode, progress)
 
 	// Test phase reporting
 	reporter.ReportPhaseStart("test_phase", 3, 10)

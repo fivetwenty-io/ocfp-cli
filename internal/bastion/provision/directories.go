@@ -37,7 +37,6 @@ func (dm *DirectoryManager) GetOCFPDirectories() []DirectoryConfig {
 		{Path: ocfpPath + "/artifacts", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: ocfpPath + "/kits", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
-		{Path: "${HOME}/.ocfp/config", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
@@ -124,8 +123,7 @@ func (dm *DirectoryManager) generateDirectoryCreationScript(directories []Direct
 	lines := []string{"# Create OCFP directories"}
 
 	for _, dir := range directories {
-		lines = append(lines, fmt.Sprintf("DIR_PATH='%s'", dir.Path))
-		lines = append(lines, "DIR_PATH=$(echo \"$DIR_PATH\" | envsubst)")
+		lines = append(lines, fmt.Sprintf("DIR_PATH=\"%s\"", dir.Path))
 		lines = append(lines, "if [ ! -d \"$DIR_PATH\" ]; then")
 		lines = append(lines, "    log_info \"Creating directory: $DIR_PATH\"")
 
@@ -178,10 +176,8 @@ func (dm *DirectoryManager) generateSymlinkCreationScript() []string {
 		expandedLink := dm.expandVariables(linkPath)
 		expandedTarget := dm.expandVariables(targetPath)
 
-		lines = append(lines, fmt.Sprintf("LINK_PATH='%s'", expandedLink))
-		lines = append(lines, fmt.Sprintf("TARGET_PATH='%s'", expandedTarget))
-		lines = append(lines, "LINK_PATH=$(echo \"$LINK_PATH\" | envsubst)")
-		lines = append(lines, "TARGET_PATH=$(echo \"$TARGET_PATH\" | envsubst)")
+		lines = append(lines, fmt.Sprintf("LINK_PATH=\"%s\"", expandedLink))
+		lines = append(lines, fmt.Sprintf("TARGET_PATH=\"%s\"", expandedTarget))
 		lines = append(lines, "")
 		lines = append(lines, "if [ ! -e \"$LINK_PATH\" ]; then")
 		lines = append(lines, "    log_info \"Creating symlink: $LINK_PATH -> $TARGET_PATH\"")
@@ -220,7 +216,7 @@ func (dm *DirectoryManager) generateDirectoryStatusScript() []string {
 
 	for _, dir := range checkDirs {
 		expandedDir := dm.expandVariables(dir)
-		lines = append(lines, fmt.Sprintf("if [ -d '%s' ]; then", expandedDir))
+		lines = append(lines, fmt.Sprintf("if [ -d \"%s\" ]; then", expandedDir))
 		lines = append(lines, fmt.Sprintf("    log_info '  ✓ %s'", expandedDir))
 		lines = append(lines, "else")
 		lines = append(lines, fmt.Sprintf("    log_warning '  ✗ %s (missing)'", expandedDir))
@@ -236,7 +232,7 @@ func (dm *DirectoryManager) generateDirectoryStatusScript() []string {
 func (dm *DirectoryManager) expandVariables(text string) string {
 	text = strings.ReplaceAll(text, "${HOME}", "$HOME")
 	text = strings.ReplaceAll(text, "${USER}", "$USER")
-	text = strings.ReplaceAll(text, "${OCFP_BLOC_NAME}", "$OCFP_BLOC_NAME")
+	text = strings.ReplaceAll(text, "${OCFP_BLOC}", "$OCFP_BLOC")
 
 	return text
 }

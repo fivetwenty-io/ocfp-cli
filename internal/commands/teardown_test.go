@@ -45,7 +45,7 @@ func (f *fakeStorageCreds) CreateSnapshot(ctx context.Context, volumeID string, 
 func (f *fakeStorageCreds) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListSnapshots(ctx context.Context, volumeID string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
 func (f *fakeStorageCreds) DeleteSnapshot(ctx context.Context, id string) error { return nil }
@@ -60,6 +60,9 @@ func (f *fakeStorageCreds) ListBuckets(ctx context.Context) ([]*cpi.Bucket, erro
 }
 func (f *fakeStorageCreds) DeleteBucket(ctx context.Context, name string) error { return nil }
 func (f *fakeStorageCreds) EmptyBucket(ctx context.Context, name string) error  { return nil }
+func (f *fakeStorageCreds) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+	return true, nil
+}
 func (f *fakeStorageCreds) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
@@ -166,7 +169,7 @@ func createTestConfigForCredentials() *config.Config {
 		SSHKeyStorageDir:      "",
 		Routers:               config.ComponentConfig{}, //nolint:exhaustruct // Test config using zero values
 		Cells:                 config.ComponentConfig{}, //nolint:exhaustruct // Test config using zero values
-		FQDNs:                 map[string]interface{}{},
+		FQDNs:                 &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}},
 		S3:                    map[string]string{},
 		AllowedIngressIPs:     []string{},
 		Type:                  "",
@@ -201,16 +204,24 @@ func setupTestStateManager(t *testing.T) *state.Manager {
 
 func createTeardownManager(cfg *config.Config, fakeProvider *fakeProviderCreds, stateManager *state.Manager) *commands.TeardownManager {
 	return commands.NewTeardownManager(cfg, fakeProvider, stateManager, &commands.TeardownOptions{
-		BlocName:  "prod",
-		Provider:  "",
-		Force:     false,
-		DryRun:    false,
-		All:       false,
-		Nuke:      false,
-		PublicIPs: false,
-		Skip:      nil,
-		Mode:      "",
-		Output:    "",
+		BlocName:       "prod",
+		Provider:       "",
+		Force:          false,
+		DryRun:         false,
+		All:            false,
+		Nuke:           false,
+		PublicIPs:      false,
+		Bastion:        false,
+		Servers:        false,
+		Volumes:        false,
+		Snapshots:      false,
+		Buckets:        false,
+		SecurityGroups: false,
+		Network:        false,
+		Empty:          false,
+		Skip:           nil,
+		Mode:           "",
+		Output:         "",
 	})
 }
 
@@ -230,5 +241,421 @@ func verifyCredentialsGroupDeletion(t *testing.T, fakeStorage *fakeStorageCreds,
 
 	if fakeStorage.deletedGroup != expectedGroupID {
 		t.Fatalf("expected credentials group deletion to be called, got %q", fakeStorage.deletedGroup)
+	}
+}
+
+func TestFilterResourcesBastionOnly(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		blocName  string
+		bastion   bool
+		resources []*commands.ResourceToDelete
+		expected  []string // Expected resource names after filtering
+	}{
+		{
+			name:     "Bastion flag filters to only bastion instance",
+			blocName: "test-bloc",
+			bastion:  true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "test-bloc-bastion", ID: "i-123"},
+				{Type: "instance", Name: "other-instance", ID: "i-456"},
+				{Type: "volume", Name: "test-volume", ID: "v-789"},
+				{Type: "network", Name: "test-network", ID: "n-012"},
+			},
+			expected: []string{"test-bloc-bastion"},
+		},
+		{
+			name:     "Bastion flag with no bastion instance returns empty",
+			blocName: "test-bloc",
+			bastion:  true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "other-instance", ID: "i-456"},
+				{Type: "volume", Name: "test-volume", ID: "v-789"},
+			},
+			expected: []string{},
+		},
+		{
+			name:     "No bastion flag returns all resources",
+			blocName: "test-bloc",
+			bastion:  false,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "test-bloc-bastion", ID: "i-123"},
+				{Type: "instance", Name: "other-instance", ID: "i-456"},
+				{Type: "volume", Name: "test-volume", ID: "v-789"},
+			},
+			expected: []string{"test-bloc-bastion", "other-instance", "test-volume"},
+		},
+		{
+			name:     "Bastion flag ignores bastion from different bloc",
+			blocName: "test-bloc",
+			bastion:  true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "other-bloc-bastion", ID: "i-123"},
+				{Type: "instance", Name: "test-bloc-bastion", ID: "i-456"},
+			},
+			expected: []string{"test-bloc-bastion"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Name:     tc.blocName,
+				Provider: "aws",
+			}
+
+			stateManager, err := state.NewManager(t.TempDir())
+			if err != nil {
+				t.Fatalf("failed to create state manager: %v", err)
+			}
+
+			_, err = stateManager.Load(tc.blocName)
+			if err != nil {
+				t.Fatalf("failed to load state: %v", err)
+			}
+
+			opts := &commands.TeardownOptions{
+				BlocName: tc.blocName,
+				Provider: cfg.Provider,
+				Bastion:  tc.bastion,
+			}
+
+			manager := commands.NewTeardownManager(cfg, &fakeProviderCreds{}, stateManager, opts)
+
+			// Use reflection to call the private filterResources method
+			// In real test, we'd test the public Execute method with proper mocking
+			filtered := manager.TestFilterResources(tc.resources)
+
+			if len(filtered) != len(tc.expected) {
+				t.Errorf("expected %d resources, got %d", len(tc.expected), len(filtered))
+			}
+
+			for i, expectedName := range tc.expected {
+				if i >= len(filtered) {
+					t.Errorf("missing resource at index %d: expected %s", i, expectedName)
+
+					continue
+				}
+
+				if filtered[i].Name != expectedName {
+					t.Errorf("resource %d: expected name %s, got %s", i, expectedName, filtered[i].Name)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterResourcesCombinedBastionAndSelective(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		blocName        string
+		bastion         bool
+		securityGroups  bool
+		servers         bool
+		resources       []*commands.ResourceToDelete
+		expectedNames   []string
+		expectedTypeLen map[string]int
+	}{
+		{
+			name:           "Bastion and security groups flags include both",
+			blocName:       "520-aws-wayne",
+			bastion:        true,
+			securityGroups: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "520-aws-wayne-bastion", ID: "i-123"},
+				{Type: "instance", Name: "other-instance", ID: "i-456"},
+				{Type: "security_group", Name: "sg-1", ID: "sg-1"},
+				{Type: "security_group", Name: "sg-2", ID: "sg-2"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+			},
+			expectedNames:   []string{"520-aws-wayne-bastion", "sg-1", "sg-2"},
+			expectedTypeLen: map[string]int{"instance": 1, "security_group": 2},
+		},
+		{
+			name:     "Bastion and servers flags include both bastion and other instances",
+			blocName: "test-bloc",
+			bastion:  true,
+			servers:  true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "test-bloc-bastion", ID: "i-123"},
+				{Type: "instance", Name: "worker-1", ID: "i-456"},
+				{Type: "instance", Name: "worker-2", ID: "i-789"},
+				{Type: "keypair", Name: "key-1", ID: "k-1"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+			},
+			expectedNames:   []string{"test-bloc-bastion", "worker-1", "worker-2", "key-1"},
+			expectedTypeLen: map[string]int{"instance": 3, "keypair": 1},
+		},
+		{
+			name:           "Bastion with security groups only includes bastion from correct bloc",
+			blocName:       "prod",
+			bastion:        true,
+			securityGroups: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "dev-bastion", ID: "i-111"},
+				{Type: "instance", Name: "prod-bastion", ID: "i-222"},
+				{Type: "security_group", Name: "sg-1", ID: "sg-1"},
+			},
+			expectedNames:   []string{"prod-bastion", "sg-1"},
+			expectedTypeLen: map[string]int{"instance": 1, "security_group": 1},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Name:     tc.blocName,
+				Provider: "aws",
+			}
+
+			stateManager, err := state.NewManager(t.TempDir())
+			if err != nil {
+				t.Fatalf("failed to create state manager: %v", err)
+			}
+
+			_, err = stateManager.Load(tc.blocName)
+			if err != nil {
+				t.Fatalf("failed to load state: %v", err)
+			}
+
+			opts := &commands.TeardownOptions{
+				BlocName:       tc.blocName,
+				Provider:       cfg.Provider,
+				Bastion:        tc.bastion,
+				SecurityGroups: tc.securityGroups,
+				Servers:        tc.servers,
+			}
+
+			manager := commands.NewTeardownManager(cfg, &fakeProviderCreds{}, stateManager, opts)
+
+			filtered := manager.TestFilterResources(tc.resources)
+
+			// Check total count
+			if len(filtered) != len(tc.expectedNames) {
+				t.Errorf("expected %d resources, got %d", len(tc.expectedNames), len(filtered))
+			}
+
+			// Check resource names
+			filteredNames := make([]string, len(filtered))
+			for i, r := range filtered {
+				filteredNames[i] = r.Name
+			}
+
+			for _, expectedName := range tc.expectedNames {
+				found := false
+				for _, name := range filteredNames {
+					if name == expectedName {
+						found = true
+
+						break
+					}
+				}
+
+				if !found {
+					t.Errorf("expected resource %s not found in filtered results", expectedName)
+				}
+			}
+
+			// Check resource type counts
+			typeCounts := make(map[string]int)
+			for _, r := range filtered {
+				typeCounts[r.Type]++
+			}
+
+			for expectedType, expectedCount := range tc.expectedTypeLen {
+				if typeCounts[expectedType] != expectedCount {
+					t.Errorf("expected %d %s resources, got %d", expectedCount, expectedType, typeCounts[expectedType])
+				}
+			}
+		})
+	}
+}
+
+func TestFilterResourcesSelectiveMode(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		servers         bool
+		volumes         bool
+		snapshots       bool
+		buckets         bool
+		securityGroups  bool
+		network         bool
+		resources       []*commands.ResourceToDelete
+		expectedNames   []string
+		expectedTypeLen map[string]int // Count of each resource type expected
+	}{
+		{
+			name:    "Servers flag includes instances and keypairs",
+			servers: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+				{Type: "instance", Name: "server-2", ID: "i-2"},
+				{Type: "keypair", Name: "key-1", ID: "k-1"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+				{Type: "network", Name: "net-1", ID: "n-1"},
+			},
+			expectedNames:   []string{"server-1", "server-2", "key-1"},
+			expectedTypeLen: map[string]int{"instance": 2, "keypair": 1},
+		},
+		{
+			name:    "Volumes flag includes only volumes",
+			volumes: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+				{Type: "volume", Name: "vol-2", ID: "v-2"},
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+				{Type: "snapshot", Name: "snap-1", ID: "s-1"},
+			},
+			expectedNames:   []string{"vol-1", "vol-2"},
+			expectedTypeLen: map[string]int{"volume": 2},
+		},
+		{
+			name:      "Snapshots flag includes only snapshots",
+			snapshots: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "snapshot", Name: "snap-1", ID: "s-1"},
+				{Type: "snapshot", Name: "snap-2", ID: "s-2"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+			},
+			expectedNames:   []string{"snap-1", "snap-2"},
+			expectedTypeLen: map[string]int{"snapshot": 2},
+		},
+		{
+			name:    "Network flag includes networks, subnets, and load balancers",
+			network: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "network", Name: "net-1", ID: "n-1"},
+				{Type: "subnet", Name: "subnet-1", ID: "sn-1"},
+				{Type: "loadbalancer", Name: "lb-1", ID: "lb-1"},
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+			},
+			expectedNames:   []string{"net-1", "subnet-1", "lb-1"},
+			expectedTypeLen: map[string]int{"network": 1, "subnet": 1, "loadbalancer": 1},
+		},
+		{
+			name:           "Security groups flag includes only security groups",
+			securityGroups: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "security_group", Name: "sg-1", ID: "sg-1"},
+				{Type: "security_group", Name: "sg-2", ID: "sg-2"},
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+			},
+			expectedNames:   []string{"sg-1", "sg-2"},
+			expectedTypeLen: map[string]int{"security_group": 2},
+		},
+		{
+			name:    "Multiple flags combine resource types",
+			servers: true,
+			volumes: true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+				{Type: "snapshot", Name: "snap-1", ID: "s-1"},
+				{Type: "network", Name: "net-1", ID: "n-1"},
+			},
+			expectedNames:   []string{"server-1", "vol-1"},
+			expectedTypeLen: map[string]int{"instance": 1, "volume": 1},
+		},
+		{
+			name:      "All selective flags include all resource types",
+			servers:   true,
+			volumes:   true,
+			snapshots: true,
+			buckets:   true,
+			network:   true,
+			resources: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "server-1", ID: "i-1"},
+				{Type: "volume", Name: "vol-1", ID: "v-1"},
+				{Type: "snapshot", Name: "snap-1", ID: "s-1"},
+				{Type: "bucket", Name: "bucket-1", ID: "b-1"},
+				{Type: "network", Name: "net-1", ID: "n-1"},
+			},
+			expectedNames:   []string{"server-1", "vol-1", "snap-1", "bucket-1", "net-1"},
+			expectedTypeLen: map[string]int{"instance": 1, "volume": 1, "snapshot": 1, "bucket": 1, "network": 1},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Name:     "test-bloc",
+				Provider: "aws",
+			}
+
+			stateManager, err := state.NewManager(t.TempDir())
+			if err != nil {
+				t.Fatalf("failed to create state manager: %v", err)
+			}
+
+			_, err = stateManager.Load("test-bloc")
+			if err != nil {
+				t.Fatalf("failed to load state: %v", err)
+			}
+
+			opts := &commands.TeardownOptions{
+				BlocName:       "test-bloc",
+				Provider:       cfg.Provider,
+				Servers:        tc.servers,
+				Volumes:        tc.volumes,
+				Snapshots:      tc.snapshots,
+				Buckets:        tc.buckets,
+				SecurityGroups: tc.securityGroups,
+				Network:        tc.network,
+			}
+
+			manager := commands.NewTeardownManager(cfg, &fakeProviderCreds{}, stateManager, opts)
+
+			filtered := manager.TestFilterResources(tc.resources)
+
+			// Check total count
+			if len(filtered) != len(tc.expectedNames) {
+				t.Errorf("expected %d resources, got %d", len(tc.expectedNames), len(filtered))
+			}
+
+			// Check resource names
+			filteredNames := make([]string, len(filtered))
+			for i, r := range filtered {
+				filteredNames[i] = r.Name
+			}
+
+			for _, expectedName := range tc.expectedNames {
+				found := false
+				for _, name := range filteredNames {
+					if name == expectedName {
+						found = true
+
+						break
+					}
+				}
+
+				if !found {
+					t.Errorf("expected resource %s not found in filtered results", expectedName)
+				}
+			}
+
+			// Check resource type counts
+			typeCounts := make(map[string]int)
+			for _, r := range filtered {
+				typeCounts[r.Type]++
+			}
+
+			for expectedType, expectedCount := range tc.expectedTypeLen {
+				if typeCounts[expectedType] != expectedCount {
+					t.Errorf("expected %d %s resources, got %d", expectedCount, expectedType, typeCounts[expectedType])
+				}
+			}
+		})
 	}
 }

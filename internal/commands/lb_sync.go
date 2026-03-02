@@ -36,7 +36,7 @@ func buildSyncLBDesiredIPs(config *syncLBConfig) map[string]bool {
 		if isToken(t) {
 			resolvedIP, err := ResolveTargetIP(config.blocName, t)
 			if err != nil {
-				log.Warn("token unresolved", "token", t, "err", err)
+				log.Warnw("token unresolved", "token", t, "err", err)
 
 				continue
 			}
@@ -45,7 +45,7 @@ func buildSyncLBDesiredIPs(config *syncLBConfig) map[string]bool {
 		}
 
 		if net.ParseIP(targetIP) == nil {
-			log.Warn("invalid target ip", "value", targetIP)
+			log.Warnw("invalid target ip", "value", targetIP)
 
 			continue
 		}
@@ -265,9 +265,9 @@ func addMissingBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lb
 
 		err := netMgr.AddBackendMember(ctx, lbID, member)
 		if err != nil {
-			log.Warn("failed add backend", "ip", memberIP, "err", err)
+			log.Warnw("failed add backend", "ip", memberIP, "err", err)
 		} else {
-			log.Info("added backend", "ip", memberIP)
+			log.Infow("added backend", "ip", memberIP)
 		}
 	}
 }
@@ -283,9 +283,9 @@ func removeUnusedBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, 
 				if !desired[member.IPAddress] {
 					err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
 					if err != nil {
-						log.Warn("failed remove backend", "ip", member.IPAddress, "err", err)
+						log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
 					} else {
-						log.Info("removed backend", "ip", member.IPAddress)
+						log.Infow("removed backend", "ip", member.IPAddress)
 					}
 				}
 			}

@@ -109,14 +109,14 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
 		if attempt > 1 {
 			delay := calculateDelay(attempt-1, config)
-			log.Debug("Retrying operation", "attempt", attempt, "delay", delay)
+			log.Debugw("Retrying operation", "attempt", attempt, "delay", delay)
 			time.Sleep(delay)
 		}
 
 		err := operation()
 		if err == nil {
 			if attempt > 1 {
-				log.Info("Operation succeeded after retry", "attempts", attempt)
+				log.Infow("Operation succeeded after retry", "attempts", attempt)
 			}
 
 			return nil
@@ -126,7 +126,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 
 		// Check if we should retry
 		if !IsRetryable(err) {
-			log.Debug("Error not retryable, giving up", "error", err, "attempt", attempt)
+			log.Debugw("Error not retryable, giving up", "error", err, "attempt", attempt)
 
 			return &VaultError{
 				Operation: "retry",
@@ -138,9 +138,9 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 		}
 
 		if attempt == config.MaxAttempts {
-			log.Warn("Operation failed after all retry attempts", "attempts", attempt, "error", err)
+			log.Warnw("Operation failed after all retry attempts", "attempts", attempt, "error", err)
 		} else {
-			log.Debug("Operation failed, will retry", "attempt", attempt, "error", err)
+			log.Debugw("Operation failed, will retry", "attempt", attempt, "error", err)
 		}
 	}
 

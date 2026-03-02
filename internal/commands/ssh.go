@@ -38,7 +38,7 @@ func NewSSHCmd() *cobra.Command {
 
 	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
-		Use:   "ssh [target]",
+		Use:   "ssh [target] [command...]",
 		Short: "Connect to bastion host or other servers",
 		Long: `SSH connects to the bastion host or other servers in the OCFP environment.
 
@@ -47,12 +47,28 @@ The command automatically:
 - Finds the SSH key in standard locations
 - Uses the correct private key to establish connection
 
+You can execute remote commands, use SSH port forwarding, and pass SSH-specific options.
+
 SSH keys are searched in the following order:
-1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-2. ~/.ssh/{environment-name}-{bastion_keypair}
-3. Configured ssh_key_storage_dir`,
-		Example: `  # Connect to bastion host
+1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
+2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`,
+		Example: `  # Connect to bastion host (interactive session)
   ocfp ssh --bloc production
+
+  # Execute a single command on bastion
+  ocfp ssh --bloc production 'hostname'
+
+  # Execute multiple commands
+  ocfp ssh --bloc production 'ls /tmp; hostname; echo $OCFP_BLOC'
+
+  # Port forwarding (local)
+  ocfp ssh --bloc production -L 8080:localhost:80
+
+  # Dynamic port forwarding (SOCKS proxy)
+  ocfp ssh --bloc production -D 1080
+
+  # Remote port forwarding
+  ocfp ssh --bloc production -R 9090:localhost:8080
 
   # Connect as specific user
   ocfp ssh --bloc production --user admin
@@ -62,9 +78,11 @@ SSH keys are searched in the following order:
 
   # Pass additional SSH options
   ocfp ssh --bloc production --ssh-options "-o StrictHostKeyChecking=no"`,
-		Args: cobra.MaximumNArgs(1),
+		Args: cobra.MinimumNArgs(0),
 		RunE: runSSH,
 	}
+
+	cmd.SilenceUsage = true
 
 	// Command-specific flags
 	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SSH login")
@@ -108,9 +126,13 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("SSH key verification failed: %w", err)
 	}
 
-	sshCmd := buildSSHCommand(bastionIP, sshConfig.User, keyPath, sshConfig.Options)
+	sshCmd := buildSSHCommand(bastionIP, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
 
-	log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
+	if len(sshConfig.Command) > 0 {
+		log.Infof("Executing command on %s at %s as %s: %s", sshConfig.Target, bastionIP, sshConfig.User, strings.Join(sshConfig.Command, " "))
+	} else {
+		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
+	}
 	log.Debugf("Using SSH key: %s", keyPath)
 
 	return executeSSH(ctx, sshCmd)
@@ -122,18 +144,73 @@ type sshConfig struct {
 	KeyPath  string
 	Options  string
 	Target   string
+	SSHArgs  []string // SSH-specific flags like -L, -R, -D
+	Command  []string // Remote command to execute
+}
+
+// classifySSHArguments separates command-line arguments into target, SSH flags, and remote command.
+// Arguments are parsed left-to-right:
+// - SSH flags (starting with -) are collected into sshArgs
+// - First non-flag argument becomes the target (defaults to "bastion" if not provided)
+// - All remaining arguments after target become the remote command
+//
+//nolint:nonamedreturns // Named returns improve readability for this parsing function
+func classifySSHArguments(args []string) (target string, sshArgs []string, command []string) {
+	target = "bastion" // default target
+	sshArgs = []string{}
+	command = []string{}
+
+	if len(args) == 0 {
+		return target, sshArgs, command
+	}
+
+	argIndex := 0 //nolint:varnamelen // 'i' is standard for loop indices
+
+	// Parse SSH flags and find target
+	for argIndex < len(args) {
+		arg := args[argIndex]
+
+		// Check if this is an SSH flag
+		if strings.HasPrefix(arg, "-") {
+			// Collect SSH flag
+			sshArgs = append(sshArgs, arg)
+
+			// Some SSH flags require a value (like -L, -R, -D, -p, -o)
+			// Check if next argument is not a flag and collect it as the flag's value
+			if argIndex+1 < len(args) {
+				nextArg := args[argIndex+1]
+				// For flags that take arguments, collect the next arg if it doesn't start with -
+				if (arg == "-L" || arg == "-R" || arg == "-D" || arg == "-p" || arg == "-o") &&
+					!strings.HasPrefix(nextArg, "-") {
+					argIndex++
+					sshArgs = append(sshArgs, args[argIndex])
+				}
+			}
+			argIndex++
+		} else {
+			// First non-flag argument is the target
+			target = arg
+			argIndex++
+			break
+		}
+	}
+
+	// All remaining arguments are the remote command
+	if argIndex < len(args) {
+		command = args[argIndex:]
+	}
+
+	return target, sshArgs, command
 }
 
 func getSSHConfig(args []string) (*sshConfig, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}
 
-	target := "bastion"
-	if len(args) > 0 {
-		target = args[0]
-	}
+	// Classify arguments into target, SSH flags, and remote command
+	target, sshArgs, command := classifySSHArguments(args)
 
 	return &sshConfig{
 		BlocName: blocName,
@@ -141,6 +218,8 @@ func getSSHConfig(args []string) (*sshConfig, error) {
 		KeyPath:  viper.GetString("ssh.key"),
 		Options:  viper.GetString("ssh.options"),
 		Target:   target,
+		SSHArgs:  sshArgs,
+		Command:  command,
 	}, nil
 }
 
@@ -196,47 +275,32 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 }
 
 // findSSHKey locates the SSH private key for the bastion.
+//
+//nolint:unparam // cfg reserved for future use in provider-specific key resolution
 func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
 
-	// Search paths in order of preference
-	searchPaths := []string{
-		// 1. ~/.ocfp/keys/{bloc_name}-bastion/id_rsa
-		filepath.Join(os.Getenv("HOME"), ".ocfp", "keys", blocName+"-bastion", "id_rsa"),
-		// 2. ~/.ssh/{bloc_name}-bastion
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion"),
-		// 3. ~/.ssh/{bloc_name}-bastion.pem
-		filepath.Join(os.Getenv("HOME"), ".ssh", blocName+"-bastion.pem"),
-		// 4. From config ssh_key_storage_dir
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion"),
-		filepath.Join(cfg.SSHKeyStorageDir, blocName+"-bastion.pem"),
+	// Try Ed25519 key first (preferred)
+	keyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_ed25519")
+
+	info, err := os.Stat(keyPath)
+	if err == nil && info.Size() > 0 {
+		log.Debugf("Found SSH key at: %s", keyPath)
+
+		return keyPath, nil
 	}
 
-	for _, path := range searchPaths {
-		_, err := os.Stat(path)
-		if err == nil {
-			log.Debugf("Found SSH key at: %s", path)
+	// Fall back to RSA key
+	rsaKeyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_rsa")
 
-			return path, nil
-		}
+	rsaInfo, rsaErr := os.Stat(rsaKeyPath)
+	if rsaErr == nil && rsaInfo.Size() > 0 {
+		log.Debugf("Found SSH key at: %s", rsaKeyPath)
+
+		return rsaKeyPath, nil
 	}
 
-	// Try to find any key with bastion in the name
-	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
-
-	entries, err := os.ReadDir(sshDir)
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.Contains(entry.Name(), "bastion") {
-				path := filepath.Join(sshDir, entry.Name())
-				log.Debugf("Found SSH key at: %s", path)
-
-				return path, nil
-			}
-		}
-	}
-
-	return "", ErrCouldNotFindSSHKeyForBastion(searchPaths)
+	return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
@@ -261,68 +325,126 @@ func verifySSHKey(keyPath string) error {
 	return nil
 }
 
-// buildSSHCommand constructs the SSH command with all options.
-func buildSSHCommand(host, user, keyPath, extraOptions string) []string {
-	cmd := []string{"ssh"}
-
-	// Validate inputs
-	err := security.ValidateInput(host, sshValidHostPattern)
-	if err != nil {
+// validateSSHInputs validates the host, user, and keyPath for SSH connections.
+func validateSSHInputs(host, user, keyPath string) error {
+	if err := security.ValidateInput(host, sshValidHostPattern); err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
-
-		return []string{"ssh", "--help"} // Return safe command
+		return err
 	}
 
-	err = security.ValidateInput(user, sshValidUserPattern)
-	if err != nil {
+	if err := security.ValidateInput(user, sshValidUserPattern); err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
-
-		return []string{"ssh", "--help"} // Return safe command
+		return err
 	}
 
 	if keyPath != "" {
-		err = security.ValidateInput(keyPath, sshValidPathPattern)
-		if err != nil {
+		if err := security.ValidateInput(keyPath, sshValidPathPattern); err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
-
-			return []string{"ssh", "--help"} // Return safe command
+			return err
 		}
 	}
 
-	// Standard options
+	return nil
+}
+
+// addSSHStandardOptions adds standard SSH options to the command.
+func addSSHStandardOptions(cmd []string, keyPath string) []string {
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
 	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
+	cmd = append(cmd, "-o", "IdentitiesOnly=yes")
 
-	// Add key if specified
 	if keyPath != "" {
 		cmd = append(cmd, "-i", keyPath)
+		cmd = append(cmd, "-o", "IdentityAgent=none")
 	}
 
-	// Add extra options if provided - sanitize by only allowing safe SSH options
-	if extraOptions != "" {
-		// Only allow specific safe SSH options
-		allowedOptions := map[string]bool{
-			"-p": true, "-v": true, "-q": true, "-4": true, "-6": true,
-			"-o": true, "-L": true, "-R": true, "-D": true,
+	if os.Getenv("SSH_AUTH_SOCK") != "" && keyPath == "" {
+		cmd = append(cmd, "-A")
+	}
+
+	return cmd
+}
+
+// filterSSHOptions filters extra SSH options to only allow safe ones.
+func filterSSHOptions(extraOptions string) []string {
+	if extraOptions == "" {
+		return []string{}
+	}
+
+	allowedOptions := map[string]bool{
+		"-p": true, "-v": true, "-q": true, "-4": true, "-6": true,
+		"-o": true, "-L": true, "-R": true, "-D": true,
+	}
+
+	result := []string{}
+	options := strings.Fields(extraOptions)
+
+	for _, opt := range options {
+		if strings.HasPrefix(opt, "-") && !allowedOptions[opt] {
+			logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+			continue
 		}
+		result = append(result, opt)
+	}
 
-		options := strings.Fields(extraOptions)
-		for _, opt := range options {
-			if strings.HasPrefix(opt, "-") {
-				if !allowedOptions[opt] {
-					logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+	return result
+}
 
-					continue
-				}
+// filterSSHArgs filters SSH arguments to only allow safe flags.
+func filterSSHArgs(sshArgs []string) []string {
+	allowedSSHFlags := map[string]bool{
+		"-p": true, "-v": true, "-vv": true, "-vvv": true,
+		"-q": true, "-4": true, "-6": true, "-A": true,
+		"-o": true, "-L": true, "-R": true, "-D": true,
+		"-N": true, "-f": true, "-T": true, "-t": true,
+	}
+
+	result := []string{}
+
+	for _, arg := range sshArgs {
+		if strings.HasPrefix(arg, "-") {
+			flag := arg
+			if strings.Contains(arg, "=") {
+				flag = strings.Split(arg, "=")[0]
 			}
 
-			cmd = append(cmd, opt)
+			if !allowedSSHFlags[flag] {
+				logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH argument: %s", arg)
+				continue
+			}
 		}
+		result = append(result, arg)
 	}
+
+	return result
+}
+
+// buildSSHCommand constructs the SSH command with all options.
+func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+	// Validate inputs
+	if err := validateSSHInputs(host, user, keyPath); err != nil {
+		return []string{"ssh", "--help"} // Return safe command
+	}
+
+	cmd := []string{"ssh"}
+
+	// Add standard options
+	cmd = addSSHStandardOptions(cmd, keyPath)
+
+	// Add filtered extra options
+	cmd = append(cmd, filterSSHOptions(extraOptions)...)
+
+	// Add filtered SSH arguments
+	cmd = append(cmd, filterSSHArgs(sshArgs)...)
 
 	// Add user@host
 	cmd = append(cmd, fmt.Sprintf("%s@%s", user, host))
+
+	// Add remote command if specified
+	if len(command) > 0 {
+		cmd = append(cmd, command...)
+	}
 
 	return cmd
 }

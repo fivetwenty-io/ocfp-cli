@@ -72,7 +72,7 @@ func DefaultInitRequest() *InitRequest {
 
 // InitializeVault initializes a new vault instance.
 func (im *InitManager) InitializeVault(req *InitRequest) (*InitResponse, error) {
-	im.logger.Info("Initializing vault", "shares", req.SecretShares, "threshold", req.SecretThreshold)
+	im.logger.Infow("Initializing vault", "shares", req.SecretShares, "threshold", req.SecretThreshold)
 
 	// Check if vault is already initialized
 	initialized, err := im.IsInitialized()
@@ -157,7 +157,7 @@ func (im *InitManager) IsSealed() (bool, error) {
 
 // UnsealVault unseals vault using the provided keys.
 func (im *InitManager) UnsealVault(keys []string) error {
-	im.logger.Info("Starting vault unseal process", "keys_provided", len(keys))
+	im.logger.Infow("Starting vault unseal process", "keys_provided", len(keys))
 
 	// Check current seal status
 	status, err := im.GetSealStatus()
@@ -171,21 +171,21 @@ func (im *InitManager) UnsealVault(keys []string) error {
 		return nil
 	}
 
-	im.logger.Info("Vault seal status", "sealed", status.Sealed, "threshold", status.T, "shares", status.N, "progress", status.Progress)
+	im.logger.Infow("Vault seal status", "sealed", status.Sealed, "threshold", status.T, "shares", status.N, "progress", status.Progress)
 
 	// Unseal with provided keys
 	for keyIndex, key := range keys {
-		im.logger.Debug("Providing unseal key", "key_number", keyIndex+1, "total", len(keys))
+		im.logger.Debugw("Providing unseal key", "key_number", keyIndex+1, "total", len(keys))
 
 		unsealResp, err := im.client.client.Sys().Unseal(key)
 		if err != nil {
 			return fmt.Errorf("failed to provide unseal key %d: %w", keyIndex+1, err)
 		}
 
-		im.logger.Debug("Unseal progress", "progress", unsealResp.Progress, "threshold", unsealResp.T)
+		im.logger.Debugw("Unseal progress", "progress", unsealResp.Progress, "threshold", unsealResp.T)
 
 		if !unsealResp.Sealed {
-			im.logger.Info("Vault successfully unsealed", "keys_used", keyIndex+1)
+			im.logger.Infow("Vault successfully unsealed", "keys_used", keyIndex+1)
 
 			return nil
 		}
@@ -261,14 +261,14 @@ func (im *InitManager) AutoUnsealFromEnv() error {
 		return ErrNoUnsealKeysFoundInEnvVars
 	}
 
-	im.logger.Info("Found unseal keys in environment", "count", len(keys))
+	im.logger.Infow("Found unseal keys in environment", "count", len(keys))
 
 	return im.UnsealVault(keys)
 }
 
 // WaitForVaultReady waits for vault to be ready and unsealed.
 func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
-	im.logger.Info("Waiting for vault to be ready", "timeout", timeout)
+	im.logger.Infow("Waiting for vault to be ready", "timeout", timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -284,7 +284,7 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 			// Check if vault is initialized and unsealed
 			initialized, err := im.IsInitialized()
 			if err != nil {
-				im.logger.Debug("Vault not accessible yet", "error", err)
+				im.logger.Debugw("Vault not accessible yet", "error", err)
 
 				continue
 			}
@@ -297,7 +297,7 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 
 			sealed, err := im.IsSealed()
 			if err != nil {
-				im.logger.Debug("Cannot check seal status", "error", err)
+				im.logger.Debugw("Cannot check seal status", "error", err)
 
 				continue
 			}
@@ -311,7 +311,7 @@ func (im *InitManager) WaitForVaultReady(timeout time.Duration) error {
 			// Test authentication
 			err = im.client.ValidateConnection()
 			if err != nil {
-				im.logger.Debug("Vault authentication not ready", "error", err)
+				im.logger.Debugw("Vault authentication not ready", "error", err)
 
 				continue
 			}

@@ -2,26 +2,18 @@ package providers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 const (
 	// SSH connection defaults.
 	defaultSSHPort = 22
-)
-
-// AWS provider errors.
-var (
-	ErrAWSAccessKeyRequired       = errors.New("AWS access key ID is required")
-	ErrAWSSecretKeyRequired       = errors.New("AWS secret access key is required")
-	ErrAWSRegionRequired          = errors.New("AWS region is required")
-	ErrCouldNotDetermineBastionIP = errors.New("could not determine bastion IP address")
 )
 
 // AWSBastionInit implements bastion initialization for AWS.
@@ -62,7 +54,7 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 	env := make(map[string]string)
 
 	// Add OCFP-specific variables
-	env["OCFP_BLOC_NAME"] = a.config.Name
+	env["OCFP_BLOC"] = a.config.Name
 	env["OCFP_PROVIDER"] = "aws"
 
 	// Add AWS-specific variables
@@ -117,7 +109,12 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		restoredPath, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
+		if restoreErr != nil {
+			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+		}
+
+		privateKeyPath = restoredPath
 	}
 
 	// Check if key is password protected
@@ -126,12 +123,13 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 		a.log.Warn("Failed to check if key is encrypted", "error", err.Error())
 	}
 
-	// Prepare SSH options
+	// Prepare SSH options (just the option values, not the -o flag)
 	sshOptions := []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=30",
+		"StrictHostKeyChecking=no",
+		"UserKnownHostsFile=/dev/null",
+		"LogLevel=ERROR",
+		"ConnectTimeout=30",
+		"ForwardAgent=yes",
 	}
 
 	details := &ConnectionDetails{
@@ -196,7 +194,89 @@ func (a *AWSBastionInit) getBastionIP() (string, error) {
 		return ip, nil
 	}
 
+	// Try to get from state file
+	ip, err := a.getBastionIPFromState()
+	if err == nil {
+		return ip, nil
+	}
+
 	// Try to get from AWS API (would need AWS SDK integration)
 	// For now, return an error
 	return "", ErrCouldNotDetermineBastionIP
+}
+
+// getBastionIPFromState retrieves the bastion IP from the state file.
+func (a *AWSBastionInit) getBastionIPFromState() (string, error) {
+	// Get standard state directory for this bloc
+	stateDir, err := state.GetStateDir(a.config.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to determine state directory: %w", err)
+	}
+
+	stateMgr, err := state.NewManager(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to create state manager: %w", err)
+	}
+
+	// Load the state for this bloc
+	_, err = stateMgr.Load(a.config.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to load state: %w", err)
+	}
+
+	// Try to get bastion IP from outputs (same as commands/bastion_lookup.go)
+	bastionIPOutput, err := stateMgr.GetOutput("bastion_public_ip")
+	if err == nil {
+		if publicIP, ok := bastionIPOutput.(string); ok && publicIP != "" {
+			a.log.Debugw("Found bastion IP in state outputs", "ip", publicIP)
+
+			return publicIP, nil
+		}
+	}
+
+	// Fallback: try to get from instance resource
+	bastionName := a.config.Name + "-bastion"
+
+	resource, err := stateMgr.GetResource("instance", bastionName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bastion resource: %w", err)
+	}
+
+	if resource == nil {
+		return "", ErrCouldNotDetermineBastionIP
+	}
+
+	publicIP, ok := resource.Properties["public_ip"].(string)
+	if !ok || publicIP == "" {
+		return "", ErrCouldNotDetermineBastionIP
+	}
+
+	a.log.Debugw("Found bastion IP in state resource", "ip", publicIP)
+
+	return publicIP, nil
+}
+
+// tryRestoreKeyFromConfig attempts to restore an SSH key from the configuration.
+func (a *AWSBastionInit) tryRestoreKeyFromConfig(keyManager *ssh.KeyManager) (string, error) {
+	keypairName := a.config.Name + "-bastion"
+	configKey, exists := a.config.Keys[keypairName]
+
+	if !exists || configKey == "" {
+		return "", ErrNoKeyFoundInConfig(keypairName)
+	}
+
+	restoredPath, err := keyManager.RestoreKeyFromConfig(a.config.Name, configKey)
+	if err != nil {
+		a.log.Warn("Failed to restore key from config", "error", err)
+
+		return "", fmt.Errorf("failed to restore key from config: %w", err)
+	}
+
+	if restoredPath == "" {
+		return "", ErrRestoredPathEmpty
+	}
+
+	a.log.Info("Restored SSH key from config", "path", restoredPath)
+
+	return restoredPath, nil
 }

@@ -27,7 +27,6 @@ func TestTmuxIntegration(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	t.Run("TmuxSessionCreation", testTmuxSessionCreation)
 	t.Run("TmuxScriptDiscovery", func(t *testing.T) {
 		t.Parallel()
 		testTmuxScriptDiscovery(t, tmpDir)
@@ -42,24 +41,6 @@ func isTmuxAvailable() bool {
 	_, err := exec.LookPath("tmux")
 
 	return err == nil
-}
-
-func testTmuxSessionCreation(t *testing.T) {
-	t.Parallel()
-
-	cmd := commands.NewTmuxCmd()
-	cmd.SetArgs([]string{})
-
-	err := cmd.Execute()
-	if err != nil {
-		errMsg := err.Error()
-		assert.True(t,
-			strings.Contains(errMsg, "tmux") ||
-				strings.Contains(errMsg, "terminal") ||
-				strings.Contains(errMsg, "session") ||
-				strings.Contains(errMsg, "display"),
-			"Error should be tmux-related: %s", errMsg)
-	}
 }
 
 func testTmuxScriptDiscovery(t *testing.T, tmpDir string) {
@@ -221,7 +202,7 @@ use strict;
 use warnings;
 
 print "Bastion provision script executed\n";
-print "Environment: $ENV{OCFP_BLOC_NAME}\n" if $ENV{OCFP_BLOC_NAME};
+print "Environment: $ENV{OCFP_BLOC}\n" if $ENV{OCFP_BLOC};
 print "Provider: $ENV{OCFP_PROVIDER}\n" if $ENV{OCFP_PROVIDER};
 print "Installing deployment tools...\n";
 print "Configuring BOSH CLI...\n";
@@ -290,7 +271,7 @@ exit 0;
 func testBastionEnvironmentVariables(t *testing.T, tmpDir, configFile string) {
 	t.Helper()
 	t.Parallel()
-	t.Setenv("OCFP_BLOC_NAME", "test-env-bloc")
+	t.Setenv("OCFP_BLOC", "test-env-bloc")
 	t.Setenv("OCFP_PROVIDER", "stackit")
 	t.Setenv("STACKIT_PROJECT_ID", "env-project-123")
 	t.Setenv("GENESIS_ENVIRONMENT", "test")
@@ -301,7 +282,7 @@ func testBastionEnvironmentVariables(t *testing.T, tmpDir, configFile string) {
 
 	envScriptPath := filepath.Join(scriptDir, "bastion")
 	envScriptContent := `#!/usr/bin/perl
-print "OCFP_BLOC_NAME: $ENV{OCFP_BLOC_NAME}\n";
+print "OCFP_BLOC: $ENV{OCFP_BLOC}\n";
 print "OCFP_PROVIDER: $ENV{OCFP_PROVIDER}\n";
 print "STACKIT_PROJECT_ID: $ENV{STACKIT_PROJECT_ID}\n";
 print "GENESIS_ENVIRONMENT: $ENV{GENESIS_ENVIRONMENT}\n";

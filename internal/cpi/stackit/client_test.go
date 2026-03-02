@@ -29,16 +29,6 @@ func TestNewClient(t *testing.T) {
 	assert.Equal(t, cfg.Region, client.Region())
 }
 
-func TestClient_Authenticate(t *testing.T) {
-	t.Parallel()
-	t.Skip("STACKIT auth now uses SDK; requires real credentials.")
-}
-
-func TestClient_ValidateCredentials(t *testing.T) {
-	t.Parallel()
-	t.Skip("STACKIT credential validation uses SDK; skipping")
-}
-
 func TestClient_Name(t *testing.T) {
 	t.Parallel()
 
@@ -63,14 +53,4 @@ func TestClient_Region(t *testing.T) {
 	client, err := stackit.NewClient(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "eu02", client.Region())
-}
-
-func TestClient_Initialize(t *testing.T) {
-	t.Parallel()
-	t.Skip("STACKIT Initialize authenticates via SDK; skip.")
-}
-
-func TestClient_parseError(t *testing.T) {
-	t.Parallel()
-	t.Skip("Removed raw HTTP helpers; no parseError")
 }

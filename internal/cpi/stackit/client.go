@@ -310,16 +310,12 @@ func (c *Client) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// buildConfigOptions builds common SDK configuration options based on client config.
-func (c *Client) buildConfigOptions() []stackitconfig.ConfigurationOption {
+// buildBaseConfigOptions builds base SDK configuration options (region and auth) for all services.
+func (c *Client) buildBaseConfigOptions() []stackitconfig.ConfigurationOption {
 	opts := []stackitconfig.ConfigurationOption{}
 
 	if c.config.Region != "" {
 		opts = append(opts, stackitconfig.WithRegion(c.config.Region))
-	}
-
-	if c.config.BaseURL != "" {
-		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
 	}
 
 	switch {
@@ -332,6 +328,32 @@ func (c *Client) buildConfigOptions() []stackitconfig.ConfigurationOption {
 	}
 
 	return opts
+}
+
+// buildIAASConfigOptions builds IAAS-specific configuration options with BaseURL override.
+func (c *Client) buildIAASConfigOptions() []stackitconfig.ConfigurationOption {
+	opts := c.buildBaseConfigOptions()
+
+	// Apply BaseURL override for IAAS if configured
+	if c.config.BaseURL != "" {
+		opts = append(opts, stackitconfig.WithEndpoint(c.config.BaseURL))
+	}
+
+	return opts
+}
+
+// buildObjectStorageConfigOptions builds Object Storage configuration options without BaseURL override.
+// This lets the SDK use its built-in object storage endpoint.
+func (c *Client) buildObjectStorageConfigOptions() []stackitconfig.ConfigurationOption {
+	// Use base options only - let SDK determine the correct object storage endpoint
+	return c.buildBaseConfigOptions()
+}
+
+// buildLoadBalancerConfigOptions builds Load Balancer configuration options without BaseURL override.
+// This lets the SDK use its built-in load balancer endpoint.
+func (c *Client) buildLoadBalancerConfigOptions() []stackitconfig.ConfigurationOption {
+	// Use base options only - let SDK determine the correct load balancer endpoint
+	return c.buildBaseConfigOptions()
 }
 
 // httpClientConfigurer is implemented by SDK clients that expose GetConfig().
@@ -363,7 +385,7 @@ func (c *Client) getIAASClient() (*iaas.APIClient, error) {
 		return c.iaasClient, nil
 	}
 
-	cli, err := iaas.NewAPIClient(c.buildConfigOptions()...)
+	cli, err := iaas.NewAPIClient(c.buildIAASConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAAS client: %w", err)
 	}
@@ -381,7 +403,7 @@ func (c *Client) getObjectStorageClient() (*objectstorage.APIClient, error) {
 		return c.objClient, nil
 	}
 
-	cli, err := objectstorage.NewAPIClient(c.buildConfigOptions()...)
+	cli, err := objectstorage.NewAPIClient(c.buildObjectStorageConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Object Storage client: %w", err)
 	}
@@ -399,7 +421,7 @@ func (c *Client) getLoadBalancerClient() (*lb.APIClient, error) {
 		return c.lbClient, nil
 	}
 
-	cli, err := lb.NewAPIClient(c.buildConfigOptions()...)
+	cli, err := lb.NewAPIClient(c.buildLoadBalancerConfigOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Load Balancer client: %w", err)
 	}

@@ -115,9 +115,9 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get current environment
-	currentEnv := viper.GetString("bloc_name")
+	currentEnv := viper.GetString("bloc")
 	if currentEnv == "" {
-		currentEnv = os.Getenv("OCFP_BLOC_NAME")
+		currentEnv = os.Getenv("OCFP_BLOC")
 	}
 
 	// Create table writer
@@ -172,7 +172,7 @@ func getEnvironmentName(args []string) (string, error) {
 		return args[0], nil
 	}
 
-	envName := viper.GetString("bloc_name")
+	envName := viper.GetString("bloc")
 	if envName == "" {
 		return "", ErrNoEnvironmentSpecifiedAndNoCurrentSet
 	}
@@ -420,7 +420,7 @@ func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Log
 	}
 
 	ocfpConfig["current_environment"] = envName
-	ocfpConfig["bloc_name"] = envName
+	ocfpConfig["bloc"] = envName
 	ocfpConfig["config_file"] = targetEnv.ConfigFile
 
 	return writeOCFPConfig(ocfpConfigPath, ocfpConfig)
@@ -490,7 +490,7 @@ func runEnvExport(args []string, format string) error {
 	if len(args) > 0 {
 		envName = args[0]
 	} else {
-		envName = viper.GetString("bloc_name")
+		envName = viper.GetString("bloc")
 		if envName == "" {
 			return ErrNoEnvironmentSpecifiedAndNoCurrentSet
 		}
@@ -601,7 +601,7 @@ func (e *shellExporter) exportEnvironment(cfg *config.Config) error {
 		name  string
 		value string
 	}{
-		{"OCFP_BLOC_NAME", cfg.Name},
+		{"OCFP_BLOC", cfg.Name},
 		{"OCFP_PROVIDER", cfg.Provider},
 		{"OCFP_IAAS", cfg.IaaS},
 		{"OCFP_REGION", cfg.Region},

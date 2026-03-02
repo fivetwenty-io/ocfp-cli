@@ -65,7 +65,7 @@ func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 			Path:        "${HOME}/.genesis/config",
 			CheckExists: true,
 			PreCommand:  "mkdir -p ${HOME}/.genesis/logs",
-			Content:     cfm.generateGenesisConfig(),
+			Content:     cfm.GenerateGenesisConfig(),
 			Mode:        fileModeStandard,
 			Enabled:     true,
 			PostCommand: "",
@@ -111,6 +111,18 @@ func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) stri
 	return strings.Join(lines, "\n")
 }
 
+// GenerateGenesisConfig generates the Genesis configuration file content.
+func (cfm *ConfigFileManager) GenerateGenesisConfig() string {
+	var config strings.Builder
+
+	config.WriteString("# ~/.genesis/config\n\n")
+
+	cfm.writeGenesisBasicSettings(&config)
+	cfm.writeGenesisLoggingConfig(&config)
+
+	return config.String()
+}
+
 func (cfm *ConfigFileManager) generateConfigFileHeader() []string {
 	return []string{
 		"# Configuration file creation",
@@ -147,8 +159,7 @@ func (cfm *ConfigFileManager) generatePreCommand(file ConfigFile) []string {
 
 func (cfm *ConfigFileManager) generatePathSetup(file ConfigFile) []string {
 	return []string{
-		fmt.Sprintf("CONFIG_PATH='%s'", file.Path),
-		"CONFIG_PATH=$(echo \"$CONFIG_PATH\" | envsubst)",
+		fmt.Sprintf("CONFIG_PATH=\"%s\"", file.Path),
 		"",
 	}
 }
@@ -286,35 +297,90 @@ packages = OCFP
 packages = OCFP::Config`
 }
 
-func (cfm *ConfigFileManager) generateGenesisConfig() string {
-	var config strings.Builder
+// writeGenesisBasicSettings writes basic Genesis configuration settings.
+func (cfm *ConfigFileManager) writeGenesisBasicSettings(config *strings.Builder) {
+	// BOSH targeting
+	config.WriteString("# BOSH targeting\n")
+	config.WriteString("default_bosh_target: ask\n\n")
 
-	config.WriteString("# OCFP Genesis configuration\n")
-	config.WriteString("---\n")
-	config.WriteString("genesis:\n")
-	config.WriteString("  author_name: OCFP\n")
-	config.WriteString("  author_email: ops@example.com\n")
+	// Repository management
+	config.WriteString("# Repository management\n")
+	config.WriteString("legacy_repo_suffix: false\n")
+	config.WriteString("deployment_roots:\n")
+	config.WriteString("  - /home/ubuntu/ocfp/deployments\n\n")
 
-	if cfm.config.Bastion.Git.User.Name != "" {
-		config.WriteString(fmt.Sprintf("  author_name: %s\n", cfm.config.Bastion.Git.User.Name))
-	}
+	// Display preferences
+	config.WriteString("# Display preferences\n")
+	config.WriteString("output_style: fun\n")
+	config.WriteString("show_duration: true\n\n")
 
-	if cfm.config.Bastion.Git.User.Email != "" {
-		config.WriteString(fmt.Sprintf("  author_email: %s\n", cfm.config.Bastion.Git.User.Email))
-	}
+	// Deployment behavior
+	config.WriteString("# Deployment behavior\n")
+	config.WriteString("fix_on_deploy: ask\n")
+	config.WriteString("confirm_release_overrides: outdated\n\n")
 
-	config.WriteString("  env: ${OCFP_BLOC_NAME:-development}\n")
-	config.WriteString("  vault:\n")
-	config.WriteString("    url: https://127.0.0.1:8200\n")
-	config.WriteString("    verify: false\n")
-	config.WriteString("  bosh:\n")
-	config.WriteString("    env: ${OCFP_BLOC_NAME:-bosh}\n")
-	config.WriteString("  kit_repos:\n")
-	config.WriteString("    - https://github.com/genesis-community\n")
-	config.WriteString("  secrets:\n")
-	config.WriteString("    base: secret/${OCFP_BLOC_NAME:-development}\n")
+	// Cache and storage
+	config.WriteString("# Cache and storage\n")
+	config.WriteString("spec_cache_dir: \"/tmp/genesis-cache\"\n")
+	config.WriteString("bosh_logs_path: \"/home/ubuntu/ocfp/logs\"\n\n")
 
-	return config.String()
+	// Warning suppression
+	config.WriteString("# Warning suppression\n")
+	config.WriteString("suppress_warnings:\n")
+	config.WriteString("  oversized_secrets: false\n")
+	config.WriteString("  bosh_target: true\n\n")
+
+	// Genesis behavior
+	config.WriteString("# Genesis behavior\n")
+	config.WriteString("embedded_genesis: warn\n")
+	config.WriteString("automatic_config_upgrade: \"yes\"\n\n")
+}
+
+// writeGenesisLoggingConfig writes Genesis logging configuration.
+func (cfm *ConfigFileManager) writeGenesisLoggingConfig(config *strings.Builder) {
+	config.WriteString("# Comprehensive logging setup\n")
+	config.WriteString("logs:\n")
+
+	cfm.writeMainApplicationLog(config)
+	cfm.writeDebugLog(config)
+	cfm.writeErrorLog(config)
+}
+
+// writeMainApplicationLog writes the main application log configuration.
+func (cfm *ConfigFileManager) writeMainApplicationLog(config *strings.Builder) {
+	config.WriteString("  # Main application log\n")
+	config.WriteString("  - file: \"/home/ubuntu/.genesis/logs/genesis.log\"\n")
+	config.WriteString("    level: INFO\n")
+	config.WriteString("    timestamp: true\n")
+	config.WriteString("    style: plain\n")
+	config.WriteString("    lifespan: forever\n")
+	config.WriteString("    show_stack: default\n")
+	config.WriteString("    truncate: false\n")
+	config.WriteString("    \n")
+}
+
+// writeDebugLog writes the debug log configuration.
+func (cfm *ConfigFileManager) writeDebugLog(config *strings.Builder) {
+	config.WriteString("  # Debug log for troubleshooting\n")
+	config.WriteString("  - file: \"/home/ubuntu/.genesis/logs/debug.log\"\n")
+	config.WriteString("    level: DEBUG\n")
+	config.WriteString("    style: rfc-5424\n")
+	config.WriteString("    lifespan: current\n")
+	config.WriteString("    truncate: true\n")
+	config.WriteString("    timestamp: true\n")
+	config.WriteString("    show_stack: full\n")
+	config.WriteString("    \n")
+}
+
+// writeErrorLog writes the error log configuration.
+func (cfm *ConfigFileManager) writeErrorLog(config *strings.Builder) {
+	config.WriteString("  # Error-only log\n")
+	config.WriteString("  - file: \"/home/ubuntu/.genesis/logs/errors.log\"\n")
+	config.WriteString("    level: ERROR\n")
+	config.WriteString("    style: plain\n")
+	config.WriteString("    lifespan: forever\n")
+	config.WriteString("    timestamp: true\n")
+	config.WriteString("    show_stack: fatal\n")
 }
 
 func (cfm *ConfigFileManager) generateGitConfig() string {

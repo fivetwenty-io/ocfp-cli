@@ -24,7 +24,30 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return nil, err
 	}
 
-	payload := m.buildCreateServerPayload(req)
+	// If static IP requested, create NIC with static IP first, then create server
+	if req.StaticPrivateIP != "" && req.NetworkID != "" {
+		logger.WithOperation("CreateInstance").Infof("Creating NIC with static IP %s before server creation", req.StaticPrivateIP)
+
+		// Use instance name as NIC name for easier identification (e.g., "bastion", "bosh")
+		nicName := req.Name
+		nicID, err := m.createNICWithStaticIP(ctx, req.NetworkID, req.StaticPrivateIP, nicName, req.SecurityGroupIDs)
+		if err != nil {
+			logger.WithOperation("CreateInstance").Warnf("Failed to create NIC with static IP: %v, falling back to DHCP", err)
+			// Continue with regular server creation (DHCP) as fallback
+		} else {
+			// Wait for NIC to be ready
+			const nicReadyWaitDuration = 2 * time.Second
+			time.Sleep(nicReadyWaitDuration)
+
+			logger.WithOperation("CreateInstance").Infof("NIC created with static IP, creating server with attached NIC: %s", nicID)
+
+			// Create server with pre-created NIC
+			return m.createServerWithNIC(ctx, req, nicID)
+		}
+	}
+
+	// Regular server creation (with DHCP IP assignment)
+	payload := m.buildCreateServerPayload(req, "")
 
 	created, err := cli.CreateServer(ctx, m.client.config.ProjectID).CreateServerPayload(*payload).Execute()
 	if err != nil {
@@ -44,61 +67,22 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 }
 
 // buildCreateServerPayload builds the server creation payload.
-func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest) *iaas.CreateServerPayload {
+// If nicID is provided, the server will be created with that specific NIC (for static IP assignment).
+// If nicID is empty, the server will be created with a default DHCP NIC.
+func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest, nicID string) *iaas.CreateServerPayload {
 	payload := iaas.NewCreateServerPayload(req.Flavor, req.Name)
 
-	// For STACKIT diskless flavors, use boot volume instead of direct image
-	if req.UseBootVolume && req.Image != "" {
-		bootVolume := iaas.CreateServerPayloadBootVolume{}
+	m.configureBootVolumeOrImage(payload, req)
+	m.configureServerMetadata(payload, req)
+	m.configureServerNetworking(payload, req, nicID)
 
-		// Set boot volume source (the image ID)
-		imageID := req.Image
-		sourceType := "image"
-		bootVolumeSource := iaas.BootVolumeSource{
-			Id:   &imageID,
-			Type: &sourceType,
-		}
-		bootVolume.SetSource(bootVolumeSource)
-
-		// Set boot volume size if specified, otherwise use default
-		bootVolumeSize := int64(defaultBootVolumeSize)
-		if req.BootVolumeSize > 0 {
-			bootVolumeSize = int64(req.BootVolumeSize)
-		}
-
-		bootVolume.SetSize(bootVolumeSize)
-
-		// Don't delete the volume on termination
-		bootVolume.SetDeleteOnTermination(false)
-
-		payload.SetBootVolume(bootVolume)
-	} else if req.Image != "" {
-		// Regular image-based creation for flavors with local disk
-		payload.SetImageId(req.Image)
-	}
-
-	if req.KeyPair != "" {
-		payload.SetKeypairName(req.KeyPair)
-	}
-
-	if req.AvailabilityZone != "" {
-		payload.SetAvailabilityZone(req.AvailabilityZone)
-	}
-
-	if len(req.Tags) > 0 {
-		lm := make(map[string]interface{}, len(req.Tags))
-		for k, v := range req.Tags {
-			lm[k] = v
-		}
-
-		payload.SetLabels(lm)
-	}
-
-	if req.NetworkID != "" {
-		net := iaas.NewCreateServerNetworking()
-		net.SetNetworkId(req.NetworkID)
-		n := iaas.CreateServerNetworkingAsCreateServerPayloadNetworking(net)
-		payload.SetNetworking(n)
+	// Configure security groups when NOT using pre-created NIC
+	// (when using NIC, security groups are attached to the NIC itself)
+	if nicID == "" && len(req.SecurityGroupIDs) > 0 {
+		payload.SetSecurityGroups(req.SecurityGroupIDs)
+		logger.WithOperation("buildCreateServerPayload").Infof("Set security groups on payload: %v", req.SecurityGroupIDs)
+	} else {
+		logger.WithOperation("buildCreateServerPayload").Debugf("NOT setting security groups: nicID=%s, sgCount=%d", nicID, len(req.SecurityGroupIDs))
 	}
 
 	if req.UserData != "" {
@@ -107,6 +91,93 @@ func (m *ComputeManager) buildCreateServerPayload(req *cpi.InstanceRequest) *iaa
 	}
 
 	return payload
+}
+
+// configureBootVolumeOrImage configures boot volume for diskless flavors or image for regular flavors.
+func (m *ComputeManager) configureBootVolumeOrImage(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest) {
+	// For STACKIT diskless flavors, use boot volume instead of direct image
+	if req.UseBootVolume && req.Image != "" {
+		bootVolume := m.buildBootVolume(req)
+		payload.SetBootVolume(bootVolume)
+	} else if req.Image != "" {
+		// Regular image-based creation for flavors with local disk
+		payload.SetImageId(req.Image)
+	}
+}
+
+// buildBootVolume builds boot volume configuration for diskless flavors.
+func (m *ComputeManager) buildBootVolume(req *cpi.InstanceRequest) iaas.CreateServerPayloadBootVolume {
+	bootVolume := iaas.CreateServerPayloadBootVolume{}
+
+	// Set boot volume source (the image ID)
+	imageID := req.Image
+	sourceType := "image"
+	bootVolumeSource := iaas.BootVolumeSource{
+		Id:   &imageID,
+		Type: &sourceType,
+	}
+	bootVolume.SetSource(bootVolumeSource)
+
+	// Set boot volume size if specified, otherwise use default
+	bootVolumeSize := int64(defaultBootVolumeSize)
+	if req.BootVolumeSize > 0 {
+		bootVolumeSize = int64(req.BootVolumeSize)
+	}
+
+	bootVolume.SetSize(bootVolumeSize)
+
+	// Don't delete the volume on termination
+	bootVolume.SetDeleteOnTermination(false)
+
+	return bootVolume
+}
+
+// configureServerMetadata configures server metadata (keypair, zone, labels).
+func (m *ComputeManager) configureServerMetadata(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest) {
+	// Use KeyPairName (preferred) or fall back to KeyPair (legacy)
+	keypairName := req.KeyPairName
+	if keypairName == "" {
+		keypairName = req.KeyPair
+	}
+
+	if keypairName != "" {
+		payload.SetKeypairName(keypairName)
+		logger.WithOperation("configureServerMetadata").Infof("Set keypair: %s", keypairName)
+	}
+
+	if req.AvailabilityZone != "" {
+		payload.SetAvailabilityZone(req.AvailabilityZone)
+	}
+
+	if len(req.Tags) > 0 {
+		// Use sanitization to ensure labels comply with STACKIT requirements
+		labels := sanitizeLabelsForStackit(req.Tags)
+		payload.SetLabels(labels)
+	}
+}
+
+// configureServerNetworking configures server networking (NIC or DHCP).
+func (m *ComputeManager) configureServerNetworking(payload *iaas.CreateServerPayload, req *cpi.InstanceRequest, nicID string) {
+	// Configure networking - either with pre-created NIC (static IP) or default DHCP
+	if nicID != "" {
+		// Use pre-created NIC with static IP (matching STACKIT CLI pattern)
+		logger.WithOperation("buildCreateServerPayload").Infof("Creating server with pre-created NIC: %s", nicID)
+
+		netWithNics := iaas.NewCreateServerNetworkingWithNics()
+		nicIDs := []string{nicID}
+		netWithNics.SetNicIds(nicIDs)
+
+		networking := iaas.CreateServerNetworkingWithNicsAsCreateServerPayloadNetworking(netWithNics)
+		payload.SetNetworking(networking)
+	} else if req.NetworkID != "" {
+		// Default DHCP networking with NetworkID
+		logger.WithOperation("buildCreateServerPayload").Infof("Creating server with default DHCP on network: %s", req.NetworkID)
+
+		net := iaas.NewCreateServerNetworking()
+		net.SetNetworkId(req.NetworkID)
+		networking := iaas.CreateServerNetworkingAsCreateServerPayloadNetworking(net)
+		payload.SetNetworking(networking)
+	}
 }
 
 // serverResponseToInstance converts a server response to an instance.
@@ -118,56 +189,10 @@ func (m *ComputeManager) serverResponseToInstance(server interface {
 	GetAvailabilityZoneOk() (string, bool)
 	GetKeypairNameOk() (string, bool)
 	GetLabelsOk() (map[string]interface{}, bool)
+	GetStatusOk() (string, bool)
+	GetSecurityGroupsOk() ([]string, bool)
 }) *cpi.Instance {
-	inst := &cpi.Instance{
-		ID:               "",
-		Name:             "",
-		State:            cpi.ResourceStateUnknown,
-		Flavor:           "",
-		Image:            "",
-		NetworkID:        "",
-		SubnetID:         "",
-		PrivateIP:        "",
-		PublicIP:         "",
-		FloatingIP:       "",
-		SecurityGroups:   []string{},
-		KeyPair:          "",
-		AvailabilityZone: "",
-		Tags:             map[string]string{},
-		Volumes:          []string{},
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
-	}
-
-	if id, ok := server.GetIdOk(); ok {
-		inst.ID = id
-	}
-
-	if name, ok := server.GetNameOk(); ok {
-		inst.Name = name
-	}
-
-	if mt, ok := server.GetMachineTypeOk(); ok {
-		inst.Flavor = mt
-	}
-
-	if img, ok := server.GetImageIdOk(); ok {
-		inst.Image = img
-	}
-
-	if az, ok := server.GetAvailabilityZoneOk(); ok {
-		inst.AvailabilityZone = az
-	}
-
-	if kp, ok := server.GetKeypairNameOk(); ok {
-		inst.KeyPair = kp
-	}
-
-	if labels, ok := server.GetLabelsOk(); ok {
-		inst.Tags = mapAnyToString(labels)
-	}
-
-	return inst
+	return m.populateInstanceFromServer(server)
 }
 
 // GetInstance retrieves an instance by ID.
@@ -277,10 +302,10 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	// Build NIC->PublicIP map once
 	publicIPsByNIC := m.buildPublicIPMap(ctx, cli)
 
-	// Convert servers to instances
-	instances := m.serversToInstances(ctx, cli, resp, publicIPsByNIC)
+	// Convert servers to instances with client-side filtering for defense-in-depth
+	instances := m.serversToInstances(ctx, cli, resp, publicIPsByNIC, filters)
 
-	logger.WithOperation("ListInstances").Debugf("Found %d instances", len(instances))
+	logger.WithOperation("ListInstances").Debugf("Found %d instances (after client-side filtering)", len(instances))
 
 	return instances, nil
 }
@@ -303,26 +328,40 @@ func (m *ComputeManager) listServersWithFilters(ctx context.Context, cli *iaas.A
 }
 
 // buildLabelSelector builds a label selector from filters.
+// Handles filters with "label:" or "label." prefixes, as well as plain keys.
+// Plain keys (like "bloc", "managed-by") are treated as label selectors.
 func (m *ComputeManager) buildLabelSelector(filters map[string]string) string {
 	selectors := make([]string, 0, len(filters))
 
 	for k, v := range filters {
+		var key string
 		if strings.HasPrefix(k, "label.") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label."), v))
+			key = strings.TrimPrefix(k, "label.")
 		} else if strings.HasPrefix(k, "label:") {
-			selectors = append(selectors, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label:"), v))
+			key = strings.TrimPrefix(k, "label:")
+		} else {
+			// Treat plain keys as label selectors (e.g., "bloc", "managed-by")
+			key = k
 		}
+		selectors = append(selectors, fmt.Sprintf("%s=%s", key, v))
 	}
 
 	return strings.Join(selectors, ",")
 }
 
-// serversToInstances converts server responses to instances.
-func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APIClient, resp *iaas.ServerListResponse, publicIPsByNIC map[string]string) []*cpi.Instance {
+// serversToInstances converts server responses to instances with client-side label filtering.
+// This provides defense-in-depth protection against returning instances from wrong blocs.
+func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APIClient, resp *iaas.ServerListResponse, publicIPsByNIC map[string]string, filters map[string]string) []*cpi.Instance {
 	items, _ := resp.GetItemsOk()
 	out := make([]*cpi.Instance, 0, len(items))
 
 	for _, server := range items {
+		// Client-side label filtering for safety (defense-in-depth)
+		labels := mapAnyToString(server.GetLabels())
+		if !matchLabels(labels, filters) {
+			continue
+		}
+
 		inst := m.serverToInstance(server)
 
 		// Populate networking for each instance
@@ -338,6 +377,23 @@ func (m *ComputeManager) serversToInstances(ctx context.Context, cli *iaas.APICl
 
 // serverToInstance converts a server object to an instance.
 func (m *ComputeManager) serverToInstance(server iaas.Server) *cpi.Instance {
+	return m.populateInstanceFromServer(&server)
+}
+
+// populateInstanceFromServer populates a CPI instance from a server object that implements the required interface.
+//
+//nolint:funlen // STACKIT SDK integration requires comprehensive field mapping
+func (m *ComputeManager) populateInstanceFromServer(server interface {
+	GetIdOk() (string, bool)
+	GetNameOk() (string, bool)
+	GetMachineTypeOk() (string, bool)
+	GetImageIdOk() (string, bool)
+	GetAvailabilityZoneOk() (string, bool)
+	GetKeypairNameOk() (string, bool)
+	GetLabelsOk() (map[string]interface{}, bool)
+	GetStatusOk() (string, bool)
+	GetSecurityGroupsOk() ([]string, bool)
+}) *cpi.Instance {
 	inst := &cpi.Instance{
 		ID:               "",
 		Name:             "",
@@ -358,28 +414,35 @@ func (m *ComputeManager) serverToInstance(server iaas.Server) *cpi.Instance {
 		UpdatedAt:        time.Now(),
 	}
 
-	if id, ok := server.GetIdOk(); ok {
-		inst.ID = id
+	if serverID, ok := server.GetIdOk(); ok {
+		inst.ID = serverID
 	}
 
 	if name, ok := server.GetNameOk(); ok {
 		inst.Name = name
 	}
 
-	if mt, ok := server.GetMachineTypeOk(); ok {
-		inst.Flavor = mt
+	if machineType, ok := server.GetMachineTypeOk(); ok {
+		inst.Flavor = machineType
 	}
 
-	if img, ok := server.GetImageIdOk(); ok {
-		inst.Image = img
+	if imageID, ok := server.GetImageIdOk(); ok {
+		inst.Image = imageID
 	}
 
-	if az, ok := server.GetAvailabilityZoneOk(); ok {
-		inst.AvailabilityZone = az
+	if availabilityZone, ok := server.GetAvailabilityZoneOk(); ok {
+		inst.AvailabilityZone = availabilityZone
 	}
 
-	if kp, ok := server.GetKeypairNameOk(); ok {
-		inst.KeyPair = kp
+	if keypairName, ok := server.GetKeypairNameOk(); ok {
+		inst.KeyPair = keypairName
+	}
+
+	if securityGroups, ok := server.GetSecurityGroupsOk(); ok {
+		inst.SecurityGroups = securityGroups
+		logger.WithOperation("populateInstanceFromServer").Infof("Retrieved security groups from API: %v", securityGroups)
+	} else {
+		logger.WithOperation("populateInstanceFromServer").Warnf("No security groups returned from API for instance %s", inst.ID)
 	}
 
 	if labels, ok := server.GetLabelsOk(); ok {
@@ -446,6 +509,51 @@ func mapServerStatus(status string) cpi.ResourceState {
 	}
 }
 
+// deleteServerNICs attempts to delete all NICs associated with a server.
+// This is done before server deletion to avoid "in use" errors on security groups/networks.
+// Failures are logged but don't prevent server deletion since partial cleanup is better than none.
+func (m *ComputeManager) deleteServerNICs(ctx context.Context, cli *iaas.APIClient, instanceID string) {
+	nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, instanceID).Execute()
+	if err != nil {
+		logger.WithOperation("DeleteInstance").Warnf("Failed to list NICs for cleanup: %v", err)
+
+		return
+	}
+
+	nics, ok := nicsResp.GetItemsOk()
+	if !ok || nics == nil {
+		return
+	}
+
+	for _, nic := range nics {
+		m.deleteNIC(ctx, cli, nic)
+	}
+}
+
+// deleteNIC deletes a single NIC, logging any errors but not propagating them.
+func (m *ComputeManager) deleteNIC(ctx context.Context, cli *iaas.APIClient, nic iaas.NIC) {
+	nicID, nicIDExists := nic.GetIdOk()
+	if !nicIDExists || nicID == "" {
+		return
+	}
+
+	networkID, networkIDExists := nic.GetNetworkIdOk()
+	if !networkIDExists || networkID == "" {
+		return
+	}
+
+	logger.WithOperation("DeleteInstance").Debugf("Deleting NIC %s from network %s", nicID, networkID)
+
+	err := cli.DeleteNic(ctx, m.client.config.ProjectID, networkID, nicID).Execute()
+	if err != nil {
+		logger.WithOperation("DeleteInstance").Warnf("Failed to delete NIC %s: %v", nicID, err)
+
+		return
+	}
+
+	logger.WithOperation("DeleteInstance").Debugf("Successfully deleted NIC %s", nicID)
+}
+
 // DeleteInstance deletes an instance.
 func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) error {
 	logger.WithOperation("DeleteInstance").Infof("Deleting instance: %s", instanceID)
@@ -454,6 +562,9 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) 
 	if err != nil {
 		return err
 	}
+
+	// Delete all NICs before deleting the server to avoid "in use" errors
+	m.deleteServerNICs(ctx, cli, instanceID)
 
 	err = cli.DeleteServer(ctx, m.client.config.ProjectID, instanceID).Execute()
 	if err != nil {
@@ -507,6 +618,7 @@ func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyP
 	}
 
 	out := &cpi.KeyPair{
+		ID:          name, // STACKIT uses name as ID
 		Name:        stringOrEmpty(keyPair.GetNameOk()),
 		Fingerprint: stringOrEmpty(keyPair.GetFingerprintOk()),
 		PublicKey:   stringOrEmpty(keyPair.GetPublicKeyOk()),
@@ -534,11 +646,13 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 	items, _ := resp.GetItemsOk()
 
 	out := make([]*cpi.KeyPair, 0, len(items))
-	for _, k := range items {
+	for _, keyPair := range items {
+		keyName := stringOrEmpty(keyPair.GetNameOk())
 		out = append(out, &cpi.KeyPair{
-			Name:        stringOrEmpty(k.GetNameOk()),
-			Fingerprint: stringOrEmpty(k.GetFingerprintOk()),
-			PublicKey:   stringOrEmpty(k.GetPublicKeyOk()),
+			ID:          keyName, // STACKIT uses name as ID
+			Name:        keyName,
+			Fingerprint: stringOrEmpty(keyPair.GetFingerprintOk()),
+			PublicKey:   stringOrEmpty(keyPair.GetPublicKeyOk()),
 			PrivateKey:  "",
 			CreatedAt:   time.Now(),
 		})
@@ -705,6 +819,8 @@ func (m *ComputeManager) GetImage(ctx context.Context, imageID string) (*cpi.Ima
 }
 
 // ListFlavors lists available flavors.
+//
+//nolint:funlen // STACKIT SDK flavor mapping and debug logging requires comprehensive processing
 func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
 	logger.WithOperation("ListFlavors").Debug("Listing machine types via SDK")
 
@@ -719,6 +835,40 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 	}
 
 	items, _ := resp.GetItemsOk()
+
+	const maxSampleMachineTypes = 10
+
+	// Debug: Log what machine types were returned
+	logger.Infof("STACKIT ListMachineTypes returned %d machine types", len(items))
+
+	sampleCount := len(items)
+	if sampleCount > maxSampleMachineTypes {
+		sampleCount = maxSampleMachineTypes
+	}
+
+	foundG1a2d := false
+
+	for i := range sampleCount {
+		if name, ok := items[i].GetNameOk(); ok {
+			logger.Infof("  Sample machine type [%d]: %s", i+1, name)
+
+			if name == "g1a.2d" {
+				foundG1a2d = true
+			}
+		}
+	}
+	// Check if g1a.2d exists in the full list
+	if !foundG1a2d {
+		for _, mt := range items {
+			if name, ok := mt.GetNameOk(); ok && name == "g1a.2d" {
+				foundG1a2d = true
+
+				break
+			}
+		}
+	}
+
+	logger.Infof("STACKIT ListMachineTypes: g1a.2d found = %v", foundG1a2d)
 
 	out := make([]*cpi.Flavor, 0, len(items))
 	for _, machineType := range items {
@@ -767,6 +917,9 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, flavorID string) (*cpi.F
 
 	machineType, err := cli.GetMachineType(ctx, m.client.config.ProjectID, flavorID).Execute()
 	if err != nil {
+		logger.WithOperation("GetFlavor").Infof("GetMachineType API error for '%s' in project '%s': %v",
+			flavorID, m.client.config.ProjectID, err)
+
 		return nil, fmt.Errorf("stackit iaas GetMachineType failed: %w", err)
 	}
 
@@ -813,4 +966,89 @@ func (m *ComputeManager) ListVolumes(ctx context.Context, filters map[string]str
 // DeleteVolume deletes a volume.
 func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 	return m.client.storage.DeleteVolume(ctx, id)
+}
+
+// ==============================================================================
+// Static IP Support - Matches Perl Implementation
+// ==============================================================================
+
+// createNICWithStaticIP creates a network interface with a specific IPv4 address.
+// This matches the Perl implementation's behavior of creating NICs with predetermined IPs.
+func (m *ComputeManager) createNICWithStaticIP(ctx context.Context, networkID, ipv4, nicName string, securityGroups []string) (string, error) {
+	logger.WithOperation("createNICWithStaticIP").Infof("Creating NIC '%s' with static IP %s on network %s", nicName, ipv4, networkID)
+
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to get IAAS client: %w", err)
+	}
+
+	// Build NIC payload with static IP
+	// NOTE: networkId is passed as URL parameter to CreateNic(), NOT in the payload
+	// STACKIT API returns 400 "readOnly property networkId" if included in payload
+	nicPayload := iaas.NewCreateNicPayload()
+	nicPayload.SetIpv4(ipv4) // Static IP assignment!
+
+	// Set NIC name for easier identification in STACKIT console
+	if nicName != "" {
+		nicPayload.SetName(nicName)
+	}
+
+	if len(securityGroups) > 0 {
+		sgList := make([]string, len(securityGroups))
+		copy(sgList, securityGroups)
+		nicPayload.SetSecurityGroups(sgList)
+	}
+
+	// Create NIC with static IP (networkID passed as URL parameter)
+	resp, err := cli.CreateNic(ctx, m.client.config.ProjectID, networkID).CreateNicPayload(*nicPayload).Execute()
+	if err != nil {
+		return "", fmt.Errorf("failed to create NIC with static IP %s: %w", ipv4, err)
+	}
+
+	nicID, ok := resp.GetIdOk()
+	if !ok || nicID == "" {
+		return "", ErrNICCreatedButNoID
+	}
+
+	logger.WithOperation("createNICWithStaticIP").Infof("NIC created successfully: ID=%s, IP=%s", nicID, ipv4)
+
+	return nicID, nil
+}
+
+// createServerWithNIC creates a server with a pre-created NIC that has a static IP.
+// This is the STACKIT-specific flow for static IP assignment matching Perl implementation.
+// The NIC ID is passed in the server creation payload (matching STACKIT CLI pattern).
+func (m *ComputeManager) createServerWithNIC(ctx context.Context, req *cpi.InstanceRequest, nicID string) (*cpi.Instance, error) {
+	logger.WithOperation("createServerWithNIC").Infof("Creating server %s with pre-created NIC %s", req.Name, nicID)
+
+	cli, err := m.client.getIAASClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IAAS client: %w", err)
+	}
+
+	// Build server payload WITH the NIC ID (matching STACKIT CLI pattern)
+	// This ensures the server is created with the static IP NIC from the start
+	payload := m.buildCreateServerPayload(req, nicID)
+
+	// Create server with the pre-created NIC
+	created, err := cli.CreateServer(ctx, m.client.config.ProjectID).CreateServerPayload(*payload).Execute()
+	if err != nil {
+		// Cleanup: delete the orphaned NIC since server creation failed
+		_ = cli.DeleteNic(ctx, m.client.config.ProjectID, req.NetworkID, nicID).Execute()
+
+		return nil, fmt.Errorf("failed to create server: %w", err)
+	}
+
+	// Convert to instance
+	inst := m.serverResponseToInstance(created)
+
+	// Wait for instance to become active
+	err = m.waitForInstanceState(ctx, inst.ID, cpi.ResourceStateActive, instanceWaitTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("instance failed to become active: %w", err)
+	}
+
+	logger.WithOperation("createServerWithNIC").Infof("Server created with static IP NIC: %s (%s)", inst.Name, inst.ID)
+
+	return inst, nil
 }

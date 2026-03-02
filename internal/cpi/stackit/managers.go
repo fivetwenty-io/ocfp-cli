@@ -3,9 +3,11 @@ package stackit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
 	lb "github.com/stackitcloud/stackit-sdk-go/services/loadbalancer"
 )
@@ -50,12 +52,9 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 	}
 
 	if len(req.Tags) > 0 {
-		lm := make(map[string]interface{}, len(req.Tags))
-		for k, v := range req.Tags {
-			lm[k] = v
-		}
-
-		payload.SetLabels(lm)
+		// Use sanitization to ensure labels comply with STACKIT requirements
+		labels := sanitizeLabelsForStackit(req.Tags)
+		payload.SetLabels(labels)
 	}
 
 	created, err := cli.CreateSecurityGroup(ctx, m.client.config.ProjectID).CreateSecurityGroupPayload(*payload).Execute()
@@ -72,9 +71,13 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 		Tags:        mapAnyToString(created.GetLabels()),
 		CreatedAt:   time.Now(),
 	}
-	// Add initial rules if provided (best-effort)
-	for _, r := range req.Rules {
-		_ = m.AddSecurityRule(ctx, out.ID, r)
+	// Add initial rules (critical for network access)
+	for i, r := range req.Rules {
+		err = m.AddSecurityRule(ctx, out.ID, r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add rule %d/%d to security group %s: %w",
+				i+1, len(req.Rules), out.ID, err)
+		}
 	}
 
 	return out, nil
@@ -122,6 +125,11 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	for _, securityGroupItem := range items {
 		labels := mapAnyToString(securityGroupItem.GetLabels())
 
+		// Apply label filtering - skip resources without required metadata
+		if !matchLabels(labels, filters) {
+			continue
+		}
+
 		group := &cpi.SecurityGroup{
 			ID:          stringOrEmpty(securityGroupItem.GetIdOk()),
 			Name:        stringOrEmpty(securityGroupItem.GetNameOk()),
@@ -131,10 +139,10 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 			Tags:        labels,
 			CreatedAt:   time.Now(),
 		}
-		if matchLabels(labels, filters) {
-			out = append(out, group)
-		}
+		out = append(out, group)
 	}
+
+	logger.WithOperation("ListSecurityGroups").Debugf("Found %d security groups (after filtering)", len(out))
 
 	return out, nil
 }
@@ -154,18 +162,25 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID strin
 }
 
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+	logger.Debugf("Adding security group rule: group=%s direction=%s protocol=%s ports=%d-%d cidr=%s",
+		groupID, rule.Direction, rule.Protocol, rule.PortRangeMin, rule.PortRangeMax, rule.RemoteIPCIDR)
+
 	cli, err := m.client.getIAASClient()
 	if err != nil {
 		return err
 	}
 
 	payload := iaas.NewCreateSecurityGroupRulePayload(rule.Direction)
-	payload.SetSecurityGroupId(groupID)
+	// Note: SecurityGroupId is NOT set in payload as it's a read-only field
+	// The groupID is passed as a URL path parameter in CreateSecurityGroupRule()
 
-	if rule.Protocol != "" {
+	// StackIT API: omit protocol field to allow all protocols (per StackIT docs)
+	// "If not explicitly specified, a security group rule will match all IPs, ports and protocols"
+	if rule.Protocol != "" && rule.Protocol != "all" {
 		p := rule.Protocol
 		payload.SetProtocol(iaas.StringAsCreateProtocol(&p))
 	}
+	// If Protocol is "all" or empty, omit SetProtocol to match all protocols
 
 	if rule.Description != "" {
 		payload.SetDescription(rule.Description)
@@ -186,6 +201,15 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 	_, err = cli.CreateSecurityGroupRule(ctx, m.client.config.ProjectID, groupID).CreateSecurityGroupRulePayload(*payload).Execute()
 	if err != nil {
+		// Check if rule already exists (409 Conflict) - treat as success (idempotent operation)
+		errStr := err.Error()
+		if strings.Contains(errStr, "already exists") ||
+			strings.Contains(errStr, "409") {
+			logger.Debugf("Security group rule already exists in group %s, treating as success", groupID)
+
+			return nil
+		}
+
 		return fmt.Errorf("failed to create security group rule: %w", err)
 	}
 
@@ -362,6 +386,15 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, loadBalancerI
 }
 
 func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+	// STACKIT load balancers do not support labels/tags.
+	// When metadata filters are provided, return empty list to enforce strict metadata requirements.
+	// This means load balancers without OCFP metadata are not in scope for management.
+	if len(filters) > 0 {
+		logger.WithOperation("ListLoadBalancers").Debug("STACKIT load balancers don't support labels - returning empty list due to metadata filter requirements")
+
+		return []*cpi.LoadBalancer{}, nil
+	}
+
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
 		return nil, err
@@ -404,6 +437,8 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 
 		list = append(list, lbOut)
 	}
+
+	logger.WithOperation("ListLoadBalancers").Debugf("Found %d load balancers", len(list))
 
 	return list, nil
 }

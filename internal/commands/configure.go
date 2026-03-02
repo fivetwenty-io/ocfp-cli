@@ -106,7 +106,7 @@ func runConfigure(opts *configureOptions) error {
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	log.Info("Starting configuration", "provider", cfg.Provider, "dry-run", opts.dryRun)
+	log.Infow("Starting configuration", "provider", cfg.Provider, "dry-run", opts.dryRun)
 
 	// Configure security groups
 	if !opts.skipSecGroups {
@@ -166,10 +166,10 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, dryRun 
 	}
 
 	for _, group := range groups {
-		log.Info("Found security group", "name", group.Name, "id", group.ID)
+		log.Infow("Found security group", "name", group.Name, "id", group.ID)
 
 		if dryRun {
-			log.Info("[DRY RUN] Would configure rules for security group", "name", group.Name)
+			log.Infow("[DRY RUN] Would configure rules for security group", "name", group.Name)
 
 			continue
 		}
@@ -214,9 +214,9 @@ func applySecurityRules(ctx context.Context, security cpi.SecurityManager, group
 	for _, rule := range rules {
 		err := security.AddSecurityRule(ctx, group.ID, &rule)
 		if err != nil {
-			log.Warn("Failed to add rule", "error", err, "rule", rule.Description)
+			log.Warnw("Failed to add rule", "error", err, "rule", rule.Description)
 		} else {
-			log.Info("Added security rule", "group", group.Name, "rule", rule.Description)
+			log.Infow("Added security rule", "group", group.Name, "rule", rule.Description)
 		}
 	}
 }
@@ -238,10 +238,10 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, dryRun bool) er
 	}
 
 	for _, router := range routers {
-		log.Info("Found router", "name", router.Name, "id", router.ID)
+		log.Infow("Found router", "name", router.Name, "id", router.ID)
 
 		if dryRun {
-			log.Info("[DRY RUN] Would configure routes for router", "name", router.Name)
+			log.Infow("[DRY RUN] Would configure routes for router", "name", router.Name)
 
 			continue
 		}
@@ -268,7 +268,7 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, dryRun boo
 	}
 
 	// List floating IPs
-	ips, err := network.ListFloatingIPs(ctx)
+	ips, err := network.ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to list floating IPs: %w", err)
 	}
@@ -308,7 +308,7 @@ func associateFloatingIPWithBastion(ctx context.Context, network cpi.NetworkMana
 		return nil
 	}
 
-	log.Info("Floating IP already associated", "ip", floatingIP.Address)
+	log.Infow("Floating IP already associated", "ip", floatingIP.Address)
 
 	return nil
 }
@@ -336,10 +336,10 @@ func configureBastion(ctx context.Context, provider cpi.Provider, dryRun bool) e
 	}
 
 	bastion := instances[0]
-	log.Info("Found bastion", "name", bastion.Name, "id", bastion.ID)
+	log.Infow("Found bastion", "name", bastion.Name, "id", bastion.ID)
 
 	if dryRun {
-		log.Info("[DRY RUN] Would configure bastion", "name", bastion.Name)
+		log.Infow("[DRY RUN] Would configure bastion", "name", bastion.Name)
 
 		return nil
 	}

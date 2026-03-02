@@ -24,8 +24,8 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 		t.Error("Expected hostname configuration to be enabled")
 	}
 
-	if sysConfig.Hostname.Pattern != "${OCFP_BLOC_NAME}-bastion" {
-		t.Errorf("Expected hostname pattern '${OCFP_BLOC_NAME}-bastion', got '%s'",
+	if sysConfig.Hostname.Pattern != "${OCFP_BLOC}-bastion" {
+		t.Errorf("Expected hostname pattern '${OCFP_BLOC}-bastion', got '%s'",
 			sysConfig.Hostname.Pattern)
 	}
 
@@ -36,7 +36,7 @@ func TestProvisioningConfigGeneration(t *testing.T) {
 	}
 
 	// Check for required directories
-	requiredDirs := []string{"${HOME}/ocfp/cli", "${HOME}/.ocfp/config", "${HOME}/bin"}
+	requiredDirs := []string{"${HOME}/ocfp/cli", "${HOME}/.ocfp", "${HOME}/bin"}
 	foundDirs := make(map[string]bool)
 
 	for _, dir := range directories {
@@ -90,7 +90,7 @@ func TestProvisionScriptIncludesDeploymentRepoSetup(t *testing.T) {
 	provConfig := provision.NewConfig("stackit", cfg, deployments.NewResolver(cfg))
 
 	envVars := map[string]string{
-		"OCFP_BLOC_NAME":     "test-bloc",
+		"OCFP_BLOC":          "test-bloc",
 		"OCFP_PROVIDER":      "stackit",
 		"STACKIT_PROJECT_ID": "test-project",
 		"STACKIT_REGION":     "eu01",
@@ -135,7 +135,7 @@ func TestScriptGeneration(t *testing.T) {
 	provConfig := provision.NewConfig("stackit", cfg, deployments.NewResolver(cfg))
 
 	envVars := map[string]string{
-		"OCFP_BLOC_NAME":     "test-bloc",
+		"OCFP_BLOC":          "test-bloc",
 		"OCFP_PROVIDER":      "stackit",
 		"STACKIT_PROJECT_ID": "test-project",
 		"STACKIT_REGION":     "eu01",
@@ -300,24 +300,28 @@ func TestCPANModuleGeneration(t *testing.T) {
 	cpanMgr := provision.NewCPANManager("stackit", cfg)
 
 	modules := cpanMgr.GetCPANModules()
-	if len(modules) == 0 {
-		t.Error("Expected CPAN modules to be configured")
+	if len(modules) != 3 {
+		t.Fatalf("Expected exactly 3 CPAN modules, got %d", len(modules))
 	}
 
-	// Check for required modules
-	requiredModules := []string{"YAML::XS", "JSON::PP", "Service::Vault", "Try::Tiny"}
-	moduleMap := make(map[string]bool)
+	expectedModules := map[string]struct{}{
+		"Pry":             {},
+		"Carp::Always":    {},
+		"Smart::Comments": {},
+	}
 
 	for _, module := range modules {
-		moduleMap[module.Name] = module.Enabled
+		if _, ok := expectedModules[module.Name]; !ok {
+			t.Fatalf("Unexpected CPAN module configured: %s", module.Name)
+		}
+		if !module.Enabled {
+			t.Fatalf("Expected CPAN module %s to be enabled", module.Name)
+		}
+		delete(expectedModules, module.Name)
 	}
 
-	for _, reqModule := range requiredModules {
-		if enabled, exists := moduleMap[reqModule]; !exists {
-			t.Errorf("Required CPAN module not found: %s", reqModule)
-		} else if !enabled {
-			t.Errorf("Required CPAN module not enabled: %s", reqModule)
-		}
+	if len(expectedModules) != 0 {
+		t.Fatalf("Missing expected CPAN modules: %v", expectedModules)
 	}
 
 	ctx := context.Background()
@@ -332,8 +336,9 @@ func TestCPANModuleGeneration(t *testing.T) {
 		"cpanm",
 		"--notest",
 		"perl -e",
-		"YAML::XS",
-		"Service::Vault",
+		"Pry",
+		"Carp::Always",
+		"Smart::Comments",
 	}
 
 	for _, content := range cpanContent {

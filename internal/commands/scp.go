@@ -117,7 +117,7 @@ type scpConfig struct {
 }
 
 func getSCPConfig(args []string) (*scpConfig, error) {
-	blocName := viper.GetString("bloc_name")
+	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}

@@ -35,14 +35,28 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Setting vault secret", "path", path, "key", key)
+	s.logger.Debugw("Setting vault secret", "path", path, "key", key)
+
+	// Determine if we're using KV v1 or v2
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	// Determine read path based on engine version
+	readPath := path
+	if isKVv2 {
+		readPath = s.convertToKVv2WritePath(path)
+	}
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
-	secret, err := s.client.logical.Read(path)
+	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
-		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
+		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if data, ok := secret.Data["data"].(map[string]interface{}); ok {
@@ -57,55 +71,69 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Update with new key-value
 	existingData[key] = value
 
-	// Determine if we're using KV v1 or v2
+	// Determine write path and data format based on engine version
+	var writePath string
+
 	var writeData map[string]interface{}
 
-	isKVv2, err := s.engine.IsKVv2(path)
-	if err != nil {
-		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
-
-		isKVv2 = false
-	}
-
 	if isKVv2 {
-		// KV v2 format - wrap in "data" field
+		// KV v2: convert path and wrap data
+		writePath = s.convertToKVv2WritePath(path)
 		writeData = map[string]interface{}{
 			"data": existingData,
 		}
 	} else {
-		// KV v1 format - use data directly
+		// KV v1: use path and data directly
+		writePath = path
 		writeData = existingData
 	}
 
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set", path, key, func() error {
-		_, writeErr := s.client.logical.Write(path, writeData)
+		_, writeErr := s.client.logical.Write(writePath, writeData)
+		if writeErr != nil {
+			return fmt.Errorf("vault write operation failed: %w", writeErr)
+		}
 
-		return fmt.Errorf("vault write operation failed: %w", writeErr)
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secret to %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully set vault secret", "path", path, "key", key)
+	s.logger.Debugw("Successfully set vault secret", "path", path, "key", key)
 
 	return nil
 }
 
 // SetMultiple stores multiple key-value pairs at the specified path
 // This is more efficient than calling Set multiple times.
-func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
+func (s *Safe) SetMultiple(path string, data map[string]interface{}) error { //nolint:funlen // KV v2 support requires additional logic
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Setting multiple vault secrets", "path", path, "keys", len(data))
+	s.logger.Debugw("Setting multiple vault secrets", "path", path, "keys", len(data))
+
+	// Determine if we're using KV v1 or v2
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	// Determine read path based on engine version
+	readPath := path
+	if isKVv2 {
+		readPath = s.convertToKVv2WritePath(path)
+	}
 
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
-	secret, err := s.client.logical.Read(path)
+	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
-		s.logger.Debug("Failed to read existing data (may not exist yet)", "path", path, "error", err)
+		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
 	} else if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if secretData, ok := secret.Data["data"].(map[string]interface{}); ok {
@@ -122,37 +150,37 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error {
 		existingData[key] = value
 	}
 
-	// Determine if we're using KV v1 or v2
+	// Determine write path and data format based on engine version
+	var writePath string
+
 	var writeData map[string]interface{}
 
-	isKVv2, err := s.engine.IsKVv2(path)
-	if err != nil {
-		s.logger.Warn("Failed to detect engine type, assuming KV v1", "path", path, "error", err)
-
-		isKVv2 = false
-	}
-
 	if isKVv2 {
-		// KV v2 format - wrap in "data" field
+		// KV v2: convert path and wrap data
+		writePath = s.convertToKVv2WritePath(path)
 		writeData = map[string]interface{}{
 			"data": existingData,
 		}
 	} else {
-		// KV v1 format - use data directly
+		// KV v1: use path and data directly
+		writePath = path
 		writeData = existingData
 	}
 
 	// Write the updated data with retry
 	err = RetryableVaultOperation("set_multiple", path, "", func() error {
-		_, writeErr := s.client.logical.Write(path, writeData)
+		_, writeErr := s.client.logical.Write(writePath, writeData)
+		if writeErr != nil {
+			return fmt.Errorf("vault write operation failed: %w", writeErr)
+		}
 
-		return fmt.Errorf("vault write operation failed: %w", writeErr)
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write secrets to %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully set multiple vault secrets", "path", path, "keys", len(data))
+	s.logger.Debugw("Successfully set multiple vault secrets", "path", path, "keys", len(data))
 
 	return nil
 }
@@ -163,16 +191,33 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Getting vault secret", "path", path, "key", key)
+	s.logger.Debugw("Getting vault secret", "path", path, "key", key)
+
+	// Determine read path based on engine version
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type for read, assuming KV v1", "path", path, "error", err)
+
+		isKVv2 = false
+	}
+
+	readPath := path
+	if isKVv2 {
+		// KV v2: convert path for read
+		readPath = s.convertToKVv2WritePath(path)
+	}
 
 	var secret *api.Secret
 
-	err := RetryableVaultOperation("get", path, key, func() error {
+	err = RetryableVaultOperation("get", path, key, func() error {
 		var readErr error
 
-		secret, readErr = s.client.logical.Read(path)
+		secret, readErr = s.client.logical.Read(readPath)
+		if readErr != nil {
+			return fmt.Errorf("vault read operation failed: %w", readErr)
+		}
 
-		return fmt.Errorf("vault read operation failed: %w", readErr)
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret from %s: %w", path, err)
@@ -202,7 +247,7 @@ func (s *Safe) Get(path, key string) (interface{}, error) {
 		return nil, ErrKeyNotFoundAtPath(key, path)
 	}
 
-	s.logger.Debug("Successfully retrieved vault secret", "path", path, "key", key)
+	s.logger.Debugw("Successfully retrieved vault secret", "path", path, "key", key)
 
 	return value, nil
 }
@@ -232,7 +277,7 @@ func (s *Safe) Exists(path string) (bool, error) {
 	if err != nil {
 		// If we get a permission denied or similar, the path might exist
 		// but we can't read it. For now, treat any error as "doesn't exist"
-		s.logger.Debug("Error checking path existence", "path", path, "error", err)
+		s.logger.Debugw("Error checking path existence", "path", path, "error", err)
 
 		return false, nil
 	}
@@ -247,7 +292,7 @@ func (s *Safe) Delete(path, key string) error {
 
 	if key == "" {
 		// Delete entire path
-		s.logger.Debug("Deleting entire vault path", "path", path)
+		s.logger.Debugw("Deleting entire vault path", "path", path)
 
 		_, err := s.client.logical.Delete(path)
 		if err != nil {
@@ -258,7 +303,7 @@ func (s *Safe) Delete(path, key string) error {
 	}
 
 	// Delete specific key - need to read, modify, and write back
-	s.logger.Debug("Deleting vault secret key", "path", path, "key", key)
+	s.logger.Debugw("Deleting vault secret key", "path", path, "key", key)
 
 	data, err := s.GetAll(path)
 	if err != nil {
@@ -279,9 +324,25 @@ func (s *Safe) List(path string) ([]string, error) {
 		path += "/"
 	}
 
-	s.logger.Debug("Listing vault paths", "path", path)
+	s.logger.Infow("Listing vault paths", "path", path)
 
-	secret, err := s.client.logical.List(path)
+	// Determine list path based on engine version
+	isKVv2, err := s.engine.IsKVv2(path)
+	if err != nil {
+		s.logger.Warnw("Failed to detect engine type for list, assuming KV v1", "path", path, "error", err)
+		isKVv2 = false
+	}
+
+	listPath := path
+	if isKVv2 {
+		// KV v2: convert path for list (use metadata)
+		listPath = s.convertToKVv2ListPath(path)
+		s.logger.Infow("Using KV v2 - converted to metadata path", "logical", path, "api", listPath)
+	} else {
+		s.logger.Infow("Using KV v1 - no path conversion", "path", path)
+	}
+
+	secret, err := s.client.logical.List(listPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list paths under %s: %w", path, err)
 	}
@@ -302,7 +363,7 @@ func (s *Safe) List(path string) ([]string, error) {
 		}
 	}
 
-	s.logger.Debug("Successfully listed vault paths", "path", path, "count", len(paths))
+	s.logger.Debugw("Successfully listed vault paths", "path", path, "count", len(paths))
 
 	return paths, nil
 }
@@ -312,16 +373,17 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Exporting vault secrets", "path", path)
+	s.logger.Infow("Starting export from vault", "path", path)
 
 	result := make(map[string]interface{})
 
 	err := s.exportRecursive(path, "", result)
 	if err != nil {
+		s.logger.Errorw("Export failed", "path", path, "error", err)
 		return nil, fmt.Errorf("failed to export from %s: %w", path, err)
 	}
 
-	s.logger.Debug("Successfully exported vault secrets", "path", path, "entries", len(result))
+	s.logger.Infow("Successfully exported vault secrets", "path", path, "total_entries", len(result))
 
 	return result, nil
 }
@@ -331,7 +393,7 @@ func (s *Safe) Import(path string, data map[string]interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
 
-	s.logger.Debug("Importing vault secrets", "path", path, "entries", len(data))
+	s.logger.Debugw("Importing vault secrets", "path", path, "entries", len(data))
 
 	for subPath, value := range data {
 		fullPath := path
@@ -354,7 +416,7 @@ func (s *Safe) Import(path string, data map[string]interface{}) error {
 		}
 	}
 
-	s.logger.Debug("Successfully imported vault secrets", "path", path, "entries", len(data))
+	s.logger.Debugw("Successfully imported vault secrets", "path", path, "entries", len(data))
 
 	return nil
 }
@@ -403,6 +465,49 @@ func (s *Safe) GetJSON(path, key string) ([]byte, error) {
 	return data, nil
 }
 
+// convertToKVv2WritePath converts a logical path to the API write path for KV v2
+// For KV v2, writes go to mount/data/path instead of mount/path.
+func (s *Safe) convertToKVv2WritePath(logicalPath string) string {
+	const minPartsForSubpath = 2
+
+	// Split path into mount and rest
+	parts := strings.SplitN(logicalPath, "/", minPartsForSubpath)
+	if len(parts) < minPartsForSubpath {
+		// Path has no subpath, just add /data
+		return logicalPath + "/data"
+	}
+
+	mount := parts[0]
+	rest := parts[1]
+
+	// Insert /data/ after mount
+	return mount + "/data/" + rest
+}
+
+// convertToKVv2ListPath converts a logical path to the API list path for KV v2
+// For KV v2, list operations go to mount/metadata/path instead of mount/path.
+func (s *Safe) convertToKVv2ListPath(logicalPath string) string {
+	const minPartsForSubpath = 2
+
+	// Ensure path ends with / for list operations
+	if !strings.HasSuffix(logicalPath, "/") {
+		logicalPath += "/"
+	}
+
+	// Split path into mount and rest
+	parts := strings.SplitN(logicalPath, "/", minPartsForSubpath)
+	if len(parts) < minPartsForSubpath {
+		// Path has no subpath, just add /metadata/
+		return strings.TrimSuffix(logicalPath, "/") + "/metadata/"
+	}
+
+	mount := parts[0]
+	rest := parts[1]
+
+	// Insert /metadata/ after mount
+	return mount + "/metadata/" + rest
+}
+
 // exportRecursive recursively exports secrets from a path.
 func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]interface{}) error {
 	fullPath := basePath
@@ -410,10 +515,15 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		fullPath = filepath.Join(basePath, currentPath)
 	}
 
+	s.logger.Debugw("exportRecursive processing", "basePath", basePath, "currentPath", currentPath, "fullPath", fullPath)
+
 	// Try to read as a secret first
 	data, err := s.GetAll(fullPath)
-	if err == nil {
+	secretFound := (err == nil)
+
+	if secretFound {
 		// This is a secret, store it
+		s.logger.Debugw("Found secret at path", "fullPath", fullPath, "keys", len(data))
 		if currentPath == "" {
 			// Root level
 			for k, v := range data {
@@ -422,16 +532,27 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		} else {
 			result[currentPath] = data
 		}
-
-		return nil
+		// DON'T return yet - this path might ALSO have subdirectories
+	} else {
+		s.logger.Debugw("Not a secret, trying to list as directory", "fullPath", fullPath, "getError", err)
 	}
 
-	// Try to list as a directory
-	paths, err := s.List(fullPath)
-	if err != nil {
+	// Try to list as a directory (even if we found a secret above)
+	// In Vault, a path can contain BOTH keys AND subdirectories
+	paths, listErr := s.List(fullPath)
+	if listErr != nil {
+		// Failed to list as directory
+		if secretFound {
+			// We got the secret data, so this is not an error - just no subdirectories
+			s.logger.Debugw("Path has secret but no subdirectories", "fullPath", fullPath)
+			return nil
+		}
 		// Neither a secret nor a directory we can list
-		return err
+		s.logger.Errorw("Failed to list directory", "fullPath", fullPath, "error", listErr)
+		return listErr
 	}
+
+	s.logger.Infow("Listed directory", "fullPath", fullPath, "subpaths", len(paths), "also_has_secret", secretFound)
 
 	// Process each sub-path
 	for _, subPath := range paths {
@@ -442,11 +563,15 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 			newCurrentPath = filepath.Join(currentPath, strings.TrimSuffix(subPath, "/"))
 		}
 
+		s.logger.Debugw("Recursing into subpath", "subPath", subPath, "newCurrentPath", newCurrentPath)
+
 		err := s.exportRecursive(basePath, newCurrentPath, result)
 		if err != nil {
 			return err
 		}
 	}
+
+	s.logger.Debugw("Finished processing path", "fullPath", fullPath, "total_results", len(result))
 
 	return nil
 }
