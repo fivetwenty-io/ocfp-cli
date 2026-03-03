@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -368,7 +367,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 // initializeBlocLogger initializes the logger for a specific bloc.
 func initializeBlocLogger(blocName string) error {
 	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

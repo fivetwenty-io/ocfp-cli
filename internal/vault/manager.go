@@ -1186,7 +1186,7 @@ func (m *Manager) cleanupVaultFiles(_ string) error {
 	removedFiles := 0
 
 	removedFiles += m.removeGlobalVaultFiles(homeDir)
-	removedFiles += m.removeBlocSpecificVaultFiles(homeDir)
+	removedFiles += m.removeBlocSpecificVaultFiles()
 
 	m.logCleanupResults(removedFiles)
 
@@ -1211,24 +1211,26 @@ func (m *Manager) removeGlobalVaultFiles(homeDir string) int {
 }
 
 // removeBlocSpecificVaultFiles removes bloc-specific vault files.
-func (m *Manager) removeBlocSpecificVaultFiles(homeDir string) int {
+func (m *Manager) removeBlocSpecificVaultFiles() int {
 	if m.blocName == "" {
 		return 0
 	}
 
 	removedCount := 0
 
-	blocVaultKeyFile := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "root.key")
+	blocDir := config.OcfpBlocDir(m.blocName)
+
+	blocVaultKeyFile := filepath.Join(blocDir, "vault", "root.key")
 	if m.removeFileIfExists(blocVaultKeyFile, "bloc vault key") {
 		removedCount++
 	}
 
-	unsealKeysFile := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "unseal.keys")
+	unsealKeysFile := filepath.Join(blocDir, "vault", "unseal.keys")
 	if m.removeFileIfExists(unsealKeysFile, "unseal keys") {
 		removedCount++
 	}
 
-	blocVaultDataDir := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "data")
+	blocVaultDataDir := filepath.Join(blocDir, "vault", "data")
 	if m.removeDirIfExists(blocVaultDataDir, "vault data directory") {
 		removedCount++
 	}
@@ -1970,16 +1972,16 @@ func buildPathWithKey(currentPath, key string) string {
 }
 
 // snapshotInceptionVault creates a safety snapshot of the inception vault before migration.
-// The snapshot is saved to ~/.ocfp/{bloc}/vault/snapshots/inception/{timestamp}.json
+// The snapshot is saved to {OcfpHome}/{bloc}/vault/snapshots/inception/{timestamp}.json
 // Returns the path to the snapshot file.
 func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
 	// Create snapshot directory
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
+	blocDir := config.OcfpBlocDir(m.blocName)
+	if blocDir == "" {
 		return "", ErrHomeNotSet
 	}
 
-	snapshotDir := filepath.Join(homeDir, ".ocfp", m.blocName, "vault", "snapshots", "inception")
+	snapshotDir := filepath.Join(blocDir, "vault", "snapshots", "inception")
 
 	err := os.MkdirAll(snapshotDir, 0700) //nolint:gosec,mnd // path components are from trusted config
 	if err != nil {

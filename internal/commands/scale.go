@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -148,7 +147,7 @@ func parseScaleArgs(args []string) (string, int, error) {
 func initializeScaleLogger() (logger.Logger, error) {
 	blocName := viper.GetString("bloc")
 	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

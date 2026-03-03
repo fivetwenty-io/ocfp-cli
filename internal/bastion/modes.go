@@ -105,8 +105,8 @@ func (md *ModeDetector) checkHostnamePattern() bool {
 // checkMarkerFiles checks for bastion-specific marker files.
 func (md *ModeDetector) checkMarkerFiles() bool {
 	markerFiles := []string{
-		os.Getenv("HOME") + "/.ocfp/provisioned",
-		os.Getenv("HOME") + "/.ocfp/bastion-init-completed",
+		filepath.Join(config.OcfpHome(), "provisioned"),
+		filepath.Join(config.OcfpHome(), "bastion-init-completed"),
 	}
 
 	for _, marker := range markerFiles {
@@ -126,7 +126,7 @@ func (md *ModeDetector) checkDirectoryStructure() bool {
 	ocfpDirs := []string{
 		os.Getenv("HOME") + "/ocfp",
 		os.Getenv("HOME") + "/ocfp/deployments",
-		os.Getenv("HOME") + "/.ocfp",
+		config.OcfpHome(),
 	}
 
 	for _, dir := range ocfpDirs {
@@ -522,8 +522,8 @@ func getHostname() string {
 
 // isOCFPProvisioned checks if OCFP is provisioned.
 func isOCFPProvisioned() bool {
-	markerFile := os.Getenv("HOME") + "/.ocfp/provisioned"
-	_, err := os.Stat(markerFile) //nolint:gosec // path components are from trusted HOME env
+	markerFile := filepath.Join(config.OcfpHome(), "provisioned")
+	_, err := os.Stat(markerFile)
 
 	return err == nil
 }

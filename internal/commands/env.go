@@ -414,7 +414,7 @@ func findTargetEnvironment(envName string) (*environmentInfo, error) {
 }
 
 func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Logger) error {
-	ocfpConfigPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "config.yml")
+	ocfpConfigPath := filepath.Join(config.OcfpHome(), "config.yml")
 
 	ocfpConfig, err := readExistingOCFPConfig(ocfpConfigPath, log)
 	if err != nil {
@@ -544,8 +544,8 @@ func findEnvironments() []environmentInfo {
 
 	// Search paths for configuration files
 	searchPaths := []string{
-		filepath.Join(os.Getenv("HOME"), ".ocfp", "configs"),
-		filepath.Join(os.Getenv("HOME"), ".ocfp"),
+		filepath.Join(config.OcfpHome(), "configs"),
+		config.OcfpHome(),
 		"./configs",
 		".",
 	}

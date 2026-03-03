@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -121,11 +122,8 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	// Place logs under ~/.ocfp/{bloc}/logs/{command}/[{subcommand}/]
 	baseDir := cfg.LogDir
 	if baseDir == "" {
-		// Fallback to ~/.ocfp if not provided
-		home, err := os.UserHomeDir()
-		if err == nil {
-			baseDir = filepath.Join(home, ".ocfp")
-		}
+		// Fallback to OcfpHome if not provided
+		baseDir = config.OcfpHome()
 	}
 
 	// Build path components
