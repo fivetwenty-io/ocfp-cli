@@ -558,6 +558,8 @@ genesis update
 
 ## See Also
 
+- [Security Groups](../networking/security-groups.md) for the 7 default security groups created during bootstrap
+- [Networking Overview](../networking/README.md) for the full networking bootstrap flow
 - [CF App-Autoscaler Documentation](https://github.com/cloudfoundry/app-autoscaler-cli-plugin)
 - [Genesis Documentation](https://genesisproject.io)
 - [BOSH CLI Documentation](https://bosh.io/docs/cli-v2/)
