@@ -20,17 +20,115 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		return ip, nil
 	}
 
-	// Try label-based discovery strategies
-	if ip, found := tryLabelBasedDiscovery(ctx, provider, blocName, log); found {
-		return ip, nil
+	// Delegate to instance-level discovery and extract the IP
+	inst, err := findBastionInstance(ctx, provider, blocName)
+	if err != nil {
+		return "", err
 	}
 
-	// Fall back to name-based discovery
-	if ip, found := tryNameBasedDiscovery(ctx, provider, blocName, log); found {
-		return ip, nil
+	// Check for a direct public/floating IP on the instance
+	if publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP); publicIP != "" {
+		log.Debugf("Found bastion IP from instance %s: %s", inst.Name, publicIP)
+		cacheBastionIP(blocName, publicIP)
+
+		return publicIP, nil
+	}
+
+	// Check floating IPs associated by instance ID
+	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
+	if err == nil {
+		for _, fip := range fips {
+			if fip.InstanceID == inst.ID && fip.Address != "" {
+				log.Debugf("Found bastion floating IP for instance %s: %s", inst.Name, fip.Address)
+				cacheBastionIP(blocName, fip.Address)
+
+				return fip.Address, nil
+			}
+		}
 	}
 
 	return "", ErrNoBastionHostFound(blocName)
+}
+
+// findBastionInstance discovers the bastion instance using label-based strategies
+// followed by name-based pattern matching. It returns the *cpi.Instance directly,
+// which is useful when callers need the full instance (e.g., configure commands).
+func findBastionInstance(ctx context.Context, provider cpi.Provider, blocName string) (*cpi.Instance, error) {
+	log := logger.WithOperation("findBastionInstance")
+
+	// Try label-based discovery strategies
+	if inst := tryLabelBasedInstanceDiscovery(ctx, provider, blocName, log); inst != nil {
+		return inst, nil
+	}
+
+	// Fall back to name-based discovery
+	if inst := tryNameBasedInstanceDiscovery(ctx, provider, blocName, log); inst != nil {
+		return inst, nil
+	}
+
+	return nil, ErrNoBastionHostFound(blocName)
+}
+
+func tryLabelBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) *cpi.Instance {
+	labelKeys := []string{"component", "role", "job"}
+	for _, key := range labelKeys {
+		filters := map[string]string{
+			"label.bloc":   blocName,
+			"label." + key: RoleBastion,
+		}
+
+		log.Debugf("Label instance discovery: trying key=%s filters=%v", key, filters)
+
+		instances, err := provider.Compute().ListInstances(ctx, filters)
+		if err != nil {
+			log.Debugf("Label instance discovery: key=%s failed: %v", key, err)
+
+			continue
+		}
+
+		if len(instances) == 0 {
+			log.Debugf("Label instance discovery: key=%s returned 0 instances", key)
+
+			continue
+		}
+
+		log.Debugf("Label instance discovery: key=%s found %d instances", key, len(instances))
+
+		return instances[0]
+	}
+
+	return nil
+}
+
+func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) *cpi.Instance {
+	log.Debugf("Name instance discovery: listing instances with label.bloc=%s", blocName)
+
+	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
+		"label.bloc": blocName,
+	})
+	if err != nil {
+		log.Debugf("Name instance discovery: failed to list instances: %v", err)
+
+		return nil
+	}
+
+	if len(instances) == 0 {
+		log.Debugf("Name instance discovery: no instances found for bloc=%s", blocName)
+
+		return nil
+	}
+
+	log.Debugf("Name instance discovery: checking %d instances for bastion name pattern", len(instances))
+
+	for _, inst := range instances {
+		if isBastionInstance(inst.Name) {
+			log.Debugf("Name instance discovery: matched instance %s by name pattern", inst.Name)
+
+			return inst
+		}
+	}
+
+	return nil
 }
 
 func tryStateCache(blocName string, log logger.Logger) (string, bool) {
@@ -73,136 +171,6 @@ func tryStateCache(blocName string, log logger.Logger) (string, bool) {
 	logDiscoveryResult(log, "state-cache", "", "", bastionIP)
 
 	return bastionIP, true
-}
-
-func tryLabelBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) (string, bool) {
-	labelKeys := []string{"component", "role", "job"}
-	for _, key := range labelKeys {
-		filters := map[string]string{
-			"label.bloc":   blocName,
-			"label." + key: RoleBastion,
-		}
-
-		log.Debugf("Label discovery: trying key=%s filters=%v", key, filters)
-
-		instances, err := provider.Compute().ListInstances(ctx, filters)
-		if err != nil {
-			log.Debugf("Label discovery: key=%s failed: %v", key, err)
-
-			continue
-		}
-
-		if len(instances) == 0 {
-			log.Debugf("Label discovery: key=%s returned 0 instances", key)
-
-			continue
-		}
-
-		log.Debugf("Label discovery: key=%s found %d instances", key, len(instances))
-
-		// Check for direct public IP
-		if ip := findDirectPublicIP(instances, key, log, blocName); ip != "" {
-			return ip, true
-		}
-
-		// Check floating IPs
-		if ip := findFloatingIPForInstances(ctx, provider, instances, key, log, blocName); ip != "" {
-			return ip, true
-		}
-	}
-
-	return "", false
-}
-
-func tryNameBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) (string, bool) {
-	log.Debugf("Name discovery: listing instances with label.bloc=%s", blocName)
-
-	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
-		"label.bloc": blocName,
-	})
-	if err != nil {
-		log.Debugf("Name discovery: failed to list instances: %v", err)
-
-		return "", false
-	}
-
-	if len(instances) == 0 {
-		log.Debugf("Name discovery: no instances found for bloc=%s", blocName)
-
-		return "", false
-	}
-
-	log.Debugf("Name discovery: checking %d instances for bastion name pattern", len(instances))
-
-	// Check for direct public IP on bastion-named instances
-	for _, inst := range instances {
-		if !isBastionInstance(inst.Name) {
-			continue
-		}
-
-		if publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP); publicIP != "" {
-			logDiscoveryResult(log, "name", "", inst.Name, publicIP)
-			cacheBastionIP(blocName, publicIP)
-
-			return publicIP, true
-		}
-	}
-
-	// Check floating IPs for bastion-named instances
-	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
-	if err != nil {
-		return "", false
-	}
-
-	for _, inst := range instances {
-		if !isBastionInstance(inst.Name) {
-			continue
-		}
-
-		for _, fip := range fips {
-			if fip.InstanceID == inst.ID && fip.Address != "" {
-				logDiscoveryResult(log, "floating-ip-by-name", "", inst.Name, fip.Address)
-				cacheBastionIP(blocName, fip.Address)
-
-				return fip.Address, true
-			}
-		}
-	}
-
-	return "", false
-}
-
-func findDirectPublicIP(instances []*cpi.Instance, key string, log logger.Logger, blocName string) string {
-	for _, inst := range instances {
-		if publicIP := firstNonEmpty(inst.FloatingIP, inst.PublicIP); publicIP != "" {
-			logDiscoveryResult(log, "label", key, inst.Name, publicIP)
-			cacheBastionIP(blocName, publicIP)
-
-			return publicIP
-		}
-	}
-
-	return ""
-}
-
-func findFloatingIPForInstances(ctx context.Context, provider cpi.Provider, instances []*cpi.Instance, key string, log logger.Logger, blocName string) string {
-	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
-	if err != nil {
-		return ""
-	}
-
-	for _, inst := range instances {
-		for _, fip := range fips {
-			if fip.InstanceID == inst.ID && fip.Address != "" {
-				logDiscoveryResult(log, "floating-ip-by-label", key, inst.Name, fip.Address)
-				cacheBastionIP(blocName, fip.Address)
-
-				return fip.Address
-			}
-		}
-	}
-
-	return ""
 }
 
 func isBastionInstance(name string) bool {
