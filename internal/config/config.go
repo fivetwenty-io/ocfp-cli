@@ -491,6 +491,46 @@ type FQDNConfig struct {
 	OCF  map[string]string `json:"ocf"  mapstructure:"ocf"  yaml:"ocf,omitempty"`
 }
 
+// UnmarshalYAML handles fqdns.base being either a string or a single-element
+// YAML sequence, coercing the latter into a plain string so callers always see
+// FQDNConfig.Base as a string.
+func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
+	type aux struct {
+		Base interface{}       `yaml:"base"`
+		Mgmt map[string]string `yaml:"mgmt"`
+		OCF  map[string]string `yaml:"ocf"`
+	}
+
+	var raw aux
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	f.Mgmt = raw.Mgmt
+	f.OCF = raw.OCF
+
+	switch v := raw.Base.(type) {
+	case nil:
+		f.Base = ""
+	case string:
+		f.Base = v
+	case []interface{}:
+		if len(v) == 0 {
+			f.Base = ""
+		} else {
+			s, ok := v[0].(string)
+			if !ok {
+				return fmt.Errorf("fqdns.base list element must be a string, got %T", v[0])
+			}
+			f.Base = s
+		}
+	default:
+		return fmt.Errorf("fqdns.base must be a string or list of strings, got %T", v)
+	}
+
+	return nil
+}
+
 // Configuration caching for performance optimization.
 var (
 	configMutex   sync.RWMutex                     //nolint:gochecknoglobals // package-level cache lock for performance
