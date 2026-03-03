@@ -1316,6 +1316,10 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 }
 
 func (m *Manager) savePrivateKey(privateKey string) error {
+	if strings.TrimSpace(privateKey) == "" {
+		return errEmptyPrivateKey
+	}
+
 	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 

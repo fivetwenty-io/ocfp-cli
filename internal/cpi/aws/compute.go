@@ -314,19 +314,11 @@ func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequ
 		return nil, err
 	}
 
-	// Check if keypair already exists (idempotency)
+	// Check if keypair already exists — return a duplicate error so the
+	// caller's handleDuplicateKeyPair flow can reconcile with any local key.
 	existingKeyPair, err := m.GetKeyPair(ctx, req.Name)
 	if err == nil && existingKeyPair != nil {
-		// KeyPair already exists, return it without private key
-		// Note: AWS doesn't allow retrieving private key after creation
-		return &cpi.KeyPair{
-			ID:          existingKeyPair.ID,
-			Name:        existingKeyPair.Name,
-			Fingerprint: existingKeyPair.Fingerprint,
-			PublicKey:   existingKeyPair.PublicKey,
-			PrivateKey:  "", // Private key not available for existing pairs
-			CreatedAt:   existingKeyPair.CreatedAt,
-		}, nil
+		return nil, fmt.Errorf("InvalidKeyPair.Duplicate: %w: %s", ErrDuplicateKeyPair, req.Name)
 	}
 
 	// Default to ed25519 if not specified

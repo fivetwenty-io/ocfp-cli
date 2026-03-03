@@ -13,6 +13,7 @@ var (
 	errNoFlavorWithDisk                = errors.New("no flavor found with sufficient disk space")
 	errBastionPublicIPNotFound         = errors.New("bastion public IP not found in state")
 	errNetworkManagerNotAvailable      = errors.New("network manager not available")
+	errEmptyPrivateKey                 = errors.New("cannot save empty private key")
 )
 
 // ErrInvalidNetworkIDInState returns an error for an invalid network_id value found in state.
