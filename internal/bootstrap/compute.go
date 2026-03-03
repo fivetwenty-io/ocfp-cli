@@ -1312,11 +1312,11 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 
 	m.config.Keys[keypairName] = privateKey
 
-	err = config.SaveConfig("", m.options.BlocName, m.config)
+	err = config.SaveBlocKeys(m.options.BlocName, m.config.Keys)
 	if err != nil {
-		logger.Warnf("Failed to save SSH key to config: %v", err)
+		logger.Warnf("Failed to save SSH key to state: %v", err)
 	} else {
-		logger.Infof("Saved SSH key to config file for portability")
+		logger.Infof("Saved SSH key to state file for portability")
 	}
 
 	return nil

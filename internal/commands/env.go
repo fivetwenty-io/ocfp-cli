@@ -413,57 +413,10 @@ func findTargetEnvironment(envName string) (*environmentInfo, error) {
 	return nil, ErrEnvironmentNotFound(envName)
 }
 
-func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Logger) error {
-	ocfpConfigPath := filepath.Join(config.OcfpHome(), "config.yml")
-
-	ocfpConfig, err := readExistingOCFPConfig(ocfpConfigPath, log)
+func updateOCFPConfig(envName string, targetEnv *environmentInfo, _ logger.Logger) error {
+	err := config.SetCurrentBloc(envName, targetEnv.ConfigFile)
 	if err != nil {
-		return err
-	}
-
-	ocfpConfig["current_environment"] = envName
-	ocfpConfig["bloc"] = envName
-	ocfpConfig["config_file"] = targetEnv.ConfigFile
-
-	return writeOCFPConfig(ocfpConfigPath, ocfpConfig)
-}
-
-func readExistingOCFPConfig(ocfpConfigPath string, log logger.Logger) (map[string]interface{}, error) {
-	ocfpConfig := make(map[string]interface{})
-
-	data, err := os.ReadFile(ocfpConfigPath) //nolint:gosec // path is constructed from safe config paths
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ocfpConfig, nil
-		}
-
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	err = yaml.Unmarshal(data, &ocfpConfig)
-	if err != nil {
-		log.Warnf("Failed to parse existing config: %v", err)
-
-		return ocfpConfig, nil
-	}
-
-	return ocfpConfig, nil
-}
-
-func writeOCFPConfig(ocfpConfigPath string, ocfpConfig map[string]interface{}) error {
-	err := os.MkdirAll(filepath.Dir(ocfpConfigPath), ConfigDirPerm) //nolint:gosec // path is from trusted config
-	if err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	data, err := yaml.Marshal(ocfpConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	err = os.WriteFile(ocfpConfigPath, data, ConfigFilePerm) //nolint:gosec // path is from trusted config
-	if err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+		return fmt.Errorf("failed to update OCFP state: %w", err)
 	}
 
 	return nil
