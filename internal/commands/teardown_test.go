@@ -481,6 +481,99 @@ func TestFilterResourcesCombinedBastionAndSelective(t *testing.T) {
 	}
 }
 
+func TestMergeResources(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name        string
+		existing    []*commands.ResourceToDelete
+		discovered  []*commands.ResourceToDelete
+		expectedIDs []string
+	}{
+		{
+			name: "no duplicates added",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			expectedIDs: []string{"i-111", "vpc-222"},
+		},
+		{
+			name: "cloud-only resources added",
+			existing: []*commands.ResourceToDelete{
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "orphaned-bastion", ID: "i-333"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			expectedIDs: []string{"vpc-222", "i-333"},
+		},
+		{
+			name:        "both empty",
+			existing:    []*commands.ResourceToDelete{},
+			discovered:  []*commands.ResourceToDelete{},
+			expectedIDs: []string{},
+		},
+		{
+			name:     "empty existing gets all discovered",
+			existing: []*commands.ResourceToDelete{},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+			},
+			expectedIDs: []string{"i-111"},
+		},
+		{
+			name: "empty discovered keeps existing",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+			},
+			discovered:  []*commands.ResourceToDelete{},
+			expectedIDs: []string{"i-111"},
+		},
+		{
+			name: "mixed overlap and new",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "worker", ID: "i-111"},
+				{Type: "volume", Name: "vol", ID: "vol-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "worker", ID: "i-111"},
+				{Type: "instance", Name: "orphaned-bastion", ID: "i-333"},
+				{Type: "security_group", Name: "sg", ID: "sg-444"},
+			},
+			expectedIDs: []string{"i-111", "vol-222", "i-333", "sg-444"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := commands.TestMergeResources(tc.existing, tc.discovered)
+
+			if len(result) != len(tc.expectedIDs) {
+				t.Fatalf("expected %d resources, got %d", len(tc.expectedIDs), len(result))
+			}
+
+			resultIDs := make(map[string]bool, len(result))
+			for _, r := range result {
+				resultIDs[r.ID] = true
+			}
+
+			for _, expectedID := range tc.expectedIDs {
+				if !resultIDs[expectedID] {
+					t.Errorf("expected resource ID %s not found in merged results", expectedID)
+				}
+			}
+		})
+	}
+}
+
 func TestFilterResourcesSelectiveMode(t *testing.T) {
 	t.Parallel()
 

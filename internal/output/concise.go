@@ -308,13 +308,6 @@ func (r *ConciseRenderer) Close() error {
 func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 	subtasks := r.phaseSubtasks[phaseID]
 
-	// Subtasks always show as running (white), never completed (green)
-	// Only the "Phase completed" line should be green
-	actualStatus := progress.Status
-	if actualStatus == StatusCompleted {
-		actualStatus = StatusRunning
-	}
-
 	// Find existing subtask by category and item
 	found := false
 
@@ -323,7 +316,7 @@ func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 			// Update existing
 			subtasks[i].current = progress.Current
 			subtasks[i].total = progress.Total
-			subtasks[i].status = actualStatus
+			subtasks[i].status = progress.Status
 			found = true
 
 			break
@@ -337,7 +330,7 @@ func (r *ConciseRenderer) updateSubtask(phaseID string, progress ProgressInfo) {
 			item:     progress.Item,
 			current:  progress.Current,
 			total:    progress.Total,
-			status:   actualStatus,
+			status:   progress.Status,
 		})
 	}
 
@@ -395,11 +388,12 @@ func (r *ConciseRenderer) writeSubtaskTree(phaseID string) error {
 				treeChar = "└─"
 			}
 
-			// Format: [08/25]   ├─ category: item (current/total)
-			line := fmt.Sprintf("[%02d/%d]   %s %s: %s (%d/%d)\n",
+			// Format: [08/25]   ├─ icon category: item (current/total)
+			line := fmt.Sprintf("[%02d/%d]   %s %s %s: %s (%d/%d)\n",
 				r.currentPhase.Number,
 				r.currentPhase.Total,
 				treeChar,
+				r.statusIcon(item.status),
 				category,
 				item.item,
 				item.current,

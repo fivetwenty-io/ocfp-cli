@@ -293,6 +293,14 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
 		InstanceIds: []string{id},
 	})
 	if err != nil {
+		if IsTerminationProtected(err) {
+			return &cpi.ProviderError{
+				Provider: "aws",
+				Code:     "TerminationProtected",
+				Message:  fmt.Sprintf("instance %s has termination protection enabled; disable it in the AWS console or via: aws ec2 modify-instance-attribute --instance-id %s --no-disable-api-termination", id, id),
+			}
+		}
+
 		return wrapError(err, "failed to terminate instance")
 	}
 
