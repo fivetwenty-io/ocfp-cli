@@ -137,7 +137,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 }
 
 // Initialize performs the actual bastion initialization.
-func (s *StackitBastionInit) Initialize(ctx context.Context) error {
+func (s *StackitBastionInit) Initialize(_ctx context.Context) error {
 	s.log.Info("Initializing STACKIT bastion")
 
 	// This method coordinates the initialization process

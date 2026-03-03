@@ -294,7 +294,7 @@ func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, id string)
 }
 
 // AddBackend adds a backend to a load balancer.
-func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backend *cpi.Backend) error {
+func (m *LoadBalancerManager) AddBackend(_ctx context.Context, lbID string, backend *cpi.Backend) error {
 	if backend == nil {
 		return ErrInvalidRequest
 	}
@@ -307,20 +307,20 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 }
 
 // RemoveBackend removes a backend from a load balancer.
-func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) RemoveBackend(_ctx context.Context, lbID string, backendID string) error {
 	logger.Warnw("RemoveBackend requires NIC-level configuration in Azure", "lb", lbID, "backend", backendID)
 
 	return ErrNotImplemented
 }
 
 // EnableBackend enables a backend in a load balancer.
-func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) EnableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// Azure doesn't have a direct "enable/disable" concept for backends
 	return ErrNotImplemented
 }
 
 // DisableBackend disables a backend in a load balancer.
-func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	return ErrNotImplemented
 }
 
@@ -389,7 +389,7 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 }
 
 // GetHealthStatus retrieves health status of a load balancer.
-func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+func (m *LoadBalancerManager) GetHealthStatus(_ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
 	// Azure Load Balancer health status requires metrics API
 	// This is a simplified implementation
 	return &cpi.HealthStatus{

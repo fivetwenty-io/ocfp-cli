@@ -766,7 +766,7 @@ func (m *SecurityManager) ipPermissionsMatch(perm1, perm2 *types.IpPermission) b
 	}
 
 	// Check security group references
-	return m.userIdGroupPairsMatch(perm1.UserIdGroupPairs, perm2.UserIdGroupPairs)
+	return m.userIDGroupPairsMatch(perm1.UserIdGroupPairs, perm2.UserIdGroupPairs)
 }
 
 // ipRangesMatch checks if IP ranges match.
@@ -819,8 +819,8 @@ func (m *SecurityManager) ipv6RangesMatch(ranges1, ranges2 []types.Ipv6Range) bo
 	return true
 }
 
-// userIdGroupPairsMatch checks if user ID group pairs match.
-func (m *SecurityManager) userIdGroupPairsMatch(pairs1, pairs2 []types.UserIdGroupPair) bool {
+// userIDGroupPairsMatch checks if user ID group pairs match.
+func (m *SecurityManager) userIDGroupPairsMatch(pairs1, pairs2 []types.UserIdGroupPair) bool {
 	if len(pairs1) != len(pairs2) {
 		return false
 	}

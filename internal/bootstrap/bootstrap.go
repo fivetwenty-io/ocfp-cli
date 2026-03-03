@@ -1,3 +1,4 @@
+// Package bootstrap handles infrastructure bootstrapping operations for OCFP environments.
 package bootstrap
 
 import (

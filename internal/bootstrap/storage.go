@@ -309,7 +309,7 @@ func (m *Manager) configureBoshBlobstoreBucket(ctx context.Context, name string,
 }
 
 //nolint:unparam // bucketName reserved for future use in per-bucket configuration
-func (m *Manager) blobstoreSettingsFor(bucketName string, settings config.BucketSettings, defaultVersioning bool, defaultDays int) (bool, int) {
+func (m *Manager) blobstoreSettingsFor(_bucketName string, settings config.BucketSettings, defaultVersioning bool, defaultDays int) (bool, int) {
 	if !m.config.Blobstore.EnablePolicies {
 		return defaultVersioning, defaultDays
 	}

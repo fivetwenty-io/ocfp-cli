@@ -75,7 +75,7 @@ func NewProgressReporterCompat(w io.Writer, progress *ProvisioningProgress) *Pro
 // Start begins progress reporting.
 //
 // Deprecated: Progress updates are now handled by the renderer automatically.
-func (pr *ProgressReporter) Start(ctx context.Context) {
+func (pr *ProgressReporter) Start(_ctx context.Context) {
 	// No-op: Renderers handle their own update timing
 }
 

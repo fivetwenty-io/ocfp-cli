@@ -1,3 +1,6 @@
+// Package version provides build and version information for the OCFP CLI.
+//
+//revive:disable-next-line:var-naming internal package does not conflict with go/version
 package version
 
 import (

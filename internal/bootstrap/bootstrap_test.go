@@ -72,10 +72,10 @@ type fakeProvWithStorage struct {
 	s cpi.StorageManager
 }
 
-func (p *fakeProvWithStorage) Name() string                                  { return "fake" }
-func (p *fakeProvWithStorage) Region() string                                { return "eu01" }
-func (p *fakeProvWithStorage) Authenticate(ctx context.Context) error        { return nil }
-func (p *fakeProvWithStorage) ValidateCredentials(ctx context.Context) error { return nil }
+func (p *fakeProvWithStorage) Name() string                                   { return "fake" }
+func (p *fakeProvWithStorage) Region() string                                 { return "eu01" }
+func (p *fakeProvWithStorage) Authenticate(_ctx context.Context) error        { return nil }
+func (p *fakeProvWithStorage) ValidateCredentials(_ctx context.Context) error { return nil }
 
 //nolint:ireturn
 func (p *fakeProvWithStorage) Network() cpi.NetworkManager { return p.n }
@@ -107,9 +107,9 @@ func (p *fakeProvWithStorage) SecurityManager() cpi.SecurityManager { return p.S
 //nolint:ireturn
 func (p *fakeProvWithStorage) LoadBalancerManager() cpi.LoadBalancerManager { return p.LoadBalancer() }
 
-func (p *fakeProvWithStorage) SupportsStorage() bool                                 { return true }
-func (p *fakeProvWithStorage) Initialize(ctx context.Context, cfg interface{}) error { return nil }
-func (p *fakeProvWithStorage) Cleanup(ctx context.Context) error                     { return nil }
+func (p *fakeProvWithStorage) SupportsStorage() bool                                   { return true }
+func (p *fakeProvWithStorage) Initialize(_ctx context.Context, _cfg interface{}) error { return nil }
+func (p *fakeProvWithStorage) Cleanup(_ctx context.Context) error                      { return nil }
 
 func createExecuteTestConfig() *config.Config {
 	return &config.Config{
@@ -150,41 +150,28 @@ func TestExecute_Success_STACKIT(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	// Verify network was created
-	networks, err := sm.GetResourcesByType("network")
-	if err != nil {
-		t.Fatalf("Failed to get networks: %v", err)
-	}
-	if len(networks) == 0 {
-		t.Error("Expected network to be created")
-	}
-
-	// Verify subnets were created
-	subnets, err := sm.GetResourcesByType("subnet")
-	if err != nil {
-		t.Fatalf("Failed to get subnets: %v", err)
-	}
-	if len(subnets) == 0 {
-		t.Error("Expected subnets to be created")
+	// Verify resources were created in state using table-driven checks
+	resourceChecks := []struct {
+		name     string
+		resType  string
+		minCount int
+	}{
+		{"network", "network", 1},
+		{"subnet", "subnet", 1},
+		{"security_group", "security_group", 1},
+		{"public_ip", "public_ip", 2},
 	}
 
-	// Verify security groups were created
-	securityGroups, err := sm.GetResourcesByType("security_group")
-	if err != nil {
-		t.Fatalf("Failed to get security groups: %v", err)
-	}
-	if len(securityGroups) == 0 {
-		t.Error("Expected security groups to be created")
-	}
-
-	// Verify public IPs were created
-	publicIPs, err := sm.GetResourcesByType("public_ip")
-	if err != nil {
-		t.Fatalf("Failed to get public IPs: %v", err)
-	}
-	// Should have at least ops + bastion IPs
-	if len(publicIPs) < 2 {
-		t.Errorf("Expected at least 2 public IPs, got %d", len(publicIPs))
+	for _, rc := range resourceChecks {
+		t.Run("state_has_"+rc.name, func(t *testing.T) {
+			resources, err := sm.GetResourcesByType(rc.resType)
+			if err != nil {
+				t.Fatalf("Failed to get %s: %v", rc.name, err)
+			}
+			if len(resources) < rc.minCount {
+				t.Errorf("Expected at least %d %s, got %d", rc.minCount, rc.name, len(resources))
+			}
+		})
 	}
 
 	// Verify bastion was created
@@ -194,29 +181,32 @@ func TestExecute_Success_STACKIT(t *testing.T) {
 	}
 
 	// Verify fake providers were called
-	if len(fakeNet.fakeNet.createdNetworks) == 0 {
-		t.Error("Network creation not called")
+	providerChecks := []struct {
+		name  string
+		count int
+	}{
+		{"network creation", len(fakeNet.fakeNet.createdNetworks)},
+		{"security group creation", len(fakeNet.fakeNet.createdSecurityGroups)},
+		{"public IP creation", len(fakeNet.createdPublicIPs)},
+		{"bastion instance creation", len(fakeComp.instances)},
+	}
+
+	for _, pc := range providerChecks {
+		t.Run("provider_called_"+pc.name, func(t *testing.T) {
+			if pc.count == 0 {
+				t.Errorf("%s not called", pc.name)
+			}
+		})
 	}
 
 	// STACKIT uses virtual subnets that are added directly to state
 	// without calling CreateSubnet(), so we verify state instead
 	// Virtual subnets have IDs prefixed with "virtual:"
+	subnets, _ := sm.GetResourcesByType("subnet")
 	for _, subnet := range subnets {
 		if !strings.HasPrefix(subnet.ID, "virtual:") {
 			t.Errorf("Expected virtual subnet ID for STACKIT, got %s", subnet.ID)
 		}
-	}
-
-	if len(fakeNet.fakeNet.createdSecurityGroups) == 0 {
-		t.Error("Security group creation not called")
-	}
-
-	if len(fakeNet.createdPublicIPs) == 0 {
-		t.Error("Public IP creation not called")
-	}
-
-	if len(fakeComp.instances) == 0 {
-		t.Error("Bastion instance creation not called")
 	}
 }
 
@@ -599,7 +589,7 @@ func TestExecute_ResourcesHaveCorrectTags(t *testing.T) {
 	}
 }
 
-func verifyBaseTags(t *testing.T, tags map[string]string, bloc, provider, region string) {
+func verifyBaseTags(t *testing.T, tags map[string]string, bloc, _provider, _region string) {
 	t.Helper()
 
 	// Verify required metadata tags (using hyphenated names as per metadata.go)

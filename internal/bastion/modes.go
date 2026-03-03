@@ -32,7 +32,7 @@ var (
 	ErrTunnelCreationNotApplicableForLocal = errors.New("tunnel creation not applicable for local execution")
 )
 
-// Dynamic error constructor.
+// ErrUnknownExecutionMode returns an error for an unrecognized execution mode value.
 func ErrUnknownExecutionMode(mode int) error {
 	return fmt.Errorf("unknown execution mode: %d", mode) //nolint:err113 // dynamic error with context
 }
@@ -62,7 +62,7 @@ func NewModeDetector(cfg *config.Config) *ModeDetector {
 }
 
 // DetectExecutionMode determines whether we're running locally on bastion or remotely.
-func (md *ModeDetector) DetectExecutionMode(ctx context.Context) (ExecutionMode, error) {
+func (md *ModeDetector) DetectExecutionMode(_ctx context.Context) (ExecutionMode, error) {
 	md.log.Debug("Detecting execution mode")
 
 	// Check if we're on the bastion host itself
@@ -330,7 +330,7 @@ type LocalCommandExecutor struct {
 }
 
 // Connect is a no-op for local execution.
-func (lce *LocalCommandExecutor) Connect(ctx context.Context) error {
+func (lce *LocalCommandExecutor) Connect(_ctx context.Context) error {
 	return nil
 }
 
@@ -381,7 +381,7 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 }
 
 // TransferFile is a no-op for local execution (files are already local).
-func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (lce *LocalCommandExecutor) TransferFile(_ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
 	// Local mode: treat as copying a file from local path to target path on the same machine
 	// Strip any accidental "bastion:" prefix if present
 	remote = strings.TrimPrefix(remote, "bastion:")
@@ -437,7 +437,7 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 }
 
 // CreateTunnel is not applicable for local execution.
-func (lce *LocalCommandExecutor) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (lce *LocalCommandExecutor) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return ErrTunnelCreationNotApplicableForLocal
 }
 

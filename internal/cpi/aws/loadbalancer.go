@@ -407,14 +407,14 @@ func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, ba
 }
 
 // EnableBackend enables a backend in the load balancer.
-func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) EnableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// AWS doesn't have a separate enable/disable; targets are either registered or not
 	// We could implement this by registering the target if it's not already registered
 	return ErrNotImplemented
 }
 
 // DisableBackend disables a backend in the load balancer.
-func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// AWS doesn't have a separate enable/disable; targets are either registered or not
 	// We could implement this by deregistering the target
 	return ErrNotImplemented

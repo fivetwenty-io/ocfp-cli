@@ -506,7 +506,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 }
 
 // AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+func (m *NetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
 	// In Azure, public IPs are associated via NIC configuration
 	// This requires updating the VM's NIC, which is more complex
 	// For now, return not implemented
@@ -514,7 +514,7 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, i
 }
 
 // DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+func (m *NetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
 	return ErrNotImplemented
 }
 
@@ -603,13 +603,13 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 }
 
 // AttachRouterInterface associates a route table with a subnet.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) AttachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	// In Azure, this requires updating the subnet to reference the route table
 	return ErrNotImplemented
 }
 
 // DetachRouterInterface disassociates a route table from a subnet.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) DetachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return ErrNotImplemented
 }
 

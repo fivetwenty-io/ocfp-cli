@@ -18,7 +18,7 @@ import (
 
 // CreateInstance creates a new compute instance.
 //
-//nolint:cyclop,funlen // GCP instance creation with network, disk, and metadata configuration
+//nolint:funlen // GCP instance creation with network, disk, and metadata configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
@@ -35,103 +35,19 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	}
 
 	labels := BuildLabels(req.Name, req.Tags)
-
-	// Build network interface
-	networkProject := config.GetNetworkProject()
-
-	var networkInterfaces []*computepb.NetworkInterface
-
-	if req.SubnetID != "" {
-		subnetURL := FormatSubnetworkURL(networkProject, config.Region, req.SubnetID)
-		ni := &computepb.NetworkInterface{ //nolint:varnamelen
-			Subnetwork: proto(subnetURL),
-		}
-
-		// Add access config for external IP if in public subnet
-		if req.Tags != nil && req.Tags["public"] == "true" {
-			ni.AccessConfigs = []*computepb.AccessConfig{
-				{
-					Name:        proto("External NAT"),
-					Type:        proto("ONE_TO_ONE_NAT"),
-					NetworkTier: proto("PREMIUM"),
-				},
-			}
-		}
-
-		networkInterfaces = append(networkInterfaces, ni)
-	} else if req.NetworkID != "" {
-		networkURL := FormatNetworkURL(networkProject, req.NetworkID)
-		networkInterfaces = append(networkInterfaces, &computepb.NetworkInterface{
-			Network: proto(networkURL),
-		})
-	}
-
-	// Build disk configuration
 	machineTypeURL := FormatMachineTypeURL(projectID, zone, req.Flavor)
-
-	var disks []*computepb.AttachedDisk
-
-	if req.Image != "" {
-		// Create boot disk from image
-		bootDisk := &computepb.AttachedDisk{
-			Boot:       proto(true),
-			AutoDelete: proto(true),
-			InitializeParams: &computepb.AttachedDiskInitializeParams{
-				SourceImage: proto(req.Image),
-				DiskType:    proto(fmt.Sprintf("zones/%s/diskTypes/pd-balanced", zone)),
-			},
-		}
-
-		if req.BootVolumeSize > 0 {
-			bootDisk.InitializeParams.DiskSizeGb = proto(int64(req.BootVolumeSize))
-		}
-
-		disks = append(disks, bootDisk)
-	}
 
 	// Build instance
 	instance := &computepb.Instance{
 		Name:              proto(req.Name),
 		MachineType:       proto(machineTypeURL),
-		NetworkInterfaces: networkInterfaces,
-		Disks:             disks,
+		NetworkInterfaces: m.buildNetworkInterfaces(config, req),
+		Disks:             m.buildBootDisks(zone, req),
 		Labels:            labels,
 	}
 
-	// Add network tags for security groups
-	if len(req.SecurityGroups) > 0 || len(req.SecurityGroupIDs) > 0 {
-		tags := make([]string, 0)
-		for _, sg := range req.SecurityGroups {
-			tags = append(tags, FormatNetworkTag(sg))
-		}
-
-		for _, sg := range req.SecurityGroupIDs {
-			tags = append(tags, FormatNetworkTag(sg))
-		}
-
-		instance.Tags = &computepb.Tags{
-			Items: tags,
-		}
-	}
-
-	// Add SSH key from keypair
-	if req.KeyPair != "" || req.KeyPairName != "" {
-		instance.Metadata = &computepb.Metadata{
-			Items: []*computepb.Items{},
-		}
-	}
-
-	// Add user data as startup script
-	if req.UserData != "" {
-		if instance.GetMetadata() == nil {
-			instance.Metadata = &computepb.Metadata{}
-		}
-
-		instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{
-			Key:   proto("startup-script"),
-			Value: proto(req.UserData),
-		})
-	}
+	m.buildSecurityTags(instance, req)
+	m.buildInstanceMetadata(instance, req)
 
 	op, err := m.client.getInstancesClient().Insert(ctx, &computepb.InsertInstanceRequest{ //nolint:varnamelen
 		Project:          projectID,
@@ -165,6 +81,108 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	}
 
 	return m.GetInstance(ctx, req.Name)
+}
+
+// buildNetworkInterfaces constructs network interface configuration for a new instance.
+func (m *ComputeManager) buildNetworkInterfaces(config *Config, req *cpi.InstanceRequest) []*computepb.NetworkInterface {
+	networkProject := config.GetNetworkProject()
+
+	if req.SubnetID != "" {
+		subnetURL := FormatSubnetworkURL(networkProject, config.Region, req.SubnetID)
+		ni := &computepb.NetworkInterface{ //nolint:varnamelen
+			Subnetwork: proto(subnetURL),
+		}
+
+		// Add access config for external IP if in public subnet
+		if req.Tags != nil && req.Tags["public"] == "true" {
+			ni.AccessConfigs = []*computepb.AccessConfig{
+				{
+					Name:        proto("External NAT"),
+					Type:        proto("ONE_TO_ONE_NAT"),
+					NetworkTier: proto("PREMIUM"),
+				},
+			}
+		}
+
+		return []*computepb.NetworkInterface{ni}
+	}
+
+	if req.NetworkID != "" {
+		networkURL := FormatNetworkURL(networkProject, req.NetworkID)
+
+		return []*computepb.NetworkInterface{
+			{Network: proto(networkURL)},
+		}
+	}
+
+	return nil
+}
+
+// buildBootDisks constructs boot disk configuration for a new instance.
+func (m *ComputeManager) buildBootDisks(zone string, req *cpi.InstanceRequest) []*computepb.AttachedDisk {
+	if req.Image == "" {
+		return nil
+	}
+
+	bootDisk := &computepb.AttachedDisk{
+		Boot:       proto(true),
+		AutoDelete: proto(true),
+		InitializeParams: &computepb.AttachedDiskInitializeParams{
+			SourceImage: proto(req.Image),
+			DiskType:    proto(fmt.Sprintf("zones/%s/diskTypes/pd-balanced", zone)),
+		},
+	}
+
+	if req.BootVolumeSize > 0 {
+		bootDisk.InitializeParams.DiskSizeGb = proto(int64(req.BootVolumeSize))
+	}
+
+	return []*computepb.AttachedDisk{bootDisk}
+}
+
+// buildSecurityTags adds network tags for security groups to an instance.
+func (m *ComputeManager) buildSecurityTags(instance *computepb.Instance, req *cpi.InstanceRequest) {
+	if len(req.SecurityGroups) == 0 && len(req.SecurityGroupIDs) == 0 {
+		return
+	}
+
+	tags := make([]string, 0, len(req.SecurityGroups)+len(req.SecurityGroupIDs))
+
+	for _, sg := range req.SecurityGroups {
+		tags = append(tags, FormatNetworkTag(sg))
+	}
+
+	for _, sg := range req.SecurityGroupIDs {
+		tags = append(tags, FormatNetworkTag(sg))
+	}
+
+	instance.Tags = &computepb.Tags{
+		Items: tags,
+	}
+}
+
+// buildInstanceMetadata adds SSH key and user data metadata to an instance.
+func (m *ComputeManager) buildInstanceMetadata(instance *computepb.Instance, req *cpi.InstanceRequest) {
+	// Add SSH key from keypair
+	if req.KeyPair != "" || req.KeyPairName != "" {
+		instance.Metadata = &computepb.Metadata{
+			Items: []*computepb.Items{},
+		}
+	}
+
+	// Add user data as startup script
+	if req.UserData == "" {
+		return
+	}
+
+	if instance.GetMetadata() == nil {
+		instance.Metadata = &computepb.Metadata{}
+	}
+
+	instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{
+		Key:   proto("startup-script"),
+		Value: proto(req.UserData),
+	})
 }
 
 // GetInstance retrieves an instance by name or ID.
@@ -348,7 +366,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 }
 
 // CreateKeyPair creates a new SSH key pair (stored in project metadata).
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (m *ComputeManager) CreateKeyPair(_ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	// GCP doesn't have a native key pair concept like AWS
 	// SSH keys are managed via project or instance metadata
 	// We'll return a placeholder that indicates manual key management
@@ -359,7 +377,7 @@ func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequ
 }
 
 // ImportKeyPair imports a public key (adds to project metadata).
-func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (m *ComputeManager) ImportKeyPair(_ctx context.Context, name string, _publicKey string) error {
 	// In a full implementation, this would update project metadata
 	// with the SSH key in format: username:ssh-rsa AAAA...
 	logger.Debugw("ImportKeyPair called - SSH keys managed via project/instance metadata", "name", name)
@@ -368,7 +386,7 @@ func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicK
 }
 
 // GetKeyPair retrieves a key pair.
-func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (m *ComputeManager) GetKeyPair(_ctx context.Context, name string) (*cpi.KeyPair, error) {
 	// GCP SSH keys are stored in project metadata
 	// Return a placeholder
 	return &cpi.KeyPair{
@@ -377,13 +395,13 @@ func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyP
 }
 
 // ListKeyPairs lists key pairs.
-func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
+func (m *ComputeManager) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
 	// Would need to parse project metadata for SSH keys
 	return []*cpi.KeyPair{}, nil
 }
 
 // DeleteKeyPair deletes a key pair.
-func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
+func (m *ComputeManager) DeleteKeyPair(_ctx context.Context, name string) error {
 	// Would need to update project metadata to remove the key
 	logger.Debugw("DeleteKeyPair called - SSH keys managed via project/instance metadata", "name", name)
 
@@ -537,7 +555,7 @@ func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error { //
 }
 
 // ListImages lists available images.
-func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err

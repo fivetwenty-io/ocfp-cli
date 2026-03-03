@@ -28,5 +28,9 @@ warningCode = 0
 [rule.unexported-return]
 [rule.unreachable-code]
 [rule.unused-parameter]
+  arguments = [{allowRegex = "^_"}]
 [rule.var-declaration]
+# Note: var-naming flags internal/version/ for conflicting with go/version
+# standard library package. This is a false positive since the package is
+# internal and fully qualified import paths prevent ambiguity.
 [rule.var-naming]

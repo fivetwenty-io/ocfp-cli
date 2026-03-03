@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	// File permissions.
-	GenesisDirMode  = 0750
+	// GenesisDirMode is the file permission mode for Genesis environment directories.
+	GenesisDirMode = 0750
+	// GenesisFileMode is the file permission mode for Genesis environment files.
 	GenesisFileMode = 0600
 )
 
@@ -95,7 +96,7 @@ func (gi *GenesisIntegration) GetVaultPath(envType string) string {
 }
 
 // UpdateEnvironmentSecrets updates Genesis environment files with new vault information.
-func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, vaultToken string) error {
+func (gi *GenesisIntegration) UpdateEnvironmentSecrets(vaultURL, _vaultToken string) error {
 	gi.logger.Infow("Updating Genesis environment secrets providers", "bloc", gi.blocName)
 
 	// Find Genesis environments directory

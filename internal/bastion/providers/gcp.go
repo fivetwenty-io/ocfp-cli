@@ -138,7 +138,7 @@ func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 }
 
 // Initialize performs bastion initialization for GCP.
-func (g *GCPBastionInit) Initialize(ctx context.Context) error {
+func (g *GCPBastionInit) Initialize(_ctx context.Context) error {
 	g.log.Infow("Initializing GCP bastion", "bloc", g.config.Name)
 
 	// Validate configuration

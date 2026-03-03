@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	// File permissions.
+	// ConfigFilePerm is the file permission mode for configuration files.
 	ConfigFilePerm os.FileMode = 0600
-	ConfigDirPerm  os.FileMode = 0750
 
-	// Tabwriter padding.
+	// ConfigDirPerm is the file permission mode for configuration directories.
+	ConfigDirPerm os.FileMode = 0750
+
+	// TabwriterPadding is the number of padding spaces used by the tabwriter.
 	TabwriterPadding = 2
 )
 
@@ -91,7 +93,7 @@ func newEnvExportCmd() *cobra.Command {
 		Long: `Export environment configuration as shell variables.
 If no environment is specified, exports the current environment.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runEnvExport(args, format)
 		},
 	}
@@ -102,7 +104,7 @@ If no environment is specified, exports the current environment.`,
 }
 
 // runEnvList lists all available environments.
-func runEnvList(cmd *cobra.Command, args []string) error {
+func runEnvList(_cmd *cobra.Command, _args []string) error {
 	log := logger.WithOperation("env-list")
 
 	// Find all configuration files
@@ -143,7 +145,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 // runEnvShow displays details about an environment.
-func runEnvShow(cmd *cobra.Command, args []string) error {
+func runEnvShow(_cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-show")
 
 	envName, err := getEnvironmentName(args)
@@ -375,7 +377,7 @@ func displayAvailabilityZones(cfg *config.Config) error {
 }
 
 // runEnvSet sets the active environment.
-func runEnvSet(cmd *cobra.Command, args []string) error {
+func runEnvSet(_cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-set")
 	envName := args[0]
 

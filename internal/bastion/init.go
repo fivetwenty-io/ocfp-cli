@@ -50,7 +50,7 @@ var (
 	ErrSSHPortNotReachable               = errors.New("SSH port 22 did not become reachable")
 )
 
-// Dynamic error constructor.
+// ErrUnsupportedProvider returns an error for an unrecognized cloud provider name.
 func ErrUnsupportedProvider(provider string) error {
 	return fmt.Errorf("unsupported provider: %s", provider) //nolint:err113 // dynamic error with context
 }
@@ -1669,7 +1669,7 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 }
 
 // setupAPTRepositories sets up APT repositories only.
-func (m *Manager) setupAPTRepositories(ctx context.Context) error {
+func (m *Manager) setupAPTRepositories(_ctx context.Context) error {
 	m.log.Info("Setting up APT repositories")
 
 	// For now, this is a minimal implementation
@@ -2054,7 +2054,7 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 	close(jobs)
 }
 
-func (m *Manager) setupGenesis(ctx context.Context) error {
+func (m *Manager) setupGenesis(_ctx context.Context) error {
 	// Genesis is now installed as part of the binary_tools phase
 	// This phase is kept for main installation once genesis 3.1 has an official release.
 	return nil

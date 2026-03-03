@@ -543,7 +543,7 @@ func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, 
 }
 
 // CreateCredentialsGroup creates a credentials group (not applicable for GCP).
-func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	// GCP uses IAM for credentials, not credentials groups
 	return &cpi.CredentialsGroup{
 		Name:      req.Name,

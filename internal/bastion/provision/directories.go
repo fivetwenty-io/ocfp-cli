@@ -57,7 +57,7 @@ func (dm *DirectoryManager) GetOCFPSymlinks() map[string]string {
 }
 
 // GenerateOCFPDirectoryScript generates script for OCFP directory setup.
-func (dm *DirectoryManager) GenerateOCFPDirectoryScript(ctx context.Context) string {
+func (dm *DirectoryManager) GenerateOCFPDirectoryScript(_ctx context.Context) string {
 	directories := dm.GetOCFPDirectories()
 	lines := make([]string, 0, scriptBufferDirectoriesBase+scriptBufferDirectoriesPerItem*len(directories))
 
@@ -74,7 +74,7 @@ func (dm *DirectoryManager) GenerateOCFPDirectoryScript(ctx context.Context) str
 }
 
 // GenerateOCFPCLISetupScript generates script for OCFP CLI setup.
-func (dm *DirectoryManager) GenerateOCFPCLISetupScript(ctx context.Context) string {
+func (dm *DirectoryManager) GenerateOCFPCLISetupScript(_ctx context.Context) string {
 	// Fixed-size-ish script; preallocate a sensible capacity
 	lines := make([]string, 0, scriptBufferBase)
 

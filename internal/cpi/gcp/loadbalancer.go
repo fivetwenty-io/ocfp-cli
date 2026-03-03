@@ -140,7 +140,7 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, id string) (*
 }
 
 // ListLoadBalancers lists load balancers.
-func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -174,7 +174,7 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 }
 
 // UpdateLoadBalancer updates a load balancer.
-func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string, req *cpi.UpdateLoadBalancerRequest) error {
+func (m *LoadBalancerManager) UpdateLoadBalancer(_ctx context.Context, _id string, _req *cpi.UpdateLoadBalancerRequest) error {
 	// GCP load balancer updates typically require updating individual components
 	// (backend service, health check, etc.)
 	return fmt.Errorf("%w: UpdateLoadBalancer - update individual components", ErrNotImplemented)
@@ -275,18 +275,18 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 }
 
 // RemoveBackend removes a backend from the load balancer.
-func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) RemoveBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	return fmt.Errorf("%w: RemoveBackend - configure instance groups", ErrNotImplemented)
 }
 
 // EnableBackend enables a backend.
-func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) EnableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// GCP doesn't have explicit enable/disable - uses health checks
 	return fmt.Errorf("%w: EnableBackend - managed by health checks", ErrNotImplemented)
 }
 
 // DisableBackend disables a backend.
-func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// GCP doesn't have explicit enable/disable - uses health checks
 	return fmt.Errorf("%w: DisableBackend - managed by health checks", ErrNotImplemented)
 }

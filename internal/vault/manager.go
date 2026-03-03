@@ -80,8 +80,8 @@ type TreeNode struct {
 	Keys     []string             // Key names at this path (if not IsKey)
 }
 
-// VaultTree is the root of the hierarchy.
-type VaultTree struct {
+// Tree is the root of the hierarchy.
+type Tree struct {
 	Root *TreeNode
 }
 
@@ -192,8 +192,6 @@ type MigrateOptions struct {
 
 // Migrate performs vault migration from inception to production
 // This is the Go equivalent of the migrate method in OCFP::Vault::Manager.
-//
-//nolint:gocognit,nestif,cyclop,funlen // migration workflow with dry-run branches and confirmation is inherently complex
 func (m *Manager) Migrate(opts *MigrateOptions) error {
 	inceptionName := m.getInceptionVaultName()
 
@@ -206,99 +204,37 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	m.logger.Infow("Starting vault migration", "from", inceptionName, "to", productionName)
 
 	// Step 1: Validate targets
-	if !opts.DryRun {
-		err := m.validateTargets(inceptionName, productionName)
-		if err != nil {
-			return fmt.Errorf("target validation failed: %w", err)
-		}
-	} else {
-		m.logger.Infow("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", productionName)
+	err = m.migrateStepValidateTargets(opts.DryRun, inceptionName, productionName)
+	if err != nil {
+		return err
 	}
 
 	// Step 2: Create snapshot of inception vault for safety
-	var snapshotPath string
-
-	if !opts.DryRun {
-		m.logger.Info("Creating safety snapshot of inception vault...")
-
-		snapshotPath, err = m.snapshotInceptionVault(inceptionName)
-		if err != nil {
-			return fmt.Errorf("snapshot creation failed: %w", err)
-		}
-
-		m.logger.Infow("✓ Snapshot created successfully", "path", snapshotPath)
-	} else {
-		m.logger.Info("[DRY RUN] Would create snapshot of inception vault")
+	snapshotPath, err := m.migrateStepSnapshot(opts.DryRun, inceptionName)
+	if err != nil {
+		return err
 	}
 
 	// Step 3: Streaming migration with inline validation
-	var migratedCount int
-
-	if !opts.DryRun {
-		m.logger.Info("\nStarting streaming key-by-key migration...")
-
-		migratedCount, err = m.streamingMigrateWithValidation(inceptionName, productionName, opts.OutputMode)
-		if err != nil {
-			return fmt.Errorf("migration failed: %w (snapshot available at: %s)", err, snapshotPath)
-		}
-		// CRITICAL: Ensure we actually migrated something
-		if migratedCount == 0 {
-			return fmt.Errorf("CRITICAL: %w (snapshot saved at: %s)", ErrZeroKeysMigrated, snapshotPath)
-		}
-
-		m.logger.Infow("✓ All secret keys migrated successfully", "migrated", migratedCount)
-	} else {
-		m.logger.Info("[DRY RUN] Would perform streaming migration with validation")
-		// For dry-run, still do the walk but don't write to production
-		// This validates inception vault is accessible and shows what would happen
-		migratedCount, err = m.streamingMigrateWithValidation(inceptionName, inceptionName, opts.OutputMode)
-		if err != nil {
-			return fmt.Errorf("dry-run validation failed: %w", err)
-		}
-
-		m.logger.Infow("[DRY RUN] Would migrate %d keys", "count", migratedCount)
+	migratedCount, err := m.migrateStepStreamingMigration(opts.DryRun, inceptionName, productionName, snapshotPath, opts.OutputMode)
+	if err != nil {
+		return err
 	}
 
-	// Step 5: Confirmation prompt before decommission
-	if !opts.DryRun {
-		if !opts.Force {
-			m.logger.Warn("\n⚠️  CRITICAL OPERATION: About to decommission inception vault")
-			m.logger.Infow("Migration Summary",
-				"migrated", migratedCount,
-				"snapshot", snapshotPath)
-
-			confirmed, err := m.confirmDecommission()
-			if err != nil {
-				return fmt.Errorf("confirmation failed: %w", err)
-			}
-
-			if !confirmed {
-				m.logger.Info("Decommission cancelled by user - inception vault preserved")
-				m.logger.Infow("Migration completed but inception vault NOT decommissioned", "snapshot", snapshotPath)
-
-				return nil
-			}
-		}
-
-		// ONLY NOW is it safe to decommission
-		err := m.decommissionInception(inceptionName)
-		if err != nil {
-			return fmt.Errorf("decommission failed: %w", err)
-		}
-
-		m.logger.Infow("✓ Inception vault decommissioned", "vault", inceptionName)
-	} else {
-		m.logger.Info("[DRY RUN] Would prompt for confirmation to decommission inception vault")
+	// Step 4: Confirmation prompt and decommission
+	cancelled, err := m.migrateStepDecommission(opts.DryRun, opts.Force, inceptionName, migratedCount, snapshotPath)
+	if err != nil {
+		return err
 	}
 
-	// Step 6: Update environment secrets-providers
-	if !opts.DryRun {
-		err := m.updateEnvironmentSecrets()
-		if err != nil {
-			return fmt.Errorf("environment update failed: %w", err)
-		}
-	} else {
-		m.logger.Info("[DRY RUN] Would update environment secrets-providers")
+	if cancelled {
+		return nil
+	}
+
+	// Step 5: Update environment secrets-providers
+	err = m.migrateStepUpdateSecrets(opts.DryRun)
+	if err != nil {
+		return err
 	}
 
 	duration := time.Since(m.startTime)
@@ -328,6 +264,153 @@ func (m *Manager) GetSafe() *Safe {
 // GetClient returns the vault client for advanced operations.
 func (m *Manager) GetClient() *Client {
 	return m.client
+}
+
+// migrateStepValidateTargets validates inception and production vault targets.
+// In dry-run mode, it logs what would happen instead.
+func (m *Manager) migrateStepValidateTargets(dryRun bool, inceptionName, productionName string) error {
+	if dryRun {
+		m.logger.Infow("[DRY RUN] Would validate vault targets", "inception", inceptionName, "production", productionName)
+
+		return nil
+	}
+
+	err := m.validateTargets(inceptionName, productionName)
+	if err != nil {
+		return fmt.Errorf("target validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// migrateStepSnapshot creates a safety snapshot of the inception vault.
+// In dry-run mode, it logs what would happen and returns an empty path.
+func (m *Manager) migrateStepSnapshot(dryRun bool, inceptionName string) (string, error) {
+	if dryRun {
+		m.logger.Info("[DRY RUN] Would create snapshot of inception vault")
+
+		return "", nil
+	}
+
+	m.logger.Info("Creating safety snapshot of inception vault...")
+
+	snapshotPath, err := m.snapshotInceptionVault(inceptionName)
+	if err != nil {
+		return "", fmt.Errorf("snapshot creation failed: %w", err)
+	}
+
+	m.logger.Infow("✓ Snapshot created successfully", "path", snapshotPath)
+
+	return snapshotPath, nil
+}
+
+// migrateStepStreamingMigration performs the streaming key-by-key migration.
+// In dry-run mode, it validates inception vault accessibility without writing to production.
+func (m *Manager) migrateStepStreamingMigration(
+	dryRun bool, inceptionName, productionName, snapshotPath string, outputMode output.Mode,
+) (int, error) {
+	if dryRun {
+		m.logger.Info("[DRY RUN] Would perform streaming migration with validation")
+		// For dry-run, still do the walk but don't write to production
+		// This validates inception vault is accessible and shows what would happen
+		count, err := m.streamingMigrateWithValidation(inceptionName, inceptionName, outputMode)
+		if err != nil {
+			return 0, fmt.Errorf("dry-run validation failed: %w", err)
+		}
+
+		m.logger.Infow("[DRY RUN] Would migrate %d keys", "count", count)
+
+		return count, nil
+	}
+
+	m.logger.Info("\nStarting streaming key-by-key migration...")
+
+	count, err := m.streamingMigrateWithValidation(inceptionName, productionName, outputMode)
+	if err != nil {
+		return 0, fmt.Errorf("migration failed: %w (snapshot available at: %s)", err, snapshotPath)
+	}
+	// CRITICAL: Ensure we actually migrated something
+	if count == 0 {
+		return 0, fmt.Errorf("CRITICAL: %w (snapshot saved at: %s)", ErrZeroKeysMigrated, snapshotPath)
+	}
+
+	m.logger.Infow("✓ All secret keys migrated successfully", "migrated", count)
+
+	return count, nil
+}
+
+// migrateStepDecommission handles the confirmation prompt and inception vault decommission.
+// Returns (cancelled, error). cancelled is true if the user declined decommission.
+// In dry-run mode, it logs what would happen and returns (false, nil).
+func (m *Manager) migrateStepDecommission(
+	dryRun, force bool, inceptionName string, migratedCount int, snapshotPath string,
+) (bool, error) {
+	if dryRun {
+		m.logger.Info("[DRY RUN] Would prompt for confirmation to decommission inception vault")
+
+		return false, nil
+	}
+
+	if !force {
+		cancelled, err := m.promptDecommissionConfirmation(migratedCount, snapshotPath)
+		if err != nil {
+			return false, err
+		}
+
+		if cancelled {
+			return true, nil
+		}
+	}
+
+	// ONLY NOW is it safe to decommission
+	err := m.decommissionInception(inceptionName)
+	if err != nil {
+		return false, fmt.Errorf("decommission failed: %w", err)
+	}
+
+	m.logger.Infow("✓ Inception vault decommissioned", "vault", inceptionName)
+
+	return false, nil
+}
+
+// promptDecommissionConfirmation prompts the user to confirm decommission.
+// Returns (cancelled, error). cancelled is true if the user declined.
+func (m *Manager) promptDecommissionConfirmation(migratedCount int, snapshotPath string) (bool, error) {
+	m.logger.Warn("\n⚠️  CRITICAL OPERATION: About to decommission inception vault")
+	m.logger.Infow("Migration Summary",
+		"migrated", migratedCount,
+		"snapshot", snapshotPath)
+
+	confirmed, err := m.confirmDecommission()
+	if err != nil {
+		return false, fmt.Errorf("confirmation failed: %w", err)
+	}
+
+	if !confirmed {
+		m.logger.Info("Decommission cancelled by user - inception vault preserved")
+		m.logger.Infow("Migration completed but inception vault NOT decommissioned", "snapshot", snapshotPath)
+
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// migrateStepUpdateSecrets updates environment secrets-providers after migration.
+// In dry-run mode, it logs what would happen instead.
+func (m *Manager) migrateStepUpdateSecrets(dryRun bool) error {
+	if dryRun {
+		m.logger.Info("[DRY RUN] Would update environment secrets-providers")
+
+		return nil
+	}
+
+	err := m.updateEnvironmentSecrets()
+	if err != nil {
+		return fmt.Errorf("environment update failed: %w", err)
+	}
+
+	return nil
 }
 
 // getInceptionVaultName returns the inception vault name with fallback logic.
@@ -611,7 +694,7 @@ func (m *Manager) streamingMigrateStructured(
 	}
 
 	// Build tree for structured output
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build vault tree: %w", err)
 	}
@@ -1519,10 +1602,10 @@ func (m *Manager) walkVaultPathsFromSafe(safe *Safe, basePath, currentPath strin
 	return nil
 }
 
-// buildVaultTree converts flat path:key list to hierarchical tree.
+// buildTree converts flat path:key list to hierarchical tree.
 //
 //nolint:unparam // error return kept for interface consistency and future validation
-func (m *Manager) buildVaultTree(pathsWithKeys []string) (*VaultTree, error) {
+func (m *Manager) buildTree(pathsWithKeys []string) (*Tree, error) {
 	root := &TreeNode{
 		Name:     "secret",
 		IsKey:    false,
@@ -1581,7 +1664,7 @@ func (m *Manager) buildVaultTree(pathsWithKeys []string) (*VaultTree, error) {
 		current.Keys = append(current.Keys, key)
 	}
 
-	return &VaultTree{Root: root}, nil
+	return &Tree{Root: root}, nil
 }
 
 // calculatePathChecksumFromSafe calculates SHA256 checksum from a specific Safe instance.
@@ -1748,10 +1831,7 @@ func (m *Manager) walkAndStreamMigrate(
 	migratedCount *int,
 	visited map[string]bool,
 ) error {
-	fullPath := basePath
-	if currentPath != "" {
-		fullPath = basePath + currentPath
-	}
+	fullPath := joinVaultPath(basePath, currentPath)
 
 	// Skip if we've already processed this path
 	if visited[fullPath] {
@@ -1773,27 +1853,8 @@ func (m *Manager) walkAndStreamMigrate(
 		return nil
 	}
 
-	// Get sorted subdirectories
-	var childNames []string
-
-	if hasSubPaths {
-		for _, subPath := range subPaths {
-			childNames = append(childNames, strings.TrimSuffix(subPath, "/"))
-		}
-
-		sort.Strings(childNames)
-	}
-
-	// Get sorted keys
-	var keys []string
-
-	if hasKeys {
-		for key := range data {
-			keys = append(keys, key)
-		}
-
-		sort.Strings(keys)
-	}
+	childNames := sortedChildNames(subPaths)
+	keys := sortedMapKeys(data)
 
 	// Calculate total items for isLast determination
 	totalItems := len(childNames) + len(keys)
@@ -1808,16 +1869,11 @@ func (m *Manager) walkAndStreamMigrate(
 		renderer.StartDirectory(childName, isLast)
 
 		// Recursively walk subdirectory
-		newCurrentPath := currentPath + "/" + childName
-		if currentPath == "" {
-			newCurrentPath = childName
-		}
-
 		err := m.walkAndStreamMigrate(
 			inceptionSafe,
 			productionSafe,
 			basePath,
-			newCurrentPath,
+			joinChildPath(currentPath, childName),
 			renderer,
 			migratedCount,
 			visited,
@@ -1834,18 +1890,12 @@ func (m *Manager) walkAndStreamMigrate(
 		currentItem++
 		isLast := currentItem == totalItems
 
-		// Build path:key format
-		pathWithKey := strings.TrimPrefix(currentPath, "/") + ":" + key
-		if currentPath == "" {
-			pathWithKey = ":" + key
-		}
-
 		// MIGRATE + VALIDATE inline
 		inceptionHash, prodHash, err := m.migrateAndValidateSingleKey(
 			inceptionSafe,
 			productionSafe,
 			basePath,
-			pathWithKey,
+			buildPathWithKey(currentPath, key),
 		)
 
 		// RENDER immediately (real-time feedback)
@@ -1858,6 +1908,65 @@ func (m *Manager) walkAndStreamMigrate(
 	}
 
 	return nil
+}
+
+// joinVaultPath joins a base path with a current path segment.
+func joinVaultPath(basePath, currentPath string) string {
+	if currentPath != "" {
+		return basePath + currentPath
+	}
+
+	return basePath
+}
+
+// sortedChildNames extracts child directory names from vault list output, sorted alphabetically.
+func sortedChildNames(subPaths []string) []string {
+	if len(subPaths) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(subPaths))
+	for _, subPath := range subPaths {
+		names = append(names, strings.TrimSuffix(subPath, "/"))
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
+// sortedMapKeys returns the keys of a map sorted alphabetically.
+func sortedMapKeys(data map[string]interface{}) []string {
+	if len(data) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(data))
+	for key := range data {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// joinChildPath builds the next current path for a child directory.
+func joinChildPath(currentPath, childName string) string {
+	if currentPath == "" {
+		return childName
+	}
+
+	return currentPath + "/" + childName
+}
+
+// buildPathWithKey builds the path:key format used for vault operations.
+func buildPathWithKey(currentPath, key string) string {
+	if currentPath == "" {
+		return ":" + key
+	}
+
+	return strings.TrimPrefix(currentPath, "/") + ":" + key
 }
 
 // snapshotInceptionVault creates a safety snapshot of the inception vault before migration.

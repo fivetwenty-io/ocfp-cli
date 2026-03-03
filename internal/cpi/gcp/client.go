@@ -1,3 +1,4 @@
+// Package gcp implements the CPI provider for Google Cloud Platform.
 package gcp
 
 import (
@@ -117,7 +118,7 @@ func (c *Client) ProjectID() string {
 }
 
 // Initialize configures the GCP client with the provided configuration.
-func (c *Client) Initialize(ctx context.Context, config interface{}) error {
+func (c *Client) Initialize(_ctx context.Context, config interface{}) error {
 	// Handle different config types
 	cfg, err := c.parseConfig(config)
 	if err != nil {
@@ -207,7 +208,7 @@ func closeClient(c closeable, errs *[]error) {
 // Cleanup releases resources and closes connections.
 //
 //nolint:funlen // sequential cleanup steps must remain together
-func (c *Client) Cleanup(ctx context.Context) error {
+func (c *Client) Cleanup(_ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -414,8 +415,6 @@ func (c *Client) initializeResourceManagers() {
 }
 
 // ensureClientsLoaded ensures all GCP SDK clients are loaded.
-//
-//nolint:cyclop,funlen // repetitive SDK client initialization for each GCP service
 func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -444,7 +443,36 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		opts = append(opts, option.WithEndpoint(c.config.ComputeEndpoint))
 	}
 
-	// Initialize compute clients
+	err = c.initComputeClients(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	err = c.initLoadBalancingClients(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	err = c.initStorageClient(ctx, creds)
+	if err != nil {
+		return err
+	}
+
+	c.clientsLoaded = true
+
+	logger.Debugw("GCP service clients loaded",
+		"project", c.config.ProjectID,
+		"region", c.config.Region)
+
+	return nil
+}
+
+// initComputeClients initializes all GCP compute SDK clients.
+//
+//nolint:funlen // sequential SDK client initialization for each GCP compute service
+func (c *Client) initComputeClients(ctx context.Context, opts []option.ClientOption) error {
+	var err error
+
 	c.instancesClient, err = compute.NewInstancesRESTClient(ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create instances client: %w", err)
@@ -495,7 +523,13 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		return fmt.Errorf("failed to create routers client: %w", err)
 	}
 
-	// Initialize load balancing clients
+	return nil
+}
+
+// initLoadBalancingClients initializes all GCP load balancing SDK clients.
+func (c *Client) initLoadBalancingClients(ctx context.Context, opts []option.ClientOption) error {
+	var err error
+
 	c.forwardingRulesClient, err = compute.NewForwardingRulesRESTClient(ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create forwarding rules client: %w", err)
@@ -521,24 +555,25 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		return fmt.Errorf("failed to create region health checks client: %w", err)
 	}
 
-	// Initialize storage client
+	return nil
+}
+
+// initStorageClient initializes the GCP storage SDK client.
+func (c *Client) initStorageClient(ctx context.Context, creds []byte) error {
 	storageOpts := []option.ClientOption{
 		option.WithCredentialsJSON(creds),
 	}
+
 	if c.config.UseCustomEndpoint && c.config.StorageEndpoint != "" {
 		storageOpts = append(storageOpts, option.WithEndpoint(c.config.StorageEndpoint))
 	}
+
+	var err error
 
 	c.storageClient, err = storage.NewClient(ctx, storageOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client: %w", err)
 	}
-
-	c.clientsLoaded = true
-
-	logger.Debugw("GCP service clients loaded",
-		"project", c.config.ProjectID,
-		"region", c.config.Region)
 
 	return nil
 }

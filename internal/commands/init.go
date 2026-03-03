@@ -20,11 +20,13 @@ import (
 )
 
 const (
-	// Default maximum workers for parallel operations.
+	// DefaultMaxWorkers is the default number of workers for parallel operations.
 	DefaultMaxWorkers = 4
 
-	// File permissions.
-	ManifestFilePerm  os.FileMode = 0600
+	// ManifestFilePerm is the file permission mode for manifest files.
+	ManifestFilePerm os.FileMode = 0600
+
+	// DeploymentDirPerm is the file permission mode for deployment directories.
 	DeploymentDirPerm os.FileMode = 0750
 )
 
@@ -33,6 +35,7 @@ var (
 	validDNSPattern      = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 	validUserPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 
+	// ErrInitCancelled indicates the user cancelled the initialization process.
 	ErrInitCancelled = errors.New("initialization cancelled by user")
 )
 
@@ -144,6 +147,7 @@ func (f *initFlags) getComponent(args []string) string {
 	return strings.ToLower(args[0])
 }
 
+// ErrMutuallyExclusiveFlags indicates that mutually exclusive command flags were specified together.
 var ErrMutuallyExclusiveFlags = errors.New("mutually exclusive flags")
 
 // validateModeFlags validates that mutually exclusive mode flags are not used together.

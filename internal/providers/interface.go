@@ -1,3 +1,4 @@
+// Package providers defines interfaces and base types for cloud provider vault operations.
 package providers
 
 import (

@@ -86,7 +86,7 @@ func (m *mockFullSafe) Delete(path, key string) error {
 	return nil
 }
 
-func (m *mockFullSafe) List(path string) ([]string, error) {
+func (m *mockFullSafe) List(_path string) ([]string, error) {
 	var keys []string
 	for k := range m.data {
 		keys = append(keys, k)
@@ -103,11 +103,11 @@ func (m *mockFullSafe) Import(path string, data map[string]interface{}) error {
 	return nil
 }
 
-func (m *mockFullSafe) GetEngineInfo(path string) (*EngineInfo, error) {
+func (m *mockFullSafe) GetEngineInfo(_path string) (*EngineInfo, error) {
 	return &EngineInfo{}, nil
 }
 
-func (m *mockFullSafe) GetJSON(path, key string) ([]byte, error) {
+func (m *mockFullSafe) GetJSON(_path, _key string) ([]byte, error) {
 	return []byte("{}"), nil
 }
 

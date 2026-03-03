@@ -54,7 +54,7 @@ func (sm *SnapManager) GetSnapPackages() []SnapPackage {
 }
 
 // GenerateSnapInstallScript generates script for snap package installation.
-func (sm *SnapManager) GenerateSnapInstallScript(ctx context.Context) string {
+func (sm *SnapManager) GenerateSnapInstallScript(_ctx context.Context) string {
 	packages := sm.GetSnapPackages()
 	if len(packages) == 0 {
 		return ""

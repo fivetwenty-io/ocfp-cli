@@ -244,93 +244,23 @@ func (r *InteractiveRenderer) PhaseSkipped(info PhaseInfo, reason string) error 
 }
 
 // Finalize completes the rendering process with summary information.
-//
-//nolint:funlen // summary output with color support and multiple write operations
 func (r *InteractiveRenderer) Finalize(summary Summary) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Write separator
-	separator := "===== Summary =====\n"
-
-	_, err := r.writer.Write([]byte(separator))
+	err := r.writeLinef("===== Summary =====\n")
 	if err != nil {
-		return fmt.Errorf("failed to write separator: %w", err)
+		return err
 	}
 
-	// Status
-	status := "Success"
-	if !summary.Success {
-		status = "Failed"
-	}
-
-	line := fmt.Sprintf("Status: %s\n", status)
-
-	if r.config.UseColor {
-		if summary.Success {
-			line = Green(line)
-		} else {
-			line = Red(line)
-		}
-	}
-
-	_, err = r.writer.Write([]byte(line))
+	err = r.writeSummaryStatus(summary)
 	if err != nil {
-		return fmt.Errorf("failed to write status: %w", err)
+		return err
 	}
 
-	// Duration
-	line = fmt.Sprintf("Duration: %s\n", r.formatDuration(summary.Duration))
-
-	_, err = r.writer.Write([]byte(line))
+	err = r.writeSummaryErrors(summary.Errors)
 	if err != nil {
-		return fmt.Errorf("failed to write duration: %w", err)
-	}
-
-	// Phase counts
-	line = fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases)
-
-	_, err = r.writer.Write([]byte(line))
-	if err != nil {
-		return fmt.Errorf("failed to write completed count: %w", err)
-	}
-
-	line = fmt.Sprintf("Phases failed: %d\n", summary.FailedPhases)
-
-	_, err = r.writer.Write([]byte(line))
-	if err != nil {
-		return fmt.Errorf("failed to write failed count: %w", err)
-	}
-
-	if summary.SkippedPhases > 0 {
-		line = fmt.Sprintf("Phases skipped: %d\n", summary.SkippedPhases)
-
-		_, err = r.writer.Write([]byte(line))
-		if err != nil {
-			return fmt.Errorf("failed to write skipped count: %w", err)
-		}
-	}
-
-	// Include errors if any
-	if len(summary.Errors) > 0 {
-		errHeader := "\nErrors:\n"
-
-		_, err = r.writer.Write([]byte(errHeader))
-		if err != nil {
-			return fmt.Errorf("failed to write error header: %w", err)
-		}
-
-		for _, errMsg := range summary.Errors {
-			line = fmt.Sprintf("  - %s\n", errMsg)
-			if r.config.UseColor {
-				line = Red(line)
-			}
-
-			_, err = r.writer.Write([]byte(line))
-			if err != nil {
-				return fmt.Errorf("failed to write error: %w", err)
-			}
-		}
+		return err
 	}
 
 	r.log.Infow("Operation finalized",
@@ -351,6 +281,89 @@ func (r *InteractiveRenderer) Close() error {
 	defer r.mu.Unlock()
 
 	r.log.Debugw("Interactive renderer closed")
+
+	return nil
+}
+
+// writeLinef writes a pre-formatted line to the renderer's writer.
+func (r *InteractiveRenderer) writeLinef(line string) error {
+	_, err := r.writer.Write([]byte(line))
+	if err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	return nil
+}
+
+// writeSummaryErrors writes error details to the summary output.
+func (r *InteractiveRenderer) writeSummaryErrors(errors []string) error {
+	if len(errors) == 0 {
+		return nil
+	}
+
+	err := r.writeLinef("\nErrors:\n")
+	if err != nil {
+		return err
+	}
+
+	for _, errMsg := range errors {
+		line := fmt.Sprintf("  - %s\n", errMsg)
+		if r.config.UseColor {
+			line = Red(line)
+		}
+
+		err = r.writeLinef(line)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeSummaryStatus writes the status, duration, and phase count lines.
+func (r *InteractiveRenderer) writeSummaryStatus(summary Summary) error {
+	statusText := "Success"
+	if !summary.Success {
+		statusText = "Failed"
+	}
+
+	statusLine := fmt.Sprintf("Status: %s\n", statusText)
+
+	if r.config.UseColor {
+		if summary.Success {
+			statusLine = Green(statusLine)
+		} else {
+			statusLine = Red(statusLine)
+		}
+	}
+
+	err := r.writeLinef(statusLine)
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Duration: %s\n", r.formatDuration(summary.Duration)))
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases))
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Phases failed: %d\n", summary.FailedPhases))
+	if err != nil {
+		return err
+	}
+
+	if summary.SkippedPhases > 0 {
+		err = r.writeLinef(fmt.Sprintf("Phases skipped: %d\n", summary.SkippedPhases))
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

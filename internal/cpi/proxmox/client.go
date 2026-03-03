@@ -1,3 +1,4 @@
+// Package proxmox implements the CPI provider for Proxmox Virtual Environment.
 package proxmox
 
 import (
@@ -332,35 +333,15 @@ func (c *Client) SupportsStorage() bool {
 }
 
 // Initialize initializes the provider with configuration.
-//
-//nolint:cyclop,funlen // Multiple config type checks and setup required
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
-	// Handle different config types
-	var cfg *Config
+	cfg, err := c.parseProxmoxConfig(config)
+	if err != nil {
+		return err
+	}
 
-	switch configValue := config.(type) {
-	case *Config:
-		cfg = configValue
-	case *ocfpconfig.Config:
-		// Convert OCFP config to Proxmox config
-		cfg = &Config{
-			Host:           configValue.APIEndpoint,
-			Node:           configValue.Region, // Use region as node
-			TokenID:        configValue.AuthToken,
-			TokenSecret:    configValue.Password, // Token secret may be in password field
-			Username:       configValue.Username,
-			Password:       configValue.Password,
-			NetworkMode:    defaultNetworkMode,
-			DefaultBridge:  defaultBridge,
-			DefaultStorage: defaultStorage,
-			Timeout:        0,
-			MaxRetries:     0,
-		}
-	case map[string]interface{}:
-		// Config was already parsed in NewProvider, just return success
+	// parseProxmoxConfig returns nil for map config type (already parsed)
+	if cfg == nil {
 		return nil
-	default:
-		return ErrInvalidConfigType(config)
 	}
 
 	// Validate required fields
@@ -376,7 +357,23 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 		return ErrAPITokenRequired
 	}
 
-	// Set defaults
+	applyProxmoxDefaults(cfg)
+
+	c.config = cfg
+
+	c.initProxmoxManagers()
+
+	// Authenticate
+	err = c.Authenticate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize Proxmox provider: %w", err)
+	}
+
+	return nil
+}
+
+// applyProxmoxDefaults sets default values on a Proxmox config.
+func applyProxmoxDefaults(cfg *Config) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultHTTPTimeout
 	}
@@ -400,10 +397,48 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	if cfg.Realm == "" {
 		cfg.Realm = "pam"
 	}
+}
 
-	c.config = cfg
+// Cleanup performs cleanup operations.
+func (c *Client) Cleanup(_ctx context.Context) error {
+	// If using ticket-based auth, logout
+	if c.pveClient != nil && c.config != nil && c.config.Username != "" {
+		_ = c.pveClient.Logout()
+	}
 
-	// Initialize resource managers if not already set
+	return nil
+}
+
+// parseProxmoxConfig parses the configuration based on type.
+// Returns nil config for map[string]interface{} (already parsed).
+func (c *Client) parseProxmoxConfig(config interface{}) (*Config, error) {
+	switch configValue := config.(type) {
+	case *Config:
+		return configValue, nil
+	case *ocfpconfig.Config:
+		return &Config{
+			Host:           configValue.APIEndpoint,
+			Node:           configValue.Region, // Use region as node
+			TokenID:        configValue.AuthToken,
+			TokenSecret:    configValue.Password, // Token secret may be in password field
+			Username:       configValue.Username,
+			Password:       configValue.Password,
+			NetworkMode:    defaultNetworkMode,
+			DefaultBridge:  defaultBridge,
+			DefaultStorage: defaultStorage,
+			Timeout:        0,
+			MaxRetries:     0,
+		}, nil
+	case map[string]interface{}:
+		// Config was already parsed in NewProvider, just return success
+		return nil, nil
+	default:
+		return nil, ErrInvalidConfigType(config)
+	}
+}
+
+// initProxmoxManagers initializes resource managers if not already set.
+func (c *Client) initProxmoxManagers() {
 	if c.network == nil {
 		c.network = &NetworkManager{client: c}
 	}
@@ -423,24 +458,6 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	if c.loadBalancer == nil {
 		c.loadBalancer = &LoadBalancerManager{client: c}
 	}
-
-	// Authenticate
-	err := c.Authenticate(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize Proxmox provider: %w", err)
-	}
-
-	return nil
-}
-
-// Cleanup performs cleanup operations.
-func (c *Client) Cleanup(ctx context.Context) error {
-	// If using ticket-based auth, logout
-	if c.pveClient != nil && c.config != nil && c.config.Username != "" {
-		_ = c.pveClient.Logout()
-	}
-
-	return nil
 }
 
 // getQemuService returns the QEMU service, initializing on first use.

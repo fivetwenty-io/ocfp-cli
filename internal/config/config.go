@@ -1,3 +1,4 @@
+// Package config handles OCFP CLI configuration file loading, validation, and bloc management.
 package config
 
 import (
@@ -15,6 +16,8 @@ import (
 )
 
 // ConfigFile represents the top-level configuration file structure.
+//
+//revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
 	Debug   bool               `mapstructure:"debug"   yaml:"debug"`
 	Verbose bool               `mapstructure:"verbose" yaml:"verbose"`
@@ -241,6 +244,7 @@ type SnapOverride struct {
 	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
 }
 
+// Deployment mode constants for development and release configurations.
 const (
 	DeploymentModeDev     = "dev"
 	DeploymentModeRelease = "release"
@@ -766,6 +770,14 @@ func applyDefaults(cfg *Config, provider string) error {
 		cfg.Bastion.SSHUser = "ubuntu"
 	}
 
+	applyGenesisDefaults(cfg)
+	applyBastionGenesisDefaults(cfg)
+
+	return nil
+}
+
+// applyGenesisDefaults applies defaults for the global Genesis configuration.
+func applyGenesisDefaults(cfg *Config) {
 	// Enable Genesis by default if not explicitly configured
 	if !cfg.Genesis.Enabled && cfg.Bastion.Genesis.Enabled {
 		// Bastion-specific Genesis config takes precedence
@@ -775,7 +787,6 @@ func applyDefaults(cfg *Config, provider string) error {
 		cfg.Genesis.Enabled = true
 	}
 
-	// Apply Genesis defaults
 	if cfg.Genesis.Branch == "" {
 		cfg.Genesis.Branch = "v3.1.x-dev"
 	}
@@ -783,19 +794,21 @@ func applyDefaults(cfg *Config, provider string) error {
 	if cfg.Genesis.VersionPrefix == "" {
 		cfg.Genesis.VersionPrefix = "3.1.0"
 	}
+}
 
-	// Apply Bastion-specific Genesis defaults
-	if cfg.Bastion.Genesis.Enabled {
-		if cfg.Bastion.Genesis.Branch == "" {
-			cfg.Bastion.Genesis.Branch = "v3.1.x-dev"
-		}
-
-		if cfg.Bastion.Genesis.VersionPrefix == "" {
-			cfg.Bastion.Genesis.VersionPrefix = "3.1.0"
-		}
+// applyBastionGenesisDefaults applies defaults for the bastion-specific Genesis configuration.
+func applyBastionGenesisDefaults(cfg *Config) {
+	if !cfg.Bastion.Genesis.Enabled {
+		return
 	}
 
-	return nil
+	if cfg.Bastion.Genesis.Branch == "" {
+		cfg.Bastion.Genesis.Branch = "v3.1.x-dev"
+	}
+
+	if cfg.Bastion.Genesis.VersionPrefix == "" {
+		cfg.Bastion.Genesis.VersionPrefix = "3.1.0"
+	}
 }
 
 // applyStackitDefaults applies STACKIT-specific defaults.

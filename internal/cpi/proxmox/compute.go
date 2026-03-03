@@ -104,8 +104,6 @@ var flavorPresets = map[string]*cpi.Flavor{
 }
 
 // CreateInstance creates a new QEMU VM.
-//
-//nolint:cyclop,funlen,nestif // Proxmox VM creation with template cloning and cloud-init is inherently complex
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	logger.WithOperation("CreateInstance").Infof("Creating VM: %s", req.Name)
 
@@ -127,107 +125,26 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return nil, fmt.Errorf("failed to get next VMID: %w", err)
 	}
 
-	// Build VM creation parameters
-	params := map[string]interface{}{
-		"vmid":    vmid,
-		"name":    req.Name,
-		"memory":  flavor.RAM,
-		"cores":   flavor.VCPUs,
-		"sockets": 1,
-		"cpu":     "host",
-		"ostype":  "l26", // Linux 2.6+ kernel
-		"agent":   "1",   // Enable QEMU guest agent
-	}
-
-	// Configure network
-	bridge := m.client.config.DefaultBridge
-	if req.NetworkID != "" {
-		bridge = req.NetworkID
-	}
-
-	params["net0"] = fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge)
-
-	// Configure storage for boot disk
-	storage := m.client.config.DefaultStorage
-
+	// Determine disk size
 	diskSize := flavor.Disk
 	if req.BootVolumeSize > 0 {
 		diskSize = req.BootVolumeSize
 	}
 
-	// If we have an image (template), clone from it
+	storage := m.client.config.DefaultStorage
+
+	// Create the VM either from template or blank
 	if req.Image != "" {
-		// Image is expected to be a template VMID
-		templateVMID, err := strconv.Atoi(req.Image)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidTemplateVMID, req.Image)
-		}
-
-		// Clone the template
-		upid, err := m.cloneTemplate(ctx, node, templateVMID, vmid, req.Name, storage)
-		if err != nil {
-			return nil, fmt.Errorf("failed to clone template: %w", err)
-		}
-
-		// Wait for clone to complete
-		err = m.client.waitForTask(ctx, node, upid, taskTimeoutClone)
-		if err != nil {
-			return nil, fmt.Errorf("clone task failed: %w", err)
-		}
-
-		// Resize disk if needed
-		if diskSize > 0 {
-			_ = m.resizeBootDisk(ctx, node, vmid, diskSize)
-		}
+		err = m.createFromTemplate(ctx, node, vmid, diskSize, storage, req)
 	} else {
-		// Create VM with blank disk
-		params["scsi0"] = fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize)
-		params["scsihw"] = "virtio-scsi-pci"
-		params["boot"] = "order=scsi0"
-
-		// Create the VM
-		qemuSvc := m.client.getQemuService()
-
-		upid, err := qemuSvc.Create(ctx, node, params)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create VM: %w", err)
-		}
-
-		// Wait for creation
-		err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
-		if err != nil {
-			return nil, fmt.Errorf("VM creation task failed: %w", err)
-		}
+		err = m.createBlankVM(ctx, node, vmid, diskSize, storage, flavor, req)
 	}
 
-	// Configure cloud-init if user data is provided
-	if req.UserData != "" {
-		err := m.configureCloudInit(ctx, node, vmid, req)
-		if err != nil {
-			logger.Warnf("Failed to configure cloud-init: %v", err)
-		}
-	}
-
-	// Apply tags via description
-	if len(req.Tags) > 0 {
-		m.setVMTags(ctx, node, vmid, req.Tags)
-	}
-
-	// Start the VM
-	qemuSvc := m.client.getQemuService()
-
-	upid, err := qemuSvc.Start(ctx, node, vmid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start VM: %w", err)
+		return nil, err
 	}
 
-	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
-	if err != nil {
-		return nil, fmt.Errorf("VM start task failed: %w", err)
-	}
-
-	// Get the created instance
-	return m.GetInstance(ctx, strconv.Itoa(vmid))
+	return m.finalizeAndStartVM(ctx, node, vmid, req)
 }
 
 // GetInstance retrieves a VM by ID.
@@ -429,12 +346,12 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 }
 
 // CreateKeyPair creates a new key pair (not supported - use ImportKeyPair).
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (m *ComputeManager) CreateKeyPair(_ctx context.Context, _req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	return nil, ErrCreateKeyPairNotSupported
 }
 
 // ImportKeyPair imports a public key.
-func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (m *ComputeManager) ImportKeyPair(_ctx context.Context, name string, _publicKey string) error {
 	// Store the key for use in cloud-init
 	// In Proxmox, keys are typically stored per-VM via cloud-init
 	// We'll store this in a local cache for now
@@ -444,19 +361,19 @@ func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicK
 }
 
 // GetKeyPair retrieves a key pair.
-func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (m *ComputeManager) GetKeyPair(_ctx context.Context, _name string) (*cpi.KeyPair, error) {
 	// Key pairs are not stored centrally in Proxmox
 	return nil, ErrVMNotFound
 }
 
 // ListKeyPairs lists all key pairs.
-func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
+func (m *ComputeManager) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
 	// Key pairs are not stored centrally in Proxmox
 	return []*cpi.KeyPair{}, nil
 }
 
 // DeleteKeyPair deletes a key pair.
-func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
+func (m *ComputeManager) DeleteKeyPair(_ctx context.Context, _name string) error {
 	// Key pairs are not stored centrally in Proxmox
 	return nil
 }
@@ -483,7 +400,7 @@ func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 }
 
 // ListImages lists available templates.
-func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	var images []*cpi.Image
 
 	// Refresh nodes
@@ -562,7 +479,7 @@ func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, e
 }
 
 // ListFlavors lists available flavor presets.
-func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
+func (m *ComputeManager) ListFlavors(_ctx context.Context) ([]*cpi.Flavor, error) {
 	flavors := make([]*cpi.Flavor, 0, len(flavorPresets))
 	for _, f := range flavorPresets {
 		flavors = append(flavors, f)
@@ -572,12 +489,107 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 }
 
 // GetFlavor retrieves a flavor preset.
-func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
+func (m *ComputeManager) GetFlavor(_ctx context.Context, id string) (*cpi.Flavor, error) {
 	if f, ok := flavorPresets[id]; ok {
 		return f, nil
 	}
 
 	return nil, ErrFlavorNotFound(id)
+}
+
+// createFromTemplate creates a VM by cloning a template.
+func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vmid, diskSize int, storage string, req *cpi.InstanceRequest) error {
+	templateVMID, err := strconv.Atoi(req.Image)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidTemplateVMID, req.Image)
+	}
+
+	upid, err := m.cloneTemplate(ctx, node, templateVMID, vmid, req.Name, storage)
+	if err != nil {
+		return fmt.Errorf("failed to clone template: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutClone)
+	if err != nil {
+		return fmt.Errorf("clone task failed: %w", err)
+	}
+
+	// Resize disk if needed
+	if diskSize > 0 {
+		_ = m.resizeBootDisk(ctx, node, vmid, diskSize)
+	}
+
+	return nil
+}
+
+// createBlankVM creates a VM with a blank disk.
+func (m *ComputeManager) createBlankVM(ctx context.Context, node string, vmid, diskSize int, storage string, flavor *cpi.Flavor, req *cpi.InstanceRequest) error {
+	// Build VM creation parameters
+	bridge := m.client.config.DefaultBridge
+	if req.NetworkID != "" {
+		bridge = req.NetworkID
+	}
+
+	params := map[string]interface{}{
+		"vmid":    vmid,
+		"name":    req.Name,
+		"memory":  flavor.RAM,
+		"cores":   flavor.VCPUs,
+		"sockets": 1,
+		"cpu":     "host",
+		"ostype":  "l26", // Linux 2.6+ kernel
+		"agent":   "1",   // Enable QEMU guest agent
+		"net0":    fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge),
+		"scsi0":   fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize),
+		"scsihw":  "virtio-scsi-pci",
+		"boot":    "order=scsi0",
+	}
+
+	qemuSvc := m.client.getQemuService()
+
+	upid, err := qemuSvc.Create(ctx, node, params)
+	if err != nil {
+		return fmt.Errorf("failed to create VM: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
+	if err != nil {
+		return fmt.Errorf("VM creation task failed: %w", err)
+	}
+
+	return nil
+}
+
+// finalizeAndStartVM applies cloud-init, tags, and starts the VM.
+func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+	// Configure cloud-init if user data is provided
+	if req.UserData != "" {
+		err := m.configureCloudInit(ctx, node, vmid, req)
+		if err != nil {
+			logger.Warnf("Failed to configure cloud-init: %v", err)
+		}
+	}
+
+	// Apply tags via description
+	if len(req.Tags) > 0 {
+		m.setVMTags(ctx, node, vmid, req.Tags)
+	}
+
+	// Start the VM
+	qemuSvc := m.client.getQemuService()
+
+	upid, err := qemuSvc.Start(ctx, node, vmid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start VM: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
+	if err != nil {
+		return nil, fmt.Errorf("VM start task failed: %w", err)
+	}
+
+	// Get the created instance
+	return m.GetInstance(ctx, strconv.Itoa(vmid))
 }
 
 // Helper methods

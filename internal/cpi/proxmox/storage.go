@@ -277,7 +277,7 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 }
 
 // ResizeVolume resizes a volume.
-func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) error {
+func (m *StorageManager) ResizeVolume(_ctx context.Context, _id string, _size int) error {
 	// Volume resizing in Proxmox is done through the VM
 	// This requires knowing which VM the volume is attached to
 	logger.Warnf("Volume resize requires the volume to be attached to a VM")
@@ -476,36 +476,36 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
 // Object storage operations (not natively supported)
 
 // CreateBucket creates a bucket (not supported).
-func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
+func (m *StorageManager) CreateBucket(_ctx context.Context, _req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	return nil, ErrBucketsNotSupported
 }
 
 // GetBucket retrieves a bucket.
-func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
+func (m *StorageManager) GetBucket(_ctx context.Context, _name string) (*cpi.Bucket, error) {
 	return nil, ErrBucketsNotSupported
 }
 
 // ListBuckets lists buckets.
-func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) {
+func (m *StorageManager) ListBuckets(_ctx context.Context) ([]*cpi.Bucket, error) {
 	return []*cpi.Bucket{}, nil
 }
 
 // DeleteBucket deletes a bucket.
-func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
+func (m *StorageManager) DeleteBucket(_ctx context.Context, _name string) error {
 	return ErrBucketsNotSupported
 }
 
 // EmptyBucket empties a bucket.
-func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
+func (m *StorageManager) EmptyBucket(_ctx context.Context, _name string) error {
 	return ErrBucketsNotSupported
 }
 
 // IsBucketEmpty checks if a bucket is empty.
-func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+func (m *StorageManager) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
 	return false, ErrBucketsNotSupported
 }
 
 // CreateCredentialsGroup creates a credentials group (not supported).
-func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	return nil, ErrBucketsNotSupported
 }

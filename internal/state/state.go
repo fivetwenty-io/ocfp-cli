@@ -1,3 +1,4 @@
+// Package state manages OCFP bloc state persistence, backup, reconciliation, and resource tracking.
 package state
 
 import (

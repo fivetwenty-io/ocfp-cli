@@ -93,7 +93,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 }
 
 // GetSubnet retrieves a subnet.
-func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
+func (m *NetworkManager) GetSubnet(_ctx context.Context, _id string) (*cpi.Subnet, error) {
 	return nil, ErrSubnetsNotSupported
 }
 
@@ -136,7 +136,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 }
 
 // DeleteSubnet deletes a subnet.
-func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteSubnet(_ctx context.Context, _id string) error {
 	return ErrSubnetsNotSupported
 }
 
@@ -165,138 +165,138 @@ func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) err
 // Public IP operations (not natively supported)
 
 // CreatePublicIP creates a public IP (not supported).
-func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+func (m *NetworkManager) CreatePublicIP(_ctx context.Context, _req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	return nil, ErrFloatingIPsNotSupported
 }
 
 // GetPublicIP retrieves a public IP.
-func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
+func (m *NetworkManager) GetPublicIP(_ctx context.Context, _id string) (*cpi.PublicIP, error) {
 	return nil, ErrFloatingIPsNotSupported
 }
 
 // ListPublicIPs lists public IPs.
-func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
+func (m *NetworkManager) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) {
 	return []*cpi.PublicIP{}, nil
 }
 
 // DeletePublicIP deletes a public IP.
-func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
+func (m *NetworkManager) DeletePublicIP(_ctx context.Context, _id string) error {
 	return ErrFloatingIPsNotSupported
 }
 
 // Floating IP operations (not natively supported)
 
 // AllocateFloatingIP allocates a floating IP.
-func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
+func (m *NetworkManager) AllocateFloatingIP(_ctx context.Context, _req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
 	return nil, ErrFloatingIPsNotSupported
 }
 
 // GetFloatingIP retrieves a floating IP.
-func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
+func (m *NetworkManager) GetFloatingIP(_ctx context.Context, _id string) (*cpi.FloatingIP, error) {
 	return nil, ErrFloatingIPsNotSupported
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(_ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) {
 	return []*cpi.FloatingIP{}, nil
 }
 
 // AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+func (m *NetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
 	return ErrFloatingIPsNotSupported
 }
 
 // DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+func (m *NetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
 	return ErrFloatingIPsNotSupported
 }
 
 // ReleaseFloatingIP releases a floating IP.
-func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error {
+func (m *NetworkManager) ReleaseFloatingIP(_ctx context.Context, _id string) error {
 	return ErrFloatingIPsNotSupported
 }
 
 // Router operations (not supported)
 
 // CreateRouter creates a router.
-func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
+func (m *NetworkManager) CreateRouter(_ctx context.Context, _req *cpi.CreateRouterRequest) (*cpi.Router, error) {
 	return nil, ErrRoutersNotSupported
 }
 
 // GetRouter retrieves a router.
-func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
+func (m *NetworkManager) GetRouter(_ctx context.Context, _id string) (*cpi.Router, error) {
 	return nil, ErrRoutersNotSupported
 }
 
 // ListRouters lists routers.
-func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
+func (m *NetworkManager) ListRouters(_ctx context.Context) ([]*cpi.Router, error) {
 	return []*cpi.Router{}, nil
 }
 
 // AttachRouterInterface attaches a router interface.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) AttachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return ErrRoutersNotSupported
 }
 
 // DetachRouterInterface detaches a router interface.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) DetachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return ErrRoutersNotSupported
 }
 
 // DeleteRouter deletes a router.
-func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteRouter(_ctx context.Context, _id string) error {
 	return ErrRoutersNotSupported
 }
 
 // Load balancer operations (delegate to load balancer manager)
 
 // CreateLoadBalancer creates a load balancer.
-func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
 	return nil, ErrLoadBalancersNotSupported
 }
 
 // GetLoadBalancer retrieves a load balancer.
-func (m *NetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) {
 	return nil, ErrLoadBalancersNotSupported
 }
 
 // ListLoadBalancers lists load balancers.
-func (m *NetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+func (m *NetworkManager) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	return []*cpi.LoadBalancer{}, nil
 }
 
 // UpdateLoadBalancer updates a load balancer.
-func (m *NetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
+func (m *NetworkManager) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error {
 	return ErrLoadBalancersNotSupported
 }
 
 // DeleteLoadBalancer deletes a load balancer.
-func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteLoadBalancer(_ctx context.Context, _id string) error {
 	return ErrLoadBalancersNotSupported
 }
 
 // GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *NetworkManager) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) {
 	return []*cpi.BackendPool{}, nil
 }
 
 // AddBackendMember adds a member to a backend pool.
-func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+func (m *NetworkManager) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
 	return ErrLoadBalancersNotSupported
 }
 
 // RemoveBackendMember removes a member from a backend pool.
-func (m *NetworkManager) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
+func (m *NetworkManager) RemoveBackendMember(_ctx context.Context, _lbID string, _memberIP string) error {
 	return ErrLoadBalancersNotSupported
 }
 
 // ConfigureHealthCheck configures a health check for a load balancer.
-func (m *NetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+func (m *NetworkManager) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
 	return ErrLoadBalancersNotSupported
 }
 
 // GetLoadBalancerHealth retrieves health status of a load balancer.
-func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
 	return nil, ErrLoadBalancersNotSupported
 }
 

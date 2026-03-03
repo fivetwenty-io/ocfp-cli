@@ -72,7 +72,7 @@ func (w *StructuredOutputWriter) WriteValidation(entry ValidationEntry) error {
 
 // validateWithStructuredOutput validates with JSON/YAML logging.
 func (m *Manager) validateWithStructuredOutput(
-	tree *VaultTree,
+	tree *Tree,
 	inceptionSafe, productionSafe *Safe,
 	mode output.Mode,
 ) (int, error) {

@@ -108,7 +108,7 @@ func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 }
 
 // ConfigureNetworks configures network settings.
-func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureNetworks(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "networks-" + envType
 	phaseStart := time.Now()
 
@@ -144,7 +144,7 @@ func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, report
 }
 
 // ConfigureSubnets configures subnet settings (minimal for Proxmox).
-func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
 	phaseStart := time.Now()
 
@@ -175,7 +175,7 @@ func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporte
 }
 
 // ConfigureSecurityGroups configures security group settings.
-func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "security-groups-" + envType
 	phaseStart := time.Now()
 
@@ -206,7 +206,7 @@ func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, 
 }
 
 // ConfigureBlobstores configures blobstore settings.
-func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
 
@@ -237,7 +237,7 @@ func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, repo
 }
 
 // ConfigureDatabases configures database settings.
-func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureDatabases(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "databases-" + envType
 	phaseStart := time.Now()
 
@@ -268,7 +268,7 @@ func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, repor
 }
 
 // ConfigureLoadBalancers configures load balancer settings.
-func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "load-balancers-" + envType
 	phaseStart := time.Now()
 
@@ -299,7 +299,7 @@ func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, r
 }
 
 // ConfigureFQDNs configures FQDN settings.
-func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "fqdns-" + envType
 	phaseStart := time.Now()
 
@@ -335,7 +335,7 @@ func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 }
 
 // ConfigureCertificates configures TLS certificates.
-func (p *ProxmoxVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *ProxmoxVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseCertificates
 	phaseStart := time.Now()
 

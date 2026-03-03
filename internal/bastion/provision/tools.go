@@ -13,7 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// Tool provisioning errors.
+// ErrVersionNotFoundWithPattern returns an error when a version cannot be found using the given regex pattern.
 func ErrVersionNotFoundWithPattern(pattern string) error {
 	return fmt.Errorf("version not found with pattern: %s", pattern) //nolint:err113 // dynamic error with context
 }
@@ -74,7 +74,7 @@ func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 }
 
 // GenerateAdvancedToolScript generates script for advanced tool installation.
-func (atm *AdvancedToolManager) GenerateAdvancedToolScript(ctx context.Context) string {
+func (atm *AdvancedToolManager) GenerateAdvancedToolScript(_ctx context.Context) string {
 	tools := atm.GetAdvancedBinaryTools()
 	if len(tools) == 0 {
 		return ""

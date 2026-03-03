@@ -325,7 +325,7 @@ func renderStateOutput(currentState *state.State, outputFormat string) error {
 }
 
 // runStateDisplay is the default handler for 'state' command without subcommands.
-func runStateDisplay(cmd *cobra.Command, args []string) error {
+func runStateDisplay(cmd *cobra.Command, _args []string) error {
 	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return ErrBlocRequired
@@ -562,7 +562,7 @@ func initializeStateSyncReconciler(ctx context.Context, params *stateSyncParams)
 }
 
 // runStateSyncCommand is the execution handler for 'state sync' command.
-func runStateSyncCommand(cmd *cobra.Command, args []string) error {
+func runStateSyncCommand(cmd *cobra.Command, _args []string) error {
 	params, err := validateAndParseStateSyncParams()
 	if err != nil {
 		return err

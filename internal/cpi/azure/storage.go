@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -32,34 +33,13 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		return nil, err
 	}
 
-	// Determine disk size
-	sizeGB := req.SizeGB
-	if sizeGB == 0 {
-		sizeGB = req.Size
+	sizeGB := resolveVolumeSize(req)
+
+	if sizeGB > math.MaxInt32 {
+		return nil, fmt.Errorf("disk size %d GB exceeds maximum int32 value: %w", sizeGB, ErrInvalidRequest)
 	}
 
-	if sizeGB == 0 {
-		sizeGB = 32 // Default 32 GB
-	}
-
-	// Determine storage account type
-	storageType := armcompute.DiskStorageAccountTypesPremiumLRS
-
-	volumeType := req.VolumeType
-	if volumeType == "" {
-		volumeType = req.Type
-	}
-
-	switch strings.ToLower(volumeType) {
-	case "standard", "standard_lrs":
-		storageType = armcompute.DiskStorageAccountTypesStandardLRS
-	case "standardssd", "standard_ssd", "standardssd_lrs":
-		storageType = armcompute.DiskStorageAccountTypesStandardSSDLRS
-	case "premium", "premium_lrs":
-		storageType = armcompute.DiskStorageAccountTypesPremiumLRS
-	case "ultra", "ultrassd_lrs":
-		storageType = armcompute.DiskStorageAccountTypesUltraSSDLRS
-	}
+	storageType := resolveStorageType(req)
 
 	// Prepare disk parameters
 	diskParams := armcompute.Disk{
@@ -68,7 +48,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 			CreationData: &armcompute.CreationData{
 				CreateOption: to.Ptr(armcompute.DiskCreateOptionEmpty),
 			},
-			DiskSizeGB: to.Ptr(int32(sizeGB)),
+			DiskSizeGB: to.Ptr(int32(sizeGB)), //nolint:gosec // bounds checked above
 		},
 		SKU: &armcompute.DiskSKU{
 			Name: to.Ptr(storageType),
@@ -107,6 +87,48 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	logger.Infow("Created managed disk", "name", req.Name, "sizeGB", sizeGB)
 
 	return m.diskToVolume(&result.Disk), nil
+}
+
+// defaultDiskSizeGB is the default managed disk size in gigabytes.
+const defaultDiskSizeGB = 32
+
+// resolveVolumeSize determines the disk size from the request, defaulting to defaultDiskSizeGB.
+func resolveVolumeSize(req *cpi.VolumeRequest) int {
+	if req.SizeGB != 0 {
+		return req.SizeGB
+	}
+
+	if req.Size != 0 {
+		return req.Size
+	}
+
+	return defaultDiskSizeGB
+}
+
+// resolveStorageType determines the Azure storage account type from the request.
+func resolveStorageType(req *cpi.VolumeRequest) armcompute.DiskStorageAccountTypes {
+	storageTypeMap := map[string]armcompute.DiskStorageAccountTypes{
+		"standard":        armcompute.DiskStorageAccountTypesStandardLRS,
+		"standard_lrs":    armcompute.DiskStorageAccountTypesStandardLRS,
+		"standardssd":     armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"standard_ssd":    armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"standardssd_lrs": armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"premium":         armcompute.DiskStorageAccountTypesPremiumLRS,
+		"premium_lrs":     armcompute.DiskStorageAccountTypesPremiumLRS,
+		"ultra":           armcompute.DiskStorageAccountTypesUltraSSDLRS,
+		"ultrassd_lrs":    armcompute.DiskStorageAccountTypesUltraSSDLRS,
+	}
+
+	volumeType := req.VolumeType
+	if volumeType == "" {
+		volumeType = req.Type
+	}
+
+	if st, ok := storageTypeMap[strings.ToLower(volumeType)]; ok {
+		return st
+	}
+
+	return armcompute.DiskStorageAccountTypesPremiumLRS
 }
 
 // GetVolume retrieves a managed disk by ID or name.
@@ -157,7 +179,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 // AttachVolume attaches a managed disk to a virtual machine.
 //
 //nolint:funlen // volume attachment requires fetching both resources and updating VM
-func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
+func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, _device string) error {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -607,21 +629,21 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 }
 
 // EmptyBucket empties all containers in a storage account.
-func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
+func (m *StorageManager) EmptyBucket(_ctx context.Context, _name string) error {
 	// This would require listing and deleting all blobs
 	// For now, return not implemented
 	return ErrNotImplemented
 }
 
 // IsBucketEmpty checks if a storage account has any blobs.
-func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+func (m *StorageManager) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
 	// This would require listing blobs
 	// For now, return not implemented
 	return false, ErrNotImplemented
 }
 
 // CreateCredentialsGroup creates a credentials group (not directly applicable to Azure).
-func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	// Azure uses storage account keys or SAS tokens for access
 	// This could be implemented as generating SAS tokens
 	return nil, ErrNotImplemented

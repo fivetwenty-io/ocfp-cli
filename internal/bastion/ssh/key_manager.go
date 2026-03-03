@@ -68,9 +68,9 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 				km.log.Infow("Using SSH private key", "path", path)
 
 				return path, nil
-			} else {
-				km.log.Warnw("Invalid SSH key", "path", path)
 			}
+
+			km.log.Warnw("Invalid SSH key", "path", path)
 		}
 	}
 

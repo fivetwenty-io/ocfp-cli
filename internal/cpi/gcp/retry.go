@@ -143,7 +143,7 @@ func addJitter(delay time.Duration, jitterFactor float64) time.Duration {
 	return delay + time.Duration(jitter)
 }
 
-// WaitForOperation waits for a GCP operation to complete with polling.
+// OperationWaiter waits for a GCP operation to complete with polling.
 type OperationWaiter struct {
 	PollInterval time.Duration
 	Timeout      time.Duration

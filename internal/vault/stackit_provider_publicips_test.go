@@ -18,184 +18,184 @@ type MockNetworkManager struct {
 	Error     error
 }
 
-func (m *MockNetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
+func (m *MockNetworkManager) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) {
 	return m.PublicIPs, m.Error
 }
 
-func (m *MockNetworkManager) CreateNetwork(ctx context.Context, request *cpi.NetworkRequest) (*cpi.Network, error) {
+func (m *MockNetworkManager) CreateNetwork(_ctx context.Context, _request *cpi.NetworkRequest) (*cpi.Network, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetNetwork(ctx context.Context, networkID string) (*cpi.Network, error) {
+func (m *MockNetworkManager) GetNetwork(_ctx context.Context, _networkID string) (*cpi.Network, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteNetwork(ctx context.Context, networkID string) error {
+func (m *MockNetworkManager) DeleteNetwork(_ctx context.Context, _networkID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
+func (m *MockNetworkManager) ListNetworks(_ctx context.Context, _filters map[string]string) ([]*cpi.Network, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) CreateSubnet(ctx context.Context, request *cpi.SubnetRequest) (*cpi.Subnet, error) {
+func (m *MockNetworkManager) CreateSubnet(_ctx context.Context, _request *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetSubnet(ctx context.Context, subnetID string) (*cpi.Subnet, error) {
+func (m *MockNetworkManager) GetSubnet(_ctx context.Context, _subnetID string) (*cpi.Subnet, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteSubnet(ctx context.Context, subnetID string) error {
+func (m *MockNetworkManager) DeleteSubnet(_ctx context.Context, _subnetID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
+func (m *MockNetworkManager) ListSubnets(_ctx context.Context, _networkID string) ([]*cpi.Subnet, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AllocatePublicIP(ctx context.Context, request *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+func (m *MockNetworkManager) AllocatePublicIP(_ctx context.Context, _request *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetPublicIP(ctx context.Context, ipID string) (*cpi.PublicIP, error) {
+func (m *MockNetworkManager) GetPublicIP(_ctx context.Context, _ipID string) (*cpi.PublicIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ReleasePublicIP(ctx context.Context, ipID string) error {
+func (m *MockNetworkManager) ReleasePublicIP(_ctx context.Context, _ipID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AssociateFloatingIP(ctx context.Context, ipID, instanceID string) error {
+func (m *MockNetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID, _instanceID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+func (m *MockNetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) CreateSecurityGroup(ctx context.Context, request *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+func (m *MockNetworkManager) CreateSecurityGroup(_ctx context.Context, _request *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetSecurityGroup(ctx context.Context, groupID string) (*cpi.SecurityGroup, error) {
+func (m *MockNetworkManager) GetSecurityGroup(_ctx context.Context, _groupID string) (*cpi.SecurityGroup, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteSecurityGroup(ctx context.Context, groupID string) error {
+func (m *MockNetworkManager) DeleteSecurityGroup(_ctx context.Context, _groupID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+func (m *MockNetworkManager) ListSecurityGroups(_ctx context.Context, _filters map[string]string) ([]*cpi.SecurityGroup, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // Additional methods from NetworkManager interface
-func (m *MockNetworkManager) CreatePublicIP(ctx context.Context, request *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+func (m *MockNetworkManager) CreatePublicIP(_ctx context.Context, _request *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeletePublicIP(ctx context.Context, ipID string) error {
+func (m *MockNetworkManager) DeletePublicIP(_ctx context.Context, _ipID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
+func (m *MockNetworkManager) AllocateFloatingIP(_ctx context.Context, _req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetFloatingIP(ctx context.Context, ipID string) (*cpi.FloatingIP, error) {
+func (m *MockNetworkManager) GetFloatingIP(_ctx context.Context, _ipID string) (*cpi.FloatingIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
+func (m *MockNetworkManager) ListFloatingIPs(_ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ReleaseFloatingIP(ctx context.Context, ipID string) error {
+func (m *MockNetworkManager) ReleaseFloatingIP(_ctx context.Context, _ipID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
+func (m *MockNetworkManager) CreateRouter(_ctx context.Context, _req *cpi.CreateRouterRequest) (*cpi.Router, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
+func (m *MockNetworkManager) GetRouter(_ctx context.Context, _id string) (*cpi.Router, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
+func (m *MockNetworkManager) ListRouters(_ctx context.Context) ([]*cpi.Router, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AttachRouterInterface(ctx context.Context, routerID, subnetID string) error {
+func (m *MockNetworkManager) AttachRouterInterface(_ctx context.Context, _routerID, _subnetID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DetachRouterInterface(ctx context.Context, routerID, subnetID string) error {
+func (m *MockNetworkManager) DetachRouterInterface(_ctx context.Context, _routerID, _subnetID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteRouter(ctx context.Context, id string) error {
+func (m *MockNetworkManager) DeleteRouter(_ctx context.Context, _id string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
+func (m *MockNetworkManager) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
+func (m *MockNetworkManager) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+func (m *MockNetworkManager) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
+func (m *MockNetworkManager) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+func (m *MockNetworkManager) DeleteLoadBalancer(_ctx context.Context, _id string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *MockNetworkManager) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) CreateBackendPool(ctx context.Context, lbID string, pool *cpi.BackendPool) error {
+func (m *MockNetworkManager) CreateBackendPool(_ctx context.Context, _lbID string, _pool *cpi.BackendPool) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) UpdateBackendPool(ctx context.Context, lbID string, pool *cpi.BackendPool) error {
+func (m *MockNetworkManager) UpdateBackendPool(_ctx context.Context, _lbID string, _pool *cpi.BackendPool) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DeleteBackendPool(ctx context.Context, lbID, poolID string) error {
+func (m *MockNetworkManager) DeleteBackendPool(_ctx context.Context, _lbID, _poolID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+func (m *MockNetworkManager) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) RemoveBackendMember(ctx context.Context, lbID, memberID string) error {
+func (m *MockNetworkManager) RemoveBackendMember(_ctx context.Context, _lbID, _memberID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+func (m *MockNetworkManager) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+func (m *MockNetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) AttachBackendServer(ctx context.Context, lbID, poolID, serverID string) error {
+func (m *MockNetworkManager) AttachBackendServer(_ctx context.Context, _lbID, _poolID, _serverID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *MockNetworkManager) DetachBackendServer(ctx context.Context, lbID, poolID, serverID string) error {
+func (m *MockNetworkManager) DetachBackendServer(_ctx context.Context, _lbID, _poolID, _serverID string) error {
 	return fmt.Errorf("not implemented")
 }
 

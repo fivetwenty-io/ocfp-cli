@@ -78,7 +78,7 @@ func newFakeNetEnhanced() *fakeNetEnhanced {
 	}
 }
 
-func (f *fakeNetEnhanced) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+func (f *fakeNetEnhanced) CreatePublicIP(_ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	// Simulate failure for specific IP names
 	if f.shouldFailNext == req.Name {
 		f.shouldFailNext = ""
@@ -101,7 +101,7 @@ func (f *fakeNetEnhanced) CreatePublicIP(ctx context.Context, req *cpi.PublicIPR
 	return ip, nil
 }
 
-func (f *fakeNetEnhanced) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
+func (f *fakeNetEnhanced) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) {
 	return f.createdPublicIPs, nil
 }
 

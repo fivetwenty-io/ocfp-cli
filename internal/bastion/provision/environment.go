@@ -31,7 +31,7 @@ func (em *EnvironmentManager) GetSystemEnvironmentVarsForPreview() map[string]st
 }
 
 // GenerateShellEnvironmentScript generates .bashrc configuration.
-func (em *EnvironmentManager) GenerateShellEnvironmentScript(ctx context.Context) string {
+func (em *EnvironmentManager) GenerateShellEnvironmentScript(_ctx context.Context) string {
 	// Preallocate a sensible capacity; mostly fixed-size content
 	lines := make([]string, 0, scriptBufferEnvironmentBase)
 
@@ -57,7 +57,7 @@ func (em *EnvironmentManager) GenerateShellEnvironmentScript(ctx context.Context
 }
 
 // GenerateSystemEnvironmentScript generates /etc/environment and /etc/profile.d setup.
-func (em *EnvironmentManager) GenerateSystemEnvironmentScript(ctx context.Context) string {
+func (em *EnvironmentManager) GenerateSystemEnvironmentScript(_ctx context.Context) string {
 	envVars := em.getSystemEnvironmentVars()
 	lines := make([]string, 0, scriptBufferEnvironment+scriptBufferEnvironmentPerItem*len(envVars))
 

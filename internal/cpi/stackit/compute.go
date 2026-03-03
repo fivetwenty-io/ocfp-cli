@@ -581,7 +581,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, instanceID string) 
 }
 
 // CreateKeyPair creates a new SSH key pair.
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (m *ComputeManager) CreateKeyPair(_ctx context.Context, _req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	return nil, ErrCreateKeyPairUnsupported
 }
 
@@ -751,7 +751,7 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, instanceID string) 
 }
 
 // ListImages lists available images.
-func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	logger.WithOperation("ListImages").Debug("Listing images via SDK")
 
 	cli, err := m.client.getIAASClient()

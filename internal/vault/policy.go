@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// Policy template capacity.
+	// PolicyTemplateCapacity is the initial slice capacity for policy template builders.
 	PolicyTemplateCapacity = 5
 )
 

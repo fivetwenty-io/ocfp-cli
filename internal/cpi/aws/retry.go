@@ -255,7 +255,7 @@ func NewCircuitBreaker(config *CircuitBreakerConfig) *CircuitBreaker {
 }
 
 // Execute runs a function through the circuit breaker.
-func (cb *CircuitBreaker) Execute(ctx context.Context, operation string, opFunc func() error) error {
+func (cb *CircuitBreaker) Execute(_ctx context.Context, operation string, opFunc func() error) error {
 	// Check if circuit breaker allows the request
 	if !cb.canAttempt() {
 		return &CircuitBreakerError{

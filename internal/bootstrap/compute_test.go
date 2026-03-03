@@ -80,7 +80,7 @@ func makeFakeFlavors() []*cpi.Flavor {
 	}
 }
 
-func (f *fakeComputeEnhanced) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) CreateInstance(_ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	if f.shouldFailNext == "CreateInstance" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateInstance error")
@@ -110,7 +110,7 @@ func (f *fakeComputeEnhanced) CreateInstance(ctx context.Context, req *cpi.Insta
 	return instance, nil
 }
 
-func (f *fakeComputeEnhanced) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) GetInstance(_ctx context.Context, id string) (*cpi.Instance, error) {
 	if inst, ok := f.instances[id]; ok {
 		return inst, nil
 	}
@@ -118,7 +118,7 @@ func (f *fakeComputeEnhanced) GetInstance(ctx context.Context, id string) (*cpi.
 	return nil, fmt.Errorf("instance not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) ListInstances(_ctx context.Context, _filters map[string]string) ([]*cpi.Instance, error) {
 	var instances []*cpi.Instance
 	for _, inst := range f.instances {
 		instances = append(instances, inst)
@@ -127,15 +127,15 @@ func (f *fakeComputeEnhanced) ListInstances(ctx context.Context, filters map[str
 	return instances, nil
 }
 
-func (f *fakeComputeEnhanced) StartInstance(ctx context.Context, id string) error  { return nil }
-func (f *fakeComputeEnhanced) StopInstance(ctx context.Context, id string) error   { return nil }
-func (f *fakeComputeEnhanced) RebootInstance(ctx context.Context, id string) error { return nil }
-func (f *fakeComputeEnhanced) DeleteInstance(ctx context.Context, id string) error {
+func (f *fakeComputeEnhanced) StartInstance(_ctx context.Context, _id string) error  { return nil }
+func (f *fakeComputeEnhanced) StopInstance(_ctx context.Context, _id string) error   { return nil }
+func (f *fakeComputeEnhanced) RebootInstance(_ctx context.Context, _id string) error { return nil }
+func (f *fakeComputeEnhanced) DeleteInstance(_ctx context.Context, id string) error {
 	delete(f.instances, id)
 	return nil
 }
 
-func (f *fakeComputeEnhanced) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) CreateKeyPair(_ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	if f.shouldFailNext == "CreateKeyPair" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateKeyPair error")
@@ -155,7 +155,7 @@ func (f *fakeComputeEnhanced) CreateKeyPair(ctx context.Context, req *cpi.KeyPai
 	return keypair, nil
 }
 
-func (f *fakeComputeEnhanced) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (f *fakeComputeEnhanced) ImportKeyPair(_ctx context.Context, name string, publicKey string) error {
 	f.keypairs[name] = &cpi.KeyPair{
 		ID:          "kp-import-" + name,
 		Name:        name,
@@ -167,7 +167,7 @@ func (f *fakeComputeEnhanced) ImportKeyPair(ctx context.Context, name string, pu
 	return nil
 }
 
-func (f *fakeComputeEnhanced) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) GetKeyPair(_ctx context.Context, name string) (*cpi.KeyPair, error) {
 	if kp, ok := f.keypairs[name]; ok {
 		return kp, nil
 	}
@@ -175,7 +175,7 @@ func (f *fakeComputeEnhanced) GetKeyPair(ctx context.Context, name string) (*cpi
 	return nil, fmt.Errorf("keypair not found: %s", name)
 }
 
-func (f *fakeComputeEnhanced) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
 	var keypairs []*cpi.KeyPair
 	for _, kp := range f.keypairs {
 		keypairs = append(keypairs, kp)
@@ -184,12 +184,12 @@ func (f *fakeComputeEnhanced) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair,
 	return keypairs, nil
 }
 
-func (f *fakeComputeEnhanced) DeleteKeyPair(ctx context.Context, name string) error {
+func (f *fakeComputeEnhanced) DeleteKeyPair(_ctx context.Context, name string) error {
 	delete(f.keypairs, name)
 	return nil
 }
 
-func (f *fakeComputeEnhanced) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (f *fakeComputeEnhanced) ListImages(_ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	if f.shouldFailNext == "ListImages" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake ListImages error")
@@ -198,7 +198,7 @@ func (f *fakeComputeEnhanced) ListImages(ctx context.Context, filters map[string
 	return f.images, nil
 }
 
-func (f *fakeComputeEnhanced) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
+func (f *fakeComputeEnhanced) GetImage(_ctx context.Context, id string) (*cpi.Image, error) {
 	for _, img := range f.images {
 		if img.ID == id {
 			return img, nil
@@ -208,7 +208,7 @@ func (f *fakeComputeEnhanced) GetImage(ctx context.Context, id string) (*cpi.Ima
 	return nil, fmt.Errorf("image not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
+func (f *fakeComputeEnhanced) ListFlavors(_ctx context.Context) ([]*cpi.Flavor, error) {
 	if f.shouldFailNext == "ListFlavors" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake ListFlavors error")
@@ -217,7 +217,7 @@ func (f *fakeComputeEnhanced) ListFlavors(ctx context.Context) ([]*cpi.Flavor, e
 	return f.flavors, nil
 }
 
-func (f *fakeComputeEnhanced) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
+func (f *fakeComputeEnhanced) GetFlavor(_ctx context.Context, id string) (*cpi.Flavor, error) {
 	for _, flavor := range f.flavors {
 		if flavor.ID == id || flavor.Name == id {
 			return flavor, nil
@@ -227,7 +227,7 @@ func (f *fakeComputeEnhanced) GetFlavor(ctx context.Context, id string) (*cpi.Fl
 	return nil, fmt.Errorf("flavor not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) CreateVolume(_ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	if f.shouldFailNext == "CreateVolume" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateVolume error")
@@ -244,15 +244,15 @@ func (f *fakeComputeEnhanced) CreateVolume(ctx context.Context, req *cpi.VolumeR
 	}, nil
 }
 
-func (f *fakeComputeEnhanced) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) GetVolume(_ctx context.Context, _id string) (*cpi.Volume, error) {
 	return nil, nil
 }
 
-func (f *fakeComputeEnhanced) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) ListVolumes(_ctx context.Context, _filters map[string]string) ([]*cpi.Volume, error) {
 	return nil, nil
 }
 
-func (f *fakeComputeEnhanced) DeleteVolume(ctx context.Context, id string) error { return nil }
+func (f *fakeComputeEnhanced) DeleteVolume(_ctx context.Context, _id string) error { return nil }
 
 // ==============================================================================
 // Helper Functions for Test Setup

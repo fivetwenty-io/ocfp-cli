@@ -19,27 +19,33 @@ import (
 )
 
 const (
-	// Load balancer port defaults.
-	DefaultHTTPPort  = 80
+	// DefaultHTTPPort is the default HTTP port for load balancers.
+	DefaultHTTPPort = 80
+
+	// DefaultHTTPSPort is the default HTTPS port for load balancers.
 	DefaultHTTPSPort = 443
 
-	// Health check configuration.
-	HealthCheckPath            = "/health"
+	// HealthCheckPath is the default URL path for health check probes.
+	HealthCheckPath = "/health"
+	// HealthCheckIntervalSeconds is the interval between health check probes.
 	HealthCheckIntervalSeconds = 30
-	HealthCheckTimeoutSeconds  = 5
-	HealthCheckThreshold       = 3
+	// HealthCheckTimeoutSeconds is the timeout for each health check probe.
+	HealthCheckTimeoutSeconds = 5
+	// HealthCheckThreshold is the number of consecutive failures before marking unhealthy.
+	HealthCheckThreshold = 3
 
-	// Default service weight for backend members.
+	// DefaultServiceWeight is the default weight assigned to backend members.
 	DefaultServiceWeight = 1
+	// DefaultHealthTimeout is the default timeout in seconds for health checks.
 	DefaultHealthTimeout = 5
 
-	// Command argument expectations.
+	// ExactArgsTwo is the expected argument count for commands requiring exactly two arguments.
 	ExactArgsTwo = 2
 
-	// String parsing.
+	// FilterParts is the expected number of parts when splitting a filter expression.
 	FilterParts = 2
 
-	// Table row allocation.
+	// StatusTableRows is the initial allocation for status table rows.
 	StatusTableRows = 3
 )
 
@@ -53,7 +59,7 @@ func NewLBCmd() *cobra.Command {
 
 The lb command provides functionality to create, delete, and manage
 load balancers including adding/removing services and checking status.`,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		PersistentPreRunE: func(_cmd *cobra.Command, _args []string) error {
 			// Initialize per-command file logger; keep stdout for UX
 			blocName := viper.GetString("bloc")
 			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
@@ -126,7 +132,7 @@ and associates it with the appropriate network resources.`,
 
   # Create internal load balancer for databases
   ocfp lb create --name postgres-lb --type internal --port 5432 --target-port 5432`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runLBCreate(opts)
 		},
 	}
@@ -312,7 +318,7 @@ func newLBDeleteCmd() *cobra.Command {
   # Delete all load balancers
   ocfp lb delete --all --force`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log := logger.Get()
 
@@ -502,7 +508,7 @@ func newLBListCmd() *cobra.Command {
 
   # Filter by type
   ocfp lb list --filter type=external`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runLBList(output, filter)
 		},
 	}
@@ -593,7 +599,7 @@ func newLBStatusCmd() *cobra.Command {
 		Example: `  # Get status of a load balancer
   ocfp lb status cf-router`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runLBStatus(args[0], output)
 		},
 	}
@@ -725,7 +731,7 @@ Examples:
   ocfp lb add-service ops-https reserved:vault_ip
   ocfp lb add-service doomsday-mgmt reserved:doomsday_ip:1`,
 		Args: cobra.ExactArgs(ExactArgsTwo),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runLBAddServiceCmd(args[0], args[1], port, targetPort, weight, dryRun, output)
 		},
 	}
@@ -925,7 +931,7 @@ func isToken(s string) bool {
 	return strings.HasPrefix(s, "reserved:") || strings.HasPrefix(s, "public-ip:")
 }
 
-// resolveTargetIP resolves tokens of the form:
+// ResolveTargetIP resolves tokens of the form:
 //   - reserved:<key>[:index]
 //   - public-ip:<job>[:index]
 func ResolveTargetIP(blocName string, token string) (string, error) {
@@ -1143,7 +1149,7 @@ func newLBRemoveServiceCmd() *cobra.Command {
   # Force removal without confirmation
   ocfp lb remove-service cf-router 10.0.1.10 --force`,
 		Args: cobra.ExactArgs(ExactArgsTwo),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log := logger.Get()
 
@@ -1212,7 +1218,7 @@ func newLBUpdateCmd() *cobra.Command {
   # Update health check settings
   ocfp lb update cf-router --health-check /health --timeout 10`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log := logger.Get()
 			lbName := args[0]

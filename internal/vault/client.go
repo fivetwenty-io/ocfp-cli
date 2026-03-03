@@ -180,7 +180,7 @@ func NewClientFromEnv() (*Client, error) {
 
 // NewClientFromConfig creates a vault client from OCFP config.
 // If VAULT_TOKEN is not set, it will try to read from ~/.saferc.
-func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
+func NewClientFromConfig(_ocfpCfg *config.Config) (*Client, error) {
 	// Try to get token and address from environment first
 	token := os.Getenv("VAULT_TOKEN")
 	address := os.Getenv("VAULT_ADDR")

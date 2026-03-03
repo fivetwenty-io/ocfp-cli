@@ -20,11 +20,11 @@ type mockSSHClient struct {
 	transferError    error
 }
 
-func (m *mockSSHClient) Connect(ctx context.Context) error {
+func (m *mockSSHClient) Connect(_ctx context.Context) error {
 	return nil
 }
 
-func (m *mockSSHClient) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (m *mockSSHClient) TransferFile(_ctx context.Context, local, remote string, _opts ssh.TransferOptions) error {
 	if m.transferError != nil {
 		return m.transferError
 	}
@@ -44,11 +44,11 @@ func (m *mockSSHClient) TransferFile(ctx context.Context, local, remote string, 
 	return nil
 }
 
-func (m *mockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+func (m *mockSSHClient) ExecuteCommand(_ctx context.Context, _cmd string) (*ssh.CommandResult, error) {
 	return &ssh.CommandResult{ExitCode: 0, Stdout: "", Stderr: ""}, nil
 }
 
-func (m *mockSSHClient) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (m *mockSSHClient) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return nil
 }
 

@@ -1,3 +1,4 @@
+// Package logger provides structured file-based logging for the OCFP CLI using zap.
 package logger
 
 import (
@@ -13,9 +14,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Log directory and file permission constants.
 const (
-	// File permissions.
-	LogDirMode  = 0750
+	// LogDirMode is the file permission mode for log directories.
+	LogDirMode = 0750
+	// LogFileMode is the file permission mode for log files.
 	LogFileMode = 0600
 )
 

@@ -44,7 +44,7 @@ func (cm *CPANManager) GetCPANModules() []CPANModule {
 }
 
 // GenerateCPANInstallScript generates script for CPAN module installation.
-func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
+func (cm *CPANManager) GenerateCPANInstallScript(_ctx context.Context) string {
 	modules := cm.GetCPANModules()
 	if len(modules) == 0 {
 		return ""

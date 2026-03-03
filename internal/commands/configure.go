@@ -12,16 +12,32 @@ import (
 )
 
 const (
-	// Standard network ports.
-	PortSSH       = 22
-	PortHTTP      = 80
-	PortHTTPS     = 443
-	PortCFSSH     = 2222
-	PortWSS       = 4443
+	// PortSSH is the standard SSH port.
+	PortSSH = 22
+
+	// PortHTTP is the standard HTTP port.
+	PortHTTP = 80
+
+	// PortHTTPS is the standard HTTPS port.
+	PortHTTPS = 443
+
+	// PortCFSSH is the Cloud Foundry SSH proxy port.
+	PortCFSSH = 2222
+
+	// PortWSS is the WebSocket Secure port used by CF logging.
+	PortWSS = 4443
+
+	// PortBoshAgent is the BOSH Agent port.
 	PortBoshAgent = 6868
-	PortUAA       = 8443
-	PortCredHub   = 8844
-	PortBoshDir   = 25555
+
+	// PortUAA is the UAA authentication server port.
+	PortUAA = 8443
+
+	// PortCredHub is the CredHub credential management port.
+	PortCredHub = 8844
+
+	// PortBoshDir is the BOSH Director API port.
+	PortBoshDir = 25555
 )
 
 type configureOptions struct {
@@ -58,7 +74,7 @@ configuration to your infrastructure.`,
 
   # Skip specific configuration steps
   ocfp configure --bloc production --skip-routes --skip-floating-ips`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runConfigure(opts)
 		},
 	}
