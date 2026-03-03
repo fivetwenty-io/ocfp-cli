@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	// File permissions.
+	// SSHKeyFileMode is the file permission mode for SSH private key files.
 	SSHKeyFileMode = 0600
 )
 
@@ -99,7 +99,7 @@ SSH keys are searched in the following order:
 	return cmd
 }
 
-func runSSH(cmd *cobra.Command, args []string) error {
+func runSSH(_cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("ssh")
 
@@ -282,7 +282,7 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 // findSSHKey locates the SSH private key for the bastion.
 //
 //nolint:unparam // cfg reserved for future use in provider-specific key resolution
-func findSSHKey(blocName string, cfg *config.Config) (string, error) {
+func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
 
 	// Try Ed25519 key first (preferred)

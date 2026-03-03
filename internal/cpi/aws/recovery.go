@@ -100,7 +100,7 @@ func (r *ThrottlingRecovery) CanRecover(err error) bool {
 }
 
 // Recover implements exponential backoff for throttling errors.
-func (r *ThrottlingRecovery) Recover(ctx context.Context, err error) error {
+func (r *ThrottlingRecovery) Recover(_ctx context.Context, err error) error {
 	logger.Debug("Recovering from throttling error")
 
 	// Use exponential backoff with longer delays for throttling
@@ -150,7 +150,7 @@ type InvalidStateRecovery struct{}
 
 // CanRecover returns true if the error is an invalid state error.
 func (r *InvalidStateRecovery) CanRecover(err error) bool {
-	var awsErr *AWSError
+	var awsErr *Error
 	if errors.As(err, &awsErr) {
 		return awsErr.Code == ErrCodeInvalidState
 	}

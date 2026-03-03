@@ -20,40 +20,62 @@ import (
 )
 
 const (
-	// Resource discovery buffer sizes.
-	InitialResourcesBufferSize   = 16 // Initial buffer for discovered resources
-	CloudResourcesBufferSize     = 32 // Buffer for cloud resource discovery
-	NukeModeResourcesBufferSize  = 64 // Buffer for nuke mode resources
-	StateResourcesBufferInitSize = 0  // Dynamic sizing based on state resources length
+	// InitialResourcesBufferSize is the initial buffer capacity for discovered resources.
+	InitialResourcesBufferSize = 16
 
-	// String split expectations.
-	ExpectedResourceKeyParts = 2 // Expected parts when splitting resource keys
+	// CloudResourcesBufferSize is the buffer capacity for cloud resource discovery.
+	CloudResourcesBufferSize = 32
 
-	// Retry configuration for resource deletion.
-	MaxRetryAttempts       = 3                // Maximum retry attempts for 409 conflicts
-	InitialRetryDelay      = 5 * time.Second  // Initial retry delay
-	MaxRetryDelay          = 30 * time.Second // Maximum retry delay
-	RetryDelayMultiplier   = 2                // Exponential backoff multiplier
-	ConflictErrorIndicator = "409"            // HTTP 409 Conflict indicator in error messages
+	// NukeModeResourcesBufferSize is the buffer capacity for nuke mode resource discovery.
+	NukeModeResourcesBufferSize = 64
+	// StateResourcesBufferInitSize is the initial buffer size for state-based resource lists.
+	StateResourcesBufferInitSize = 0
 
-	// Teardown order priorities (reverse of bootstrap order).
+	// ExpectedResourceKeyParts is the expected number of parts when splitting resource keys.
+	ExpectedResourceKeyParts = 2
+
+	// MaxRetryAttempts is the maximum number of retry attempts for 409 conflict errors.
+	MaxRetryAttempts = 3
+	// InitialRetryDelay is the initial delay before the first retry on conflict errors.
+	InitialRetryDelay = 5 * time.Second
+	// MaxRetryDelay is the maximum delay between retry attempts.
+	MaxRetryDelay = 30 * time.Second
+	// RetryDelayMultiplier is the multiplier applied to the delay between successive retries.
+	RetryDelayMultiplier = 2
+	// ConflictErrorIndicator is the HTTP status code string indicating a conflict error.
+	ConflictErrorIndicator = "409"
+
+	// LoadBalancerPriority defines the teardown order for load balancers (deleted first).
+	// Teardown order priorities are the reverse of bootstrap order.
 	// CRITICAL: Instances and NICs must be deleted BEFORE security groups to avoid 409 conflicts.
-	LoadBalancerPriority     = 1  // Delete load balancers first (may reference instances)
-	InstancePriority         = 2  // Delete instances early (to release volumes, NICs, security groups)
-	NetworkInterfacePriority = 3  // Delete network interfaces (after instances, before security groups)
-	BucketPriority           = 4  // Delete buckets (reverse of bootstrap step 8)
-	SnapshotPriority         = 5  // Delete snapshots before volumes
-	VolumePriority           = 6  // Delete volumes (reverse of bootstrap step 6)
-	KeyPairPriority          = 7  // Delete key pairs (reverse of bootstrap step 5)
-	FloatingIPPriority       = 8  // Delete floating/public IPs (reverse of bootstrap step 4)
-	SecurityGroupPriority    = 9  // Delete security groups (after instances/NICs freed them)
-	SubnetRouterPriority     = 10 // Delete subnets and routers (reverse of bootstrap step 2)
-	NetworkPriority          = 11 // Delete networks last (reverse of bootstrap step 1)
+	LoadBalancerPriority = 1
+	// InstancePriority is the teardown order for compute instances.
+	InstancePriority = 2
+	// NetworkInterfacePriority is the teardown order for network interfaces.
+	NetworkInterfacePriority = 3
+	// BucketPriority is the teardown order for storage buckets.
+	BucketPriority = 4
+	// SnapshotPriority is the teardown order for volume snapshots.
+	SnapshotPriority = 5
+	// VolumePriority is the teardown order for block volumes.
+	VolumePriority = 6
+	// KeyPairPriority is the teardown order for SSH key pairs.
+	KeyPairPriority = 7
+	// FloatingIPPriority is the teardown order for floating IP addresses.
+	FloatingIPPriority = 8
+	// SecurityGroupPriority is the teardown order for security groups.
+	SecurityGroupPriority = 9
+	// SubnetRouterPriority is the teardown order for subnets and routers.
+	SubnetRouterPriority = 10
+	// NetworkPriority is the teardown order for networks (deleted last).
+	NetworkPriority = 11
 )
 
 var (
+	// ErrTeardownCancelled indicates the user cancelled the teardown operation.
 	ErrTeardownCancelled = errors.New("teardown cancelled by user")
-	ErrResourceSkipped   = errors.New("resource skipped (not an error)")
+	// ErrResourceSkipped indicates a resource was intentionally skipped during teardown.
+	ErrResourceSkipped = errors.New("resource skipped (not an error)")
 )
 
 // NewTeardownCmd creates the teardown command.
@@ -237,7 +259,7 @@ func bindTeardownViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("teardown.output", cmd.Flags().Lookup("output"))
 }
 
-func runTeardown(cmd *cobra.Command, args []string) error {
+func runTeardown(cmd *cobra.Command, _args []string) error {
 	// Silence usage on execution errors
 	cmd.SilenceUsage = true
 

@@ -1,3 +1,4 @@
+// Package azure implements the CPI provider for Microsoft Azure.
 package azure
 
 import (
@@ -185,7 +186,7 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 }
 
 // Cleanup releases resources and closes connections.
-func (c *Client) Cleanup(ctx context.Context) error {
+func (c *Client) Cleanup(_ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -385,7 +386,7 @@ func (c *Client) initializeResourceManagers() {
 // initializeCredential sets up Azure credentials based on configuration.
 //
 //nolint:funlen // credential setup with multiple auth strategies
-func (c *Client) initializeCredential(ctx context.Context) error { //nolint:unparam // ctx kept for future use and interface consistency
+func (c *Client) initializeCredential(_ctx context.Context) error { //nolint:unparam // ctx kept for future use and interface consistency
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -516,8 +517,6 @@ func (c *Client) getCloudConfiguration() cloud.Configuration {
 }
 
 // ensureClientsLoaded initializes all SDK clients if not already done.
-//
-//nolint:cyclop,funlen // repetitive SDK client initialization for each Azure service
 func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -541,15 +540,40 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		}
 	}
 
+	// Initialize Resource Groups client
 	var err error
 
-	// Initialize Resource Groups client
 	c.resourceGroupsClient, err = armresources.NewResourceGroupsClient(c.config.SubscriptionID, c.credential, c.armClientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to create resource groups client: %w", err)
 	}
 
-	// Initialize Network clients
+	err = c.initNetworkClients()
+	if err != nil {
+		return err
+	}
+
+	err = c.initComputeClients()
+	if err != nil {
+		return err
+	}
+
+	err = c.initStorageClients()
+	if err != nil {
+		return err
+	}
+
+	c.clientsLoaded = true
+
+	logger.Debugw("Azure service clients loaded", "location", c.config.Location, "resourceGroup", c.config.ResourceGroup)
+
+	return nil
+}
+
+// initNetworkClients initializes all network-related SDK clients.
+func (c *Client) initNetworkClients() error {
+	var err error
+
 	c.virtualNetworksClient, err = armnetwork.NewVirtualNetworksClient(c.config.SubscriptionID, c.credential, c.armClientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to create virtual networks client: %w", err)
@@ -585,7 +609,13 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		return fmt.Errorf("failed to create load balancers client: %w", err)
 	}
 
-	// Initialize Compute clients
+	return nil
+}
+
+// initComputeClients initializes all compute-related SDK clients.
+func (c *Client) initComputeClients() error {
+	var err error
+
 	c.virtualMachinesClient, err = armcompute.NewVirtualMachinesClient(c.config.SubscriptionID, c.credential, c.armClientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to create virtual machines client: %w", err)
@@ -616,7 +646,13 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 		return fmt.Errorf("failed to create virtual machine sizes client: %w", err)
 	}
 
-	// Initialize Storage clients
+	return nil
+}
+
+// initStorageClients initializes all storage-related SDK clients.
+func (c *Client) initStorageClients() error {
+	var err error
+
 	c.storageAccountsClient, err = armstorage.NewAccountsClient(c.config.SubscriptionID, c.credential, c.armClientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to create storage accounts client: %w", err)
@@ -626,10 +662,6 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create blob containers client: %w", err)
 	}
-
-	c.clientsLoaded = true
-
-	logger.Debugw("Azure service clients loaded", "location", c.config.Location, "resourceGroup", c.config.ResourceGroup)
 
 	return nil
 }

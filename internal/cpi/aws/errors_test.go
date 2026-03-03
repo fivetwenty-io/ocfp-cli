@@ -8,15 +8,15 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-func TestAWSError_Error(t *testing.T) {
+func TestError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *AWSError
+		err      *Error
 		expected string
 	}{
 		{
 			name: "with operation",
-			err: &AWSError{
+			err: &Error{
 				Code:      ErrCodeNotFound,
 				Message:   "resource not found",
 				RequestID: "req-123",
@@ -26,7 +26,7 @@ func TestAWSError_Error(t *testing.T) {
 		},
 		{
 			name: "without operation",
-			err: &AWSError{
+			err: &Error{
 				Code:      ErrCodeThrottling,
 				Message:   "rate limit exceeded",
 				RequestID: "req-456",
@@ -44,64 +44,64 @@ func TestAWSError_Error(t *testing.T) {
 	}
 }
 
-func TestAWSError_IsRetryable(t *testing.T) {
+func TestError_IsRetryable(t *testing.T) {
 	tests := []struct {
 		name      string
-		err       *AWSError
+		err       *Error
 		retryable bool
 	}{
 		{
 			name: "throttling error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeThrottling,
 			},
 			retryable: true,
 		},
 		{
 			name: "request limit exceeded",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeRequestLimitExceeded,
 			},
 			retryable: true,
 		},
 		{
 			name: "service unavailable",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeServiceUnavailable,
 			},
 			retryable: true,
 		},
 		{
 			name: "internal error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeInternalError,
 			},
 			retryable: true,
 		},
 		{
 			name: "http 429",
-			err: &AWSError{
+			err: &Error{
 				StatusCode: http.StatusTooManyRequests,
 			},
 			retryable: true,
 		},
 		{
 			name: "http 503",
-			err: &AWSError{
+			err: &Error{
 				StatusCode: http.StatusServiceUnavailable,
 			},
 			retryable: true,
 		},
 		{
 			name: "not found error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			retryable: false,
 		},
 		{
 			name: "invalid parameter",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeInvalidParameter,
 			},
 			retryable: false,
@@ -173,14 +173,14 @@ func TestIsNotFound(t *testing.T) {
 	}{
 		{
 			name: "not found error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			isNF: true,
 		},
 		{
 			name: "other error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeThrottling,
 			},
 			isNF: false,
@@ -209,14 +209,14 @@ func TestIsAlreadyExists(t *testing.T) {
 	}{
 		{
 			name: "already exists error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeAlreadyExists,
 			},
 			isAE: true,
 		},
 		{
 			name: "other error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			isAE: false,
@@ -245,14 +245,14 @@ func TestIsRetryable(t *testing.T) {
 	}{
 		{
 			name: "retryable error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeThrottling,
 			},
 			retryable: true,
 		},
 		{
 			name: "non-retryable error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			retryable: false,
@@ -281,21 +281,21 @@ func TestIsThrottling(t *testing.T) {
 	}{
 		{
 			name: "throttling error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeThrottling,
 			},
 			throttling: true,
 		},
 		{
 			name: "request limit exceeded",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeRequestLimitExceeded,
 			},
 			throttling: true,
 		},
 		{
 			name: "other error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			throttling: false,
@@ -324,14 +324,14 @@ func TestIsDependencyViolation(t *testing.T) {
 	}{
 		{
 			name: "dependency violation",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeDependencyViolation,
 			},
 			dependency: true,
 		},
 		{
 			name: "other error",
-			err: &AWSError{
+			err: &Error{
 				Code: ErrCodeNotFound,
 			},
 			dependency: false,

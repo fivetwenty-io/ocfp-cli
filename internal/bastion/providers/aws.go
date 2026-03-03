@@ -152,7 +152,7 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 }
 
 // Initialize performs the actual bastion initialization.
-func (a *AWSBastionInit) Initialize(ctx context.Context) error {
+func (a *AWSBastionInit) Initialize(_ctx context.Context) error {
 	a.log.Info("Initializing AWS bastion")
 
 	return nil

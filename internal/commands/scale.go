@@ -20,11 +20,13 @@ import (
 const (
 	// Command arguments.
 	scaleTwoArgs = 2
-	// Network ports.
+
+	// HTTPPort is the standard HTTP port used for scaling health checks.
 	HTTPPort = 80
 )
 
 var (
+	// ErrNoBackendPoolsFound indicates no backend pools were found for the load balancer.
 	ErrNoBackendPoolsFound = errors.New("no backend pools found")
 )
 
@@ -66,7 +68,7 @@ routers, cells, and other component instances.`,
   # Scale and wait for completion
   ocfp scale cells 10 --wait`,
 		Args: cobra.ExactArgs(scaleTwoArgs),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runScaleCommand(args, opts)
 		},
 	}

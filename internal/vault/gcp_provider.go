@@ -81,7 +81,7 @@ func (g *GCPVaultProvider) Configure(reporter providers.ProgressReporter) error 
 }
 
 // ConfigureIAAS configures GCP-specific IAAS settings.
-func (g *GCPVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	currentPhase := 0
 	if phaseNum != nil {
 		currentPhase = *phaseNum
@@ -133,7 +133,7 @@ func (g *GCPVaultProvider) ConfigureIAAS(envPath, envType string, reporter provi
 }
 
 // ConfigureBlobstores configures Cloud Storage bucket settings.
-func (g *GCPVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (g *GCPVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
 	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
@@ -317,7 +317,7 @@ type fqdnConfig struct {
 }
 
 // ConfigureCertificates configures TLS certificates.
-func (g *GCPVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (g *GCPVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
 	phaseName := PhaseCertificates
 	phaseStart := time.Now()

@@ -20,20 +20,35 @@ import (
 type RestoreMode string
 
 const (
-	RestoreModeFull   RestoreMode = "full"
-	RestoreModeConfig RestoreMode = "config"
-	RestoreModeData   RestoreMode = "data"
-	RestoreModeVault  RestoreMode = "vault"
+	// RestoreModeFull performs a complete deployment restoration.
+	RestoreModeFull RestoreMode = "full"
 
-	// File permissions.
-	DefaultDirMode  = 0750
+	// RestoreModeConfig restores only configuration files.
+	RestoreModeConfig RestoreMode = "config"
+
+	// RestoreModeData restores only state and data files.
+	RestoreModeData RestoreMode = "data"
+
+	// RestoreModeVault restores only vault secrets and credentials.
+	RestoreModeVault RestoreMode = "vault"
+
+	// DefaultDirMode is the default file permission mode for directories.
+	DefaultDirMode = 0750
+
+	// DefaultFileMode is the default file permission mode for files.
 	DefaultFileMode = 0600
 
-	// Sizes.
+	// DefaultBackupSizeMB is the default estimated backup size in megabytes.
 	DefaultBackupSizeMB = 100
-	DirectoryConfigs    = 1024
-	DirectoryManifests  = 2048
-	DirectoryDeploys    = 4096
+
+	// DirectoryConfigs is the estimated size for configuration directories.
+	DirectoryConfigs = 1024
+
+	// DirectoryManifests is the estimated size for manifest directories.
+	DirectoryManifests = 2048
+
+	// DirectoryDeploys is the estimated size for deployment directories.
+	DirectoryDeploys = 4096
 )
 
 // Restore errors.
@@ -102,7 +117,7 @@ func (rf *restoreFlags) addFlags(cmd *cobra.Command) {
 }
 
 // runRestore executes the restore command.
-func (rf *restoreFlags) runRestore(cmd *cobra.Command, args []string) error {
+func (rf *restoreFlags) runRestore(_cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.Get()
 
@@ -738,7 +753,7 @@ func restoreComponent(sourcePath, destPath, baseDestination string) error {
 	return copyForRestore(sourcePath, actualDest)
 }
 
-func restoreBastion(ctx context.Context, cfg *config.Config, tempDir string) error {
+func restoreBastion(_ctx context.Context, _cfg *config.Config, _tempDir string) error {
 	// Restore bastion host data via SSH
 	// Placeholder implementation
 	return nil

@@ -16,13 +16,21 @@ import (
 )
 
 const (
-	// Load balancer port constants for typed commands.
-	OpsHTTPSPort      = 443
-	RouterHTTPPort    = 80
-	RouterHTTPSPort   = 443
-	TCPRouterPort     = 1024
-	CFSSHPort         = 2222
-	DefaultWeight     = 1
+	// OpsHTTPSPort is the HTTPS port for operational load balancers.
+	OpsHTTPSPort = 443
+
+	// RouterHTTPPort is the HTTP port for CF router load balancers.
+	RouterHTTPPort = 80
+
+	// RouterHTTPSPort is the HTTPS port for CF router load balancers.
+	RouterHTTPSPort = 443
+	// TCPRouterPort is the TCP port for CF TCP router load balancers.
+	TCPRouterPort = 1024
+	// CFSSHPort is the port for CF SSH proxy load balancers.
+	CFSSHPort = 2222
+	// DefaultWeight is the default weight assigned to load balancer members.
+	DefaultWeight = 1
+	// DefaultMemberPort is the default port for load balancer members (0 inherits from listener).
 	DefaultMemberPort = 0
 )
 
@@ -365,7 +373,7 @@ func newLBOpsCmd() *cobra.Command {
 }
 
 func makeLBOpsRunFunc(name *string, port *int, protocol *string, includeDoomsday, removeUnused, dryRun *bool, output *string) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
+	return func(_cmd *cobra.Command, _args []string) error {
 		config, err := prepareLBOpsConfig(*name, *port, *protocol, *includeDoomsday, *removeUnused, *dryRun, *output)
 		if err != nil {
 			return err
@@ -683,7 +691,7 @@ func newLBRoutersCmd() *cobra.Command {
 }
 
 func makeLBRoutersRunFunc(namePrefix *string, httpPort, httpsPort *int, createHTTP, createHTTPS, removeUnused, dryRun *bool, output *string) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
+	return func(_cmd *cobra.Command, _args []string) error {
 		config, err := prepareLBRoutersConfig(*namePrefix, *httpPort, *httpsPort, *createHTTP, *createHTTPS, *removeUnused, *dryRun, *output)
 		if err != nil {
 			return err
@@ -914,7 +922,7 @@ func newLBTCPRoutersCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tcp-routers",
 		Short: "Manage CF TCP routers load balancer",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			ctx := context.Background()
 			configFile := viper.GetString("config")
 
@@ -1107,7 +1115,7 @@ func newLBCFSSHCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cf-ssh",
 		Short: "Manage CF SSH load balancer",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			ctx := context.Background()
 			configFile := viper.GetString("config")
 

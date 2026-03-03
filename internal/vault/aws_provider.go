@@ -81,7 +81,7 @@ func (a *AWSVaultProvider) Configure(reporter providers.ProgressReporter) error 
 }
 
 // ConfigurePublicIPs configures public IP addresses (AWS Elastic IPs).
-func (a *AWSVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigurePublicIPs(_reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Info("Configuring AWS Elastic IPs")
 
 	publicIPsPath := a.PathBuilder.GetPublicIPsPath()
@@ -116,7 +116,7 @@ func (a *AWSVaultProvider) GetProviderName() string {
 
 // SaveConfigToVault saves the OCFP configuration to vault.
 // Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
-func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) SaveConfigToVault(_reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Info("Saving OCFP configuration to vault")
 
 	// Convert config to JSON
@@ -162,7 +162,7 @@ func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 }
 
 // ConfigureBlobstores configures blobstore settings (AWS S3).
-func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureBlobstores(_envPath, envType string, _reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Infow("Configuring S3 blobstores", "env_type", envType)
 
 	// AWS uses S3 for blobstore
@@ -187,7 +187,7 @@ func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string, reporter
 }
 
 // ConfigureCertificates configures TLS certificates (AWS ACM or Let's Encrypt).
-func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureCertificates(_envPath, _envType string, _reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Info("Configuring certificates")
 
 	certsPath := a.PathBuilder.GetCertsPath()
@@ -209,7 +209,7 @@ func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string, report
 }
 
 // ConfigureDatabases configures database settings (AWS RDS).
-func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureDatabases(_envPath, envType string, _reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Infow("Configuring RDS databases", "env_type", envType)
 
 	databases := a.getDatabasesForEnv(envType)
@@ -232,7 +232,7 @@ func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter 
 // under their respective environment paths.
 //
 //nolint:funlen // FQDN configuration with base/explicit resolution and vault writes
-func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureFQDNs(_envPath, envType string, _reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Infow("Configuring FQDNs", "env_type", envType)
 
 	// Get FQDNs configuration
@@ -307,7 +307,7 @@ func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter prov
 }
 
 // ConfigureIAAS configures IaaS-specific settings (AWS VPC, Subnets, Security Groups).
-func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureIAAS(_envPath, envType string, _reporter providers.ProgressReporter, _phaseNum *int, _totalPhases int) error {
 	a.logger.Infow("Configuring AWS IaaS components", "env_type", envType)
 
 	// Configure VPC
@@ -338,7 +338,7 @@ func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string, reporter provi
 }
 
 // ConfigureLoadBalancers configures load balancer settings (AWS ELB/ALB).
-func (a *AWSVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (a *AWSVaultProvider) ConfigureLoadBalancers(_envPath, envType string, _reporter providers.ProgressReporter, _phaseNum, _totalPhases int) error {
 	a.logger.Infow("Configuring AWS load balancers", "env_type", envType)
 
 	// Export service targets backed by reserved IPs (AWS ELB/ALB)

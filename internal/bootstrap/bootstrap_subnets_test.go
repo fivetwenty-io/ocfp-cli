@@ -23,7 +23,7 @@ type fakeNet struct {
 	existingSecurityGroups []*cpi.SecurityGroup // Pre-existing SGs in "cloud" (for Get/List)
 }
 
-func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
+func (f *fakeNet) CreateNetwork(_ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	network := &cpi.Network{
 		ID:         "net-1",
 		Name:       req.Name,
@@ -39,14 +39,14 @@ func (f *fakeNet) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*
 
 	return network, nil
 }
-func (f *fakeNet) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetNetwork(_ctx context.Context, _id string) (*cpi.Network, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
+func (f *fakeNet) ListNetworks(_ctx context.Context, _filters map[string]string) ([]*cpi.Network, error) {
 	return nil, nil
 }
-func (f *fakeNet) DeleteNetwork(ctx context.Context, id string) error { return nil }
-func (f *fakeNet) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
+func (f *fakeNet) DeleteNetwork(_ctx context.Context, _id string) error { return nil }
+func (f *fakeNet) CreateSubnet(_ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	id := "subnet-" + req.Name
 	subnet := &cpi.Subnet{
 		ID:               id,
@@ -63,16 +63,16 @@ func (f *fakeNet) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cp
 
 	return subnet, nil
 }
-func (f *fakeNet) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetSubnet(_ctx context.Context, _id string) (*cpi.Subnet, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
+func (f *fakeNet) ListSubnets(_ctx context.Context, _networkID string) ([]*cpi.Subnet, error) {
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) DeleteSubnet(ctx context.Context, id string) error { return nil }
+func (f *fakeNet) DeleteSubnet(_ctx context.Context, _id string) error { return nil }
 
 // Security group operations.
-func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+func (f *fakeNet) CreateSecurityGroup(_ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	sg := &cpi.SecurityGroup{
 		ID:          "sg-" + req.Name,
 		Name:        req.Name,
@@ -90,7 +90,7 @@ func (f *fakeNet) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecuri
 
 	return sg, nil
 }
-func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+func (f *fakeNet) GetSecurityGroup(_ctx context.Context, id string) (*cpi.SecurityGroup, error) {
 	// Check both newly created and pre-existing security groups
 	for _, sg := range f.createdSecurityGroups {
 		if sg.ID == id {
@@ -104,7 +104,7 @@ func (f *fakeNet) GetSecurityGroup(ctx context.Context, id string) (*cpi.Securit
 	}
 	return nil, fmt.Errorf("security group not found: %s", id)
 }
-func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+func (f *fakeNet) ListSecurityGroups(_ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
 	// Combine both newly created and pre-existing security groups
 	allGroups := append([]*cpi.SecurityGroup{}, f.createdSecurityGroups...)
 	allGroups = append(allGroups, f.existingSecurityGroups...)
@@ -129,10 +129,10 @@ func (f *fakeNet) ListSecurityGroups(ctx context.Context, filters map[string]str
 	}
 	return filtered, nil
 }
-func (f *fakeNet) DeleteSecurityGroup(ctx context.Context, id string) error { return nil }
+func (f *fakeNet) DeleteSecurityGroup(_ctx context.Context, _id string) error { return nil }
 
 // SecurityManager interface methods (for rule management).
-func (f *fakeNet) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+func (f *fakeNet) AddSecurityRule(_ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
 	// Find the security group and add the rule
 	for _, sg := range f.createdSecurityGroups {
 		if sg.ID == groupID {
@@ -149,11 +149,11 @@ func (f *fakeNet) AddSecurityRule(ctx context.Context, groupID string, rule *cpi
 	return fmt.Errorf("security group not found: %s", groupID)
 }
 
-func (f *fakeNet) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
+func (f *fakeNet) RemoveSecurityRule(_ctx context.Context, _groupID string, _ruleID string) error {
 	return nil
 }
 
-func (f *fakeNet) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
+func (f *fakeNet) ListSecurityRules(_ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
 	for _, sg := range f.createdSecurityGroups {
 		if sg.ID == groupID {
 			return sg.Rules, nil
@@ -168,76 +168,76 @@ func (f *fakeNet) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi
 }
 
 // Public IP operations.
-func (f *fakeNet) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) CreatePublicIP(_ctx context.Context, _req *cpi.PublicIPRequest) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetPublicIP(_ctx context.Context, _id string) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) DeletePublicIP(ctx context.Context, id string) error { return nil }
-func (f *fakeNet) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) DeletePublicIP(_ctx context.Context, _id string) error { return nil }
+func (f *fakeNet) AllocateFloatingIP(_ctx context.Context, _req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetFloatingIP(_ctx context.Context, _id string) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListFloatingIPs(_ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeNet) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+func (f *fakeNet) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
 	return nil
 }
-func (f *fakeNet) DisassociateFloatingIP(ctx context.Context, ipID string) error { return nil }
-func (f *fakeNet) ReleaseFloatingIP(ctx context.Context, id string) error        { return nil }
-func (f *fakeNet) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) { //nolint:nilnil // test fake
+func (f *fakeNet) DisassociateFloatingIP(_ctx context.Context, _ipID string) error { return nil }
+func (f *fakeNet) ReleaseFloatingIP(_ctx context.Context, _id string) error        { return nil }
+func (f *fakeNet) CreateRouter(_ctx context.Context, _req *cpi.CreateRouterRequest) (*cpi.Router, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetRouter(ctx context.Context, id string) (*cpi.Router, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetRouter(_ctx context.Context, _id string) (*cpi.Router, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListRouters(ctx context.Context) ([]*cpi.Router, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListRouters(_ctx context.Context) ([]*cpi.Router, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (f *fakeNet) AttachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return nil
 }
-func (f *fakeNet) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (f *fakeNet) DetachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return nil
 }
-func (f *fakeNet) DeleteRouter(ctx context.Context, id string) error { return nil }
-func (f *fakeNet) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+func (f *fakeNet) DeleteRouter(_ctx context.Context, _id string) error { return nil }
+func (f *fakeNet) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
+func (f *fakeNet) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error { return nil }
-func (f *fakeNet) DeleteLoadBalancer(ctx context.Context, id string) error            { return nil }
-func (f *fakeNet) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) { //nolint:nilnil // test fake
+func (f *fakeNet) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error { return nil }
+func (f *fakeNet) DeleteLoadBalancer(_ctx context.Context, _id string) error            { return nil }
+func (f *fakeNet) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeNet) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+func (f *fakeNet) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
 	return nil
 }
-func (f *fakeNet) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
+func (f *fakeNet) RemoveBackendMember(_ctx context.Context, _lbID string, _memberIP string) error {
 	return nil
 }
-func (f *fakeNet) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+func (f *fakeNet) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
 	return nil
 }
-func (f *fakeNet) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) { //nolint:nilnil // test fake
+func (f *fakeNet) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
 
 type fakeCompute struct{ lastReq *cpi.InstanceRequest }
 
-func (f *fakeCompute) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+func (f *fakeCompute) CreateInstance(_ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	f.lastReq = req
 
 	return &cpi.Instance{
@@ -260,17 +260,17 @@ func (f *fakeCompute) CreateInstance(ctx context.Context, req *cpi.InstanceReque
 		UpdatedAt:        time.Time{},
 	}, nil
 }
-func (f *fakeCompute) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) GetInstance(_ctx context.Context, _id string) (*cpi.Instance, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) ListInstances(_ctx context.Context, _filters map[string]string) ([]*cpi.Instance, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeCompute) StartInstance(ctx context.Context, id string) error  { return nil }
-func (f *fakeCompute) StopInstance(ctx context.Context, id string) error   { return nil }
-func (f *fakeCompute) RebootInstance(ctx context.Context, id string) error { return nil }
-func (f *fakeCompute) DeleteInstance(ctx context.Context, id string) error { return nil }
-func (f *fakeCompute) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (f *fakeCompute) StartInstance(_ctx context.Context, _id string) error  { return nil }
+func (f *fakeCompute) StopInstance(_ctx context.Context, _id string) error   { return nil }
+func (f *fakeCompute) RebootInstance(_ctx context.Context, _id string) error { return nil }
+func (f *fakeCompute) DeleteInstance(_ctx context.Context, _id string) error { return nil }
+func (f *fakeCompute) CreateKeyPair(_ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	return &cpi.KeyPair{
 		Name:        req.Name,
 		Fingerprint: "",
@@ -279,10 +279,10 @@ func (f *fakeCompute) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest
 		CreatedAt:   time.Time{},
 	}, nil
 }
-func (f *fakeCompute) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (f *fakeCompute) ImportKeyPair(_ctx context.Context, _name string, _publicKey string) error {
 	return nil
 }
-func (f *fakeCompute) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (f *fakeCompute) GetKeyPair(_ctx context.Context, name string) (*cpi.KeyPair, error) {
 	return &cpi.KeyPair{
 		Name:        name,
 		Fingerprint: "",
@@ -291,34 +291,34 @@ func (f *fakeCompute) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair
 		CreatedAt:   time.Time{},
 	}, nil
 }
-func (f *fakeCompute) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeCompute) DeleteKeyPair(ctx context.Context, name string) error { return nil }
-func (f *fakeCompute) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) DeleteKeyPair(_ctx context.Context, _name string) error { return nil }
+func (f *fakeCompute) ListImages(_ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeCompute) GetImage(ctx context.Context, id string) (*cpi.Image, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) GetImage(_ctx context.Context, _id string) (*cpi.Image, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) ListFlavors(_ctx context.Context) ([]*cpi.Flavor, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeCompute) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) GetFlavor(_ctx context.Context, _id string) (*cpi.Flavor, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
 
 // Volume operations.
-func (f *fakeCompute) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) CreateVolume(_ctx context.Context, _req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) GetVolume(_ctx context.Context, _id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeCompute) ListVolumes(_ctx context.Context, _filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeCompute) DeleteVolume(ctx context.Context, id string) error { return nil }
+func (f *fakeCompute) DeleteVolume(_ctx context.Context, _id string) error { return nil }
 
 type fakeProv struct {
 	n interface {
@@ -328,10 +328,10 @@ type fakeProv struct {
 	c cpi.ComputeManager
 }
 
-func (p *fakeProv) Name() string                                  { return "fake" }
-func (p *fakeProv) Region() string                                { return "eu01" }
-func (p *fakeProv) Authenticate(ctx context.Context) error        { return nil }
-func (p *fakeProv) ValidateCredentials(ctx context.Context) error { return nil }
+func (p *fakeProv) Name() string                                   { return "fake" }
+func (p *fakeProv) Region() string                                 { return "eu01" }
+func (p *fakeProv) Authenticate(_ctx context.Context) error        { return nil }
+func (p *fakeProv) ValidateCredentials(_ctx context.Context) error { return nil }
 
 //nolint:ireturn
 func (p *fakeProv) Network() cpi.NetworkManager { return p.n }
@@ -365,9 +365,9 @@ func (p *fakeProv) SecurityManager() cpi.SecurityManager { return p.Security() }
 //nolint:ireturn
 func (p *fakeProv) LoadBalancerManager() cpi.LoadBalancerManager { return p.LoadBalancer() }
 
-func (p *fakeProv) SupportsStorage() bool                                 { return true }
-func (p *fakeProv) Initialize(ctx context.Context, cfg interface{}) error { return nil }
-func (p *fakeProv) Cleanup(ctx context.Context) error                     { return nil }
+func (p *fakeProv) SupportsStorage() bool                                   { return true }
+func (p *fakeProv) Initialize(_ctx context.Context, _cfg interface{}) error { return nil }
+func (p *fakeProv) Cleanup(_ctx context.Context) error                      { return nil }
 
 func createTestConfig() *config.Config {
 	cfg := &config.Config{
@@ -450,7 +450,7 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 	manager, fakeNetwork := setupStackitSubnetTest(t)
 	ctx := context.Background()
 
-	createNetworkAndSubnets(t, manager, ctx)
+	createNetworkAndSubnets(ctx, t, manager)
 	verifyVirtualOnlySubnetsCreated(t, fakeNetwork, manager.StateManager())
 }
 
@@ -491,7 +491,7 @@ func setupStackitSubnetTest(t *testing.T) (*bootstrap.Manager, *fakeNet) {
 	return manager, fakeNetwork
 }
 
-func createNetworkAndSubnets(t *testing.T, manager *bootstrap.Manager, ctx context.Context) {
+func createNetworkAndSubnets(ctx context.Context, t *testing.T, manager *bootstrap.Manager) {
 	t.Helper()
 
 	err := manager.CreateNetwork(ctx)
@@ -569,7 +569,7 @@ func TestCreateBastion_Stackit_UsesNetworkOnlyAndDependsOnVirtual(t *testing.T) 
 	manager, fakeComp := setupStackitBastionTest(t)
 	ctx := context.Background()
 
-	createNetworkSubnetsAndBastion(t, manager, ctx)
+	createNetworkSubnetsAndBastion(ctx, t, manager)
 	verifyBastionStackitBehavior(t, fakeComp, manager.StateManager())
 }
 
@@ -611,7 +611,7 @@ func setupStackitBastionTest(t *testing.T) (*bootstrap.Manager, *fakeCompute) {
 	return manager, fakeComp
 }
 
-func createNetworkSubnetsAndBastion(t *testing.T, manager *bootstrap.Manager, ctx context.Context) {
+func createNetworkSubnetsAndBastion(ctx context.Context, t *testing.T, manager *bootstrap.Manager) {
 	t.Helper()
 
 	err := manager.CreateNetwork(ctx)
@@ -675,7 +675,7 @@ func TestCreateSubnets_Stackit_OcfpTriple_VirtualsAndReserved(t *testing.T) {
 	manager, fakeNetwork := setupStackitOcfpTripleTest(t)
 	ctx := context.Background()
 
-	createNetworkAndSubnets(t, manager, ctx)
+	createNetworkAndSubnets(ctx, t, manager)
 	verifyOcfpTripleSubnets(t, fakeNetwork, manager.StateManager())
 }
 

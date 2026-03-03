@@ -94,7 +94,7 @@ func (cfm *ConfigFileManager) GetConfigFiles() []ConfigFile {
 }
 
 // GenerateConfigFileScript generates script for configuration file creation.
-func (cfm *ConfigFileManager) GenerateConfigFileScript(ctx context.Context) string {
+func (cfm *ConfigFileManager) GenerateConfigFileScript(_ctx context.Context) string {
 	configFiles := cfm.GetConfigFiles()
 	if len(configFiles) == 0 {
 		return ""

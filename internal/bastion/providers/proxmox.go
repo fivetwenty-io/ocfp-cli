@@ -142,7 +142,7 @@ func (p *ProxmoxBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 }
 
 // Initialize performs the actual bastion initialization.
-func (p *ProxmoxBastionInit) Initialize(ctx context.Context) error {
+func (p *ProxmoxBastionInit) Initialize(_ctx context.Context) error {
 	p.log.Info("Initializing Proxmox bastion")
 
 	// This method coordinates the initialization process

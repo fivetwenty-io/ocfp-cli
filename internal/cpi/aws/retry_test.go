@@ -17,7 +17,7 @@ func TestRetryWithBackoff_Success(t *testing.T) {
 	err := RetryWithBackoff(ctx, config, "test-op", func() error {
 		callCount++
 		if callCount < 3 {
-			return &AWSError{Code: ErrCodeThrottling}
+			return &Error{Code: ErrCodeThrottling}
 		}
 
 		return nil
@@ -42,7 +42,7 @@ func TestRetryWithBackoff_MaxRetriesExceeded(t *testing.T) {
 	err := RetryWithBackoff(ctx, config, "test-op", func() error {
 		callCount++
 
-		return &AWSError{Code: ErrCodeThrottling}
+		return &Error{Code: ErrCodeThrottling}
 	})
 
 	if err == nil {
@@ -61,7 +61,7 @@ func TestRetryWithBackoff_NonRetryableError(t *testing.T) {
 	config.BaseDelay = 10 * time.Millisecond
 
 	callCount := 0
-	testErr := &AWSError{Code: ErrCodeNotFound}
+	testErr := &Error{Code: ErrCodeNotFound}
 	err := RetryWithBackoff(ctx, config, "test-op", func() error {
 		callCount++
 
@@ -90,7 +90,7 @@ func TestRetryWithBackoff_ContextCancellation(t *testing.T) {
 		err := RetryWithBackoff(ctx, config, "test-op", func() error {
 			callCount++
 
-			return &AWSError{Code: ErrCodeThrottling}
+			return &Error{Code: ErrCodeThrottling}
 		})
 		errChan <- err
 	}()

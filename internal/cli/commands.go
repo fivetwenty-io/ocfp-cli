@@ -1,3 +1,4 @@
+// Package cli implements the root command and subcommand registration for the OCFP CLI.
 package cli
 
 import (

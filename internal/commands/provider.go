@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	// Command timeout constants for provider operations.
-	VaultTimeoutSeconds   = 10
+	// VaultTimeoutSeconds is the timeout duration in seconds for vault operations.
+	VaultTimeoutSeconds = 10
+
+	// StackitTimeoutSeconds is the timeout duration in seconds for STACKIT operations.
 	StackitTimeoutSeconds = 30
 )
 

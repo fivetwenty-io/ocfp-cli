@@ -1,3 +1,4 @@
+// Package bastion orchestrates bastion host initialization and provisioning.
 package bastion
 
 import (
@@ -8,8 +9,8 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 )
 
-// BastionInitializer defines the interface for bastion initialization.
-type BastionInitializer interface {
+// Initializer defines the interface for bastion initialization.
+type Initializer interface {
 	Validate() error
 	PrepareEnvironment() map[string]string
 	GetConnectionDetails() (*ConnectionDetails, error)

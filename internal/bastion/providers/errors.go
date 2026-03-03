@@ -14,7 +14,7 @@ var (
 	ErrRestoredPathEmpty          = errors.New("restored path is empty")
 )
 
-// Dynamic error constructors.
+// ErrNoKeyFoundInConfig returns an error when no SSH key is found for the given keypair name.
 func ErrNoKeyFoundInConfig(keypairName string) error {
 	return fmt.Errorf("no key found in config for %s", keypairName) //nolint:err113 // dynamic error with context
 }

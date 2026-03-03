@@ -206,7 +206,7 @@ func bindFlagsToViper(cmd *cobra.Command) {
 
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, args []string) {
+	return func(cmd *cobra.Command, _args []string) {
 		// Determine bloc name: flag takes precedence, then env var, then viper config
 		effectiveBlocName := *blocName
 		if effectiveBlocName == "" {
@@ -314,7 +314,7 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 
 // createPostRunHandler creates the persistent post-run handler.
 func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, args []string) {
+	return func(_cmd *cobra.Command, _args []string) {
 		// Clean up lock file
 		if lock.tracker != nil && !lock.timestamp.IsZero() {
 			if viper.GetBool("debug") {

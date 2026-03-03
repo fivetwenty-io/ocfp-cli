@@ -23,6 +23,8 @@ const (
 	filterKeyName = "name"
 )
 
+// CreateInstance creates a new EC2 instance with the specified configuration.
+//
 //nolint:funlen // EC2 instance creation requires extensive configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	client, err := m.client.getEC2Client(ctx)

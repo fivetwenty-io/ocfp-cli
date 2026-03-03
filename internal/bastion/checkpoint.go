@@ -22,23 +22,27 @@ const (
 	percentageMultiplier = 100
 )
 
-// Checkpoint validation errors.
+// ErrUnsupportedCheckpointVersion returns an error for an unrecognized checkpoint format version.
 func ErrUnsupportedCheckpointVersion(version string) error {
 	return fmt.Errorf("unsupported checkpoint version: %s", version) //nolint:err113 // dynamic error with context
 }
 
+// ErrCheckpointBlocNameMismatch returns an error when the checkpoint bloc name does not match the expected value.
 func ErrCheckpointBlocNameMismatch(got, expected string) error {
 	return fmt.Errorf("checkpoint bloc name mismatch: got %s, expected %s", got, expected) //nolint:err113 // dynamic error with context
 }
 
+// ErrCheckpointProviderMismatch returns an error when the checkpoint provider does not match the expected value.
 func ErrCheckpointProviderMismatch(got, expected string) error {
 	return fmt.Errorf("checkpoint provider mismatch: got %s, expected %s", got, expected) //nolint:err113 // dynamic error with context
 }
 
+// ErrCheckpointTooOld returns an error when a checkpoint has exceeded its maximum age.
 func ErrCheckpointTooOld(age string) error {
 	return fmt.Errorf("checkpoint is too old: %s", age) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidCheckpointSteps returns an error when completed steps exceed total steps.
 func ErrInvalidCheckpointSteps(completed, total int) error {
 	return fmt.Errorf("invalid checkpoint: completed steps (%d) > total steps (%d)", completed, total) //nolint:err113 // dynamic error with context
 }
@@ -102,7 +106,7 @@ func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[s
 
 	// Add failed phases information
 	for _, err := range progress.Errors {
-		bastionErr := &BastionError{
+		bastionErr := &Error{
 			Type:         "",
 			Phase:        "",
 			Command:      "",

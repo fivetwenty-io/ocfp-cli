@@ -9,13 +9,18 @@ import (
 )
 
 const (
-	// Path parsing requirements.
-	MinVaultPathParts  = 3
+	// MinVaultPathParts is the minimum number of path segments in a valid vault path.
+	MinVaultPathParts = 3
+	// MinConfigPathParts is the minimum number of path segments in a valid config path.
 	MinConfigPathParts = 4
-	MinNetworkParts    = 4
-	MaxPathParts       = 5
-	NetworkPartsForIP  = 2
-	MaxPathsCapacity   = 30
+	// MinNetworkParts is the minimum number of parts in a network address.
+	MinNetworkParts = 4
+	// MaxPathParts is the maximum number of path segments supported.
+	MaxPathParts = 5
+	// NetworkPartsForIP is the number of parts when splitting an IP address for network derivation.
+	NetworkPartsForIP = 2
+	// MaxPathsCapacity is the initial slice capacity for path collection builders.
+	MaxPathsCapacity = 30
 )
 
 // PathBuilder provides utilities for constructing vault paths according to OCFP conventions
@@ -393,6 +398,9 @@ func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
 // HostnameFormatter is a function type that generates database hostnames.
 type HostnameFormatter func(envType string) string
 
+// BuildDatabasesForEnv constructs database configuration maps for a given environment type
+// using the provided hostname formatter to generate database hostnames.
+//
 //nolint:gosec // map keys contain "password" but values are Genesis template placeholders, not real secrets
 func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
 	databases := make(map[string]map[string]interface{})

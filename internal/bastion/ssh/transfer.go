@@ -149,7 +149,7 @@ func (tm *TransferManager) download(ctx context.Context, remotePath, localPath s
 }
 
 // uploadViaSFTP uploads using SFTP.
-func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote string, localStat os.FileInfo) error {
+func (tm *TransferManager) uploadViaSFTP(_ctx context.Context, local, remote string, localStat os.FileInfo) error {
 	// Create SFTP client
 	sftpClient, err := sftp.NewClient(tm.client.client)
 	if err != nil {
@@ -213,14 +213,14 @@ func (tm *TransferManager) uploadViaSFTP(ctx context.Context, local, remote stri
 }
 
 // uploadViaSCP uploads using SCP command.
-func (tm *TransferManager) uploadViaSCP(ctx context.Context, local, remote string, localStat os.FileInfo) error {
+func (tm *TransferManager) uploadViaSCP(ctx context.Context, local, remote string, _localStat os.FileInfo) error {
 	// For now, delegate to external SCP command
 	// In a full implementation, this would implement SCP protocol natively
 	return tm.uploadViaExternalSCP(ctx, local, remote)
 }
 
 // uploadViaTarPipe uploads using tar pipe over SSH.
-func (tm *TransferManager) uploadViaTarPipe(ctx context.Context, local, remote string, localStat os.FileInfo) error {
+func (tm *TransferManager) uploadViaTarPipe(ctx context.Context, _local, remote string, _localStat os.FileInfo) error {
 	// Create tar command that pipes to remote tar extraction
 	remoteDir := filepath.Dir(remote)
 
@@ -279,7 +279,7 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 }
 
 // downloadViaSFTP downloads using SFTP.
-func (tm *TransferManager) downloadViaSFTP(ctx context.Context, remote, local string) error {
+func (tm *TransferManager) downloadViaSFTP(_ctx context.Context, remote, local string) error {
 	// Create SFTP client
 	sftpClient, err := sftp.NewClient(tm.client.client)
 	if err != nil {

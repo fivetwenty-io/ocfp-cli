@@ -11,11 +11,12 @@ var (
 	ErrNoConfigPath           = errors.New("no config file path available")
 )
 
-// Dynamic error constructors.
+// ErrBlocNotFound returns an error indicating the specified bloc was not found in the configuration file.
 func ErrBlocNotFound(blocName, configPath string) error {
 	return fmt.Errorf("bloc '%s' not found in configuration file %s", blocName, configPath) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidProvider returns an error for an unrecognized or unsupported cloud provider.
 func ErrInvalidProvider(provider string) error {
 	return fmt.Errorf("invalid provider: %s", provider) //nolint:err113 // dynamic error with context
 }

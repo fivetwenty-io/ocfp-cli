@@ -1417,7 +1417,7 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 // Utility Functions
 // ==============================================================================
 
-func generateBastionUserData(cfg *config.Config) string {
+func generateBastionUserData(_cfg *config.Config) string {
 	return `#!/bin/bash
 # Bootstrap bastion instance
 apt-get update

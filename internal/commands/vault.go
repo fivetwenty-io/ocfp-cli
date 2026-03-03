@@ -23,31 +23,46 @@ import (
 )
 
 const (
-	// File permissions.
+	// VaultOutputFileMode is the file permission mode for vault output files.
 	VaultOutputFileMode = 0600
-	VaultDirMode        = 0750
 
-	// Vault inception constants.
-	VaultInceptionPort     = 8234
+	// VaultDirMode is the file permission mode for vault directories.
+	VaultDirMode = 0750
+
+	// VaultInceptionPort is the default port for the inception vault server.
+	VaultInceptionPort = 8234
+	// TestVaultInceptionPort is the port for testing the inception vault server.
 	TestVaultInceptionPort = 8235
-	VaultInceptionLogDir   = ".ocfp/logs/vault"
-	VaultInceptionLogFile  = "vault-inception.log"
-	MaxVaultReadyAttempts  = 30
+	// VaultInceptionLogDir is the directory for vault inception logs.
+	VaultInceptionLogDir = ".ocfp/logs/vault"
+	// VaultInceptionLogFile is the filename for vault inception logs.
+	VaultInceptionLogFile = "vault-inception.log"
+	// MaxVaultReadyAttempts is the maximum number of attempts to wait for vault readiness.
+	MaxVaultReadyAttempts = 30
 
-	// Vault cleanup wait duration after process termination.
+	// VaultCleanupWait is the duration to wait after process termination before cleanup.
 	VaultCleanupWait = 2 * time.Second
-	// Vault initialization wait duration after startup.
+
+	// VaultInitWait is the duration to wait after vault startup before initialization.
 	VaultInitWait = 5 * time.Second
 )
 
 var (
-	// Vault inception errors.
-	ErrSafeNotFound      = errors.New("'safe' command not found - please install safe CLI")
-	ErrTmuxNotFound      = errors.New("'tmux' command not found - please install tmux")
-	ErrVaultNotFound     = errors.New("'vault' command not found - please install vault")
-	ErrVaultNotReady     = errors.New("vault did not become ready within timeout")
-	ErrTmuxFailed        = errors.New("failed to create tmux session")
+	// ErrSafeNotFound indicates the safe CLI is not installed.
+	ErrSafeNotFound = errors.New("'safe' command not found - please install safe CLI")
+
+	// ErrTmuxNotFound indicates tmux is not installed.
+	ErrTmuxNotFound = errors.New("'tmux' command not found - please install tmux")
+
+	// ErrVaultNotFound indicates the vault CLI is not installed.
+	ErrVaultNotFound = errors.New("'vault' command not found - please install vault")
+	// ErrVaultNotReady indicates vault did not become ready within the timeout period.
+	ErrVaultNotReady = errors.New("vault did not become ready within timeout")
+	// ErrTmuxFailed indicates failure to create a tmux session for vault.
+	ErrTmuxFailed = errors.New("failed to create tmux session")
+	// ErrVaultStartupError indicates a vault startup error was detected in tmux output.
 	ErrVaultStartupError = errors.New("vault startup error detected in tmux output")
+	// ErrVaultTargetVerify indicates failure to verify the inception vault target.
 	ErrVaultTargetVerify = errors.New("failed to verify inception vault target")
 )
 
@@ -217,7 +232,7 @@ Root and unseal keys are saved to ~/.ocfp/{bloc}/vault/{root.key,unseal.keys}.`,
 
   # Initialize with specific bloc
   ocfp vault inception --bloc production`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runVaultInception()
 		},
 	}
@@ -591,7 +606,7 @@ func newVaultTeardownCmd() *cobra.Command {
 
   # Teardown with specific bloc
   ocfp vault teardown --bloc production`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runVaultTeardown()
 		},
 	}
@@ -676,7 +691,7 @@ The output mode is automatically detected based on terminal capabilities.`,
   # Output to YAML for automation
   OUTPUT_MODE=yaml ocfp vault migrate`,
 		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _args []string) error {
 			return runVaultMigrate(cmd, sourcePath, destPath, dryRun)
 		},
 	}
@@ -771,7 +786,7 @@ func newVaultExportCmd() *cobra.Command {
 
   # Export as JSON
   ocfp vault export --path /secret/production --output secrets.json --format json`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runVaultExport(vaultPath, outputFile, format)
 		},
 	}
@@ -853,7 +868,7 @@ func newVaultImportCmd() *cobra.Command {
 
   # Force overwrite existing secrets
   ocfp vault import --path /secret/production --file secrets.yml --force`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			log := logger.Get()
 
 			if vaultPath == "" || inputFile == "" {

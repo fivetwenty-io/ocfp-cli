@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	// Bootstrap timeout duration.
+	// BootstrapTimeoutMinutes is the maximum duration in minutes for a bootstrap operation.
 	BootstrapTimeoutMinutes = 30
 )
 
@@ -160,7 +160,7 @@ func bindBootstrapViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
 }
 
-func runBootstrap(cmd *cobra.Command, args []string) error {
+func runBootstrap(cmd *cobra.Command, _args []string) error {
 	// Silence usage on execution errors
 	cmd.SilenceUsage = true
 

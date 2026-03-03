@@ -106,7 +106,7 @@ func bindRSyncViperFlags(cmd *cobra.Command) {
 	})
 }
 
-func runRSync(cmd *cobra.Command, args []string) error {
+func runRSync(_cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("rsync")
 

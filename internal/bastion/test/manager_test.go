@@ -179,14 +179,14 @@ func NewMockSSHClient() *MockSSHClient {
 }
 
 // Connect simulates SSH connection.
-func (m *MockSSHClient) Connect(ctx context.Context) error {
+func (m *MockSSHClient) Connect(_ctx context.Context) error {
 	m.connected = true
 
 	return nil
 }
 
 // ExecuteCommand simulates command execution.
-func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+func (m *MockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.CommandResult, error) {
 	m.commands = append(m.commands, cmd)
 
 	if result, exists := m.commandResults[cmd]; exists {
@@ -204,7 +204,7 @@ func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.Co
 }
 
 // TransferFile simulates file transfer.
-func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (m *MockSSHClient) TransferFile(_ctx context.Context, local, remote string, _opts ssh.TransferOptions) error {
 	transferKey := fmt.Sprintf("%s->%s", local, remote)
 
 	if err, exists := m.transferErrors[transferKey]; exists {
@@ -215,7 +215,7 @@ func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, 
 }
 
 // CreateTunnel simulates tunnel creation.
-func (m *MockSSHClient) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (m *MockSSHClient) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return nil
 }
 

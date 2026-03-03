@@ -353,7 +353,7 @@ func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.
 }
 
 // ListSecurityGroups lists firewall rules.
-func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+func (m *NetworkManager) ListSecurityGroups(ctx context.Context, _filters map[string]string) ([]*cpi.SecurityGroup, error) {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -608,7 +608,7 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.Flo
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -644,7 +644,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 }
 
 // AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+func (m *NetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
 	// In GCP, this is done by updating the instance's access config
 	// This is a more complex operation that requires getting the instance,
 	// finding the network interface, and adding an access config
@@ -652,7 +652,7 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, i
 }
 
 // DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+func (m *NetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
 	// In GCP, this is done by removing the access config from the instance
 	return fmt.Errorf("%w: DisassociateFloatingIP - use instance network interface configuration", ErrNotImplemented)
 }
@@ -757,7 +757,7 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 }
 
 // AttachRouterInterface attaches a subnet to a router.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) AttachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	// GCP Cloud Routers don't have explicit interface attachment like OpenStack
 	// They automatically route for networks they're associated with
 	// NAT configuration is done separately via Cloud NAT
@@ -765,7 +765,7 @@ func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID str
 }
 
 // DetachRouterInterface detaches a subnet from a router.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) DetachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return fmt.Errorf("%w: DetachRouterInterface - use Cloud NAT configuration", ErrNotImplemented)
 }
 
@@ -800,52 +800,52 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //
 }
 
 // CreateLoadBalancer creates a load balancer (delegates to LoadBalancerManager).
-func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetLoadBalancer retrieves a load balancer.
-func (m *NetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // ListLoadBalancers lists load balancers.
-func (m *NetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+func (m *NetworkManager) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // UpdateLoadBalancer updates a load balancer.
-func (m *NetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
+func (m *NetworkManager) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // DeleteLoadBalancer deletes a load balancer.
-func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteLoadBalancer(_ctx context.Context, _id string) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *NetworkManager) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // AddBackendMember adds a member to a backend pool.
-func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+func (m *NetworkManager) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // RemoveBackendMember removes a member from a backend pool.
-func (m *NetworkManager) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
+func (m *NetworkManager) RemoveBackendMember(_ctx context.Context, _lbID string, _memberIP string) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // ConfigureHealthCheck configures a health check for a load balancer.
-func (m *NetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+func (m *NetworkManager) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetLoadBalancerHealth retrieves health status for a load balancer.
-func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
