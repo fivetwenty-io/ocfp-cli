@@ -274,6 +274,41 @@ func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) s
 	return keyStr
 }
 
+// FormatAuthorizedKeysBlock formats resolved keys (from ResolveKeySpecs) into an
+// authorized_keys content block with label comments.
+//
+// Output format:
+//
+//	# alice
+//	ssh-ed25519 AAAA...
+//	# bob (github/bob-user)
+//	ssh-ed25519 AAAA...
+//	ssh-rsa AAAA...
+func (km *KeyManager) FormatAuthorizedKeysBlock(resolvedKeys map[string][]string, specs map[string]string) string {
+	if len(resolvedKeys) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	for label, keys := range resolvedKeys {
+		spec := specs[label]
+
+		comment := label
+		if strings.Contains(spec, "/") {
+			comment = label + " (" + spec + ")"
+		}
+
+		builder.WriteString("# " + comment + "\n")
+
+		for _, key := range keys {
+			builder.WriteString(strings.TrimSpace(key) + "\n")
+		}
+	}
+
+	return builder.String()
+}
+
 // RestoreKeyFromConfig attempts to restore an SSH key from config if it exists.
 // Returns the path to the restored key file, or empty string if no key found in config.
 func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (string, error) {

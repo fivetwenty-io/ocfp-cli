@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 // Phase execution errors.
 var (
 	ErrLocalScriptExecutionNotImplemented = errors.New("local script execution not implemented")
+	ErrKeyFetchFailed                     = errors.New("failed to fetch keys")
 )
 
 // Additional phase implementations for comprehensive bastion initialization
@@ -434,4 +436,130 @@ func calculateFileSHA256(filePath string) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// configureBastionKeys resolves bastion.keys from config and appends any new
+// keys to ~/.ssh/authorized_keys on the bastion host.
+func (m *Manager) configureBastionKeys(ctx context.Context) error {
+	keys := m.config.Bastion.Keys
+	if len(keys) == 0 {
+		m.log.Infow("No bastion keys configured, skipping")
+
+		return nil
+	}
+
+	m.log.Infow("Configuring bastion SSH authorized keys", "key_count", len(keys))
+
+	keyManager := ssh.NewKeyManager()
+
+	resolved, err := ssh.ResolveKeySpecs(ctx, keys, fetchGitHubKeysHTTP, fetchGitLabKeysHTTP)
+	if err != nil {
+		return fmt.Errorf("failed to resolve bastion key specs: %w", err)
+	}
+
+	if len(resolved) == 0 {
+		m.log.Infow("No keys resolved, skipping authorized_keys update")
+
+		return nil
+	}
+
+	block := keyManager.FormatAuthorizedKeysBlock(resolved, keys)
+
+	return m.appendNewKeysToBastion(ctx, block, len(resolved))
+}
+
+// appendNewKeysToBastion reads the bastion's authorized_keys, deduplicates,
+// and appends any keys not already present.
+func (m *Manager) appendNewKeysToBastion(ctx context.Context, block string, keyCount int) error {
+	result, err := m.sshClient.ExecuteCommand(ctx, "cat ~/.ssh/authorized_keys 2>/dev/null || true")
+	if err != nil {
+		return fmt.Errorf("failed to read authorized_keys from bastion: %w", err)
+	}
+
+	toAppend := deduplicateKeyBlock(block, result.Stdout)
+	if strings.TrimSpace(toAppend) == "" {
+		m.log.Infow("All bastion keys already present in authorized_keys")
+
+		return nil
+	}
+
+	escapedBlock := strings.ReplaceAll(toAppend, "'", "'\"'\"'")
+	appendCmd := fmt.Sprintf(
+		`bash -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf "\n%s\n" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'`,
+		escapedBlock)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, appendCmd)
+	if err != nil {
+		return fmt.Errorf("failed to append keys to authorized_keys: %w", err)
+	}
+
+	m.log.Infow("Bastion authorized keys updated", "keys_added", keyCount)
+
+	return nil
+}
+
+// deduplicateKeyBlock returns only lines from block that are not already
+// present in existing, preserving comments and blank lines.
+func deduplicateKeyBlock(block, existing string) string {
+	var newLines []string
+
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			newLines = append(newLines, line)
+
+			continue
+		}
+
+		if !strings.Contains(existing, line) {
+			newLines = append(newLines, line)
+		}
+	}
+
+	return strings.Join(newLines, "\n")
+}
+
+// fetchGitHubKeysHTTP fetches SSH public keys from GitHub for a username.
+func fetchGitHubKeysHTTP(ctx context.Context, username string) ([]string, error) {
+	return fetchKeysFromURL(ctx, fmt.Sprintf("https://github.com/%s.keys", username), "GitHub")
+}
+
+// fetchGitLabKeysHTTP fetches SSH public keys from GitLab for a username.
+func fetchGitLabKeysHTTP(ctx context.Context, username string) ([]string, error) {
+	return fetchKeysFromURL(ctx, fmt.Sprintf("https://gitlab.com/%s.keys", username), "GitLab")
+}
+
+// fetchKeysFromURL performs an HTTP GET and parses newline-delimited SSH keys.
+func fetchKeysFromURL(ctx context.Context, url, provider string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build %s key request: %w", provider, err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL built from trusted config
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: %s returned %s", ErrKeyFetchFailed, provider, resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s keys response: %w", provider, err)
+	}
+
+	var keys []string
+
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			keys = append(keys, line)
+		}
+	}
+
+	return keys, nil
 }
