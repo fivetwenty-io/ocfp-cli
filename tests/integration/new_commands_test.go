@@ -60,13 +60,23 @@ func TestTmuxCommandIntegration(t *testing.T) {
 			t.Skip("tmux not available on system, skipping integration test")
 		}
 
-		// Since tmux requires a terminal and we're in a test environment,
-		// we expect this to fail but not panic
-		err = cmd.Execute()
+		// Suppress subprocess output — tmux writes directly to os.Stdout/os.Stderr
+		// and will fail without a terminal (expected in test environments)
+		devNull, err := os.Open(os.DevNull)
+		require.NoError(t, err)
+		defer devNull.Close()
+
+		origStdout, origStderr := os.Stdout, os.Stderr
+		os.Stdout, os.Stderr = devNull, devNull
+		execErr := cmd.Execute()
+		os.Stdout, os.Stderr = origStdout, origStderr
+
+		t.Log("tmux command failed as expected (no terminal in test environment)")
+
 		// In CI/test environments without proper terminal, tmux will fail
 		// This is expected behavior
-		if err != nil {
-			assert.Contains(t, err.Error(), "tmux")
+		if execErr != nil {
+			assert.Contains(t, execErr.Error(), "tmux")
 		}
 	})
 
