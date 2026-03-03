@@ -278,11 +278,16 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, blocName s
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
 
-	// List floating IPs
-	ips, err := network.ListFloatingIPs(ctx, nil)
+	// List floating IPs scoped to this bloc to avoid associating EIPs from other blocs.
+	ips, err := network.ListFloatingIPs(ctx, map[string]string{
+		"bloc":       blocName,
+		"managed-by": "ocfp",
+	})
 	if err != nil {
 		return fmt.Errorf("failed to list floating IPs: %w", err)
 	}
+
+	log.Infow("Found floating IPs for bloc", "bloc", blocName, "count", len(ips))
 
 	// Find bastion instance using robust multi-strategy discovery
 	bastion, err := findBastionInstance(ctx, provider, blocName)
@@ -292,9 +297,17 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, blocName s
 		return nil //nolint:nilerr // bastion not found is non-fatal
 	}
 
+	log.Infow("Found bastion for floating IP association", "name", bastion.Name, "id", bastion.ID)
+
 	if len(ips) > 0 {
+		log.Infow("Associating floating IP with bastion",
+			"ip_id", ips[0].ID, "ip_address", ips[0].Address,
+			"bastion_id", bastion.ID, "bastion_name", bastion.Name)
+
 		return associateFloatingIPWithBastion(ctx, network, bastion, ips[0], dryRun)
 	}
+
+	log.Warnw("No floating IPs found for bloc", "bloc", blocName)
 
 	return nil
 }
