@@ -44,6 +44,14 @@ var (
 	ErrSnapshotWaitTimeout = errors.New("timeout waiting for snapshot to reach desired state")
 	// ErrSnapshotErrorState indicates snapshot entered error state.
 	ErrSnapshotErrorState = errors.New("snapshot entered error state")
+	// ErrCleanupFailed indicates errors occurred during cleanup.
+	ErrCleanupFailed = errors.New("errors during cleanup")
+	// ErrClientNotInitialized indicates the client config is nil.
+	ErrClientNotInitialized = errors.New("client not initialized: config is nil")
+	// ErrAutoDetectProject indicates GCP project could not be auto-detected.
+	ErrAutoDetectProject = errors.New("unable to auto-detect GCP project")
+	// ErrAutoDetectCredentials indicates GCP credentials could not be auto-detected.
+	ErrAutoDetectCredentials = errors.New("unable to auto-detect GCP credentials")
 )
 
 // ErrorCode represents GCP-specific error codes.
@@ -90,6 +98,7 @@ func (e *GCPError) Error() string {
 	if e.Operation != "" {
 		return fmt.Sprintf("[GCP:%s] %s: %s", e.Operation, e.Code, e.Message)
 	}
+
 	return fmt.Sprintf("[GCP] %s: %s", e.Code, e.Message)
 }
 
@@ -103,6 +112,10 @@ func (e *GCPError) IsRetryable() bool {
 	switch e.Code {
 	case ErrCodeRateLimitExceeded, ErrCodeServiceUnavailable, ErrCodeInternalError:
 		return true
+	case ErrCodeQuotaExceeded, ErrCodeResourceNotFound, ErrCodeResourceAlreadyExists,
+		ErrCodePermissionDenied, ErrCodeUnauthorized, ErrCodeBadRequest,
+		ErrCodeOperationInProgress, ErrCodeResourceInUse, ErrCodeConditionNotMet:
+		// Not retryable
 	}
 
 	// Check HTTP status codes
@@ -227,6 +240,8 @@ func buildLogArgs(gcpErr *GCPError) []interface{} {
 }
 
 // mapToProviderError maps GCP errors to provider-specific errors.
+//
+//nolint:funlen // exhaustive error code mapping requires this length
 func mapToProviderError(gcpErr *GCPError) error {
 	// Check for GCP-specific NotFound error codes
 	errorCode := string(gcpErr.Code)
@@ -291,6 +306,10 @@ func mapToProviderError(gcpErr *GCPError) error {
 				"operation": gcpErr.Operation,
 			},
 		}
+
+	case ErrCodeRateLimitExceeded, ErrCodeResourceNotFound, ErrCodeInternalError,
+		ErrCodeServiceUnavailable, ErrCodeOperationInProgress, ErrCodeConditionNotMet:
+		// Not mapped to provider errors
 	}
 
 	return nil
@@ -302,6 +321,7 @@ func IsNotFound(err error) bool {
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsNotFound()
 	}
+
 	return cpi.IsNotFound(err)
 }
 
@@ -311,6 +331,7 @@ func IsAlreadyExists(err error) bool {
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsAlreadyExists()
 	}
+
 	return cpi.IsAlreadyExists(err)
 }
 
@@ -320,6 +341,7 @@ func IsRetryable(err error) bool {
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsRetryable()
 	}
+
 	return false
 }
 
@@ -329,6 +351,7 @@ func IsQuotaExceeded(err error) bool {
 	if errors.As(err, &gcpErr) {
 		return gcpErr.Code == ErrCodeQuotaExceeded
 	}
+
 	return false
 }
 
@@ -338,5 +361,6 @@ func IsResourceInUse(err error) bool {
 	if errors.As(err, &gcpErr) {
 		return gcpErr.Code == ErrCodeResourceInUse
 	}
+
 	return false
 }

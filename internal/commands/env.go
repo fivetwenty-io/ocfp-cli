@@ -428,8 +428,8 @@ func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Log
 
 func readExistingOCFPConfig(ocfpConfigPath string, log logger.Logger) (map[string]interface{}, error) {
 	ocfpConfig := make(map[string]interface{})
-	// #nosec G304 - ocfpConfigPath is constructed from safe paths
-	data, err := os.ReadFile(ocfpConfigPath)
+
+	data, err := os.ReadFile(ocfpConfigPath) //nolint:gosec // path is constructed from safe config paths
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ocfpConfig, nil
@@ -449,7 +449,7 @@ func readExistingOCFPConfig(ocfpConfigPath string, log logger.Logger) (map[strin
 }
 
 func writeOCFPConfig(ocfpConfigPath string, ocfpConfig map[string]interface{}) error {
-	err := os.MkdirAll(filepath.Dir(ocfpConfigPath), ConfigDirPerm)
+	err := os.MkdirAll(filepath.Dir(ocfpConfigPath), ConfigDirPerm) //nolint:gosec // path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
@@ -459,7 +459,7 @@ func writeOCFPConfig(ocfpConfigPath string, ocfpConfig map[string]interface{}) e
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	err = os.WriteFile(ocfpConfigPath, data, ConfigFilePerm)
+	err = os.WriteFile(ocfpConfigPath, data, ConfigFilePerm) //nolint:gosec // path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
@@ -559,7 +559,7 @@ func findEnvironments() []environmentInfo {
 
 		for _, match := range matches {
 			// Try to load and parse the file
-			data, err := os.ReadFile(match) // #nosec G304 - match is from glob pattern
+			data, err := os.ReadFile(match) //nolint:gosec // match is from glob pattern on trusted paths
 			if err != nil {
 				continue
 			}

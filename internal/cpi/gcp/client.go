@@ -94,6 +94,7 @@ func (c *Client) Region() string {
 	if c.config == nil {
 		return ""
 	}
+
 	return c.config.Region
 }
 
@@ -102,6 +103,7 @@ func (c *Client) Zone() string {
 	if c.config == nil {
 		return ""
 	}
+
 	return c.config.Zone
 }
 
@@ -110,6 +112,7 @@ func (c *Client) ProjectID() string {
 	if c.config == nil {
 		return ""
 	}
+
 	return c.config.ProjectID
 }
 
@@ -173,8 +176,9 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 	}
 
 	it := c.machineTypesClient.List(ctx, req)
+
 	_, err = it.Next()
-	if err != nil && err != iterator.Done {
+	if err != nil && !errors.Is(err, iterator.Done) {
 		return WrapGCPError(err, "failed to validate GCP credentials")
 	}
 
@@ -183,132 +187,85 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 	return nil
 }
 
+// closeable is an interface for clients that can be closed.
+type closeable interface {
+	Close() error
+}
+
+// closeClient closes a client and appends any error to the slice.
+func closeClient(c closeable, errs *[]error) {
+	if c == nil {
+		return
+	}
+
+	err := c.Close()
+	if err != nil {
+		*errs = append(*errs, err)
+	}
+}
+
 // Cleanup releases resources and closes connections.
+//nolint:funlen // sequential cleanup steps must remain together
 func (c *Client) Cleanup(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	var errs []error
 
-	// Close all clients
-	if c.instancesClient != nil {
-		if err := c.instancesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.instancesClient = nil
-	}
+	closeClient(c.instancesClient, &errs)
+	c.instancesClient = nil
 
-	if c.disksClient != nil {
-		if err := c.disksClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.disksClient = nil
-	}
+	closeClient(c.disksClient, &errs)
+	c.disksClient = nil
 
-	if c.snapshotsClient != nil {
-		if err := c.snapshotsClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.snapshotsClient = nil
-	}
+	closeClient(c.snapshotsClient, &errs)
+	c.snapshotsClient = nil
 
-	if c.imagesClient != nil {
-		if err := c.imagesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.imagesClient = nil
-	}
+	closeClient(c.imagesClient, &errs)
+	c.imagesClient = nil
 
-	if c.machineTypesClient != nil {
-		if err := c.machineTypesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.machineTypesClient = nil
-	}
+	closeClient(c.machineTypesClient, &errs)
+	c.machineTypesClient = nil
 
-	if c.networksClient != nil {
-		if err := c.networksClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.networksClient = nil
-	}
+	closeClient(c.networksClient, &errs)
+	c.networksClient = nil
 
-	if c.subnetworksClient != nil {
-		if err := c.subnetworksClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.subnetworksClient = nil
-	}
+	closeClient(c.subnetworksClient, &errs)
+	c.subnetworksClient = nil
 
-	if c.firewallsClient != nil {
-		if err := c.firewallsClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.firewallsClient = nil
-	}
+	closeClient(c.firewallsClient, &errs)
+	c.firewallsClient = nil
 
-	if c.addressesClient != nil {
-		if err := c.addressesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.addressesClient = nil
-	}
+	closeClient(c.addressesClient, &errs)
+	c.addressesClient = nil
 
-	if c.routersClient != nil {
-		if err := c.routersClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.routersClient = nil
-	}
+	closeClient(c.routersClient, &errs)
+	c.routersClient = nil
 
-	if c.storageClient != nil {
-		if err := c.storageClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.storageClient = nil
-	}
+	closeClient(c.storageClient, &errs)
+	c.storageClient = nil
 
-	if c.forwardingRulesClient != nil {
-		if err := c.forwardingRulesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.forwardingRulesClient = nil
-	}
+	closeClient(c.forwardingRulesClient, &errs)
+	c.forwardingRulesClient = nil
 
-	if c.targetPoolsClient != nil {
-		if err := c.targetPoolsClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.targetPoolsClient = nil
-	}
+	closeClient(c.targetPoolsClient, &errs)
+	c.targetPoolsClient = nil
 
-	if c.backendServicesClient != nil {
-		if err := c.backendServicesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.backendServicesClient = nil
-	}
+	closeClient(c.backendServicesClient, &errs)
+	c.backendServicesClient = nil
 
-	if c.healthChecksClient != nil {
-		if err := c.healthChecksClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.healthChecksClient = nil
-	}
+	closeClient(c.healthChecksClient, &errs)
+	c.healthChecksClient = nil
 
-	if c.regionHealthChecksClient != nil {
-		if err := c.regionHealthChecksClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.regionHealthChecksClient = nil
-	}
+	closeClient(c.regionHealthChecksClient, &errs)
+	c.regionHealthChecksClient = nil
 
 	c.clientsLoaded = false
 
 	logger.Debug("GCP provider cleaned up")
 
 	if len(errs) > 0 {
-		return fmt.Errorf("errors during cleanup: %v", errs)
+		return fmt.Errorf("%w: %v", ErrCleanupFailed, errs)
 	}
 
 	return nil
@@ -399,7 +356,7 @@ func (c *Client) parseConfig(config interface{}) (*Config, error) {
 	case map[string]interface{}:
 		return c.handleMapConfig()
 	default:
-		return nil, fmt.Errorf("invalid config type for GCP provider: expected *gcp.Config or *config.Config, got %T", config)
+		return nil, fmt.Errorf("%w: expected *gcp.Config or *config.Config, got %T", ErrInvalidConfigType, config)
 	}
 }
 
@@ -442,6 +399,7 @@ func (c *Client) handleMapConfig() (*Config, error) {
 			"project", c.config.ProjectID,
 			"region", c.config.Region)
 	}
+
 	return nil, nil
 }
 
@@ -455,6 +413,8 @@ func (c *Client) initializeResourceManagers() {
 }
 
 // ensureClientsLoaded ensures all GCP SDK clients are loaded.
+//
+//nolint:cyclop,funlen // repetitive SDK client initialization for each GCP service
 func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -464,7 +424,7 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 	}
 
 	if c.config == nil {
-		return errors.New("client not initialized: config is nil")
+		return ErrClientNotInitialized
 	}
 
 	// Get service account credentials
@@ -586,6 +546,7 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 func (c *Client) getConfig() *Config {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.config
 }
 

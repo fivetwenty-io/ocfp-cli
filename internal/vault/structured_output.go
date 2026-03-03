@@ -14,16 +14,16 @@ import (
 
 // ValidationEntry represents a single validation event.
 type ValidationEntry struct {
-	Timestamp          time.Time `json:"timestamp" yaml:"timestamp"`
-	Path               string    `json:"path" yaml:"path"`
-	Key                string    `json:"key" yaml:"key"`
-	FullPath           string    `json:"full_path" yaml:"full_path"`
-	Depth              int       `json:"depth" yaml:"depth"`
-	ParentPath         string    `json:"parent_path" yaml:"parent_path"`
-	IsLastSibling      bool      `json:"is_last_sibling" yaml:"is_last_sibling"`
-	InceptionChecksum  string    `json:"inception_checksum" yaml:"inception_checksum"`
-	ProductionChecksum string    `json:"production_checksum" yaml:"production_checksum"`
-	Status             string    `json:"status" yaml:"status"` // "ok", "mismatch", "error"
+	Timestamp          time.Time `json:"timestamp"               yaml:"timestamp"`
+	Path               string    `json:"path"                    yaml:"path"`
+	Key                string    `json:"key"                     yaml:"key"`
+	FullPath           string    `json:"full_path"               yaml:"full_path"`
+	Depth              int       `json:"depth"                   yaml:"depth"`
+	ParentPath         string    `json:"parent_path"             yaml:"parent_path"`
+	IsLastSibling      bool      `json:"is_last_sibling"         yaml:"is_last_sibling"`
+	InceptionChecksum  string    `json:"inception_checksum"      yaml:"inception_checksum"`
+	ProductionChecksum string    `json:"production_checksum"     yaml:"production_checksum"`
+	Status             string    `json:"status"                  yaml:"status"` // "ok", "mismatch", "error"
 	ErrorMessage       string    `json:"error_message,omitempty" yaml:"error_message,omitempty"`
 }
 
@@ -43,12 +43,28 @@ func NewStructuredOutputWriter(mode output.Mode) *StructuredOutputWriter {
 func (w *StructuredOutputWriter) WriteValidation(entry ValidationEntry) error {
 	entry.Timestamp = time.Now()
 
-	if w.mode == output.ModeJSON {
+	switch w.mode {
+	case output.ModeJSON:
 		encoder := json.NewEncoder(os.Stdout)
-		return encoder.Encode(entry)
-	} else if w.mode == output.ModeYAML {
+
+		err := encoder.Encode(entry)
+		if err != nil {
+			return fmt.Errorf("encoding validation entry as JSON: %w", err)
+		}
+
+		return nil
+	case output.ModeYAML:
 		encoder := yaml.NewEncoder(os.Stdout)
-		return encoder.Encode(entry)
+
+		err := encoder.Encode(entry)
+		if err != nil {
+			return fmt.Errorf("encoding validation entry as YAML: %w", err)
+		}
+
+		return nil
+	case output.ModeInteractive, output.ModeConcise:
+		// Interactive and concise modes are handled by the tree renderer, not here
+		return nil
 	}
 
 	return nil
@@ -63,6 +79,7 @@ func (m *Manager) validateWithStructuredOutput(
 	writer := NewStructuredOutputWriter(mode)
 
 	validatedCount := 0
+
 	var validationErrors []ValidationEntry
 
 	// Traverse tree and output structured entries
@@ -78,13 +95,14 @@ func (m *Manager) validateWithStructuredOutput(
 	)
 
 	if len(validationErrors) > 0 {
-		return validatedCount, fmt.Errorf("validation failed for %d secret(s)", len(validationErrors))
+		return validatedCount, fmt.Errorf("%w: %d secret(s)", ErrValidationFailed, len(validationErrors))
 	}
 
 	return validatedCount, err
 }
 
 // traverseTreeForStructuredOutput performs DFS with structured logging.
+//nolint:funlen // tree traversal is inherently recursive and long
 func (m *Manager) traverseTreeForStructuredOutput(
 	node *TreeNode,
 	inceptionSafe, productionSafe *Safe,
@@ -103,6 +121,7 @@ func (m *Manager) traverseTreeForStructuredOutput(
 	for name := range node.Children {
 		childNames = append(childNames, name)
 	}
+
 	sort.Strings(childNames)
 	sort.Strings(node.Keys)
 
@@ -114,7 +133,7 @@ func (m *Manager) traverseTreeForStructuredOutput(
 		child := node.Children[childName]
 		currentItem++
 
-		if err := m.traverseTreeForStructuredOutput(
+		err := m.traverseTreeForStructuredOutput(
 			child,
 			inceptionSafe,
 			productionSafe,
@@ -123,7 +142,8 @@ func (m *Manager) traverseTreeForStructuredOutput(
 			validationErrors,
 			depth+1,
 			node.FullPath,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
 	}
@@ -154,17 +174,20 @@ func (m *Manager) traverseTreeForStructuredOutput(
 
 		if err != nil {
 			entry.Status = "error"
+
 			entry.ErrorMessage = err.Error()
 			if strings.Contains(err.Error(), "mismatch") {
 				entry.Status = "mismatch"
 			}
+
 			*validationErrors = append(*validationErrors, entry)
 		} else {
 			entry.Status = "ok"
 			*validatedCount++
 		}
 
-		if err := writer.WriteValidation(entry); err != nil {
+		err = writer.WriteValidation(entry)
+		if err != nil {
 			return fmt.Errorf("failed to write validation entry: %w", err)
 		}
 	}

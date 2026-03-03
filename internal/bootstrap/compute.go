@@ -107,8 +107,10 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 			// - Network routing tables to update
 			// - Instance network stack to recognize the new IP
 			logger.Info("Waiting 30 seconds for network configuration to propagate...")
+
 			_, _ = fmt.Fprintf(os.Stdout, "    • Waiting for network configuration to stabilize...\n")
-			time.Sleep(30 * time.Second)
+
+			time.Sleep(30 * time.Second) //nolint:mnd
 			logger.Info("Network wait period completed")
 		}
 	}
@@ -884,7 +886,7 @@ func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	localKeyExists := false
 
-	_, err := os.Stat(keyFile)
+	_, err := os.Stat(keyFile) //nolint:gosec // path components are from trusted config
 	if err == nil {
 		localKeyExists = true
 	}
@@ -953,7 +955,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 	publicKeyStr := strings.TrimSpace(string(publicKeyData))
 
 	// DEBUG: Log first 50 bytes of privateKeyData for verification
-	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))]))
+	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))])) //nolint:mnd
 	logger.Debugf("generateLocalSSHKeyPair returned publicKeyStr: %s", publicKeyStr)
 	logger.Debugf("Keys were read from existing file: %v", wasReadFromFile)
 
@@ -979,7 +981,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 	}
 
 	// DEBUG: Log keypair.PrivateKey that will be saved
-	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))])
+	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))]) //nolint:mnd
 
 	// Return the inverse of wasReadFromFile:
 	// - If read from existing file (wasReadFromFile=true), DON'T save again (return false)
@@ -1000,18 +1002,20 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	existingPubPath := filepath.Join(keyDir, "id_ed25519.pub")
 
 	// If local keypair exists, reuse it
-	if _, err := os.Stat(existingKeyPath); err == nil {
-		if _, pubErr := os.Stat(existingPubPath); pubErr == nil {
+	_, keyStatErr := os.Stat(existingKeyPath) //nolint:gosec // path components are from trusted config
+	if keyStatErr == nil { //nolint:nestif // SSH key validation requires nested checks
+		_, pubStatErr := os.Stat(existingPubPath) //nolint:gosec // path components are from trusted config
+		if pubStatErr == nil {
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
 
-			privateKeyData, err := os.ReadFile(existingKeyPath) // #nosec G304 -- path is controlled
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", err)
+			privateKeyData, readErr := os.ReadFile(existingKeyPath) //nolint:gosec // path is controlled
+			if readErr != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", readErr)
 			}
 
-			publicKeyData, err := os.ReadFile(existingPubPath) // #nosec G304 -- path is controlled
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", err)
+			publicKeyData, readErr := os.ReadFile(existingPubPath) //nolint:gosec // path is controlled
+			if readErr != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", readErr)
 			}
 
 			// Return true to indicate keys were read from existing files - DON'T save them again!
@@ -1068,6 +1072,7 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 		if localPubKey != cloudPubKey {
 			// Keys don't match - delete cloud keypair and force regeneration
 			logger.Warnf("Keypair %s exists in STACKIT but public key doesn't match local key", keypairName)
+
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair exists in STACKIT but doesn't match local key\n")
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Deleting cloud keypair and re-uploading local public key\n")
 
@@ -1085,6 +1090,7 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 
 		// Keys match - reuse existing keypair
 		logger.Infof("Keypair %s already exists in STACKIT and matches local key, skipping import", keypairName)
+
 		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT and matches local key, skipping upload\n")
 
 		// Create a KeyPair object for consistency
@@ -1164,7 +1170,7 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 
 	// Check if we have the local keypair (Ed25519 preferred)
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(keyFile); err == nil {
+	if _, err := os.Stat(keyFile); err == nil { //nolint:gosec // path components are from trusted config
 		// Local keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local key found at %s, reusing", keypairName, keyFile)
@@ -1182,7 +1188,7 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 	rsaKeyFile := filepath.Join(keyDir, "id_rsa")
 
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(rsaKeyFile); err == nil {
+	if _, err := os.Stat(rsaKeyFile); err == nil { //nolint:gosec // path components are from trusted config
 		// Local RSA keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local RSA key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local RSA key found at %s, reusing", keypairName, rsaKeyFile)
@@ -1307,16 +1313,16 @@ func (m *Manager) savePrivateKey(privateKey string) error {
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// DEBUG: Log what we're about to save
-	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))])
+	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))]) //nolint:mnd
 
 	// Create directory if it doesn't exist
-	err := os.MkdirAll(keyDir, sshKeyDirMode)
+	err := os.MkdirAll(keyDir, sshKeyDirMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create SSH key directory: %w", err)
 	}
 
 	// Write private key
-	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode)
+	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
@@ -1395,9 +1401,9 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 		keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
 
 		//nolint:noinlineerr // Idiomatic file existence check for key type fallback
-		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil {
+		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil { //nolint:gosec // path components are from trusted config
 			// Check for RSA key fallback
-			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil {
+			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil { //nolint:gosec // path components are from trusted config
 				keyFile = "id_rsa"
 			}
 		}

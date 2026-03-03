@@ -52,12 +52,13 @@ func buildAWSTagFilters(filters map[string]string) []types.Filter {
 		var filterName string
 
 		// Check if the key already has "tag:" prefix
-		if strings.HasPrefix(key, "tag:") {
+		switch {
+		case strings.HasPrefix(key, "tag:"):
 			filterName = key
-		} else if awsSpecificKeys[key] {
+		case awsSpecificKeys[key]:
 			// AWS-specific filter keys are passed through as-is
 			filterName = key
-		} else {
+		default:
 			// All other keys are assumed to be tags and need "tag:" prefix
 			filterName = "tag:" + key
 		}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
@@ -158,6 +159,8 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 }
 
 // uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
+//
+//nolint:funlen // sequential upload steps (checksum, transfer, install) must remain together
 func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	// NOTE: Currently uploading from local build until official OCFP releases are published.
 	// Once official releases are available via GitHub releases or package repositories,
@@ -170,7 +173,7 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 1: Check if remote binary exists and compare checksums
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary")
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary") //nolint:mnd
 	}
 
 	// Calculate local checksum
@@ -181,18 +184,22 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Check if remote binary exists and get its checksum
 	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
+
 	remoteResult, err := m.sshClient.ExecuteCommand(ctx, remoteChecksumCmd)
 	if err != nil {
 		m.log.Debugw("Could not check remote binary checksum", "error", err)
 	}
+
 	remoteChecksum := strings.TrimSpace(remoteResult.Stdout)
 
 	// If checksums match, skip upload
 	if remoteChecksum != "" && remoteChecksum == localChecksum {
 		m.log.Infow("Remote binary already up to date", "checksum", localChecksum)
+
 		if m.reporter != nil {
-			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)")
+			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)") //nolint:mnd
 		}
+
 		return nil
 	}
 
@@ -200,7 +207,7 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 2: Transfer binary
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, fmt.Sprintf("Uploading %s", localBinaryPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, "Uploading "+localBinaryPath) //nolint:mnd
 	}
 
 	// Transfer to temporary location first (user has write permissions here)
@@ -222,12 +229,12 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 3: Binary uploaded
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location")
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location") //nolint:mnd
 	}
 
 	// Step 4: Install binary with sudo
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, fmt.Sprintf("Installing to %s", remoteFinalPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Installing to "+remoteFinalPath) //nolint:mnd
 	}
 
 	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
@@ -394,7 +401,7 @@ export NEEDRESTART_SUSPEND=1
 	envExports.WriteString("# Export OCFP environment variables\n")
 
 	for key, value := range envVars {
-		envExports.WriteString(fmt.Sprintf("export %s='%s'\n", key, value))
+		fmt.Fprintf(&envExports, "export %s='%s'\n", key, value)
 	}
 
 	envExports.WriteString("\n")
@@ -412,14 +419,17 @@ func (m *Manager) escapeShellString(script string) string {
 
 // calculateFileSHA256 calculates the SHA256 checksum of a file.
 func calculateFileSHA256(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+
+	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+
+	_, err = io.Copy(hash, file)
+	if err != nil {
 		return "", fmt.Errorf("failed to calculate hash: %w", err)
 	}
 

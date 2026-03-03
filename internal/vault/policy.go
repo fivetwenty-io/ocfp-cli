@@ -496,17 +496,17 @@ func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 	var builder strings.Builder
 
 	// Add policy header comment
-	builder.WriteString(fmt.Sprintf("# %s\n", template.Description))
-	builder.WriteString(fmt.Sprintf("# Generated for OCFP bloc: %s\n", pm.blocName))
-	builder.WriteString(fmt.Sprintf("# Created: %s\n\n", time.Now().Format(time.RFC3339)))
+	fmt.Fprintf(&builder, "# %s\n", template.Description)
+	fmt.Fprintf(&builder, "# Generated for OCFP bloc: %s\n", pm.blocName)
+	fmt.Fprintf(&builder, "# Created: %s\n\n", time.Now().Format(time.RFC3339))
 
 	// Generate rules
 	for _, rule := range template.Rules {
 		if rule.Description != "" {
-			builder.WriteString(fmt.Sprintf("# %s\n", rule.Description))
+			fmt.Fprintf(&builder, "# %s\n", rule.Description)
 		}
 
-		builder.WriteString(fmt.Sprintf("path \"%s\" {\n", rule.Path))
+		fmt.Fprintf(&builder, "path \"%s\" {\n", rule.Path)
 
 		if len(rule.Capabilities) > 0 {
 			caps := make([]string, len(rule.Capabilities))
@@ -514,7 +514,7 @@ func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 				caps[i] = fmt.Sprintf("\"%s\"", cap)
 			}
 
-			builder.WriteString(fmt.Sprintf("  capabilities = [%s]\n", strings.Join(caps, ", ")))
+			fmt.Fprintf(&builder, "  capabilities = [%s]\n", strings.Join(caps, ", "))
 		}
 
 		builder.WriteString("}\n\n")

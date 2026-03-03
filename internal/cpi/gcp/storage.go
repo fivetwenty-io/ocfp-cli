@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
@@ -14,8 +16,10 @@ import (
 )
 
 // CreateVolume creates a persistent disk.
+//nolint:dupl // intentionally similar CPI implementation
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -48,7 +52,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		Labels: labels,
 	}
 
-	op, err := m.client.getDisksClient().Insert(ctx, &computepb.InsertDiskRequest{
+	op, err := m.client.getDisksClient().Insert(ctx, &computepb.InsertDiskRequest{ //nolint:varnamelen
 		Project:      projectID,
 		Zone:         zone,
 		DiskResource: disk,
@@ -57,7 +61,8 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		return nil, WrapGCPError(err, "CreateVolume")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateVolume.Wait")
 	}
 
@@ -67,8 +72,9 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 }
 
 // GetVolume retrieves a persistent disk by name.
-func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -90,7 +96,8 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 // ListVolumes lists persistent disks.
 func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -99,16 +106,18 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 	zone := config.Zone
 
 	var volumes []*cpi.Volume
-	it := m.client.getDisksClient().List(ctx, &computepb.ListDisksRequest{
+
+	it := m.client.getDisksClient().List(ctx, &computepb.ListDisksRequest{ //nolint:varnamelen
 		Project: projectID,
 		Zone:    zone,
 	})
 
 	for {
 		disk, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListVolumes")
 		}
@@ -123,7 +132,8 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 // AttachVolume attaches a persistent disk to an instance.
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -142,7 +152,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 		attachedDisk.DeviceName = proto(device)
 	}
 
-	op, err := m.client.getInstancesClient().AttachDisk(ctx, &computepb.AttachDiskInstanceRequest{
+	op, err := m.client.getInstancesClient().AttachDisk(ctx, &computepb.AttachDiskInstanceRequest{ //nolint:varnamelen
 		Project:              projectID,
 		Zone:                 zone,
 		Instance:             instanceID,
@@ -152,7 +162,8 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 		return WrapGCPError(err, "AttachVolume")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "AttachVolume.Wait")
 	}
 
@@ -163,7 +174,8 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 
 // DetachVolume detaches a persistent disk from an instance.
 func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -171,7 +183,7 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 	projectID := config.ProjectID
 	zone := config.Zone
 
-	op, err := m.client.getInstancesClient().DetachDisk(ctx, &computepb.DetachDiskInstanceRequest{
+	op, err := m.client.getInstancesClient().DetachDisk(ctx, &computepb.DetachDiskInstanceRequest{ //nolint:varnamelen
 		Project:    projectID,
 		Zone:       zone,
 		Instance:   instanceID,
@@ -181,7 +193,8 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 		return WrapGCPError(err, "DetachVolume")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DetachVolume.Wait")
 	}
 
@@ -191,8 +204,9 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 }
 
 // ResizeVolume resizes a persistent disk.
-func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -200,7 +214,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 	projectID := config.ProjectID
 	zone := config.Zone
 
-	op, err := m.client.getDisksClient().Resize(ctx, &computepb.ResizeDiskRequest{
+	op, err := m.client.getDisksClient().Resize(ctx, &computepb.ResizeDiskRequest{ //nolint:varnamelen
 		Project: projectID,
 		Zone:    zone,
 		Disk:    id,
@@ -212,7 +226,8 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 		return WrapGCPError(err, "ResizeVolume")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "ResizeVolume.Wait")
 	}
 
@@ -222,8 +237,9 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 }
 
 // DeleteVolume deletes a persistent disk.
-func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -231,7 +247,7 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
 	projectID := config.ProjectID
 	zone := config.Zone
 
-	op, err := m.client.getDisksClient().Delete(ctx, &computepb.DeleteDiskRequest{
+	op, err := m.client.getDisksClient().Delete(ctx, &computepb.DeleteDiskRequest{ //nolint:varnamelen
 		Project: projectID,
 		Zone:    zone,
 		Disk:    id,
@@ -240,7 +256,8 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeleteVolume")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteVolume.Wait")
 	}
 
@@ -251,7 +268,8 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
 
 // CreateSnapshot creates a disk snapshot.
 func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -266,7 +284,7 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 		SourceDisk: proto(diskURL),
 	}
 
-	op, err := m.client.getSnapshotsClient().Insert(ctx, &computepb.InsertSnapshotRequest{
+	op, err := m.client.getSnapshotsClient().Insert(ctx, &computepb.InsertSnapshotRequest{ //nolint:varnamelen
 		Project:          projectID,
 		SnapshotResource: snapshot,
 	})
@@ -274,7 +292,8 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 		return nil, WrapGCPError(err, "CreateSnapshot")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateSnapshot.Wait")
 	}
 
@@ -284,8 +303,9 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 }
 
 // GetSnapshot retrieves a snapshot by name.
-func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -305,7 +325,8 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snaps
 
 // ListSnapshots lists snapshots.
 func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -313,15 +334,17 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 	projectID := config.ProjectID
 
 	var snapshots []*cpi.Snapshot
+
 	it := m.client.getSnapshotsClient().List(ctx, &computepb.ListSnapshotsRequest{
 		Project: projectID,
 	})
 
 	for {
 		snapshot, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListSnapshots")
 		}
@@ -343,15 +366,16 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 }
 
 // DeleteSnapshot deletes a snapshot.
-func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 
-	op, err := m.client.getSnapshotsClient().Delete(ctx, &computepb.DeleteSnapshotRequest{
+	op, err := m.client.getSnapshotsClient().Delete(ctx, &computepb.DeleteSnapshotRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Snapshot: id,
 	})
@@ -359,7 +383,8 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeleteSnapshot")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteSnapshot.Wait")
 	}
 
@@ -370,7 +395,8 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
 
 // CreateBucket creates a Cloud Storage bucket.
 func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -386,7 +412,8 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 		Labels:       BuildLabels(req.Name, req.Tags),
 	}
 
-	if err := bucket.Create(ctx, projectID, attrs); err != nil {
+	err = bucket.Create(ctx, projectID, attrs)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateBucket")
 	}
 
@@ -397,11 +424,13 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 
 // GetBucket retrieves a bucket by name.
 func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
 	bucket := m.client.getStorageClient().Bucket(name)
+
 	attrs, err := bucket.Attrs(ctx)
 	if err != nil {
 		return nil, WrapGCPError(err, "GetBucket")
@@ -412,7 +441,8 @@ func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucke
 
 // ListBuckets lists Cloud Storage buckets.
 func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -420,13 +450,15 @@ func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error)
 	projectID := config.ProjectID
 
 	var buckets []*cpi.Bucket
+
 	it := m.client.getStorageClient().Buckets(ctx, projectID)
 
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListBuckets")
 		}
@@ -439,12 +471,15 @@ func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error)
 
 // DeleteBucket deletes a Cloud Storage bucket.
 func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	bucket := m.client.getStorageClient().Bucket(name)
-	if err := bucket.Delete(ctx); err != nil {
+
+	err = bucket.Delete(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteBucket")
 	}
 
@@ -455,7 +490,8 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 
 // EmptyBucket deletes all objects in a bucket.
 func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -464,14 +500,16 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return WrapGCPError(err, "EmptyBucket.List")
 		}
 
-		if err := bucket.Object(attrs.Name).Delete(ctx); err != nil {
+		err = bucket.Object(attrs.Name).Delete(ctx)
+	if err != nil {
 			return WrapGCPError(err, "EmptyBucket.DeleteObject")
 		}
 	}
@@ -483,17 +521,19 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 
 // IsBucketEmpty checks if a bucket is empty.
 func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return false, err
 	}
 
 	bucket := m.client.getStorageClient().Bucket(name)
 	it := bucket.Objects(ctx, &storage.Query{Prefix: ""})
 
-	_, err := it.Next()
-	if err == iterator.Done {
+	_, err = it.Next()
+	if errors.Is(err, iterator.Done) {
 		return true, nil
 	}
+
 	if err != nil {
 		return false, WrapGCPError(err, "IsBucketEmpty")
 	}
@@ -519,7 +559,7 @@ func (m *StorageManager) convertDisk(disk *computepb.Disk) *cpi.Volume {
 	}
 
 	return &cpi.Volume{
-		ID:         fmt.Sprintf("%d", disk.GetId()),
+		ID:         strconv.FormatUint(disk.GetId(), 10),
 		Name:       disk.GetName(),
 		Size:       int(disk.GetSizeGb()),
 		Type:       ExtractNameFromURL(disk.GetType()),
@@ -532,7 +572,7 @@ func (m *StorageManager) convertDisk(disk *computepb.Disk) *cpi.Volume {
 
 func (m *StorageManager) convertSnapshot(snapshot *computepb.Snapshot) *cpi.Snapshot {
 	return &cpi.Snapshot{
-		ID:          fmt.Sprintf("%d", snapshot.GetId()),
+		ID:          strconv.FormatUint(snapshot.GetId(), 10),
 		Name:        snapshot.GetName(),
 		VolumeID:    ExtractNameFromURL(snapshot.GetSourceDisk()),
 		Size:        int(snapshot.GetDiskSizeGb()),

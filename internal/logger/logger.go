@@ -77,7 +77,7 @@ func Initialize(cfg Config) error {
 	}
 
 	// Always log to file (JSON) only; stdout/stderr reserved for user UX
-	cores := []zapcore.Core{}
+	cores := make([]zapcore.Core, 0, 1)
 
 	fileCore, err := createFileCore(cfg, encoderConfig)
 	if err != nil {

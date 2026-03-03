@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
@@ -13,8 +15,10 @@ import (
 )
 
 // CreateSecurityGroup creates a firewall rule (GCP uses network tags for grouping).
+//nolint:dupl // intentionally similar CPI implementation
 func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -41,25 +45,26 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 
 		if rule.PortRangeMin > 0 && rule.PortRangeMax > 0 {
 			if rule.PortRangeMin == rule.PortRangeMax {
-				allowed.Ports = []string{fmt.Sprintf("%d", rule.PortRangeMin)}
+				allowed.Ports = []string{strconv.Itoa(rule.PortRangeMin)}
 			} else {
 				allowed.Ports = []string{fmt.Sprintf("%d-%d", rule.PortRangeMin, rule.PortRangeMax)}
 			}
 		}
+
 		firewall.Allowed = append(firewall.Allowed, allowed)
 
 		// Set source ranges for ingress
-		if rule.Direction == "ingress" && rule.RemoteIPCIDR != "" {
+		if rule.Direction == DirectionIngress && rule.RemoteIPCIDR != "" {
 			firewall.SourceRanges = append(firewall.SourceRanges, rule.RemoteIPCIDR)
 		}
 	}
 
 	// Default to allow from anywhere if no source ranges specified
-	if len(firewall.SourceRanges) == 0 {
+	if len(firewall.GetSourceRanges()) == 0 {
 		firewall.SourceRanges = []string{"0.0.0.0/0"}
 	}
 
-	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{
+	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{ //nolint:varnamelen
 		Project:          projectID,
 		FirewallResource: firewall,
 	})
@@ -67,7 +72,8 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 		return nil, WrapGCPError(err, "CreateSecurityGroup")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateSecurityGroup.Wait")
 	}
 
@@ -77,8 +83,9 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 }
 
 // GetSecurityGroup retrieves a firewall rule by name.
-func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -97,22 +104,25 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 
 // ListSecurityGroups lists firewall rules.
 func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
 	var securityGroups []*cpi.SecurityGroup
+
 	it := m.client.getFirewallsClient().List(ctx, &computepb.ListFirewallsRequest{
 		Project: projectID,
 	})
 
 	for {
 		firewall, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListSecurityGroups")
 		}
@@ -131,14 +141,15 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 }
 
 // DeleteSecurityGroup deletes a firewall rule.
-func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
-	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{
+	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Firewall: id,
 	})
@@ -146,7 +157,8 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 		return WrapGCPError(err, "DeleteSecurityGroup")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteSecurityGroup.Wait")
 	}
 
@@ -157,7 +169,8 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 
 // AddSecurityRule adds a rule to a security group (creates a new firewall rule).
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -181,7 +194,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 	if rule.PortRangeMin > 0 && rule.PortRangeMax > 0 {
 		if rule.PortRangeMin == rule.PortRangeMax {
-			allowed.Ports = []string{fmt.Sprintf("%d", rule.PortRangeMin)}
+			allowed.Ports = []string{strconv.Itoa(rule.PortRangeMin)}
 		} else {
 			allowed.Ports = []string{fmt.Sprintf("%d-%d", rule.PortRangeMin, rule.PortRangeMax)}
 		}
@@ -196,12 +209,12 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 		Name:         proto(ruleName),
 		Description:  proto(rule.Description),
 		Network:      existing.Network,
-		TargetTags:   existing.TargetTags,
+		TargetTags:   existing.GetTargetTags(),
 		Allowed:      []*computepb.Allowed{allowed},
 		SourceRanges: sourceRanges,
 	}
 
-	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{
+	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{ //nolint:varnamelen
 		Project:          projectID,
 		FirewallResource: firewall,
 	})
@@ -209,7 +222,8 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 		return WrapGCPError(err, "AddSecurityRule")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "AddSecurityRule.Wait")
 	}
 
@@ -220,13 +234,14 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 // RemoveSecurityRule removes a rule from a security group (deletes the firewall rule).
 func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
-	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{
+	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Firewall: ruleID,
 	})
@@ -234,7 +249,8 @@ func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string
 		return WrapGCPError(err, "RemoveSecurityRule")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "RemoveSecurityRule.Wait")
 	}
 
@@ -245,7 +261,8 @@ func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string
 
 // ListSecurityRules lists rules in a security group.
 func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -269,7 +286,7 @@ func (m *SecurityManager) convertFirewallToSecurityGroup(firewall *computepb.Fir
 	rules := m.extractRulesFromFirewall(firewall)
 
 	return &cpi.SecurityGroup{
-		ID:          fmt.Sprintf("%d", firewall.GetId()),
+		ID:          strconv.FormatUint(firewall.GetId(), 10),
 		Name:        firewall.GetName(),
 		Description: firewall.GetDescription(),
 		NetworkID:   ExtractNameFromURL(firewall.GetNetwork()),
@@ -282,7 +299,7 @@ func (m *SecurityManager) extractRulesFromFirewall(firewall *computepb.Firewall)
 	var rules []*cpi.SecurityRule
 
 	// Determine direction based on firewall configuration
-	direction := "ingress"
+	direction := DirectionIngress
 	if firewall.GetDirection() == "EGRESS" {
 		direction = "egress"
 	}
@@ -315,7 +332,7 @@ func (m *SecurityManager) extractRulesFromFirewall(firewall *computepb.Firewall)
 				Direction:    direction,
 				Protocol:     allowed.GetIPProtocol(),
 				PortRangeMin: 0,
-				PortRangeMax: 65535,
+				PortRangeMax: 65535, //nolint:mnd
 				RemoteIPCIDR: remoteCIDR,
 				Description:  firewall.GetDescription(),
 			})
@@ -328,14 +345,19 @@ func (m *SecurityManager) extractRulesFromFirewall(firewall *computepb.Firewall)
 func parseSecurityPortRange(port string) (int, int) {
 	if strings.Contains(port, "-") {
 		parts := strings.Split(port, "-")
-		if len(parts) == 2 {
-			var min, max int
-			fmt.Sscanf(parts[0], "%d", &min)
-			fmt.Sscanf(parts[1], "%d", &max)
-			return min, max
+		if len(parts) == 2 { //nolint:mnd
+			var portMin, portMax int
+
+			_, _ = fmt.Sscanf(parts[0], "%d", &portMin)
+			_, _ = fmt.Sscanf(parts[1], "%d", &portMax)
+
+			return portMin, portMax
 		}
 	}
+
 	var p int
-	fmt.Sscanf(port, "%d", &p)
+
+	_, _ = fmt.Sscanf(port, "%d", &p)
+
 	return p, p
 }

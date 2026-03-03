@@ -329,7 +329,7 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
 
-	defer func() { _ = os.Remove(tempFile.Name()) }()
+	defer func() { _ = os.Remove(tempFile.Name()) }() //nolint:gosec // path from os.CreateTemp is trusted
 
 	_, err = tempFile.WriteString(serviceAccountJSON)
 	if err != nil {
@@ -352,7 +352,7 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) // #nosec G204 - path is validated above
+	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) //nolint:gosec // command args are validated above
 
 	var stdout, stderr bytes.Buffer
 
@@ -383,7 +383,7 @@ func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error
 	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken)
+	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken) //nolint:gosec // command args are from trusted config
 
 	var stdout, stderr bytes.Buffer
 
@@ -466,7 +466,7 @@ func loginAWS(cmd *cobra.Command, log *zap.Logger) error {
 type AWSCredentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
-	SessionToken    string
+	SessionToken    string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	Region          string
 }
 
@@ -820,48 +820,37 @@ func loginGCP(log *zap.Logger) error {
 	// Check for service account credentials
 	credPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 	if credPath == "" {
-		// Try to get from config
-		configFile := viper.GetString("config")
-		blocName := viper.GetString("bloc")
-		cfg, err := config.LoadWithParams(configFile, blocName)
-		if err == nil && cfg != nil {
-			if cfg.ServiceAccountKeyPath != "" {
-				credPath = cfg.ServiceAccountKeyPath
-			} else if cfg.ServiceAccountJSON != "" {
-				// Write inline JSON to temp file and set env
-				tmpFile, err := os.CreateTemp("", "gcp-credentials-*.json")
-				if err != nil {
-					return fmt.Errorf("failed to create temp credentials file: %w", err)
-				}
-				if _, err := tmpFile.WriteString(cfg.ServiceAccountJSON); err != nil {
-					return fmt.Errorf("failed to write credentials file: %w", err)
-				}
-				tmpFile.Close()
-				credPath = tmpFile.Name()
-				log.Info("Created temporary credentials file", zap.String("path", credPath))
-			}
+		resolved, err := resolveGCPCredPath(log)
+		if err != nil {
+			return err
 		}
+
+		credPath = resolved
 	}
 
 	if credPath != "" {
 		// Set environment variable for GCP SDK
-		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credPath)
+		_ = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credPath)
 		log.Info("Using service account credentials", zap.String("path", credPath))
 
 		// Try to activate using gcloud if available
-		if _, err := exec.LookPath("gcloud"); err == nil {
-			cmd := exec.Command("gcloud", "auth", "activate-service-account", "--key-file", credPath)
+		_, err := exec.LookPath("gcloud")
+		if err == nil {
+			cmd := exec.CommandContext(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath) //nolint:gosec // command args are from trusted config
+
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Warn("gcloud auth failed (may not be required)", zap.Error(err), zap.String("output", string(output)))
 			} else {
 				log.Info("Activated service account with gcloud")
+
 				_, _ = fmt.Fprintln(os.Stdout, "GCP service account activated successfully")
 			}
 		}
 
 		_, _ = fmt.Fprintln(os.Stdout, "GCP credentials configured")
-		_, _ = fmt.Fprintf(os.Stdout, "  GOOGLE_APPLICATION_CREDENTIALS=%s\n", credPath)
+		_, _ = fmt.Fprintf(os.Stdout, "  GOOGLE_APPLICATION_CREDENTIALS=%s\n", credPath) //nolint:gosec // output to stdout, not web context
+
 		return nil
 	}
 
@@ -875,67 +864,57 @@ func loginGCP(log *zap.Logger) error {
 	return nil
 }
 
+// resolveGCPCredPath resolves the GCP credential path from config.
+func resolveGCPCredPath(log *zap.Logger) (string, error) {
+	configFile := viper.GetString("config")
+	blocName := viper.GetString("bloc")
+
+	cfg, err := config.LoadWithParams(configFile, blocName)
+	if err != nil {
+		return "", err //nolint:wrapcheck // error context handled by caller
+	}
+
+	if cfg == nil {
+		return "", nil
+	}
+
+	if cfg.ServiceAccountKeyPath != "" {
+		return cfg.ServiceAccountKeyPath, nil
+	}
+
+	if cfg.ServiceAccountJSON == "" {
+		return "", nil
+	}
+
+	// Write inline JSON to temp file
+	tmpFile, err := os.CreateTemp("", "gcp-credentials-*.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp credentials file: %w", err)
+	}
+
+	_, err = tmpFile.WriteString(cfg.ServiceAccountJSON)
+	if err != nil {
+		return "", fmt.Errorf("failed to write credentials file: %w", err)
+	}
+
+	_ = tmpFile.Close()
+	log.Info("Created temporary credentials file", zap.String("path", tmpFile.Name()))
+
+	return tmpFile.Name(), nil
+}
+
 func loginAzure(log *zap.Logger) error {
 	log.Info("Setting up Azure authentication")
 
-	// Check for existing Azure credentials in environment
-	subscriptionID := os.Getenv("AZURE_SUBSCRIPTION_ID")
-	clientID := os.Getenv("AZURE_CLIENT_ID")
-	tenantID := os.Getenv("AZURE_TENANT_ID")
-	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
-
-	// If service principal credentials are set, validate them
-	if subscriptionID != "" && clientID != "" && tenantID != "" && clientSecret != "" {
-		log.Info("Azure service principal credentials found in environment")
-		_, _ = fmt.Fprintln(os.Stdout, "Azure credentials configured via environment variables:")
-		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_SUBSCRIPTION_ID=%s\n", subscriptionID)
-		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_TENANT_ID=%s\n", tenantID)
-		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s\n", clientID)
-		_, _ = fmt.Fprintln(os.Stdout, "  AZURE_CLIENT_SECRET=***")
+	if loginAzureFromServicePrincipal(log) {
 		return nil
 	}
 
-	// Check for Azure CLI
-	if _, err := exec.LookPath("az"); err == nil {
-		log.Info("Azure CLI found, checking authentication status")
-
-		// Check if already logged in
-		ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
-
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		err := cmd.Run()
-		if err == nil {
-			log.Info("Already authenticated with Azure CLI")
-			_, _ = fmt.Fprintln(os.Stdout, "Azure CLI authentication active")
-			_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", stdout.String())
-			return nil
-		}
-
-		// Not logged in, provide instructions
-		_, _ = fmt.Fprintln(os.Stdout, "Azure CLI is installed but not authenticated")
-		_, _ = fmt.Fprintln(os.Stdout, "\nTo authenticate, run one of:")
-		_, _ = fmt.Fprintln(os.Stdout, "  az login                        # Interactive browser login")
-		_, _ = fmt.Fprintln(os.Stdout, "  az login --use-device-code      # Device code flow (for headless)")
-		_, _ = fmt.Fprintln(os.Stdout, "  az login --service-principal -u <client-id> -p <secret> --tenant <tenant>")
+	if loginAzureFromCLI(log) {
 		return nil
 	}
 
-	// Check for managed identity
-	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == "true" || useMI == "1" {
-		log.Info("Managed identity mode enabled")
-		_, _ = fmt.Fprintln(os.Stdout, "Azure Managed Identity authentication enabled")
-		_, _ = fmt.Fprintln(os.Stdout, "  AZURE_USE_MANAGED_IDENTITY=true")
-		if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
-			_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s (user-assigned)\n", clientID)
-		} else {
-			_, _ = fmt.Fprintln(os.Stdout, "  Using system-assigned managed identity")
-		}
+	if loginAzureFromManagedIdentity(log) {
 		return nil
 	}
 
@@ -953,4 +932,85 @@ func loginAzure(log *zap.Logger) error {
 	_, _ = fmt.Fprintln(os.Stdout, "   export AZURE_USE_MANAGED_IDENTITY=true")
 
 	return nil
+}
+
+// loginAzureFromServicePrincipal checks for service principal credentials in environment.
+func loginAzureFromServicePrincipal(log *zap.Logger) bool {
+	subscriptionID := os.Getenv("AZURE_SUBSCRIPTION_ID")
+	clientID := os.Getenv("AZURE_CLIENT_ID")
+	tenantID := os.Getenv("AZURE_TENANT_ID")
+	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
+
+	if subscriptionID == "" || clientID == "" || tenantID == "" || clientSecret == "" {
+		return false
+	}
+
+	log.Info("Azure service principal credentials found in environment")
+
+	_, _ = fmt.Fprintln(os.Stdout, "Azure credentials configured via environment variables:")
+	_, _ = fmt.Fprintf(os.Stdout, "  AZURE_SUBSCRIPTION_ID=%s\n", subscriptionID)
+	_, _ = fmt.Fprintf(os.Stdout, "  AZURE_TENANT_ID=%s\n", tenantID)
+	_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s\n", clientID)
+	_, _ = fmt.Fprintln(os.Stdout, "  AZURE_CLIENT_SECRET=***")
+
+	return true
+}
+
+// loginAzureFromCLI checks for Azure CLI authentication.
+func loginAzureFromCLI(log *zap.Logger) bool {
+	_, err := exec.LookPath("az")
+	if err != nil {
+		return false
+	}
+
+	log.Info("Azure CLI found, checking authentication status")
+
+	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err == nil {
+		log.Info("Already authenticated with Azure CLI")
+
+		_, _ = fmt.Fprintln(os.Stdout, "Azure CLI authentication active")
+		_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", stdout.String())
+
+		return true
+	}
+
+	_, _ = fmt.Fprintln(os.Stdout, "Azure CLI is installed but not authenticated")
+	_, _ = fmt.Fprintln(os.Stdout, "\nTo authenticate, run one of:")
+	_, _ = fmt.Fprintln(os.Stdout, "  az login                        # Interactive browser login")
+	_, _ = fmt.Fprintln(os.Stdout, "  az login --use-device-code      # Device code flow (for headless)")
+	_, _ = fmt.Fprintln(os.Stdout, "  az login --service-principal -u <client-id> -p <secret> --tenant <tenant>")
+
+	return true
+}
+
+// loginAzureFromManagedIdentity checks for Azure managed identity configuration.
+func loginAzureFromManagedIdentity(log *zap.Logger) bool {
+	useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY")
+	if useMI != "true" && useMI != "1" {
+		return false
+	}
+
+	log.Info("Managed identity mode enabled")
+
+	_, _ = fmt.Fprintln(os.Stdout, "Azure Managed Identity authentication enabled")
+	_, _ = fmt.Fprintln(os.Stdout, "  AZURE_USE_MANAGED_IDENTITY=true")
+
+	if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "  AZURE_CLIENT_ID=%s (user-assigned)\n", clientID)
+	} else {
+		_, _ = fmt.Fprintln(os.Stdout, "  Using system-assigned managed identity")
+	}
+
+	return true
 }

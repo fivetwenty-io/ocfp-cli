@@ -393,11 +393,11 @@ func (cfm *ConfigFileManager) generateGitConfig() string {
 	config.WriteString("[user]\n")
 
 	if cfm.config.Bastion.Git.User.Name != "" {
-		config.WriteString(fmt.Sprintf("    name = %s\n", cfm.config.Bastion.Git.User.Name))
+		fmt.Fprintf(&config, "    name = %s\n", cfm.config.Bastion.Git.User.Name)
 	}
 
 	if cfm.config.Bastion.Git.User.Email != "" {
-		config.WriteString(fmt.Sprintf("    email = %s\n", cfm.config.Bastion.Git.User.Email))
+		fmt.Fprintf(&config, "    email = %s\n", cfm.config.Bastion.Git.User.Email)
 	}
 
 	config.WriteString("\n[core]\n")

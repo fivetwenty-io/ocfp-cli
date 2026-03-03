@@ -47,7 +47,8 @@ const (
 	ResourceVolume        = "volume"
 	ResourceSubnet        = "subnet"
 	ResourceLoadBalancer  = "loadbalancer"
-	ResourceSecurityGroup = "security_group"
+	ResourceSecurityGroup    = "security_group"
+	ResourceNetworkInterface = "network_interface"
 
 	CategoryNetwork = "network"
 

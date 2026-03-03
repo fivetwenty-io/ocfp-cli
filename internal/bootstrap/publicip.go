@@ -262,9 +262,10 @@ func (m *Manager) ensureAndRecordPublicIPs(
 	baseLabels map[string]string,
 ) []*cpi.PublicIP {
 	ips := make([]*cpi.PublicIP, 0, count)
+
 	const maxRetriesPerIP = 3
 
-	for index := 0; index < count; index++ {
+	for index := range count {
 		// Format name - if nameFormat contains %d, use index; otherwise use as-is
 		var formattedName string
 		if strings.Contains(nameFormat, "%") {
@@ -276,11 +277,12 @@ func (m *Manager) ensureAndRecordPublicIPs(
 		name := fmt.Sprintf("%s-%s", m.options.BlocName, formattedName)
 
 		var ip *cpi.PublicIP
-		for attempt := 0; attempt < maxRetriesPerIP; attempt++ {
+		for attempt := range maxRetriesPerIP {
 			ip = m.getOrCreatePublicIP(ctx, netMgr, name, job, index, baseLabels)
 			if ip != nil {
 				// Success! Add to list and break retry loop
 				ips = append(ips, ip)
+
 				break
 			}
 

@@ -50,7 +50,7 @@ func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
 		return ""
 	}
 
-	lines := []string{}
+	lines := make([]string, 0, len(modules)*2) //nolint:mnd // rough estimate for header+setup+modules+critical
 	lines = append(lines, cm.generateCPANHeader()...)
 	lines = append(lines, cm.generateCPANSetup()...)
 	lines = append(lines, cm.generateCPANModuleInstalls(modules)...)

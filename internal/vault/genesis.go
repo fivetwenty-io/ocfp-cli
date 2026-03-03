@@ -324,7 +324,7 @@ func (gi *GenesisIntegration) isGenesisDirectory(path string) bool {
 	}
 
 	for _, marker := range genesisMarkers {
-		_, err := os.Stat(filepath.Join(path, marker))
+		_, err := os.Stat(filepath.Join(path, marker)) //nolint:gosec // path components are from trusted config
 		if err == nil {
 			return true
 		}

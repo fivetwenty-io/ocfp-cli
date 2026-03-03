@@ -330,6 +330,7 @@ func (s *Safe) List(path string) ([]string, error) {
 	isKVv2, err := s.engine.IsKVv2(path)
 	if err != nil {
 		s.logger.Warnw("Failed to detect engine type for list, assuming KV v1", "path", path, "error", err)
+
 		isKVv2 = false
 	}
 
@@ -380,6 +381,7 @@ func (s *Safe) Export(path string) (map[string]interface{}, error) {
 	err := s.exportRecursive(path, "", result)
 	if err != nil {
 		s.logger.Errorw("Export failed", "path", path, "error", err)
+
 		return nil, fmt.Errorf("failed to export from %s: %w", path, err)
 	}
 
@@ -524,6 +526,7 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 	if secretFound {
 		// This is a secret, store it
 		s.logger.Debugw("Found secret at path", "fullPath", fullPath, "keys", len(data))
+
 		if currentPath == "" {
 			// Root level
 			for k, v := range data {
@@ -545,10 +548,12 @@ func (s *Safe) exportRecursive(basePath, currentPath string, result map[string]i
 		if secretFound {
 			// We got the secret data, so this is not an error - just no subdirectories
 			s.logger.Debugw("Path has secret but no subdirectories", "fullPath", fullPath)
+
 			return nil
 		}
 		// Neither a secret nor a directory we can list
 		s.logger.Errorw("Failed to list directory", "fullPath", fullPath, "error", listErr)
+
 		return listErr
 	}
 

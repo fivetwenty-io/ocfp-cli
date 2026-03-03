@@ -45,6 +45,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 		for i, dns := range req.DNSServers {
 			dnsServers[i] = to.Ptr(dns)
 		}
+
 		vnetParams.Properties.DhcpOptions = &armnetwork.DhcpOptions{
 			DNSServers: dnsServers,
 		}
@@ -74,7 +75,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 }
 
 // GetNetwork retrieves a virtual network by ID or name.
-func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) {
+func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:varnamelen // id is clear in context
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -101,6 +102,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 	pager := m.client.virtualNetworksClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var networks []*cpi.Network
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -119,7 +121,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 }
 
 // DeleteNetwork deletes a virtual network.
-func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error { //nolint:varnamelen // id is clear in context
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -185,7 +187,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 }
 
 // GetSubnet retrieves a subnet by ID.
-func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
+func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -195,14 +197,15 @@ func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet,
 	resourceID, err := ParseResourceID(id)
 	if err != nil {
 		// Try to extract from simple format
-		return nil, fmt.Errorf("invalid subnet ID format: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidSubnetIDFormat, id)
 	}
 
 	// For subnet IDs, the resource name contains vnet/subnet
 	parts := splitSubnetPath(resourceID.ResourceName)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid subnet ID format: %s", id)
+	if len(parts) != 2 { //nolint:mnd
+		return nil, fmt.Errorf("%w: %s", ErrInvalidSubnetIDFormat, id)
 	}
+
 	vnetName := parts[0]
 	subnetName := parts[1]
 
@@ -226,6 +229,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 	pager := m.client.subnetsClient.NewListPager(m.client.getResourceGroup(), vnetName, nil)
 
 	var subnets []*cpi.Subnet
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -241,7 +245,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 }
 
 // DeleteSubnet deletes a subnet.
-func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //nolint:varnamelen // id is clear in context
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -250,13 +254,14 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 	// Parse subnet ID
 	resourceID, err := ParseResourceID(id)
 	if err != nil {
-		return fmt.Errorf("invalid subnet ID format: %s", id)
+		return fmt.Errorf("%w: %s", ErrInvalidSubnetIDFormat, id)
 	}
 
 	parts := splitSubnetPath(resourceID.ResourceName)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid subnet ID format: %s", id)
+	if len(parts) != 2 { //nolint:mnd
+		return fmt.Errorf("%w: %s", ErrInvalidSubnetIDFormat, id)
 	}
+
 	vnetName := parts[0]
 	subnetName := parts[1]
 
@@ -296,6 +301,8 @@ func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) err
 }
 
 // CreatePublicIP creates a new public IP address.
+//
+//nolint:funlen // Azure public IP creation with tag merging is inherently detailed
 func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	if req == nil {
 		return nil, ErrInvalidRequest
@@ -326,6 +333,7 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 			if publicIPParams.Tags == nil {
 				publicIPParams.Tags = make(map[string]*string)
 			}
+
 			publicIPParams.Tags[k] = to.Ptr(v)
 		}
 	}
@@ -335,12 +343,15 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 		if publicIPParams.Tags == nil {
 			publicIPParams.Tags = make(map[string]*string)
 		}
+
 		publicIPParams.Tags["ocfp-job"] = to.Ptr(req.Job)
 	}
+
 	if req.Index != "" {
 		if publicIPParams.Tags == nil {
 			publicIPParams.Tags = make(map[string]*string)
 		}
+
 		publicIPParams.Tags["ocfp-index"] = to.Ptr(req.Index)
 	}
 
@@ -366,7 +377,7 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 }
 
 // GetPublicIP retrieves a public IP by ID or name.
-func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
+func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -392,6 +403,7 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 	pager := m.client.publicIPAddressesClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var publicIPs []*cpi.PublicIP
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -407,7 +419,7 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 }
 
 // DeletePublicIP deletes a public IP address.
-func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
+func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -433,7 +445,7 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
 // AllocateFloatingIP allocates a floating IP (same as public IP in Azure).
 func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
 	publicIPReq := &cpi.PublicIPRequest{
-		Name: GenerateUniqueName("fip", 24),
+		Name: GenerateUniqueName("fip", 24), //nolint:mnd
 		Tags: req.Tags,
 	}
 
@@ -476,6 +488,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 	}
 
 	var floatingIPs []*cpi.FloatingIP
+
 	for _, pip := range publicIPs {
 		if matchesFilters(pip.Tags, filters) {
 			floatingIPs = append(floatingIPs, &cpi.FloatingIP{
@@ -548,7 +561,7 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 }
 
 // GetRouter retrieves a route table by ID.
-func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
+func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -574,6 +587,7 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 	pager := m.client.routeTablesClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var routers []*cpi.Router
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -600,7 +614,7 @@ func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID str
 }
 
 // DeleteRouter deletes a route table.
-func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -651,15 +665,16 @@ func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) erro
 }
 
 // GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) { //nolint:varnamelen // lb is clear in context
 	// Get load balancer and extract backend pools
-	lb, err := m.GetLoadBalancer(ctx, lbID)
+	lb, err := m.GetLoadBalancer(ctx, lbID) //nolint:varnamelen
 	if err != nil {
 		return nil, err
 	}
 
 	// Convert backends to backend pools
 	var pools []*cpi.BackendPool
+
 	if lb != nil && len(lb.Backends) > 0 {
 		pool := &cpi.BackendPool{
 			ID:   lb.ID + "/backendPool",
@@ -673,6 +688,7 @@ func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*c
 				Weight:    backend.Weight,
 			})
 		}
+
 		pools = append(pools, pool)
 	}
 
@@ -740,9 +756,9 @@ func (m *NetworkManager) vnetToNetwork(vnet *armnetwork.VirtualNetwork) *cpi.Net
 func (m *NetworkManager) subnetToSubnet(subnet *armnetwork.Subnet, vnetName string) *cpi.Subnet {
 	if subnet == nil {
 		return nil
-	}
+	} //nolint:varnamelen // s is clear in context
 
-	s := &cpi.Subnet{
+	s := &cpi.Subnet{ //nolint:varnamelen
 		ID:        DerefString(subnet.ID),
 		Name:      DerefString(subnet.Name),
 		NetworkID: BuildVNetID(m.client.getSubscriptionID(), m.client.getResourceGroup(), vnetName),
@@ -791,6 +807,7 @@ func (m *NetworkManager) publicIPToPublicIP(pip *armnetwork.PublicIPAddress) *cp
 		if job, ok := publicIP.Tags["ocfp-job"]; ok {
 			publicIP.Job = job
 		}
+
 		if index, ok := publicIP.Tags["ocfp-index"]; ok {
 			publicIP.Index = index
 		}
@@ -799,7 +816,7 @@ func (m *NetworkManager) publicIPToPublicIP(pip *armnetwork.PublicIPAddress) *cp
 	return publicIP
 }
 
-func (m *NetworkManager) routeTableToRouter(rt *armnetwork.RouteTable) *cpi.Router {
+func (m *NetworkManager) routeTableToRouter(rt *armnetwork.RouteTable) *cpi.Router { //nolint:varnamelen
 	if rt == nil {
 		return nil
 	}
@@ -854,7 +871,7 @@ func matchesFilters(tags map[string]string, filters map[string]string) bool {
 func splitSubnetPath(path string) []string {
 	// Path format: virtualNetworks/vnetName/subnets/subnetName
 	// We need to extract vnetName and subnetName
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 2) //nolint:mnd
 
 	// Simple split - look for the pattern
 	if idx := findSubstr(path, "/subnets/"); idx != -1 {
@@ -878,5 +895,6 @@ func findSubstr(s, substr string) int {
 			return i
 		}
 	}
+
 	return -1
 }

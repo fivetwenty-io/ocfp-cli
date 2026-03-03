@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,8 +52,9 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 }
 
 // GetSecurityGroup retrieves a firewall group.
-func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
-	path := fmt.Sprintf("/cluster/firewall/groups/%s", id)
+func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen // id is clear in context
+	path := "/cluster/firewall/groups/" + id
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
 		return nil, ErrSecurityGroupNotFound(id)
@@ -60,19 +62,20 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 
 	data, ok := resp.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type: %T", resp)
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	// Parse rules
 	var rules []*cpi.SecurityRule
-	for i, item := range data {
+
+	for i, item := range data { //nolint:varnamelen // i is clear in context
 		ruleData, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
 		rule := &cpi.SecurityRule{
-			ID:           fmt.Sprintf("%d", i),
+			ID:           strconv.Itoa(i),
 			Direction:    getStringFromMap(ruleData, "type"),
 			Protocol:     getStringFromMap(ruleData, "proto"),
 			RemoteIPCIDR: getStringFromMap(ruleData, "source"),
@@ -83,12 +86,12 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 		if dport := getStringFromMap(ruleData, "dport"); dport != "" {
 			if strings.Contains(dport, ":") {
 				parts := strings.Split(dport, ":")
-				if len(parts) == 2 {
-					fmt.Sscanf(parts[0], "%d", &rule.PortRangeMin)
-					fmt.Sscanf(parts[1], "%d", &rule.PortRangeMax)
+				if len(parts) == 2 { //nolint:mnd // splitting port range "from:to" always yields 2 parts
+					_, _ = fmt.Sscanf(parts[0], "%d", &rule.PortRangeMin)
+					_, _ = fmt.Sscanf(parts[1], "%d", &rule.PortRangeMax)
 				}
 			} else {
-				fmt.Sscanf(dport, "%d", &rule.PortRangeMin)
+				_, _ = fmt.Sscanf(dport, "%d", &rule.PortRangeMin)
 				rule.PortRangeMax = rule.PortRangeMin
 			}
 		}
@@ -117,6 +120,7 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	}
 
 	var groups []*cpi.SecurityGroup
+
 	for _, item := range data {
 		groupData, ok := item.(map[string]interface{})
 		if !ok {
@@ -143,7 +147,8 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 
 // DeleteSecurityGroup deletes a firewall group.
 func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error {
-	path := fmt.Sprintf("/cluster/firewall/groups/%s", id)
+	path := "/cluster/firewall/groups/" + id
+
 	_, err := m.client.pveClient.DeleteCtx(ctx, path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete firewall group: %w", err)
@@ -154,7 +159,7 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 
 // AddSecurityRule adds a rule to a firewall group.
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
-	path := fmt.Sprintf("/cluster/firewall/groups/%s", groupID)
+	path := "/cluster/firewall/groups/" + groupID
 
 	// Map direction
 	ruleType := "in"
@@ -164,11 +169,12 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 	// Build port specification
 	var dport string
+
 	if rule.PortRangeMin > 0 {
 		if rule.PortRangeMax > rule.PortRangeMin {
 			dport = fmt.Sprintf("%d:%d", rule.PortRangeMin, rule.PortRangeMax)
 		} else {
-			dport = fmt.Sprintf("%d", rule.PortRangeMin)
+			dport = strconv.Itoa(rule.PortRangeMin)
 		}
 	}
 
@@ -200,6 +206,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 		if strings.Contains(err.Error(), "already exists") {
 			return nil
 		}
+
 		return fmt.Errorf("failed to add firewall rule: %w", err)
 	}
 
@@ -209,6 +216,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 // RemoveSecurityRule removes a rule from a firewall group.
 func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
 	path := fmt.Sprintf("/cluster/firewall/groups/%s/%s", groupID, ruleID)
+
 	_, err := m.client.pveClient.DeleteCtx(ctx, path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to remove firewall rule: %w", err)

@@ -56,6 +56,31 @@ var (
 	ErrNotFound = errors.New("resource not found")
 	// ErrNotImplemented indicates functionality not yet implemented.
 	ErrNotImplemented = errors.New("not implemented")
+
+	// ErrResourceGroupNotCreatable indicates resource group does not exist and cannot be created.
+	ErrResourceGroupNotCreatable = errors.New("resource group does not exist and CreateResourceGroup is false")
+	// ErrInvalidResourceIDFormat indicates an invalid Azure resource ID format.
+	ErrInvalidResourceIDFormat = errors.New("invalid Azure resource ID format")
+	// ErrNameTooShort indicates a name is shorter than the minimum length.
+	ErrNameTooShort = errors.New("name too short")
+	// ErrNameTooLong indicates a name exceeds the maximum length.
+	ErrNameTooLong = errors.New("name too long")
+	// ErrNameMustStartAlphanumeric indicates a name must start with an alphanumeric character.
+	ErrNameMustStartAlphanumeric = errors.New("name must start with an alphanumeric character")
+	// ErrNameMustEndAlphanumeric indicates a name must end with an alphanumeric character.
+	ErrNameMustEndAlphanumeric = errors.New("name must end with an alphanumeric character")
+	// ErrSubnetIDRequired indicates a subnet ID is required for internal load balancer.
+	ErrSubnetIDRequired = errors.New("subnet ID required for internal load balancer")
+	// ErrLoadBalancerNoProbes indicates a load balancer has no probes.
+	ErrLoadBalancerNoProbes = errors.New("load balancer has no probes")
+	// ErrInvalidSubnetIDFormat indicates an invalid subnet ID format.
+	ErrInvalidSubnetIDFormat = errors.New("invalid subnet ID format")
+	// ErrVMNoStorageProfile indicates a VM has no storage profile.
+	ErrVMNoStorageProfile = errors.New("VM has no storage profile")
+	// ErrVMNoDataDisks indicates a VM has no data disks.
+	ErrVMNoDataDisks = errors.New("VM has no data disks")
+	// ErrDiskNotAttached indicates a disk is not attached to a VM.
+	ErrDiskNotAttached = errors.New("disk not attached to VM")
 )
 
 // ErrorCode represents Azure-specific error codes.
@@ -183,7 +208,7 @@ func WrapAzureError(err error, operation string) error {
 
 		// Try to extract request ID from response headers
 		if respErr.RawResponse != nil {
-			azureErr.RequestID = respErr.RawResponse.Header.Get("x-ms-request-id")
+			azureErr.RequestID = respErr.RawResponse.Header.Get("X-Ms-Request-Id")
 		}
 	}
 

@@ -34,6 +34,7 @@ type LoadBalancerManager struct {
 func (c *Client) getInstancesClient() *compute.InstancesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.instancesClient
 }
 
@@ -41,6 +42,7 @@ func (c *Client) getInstancesClient() *compute.InstancesClient {
 func (c *Client) getDisksClient() *compute.DisksClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.disksClient
 }
 
@@ -48,6 +50,7 @@ func (c *Client) getDisksClient() *compute.DisksClient {
 func (c *Client) getSnapshotsClient() *compute.SnapshotsClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.snapshotsClient
 }
 
@@ -55,6 +58,7 @@ func (c *Client) getSnapshotsClient() *compute.SnapshotsClient {
 func (c *Client) getImagesClient() *compute.ImagesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.imagesClient
 }
 
@@ -62,6 +66,7 @@ func (c *Client) getImagesClient() *compute.ImagesClient {
 func (c *Client) getMachineTypesClient() *compute.MachineTypesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.machineTypesClient
 }
 
@@ -69,6 +74,7 @@ func (c *Client) getMachineTypesClient() *compute.MachineTypesClient {
 func (c *Client) getNetworksClient() *compute.NetworksClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.networksClient
 }
 
@@ -76,6 +82,7 @@ func (c *Client) getNetworksClient() *compute.NetworksClient {
 func (c *Client) getSubnetworksClient() *compute.SubnetworksClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.subnetworksClient
 }
 
@@ -83,6 +90,7 @@ func (c *Client) getSubnetworksClient() *compute.SubnetworksClient {
 func (c *Client) getFirewallsClient() *compute.FirewallsClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.firewallsClient
 }
 
@@ -90,6 +98,7 @@ func (c *Client) getFirewallsClient() *compute.FirewallsClient {
 func (c *Client) getAddressesClient() *compute.AddressesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.addressesClient
 }
 
@@ -97,6 +106,7 @@ func (c *Client) getAddressesClient() *compute.AddressesClient {
 func (c *Client) getRoutersClient() *compute.RoutersClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.routersClient
 }
 
@@ -104,6 +114,7 @@ func (c *Client) getRoutersClient() *compute.RoutersClient {
 func (c *Client) getStorageClient() *storage.Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.storageClient
 }
 
@@ -111,20 +122,15 @@ func (c *Client) getStorageClient() *storage.Client {
 func (c *Client) getForwardingRulesClient() *compute.ForwardingRulesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.forwardingRulesClient
-}
 
-// getTargetPoolsClient returns the target pools client.
-func (c *Client) getTargetPoolsClient() *compute.TargetPoolsClient {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.targetPoolsClient
+	return c.forwardingRulesClient
 }
 
 // getBackendServicesClient returns the backend services client.
 func (c *Client) getBackendServicesClient() *compute.BackendServicesClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.backendServicesClient
 }
 
@@ -132,12 +138,7 @@ func (c *Client) getBackendServicesClient() *compute.BackendServicesClient {
 func (c *Client) getHealthChecksClient() *compute.HealthChecksClient {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	return c.healthChecksClient
 }
 
-// getRegionHealthChecksClient returns the region health checks client.
-func (c *Client) getRegionHealthChecksClient() *compute.RegionHealthChecksClient {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.regionHealthChecksClient
-}

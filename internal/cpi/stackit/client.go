@@ -36,7 +36,7 @@ type Client struct {
 type Config struct {
 	ProjectID           string
 	OrgID               string
-	AuthToken           string
+	AuthToken           string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken string
 	ServiceAccountJSON  string
 	Region              string
@@ -217,6 +217,7 @@ func (c *Client) SupportsStorage() bool {
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	// Handle different config types
 	var cfg *Config
+
 	switch configValue := config.(type) {
 	case *Config:
 		cfg = configValue

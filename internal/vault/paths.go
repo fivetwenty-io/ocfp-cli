@@ -47,6 +47,13 @@ const (
 
 const inceptionComponent = "inception"
 
+// Phase name constants for provider operations.
+const (
+	PhaseCertificates = "certificates"
+	PhasePublicIPs    = "public-ips"
+	PhaseConfig       = "config"
+)
+
 // GetConfigPath returns the base configuration path for a bloc
 // Format: secret/config/{bloc}.
 func (pb *PathBuilder) GetConfigPath() string {
@@ -386,8 +393,7 @@ func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
 // HostnameFormatter is a function type that generates database hostnames.
 type HostnameFormatter func(envType string) string
 
-// BuildDatabasesForEnv returns database configuration for an environment.
-// The hostnameFormatter function allows provider-specific hostname generation.
+//nolint:gosec // map keys contain "password" but values are Genesis template placeholders, not real secrets
 func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
 	databases := make(map[string]map[string]interface{})
 

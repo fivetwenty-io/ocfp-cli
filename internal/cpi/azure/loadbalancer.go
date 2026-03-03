@@ -11,7 +11,12 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// lbSchemeInternal is the scheme identifier for internal load balancers.
+const lbSchemeInternal = "internal"
+
 // CreateLoadBalancer creates a new Azure Load Balancer.
+//
+//nolint:funlen // Azure LB creation requires constructing multiple nested resource configs
 func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.CreateLoadBalancerRequest) (*cpi.LoadBalancer, error) {
 	if req == nil {
 		return nil, ErrInvalidRequest
@@ -29,17 +34,19 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 	}
 
 	// Determine if this is an internal or external load balancer
-	isInternal := req.Scheme == "internal"
+	isInternal := req.Scheme == lbSchemeInternal
 
 	// Create frontend IP configuration
 	frontendName := req.Name + "-frontend"
+
 	var frontendConfig *armnetwork.FrontendIPConfiguration
 
 	if isInternal {
 		// Internal load balancer - use private IP from subnet
 		if len(req.SubnetIDs) == 0 {
-			return nil, fmt.Errorf("subnet ID required for internal load balancer")
+			return nil, ErrSubnetIDRequired
 		}
+
 		frontendConfig = &armnetwork.FrontendIPConfiguration{
 			Name: to.Ptr(frontendName),
 			Properties: &armnetwork.FrontendIPConfigurationPropertiesFormat{
@@ -52,6 +59,7 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 	} else {
 		// External load balancer - create public IP first
 		publicIPName := req.Name + "-pip"
+
 		publicIP, err := m.createPublicIPForLB(ctx, publicIPName, req.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create public IP for load balancer: %w", err)
@@ -79,9 +87,9 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 		Name: to.Ptr(probeName),
 		Properties: &armnetwork.ProbePropertiesFormat{
 			Protocol:          to.Ptr(armnetwork.ProbeProtocolTCP),
-			Port:              to.Ptr(int32(80)),
-			IntervalInSeconds: to.Ptr(int32(15)),
-			NumberOfProbes:    to.Ptr(int32(2)),
+			Port:              to.Ptr(int32(80)), //nolint:mnd
+			IntervalInSeconds: to.Ptr(int32(15)), //nolint:mnd
+			NumberOfProbes:    to.Ptr(int32(2)), //nolint:mnd
 		},
 	}
 
@@ -91,10 +99,10 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 		Name: to.Ptr(ruleName),
 		Properties: &armnetwork.LoadBalancingRulePropertiesFormat{
 			Protocol:             to.Ptr(armnetwork.TransportProtocolTCP),
-			FrontendPort:         to.Ptr(int32(80)),
-			BackendPort:          to.Ptr(int32(80)),
+			FrontendPort:         to.Ptr(int32(80)), //nolint:mnd
+			BackendPort:          to.Ptr(int32(80)), //nolint:mnd
 			EnableFloatingIP:     to.Ptr(false),
-			IdleTimeoutInMinutes: to.Ptr(int32(4)),
+			IdleTimeoutInMinutes: to.Ptr(int32(4)), //nolint:mnd
 			FrontendIPConfiguration: &armnetwork.SubResource{
 				ID: to.Ptr(fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/loadBalancers/%s/frontendIPConfigurations/%s",
 					m.client.getSubscriptionID(), m.client.getResourceGroup(), req.Name, frontendName)),
@@ -160,8 +168,8 @@ func (m *LoadBalancerManager) createLoadBalancerFromConfig(ctx context.Context, 
 		SubnetIDs: config.SubnetIDs,
 	}
 
-	if config.Type == "internal" {
-		req.Scheme = "internal"
+	if config.Type == lbSchemeInternal {
+		req.Scheme = lbSchemeInternal
 	} else {
 		req.Scheme = "internet-facing"
 	}
@@ -170,7 +178,7 @@ func (m *LoadBalancerManager) createLoadBalancerFromConfig(ctx context.Context, 
 }
 
 // GetLoadBalancer retrieves a load balancer by ID or name.
-func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, id string) (*cpi.LoadBalancer, error) {
+func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, id string) (*cpi.LoadBalancer, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -196,6 +204,7 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 	pager := m.client.loadBalancersClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var loadBalancers []*cpi.LoadBalancer
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -214,7 +223,7 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 }
 
 // UpdateLoadBalancer updates a load balancer.
-func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string, req *cpi.UpdateLoadBalancerRequest) error {
+func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string, req *cpi.UpdateLoadBalancerRequest) error { //nolint:varnamelen
 	if req == nil {
 		return ErrInvalidRequest
 	}
@@ -225,7 +234,7 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string,
 	}
 
 	name := ExtractResourceName(id)
-
+ //nolint:varnamelen // lb is clear in context
 	// Get current load balancer
 	lb, err := m.client.loadBalancersClient.Get(ctx, m.client.getResourceGroup(), name, nil)
 	if err != nil {
@@ -257,9 +266,9 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string,
 
 	return nil
 }
-
+ //nolint:varnamelen // id is clear in context
 // DeleteLoadBalancer deletes a load balancer.
-func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -325,7 +334,7 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 	}
 
 	name := ExtractResourceName(lbID)
-
+ //nolint:varnamelen // lb is clear in context
 	// Get current load balancer
 	lb, err := m.client.loadBalancersClient.Get(ctx, m.client.getResourceGroup(), name, nil)
 	if err != nil {
@@ -334,7 +343,7 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 
 	// Update or add probe
 	if lb.Properties == nil || lb.Properties.Probes == nil || len(lb.Properties.Probes) == 0 {
-		return fmt.Errorf("load balancer %s has no probes", name)
+		return fmt.Errorf("%w: %s", ErrLoadBalancerNoProbes, name)
 	}
 
 	// Update the first probe
@@ -352,9 +361,9 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 		probe.Properties.Protocol = to.Ptr(armnetwork.ProbeProtocolTCP)
 	}
 
-	probe.Properties.Port = to.Ptr(int32(check.Port))
-	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))
-	probe.Properties.NumberOfProbes = to.Ptr(int32(check.UnhealthyThreshold))
+	probe.Properties.Port = to.Ptr(int32(check.Port))                        //nolint:gosec // port values are within int32 range
+	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))       //nolint:gosec // interval is a small config value
+	probe.Properties.NumberOfProbes = to.Ptr(int32(check.UnhealthyThreshold)) //nolint:gosec // threshold is a small config value
 
 	poller, err := m.client.loadBalancersClient.BeginCreateOrUpdate(
 		ctx,
@@ -425,7 +434,7 @@ func (m *LoadBalancerManager) createPublicIPForLB(ctx context.Context, name stri
 	return &result.PublicIPAddress, nil
 }
 
-func (m *LoadBalancerManager) lbToLoadBalancer(lb *armnetwork.LoadBalancer) *cpi.LoadBalancer {
+func (m *LoadBalancerManager) lbToLoadBalancer(lb *armnetwork.LoadBalancer) *cpi.LoadBalancer { //nolint:varnamelen
 	if lb == nil {
 		return nil
 	}
@@ -437,62 +446,80 @@ func (m *LoadBalancerManager) lbToLoadBalancer(lb *armnetwork.LoadBalancer) *cpi
 		CreatedAt: time.Now(),
 	}
 
-	if lb.Properties != nil {
-		loadBalancer.State = MapProvisioningStateToResourceState(string(*lb.Properties.ProvisioningState))
-
-		// Determine type based on frontend configuration
-		if lb.Properties.FrontendIPConfigurations != nil && len(lb.Properties.FrontendIPConfigurations) > 0 {
-			frontend := lb.Properties.FrontendIPConfigurations[0]
-			if frontend.Properties != nil {
-				if frontend.Properties.PublicIPAddress != nil {
-					loadBalancer.Type = "external"
-					// Get public IP address
-					if frontend.Properties.PublicIPAddress.ID != nil {
-						// Would need to query public IP to get address
-					}
-				} else if frontend.Properties.PrivateIPAddress != nil {
-					loadBalancer.Type = "internal"
-					loadBalancer.IPAddress = DerefString(frontend.Properties.PrivateIPAddress)
-				}
-			}
-		}
-
-		// Extract backend addresses
-		if lb.Properties.BackendAddressPools != nil {
-			for _, pool := range lb.Properties.BackendAddressPools {
-				if pool.Properties != nil && pool.Properties.LoadBalancerBackendAddresses != nil {
-					for _, addr := range pool.Properties.LoadBalancerBackendAddresses {
-						if addr.Properties != nil && addr.Properties.IPAddress != nil {
-							loadBalancer.Backends = append(loadBalancer.Backends, &cpi.Backend{
-								ID:      DerefString(addr.Name),
-								Name:    DerefString(addr.Name),
-								Address: DerefString(addr.Properties.IPAddress),
-								Enabled: true,
-							})
-						}
-					}
-				}
-			}
-		}
-
-		// Extract health check from probes
-		if lb.Properties.Probes != nil && len(lb.Properties.Probes) > 0 {
-			probe := lb.Properties.Probes[0]
-			if probe.Properties != nil {
-				loadBalancer.HealthCheck = &cpi.HealthCheck{
-					Protocol:           string(*probe.Properties.Protocol),
-					Port:               int(DerefInt32(probe.Properties.Port)),
-					Interval:           int(DerefInt32(probe.Properties.IntervalInSeconds)),
-					UnhealthyThreshold: int(DerefInt32(probe.Properties.NumberOfProbes)),
-				}
-				if probe.Properties.RequestPath != nil {
-					loadBalancer.HealthCheck.Path = DerefString(probe.Properties.RequestPath)
-				}
-			}
-		}
+	if lb.Properties == nil {
+		return loadBalancer
 	}
 
+	loadBalancer.State = MapProvisioningStateToResourceState(string(*lb.Properties.ProvisioningState))
+	m.populateLBFrontend(loadBalancer, lb.Properties.FrontendIPConfigurations)
+	m.populateLBBackends(loadBalancer, lb.Properties.BackendAddressPools)
+	m.populateLBHealthCheck(loadBalancer, lb.Properties.Probes)
+
 	return loadBalancer
+}
+
+// populateLBFrontend extracts load balancer type and IP from frontend configuration.
+func (m *LoadBalancerManager) populateLBFrontend(lb *cpi.LoadBalancer, frontends []*armnetwork.FrontendIPConfiguration) { //nolint:varnamelen
+	if len(frontends) == 0 {
+		return
+	}
+
+	frontend := frontends[0]
+	if frontend.Properties == nil {
+		return
+	}
+
+	if frontend.Properties.PublicIPAddress != nil {
+		lb.Type = "external"
+	} else if frontend.Properties.PrivateIPAddress != nil {
+		lb.Type = lbSchemeInternal
+		lb.IPAddress = DerefString(frontend.Properties.PrivateIPAddress)
+	}
+}
+
+// populateLBBackends extracts backend addresses from backend address pools.
+func (m *LoadBalancerManager) populateLBBackends(lb *cpi.LoadBalancer, pools []*armnetwork.BackendAddressPool) { //nolint:varnamelen
+	for _, pool := range pools {
+		if pool.Properties == nil {
+			continue
+		}
+
+		for _, addr := range pool.Properties.LoadBalancerBackendAddresses {
+			if addr.Properties == nil || addr.Properties.IPAddress == nil {
+				continue
+			}
+
+			lb.Backends = append(lb.Backends, &cpi.Backend{
+				ID:      DerefString(addr.Name),
+				Name:    DerefString(addr.Name),
+				Address: DerefString(addr.Properties.IPAddress),
+				Enabled: true,
+			})
+		}
+	}
+}
+
+// populateLBHealthCheck extracts health check configuration from probes.
+func (m *LoadBalancerManager) populateLBHealthCheck(lb *cpi.LoadBalancer, probes []*armnetwork.Probe) { //nolint:varnamelen
+	if len(probes) == 0 {
+		return
+	}
+
+	probe := probes[0]
+	if probe.Properties == nil {
+		return
+	}
+
+	lb.HealthCheck = &cpi.HealthCheck{
+		Protocol:           string(*probe.Properties.Protocol),
+		Port:               int(DerefInt32(probe.Properties.Port)),
+		Interval:           int(DerefInt32(probe.Properties.IntervalInSeconds)),
+		UnhealthyThreshold: int(DerefInt32(probe.Properties.NumberOfProbes)),
+	}
+
+	if probe.Properties.RequestPath != nil {
+		lb.HealthCheck.Path = DerefString(probe.Properties.RequestPath)
+	}
 }
 
 func tagsToSlice(tags map[string]string) []string {
@@ -504,6 +531,7 @@ func tagsToSlice(tags map[string]string) []string {
 	for k, v := range tags {
 		result = append(result, k+"="+v)
 	}
+
 	return result
 }
 
@@ -514,10 +542,12 @@ func matchesLBFilters(tags []string, filters map[string]string) bool {
 
 	// Convert tag slice to map for easier matching
 	tagMap := make(map[string]string)
+
 	for _, tag := range tags {
 		for i, c := range tag {
 			if c == '=' {
 				tagMap[tag[:i]] = tag[i+1:]
+
 				break
 			}
 		}

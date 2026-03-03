@@ -11,6 +11,17 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// volumeIDPartCount is the expected number of parts when splitting a volume ID by ":".
+	volumeIDPartCount = 2
+	// snapshotIDPartCount is the expected number of parts when splitting a snapshot ID by ":".
+	snapshotIDPartCount = 2
+	// bytesPerGB is the number of bytes in a gigabyte for size conversions.
+	bytesPerGB = 1024 * 1024 * 1024
+	// taskTimeoutSnapshot is the timeout in seconds for snapshot operations.
+	taskTimeoutSnapshot = 300
+)
+
 // StorageManager handles Proxmox storage operations.
 type StorageManager struct {
 	client *Client
@@ -35,6 +46,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	if req.SizeGB > 0 {
 		sizeGB = req.SizeGB
 	}
+
 	if sizeGB == 0 {
 		sizeGB = 10 // Default 10GB
 	}
@@ -65,7 +77,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 }
 
 // GetVolume retrieves a volume.
-func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:varnamelen // id is clear in context
 	node, err := m.client.getNode(ctx)
 	if err != nil {
 		return nil, err
@@ -73,8 +85,8 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 	// Volume ID format: storage:type/name or storage:name
 	parts := strings.Split(id, ":")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid volume ID format: %s", id)
+	if len(parts) != volumeIDPartCount {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidVolumeIDFormat, id)
 	}
 
 	storage := parts[0]
@@ -92,16 +104,10 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 	// Get volume details from storage content
 	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, storage, id)
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
-		// Return minimal info if we can't get details
-		return &cpi.Volume{
-			ID:    id,
-			Name:  id,
-			Type:  storage,
-			State: cpi.ResourceStateAvailable,
-			Tags:  make(map[string]string),
-		}, nil
+		return nil, fmt.Errorf("failed to get volume details: %w", err)
 	}
 
 	data, ok := resp.(map[string]interface{})
@@ -118,7 +124,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 	// Parse size (in bytes)
 	var sizeGB int
 	if size, ok := data["size"].(float64); ok {
-		sizeGB = int(size / 1024 / 1024 / 1024)
+		sizeGB = int(size / bytesPerGB)
 	}
 
 	return &cpi.Volume{
@@ -145,6 +151,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 	// List storage content
 	path := fmt.Sprintf("/nodes/%s/storage/%s/content", node, storage)
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list storage content: %w", err)
@@ -156,6 +163,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 	}
 
 	var volumes []*cpi.Volume
+
 	for _, item := range data {
 		volData, ok := item.(map[string]interface{})
 		if !ok {
@@ -177,7 +185,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 		var sizeGB int
 		if size, ok := volData["size"].(float64); ok {
-			sizeGB = int(size / 1024 / 1024 / 1024)
+			sizeGB = int(size / bytesPerGB)
 		}
 
 		volumes = append(volumes, &cpi.Volume{
@@ -197,7 +205,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", instanceID)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, instanceID)
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -226,7 +234,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", instanceID)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, instanceID)
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -244,17 +252,19 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 
 	// Find the disk ID that matches the volume
 	var diskID string
+
 	for key, value := range config {
 		if strings.HasPrefix(key, "scsi") || strings.HasPrefix(key, "virtio") || strings.HasPrefix(key, "ide") {
 			if valueStr, ok := value.(string); ok && strings.Contains(valueStr, volumeID) {
 				diskID = key
+
 				break
 			}
 		}
 	}
 
 	if diskID == "" {
-		return fmt.Errorf("volume %s not found on VM %d", volumeID, vmid)
+		return fmt.Errorf("%w: %s on VM %d", ErrVolumeNotFoundOnVM, volumeID, vmid)
 	}
 
 	// Detach the disk
@@ -271,11 +281,12 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 	// Volume resizing in Proxmox is done through the VM
 	// This requires knowing which VM the volume is attached to
 	logger.Warnf("Volume resize requires the volume to be attached to a VM")
-	return fmt.Errorf("volume resize not supported for unattached volumes")
+
+	return ErrVolumeResizeUnsupported
 }
 
 // DeleteVolume deletes a volume.
-func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
+func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //nolint:varnamelen // id is clear in context
 	node, err := m.client.getNode(ctx)
 	if err != nil {
 		return err
@@ -283,8 +294,8 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
 
 	// Parse storage from volume ID
 	parts := strings.Split(id, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid volume ID format: %s", id)
+	if len(parts) != 2 { //nolint:mnd
+		return fmt.Errorf("%w: %s", ErrInvalidVolumeIDFormat, id)
 	}
 
 	storage := parts[0]
@@ -305,10 +316,9 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
 func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) {
 	// In Proxmox, snapshots are at the VM level, not volume level
 	// volumeID here is expected to be the VMID
-
 	vmid, err := strconv.Atoi(volumeID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid VMID for snapshot: %s", volumeID)
+		return nil, fmt.Errorf("%w for snapshot: %s", ErrInvalidVMID, volumeID)
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -319,14 +329,15 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 	qemuSvc := m.client.getQemuService()
 
 	upid, err := qemuSvc.Snapshot(ctx, node, vmid, name, map[string]interface{}{
-		"description": fmt.Sprintf("Snapshot created at %s", time.Now().Format(time.RFC3339)),
+		"description": "Snapshot created at " + time.Now().Format(time.RFC3339),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
 
 	// Wait for snapshot to complete
-	if err := m.client.waitForTask(ctx, node, upid, 300); err != nil {
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutSnapshot)
+	if err != nil {
 		return nil, fmt.Errorf("snapshot task failed: %w", err)
 	}
 
@@ -342,16 +353,16 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 }
 
 // GetSnapshot retrieves a snapshot.
-func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
+func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:varnamelen // id is clear in context
 	// Snapshot ID format: vmid:snapshotname
 	parts := strings.Split(id, ":")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid snapshot ID format: %s (expected vmid:snapshotname)", id)
+	if len(parts) != snapshotIDPartCount {
+		return nil, fmt.Errorf("%w: %s (expected vmid:snapshotname)", ErrInvalidSnapshotIDFormat, id)
 	}
 
 	vmid, err := strconv.Atoi(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("invalid VMID in snapshot ID: %s", parts[0])
+		return nil, fmt.Errorf("%w in snapshot ID: %s", ErrInvalidVMID, parts[0])
 	}
 
 	snapshotName := parts[1]
@@ -389,7 +400,7 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snaps
 func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
 	vmid, err := strconv.Atoi(volumeID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid VMID: %s", volumeID)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidVMID, volumeID)
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -405,6 +416,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 	}
 
 	var result []*cpi.Snapshot
+
 	for _, snap := range snapshots {
 		name := getStringFromMap(snap, "name")
 
@@ -435,13 +447,13 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
 	// Snapshot ID format: vmid:snapshotname
 	parts := strings.Split(id, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid snapshot ID format: %s", id)
+	if len(parts) != snapshotIDPartCount {
+		return fmt.Errorf("%w: %s", ErrInvalidSnapshotIDFormat, id)
 	}
 
 	vmid, err := strconv.Atoi(parts[0])
 	if err != nil {
-		return fmt.Errorf("invalid VMID in snapshot ID: %s", parts[0])
+		return fmt.Errorf("%w in snapshot ID: %s", ErrInvalidVMID, parts[0])
 	}
 
 	snapshotName := parts[1]

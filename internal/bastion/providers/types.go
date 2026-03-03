@@ -5,13 +5,16 @@ import (
 	"time"
 )
 
+// defaultSSHUser is the default SSH user for cloud VM images.
+const defaultSSHUser = "ubuntu"
+
 // ConnectionDetails holds SSH connection information.
 type ConnectionDetails struct {
 	Host           string
 	Port           int
 	User           string
 	PrivateKeyPath string
-	Password       string
+	Password       string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	SSHOptions     []string
 	UseSSHPass     bool
 }

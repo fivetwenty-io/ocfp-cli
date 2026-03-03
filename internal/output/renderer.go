@@ -15,11 +15,15 @@ var (
 
 	// ErrInvalidMode is returned when an invalid mode string is parsed.
 	ErrInvalidMode = errors.New("invalid output mode")
+
+	// ErrNoActivePhase is returned when a progress update occurs without an active phase.
+	ErrNoActivePhase = errors.New("no active phase for progress update")
 )
 
 // NewRenderer creates a new Renderer instance for the specified mode and output writer.
 // It validates the mode and returns an error if the mode is unsupported.
-func NewRenderer(w io.Writer, mode Mode) (Renderer, error) {
+//nolint:ireturn // returns interface by design for polymorphic renderers
+func NewRenderer(w io.Writer, mode Mode) (Renderer, error) { //nolint:varnamelen
 	log := logger.Get()
 
 	// Validate mode
@@ -53,7 +57,7 @@ func NewRenderer(w io.Writer, mode Mode) (Renderer, error) {
 
 // ParseMode converts a string representation to a Mode constant.
 // Valid values: "interactive", "concise", "json", "yaml".
-func ParseMode(s string) (Mode, error) {
+func ParseMode(s string) (Mode, error) { //nolint:varnamelen
 	normalized := strings.ToLower(strings.TrimSpace(s))
 
 	switch normalized {
@@ -70,44 +74,3 @@ func ParseMode(s string) (Mode, error) {
 	}
 }
 
-// placeholderRenderer is a temporary implementation for Phase 1 foundation.
-// It returns "not implemented" errors for all operations.
-type placeholderRenderer struct {
-	mode   Mode
-	writer io.Writer
-}
-
-// PhaseStart is not yet implemented.
-func (r *placeholderRenderer) PhaseStart(info PhaseInfo) error {
-	return fmt.Errorf("PhaseStart: %w", ErrNotImplemented)
-}
-
-// PhaseProgress is not yet implemented.
-func (r *placeholderRenderer) PhaseProgress(progress ProgressInfo) error {
-	return fmt.Errorf("PhaseProgress: %w", ErrNotImplemented)
-}
-
-// PhaseComplete is not yet implemented.
-func (r *placeholderRenderer) PhaseComplete(info PhaseInfo) error {
-	return fmt.Errorf("PhaseComplete: %w", ErrNotImplemented)
-}
-
-// PhaseFailed is not yet implemented.
-func (r *placeholderRenderer) PhaseFailed(info PhaseInfo, err error) error {
-	return fmt.Errorf("PhaseFailed: %w", ErrNotImplemented)
-}
-
-// PhaseSkipped is not yet implemented.
-func (r *placeholderRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
-	return fmt.Errorf("PhaseSkipped: %w", ErrNotImplemented)
-}
-
-// Finalize is not yet implemented.
-func (r *placeholderRenderer) Finalize(summary Summary) error {
-	return fmt.Errorf("Finalize: %w", ErrNotImplemented)
-}
-
-// Close is not yet implemented.
-func (r *placeholderRenderer) Close() error {
-	return fmt.Errorf("Close: %w", ErrNotImplemented)
-}

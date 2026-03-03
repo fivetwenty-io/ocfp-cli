@@ -30,6 +30,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 		// Use instance name as NIC name for easier identification (e.g., "bastion", "bosh")
 		nicName := req.Name
+
 		nicID, err := m.createNICWithStaticIP(ctx, req.NetworkID, req.StaticPrivateIP, nicName, req.SecurityGroupIDs)
 		if err != nil {
 			logger.WithOperation("CreateInstance").Warnf("Failed to create NIC with static IP: %v, falling back to DHCP", err)
@@ -333,16 +334,19 @@ func (m *ComputeManager) listServersWithFilters(ctx context.Context, cli *iaas.A
 func (m *ComputeManager) buildLabelSelector(filters map[string]string) string {
 	selectors := make([]string, 0, len(filters))
 
-	for k, v := range filters {
+	for k, v := range filters { //nolint:varnamelen
 		var key string
-		if strings.HasPrefix(k, "label.") {
+
+		switch {
+		case strings.HasPrefix(k, "label."):
 			key = strings.TrimPrefix(k, "label.")
-		} else if strings.HasPrefix(k, "label:") {
+		case strings.HasPrefix(k, "label:"):
 			key = strings.TrimPrefix(k, "label:")
-		} else {
+		default:
 			// Treat plain keys as label selectors (e.g., "bloc", "managed-by")
 			key = k
 		}
+
 		selectors = append(selectors, fmt.Sprintf("%s=%s", key, v))
 	}
 

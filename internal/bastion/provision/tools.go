@@ -103,7 +103,7 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionUR
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is from trusted internal config
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version info: %w", err)
 	}
@@ -456,7 +456,7 @@ func (atm *AdvancedToolManager) addCleanupStep(lines *[]string, tool AdvancedBin
 
 // generateVersionBasedInstall generates installation commands for version-based tools.
 func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryTool) []string {
-	var lines []string
+	lines := make([]string, 0, 32) //nolint:mnd // rough capacity for version-based install script
 
 	lines = append(lines, atm.generateVersionDetermination(tool)...)
 	lines = append(lines, "")
@@ -520,8 +520,7 @@ func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryT
 }
 
 func (atm *AdvancedToolManager) generateDownloadCommands(tool AdvancedBinaryTool) []string {
-	var lines []string
-
+	lines := make([]string, 0, 2) //nolint:mnd // download command + success message
 	lines = append(lines, fmt.Sprintf("        if curl -fsSL \"$DOWNLOAD_URL\" -o '/tmp/%s-download'; then", tool.Name))
 	lines = append(lines, fmt.Sprintf("            log_success '%s downloaded successfully'", tool.Name))
 

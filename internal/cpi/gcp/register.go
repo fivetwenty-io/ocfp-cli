@@ -1,7 +1,6 @@
 package gcp
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -109,6 +108,7 @@ func detectProjectFromEnv(gcpConfig *Config) {
 	for _, envVar := range []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"} {
 		if project := os.Getenv(envVar); project != "" {
 			gcpConfig.ProjectID = project
+
 			return
 		}
 	}
@@ -155,6 +155,7 @@ func getString(m map[string]interface{}, key string) string {
 			return s
 		}
 	}
+
 	return ""
 }
 
@@ -165,6 +166,7 @@ func getBool(m map[string]interface{}, key string) bool {
 			return b
 		}
 	}
+
 	return false
 }
 
@@ -187,30 +189,6 @@ func getInt(m map[string]interface{}, key string) int {
 	return 0
 }
 
-// getStringSlice safely gets a string slice from a map.
-func getStringSlice(m map[string]interface{}, key string) []string {
-	value, ok := m[key]
-	if !ok {
-		return nil
-	}
-
-	if slice, ok := value.([]interface{}); ok {
-		result := make([]string, 0, len(slice))
-		for _, item := range slice {
-			if str, ok := item.(string); ok {
-				result = append(result, str)
-			}
-		}
-		return result
-	}
-
-	if slice, ok := value.([]string); ok {
-		return slice
-	}
-
-	return nil
-}
-
 // getStringMap safely gets a string map from a map.
 func getStringMap(m map[string]interface{}, key string) map[string]string {
 	value, ok := m[key]
@@ -226,6 +204,7 @@ func getStringMap(m map[string]interface{}, key string) map[string]string {
 				result[k] = str
 			}
 		}
+
 		return result
 	}
 
@@ -266,14 +245,16 @@ func DiscoverProvider() (*Config, error) {
 
 	// Try to detect project
 	detectProjectFromEnv(config)
+
 	if config.ProjectID == "" {
-		return nil, errors.New("unable to auto-detect GCP project")
+		return nil, ErrAutoDetectProject
 	}
 
 	// Try to detect credentials
 	detectCredentialsFromEnv(config)
+
 	if config.ServiceAccountJSON == "" {
-		return nil, errors.New("unable to auto-detect GCP credentials")
+		return nil, ErrAutoDetectCredentials
 	}
 
 	// Try to detect region/zone

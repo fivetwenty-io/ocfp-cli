@@ -12,7 +12,7 @@ type Config struct {
 	SubscriptionID    string
 	TenantID          string
 	ClientID          string
-	ClientSecret      string
+	ClientSecret      string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ClientCertificate string // Path to certificate for cert-based auth
 
 	// Authentication - Managed Identity
@@ -51,11 +51,11 @@ type Config struct {
 	DefaultTags map[string]string
 
 	// Advanced settings
-	CloudName                 string // "AzurePublic", "AzureGovernment", "AzureChina"
-	CustomEndpoint            string // For Azure Stack or testing
-	DisableInstanceMetadata   bool
-	EnableDiagnosticsLogging  bool
-	DebugLogging              bool
+	CloudName                string // "AzurePublic", "AzureGovernment", "AzureChina"
+	CustomEndpoint           string // For Azure Stack or testing
+	DisableInstanceMetadata  bool
+	EnableDiagnosticsLogging bool
+	DebugLogging             bool
 }
 
 const (
@@ -133,6 +133,7 @@ func (c *Config) Validate() error {
 		if c.TenantID == "" {
 			return &ConfigError{Field: "TenantID", Message: "tenant ID required when client ID is provided"}
 		}
+
 		if c.ClientSecret == "" && c.ClientCertificate == "" && !c.UseManagedIdentity {
 			return &ConfigError{Field: "ClientSecret", Message: "client secret or certificate required when client ID is provided"}
 		}
@@ -171,6 +172,7 @@ func (c *Config) Validate() error {
 // isValidCIDR performs basic CIDR validation.
 func isValidCIDR(cidr string) bool {
 	_, _, err := net.ParseCIDR(cidr)
+
 	return err == nil
 }
 
@@ -189,6 +191,7 @@ func (c *Config) GetCloudName() string {
 	if c.CloudName == "" {
 		return "AzurePublic"
 	}
+
 	return c.CloudName
 }
 

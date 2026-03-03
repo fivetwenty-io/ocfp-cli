@@ -98,9 +98,12 @@ func (c *Config) GetGenesisDeployments() []GenesisDeployment {
 
 // GetBinaryTools returns binary tools to install.
 func (c *Config) GetBinaryTools() []BinaryTool {
-	tools := []BinaryTool{}
-	tools = append(tools, c.getGenesisTools()...)
-	tools = append(tools, c.getCloudFoundryTools()...)
+	genesisTools := c.getGenesisTools()
+	cfTools := c.getCloudFoundryTools()
+
+	tools := make([]BinaryTool, 0, len(genesisTools)+len(cfTools))
+	tools = append(tools, genesisTools...)
+	tools = append(tools, cfTools...)
 
 	return tools
 }
@@ -259,6 +262,7 @@ func (c *Config) getGenesisConfig() config.Genesis {
 	if genesisConfig.Branch == "" {
 		genesisConfig.Branch = "v3.1.x-dev"
 	}
+
 	if genesisConfig.Repo == "" {
 		genesisConfig.Repo = "git@github.com:genesis-community/genesis"
 	}
@@ -845,8 +849,7 @@ func (c *Config) generateStackitScript() string {
 
 // generateAWSScript generates AWS-specific configuration script.
 func (c *Config) generateAWSScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# AWS CLI configuration")
 	lines = append(lines, "")
@@ -857,8 +860,7 @@ func (c *Config) generateAWSScript() string {
 
 // generateAzureScript generates Azure-specific configuration script.
 func (c *Config) generateAzureScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# Azure CLI configuration")
 	lines = append(lines, "")
@@ -869,8 +871,7 @@ func (c *Config) generateAzureScript() string {
 
 // generateGCPScript generates GCP-specific configuration script.
 func (c *Config) generateGCPScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# GCP CLI configuration")
 	lines = append(lines, "")
@@ -884,8 +885,7 @@ func (c *Config) generateGCPScript() string {
 
 // generateOpenStackScript generates OpenStack-specific configuration script.
 func (c *Config) generateOpenStackScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# OpenStack CLI configuration")
 	lines = append(lines, "")

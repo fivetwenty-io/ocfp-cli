@@ -24,7 +24,7 @@ type YAMLRenderer struct {
 func NewYAMLRenderer(w io.Writer) *YAMLRenderer {
 	log := logger.Get()
 
-	r := &YAMLRenderer{
+	r := &YAMLRenderer{ //nolint:varnamelen
 		writer:   w,
 		log:      log,
 		sequence: 0,
@@ -169,7 +169,8 @@ func (r *YAMLRenderer) emitEvent(eventType string, data map[string]interface{}) 
 	}
 
 	// Write document separator
-	if _, err := r.writer.Write([]byte("---\n")); err != nil {
+	_, err := r.writer.Write([]byte("---\n"))
+	if err != nil {
 		return fmt.Errorf("failed to write YAML separator: %w", err)
 	}
 
@@ -179,12 +180,14 @@ func (r *YAMLRenderer) emitEvent(eventType string, data map[string]interface{}) 
 		return fmt.Errorf("failed to marshal YAML event: %w", err)
 	}
 
-	if _, err := r.writer.Write(yamlBytes); err != nil {
+	_, err = r.writer.Write(yamlBytes)
+	if err != nil {
 		return fmt.Errorf("failed to write YAML event: %w", err)
 	}
 
 	// Add blank line after document for readability
-	if _, err := r.writer.Write([]byte("\n")); err != nil {
+	_, err = r.writer.Write([]byte("\n"))
+	if err != nil {
 		return fmt.Errorf("failed to write YAML trailing newline: %w", err)
 	}
 
