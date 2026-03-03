@@ -45,6 +45,7 @@ const (
 	shieldIPSlot        = 9
 	blacksmithIPSlot    = 10
 	doomsdayIPSlot      = 9
+	shoutIPSlot         = 10
 	ocfpUIIPSlot        = 9
 	availableAIPSlot    = 11
 	availableBIPSlot    = 29
@@ -882,6 +883,7 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
 
 	if idx == 1 {
 		set("doomsday_ip", ipAt(doomsdayIPSlot))
+		set("shout_ip", ipAt(shoutIPSlot))
 	}
 
 	if idx == ocfpUIProviderIndex {
