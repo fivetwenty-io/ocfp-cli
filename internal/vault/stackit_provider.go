@@ -1735,6 +1735,11 @@ func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignme
 				Offset: 10, //nolint:mnd
 			},
 		},
+		"shout": {
+			"mgmt": {
+				SubnetMapping: map[int][]int{10: {1}},
+			},
+		},
 		"available": {
 			"mgmt": {
 				RangeSpec: "11-29",
@@ -2080,8 +2085,9 @@ func sortAssignmentTypes(types []string) {
 		"ocfp_ui":    8,  //nolint:mnd
 		"bastion":    9,  //nolint:mnd
 		"blacksmith": 10, //nolint:mnd
-		"available":  11, //nolint:mnd
-		"reserved":   12, //nolint:mnd
+		"shout":      11, //nolint:mnd
+		"available":  12, //nolint:mnd
+		"reserved":   13, //nolint:mnd
 	}
 
 	// Sort by priority
