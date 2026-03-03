@@ -321,13 +321,13 @@ func (m *Manager) getAvailabilityZone(index int) string {
 		}
 	}
 
-	// Fallback: STACKIT-style numeric suffix
+	// Fallback: provider-aware AZ formatting
 	region := m.options.Region
 	if region == "" {
 		region = "eu01"
 	}
 
-	return fmt.Sprintf("%s-%d", region, index+1)
+	return config.FormatAvailabilityZone(m.options.Provider, region, index)
 }
 
 // getFirstAvailabilityZone returns the first availability zone from config or region-based default.

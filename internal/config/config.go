@@ -990,15 +990,33 @@ func applyStackitDefaults(cfg *Config) {
 			cfg.Subnets = cfg.Network.Subnets
 		} else {
 			// Generate 3 default ocfp subnets carved from network CIDR
-			cfg.Subnets = generateDefaultStackitSubnets(cfg)
+			cfg.Subnets = generateDefaultSubnets(cfg)
 		}
 	}
 }
 
-// generateDefaultStackitSubnets generates 3 ocfp subnets carved from the network CIDR.
+// FormatAvailabilityZone returns an AZ name for the given provider, region, and index.
+// AWS/GCP/Azure use letter suffixes (e.g., us-east-1a, us-east-1b).
+// STACKIT uses numeric suffixes with a dash (e.g., eu01-1, eu01-2).
+func FormatAvailabilityZone(provider, region string, index int) string {
+	if strings.EqualFold(provider, "stackit") {
+		return fmt.Sprintf("%s-%d", region, index+1)
+	}
+
+	// AWS, GCP, Azure, and other providers use letter suffixes
+	if index < 0 || index > 25 {
+		return fmt.Sprintf("%s-%d", region, index)
+	}
+
+	suffix := string('a' + int32(index)) //nolint:gosec // bounds checked above
+
+	return region + suffix
+}
+
+// generateDefaultSubnets generates 3 ocfp subnets carved from the network CIDR.
 // This matches the Perl implementation behavior of creating ocfp-0, ocfp-1, ocfp-2
-// subnets across 3 availability zones.
-func generateDefaultStackitSubnets(cfg *Config) []Subnet {
+// subnets across 3 availability zones. AZ names are formatted per provider convention.
+func generateDefaultSubnets(cfg *Config) []Subnet {
 	// Determine parent network CIDR
 	parentCIDR := cfg.Network.CIDR
 	if parentCIDR == "" {
@@ -1009,23 +1027,28 @@ func generateDefaultStackitSubnets(cfg *Config) []Subnet {
 		parentCIDR = "10.4.0.0/20" // Default STACKIT network
 	}
 
+	// Determine provider for AZ formatting
+	provider := cfg.Provider
+	if provider == "" {
+		provider = cfg.IaaS
+	}
+
 	// Carve parent /20 network into 4 /22 subnets, skip first (reserved)
 	carvedSubnets := splitNetworkCIDR(parentCIDR, subnetSplitCount)
 	if len(carvedSubnets) < subnetSplitCount {
 		// Fallback: use full network if carving fails
-		return []Subnet{{Name: "ocfp-0", CIDR: parentCIDR, Type: "ocfp", AvailabilityZone: cfg.Region + "-1"}}
+		return []Subnet{{Name: "ocfp-0", CIDR: parentCIDR, Type: "ocfp", AvailabilityZone: FormatAvailabilityZone(provider, cfg.Region, 0)}}
 	}
 
 	// Use subnets [1], [2], [3] (skip [0] as reserved)
 	subnets := make([]Subnet, 0, subnetReservedCount)
-	azSuffixes := []string{"1", "2", "3"}
 
 	for i := range subnetReservedCount {
 		subnets = append(subnets, Subnet{
 			Name:             fmt.Sprintf("ocfp-%d", i),
 			CIDR:             carvedSubnets[i+1], // Skip first subnet
 			Type:             "ocfp",
-			AvailabilityZone: cfg.Region + "-" + azSuffixes[i],
+			AvailabilityZone: FormatAvailabilityZone(provider, cfg.Region, i),
 		})
 	}
 

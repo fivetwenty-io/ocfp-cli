@@ -715,11 +715,12 @@ func TestGetAvailabilityZone(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		azs    map[string]config.AvailabilityZone
-		region string
-		index  int
-		want   string
+		name     string
+		azs      map[string]config.AvailabilityZone
+		region   string
+		provider string
+		index    int
+		want     string
 	}{
 		{
 			name: "AWS config AZs index 0",
@@ -728,9 +729,10 @@ func TestGetAvailabilityZone(t *testing.T) {
 				"us-east-1b": {},
 				"us-east-1c": {},
 			},
-			region: "us-east-1",
-			index:  0,
-			want:   "us-east-1a",
+			region:   "us-east-1",
+			provider: "aws",
+			index:    0,
+			want:     "us-east-1a",
 		},
 		{
 			name: "AWS config AZs index 1",
@@ -739,9 +741,10 @@ func TestGetAvailabilityZone(t *testing.T) {
 				"us-east-1b": {},
 				"us-east-1c": {},
 			},
-			region: "us-east-1",
-			index:  1,
-			want:   "us-east-1b",
+			region:   "us-east-1",
+			provider: "aws",
+			index:    1,
+			want:     "us-east-1b",
 		},
 		{
 			name: "AWS config AZs index 2",
@@ -750,46 +753,68 @@ func TestGetAvailabilityZone(t *testing.T) {
 				"us-east-1b": {},
 				"us-east-1c": {},
 			},
-			region: "us-east-1",
-			index:  2,
-			want:   "us-east-1c",
+			region:   "us-east-1",
+			provider: "aws",
+			index:    2,
+			want:     "us-east-1c",
 		},
 		{
-			name:   "STACKIT fallback no AZs index 0",
-			azs:    nil,
-			region: "eu01",
-			index:  0,
-			want:   "eu01-1",
+			name:     "STACKIT fallback no AZs index 0",
+			azs:      nil,
+			region:   "eu01",
+			provider: "stackit",
+			index:    0,
+			want:     "eu01-1",
 		},
 		{
-			name:   "STACKIT fallback no AZs index 2",
-			azs:    nil,
-			region: "eu01",
-			index:  2,
-			want:   "eu01-3",
+			name:     "STACKIT fallback no AZs index 2",
+			azs:      nil,
+			region:   "eu01",
+			provider: "stackit",
+			index:    2,
+			want:     "eu01-3",
 		},
 		{
-			name: "index out of range falls back to STACKIT format",
+			name: "AWS index out of range falls back to AWS format",
 			azs: map[string]config.AvailabilityZone{
 				"us-east-1a": {},
 			},
-			region: "us-east-1",
-			index:  3,
-			want:   "us-east-1-4",
+			region:   "us-east-1",
+			provider: "aws",
+			index:    3,
+			want:     "us-east-1d",
 		},
 		{
-			name:   "empty region defaults to eu01",
-			azs:    nil,
-			region: "",
-			index:  0,
-			want:   "eu01-1",
+			name:     "empty region defaults to eu01 with STACKIT format",
+			azs:      nil,
+			region:   "",
+			provider: "stackit",
+			index:    0,
+			want:     "eu01-1",
 		},
 		{
-			name:   "empty AZs map falls back to STACKIT format",
-			azs:    map[string]config.AvailabilityZone{},
-			region: "eu01",
-			index:  1,
-			want:   "eu01-2",
+			name:     "empty AZs map falls back to STACKIT format",
+			azs:      map[string]config.AvailabilityZone{},
+			region:   "eu01",
+			provider: "stackit",
+			index:    1,
+			want:     "eu01-2",
+		},
+		{
+			name:     "AWS fallback no AZs produces letter suffix",
+			azs:      nil,
+			region:   "us-west-2",
+			provider: "aws",
+			index:    0,
+			want:     "us-west-2a",
+		},
+		{
+			name:     "GCP fallback no AZs produces letter suffix",
+			azs:      nil,
+			region:   "us-central1",
+			provider: "gcp",
+			index:    1,
+			want:     "us-central1b",
 		},
 	}
 
@@ -820,6 +845,7 @@ func TestGetAvailabilityZone(t *testing.T) {
 
 			manager := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
 				BlocName: "test",
+				Provider: tt.provider,
 				Region:   tt.region,
 			})
 
