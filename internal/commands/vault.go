@@ -33,8 +33,8 @@ const (
 	VaultInceptionPort = 8234
 	// TestVaultInceptionPort is the port for testing the inception vault server.
 	TestVaultInceptionPort = 8235
-	// VaultInceptionLogDir is the directory for vault inception logs.
-	VaultInceptionLogDir = ".ocfp/logs/vault"
+	// VaultInceptionLogDir is the directory for vault inception logs (relative to OcfpHome).
+	VaultInceptionLogDir = "logs/vault"
 	// VaultInceptionLogFile is the filename for vault inception logs.
 	VaultInceptionLogFile = "vault-inception.log"
 	// MaxVaultReadyAttempts is the maximum number of attempts to wait for vault readiness.
@@ -94,7 +94,7 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 			}
 
 			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-			logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+			logDir := config.OcfpHome()
 
 			return logger.Initialize(logger.Config{
 				Level:      viper.GetString("log_level"),
@@ -253,9 +253,9 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	port := VaultInceptionPort
 
 	if blocName != "" {
-		vaultDir = filepath.Join(homeDir, ".ocfp", blocName, "vault", "data")
-		rootKeyFile = filepath.Join(homeDir, ".ocfp", blocName, "vault", "root.key")
-		unsealKeysFile = filepath.Join(homeDir, ".ocfp", blocName, "vault", "unseal.keys")
+		vaultDir = filepath.Join(config.OcfpBlocDir(blocName), "vault", "data")
+		rootKeyFile = filepath.Join(config.OcfpBlocDir(blocName), "vault", "root.key")
+		unsealKeysFile = filepath.Join(config.OcfpBlocDir(blocName), "vault", "unseal.keys")
 		tmuxSession = blocName + "-inception-vault"
 		vaultName = blocName + "-inception"
 	}
@@ -278,8 +278,8 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		"tmuxSession":    tmuxSession,
 		"vaultName":      vaultName,
 		"port":           strconv.Itoa(port),
-		"logDir":         filepath.Join(homeDir, VaultInceptionLogDir),
-		"logFile":        filepath.Join(homeDir, VaultInceptionLogDir, VaultInceptionLogFile),
+		"logDir":         filepath.Join(config.OcfpHome(), VaultInceptionLogDir),
+		"logFile":        filepath.Join(config.OcfpHome(), VaultInceptionLogDir, VaultInceptionLogFile),
 	}
 }
 
@@ -714,7 +714,7 @@ func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun boo
 	}
 
 	// Reinitialize logger with migrate subcommand for proper log path
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

@@ -72,7 +72,7 @@ type CheckpointData struct {
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(cfg *config.Config) *CheckpointManager {
-	checkpointDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "checkpoints")
+	checkpointDir := filepath.Join(config.OcfpHome(), "checkpoints")
 
 	return &CheckpointManager{
 		config:        cfg,

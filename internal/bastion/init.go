@@ -916,7 +916,7 @@ func (m *Manager) validatePrerequisites() error {
 	}
 
 	// Create local directories
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs", "provision")
+	logDir := filepath.Join(config.OcfpHome(), "logs", "provision")
 
 	err := os.MkdirAll(logDir, logDirectoryMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
@@ -1421,7 +1421,7 @@ func (m *Manager) getProgressReporter() *ProgressReporter {
 
 // saveCheckpoint saves the current progress state.
 func (m *Manager) saveCheckpoint() error {
-	checkpointPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "checkpoints",
+	checkpointPath := filepath.Join(config.OcfpHome(), "checkpoints",
 		fmt.Sprintf("bastion-%s.json", m.config.Name))
 
 	// Implementation would save checkpoint data to file
@@ -2168,9 +2168,8 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 
 // findConfigFile locates the OCFP configuration file from standard paths.
 func (m *Manager) findConfigFile() (string, error) {
-	homeDir := os.Getenv("HOME")
 	configPaths := []string{
-		homeDir + "/.ocfp/config.yml",
+		filepath.Join(config.OcfpHome(), "config.yml"),
 		"config/config.yml",
 	}
 

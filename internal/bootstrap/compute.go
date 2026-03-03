@@ -889,7 +889,7 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 // Returns (shouldSkip=false, err) if verification failed with an error.
 func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string) (bool, error) {
 	// Check if local key file exists
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	localKeyExists := false
 
@@ -1004,7 +1004,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 // wasReadFromExistingFile is true when keys were read from existing local files, false when newly generated.
 func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	// Check if local keypair already exists
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	existingKeyPath := filepath.Join(keyDir, "id_ed25519")
 	existingPubPath := filepath.Join(keyDir, "id_ed25519.pub")
 
@@ -1172,7 +1172,7 @@ func (m *Manager) saveKeyPairToState(keypair *cpi.KeyPair, keypairName string) e
 // If we have the local keypair, we reuse it. Otherwise, we delete and recreate.
 // Returns the keypair and a boolean indicating whether the private key should be saved.
 func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// Check if we have the local keypair (Ed25519 preferred)
@@ -1316,7 +1316,7 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 }
 
 func (m *Manager) savePrivateKey(privateKey string) error {
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// DEBUG: Log what we're about to save
@@ -1405,7 +1405,7 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 		// Determine which key file to use (prefer ed25519, fallback to rsa)
 		keyFile := "id_ed25519"
 
-		keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+		keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 
 		//nolint:noinlineerr // Idiomatic file existence check for key type fallback
 		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil { //nolint:gosec // path components are from trusted config

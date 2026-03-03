@@ -1025,7 +1025,7 @@ func exportSecrets(_ context.Context, _ *config.Config, outputFile string) error
 
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
-	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
+	metadataDir := filepath.Join(config.OcfpHome(), "backups")
 
 	err := os.MkdirAll(metadataDir, BackupDirPerm) //nolint:gosec // path components are from trusted HOME env
 	if err != nil {

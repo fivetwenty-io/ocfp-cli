@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"gopkg.in/yaml.v3"
@@ -60,12 +61,12 @@ func GetStateDir(blocName string) (string, error) {
 		return "", ErrBlocNameEmpty
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+	ocfpHome := config.OcfpHome()
+	if ocfpHome == "" {
+		return "", config.ErrOcfpHomeNotFound
 	}
 
-	return filepath.Join(home, ".ocfp", blocName, "state"), nil
+	return filepath.Join(ocfpHome, blocName, "state"), nil
 }
 
 // NewManager creates a new state manager.
@@ -73,12 +74,12 @@ func GetStateDir(blocName string) (string, error) {
 // For bloc-specific operations, use GetStateDir(blocName) to get the proper path.
 func NewManager(stateDir string) (*Manager, error) {
 	if stateDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		ocfpHome := config.OcfpHome()
+		if ocfpHome == "" {
+			return nil, config.ErrOcfpHomeNotFound
 		}
 
-		stateDir = filepath.Join(home, ".ocfp", "state")
+		stateDir = filepath.Join(ocfpHome, "state")
 	}
 
 	// Ensure state directory exists

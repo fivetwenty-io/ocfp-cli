@@ -215,7 +215,7 @@ func (g *GCPBastionInit) getBastionIP() (string, error) {
 func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 	// Look for state file in standard locations
 	statePaths := []string{
-		filepath.Join(os.Getenv("HOME"), ".ocfp", g.config.Name, "state.json"),
+		filepath.Join(config.OcfpBlocDir(g.config.Name), "state.json"),
 		filepath.Join(".", "state.json"),
 	}
 

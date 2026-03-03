@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -63,7 +62,7 @@ load balancers including adding/removing services and checking status.`,
 			// Initialize per-command file logger; keep stdout for UX
 			blocName := viper.GetString("bloc")
 			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-			logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+			logDir := config.OcfpHome()
 
 			return logger.Initialize(logger.Config{
 				Level:      viper.GetString("log_level"),

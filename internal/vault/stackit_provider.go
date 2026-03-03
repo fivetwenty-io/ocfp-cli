@@ -1262,13 +1262,13 @@ func (s *StackitVaultProvider) resolvePrivateKey(keyData map[string]interface{},
 // getPrivateKeyPath attempts to find the private key path for the given keypair name.
 func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	// Try standard OCFP location first
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
+	sshKeyDir := config.OcfpSSHKeyDir(s.BlocName)
+	if sshKeyDir == "" {
 		return ""
 	}
 
 	// Try Ed25519 key (preferred)
-	ed25519Path := filepath.Join(homeDir, ".ocfp", s.BlocName, "ssh", "id_ed25519")
+	ed25519Path := filepath.Join(sshKeyDir, "id_ed25519")
 
 	_, statErr := os.Stat(ed25519Path) //nolint:gosec // path from trusted config
 	if statErr == nil {
@@ -1276,7 +1276,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	}
 
 	// Try RSA key
-	rsaPath := filepath.Join(homeDir, ".ocfp", s.BlocName, "ssh", "id_rsa")
+	rsaPath := filepath.Join(sshKeyDir, "id_rsa")
 
 	_, statErr = os.Stat(rsaPath) //nolint:gosec // path from trusted config
 	if statErr == nil {
@@ -1284,6 +1284,11 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	}
 
 	// Try standard .ssh directory with bloc name
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return ""
+	}
+
 	sshPath := filepath.Join(homeDir, ".ssh", keypairName)
 
 	_, statErr = os.Stat(sshPath) //nolint:gosec // path from trusted config

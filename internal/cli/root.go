@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/proxmox"
@@ -329,12 +330,12 @@ func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
 
 // getBaseDir returns the base directory for OCFP data.
 func getBaseDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	baseDir := config.OcfpHome()
+	if baseDir == "" {
+		return "", config.ErrOcfpHomeNotFound
 	}
 
-	return filepath.Join(home, ".ocfp"), nil
+	return baseDir, nil
 }
 
 // getExpectedLogPath constructs the expected log path for a command.
@@ -369,9 +370,8 @@ func initConfig(cfgFile string, verbose bool) {
 
 	// Set default config path
 	if os.Getenv("OCFP_CONFIG_PATH") == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			_ = os.Setenv("OCFP_CONFIG_PATH", filepath.Join(home, ".ocfp"))
+		if ocfpHome := config.OcfpHome(); ocfpHome != "" {
+			_ = os.Setenv("OCFP_CONFIG_PATH", ocfpHome)
 		}
 	}
 
