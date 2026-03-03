@@ -22,6 +22,57 @@ var (
 	ErrFQDNBaseElementString = errors.New("fqdns.base list element must be a string")
 )
 
+// ErrOcfpHomeNotFound is returned when the OCFP home directory cannot be determined.
+var ErrOcfpHomeNotFound = errors.New("failed to determine OCFP home directory")
+
+// OcfpHome returns the OCFP home directory path.
+// It checks OCFP_HOME env var first, then falls back to $HOME/.ocfp.
+func OcfpHome() string {
+	if v := os.Getenv("OCFP_HOME"); v != "" {
+		return v
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Join(home, ".ocfp")
+}
+
+// OcfpBlocDir returns the directory path for a specific bloc.
+func OcfpBlocDir(blocName string) string {
+	return filepath.Join(OcfpHome(), blocName)
+}
+
+// OcfpSSHKeyDir returns the SSH key directory path for a specific bloc.
+func OcfpSSHKeyDir(blocName string) string {
+	return filepath.Join(OcfpHome(), blocName, "ssh")
+}
+
+// testSafetyGuard panics if OCFP_TEST_SAFETY_GUARD is set and OcfpHome()
+// resolves to the real user home directory. This prevents tests from
+// accidentally writing to ~/.ocfp.
+func testSafetyGuard(operation string) {
+	if os.Getenv("OCFP_TEST_SAFETY_GUARD") == "" {
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	realOcfpHome := filepath.Join(home, ".ocfp")
+	if OcfpHome() == realOcfpHome {
+		panic(fmt.Sprintf(
+			"SAFETY GUARD: %s attempted to use real home directory %s during testing. "+
+				"Set OCFP_HOME to a temp directory.",
+			operation, realOcfpHome,
+		))
+	}
+}
+
 // ConfigFile represents the top-level configuration file structure.
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
@@ -788,18 +839,18 @@ func determineConfigPath(configFile string) string {
 	}
 
 	// Priority 2: Default config file at ~/.ocfp/config.yml
-	homeDir, err := os.UserHomeDir()
-	if err == nil {
-		defaultPath := filepath.Join(homeDir, ".ocfp", "config.yml")
+	ocfpHome := OcfpHome()
+	if ocfpHome != "" {
+		defaultPath := filepath.Join(ocfpHome, "config.yml")
 
-		_, err = os.Stat(defaultPath)
+		_, err := os.Stat(defaultPath)
 		if err == nil {
 			return defaultPath
 		}
 	}
 
 	// Priority 3: Check in local config/config.yml
-	_, err = os.Stat("config/config.yml")
+	_, err := os.Stat("config/config.yml")
 	if err == nil {
 		return "config/config.yml"
 	}
@@ -1188,30 +1239,35 @@ func validate(cfg *Config) error {
 
 // GetLogDir returns the log directory path.
 func GetLogDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	ocfpHome := OcfpHome()
+	if ocfpHome == "" {
 		return ""
 	}
 
-	return filepath.Join(home, ".ocfp", "logs")
+	return filepath.Join(ocfpHome, "logs")
 }
 
 // GetSSHKeyPath returns the SSH key path for a bloc.
 func GetSSHKeyPath(blocName string, keypair string) string {
+	ocfpHome := OcfpHome()
+	if ocfpHome == "" {
+		return ""
+	}
+
+	// Try new standard location first
+	newPath := filepath.Join(ocfpHome, "keys", blocName+"-bastion", "id_rsa")
+
+	_, err := os.Stat(newPath)
+	if err == nil {
+		return newPath
+	}
+
+	// Try legacy location in ~/.ssh
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 
-	// Try new standard location first
-	newPath := filepath.Join(home, ".ocfp", "keys", blocName+"-bastion", "id_rsa")
-
-	_, err = os.Stat(newPath)
-	if err == nil {
-		return newPath
-	}
-
-	// Try legacy location
 	legacyPath := filepath.Join(home, ".ssh", fmt.Sprintf("%s-%s", blocName, keypair))
 
 	_, err = os.Stat(legacyPath)
@@ -1246,6 +1302,8 @@ type BucketConfig struct {
 // SaveConfig saves the config back to the YAML file.
 // It updates the specific bloc within the config file while preserving other blocs.
 func SaveConfig(configPath, blocName string, cfg *Config) error {
+	testSafetyGuard("SaveConfig")
+
 	if configPath == "" {
 		configPath = determineConfigPath("")
 		if configPath == "" {
