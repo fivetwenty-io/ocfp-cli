@@ -34,6 +34,7 @@ func createDefaultTestConfig() *Config {
 	cfg.Subnets = []Subnet{}
 	cfg.LBs = map[string]LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,12 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
+)
+
+// FQDN configuration errors.
+var (
+	ErrFQDNBaseInvalidType   = errors.New("fqdns.base must be a string or list of strings")
+	ErrFQDNBaseElementString = errors.New("fqdns.base list element must be a string")
 )
 
 // ConfigFile represents the top-level configuration file structure.
@@ -55,6 +62,7 @@ type Config struct {
 	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion,omitempty"`
+	Jumpbox          Jumpbox                     `json:"jumpbox"             mapstructure:"jumpbox"             yaml:"jumpbox,omitempty"`
 	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis,omitempty"`
 	DeploymentsData  map[string]interface{}      `json:"deployments"         mapstructure:"deployments"         yaml:"deployments,omitempty"`
 	Deployments      *DeploymentSettings         `json:"-"                   mapstructure:"-"                   yaml:"-"`
@@ -172,6 +180,14 @@ type Bastion struct {
 	ToolOverrides     map[string]ToolOverride     `json:"toolOverrides,omitempty"     mapstructure:"toolOverrides"     yaml:"toolOverrides,omitempty"`
 	CFPluginOverrides map[string]CFPluginOverride `json:"cfPluginOverrides,omitempty" mapstructure:"cfPluginOverrides" yaml:"cfPluginOverrides,omitempty"`
 	SnapOverrides     map[string]SnapOverride     `json:"snapOverrides,omitempty"     mapstructure:"snapOverrides"     yaml:"snapOverrides,omitempty"`
+	// SSH keys to add to the bastion's authorized_keys.
+	// Values: direct public key, "github/<username>", or "gitlab/<username>".
+	Keys map[string]string `json:"keys,omitempty" mapstructure:"keys" yaml:"keys,omitempty"`
+}
+
+// Jumpbox configuration for jumpbox user accounts.
+type Jumpbox struct {
+	Users map[string]string `json:"users,omitempty" mapstructure:"users" yaml:"users,omitempty"`
 }
 
 // ComponentConfig represents configuration for CF components.
@@ -502,30 +518,33 @@ func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	var raw aux
-	if err := value.Decode(&raw); err != nil {
-		return err
+
+	decodeErr := value.Decode(&raw)
+	if decodeErr != nil {
+		return fmt.Errorf("decoding fqdns config: %w", decodeErr)
 	}
 
 	f.Mgmt = raw.Mgmt
 	f.OCF = raw.OCF
 
-	switch v := raw.Base.(type) {
+	switch baseValue := raw.Base.(type) {
 	case nil:
 		f.Base = ""
 	case string:
-		f.Base = v
+		f.Base = baseValue
 	case []interface{}:
-		if len(v) == 0 {
+		if len(baseValue) == 0 {
 			f.Base = ""
 		} else {
-			s, ok := v[0].(string)
+			element, ok := baseValue[0].(string)
 			if !ok {
-				return fmt.Errorf("fqdns.base list element must be a string, got %T", v[0])
+				return fmt.Errorf("%w: got %T", ErrFQDNBaseElementString, baseValue[0])
 			}
-			f.Base = s
+
+			f.Base = element
 		}
 	default:
-		return fmt.Errorf("fqdns.base must be a string or list of strings, got %T", v)
+		return fmt.Errorf("%w: got %T", ErrFQDNBaseInvalidType, baseValue)
 	}
 
 	return nil
@@ -713,6 +732,9 @@ func processConfiguration(cfg *Config) error {
 		cfg.Region = viper.GetString("region")
 	}
 
+	// Migrate deprecated top-level users to jumpbox.users
+	migrateDeprecatedUsers(cfg)
+
 	// Validate configuration
 	err = validate(cfg)
 	if err != nil {
@@ -720,6 +742,21 @@ func processConfiguration(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// migrateDeprecatedUsers copies top-level Users to Jumpbox.Users when the new
+// field is empty, logging a deprecation warning.
+func migrateDeprecatedUsers(cfg *Config) {
+	if len(cfg.Users) == 0 || len(cfg.Jumpbox.Users) > 0 {
+		return
+	}
+
+	cfg.Jumpbox.Users = make(map[string]string, len(cfg.Users))
+	for k, v := range cfg.Users {
+		cfg.Jumpbox.Users[k] = v
+	}
+
+	fmt.Fprintf(os.Stderr, "WARNING: top-level 'users' is deprecated; move entries under 'jumpbox.users'\n")
 }
 
 // cacheConfiguration stores the configuration in cache.
