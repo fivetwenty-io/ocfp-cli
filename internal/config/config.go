@@ -412,57 +412,6 @@ func parseDeploymentSettings(raw map[string]interface{}) (*DeploymentSettings, e
 	return settings, nil
 }
 
-// serializeDeploymentSettings converts DeploymentSettings back to map[string]interface{}
-// for marshaling to YAML. This is the inverse operation of parseDeploymentSettings.
-func serializeDeploymentSettings(settings *DeploymentSettings) map[string]interface{} {
-	if settings == nil {
-		return nil
-	}
-
-	result := make(map[string]interface{})
-
-	// Add the URL if present
-	if settings.URL != "" {
-		result["url"] = settings.URL
-	}
-
-	// Add each deployment entry
-	for name, entry := range settings.Entries {
-		if entry == nil {
-			continue
-		}
-
-		// If there's raw data, use it (preserving any unknown fields)
-		switch {
-		case len(entry.Raw) > 0:
-			entryMap := make(map[string]interface{})
-			for k, v := range entry.Raw {
-				entryMap[k] = v
-			}
-
-			// Override or add mode if explicitly set
-			if entry.Mode != "" {
-				entryMap["mode"] = entry.Mode
-			}
-
-			result[name] = entryMap
-		case entry.Mode != "":
-			// If only mode is set, just use the string
-			result[name] = entry.Mode
-		default:
-			// Empty entry, use nil
-			result[name] = nil
-		}
-	}
-
-	// Return nil if the result would be empty
-	if len(result) == 0 {
-		return nil
-	}
-
-	return result
-}
-
 //nolint:unparam // error return for future validation
 func parseDeploymentEntry(value interface{}) (*DeploymentEntry, error) {
 	entry := &DeploymentEntry{
@@ -640,10 +589,35 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 		return nil, err
 	}
 
+	// Merge keys from state file for portability
+	mergeKeysFromState(cfg, blocName)
+
 	// Cache the configuration
 	cacheConfiguration(configPath, blocName, cfg)
 
 	return cfg, nil
+}
+
+// mergeKeysFromState loads keys from state.yml and merges them into the config.
+// State file keys take precedence over config file keys.
+func mergeKeysFromState(cfg *Config, blocName string) {
+	state, stateErr := LoadState()
+	if stateErr != nil {
+		return
+	}
+
+	blocState, ok := state.Blocs[blocName]
+	if !ok || blocState.Keys == nil {
+		return
+	}
+
+	if cfg.Keys == nil {
+		cfg.Keys = make(map[string]string)
+	}
+
+	for k, v := range blocState.Keys {
+		cfg.Keys[k] = v
+	}
 }
 
 // getCachedConfig retrieves configuration from cache if available and not stale.
@@ -1320,67 +1294,4 @@ type PublicIPsConfig struct {
 // BucketConfig represents bucket configuration.
 type BucketConfig struct {
 	Name string `json:"name,omitempty" mapstructure:"name" yaml:"name,omitempty"`
-}
-
-// SaveConfig saves the config back to the YAML file.
-// It updates the specific bloc within the config file while preserving other blocs.
-func SaveConfig(configPath, blocName string, cfg *Config) error {
-	testSafetyGuard("SaveConfig")
-
-	if configPath == "" {
-		configPath = determineConfigPath("")
-		if configPath == "" {
-			return ErrNoConfigPath
-		}
-	}
-
-	// Load the entire config file to preserve all blocs
-	configFileData := &ConfigFile{
-		Debug:   false,
-		Verbose: false,
-		Blocs:   map[string]*Config{},
-	}
-
-	// Try to load existing config file
-	data, err := os.ReadFile(configPath) // #nosec G304 - path is controlled
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if len(data) > 0 {
-		err = yaml.Unmarshal(data, configFileData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal existing config: %w", err)
-		}
-	}
-
-	// Update the specific bloc
-	configFileData.Blocs[blocName] = cfg
-
-	// Serialize Deployments back to DeploymentsData before marshaling
-	// This ensures the deployments configuration is preserved when saving
-	if cfg.Deployments != nil {
-		cfg.DeploymentsData = serializeDeploymentSettings(cfg.Deployments)
-	}
-
-	// Marshal back to YAML
-	updatedData, err := yaml.Marshal(configFileData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	// Write to file with secure permissions
-	err = os.WriteFile(configPath, updatedData, configFileMode)
-	if err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	// Invalidate cache for this config
-	configMutex.Lock()
-
-	cacheKey := configPath + ":" + blocName
-	delete(cachedConfigs, cacheKey)
-	configMutex.Unlock()
-
-	return nil
 }
