@@ -64,7 +64,7 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 }
 
 // GetSecurityGroup retrieves a network security group by ID or name.
-func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -90,6 +90,7 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	pager := m.client.networkSecurityGroupsClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var securityGroups []*cpi.SecurityGroup
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -108,7 +109,7 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 }
 
 // DeleteSecurityGroup deletes a network security group.
-func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error {
+func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -147,11 +148,11 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	// Generate rule name if not provided
 	ruleName := rule.ID
 	if ruleName == "" {
-		ruleName = GenerateUniqueName("rule", 80)
+		ruleName = GenerateUniqueName("rule", 80) //nolint:mnd
 	}
 
 	// Convert CPI rule to Azure rule
-	azureRule := m.convertRuleToAzure(rule, 100) // Default priority
+	azureRule := m.convertRuleToAzure(rule, 100) //nolint:mnd // Default priority
 
 	poller, err := m.client.securityRulesClient.BeginCreateOrUpdate(
 		ctx,
@@ -212,6 +213,7 @@ func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string)
 	pager := m.client.securityRulesClient.NewListPager(m.client.getResourceGroup(), nsgName, nil)
 
 	var rules []*cpi.SecurityRule
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -233,7 +235,7 @@ func (m *SecurityManager) nsgToSecurityGroup(nsg *armnetwork.SecurityGroup) *cpi
 		return nil
 	}
 
-	sg := &cpi.SecurityGroup{
+	sg := &cpi.SecurityGroup{ //nolint:varnamelen // sg is clear in context
 		ID:        DerefString(nsg.ID),
 		Name:      DerefString(nsg.Name),
 		Tags:      ExtractTags(nsg.Tags),
@@ -257,40 +259,42 @@ func (m *SecurityManager) azureRuleToRule(rule *armnetwork.SecurityRule) *cpi.Se
 		return nil
 	}
 
-	r := &cpi.SecurityRule{
+	r := &cpi.SecurityRule{ //nolint:varnamelen // r is clear in context
 		ID:          DerefString(rule.Name),
 		Description: DerefString(rule.Properties.Description),
 	}
 
-	if rule.Properties != nil {
-		// Direction
-		if rule.Properties.Direction != nil {
-			switch *rule.Properties.Direction {
-			case armnetwork.SecurityRuleDirectionInbound:
-				r.Direction = "ingress"
-			case armnetwork.SecurityRuleDirectionOutbound:
-				r.Direction = "egress"
-			}
-		}
+	if rule.Properties == nil {
+		return r
+	}
 
-		// Protocol
-		if rule.Properties.Protocol != nil {
-			r.Protocol = string(*rule.Properties.Protocol)
-			if r.Protocol == "*" {
-				r.Protocol = "all"
-			}
+	// Direction
+	if rule.Properties.Direction != nil {
+		switch *rule.Properties.Direction {
+		case armnetwork.SecurityRuleDirectionInbound:
+			r.Direction = "ingress"
+		case armnetwork.SecurityRuleDirectionOutbound:
+			r.Direction = "egress"
 		}
+	}
 
-		// Port range
-		if rule.Properties.DestinationPortRange != nil {
-			portRange := DerefString(rule.Properties.DestinationPortRange)
-			r.PortRangeMin, r.PortRangeMax = parsePortRange(portRange)
+	// Protocol
+	if rule.Properties.Protocol != nil {
+		r.Protocol = string(*rule.Properties.Protocol)
+		if r.Protocol == "*" {
+			r.Protocol = "all"
 		}
+	}
 
-		// Source address
-		if rule.Properties.SourceAddressPrefix != nil {
-			r.RemoteIPCIDR = DerefString(rule.Properties.SourceAddressPrefix)
-		}
+	// Port range
+	if rule.Properties.DestinationPortRange != nil {
+		portRange := DerefString(rule.Properties.DestinationPortRange)
+		r.PortRangeMin, r.PortRangeMax = parsePortRange(portRange)
+	}
+
+	// Source address
+	if rule.Properties.SourceAddressPrefix != nil {
+		r.RemoteIPCIDR = DerefString(rule.Properties.SourceAddressPrefix)
 	}
 
 	return r
@@ -301,7 +305,7 @@ func (m *SecurityManager) convertRulesToAzure(rules []*cpi.SecurityRule) []*armn
 
 	for i, rule := range rules {
 		// Priority must be between 100 and 4096
-		priority := int32(100 + i)
+		priority := int32(100 + i) //nolint:mnd
 		azureRules = append(azureRules, m.convertRuleToAzure(rule, priority))
 	}
 
@@ -321,6 +325,7 @@ func (m *SecurityManager) convertRuleToAzure(rule *cpi.SecurityRule, priority in
 
 	// Determine protocol
 	protocol := armnetwork.SecurityRuleProtocolAsterisk
+
 	switch rule.Protocol {
 	case "tcp", "TCP":
 		protocol = armnetwork.SecurityRuleProtocolTCP
@@ -332,6 +337,7 @@ func (m *SecurityManager) convertRuleToAzure(rule *cpi.SecurityRule, priority in
 
 	// Build port range
 	portRange := "*"
+
 	if rule.PortRangeMin > 0 && rule.PortRangeMax > 0 {
 		if rule.PortRangeMin == rule.PortRangeMax {
 			portRange = strconv.Itoa(rule.PortRangeMin)
@@ -349,7 +355,7 @@ func (m *SecurityManager) convertRuleToAzure(rule *cpi.SecurityRule, priority in
 	// Generate name if not provided
 	name := rule.ID
 	if name == "" {
-		name = GenerateUniqueName("rule", 80)
+		name = GenerateUniqueName("rule", 80) //nolint:mnd
 	}
 
 	return &armnetwork.SecurityRule{
@@ -370,7 +376,7 @@ func (m *SecurityManager) convertRuleToAzure(rule *cpi.SecurityRule, priority in
 
 func parsePortRange(portRange string) (int, int) {
 	if portRange == "*" || portRange == "" {
-		return 0, 65535
+		return 0, 65535 //nolint:mnd
 	}
 
 	// Check for range format "min-max"
@@ -379,12 +385,13 @@ func parsePortRange(portRange string) (int, int) {
 			minStr := portRange[:i]
 			maxStr := portRange[i+1:]
 
-			min, err1 := strconv.Atoi(minStr)
-			max, err2 := strconv.Atoi(maxStr)
+			portMin, err1 := strconv.Atoi(minStr)
+			portMax, err2 := strconv.Atoi(maxStr)
 
 			if err1 == nil && err2 == nil {
-				return min, max
+				return portMin, portMax
 			}
+
 			break
 		}
 	}
@@ -395,7 +402,7 @@ func parsePortRange(portRange string) (int, int) {
 		return port, port
 	}
 
-	return 0, 65535
+	return 0, 65535 //nolint:mnd
 }
 
 func matchesSecurityGroupFilters(tags map[string]string, filters map[string]string) bool {

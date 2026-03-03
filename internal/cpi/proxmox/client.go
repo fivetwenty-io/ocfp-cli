@@ -10,21 +10,28 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 
-	pve "github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/client"
+	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cloudinit"
+	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/network"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/qemu"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/storage"
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/network"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/tasks"
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cloudinit"
+	pve "github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/client"
 )
 
 const (
-	defaultHTTPTimeout     = 30 * time.Second
-	defaultMaxRetries      = 3
-	defaultNetworkMode     = "bridge"
-	defaultBridge          = "vmbr0"
-	defaultStorage         = "local-lvm"
-	nodeRefreshInterval    = 5 * time.Minute
+	defaultHTTPTimeout  = 30 * time.Second
+	defaultMaxRetries   = 3
+	defaultNetworkMode  = "bridge"
+	defaultBridge       = "vmbr0"
+	defaultStorage      = "local-lvm"
+	nodeRefreshInterval = 5 * time.Minute
+
+	// bytesPerKB is the number of bytes in a kilobyte for memory calculations.
+	bytesPerKB = 1024
+	// cpuScoreWeight is the weight for CPU in node scoring (0-1 scale).
+	cpuScoreWeight = 0.4
+	// memScoreWeight is the weight for memory in node scoring (0-1 scale, implied via 1024 divisor).
+	memScoreWeight = 0.6
 )
 
 // Config holds Proxmox-specific configuration.
@@ -37,7 +44,7 @@ type Config struct {
 	TokenID     string // API Token ID (e.g., "root@pam!mytoken")
 	TokenSecret string // API Token secret
 	Username    string // Username for password auth (fallback)
-	Password    string // Password for password auth (fallback)
+	Password    string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	Realm       string // Auth realm (default: "pam")
 
 	// Network settings
@@ -60,15 +67,15 @@ type Config struct {
 
 // NodeInfo holds information about a Proxmox node.
 type NodeInfo struct {
-	Name      string
-	Status    string
-	CPU       float64
-	MaxCPU    float64
-	Mem       int64
-	MaxMem    int64
-	Disk      int64
-	MaxDisk   int64
-	Uptime    int64
+	Name    string
+	Status  string
+	CPU     float64
+	MaxCPU  float64
+	Mem     int64
+	MaxMem  int64
+	Disk    int64
+	MaxDisk int64
+	Uptime  int64
 }
 
 // Client implements the Proxmox provider.
@@ -111,6 +118,7 @@ func NewClient(config *Config) (*Client, error) {
 			loadBalancer: nil,
 			pveClient:    nil,
 		}
+
 		return client, nil
 	}
 
@@ -171,9 +179,11 @@ func (c *Client) Region() string {
 	if c.config == nil {
 		return ""
 	}
+
 	if c.config.Node != "" {
 		return c.config.Node
 	}
+
 	return "pve-cluster"
 }
 
@@ -193,18 +203,20 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	}
 
 	// Configure authentication
-	if c.config.TokenID != "" && c.config.TokenSecret != "" {
+	switch {
+	case c.config.TokenID != "" && c.config.TokenSecret != "":
 		// API Token authentication (preferred)
 		opts.APIToken = c.config.TokenSecret
 		opts.APITokenName = c.config.TokenID
-	} else if c.config.Username != "" && c.config.Password != "" {
+	case c.config.Username != "" && c.config.Password != "":
 		// Username/password authentication
 		opts.Username = c.config.Username
 		if c.config.Realm != "" {
 			opts.Username = fmt.Sprintf("%s@%s", c.config.Username, c.config.Realm)
 		}
+
 		opts.Password = c.config.Password
-	} else {
+	default:
 		return ErrAPITokenRequired
 	}
 
@@ -432,42 +444,57 @@ func (c *Client) Cleanup(ctx context.Context) error {
 }
 
 // getQemuService returns the QEMU service, initializing on first use.
+//
+//nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getQemuService() qemu.Service {
 	if c.qemuService == nil {
 		c.qemuService = qemu.New(c.pveClient)
 	}
+
 	return c.qemuService
 }
 
 // getStorageService returns the storage service, initializing on first use.
+//
+//nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getStorageService() storage.Service {
 	if c.storageService == nil {
 		c.storageService = storage.New(c.pveClient)
 	}
+
 	return c.storageService
 }
 
 // getNetworkService returns the network service, initializing on first use.
+//
+//nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getNetworkService() network.Service {
 	if c.networkService == nil {
 		c.networkService = network.New(c.pveClient)
 	}
+
 	return c.networkService
 }
 
 // getTasksService returns the tasks service, initializing on first use.
+//
+//nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getTasksService() tasks.Service {
 	if c.tasksService == nil {
 		c.tasksService = tasks.New(c.pveClient)
 	}
+
 	return c.tasksService
 }
 
 // getCloudinitService returns the cloud-init service, initializing on first use.
+//
+//nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getCloudinitService() cloudinit.Service {
 	if c.cloudinitService == nil {
 		c.cloudinitService = cloudinit.New(c.pveClient)
 	}
+
 	return c.cloudinitService
 }
 
@@ -478,6 +505,7 @@ func (c *Client) waitForTask(ctx context.Context, node, upid string, timeoutSeco
 	}
 
 	taskSvc := c.getTasksService()
+
 	status, err := taskSvc.Wait(ctx, node, upid, &tasks.WaitOptions{
 		TimeoutSeconds: timeoutSeconds,
 		Backoff:        true,
@@ -512,7 +540,7 @@ func (c *Client) refreshNodes(ctx context.Context) error {
 	// Parse response
 	data, ok := resp.([]interface{})
 	if !ok {
-		return fmt.Errorf("unexpected nodes response type: %T", resp)
+		return fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	nodes := make([]NodeInfo, 0, len(data))
@@ -530,12 +558,15 @@ func (c *Client) refreshNodes(ctx context.Context) error {
 		if cpu, ok := nodeData["cpu"].(float64); ok {
 			node.CPU = cpu
 		}
+
 		if maxcpu, ok := nodeData["maxcpu"].(float64); ok {
 			node.MaxCPU = maxcpu
 		}
+
 		if mem, ok := nodeData["mem"].(float64); ok {
 			node.Mem = int64(mem)
 		}
+
 		if maxmem, ok := nodeData["maxmem"].(float64); ok {
 			node.MaxMem = int64(maxmem)
 		}
@@ -557,7 +588,8 @@ func (c *Client) getNode(ctx context.Context) (string, error) {
 	}
 
 	// Refresh node list
-	if err := c.refreshNodes(ctx); err != nil {
+	err := c.refreshNodes(ctx)
+	if err != nil {
 		return "", err
 	}
 
@@ -582,15 +614,18 @@ func (c *Client) selectOptimalNode(ctx context.Context, cpuReq int, memReqMB int
 	}
 
 	// Refresh node list
-	if err := c.refreshNodes(ctx); err != nil {
+	err := c.refreshNodes(ctx)
+	if err != nil {
 		return "", err
 	}
 
 	c.nodesMutex.RLock()
 	defer c.nodesMutex.RUnlock()
 
-	var bestNode string
-	var bestScore float64 = -1
+	var (
+		bestNode  string
+		bestScore float64 = -1
+	)
 
 	for _, node := range c.nodes {
 		// Skip offline nodes
@@ -600,7 +635,7 @@ func (c *Client) selectOptimalNode(ctx context.Context, cpuReq int, memReqMB int
 
 		// Calculate available resources
 		availCPU := node.MaxCPU - node.CPU
-		availMemMB := float64(node.MaxMem-node.Mem) / 1024 / 1024
+		availMemMB := float64(node.MaxMem-node.Mem) / bytesPerKB / bytesPerKB
 
 		// Check if node has sufficient resources
 		if availCPU < float64(cpuReq) || availMemMB < float64(memReqMB) {
@@ -609,7 +644,7 @@ func (c *Client) selectOptimalNode(ctx context.Context, cpuReq int, memReqMB int
 
 		// Score based on available resources (higher is better)
 		// Weight: 40% CPU, 60% memory
-		score := availCPU*0.4 + (availMemMB/1024)*0.6
+		score := availCPU*cpuScoreWeight + (availMemMB/bytesPerKB)*memScoreWeight
 
 		if score > bestScore {
 			bestScore = score
@@ -631,13 +666,14 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 			return s
 		}
 	}
+
 	return ""
 }
 
 // getIntFromMap safely gets an int from a map.
 func getIntFromMap(m map[string]interface{}, key string) int {
 	if v, ok := m[key]; ok {
-		switch n := v.(type) {
+		switch n := v.(type) { //nolint:varnamelen // n is clear in context
 		case int:
 			return n
 		case int64:
@@ -646,15 +682,6 @@ func getIntFromMap(m map[string]interface{}, key string) int {
 			return int(n)
 		}
 	}
-	return 0
-}
 
-// getFloat64FromMap safely gets a float64 from a map.
-func getFloat64FromMap(m map[string]interface{}, key string) float64 {
-	if v, ok := m[key]; ok {
-		if f, ok := v.(float64); ok {
-			return f
-		}
-	}
 	return 0
 }

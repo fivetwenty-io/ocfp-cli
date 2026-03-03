@@ -281,7 +281,7 @@ func determineBlocsToRun(selected []string, availableBlocs map[string]interface{
 
 // getAllBlocNames returns all bloc names from the configuration.
 func getAllBlocNames(blocs map[string]interface{}) []string {
-	toRun := []string{}
+	toRun := make([]string, 0, len(blocs))
 	for blocName := range blocs {
 		toRun = append(toRun, blocName)
 	}

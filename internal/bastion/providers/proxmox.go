@@ -18,8 +18,10 @@ import (
 
 // Proxmox provider errors.
 var (
-	ErrProxmoxHostRequired = errors.New("Proxmox host URL is required")
-	ErrProxmoxAuthRequired = errors.New("Proxmox API token or username/password is required")
+	ErrProxmoxHostRequired     = errors.New("proxmox host URL is required")
+	ErrProxmoxAuthRequired     = errors.New("proxmox API token or username/password is required")
+	ErrBastionInstanceNoIP     = errors.New("bastion instance has no IP")
+	ErrBastionInstanceNotFound = errors.New("bastion instance not found")
 )
 
 // ProxmoxBastionInit implements bastion initialization for Proxmox.
@@ -156,7 +158,7 @@ func (p *ProxmoxBastionInit) getSSHUser() string {
 		return p.config.Bastion.SSHUser
 	}
 
-	return "ubuntu" // Default for cloud images on Proxmox
+	return defaultSSHUser // Default for cloud images on Proxmox
 }
 
 // findSSHPrivateKey locates the SSH private key, restoring from config if needed.
@@ -264,6 +266,7 @@ func (p *ProxmoxBastionInit) addGenesisEnv(env map[string]string) {
 }
 
 // getBastionIP retrieves the bastion host IP address.
+//nolint:dupl // intentionally similar CPI implementation
 func (p *ProxmoxBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
 	if p.config.BastionIP != "" {
@@ -274,7 +277,7 @@ func (p *ProxmoxBastionInit) getBastionIP() (string, error) {
 
 	// Strategy 2: Check state cache first (fast path)
 	stateDir, err := state.GetStateDir(p.config.Name)
-	if err == nil {
+	if err == nil { //nolint:nestif // state cache lookup requires nested checks
 		stateManager, err := state.NewManager(stateDir)
 		if err == nil {
 			_, err := stateManager.Load(p.config.Name)
@@ -370,13 +373,13 @@ func (p *ProxmoxBastionInit) getBastionIPFromAPI() (string, error) {
 
 			p.log.Debugw("Found bastion but no IP assigned", "name", inst.Name)
 
-			return "", fmt.Errorf("bastion instance %s has no IP", bastionName)
+			return "", fmt.Errorf("%w: %s", ErrBastionInstanceNoIP, bastionName)
 		}
 	}
 
 	p.log.Debugw("No bastion instance found", "name", bastionName)
 
-	return "", fmt.Errorf("bastion instance not found: %s", bastionName)
+	return "", fmt.Errorf("%w: %s", ErrBastionInstanceNotFound, bastionName)
 }
 
 // getBastionIPFromState retrieves bastion IP from terraform state or similar.

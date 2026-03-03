@@ -379,7 +379,7 @@ func (m *SecurityManager) convertSecurityGroup(securityGroup *types.SecurityGrou
 		}
 	}
 
-	rules := make([]*cpi.SecurityRule, 0)
+	rules := make([]*cpi.SecurityRule, 0, len(securityGroup.IpPermissions)+len(securityGroup.IpPermissionsEgress))
 	for _, perm := range securityGroup.IpPermissions {
 		rules = append(rules, m.ipPermissionToRules(directionIngress, &perm)...)
 	}
@@ -402,7 +402,7 @@ func (m *SecurityManager) convertSecurityGroup(securityGroup *types.SecurityGrou
 // ipPermissionToRules converts an AWS IP permission to CPI security rules.
 // One AWS IP permission can result in multiple CPI rules (one per CIDR/SG reference).
 func (m *SecurityManager) ipPermissionToRules(direction string, perm *types.IpPermission) []*cpi.SecurityRule {
-	rules := make([]*cpi.SecurityRule, 0)
+	rules := make([]*cpi.SecurityRule, 0, len(perm.IpRanges)+len(perm.Ipv6Ranges)+len(perm.UserIdGroupPairs))
 
 	protocol := aws.ToString(perm.IpProtocol)
 	if protocol == "-1" {
@@ -649,11 +649,11 @@ func (m *SecurityManager) setPorts(ipPerm *types.IpPermission, rule *cpi.Securit
 	}
 
 	if rule.PortRangeMin > 0 {
-		ipPerm.FromPort = aws.Int32(int32(rule.PortRangeMin))
+		ipPerm.FromPort = aws.Int32(int32(rule.PortRangeMin)) //nolint:gosec // port values are within int32 range
 	}
 
 	if rule.PortRangeMax > 0 {
-		ipPerm.ToPort = aws.Int32(int32(rule.PortRangeMax))
+		ipPerm.ToPort = aws.Int32(int32(rule.PortRangeMax)) //nolint:gosec // port values are within int32 range
 	}
 
 	if rule.PortRangeMin > 0 && rule.PortRangeMax == 0 {

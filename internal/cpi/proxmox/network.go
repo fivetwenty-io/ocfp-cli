@@ -10,6 +10,9 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// networkModeSDN is the network mode value for Proxmox SDN networking.
+const networkModeSDN = "sdn"
+
 // NetworkManager handles Proxmox network operations.
 type NetworkManager struct {
 	client *Client
@@ -17,12 +20,254 @@ type NetworkManager struct {
 
 // CreateNetwork creates a new network (bridge or SDN VNet).
 func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
-	if m.client.config.NetworkMode == "sdn" {
+	if m.client.config.NetworkMode == networkModeSDN {
 		return m.createSDNNetwork(ctx, req)
 	}
+
 	return m.createBridgeNetwork(ctx, req)
 }
+// GetNetwork retrieves a network by ID.
+func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) {
+	if m.client.config.NetworkMode == networkModeSDN {
+		return m.getSDNNetwork(ctx, id)
+	}
 
+	return m.getBridgeNetwork(ctx, id)
+}
+// ListNetworks lists all networks.
+func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
+	if m.client.config.NetworkMode == networkModeSDN {
+		return m.listSDNNetworks(ctx, filters)
+	}
+
+	return m.listBridgeNetworks(ctx, filters)
+}
+// DeleteNetwork deletes a network.
+func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
+	if m.client.config.NetworkMode == networkModeSDN {
+		return m.deleteSDNNetwork(ctx, id)
+	}
+
+	return m.deleteBridgeNetwork(ctx, id)
+}
+
+// Subnet operations (limited support - Proxmox bridges don't have native subnets)
+
+// CreateSubnet creates a subnet (limited support).
+func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
+	// In SDN mode, we can create subnets
+	if m.client.config.NetworkMode == networkModeSDN {
+		params := map[string]interface{}{
+			"subnet": req.CIDR,
+			"vnet":   req.NetworkID,
+			"type":   "subnet",
+		}
+
+		subnetID := strings.ReplaceAll(req.CIDR, "/", "-")
+		path := fmt.Sprintf("/cluster/sdn/vnets/%s/subnets", req.NetworkID)
+
+		_, err := m.client.pveClient.PostCtx(ctx, path, params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SDN subnet: %w", err)
+		}
+
+		// Apply SDN changes
+		_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
+
+		return &cpi.Subnet{
+			ID:        subnetID,
+			Name:      req.Name,
+			NetworkID: req.NetworkID,
+			CIDR:      req.CIDR,
+			State:     cpi.ResourceStateActive,
+			Tags:      req.Tags,
+			CreatedAt: time.Now(),
+		}, nil
+	}
+
+	// For bridge mode, subnets are not supported
+	return nil, ErrSubnetsNotSupported
+}
+// GetSubnet retrieves a subnet.
+func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
+	return nil, ErrSubnetsNotSupported
+}
+// ListSubnets lists subnets in a network.
+func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
+	if m.client.config.NetworkMode == networkModeSDN {
+		path := fmt.Sprintf("/cluster/sdn/vnets/%s/subnets", networkID)
+
+		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list SDN subnets: %w", err)
+		}
+
+		data, ok := resp.([]interface{})
+		if !ok {
+			return []*cpi.Subnet{}, nil
+		}
+
+		var subnets []*cpi.Subnet
+
+		for _, item := range data {
+			subnetData, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			subnets = append(subnets, &cpi.Subnet{
+				ID:        getStringFromMap(subnetData, "subnet"),
+				NetworkID: networkID,
+				CIDR:      getStringFromMap(subnetData, "subnet"),
+				State:     cpi.ResourceStateActive,
+				Tags:      make(map[string]string),
+			})
+		}
+
+		return subnets, nil
+	}
+
+	return []*cpi.Subnet{}, nil
+}
+// DeleteSubnet deletes a subnet.
+func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
+	return ErrSubnetsNotSupported
+}
+
+// Security group operations (delegate to security manager)
+
+// CreateSecurityGroup creates a security group.
+func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
+	return m.client.security.CreateSecurityGroup(ctx, req)
+}
+// GetSecurityGroup retrieves a security group.
+func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+	return m.client.security.GetSecurityGroup(ctx, id)
+}
+// ListSecurityGroups lists security groups.
+func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
+	return m.client.security.ListSecurityGroups(ctx, filters)
+}
+// DeleteSecurityGroup deletes a security group.
+func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
+	return m.client.security.DeleteSecurityGroup(ctx, id)
+}
+
+// Public IP operations (not natively supported)
+
+// CreatePublicIP creates a public IP (not supported).
+func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
+	return nil, ErrFloatingIPsNotSupported
+}
+// GetPublicIP retrieves a public IP.
+func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
+	return nil, ErrFloatingIPsNotSupported
+}
+// ListPublicIPs lists public IPs.
+func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
+	return []*cpi.PublicIP{}, nil
+}
+// DeletePublicIP deletes a public IP.
+func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
+	return ErrFloatingIPsNotSupported
+}
+
+// Floating IP operations (not natively supported)
+
+// AllocateFloatingIP allocates a floating IP.
+func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
+	return nil, ErrFloatingIPsNotSupported
+}
+// GetFloatingIP retrieves a floating IP.
+func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
+	return nil, ErrFloatingIPsNotSupported
+}
+// ListFloatingIPs lists floating IPs.
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
+	return []*cpi.FloatingIP{}, nil
+}
+// AssociateFloatingIP associates a floating IP with an instance.
+func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+	return ErrFloatingIPsNotSupported
+}
+// DisassociateFloatingIP disassociates a floating IP from an instance.
+func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+	return ErrFloatingIPsNotSupported
+}
+// ReleaseFloatingIP releases a floating IP.
+func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error {
+	return ErrFloatingIPsNotSupported
+}
+
+// Router operations (not supported)
+
+// CreateRouter creates a router.
+func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
+	return nil, ErrRoutersNotSupported
+}
+// GetRouter retrieves a router.
+func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
+	return nil, ErrRoutersNotSupported
+}
+// ListRouters lists routers.
+func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
+	return []*cpi.Router{}, nil
+}
+// AttachRouterInterface attaches a router interface.
+func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+	return ErrRoutersNotSupported
+}
+// DetachRouterInterface detaches a router interface.
+func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+	return ErrRoutersNotSupported
+}
+// DeleteRouter deletes a router.
+func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
+	return ErrRoutersNotSupported
+}
+
+// Load balancer operations (delegate to load balancer manager)
+
+// CreateLoadBalancer creates a load balancer.
+func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
+	return nil, ErrLoadBalancersNotSupported
+}
+// GetLoadBalancer retrieves a load balancer.
+func (m *NetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
+	return nil, ErrLoadBalancersNotSupported
+}
+// ListLoadBalancers lists load balancers.
+func (m *NetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+	return []*cpi.LoadBalancer{}, nil
+}
+// UpdateLoadBalancer updates a load balancer.
+func (m *NetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
+	return ErrLoadBalancersNotSupported
+}
+// DeleteLoadBalancer deletes a load balancer.
+func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+	return ErrLoadBalancersNotSupported
+}
+// GetBackendPools retrieves backend pools for a load balancer.
+func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+	return []*cpi.BackendPool{}, nil
+}
+// AddBackendMember adds a member to a backend pool.
+func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+	return ErrLoadBalancersNotSupported
+}
+// RemoveBackendMember removes a member from a backend pool.
+func (m *NetworkManager) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
+	return ErrLoadBalancersNotSupported
+}
+// ConfigureHealthCheck configures a health check for a load balancer.
+func (m *NetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+	return ErrLoadBalancersNotSupported
+}
+// GetLoadBalancerHealth retrieves health status of a load balancer.
+func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+	return nil, ErrLoadBalancersNotSupported
+}
 // createBridgeNetwork creates a Linux bridge network.
 func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	logger.WithOperation("CreateNetwork").Infof("Creating bridge network: %s", req.Name)
@@ -41,7 +286,7 @@ func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.Netwo
 	if req.CIDR != "" {
 		// Extract IP and netmask from CIDR
 		parts := strings.Split(req.CIDR, "/")
-		if len(parts) == 2 {
+		if len(parts) == 2 { //nolint:mnd // CIDR format "ip/prefix" always has 2 parts
 			params["cidr"] = req.CIDR
 		}
 	}
@@ -64,7 +309,6 @@ func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.Netwo
 		CreatedAt: time.Now(),
 	}, nil
 }
-
 // createSDNNetwork creates an SDN VNet.
 func (m *NetworkManager) createSDNNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	logger.WithOperation("CreateNetwork").Infof("Creating SDN network: %s", req.Name)
@@ -104,17 +348,8 @@ func (m *NetworkManager) createSDNNetwork(ctx context.Context, req *cpi.NetworkR
 		CreatedAt: time.Now(),
 	}, nil
 }
-
-// GetNetwork retrieves a network by ID.
-func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) {
-	if m.client.config.NetworkMode == "sdn" {
-		return m.getSDNNetwork(ctx, id)
-	}
-	return m.getBridgeNetwork(ctx, id)
-}
-
 // getBridgeNetwork retrieves a bridge network.
-func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.Network, error) {
+func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:varnamelen
 	node, err := m.client.getNode(ctx)
 	if err != nil {
 		return nil, err
@@ -133,6 +368,7 @@ func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.
 
 	// Get bridge details
 	path := fmt.Sprintf("/nodes/%s/network/%s", node, id)
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bridge details: %w", err)
@@ -140,7 +376,7 @@ func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.
 
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type: %T", resp)
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	return &cpi.Network{
@@ -152,10 +388,10 @@ func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.
 		Tags:   make(map[string]string),
 	}, nil
 }
-
 // getSDNNetwork retrieves an SDN VNet.
-func (m *NetworkManager) getSDNNetwork(ctx context.Context, id string) (*cpi.Network, error) {
-	path := fmt.Sprintf("/cluster/sdn/vnets/%s", id)
+func (m *NetworkManager) getSDNNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:varnamelen
+	path := "/cluster/sdn/vnets/" + id
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SDN VNet: %w", err)
@@ -163,7 +399,7 @@ func (m *NetworkManager) getSDNNetwork(ctx context.Context, id string) (*cpi.Net
 
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type: %T", resp)
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	return &cpi.Network{
@@ -174,15 +410,6 @@ func (m *NetworkManager) getSDNNetwork(ctx context.Context, id string) (*cpi.Net
 		Tags:   make(map[string]string),
 	}, nil
 }
-
-// ListNetworks lists all networks.
-func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
-	if m.client.config.NetworkMode == "sdn" {
-		return m.listSDNNetworks(ctx, filters)
-	}
-	return m.listBridgeNetworks(ctx, filters)
-}
-
 // listBridgeNetworks lists bridge networks.
 func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
 	node, err := m.client.getNode(ctx)
@@ -191,6 +418,7 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 	}
 
 	path := fmt.Sprintf("/nodes/%s/network", node)
+
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
@@ -198,10 +426,11 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 
 	data, ok := resp.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type: %T", resp)
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	var networks []*cpi.Network
+
 	for _, item := range data {
 		netData, ok := item.(map[string]interface{})
 		if !ok {
@@ -233,7 +462,6 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 
 	return networks, nil
 }
-
 // listSDNNetworks lists SDN VNets.
 func (m *NetworkManager) listSDNNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
 	resp, err := m.client.pveClient.GetCtx(ctx, "/cluster/sdn/vnets", nil)
@@ -243,10 +471,11 @@ func (m *NetworkManager) listSDNNetworks(ctx context.Context, filters map[string
 
 	data, ok := resp.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type: %T", resp)
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
 	}
 
 	var networks []*cpi.Network
+
 	for _, item := range data {
 		vnetData, ok := item.(map[string]interface{})
 		if !ok {
@@ -271,17 +500,8 @@ func (m *NetworkManager) listSDNNetworks(ctx context.Context, filters map[string
 
 	return networks, nil
 }
-
-// DeleteNetwork deletes a network.
-func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
-	if m.client.config.NetworkMode == "sdn" {
-		return m.deleteSDNNetwork(ctx, id)
-	}
-	return m.deleteBridgeNetwork(ctx, id)
-}
-
 // deleteBridgeNetwork deletes a bridge network.
-func (m *NetworkManager) deleteBridgeNetwork(ctx context.Context, id string) error {
+func (m *NetworkManager) deleteBridgeNetwork(ctx context.Context, id string) error { //nolint:varnamelen
 	node, err := m.client.getNode(ctx)
 	if err != nil {
 		return err
@@ -299,10 +519,10 @@ func (m *NetworkManager) deleteBridgeNetwork(ctx context.Context, id string) err
 
 	return nil
 }
-
 // deleteSDNNetwork deletes an SDN VNet.
 func (m *NetworkManager) deleteSDNNetwork(ctx context.Context, id string) error {
-	path := fmt.Sprintf("/cluster/sdn/vnets/%s", id)
+	path := "/cluster/sdn/vnets/" + id
+
 	_, err := m.client.pveClient.DeleteCtx(ctx, path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete SDN VNet: %w", err)
@@ -312,247 +532,4 @@ func (m *NetworkManager) deleteSDNNetwork(ctx context.Context, id string) error 
 	_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
 
 	return nil
-}
-
-// Subnet operations (limited support - Proxmox bridges don't have native subnets)
-
-// CreateSubnet creates a subnet (limited support).
-func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
-	// In SDN mode, we can create subnets
-	if m.client.config.NetworkMode == "sdn" {
-		params := map[string]interface{}{
-			"subnet": req.CIDR,
-			"vnet":   req.NetworkID,
-			"type":   "subnet",
-		}
-
-		subnetID := strings.ReplaceAll(req.CIDR, "/", "-")
-		path := fmt.Sprintf("/cluster/sdn/vnets/%s/subnets", req.NetworkID)
-		_, err := m.client.pveClient.PostCtx(ctx, path, params)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SDN subnet: %w", err)
-		}
-
-		// Apply SDN changes
-		_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
-
-		return &cpi.Subnet{
-			ID:        subnetID,
-			Name:      req.Name,
-			NetworkID: req.NetworkID,
-			CIDR:      req.CIDR,
-			State:     cpi.ResourceStateActive,
-			Tags:      req.Tags,
-			CreatedAt: time.Now(),
-		}, nil
-	}
-
-	// For bridge mode, subnets are not supported
-	return nil, ErrSubnetsNotSupported
-}
-
-// GetSubnet retrieves a subnet.
-func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
-	return nil, ErrSubnetsNotSupported
-}
-
-// ListSubnets lists subnets in a network.
-func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
-	if m.client.config.NetworkMode == "sdn" {
-		path := fmt.Sprintf("/cluster/sdn/vnets/%s/subnets", networkID)
-		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list SDN subnets: %w", err)
-		}
-
-		data, ok := resp.([]interface{})
-		if !ok {
-			return []*cpi.Subnet{}, nil
-		}
-
-		var subnets []*cpi.Subnet
-		for _, item := range data {
-			subnetData, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			subnets = append(subnets, &cpi.Subnet{
-				ID:        getStringFromMap(subnetData, "subnet"),
-				NetworkID: networkID,
-				CIDR:      getStringFromMap(subnetData, "subnet"),
-				State:     cpi.ResourceStateActive,
-				Tags:      make(map[string]string),
-			})
-		}
-
-		return subnets, nil
-	}
-
-	return []*cpi.Subnet{}, nil
-}
-
-// DeleteSubnet deletes a subnet.
-func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
-	return ErrSubnetsNotSupported
-}
-
-// Security group operations (delegate to security manager)
-
-// CreateSecurityGroup creates a security group.
-func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	return m.client.security.CreateSecurityGroup(ctx, req)
-}
-
-// GetSecurityGroup retrieves a security group.
-func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
-	return m.client.security.GetSecurityGroup(ctx, id)
-}
-
-// ListSecurityGroups lists security groups.
-func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
-	return m.client.security.ListSecurityGroups(ctx, filters)
-}
-
-// DeleteSecurityGroup deletes a security group.
-func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
-	return m.client.security.DeleteSecurityGroup(ctx, id)
-}
-
-// Public IP operations (not natively supported)
-
-// CreatePublicIP creates a public IP (not supported).
-func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
-	return nil, ErrFloatingIPsNotSupported
-}
-
-// GetPublicIP retrieves a public IP.
-func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
-	return nil, ErrFloatingIPsNotSupported
-}
-
-// ListPublicIPs lists public IPs.
-func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
-	return []*cpi.PublicIP{}, nil
-}
-
-// DeletePublicIP deletes a public IP.
-func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
-	return ErrFloatingIPsNotSupported
-}
-
-// Floating IP operations (not natively supported)
-
-// AllocateFloatingIP allocates a floating IP.
-func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
-	return nil, ErrFloatingIPsNotSupported
-}
-
-// GetFloatingIP retrieves a floating IP.
-func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
-	return nil, ErrFloatingIPsNotSupported
-}
-
-// ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
-	return []*cpi.FloatingIP{}, nil
-}
-
-// AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
-	return ErrFloatingIPsNotSupported
-}
-
-// DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
-	return ErrFloatingIPsNotSupported
-}
-
-// ReleaseFloatingIP releases a floating IP.
-func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error {
-	return ErrFloatingIPsNotSupported
-}
-
-// Router operations (not supported)
-
-// CreateRouter creates a router.
-func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
-	return nil, ErrRoutersNotSupported
-}
-
-// GetRouter retrieves a router.
-func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
-	return nil, ErrRoutersNotSupported
-}
-
-// ListRouters lists routers.
-func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
-	return []*cpi.Router{}, nil
-}
-
-// AttachRouterInterface attaches a router interface.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
-	return ErrRoutersNotSupported
-}
-
-// DetachRouterInterface detaches a router interface.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
-	return ErrRoutersNotSupported
-}
-
-// DeleteRouter deletes a router.
-func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
-	return ErrRoutersNotSupported
-}
-
-// Load balancer operations (delegate to load balancer manager)
-
-// CreateLoadBalancer creates a load balancer.
-func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
-	return nil, ErrLoadBalancersNotSupported
-}
-
-// GetLoadBalancer retrieves a load balancer.
-func (m *NetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
-	return nil, ErrLoadBalancersNotSupported
-}
-
-// ListLoadBalancers lists load balancers.
-func (m *NetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
-	return []*cpi.LoadBalancer{}, nil
-}
-
-// UpdateLoadBalancer updates a load balancer.
-func (m *NetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
-	return ErrLoadBalancersNotSupported
-}
-
-// DeleteLoadBalancer deletes a load balancer.
-func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
-	return ErrLoadBalancersNotSupported
-}
-
-// GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
-	return []*cpi.BackendPool{}, nil
-}
-
-// AddBackendMember adds a member to a backend pool.
-func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
-	return ErrLoadBalancersNotSupported
-}
-
-// RemoveBackendMember removes a member from a backend pool.
-func (m *NetworkManager) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
-	return ErrLoadBalancersNotSupported
-}
-
-// ConfigureHealthCheck configures a health check for a load balancer.
-func (m *NetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
-	return ErrLoadBalancersNotSupported
-}
-
-// GetLoadBalancerHealth retrieves health status of a load balancer.
-func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
-	return nil, ErrLoadBalancersNotSupported
 }

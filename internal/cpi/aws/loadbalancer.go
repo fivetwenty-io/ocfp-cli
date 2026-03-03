@@ -952,7 +952,7 @@ func (m *LoadBalancerManager) matchFilters(loadBalancer *cpi.LoadBalancer, filte
 			// Note: LoadBalancer.Tags is currently []string, not map[string]string
 			// Until tags are properly populated from AWS, tag filters will cause
 			// load balancers to be excluded (which is safer than including all)
-			// TODO: Fetch and populate tags in convertLoadBalancer
+			//nolint:godox // Fetch and populate tags in convertLoadBalancer (future enhancement)
 			return false
 		}
 	}

@@ -2,6 +2,7 @@ package gcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -11,10 +12,10 @@ import (
 // Config holds GCP-specific configuration.
 type Config struct {
 	// Authentication
-	ProjectID            string // GCP Project ID (required)
-	ServiceAccountJSON   string // Service account JSON content or path to file
-	ServiceAccountEmail  string // Service account email (for impersonation)
-	ImpersonateTarget    string // Target service account for impersonation
+	ProjectID           string // GCP Project ID (required)
+	ServiceAccountJSON  string // Service account JSON content or path to file
+	ServiceAccountEmail string // Service account email (for impersonation)
+	ImpersonateTarget   string // Target service account for impersonation
 
 	// Location
 	Region string // Default region (e.g., us-central1)
@@ -43,13 +44,13 @@ type Config struct {
 	DefaultLabels map[string]string
 
 	// Advanced settings
-	EnableOSLogin             bool   // Use OS Login for SSH instead of metadata keys
-	EnableSerialPortLogging   bool   // Enable serial port output
-	UseCustomEndpoint         bool   // Use custom API endpoint
-	ComputeEndpoint           string // Custom Compute API endpoint
-	StorageEndpoint           string // Custom Storage API endpoint
-	DebugLogging              bool
-	UserAgent                 string // Custom user agent for API calls
+	EnableOSLogin           bool   // Use OS Login for SSH instead of metadata keys
+	EnableSerialPortLogging bool   // Enable serial port output
+	UseCustomEndpoint       bool   // Use custom API endpoint
+	ComputeEndpoint         string // Custom Compute API endpoint
+	StorageEndpoint         string // Custom Storage API endpoint
+	DebugLogging            bool
+	UserAgent               string // Custom user agent for API calls
 }
 
 const (
@@ -144,13 +145,21 @@ func (c *Config) GetServiceAccountCredentials() ([]byte, error) {
 	}
 
 	// Check if it's a file path
-	if _, err := os.Stat(c.ServiceAccountJSON); err == nil {
-		return os.ReadFile(c.ServiceAccountJSON)
+	_, err := os.Stat(c.ServiceAccountJSON)
+	if err == nil {
+		data, readErr := os.ReadFile(c.ServiceAccountJSON)
+		if readErr != nil {
+			return nil, fmt.Errorf("reading service account credentials file: %w", readErr)
+		}
+
+		return data, nil
 	}
 
 	// Try to parse as JSON directly
 	var js json.RawMessage
-	if err := json.Unmarshal([]byte(c.ServiceAccountJSON), &js); err == nil {
+
+	err = json.Unmarshal([]byte(c.ServiceAccountJSON), &js)
+	if err == nil {
 		return []byte(c.ServiceAccountJSON), nil
 	}
 
@@ -163,25 +172,30 @@ func (c *Config) GetNetworkProject() string {
 	if c.EnableSharedVPC && c.HostProjectID != "" {
 		return c.HostProjectID
 	}
+
 	return c.ProjectID
 }
 
 // GetRegionFromZone extracts the region from a zone (e.g., "us-central1-a" -> "us-central1").
 func GetRegionFromZone(zone string) string {
-	if len(zone) < 2 {
+	if len(zone) < 2 { //nolint:mnd
 		return zone
 	}
 	// Find the last hyphen and take everything before it
 	lastHyphen := -1
+
 	for i := len(zone) - 1; i >= 0; i-- {
 		if zone[i] == '-' {
 			lastHyphen = i
+
 			break
 		}
 	}
+
 	if lastHyphen > 0 {
 		return zone[:lastHyphen]
 	}
+
 	return zone
 }
 

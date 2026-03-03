@@ -29,6 +29,8 @@ var (
 )
 
 // NewSSHCmd creates the SSH command.
+//
+//nolint:funlen // cobra command setup with examples and flags is inherently verbose
 func NewSSHCmd() *cobra.Command {
 	var (
 		user       string
@@ -133,6 +135,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	} else {
 		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
 	}
+
 	log.Debugf("Using SSH key: %s", keyPath)
 
 	return executeSSH(ctx, sshCmd)
@@ -186,11 +189,13 @@ func classifySSHArguments(args []string) (target string, sshArgs []string, comma
 					sshArgs = append(sshArgs, args[argIndex])
 				}
 			}
+
 			argIndex++
 		} else {
 			// First non-flag argument is the target
 			target = arg
 			argIndex++
+
 			break
 		}
 	}
@@ -283,7 +288,7 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	// Try Ed25519 key first (preferred)
 	keyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_ed25519")
 
-	info, err := os.Stat(keyPath)
+	info, err := os.Stat(keyPath) //nolint:gosec // path components are from trusted config
 	if err == nil && info.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", keyPath)
 
@@ -293,7 +298,7 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	// Fall back to RSA key
 	rsaKeyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_rsa")
 
-	rsaInfo, rsaErr := os.Stat(rsaKeyPath)
+	rsaInfo, rsaErr := os.Stat(rsaKeyPath) //nolint:gosec // path components are from trusted config
 	if rsaErr == nil && rsaInfo.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", rsaKeyPath)
 
@@ -327,20 +332,26 @@ func verifySSHKey(keyPath string) error {
 
 // validateSSHInputs validates the host, user, and keyPath for SSH connections.
 func validateSSHInputs(host, user, keyPath string) error {
-	if err := security.ValidateInput(host, sshValidHostPattern); err != nil {
+	err := security.ValidateInput(host, sshValidHostPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
-		return err
+
+		return fmt.Errorf("invalid SSH host: %w", err)
 	}
 
-	if err := security.ValidateInput(user, sshValidUserPattern); err != nil {
+	err = security.ValidateInput(user, sshValidUserPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
-		return err
+
+		return fmt.Errorf("invalid SSH user: %w", err)
 	}
 
 	if keyPath != "" {
-		if err := security.ValidateInput(keyPath, sshValidPathPattern); err != nil {
+		err = security.ValidateInput(keyPath, sshValidPathPattern)
+		if err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
-			return err
+
+			return fmt.Errorf("invalid SSH key path: %w", err)
 		}
 	}
 
@@ -383,8 +394,10 @@ func filterSSHOptions(extraOptions string) []string {
 	for _, opt := range options {
 		if strings.HasPrefix(opt, "-") && !allowedOptions[opt] {
 			logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+
 			continue
 		}
+
 		result = append(result, opt)
 	}
 
@@ -411,9 +424,11 @@ func filterSSHArgs(sshArgs []string) []string {
 
 			if !allowedSSHFlags[flag] {
 				logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH argument: %s", arg)
+
 				continue
 			}
 		}
+
 		result = append(result, arg)
 	}
 
@@ -423,7 +438,8 @@ func filterSSHArgs(sshArgs []string) []string {
 // buildSSHCommand constructs the SSH command with all options.
 func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
 	// Validate inputs
-	if err := validateSSHInputs(host, user, keyPath); err != nil {
+	err := validateSSHInputs(host, user, keyPath)
+	if err != nil {
 		return []string{"ssh", "--help"} // Return safe command
 	}
 

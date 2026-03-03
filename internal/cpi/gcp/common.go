@@ -26,6 +26,15 @@ const (
 	IndexLabel = "index"
 	// SecurityGroupLabel is the label key for security group association.
 	SecurityGroupLabel = "security-group"
+
+	// DirectionIngress is the firewall rule direction for inbound traffic.
+	DirectionIngress = "ingress"
+
+	// AddressStatusInUse indicates a GCP address is currently in use.
+	AddressStatusInUse = "IN_USE"
+
+	// OperationStateFailed indicates a GCP operation has failed.
+	OperationStateFailed = "FAILED"
 )
 
 // labelRegex matches valid GCP label characters.
@@ -34,7 +43,7 @@ var labelRegex = regexp.MustCompile(`[^a-z0-9_-]`)
 
 // SanitizeLabel sanitizes a string for use as a GCP label value.
 // GCP labels must be lowercase, max 63 characters, alphanumeric with underscores and hyphens.
-func SanitizeLabel(s string) string {
+func SanitizeLabel(s string) string { //nolint:varnamelen
 	// Convert to lowercase
 	s = strings.ToLower(s)
 
@@ -45,7 +54,7 @@ func SanitizeLabel(s string) string {
 	s = strings.Trim(s, "-")
 
 	// Truncate to 63 characters
-	if len(s) > 63 {
+	if len(s) > 63 { //nolint:mnd
 		s = s[:63]
 	}
 
@@ -76,17 +85,20 @@ func BuildLabelsWithBloc(name, bloc string, tags map[string]string) map[string]s
 	if bloc != "" {
 		labels[BlocLabel] = SanitizeLabel(bloc)
 	}
+
 	return labels
 }
 
 // MergeLabels merges multiple label maps, with later maps taking precedence.
 func MergeLabels(labelMaps ...map[string]string) map[string]string {
 	result := make(map[string]string)
+
 	for _, m := range labelMaps {
 		for k, v := range m {
 			result[k] = v
 		}
 	}
+
 	return result
 }
 
@@ -107,7 +119,7 @@ func MapGCPStateToResourceState(gcpState string) cpi.ResourceState {
 		return cpi.ResourceStateDeleting
 	case "DELETED":
 		return cpi.ResourceStateDeleted
-	case "FAILED", "ERROR":
+	case OperationStateFailed, "ERROR":
 		return cpi.ResourceStateError
 	default:
 		return cpi.ResourceStateUnknown
@@ -123,7 +135,7 @@ func MapDiskStateToResourceState(gcpState string) cpi.ResourceState {
 		return cpi.ResourceStateAvailable
 	case "RESTORING", "DELETING":
 		return cpi.ResourceStateDeleting
-	case "FAILED":
+	case OperationStateFailed:
 		return cpi.ResourceStateError
 	default:
 		return cpi.ResourceStateUnknown
@@ -196,6 +208,7 @@ func ExtractNameFromURL(url string) string {
 	if len(parts) > 0 {
 		return parts[len(parts)-1]
 	}
+
 	return url
 }
 
@@ -207,6 +220,7 @@ func ExtractZoneFromURL(url string) string {
 			return parts[i+1]
 		}
 	}
+
 	return ""
 }
 
@@ -218,6 +232,7 @@ func ExtractRegionFromURL(url string) string {
 			return parts[i+1]
 		}
 	}
+
 	return ""
 }
 
@@ -228,6 +243,7 @@ func ParseTimestamp(timestamp string) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
+
 	return t
 }
 
@@ -240,9 +256,10 @@ func FormatNetworkTag(securityGroupName string) string {
 // FormatFirewallRuleName formats a firewall rule name from security group and rule details.
 func FormatFirewallRuleName(securityGroupName, direction string, port int) string {
 	name := fmt.Sprintf("sg-%s-%s-%d", SanitizeLabel(securityGroupName), direction, port)
-	if len(name) > 63 {
+	if len(name) > 63 { //nolint:mnd
 		name = name[:63]
 	}
+
 	return strings.TrimRight(name, "-")
 }
 
@@ -254,6 +271,7 @@ func IsZonalResource(resourceType string) bool {
 		"machineType": true,
 		"accelerator": true,
 	}
+
 	return zonalResources[resourceType]
 }
 
@@ -267,21 +285,23 @@ func IsRegionalResource(resourceType string) bool {
 		"backendService": true,
 		"healthCheck":    true,
 	}
+
 	return regionalResources[resourceType]
 }
 
 // IsGlobalResource checks if a resource type is globally-scoped.
 func IsGlobalResource(resourceType string) bool {
 	globalResources := map[string]bool{
-		"network":       true,
-		"firewall":      true,
-		"route":         true,
-		"image":         true,
-		"snapshot":      true,
-		"sslCertificate": true,
-		"urlMap":        true,
-		"targetHttpProxy": true,
+		"network":          true,
+		"firewall":         true,
+		"route":            true,
+		"image":            true,
+		"snapshot":         true,
+		"sslCertificate":   true,
+		"urlMap":           true,
+		"targetHttpProxy":  true,
 		"targetHttpsProxy": true,
 	}
+
 	return globalResources[resourceType]
 }

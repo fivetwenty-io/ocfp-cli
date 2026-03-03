@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -21,11 +22,11 @@ type RetryConfig struct {
 // DefaultRetryConfig returns the default retry configuration.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
-		MaxRetries:     3,
+		MaxRetries:     3, //nolint:mnd
 		InitialBackoff: 1 * time.Second,
-		MaxBackoff:     30 * time.Second,
-		BackoffFactor:  2.0,
-		Jitter:         0.2,
+		MaxBackoff:     30 * time.Second, //nolint:mnd
+		BackoffFactor:  2.0, //nolint:mnd
+		Jitter:         0.2, //nolint:mnd
 	}
 }
 
@@ -36,16 +37,17 @@ type RetryableFunc func() error
 type IsRetryableFunc func(error) bool
 
 // RetryWithBackoff retries a function with exponential backoff.
-func RetryWithBackoff(ctx context.Context, config *RetryConfig, isRetryable IsRetryableFunc, fn RetryableFunc) error {
+func RetryWithBackoff(ctx context.Context, config *RetryConfig, isRetryable IsRetryableFunc, fn RetryableFunc) error { //nolint:varnamelen // fn is clear in context
 	if config == nil {
 		config = DefaultRetryConfig()
 	}
 
 	var lastErr error
+
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		// Check context before attempting
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("retry cancelled before attempt %d: %w", attempt, ctx.Err())
 		}
 
 		// Execute the function
@@ -76,7 +78,7 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, isRetryable IsRe
 		// Sleep with context cancellation support
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("retry cancelled during backoff at attempt %d: %w", attempt, ctx.Err())
 		case <-time.After(backoff):
 			// Continue to next attempt
 		}
@@ -106,13 +108,13 @@ func calculateBackoff(config *RetryConfig, attempt int) time.Duration {
 }
 
 // RetryOperation retries an operation using the standard Azure retry logic.
-func RetryOperation(ctx context.Context, maxRetries int, fn RetryableFunc) error {
+func RetryOperation(ctx context.Context, maxRetries int, fn RetryableFunc) error { //nolint:varnamelen // fn is clear in context
 	config := &RetryConfig{
 		MaxRetries:     maxRetries,
 		InitialBackoff: 1 * time.Second,
-		MaxBackoff:     30 * time.Second,
-		BackoffFactor:  2.0,
-		Jitter:         0.2,
+		MaxBackoff:     30 * time.Second, //nolint:mnd
+		BackoffFactor:  2.0, //nolint:mnd
+		Jitter:         0.2, //nolint:mnd
 	}
 
 	return RetryWithBackoff(ctx, config, IsRetryable, fn)
@@ -157,8 +159,10 @@ func (cb *CircuitBreaker) Allow() bool {
 		// Check if we should transition to half-open
 		if time.Since(cb.lastFailure) > cb.resetTimeout {
 			cb.state = CircuitHalfOpen
+
 			return true
 		}
+
 		return false
 	case CircuitHalfOpen:
 		return true

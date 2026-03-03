@@ -43,7 +43,7 @@ type ConnectionDetails struct {
 	Port           int
 	User           string
 	PrivateKeyPath string
-	Password       string
+	Password       string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	SSHOptions     []string
 	UseSSHPass     bool
 }

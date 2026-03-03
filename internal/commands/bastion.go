@@ -259,7 +259,7 @@ func FindProvisionScript(scriptName string) (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		_, err := os.Stat(path)
+		_, err := os.Stat(path) //nolint:gosec // path components are from trusted config
 		if err == nil {
 			return path, nil
 		}

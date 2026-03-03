@@ -31,7 +31,8 @@ func SelectOutputMode(w io.Writer) output.Mode {
 
 	// Check for explicit mode flag from environment
 	if modeStr := os.Getenv("OUTPUT_MODE"); modeStr != "" {
-		if mode, err := output.ParseMode(modeStr); err == nil {
+		mode, err := output.ParseMode(modeStr)
+		if err == nil {
 			return mode
 		}
 	}
@@ -41,7 +42,7 @@ func SelectOutputMode(w io.Writer) output.Mode {
 }
 
 // NewProgressReporter creates a new progress reporter with the specified output mode.
-func NewProgressReporter(w io.Writer, mode output.Mode, progress *ProvisioningProgress) *ProgressReporter {
+func NewProgressReporter(w io.Writer, mode output.Mode, progress *ProvisioningProgress) *ProgressReporter { //nolint:varnamelen
 	log := logger.Get()
 
 	renderer, err := output.NewRenderer(w, mode)
@@ -51,6 +52,7 @@ func NewProgressReporter(w io.Writer, mode output.Mode, progress *ProvisioningPr
 			"error", err,
 			"requested_mode", mode.String(),
 		)
+
 		renderer, _ = output.NewRenderer(w, output.ModeConcise)
 	}
 
@@ -62,13 +64,16 @@ func NewProgressReporter(w io.Writer, mode output.Mode, progress *ProvisioningPr
 }
 
 // NewProgressReporterCompat creates a reporter with auto-detected mode.
+//
 // Deprecated: Use NewProgressReporter with explicit mode for better control.
 func NewProgressReporterCompat(w io.Writer, progress *ProvisioningProgress) *ProgressReporter {
 	mode := SelectOutputMode(w)
+
 	return NewProgressReporter(w, mode, progress)
 }
 
 // Start begins progress reporting.
+//
 // Deprecated: Progress updates are now handled by the renderer automatically.
 func (pr *ProgressReporter) Start(ctx context.Context) {
 	// No-op: Renderers handle their own update timing
@@ -102,7 +107,8 @@ func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 		StartTime: pr.phaseStartTime,
 	}
 
-	if err := pr.renderer.PhaseStart(phaseInfo); err != nil {
+	err := pr.renderer.PhaseStart(phaseInfo)
+	if err != nil {
 		pr.log.Warnw("Failed to report phase start",
 			"phase", phase,
 			"error", err,
@@ -134,7 +140,8 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 		CumulativeDuration: pr.cumulativeTime,
 	}
 
-	if err := pr.renderer.PhaseComplete(phaseInfo); err != nil {
+	err := pr.renderer.PhaseComplete(phaseInfo)
+	if err != nil {
 		pr.log.Warnw("Failed to report phase complete",
 			"phase", phase,
 			"error", err,
@@ -152,14 +159,16 @@ func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total i
 	if total <= 0 {
 		total = 1
 	}
+
 	if current < 0 {
 		current = 0
 	}
+
 	if current > total {
 		current = total
 	}
 
-	percentage := float64(current) / float64(total) * 100.0
+	percentage := float64(current) / float64(total) * 100.0 //nolint:mnd
 
 	progressInfo := output.ProgressInfo{
 		Category:   phase,
@@ -170,7 +179,8 @@ func (pr *ProgressReporter) ReportSubtaskProgress(phase string, current, total i
 		Percentage: percentage,
 	}
 
-	if err := pr.renderer.PhaseProgress(progressInfo); err != nil {
+	err := pr.renderer.PhaseProgress(progressInfo)
+	if err != nil {
 		pr.log.Warnw("Failed to report phase progress",
 			"phase", phase,
 			"error", err,
@@ -189,7 +199,8 @@ func (pr *ProgressReporter) ReportPhaseSkipped(phase string, reason string) {
 		Name: phase,
 	}
 
-	if err := pr.renderer.PhaseSkipped(phaseInfo, reason); err != nil {
+	err := pr.renderer.PhaseSkipped(phaseInfo, reason)
+	if err != nil {
 		pr.log.Warnw("Failed to report phase skipped",
 			"phase", phase,
 			"reason", reason,
@@ -219,7 +230,8 @@ func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAtt
 			Name: phase,
 		}
 
-		if renderErr := pr.renderer.PhaseFailed(phaseInfo, err); renderErr != nil {
+		renderErr := pr.renderer.PhaseFailed(phaseInfo, err)
+		if renderErr != nil {
 			pr.log.Errorw("Failed to report phase failure",
 				"phase", phase,
 				"error", err,
@@ -243,7 +255,8 @@ func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Durat
 		Success:         success,
 	}
 
-	if err := pr.renderer.Finalize(summary); err != nil {
+	err := pr.renderer.Finalize(summary)
+	if err != nil {
 		pr.log.Warnw("Failed to report final summary",
 			"success", success,
 			"error", err,
@@ -251,7 +264,8 @@ func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Durat
 	}
 
 	// Close renderer to release resources
-	if err := pr.renderer.Close(); err != nil {
+	err = pr.renderer.Close()
+	if err != nil {
 		pr.log.Warnw("Failed to close renderer", "error", err)
 	}
 }

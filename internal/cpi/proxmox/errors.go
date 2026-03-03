@@ -46,6 +46,15 @@ var (
 	ErrStoragePoolNotConfigured     = errors.New("proxmox: default storage pool not configured")
 	ErrVolumeAttached               = errors.New("proxmox: volume is attached to a VM")
 	ErrInvalidVolumeFormat          = errors.New("proxmox: invalid volume format")
+	ErrInvalidVolumeIDFormat        = errors.New("proxmox: invalid volume ID format")
+	ErrInvalidSnapshotIDFormat      = errors.New("proxmox: invalid snapshot ID format")
+	ErrVolumeResizeUnsupported      = errors.New("proxmox: volume resize not supported for unattached volumes")
+	ErrVolumeNotFoundOnVM           = errors.New("proxmox: volume not found on VM")
+
+	// Parse errors.
+	ErrInvalidVMID                  = errors.New("proxmox: invalid VMID")
+	ErrInvalidTemplateVMID          = errors.New("proxmox: invalid template VMID")
+	ErrUnexpectedResponseType       = errors.New("proxmox: unexpected response type")
 
 	// Configuration errors.
 	ErrConfigIsRequired             = errors.New("proxmox: config is required")

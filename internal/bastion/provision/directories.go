@@ -170,7 +170,8 @@ func (dm *DirectoryManager) generateOwnershipScript() []string {
 
 func (dm *DirectoryManager) generateSymlinkCreationScript() []string {
 	symlinks := dm.GetOCFPSymlinks()
-	lines := []string{"# Create OCFP symlinks"}
+	lines := make([]string, 0, 1+len(symlinks)*16) //nolint:mnd // each symlink generates ~16 script lines
+	lines = append(lines, "# Create OCFP symlinks")
 
 	for linkPath, targetPath := range symlinks {
 		expandedLink := dm.expandVariables(linkPath)
@@ -201,10 +202,6 @@ func (dm *DirectoryManager) generateSymlinkCreationScript() []string {
 }
 
 func (dm *DirectoryManager) generateDirectoryStatusScript() []string {
-	lines := []string{
-		"# Log final OCFP directory structure",
-		"log_info 'Final OCFP directory structure:'"}
-
 	checkDirs := []string{
 		"${HOME}/ocfp",
 		"${HOME}/ocfp/deployments",
@@ -213,6 +210,10 @@ func (dm *DirectoryManager) generateDirectoryStatusScript() []string {
 		"${HOME}/ocfp/cli",
 		"${HOME}/bin",
 	}
+
+	lines := make([]string, 0, 2+5*len(checkDirs)+1)
+	lines = append(lines, "# Log final OCFP directory structure")
+	lines = append(lines, "log_info 'Final OCFP directory structure:'")
 
 	for _, dir := range checkDirs {
 		expandedDir := dm.expandVariables(dir)

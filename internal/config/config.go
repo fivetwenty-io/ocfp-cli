@@ -30,7 +30,7 @@ type Config struct {
 	// Prefer snake_case to match README and user configs
 	ProjectID             string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
 	OrgID                 string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
-	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"`
+	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"`               //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token,omitempty"`
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
@@ -41,13 +41,13 @@ type Config struct {
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
 	TenantID         string                      `json:"tenant_id"           mapstructure:"tenant_id"           yaml:"tenant_id,omitempty"`
 	ClientID         string                      `json:"client_id"           mapstructure:"client_id"           yaml:"client_id,omitempty"`
-	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret,omitempty"`
+	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret,omitempty"`       //nolint:gosec // field name is descriptive, not a hardcoded secret
 	AuthURL          string                      `json:"auth_url"            mapstructure:"auth_url"            yaml:"auth_url,omitempty"`
 	Username         string                      `json:"username"            mapstructure:"username"            yaml:"username,omitempty"`
-	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password,omitempty"`
+	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password,omitempty"`            //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ProjectName      string                      `json:"project_name"        mapstructure:"project_name"        yaml:"project_name,omitempty"`
 	DomainName       string                      `json:"domain_name"         mapstructure:"domain_name"         yaml:"domain_name,omitempty"`
-	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token,omitempty"`
+	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token,omitempty"`       //nolint:gosec // field name is descriptive, not a hardcoded secret
 	BastionIP        string                      `json:"bastion_ip"          mapstructure:"bastion_ip"          yaml:"bastion_ip,omitempty"`
 	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
@@ -61,15 +61,15 @@ type Config struct {
 	Routers          ComponentConfig             `json:"routers"             mapstructure:"routers"             yaml:"routers,omitempty"`
 	Cells            ComponentConfig             `json:"cells"               mapstructure:"cells"               yaml:"cells,omitempty"`
 	// Additional fields from the example config
-	FQDNs             *FQDNConfig            `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns,omitempty"`
-	S3                map[string]string      `json:"s3"                  mapstructure:"s3"                  yaml:"s3,omitempty"`
-	AllowedIngressIPs []string               `json:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips" yaml:"allowed_ingress_ips,omitempty"`
-	Type              string                 `json:"type"                mapstructure:"type"                yaml:"type,omitempty"`
-	Environment       string                 `json:"environment"         mapstructure:"environment"         yaml:"environment,omitempty"`
-	Subnets           []Subnet               `json:"subnets"             mapstructure:"subnets"             yaml:"subnets,omitempty"`
-	SubnetStrategy    string                 `json:"subnet_strategy"     mapstructure:"subnet_strategy"     yaml:"subnet_strategy,omitempty"`
-	LBs               map[string]LBService   `json:"lbs"                 mapstructure:"lbs"                 yaml:"lbs,omitempty"`
-	Users             map[string]string      `json:"users"               mapstructure:"users"               yaml:"users,omitempty"`
+	FQDNs             *FQDNConfig          `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns,omitempty"`
+	S3                map[string]string    `json:"s3"                  mapstructure:"s3"                  yaml:"s3,omitempty"`
+	AllowedIngressIPs []string             `json:"allowed_ingress_ips" mapstructure:"allowed_ingress_ips" yaml:"allowed_ingress_ips,omitempty"`
+	Type              string               `json:"type"                mapstructure:"type"                yaml:"type,omitempty"`
+	Environment       string               `json:"environment"         mapstructure:"environment"         yaml:"environment,omitempty"`
+	Subnets           []Subnet             `json:"subnets"             mapstructure:"subnets"             yaml:"subnets,omitempty"`
+	SubnetStrategy    string               `json:"subnet_strategy"     mapstructure:"subnet_strategy"     yaml:"subnet_strategy,omitempty"`
+	LBs               map[string]LBService `json:"lbs"                 mapstructure:"lbs"                 yaml:"lbs,omitempty"`
+	Users             map[string]string    `json:"users"               mapstructure:"users"               yaml:"users,omitempty"`
 	// Public IP configurations
 	RouterPublicIPs    int `json:"router_public_ips"     mapstructure:"router_public_ips"     yaml:"router_public_ips,omitempty"`
 	CFSSHPublicIPs     int `json:"cf_ssh_public_ips"     mapstructure:"cf_ssh_public_ips"     yaml:"cf_ssh_public_ips,omitempty"`
@@ -91,143 +91,154 @@ type Config struct {
 
 // BlobstoreConfig controls versioning/lifecycle policies for expected buckets.
 type BlobstoreConfig struct {
-	EnablePolicies bool `mapstructure:"enablePolicies" yaml:"enablePolicies,omitempty"`
+	EnablePolicies bool `json:"enablePolicies,omitempty" mapstructure:"enablePolicies" yaml:"enablePolicies,omitempty"`
 
 	// Per-bucket overrides
-	BoshBlobstore BucketSettings `mapstructure:"boshBlobstore" yaml:"boshBlobstore,omitempty"`
-	CFBuildpacks  BucketSettings `mapstructure:"cfBuildpacks"  yaml:"cfBuildpacks,omitempty"`
-	CFDroplets    BucketSettings `mapstructure:"cfDroplets"    yaml:"cfDroplets,omitempty"`
-	CFAppPackages BucketSettings `mapstructure:"cfAppPackages" yaml:"cfAppPackages,omitempty"`
+	BoshBlobstore BucketSettings `json:"boshBlobstore,omitempty" mapstructure:"boshBlobstore" yaml:"boshBlobstore,omitempty"`
+	CFBuildpacks  BucketSettings `json:"cfBuildpacks,omitempty"  mapstructure:"cfBuildpacks"  yaml:"cfBuildpacks,omitempty"`
+	CFDroplets    BucketSettings `json:"cfDroplets,omitempty"    mapstructure:"cfDroplets"    yaml:"cfDroplets,omitempty"`
+	CFAppPackages BucketSettings `json:"cfAppPackages,omitempty" mapstructure:"cfAppPackages" yaml:"cfAppPackages,omitempty"`
 }
 
 // Common default network CIDR for several providers.
 const (
 	defaultNetworkCIDR = "10.0.0.0/16"
 	configFileMode     = 0o600
+
+	// Network CIDR splitting constants.
+	subnetSplitCount      = 4  // Number of subnets to carve from a /20 network
+	subnetReservedCount   = 3  // Number of usable subnets (skip first reserved)
+	cidrPartCount         = 2  // Expected parts when splitting CIDR by "/"
+	ipOctetCount          = 4  // Number of octets in an IPv4 address
+	maxPrefixLen          = 32 // Maximum IPv4 prefix length
+	octetBitmask          = 0xFF
+	octetShift24          = 24
+	octetShift16          = 16
+	octetShift8           = 8
 )
 
 // BucketSettings specify data-plane policies.
 type BucketSettings struct {
-	Versioning     bool `mapstructure:"versioning"     yaml:"versioning,omitempty"`
-	NoncurrentDays int  `mapstructure:"noncurrentDays" yaml:"noncurrentDays,omitempty"`
+	Versioning     bool `json:"versioning,omitempty"     mapstructure:"versioning"     yaml:"versioning,omitempty"`
+	NoncurrentDays int  `json:"noncurrentDays,omitempty" mapstructure:"noncurrentDays" yaml:"noncurrentDays,omitempty"`
 }
 
 // NetworkConfig represents network configuration.
 type NetworkConfig struct {
-	ID             string   `mapstructure:"id"             yaml:"id,omitempty"`
-	Name           string   `mapstructure:"name"           yaml:"name,omitempty"`
-	CIDR           string   `mapstructure:"cidr"           yaml:"cidr,omitempty"`
-	NetworkCIDR    string   `mapstructure:"networkCidr"    yaml:"networkCidr,omitempty"`
-	SubnetID       string   `mapstructure:"subnetId"       yaml:"subnetId,omitempty"`
-	DNS            []string `mapstructure:"dns"            yaml:"dns,omitempty"`
-	DNSServers     []string `mapstructure:"dnsServers"     yaml:"dnsServers,omitempty"`     // Alternative field name
-	SubnetStrategy string   `mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"` // Network subnet strategy
-	Subnets        []Subnet `mapstructure:"subnets"        yaml:"subnets,omitempty"`        // Network subnets
+	ID             string   `json:"id,omitempty"             mapstructure:"id"             yaml:"id,omitempty"`
+	Name           string   `json:"name,omitempty"           mapstructure:"name"           yaml:"name,omitempty"`
+	CIDR           string   `json:"cidr,omitempty"           mapstructure:"cidr"           yaml:"cidr,omitempty"`
+	NetworkCIDR    string   `json:"networkCidr,omitempty"    mapstructure:"networkCidr"    yaml:"networkCidr,omitempty"`
+	SubnetID       string   `json:"subnetId,omitempty"       mapstructure:"subnetId"       yaml:"subnetId,omitempty"`
+	DNS            []string `json:"dns,omitempty"            mapstructure:"dns"            yaml:"dns,omitempty"`
+	DNSServers     []string `json:"dnsServers,omitempty"     mapstructure:"dnsServers"     yaml:"dnsServers,omitempty"`
+	SubnetStrategy string   `json:"subnetStrategy,omitempty" mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"`
+	Subnets        []Subnet `json:"subnets,omitempty"        mapstructure:"subnets"        yaml:"subnets,omitempty"`
 }
 
 // Subnet configuration.
 type Subnet struct {
-	Name             string `mapstructure:"name"             yaml:"name,omitempty"`
-	CIDR             string `mapstructure:"cidr"             yaml:"cidr,omitempty"`
-	AvailabilityZone string `mapstructure:"availabilityZone" yaml:"availabilityZone,omitempty"`
-	Type             string `mapstructure:"type"             yaml:"type,omitempty"`
+	Name             string `json:"name,omitempty"             mapstructure:"name"             yaml:"name,omitempty"`
+	CIDR             string `json:"cidr,omitempty"             mapstructure:"cidr"             yaml:"cidr,omitempty"`
+	AvailabilityZone string `json:"availabilityZone,omitempty" mapstructure:"availabilityZone" yaml:"availabilityZone,omitempty"`
+	Type             string `json:"type,omitempty"             mapstructure:"type"             yaml:"type,omitempty"`
 }
 
 // Bastion configuration.
 type Bastion struct {
-	Flavor       string    `mapstructure:"flavor"           yaml:"flavor,omitempty"`
-	InstanceType string    `mapstructure:"instanceType"     yaml:"instanceType,omitempty"` // AWS alias for Flavor
-	Image        string    `mapstructure:"image"            yaml:"image,omitempty"`
-	OS           string    `mapstructure:"os"               yaml:"os,omitempty"`
-	OSVersion    string    `mapstructure:"osVersion"        yaml:"osVersion,omitempty"`
-	Keypair      string    `mapstructure:"keypair"          yaml:"keypair,omitempty"`
-	SSHUser      string    `mapstructure:"sshUser"          yaml:"sshUser,omitempty"`
-	SSHOptions   string    `mapstructure:"sshOptions"       yaml:"sshOptions,omitempty"`
-	SSHKeyDir    string    `mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir,omitempty"`
-	SSHKeyName   string    `mapstructure:"sshKeyName"       yaml:"sshKeyName,omitempty"`
-	UserData     string    `mapstructure:"userData"         yaml:"userData,omitempty"` // Custom user data for bastion
-	RootDiskSize int       `mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
-	DataDiskSize int       `mapstructure:"dataDiskSize"     yaml:"dataDiskSize,omitempty"`
-	Genesis      Genesis   `mapstructure:"genesis"          yaml:"genesis,omitempty"`
-	Git          GitConfig `mapstructure:"git"              yaml:"git,omitempty"`
+	Flavor       string    `json:"flavor,omitempty"           mapstructure:"flavor"           yaml:"flavor,omitempty"`
+	InstanceType string    `json:"instanceType,omitempty"     mapstructure:"instanceType"     yaml:"instanceType,omitempty"`
+	Image        string    `json:"image,omitempty"            mapstructure:"image"            yaml:"image,omitempty"`
+	OS           string    `json:"os,omitempty"               mapstructure:"os"               yaml:"os,omitempty"`
+	OSVersion    string    `json:"osVersion,omitempty"        mapstructure:"osVersion"        yaml:"osVersion,omitempty"`
+	Keypair      string    `json:"keypair,omitempty"          mapstructure:"keypair"          yaml:"keypair,omitempty"`
+	SSHUser      string    `json:"sshUser,omitempty"          mapstructure:"sshUser"          yaml:"sshUser,omitempty"`
+	SSHOptions   string    `json:"sshOptions,omitempty"       mapstructure:"sshOptions"       yaml:"sshOptions,omitempty"`
+	SSHKeyDir    string    `json:"sshKeyStorageDir,omitempty" mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir,omitempty"`
+	SSHKeyName   string    `json:"sshKeyName,omitempty"       mapstructure:"sshKeyName"       yaml:"sshKeyName,omitempty"`
+	UserData     string    `json:"userData,omitempty"         mapstructure:"userData"         yaml:"userData,omitempty"`
+	RootDiskSize int       `json:"rootDiskSize,omitempty"     mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
+	DataDiskSize int       `json:"dataDiskSize,omitempty"     mapstructure:"dataDiskSize"     yaml:"dataDiskSize,omitempty"`
+	Genesis      Genesis   `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
+	Git          GitConfig `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
 	// Optional overrides for tooling installation/selection
-	Tools     OverrideSets `mapstructure:"tools"     yaml:"tools,omitempty"`
-	CFPlugins OverrideSets `mapstructure:"cfPlugins" yaml:"cfPlugins,omitempty"`
-	Snaps     OverrideSets `mapstructure:"snaps"     yaml:"snaps,omitempty"`
+	Tools     OverrideSets `json:"tools,omitempty"     mapstructure:"tools"     yaml:"tools,omitempty"`
+	CFPlugins OverrideSets `json:"cfPlugins,omitempty" mapstructure:"cfPlugins" yaml:"cfPlugins,omitempty"`
+	Snaps     OverrideSets `json:"snaps,omitempty"     mapstructure:"snaps"     yaml:"snaps,omitempty"`
 	// Per-item override maps (by name)
-	ToolOverrides     map[string]ToolOverride     `mapstructure:"toolOverrides"     yaml:"toolOverrides,omitempty"`
-	CFPluginOverrides map[string]CFPluginOverride `mapstructure:"cfPluginOverrides" yaml:"cfPluginOverrides,omitempty"`
-	SnapOverrides     map[string]SnapOverride     `mapstructure:"snapOverrides"     yaml:"snapOverrides,omitempty"`
+	ToolOverrides     map[string]ToolOverride     `json:"toolOverrides,omitempty"     mapstructure:"toolOverrides"     yaml:"toolOverrides,omitempty"`
+	CFPluginOverrides map[string]CFPluginOverride `json:"cfPluginOverrides,omitempty" mapstructure:"cfPluginOverrides" yaml:"cfPluginOverrides,omitempty"`
+	SnapOverrides     map[string]SnapOverride     `json:"snapOverrides,omitempty"     mapstructure:"snapOverrides"     yaml:"snapOverrides,omitempty"`
 }
 
 // ComponentConfig represents configuration for CF components.
 type ComponentConfig struct {
-	Flavor   string `mapstructure:"flavor"   yaml:"flavor,omitempty"`
-	Image    string `mapstructure:"image"    yaml:"image,omitempty"`
-	Count    int    `mapstructure:"count"    yaml:"count,omitempty"`
-	DiskSize int    `mapstructure:"diskSize" yaml:"diskSize,omitempty"`
+	Flavor   string `json:"flavor,omitempty"   mapstructure:"flavor"   yaml:"flavor,omitempty"`
+	Image    string `json:"image,omitempty"    mapstructure:"image"    yaml:"image,omitempty"`
+	Count    int    `json:"count,omitempty"    mapstructure:"count"    yaml:"count,omitempty"`
+	DiskSize int    `json:"diskSize,omitempty" mapstructure:"diskSize" yaml:"diskSize,omitempty"`
 }
 
 // Genesis configuration.
 type Genesis struct {
-	Enabled       bool   `mapstructure:"enabled"       yaml:"enabled,omitempty"`
-	Repo          string `mapstructure:"repo"          yaml:"repo,omitempty"`
-	Branch        string `mapstructure:"branch"        yaml:"branch,omitempty"`
-	Commit        string `mapstructure:"commit"        yaml:"commit,omitempty"`
-	VersionPrefix string `mapstructure:"versionPrefix" yaml:"versionPrefix,omitempty"`
+	Enabled       bool   `json:"enabled,omitempty"       mapstructure:"enabled"       yaml:"enabled,omitempty"`
+	Repo          string `json:"repo,omitempty"          mapstructure:"repo"          yaml:"repo,omitempty"`
+	Branch        string `json:"branch,omitempty"        mapstructure:"branch"        yaml:"branch,omitempty"`
+	Commit        string `json:"commit,omitempty"        mapstructure:"commit"        yaml:"commit,omitempty"`
+	VersionPrefix string `json:"versionPrefix,omitempty" mapstructure:"versionPrefix" yaml:"versionPrefix,omitempty"`
 }
 
 // GitConfig represents Git configuration for the bastion.
 type GitConfig struct {
-	User GitUser `mapstructure:"user" yaml:"user,omitempty"`
+	User GitUser `json:"user,omitempty" mapstructure:"user" yaml:"user,omitempty"`
 }
 
 // GitUser represents Git user configuration.
 type GitUser struct {
-	Name  string `mapstructure:"name"  yaml:"name,omitempty"`
-	Email string `mapstructure:"email" yaml:"email,omitempty"`
+	Name  string `json:"name,omitempty"  mapstructure:"name"  yaml:"name,omitempty"`
+	Email string `json:"email,omitempty" mapstructure:"email" yaml:"email,omitempty"`
 }
 
 // OverrideSets allows enabling or disabling named items via config.
 type OverrideSets struct {
-	Enable  []string `mapstructure:"enable"  yaml:"enable,omitempty"`
-	Disable []string `mapstructure:"disable" yaml:"disable,omitempty"`
+	Enable  []string `json:"enable,omitempty"  mapstructure:"enable"  yaml:"enable,omitempty"`
+	Disable []string `json:"disable,omitempty" mapstructure:"disable" yaml:"disable,omitempty"`
 }
 
 // ToolOverride allows overriding advanced tool properties.
 type ToolOverride struct {
-	URL            string `mapstructure:"url"            yaml:"url,omitempty"`
-	Version        string `mapstructure:"version"        yaml:"version,omitempty"`
-	VersionURL     string `mapstructure:"versionUrl"     yaml:"versionUrl,omitempty"`
-	VersionPattern string `mapstructure:"versionPattern" yaml:"versionPattern,omitempty"`
-	URLTemplate    string `mapstructure:"urlTemplate"    yaml:"urlTemplate,omitempty"`
-	Dest           string `mapstructure:"dest"           yaml:"dest,omitempty"`
-	Mode           uint32 `mapstructure:"mode"           yaml:"mode,omitempty"`
-	Sudo           *bool  `mapstructure:"sudo"           yaml:"sudo,omitempty"`
-	Extract        *bool  `mapstructure:"extract"        yaml:"extract,omitempty"`
-	InstallCommand string `mapstructure:"installCommand" yaml:"installCommand,omitempty"`
-	InstallScript  string `mapstructure:"installScript"  yaml:"installScript,omitempty"`
-	VerifyCommand  string `mapstructure:"verifyCommand"  yaml:"verifyCommand,omitempty"`
-	PathAddition   string `mapstructure:"pathAddition"   yaml:"pathAddition,omitempty"`
-	Cleanup        string `mapstructure:"cleanup"        yaml:"cleanup,omitempty"`
+	URL            string `json:"url,omitempty"            mapstructure:"url"            yaml:"url,omitempty"`
+	Version        string `json:"version,omitempty"        mapstructure:"version"        yaml:"version,omitempty"`
+	VersionURL     string `json:"versionUrl,omitempty"     mapstructure:"versionUrl"     yaml:"versionUrl,omitempty"`
+	VersionPattern string `json:"versionPattern,omitempty" mapstructure:"versionPattern" yaml:"versionPattern,omitempty"`
+	URLTemplate    string `json:"urlTemplate,omitempty"    mapstructure:"urlTemplate"    yaml:"urlTemplate,omitempty"`
+	Dest           string `json:"dest,omitempty"           mapstructure:"dest"           yaml:"dest,omitempty"`
+	Mode           uint32 `json:"mode,omitempty"           mapstructure:"mode"           yaml:"mode,omitempty"`
+	Sudo           *bool  `json:"sudo,omitempty"           mapstructure:"sudo"           yaml:"sudo,omitempty"`
+	Extract        *bool  `json:"extract,omitempty"        mapstructure:"extract"        yaml:"extract,omitempty"`
+	InstallCommand string `json:"installCommand,omitempty" mapstructure:"installCommand" yaml:"installCommand,omitempty"`
+	InstallScript  string `json:"installScript,omitempty"  mapstructure:"installScript"  yaml:"installScript,omitempty"`
+	VerifyCommand  string `json:"verifyCommand,omitempty"  mapstructure:"verifyCommand"  yaml:"verifyCommand,omitempty"`
+	PathAddition   string `json:"pathAddition,omitempty"   mapstructure:"pathAddition"   yaml:"pathAddition,omitempty"`
+	Cleanup        string `json:"cleanup,omitempty"        mapstructure:"cleanup"        yaml:"cleanup,omitempty"`
 }
 
 // CFPluginOverride allows overriding CF plugin properties.
 type CFPluginOverride struct {
-	GitHubRepo string `mapstructure:"githubRepo" yaml:"githubRepo,omitempty"`
-	Version    string `mapstructure:"version"    yaml:"version,omitempty"`
-	Repo       string `mapstructure:"repo"       yaml:"repo,omitempty"`
-	RepoURL    string `mapstructure:"repoUrl"    yaml:"repoUrl,omitempty"`
-	Force      *bool  `mapstructure:"force"      yaml:"force,omitempty"`
+	GitHubRepo string `json:"githubRepo,omitempty" mapstructure:"githubRepo" yaml:"githubRepo,omitempty"`
+	Version    string `json:"version,omitempty"    mapstructure:"version"    yaml:"version,omitempty"`
+	Repo       string `json:"repo,omitempty"       mapstructure:"repo"       yaml:"repo,omitempty"`
+	RepoURL    string `json:"repoUrl,omitempty"    mapstructure:"repoUrl"    yaml:"repoUrl,omitempty"`
+	Force      *bool  `json:"force,omitempty"      mapstructure:"force"      yaml:"force,omitempty"`
 }
 
 // SnapOverride allows overriding snap package properties.
 type SnapOverride struct {
-	Channel      string `mapstructure:"channel"      yaml:"channel,omitempty"`
-	Classic      *bool  `mapstructure:"classic"      yaml:"classic,omitempty"`
-	DevMode      *bool  `mapstructure:"devMode"      yaml:"devMode,omitempty"`
-	Dangerous    *bool  `mapstructure:"dangerous"    yaml:"dangerous,omitempty"`
-	CheckCommand string `mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
+	Channel      string `json:"channel,omitempty"      mapstructure:"channel"      yaml:"channel,omitempty"`
+	Classic      *bool  `json:"classic,omitempty"      mapstructure:"classic"      yaml:"classic,omitempty"`
+	DevMode      *bool  `json:"devMode,omitempty"      mapstructure:"devMode"      yaml:"devMode,omitempty"`
+	Dangerous    *bool  `json:"dangerous,omitempty"    mapstructure:"dangerous"    yaml:"dangerous,omitempty"`
+	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
 }
 
 const (
@@ -351,7 +362,8 @@ func serializeDeploymentSettings(settings *DeploymentSettings) map[string]interf
 		}
 
 		// If there's raw data, use it (preserving any unknown fields)
-		if len(entry.Raw) > 0 {
+		switch {
+		case len(entry.Raw) > 0:
 			entryMap := make(map[string]interface{})
 			for k, v := range entry.Raw {
 				entryMap[k] = v
@@ -363,10 +375,10 @@ func serializeDeploymentSettings(settings *DeploymentSettings) map[string]interf
 			}
 
 			result[name] = entryMap
-		} else if entry.Mode != "" {
+		case entry.Mode != "":
 			// If only mode is set, just use the string
 			result[name] = entry.Mode
-		} else {
+		default:
 			// Empty entry, use nil
 			result[name] = nil
 		}
@@ -464,8 +476,8 @@ func normalizeDeploymentMode(value string) string {
 
 // AvailabilityZone configuration.
 type AvailabilityZone struct {
-	Zone            string `mapstructure:"zone"            yaml:"zone,omitempty"`
-	CloudProperties string `mapstructure:"cloudProperties" yaml:"cloudProperties,omitempty"`
+	Zone            string `json:"zone,omitempty"            mapstructure:"zone"            yaml:"zone,omitempty"`
+	CloudProperties string `json:"cloudProperties,omitempty" mapstructure:"cloudProperties" yaml:"cloudProperties,omitempty"`
 }
 
 // FQDNConfig represents the FQDN configuration with base domain and per-environment FQDNs.
@@ -851,22 +863,23 @@ func generateDefaultStackitSubnets(cfg *Config) []Subnet {
 	if parentCIDR == "" {
 		parentCIDR = cfg.Network.NetworkCIDR
 	}
+
 	if parentCIDR == "" {
 		parentCIDR = "10.4.0.0/20" // Default STACKIT network
 	}
 
 	// Carve parent /20 network into 4 /22 subnets, skip first (reserved)
-	carvedSubnets := splitNetworkCIDR(parentCIDR, 4)
-	if len(carvedSubnets) < 4 {
+	carvedSubnets := splitNetworkCIDR(parentCIDR, subnetSplitCount)
+	if len(carvedSubnets) < subnetSplitCount {
 		// Fallback: use full network if carving fails
 		return []Subnet{{Name: "ocfp-0", CIDR: parentCIDR, Type: "ocfp", AvailabilityZone: cfg.Region + "-1"}}
 	}
 
 	// Use subnets [1], [2], [3] (skip [0] as reserved)
-	subnets := make([]Subnet, 0, 3)
+	subnets := make([]Subnet, 0, subnetReservedCount)
 	azSuffixes := []string{"1", "2", "3"}
 
-	for i := 0; i < 3; i++ {
+	for i := range subnetReservedCount {
 		subnets = append(subnets, Subnet{
 			Name:             fmt.Sprintf("ocfp-%d", i),
 			CIDR:             carvedSubnets[i+1], // Skip first subnet
@@ -883,12 +896,13 @@ func generateDefaultStackitSubnets(cfg *Config) []Subnet {
 func splitNetworkCIDR(parentCIDR string, count int) []string {
 	// Parse parent CIDR
 	parts := strings.Split(parentCIDR, "/")
-	if len(parts) != 2 {
+	if len(parts) != cidrPartCount {
 		return nil
 	}
 
 	// Parse prefix length
 	var prefixLen int
+
 	_, err := fmt.Sscanf(parts[1], "%d", &prefixLen)
 	if err != nil {
 		return nil
@@ -900,19 +914,20 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 	for (1 << bitsNeeded) < count {
 		bitsNeeded++
 	}
+
 	newPrefixLen := prefixLen + bitsNeeded
 
-	if newPrefixLen > 32 {
+	if newPrefixLen > maxPrefixLen {
 		return nil // Invalid split
 	}
 
 	// Parse base IP
 	ipParts := strings.Split(parts[0], ".")
-	if len(ipParts) != 4 {
+	if len(ipParts) != ipOctetCount {
 		return nil
 	}
 
-	var octets [4]int
+	var octets [ipOctetCount]int
 	for i, part := range ipParts {
 		_, err := fmt.Sscanf(part, "%d", &octets[i])
 		if err != nil {
@@ -921,20 +936,20 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 	}
 
 	// Convert to uint32
-	baseIP := uint32(octets[0])<<24 | uint32(octets[1])<<16 | uint32(octets[2])<<8 | uint32(octets[3])
+	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3])
 
 	// Calculate subnet size
-	subnetSize := uint32(1) << (32 - newPrefixLen)
+	subnetSize := uint32(1) << (maxPrefixLen - newPrefixLen)
 
 	// Generate carved subnets
 	result := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		subnetIP := baseIP + uint32(i)*subnetSize
 		result[i] = fmt.Sprintf("%d.%d.%d.%d/%d",
-			(subnetIP>>24)&0xFF,
-			(subnetIP>>16)&0xFF,
-			(subnetIP>>8)&0xFF,
-			subnetIP&0xFF,
+			(subnetIP>>octetShift24)&octetBitmask,
+			(subnetIP>>octetShift16)&octetBitmask,
+			(subnetIP>>octetShift8)&octetBitmask,
+			subnetIP&octetBitmask,
 			newPrefixLen,
 		)
 	}
@@ -1119,23 +1134,23 @@ func GetSSHKeyPath(blocName string, keypair string) string {
 
 // LBService describes a desired load balancer and its backend targets.
 type LBService struct {
-	Protocol string   `mapstructure:"protocol" yaml:"protocol,omitempty"`
-	Port     int      `mapstructure:"port"     yaml:"port,omitempty"`
-	Targets  []string `mapstructure:"targets"  yaml:"targets,omitempty"`
+	Protocol string   `json:"protocol,omitempty" mapstructure:"protocol" yaml:"protocol,omitempty"`
+	Port     int      `json:"port,omitempty"     mapstructure:"port"     yaml:"port,omitempty"`
+	Targets  []string `json:"targets,omitempty"  mapstructure:"targets"  yaml:"targets,omitempty"`
 }
 
 // PublicIPsConfig represents public IPs configuration.
 type PublicIPsConfig struct {
-	Ops       int `mapstructure:"ops"        yaml:"ops,omitempty"`
-	Jumpbox   int `mapstructure:"jumpbox"    yaml:"jumpbox,omitempty"`
-	Router    int `mapstructure:"router"     yaml:"router,omitempty"`
-	CFSSH     int `mapstructure:"cf_ssh"     yaml:"cf_ssh,omitempty"`
-	TCPRouter int `mapstructure:"tcp_router" yaml:"tcp_router,omitempty"`
+	Ops       int `json:"ops,omitempty"        mapstructure:"ops"        yaml:"ops,omitempty"`
+	Jumpbox   int `json:"jumpbox,omitempty"    mapstructure:"jumpbox"    yaml:"jumpbox,omitempty"`
+	Router    int `json:"router,omitempty"     mapstructure:"router"     yaml:"router,omitempty"`
+	CFSSH     int `json:"cf_ssh,omitempty"     mapstructure:"cf_ssh"     yaml:"cf_ssh,omitempty"`
+	TCPRouter int `json:"tcp_router,omitempty" mapstructure:"tcp_router" yaml:"tcp_router,omitempty"`
 }
 
 // BucketConfig represents bucket configuration.
 type BucketConfig struct {
-	Name string `mapstructure:"name" yaml:"name,omitempty"`
+	Name string `json:"name,omitempty" mapstructure:"name" yaml:"name,omitempty"`
 }
 
 // SaveConfig saves the config back to the YAML file.

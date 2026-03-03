@@ -34,8 +34,7 @@ func NewOCFPManager(provider string, cfg *config.Config, modes *deployments.Reso
 
 // GenerateVaultInceptionScript generates script for vault inception setup.
 func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string {
-	var lines []string
-
+	lines := make([]string, 0, 16) //nolint:mnd // rough capacity for script header + locator + execution
 	lines = append(lines, "# Vault inception setup")
 	lines = append(lines, "")
 
@@ -267,8 +266,7 @@ func (om *OCFPManager) resolver() *deployments.Resolver {
 	return om.modes
 }
 func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
-	var lines []string
-
+	lines := make([]string, 0, 32) //nolint:mnd // rough capacity for script sections
 	lines = append(lines, "# Vault population")
 	lines = append(lines, "")
 
@@ -281,9 +279,10 @@ func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 }
 
 // GenerateGenesisSecretsProvidersScript generates script to configure genesis deployments to use inception vault.
+//
+//nolint:funlen // shell script generation with line-by-line append is inherently verbose
 func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(ctx context.Context) string {
-	var lines []string
-
+	lines := make([]string, 0, 71) //nolint:mnd // rough capacity for genesis secrets providers script
 	lines = append(lines, "# Configure Genesis secrets providers for deployments")
 	lines = append(lines, "")
 
@@ -479,13 +478,6 @@ func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) str
 	lines = append(lines, om.generateEnvironmentVariableLogging()...)
 
 	return strings.Join(lines, "\n")
-}
-
-func (om *OCFPManager) generateVaultInceptionScriptLocator() []string {
-	// Vault inception now uses the OCFP CLI binary installed on the bastion
-	// This function is kept for compatibility but returns empty - the CLI locator
-	// is called separately in GenerateVaultInceptionScript
-	return []string{}
 }
 
 func (om *OCFPManager) generateVaultInceptionExecution() []string {

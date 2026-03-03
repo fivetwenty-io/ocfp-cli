@@ -282,9 +282,12 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 		if err != nil {
 			// If not in PATH, try /usr/local/bin explicitly (where bastion tools are installed)
 			explicitPath := filepath.Join("/usr/local/bin", cmd)
-			if _, statErr := os.Stat(explicitPath); statErr != nil {
+
+			_, statErr := os.Stat(explicitPath)
+			if statErr != nil {
 				return cmdErr
 			}
+
 			cmdPath = explicitPath
 		}
 
@@ -614,6 +617,8 @@ func runVaultTeardown() error {
 }
 
 // newVaultMigrateCmd creates the vault migrate subcommand.
+//
+//nolint:funlen // cobra command setup with long description and examples is inherently verbose
 func newVaultMigrateCmd() *cobra.Command {
 	var (
 		sourcePath string
@@ -695,6 +700,7 @@ func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun boo
 
 	// Reinitialize logger with migrate subcommand for proper log path
 	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),
 		Debug:      viper.GetBool("debug"),

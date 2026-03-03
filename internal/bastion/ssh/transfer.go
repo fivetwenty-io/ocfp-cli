@@ -564,7 +564,7 @@ func (tm *TransferManager) addSourceAndDestination(args []string, local, remote 
 }
 
 func (tm *TransferManager) createSCPCommand(ctx context.Context, args []string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...) //nolint:gosec // command args are from trusted config
 
 	if tm.client.config.UseSSHPass && tm.client.config.Password != "" {
 		return tm.createSSHPassCommand(ctx, args)
@@ -578,10 +578,11 @@ func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []stri
 	if err != nil {
 		tm.log.Warn("sshpass not available for password authentication")
 
-		return exec.CommandContext(ctx, "scp", args...), err
+		return exec.CommandContext(ctx, "scp", args...), err //nolint:gosec // command args are from trusted config
 	}
 
-	sshpassArgs := []string{"-p", tm.client.config.Password, "scp"}
+	sshpassArgs := make([]string, 0, 3+len(args)) //nolint:mnd // 3 fixed args: -p, password, scp
+	sshpassArgs = append(sshpassArgs, "-p", tm.client.config.Password, "scp")
 	sshpassArgs = append(sshpassArgs, args...)
 
 	err = validateCommand(append([]string{"sshpass"}, sshpassArgs...))

@@ -801,6 +801,7 @@ func buildTCPRouterPlanDesiredIPs(config *tcpRoutersLBConfig) map[string]bool {
 }
 
 // addTCPRouterCurrentMembersSection adds current members section to table.
+//nolint:dupl // intentionally similar LB type handling
 func addTCPRouterCurrentMembersSection(ctx context.Context, table *ui.Table, netMgr cpi.NetworkManager, config *tcpRoutersLBConfig) map[string]bool {
 	existing := map[string]bool{}
 
@@ -991,6 +992,7 @@ func buildCFSSHPlanDesiredIPs(config *cfSSHLBConfig) map[string]bool {
 }
 
 // addCFSSHCurrentMembersSection adds current members section to table.
+//nolint:dupl // intentionally similar LB type handling
 func addCFSSHCurrentMembersSection(ctx context.Context, table *ui.Table, netMgr cpi.NetworkManager, config *cfSSHLBConfig) map[string]bool {
 	existing := map[string]bool{}
 
@@ -998,7 +1000,7 @@ func addCFSSHCurrentMembersSection(ctx context.Context, table *ui.Table, netMgr 
 	if err == nil && lb != nil {
 		pools, err := netMgr.GetBackendPools(ctx, lb.ID)
 		if err == nil && len(pools) > 0 {
-			rows := [][]string{}
+			rows := make([][]string, 0, len(pools[0].Members))
 
 			for _, m := range pools[0].Members {
 				existing[m.IPAddress] = true

@@ -596,7 +596,7 @@ func (m *TeardownManager) DeleteResource(ctx context.Context, resource *Resource
 		return m.deleteComputeResource(ctx, resource)
 	case ResourceVolume, ResourceSnapshot, ResourceBucket, "credentials_group":
 		return m.deleteStorageResource(ctx, resource)
-	case ResourceLoadBalancer, "floating_ip", "public_ip", ResourceSubnet, "network_interface", CategoryNetwork:
+	case ResourceLoadBalancer, "floating_ip", "public_ip", ResourceSubnet, ResourceNetworkInterface, CategoryNetwork:
 		return m.deleteNetworkResource(ctx, resource)
 	case ResourceSecurityGroup:
 		return m.deleteSecurityResource(ctx, resource)
@@ -1315,7 +1315,7 @@ func (m *TeardownManager) discoverNetworkInterfaces(ctx context.Context, network
 
 	for _, nic := range nics {
 		*resources = append(*resources, &ResourceToDelete{
-			Type:         "network_interface",
+			Type:         ResourceNetworkInterface,
 			ID:           nic.ID,
 			Name:         nic.Name,
 			Dependencies: nil,
@@ -1348,7 +1348,7 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 
 	// Find all network resources in state
 	for _, resource := range stateResources {
-		if resource.Type == "network" {
+		if resource.Type == CategoryNetwork {
 			// Discover subnets for this network from the cloud
 			subnets, err := network.ListSubnets(ctx, resource.ID)
 			if err != nil {
@@ -1394,6 +1394,8 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 //
 // NOTE: NICs may not have OCFP labels/tags (especially when created pre-attached to servers),
 // so we discover them per-network without tag filtering, similar to subnet discovery.
+//
+//nolint:funlen // NIC discovery with deduplication and property mapping is inherently detailed
 func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Context, stateResources []*ResourceToDelete, allResources *[]*ResourceToDelete, log logger.Logger) {
 	network := m.provider.Network()
 	if network == nil {
@@ -1417,7 +1419,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 	existingNICIDs := make(map[string]bool)
 
 	for _, resource := range *allResources {
-		if resource.Type == "network_interface" {
+		if resource.Type == ResourceNetworkInterface {
 			existingNICIDs[resource.ID] = true
 		}
 	}
@@ -1425,7 +1427,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 	// Find all network resources in state and discover their NICs
 	// We don't use tag filters because NICs may not have OCFP labels (created pre-attached to servers)
 	for _, resource := range stateResources {
-		if resource.Type == "network" {
+		if resource.Type == CategoryNetwork {
 			// Discover NICs for this network WITHOUT tag filtering
 			// This ensures we catch orphaned NICs without labels
 			nics, err := niLister.ListNetworkInterfaces(ctx, nil)
@@ -1449,7 +1451,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 				}
 
 				*allResources = append(*allResources, &ResourceToDelete{
-					Type:         "network_interface",
+					Type:         ResourceNetworkInterface,
 					ID:           nic.ID,
 					Name:         nic.Name,
 					Dependencies: nil,
@@ -1562,7 +1564,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 		if err == nil {
 			for _, net := range networks {
 				resources = append(resources, &ResourceToDelete{
-					Type:         "network",
+					Type:         CategoryNetwork,
 					ID:           net.ID,
 					Name:         net.Name,
 					Dependencies: nil,
@@ -1692,7 +1694,7 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 	order := map[string]int{
 		"loadbalancer":        LoadBalancerPriority,     // 1: Delete load balancers first
 		"instance":            InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
-		"network_interface":   NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
+		ResourceNetworkInterface:   NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
 		"bucket":              BucketPriority,           // 4: Delete buckets
 		ResourceSnapshot:      SnapshotPriority,         // 5: Delete snapshots before volumes
 		ResourceVolume:        VolumePriority,           // 6: Delete volumes (after instances released them)
@@ -1702,7 +1704,7 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 		ResourceSecurityGroup: SecurityGroupPriority,    // 9: Delete security groups (after NICs removed)
 		ResourceSubnet:        SubnetRouterPriority,     // 10: Delete subnets
 		"router":              SubnetRouterPriority,     // 10: Delete routers
-		"network":             NetworkPriority,          // 11: Delete networks last
+		CategoryNetwork:       NetworkPriority,          // 11: Delete networks last
 	}
 
 	sort.Slice(resources, func(first, second int) bool {
@@ -1999,11 +2001,11 @@ func (m *TeardownManager) deleteNetworkResource(ctx context.Context, resource *R
 		return nil
 	case "public_ip":
 		return m.deletePublicIP(ctx, network, resource)
-	case "network_interface":
+	case ResourceNetworkInterface:
 		return m.deleteNetworkInterface(ctx, network, resource)
 	case ResourceSubnet:
 		return m.deleteSubnet(ctx, network, resource)
-	case "network":
+	case CategoryNetwork:
 		err := network.DeleteNetwork(ctx, resource.ID)
 		if err != nil {
 			// If resource doesn't exist, that's success (already deleted)

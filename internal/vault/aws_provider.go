@@ -20,6 +20,12 @@ import (
 const (
 	// DefaultSubnetType is the default subnet type used for OCFP infrastructure.
 	DefaultSubnetType = "ocfp"
+
+	// DefaultDNSServer is the default DNS server (Cloudflare) used when no DNS servers are configured.
+	DefaultDNSServer = "1.1.1.1"
+
+	// boshSystem is the BOSH system identifier for blobstore configuration.
+	boshSystem = "bosh"
 )
 
 // AWSVaultProvider implements vault operations for AWS.
@@ -41,14 +47,12 @@ func NewAWSVaultProvider(cfg *config.Config, safe SafeInterface, blocName string
 		logger:            logger.Get(),
 	}
 }
-
 // Configure performs full vault configuration for AWS.
 // This is the main entry point that orchestrates all configuration steps.
 func (a *AWSVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	a.logger.Infow("Starting AWS vault configuration", "bloc", a.BlocName)
 
-	// TODO: Implement detailed progress reporting for AWS provider (similar to STACKIT)
-	// For now, just accept the reporter parameter
+	// Detailed progress reporting for AWS provider (similar to STACKIT) is not yet implemented.
 
 	// Save OCFP configuration to vault first
 	err := a.SaveConfigToVault(reporter, 1, 1)
@@ -74,7 +78,6 @@ func (a *AWSVaultProvider) Configure(reporter providers.ProgressReporter) error 
 
 	return nil
 }
-
 // ConfigurePublicIPs configures public IP addresses (AWS Elastic IPs).
 func (a *AWSVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Info("Configuring AWS Elastic IPs")
@@ -103,12 +106,10 @@ func (a *AWSVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporte
 
 	return nil
 }
-
 // GetProviderName returns the provider name.
 func (a *AWSVaultProvider) GetProviderName() string {
 	return "aws"
 }
-
 // SaveConfigToVault saves the OCFP configuration to vault.
 // Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
 func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
@@ -122,6 +123,7 @@ func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 
 	// Compress with gzip (level 9 - maximum compression) to match Perl implementation
 	var compressedBuf bytes.Buffer
+
 	gzipWriter, err := gzip.NewWriterLevel(&compressedBuf, gzip.BestCompression)
 	if err != nil {
 		return fmt.Errorf("failed to create gzip writer: %w", err)
@@ -129,7 +131,8 @@ func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 
 	_, err = gzipWriter.Write(jsonConfig)
 	if err != nil {
-		gzipWriter.Close()
+		_ = gzipWriter.Close()
+
 		return fmt.Errorf("failed to write to gzip: %w", err)
 	}
 
@@ -153,13 +156,12 @@ func (a *AWSVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 
 	return nil
 }
-
 // ConfigureBlobstores configures blobstore settings (AWS S3).
 func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring S3 blobstores", "env_type", envType)
 
 	// AWS uses S3 for blobstore
-	systems := []string{"bosh"}
+	systems := []string{boshSystem}
 	if envType == OCFEnvType {
 		systems = append(systems, "cf")
 	}
@@ -178,7 +180,6 @@ func (a *AWSVaultProvider) ConfigureBlobstores(envPath, envType string, reporter
 
 	return nil
 }
-
 // ConfigureCertificates configures TLS certificates (AWS ACM or Let's Encrypt).
 func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Info("Configuring certificates")
@@ -200,7 +201,6 @@ func (a *AWSVaultProvider) ConfigureCertificates(envPath, envType string, report
 
 	return nil
 }
-
 // ConfigureDatabases configures database settings (AWS RDS).
 func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring RDS databases", "env_type", envType)
@@ -218,11 +218,12 @@ func (a *AWSVaultProvider) ConfigureDatabases(envPath, envType string, reporter 
 
 	return nil
 }
-
 // ConfigureFQDNs configures fully qualified domain names (AWS Route53).
 // It supports a base FQDN that is used to derive service FQDNs when not explicitly set.
 // The base FQDN is stored at a shared path, while environment-specific FQDNs are stored
 // under their respective environment paths.
+//
+//nolint:funlen // FQDN configuration with base/explicit resolution and vault writes
 func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	a.logger.Infow("Configuring FQDNs", "env_type", envType)
 
@@ -237,15 +238,18 @@ func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter prov
 	// Store base FQDN at shared path if configured (only do this once, for first env type)
 	if fqdnConfig.Base != "" && envType == MgmtEnvType {
 		basePath := a.PathBuilder.GetBaseFQDNPath()
+
 		err := a.Safe.Set(basePath, "value", fqdnConfig.Base)
 		if err != nil {
 			return fmt.Errorf("failed to set base FQDN: %w", err)
 		}
+
 		a.logger.Infow("Stored base FQDN", "path", basePath, "base", fqdnConfig.Base)
 	}
 
 	// Get explicit FQDNs for this environment
 	var explicit map[string]string
+
 	switch envType {
 	case MgmtEnvType:
 		explicit = fqdnConfig.Mgmt
@@ -293,7 +297,55 @@ func (a *AWSVaultProvider) ConfigureFQDNs(envPath, envType string, reporter prov
 
 	return nil
 }
+// ConfigureIAAS configures IaaS-specific settings (AWS VPC, Subnets, Security Groups).
+func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+	a.logger.Infow("Configuring AWS IaaS components", "env_type", envType)
 
+	// Configure VPC
+	err := a.configureVPC(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure VPC: %w", err)
+	}
+
+	// Configure subnets
+	err = a.configureSubnets(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure subnets: %w", err)
+	}
+
+	// Configure security groups
+	err = a.configureSecurityGroups(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure security groups: %w", err)
+	}
+
+	// Configure region
+	err = a.configureRegion(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure region: %w", err)
+	}
+
+	return nil
+}
+// ConfigureLoadBalancers configures load balancer settings (AWS ELB/ALB).
+func (a *AWSVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	a.logger.Infow("Configuring AWS load balancers", "env_type", envType)
+
+	// Export service targets backed by reserved IPs (AWS ELB/ALB)
+	services := a.buildLBServiceTargetsFromState()
+	if len(services) > 0 {
+		for serviceName, cfg := range services {
+			svcPath := a.PathBuilder.GetLoadBalancerPath(envType, serviceName)
+
+			err := a.Safe.SetMultiple(svcPath, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to set LB service %s: %w", serviceName, err)
+			}
+		}
+	}
+
+	return nil
+}
 // shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
 func (a *AWSVaultProvider) shouldSkipCFForEnvType(envType, system string) bool {
 	// Only skip CF systems for mgmt environment
@@ -329,58 +381,6 @@ func (a *AWSVaultProvider) shouldSkipCFForEnvType(envType, system string) bool {
 
 	return false
 }
-
-// ConfigureIAAS configures IaaS-specific settings (AWS VPC, Subnets, Security Groups).
-func (a *AWSVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
-	a.logger.Infow("Configuring AWS IaaS components", "env_type", envType)
-
-	// Configure VPC
-	err := a.configureVPC(envType)
-	if err != nil {
-		return fmt.Errorf("failed to configure VPC: %w", err)
-	}
-
-	// Configure subnets
-	err = a.configureSubnets(envType)
-	if err != nil {
-		return fmt.Errorf("failed to configure subnets: %w", err)
-	}
-
-	// Configure security groups
-	err = a.configureSecurityGroups(envType)
-	if err != nil {
-		return fmt.Errorf("failed to configure security groups: %w", err)
-	}
-
-	// Configure region
-	err = a.configureRegion(envType)
-	if err != nil {
-		return fmt.Errorf("failed to configure region: %w", err)
-	}
-
-	return nil
-}
-
-// ConfigureLoadBalancers configures load balancer settings (AWS ELB/ALB).
-func (a *AWSVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	a.logger.Infow("Configuring AWS load balancers", "env_type", envType)
-
-	// Export service targets backed by reserved IPs (AWS ELB/ALB)
-	services := a.buildLBServiceTargetsFromState()
-	if len(services) > 0 {
-		for serviceName, cfg := range services {
-			svcPath := a.PathBuilder.GetLoadBalancerPath(envType, serviceName)
-
-			err := a.Safe.SetMultiple(svcPath, cfg)
-			if err != nil {
-				return fmt.Errorf("failed to set LB service %s: %w", serviceName, err)
-			}
-		}
-	}
-
-	return nil
-}
-
 // configureEnvironment configures a single environment (mgmt or ocf).
 func (a *AWSVaultProvider) configureEnvironment(envType string) error {
 	a.logger.Infow("Configuring environment", "env_type", envType)
@@ -388,8 +388,9 @@ func (a *AWSVaultProvider) configureEnvironment(envType string) error {
 	envPath := a.PathBuilder.GetEnvironmentPath(envType)
 
 	// Configure IaaS components
-	// TODO: Implement proper phase tracking for AWS provider
+	// Phase tracking for AWS provider not yet implemented; using placeholder.
 	dummyPhase := 1
+
 	err := a.ConfigureIAAS(envPath, envType, nil, &dummyPhase, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure IaaS for %s: %w", envType, err)
@@ -409,10 +410,9 @@ func (a *AWSVaultProvider) configureEnvironment(envType string) error {
 
 	return nil
 }
-
 // configureServices configures all service components for an environment.
 func (a *AWSVaultProvider) configureServices(envPath, envType string) error {
-	// TODO: Implement proper phase tracking for AWS provider
+	// Phase tracking for AWS provider not yet implemented; using placeholder.
 	err := a.ConfigureBlobstores(envPath, envType, nil, 1, 1)
 	if err != nil {
 		return fmt.Errorf("failed to configure blobstores for %s: %w", envType, err)
@@ -435,7 +435,6 @@ func (a *AWSVaultProvider) configureServices(envPath, envType string) error {
 
 	return nil
 }
-
 // configureEnvironmentComponents configures environment-specific components.
 func (a *AWSVaultProvider) configureEnvironmentComponents(envType string) error {
 	// Configure Shield admin credentials
@@ -476,10 +475,9 @@ func (a *AWSVaultProvider) configureEnvironmentComponents(envType string) error 
 
 	return nil
 }
-
 // configureSharedComponents configures components shared between environments.
 func (a *AWSVaultProvider) configureSharedComponents() error {
-	// TODO: Implement proper phase tracking for AWS provider
+	// Phase tracking for AWS provider not yet implemented; using placeholder.
 	// Configure certificates (shared between environments)
 	err := a.ConfigureCertificates("", "", nil, 1, 1)
 	if err != nil {
@@ -494,7 +492,6 @@ func (a *AWSVaultProvider) configureSharedComponents() error {
 
 	return nil
 }
-
 // configureVPC configures VPC settings in vault.
 func (a *AWSVaultProvider) configureVPC(envType string) error {
 	vpcPath := a.PathBuilder.GetNetPath(envType)
@@ -537,7 +534,6 @@ func (a *AWSVaultProvider) configureVPC(envType string) error {
 
 	return nil
 }
-
 // configureSubnets configures subnet settings in vault.
 func (a *AWSVaultProvider) configureSubnets(envType string) error {
 	a.logger.Infow("Configuring subnets", "env_type", envType)
@@ -555,7 +551,6 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 
 	return nil
 }
-
 // configureSubnet configures a single subnet.
 func (a *AWSVaultProvider) configureSubnet(envType string, subnetNum int, subnet config.Subnet) error {
 	subnetType := subnet.Type
@@ -589,7 +584,6 @@ func (a *AWSVaultProvider) configureSubnet(envType string, subnetNum int, subnet
 
 	return nil
 }
-
 // parseSubnetCIDR parses a CIDR string and extracts network information.
 func (a *AWSVaultProvider) parseSubnetCIDR(cidr string) (*subnetNetworkInfo, error) {
 	cidrParts := strings.Split(cidr, "/")
@@ -616,7 +610,6 @@ func (a *AWSVaultProvider) parseSubnetCIDR(cidr string) (*subnetNetworkInfo, err
 		lastHost:   lastHost,
 	}, nil
 }
-
 // getAvailabilityZone returns the availability zone for a subnet by index.
 func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 	if len(a.Config.AZs) <= subnetNum {
@@ -638,7 +631,6 @@ func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 
 	return ""
 }
-
 // buildSubnetData constructs subnet metadata.
 func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
 	return map[string]interface{}{
@@ -653,7 +645,6 @@ func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cid
 		"type":        subnetType,
 	}
 }
-
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
 func (a *AWSVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
 	a.logger.Infow("Configuring reserved IPs", "subnet", fmt.Sprintf("%s-%d", subnetType, subnetNum))
@@ -669,7 +660,6 @@ func (a *AWSVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, s
 
 	return nil
 }
-
 // calculateSystemIPs calculates IP addresses for system components.
 func (a *AWSVaultProvider) calculateSystemIPs(cidr string, envType string) map[string]interface{} {
 	cidrParts := strings.Split(cidr, "/")
@@ -693,7 +683,6 @@ func (a *AWSVaultProvider) calculateSystemIPs(cidr string, envType string) map[s
 
 	return systemIPs
 }
-
 // configureSecurityGroups configures security group settings.
 func (a *AWSVaultProvider) configureSecurityGroups(envType string) error {
 	a.logger.Infow("Configuring security groups", "env_type", envType)
@@ -726,7 +715,6 @@ func (a *AWSVaultProvider) configureSecurityGroups(envType string) error {
 
 	return nil
 }
-
 // configureRegion configures region settings.
 func (a *AWSVaultProvider) configureRegion(envType string) error {
 	vpcPath := a.PathBuilder.GetNetPath(envType)
@@ -741,7 +729,6 @@ func (a *AWSVaultProvider) configureRegion(envType string) error {
 
 	return nil
 }
-
 // configureBOSH configures BOSH-specific components.
 func (a *AWSVaultProvider) configureBOSH(envType string) error {
 	a.logger.Infow("Configuring BOSH components", "env_type", envType)
@@ -763,7 +750,6 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 
 	return nil
 }
-
 // configureIAM configures AWS IAM credentials.
 func (a *AWSVaultProvider) configureIAM(envType string) error {
 	s3Path := a.PathBuilder.GetS3Path(envType)
@@ -798,7 +784,6 @@ func (a *AWSVaultProvider) configureIAM(envType string) error {
 
 	return nil
 }
-
 // configureKMS configures AWS KMS settings.
 func (a *AWSVaultProvider) configureKMS(envType string) {
 	// AWS KMS configuration
@@ -806,7 +791,6 @@ func (a *AWSVaultProvider) configureKMS(envType string) {
 	// In a full implementation, this would configure KMS keys for BOSH
 	a.logger.Infow("KMS configuration placeholder", "env_type", envType)
 }
-
 // configureKeys configures SSH keys.
 func (a *AWSVaultProvider) configureKeys(envType string) error {
 	boshKeyPath := a.PathBuilder.GetBOSHKeyPath(envType)
@@ -833,15 +817,14 @@ func (a *AWSVaultProvider) configureKeys(envType string) error {
 
 	return nil
 }
-
 // configureBOSHMeta configures BOSH metadata information.
 func (a *AWSVaultProvider) configureBOSHMeta(envType string) error {
 	a.logger.Infow("Configuring BOSH meta information", "env_type", envType)
 
 	boshPath := a.PathBuilder.GetBOSHPath(envType)
 
-	// Parse DNS servers from config (defaults to 1.1.1.1)
-	dnsNS := "1.1.1.1"
+	// Parse DNS servers from config (defaults to DefaultDNSServer)
+	dnsNS := DefaultDNSServer
 	if len(a.Config.DNS) > 0 {
 		dnsNS = strings.Join(a.Config.DNS, ",")
 	}
@@ -896,7 +879,6 @@ func (a *AWSVaultProvider) configureBOSHMeta(envType string) error {
 
 	return nil
 }
-
 // configureShield configures Shield admin credentials for an environment.
 func (a *AWSVaultProvider) configureShield(envType string) error {
 	a.logger.Infow("Configuring Shield admin credentials", "env_type", envType)
@@ -918,7 +900,6 @@ func (a *AWSVaultProvider) configureShield(envType string) error {
 
 	return nil
 }
-
 // configureCPI configures AWS CPI configuration for an environment.
 func (a *AWSVaultProvider) configureCPI(envType string) error {
 	a.logger.Infow("Configuring AWS CPI credentials", "env_type", envType)
@@ -974,7 +955,6 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 
 	return nil
 }
-
 // configurePolicies configures deployment policies for an environment.
 func (a *AWSVaultProvider) configurePolicies(envType string) error {
 	a.logger.Infow("Configuring policies", "env_type", envType)
@@ -1001,7 +981,6 @@ func (a *AWSVaultProvider) configurePolicies(envType string) error {
 
 	return nil
 }
-
 // configureUsers configures jumpbox users for the management environment.
 //
 //nolint:unparam // error return for future implementation; maintains interface consistency
@@ -1020,7 +999,6 @@ func (a *AWSVaultProvider) configureUsers(envType string) error {
 
 	return nil
 }
-
 // getDatabasesForEnv returns database configuration for an environment.
 func (a *AWSVaultProvider) getDatabasesForEnv(envType string) map[string]map[string]interface{} {
 	// AWS RDS-specific hostname formatter
@@ -1037,14 +1015,13 @@ func (a *AWSVaultProvider) getDatabasesForEnv(envType string) map[string]map[str
 
 	return BuildDatabasesForEnv(envType, hostnameFormatter)
 }
-
 // getBlobstoresForSystem returns blobstore configuration for a system.
 func (a *AWSVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
 
 	// AWS S3 bucket naming
 	switch system {
-	case "bosh":
+	case boshSystem:
 		blobstores["artifacts"] = map[string]interface{}{
 			"name":   fmt.Sprintf("%s-%s-bosh-artifacts", a.BlocName, envType),
 			"region": a.Config.Region,
@@ -1063,7 +1040,6 @@ func (a *AWSVaultProvider) getBlobstoresForSystem(system, envType string) map[st
 
 	return blobstores
 }
-
 // buildLBServiceTargetsFromState assembles load balancer service definitions using state.
 func (a *AWSVaultProvider) buildLBServiceTargetsFromState() map[string]map[string]interface{} {
 	stateManager := a.loadStateManager()
@@ -1086,7 +1062,6 @@ func (a *AWSVaultProvider) buildLBServiceTargetsFromState() map[string]map[strin
 
 	return builder.services
 }
-
 // loadStateManager loads the state manager for this bloc.
 func (a *AWSVaultProvider) loadStateManager() *state.Manager {
 	// Get standard state directory for this bloc
@@ -1107,7 +1082,6 @@ func (a *AWSVaultProvider) loadStateManager() *state.Manager {
 
 	return stateManager
 }
-
 // getVPCID returns the VPC ID from state or config.
 func (a *AWSVaultProvider) getVPCID() string {
 	// Try to get VPC ID from state
@@ -1124,7 +1098,6 @@ func (a *AWSVaultProvider) getVPCID() string {
 	// Fallback to using bloc name as VPC identifier
 	return a.BlocName + "-vpc"
 }
-
 // getPublicIPsFromState retrieves public IPs from state.
 func (a *AWSVaultProvider) getPublicIPsFromState() map[string]interface{} {
 	stateManager := a.loadStateManager()
@@ -1157,7 +1130,6 @@ func (a *AWSVaultProvider) getPublicIPsFromState() map[string]interface{} {
 
 	return publicIPs
 }
-
 // getPublicIPsByJob retrieves public IPs for a specific job from state.
 func (a *AWSVaultProvider) getPublicIPsByJob(stateManager *state.Manager, job string) []string {
 	res, _ := stateManager.ListResources("public_ip")
@@ -1173,7 +1145,6 @@ func (a *AWSVaultProvider) getPublicIPsByJob(stateManager *state.Manager, job st
 
 	return ips
 }
-
 // resourceMatchesJob checks if a resource matches a specific job.
 func (a *AWSVaultProvider) resourceMatchesJob(resource state.Resource, job string) bool {
 	if resource.Tags != nil && resource.Tags["job"] == job {
@@ -1208,7 +1179,6 @@ func (b *awsLBServiceBuilder) getReservedIP(idx int, key string) string {
 
 	return ""
 }
-
 func (b *awsLBServiceBuilder) addOpsHTTPSService() {
 	opsTargets := []map[string]interface{}{}
 
@@ -1231,7 +1201,6 @@ func (b *awsLBServiceBuilder) addOpsHTTPSService() {
 		}
 	}
 }
-
 func (b *awsLBServiceBuilder) addManagementServices() {
 	services := []struct {
 		name string
@@ -1256,7 +1225,6 @@ func (b *awsLBServiceBuilder) addManagementServices() {
 		}
 	}
 }
-
 func (b *awsLBServiceBuilder) addPrometheusSharedServices() {
 	prometheusIP := b.getReservedIP(0, "prometheus_ip")
 	if prometheusIP == "" {
@@ -1280,7 +1248,6 @@ func (b *awsLBServiceBuilder) addPrometheusSharedServices() {
 		}
 	}
 }
-
 func (b *awsLBServiceBuilder) getPublicIPsByJob(job string) []string {
 	res, _ := b.stateManager.ListResources("public_ip")
 	ips := []string{}
@@ -1295,7 +1262,6 @@ func (b *awsLBServiceBuilder) getPublicIPsByJob(job string) []string {
 
 	return ips
 }
-
 func (b *awsLBServiceBuilder) resourceMatchesJob(resource state.Resource, job string) bool {
 	if resource.Tags != nil && resource.Tags["job"] == job {
 		return true
@@ -1307,7 +1273,6 @@ func (b *awsLBServiceBuilder) resourceMatchesJob(resource state.Resource, job st
 
 	return false
 }
-
 func (b *awsLBServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []map[string]interface{} {
 	targets := make([]map[string]interface{}, 0, len(ips))
 	for i, ip := range ips {
@@ -1319,7 +1284,6 @@ func (b *awsLBServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) [
 
 	return targets
 }
-
 func (b *awsLBServiceBuilder) addRouterServices() {
 	ips := b.getPublicIPsByJob("router")
 	if len(ips) == 0 {
@@ -1341,7 +1305,6 @@ func (b *awsLBServiceBuilder) addRouterServices() {
 		"targets":  targets,
 	}
 }
-
 func (b *awsLBServiceBuilder) addTCPRouterService() {
 	ips := b.getPublicIPsByJob("tcp-router")
 	if len(ips) == 0 {
@@ -1357,7 +1320,6 @@ func (b *awsLBServiceBuilder) addTCPRouterService() {
 		"targets":  targets,
 	}
 }
-
 func (b *awsLBServiceBuilder) addCFSSHService() {
 	ips := b.getPublicIPsByJob("cf-ssh")
 	if len(ips) == 0 {

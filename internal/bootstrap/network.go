@@ -62,7 +62,6 @@ var (
 	ErrInvalidCIDROffsetNegative = errors.New("CIDR offset must be non-negative")
 	ErrInvalidCIDR               = errors.New("invalid CIDR")
 	ErrOffsetOutOfRange          = errors.New("offset out of range for uint32")
-	errSubnetOutOfBounds         = errors.New("subnet is outside parent network bounds")
 )
 
 // CreateNetwork creates the network/VPC.
@@ -180,14 +179,19 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 		return fmt.Errorf("failed to import network to state: %w", err)
 	}
 
-	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
-		logger.Warnf("Failed to set network_id output: %v", err)
+	setErr := m.stateManager.SetOutput("network_id", network.ID)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_id output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_cidr", network.CIDR); err != nil {
-		logger.Warnf("Failed to set network_cidr output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_cidr", network.CIDR)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
-		logger.Warnf("Failed to set network_name output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_name", networkName)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_name output: %v", setErr)
 	}
 
 	return nil
@@ -225,14 +229,19 @@ func (m *Manager) createNewNetwork(ctx context.Context, netMgr cpi.NetworkManage
 		return fmt.Errorf("failed to save network to state: %w", err)
 	}
 
-	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
-		logger.Warnf("Failed to set network_name output: %v", err)
+	setErr := m.stateManager.SetOutput("network_name", networkName)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_name output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
-		logger.Warnf("Failed to set network_id output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_id", network.ID)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_id output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_cidr", cidr); err != nil {
-		logger.Warnf("Failed to set network_cidr output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_cidr", cidr)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", setErr)
 	}
 
 	logger.Infof("Network created successfully: id=%s", network.ID)

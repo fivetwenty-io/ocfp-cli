@@ -186,9 +186,9 @@ func (m *Manager) setupBucketsPlan(plan *bootstrapPlan) {
 }
 
 func (m *Manager) setupVolumesPlan(plan *bootstrapPlan) {
-	// TODO: Volume creation disabled - volumes are never attached to bastion
+	// Volume creation disabled - volumes are never attached to bastion.
 	// Both AWS and STACKIT handle volumes inline during instance creation
-	// (via BlockDeviceMappings for AWS and bootVolume for STACKIT)
+	// (via BlockDeviceMappings for AWS and bootVolume for STACKIT).
 	plan.Volumes = []volumePreview{}
 
 	// Original code (disabled):

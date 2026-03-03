@@ -15,18 +15,18 @@ var resourceIDPattern = regexp.MustCompile(`^/subscriptions/([^/]+)/resourceGrou
 
 // ResourceID represents a parsed Azure resource ID.
 type ResourceID struct {
-	SubscriptionID    string
-	ResourceGroup     string
-	Provider          string
-	ResourceType      string
-	ResourceName      string
+	SubscriptionID string
+	ResourceGroup  string
+	Provider       string
+	ResourceType   string
+	ResourceName   string
 }
 
 // ParseResourceID parses an Azure resource ID string.
 func ParseResourceID(id string) (*ResourceID, error) {
 	matches := resourceIDPattern.FindStringSubmatch(id)
 	if matches == nil {
-		return nil, fmt.Errorf("invalid Azure resource ID format: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidResourceIDFormat, id)
 	}
 
 	return &ResourceID{
@@ -96,6 +96,7 @@ func ExtractResourceName(resourceID string) string {
 	if len(parts) > 0 {
 		return parts[len(parts)-1]
 	}
+
 	return resourceID
 }
 
@@ -109,6 +110,7 @@ func BuildTags(tags map[string]string) map[string]*string {
 	for k, v := range tags {
 		result[k] = to.Ptr(v)
 	}
+
 	return result
 }
 
@@ -119,22 +121,26 @@ func ExtractTags(tags map[string]*string) map[string]string {
 	}
 
 	result := make(map[string]string)
+
 	for k, v := range tags {
 		if v != nil {
 			result[k] = *v
 		}
 	}
+
 	return result
 }
 
 // MergeTags merges multiple tag maps, with later maps taking precedence.
 func MergeTags(tagMaps ...map[string]string) map[string]string {
 	result := make(map[string]string)
+
 	for _, tags := range tagMaps {
 		for k, v := range tags {
 			result[k] = v
 		}
 	}
+
 	return result
 }
 
@@ -189,29 +195,32 @@ func MapIPAllocationStateToStatus(allocated bool, associated bool) string {
 	if associated {
 		return "associated"
 	}
+
 	if allocated {
 		return "available"
 	}
+
 	return "pending"
 }
 
 // ValidateAzureResourceName validates that a name is valid for Azure resources.
 func ValidateAzureResourceName(name string, minLen, maxLen int) error {
 	if len(name) < minLen {
-		return fmt.Errorf("name must be at least %d characters", minLen)
+		return fmt.Errorf("%w: must be at least %d characters", ErrNameTooShort, minLen)
 	}
+
 	if len(name) > maxLen {
-		return fmt.Errorf("name must be at most %d characters", maxLen)
+		return fmt.Errorf("%w: must be at most %d characters", ErrNameTooLong, maxLen)
 	}
 
 	// Azure resource names typically must start with alphanumeric
 	if len(name) > 0 && !isAlphanumeric(rune(name[0])) {
-		return fmt.Errorf("name must start with an alphanumeric character")
+		return ErrNameMustStartAlphanumeric
 	}
 
 	// Azure resource names typically must end with alphanumeric
 	if len(name) > 0 && !isAlphanumeric(rune(name[len(name)-1])) {
-		return fmt.Errorf("name must end with an alphanumeric character")
+		return ErrNameMustEndAlphanumeric
 	}
 
 	return nil
@@ -228,6 +237,7 @@ func SanitizeResourceName(name string, maxLen int) string {
 		if isAlphanumeric(r) || r == '-' || r == '_' {
 			return r
 		}
+
 		return '-'
 	}, name)
 
@@ -271,15 +281,15 @@ func IsValidAzureLocation(location string) bool {
 	// Common Azure regions
 	validLocations := map[string]bool{
 		// US
-		"eastus":             true,
-		"eastus2":            true,
-		"westus":             true,
-		"westus2":            true,
-		"westus3":            true,
-		"centralus":          true,
-		"northcentralus":     true,
-		"southcentralus":     true,
-		"westcentralus":      true,
+		"eastus":         true,
+		"eastus2":        true,
+		"westus":         true,
+		"westus2":        true,
+		"westus3":        true,
+		"centralus":      true,
+		"northcentralus": true,
+		"southcentralus": true,
+		"westcentralus":  true,
 
 		// Europe
 		"northeurope":        true,
@@ -314,19 +324,19 @@ func IsValidAzureLocation(location string) bool {
 		"westindia":          true,
 
 		// Middle East and Africa
-		"uaenorth":           true,
-		"uaecentral":         true,
-		"southafricanorth":   true,
-		"southafricawest":    true,
-		"qatarcentral":       true,
-		"israelcentral":      true,
+		"uaenorth":         true,
+		"uaecentral":       true,
+		"southafricanorth": true,
+		"southafricawest":  true,
+		"qatarcentral":     true,
+		"israelcentral":    true,
 
 		// Americas
-		"canadacentral":      true,
-		"canadaeast":         true,
-		"brazilsouth":        true,
-		"brazilsoutheast":    true,
-		"mexicocentral":      true,
+		"canadacentral":   true,
+		"canadaeast":      true,
+		"brazilsouth":     true,
+		"brazilsoutheast": true,
+		"mexicocentral":   true,
 	}
 
 	return validLocations[strings.ToLower(location)]
@@ -336,30 +346,31 @@ func IsValidAzureLocation(location string) bool {
 func GetAvailabilityZonesForLocation(location string) []string {
 	// Locations that support availability zones
 	zonesMap := map[string][]string{
-		"eastus":         {"1", "2", "3"},
-		"eastus2":        {"1", "2", "3"},
-		"westus2":        {"1", "2", "3"},
-		"westus3":        {"1", "2", "3"},
-		"centralus":      {"1", "2", "3"},
-		"northeurope":    {"1", "2", "3"},
-		"westeurope":     {"1", "2", "3"},
-		"uksouth":        {"1", "2", "3"},
-		"francecentral":  {"1", "2", "3"},
+		"eastus":             {"1", "2", "3"},
+		"eastus2":            {"1", "2", "3"},
+		"westus2":            {"1", "2", "3"},
+		"westus3":            {"1", "2", "3"},
+		"centralus":          {"1", "2", "3"},
+		"northeurope":        {"1", "2", "3"},
+		"westeurope":         {"1", "2", "3"},
+		"uksouth":            {"1", "2", "3"},
+		"francecentral":      {"1", "2", "3"},
 		"germanywestcentral": {"1", "2", "3"},
-		"swedencentral":  {"1", "2", "3"},
-		"eastasia":       {"1", "2", "3"},
-		"southeastasia":  {"1", "2", "3"},
-		"australiaeast":  {"1", "2", "3"},
-		"japaneast":      {"1", "2", "3"},
-		"koreacentral":   {"1", "2", "3"},
-		"canadacentral":  {"1", "2", "3"},
-		"brazilsouth":    {"1", "2", "3"},
+		"swedencentral":      {"1", "2", "3"},
+		"eastasia":           {"1", "2", "3"},
+		"southeastasia":      {"1", "2", "3"},
+		"australiaeast":      {"1", "2", "3"},
+		"japaneast":          {"1", "2", "3"},
+		"koreacentral":       {"1", "2", "3"},
+		"canadacentral":      {"1", "2", "3"},
+		"brazilsouth":        {"1", "2", "3"},
 	}
 
 	zones, ok := zonesMap[strings.ToLower(location)]
 	if !ok {
 		return nil
 	}
+
 	return zones
 }
 
@@ -393,6 +404,7 @@ func DerefString(s *string) string {
 	if s == nil {
 		return ""
 	}
+
 	return *s
 }
 
@@ -401,6 +413,7 @@ func DerefInt32(i *int32) int32 {
 	if i == nil {
 		return 0
 	}
+
 	return *i
 }
 
@@ -409,6 +422,7 @@ func DerefInt64(i *int64) int64 {
 	if i == nil {
 		return 0
 	}
+
 	return *i
 }
 
@@ -417,5 +431,6 @@ func DerefBool(b *bool) bool {
 	if b == nil {
 		return false
 	}
+
 	return *b
 }
