@@ -45,6 +45,7 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 }
 
 // installSnapPackages installs snap packages.
+// Deprecated: Snap packages have been migrated to Linuxbrew.
 func (m *Manager) installSnapPackages(ctx context.Context) error {
 	m.log.Info("Installing snap packages")
 
@@ -63,6 +64,37 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 	script := snapMgr.GenerateSnapInstallScript(ctx)
 
 	return m.executeScript(ctx, script, "snap-packages")
+}
+
+// installBrew installs Linuxbrew itself.
+func (m *Manager) installBrew(ctx context.Context) error {
+	m.log.Info("Installing Linuxbrew")
+
+	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+	script := brewMgr.GenerateBrewInstallScript(ctx)
+
+	return m.executeScript(ctx, script, "brew-install")
+}
+
+// installBrewPackages installs brew packages.
+func (m *Manager) installBrewPackages(ctx context.Context) error {
+	m.log.Info("Installing brew packages")
+
+	// Report progress for brew packages
+	if m.reporter != nil {
+		brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+		pkgs := brewMgr.GetBrewPackages()
+		enabled := filterEnabledBrewPackages(pkgs)
+
+		for i, p := range enabled {
+			m.reporter.ReportSubtaskProgress("brew_packages", i+1, len(enabled), p.Name)
+		}
+	}
+
+	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+	script := brewMgr.GenerateBrewPackageScript(ctx)
+
+	return m.executeScript(ctx, script, "brew-packages")
 }
 
 // installCPANModules installs CPAN modules.
