@@ -265,6 +265,7 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //
 }
 
 // CreateSecurityGroup creates a firewall rule (GCP uses network tags for grouping).
+//
 //nolint:dupl // intentionally similar CPI implementation
 func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	err := m.client.ensureClientsLoaded(ctx)

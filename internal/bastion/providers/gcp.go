@@ -210,6 +210,7 @@ func (g *GCPBastionInit) getBastionIP() (string, error) {
 }
 
 // getBastionIPFromState retrieves the bastion IP from state file.
+//
 //nolint:unparam // signature kept for interface compatibility
 func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 	// Look for state file in standard locations
@@ -220,7 +221,7 @@ func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 
 	for _, statePath := range statePaths {
 		_, statErr := os.Stat(statePath) //nolint:gosec // path from trusted config
-		if statErr == nil { //nolint:gosec // path components are from trusted config
+		if statErr == nil {              //nolint:gosec // path components are from trusted config
 			// State file exists - would parse and extract bastion IP
 			// For now, return empty to fall through to other methods
 			g.log.Debugw("Found state file", "path", statePath)

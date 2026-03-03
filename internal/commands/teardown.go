@@ -1692,19 +1692,19 @@ func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete) []*ResourceToDelete {
 	// Define deletion order (dependency-aware, optimized to prevent 409 conflicts)
 	order := map[string]int{
-		"loadbalancer":        LoadBalancerPriority,     // 1: Delete load balancers first
-		"instance":            InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
-		ResourceNetworkInterface:   NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
-		"bucket":              BucketPriority,           // 4: Delete buckets
-		ResourceSnapshot:      SnapshotPriority,         // 5: Delete snapshots before volumes
-		ResourceVolume:        VolumePriority,           // 6: Delete volumes (after instances released them)
-		"keypair":             KeyPairPriority,          // 7: Delete key pairs
-		ResourceFloatingIP:    FloatingIPPriority,       // 8: Delete floating IPs
-		ResourcePublicIP:      FloatingIPPriority,       // 8: Delete public IPs
-		ResourceSecurityGroup: SecurityGroupPriority,    // 9: Delete security groups (after NICs removed)
-		ResourceSubnet:        SubnetRouterPriority,     // 10: Delete subnets
-		"router":              SubnetRouterPriority,     // 10: Delete routers
-		CategoryNetwork:       NetworkPriority,          // 11: Delete networks last
+		"loadbalancer":           LoadBalancerPriority,     // 1: Delete load balancers first
+		"instance":               InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
+		ResourceNetworkInterface: NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
+		"bucket":                 BucketPriority,           // 4: Delete buckets
+		ResourceSnapshot:         SnapshotPriority,         // 5: Delete snapshots before volumes
+		ResourceVolume:           VolumePriority,           // 6: Delete volumes (after instances released them)
+		"keypair":                KeyPairPriority,          // 7: Delete key pairs
+		ResourceFloatingIP:       FloatingIPPriority,       // 8: Delete floating IPs
+		ResourcePublicIP:         FloatingIPPriority,       // 8: Delete public IPs
+		ResourceSecurityGroup:    SecurityGroupPriority,    // 9: Delete security groups (after NICs removed)
+		ResourceSubnet:           SubnetRouterPriority,     // 10: Delete subnets
+		"router":                 SubnetRouterPriority,     // 10: Delete routers
+		CategoryNetwork:          NetworkPriority,          // 11: Delete networks last
 	}
 
 	sort.Slice(resources, func(first, second int) bool {

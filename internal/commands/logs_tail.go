@@ -25,11 +25,10 @@ var (
 
 // logEntry represents a parsed JSON log entry from zap logger.
 type logEntry struct {
-	Level        string    `json:"level"`
-	TimestampStr string    `json:"timestamp"`
-	Caller       string    `json:"caller"`
-	Message      string    `json:"msg"`
-	_parsedTime  time.Time //nolint:unused // Reserved for future use
+	Level        string `json:"level"`
+	TimestampStr string `json:"timestamp"`
+	Caller       string `json:"caller"`
+	Message      string `json:"msg"`
 }
 
 // LogTailer handles tailing log files.

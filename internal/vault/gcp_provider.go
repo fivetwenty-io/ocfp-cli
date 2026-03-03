@@ -37,6 +37,7 @@ func NewGCPVaultProvider(cfg *config.Config, safe SafeInterface, blocName string
 		logger:            logger.Get(),
 	}
 }
+
 // Configure performs full vault configuration for GCP.
 func (g *GCPVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	g.logger.Infow("Starting GCP vault configuration", "bloc", g.BlocName)
@@ -78,6 +79,7 @@ func (g *GCPVaultProvider) Configure(reporter providers.ProgressReporter) error 
 
 	return nil
 }
+
 // ConfigureIAAS configures GCP-specific IAAS settings.
 func (g *GCPVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	currentPhase := 0
@@ -129,6 +131,7 @@ func (g *GCPVaultProvider) ConfigureIAAS(envPath, envType string, reporter provi
 
 	return nil
 }
+
 // ConfigureBlobstores configures Cloud Storage bucket settings.
 func (g *GCPVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
@@ -181,6 +184,7 @@ func (g *GCPVaultProvider) ConfigureBlobstores(envPath, envType string, reporter
 
 	return nil
 }
+
 // ConfigureDatabases configures Cloud SQL settings.
 func (g *GCPVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
@@ -218,6 +222,7 @@ func (g *GCPVaultProvider) ConfigureDatabases(envPath, envType string, reporter 
 
 	return nil
 }
+
 // ConfigureLoadBalancers configures Cloud Load Balancing settings.
 func (g *GCPVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
@@ -345,6 +350,7 @@ func (g *GCPVaultProvider) ConfigureCertificates(envPath, envType string, report
 
 	return nil
 }
+
 // ConfigurePublicIPs configures external IP addresses.
 func (g *GCPVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	currentPhase := phaseNum
@@ -450,10 +456,12 @@ func (g *GCPVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 
 	return nil
 }
+
 // GetProviderName returns the provider name.
 func (g *GCPVaultProvider) GetProviderName() string {
 	return "gcp"
 }
+
 // configureEnvironment configures all components for a given environment type.
 func (g *GCPVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	envPath := g.PathBuilder.GetEnvironmentPath(envType)
@@ -516,6 +524,7 @@ func (g *GCPVaultProvider) configureEnvironment(envType string, reporter provide
 
 	return nil
 }
+
 // configureSubnets configures subnet settings.
 func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
 	currentPhase := phaseNum
@@ -563,6 +572,7 @@ func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter pr
 
 	return nil
 }
+
 // configureSecurityGroups configures firewall rules.
 func (g *GCPVaultProvider) configureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
 	currentPhase := phaseNum
@@ -616,6 +626,7 @@ func (g *GCPVaultProvider) configureSecurityGroups(envPath, envType string, repo
 
 	return nil
 }
+
 // getBlobstoresForSystem returns blobstore configuration for a system.
 func (g *GCPVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
@@ -646,15 +657,15 @@ func (g *GCPVaultProvider) getLoadBalancersForEnv(envType string) []loadBalancer
 
 	if envType == MgmtEnvType {
 		lbs = []loadBalancerConfig{
-			{name: "concourse", lbType: "https", port: 443, backend: "concourse"}, //nolint:mnd
-			{name: "vault", lbType: "https", port: 443, backend: "vault"}, //nolint:mnd
+			{name: "concourse", lbType: "https", port: 443, backend: "concourse"},   //nolint:mnd
+			{name: "vault", lbType: "https", port: 443, backend: "vault"},           //nolint:mnd
 			{name: "prometheus", lbType: "https", port: 443, backend: "prometheus"}, //nolint:mnd
 		}
 	} else {
 		lbs = []loadBalancerConfig{
-			{name: "router", lbType: "https", port: 443, backend: "router"}, //nolint:mnd
+			{name: "router", lbType: "https", port: 443, backend: "router"},        //nolint:mnd
 			{name: "tcp-router", lbType: "tcp", port: 1024, backend: "tcp-router"}, //nolint:mnd
-			{name: "ssh", lbType: "tcp", port: 2222, backend: "diego-ssh"}, //nolint:mnd
+			{name: "ssh", lbType: "tcp", port: 2222, backend: "diego-ssh"},         //nolint:mnd
 		}
 	}
 
@@ -690,6 +701,7 @@ func (g *GCPVaultProvider) getFQDNsForEnv(envType string) []fqdnConfig {
 
 	return fqdns
 }
+
 // configureSharedComponents configures components shared across environments.
 func (g *GCPVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	// Configure certificates

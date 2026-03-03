@@ -91,4 +91,3 @@ func getBool(m map[string]interface{}, key string) bool {
 
 	return false
 }
-

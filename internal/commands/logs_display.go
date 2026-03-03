@@ -14,9 +14,8 @@ import (
 
 // Output format constants for logs display.
 const (
-	formatJSON  = "json"
-	formatYAML  = "yaml"
-	hoursPerDay = 24 // Number of hours in a day for time calculations
+	formatJSON = "json"
+	formatYAML = "yaml"
 )
 
 // LogDisplayer handles displaying log entries in various formats.
@@ -393,37 +392,6 @@ func (d *LogDisplayer) displayEntriesJSON(entries []LogEntry) error {
 // displayEntriesYAML displays log entries in YAML format.
 func (d *LogDisplayer) displayEntriesYAML(entries []LogEntry) error {
 	return outputYAML(entries)
-}
-
-// _humanizeDuration converts a duration to human-readable format.
-//
-//nolint:unused // Reserved for future use
-func _humanizeDuration(duration time.Duration) string {
-	switch {
-	case duration < time.Minute:
-		return "< 1 minute ago"
-	case duration < time.Hour:
-		minutes := int(duration.Minutes())
-		if minutes == 1 {
-			return "1 minute ago"
-		}
-
-		return fmt.Sprintf("%d minutes ago", minutes)
-	case duration < hoursPerDay*time.Hour:
-		hours := int(duration.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-
-		return fmt.Sprintf("%d hours ago", hours)
-	default:
-		days := int(duration.Hours() / hoursPerDay)
-		if days == 1 {
-			return "1 day ago"
-		}
-
-		return fmt.Sprintf("%d days ago", days)
-	}
 }
 
 // humanizeSize converts bytes to human-readable format.

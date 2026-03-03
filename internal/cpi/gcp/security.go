@@ -15,6 +15,7 @@ import (
 )
 
 // CreateSecurityGroup creates a firewall rule (GCP uses network tags for grouping).
+//
 //nolint:dupl // intentionally similar CPI implementation
 func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	err := m.client.ensureClientsLoaded(ctx)

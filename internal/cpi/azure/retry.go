@@ -25,8 +25,8 @@ func DefaultRetryConfig() *RetryConfig {
 		MaxRetries:     3, //nolint:mnd
 		InitialBackoff: 1 * time.Second,
 		MaxBackoff:     30 * time.Second, //nolint:mnd
-		BackoffFactor:  2.0, //nolint:mnd
-		Jitter:         0.2, //nolint:mnd
+		BackoffFactor:  2.0,              //nolint:mnd
+		Jitter:         0.2,              //nolint:mnd
 	}
 }
 
@@ -113,8 +113,8 @@ func RetryOperation(ctx context.Context, maxRetries int, fn RetryableFunc) error
 		MaxRetries:     maxRetries,
 		InitialBackoff: 1 * time.Second,
 		MaxBackoff:     30 * time.Second, //nolint:mnd
-		BackoffFactor:  2.0, //nolint:mnd
-		Jitter:         0.2, //nolint:mnd
+		BackoffFactor:  2.0,              //nolint:mnd
+		Jitter:         0.2,              //nolint:mnd
 	}
 
 	return RetryWithBackoff(ctx, config, IsRetryable, fn)

@@ -152,7 +152,7 @@ type OperationWaiter struct {
 // DefaultOperationWaiter returns a default operation waiter.
 func DefaultOperationWaiter() *OperationWaiter {
 	return &OperationWaiter{
-		PollInterval: 5 * time.Second, //nolint:mnd
+		PollInterval: 5 * time.Second,  //nolint:mnd
 		Timeout:      10 * time.Minute, //nolint:mnd
 	}
 }

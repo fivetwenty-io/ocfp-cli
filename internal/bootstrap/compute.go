@@ -1003,7 +1003,7 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 
 	// If local keypair exists, reuse it
 	_, keyStatErr := os.Stat(existingKeyPath) //nolint:gosec // path components are from trusted config
-	if keyStatErr == nil { //nolint:nestif // SSH key validation requires nested checks
+	if keyStatErr == nil {                    //nolint:nestif // SSH key validation requires nested checks
 		_, pubStatErr := os.Stat(existingPubPath) //nolint:gosec // path components are from trusted config
 		if pubStatErr == nil {
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")

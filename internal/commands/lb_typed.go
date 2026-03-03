@@ -801,6 +801,7 @@ func buildTCPRouterPlanDesiredIPs(config *tcpRoutersLBConfig) map[string]bool {
 }
 
 // addTCPRouterCurrentMembersSection adds current members section to table.
+//
 //nolint:dupl // intentionally similar LB type handling
 func addTCPRouterCurrentMembersSection(ctx context.Context, table *ui.Table, netMgr cpi.NetworkManager, config *tcpRoutersLBConfig) map[string]bool {
 	existing := map[string]bool{}
@@ -992,6 +993,7 @@ func buildCFSSHPlanDesiredIPs(config *cfSSHLBConfig) map[string]bool {
 }
 
 // addCFSSHCurrentMembersSection adds current members section to table.
+//
 //nolint:dupl // intentionally similar LB type handling
 func addCFSSHCurrentMembersSection(ctx context.Context, table *ui.Table, netMgr cpi.NetworkManager, config *cfSSHLBConfig) map[string]bool {
 	existing := map[string]bool{}

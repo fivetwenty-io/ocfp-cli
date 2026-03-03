@@ -506,14 +506,14 @@ func TestExecute_SavesStateAfterEachStep(t *testing.T) {
 func TestExecute_DryRun_DoesNotCreateResources(t *testing.T) {
 	t.Parallel()
 
-	manager, fakeNet, fakeComp, sm := setupExecuteTest(t, "stackit")
+	_, fakeNet, fakeComp, sm := setupExecuteTest(t, "stackit")
 
 	// Remove pre-created keypair since we're testing dry-run from scratch
 	_ = sm.RemoveResource("keypair", "prod-keypair")
 
 	// Enable dry-run mode with storage manager
 	fakeStorage := newFakeStorage()
-	manager = bootstrap.NewManager(
+	manager := bootstrap.NewManager(
 		createExecuteTestConfig(),
 		&fakeProvWithStorage{n: fakeNet, c: fakeComp, s: fakeStorage},
 		sm,
