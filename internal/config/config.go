@@ -227,10 +227,12 @@ type Bastion struct {
 	Tools     OverrideSets `json:"tools,omitempty"     mapstructure:"tools"     yaml:"tools,omitempty"`
 	CFPlugins OverrideSets `json:"cfPlugins,omitempty" mapstructure:"cfPlugins" yaml:"cfPlugins,omitempty"`
 	Snaps     OverrideSets `json:"snaps,omitempty"     mapstructure:"snaps"     yaml:"snaps,omitempty"`
+	Brews     OverrideSets `json:"brews,omitempty"     mapstructure:"brews"     yaml:"brews,omitempty"`
 	// Per-item override maps (by name)
 	ToolOverrides     map[string]ToolOverride     `json:"toolOverrides,omitempty"     mapstructure:"toolOverrides"     yaml:"toolOverrides,omitempty"`
 	CFPluginOverrides map[string]CFPluginOverride `json:"cfPluginOverrides,omitempty" mapstructure:"cfPluginOverrides" yaml:"cfPluginOverrides,omitempty"`
 	SnapOverrides     map[string]SnapOverride     `json:"snapOverrides,omitempty"     mapstructure:"snapOverrides"     yaml:"snapOverrides,omitempty"`
+	BrewOverrides     map[string]BrewOverride     `json:"brewOverrides,omitempty"     mapstructure:"brewOverrides"     yaml:"brewOverrides,omitempty"`
 	// SSH keys to add to the bastion's authorized_keys.
 	// Values: direct public key, "github/<username>", or "gitlab/<username>".
 	Keys map[string]string `json:"keys,omitempty" mapstructure:"keys" yaml:"keys,omitempty"`
@@ -308,6 +310,15 @@ type SnapOverride struct {
 	Classic      *bool  `json:"classic,omitempty"      mapstructure:"classic"      yaml:"classic,omitempty"`
 	DevMode      *bool  `json:"devMode,omitempty"      mapstructure:"devMode"      yaml:"devMode,omitempty"`
 	Dangerous    *bool  `json:"dangerous,omitempty"    mapstructure:"dangerous"    yaml:"dangerous,omitempty"`
+	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
+}
+
+// BrewOverride allows overriding brew package properties.
+type BrewOverride struct {
+	Tap          string `json:"tap,omitempty"          mapstructure:"tap"          yaml:"tap,omitempty"`
+	Cask         *bool  `json:"cask,omitempty"         mapstructure:"cask"         yaml:"cask,omitempty"`
+	Version      string `json:"version,omitempty"      mapstructure:"version"      yaml:"version,omitempty"`
+	Options      string `json:"options,omitempty"       mapstructure:"options"      yaml:"options,omitempty"`
 	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
 }
 
@@ -667,9 +678,11 @@ func createEmptyConfig() *Config {
 			Tools:             OverrideSets{Enable: []string{}, Disable: []string{}},
 			CFPlugins:         OverrideSets{Enable: []string{}, Disable: []string{}},
 			Snaps:             OverrideSets{Enable: []string{}, Disable: []string{}},
+			Brews:             OverrideSets{Enable: []string{}, Disable: []string{}},
 			ToolOverrides:     map[string]ToolOverride{},
 			CFPluginOverrides: map[string]CFPluginOverride{},
 			SnapOverrides:     map[string]SnapOverride{},
+			BrewOverrides:     map[string]BrewOverride{},
 		},
 		Genesis:           Genesis{},
 		Deployments:       NewDeploymentSettings("", nil),
