@@ -405,6 +405,13 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	req := m.buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData, useBootVolume, bootVolumeSize)
 	req.StaticPrivateIP = bastionIP // Set static IP (empty string means use DHCP)
 
+	// Tag instance with role for discovery by findBastionIP
+	if req.Tags == nil {
+		req.Tags = make(map[string]string)
+	}
+
+	req.Tags["role"] = "bastion"
+
 	instance, err := computeMgr.CreateInstance(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bastion instance %s: %w", bastionName, err)

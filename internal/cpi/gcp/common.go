@@ -41,6 +41,20 @@ const (
 // GCP labels: lowercase letters, numbers, underscores, hyphens; max 63 chars.
 var labelRegex = regexp.MustCompile(`[^a-z0-9_-]`)
 
+// stripLabelPrefix strips the CPI-agnostic "label." or "label:" prefix from a filter key.
+// This allows callers to use the CPI-agnostic filter convention (e.g., "label.bloc")
+// which gets normalized to the provider-native key (e.g., "bloc") before matching.
+func stripLabelPrefix(key string) string {
+	switch {
+	case strings.HasPrefix(key, "label."):
+		return strings.TrimPrefix(key, "label.")
+	case strings.HasPrefix(key, "label:"):
+		return strings.TrimPrefix(key, "label:")
+	default:
+		return key
+	}
+}
+
 // SanitizeLabel sanitizes a string for use as a GCP label value.
 // GCP labels must be lowercase, max 63 characters, alphanumeric with underscores and hyphens.
 func SanitizeLabel(s string) string { //nolint:varnamelen

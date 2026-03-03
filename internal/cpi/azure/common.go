@@ -379,6 +379,20 @@ func SupportsAvailabilityZones(location string) bool {
 	return GetAvailabilityZonesForLocation(location) != nil
 }
 
+// stripLabelPrefix strips the CPI-agnostic "label." or "label:" prefix from a filter key.
+// This allows callers to use the CPI-agnostic filter convention (e.g., "label.bloc")
+// which gets normalized to the provider-native key (e.g., "bloc") before matching.
+func stripLabelPrefix(key string) string {
+	switch {
+	case strings.HasPrefix(key, "label."):
+		return strings.TrimPrefix(key, "label.")
+	case strings.HasPrefix(key, "label:"):
+		return strings.TrimPrefix(key, "label:")
+	default:
+		return key
+	}
+}
+
 // StringPtr returns a pointer to a string (helper for Azure SDK).
 func StringPtr(s string) *string {
 	return &s

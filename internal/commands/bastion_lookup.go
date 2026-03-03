@@ -37,26 +37,36 @@ func tryStateCache(blocName string, log logger.Logger) (string, bool) {
 	// Get standard state directory for this bloc
 	stateDir, err := state.GetStateDir(blocName)
 	if err != nil {
+		log.Debugf("State cache: failed to get state dir for %s: %v", blocName, err)
+
 		return "", false
 	}
 
 	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
+		log.Debugf("State cache: failed to create state manager for %s: %v", stateDir, err)
+
 		return "", false
 	}
 
 	_, err = stateManager.Load(blocName)
 	if err != nil {
+		log.Debugf("State cache: failed to load state for %s: %v", blocName, err)
+
 		return "", false
 	}
 
-	v, err := stateManager.GetOutput("bastion_public_ip")
+	outputVal, err := stateManager.GetOutput("bastion_public_ip")
 	if err != nil {
+		log.Debugf("State cache: bastion_public_ip not found in state: %v", err)
+
 		return "", false
 	}
 
-	bastionIP, ok := v.(string)
+	bastionIP, ok := outputVal.(string)
 	if !ok || bastionIP == "" {
+		log.Debugf("State cache: bastion_public_ip is empty or not a string")
+
 		return "", false
 	}
 
@@ -73,10 +83,22 @@ func tryLabelBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName
 			"label." + key: RoleBastion,
 		}
 
+		log.Debugf("Label discovery: trying key=%s filters=%v", key, filters)
+
 		instances, err := provider.Compute().ListInstances(ctx, filters)
-		if err != nil || len(instances) == 0 {
+		if err != nil {
+			log.Debugf("Label discovery: key=%s failed: %v", key, err)
+
 			continue
 		}
+
+		if len(instances) == 0 {
+			log.Debugf("Label discovery: key=%s returned 0 instances", key)
+
+			continue
+		}
+
+		log.Debugf("Label discovery: key=%s found %d instances", key, len(instances))
 
 		// Check for direct public IP
 		if ip := findDirectPublicIP(instances, key, log, blocName); ip != "" {
@@ -93,12 +115,24 @@ func tryLabelBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName
 }
 
 func tryNameBasedDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) (string, bool) {
+	log.Debugf("Name discovery: listing instances with label.bloc=%s", blocName)
+
 	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
 		"label.bloc": blocName,
 	})
-	if err != nil || len(instances) == 0 {
+	if err != nil {
+		log.Debugf("Name discovery: failed to list instances: %v", err)
+
 		return "", false
 	}
+
+	if len(instances) == 0 {
+		log.Debugf("Name discovery: no instances found for bloc=%s", blocName)
+
+		return "", false
+	}
+
+	log.Debugf("Name discovery: checking %d instances for bastion name pattern", len(instances))
 
 	// Check for direct public IP on bastion-named instances
 	for _, inst := range instances {

@@ -556,7 +556,8 @@ func matchesLBFilters(tags []string, filters map[string]string) bool {
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tagMap[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tagMap[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}
