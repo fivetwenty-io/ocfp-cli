@@ -62,6 +62,8 @@ const (
 	ErrCodeDependencyViolation ErrorCode = "DependencyViolation"
 	// ErrCodeInvalidState indicates invalid resource state.
 	ErrCodeInvalidState ErrorCode = "InvalidState"
+	// ErrCodeOperationNotPermitted indicates the operation is not allowed (e.g., termination protection).
+	ErrCodeOperationNotPermitted ErrorCode = "OperationNotPermitted"
 )
 
 // Error represents an AWS-specific error.
@@ -366,6 +368,39 @@ func IsDependencyViolation(err error) bool {
 	var awsErr *Error
 	if errors.As(err, &awsErr) {
 		return awsErr.Code == ErrCodeDependencyViolation
+	}
+
+	return false
+}
+
+// IsTerminationProtected checks if the error indicates an instance has
+// termination protection (DisableApiTermination) enabled. AWS returns
+// OperationNotPermitted with a message referencing DisableApiTermination.
+func IsTerminationProtected(err error) bool {
+	var awsErr *Error
+	if errors.As(err, &awsErr) {
+		if awsErr.Code == ErrCodeOperationNotPermitted &&
+			strings.Contains(awsErr.Message, "DisableApiTermination") {
+			return true
+		}
+	}
+
+	var provErr *cpi.ProviderError
+	if errors.As(err, &provErr) {
+		if provErr.Code == "OperationNotPermitted" &&
+			strings.Contains(provErr.Message, "DisableApiTermination") {
+			return true
+		}
+	}
+
+	// Also check the raw error message for cases where the error
+	// hasn't been wrapped into a structured type yet
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.ErrorCode() == "OperationNotPermitted" &&
+			strings.Contains(apiErr.ErrorMessage(), "DisableApiTermination") {
+			return true
+		}
 	}
 
 	return false

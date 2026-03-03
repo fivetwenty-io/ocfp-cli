@@ -646,6 +646,32 @@ func (m *TeardownManager) TestFilterResources(resources []*ResourceToDelete) []*
 	return m.filterResources(resources)
 }
 
+// mergeResources adds cloud-discovered resources that are not already present
+// (by ID) in the existing resource list. This prevents duplicates when
+// supplementing state-based discovery with cloud-based discovery.
+func mergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelete {
+	seen := make(map[string]bool, len(existing))
+	for _, r := range existing {
+		if r.ID != "" {
+			seen[r.ID] = true
+		}
+	}
+
+	for _, r := range discovered {
+		if r.ID != "" && !seen[r.ID] {
+			existing = append(existing, r)
+			seen[r.ID] = true
+		}
+	}
+
+	return existing
+}
+
+// TestMergeResources exposes mergeResources for testing.
+func TestMergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelete {
+	return mergeResources(existing, discovered)
+}
+
 // acquireLockWithForce attempts to acquire state lock, using force if enabled.
 func (m *TeardownManager) acquireLockWithForce() error {
 	log := logger.Get()
@@ -878,6 +904,16 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 		// Discover network interfaces for any networks found in state (NICs not always in state)
 		// This is critical to avoid 409 conflicts when deleting networks and security groups
 		m.discoverNetworkInterfacesForNetworks(ctx, stateResources, &resources, log)
+
+		// Force mode: also discover from cloud to catch orphaned resources
+		// that exist in the cloud but were lost from state (e.g., bastion
+		// removed from state by a previous failed teardown but not terminated)
+		if m.options.Force {
+			log.Info("Force mode: supplementing state with cloud discovery to find orphaned resources")
+
+			cloudResources := m.discoverResourcesFromCloud(ctx)
+			resources = mergeResources(resources, cloudResources)
+		}
 	} else {
 		log.Info("No state found or state is empty, discovering from cloud")
 		// Fallback: discover from cloud using tags
@@ -1675,7 +1711,7 @@ func (m *TeardownManager) shouldIncludeResourceInSelectiveMode(resource *Resourc
 	case CategoryNetwork, ResourceSubnet, "router":
 		return m.options.Network
 	case "keypair":
-		return m.options.KeyPairs
+		return m.options.KeyPairs || m.options.Servers
 	default:
 		// For other resource types (like floating_ips), include them based on related flags
 		// Floating/public IPs require explicit --public-ips flag

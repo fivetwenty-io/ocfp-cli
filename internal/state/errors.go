@@ -13,7 +13,7 @@ var (
 	ErrNoBackupsAvailable   = errors.New("no backups available for rollback")
 	ErrCurrentStateNil      = errors.New("current state cannot be nil")
 	ErrDiffSetNil           = errors.New("diff set cannot be nil")
-	ErrUnknownMergeStrategy = errors.New("unknown merge strategy")
+	ErrUnknownMergeStrategy = errors.New("invalid merge strategy")
 	ErrProviderNil          = errors.New("provider cannot be nil")
 	ErrStateManagerNil      = errors.New("state manager cannot be nil")
 	ErrBlocNameEmpty        = errors.New("bloc name cannot be empty")

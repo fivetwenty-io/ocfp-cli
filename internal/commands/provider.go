@@ -171,11 +171,8 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 		return ErrBlocFlagOrEnvVarRequired
 	}
 
-	// Load config to get project ID
-	cfg, err := config.LoadWithParams("", blocName)
-	if err != nil {
-		return fmt.Errorf("failed to load config for bloc %s: %w", blocName, err)
-	}
+	// Load config to get project ID; a missing config is non-fatal
+	cfg, _ := config.LoadWithParams("", blocName)
 
 	// Get credentials (either JSON or token)
 	authType, credentials, err := getSTACKITCredentials(blocName, log)
@@ -199,7 +196,7 @@ func loginSTACKIT(cmd *cobra.Command, log *zap.Logger) error {
 	}
 
 	// Configure project ID if available
-	if cfg.ProjectID != "" {
+	if cfg != nil && cfg.ProjectID != "" {
 		return configureSTACKITProject(cfg.ProjectID, log)
 	}
 

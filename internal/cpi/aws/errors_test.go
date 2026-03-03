@@ -351,3 +351,57 @@ func TestIsDependencyViolation(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTerminationProtected(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		protected bool
+	}{
+		{
+			name: "termination protected AWS error",
+			err: &Error{
+				Code:    ErrCodeOperationNotPermitted,
+				Message: "The instance 'i-abc123' may not be terminated. Modify its 'DisableApiTermination' instance attribute and try again.",
+			},
+			protected: true,
+		},
+		{
+			name: "operation not permitted but not termination protection",
+			err: &Error{
+				Code:    ErrCodeOperationNotPermitted,
+				Message: "You are not authorized to perform this operation.",
+			},
+			protected: false,
+		},
+		{
+			name: "different error code with termination message",
+			err: &Error{
+				Code:    ErrCodeNotFound,
+				Message: "DisableApiTermination",
+			},
+			protected: false,
+		},
+		{
+			name: "smithy API error with termination protection",
+			err: &smithy.GenericAPIError{
+				Code:    "OperationNotPermitted",
+				Message: "The instance 'i-abc123' may not be terminated. Modify its 'DisableApiTermination' instance attribute and try again.",
+			},
+			protected: true,
+		},
+		{
+			name:      "generic error",
+			err:       errors.New("generic error"),
+			protected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if IsTerminationProtected(tt.err) != tt.protected {
+				t.Errorf("expected IsTerminationProtected() = %v, got %v", tt.protected, IsTerminationProtected(tt.err))
+			}
+		})
+	}
+}
