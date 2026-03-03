@@ -208,16 +208,10 @@ func bindFlagsToViper(cmd *cobra.Command) {
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, _args []string) {
-		// Determine bloc name: flag takes precedence, then env var, then viper config
+		// Determine bloc name: flag > env var > state file > viper config
 		effectiveBlocName := *blocName
 		if effectiveBlocName == "" {
-			// Try environment variable first
-			if envBloc := os.Getenv("OCFP_BLOC"); envBloc != "" {
-				effectiveBlocName = envBloc
-			} else {
-				// Fall back to viper config
-				effectiveBlocName = viper.GetString("bloc")
-			}
+			effectiveBlocName = resolveBlocName()
 		}
 
 		// Set in viper for other components to use
@@ -261,6 +255,20 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			setupCommandTracking(lock, commandName, subcommandName)
 		}
 	}
+}
+
+// resolveBlocName determines the bloc name from env var, state file, or viper config.
+func resolveBlocName() string {
+	if envBloc := os.Getenv("OCFP_BLOC"); envBloc != "" {
+		return envBloc
+	}
+
+	stateBloc, err := config.GetCurrentBloc()
+	if err == nil && stateBloc != "" {
+		return stateBloc
+	}
+
+	return viper.GetString("bloc")
 }
 
 // setupCommandTracking initializes command tracking and lock file creation.
