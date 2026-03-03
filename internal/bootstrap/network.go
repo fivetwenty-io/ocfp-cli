@@ -625,7 +625,7 @@ func (m *Manager) generateDefaultSubnets() []config.Subnet {
 	subnetCIDRs := allSubnets[1:]
 
 	// Create 3 subnets with different AZs
-	// STACKIT uses numeric AZ suffixes: {region}-{index+1} (e.g., eu01-1, eu01-2, eu01-3)
+	// AZ names come from config (e.g., AWS: us-east-1a) with STACKIT-style numeric fallback
 	subnets := make([]config.Subnet, 0, tripleSubnetSplitCount)
 
 	for i := range tripleSubnetSplitCount {
@@ -633,7 +633,7 @@ func (m *Manager) generateDefaultSubnets() []config.Subnet {
 			Name:             fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i),
 			CIDR:             subnetCIDRs[i],
 			Type:             "public",
-			AvailabilityZone: fmt.Sprintf("%s-%d", m.options.Region, i+1),
+			AvailabilityZone: m.getAvailabilityZone(i),
 		})
 	}
 

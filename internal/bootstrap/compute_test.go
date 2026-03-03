@@ -708,6 +708,130 @@ func TestCreateBastion_DependenciesSet(t *testing.T) {
 }
 
 // ==============================================================================
+// Test: getAvailabilityZone
+// ==============================================================================
+
+func TestGetAvailabilityZone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		azs    map[string]config.AvailabilityZone
+		region string
+		index  int
+		want   string
+	}{
+		{
+			name: "AWS config AZs index 0",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region: "us-east-1",
+			index:  0,
+			want:   "us-east-1a",
+		},
+		{
+			name: "AWS config AZs index 1",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region: "us-east-1",
+			index:  1,
+			want:   "us-east-1b",
+		},
+		{
+			name: "AWS config AZs index 2",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region: "us-east-1",
+			index:  2,
+			want:   "us-east-1c",
+		},
+		{
+			name:   "STACKIT fallback no AZs index 0",
+			azs:    nil,
+			region: "eu01",
+			index:  0,
+			want:   "eu01-1",
+		},
+		{
+			name:   "STACKIT fallback no AZs index 2",
+			azs:    nil,
+			region: "eu01",
+			index:  2,
+			want:   "eu01-3",
+		},
+		{
+			name: "index out of range falls back to STACKIT format",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+			},
+			region: "us-east-1",
+			index:  3,
+			want:   "us-east-1-4",
+		},
+		{
+			name:   "empty region defaults to eu01",
+			azs:    nil,
+			region: "",
+			index:  0,
+			want:   "eu01-1",
+		},
+		{
+			name:   "empty AZs map falls back to STACKIT format",
+			azs:    map[string]config.AvailabilityZone{},
+			region: "eu01",
+			index:  1,
+			want:   "eu01-2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := t.TempDir()
+			sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = sm.Load("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := &config.Config{
+				Name:   "test",
+				Region: tt.region,
+				AZs:    tt.azs,
+			}
+
+			fakeNetwork := &fakeNet{}
+			fakeCompute := newFakeComputeEnhanced()
+			fakeProvider := &fakeProv{n: fakeNetwork, c: fakeCompute}
+
+			manager := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
+				BlocName: "test",
+				Region:   tt.region,
+			})
+
+			got := manager.GetAvailabilityZone(tt.index)
+			if got != tt.want {
+				t.Errorf("getAvailabilityZone(%d) = %q, want %q", tt.index, got, tt.want)
+			}
+		})
+	}
+}
+
+// ==============================================================================
 // Test: Availability Zone Selection
 // ==============================================================================
 

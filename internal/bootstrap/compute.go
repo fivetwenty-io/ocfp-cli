@@ -304,12 +304,11 @@ func (m *Manager) saveFallbackAsManagementSubnet(subnetID string) {
 	_ = m.stateManager.SetOutput("mgmt_subnet_id", subnetID)
 }
 
-// getFirstAvailabilityZone returns the first availability zone from config or region-based default.
-// This mimics the Perl _get_first_availability_zone() function.
-func (m *Manager) getFirstAvailabilityZone() string {
-	// First check if azs is defined and has keys
+// getAvailabilityZone returns the availability zone for a given index from config or region-based default.
+// When config AZs are defined (e.g., AWS: us-east-1a, us-east-1b), returns the sorted AZ at the given index.
+// Falls back to STACKIT-style numeric suffix (e.g., eu01-1) when config AZs are absent or index is out of range.
+func (m *Manager) getAvailabilityZone(index int) string {
 	if len(m.config.AZs) > 0 {
-		// Sort keys to ensure consistent ordering
 		azNames := make([]string, 0, len(m.config.AZs))
 		for azName := range m.config.AZs {
 			azNames = append(azNames, azName)
@@ -317,16 +316,24 @@ func (m *Manager) getFirstAvailabilityZone() string {
 
 		sort.Strings(azNames)
 
-		return azNames[0]
+		if index < len(azNames) {
+			return azNames[index]
+		}
 	}
 
-	// Fallback to region-based default for STACKIT
+	// Fallback: STACKIT-style numeric suffix
 	region := m.options.Region
 	if region == "" {
 		region = "eu01"
 	}
 
-	return region + "-1" // e.g., eu01-1
+	return fmt.Sprintf("%s-%d", region, index+1)
+}
+
+// getFirstAvailabilityZone returns the first availability zone from config or region-based default.
+// This mimics the Perl _get_first_availability_zone() function.
+func (m *Manager) getFirstAvailabilityZone() string {
+	return m.getAvailabilityZone(0)
 }
 
 func (m *Manager) getBastionSecurityGroup() (string, error) {
