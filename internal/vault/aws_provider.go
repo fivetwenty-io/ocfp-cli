@@ -1024,12 +1024,20 @@ func (a *AWSVaultProvider) configureUsers(envType string) error {
 		return nil
 	}
 
-	a.logger.Infow("Configuring jumpbox users", "env_type", envType)
+	// Prefer jumpbox.users; fall back to deprecated top-level users
+	users := a.Config.Jumpbox.Users
+	if len(users) == 0 {
+		users = a.Config.Users // deprecated fallback
+	}
+
+	if len(users) == 0 {
+		a.logger.Infow("No users configured, skipping jumpbox user configuration")
+
+		return nil
+	}
 
 	usersPath := a.PathBuilder.GetEnvironmentPath(envType) + "/jumpbox/users"
-
-	// Placeholder - in real implementation, this would read users from config
-	a.logger.Infow("Jumpbox users path configured", "path", usersPath)
+	a.logger.Infow("Configuring jumpbox users", "path", usersPath, "user_count", len(users))
 
 	return nil
 }
