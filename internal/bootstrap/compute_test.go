@@ -373,7 +373,7 @@ func TestCreateBastion_Success(t *testing.T) {
 	}
 
 	// Verify state was saved
-	bastion, err := manager.StateManager().GetResource("instance", "prod-bastion")
+	bastion, err := manager.StateManager().GetResource(state.ResourceTypeInstance, "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Fatal("Bastion not found in state")
 	}
@@ -659,7 +659,7 @@ func TestCreateBastion_InstanceCreationFails(t *testing.T) {
 	}
 
 	// Verify bastion was NOT saved to state
-	bastion, _ := manager.StateManager().GetResource("instance", "prod-bastion")
+	bastion, _ := manager.StateManager().GetResource(state.ResourceTypeInstance, "prod-bastion")
 	if bastion != nil {
 		t.Error("Bastion should not be in state after creation failure")
 	}
@@ -912,7 +912,7 @@ func TestCreateKeyPair_Success_AWS(t *testing.T) {
 	keypairName := "prod-keypair"
 
 	// First verify no keypair exists in state
-	existing, _ := manager.StateManager().GetResource("keypair", keypairName)
+	existing, _ := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existing != nil {
 		t.Fatal("Keypair should not exist in state initially")
 	}
@@ -1016,7 +1016,7 @@ func TestCreateKeyPair_AlreadyExistsInState(t *testing.T) {
 
 	// Verify no CreateKeyPair call would be made (idempotency)
 	// The createKeyPair function should skip creation if already in state
-	existing, _ := manager.StateManager().GetResource("keypair", keypairName)
+	existing, _ := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existing == nil {
 		t.Fatal("Keypair should exist in state")
 	}
@@ -1169,7 +1169,7 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 	_ = manager.StateManager().SetOutput("keypair_fingerprint", keypair.Fingerprint)
 
 	// Verify resource was saved
-	saved, err := manager.StateManager().GetResource("keypair", keypairName)
+	saved, err := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if err != nil || saved == nil {
 		t.Fatal("Keypair not found in state")
 	}
@@ -1178,8 +1178,8 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 		t.Errorf("Saved keypair ID = %v, want %v", saved.ID, keypair.ID)
 	}
 
-	if saved.Type != "keypair" {
-		t.Errorf("Saved resource type = %v, want keypair", saved.Type)
+	if saved.Type != state.ResourceTypeKeyPair {
+		t.Errorf("Saved resource type = %v, want %v", saved.Type, state.ResourceTypeKeyPair)
 	}
 
 	// Verify properties
