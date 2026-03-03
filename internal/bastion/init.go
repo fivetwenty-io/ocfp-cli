@@ -578,6 +578,9 @@ func (m *Manager) getInitializationPhases() []struct {
 		// This enables agent forwarding on the server before any git operations
 		{"ssh_agent_forwarding", m.setupSSHAgentForwarding},
 
+		// Phase 0.5: Bastion SSH authorized_keys injection
+		{"bastion_keys", m.configureBastionKeys},
+
 		// Phase 1: Prerequisites and system setup
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
@@ -647,6 +650,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		fn   func(context.Context) error
 	}{
 		{"ssh_agent_forwarding", m.setupSSHAgentForwarding}, // MUST BE FIRST
+		{"bastion_keys", m.configureBastionKeys},            // inject authorized_keys early
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
 		{"directories", m.createDirectories},

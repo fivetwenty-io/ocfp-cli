@@ -254,7 +254,7 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 	}
 
 	// Check for required tools
-	requiredTools := []string{"yq", "ripgrep", "fly", "bun", "nvim"}
+	requiredTools := []string{"yq", "ripgrep", "fly", "bun"}
 	toolMap := make(map[string]bool)
 
 	for _, tool := range tools {

@@ -44,7 +44,12 @@ func (m *mockSSHClient) TransferFile(_ctx context.Context, local, remote string,
 	return nil
 }
 
-func (m *mockSSHClient) ExecuteCommand(_ctx context.Context, _cmd string) (*ssh.CommandResult, error) {
+func (m *mockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+	// Return realistic values for common commands
+	if cmd == "echo $HOME" {
+		return &ssh.CommandResult{ExitCode: 0, Stdout: "/home/testuser\n", Stderr: ""}, nil
+	}
+
 	return &ssh.CommandResult{ExitCode: 0, Stdout: "", Stderr: ""}, nil
 }
 
@@ -140,10 +145,10 @@ func TestManager_copyOCFPConfig_FiltersSingleBloc(t *testing.T) {
 
 	// Verify
 	require.NoError(t, err, "copyOCFPConfig should succeed")
-	assert.Contains(t, mockSSH.transferredFiles, "~/.ocfp/config.yml", "Should transfer to remote path")
+	assert.Contains(t, mockSSH.transferredFiles, "/home/testuser/.ocfp/config.yml", "Should transfer to remote path")
 
 	// Parse transferred content
-	transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+	transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 	var transferredConfig config.ConfigFile
 	err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 	require.NoError(t, err, "Transferred content should be valid YAML")
@@ -292,7 +297,7 @@ func TestManager_copyOCFPConfig_PreservesGlobals(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify
-			transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+			transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 			var transferredConfig config.ConfigFile
 			err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 			require.NoError(t, err)
@@ -390,9 +395,9 @@ func TestManager_copyOCFPConfig_AlternativeConfigPath(t *testing.T) {
 
 	// Verify
 	require.NoError(t, err, "Should succeed with alternative config path")
-	assert.Contains(t, mockSSH.transferredFiles, "~/.ocfp/config.yml")
+	assert.Contains(t, mockSSH.transferredFiles, "/home/testuser/.ocfp/config.yml")
 
-	transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+	transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 	var transferredConfig config.ConfigFile
 	err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 	require.NoError(t, err)

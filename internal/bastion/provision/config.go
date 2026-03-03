@@ -51,6 +51,7 @@ func (c *Config) GetSystemConfig() SystemConfig {
 func (c *Config) GetDirectories() []DirectoryConfig {
 	return []DirectoryConfig{
 		{Path: "${HOME}/ocfp/cli", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
+		{Path: "${HOME}/.ocfp", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/deployments", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
