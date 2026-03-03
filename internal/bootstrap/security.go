@@ -397,6 +397,11 @@ func (m *Manager) cfSSHSecurityGroupDef() securityGroupDef {
 // This fixes security groups that exist but have missing or incomplete rules.
 func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, groupDef *securityGroupDef) error {
 	secMgr := m.provider.Security()
+	if secMgr == nil {
+		logger.Debugf("Security manager not available, skipping rule reconciliation for group %s", groupID)
+
+		return nil
+	}
 
 	// List current rules
 	currentRules, err := secMgr.ListSecurityRules(ctx, groupID)
