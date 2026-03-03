@@ -3,7 +3,11 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -96,7 +100,8 @@ configuration to your infrastructure.`,
 }
 
 func runConfigure(opts *configureOptions) error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	log := logger.Get()
 
 	// Load configuration
@@ -150,7 +155,7 @@ func runConfigure(opts *configureOptions) error {
 
 	// Configure bastion
 	if !opts.skipBastion {
-		err := configureBastion(ctx, provider, blocName, opts.dryRun)
+		err := configureBastion(ctx, cfg, provider, blocName, opts.dryRun)
 		if err != nil {
 			return fmt.Errorf("failed to configure bastion: %w", err)
 		}
@@ -340,7 +345,7 @@ func associateFloatingIPWithBastion(ctx context.Context, network cpi.NetworkMana
 }
 
 // configureBastion finalizes bastion host configuration.
-func configureBastion(ctx context.Context, provider cpi.Provider, blocName string, dryRun bool) error {
+func configureBastion(ctx context.Context, cfg *config.Config, provider cpi.Provider, blocName string, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring bastion host")
 
@@ -348,27 +353,79 @@ func configureBastion(ctx context.Context, provider cpi.Provider, blocName strin
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
 
-	// Find bastion instance using robust multi-strategy discovery
-	bastion, err := findBastionInstance(ctx, provider, blocName)
+	// Find bastion instance to verify it exists before provisioning
+	bastionInstance, err := findBastionInstance(ctx, provider, blocName)
 	if err != nil {
 		log.Warnw("No bastion instance found", "error", err)
 
 		return nil //nolint:nilerr // bastion not found is non-fatal
 	}
 
-	log.Infow("Found bastion", "name", bastion.Name, "id", bastion.ID)
+	log.Infow("Found bastion", "name", bastionInstance.Name, "id", bastionInstance.ID)
 
-	if dryRun {
-		log.Infow("[DRY RUN] Would configure bastion", "name", bastion.Name)
-
-		return nil
+	// Resolve the bastion's current public IP from live cloud data.
+	// This bypasses the state cache which may hold a stale IP from a
+	// previous bootstrap (e.g., if the EC2 instance was replaced).
+	bastionIP := resolveBastionPublicIP(ctx, provider, bastionInstance, blocName)
+	if bastionIP != "" {
+		log.Infow("Resolved live bastion IP", "ip", bastionIP)
+		cfg.BastionIP = bastionIP           // getBastionIP() checks config.BastionIP first
+		cacheBastionIP(blocName, bastionIP)  // update state cache for future commands
 	}
 
-	// Pending: add bastion configuration steps
-	// - Install required packages
-	// - Configure SSH
-	// - Set up jump host configuration
-	// - Configure firewall rules
+	// Provision bastion via the Go Manager (23-phase orchestration)
+	provOpts := &bastion.ProvisioningOptions{
+		DryRun:      dryRun,
+		ProgressOut: os.Stdout,
+	}
+
+	log.Info("Initializing bastion provisioning")
+
+	err = bastion.InitializeBastionWithMode(ctx, cfg, provOpts)
+	if err != nil {
+		return fmt.Errorf("bastion provisioning failed: %w", err)
+	}
+
+	log.Info("Bastion provisioning completed successfully")
 
 	return nil
+}
+
+// resolveBastionPublicIP resolves the bastion's current public IP from live
+// cloud data, bypassing the local state cache.
+func resolveBastionPublicIP(ctx context.Context, provider cpi.Provider, inst *cpi.Instance, blocName string) string {
+	log := logger.Get()
+
+	// Check instance's direct public/floating IP
+	if ip := firstNonEmpty(inst.FloatingIP, inst.PublicIP); ip != "" {
+		log.Debugw("Bastion IP from instance", "ip", ip, "instance", inst.Name)
+
+		return ip
+	}
+
+	// Check floating IPs associated by instance ID
+	network := provider.Network()
+	if network == nil {
+		return ""
+	}
+
+	fips, err := network.ListFloatingIPs(ctx, map[string]string{
+		"bloc":       blocName,
+		"managed-by": "ocfp",
+	})
+	if err != nil {
+		log.Debugw("Failed to list floating IPs for bastion IP resolution", "error", err)
+
+		return ""
+	}
+
+	for _, fip := range fips {
+		if fip.InstanceID == inst.ID && fip.Address != "" {
+			log.Debugw("Bastion IP from floating IP", "ip", fip.Address, "instance", inst.Name)
+
+			return fip.Address
+		}
+	}
+
+	return ""
 }
