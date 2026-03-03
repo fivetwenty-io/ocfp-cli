@@ -173,22 +173,28 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 
 	input := &ec2.DescribeInstancesInput{}
 
-	// Build filters
-	var ec2Filters []types.Filter
+	// Build tag filters, handling "name" specially for instances
+	// buildAWSTagFilters treats "name" as an AWS-specific key (passes as-is),
+	// but for instances we need "name" → "tag:Name"
+	tagFilters := make(map[string]string, len(filters))
 
-	for key, value := range filters {
-		switch key {
-		case filterKeyName:
-			ec2Filters = append(ec2Filters, types.Filter{
-				Name:   aws.String("tag:Name"),
-				Values: []string{value},
-			})
-		default:
-			ec2Filters = append(ec2Filters, types.Filter{
-				Name:   aws.String(key),
-				Values: []string{value},
-			})
+	var nameFilter string
+
+	for k, v := range filters {
+		if k == filterKeyName {
+			nameFilter = v
+		} else {
+			tagFilters[k] = v
 		}
+	}
+
+	ec2Filters := buildAWSTagFilters(tagFilters)
+
+	if nameFilter != "" {
+		ec2Filters = append(ec2Filters, types.Filter{
+			Name:   aws.String("tag:Name"),
+			Values: []string{nameFilter},
+		})
 	}
 
 	// Always exclude terminated instances
