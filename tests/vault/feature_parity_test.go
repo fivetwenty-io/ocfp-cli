@@ -222,9 +222,9 @@ func TestStackitProviderSpecific(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, publicIPs)
 
-		// Check for expected CF router IPs
-		assert.Contains(t, publicIPs, "cf_router_0")
-		assert.Contains(t, publicIPs, "cf_tcp_router_0")
+		// Check for expected router IPs (Perl contract: {job}_{index} format)
+		assert.Contains(t, publicIPs, "router_0")
+		assert.Contains(t, publicIPs, "tcp-router_0")
 	})
 }
 
@@ -314,6 +314,7 @@ func createStackitTestConfig() *config.Config {
 	cfg.AllowedIngressIPs = []string{}
 	cfg.LBs = map[string]config.LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = config.Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }

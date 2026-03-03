@@ -556,33 +556,42 @@ func TestIntegration_PublicIPs_GroupingAndFiltering(t *testing.T) {
 	// Create test public IPs
 	allIPs := []*cpi.PublicIP{
 		{
-			ID:      "ip-1",
-			Address: "1.2.3.4",
+			ID:        "ip-1",
+			IPAddress: "1.2.3.4",
+			Address:   "1.2.3.4",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "test-bloc",
 				"job":         "bosh",
 				"index":       "0",
 				"environment": "mgmt",
+				"managed-by":  "ocfp",
 			},
 		},
 		{
-			ID:      "ip-2",
-			Address: "1.2.3.5",
+			ID:        "ip-2",
+			IPAddress: "1.2.3.5",
+			Address:   "1.2.3.5",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "test-bloc",
 				"job":         "router",
 				"index":       "0",
 				"environment": "ocf",
+				"managed-by":  "ocfp",
 			},
 		},
 		{
-			ID:      "ip-3",
-			Address: "1.2.3.6",
+			ID:        "ip-3",
+			IPAddress: "1.2.3.6",
+			Address:   "1.2.3.6",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "other-bloc", // Different bloc
 				"job":         "bosh",
 				"index":       "0",
 				"environment": "mgmt",
+				"managed-by":  "ocfp",
 			},
 		},
 	}

@@ -14,8 +14,10 @@ import (
 
 // MockNetworkManager is a simple mock implementation of cpi.NetworkManager for testing.
 type MockNetworkManager struct {
-	PublicIPs []*cpi.PublicIP
-	Error     error
+	PublicIPs        []*cpi.PublicIP
+	Networks         []*cpi.Network
+	GetNetworkResult *cpi.Network
+	Error            error
 }
 
 func (m *MockNetworkManager) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) {
@@ -27,6 +29,10 @@ func (m *MockNetworkManager) CreateNetwork(_ctx context.Context, _request *cpi.N
 }
 
 func (m *MockNetworkManager) GetNetwork(_ctx context.Context, _networkID string) (*cpi.Network, error) {
+	if m.GetNetworkResult != nil {
+		return m.GetNetworkResult, nil
+	}
+
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -35,6 +41,10 @@ func (m *MockNetworkManager) DeleteNetwork(_ctx context.Context, _networkID stri
 }
 
 func (m *MockNetworkManager) ListNetworks(_ctx context.Context, _filters map[string]string) ([]*cpi.Network, error) {
+	if m.Networks != nil {
+		return m.Networks, nil
+	}
+
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -424,14 +434,14 @@ func TestDetermineVaultKeyAndEnvironment(t *testing.T) {
 			name:        "router job",
 			job:         "router",
 			index:       "1",
-			expectedKey: "cf_router_1",
+			expectedKey: "router_1",
 			expectedEnv: "ocf",
 		},
 		{
 			name:        "tcp-router job",
 			job:         "tcp-router",
 			index:       "0",
-			expectedKey: "cf_tcp_router_0",
+			expectedKey: "tcp-router_0",
 			expectedEnv: "ocf",
 		},
 		{
@@ -459,7 +469,7 @@ func TestDetermineVaultKeyAndEnvironment(t *testing.T) {
 			name:        "empty index defaults to unknown",
 			job:         "router",
 			index:       "",
-			expectedKey: "cf_router_unknown",
+			expectedKey: "router_unknown",
 			expectedEnv: "ocf",
 		},
 	}
@@ -508,7 +518,7 @@ func TestPreparePublicIPVaultData(t *testing.T) {
 				},
 			},
 			expectedMgmtKeys: []string{"bastion_0"},
-			expectedOcfKeys:  []string{"cf_router_0", "cf_router_1", "cf_tcp_router_0"},
+			expectedOcfKeys:  []string{"router_0", "router_1", "tcp-router_0"},
 		},
 		{
 			name: "handles multiple jobs in same environment",

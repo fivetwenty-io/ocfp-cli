@@ -73,13 +73,18 @@ var (
 	ErrNoValidSSHKeys         = errors.New("no valid SSH keys found")
 )
 
+// NetworkManagerFactory is a function that creates a NetworkManager.
+// It can be overridden in tests to inject mock implementations.
+type NetworkManagerFactory func(cfg *config.Config) (cpi.NetworkManager, error)
+
 // StackitVaultProvider implements vault operations for STACKIT.
 type StackitVaultProvider struct {
 	*providers.BaseVaultProvider
 
-	Safe        SafeInterface
-	PathBuilder *PathBuilder
-	logger      *zap.SugaredLogger
+	Safe                  SafeInterface
+	PathBuilder           *PathBuilder
+	logger                *zap.SugaredLogger
+	networkManagerFactory NetworkManagerFactory
 }
 
 // NewStackitVaultProvider creates a new STACKIT vault provider.
@@ -474,8 +479,8 @@ var jobTypeMapping = map[string]struct {
 }{
 	"bastion":    {prefix: "bastion_", environment: MgmtEnvType},
 	"ops":        {prefix: "ops_", environment: MgmtEnvType},
-	"router":     {prefix: "cf_router_", environment: OCFEnvType},
-	"tcp-router": {prefix: "cf_tcp_router_", environment: OCFEnvType},
+	"router":     {prefix: "router_", environment: OCFEnvType},
+	"tcp-router": {prefix: "tcp-router_", environment: OCFEnvType},
 	"jumpbox":    {prefix: "jumpbox_", environment: MgmtEnvType},
 }
 
@@ -678,9 +683,16 @@ func (s *StackitVaultProvider) shouldSkipCFForEnvType(envType, system string) bo
 }
 
 // getStackitClient retrieves or creates a STACKIT CPI client.
+// If a networkManagerFactory is set (e.g., in tests), it will be used instead
+// of creating a real STACKIT client.
 //
 //nolint:ireturn // returns interface by design
 func (s *StackitVaultProvider) getStackitClient() (cpi.NetworkManager, error) {
+	// Use factory if provided (allows test injection)
+	if s.networkManagerFactory != nil {
+		return s.networkManagerFactory(s.Config)
+	}
+
 	// Create STACKIT config from OCFP config
 	stackitConfig := &stackitcpi.Config{
 		ProjectID:           s.Config.ProjectID,
@@ -917,14 +929,14 @@ func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultDat
 	bastionCount := s.countKeysWithPrefix(mgmtVaultData, "bastion_")
 	opsCount := s.countKeysWithPrefix(mgmtVaultData, "ops_")
 	jumpboxCount := s.countKeysWithPrefix(mgmtVaultData, "jumpbox_")
-	routerCount := s.countKeysWithPrefix(ocfVaultData, "cf_router_")
-	tcpRouterCount := s.countKeysWithPrefix(ocfVaultData, "cf_tcp_router_")
+	routerCount := s.countKeysWithPrefix(ocfVaultData, "router_")
+	tcpRouterCount := s.countKeysWithPrefix(ocfVaultData, "tcp-router_")
 
 	s.logger.Infow("  bastion IPs", "count", bastionCount)
 	s.logger.Infow("  ops IPs", "count", opsCount)
 	s.logger.Infow("  jumpbox IPs", "count", jumpboxCount)
-	s.logger.Infow("  cf_router IPs", "count", routerCount)
-	s.logger.Infow("  cf_tcp_router IPs", "count", tcpRouterCount)
+	s.logger.Infow("  router IPs", "count", routerCount)
+	s.logger.Infow("  tcp-router IPs", "count", tcpRouterCount)
 }
 
 // countKeysWithPrefix counts keys in a map that start with a given prefix.
@@ -2933,15 +2945,20 @@ func (s *StackitVaultProvider) configureUsers(envType string) error {
 		return nil
 	}
 
-	// Check if users are defined in the configuration
-	if len(s.Config.Users) == 0 {
+	// Prefer jumpbox.users; fall back to deprecated top-level users
+	users := s.Config.Jumpbox.Users
+	if len(users) == 0 {
+		users = s.Config.Users // deprecated fallback
+	}
+
+	if len(users) == 0 {
 		s.logger.Infow("No users configured, skipping jumpbox user configuration")
 
 		return nil
 	}
 
 	usersPath := s.PathBuilder.GetJumpboxUsersPath()
-	s.logger.Infow("Configuring jumpbox users", "path", usersPath, "user_count", len(s.Config.Users))
+	s.logger.Infow("Configuring jumpbox users", "path", usersPath, "user_count", len(users))
 
 	// HTTP client for fetching keys from GitHub/GitLab
 	httpClient := &http.Client{
@@ -2960,7 +2977,7 @@ func (s *StackitVaultProvider) configureUsers(envType string) error {
 	// Process each user
 	userCount := 0
 
-	for username, keySpec := range s.Config.Users {
+	for username, keySpec := range users {
 		if keySpec == "" {
 			s.logger.Warnw("No SSH key provided for user, skipping", "username", username)
 

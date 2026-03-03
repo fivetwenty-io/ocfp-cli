@@ -9,6 +9,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// newTestNetworkManagerFactory creates a NetworkManagerFactory that returns a MockNetworkManager
+// with a single network matching the given bloc name and network ID.
+func newTestNetworkManagerFactory(blocName, networkID string) NetworkManagerFactory {
+	return func(_cfg *config.Config) (cpi.NetworkManager, error) {
+		return &MockNetworkManager{
+			Networks: []*cpi.Network{
+				{
+					ID:   networkID,
+					Name: blocName + "-net",
+					CIDR: "10.0.0.0/16",
+				},
+			},
+		}, nil
+	}
+}
+
 func TestConfigureNetwork_WithAPIFields(t *testing.T) {
 	// Create test provider with mock safe
 	mockSafe := &mockFullSafe{
@@ -32,6 +48,7 @@ func TestConfigureNetwork_WithAPIFields(t *testing.T) {
 	}
 
 	provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+	provider.networkManagerFactory = newTestNetworkManagerFactory("test-bloc", "test-project-123")
 
 	// Test without API (basic fields only)
 	t.Run("BasicFieldsWithoutAPI", func(t *testing.T) {
@@ -84,6 +101,7 @@ func TestConfigureNetwork_FieldCompleteness(t *testing.T) {
 	}
 
 	provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+	provider.networkManagerFactory = newTestNetworkManagerFactory("test-bloc", "net-abc-123")
 
 	err := provider.configureNetwork("ocf", nil, 1, 1)
 	assert.NoError(t, err)
@@ -159,6 +177,7 @@ func TestConfigureNetwork_GracefulDegradation(t *testing.T) {
 	}
 
 	provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+	provider.networkManagerFactory = newTestNetworkManagerFactory("test-bloc", "net-test-456")
 
 	// Should not fail even if API call fails (graceful degradation)
 	err := provider.configureNetwork("mgmt", nil, 1, 1)
@@ -178,19 +197,19 @@ func TestConfigureNetwork_DNSStringConversion(t *testing.T) {
 			expectedDNS: "8.8.8.8",
 		},
 		{
-			name:        "multiple_dns_servers",
+			name:        "multiple_dns_servers_uses_first",
 			dnsArray:    []string{"8.8.8.8", "8.8.4.4"},
-			expectedDNS: "8.8.8.8,8.8.4.4",
+			expectedDNS: "8.8.8.8",
 		},
 		{
-			name:        "three_dns_servers",
+			name:        "three_dns_servers_uses_first",
 			dnsArray:    []string{"1.1.1.1", "8.8.8.8", "8.8.4.4"},
-			expectedDNS: "1.1.1.1,8.8.8.8,8.8.4.4",
+			expectedDNS: "1.1.1.1",
 		},
 		{
-			name:        "empty_dns_array",
+			name:        "empty_dns_array_uses_default",
 			dnsArray:    []string{},
-			expectedDNS: "",
+			expectedDNS: DefaultDNSServer,
 		},
 	}
 
@@ -213,6 +232,7 @@ func TestConfigureNetwork_DNSStringConversion(t *testing.T) {
 			}
 
 			provider := NewStackitVaultProvider(cfg, mockSafe, "test-bloc")
+			provider.networkManagerFactory = newTestNetworkManagerFactory("test-bloc", "net-dns-test")
 
 			err := provider.configureNetwork("mgmt", nil, 1, 1)
 			assert.NoError(t, err)

@@ -939,8 +939,8 @@ func matchLabels(labels map[string]string, filters map[string]string) bool {
 		case strings.HasPrefix(filterKey, "label."):
 			key = strings.TrimPrefix(filterKey, "label.")
 		default:
-			// Treat unprefixed filters as label filters
-			key = filterKey
+			// Skip unknown filter types
+			continue
 		}
 
 		if labels == nil || labels[key] != filterValue {

@@ -364,6 +364,7 @@ func createTestConfig() *config.Config {
 	cfg.AllowedIngressIPs = []string{}
 	cfg.LBs = map[string]config.LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = config.Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }
