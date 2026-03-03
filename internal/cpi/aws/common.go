@@ -50,18 +50,28 @@ func buildAWSTagFilters(filters map[string]string) []types.Filter {
 			continue
 		}
 
+		// Strip "label." or "label:" prefix (CPI-agnostic filter convention)
+		cleanKey := key
+
+		switch {
+		case strings.HasPrefix(cleanKey, "label."):
+			cleanKey = strings.TrimPrefix(cleanKey, "label.")
+		case strings.HasPrefix(cleanKey, "label:"):
+			cleanKey = strings.TrimPrefix(cleanKey, "label:")
+		}
+
 		var filterName string
 
 		// Check if the key already has "tag:" prefix
 		switch {
-		case strings.HasPrefix(key, "tag:"):
-			filterName = key
-		case awsSpecificKeys[key]:
+		case strings.HasPrefix(cleanKey, "tag:"):
+			filterName = cleanKey
+		case awsSpecificKeys[cleanKey]:
 			// AWS-specific filter keys are passed through as-is
-			filterName = key
+			filterName = cleanKey
 		default:
 			// All other keys are assumed to be tags and need "tag:" prefix
-			filterName = "tag:" + key
+			filterName = "tag:" + cleanKey
 		}
 
 		awsFilters = append(awsFilters, types.Filter{

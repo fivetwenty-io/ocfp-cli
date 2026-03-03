@@ -601,7 +601,8 @@ func matchesStorageLabelFilters(labels map[string]string, filters map[string]str
 	}
 
 	for k, v := range filters {
-		if labels[k] != v {
+		cleanKey := stripLabelPrefix(k)
+		if labels[cleanKey] != v {
 			return false
 		}
 	}

@@ -809,7 +809,8 @@ func matchesLabelFilters(labels map[string]string, filters map[string]string) bo
 	}
 
 	for k, v := range filters {
-		if labels[k] != v {
+		cleanKey := stripLabelPrefix(k)
+		if labels[cleanKey] != v {
 			return false
 		}
 	}

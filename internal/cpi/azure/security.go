@@ -411,7 +411,8 @@ func matchesSecurityGroupFilters(tags map[string]string, filters map[string]stri
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tags[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tags[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}

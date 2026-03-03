@@ -124,10 +124,11 @@ func (m *Manager) Execute(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stdout, "  ✓ %s completed\n", step.name)
 		logger.Infof("Completed step: %s", step.name)
 
-		// Save state after each successful step
+		// Save state after each successful step — state persistence is critical
+		// for subsequent commands (ssh bastion, teardown) to find resources
 		saveErr := m.stateManager.Save()
 		if saveErr != nil {
-			logger.Warnf("Failed to save state after %s: %v", step.name, saveErr)
+			return fmt.Errorf("failed to save state after %s: %w", step.name, saveErr)
 		}
 	}
 

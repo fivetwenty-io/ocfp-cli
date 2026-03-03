@@ -85,6 +85,50 @@ func TestBuildAWSTagFilters(t *testing.T) {
 				{Name: aws.String("vpc-id"), Values: []string{"vpc-123"}},
 			},
 		},
+		{
+			name: "label. prefix is stripped before adding tag: prefix",
+			filters: map[string]string{
+				"label.bloc":      "520-aws-wayne",
+				"label.component": "bastion",
+			},
+			expected: []types.Filter{
+				{Name: aws.String("tag:bloc"), Values: []string{"520-aws-wayne"}},
+				{Name: aws.String("tag:component"), Values: []string{"bastion"}},
+			},
+		},
+		{
+			name: "label: prefix is stripped before adding tag: prefix",
+			filters: map[string]string{
+				"label:bloc": "520-aws-wayne",
+				"label:role": "bastion",
+			},
+			expected: []types.Filter{
+				{Name: aws.String("tag:bloc"), Values: []string{"520-aws-wayne"}},
+				{Name: aws.String("tag:role"), Values: []string{"bastion"}},
+			},
+		},
+		{
+			name: "label. prefix with AWS-specific key after stripping",
+			filters: map[string]string{
+				"label.bloc": "520-aws-wayne",
+				"vpc-id":     "vpc-123",
+			},
+			expected: []types.Filter{
+				{Name: aws.String("tag:bloc"), Values: []string{"520-aws-wayne"}},
+				{Name: aws.String("vpc-id"), Values: []string{"vpc-123"}},
+			},
+		},
+		{
+			name: "label. prefix with already tag-prefixed key",
+			filters: map[string]string{
+				"label.bloc": "520-aws-wayne",
+				"tag:Name":   "my-instance",
+			},
+			expected: []types.Filter{
+				{Name: aws.String("tag:Name"), Values: []string{"my-instance"}},
+				{Name: aws.String("tag:bloc"), Values: []string{"520-aws-wayne"}},
+			},
+		},
 	}
 
 	for _, tt := range tests {
