@@ -255,22 +255,14 @@ func containsAny(text string, substrings []string) bool {
 }
 
 // setupTestEnvironment creates a test environment.
+// OCFP_HOME is set in TestMain for the whole package to support
+// tests that use t.Parallel(). This function returns the OCFP_HOME
+// directory for tests that need it.
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	t.Helper()
-	// Create temporary directory for test files
-	tempDir := t.TempDir()
 
-	// Set HOME environment variable for tests
-	prevHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", tempDir); err != nil {
-		t.Fatalf("failed to set HOME for test: %v", err)
-	}
+	ocfpHome := os.Getenv("OCFP_HOME")
+	cleanup := func() {}
 
-	cleanup := func() {
-		_ = os.Setenv("HOME", prevHome)
-	}
-
-	t.Cleanup(cleanup)
-
-	return tempDir, cleanup
+	return ocfpHome, cleanup
 }

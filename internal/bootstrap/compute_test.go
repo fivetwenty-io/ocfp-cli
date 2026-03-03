@@ -892,14 +892,9 @@ func TestCreateBastion_AvailabilityZoneDefault(t *testing.T) {
 func TestCreateKeyPair_Success_AWS(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME for SSH key storage
-	originalHome := os.Getenv("HOME")
+	// Setup with temporary OCFP_HOME for SSH key storage
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	manager, fakeComp, _, _ := setupComputeTest(t, "aws")
 	ctx := context.Background()
@@ -949,14 +944,9 @@ func TestCreateKeyPair_Success_AWS(t *testing.T) {
 func TestCreateKeyPair_Success_STACKIT(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME
-	originalHome := os.Getenv("HOME")
+	// Setup with temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	_, fakeComp, _, _ := setupComputeTest(t, "stackit")
 	ctx := context.Background()
@@ -1034,14 +1024,9 @@ func TestCreateKeyPair_AlreadyExistsInState(t *testing.T) {
 func TestCreateKeyPair_DuplicateInAWS_NoLocalKey(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with clean temporary HOME
+	// Setup with clean temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	_, fakeComp, _, _ := setupComputeTest(t, "aws")
 	ctx := context.Background()
@@ -1063,7 +1048,7 @@ func TestCreateKeyPair_DuplicateInAWS_NoLocalKey(t *testing.T) {
 	}
 
 	// Verify no local key exists
-	keyDir := filepath.Join(tmpHome, ".ocfp", "prod", "ssh")
+	keyDir := filepath.Join(tmpHome, "prod", "ssh")
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	if _, err := os.Stat(keyFile); err == nil {
 		t.Error("Local key should not exist")
@@ -1220,14 +1205,9 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 func TestCreateKeyPair_PrivateKeySaved(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME
+	// Setup with temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	manager, _, _, _ := setupComputeTest(t, "aws")
 
@@ -1235,7 +1215,7 @@ func TestCreateKeyPair_PrivateKeySaved(t *testing.T) {
 	privateKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST_PRIVATE_KEY_CONTENT\n-----END OPENSSH PRIVATE KEY-----"
 
 	// Manually create the key directory and save the key
-	keyDir := filepath.Join(tmpHome, ".ocfp", "prod", "ssh")
+	keyDir := filepath.Join(tmpHome, "prod", "ssh")
 	err := os.MkdirAll(keyDir, 0o700)
 	if err != nil {
 		t.Fatalf("Failed to create key directory: %v", err)
