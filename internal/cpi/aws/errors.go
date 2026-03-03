@@ -32,6 +32,8 @@ var (
 	ErrNotFound = errors.New("resource not found")
 	// ErrNotImplemented indicates functionality not yet implemented.
 	ErrNotImplemented = errors.New("not implemented")
+	// ErrDuplicateKeyPair indicates that a key pair already exists.
+	ErrDuplicateKeyPair = errors.New("key pair already exists")
 )
 
 // ErrorCode represents AWS-specific error codes.

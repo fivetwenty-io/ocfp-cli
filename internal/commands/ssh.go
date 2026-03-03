@@ -305,7 +305,12 @@ func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 		return rsaKeyPath, nil
 	}
 
-	return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
+	// Distinguish between missing keys and empty keys for clearer diagnostics
+	if err != nil {
+		return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
+	}
+
+	return "", fmt.Errorf("SSH key at %s exists but is empty (0 bytes); no valid key found at %s either", keyPath, rsaKeyPath) //nolint:err113 // dynamic error with context
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
