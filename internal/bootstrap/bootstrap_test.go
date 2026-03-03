@@ -459,15 +459,15 @@ func TestExecute_SavesStateAfterEachStep(t *testing.T) {
 
 	for _, resource := range resources {
 		switch resource.Type {
-		case "network":
+		case state.ResourceTypeNetwork:
 			hasNetwork = true
-		case "subnet":
+		case state.ResourceTypeSubnet:
 			hasSubnet = true
-		case "security_group":
+		case state.ResourceTypeSecurityGroup:
 			hasSG = true
-		case "public_ip":
+		case state.ResourceTypePublicIP:
 			hasIP = true
-		case "instance":
+		case state.ResourceTypeInstance:
 			hasInstance = true
 		}
 	}
@@ -499,7 +499,7 @@ func TestExecute_DryRun_DoesNotCreateResources(t *testing.T) {
 	_, fakeNet, fakeComp, sm := setupExecuteTest(t, "stackit")
 
 	// Remove pre-created keypair since we're testing dry-run from scratch
-	_ = sm.RemoveResource("keypair", "prod-keypair")
+	_ = sm.RemoveResource(state.ResourceTypeKeyPair, "prod-keypair")
 
 	// Enable dry-run mode with storage manager
 	fakeStorage := newFakeStorage()

@@ -122,7 +122,7 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 
 func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) bool {
 	// First check state file (fast path)
-	existingBastion, _ := m.stateManager.GetResource("instance", bastionName)
+	existingBastion, _ := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
 	if existingBastion != nil {
 		return true
 	}
@@ -868,7 +868,7 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 	keypairName := m.options.BlocName + "-keypair"
 
 	// Check if keypair already exists in state
-	existingKeypair, _ := m.stateManager.GetResource("keypair", keypairName)
+	existingKeypair, _ := m.stateManager.GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existingKeypair != nil {
 		shouldSkip, err := m.verifyExistingKeypair(ctx, keypairName)
 		if err != nil {
@@ -935,7 +935,7 @@ func (m *Manager) handleOrphanedCloudKeypair(ctx context.Context, keypairName, k
 	}
 
 	// Remove from state
-	_ = m.stateManager.RemoveResource("keypair", keypairName)
+	_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
 
 	return nil
 }
@@ -946,7 +946,7 @@ func (m *Manager) handleStaleKeypairState(keypairName string) {
 	_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s in state but not in cloud, recreating\n", keypairName)
 
 	// Remove from state
-	_ = m.stateManager.RemoveResource("keypair", keypairName)
+	_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
 }
 
 // createStackitKeyPair handles STACKIT-specific keypair creation.
@@ -1032,7 +1032,7 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 
 	// No existing keypair - generate a new one
 	keyManager := ssh.NewKeyManager()
-	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().Unix()))
+	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().UnixNano()))
 
 	defer func() {
 		_ = os.Remove(tempKeyPath)

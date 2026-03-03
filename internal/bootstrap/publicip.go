@@ -49,13 +49,13 @@ func (m *Manager) CreatePublicIPs(ctx context.Context) error {
 	if isStackit {
 		// STACKIT-specific: Create jumpbox IPs using floating IP method
 		allIPs = append(allIPs, m.createJumpboxPublicIPs(ctx, stackitProvider)...)
-	}
 
-	// Create remaining public IPs (all providers)
-	allIPs = append(allIPs, m.createRouterPublicIPs(ctx, netMgr)...)
-	allIPs = append(allIPs, m.createCFSSHPublicIPs(ctx, netMgr)...)
-	allIPs = append(allIPs, m.createTCPRouterPublicIPs(ctx, netMgr)...)
-	allIPs = append(allIPs, m.createBastionPublicIPs(ctx, netMgr)...)
+		// Create remaining public IPs (STACKIT only - other providers manage these differently)
+		allIPs = append(allIPs, m.createRouterPublicIPs(ctx, netMgr)...)
+		allIPs = append(allIPs, m.createCFSSHPublicIPs(ctx, netMgr)...)
+		allIPs = append(allIPs, m.createTCPRouterPublicIPs(ctx, netMgr)...)
+		allIPs = append(allIPs, m.createBastionPublicIPs(ctx, netMgr)...)
+	}
 
 	if len(allIPs) > 0 {
 		m.renderPublicIPsSummary(allIPs)
