@@ -167,7 +167,8 @@ func (em *EnvironmentManager) addBasicEnvironmentConfig(content *strings.Builder
 	content.WriteString("export RELEASES_DIR=\"$HOME/ocfp/releases\"\n")
 	content.WriteString("export ARTIFACTS_DIR=\"$HOME/ocfp/artifacts\"\n")
 	content.WriteString("export PATH=\"$HOME/bin:$PATH\"\n")
-	content.WriteString("# Go is installed via snap, no need to modify PATH\n")
+	content.WriteString("# Linuxbrew environment\n")
+	content.WriteString("eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"\n")
 	content.WriteString("\n")
 }
 
@@ -283,9 +284,11 @@ func (em *EnvironmentManager) addToolConfigurations(content *strings.Builder) {
 	content.WriteString("fi\n")
 	content.WriteString("\n")
 
-	// Snap binary PATH
-	content.WriteString("# Snap binaries\n")
-	content.WriteString("export PATH=\"/snap/bin:$PATH\"\n")
+	// Go version pinning (keg-only formula needs explicit PATH)
+	content.WriteString("# Go (brew keg-only versioned formula)\n")
+	content.WriteString("if [ -d \"$(brew --prefix)/opt/go@1.24/bin\" ] 2>/dev/null; then\n")
+	content.WriteString("    export PATH=\"$(brew --prefix)/opt/go@1.24/bin:$PATH\"\n")
+	content.WriteString("fi\n")
 	content.WriteString("\n")
 }
 

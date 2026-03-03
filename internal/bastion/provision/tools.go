@@ -149,7 +149,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
 			Name:           "vault",
-			Enabled:        true,
+			Enabled:        false, // installed via brew (hashicorp/tap)
 			CheckCommand:   "vault",
 			VersionURL:     "https://api.github.com/repos/hashicorp/vault/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
@@ -173,7 +173,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "yq",
-			Enabled:        true,
+			Enabled:        false, // installed via brew
 			CheckCommand:   "yq",
 			VersionURL:     "https://api.github.com/repos/mikefarah/yq/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
@@ -185,7 +185,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "ripgrep",
-			Enabled:        true,
+			Enabled:        false, // installed via brew
 			CheckCommand:   "rg",
 			VersionURL:     "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest",
 			VersionPattern: `"tag_name":\s*"([^"]+)"`,

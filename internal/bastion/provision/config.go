@@ -127,6 +127,7 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 	}
 
 	// Add provider-specific repositories
+	// Azure and GCP repos removed: azure-cli and google-cloud-sdk moved to brew.
 	switch c.provider {
 	case providerStackit:
 		repos = append(repos, APTRepository{
@@ -140,32 +141,6 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 			},
 			SourceLine: "deb [signed-by=/usr/share/keyrings/stackit.gpg] https://packages.stackit.cloud/apt/cli stackit main",
 			SourceFile: "/etc/apt/sources.list.d/stackit.list",
-		})
-	case providerAzure:
-		repos = append(repos, APTRepository{
-			Name:      "azure-cli",
-			Enabled:   true,
-			Condition: condProviderIsAzure,
-			GPGKey: GPGKey{
-				URL:     "https://packages.microsoft.com/keys/microsoft.asc",
-				Dest:    "/etc/apt/keyrings/microsoft.key",
-				Dearmor: false,
-			},
-			SourceLine: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.key] https://packages.microsoft.com/repos/azure-cli/ jammy main",
-			SourceFile: "/etc/apt/sources.list.d/azure-cli.list",
-		})
-	case providerGCP:
-		repos = append(repos, APTRepository{
-			Name:      "google-cloud-sdk",
-			Enabled:   true,
-			Condition: condProviderIsGCP,
-			GPGKey: GPGKey{
-				URL:     "https://packages.cloud.google.com/apt/doc/apt-key.gpg",
-				Dest:    "/etc/apt/keyrings/google-cloud.key",
-				Dearmor: false,
-			},
-			SourceLine: "deb [signed-by=/etc/apt/keyrings/google-cloud.key] https://packages.cloud.google.com/apt cloud-sdk main",
-			SourceFile: "/etc/apt/sources.list.d/google-cloud-sdk.list",
 		})
 	}
 
@@ -306,21 +281,25 @@ func (c *Config) getCorePackages() map[string]PackageGroup {
 }
 
 // getEssentialPackages returns essential system packages.
+// Packages that moved to brew: rsync, wget, unzip, tig, ack-grep, ripgrep,
+// coreutils, htop, s3cmd, vim, vim-common, neovim, snapd.
 func (c *Config) getEssentialPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:   true,
 		Condition: "",
 		DependsOn: []string{},
 		Packages: []string{
-			"rsync", "curl", "wget", "git", "unzip", "tig", "ack-grep", "ripgrep",
-			"python3", "python3-pip", "ca-certificates", "gnupg", "lsb-release",
-			"tar", "gzip", "gawk", "sed", "grep", "coreutils", "cpanminus",
-			"perl-doc", "libperl-dev", "make", "gcc", "build-essential",
+			// Brew prerequisites
+			"build-essential", "curl", "git", "ca-certificates", "gcc", "make", "procps",
+			// System C libraries (CPAN, native gem extensions)
+			"cpanminus", "perl-doc", "libperl-dev",
 			"libnet-ip-perl", "libnetaddr-ip-perl", "libjson-perl", "libnet-cidr-perl",
-			"snapd", "libreadline-dev", "apt-rdepends", "gpg", "htop",
-			"libssl-dev", "libtool", "libyaml-dev", "libyaml-libyaml-perl",
-			"libyaml-perl", "python3-dev", "python3-setuptools", "s3cmd",
-			"vim", "vim-common", "libfuse2", "neovim",
+			"libreadline-dev", "libssl-dev", "libtool", "libyaml-dev",
+			"libyaml-libyaml-perl", "libyaml-perl", "libfuse2",
+			// Debian-specific
+			"apt-rdepends", "gnupg", "gpg", "lsb-release",
+			// Python (needed before brew python available)
+			"python3", "python3-pip", "python3-dev", "python3-setuptools",
 		},
 		PipPackages: []string{},
 		Verify:      []string{},
@@ -329,19 +308,18 @@ func (c *Config) getEssentialPackages() PackageGroup {
 }
 
 // getCloudFoundryPackages returns CloudFoundry-related packages.
+// Packages that moved to brew: ruby, ruby-dev, openssl, sqlite3, jq, tmux, screen, tree.
 func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:   true,
 		Condition: "",
 		DependsOn: []string{},
 		Packages: []string{
-			"zlib1g-dev", "ruby", "ruby-dev", "openssl",
-			"libxslt1-dev", "libxml2-dev", "libssl-dev", "libyaml-dev",
-			"libsqlite3-dev", "sqlite3", "jq",
-			"tmux", "screen", "tree",
+			// CF dev libs (native gem extensions)
+			"zlib1g-dev", "libxslt1-dev", "libxml2-dev", "libsqlite3-dev",
 		},
 		PipPackages: []string{},
-		Verify:      []string{"jq"},
+		Verify:      []string{},
 		PostInstall: "",
 	}
 }
@@ -391,12 +369,13 @@ func (c *Config) getAWSPackages() PackageGroup {
 }
 
 // getAzurePackages returns Azure-specific packages.
+// azure-cli moved to brew.
 func (c *Config) getAzurePackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
 		Condition:   condProviderIsAzure,
-		DependsOn:   []string{"azure-cli"},
-		Packages:    []string{"azure-cli"},
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
 		Verify:      []string{"az"},
 		PostInstall: "configure_azure_cli",
@@ -404,12 +383,13 @@ func (c *Config) getAzurePackages() PackageGroup {
 }
 
 // getGCPPackages returns GCP-specific packages.
+// google-cloud-sdk moved to brew.
 func (c *Config) getGCPPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
 		Condition:   condProviderIsGCP,
-		DependsOn:   []string{"google-cloud-sdk"},
-		Packages:    []string{"google-cloud-sdk"},
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
 		Verify:      []string{"gcloud"},
 		PostInstall: "configure_gcp_cli",

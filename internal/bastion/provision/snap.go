@@ -73,39 +73,11 @@ func (sm *SnapManager) GenerateSnapInstallScript(_ctx context.Context) string {
 }
 
 // getDefaultSnapPackages returns the default snap package configurations.
+// Deprecated: Snap packages have been migrated to Linuxbrew.
+// This returns an empty list; the existing override system means
+// config-based enables on an empty list are harmless no-ops.
 func (sm *SnapManager) getDefaultSnapPackages() []SnapPackage {
-	return []SnapPackage{
-		{
-			Name:         "go",
-			Enabled:      true,
-			CheckCommand: "go",
-			Channel:      "1.24/stable",
-			Classic:      true,
-			Condition:    "",
-			DevMode:      false,
-			Dangerous:    false,
-		},
-		{
-			Name:         "node",
-			Enabled:      false, // Disabled by default, use nvm instead
-			CheckCommand: "node",
-			Channel:      "18/stable",
-			Classic:      false,
-			Condition:    "",
-			DevMode:      false,
-			Dangerous:    false,
-		},
-		{
-			Name:         "kubectl",
-			Enabled:      true,
-			CheckCommand: "kubectl",
-			Channel:      "stable",
-			Classic:      true,
-			Condition:    "",
-			DevMode:      false,
-			Dangerous:    false,
-		},
-	}
+	return []SnapPackage{}
 }
 
 // applyConfigOverrides applies configuration overrides to snap packages.
