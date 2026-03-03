@@ -142,7 +142,7 @@ func runConfigure(opts *configureOptions) error {
 
 	// Configure floating IPs
 	if !opts.skipFloatingIPs {
-		err := configureFloatingIPs(ctx, provider, opts.dryRun)
+		err := configureFloatingIPs(ctx, provider, blocName, opts.dryRun)
 		if err != nil {
 			return fmt.Errorf("failed to configure floating IPs: %w", err)
 		}
@@ -150,7 +150,7 @@ func runConfigure(opts *configureOptions) error {
 
 	// Configure bastion
 	if !opts.skipBastion {
-		err := configureBastion(ctx, provider, opts.dryRun)
+		err := configureBastion(ctx, provider, blocName, opts.dryRun)
 		if err != nil {
 			return fmt.Errorf("failed to configure bastion: %w", err)
 		}
@@ -269,7 +269,7 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, dryRun bool) er
 }
 
 // configureFloatingIPs associates floating IPs with instances.
-func configureFloatingIPs(ctx context.Context, provider cpi.Provider, dryRun bool) error {
+func configureFloatingIPs(ctx context.Context, provider cpi.Provider, blocName string, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring floating IPs")
 
@@ -278,25 +278,22 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, dryRun boo
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
 
-	compute := provider.Compute()
-	if compute == nil {
-		return ErrProviderDoesNotSupportComputeMgmt
-	}
-
 	// List floating IPs
 	ips, err := network.ListFloatingIPs(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to list floating IPs: %w", err)
 	}
 
-	// Find bastion instance
-	instances, err := compute.ListInstances(ctx, map[string]string{"role": "bastion"})
+	// Find bastion instance using robust multi-strategy discovery
+	bastion, err := findBastionInstance(ctx, provider, blocName)
 	if err != nil {
-		return fmt.Errorf("failed to list instances: %w", err)
+		log.Warnw("No bastion instance found for floating IP association", "error", err)
+
+		return nil //nolint:nilerr // bastion not found is non-fatal
 	}
 
-	if len(instances) > 0 && len(ips) > 0 {
-		return associateFloatingIPWithBastion(ctx, network, instances[0], ips[0], dryRun)
+	if len(ips) > 0 {
+		return associateFloatingIPWithBastion(ctx, network, bastion, ips[0], dryRun)
 	}
 
 	return nil
@@ -330,28 +327,22 @@ func associateFloatingIPWithBastion(ctx context.Context, network cpi.NetworkMana
 }
 
 // configureBastion finalizes bastion host configuration.
-func configureBastion(ctx context.Context, provider cpi.Provider, dryRun bool) error {
+func configureBastion(ctx context.Context, provider cpi.Provider, blocName string, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring bastion host")
 
-	compute := provider.Compute()
-	if compute == nil {
+	if provider.Compute() == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
 
-	// Find bastion instance
-	instances, err := compute.ListInstances(ctx, map[string]string{"role": "bastion"})
+	// Find bastion instance using robust multi-strategy discovery
+	bastion, err := findBastionInstance(ctx, provider, blocName)
 	if err != nil {
-		return fmt.Errorf("failed to list instances: %w", err)
+		log.Warnw("No bastion instance found", "error", err)
+
+		return nil //nolint:nilerr // bastion not found is non-fatal
 	}
 
-	if len(instances) == 0 {
-		log.Warn("No bastion instance found")
-
-		return nil
-	}
-
-	bastion := instances[0]
 	log.Infow("Found bastion", "name", bastion.Name, "id", bastion.ID)
 
 	if dryRun {
