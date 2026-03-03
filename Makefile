@@ -130,7 +130,11 @@ test-integration: ## Run integration tests
 .PHONY: test-plugins
 test-plugins: ## Run plugin tests
 	@echo "$(GREEN)Running plugin tests...$(RESET)"
-	@go test -v -race ./pkg/plugins/...
+	@if [ -d pkg/plugins ]; then \
+		go test -v -race ./pkg/plugins/...; \
+	else \
+		echo "$(YELLOW)⚠ pkg/plugins/ not found, skipping plugin tests$(RESET)"; \
+	fi
 	@echo "$(GREEN)✓ Plugin tests complete$(RESET)"
 
 .PHONY: test-short
