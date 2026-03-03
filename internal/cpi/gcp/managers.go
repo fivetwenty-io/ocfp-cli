@@ -141,4 +141,3 @@ func (c *Client) getHealthChecksClient() *compute.HealthChecksClient {
 
 	return c.healthChecksClient
 }
-

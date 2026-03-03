@@ -22,23 +22,23 @@ const (
 	taskTimeoutDefault = 120 // 2 minutes for standard operations
 
 	// Flavor preset resource values.
-	flavorSmallRAM   = 1024
-	flavorSmallDisk  = 10
-	flavorMedCPU     = 2
-	flavorMedRAM     = 2048
-	flavorMedDisk    = 20
-	flavorLargeCPU   = 4
-	flavorLargeRAM   = 4096
-	flavorLargeDisk  = 40
-	flavorXLCPU      = 8
-	flavorXLRAM      = 8192
-	flavorXLDisk     = 80
-	flavorBastionCPU = 2
-	flavorBastionRAM = 4096
+	flavorSmallRAM    = 1024
+	flavorSmallDisk   = 10
+	flavorMedCPU      = 2
+	flavorMedRAM      = 2048
+	flavorMedDisk     = 20
+	flavorLargeCPU    = 4
+	flavorLargeRAM    = 4096
+	flavorLargeDisk   = 40
+	flavorXLCPU       = 8
+	flavorXLRAM       = 8192
+	flavorXLDisk      = 80
+	flavorBastionCPU  = 2
+	flavorBastionRAM  = 4096
 	flavorBastionDisk = 50
-	flavorBoshCPU    = 4
-	flavorBoshRAM    = 8192
-	flavorBoshDisk   = 100
+	flavorBoshCPU     = 4
+	flavorBoshRAM     = 8192
+	flavorBoshDisk    = 100
 
 	// vmStopDelay is the time to wait after stopping a VM before deleting it.
 	vmStopDelay = 2 * time.Second

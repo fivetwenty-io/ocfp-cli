@@ -130,16 +130,6 @@ func (m *mockFullSafe) MustGet(path, key string) interface{} {
 	return val
 }
 
-func (m *mockFullSafe) findPathsWithPrefix(prefix string) []string {
-	var paths []string
-	for path := range m.data {
-		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
-			paths = append(paths, path)
-		}
-	}
-	return paths
-}
-
 // Note: State manager mocking removed as it's not used in current tests.
 // Tests focus on vault provider logic, not state management integration.
 

@@ -261,6 +261,7 @@ func (s *StackitBastionInit) addGenesisEnv(env map[string]string) {
 }
 
 // getBastionIP retrieves the bastion host IP address.
+//
 //nolint:dupl // intentionally similar CPI implementation
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured

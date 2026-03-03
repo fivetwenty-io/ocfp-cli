@@ -59,8 +59,8 @@ func NewInteractiveRenderer(w io.Writer) *InteractiveRenderer { //nolint:varname
 	// Create default configuration based on environment
 	config := &InteractiveConfig{
 		UseColor:       env.SupportsANSI,
-		UseUnicode:     env.SupportsANSI, // Assume Unicode support with ANSI
-		ProgressWidth:  30, //nolint:mnd
+		UseUnicode:     env.SupportsANSI,       // Assume Unicode support with ANSI
+		ProgressWidth:  30,                     //nolint:mnd
 		UpdateInterval: 100 * time.Millisecond, //nolint:mnd
 	}
 

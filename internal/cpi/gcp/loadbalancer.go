@@ -36,9 +36,9 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 		Name:               proto(healthCheckName),
 		Type:               proto("HTTP"),
 		CheckIntervalSec:   proto(int32(10)), //nolint:mnd
-		TimeoutSec:         proto(int32(5)), //nolint:mnd
-		HealthyThreshold:   proto(int32(2)), //nolint:mnd
-		UnhealthyThreshold: proto(int32(3)), //nolint:mnd
+		TimeoutSec:         proto(int32(5)),  //nolint:mnd
+		HealthyThreshold:   proto(int32(2)),  //nolint:mnd
+		UnhealthyThreshold: proto(int32(3)),  //nolint:mnd
 		HttpHealthCheck: &computepb.HTTPHealthCheck{
 			Port:        proto(int32(80)), //nolint:mnd
 			RequestPath: proto("/"),

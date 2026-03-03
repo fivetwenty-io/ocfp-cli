@@ -251,9 +251,9 @@ func TestTreeRenderer_FailureSummary(t *testing.T) {
 
 	// Add some failures
 	renderer.RenderKeyValidation("key1", "abc", "xyz",
-		&vault.ValidationError{Message: "checksum mismatch"}, false)
+		&ValidationError{Message: "checksum mismatch"}, false)
 	renderer.RenderKeyValidation("key2", "def", "",
-		&vault.ValidationError{Message: "production vault unreachable"}, false)
+		&ValidationError{Message: "production vault unreachable"}, false)
 	renderer.RenderKeyValidation("key3", "ghi", "ghi", nil, true) // Success
 
 	// Render failure summary

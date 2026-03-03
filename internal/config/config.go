@@ -30,7 +30,7 @@ type Config struct {
 	// Prefer snake_case to match README and user configs
 	ProjectID             string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
 	OrgID                 string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
-	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"`               //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token,omitempty"`
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
@@ -41,13 +41,13 @@ type Config struct {
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
 	TenantID         string                      `json:"tenant_id"           mapstructure:"tenant_id"           yaml:"tenant_id,omitempty"`
 	ClientID         string                      `json:"client_id"           mapstructure:"client_id"           yaml:"client_id,omitempty"`
-	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret,omitempty"`       //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	AuthURL          string                      `json:"auth_url"            mapstructure:"auth_url"            yaml:"auth_url,omitempty"`
 	Username         string                      `json:"username"            mapstructure:"username"            yaml:"username,omitempty"`
-	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password,omitempty"`            //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ProjectName      string                      `json:"project_name"        mapstructure:"project_name"        yaml:"project_name,omitempty"`
 	DomainName       string                      `json:"domain_name"         mapstructure:"domain_name"         yaml:"domain_name,omitempty"`
-	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token,omitempty"`       //nolint:gosec // field name is descriptive, not a hardcoded secret
+	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	BastionIP        string                      `json:"bastion_ip"          mapstructure:"bastion_ip"          yaml:"bastion_ip,omitempty"`
 	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
@@ -106,15 +106,15 @@ const (
 	configFileMode     = 0o600
 
 	// Network CIDR splitting constants.
-	subnetSplitCount      = 4  // Number of subnets to carve from a /20 network
-	subnetReservedCount   = 3  // Number of usable subnets (skip first reserved)
-	cidrPartCount         = 2  // Expected parts when splitting CIDR by "/"
-	ipOctetCount          = 4  // Number of octets in an IPv4 address
-	maxPrefixLen          = 32 // Maximum IPv4 prefix length
-	octetBitmask          = 0xFF
-	octetShift24          = 24
-	octetShift16          = 16
-	octetShift8           = 8
+	subnetSplitCount    = 4  // Number of subnets to carve from a /20 network
+	subnetReservedCount = 3  // Number of usable subnets (skip first reserved)
+	cidrPartCount       = 2  // Expected parts when splitting CIDR by "/"
+	ipOctetCount        = 4  // Number of octets in an IPv4 address
+	maxPrefixLen        = 32 // Maximum IPv4 prefix length
+	octetBitmask        = 0xFF
+	octetShift24        = 24
+	octetShift16        = 16
+	octetShift8         = 8
 )
 
 // BucketSettings specify data-plane policies.

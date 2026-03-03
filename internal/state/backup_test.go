@@ -272,8 +272,6 @@ func TestBackupTimestamps(t *testing.T) {
 	st.Provider = "test-provider"
 
 	// Create multiple backups with delays
-	timestamps := make([]time.Time, 0)
-
 	for i := 0; i < 3; i++ {
 		st.Resources[fmt.Sprintf("res-%d", i)] = &state.Resource{
 			ID:         fmt.Sprintf("res-%d", i),
@@ -283,10 +281,8 @@ func TestBackupTimestamps(t *testing.T) {
 			Tags:       map[string]string{},
 		}
 
-		beforeSave := time.Now()
 		err = manager.SaveWithBackup()
 		assert.NoError(t, err)
-		timestamps = append(timestamps, beforeSave)
 
 		time.Sleep(100 * time.Millisecond)
 	}

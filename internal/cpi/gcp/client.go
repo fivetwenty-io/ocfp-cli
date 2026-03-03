@@ -205,6 +205,7 @@ func closeClient(c closeable, errs *[]error) {
 }
 
 // Cleanup releases resources and closes connections.
+//
 //nolint:funlen // sequential cleanup steps must remain together
 func (c *Client) Cleanup(ctx context.Context) error {
 	c.mu.Lock()

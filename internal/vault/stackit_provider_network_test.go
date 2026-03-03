@@ -115,7 +115,7 @@ func TestConfigureNetwork_APIIntegration(t *testing.T) {
 
 	t.Run("DocumentedBehavior", func(t *testing.T) {
 		// Expected behavior when network ID is available from state:
-		// 1. getNetworkIDFromState() returns network ID
+		// 1. getNetworkIDFromAPI() returns network ID
 		// 2. getStackitClient() creates CPI client
 		// 3. NetworkManager.GetNetwork(ctx, networkID) fetches from API
 		// 4. If successful, status and created_at are added to networkData

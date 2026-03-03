@@ -28,6 +28,7 @@ func NewProxmoxVaultProvider(cfg *config.Config, safe SafeInterface, blocName st
 		logger:            logger.Get(),
 	}
 }
+
 // Configure performs full vault configuration for Proxmox.
 func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	p.logger.Infow("Starting Proxmox vault configuration", "bloc", p.BlocName)
@@ -70,6 +71,7 @@ func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) er
 
 	return nil
 }
+
 // SaveConfigToVault saves the OCFP configuration to vault.
 func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseConfig
@@ -104,6 +106,7 @@ func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 
 	return nil
 }
+
 // ConfigureNetworks configures network settings.
 func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "networks-" + envType
@@ -139,6 +142,7 @@ func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, report
 
 	return nil
 }
+
 // ConfigureSubnets configures subnet settings (minimal for Proxmox).
 func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
@@ -169,6 +173,7 @@ func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporte
 
 	return nil
 }
+
 // ConfigureSecurityGroups configures security group settings.
 func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "security-groups-" + envType
@@ -199,6 +204,7 @@ func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, 
 
 	return nil
 }
+
 // ConfigureBlobstores configures blobstore settings.
 func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "blobstores-" + envType
@@ -229,6 +235,7 @@ func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, repo
 
 	return nil
 }
+
 // ConfigureDatabases configures database settings.
 func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "databases-" + envType
@@ -259,6 +266,7 @@ func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, repor
 
 	return nil
 }
+
 // ConfigureLoadBalancers configures load balancer settings.
 func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "load-balancers-" + envType
@@ -289,6 +297,7 @@ func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, r
 
 	return nil
 }
+
 // ConfigureFQDNs configures FQDN settings.
 func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "fqdns-" + envType
@@ -324,6 +333,7 @@ func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 
 	return nil
 }
+
 // ConfigureCertificates configures TLS certificates.
 func (p *ProxmoxVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseCertificates
@@ -353,6 +363,7 @@ func (p *ProxmoxVaultProvider) ConfigureCertificates(envPath, envType string, re
 
 	return nil
 }
+
 // ConfigurePublicIPs configures public IP settings.
 func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhasePublicIPs
@@ -382,15 +393,18 @@ func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressRep
 
 	return nil
 }
+
 // ConfigureIAAS configures IAAS settings (implements VaultProvider interface).
 func (p *ProxmoxVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	// IAAS configuration is handled by ConfigureNetworks for Proxmox
 	return p.ConfigureNetworks(envPath, envType, reporter, *phaseNum, totalPhases)
 }
+
 // GetProviderName returns the provider name.
 func (p *ProxmoxVaultProvider) GetProviderName() string {
 	return "proxmox"
 }
+
 // configureEnvironment configures vault paths for a specific environment type.
 func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	envPath := p.PathBuilder.GetEnvironmentPath(envType)
@@ -453,6 +467,7 @@ func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter pro
 
 	return nil
 }
+
 // configureSharedComponents configures shared vault paths.
 func (p *ProxmoxVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	// Configure certificates

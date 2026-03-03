@@ -521,7 +521,7 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 // It attempts TCP connections with exponential backoff until the timeout is reached.
 func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	retryInterval := 5 * time.Second //nolint:mnd
+	retryInterval := 5 * time.Second     //nolint:mnd
 	maxRetryInterval := 30 * time.Second //nolint:mnd
 
 	attempt := 0

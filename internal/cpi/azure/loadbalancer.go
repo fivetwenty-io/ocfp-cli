@@ -89,7 +89,7 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 			Protocol:          to.Ptr(armnetwork.ProbeProtocolTCP),
 			Port:              to.Ptr(int32(80)), //nolint:mnd
 			IntervalInSeconds: to.Ptr(int32(15)), //nolint:mnd
-			NumberOfProbes:    to.Ptr(int32(2)), //nolint:mnd
+			NumberOfProbes:    to.Ptr(int32(2)),  //nolint:mnd
 		},
 	}
 
@@ -234,7 +234,7 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string,
 	}
 
 	name := ExtractResourceName(id)
- //nolint:varnamelen // lb is clear in context
+	//nolint:varnamelen // lb is clear in context
 	// Get current load balancer
 	lb, err := m.client.loadBalancersClient.Get(ctx, m.client.getResourceGroup(), name, nil)
 	if err != nil {
@@ -266,8 +266,10 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, id string,
 
 	return nil
 }
- //nolint:varnamelen // id is clear in context
+
 // DeleteLoadBalancer deletes a load balancer.
+//
+//nolint:varnamelen // id is clear in context
 func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
@@ -334,7 +336,7 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 	}
 
 	name := ExtractResourceName(lbID)
- //nolint:varnamelen // lb is clear in context
+	//nolint:varnamelen // lb is clear in context
 	// Get current load balancer
 	lb, err := m.client.loadBalancersClient.Get(ctx, m.client.getResourceGroup(), name, nil)
 	if err != nil {
@@ -361,8 +363,8 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 		probe.Properties.Protocol = to.Ptr(armnetwork.ProbeProtocolTCP)
 	}
 
-	probe.Properties.Port = to.Ptr(int32(check.Port))                        //nolint:gosec // port values are within int32 range
-	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))       //nolint:gosec // interval is a small config value
+	probe.Properties.Port = to.Ptr(int32(check.Port))                         //nolint:gosec // port values are within int32 range
+	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))        //nolint:gosec // interval is a small config value
 	probe.Properties.NumberOfProbes = to.Ptr(int32(check.UnhealthyThreshold)) //nolint:gosec // threshold is a small config value
 
 	poller, err := m.client.loadBalancersClient.BeginCreateOrUpdate(

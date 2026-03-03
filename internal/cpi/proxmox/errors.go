@@ -8,70 +8,70 @@ import (
 // Proxmox provider errors.
 var (
 	// Authentication errors.
-	ErrAuthenticationFailed         = errors.New("proxmox: authentication failed")
-	ErrAPITokenRequired             = errors.New("proxmox: API token (token_id and token_secret) or username/password required")
-	ErrHostRequired                 = errors.New("proxmox: host URL is required")
-	ErrInvalidCredentials           = errors.New("proxmox: invalid credentials provided")
-	ErrTicketExpired                = errors.New("proxmox: authentication ticket expired")
+	ErrAuthenticationFailed = errors.New("proxmox: authentication failed")
+	ErrAPITokenRequired     = errors.New("proxmox: API token (token_id and token_secret) or username/password required")
+	ErrHostRequired         = errors.New("proxmox: host URL is required")
+	ErrInvalidCredentials   = errors.New("proxmox: invalid credentials provided")
+	ErrTicketExpired        = errors.New("proxmox: authentication ticket expired")
 
 	// Resource errors.
-	ErrVMNotFound                   = errors.New("proxmox: virtual machine not found")
-	ErrNodeNotFound                 = errors.New("proxmox: node not found")
-	ErrStorageNotFound              = errors.New("proxmox: storage pool not found")
-	ErrVolumeNotFound               = errors.New("proxmox: volume not found")
-	ErrSnapshotNotFound             = errors.New("proxmox: snapshot not found")
-	ErrNetworkNotFound              = errors.New("proxmox: network/bridge not found")
-	ErrTemplateNotFound             = errors.New("proxmox: template not found")
-	ErrFirewallGroupNotFound        = errors.New("proxmox: firewall group not found")
+	ErrVMNotFound            = errors.New("proxmox: virtual machine not found")
+	ErrNodeNotFound          = errors.New("proxmox: node not found")
+	ErrStorageNotFound       = errors.New("proxmox: storage pool not found")
+	ErrVolumeNotFound        = errors.New("proxmox: volume not found")
+	ErrSnapshotNotFound      = errors.New("proxmox: snapshot not found")
+	ErrNetworkNotFound       = errors.New("proxmox: network/bridge not found")
+	ErrTemplateNotFound      = errors.New("proxmox: template not found")
+	ErrFirewallGroupNotFound = errors.New("proxmox: firewall group not found")
 
 	// Cluster errors.
-	ErrNoAvailableNode              = errors.New("proxmox: no node with sufficient resources available")
-	ErrClusterNotAvailable          = errors.New("proxmox: cluster information not available")
-	ErrNodeOffline                  = errors.New("proxmox: target node is offline")
+	ErrNoAvailableNode     = errors.New("proxmox: no node with sufficient resources available")
+	ErrClusterNotAvailable = errors.New("proxmox: cluster information not available")
+	ErrNodeOffline         = errors.New("proxmox: target node is offline")
 
 	// Feature limitation errors.
-	ErrLXCNotSupported              = errors.New("proxmox: LXC containers not supported; use QEMU VMs only")
-	ErrLoadBalancersNotSupported    = errors.New("proxmox: load balancers not natively supported")
-	ErrBucketsNotSupported          = errors.New("proxmox: object storage buckets not natively supported; use external MinIO/Ceph")
-	ErrFloatingIPsNotSupported      = errors.New("proxmox: floating IPs require external IP management")
-	ErrRoutersNotSupported          = errors.New("proxmox: routers not supported; use external network configuration")
+	ErrLXCNotSupported           = errors.New("proxmox: LXC containers not supported; use QEMU VMs only")
+	ErrLoadBalancersNotSupported = errors.New("proxmox: load balancers not natively supported")
+	ErrBucketsNotSupported       = errors.New("proxmox: object storage buckets not natively supported; use external MinIO/Ceph")
+	ErrFloatingIPsNotSupported   = errors.New("proxmox: floating IPs require external IP management")
+	ErrRoutersNotSupported       = errors.New("proxmox: routers not supported; use external network configuration")
 
 	// Network errors.
-	ErrSDNNotConfigured             = errors.New("proxmox: SDN not configured on cluster")
-	ErrBridgeNotFound               = errors.New("proxmox: bridge not found")
-	ErrBridgeInUse                  = errors.New("proxmox: bridge is in use by VMs")
-	ErrInvalidNetworkMode           = errors.New("proxmox: invalid network mode; use 'bridge' or 'sdn'")
+	ErrSDNNotConfigured   = errors.New("proxmox: SDN not configured on cluster")
+	ErrBridgeNotFound     = errors.New("proxmox: bridge not found")
+	ErrBridgeInUse        = errors.New("proxmox: bridge is in use by VMs")
+	ErrInvalidNetworkMode = errors.New("proxmox: invalid network mode; use 'bridge' or 'sdn'")
 
 	// Storage errors.
-	ErrStoragePoolNotConfigured     = errors.New("proxmox: default storage pool not configured")
-	ErrVolumeAttached               = errors.New("proxmox: volume is attached to a VM")
-	ErrInvalidVolumeFormat          = errors.New("proxmox: invalid volume format")
-	ErrInvalidVolumeIDFormat        = errors.New("proxmox: invalid volume ID format")
-	ErrInvalidSnapshotIDFormat      = errors.New("proxmox: invalid snapshot ID format")
-	ErrVolumeResizeUnsupported      = errors.New("proxmox: volume resize not supported for unattached volumes")
-	ErrVolumeNotFoundOnVM           = errors.New("proxmox: volume not found on VM")
+	ErrStoragePoolNotConfigured = errors.New("proxmox: default storage pool not configured")
+	ErrVolumeAttached           = errors.New("proxmox: volume is attached to a VM")
+	ErrInvalidVolumeFormat      = errors.New("proxmox: invalid volume format")
+	ErrInvalidVolumeIDFormat    = errors.New("proxmox: invalid volume ID format")
+	ErrInvalidSnapshotIDFormat  = errors.New("proxmox: invalid snapshot ID format")
+	ErrVolumeResizeUnsupported  = errors.New("proxmox: volume resize not supported for unattached volumes")
+	ErrVolumeNotFoundOnVM       = errors.New("proxmox: volume not found on VM")
 
 	// Parse errors.
-	ErrInvalidVMID                  = errors.New("proxmox: invalid VMID")
-	ErrInvalidTemplateVMID          = errors.New("proxmox: invalid template VMID")
-	ErrUnexpectedResponseType       = errors.New("proxmox: unexpected response type")
+	ErrInvalidVMID            = errors.New("proxmox: invalid VMID")
+	ErrInvalidTemplateVMID    = errors.New("proxmox: invalid template VMID")
+	ErrUnexpectedResponseType = errors.New("proxmox: unexpected response type")
 
 	// Configuration errors.
-	ErrConfigIsRequired             = errors.New("proxmox: config is required")
-	ErrInvalidFlavorSpec            = errors.New("proxmox: invalid flavor specification")
+	ErrConfigIsRequired  = errors.New("proxmox: config is required")
+	ErrInvalidFlavorSpec = errors.New("proxmox: invalid flavor specification")
 
 	// Task errors.
-	ErrTaskFailed                   = errors.New("proxmox: task failed")
-	ErrTaskTimeout                  = errors.New("proxmox: task timed out")
+	ErrTaskFailed  = errors.New("proxmox: task failed")
+	ErrTaskTimeout = errors.New("proxmox: task timed out")
 
 	// Operation errors.
-	ErrVMAlreadyRunning             = errors.New("proxmox: VM is already running")
-	ErrVMAlreadyStopped             = errors.New("proxmox: VM is already stopped")
-	ErrCreateKeyPairNotSupported    = errors.New("proxmox: CreateKeyPair not supported; use ImportKeyPair with a public key")
-	ErrEnableBackendNotImplemented  = errors.New("proxmox: EnableBackend not implemented")
-	ErrDisableBackendNotImplemented = errors.New("proxmox: DisableBackend not implemented")
+	ErrVMAlreadyRunning              = errors.New("proxmox: VM is already running")
+	ErrVMAlreadyStopped              = errors.New("proxmox: VM is already stopped")
+	ErrCreateKeyPairNotSupported     = errors.New("proxmox: CreateKeyPair not supported; use ImportKeyPair with a public key")
+	ErrEnableBackendNotImplemented   = errors.New("proxmox: EnableBackend not implemented")
+	ErrDisableBackendNotImplemented  = errors.New("proxmox: DisableBackend not implemented")
 	ErrGetHealthStatusNotImplemented = errors.New("proxmox: GetHealthStatus not implemented")
-	ErrSubnetsNotSupported          = errors.New("proxmox: subnets are not supported; use bridge networks")
+	ErrSubnetsNotSupported           = errors.New("proxmox: subnets are not supported; use bridge networks")
 )
 
 // Dynamic error constructors.

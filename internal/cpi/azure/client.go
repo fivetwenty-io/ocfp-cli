@@ -98,10 +98,12 @@ func NewClient(config *Config) (*Client, error) {
 
 	return client, nil
 }
+
 // Name returns the provider name.
 func (c *Client) Name() string {
 	return ProviderName
 }
+
 // Region returns the configured location (Azure's term for region).
 func (c *Client) Region() string {
 	if c.config == nil {
@@ -110,6 +112,7 @@ func (c *Client) Region() string {
 
 	return c.config.Location
 }
+
 // Initialize configures the Azure client with the provided configuration.
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	// Handle different config types
@@ -145,10 +148,12 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 
 	return nil
 }
+
 // Authenticate validates Azure credentials.
 func (c *Client) Authenticate(ctx context.Context) error {
 	return c.ValidateCredentials(ctx)
 }
+
 // ValidateCredentials validates Azure credentials by attempting to list resource groups.
 func (c *Client) ValidateCredentials(ctx context.Context) error {
 	err := c.ensureClientsLoaded(ctx)
@@ -178,6 +183,7 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 
 	return nil
 }
+
 // Cleanup releases resources and closes connections.
 func (c *Client) Cleanup(ctx context.Context) error {
 	c.mu.Lock()
@@ -207,70 +213,82 @@ func (c *Client) Cleanup(ctx context.Context) error {
 
 	return nil
 }
+
 // NetworkManager returns the network manager.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) NetworkManager() cpi.NetworkManager {
 	return c.network
 }
+
 // Network returns the network manager (legacy).
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Network() cpi.NetworkManager {
 	return c.network
 }
+
 // ComputeManager returns the compute manager.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) ComputeManager() cpi.ComputeManager {
 	return c.compute
 }
+
 // Compute returns the compute manager (legacy).
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Compute() cpi.ComputeManager {
 	return c.compute
 }
+
 // StorageManager returns the storage manager.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) StorageManager() cpi.StorageManager {
 	return c.storage
 }
+
 // Storage returns the storage manager (legacy).
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Storage() cpi.StorageManager {
 	return c.storage
 }
+
 // SecurityManager returns the security manager.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) SecurityManager() cpi.SecurityManager {
 	return c.security
 }
+
 // Security returns the security manager (legacy).
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Security() cpi.SecurityManager {
 	return c.security
 }
+
 // LoadBalancerManager returns the load balancer manager.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
 	return c.loadBalancer
 }
+
 // LoadBalancer returns the load balancer manager (legacy).
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
 	return c.loadBalancer
 }
+
 // SupportsStorage indicates whether this provider supports storage operations.
 func (c *Client) SupportsStorage() bool {
 	return true
 }
+
 // EnsureResourceGroup creates the resource group if it doesn't exist and CreateResourceGroup is true.
 func (c *Client) EnsureResourceGroup(ctx context.Context) error {
 	err := c.ensureClientsLoaded(ctx)
@@ -303,6 +321,7 @@ func (c *Client) EnsureResourceGroup(ctx context.Context) error {
 
 	return nil
 }
+
 // parseConfig parses the configuration based on type and returns a Config or nil for map types.
 func (c *Client) parseConfig(ctx context.Context, config interface{}) (*Config, error) {
 	switch configValue := config.(type) {
@@ -317,6 +336,7 @@ func (c *Client) parseConfig(ctx context.Context, config interface{}) (*Config, 
 		return nil, fmt.Errorf("invalid config type for Azure provider: expected *azure.Config or *config.Config, got %T", config)
 	}
 }
+
 // convertOCFPConfig converts OCFP config to Azure config.
 func (c *Client) convertOCFPConfig(configValue *ocfpconfig.Config) *Config {
 	cfg := DefaultConfig()
@@ -331,6 +351,7 @@ func (c *Client) convertOCFPConfig(configValue *ocfpconfig.Config) *Config {
 
 	return cfg
 }
+
 // handleMapConfig handles map[string]interface{} configuration type.
 func (c *Client) handleMapConfig(ctx context.Context) (*Config, error) {
 	// Config was already parsed in NewProvider and stored in c.config
@@ -351,6 +372,7 @@ func (c *Client) handleMapConfig(ctx context.Context) (*Config, error) {
 
 	return nil, nil
 }
+
 // initializeResourceManagers initializes all resource managers.
 func (c *Client) initializeResourceManagers() {
 	c.network = &NetworkManager{client: c}
@@ -359,6 +381,7 @@ func (c *Client) initializeResourceManagers() {
 	c.security = &SecurityManager{client: c}
 	c.loadBalancer = &LoadBalancerManager{client: c}
 }
+
 // initializeCredential sets up Azure credentials based on configuration.
 //
 //nolint:funlen // credential setup with multiple auth strategies
@@ -479,6 +502,7 @@ func (c *Client) initializeCredential(ctx context.Context) error { //nolint:unpa
 
 	return nil
 }
+
 // getCloudConfiguration returns the appropriate cloud configuration.
 func (c *Client) getCloudConfiguration() cloud.Configuration {
 	switch c.config.GetCloudName() {
@@ -490,6 +514,7 @@ func (c *Client) getCloudConfiguration() cloud.Configuration {
 		return cloud.AzurePublic
 	}
 }
+
 // ensureClientsLoaded initializes all SDK clients if not already done.
 //
 //nolint:cyclop,funlen // repetitive SDK client initialization for each Azure service
@@ -608,6 +633,7 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 
 	return nil
 }
+
 // buildDefaultTags converts config default tags to Azure format.
 func (c *Client) buildDefaultTags() map[string]*string {
 	if c.config.DefaultTags == nil {
@@ -623,6 +649,7 @@ func (c *Client) buildDefaultTags() map[string]*string {
 
 	return tags
 }
+
 // getResourceGroup returns the configured resource group.
 func (c *Client) getResourceGroup() string {
 	if c.config == nil {
@@ -631,6 +658,7 @@ func (c *Client) getResourceGroup() string {
 
 	return c.config.ResourceGroup
 }
+
 // getLocation returns the configured location.
 func (c *Client) getLocation() string {
 	if c.config == nil {
@@ -639,6 +667,7 @@ func (c *Client) getLocation() string {
 
 	return c.config.Location
 }
+
 // getSubscriptionID returns the configured subscription ID.
 func (c *Client) getSubscriptionID() string {
 	if c.config == nil {

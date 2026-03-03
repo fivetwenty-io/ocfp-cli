@@ -16,6 +16,7 @@ import (
 )
 
 // CreateVolume creates a persistent disk.
+//
 //nolint:dupl // intentionally similar CPI implementation
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	err := m.client.ensureClientsLoaded(ctx)
@@ -509,7 +510,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 		}
 
 		err = bucket.Object(attrs.Name).Delete(ctx)
-	if err != nil {
+		if err != nil {
 			return WrapGCPError(err, "EmptyBucket.DeleteObject")
 		}
 	}

@@ -1532,7 +1532,7 @@ func (m *Manager) buildVaultTree(pathsWithKeys []string) (*VaultTree, error) {
 
 	for _, pathWithKey := range pathsWithKeys {
 		parts := strings.SplitN(pathWithKey, ":", 2) //nolint:mnd // splitting "path:key" always yields 2 parts
-		if len(parts) != 2 {                        //nolint:mnd // path:key format
+		if len(parts) != 2 {                         //nolint:mnd // path:key format
 			continue // Skip malformed entries
 		}
 

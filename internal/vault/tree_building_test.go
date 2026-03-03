@@ -237,9 +237,9 @@ func TestBuildVaultTree_MalformedEntries(t *testing.T) {
 
 	pathsWithKeys := []string{
 		"config/valid:key1",
-		"malformed_no_colon",      // Should be skipped
+		"malformed_no_colon", // Should be skipped
 		"config/valid:key2",
-		":multiple:colons:here",   // Takes first two parts
+		":multiple:colons:here", // Takes first two parts
 	}
 
 	tree, err := m.buildVaultTree(pathsWithKeys)
@@ -267,9 +267,9 @@ func TestBuildVaultTree_EmptySegments(t *testing.T) {
 	m := &Manager{}
 
 	pathsWithKeys := []string{
-		"config//double/slash:key1",   // Double slash should be handled
-		"/leading/slash:key2",          // Leading slash
-		"trailing/slash/:key3",         // Trailing slash before colon
+		"config//double/slash:key1", // Double slash should be handled
+		"/leading/slash:key2",       // Leading slash
+		"trailing/slash/:key3",      // Trailing slash before colon
 	}
 
 	tree, err := m.buildVaultTree(pathsWithKeys)

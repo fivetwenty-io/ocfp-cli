@@ -81,6 +81,7 @@ func NewStackitVaultProvider(cfg *config.Config, safe SafeInterface, blocName st
 		logger:            logger.Get(),
 	}
 }
+
 // Configure performs full vault configuration for STACKIT.
 func (s *StackitVaultProvider) Configure(reporter providers.ProgressReporter) error {
 	s.logger.Infow("Starting STACKIT vault configuration", "bloc", s.BlocName)
@@ -123,6 +124,7 @@ func (s *StackitVaultProvider) Configure(reporter providers.ProgressReporter) er
 
 	return nil
 }
+
 // ConfigureBlobstores configures blobstore settings.
 func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "blobstores-" + envType
@@ -175,6 +177,7 @@ func (s *StackitVaultProvider) ConfigureBlobstores(envPath, envType string, repo
 
 	return nil
 }
+
 // ConfigureCertificates configures TLS certificates.
 func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseCertificates
@@ -211,6 +214,7 @@ func (s *StackitVaultProvider) ConfigureCertificates(envPath, envType string, re
 
 	return nil
 }
+
 // ConfigureDatabases configures database settings.
 func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "databases-" + envType
@@ -250,6 +254,7 @@ func (s *StackitVaultProvider) ConfigureDatabases(envPath, envType string, repor
 
 	return nil
 }
+
 // ConfigureFQDNs configures fully qualified domain names.
 // It supports a base FQDN that is used to derive service FQDNs when not explicitly set.
 // The base FQDN is stored at a shared path, while environment-specific FQDNs are stored
@@ -352,6 +357,7 @@ func (s *StackitVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 
 	return nil
 }
+
 // ConfigureIAAS configures IaaS-specific settings.
 func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	s.logger.Infow("Configuring IaaS components", "env_type", envType)
@@ -388,6 +394,7 @@ func (s *StackitVaultProvider) ConfigureIAAS(envPath, envType string, reporter p
 
 	return nil
 }
+
 // ConfigureLoadBalancers configures load balancer settings.
 func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "load-balancers-" + envType
@@ -428,6 +435,7 @@ func (s *StackitVaultProvider) ConfigureLoadBalancers(envPath, envType string, r
 
 	return nil
 }
+
 // ConfigurePublicIPs configures public IP addresses by querying the STACKIT API.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_public_ips (lines 499-533).
 //
@@ -553,6 +561,7 @@ var jobTypeMapping = map[string]struct {
 func (s *StackitVaultProvider) GetProviderName() string {
 	return "stackit"
 }
+
 // SaveConfigToVault saves the OCFP configuration to vault.
 // Format: Base64(gzip(JSON)) - matches Perl implementation for compatibility.
 func (s *StackitVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
@@ -614,6 +623,7 @@ func (s *StackitVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 
 	return nil
 }
+
 // shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::should_skip_cf_for_env_type (lines 29-50).
 func (s *StackitVaultProvider) shouldSkipCFForEnvType(envType, system string) bool {
@@ -650,7 +660,9 @@ func (s *StackitVaultProvider) shouldSkipCFForEnvType(envType, system string) bo
 
 	return false
 }
+
 // getStackitClient retrieves or creates a STACKIT CPI client.
+//
 //nolint:ireturn // returns interface by design
 func (s *StackitVaultProvider) getStackitClient() (cpi.NetworkManager, error) {
 	// Create STACKIT config from OCFP config
@@ -680,6 +692,7 @@ func (s *StackitVaultProvider) getStackitClient() (cpi.NetworkManager, error) {
 
 	return client.Network(), nil
 }
+
 // fetchAllPublicIPs queries the STACKIT API for all public IPs in the project.
 // This matches the Perl implementation in _fetch_all_public_ips (lines 535-554).
 func (s *StackitVaultProvider) fetchAllPublicIPs(networkManager cpi.NetworkManager) ([]*cpi.PublicIP, error) {
@@ -693,6 +706,7 @@ func (s *StackitVaultProvider) fetchAllPublicIPs(networkManager cpi.NetworkManag
 
 	return publicIPs, nil
 }
+
 // filterBlocIPs filters public IPs by bloc name and managed-by=ocfp label.
 // This matches the Perl implementation in _filter_bloc_ips (lines 556-573).
 func (s *StackitVaultProvider) filterBlocIPs(allIPs []*cpi.PublicIP) []*cpi.PublicIP {
@@ -720,6 +734,7 @@ func (s *StackitVaultProvider) filterBlocIPs(allIPs []*cpi.PublicIP) []*cpi.Publ
 
 	return blocIPs
 }
+
 // groupIPsByJob groups public IPs by job type from labels.
 // This matches the Perl implementation in _group_ips_by_job (lines 575-595).
 func (s *StackitVaultProvider) groupIPsByJob(blocIPs []*cpi.PublicIP) map[string][]*cpi.PublicIP {
@@ -745,6 +760,7 @@ func (s *StackitVaultProvider) groupIPsByJob(blocIPs []*cpi.PublicIP) map[string
 
 	return ipsByJob
 }
+
 // preparePublicIPVaultData prepares vault data for mgmt and ocf environments.
 // This matches the Perl implementation in _prepare_vault_data (lines 597-626).
 func (s *StackitVaultProvider) preparePublicIPVaultData(ipsByJob map[string][]*cpi.PublicIP) (map[string]interface{}, map[string]interface{}) {
@@ -773,6 +789,7 @@ func (s *StackitVaultProvider) preparePublicIPVaultData(ipsByJob map[string][]*c
 
 	return mgmtVaultData, ocfVaultData
 }
+
 // sortIPsByIndex sorts IPs by their index field.
 func (s *StackitVaultProvider) sortIPsByIndex(ips []*cpi.PublicIP) []*cpi.PublicIP {
 	// Create a copy to avoid modifying original
@@ -802,6 +819,7 @@ func (s *StackitVaultProvider) sortIPsByIndex(ips []*cpi.PublicIP) []*cpi.Public
 
 	return sorted
 }
+
 // determineVaultKeyAndEnvironment determines the vault key and environment for a job and index.
 // This matches the Perl implementation in _determine_vault_key_and_env (lines 639-659).
 func (s *StackitVaultProvider) determineVaultKeyAndEnvironment(job, index string) (string, string) {
@@ -831,6 +849,7 @@ func (s *StackitVaultProvider) determineVaultKeyAndEnvironment(job, index string
 
 	return key, environment
 }
+
 // storePublicIPsInVault stores public IPs in vault at appropriate paths.
 // This matches the Perl implementation in _store_ips_in_vault (lines 661-687).
 func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData map[string]interface{}) error {
@@ -866,6 +885,7 @@ func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData
 
 	return nil
 }
+
 // displayPublicIPSummary displays a summary of configured public IPs.
 // This matches the Perl implementation in _display_ip_summary (lines 689-703).
 func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultData map[string]interface{}) {
@@ -890,6 +910,7 @@ func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultDat
 	s.logger.Infow("  cf_router IPs", "count", routerCount)
 	s.logger.Infow("  cf_tcp_router IPs", "count", tcpRouterCount)
 }
+
 // countKeysWithPrefix counts keys in a map that start with a given prefix.
 func (s *StackitVaultProvider) countKeysWithPrefix(data map[string]interface{}, prefix string) int {
 	count := 0
@@ -902,6 +923,7 @@ func (s *StackitVaultProvider) countKeysWithPrefix(data map[string]interface{}, 
 
 	return count
 }
+
 // configureEnvironment configures a single environment (mgmt or ocf).
 func (s *StackitVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	s.logger.Infow("Configuring environment", "env_type", envType)
@@ -928,6 +950,7 @@ func (s *StackitVaultProvider) configureEnvironment(envType string, reporter pro
 
 	return nil
 }
+
 // configureServices configures all service components for an environment.
 func (s *StackitVaultProvider) configureServices(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	err := s.ConfigureBlobstores(envPath, envType, reporter, *phaseNum, totalPhases)
@@ -960,6 +983,7 @@ func (s *StackitVaultProvider) configureServices(envPath, envType string, report
 
 	return nil
 }
+
 // configureEnvironmentComponents configures environment-specific components.
 func (s *StackitVaultProvider) configureEnvironmentComponents(envType string) error {
 	// Configure Shield admin credentials
@@ -1006,6 +1030,7 @@ func (s *StackitVaultProvider) configureEnvironmentComponents(envType string) er
 
 	return nil
 }
+
 // configureSharedComponents configures components shared between environments.
 func (s *StackitVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
 	// Configure certificates (shared between environments)
@@ -1026,6 +1051,7 @@ func (s *StackitVaultProvider) configureSharedComponents(reporter providers.Prog
 
 	return nil
 }
+
 // getDatabasesForEnv returns database configuration for an environment.
 func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map[string]interface{} {
 	// StackIT-specific hostname formatter
@@ -1042,6 +1068,7 @@ func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map
 
 	return BuildDatabasesForEnv(envType, hostnameFormatter)
 }
+
 // buildTargetsFromIPs builds targets from a list of IPs.
 func (b *lbServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []map[string]interface{} {
 	targets := make([]map[string]interface{}, 0, len(ips))
@@ -1054,6 +1081,7 @@ func (b *lbServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []ma
 
 	return targets
 }
+
 // configureBOSH configures BOSH-specific components.
 func (s *StackitVaultProvider) configureBOSH(envType string) error {
 	s.logger.Infow("Configuring BOSH components", "env_type", envType)
@@ -1075,6 +1103,7 @@ func (s *StackitVaultProvider) configureBOSH(envType string) error {
 
 	return nil
 }
+
 // configureIAM configures IAM credentials.
 func (s *StackitVaultProvider) configureIAM(envType string) error {
 	// For STACKIT, we use S3-compatible storage credentials
@@ -1108,12 +1137,14 @@ func (s *StackitVaultProvider) configureIAM(envType string) error {
 
 	return nil
 }
+
 // configureKMS configures KMS settings (no-op for STACKIT).
 func (s *StackitVaultProvider) configureKMS() {
 	// STACKIT doesn't have a native KMS service like AWS
 	// This is a no-op but we'll log it
 	s.logger.Info("KMS configuration not applicable for STACKIT")
 }
+
 // configureKeys configures SSH keys.
 //
 //nolint:funlen,nestif // key configuration with state lookup and private key resolution
@@ -1197,6 +1228,7 @@ func (s *StackitVaultProvider) configureKeys(envType string) error {
 
 	return nil
 }
+
 // getPrivateKeyPath attempts to find the private key path for the given keypair name.
 func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	// Try standard OCFP location first
@@ -1231,6 +1263,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 
 	return ""
 }
+
 // readPrivateKeyContent reads the private key content from the given path.
 func (s *StackitVaultProvider) readPrivateKeyContent(path string) (string, error) {
 	content, err := os.ReadFile(path) //nolint:gosec // path is from trusted internal resolution
@@ -1240,6 +1273,7 @@ func (s *StackitVaultProvider) readPrivateKeyContent(path string) (string, error
 
 	return string(content), nil
 }
+
 // configureRegion configures region settings.
 func (s *StackitVaultProvider) configureRegion(envType string) error {
 	netPath := s.PathBuilder.GetNetPath(envType)
@@ -1254,6 +1288,7 @@ func (s *StackitVaultProvider) configureRegion(envType string) error {
 
 	return nil
 }
+
 // configureSecurityGroups configures security group settings.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_sgs (lines 1543-1697).
 //
@@ -1323,6 +1358,7 @@ func (s *StackitVaultProvider) configureSecurityGroups(envType string, reporter 
 
 	return nil
 }
+
 // buildSecurityGroupMapping builds the mapping of security group types to full names.
 // This matches the Perl implementation in _build_sg_mapping (lines 1582-1612).
 func (s *StackitVaultProvider) buildSecurityGroupMapping() map[string]string {
@@ -1351,6 +1387,7 @@ func (s *StackitVaultProvider) buildSecurityGroupMapping() map[string]string {
 
 	return sgMapping
 }
+
 // findSecurityGroup attempts to find a security group from state manager or provider data.
 // This matches the Perl implementation in _find_security_group (lines 1614-1645).
 // Falls back to API query if not found in state (matching Perl's robustness).
@@ -1460,6 +1497,7 @@ func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sg
 
 	return nil
 }
+
 // storeSecurityGroupToVault stores a security group to vault with proper path handling.
 // This matches the Perl implementation in _store_sg_to_vault (lines 1667-1697).
 //
@@ -1517,6 +1555,7 @@ func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]interface
 
 	return nil
 }
+
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_subnet_reserved_ips (lines 1197-1279).
 func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
@@ -1572,6 +1611,7 @@ type reservedIPAssignment struct {
 
 // getDefaultReservedIPAssignments returns the default IP assignment map.
 // This matches the Perl implementation in default_reserved_ip_assignments (lines 2339-2394).
+//
 //nolint:funlen // reserved IP assignment map is inherently large
 func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignment {
 	return map[string]map[string]*reservedIPAssignment{
@@ -1587,19 +1627,19 @@ func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignme
 			},
 		},
 		"vault": {
-			"mgmt": {Offset: 5}, //nolint:mnd
+			"mgmt": {Offset: 5},  //nolint:mnd
 			"ocf":  {Offset: 32}, //nolint:mnd
 		},
 		"jumpbox": {
-			"mgmt": {Offset: 6}, //nolint:mnd
+			"mgmt": {Offset: 6},  //nolint:mnd
 			"ocf":  {Offset: 33}, //nolint:mnd
 		},
 		"concourse": {
-			"mgmt": {Offset: 7}, //nolint:mnd
+			"mgmt": {Offset: 7},  //nolint:mnd
 			"ocf":  {Offset: 34}, //nolint:mnd
 		},
 		"prometheus": {
-			"mgmt": {Offset: 8}, //nolint:mnd
+			"mgmt": {Offset: 8},  //nolint:mnd
 			"ocf":  {Offset: 35}, //nolint:mnd
 		},
 		"shield": {
@@ -1672,7 +1712,9 @@ func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignme
 		},
 	}
 }
+
 // calculateReservedIPs calculates all reserved IPs for a subnet based on assignments.
+//
 //nolint:gocognit,cyclop,funlen // reserved IP calculation is inherently complex
 func (s *StackitVaultProvider) calculateReservedIPs(
 	cidr string,
@@ -1861,6 +1903,7 @@ func parseCIDR(cidr string) (string, int, error) {
 
 	return baseIP, networkBits, nil
 }
+
 // addOffsetToIP adds an offset to an IP address.
 func addOffsetToIP(baseIP string, offset int) string {
 	octets := strings.Split(baseIP, ".")
@@ -1893,6 +1936,7 @@ func addOffsetToIP(baseIP string, offset int) string {
 
 	return strings.Join(octets, ".")
 }
+
 // parseIPRangeSpec parses a range specification like "11-29" or "0-10,30->".
 // This matches the Perl implementation in _parse_ip_range_string (lines 1476-1497).
 //
@@ -1936,6 +1980,7 @@ func parseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]ipRan
 
 	return ranges, nil
 }
+
 // calculateLastHostOffset calculates the last usable host offset for a network.
 func calculateLastHostOffset(networkBits int) int {
 	// Calculate number of hosts: 2^(32-networkBits) - 1
@@ -1950,6 +1995,7 @@ func calculateLastHostOffset(networkBits int) int {
 
 	return maxHosts
 }
+
 // containsInt checks if a slice contains an integer.
 func containsInt(slice []int, value int) bool {
 	for _, v := range slice {
@@ -1960,20 +2006,21 @@ func containsInt(slice []int, value int) bool {
 
 	return false
 }
+
 // sortAssignmentTypes sorts assignment types for deterministic output.
 // Order matches the Perl implementation's processing order.
 func sortAssignmentTypes(types []string) {
 	// Define priority order matching Perl implementation
 	priority := map[string]int{
 		"bosh":       1,
-		"vault":      2, //nolint:mnd
-		"jumpbox":    3, //nolint:mnd
-		"concourse":  4, //nolint:mnd
-		"prometheus": 5, //nolint:mnd
-		"shield":     6, //nolint:mnd
-		"doomsday":   7, //nolint:mnd
-		"ocfp_ui":    8, //nolint:mnd
-		"bastion":    9, //nolint:mnd
+		"vault":      2,  //nolint:mnd
+		"jumpbox":    3,  //nolint:mnd
+		"concourse":  4,  //nolint:mnd
+		"prometheus": 5,  //nolint:mnd
+		"shield":     6,  //nolint:mnd
+		"doomsday":   7,  //nolint:mnd
+		"ocfp_ui":    8,  //nolint:mnd
+		"bastion":    9,  //nolint:mnd
 		"blacksmith": 10, //nolint:mnd
 		"available":  11, //nolint:mnd
 		"reserved":   12, //nolint:mnd
@@ -2003,6 +2050,7 @@ func sortAssignmentTypes(types []string) {
 		}
 	}
 }
+
 // configureSubnets configures subnet settings in vault.
 func (s *StackitVaultProvider) configureSubnets(envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
@@ -2064,6 +2112,7 @@ func (s *StackitVaultProvider) configureSubnets(envType string, reporter provide
 
 	return nil
 }
+
 // configureFallbackSubnet creates a default virtual subnet when no subnets are configured.
 // This ensures reserved IPs are always written to vault for STACKIT deployments.
 func (s *StackitVaultProvider) configureFallbackSubnet(envType string) error {
@@ -2230,6 +2279,7 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 
 	return subnetData
 }
+
 // calculateNetworkPrefix extracts the first 3 octets from a CIDR.
 func (s *StackitVaultProvider) calculateNetworkPrefix(cidr string) string {
 	// Split CIDR to get network address
@@ -2248,6 +2298,7 @@ func (s *StackitVaultProvider) calculateNetworkPrefix(cidr string) string {
 	// Join first 3 octets
 	return strings.Join(octets[:NetworkPrefix], ".")
 }
+
 // getNetworkCIDRFromState retrieves the network_cidr from state manager.
 func (s *StackitVaultProvider) getNetworkCIDRFromState() string {
 	stateManager := s.loadStateManager()
@@ -2266,8 +2317,10 @@ func (s *StackitVaultProvider) getNetworkCIDRFromState() string {
 
 	return ""
 }
+
 // getNetworkIDFromAPI fetches the network ID from STACKIT API by network name.
 // This matches the Perl implementation in _get_network_id (lines 290-324).
+//
 //nolint:funlen // network ID lookup tries multiple API sources
 func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
 	// Network name follows the pattern: <bloc>-net
@@ -2350,7 +2403,9 @@ func (s *StackitVaultProvider) getNetworkIDFromAPI() (string, error) {
 
 	return "", nil
 }
+
 // configureNetwork configures network settings in vault.
+//
 //nolint:gocognit,cyclop,funlen // network configuration is inherently complex
 func (s *StackitVaultProvider) configureNetwork(envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "networks-" + envType
@@ -2512,6 +2567,7 @@ func (s *StackitVaultProvider) configureNetwork(envType string, reporter provide
 
 	return nil
 }
+
 // configureBlobstores configures blobstore settings for systems (BOSH, CF).
 // This writes blobstore configuration to vault paths that Genesis expects.
 // Path format: /config/{bloc}/{env}/{system}/blobstores/{name}.
@@ -2553,6 +2609,7 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 
 	return nil
 }
+
 // getBlobstoresForSystem returns blobstore configuration for a system.
 func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
 	blobstores := make(map[string]map[string]interface{})
@@ -2591,6 +2648,7 @@ func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) ma
 
 	return blobstores
 }
+
 // createBlobstoreConfig creates a complete blobstore configuration with all required fields.
 // This matches the Perl implementation which generates all 11 fields for S3-compatible storage.
 func (s *StackitVaultProvider) createBlobstoreConfig(
@@ -2659,6 +2717,7 @@ func (s *StackitVaultProvider) loadStateManager() *state.Manager {
 
 	return stateManager
 }
+
 // configureShield configures Shield admin credentials for an environment.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_shield.
 func (s *StackitVaultProvider) configureShield(envType string) error {
@@ -2682,6 +2741,7 @@ func (s *StackitVaultProvider) configureShield(envType string) error {
 
 	return nil
 }
+
 // configureCPI configures STACKIT CPI configuration for an environment.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_cpi.
 func (s *StackitVaultProvider) configureCPI(envType string) error {
@@ -2749,6 +2809,7 @@ func (s *StackitVaultProvider) configureCPI(envType string) error {
 
 	return nil
 }
+
 // configurePolicies configures deployment policies for an environment.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_policies.
 func (s *StackitVaultProvider) configurePolicies(envType string) error {
@@ -2776,6 +2837,7 @@ func (s *StackitVaultProvider) configurePolicies(envType string) error {
 
 	return nil
 }
+
 // configureUsers configures jumpbox users for the management environment.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_users.
 //
@@ -2894,7 +2956,9 @@ func (s *StackitVaultProvider) configureUsers(envType string) error {
 
 	return nil
 }
+
 // fetchSSHKeysFromProvider fetches SSH keys from GitHub or GitLab.
+//
 //nolint:funlen // SSH key fetch requires multiple provider calls
 func (s *StackitVaultProvider) fetchSSHKeysFromProvider(
 	client *http.Client,
@@ -2993,6 +3057,7 @@ func (s *StackitVaultProvider) isValidSSHKey(key string, validPrefixes []string)
 
 	return false
 }
+
 // configureBOSHMeta configures BOSH metadata information.
 // This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_bosh_meta.
 func (s *StackitVaultProvider) configureBOSHMeta(envType string) error {

@@ -22,6 +22,7 @@ var (
 
 // NewRenderer creates a new Renderer instance for the specified mode and output writer.
 // It validates the mode and returns an error if the mode is unsupported.
+//
 //nolint:ireturn // returns interface by design for polymorphic renderers
 func NewRenderer(w io.Writer, mode Mode) (Renderer, error) { //nolint:varnamelen
 	log := logger.Get()
@@ -73,4 +74,3 @@ func ParseMode(s string) (Mode, error) { //nolint:varnamelen
 		return 0, fmt.Errorf("%w: %s (valid: interactive, concise, json, yaml)", ErrInvalidMode, s)
 	}
 }
-

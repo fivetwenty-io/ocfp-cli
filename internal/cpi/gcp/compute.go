@@ -391,6 +391,7 @@ func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
 }
 
 // CreateVolume creates a persistent disk.
+//
 //nolint:dupl // intentionally similar CPI implementation
 func (m *ComputeManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	err := m.client.ensureClientsLoaded(ctx)

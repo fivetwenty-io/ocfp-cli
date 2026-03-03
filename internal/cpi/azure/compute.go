@@ -162,8 +162,10 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 
 	return instances, nil
 }
- //nolint:varnamelen // id is clear in context
+
 // StartInstance starts a virtual machine.
+//
+//nolint:varnamelen // id is clear in context
 func (m *ComputeManager) StartInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
@@ -210,8 +212,10 @@ func (m *ComputeManager) StopInstance(ctx context.Context, id string) error { //
 
 	return nil
 }
- //nolint:varnamelen // id is clear in context
+
 // RebootInstance restarts a virtual machine.
+//
+//nolint:varnamelen // id is clear in context
 func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
@@ -234,8 +238,10 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { 
 
 	return nil
 }
- //nolint:varnamelen // id is clear in context
+
 // DeleteInstance deletes a virtual machine.
+//
+//nolint:varnamelen // id is clear in context
 func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {

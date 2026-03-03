@@ -102,6 +102,7 @@ func (m *Manager) validateWithStructuredOutput(
 }
 
 // traverseTreeForStructuredOutput performs DFS with structured logging.
+//
 //nolint:funlen // tree traversal is inherently recursive and long
 func (m *Manager) traverseTreeForStructuredOutput(
 	node *TreeNode,
