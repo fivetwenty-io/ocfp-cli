@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
@@ -288,7 +289,6 @@ func (m *Manager) buildTripleSubnets(parentCIDR string) []subnetPreview {
 	// Skip first subnet, use next 3
 	subnets := allSubnets[1:]
 
-	azSuffixes := []string{"a", "b", "c"}
 	previews := make([]subnetPreview, 0, len(subnets))
 
 	for i, subnet := range subnets {
@@ -296,7 +296,7 @@ func (m *Manager) buildTripleSubnets(parentCIDR string) []subnetPreview {
 			Name: fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i),
 			CIDR: subnet,
 			Type: "public",
-			AZ:   m.options.Region + azSuffixes[i],
+			AZ:   config.FormatAvailabilityZone(m.options.Provider, m.options.Region, i),
 		})
 	}
 
@@ -325,7 +325,6 @@ func (m *Manager) buildStandardSubnets(parentCIDR string) []subnetPreview {
 	// Skip first subnet, use next 3
 	subnets := allSubnets[1:]
 
-	azSuffixes := []string{"a", "b", "c"}
 	previews := make([]subnetPreview, 0, tripleSubnetSplitCount)
 
 	for i := range tripleSubnetSplitCount {
@@ -333,7 +332,7 @@ func (m *Manager) buildStandardSubnets(parentCIDR string) []subnetPreview {
 			Name: fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i),
 			CIDR: subnets[i],
 			Type: "public",
-			AZ:   m.options.Region + azSuffixes[i],
+			AZ:   config.FormatAvailabilityZone(m.options.Provider, m.options.Region, i),
 		})
 	}
 
@@ -351,7 +350,6 @@ func (m *Manager) buildDefaultSubnets(parentCIDR string) []subnetPreview {
 	// Skip first subnet, use next 3
 	subnets := allSubnets[1:]
 
-	azSuffixes := []string{"a", "b", "c"}
 	previews := make([]subnetPreview, 0, tripleSubnetSplitCount)
 
 	for i := range tripleSubnetSplitCount {
@@ -359,7 +357,7 @@ func (m *Manager) buildDefaultSubnets(parentCIDR string) []subnetPreview {
 			Name: fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i),
 			CIDR: subnets[i],
 			Type: "public",
-			AZ:   m.options.Region + azSuffixes[i],
+			AZ:   config.FormatAvailabilityZone(m.options.Provider, m.options.Region, i),
 		})
 	}
 
