@@ -493,7 +493,11 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	}
 
 	// Wait for SSH port to be ready
-	m.log.Info("Waiting for SSH service to be ready...")
+	m.log.Infow("Waiting for SSH service to be ready",
+		"host", connDetails.Host,
+		"port", connDetails.Port,
+		"user", connDetails.User,
+		"key", connDetails.PrivateKeyPath)
 
 	err = m.waitForSSHReady(ctx, connDetails.Host, 3*time.Minute) //nolint:mnd
 	if err != nil {
@@ -524,16 +528,16 @@ func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time
 	retryInterval := 5 * time.Second     //nolint:mnd
 	maxRetryInterval := 30 * time.Second //nolint:mnd
 
+	m.log.Infof("Connecting to %s:22 (timeout: %v)", host, timeout)
+
 	attempt := 0
 	for time.Now().Before(deadline) {
 		attempt++
 
-		// Try to establish TCP connection to port 22
 		dialer := &net.Dialer{Timeout: 10 * time.Second} //nolint:mnd
 
 		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "22"))
 		if err == nil {
-			// Connection successful
 			_ = conn.Close()
 
 			m.log.Infof("SSH port 22 is reachable on %s after %d attempts", host, attempt)
@@ -541,13 +545,13 @@ func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time
 			return nil
 		}
 
-		// Log the connection attempt failure
 		remainingTime := time.Until(deadline)
 		if remainingTime <= 0 {
 			break
 		}
 
-		m.log.Debugf("SSH port 22 not ready yet (attempt %d): %v. Retrying in %v...", attempt, err, retryInterval)
+		m.log.Infof("SSH not ready (attempt %d, %v remaining): %v",
+			attempt, remainingTime.Truncate(time.Second), err)
 
 		// Wait before next attempt, respecting context cancellation
 		select {
@@ -595,11 +599,14 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},
 
+		// Phase 3.5-3.6: Linuxbrew installation and packages
+		{"brew_install", m.installBrew},
+		{"brew_packages", m.installBrewPackages},
+
 		// Phase 4: Git repositories (must run before binary_tools that depend on them)
 		{"git_repos", m.cloneGitRepositories},
 
 		// Phase 5: Package managers and tools
-		{"snap_packages", m.installSnapPackages},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
 		{"binary_tools", m.installBinaryTools},
@@ -659,6 +666,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},       // avoid dpkg lock issues
+		{"brew_install", m.installBrew},       // must complete before brew_packages
 		{"git_repos", m.cloneGitRepositories}, // must run before binary_tools that depend on git repos
 	}
 
@@ -672,7 +680,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		name string
 		fn   func(context.Context) error
 	}{
-		{"snap_packages", m.installSnapPackages},
+		{"brew_packages", m.installBrewPackages},
 		{"binary_tools", m.installBinaryTools},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
@@ -1689,6 +1697,19 @@ func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
 	for _, s := range snaps {
 		if s.Enabled {
 			enabled = append(enabled, s)
+		}
+	}
+
+	return enabled
+}
+
+// filterEnabledBrewPackages returns only enabled brew packages.
+func filterEnabledBrewPackages(pkgs []provision.BrewPackage) []provision.BrewPackage {
+	var enabled []provision.BrewPackage
+
+	for _, p := range pkgs {
+		if p.Enabled {
+			enabled = append(enabled, p)
 		}
 	}
 

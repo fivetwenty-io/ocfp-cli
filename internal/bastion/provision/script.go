@@ -1001,9 +1001,16 @@ func (sg *ScriptGenerator) addSystemProvisioningSections(provConfig ProvisionCon
 
 // addPackageManagementSections adds package installation and tool management.
 func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, provConfig ProvisionConfig, scriptParts *[]string) {
-	// Package installation
+	// Package installation (minimal APT)
 	packages := provConfig.GetPackages()
 	sg.appendIfNotEmpty(scriptParts, sg.GeneratePackageScript(packages))
+
+	// Linuxbrew installation
+	brewMgr := NewBrewManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewInstallScript(ctx))
+
+	// Brew package installation
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewPackageScript(ctx))
 
 	// Git repositories (MUST come before binary tools that depend on them)
 	repos := provConfig.GetGitRepositories()
@@ -1021,12 +1028,8 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	sg.addThirdPartyPackageManagers(ctx, scriptParts)
 }
 
-// addThirdPartyPackageManagers adds snap, CPAN, and other package managers.
+// addThirdPartyPackageManagers adds CPAN, advanced tools, and CF plugins.
 func (sg *ScriptGenerator) addThirdPartyPackageManagers(ctx context.Context, scriptParts *[]string) {
-	// Snap packages
-	snapMgr := NewSnapManager(sg.provider, sg.config)
-	sg.appendIfNotEmpty(scriptParts, snapMgr.GenerateSnapInstallScript(ctx))
-
 	// CPAN modules
 	cpanMgr := NewCPANManager(sg.provider, sg.config)
 	sg.appendIfNotEmpty(scriptParts, cpanMgr.GenerateCPANInstallScript(ctx))
