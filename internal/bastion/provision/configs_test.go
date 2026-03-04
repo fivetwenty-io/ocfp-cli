@@ -418,10 +418,12 @@ func TestGetEssentialPackages_BrewPrerequisitesOnly(t *testing.T) {
 		t.Error("Expected essential package group to be enabled")
 	}
 
-	// Should only contain the 6 brew prerequisites
+	// Should contain brew prerequisites + system dev libs for BOSH CPI builds
 	brewPrereqs := map[string]bool{
 		"build-essential": false, "procps": false, "curl": false,
 		"file": false, "git": false, "ca-certificates": false,
+		"ncurses-term": false, "zlib1g-dev": false, "libssl-dev": false,
+		"libffi-dev": false,
 	}
 
 	for _, pkg := range essential.Packages {

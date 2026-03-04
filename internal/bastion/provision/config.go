@@ -290,7 +290,7 @@ func (c *Config) getEssentialPackages() PackageGroup {
 		Enabled:     true,
 		Condition:   "",
 		DependsOn:   []string{},
-		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates", "ncurses-term"},
+		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates", "ncurses-term", "zlib1g-dev", "libssl-dev", "libffi-dev"},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
@@ -299,6 +299,8 @@ func (c *Config) getEssentialPackages() PackageGroup {
 
 // getCloudFoundryPackages returns CloudFoundry-related packages.
 // Dev libs moved to brew: zlib, libxslt, libxml2, sqlite3.
+// Note: zlib1g-dev is in essential packages (not here) because BOSH
+// create-env compiles Ruby/CPI from source using system paths, not brew.
 func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
