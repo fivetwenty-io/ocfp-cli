@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +17,8 @@ import (
 
 // CreateNetwork creates a new VPC network.
 func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -25,11 +28,11 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 
 	network := &computepb.Network{
 		Name:                  proto(req.Name),
-		Description:          proto(req.Description),
+		Description:           proto(req.Description),
 		AutoCreateSubnetworks: proto(false), // Use custom subnet mode
 	}
 
-	op, err := m.client.getNetworksClient().Insert(ctx, &computepb.InsertNetworkRequest{
+	op, err := m.client.getNetworksClient().Insert(ctx, &computepb.InsertNetworkRequest{ //nolint:varnamelen
 		Project:         projectID,
 		NetworkResource: network,
 	})
@@ -38,7 +41,8 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 	}
 
 	// Wait for operation to complete
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateNetwork.Wait")
 	}
 
@@ -49,8 +53,9 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 }
 
 // GetNetwork retrieves a VPC network by name or ID.
-func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Network, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -69,22 +74,25 @@ func (m *NetworkManager) GetNetwork(ctx context.Context, id string) (*cpi.Networ
 
 // ListNetworks lists VPC networks with optional filters.
 func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
 	var networks []*cpi.Network
+
 	it := m.client.getNetworksClient().List(ctx, &computepb.ListNetworksRequest{
 		Project: projectID,
 	})
 
 	for {
 		network, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListNetworks")
 		}
@@ -99,14 +107,15 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 }
 
 // DeleteNetwork deletes a VPC network.
-func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
-	op, err := m.client.getNetworksClient().Delete(ctx, &computepb.DeleteNetworkRequest{
+	op, err := m.client.getNetworksClient().Delete(ctx, &computepb.DeleteNetworkRequest{ //nolint:varnamelen
 		Project: projectID,
 		Network: id,
 	})
@@ -114,7 +123,8 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeleteNetwork")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteNetwork.Wait")
 	}
 
@@ -125,7 +135,8 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 
 // CreateSubnet creates a new subnetwork.
 func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -144,7 +155,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		PrivateIpGoogleAccess: proto(config.EnablePrivateGoogleAccess),
 	}
 
-	op, err := m.client.getSubnetworksClient().Insert(ctx, &computepb.InsertSubnetworkRequest{
+	op, err := m.client.getSubnetworksClient().Insert(ctx, &computepb.InsertSubnetworkRequest{ //nolint:varnamelen
 		Project:            projectID,
 		Region:             region,
 		SubnetworkResource: subnetwork,
@@ -153,7 +164,8 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		return nil, WrapGCPError(err, "CreateSubnet")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateSubnet.Wait")
 	}
 
@@ -163,8 +175,9 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 }
 
 // GetSubnet retrieves a subnetwork by name or ID.
-func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -186,7 +199,8 @@ func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet,
 
 // ListSubnets lists subnetworks in a network.
 func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -195,16 +209,18 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 	region := config.Region
 
 	var subnets []*cpi.Subnet
-	it := m.client.getSubnetworksClient().List(ctx, &computepb.ListSubnetworksRequest{
+
+	it := m.client.getSubnetworksClient().List(ctx, &computepb.ListSubnetworksRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 	})
 
 	for {
 		subnet, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListSubnets")
 		}
@@ -219,8 +235,9 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 }
 
 // DeleteSubnet deletes a subnetwork.
-func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -228,7 +245,7 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 	projectID := config.GetNetworkProject()
 	region := config.Region
 
-	op, err := m.client.getSubnetworksClient().Delete(ctx, &computepb.DeleteSubnetworkRequest{
+	op, err := m.client.getSubnetworksClient().Delete(ctx, &computepb.DeleteSubnetworkRequest{ //nolint:varnamelen
 		Project:    projectID,
 		Region:     region,
 		Subnetwork: id,
@@ -237,7 +254,8 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeleteSubnet")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteSubnet.Wait")
 	}
 
@@ -247,8 +265,11 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
 }
 
 // CreateSecurityGroup creates a firewall rule (GCP uses network tags for grouping).
+//
+//nolint:dupl // intentionally similar CPI implementation
 func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -274,25 +295,26 @@ func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.Creat
 		}
 		if rule.PortRangeMin > 0 && rule.PortRangeMax > 0 {
 			if rule.PortRangeMin == rule.PortRangeMax {
-				allowed.Ports = []string{fmt.Sprintf("%d", rule.PortRangeMin)}
+				allowed.Ports = []string{strconv.Itoa(rule.PortRangeMin)}
 			} else {
 				allowed.Ports = []string{fmt.Sprintf("%d-%d", rule.PortRangeMin, rule.PortRangeMax)}
 			}
 		}
+
 		firewall.Allowed = append(firewall.Allowed, allowed)
 
 		// Set source ranges for ingress
-		if rule.Direction == "ingress" && rule.RemoteIPCIDR != "" {
+		if rule.Direction == DirectionIngress && rule.RemoteIPCIDR != "" {
 			firewall.SourceRanges = append(firewall.SourceRanges, rule.RemoteIPCIDR)
 		}
 	}
 
 	// Default to allow from anywhere if no source ranges specified
-	if len(firewall.SourceRanges) == 0 {
+	if len(firewall.GetSourceRanges()) == 0 {
 		firewall.SourceRanges = []string{"0.0.0.0/0"}
 	}
 
-	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{
+	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{ //nolint:varnamelen
 		Project:          projectID,
 		FirewallResource: firewall,
 	})
@@ -300,7 +322,8 @@ func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.Creat
 		return nil, WrapGCPError(err, "CreateSecurityGroup")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateSecurityGroup.Wait")
 	}
 
@@ -310,8 +333,9 @@ func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.Creat
 }
 
 // GetSecurityGroup retrieves a firewall rule by name.
-func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -329,23 +353,26 @@ func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.
 }
 
 // ListSecurityGroups lists firewall rules.
-func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) ListSecurityGroups(ctx context.Context, _filters map[string]string) ([]*cpi.SecurityGroup, error) {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
 	var securityGroups []*cpi.SecurityGroup
+
 	it := m.client.getFirewallsClient().List(ctx, &computepb.ListFirewallsRequest{
 		Project: projectID,
 	})
 
 	for {
 		firewall, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListSecurityGroups")
 		}
@@ -357,14 +384,15 @@ func (m *NetworkManager) ListSecurityGroups(ctx context.Context, filters map[str
 }
 
 // DeleteSecurityGroup deletes a firewall rule.
-func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
 	projectID := m.client.getConfig().GetNetworkProject()
 
-	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{
+	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Firewall: id,
 	})
@@ -372,7 +400,8 @@ func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) err
 		return WrapGCPError(err, "DeleteSecurityGroup")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteSecurityGroup.Wait")
 	}
 
@@ -383,7 +412,8 @@ func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) err
 
 // CreatePublicIP reserves a static external IP address.
 func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -395,6 +425,7 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 	if req.Job != "" {
 		labels[JobLabel] = SanitizeLabel(req.Job)
 	}
+
 	if req.Index != "" {
 		labels[IndexLabel] = SanitizeLabel(req.Index)
 	}
@@ -405,7 +436,7 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 		Labels:      labels,
 	}
 
-	op, err := m.client.getAddressesClient().Insert(ctx, &computepb.InsertAddressRequest{
+	op, err := m.client.getAddressesClient().Insert(ctx, &computepb.InsertAddressRequest{ //nolint:varnamelen
 		Project:         projectID,
 		Region:          region,
 		AddressResource: address,
@@ -414,7 +445,8 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 		return nil, WrapGCPError(err, "CreatePublicIP")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreatePublicIP.Wait")
 	}
 
@@ -424,8 +456,9 @@ func (m *NetworkManager) CreatePublicIP(ctx context.Context, req *cpi.PublicIPRe
 }
 
 // GetPublicIP retrieves a public IP address by name.
-func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.PublicIP, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -447,7 +480,8 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.Publi
 
 // ListPublicIPs lists public IP addresses.
 func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -456,16 +490,18 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 	region := config.Region
 
 	var publicIPs []*cpi.PublicIP
-	it := m.client.getAddressesClient().List(ctx, &computepb.ListAddressesRequest{
+
+	it := m.client.getAddressesClient().List(ctx, &computepb.ListAddressesRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 	})
 
 	for {
 		address, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListPublicIPs")
 		}
@@ -480,8 +516,9 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 }
 
 // DeletePublicIP releases a public IP address.
-func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -489,7 +526,7 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
 	projectID := config.ProjectID
 	region := config.Region
 
-	op, err := m.client.getAddressesClient().Delete(ctx, &computepb.DeleteAddressRequest{
+	op, err := m.client.getAddressesClient().Delete(ctx, &computepb.DeleteAddressRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 		Address: id,
@@ -498,7 +535,8 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeletePublicIP")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeletePublicIP.Wait")
 	}
 
@@ -509,7 +547,8 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
 
 // AllocateFloatingIP allocates a floating (static) IP.
 func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -526,7 +565,7 @@ func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.Alloca
 		Labels:      labels,
 	}
 
-	op, err := m.client.getAddressesClient().Insert(ctx, &computepb.InsertAddressRequest{
+	op, err := m.client.getAddressesClient().Insert(ctx, &computepb.InsertAddressRequest{ //nolint:varnamelen
 		Project:         projectID,
 		Region:          region,
 		AddressResource: address,
@@ -535,7 +574,8 @@ func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.Alloca
 		return nil, WrapGCPError(err, "AllocateFloatingIP")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "AllocateFloatingIP.Wait")
 	}
 
@@ -545,8 +585,9 @@ func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.Alloca
 }
 
 // GetFloatingIP retrieves a floating IP by name.
-func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.FloatingIP, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -567,8 +608,9 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.Flo
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -577,16 +619,18 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 	region := config.Region
 
 	var floatingIPs []*cpi.FloatingIP
-	it := m.client.getAddressesClient().List(ctx, &computepb.ListAddressesRequest{
+
+	it := m.client.getAddressesClient().List(ctx, &computepb.ListAddressesRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 	})
 
 	for {
 		address, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListFloatingIPs")
 		}
@@ -600,7 +644,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 }
 
 // AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, instanceID string) error {
+func (m *NetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
 	// In GCP, this is done by updating the instance's access config
 	// This is a more complex operation that requires getting the instance,
 	// finding the network interface, and adding an access config
@@ -608,7 +652,7 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, i
 }
 
 // DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+func (m *NetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
 	// In GCP, this is done by removing the access config from the instance
 	return fmt.Errorf("%w: DisassociateFloatingIP - use instance network interface configuration", ErrNotImplemented)
 }
@@ -620,7 +664,8 @@ func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, id string) error
 
 // CreateRouter creates a Cloud Router.
 func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -635,7 +680,7 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 		Network: proto(networkURL),
 	}
 
-	op, err := m.client.getRoutersClient().Insert(ctx, &computepb.InsertRouterRequest{
+	op, err := m.client.getRoutersClient().Insert(ctx, &computepb.InsertRouterRequest{ //nolint:varnamelen
 		Project:        projectID,
 		Region:         region,
 		RouterResource: router,
@@ -644,7 +689,8 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 		return nil, WrapGCPError(err, "CreateRouter")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return nil, WrapGCPError(err, "CreateRouter.Wait")
 	}
 
@@ -654,8 +700,9 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 }
 
 // GetRouter retrieves a Cloud Router by name.
-func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -677,7 +724,8 @@ func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router,
 
 // ListRouters lists Cloud Routers.
 func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -686,16 +734,18 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 	region := config.Region
 
 	var routers []*cpi.Router
-	it := m.client.getRoutersClient().List(ctx, &computepb.ListRoutersRequest{
+
+	it := m.client.getRoutersClient().List(ctx, &computepb.ListRoutersRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 	})
 
 	for {
 		router, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListRouters")
 		}
@@ -707,7 +757,7 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 }
 
 // AttachRouterInterface attaches a subnet to a router.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) AttachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	// GCP Cloud Routers don't have explicit interface attachment like OpenStack
 	// They automatically route for networks they're associated with
 	// NAT configuration is done separately via Cloud NAT
@@ -715,13 +765,14 @@ func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID str
 }
 
 // DetachRouterInterface detaches a subnet from a router.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) DetachRouterInterface(_ctx context.Context, _routerID string, _subnetID string) error {
 	return fmt.Errorf("%w: DetachRouterInterface - use Cloud NAT configuration", ErrNotImplemented)
 }
 
 // DeleteRouter deletes a Cloud Router.
-func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
-	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //nolint:varnamelen
+	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -729,7 +780,7 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
 	projectID := config.GetNetworkProject()
 	region := config.Region
 
-	op, err := m.client.getRoutersClient().Delete(ctx, &computepb.DeleteRouterRequest{
+	op, err := m.client.getRoutersClient().Delete(ctx, &computepb.DeleteRouterRequest{ //nolint:varnamelen
 		Project: projectID,
 		Region:  region,
 		Router:  id,
@@ -738,7 +789,8 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
 		return WrapGCPError(err, "DeleteRouter")
 	}
 
-	if err := op.Wait(ctx); err != nil {
+	err = op.Wait(ctx)
+	if err != nil {
 		return WrapGCPError(err, "DeleteRouter.Wait")
 	}
 
@@ -748,52 +800,52 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
 }
 
 // CreateLoadBalancer creates a load balancer (delegates to LoadBalancerManager).
-func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetLoadBalancer retrieves a load balancer.
-func (m *NetworkManager) GetLoadBalancer(ctx context.Context, nameOrID string) (*cpi.LoadBalancer, error) {
+func (m *NetworkManager) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // ListLoadBalancers lists load balancers.
-func (m *NetworkManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
+func (m *NetworkManager) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // UpdateLoadBalancer updates a load balancer.
-func (m *NetworkManager) UpdateLoadBalancer(ctx context.Context, lb *cpi.LoadBalancer) error {
+func (m *NetworkManager) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // DeleteLoadBalancer deletes a load balancer.
-func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteLoadBalancer(_ctx context.Context, _id string) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *NetworkManager) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // AddBackendMember adds a member to a backend pool.
-func (m *NetworkManager) AddBackendMember(ctx context.Context, lbID string, member *cpi.BackendMember) error {
+func (m *NetworkManager) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // RemoveBackendMember removes a member from a backend pool.
-func (m *NetworkManager) RemoveBackendMember(ctx context.Context, lbID string, memberIP string) error {
+func (m *NetworkManager) RemoveBackendMember(_ctx context.Context, _lbID string, _memberIP string) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // ConfigureHealthCheck configures a health check for a load balancer.
-func (m *NetworkManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
+func (m *NetworkManager) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
 	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
 // GetLoadBalancerHealth retrieves health status for a load balancer.
-func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
 	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
 }
 
@@ -801,7 +853,7 @@ func (m *NetworkManager) GetLoadBalancerHealth(ctx context.Context, lbID string)
 
 func (m *NetworkManager) convertNetwork(network *computepb.Network) *cpi.Network {
 	return &cpi.Network{
-		ID:        fmt.Sprintf("%d", network.GetId()),
+		ID:        strconv.FormatUint(network.GetId(), 10),
 		Name:      network.GetName(),
 		State:     cpi.ResourceStateActive,
 		CreatedAt: ParseTimestamp(network.GetCreationTimestamp()),
@@ -810,7 +862,7 @@ func (m *NetworkManager) convertNetwork(network *computepb.Network) *cpi.Network
 
 func (m *NetworkManager) convertSubnet(subnet *computepb.Subnetwork) *cpi.Subnet {
 	return &cpi.Subnet{
-		ID:               fmt.Sprintf("%d", subnet.GetId()),
+		ID:               strconv.FormatUint(subnet.GetId(), 10),
 		Name:             subnet.GetName(),
 		NetworkID:        ExtractNameFromURL(subnet.GetNetwork()),
 		CIDR:             subnet.GetIpCidrRange(),
@@ -822,11 +874,12 @@ func (m *NetworkManager) convertSubnet(subnet *computepb.Subnetwork) *cpi.Subnet
 
 func (m *NetworkManager) convertFirewallToSecurityGroup(firewall *computepb.Firewall) *cpi.SecurityGroup {
 	var rules []*cpi.SecurityRule
+
 	for _, allowed := range firewall.GetAllowed() {
 		for _, port := range allowed.GetPorts() {
 			portMin, portMax := parsePortRange(port)
 			rules = append(rules, &cpi.SecurityRule{
-				Direction:    "ingress",
+				Direction:    DirectionIngress,
 				Protocol:     allowed.GetIPProtocol(),
 				PortRangeMin: portMin,
 				PortRangeMax: portMax,
@@ -835,7 +888,7 @@ func (m *NetworkManager) convertFirewallToSecurityGroup(firewall *computepb.Fire
 	}
 
 	return &cpi.SecurityGroup{
-		ID:          fmt.Sprintf("%d", firewall.GetId()),
+		ID:          strconv.FormatUint(firewall.GetId(), 10),
 		Name:        firewall.GetName(),
 		Description: firewall.GetDescription(),
 		NetworkID:   ExtractNameFromURL(firewall.GetNetwork()),
@@ -846,12 +899,12 @@ func (m *NetworkManager) convertFirewallToSecurityGroup(firewall *computepb.Fire
 
 func (m *NetworkManager) convertAddressToPublicIP(address *computepb.Address) *cpi.PublicIP {
 	status := "available"
-	if address.GetStatus() == "IN_USE" {
+	if address.GetStatus() == AddressStatusInUse {
 		status = "associated"
 	}
 
 	return &cpi.PublicIP{
-		ID:        fmt.Sprintf("%d", address.GetId()),
+		ID:        strconv.FormatUint(address.GetId(), 10),
 		Name:      address.GetName(),
 		IPAddress: address.GetAddress(),
 		Address:   address.GetAddress(),
@@ -865,12 +918,12 @@ func (m *NetworkManager) convertAddressToPublicIP(address *computepb.Address) *c
 
 func (m *NetworkManager) convertAddressToFloatingIP(address *computepb.Address) *cpi.FloatingIP {
 	status := "available"
-	if address.GetStatus() == "IN_USE" {
+	if address.GetStatus() == AddressStatusInUse {
 		status = "associated"
 	}
 
 	return &cpi.FloatingIP{
-		ID:        fmt.Sprintf("%d", address.GetId()),
+		ID:        strconv.FormatUint(address.GetId(), 10),
 		Address:   address.GetAddress(),
 		Status:    status,
 		Tags:      address.GetLabels(),
@@ -880,7 +933,7 @@ func (m *NetworkManager) convertAddressToFloatingIP(address *computepb.Address) 
 
 func (m *NetworkManager) convertRouter(router *computepb.Router) *cpi.Router {
 	return &cpi.Router{
-		ID:        fmt.Sprintf("%d", router.GetId()),
+		ID:        strconv.FormatUint(router.GetId(), 10),
 		Name:      router.GetName(),
 		NetworkID: ExtractNameFromURL(router.GetNetwork()),
 		State:     cpi.ResourceStateActive,
@@ -891,15 +944,20 @@ func (m *NetworkManager) convertRouter(router *computepb.Router) *cpi.Router {
 func parsePortRange(port string) (int, int) {
 	if strings.Contains(port, "-") {
 		parts := strings.Split(port, "-")
-		if len(parts) == 2 {
-			var min, max int
-			fmt.Sscanf(parts[0], "%d", &min)
-			fmt.Sscanf(parts[1], "%d", &max)
-			return min, max
+		if len(parts) == 2 { //nolint:mnd
+			var portMin, portMax int
+
+			_, _ = fmt.Sscanf(parts[0], "%d", &portMin)
+			_, _ = fmt.Sscanf(parts[1], "%d", &portMax)
+
+			return portMin, portMax
 		}
 	}
+
 	var p int
-	fmt.Sscanf(port, "%d", &p)
+
+	_, _ = fmt.Sscanf(port, "%d", &p)
+
 	return p, p
 }
 
@@ -908,10 +966,12 @@ func matchesFilters(description string, filters map[string]string) bool {
 	if len(filters) == 0 {
 		return true
 	}
+
 	for _, v := range filters {
 		if strings.Contains(description, v) {
 			return true
 		}
 	}
+
 	return false
 }

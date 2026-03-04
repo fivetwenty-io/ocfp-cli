@@ -55,7 +55,7 @@ func (cfm *CFPluginManager) GetCFPlugins() []CFPlugin {
 }
 
 // GenerateCFPluginInstallScript generates script for CF plugin installation.
-func (cfm *CFPluginManager) GenerateCFPluginInstallScript(ctx context.Context) string {
+func (cfm *CFPluginManager) GenerateCFPluginInstallScript(_ctx context.Context) string {
 	plugins := cfm.GetCFPlugins()
 	if len(plugins) == 0 {
 		return ""

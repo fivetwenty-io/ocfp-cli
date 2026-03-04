@@ -9,13 +9,18 @@ import (
 )
 
 const (
-	// Path parsing requirements.
-	MinVaultPathParts  = 3
+	// MinVaultPathParts is the minimum number of path segments in a valid vault path.
+	MinVaultPathParts = 3
+	// MinConfigPathParts is the minimum number of path segments in a valid config path.
 	MinConfigPathParts = 4
-	MinNetworkParts    = 4
-	MaxPathParts       = 5
-	NetworkPartsForIP  = 2
-	MaxPathsCapacity   = 30
+	// MinNetworkParts is the minimum number of parts in a network address.
+	MinNetworkParts = 4
+	// MaxPathParts is the maximum number of path segments supported.
+	MaxPathParts = 5
+	// NetworkPartsForIP is the number of parts when splitting an IP address for network derivation.
+	NetworkPartsForIP = 2
+	// MaxPathsCapacity is the initial slice capacity for path collection builders.
+	MaxPathsCapacity = 30
 )
 
 // PathBuilder provides utilities for constructing vault paths according to OCFP conventions
@@ -46,6 +51,13 @@ const (
 )
 
 const inceptionComponent = "inception"
+
+// Phase name constants for provider operations.
+const (
+	PhaseCertificates = "certificates"
+	PhasePublicIPs    = "public-ips"
+	PhaseConfig       = "config"
+)
 
 // GetConfigPath returns the base configuration path for a bloc
 // Format: secret/config/{bloc}.
@@ -125,6 +137,18 @@ func (pb *PathBuilder) GetBOSHPath(envType string) string {
 // Format: secret/config/{bloc}/{env-type}/bosh/iam.
 func (pb *PathBuilder) GetIAMPath(envType string) string {
 	return filepath.Join(pb.GetBOSHPath(envType), "iam")
+}
+
+// GetIAMBoshPath returns the IAM BOSH credentials path
+// Format: secret/config/{bloc}/{env-type}/bosh/iam/bosh.
+func (pb *PathBuilder) GetIAMBoshPath(envType string) string {
+	return filepath.Join(pb.GetIAMPath(envType), "bosh")
+}
+
+// GetIAMS3Path returns the IAM S3 credentials path
+// Format: secret/config/{bloc}/{env-type}/bosh/iam/s3.
+func (pb *PathBuilder) GetIAMS3Path(envType string) string {
+	return filepath.Join(pb.GetIAMPath(envType), "s3")
 }
 
 // GetS3Path returns the S3 credentials path
@@ -386,8 +410,10 @@ func (pb *PathBuilder) setComponentInfo(parts []string, info *PathInfo) {
 // HostnameFormatter is a function type that generates database hostnames.
 type HostnameFormatter func(envType string) string
 
-// BuildDatabasesForEnv returns database configuration for an environment.
-// The hostnameFormatter function allows provider-specific hostname generation.
+// BuildDatabasesForEnv constructs database configuration maps for a given environment type
+// using the provided hostname formatter to generate database hostnames.
+//
+//nolint:gosec // map keys contain "password" but values are Genesis template placeholders, not real secrets
 func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
 	databases := make(map[string]map[string]interface{})
 

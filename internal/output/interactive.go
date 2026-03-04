@@ -27,7 +27,7 @@ type InteractiveRenderer struct {
 	writtenSubtasks map[string]map[string]subtaskState
 }
 
-// subtaskState tracks the last written state of a subtask
+// subtaskState tracks the last written state of a subtask.
 type subtaskState struct {
 	current int
 	total   int
@@ -50,7 +50,7 @@ type InteractiveConfig struct {
 }
 
 // NewInteractiveRenderer creates a new interactive renderer with terminal capability detection.
-func NewInteractiveRenderer(w io.Writer) *InteractiveRenderer {
+func NewInteractiveRenderer(w io.Writer) *InteractiveRenderer { //nolint:varnamelen
 	log := logger.Get()
 
 	// Detect terminal capabilities
@@ -59,12 +59,12 @@ func NewInteractiveRenderer(w io.Writer) *InteractiveRenderer {
 	// Create default configuration based on environment
 	config := &InteractiveConfig{
 		UseColor:       env.SupportsANSI,
-		UseUnicode:     env.SupportsANSI, // Assume Unicode support with ANSI
-		ProgressWidth:  30,
-		UpdateInterval: 100 * time.Millisecond,
+		UseUnicode:     env.SupportsANSI,       // Assume Unicode support with ANSI
+		ProgressWidth:  30,                     //nolint:mnd
+		UpdateInterval: 100 * time.Millisecond, //nolint:mnd
 	}
 
-	r := &InteractiveRenderer{
+	r := &InteractiveRenderer{ //nolint:varnamelen
 		writer:          w,
 		log:             log,
 		config:          config,
@@ -108,7 +108,8 @@ func (r *InteractiveRenderer) PhaseStart(info PhaseInfo) error {
 		line = Yellow(line)
 	}
 
-	if _, err := r.writer.Write([]byte(line)); err != nil {
+	_, err := r.writer.Write([]byte(line))
+	if err != nil {
 		return fmt.Errorf("failed to write phase start: %w", err)
 	}
 
@@ -121,7 +122,7 @@ func (r *InteractiveRenderer) PhaseProgress(progress ProgressInfo) error {
 	defer r.mu.Unlock()
 
 	if r.currentPhase == nil {
-		return fmt.Errorf("no active phase for progress update")
+		return ErrNoActivePhase
 	}
 
 	phaseID := r.currentPhase.ID
@@ -142,7 +143,8 @@ func (r *InteractiveRenderer) PhaseProgress(progress ProgressInfo) error {
 	}
 
 	// Write subtask tree (phase status line is written at PhaseStart and PhaseComplete only)
-	if err := r.writeSubtaskTree(phaseID); err != nil {
+	err := r.writeSubtaskTree(phaseID)
+	if err != nil {
 		return err
 	}
 
@@ -165,7 +167,8 @@ func (r *InteractiveRenderer) PhaseComplete(info PhaseInfo) error {
 		line = Green(line)
 	}
 
-	if _, err := r.writer.Write([]byte(line)); err != nil {
+	_, err := r.writer.Write([]byte(line))
+	if err != nil {
 		return fmt.Errorf("failed to write phase complete: %w", err)
 	}
 
@@ -197,7 +200,8 @@ func (r *InteractiveRenderer) PhaseFailed(info PhaseInfo, err error) error {
 		line = Red(line)
 	}
 
-	if _, writeErr := r.writer.Write([]byte(line)); writeErr != nil {
+	_, writeErr := r.writer.Write([]byte(line))
+	if writeErr != nil {
 		return fmt.Errorf("failed to write phase failure: %w", writeErr)
 	}
 
@@ -224,7 +228,8 @@ func (r *InteractiveRenderer) PhaseSkipped(info PhaseInfo, reason string) error 
 		line = Gray(line)
 	}
 
-	if _, err := r.writer.Write([]byte(line)); err != nil {
+	_, err := r.writer.Write([]byte(line))
+	if err != nil {
 		return fmt.Errorf("failed to write phase skipped: %w", err)
 	}
 
@@ -243,69 +248,19 @@ func (r *InteractiveRenderer) Finalize(summary Summary) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Write separator
-	separator := "===== Summary =====\n"
-	if _, err := r.writer.Write([]byte(separator)); err != nil {
-		return fmt.Errorf("failed to write separator: %w", err)
+	err := r.writeLinef("===== Summary =====\n")
+	if err != nil {
+		return err
 	}
 
-	// Status
-	status := "Success"
-	if !summary.Success {
-		status = "Failed"
-	}
-	line := fmt.Sprintf("Status: %s\n", status)
-	if r.config.UseColor {
-		if summary.Success {
-			line = Green(line)
-		} else {
-			line = Red(line)
-		}
-	}
-	if _, err := r.writer.Write([]byte(line)); err != nil {
-		return fmt.Errorf("failed to write status: %w", err)
+	err = r.writeSummaryStatus(summary)
+	if err != nil {
+		return err
 	}
 
-	// Duration
-	line = fmt.Sprintf("Duration: %s\n", r.formatDuration(summary.Duration))
-	if _, err := r.writer.Write([]byte(line)); err != nil {
-		return fmt.Errorf("failed to write duration: %w", err)
-	}
-
-	// Phase counts
-	line = fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases)
-	if _, err := r.writer.Write([]byte(line)); err != nil {
-		return fmt.Errorf("failed to write completed count: %w", err)
-	}
-
-	line = fmt.Sprintf("Phases failed: %d\n", summary.FailedPhases)
-	if _, err := r.writer.Write([]byte(line)); err != nil {
-		return fmt.Errorf("failed to write failed count: %w", err)
-	}
-
-	if summary.SkippedPhases > 0 {
-		line = fmt.Sprintf("Phases skipped: %d\n", summary.SkippedPhases)
-		if _, err := r.writer.Write([]byte(line)); err != nil {
-			return fmt.Errorf("failed to write skipped count: %w", err)
-		}
-	}
-
-	// Include errors if any
-	if len(summary.Errors) > 0 {
-		errHeader := "\nErrors:\n"
-		if _, err := r.writer.Write([]byte(errHeader)); err != nil {
-			return fmt.Errorf("failed to write error header: %w", err)
-		}
-
-		for _, errMsg := range summary.Errors {
-			line = fmt.Sprintf("  - %s\n", errMsg)
-			if r.config.UseColor {
-				line = Red(line)
-			}
-			if _, err := r.writer.Write([]byte(line)); err != nil {
-				return fmt.Errorf("failed to write error: %w", err)
-			}
-		}
+	err = r.writeSummaryErrors(summary.Errors)
+	if err != nil {
+		return err
 	}
 
 	r.log.Infow("Operation finalized",
@@ -330,6 +285,89 @@ func (r *InteractiveRenderer) Close() error {
 	return nil
 }
 
+// writeLinef writes a pre-formatted line to the renderer's writer.
+func (r *InteractiveRenderer) writeLinef(line string) error {
+	_, err := r.writer.Write([]byte(line))
+	if err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	return nil
+}
+
+// writeSummaryErrors writes error details to the summary output.
+func (r *InteractiveRenderer) writeSummaryErrors(errors []string) error {
+	if len(errors) == 0 {
+		return nil
+	}
+
+	err := r.writeLinef("\nErrors:\n")
+	if err != nil {
+		return err
+	}
+
+	for _, errMsg := range errors {
+		line := fmt.Sprintf("  - %s\n", errMsg)
+		if r.config.UseColor {
+			line = Red(line)
+		}
+
+		err = r.writeLinef(line)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeSummaryStatus writes the status, duration, and phase count lines.
+func (r *InteractiveRenderer) writeSummaryStatus(summary Summary) error {
+	statusText := "Success"
+	if !summary.Success {
+		statusText = "Failed"
+	}
+
+	statusLine := fmt.Sprintf("Status: %s\n", statusText)
+
+	if r.config.UseColor {
+		if summary.Success {
+			statusLine = Green(statusLine)
+		} else {
+			statusLine = Red(statusLine)
+		}
+	}
+
+	err := r.writeLinef(statusLine)
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Duration: %s\n", r.formatDuration(summary.Duration)))
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases))
+	if err != nil {
+		return err
+	}
+
+	err = r.writeLinef(fmt.Sprintf("Phases failed: %d\n", summary.FailedPhases))
+	if err != nil {
+		return err
+	}
+
+	if summary.SkippedPhases > 0 {
+		err = r.writeLinef(fmt.Sprintf("Phases skipped: %d\n", summary.SkippedPhases))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Helper methods
 
 // updateSubtask updates or adds a subtask to the phase's subtask list.
@@ -345,6 +383,7 @@ func (r *InteractiveRenderer) updateSubtask(phaseID string, progress ProgressInf
 
 	// Find existing subtask by category and item
 	found := false
+
 	for i, st := range subtasks {
 		if st.category == progress.Category && st.item == progress.Item {
 			// Update existing
@@ -352,6 +391,7 @@ func (r *InteractiveRenderer) updateSubtask(phaseID string, progress ProgressInf
 			subtasks[i].total = progress.Total
 			subtasks[i].status = actualStatus
 			found = true
+
 			break
 		}
 	}
@@ -371,6 +411,8 @@ func (r *InteractiveRenderer) updateSubtask(phaseID string, progress ProgressInf
 }
 
 // writeSubtaskTree writes only new or changed subtasks to prevent repetition.
+//
+//nolint:funlen // subtask tree rendering with change tracking, colors, and tree characters
 func (r *InteractiveRenderer) writeSubtaskTree(phaseID string) error {
 	if r.currentPhase == nil {
 		return nil
@@ -393,6 +435,7 @@ func (r *InteractiveRenderer) writeSubtaskTree(phaseID string) error {
 	for category, items := range categoryMap {
 		// First pass: collect items that need to be written
 		var itemsToWrite []subtaskInfo
+
 		for _, item := range items {
 			key := category + ":" + item.item
 
@@ -434,7 +477,8 @@ func (r *InteractiveRenderer) writeSubtaskTree(phaseID string) error {
 				line = r.colorizeStatus(line, item.status)
 			}
 
-			if _, err := r.writer.Write([]byte(line)); err != nil {
+			_, err := r.writer.Write([]byte(line))
+			if err != nil {
 				return fmt.Errorf("failed to write subtask: %w", err)
 			}
 
@@ -456,9 +500,9 @@ func (r *InteractiveRenderer) statusIcon(status Status) string {
 	case StatusRunning:
 		return "⟳"
 	case StatusCompleted:
-		return "✓"
+		return IconCheck
 	case StatusFailed:
-		return "✗"
+		return IconCross
 	case StatusSkipped:
 		return "⤷"
 	case StatusPending:
@@ -495,11 +539,12 @@ func (r *InteractiveRenderer) shouldLogMilestone(percentage float64) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 // formatDuration formats a duration in a human-readable format.
-func (r *InteractiveRenderer) formatDuration(d time.Duration) string {
+func (r *InteractiveRenderer) formatDuration(d time.Duration) string { //nolint:varnamelen
 	// Round to nearest second for readability
 	d = d.Round(time.Second)
 
@@ -508,14 +553,14 @@ func (r *InteractiveRenderer) formatDuration(d time.Duration) string {
 	}
 
 	minutes := int(d.Minutes())
-	seconds := int(d.Seconds()) - (minutes * 60)
+	seconds := int(d.Seconds()) - (minutes * 60) //nolint:mnd
 
-	if minutes < 60 {
+	if minutes < 60 { //nolint:mnd
 		return fmt.Sprintf("%dm%02ds", minutes, seconds)
 	}
 
-	hours := minutes / 60
-	minutes = minutes % 60
+	hours := minutes / 60 //nolint:mnd
+	minutes %= 60
 
 	return fmt.Sprintf("%dh%02dm%02ds", hours, minutes, seconds)
 }

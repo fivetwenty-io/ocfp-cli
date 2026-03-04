@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 )
 
 // CreateVolume creates a new managed disk.
+//
+//nolint:funlen // Azure disk creation with storage type mapping is inherently detailed
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	if req == nil {
 		return nil, ErrInvalidRequest
@@ -30,31 +33,13 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		return nil, err
 	}
 
-	// Determine disk size
-	sizeGB := req.SizeGB
-	if sizeGB == 0 {
-		sizeGB = req.Size
-	}
-	if sizeGB == 0 {
-		sizeGB = 32 // Default 32 GB
+	sizeGB := resolveVolumeSize(req)
+
+	if sizeGB > math.MaxInt32 {
+		return nil, fmt.Errorf("disk size %d GB exceeds maximum int32 value: %w", sizeGB, ErrInvalidRequest)
 	}
 
-	// Determine storage account type
-	storageType := armcompute.DiskStorageAccountTypesPremiumLRS
-	volumeType := req.VolumeType
-	if volumeType == "" {
-		volumeType = req.Type
-	}
-	switch strings.ToLower(volumeType) {
-	case "standard", "standard_lrs":
-		storageType = armcompute.DiskStorageAccountTypesStandardLRS
-	case "standardssd", "standard_ssd", "standardssd_lrs":
-		storageType = armcompute.DiskStorageAccountTypesStandardSSDLRS
-	case "premium", "premium_lrs":
-		storageType = armcompute.DiskStorageAccountTypesPremiumLRS
-	case "ultra", "ultrassd_lrs":
-		storageType = armcompute.DiskStorageAccountTypesUltraSSDLRS
-	}
+	storageType := resolveStorageType(req)
 
 	// Prepare disk parameters
 	diskParams := armcompute.Disk{
@@ -63,7 +48,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 			CreationData: &armcompute.CreationData{
 				CreateOption: to.Ptr(armcompute.DiskCreateOptionEmpty),
 			},
-			DiskSizeGB: to.Ptr(int32(sizeGB)),
+			DiskSizeGB: to.Ptr(int32(sizeGB)), //nolint:gosec // bounds checked above
 		},
 		SKU: &armcompute.DiskSKU{
 			Name: to.Ptr(storageType),
@@ -104,8 +89,50 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	return m.diskToVolume(&result.Disk), nil
 }
 
+// defaultDiskSizeGB is the default managed disk size in gigabytes.
+const defaultDiskSizeGB = 32
+
+// resolveVolumeSize determines the disk size from the request, defaulting to defaultDiskSizeGB.
+func resolveVolumeSize(req *cpi.VolumeRequest) int {
+	if req.SizeGB != 0 {
+		return req.SizeGB
+	}
+
+	if req.Size != 0 {
+		return req.Size
+	}
+
+	return defaultDiskSizeGB
+}
+
+// resolveStorageType determines the Azure storage account type from the request.
+func resolveStorageType(req *cpi.VolumeRequest) armcompute.DiskStorageAccountTypes {
+	storageTypeMap := map[string]armcompute.DiskStorageAccountTypes{
+		"standard":        armcompute.DiskStorageAccountTypesStandardLRS,
+		"standard_lrs":    armcompute.DiskStorageAccountTypesStandardLRS,
+		"standardssd":     armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"standard_ssd":    armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"standardssd_lrs": armcompute.DiskStorageAccountTypesStandardSSDLRS,
+		"premium":         armcompute.DiskStorageAccountTypesPremiumLRS,
+		"premium_lrs":     armcompute.DiskStorageAccountTypesPremiumLRS,
+		"ultra":           armcompute.DiskStorageAccountTypesUltraSSDLRS,
+		"ultrassd_lrs":    armcompute.DiskStorageAccountTypesUltraSSDLRS,
+	}
+
+	volumeType := req.VolumeType
+	if volumeType == "" {
+		volumeType = req.Type
+	}
+
+	if st, ok := storageTypeMap[strings.ToLower(volumeType)]; ok {
+		return st
+	}
+
+	return armcompute.DiskStorageAccountTypesPremiumLRS
+}
+
 // GetVolume retrieves a managed disk by ID or name.
-func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -131,6 +158,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 	pager := m.client.disksClient.NewListByResourceGroupPager(m.client.getResourceGroup(), nil)
 
 	var volumes []*cpi.Volume
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -149,7 +177,9 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 }
 
 // AttachVolume attaches a managed disk to a virtual machine.
-func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
+//
+//nolint:funlen // volume attachment requires fetching both resources and updating VM
+func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, _device string) error {
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -161,22 +191,23 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 	// Get the disk
 	disk, err := m.client.disksClient.Get(ctx, m.client.getResourceGroup(), diskName, nil)
 	if err != nil {
-		return WrapAzureError(err, "AttachVolume.GetDisk")
+		return WrapAzureError(err, "AttachVolume.GetDisk") //nolint:varnamelen // vm is clear in context
 	}
 
 	// Get the VM
-	vm, err := m.client.virtualMachinesClient.Get(ctx, m.client.getResourceGroup(), vmName, nil)
+	vm, err := m.client.virtualMachinesClient.Get(ctx, m.client.getResourceGroup(), vmName, nil) //nolint:varnamelen
 	if err != nil {
 		return WrapAzureError(err, "AttachVolume.GetVM")
 	}
 
 	// Add the disk to the VM's data disks
 	if vm.Properties == nil || vm.Properties.StorageProfile == nil {
-		return fmt.Errorf("VM %s has no storage profile", vmName)
+		return fmt.Errorf("%w: %s", ErrVMNoStorageProfile, vmName)
 	}
 
 	// Determine next available LUN
 	lun := int32(0)
+
 	if vm.Properties.StorageProfile.DataDisks != nil {
 		for _, dd := range vm.Properties.StorageProfile.DataDisks {
 			if dd.Lun != nil && *dd.Lun >= lun {
@@ -226,32 +257,36 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 		return err
 	}
 
-	diskName := ExtractResourceName(volumeID)
+	diskName := ExtractResourceName(volumeID) //nolint:varnamelen // vm is clear in context
 	vmName := ExtractResourceName(instanceID)
 
 	// Get the VM
-	vm, err := m.client.virtualMachinesClient.Get(ctx, m.client.getResourceGroup(), vmName, nil)
+	vm, err := m.client.virtualMachinesClient.Get(ctx, m.client.getResourceGroup(), vmName, nil) //nolint:varnamelen
 	if err != nil {
 		return WrapAzureError(err, "DetachVolume.GetVM")
 	}
 
 	if vm.Properties == nil || vm.Properties.StorageProfile == nil || vm.Properties.StorageProfile.DataDisks == nil {
-		return fmt.Errorf("VM %s has no data disks", vmName)
+		return fmt.Errorf("%w: %s", ErrVMNoDataDisks, vmName)
 	}
 
 	// Find and remove the disk
-	var newDataDisks []*armcompute.DataDisk
+	var newDataDisks []*armcompute.DataDisk //nolint:varnamelen // dd is clear in context
+
 	found := false
-	for _, dd := range vm.Properties.StorageProfile.DataDisks {
+
+	for _, dd := range vm.Properties.StorageProfile.DataDisks { //nolint:varnamelen
 		if dd.Name != nil && *dd.Name == diskName {
 			found = true
+
 			continue
 		}
+
 		newDataDisks = append(newDataDisks, dd)
 	}
 
 	if !found {
-		return fmt.Errorf("disk %s not attached to VM %s", diskName, vmName)
+		return fmt.Errorf("%w: %s on %s", ErrDiskNotAttached, diskName, vmName)
 	}
 
 	vm.Properties.StorageProfile.DataDisks = newDataDisks
@@ -279,7 +314,7 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 }
 
 // ResizeVolume resizes a managed disk.
-func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) error {
+func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -296,7 +331,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 	// Update disk size
 	diskUpdate := armcompute.DiskUpdate{
 		Properties: &armcompute.DiskUpdateProperties{
-			DiskSizeGB: to.Ptr(int32(size)),
+			DiskSizeGB: to.Ptr(int32(size)), //nolint:gosec // disk size is a small config value
 		},
 	}
 
@@ -316,7 +351,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 }
 
 // DeleteVolume deletes a managed disk.
-func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error {
+func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -383,11 +418,11 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 
 	logger.Infow("Created snapshot", "name", name, "source", diskName)
 
-	return m.snapshotToSnapshot(&result.Snapshot), nil
+	return m.snapshotToSnapshot(&result.Snapshot), nil //nolint:varnamelen // id is clear in context
 }
 
 // GetSnapshot retrieves a snapshot by ID or name.
-func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) {
+func (m *StorageManager) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -413,6 +448,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 	pager := m.client.snapshotsClient.NewListByResourceGroupPager(m.client.getResourceGroup(), nil)
 
 	var snapshots []*cpi.Snapshot
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -442,7 +478,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 }
 
 // DeleteSnapshot deletes a snapshot.
-func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
+func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -477,7 +513,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 	}
 
 	// Storage account names must be globally unique and 3-24 characters
-	accountName := SanitizeResourceName(req.Name, 24)
+	accountName := SanitizeResourceName(req.Name, 24) //nolint:mnd
 	accountName = strings.ToLower(accountName)
 
 	// Prepare storage account parameters
@@ -488,9 +524,9 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 			Name: to.Ptr(armstorage.SKUNameStandardLRS),
 		},
 		Properties: &armstorage.AccountPropertiesCreateParameters{
-			AccessTier:            to.Ptr(armstorage.AccessTierHot),
+			AccessTier:             to.Ptr(armstorage.AccessTierHot),
 			EnableHTTPSTrafficOnly: to.Ptr(true),
-			MinimumTLSVersion:     to.Ptr(armstorage.MinimumTLSVersionTLS12),
+			MinimumTLSVersion:      to.Ptr(armstorage.MinimumTLSVersionTLS12),
 		},
 		Tags: BuildTags(MergeTags(m.client.config.DefaultTags, req.Tags)),
 	}
@@ -513,6 +549,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 
 	// Create a default container
 	containerName := "data"
+
 	_, err = m.client.blobContainersClient.Create(
 		ctx,
 		m.client.getResourceGroup(),
@@ -557,6 +594,7 @@ func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error)
 	pager := m.client.storageAccountsClient.NewListByResourceGroupPager(m.client.getResourceGroup(), nil)
 
 	var buckets []*cpi.Bucket
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -591,21 +629,21 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 }
 
 // EmptyBucket empties all containers in a storage account.
-func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
+func (m *StorageManager) EmptyBucket(_ctx context.Context, _name string) error {
 	// This would require listing and deleting all blobs
 	// For now, return not implemented
 	return ErrNotImplemented
 }
 
 // IsBucketEmpty checks if a storage account has any blobs.
-func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+func (m *StorageManager) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
 	// This would require listing blobs
 	// For now, return not implemented
 	return false, ErrNotImplemented
 }
 
 // CreateCredentialsGroup creates a credentials group (not directly applicable to Azure).
-func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	// Azure uses storage account keys or SAS tokens for access
 	// This could be implemented as generating SAS tokens
 	return nil, ErrNotImplemented
@@ -660,7 +698,7 @@ func (m *StorageManager) snapshotToSnapshot(snap *armcompute.Snapshot) *cpi.Snap
 
 	if snap.Properties != nil {
 		snapshot.Size = int(DerefInt32(snap.Properties.DiskSizeGB))
-		snapshot.State = MapProvisioningStateToResourceState(string(*snap.Properties.ProvisioningState))
+		snapshot.State = MapProvisioningStateToResourceState(*snap.Properties.ProvisioningState)
 
 		if snap.Properties.CreationData != nil && snap.Properties.CreationData.SourceResourceID != nil {
 			snapshot.VolumeID = DerefString(snap.Properties.CreationData.SourceResourceID)
@@ -696,7 +734,8 @@ func matchesVolumeFilters(tags map[string]string, filters map[string]string) boo
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tags[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tags[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}
@@ -710,7 +749,8 @@ func matchesSnapshotFilters(tags map[string]string, filters map[string]string) b
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tags[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tags[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -20,40 +19,62 @@ import (
 )
 
 const (
-	// Resource discovery buffer sizes.
-	InitialResourcesBufferSize   = 16 // Initial buffer for discovered resources
-	CloudResourcesBufferSize     = 32 // Buffer for cloud resource discovery
-	NukeModeResourcesBufferSize  = 64 // Buffer for nuke mode resources
-	StateResourcesBufferInitSize = 0  // Dynamic sizing based on state resources length
+	// InitialResourcesBufferSize is the initial buffer capacity for discovered resources.
+	InitialResourcesBufferSize = 16
 
-	// String split expectations.
-	ExpectedResourceKeyParts = 2 // Expected parts when splitting resource keys
+	// CloudResourcesBufferSize is the buffer capacity for cloud resource discovery.
+	CloudResourcesBufferSize = 32
 
-	// Retry configuration for resource deletion.
-	MaxRetryAttempts       = 3                // Maximum retry attempts for 409 conflicts
-	InitialRetryDelay      = 5 * time.Second  // Initial retry delay
-	MaxRetryDelay          = 30 * time.Second // Maximum retry delay
-	RetryDelayMultiplier   = 2                // Exponential backoff multiplier
-	ConflictErrorIndicator = "409"            // HTTP 409 Conflict indicator in error messages
+	// NukeModeResourcesBufferSize is the buffer capacity for nuke mode resource discovery.
+	NukeModeResourcesBufferSize = 64
+	// StateResourcesBufferInitSize is the initial buffer size for state-based resource lists.
+	StateResourcesBufferInitSize = 0
 
-	// Teardown order priorities (reverse of bootstrap order).
+	// ExpectedResourceKeyParts is the expected number of parts when splitting resource keys.
+	ExpectedResourceKeyParts = 2
+
+	// MaxRetryAttempts is the maximum number of retry attempts for 409 conflict errors.
+	MaxRetryAttempts = 3
+	// InitialRetryDelay is the initial delay before the first retry on conflict errors.
+	InitialRetryDelay = 5 * time.Second
+	// MaxRetryDelay is the maximum delay between retry attempts.
+	MaxRetryDelay = 30 * time.Second
+	// RetryDelayMultiplier is the multiplier applied to the delay between successive retries.
+	RetryDelayMultiplier = 2
+	// ConflictErrorIndicator is the HTTP status code string indicating a conflict error.
+	ConflictErrorIndicator = "409"
+
+	// LoadBalancerPriority defines the teardown order for load balancers (deleted first).
+	// Teardown order priorities are the reverse of bootstrap order.
 	// CRITICAL: Instances and NICs must be deleted BEFORE security groups to avoid 409 conflicts.
-	LoadBalancerPriority     = 1  // Delete load balancers first (may reference instances)
-	InstancePriority         = 2  // Delete instances early (to release volumes, NICs, security groups)
-	NetworkInterfacePriority = 3  // Delete network interfaces (after instances, before security groups)
-	BucketPriority           = 4  // Delete buckets (reverse of bootstrap step 8)
-	SnapshotPriority         = 5  // Delete snapshots before volumes
-	VolumePriority           = 6  // Delete volumes (reverse of bootstrap step 6)
-	KeyPairPriority          = 7  // Delete key pairs (reverse of bootstrap step 5)
-	FloatingIPPriority       = 8  // Delete floating/public IPs (reverse of bootstrap step 4)
-	SecurityGroupPriority    = 9  // Delete security groups (after instances/NICs freed them)
-	SubnetRouterPriority     = 10 // Delete subnets and routers (reverse of bootstrap step 2)
-	NetworkPriority          = 11 // Delete networks last (reverse of bootstrap step 1)
+	LoadBalancerPriority = 1
+	// InstancePriority is the teardown order for compute instances.
+	InstancePriority = 2
+	// NetworkInterfacePriority is the teardown order for network interfaces.
+	NetworkInterfacePriority = 3
+	// BucketPriority is the teardown order for storage buckets.
+	BucketPriority = 4
+	// SnapshotPriority is the teardown order for volume snapshots.
+	SnapshotPriority = 5
+	// VolumePriority is the teardown order for block volumes.
+	VolumePriority = 6
+	// KeyPairPriority is the teardown order for SSH key pairs.
+	KeyPairPriority = 7
+	// FloatingIPPriority is the teardown order for floating IP addresses.
+	FloatingIPPriority = 8
+	// SecurityGroupPriority is the teardown order for security groups.
+	SecurityGroupPriority = 9
+	// SubnetRouterPriority is the teardown order for subnets and routers.
+	SubnetRouterPriority = 10
+	// NetworkPriority is the teardown order for networks (deleted last).
+	NetworkPriority = 11
 )
 
 var (
+	// ErrTeardownCancelled indicates the user cancelled the teardown operation.
 	ErrTeardownCancelled = errors.New("teardown cancelled by user")
-	ErrResourceSkipped   = errors.New("resource skipped (not an error)")
+	// ErrResourceSkipped indicates a resource was intentionally skipped during teardown.
+	ErrResourceSkipped = errors.New("resource skipped (not an error)")
 )
 
 // NewTeardownCmd creates the teardown command.
@@ -237,7 +258,7 @@ func bindTeardownViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("teardown.output", cmd.Flags().Lookup("output"))
 }
 
-func runTeardown(cmd *cobra.Command, args []string) error {
+func runTeardown(cmd *cobra.Command, _args []string) error {
 	// Silence usage on execution errors
 	cmd.SilenceUsage = true
 
@@ -344,7 +365,7 @@ func getTeardownConfig() *teardownConfig {
 
 func initializeTeardownLogger(blocName string) (logger.Logger, error) {
 	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),
@@ -596,7 +617,7 @@ func (m *TeardownManager) DeleteResource(ctx context.Context, resource *Resource
 		return m.deleteComputeResource(ctx, resource)
 	case ResourceVolume, ResourceSnapshot, ResourceBucket, "credentials_group":
 		return m.deleteStorageResource(ctx, resource)
-	case ResourceLoadBalancer, "floating_ip", "public_ip", ResourceSubnet, "network_interface", CategoryNetwork:
+	case ResourceLoadBalancer, "floating_ip", "public_ip", ResourceSubnet, ResourceNetworkInterface, CategoryNetwork:
 		return m.deleteNetworkResource(ctx, resource)
 	case ResourceSecurityGroup:
 		return m.deleteSecurityResource(ctx, resource)
@@ -622,6 +643,32 @@ type ResourceToDelete struct {
 // TestFilterResources exposes filterResources for testing.
 func (m *TeardownManager) TestFilterResources(resources []*ResourceToDelete) []*ResourceToDelete {
 	return m.filterResources(resources)
+}
+
+// mergeResources adds cloud-discovered resources that are not already present
+// (by ID) in the existing resource list. This prevents duplicates when
+// supplementing state-based discovery with cloud-based discovery.
+func mergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelete {
+	seen := make(map[string]bool, len(existing))
+	for _, r := range existing {
+		if r.ID != "" {
+			seen[r.ID] = true
+		}
+	}
+
+	for _, r := range discovered {
+		if r.ID != "" && !seen[r.ID] {
+			existing = append(existing, r)
+			seen[r.ID] = true
+		}
+	}
+
+	return existing
+}
+
+// TestMergeResources exposes mergeResources for testing.
+func TestMergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelete {
+	return mergeResources(existing, discovered)
 }
 
 // acquireLockWithForce attempts to acquire state lock, using force if enabled.
@@ -856,6 +903,16 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 		// Discover network interfaces for any networks found in state (NICs not always in state)
 		// This is critical to avoid 409 conflicts when deleting networks and security groups
 		m.discoverNetworkInterfacesForNetworks(ctx, stateResources, &resources, log)
+
+		// Force mode: also discover from cloud to catch orphaned resources
+		// that exist in the cloud but were lost from state (e.g., bastion
+		// removed from state by a previous failed teardown but not terminated)
+		if m.options.Force {
+			log.Info("Force mode: supplementing state with cloud discovery to find orphaned resources")
+
+			cloudResources := m.discoverResourcesFromCloud(ctx)
+			resources = mergeResources(resources, cloudResources)
+		}
 	} else {
 		log.Info("No state found or state is empty, discovering from cloud")
 		// Fallback: discover from cloud using tags
@@ -1315,7 +1372,7 @@ func (m *TeardownManager) discoverNetworkInterfaces(ctx context.Context, network
 
 	for _, nic := range nics {
 		*resources = append(*resources, &ResourceToDelete{
-			Type:         "network_interface",
+			Type:         ResourceNetworkInterface,
 			ID:           nic.ID,
 			Name:         nic.Name,
 			Dependencies: nil,
@@ -1348,7 +1405,7 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 
 	// Find all network resources in state
 	for _, resource := range stateResources {
-		if resource.Type == "network" {
+		if resource.Type == CategoryNetwork {
 			// Discover subnets for this network from the cloud
 			subnets, err := network.ListSubnets(ctx, resource.ID)
 			if err != nil {
@@ -1394,6 +1451,8 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 //
 // NOTE: NICs may not have OCFP labels/tags (especially when created pre-attached to servers),
 // so we discover them per-network without tag filtering, similar to subnet discovery.
+//
+//nolint:funlen // NIC discovery with deduplication and property mapping is inherently detailed
 func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Context, stateResources []*ResourceToDelete, allResources *[]*ResourceToDelete, log logger.Logger) {
 	network := m.provider.Network()
 	if network == nil {
@@ -1417,7 +1476,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 	existingNICIDs := make(map[string]bool)
 
 	for _, resource := range *allResources {
-		if resource.Type == "network_interface" {
+		if resource.Type == ResourceNetworkInterface {
 			existingNICIDs[resource.ID] = true
 		}
 	}
@@ -1425,7 +1484,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 	// Find all network resources in state and discover their NICs
 	// We don't use tag filters because NICs may not have OCFP labels (created pre-attached to servers)
 	for _, resource := range stateResources {
-		if resource.Type == "network" {
+		if resource.Type == CategoryNetwork {
 			// Discover NICs for this network WITHOUT tag filtering
 			// This ensures we catch orphaned NICs without labels
 			nics, err := niLister.ListNetworkInterfaces(ctx, nil)
@@ -1449,7 +1508,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 				}
 
 				*allResources = append(*allResources, &ResourceToDelete{
-					Type:         "network_interface",
+					Type:         ResourceNetworkInterface,
 					ID:           nic.ID,
 					Name:         nic.Name,
 					Dependencies: nil,
@@ -1562,7 +1621,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 		if err == nil {
 			for _, net := range networks {
 				resources = append(resources, &ResourceToDelete{
-					Type:         "network",
+					Type:         CategoryNetwork,
 					ID:           net.ID,
 					Name:         net.Name,
 					Dependencies: nil,
@@ -1651,7 +1710,7 @@ func (m *TeardownManager) shouldIncludeResourceInSelectiveMode(resource *Resourc
 	case CategoryNetwork, ResourceSubnet, "router":
 		return m.options.Network
 	case "keypair":
-		return m.options.KeyPairs
+		return m.options.KeyPairs || m.options.Servers
 	default:
 		// For other resource types (like floating_ips), include them based on related flags
 		// Floating/public IPs require explicit --public-ips flag
@@ -1690,19 +1749,19 @@ func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete) []*ResourceToDelete {
 	// Define deletion order (dependency-aware, optimized to prevent 409 conflicts)
 	order := map[string]int{
-		"loadbalancer":        LoadBalancerPriority,     // 1: Delete load balancers first
-		"instance":            InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
-		"network_interface":   NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
-		"bucket":              BucketPriority,           // 4: Delete buckets
-		ResourceSnapshot:      SnapshotPriority,         // 5: Delete snapshots before volumes
-		ResourceVolume:        VolumePriority,           // 6: Delete volumes (after instances released them)
-		"keypair":             KeyPairPriority,          // 7: Delete key pairs
-		ResourceFloatingIP:    FloatingIPPriority,       // 8: Delete floating IPs
-		ResourcePublicIP:      FloatingIPPriority,       // 8: Delete public IPs
-		ResourceSecurityGroup: SecurityGroupPriority,    // 9: Delete security groups (after NICs removed)
-		ResourceSubnet:        SubnetRouterPriority,     // 10: Delete subnets
-		"router":              SubnetRouterPriority,     // 10: Delete routers
-		"network":             NetworkPriority,          // 11: Delete networks last
+		"loadbalancer":           LoadBalancerPriority,     // 1: Delete load balancers first
+		"instance":               InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
+		ResourceNetworkInterface: NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
+		"bucket":                 BucketPriority,           // 4: Delete buckets
+		ResourceSnapshot:         SnapshotPriority,         // 5: Delete snapshots before volumes
+		ResourceVolume:           VolumePriority,           // 6: Delete volumes (after instances released them)
+		"keypair":                KeyPairPriority,          // 7: Delete key pairs
+		ResourceFloatingIP:       FloatingIPPriority,       // 8: Delete floating IPs
+		ResourcePublicIP:         FloatingIPPriority,       // 8: Delete public IPs
+		ResourceSecurityGroup:    SecurityGroupPriority,    // 9: Delete security groups (after NICs removed)
+		ResourceSubnet:           SubnetRouterPriority,     // 10: Delete subnets
+		"router":                 SubnetRouterPriority,     // 10: Delete routers
+		CategoryNetwork:          NetworkPriority,          // 11: Delete networks last
 	}
 
 	sort.Slice(resources, func(first, second int) bool {
@@ -1999,11 +2058,11 @@ func (m *TeardownManager) deleteNetworkResource(ctx context.Context, resource *R
 		return nil
 	case "public_ip":
 		return m.deletePublicIP(ctx, network, resource)
-	case "network_interface":
+	case ResourceNetworkInterface:
 		return m.deleteNetworkInterface(ctx, network, resource)
 	case ResourceSubnet:
 		return m.deleteSubnet(ctx, network, resource)
-	case "network":
+	case CategoryNetwork:
 		err := network.DeleteNetwork(ctx, resource.ID)
 		if err != nil {
 			// If resource doesn't exist, that's success (already deleted)

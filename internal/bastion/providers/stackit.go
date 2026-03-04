@@ -22,6 +22,7 @@ var (
 	ErrStackitRegionRequired               = errors.New("STACKIT region is required")
 	ErrStackitAPIIntegrationNotImplemented = errors.New("STACKIT API integration not implemented")
 	ErrNoStateFileFound                    = errors.New("no state file found")
+	ErrBastionInstanceNoPublicIP           = errors.New("bastion instance has no public IP")
 )
 
 // StackitBastionInit implements bastion initialization for STACKIT.
@@ -136,7 +137,7 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 }
 
 // Initialize performs the actual bastion initialization.
-func (s *StackitBastionInit) Initialize(ctx context.Context) error {
+func (s *StackitBastionInit) Initialize(_ctx context.Context) error {
 	s.log.Info("Initializing STACKIT bastion")
 
 	// This method coordinates the initialization process
@@ -152,7 +153,7 @@ func (s *StackitBastionInit) getSSHUser() string {
 		return s.config.Bastion.SSHUser
 	}
 
-	return "ubuntu" // Default for STACKIT
+	return defaultSSHUser // Default for STACKIT
 }
 
 // findSSHPrivateKey locates the SSH private key, restoring from config if needed.
@@ -260,6 +261,8 @@ func (s *StackitBastionInit) addGenesisEnv(env map[string]string) {
 }
 
 // getBastionIP retrieves the bastion host IP address.
+//
+//nolint:dupl // intentionally similar CPI implementation
 func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 1: Check if IP is already configured
 	if s.config.BastionIP != "" {
@@ -270,7 +273,7 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 
 	// Strategy 2: Check state cache first (fast path)
 	stateDir, err := state.GetStateDir(s.config.Name)
-	if err == nil {
+	if err == nil { //nolint:nestif // state cache lookup requires nested checks
 		stateManager, err := state.NewManager(stateDir)
 		if err == nil {
 			_, err := stateManager.Load(s.config.Name)
@@ -366,13 +369,13 @@ func (s *StackitBastionInit) getBastionIPFromAPI() (string, error) {
 
 			s.log.Debugw("Found bastion but no public IP assigned", "name", inst.Name)
 
-			return "", fmt.Errorf("bastion instance %s has no public IP", bastionName)
+			return "", fmt.Errorf("%w: %s", ErrBastionInstanceNoPublicIP, bastionName)
 		}
 	}
 
 	s.log.Debugw("No bastion instance found", "name", bastionName)
 
-	return "", fmt.Errorf("bastion instance not found: %s", bastionName)
+	return "", fmt.Errorf("%w: %s", ErrBastionInstanceNotFound, bastionName)
 }
 
 // getBastionIPFromState retrieves bastion IP from terraform state or similar.

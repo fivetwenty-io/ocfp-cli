@@ -57,6 +57,9 @@ const (
 	scriptBufferScript5             = 4
 	scriptBufferSnapBase            = 24
 	scriptBufferSnapPerPackage      = 20
+	scriptBufferBrewInstall         = 32
+	scriptBufferBrewBase            = 24
+	scriptBufferBrewPerPackage      = 8
 	scriptBufferToolsBase           = 24
 	scriptBufferToolsPerItem        = 16
 	scriptBufferVerificationBase    = 16

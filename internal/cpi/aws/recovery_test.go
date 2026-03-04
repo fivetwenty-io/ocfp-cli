@@ -31,12 +31,12 @@ func TestRecoveryManager_AddStrategy(t *testing.T) {
 func TestThrottlingRecovery_CanRecover(t *testing.T) {
 	recovery := &ThrottlingRecovery{}
 
-	throttlingErr := &AWSError{Code: ErrCodeThrottling}
+	throttlingErr := &Error{Code: ErrCodeThrottling}
 	if !recovery.CanRecover(throttlingErr) {
 		t.Error("Expected ThrottlingRecovery to handle throttling errors")
 	}
 
-	otherErr := &AWSError{Code: ErrCodeNotFound}
+	otherErr := &Error{Code: ErrCodeNotFound}
 	if recovery.CanRecover(otherErr) {
 		t.Error("Expected ThrottlingRecovery not to handle non-throttling errors")
 	}
@@ -45,12 +45,12 @@ func TestThrottlingRecovery_CanRecover(t *testing.T) {
 func TestDependencyViolationRecovery_CanRecover(t *testing.T) {
 	recovery := &DependencyViolationRecovery{}
 
-	depErr := &AWSError{Code: ErrCodeDependencyViolation}
+	depErr := &Error{Code: ErrCodeDependencyViolation}
 	if !recovery.CanRecover(depErr) {
 		t.Error("Expected DependencyViolationRecovery to handle dependency violation errors")
 	}
 
-	otherErr := &AWSError{Code: ErrCodeNotFound}
+	otherErr := &Error{Code: ErrCodeNotFound}
 	if recovery.CanRecover(otherErr) {
 		t.Error("Expected DependencyViolationRecovery not to handle non-dependency errors")
 	}
@@ -59,12 +59,12 @@ func TestDependencyViolationRecovery_CanRecover(t *testing.T) {
 func TestInvalidStateRecovery_CanRecover(t *testing.T) {
 	recovery := &InvalidStateRecovery{}
 
-	stateErr := &AWSError{Code: ErrCodeInvalidState}
+	stateErr := &Error{Code: ErrCodeInvalidState}
 	if !recovery.CanRecover(stateErr) {
 		t.Error("Expected InvalidStateRecovery to handle invalid state errors")
 	}
 
-	otherErr := &AWSError{Code: ErrCodeNotFound}
+	otherErr := &Error{Code: ErrCodeNotFound}
 	if recovery.CanRecover(otherErr) {
 		t.Error("Expected InvalidStateRecovery not to handle non-state errors")
 	}
@@ -94,7 +94,7 @@ func TestExecuteWithRecovery_NonRecoverableError(t *testing.T) {
 	rm := NewRecoveryManager()
 	ctx := context.Background()
 
-	testErr := &AWSError{Code: ErrCodeNotFound}
+	testErr := &Error{Code: ErrCodeNotFound}
 	err := ExecuteWithRecovery(ctx, rm, "test-op", func() error {
 		return testErr
 	})
@@ -239,7 +239,7 @@ func TestRetryWithRecovery_Success(t *testing.T) {
 	err := RetryWithRecovery(ctx, retryConfig, rm, "test-op", func() error {
 		callCount++
 		if callCount < 2 {
-			return &AWSError{Code: ErrCodeThrottling}
+			return &Error{Code: ErrCodeThrottling}
 		}
 
 		return nil

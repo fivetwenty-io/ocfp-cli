@@ -91,19 +91,3 @@ func getBool(m map[string]interface{}, key string) bool {
 
 	return false
 }
-
-// getInt safely gets an int from a map.
-func getInt(m map[string]interface{}, key string) int {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case int:
-			return n
-		case int64:
-			return int(n)
-		case float64:
-			return int(n)
-		}
-	}
-
-	return 0
-}

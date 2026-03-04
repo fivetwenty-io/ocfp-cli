@@ -33,9 +33,8 @@ func NewOCFPManager(provider string, cfg *config.Config, modes *deployments.Reso
 }
 
 // GenerateVaultInceptionScript generates script for vault inception setup.
-func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string {
-	var lines []string
-
+func (om *OCFPManager) GenerateVaultInceptionScript(_ctx context.Context) string {
+	lines := make([]string, 0, 16) //nolint:mnd // rough capacity for script header + locator + execution
 	lines = append(lines, "# Vault inception setup")
 	lines = append(lines, "")
 
@@ -49,7 +48,7 @@ func (om *OCFPManager) GenerateVaultInceptionScript(ctx context.Context) string 
 // GenerateOCFPConfigureScript generates script for OCFP configure deployments.
 //
 //nolint:funlen // Script generation requires many statements
-func (om *OCFPManager) GenerateOCFPConfigureScript(ctx context.Context) string {
+func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string {
 	resolver := om.resolver()
 	names := om.mergeDeploymentNames(defaultDeploymentNames, resolver.Configured())
 	devDeployments, releaseDeployments := om.partitionDeployments(names)
@@ -266,9 +265,10 @@ func (om *OCFPManager) resolver() *deployments.Resolver {
 
 	return om.modes
 }
-func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
-	var lines []string
 
+// GenerateVaultPopulateScript generates the script for populating vault secrets.
+func (om *OCFPManager) GenerateVaultPopulateScript(_ctx context.Context) string {
+	lines := make([]string, 0, 32) //nolint:mnd // rough capacity for script sections
 	lines = append(lines, "# Vault population")
 	lines = append(lines, "")
 
@@ -281,9 +281,10 @@ func (om *OCFPManager) GenerateVaultPopulateScript(ctx context.Context) string {
 }
 
 // GenerateGenesisSecretsProvidersScript generates script to configure genesis deployments to use inception vault.
-func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(ctx context.Context) string {
-	var lines []string
-
+//
+//nolint:funlen // shell script generation with line-by-line append is inherently verbose
+func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Context) string {
+	lines := make([]string, 0, 71) //nolint:mnd // rough capacity for genesis secrets providers script
 	lines = append(lines, "# Configure Genesis secrets providers for deployments")
 	lines = append(lines, "")
 
@@ -362,7 +363,7 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(ctx context.Context
 }
 
 // GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
-func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) string {
+func (om *OCFPManager) GenerateOCFPToolVerificationScript(_ctx context.Context) string {
 	requiredTools := []string{"safe", "vault", "bao", "bosh", "cf", "credhub", "uaa", "spruce", "yq", "go", "genesis"}
 	lines := make([]string, 0, scriptBufferOCFPBase+scriptBufferOCFPPerTool*len(requiredTools))
 
@@ -397,7 +398,7 @@ func (om *OCFPManager) GenerateOCFPToolVerificationScript(ctx context.Context) s
 }
 
 // GenerateScriptCommandVerificationScript ensures script command is available.
-func (om *OCFPManager) GenerateScriptCommandVerificationScript(ctx context.Context) string {
+func (om *OCFPManager) GenerateScriptCommandVerificationScript(_ctx context.Context) string {
 	lines := make([]string, 0, scriptBufferOCFP1)
 
 	lines = append(lines, "# Verify script command availability")
@@ -422,7 +423,7 @@ func (om *OCFPManager) GenerateScriptCommandVerificationScript(ctx context.Conte
 }
 
 // GenerateHostnameVerificationScript verifies hostname configuration.
-func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) string {
+func (om *OCFPManager) GenerateHostnameVerificationScript(_ctx context.Context) string {
 	lines := make([]string, 0, scriptBufferOCFP2)
 
 	lines = append(lines, "# Hostname verification")
@@ -468,7 +469,7 @@ func (om *OCFPManager) GenerateHostnameVerificationScript(ctx context.Context) s
 }
 
 // GenerateEnvironmentLoggingScript generates detailed environment logging.
-func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) string {
+func (om *OCFPManager) GenerateEnvironmentLoggingScript(_ctx context.Context) string {
 	lines := make([]string, 0, scriptBufferOCFP2)
 
 	lines = append(lines, "# Environment information logging")
@@ -479,13 +480,6 @@ func (om *OCFPManager) GenerateEnvironmentLoggingScript(ctx context.Context) str
 	lines = append(lines, om.generateEnvironmentVariableLogging()...)
 
 	return strings.Join(lines, "\n")
-}
-
-func (om *OCFPManager) generateVaultInceptionScriptLocator() []string {
-	// Vault inception now uses the OCFP CLI binary installed on the bastion
-	// This function is kept for compatibility but returns empty - the CLI locator
-	// is called separately in GenerateVaultInceptionScript
-	return []string{}
 }
 
 func (om *OCFPManager) generateVaultInceptionExecution() []string {

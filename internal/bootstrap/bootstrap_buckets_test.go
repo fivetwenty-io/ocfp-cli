@@ -28,7 +28,7 @@ func newFakeStorage() *fakeStorage {
 	}
 }
 
-func (f *fakeStorage) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
+func (f *fakeStorage) CreateBucket(_ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	f.created = append(f.created, req.Name)
 
 	return &cpi.Bucket{
@@ -45,47 +45,47 @@ func (f *fakeStorage) CreateBucket(ctx context.Context, req *cpi.BucketRequest) 
 		CreatedAt:    time.Time{},
 	}, nil
 }
-func (f *fakeStorage) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake intentionally returns no data and no error
+func (f *fakeStorage) ListBuckets(_ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake intentionally returns no data and no error
 	return nil, nil //nolint:nilnil // test fake
 }
 
 // Unused interface methods.
-func (f *fakeStorage) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) CreateVolume(_ctx context.Context, _req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) GetVolume(_ctx context.Context, _id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) ListVolumes(_ctx context.Context, _filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
+func (f *fakeStorage) AttachVolume(_ctx context.Context, _volumeID, _instanceID, _device string) error {
 	return nil
 }
-func (f *fakeStorage) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
+func (f *fakeStorage) DetachVolume(_ctx context.Context, _volumeID string, _instanceID string) error {
 	return nil
 }
-func (f *fakeStorage) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
-func (f *fakeStorage) DeleteVolume(ctx context.Context, id string) error           { return nil }
-func (f *fakeStorage) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) ResizeVolume(_ctx context.Context, _id string, _size int) error { return nil }
+func (f *fakeStorage) DeleteVolume(_ctx context.Context, _id string) error            { return nil }
+func (f *fakeStorage) CreateSnapshot(_ctx context.Context, _volumeID string, _name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) GetSnapshot(_ctx context.Context, _id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) ListSnapshots(_ctx context.Context, _volumeID string, _filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) DeleteSnapshot(ctx context.Context, id string) error { return nil }
-func (f *fakeStorage) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+func (f *fakeStorage) DeleteSnapshot(_ctx context.Context, _id string) error { return nil }
+func (f *fakeStorage) GetBucket(_ctx context.Context, _name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorage) DeleteBucket(ctx context.Context, name string) error { return nil }
-func (f *fakeStorage) EmptyBucket(ctx context.Context, name string) error  { return nil }
-func (f *fakeStorage) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+func (f *fakeStorage) DeleteBucket(_ctx context.Context, _name string) error { return nil }
+func (f *fakeStorage) EmptyBucket(_ctx context.Context, _name string) error  { return nil }
+func (f *fakeStorage) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
 	return true, nil
 }
-func (f *fakeStorage) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (f *fakeStorage) CreateCredentialsGroup(_ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	return &cpi.CredentialsGroup{
 		ID:        "group-123",
 		Name:      req.Name,
@@ -93,7 +93,7 @@ func (f *fakeStorage) CreateCredentialsGroup(ctx context.Context, req *cpi.Crede
 	}, nil
 }
 
-func (f *fakeStorage) EnableBucketVersioning(ctx context.Context, name string) error {
+func (f *fakeStorage) EnableBucketVersioning(_ctx context.Context, name string) error {
 	if f.enabledCalls == nil {
 		f.enabledCalls = make(map[string]bool)
 	}
@@ -103,7 +103,7 @@ func (f *fakeStorage) EnableBucketVersioning(ctx context.Context, name string) e
 	return nil
 }
 
-func (f *fakeStorage) SetBucketVersioning(ctx context.Context, name string, enabled bool) error {
+func (f *fakeStorage) SetBucketVersioning(_ctx context.Context, name string, enabled bool) error {
 	if f.enabledCalls == nil {
 		f.enabledCalls = make(map[string]bool)
 	}
@@ -116,7 +116,7 @@ func (f *fakeStorage) SetBucketVersioning(ctx context.Context, name string, enab
 
 	return nil
 }
-func (f *fakeStorage) SetBucketLifecycleNoncurrentDays(ctx context.Context, name string, days int32) error {
+func (f *fakeStorage) SetBucketLifecycleNoncurrentDays(_ctx context.Context, name string, days int32) error {
 	if f.lifecycleCalls == nil {
 		f.lifecycleCalls = make(map[string]int32)
 	}
@@ -126,7 +126,7 @@ func (f *fakeStorage) SetBucketLifecycleNoncurrentDays(ctx context.Context, name
 	return nil
 }
 
-func (f *fakeStorage) SetBucketLifecycle(ctx context.Context, name string, days int) error {
+func (f *fakeStorage) SetBucketLifecycle(_ctx context.Context, name string, days int) error {
 	if f.lifecycleCalls == nil {
 		f.lifecycleCalls = make(map[string]int32)
 	}
@@ -135,16 +135,16 @@ func (f *fakeStorage) SetBucketLifecycle(ctx context.Context, name string, days 
 
 	return nil
 }
-func (f *fakeStorage) EnsureObjectStorageCredentialsGroup(ctx context.Context, displayName string) (string, error) {
+func (f *fakeStorage) EnsureObjectStorageCredentialsGroup(_ctx context.Context, _displayName string) (string, error) {
 	return "group-123", nil
 }
 
 type fakeProvider struct{ s cpi.StorageManager }
 
-func (p *fakeProvider) Name() string                                  { return "fake" }
-func (p *fakeProvider) Region() string                                { return "eu01" }
-func (p *fakeProvider) Authenticate(ctx context.Context) error        { return nil }
-func (p *fakeProvider) ValidateCredentials(ctx context.Context) error { return nil }
+func (p *fakeProvider) Name() string                                   { return "fake" }
+func (p *fakeProvider) Region() string                                 { return "eu01" }
+func (p *fakeProvider) Authenticate(_ctx context.Context) error        { return nil }
+func (p *fakeProvider) ValidateCredentials(_ctx context.Context) error { return nil }
 
 //nolint:ireturn
 func (p *fakeProvider) Network() cpi.NetworkManager { return nil }
@@ -178,9 +178,9 @@ func (p *fakeProvider) SecurityManager() cpi.SecurityManager { return p.Security
 //nolint:ireturn
 func (p *fakeProvider) LoadBalancerManager() cpi.LoadBalancerManager { return p.LoadBalancer() }
 
-func (p *fakeProvider) SupportsStorage() bool                                 { return true }
-func (p *fakeProvider) Initialize(ctx context.Context, cfg interface{}) error { return nil }
-func (p *fakeProvider) Cleanup(ctx context.Context) error                     { return nil }
+func (p *fakeProvider) SupportsStorage() bool                                   { return true }
+func (p *fakeProvider) Initialize(_ctx context.Context, _cfg interface{}) error { return nil }
+func (p *fakeProvider) Cleanup(_ctx context.Context) error                      { return nil }
 
 func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 	t.Parallel()

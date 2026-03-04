@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// Secret count thresholds.
+	// MinExpectedSecrets is the minimum number of secrets expected during vault validation.
 	MinExpectedSecrets = 5
 )
 

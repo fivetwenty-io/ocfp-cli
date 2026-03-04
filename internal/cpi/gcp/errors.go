@@ -44,6 +44,14 @@ var (
 	ErrSnapshotWaitTimeout = errors.New("timeout waiting for snapshot to reach desired state")
 	// ErrSnapshotErrorState indicates snapshot entered error state.
 	ErrSnapshotErrorState = errors.New("snapshot entered error state")
+	// ErrCleanupFailed indicates errors occurred during cleanup.
+	ErrCleanupFailed = errors.New("errors during cleanup")
+	// ErrClientNotInitialized indicates the client config is nil.
+	ErrClientNotInitialized = errors.New("client not initialized: config is nil")
+	// ErrAutoDetectProject indicates GCP project could not be auto-detected.
+	ErrAutoDetectProject = errors.New("unable to auto-detect GCP project")
+	// ErrAutoDetectCredentials indicates GCP credentials could not be auto-detected.
+	ErrAutoDetectCredentials = errors.New("unable to auto-detect GCP credentials")
 )
 
 // ErrorCode represents GCP-specific error codes.
@@ -76,8 +84,8 @@ const (
 	ErrCodeConditionNotMet ErrorCode = "conditionNotMet"
 )
 
-// GCPError represents a GCP-specific error.
-type GCPError struct {
+// Error represents a GCP-specific error.
+type Error struct {
 	Code       ErrorCode
 	Message    string
 	StatusCode int
@@ -86,23 +94,28 @@ type GCPError struct {
 	Err        error
 }
 
-func (e *GCPError) Error() string {
+func (e *Error) Error() string {
 	if e.Operation != "" {
 		return fmt.Sprintf("[GCP:%s] %s: %s", e.Operation, e.Code, e.Message)
 	}
+
 	return fmt.Sprintf("[GCP] %s: %s", e.Code, e.Message)
 }
 
 // Unwrap returns the underlying error.
-func (e *GCPError) Unwrap() error {
+func (e *Error) Unwrap() error {
 	return e.Err
 }
 
 // IsRetryable returns true if the error is retryable.
-func (e *GCPError) IsRetryable() bool {
+func (e *Error) IsRetryable() bool {
 	switch e.Code {
 	case ErrCodeRateLimitExceeded, ErrCodeServiceUnavailable, ErrCodeInternalError:
 		return true
+	case ErrCodeQuotaExceeded, ErrCodeResourceNotFound, ErrCodeResourceAlreadyExists,
+		ErrCodePermissionDenied, ErrCodeUnauthorized, ErrCodeBadRequest,
+		ErrCodeOperationInProgress, ErrCodeResourceInUse, ErrCodeConditionNotMet:
+		// Not retryable
 	}
 
 	// Check HTTP status codes
@@ -119,12 +132,12 @@ func (e *GCPError) IsRetryable() bool {
 }
 
 // IsNotFound returns true if the error indicates resource not found.
-func (e *GCPError) IsNotFound() bool {
+func (e *Error) IsNotFound() bool {
 	return e.Code == ErrCodeResourceNotFound || e.StatusCode == http.StatusNotFound
 }
 
 // IsAlreadyExists returns true if the error indicates resource already exists.
-func (e *GCPError) IsAlreadyExists() bool {
+func (e *Error) IsAlreadyExists() bool {
 	return e.Code == ErrCodeResourceAlreadyExists || e.StatusCode == http.StatusConflict
 }
 
@@ -134,7 +147,7 @@ func WrapGCPError(err error, operation string) error {
 		return nil
 	}
 
-	gcpErr := &GCPError{
+	gcpErr := &Error{
 		Code:      ErrCodeInternalError,
 		Message:   err.Error(),
 		Operation: operation,
@@ -196,7 +209,7 @@ func mapHTTPStatusToErrorCode(statusCode int) ErrorCode {
 }
 
 // logError logs a GCP error with full context.
-func logError(gcpErr *GCPError) {
+func logError(gcpErr *Error) {
 	args := buildLogArgs(gcpErr)
 
 	if gcpErr.IsRetryable() {
@@ -207,7 +220,7 @@ func logError(gcpErr *GCPError) {
 }
 
 // buildLogArgs builds logging arguments based on available error data.
-func buildLogArgs(gcpErr *GCPError) []interface{} {
+func buildLogArgs(gcpErr *Error) []interface{} {
 	args := []interface{}{
 		"GCP error occurred",
 		"code", gcpErr.Code,
@@ -227,7 +240,9 @@ func buildLogArgs(gcpErr *GCPError) []interface{} {
 }
 
 // mapToProviderError maps GCP errors to provider-specific errors.
-func mapToProviderError(gcpErr *GCPError) error {
+//
+//nolint:funlen // exhaustive error code mapping requires this length
+func mapToProviderError(gcpErr *Error) error {
 	// Check for GCP-specific NotFound error codes
 	errorCode := string(gcpErr.Code)
 	if gcpErr.Code == ErrCodeResourceNotFound || strings.Contains(errorCode, "notFound") {
@@ -291,6 +306,10 @@ func mapToProviderError(gcpErr *GCPError) error {
 				"operation": gcpErr.Operation,
 			},
 		}
+
+	case ErrCodeRateLimitExceeded, ErrCodeResourceNotFound, ErrCodeInternalError,
+		ErrCodeServiceUnavailable, ErrCodeOperationInProgress, ErrCodeConditionNotMet:
+		// Not mapped to provider errors
 	}
 
 	return nil
@@ -298,45 +317,50 @@ func mapToProviderError(gcpErr *GCPError) error {
 
 // IsNotFound checks if the error is a not found error.
 func IsNotFound(err error) bool {
-	var gcpErr *GCPError
+	var gcpErr *Error
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsNotFound()
 	}
+
 	return cpi.IsNotFound(err)
 }
 
 // IsAlreadyExists checks if the error indicates the resource already exists.
 func IsAlreadyExists(err error) bool {
-	var gcpErr *GCPError
+	var gcpErr *Error
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsAlreadyExists()
 	}
+
 	return cpi.IsAlreadyExists(err)
 }
 
 // IsRetryable checks if the error is retryable.
 func IsRetryable(err error) bool {
-	var gcpErr *GCPError
+	var gcpErr *Error
 	if errors.As(err, &gcpErr) {
 		return gcpErr.IsRetryable()
 	}
+
 	return false
 }
 
 // IsQuotaExceeded checks if the error is due to quota being exceeded.
 func IsQuotaExceeded(err error) bool {
-	var gcpErr *GCPError
+	var gcpErr *Error
 	if errors.As(err, &gcpErr) {
 		return gcpErr.Code == ErrCodeQuotaExceeded
 	}
+
 	return false
 }
 
 // IsResourceInUse checks if the error is due to resource being in use.
 func IsResourceInUse(err error) bool {
-	var gcpErr *GCPError
+	var gcpErr *Error
 	if errors.As(err, &gcpErr) {
 		return gcpErr.Code == ErrCodeResourceInUse
 	}
+
 	return false
 }

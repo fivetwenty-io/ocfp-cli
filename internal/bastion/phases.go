@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
@@ -17,6 +19,7 @@ import (
 // Phase execution errors.
 var (
 	ErrLocalScriptExecutionNotImplemented = errors.New("local script execution not implemented")
+	ErrKeyFetchFailed                     = errors.New("failed to fetch keys")
 )
 
 // Additional phase implementations for comprehensive bastion initialization
@@ -42,6 +45,7 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 }
 
 // installSnapPackages installs snap packages.
+// Deprecated: Snap packages have been migrated to Linuxbrew.
 func (m *Manager) installSnapPackages(ctx context.Context) error {
 	m.log.Info("Installing snap packages")
 
@@ -62,24 +66,46 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 	return m.executeScript(ctx, script, "snap-packages")
 }
 
+// installBrew installs Linuxbrew itself.
+func (m *Manager) installBrew(ctx context.Context) error {
+	m.log.Info("Installing Linuxbrew")
+
+	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+	script := brewMgr.GenerateBrewInstallScript(ctx)
+
+	return m.executeScript(ctx, script, "brew-install")
+}
+
+// installBrewPackages installs brew packages.
+func (m *Manager) installBrewPackages(ctx context.Context) error {
+	m.log.Info("Installing brew packages")
+
+	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+	script := brewMgr.GenerateBrewPackageScript(ctx)
+
+	return m.executeScript(ctx, script, "brew-packages")
+}
+
+// installPostBrewPackages installs APT packages that have no brew formula,
+// after Linuxbrew is available (e.g. libperl-dev, libfuse2).
+func (m *Manager) installPostBrewPackages(ctx context.Context) error {
+	m.log.Info("Installing post-brew APT packages")
+
+	provCfg := provision.NewConfig(m.config.Provider, m.config, nil)
+	packages := map[string]provision.PackageGroup{
+		"post_brew": provCfg.GetPostBrewPackages(),
+	}
+
+	script := m.buildPackageInstallScript(packages)
+
+	return m.executeScript(ctx, script, "post-brew-apt")
+}
+
 // installCPANModules installs CPAN modules.
 func (m *Manager) installCPANModules(ctx context.Context) error {
 	m.log.Info("Installing CPAN modules")
 
-	// Report progress for CPAN modules
-	if m.reporter != nil {
-		cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-		modules := cpanMgr.GetCPANModules()
-		enabledModules := filterEnabledCPANModules(modules)
-
-		for i, mod := range enabledModules {
-			m.reporter.ReportSubtaskProgress("cpan_modules", i+1, len(enabledModules), mod.Name)
-		}
-	}
-
 	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-
-	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
 
 	return m.executeScript(ctx, script, "cpan-modules")
@@ -88,17 +114,6 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 // installCFPlugins installs CloudFoundry plugins.
 func (m *Manager) installCFPlugins(ctx context.Context) error {
 	m.log.Info("Installing CloudFoundry plugins")
-
-	// Report progress for CF plugins
-	if m.reporter != nil {
-		cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
-		plugins := cfMgr.GetCFPlugins()
-		enabledPlugins := filterEnabledCFPlugins(plugins)
-
-		for i, plugin := range enabledPlugins {
-			m.reporter.ReportSubtaskProgress("cf_plugins", i+1, len(enabledPlugins), plugin.Name)
-		}
-	}
 
 	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
 	script := cfMgr.GenerateCFPluginInstallScript(ctx)
@@ -158,6 +173,8 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 }
 
 // uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
+//
+//nolint:funlen // sequential upload steps (checksum, transfer, install) must remain together
 func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	// NOTE: Currently uploading from local build until official OCFP releases are published.
 	// Once official releases are available via GitHub releases or package repositories,
@@ -170,7 +187,7 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 1: Check if remote binary exists and compare checksums
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary")
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary") //nolint:mnd
 	}
 
 	// Calculate local checksum
@@ -181,18 +198,22 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Check if remote binary exists and get its checksum
 	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
+
 	remoteResult, err := m.sshClient.ExecuteCommand(ctx, remoteChecksumCmd)
 	if err != nil {
 		m.log.Debugw("Could not check remote binary checksum", "error", err)
 	}
+
 	remoteChecksum := strings.TrimSpace(remoteResult.Stdout)
 
 	// If checksums match, skip upload
 	if remoteChecksum != "" && remoteChecksum == localChecksum {
 		m.log.Infow("Remote binary already up to date", "checksum", localChecksum)
+
 		if m.reporter != nil {
-			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)")
+			m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Binary already up to date (skipped upload)") //nolint:mnd
 		}
+
 		return nil
 	}
 
@@ -200,7 +221,7 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 2: Transfer binary
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, fmt.Sprintf("Uploading %s", localBinaryPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 4, "Uploading "+localBinaryPath) //nolint:mnd
 	}
 
 	// Transfer to temporary location first (user has write permissions here)
@@ -222,12 +243,12 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	// Step 3: Binary uploaded
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location")
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 3, 4, "Binary uploaded to temporary location") //nolint:mnd
 	}
 
 	// Step 4: Install binary with sudo
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, fmt.Sprintf("Installing to %s", remoteFinalPath))
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 4, 4, "Installing to "+remoteFinalPath) //nolint:mnd
 	}
 
 	cmd := fmt.Sprintf("sudo mv '%s' '%s' && sudo chmod +x '%s'", remoteTempPath, remoteFinalPath, remoteFinalPath)
@@ -329,6 +350,16 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 				"stdout", result.Stdout,
 				"stderr", result.Stderr)
 
+			// Include meaningful script output in the error so users can diagnose failures
+			output := extractTail(result.Stderr, 20) //nolint:mnd
+			if output == "" {
+				output = extractTail(result.Stdout, 20) //nolint:mnd
+			}
+
+			if output != "" {
+				return fmt.Errorf("script %s failed: %w\n--- script output ---\n%s", scriptName, err, output)
+			}
+
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
@@ -339,6 +370,22 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 	// For local execution, we would use os/exec
 	return ErrLocalScriptExecutionNotImplemented
+}
+
+// extractTail returns the last n lines of a string.
+// If the string has fewer than n lines, the entire string is returned.
+func extractTail(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+
+	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 // wrapScriptWithFunctions wraps script content with necessary functions.
@@ -394,7 +441,7 @@ export NEEDRESTART_SUSPEND=1
 	envExports.WriteString("# Export OCFP environment variables\n")
 
 	for key, value := range envVars {
-		envExports.WriteString(fmt.Sprintf("export %s='%s'\n", key, value))
+		fmt.Fprintf(&envExports, "export %s='%s'\n", key, value)
 	}
 
 	envExports.WriteString("\n")
@@ -412,16 +459,145 @@ func (m *Manager) escapeShellString(script string) string {
 
 // calculateFileSHA256 calculates the SHA256 checksum of a file.
 func calculateFileSHA256(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+
+	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+
+	_, err = io.Copy(hash, file)
+	if err != nil {
 		return "", fmt.Errorf("failed to calculate hash: %w", err)
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// configureBastionKeys resolves bastion.keys from config and appends any new
+// keys to ~/.ssh/authorized_keys on the bastion host.
+func (m *Manager) configureBastionKeys(ctx context.Context) error {
+	keys := m.config.Bastion.Keys
+	if len(keys) == 0 {
+		m.log.Infow("No bastion keys configured, skipping")
+
+		return nil
+	}
+
+	m.log.Infow("Configuring bastion SSH authorized keys", "key_count", len(keys))
+
+	keyManager := ssh.NewKeyManager()
+
+	resolved, err := ssh.ResolveKeySpecs(ctx, keys, fetchGitHubKeysHTTP, fetchGitLabKeysHTTP)
+	if err != nil {
+		return fmt.Errorf("failed to resolve bastion key specs: %w", err)
+	}
+
+	if len(resolved) == 0 {
+		m.log.Infow("No keys resolved, skipping authorized_keys update")
+
+		return nil
+	}
+
+	block := keyManager.FormatAuthorizedKeysBlock(resolved, keys)
+
+	return m.appendNewKeysToBastion(ctx, block, len(resolved))
+}
+
+// appendNewKeysToBastion reads the bastion's authorized_keys, deduplicates,
+// and appends any keys not already present.
+func (m *Manager) appendNewKeysToBastion(ctx context.Context, block string, keyCount int) error {
+	result, err := m.sshClient.ExecuteCommand(ctx, "cat ~/.ssh/authorized_keys 2>/dev/null || true")
+	if err != nil {
+		return fmt.Errorf("failed to read authorized_keys from bastion: %w", err)
+	}
+
+	toAppend := deduplicateKeyBlock(block, result.Stdout)
+	if strings.TrimSpace(toAppend) == "" {
+		m.log.Infow("All bastion keys already present in authorized_keys")
+
+		return nil
+	}
+
+	escapedBlock := strings.ReplaceAll(toAppend, "'", "'\"'\"'")
+	appendCmd := fmt.Sprintf(
+		`bash -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf "\n%s\n" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'`,
+		escapedBlock)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, appendCmd)
+	if err != nil {
+		return fmt.Errorf("failed to append keys to authorized_keys: %w", err)
+	}
+
+	m.log.Infow("Bastion authorized keys updated", "keys_added", keyCount)
+
+	return nil
+}
+
+// deduplicateKeyBlock returns only lines from block that are not already
+// present in existing, preserving comments and blank lines.
+func deduplicateKeyBlock(block, existing string) string {
+	var newLines []string
+
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			newLines = append(newLines, line)
+
+			continue
+		}
+
+		if !strings.Contains(existing, line) {
+			newLines = append(newLines, line)
+		}
+	}
+
+	return strings.Join(newLines, "\n")
+}
+
+// fetchGitHubKeysHTTP fetches SSH public keys from GitHub for a username.
+func fetchGitHubKeysHTTP(ctx context.Context, username string) ([]string, error) {
+	return fetchKeysFromURL(ctx, fmt.Sprintf("https://github.com/%s.keys", username), "GitHub")
+}
+
+// fetchGitLabKeysHTTP fetches SSH public keys from GitLab for a username.
+func fetchGitLabKeysHTTP(ctx context.Context, username string) ([]string, error) {
+	return fetchKeysFromURL(ctx, fmt.Sprintf("https://gitlab.com/%s.keys", username), "GitLab")
+}
+
+// fetchKeysFromURL performs an HTTP GET and parses newline-delimited SSH keys.
+func fetchKeysFromURL(ctx context.Context, url, provider string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build %s key request: %w", provider, err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL built from trusted config
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: %s returned %s", ErrKeyFetchFailed, provider, resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s keys response: %w", provider, err)
+	}
+
+	var keys []string
+
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			keys = append(keys, line)
+		}
+	}
+
+	return keys, nil
 }

@@ -32,7 +32,7 @@ type Environment struct {
 
 // DetectEnvironment analyzes the execution context and returns environment details.
 // It checks for TTY capabilities, CI systems, and terminal dimensions.
-func DetectEnvironment(w io.Writer) Environment {
+func DetectEnvironment(w io.Writer) Environment { //nolint:varnamelen
 	log := logger.Get()
 
 	env := Environment{
@@ -45,24 +45,7 @@ func DetectEnvironment(w io.Writer) Environment {
 	}
 
 	// Detect TTY and terminal dimensions
-	if file, ok := w.(*os.File); ok {
-		if term.IsTerminal(int(file.Fd())) {
-			env.IsTTY = true
-			env.SupportsANSI = true
-
-			// Get terminal width
-			width, _, err := term.GetSize(int(file.Fd()))
-			if err == nil {
-				env.TermWidth = width
-			} else {
-				// Default fallback width
-				env.TermWidth = 80
-			}
-		} else {
-			// Not a terminal, might be piped
-			env.IsPiped = true
-		}
-	}
+	detectTTY(&env, w)
 
 	// Detect CI environment
 	env.IsCI, env.CIProvider = detectCI()
@@ -87,6 +70,30 @@ func DetectEnvironment(w io.Writer) Environment {
 	)
 
 	return env
+}
+
+// detectTTY detects TTY capabilities and terminal dimensions.
+func detectTTY(env *Environment, w io.Writer) {
+	file, ok := w.(*os.File)
+	if !ok {
+		return
+	}
+
+	if !term.IsTerminal(int(file.Fd())) { //nolint:gosec // file descriptor fits in int
+		env.IsPiped = true
+
+		return
+	}
+
+	env.IsTTY = true
+	env.SupportsANSI = true
+
+	width, _, err := term.GetSize(int(file.Fd())) //nolint:gosec // file descriptor fits in int
+	if err == nil {
+		env.TermWidth = width
+	} else {
+		env.TermWidth = 80
+	}
 }
 
 // detectCI checks for common CI environment variables and returns provider information.
@@ -130,21 +137,25 @@ func (e Environment) DefaultMode() Mode {
 	case e.IsTTY && !e.IsCI:
 		// Interactive terminal, use rich output
 		mode = ModeInteractive
+
 		log.Debugw("Selected interactive mode", "reason", "tty_detected")
 
 	case e.IsCI:
 		// CI environment, use concise output
 		mode = ModeConcise
+
 		log.Debugw("Selected concise mode", "reason", "ci_detected", "provider", e.CIProvider)
 
 	case e.IsPiped:
 		// Piped output, use concise
 		mode = ModeConcise
+
 		log.Debugw("Selected concise mode", "reason", "piped_output")
 
 	default:
 		// Fallback to concise for unknown contexts
 		mode = ModeConcise
+
 		log.Debugw("Selected concise mode", "reason", "default_fallback")
 	}
 

@@ -120,3 +120,9 @@ Each service entry includes `name`, `protocol`, `port`, and `targets` (list of `
   - `ocfp lb add-service ops-https reserved:vault_ip`
   - `ocfp lb add-service ops-https public-ip:router:0 --port 443`
 
+## See Also
+
+- [Load Balancer Architecture](../networking/load-balancers.md) for per-provider LB implementation details
+- [Public IPs](../networking/public-ips.md) for public IP allocation and labels
+- [Networking Overview](../networking/README.md) for the provider support matrix
+

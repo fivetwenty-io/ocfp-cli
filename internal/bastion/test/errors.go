@@ -1,3 +1,4 @@
+// Package test provides test helpers and mock implementations for bastion tests.
 package test
 
 import (

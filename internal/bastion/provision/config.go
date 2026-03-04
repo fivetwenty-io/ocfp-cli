@@ -51,6 +51,7 @@ func (c *Config) GetSystemConfig() SystemConfig {
 func (c *Config) GetDirectories() []DirectoryConfig {
 	return []DirectoryConfig{
 		{Path: "${HOME}/ocfp/cli", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
+		{Path: "${HOME}/.ocfp", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/deployments", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
@@ -98,9 +99,12 @@ func (c *Config) GetGenesisDeployments() []GenesisDeployment {
 
 // GetBinaryTools returns binary tools to install.
 func (c *Config) GetBinaryTools() []BinaryTool {
-	tools := []BinaryTool{}
-	tools = append(tools, c.getGenesisTools()...)
-	tools = append(tools, c.getCloudFoundryTools()...)
+	genesisTools := c.getGenesisTools()
+	cfTools := c.getCloudFoundryTools()
+
+	tools := make([]BinaryTool, 0, len(genesisTools)+len(cfTools))
+	tools = append(tools, genesisTools...)
+	tools = append(tools, cfTools...)
 
 	return tools
 }
@@ -123,6 +127,7 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 	}
 
 	// Add provider-specific repositories
+	// Azure and GCP repos removed: azure-cli and google-cloud-sdk moved to brew.
 	switch c.provider {
 	case providerStackit:
 		repos = append(repos, APTRepository{
@@ -136,32 +141,6 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 			},
 			SourceLine: "deb [signed-by=/usr/share/keyrings/stackit.gpg] https://packages.stackit.cloud/apt/cli stackit main",
 			SourceFile: "/etc/apt/sources.list.d/stackit.list",
-		})
-	case providerAzure:
-		repos = append(repos, APTRepository{
-			Name:      "azure-cli",
-			Enabled:   true,
-			Condition: condProviderIsAzure,
-			GPGKey: GPGKey{
-				URL:     "https://packages.microsoft.com/keys/microsoft.asc",
-				Dest:    "/etc/apt/keyrings/microsoft.key",
-				Dearmor: false,
-			},
-			SourceLine: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.key] https://packages.microsoft.com/repos/azure-cli/ jammy main",
-			SourceFile: "/etc/apt/sources.list.d/azure-cli.list",
-		})
-	case providerGCP:
-		repos = append(repos, APTRepository{
-			Name:      "google-cloud-sdk",
-			Enabled:   true,
-			Condition: condProviderIsGCP,
-			GPGKey: GPGKey{
-				URL:     "https://packages.cloud.google.com/apt/doc/apt-key.gpg",
-				Dest:    "/etc/apt/keyrings/google-cloud.key",
-				Dearmor: false,
-			},
-			SourceLine: "deb [signed-by=/etc/apt/keyrings/google-cloud.key] https://packages.cloud.google.com/apt cloud-sdk main",
-			SourceFile: "/etc/apt/sources.list.d/google-cloud-sdk.list",
 		})
 	}
 
@@ -259,6 +238,7 @@ func (c *Config) getGenesisConfig() config.Genesis {
 	if genesisConfig.Branch == "" {
 		genesisConfig.Branch = "v3.1.x-dev"
 	}
+
 	if genesisConfig.Repo == "" {
 		genesisConfig.Repo = "git@github.com:genesis-community/genesis"
 	}
@@ -300,23 +280,14 @@ func (c *Config) getCorePackages() map[string]PackageGroup {
 	}
 }
 
-// getEssentialPackages returns essential system packages.
+// getEssentialPackages returns brew prerequisite packages only.
+// All other packages moved to brew (system tools, dev libs) or CPAN (Perl modules).
 func (c *Config) getEssentialPackages() PackageGroup {
 	return PackageGroup{
-		Enabled:   true,
-		Condition: "",
-		DependsOn: []string{},
-		Packages: []string{
-			"rsync", "curl", "wget", "git", "unzip", "tig", "ack-grep", "ripgrep",
-			"python3", "python3-pip", "ca-certificates", "gnupg", "lsb-release",
-			"tar", "gzip", "gawk", "sed", "grep", "coreutils", "cpanminus",
-			"perl-doc", "libperl-dev", "make", "gcc", "build-essential",
-			"libnet-ip-perl", "libnetaddr-ip-perl", "libjson-perl", "libnet-cidr-perl",
-			"snapd", "libreadline-dev", "apt-rdepends", "gpg", "htop",
-			"libssl-dev", "libtool", "libyaml-dev", "libyaml-libyaml-perl",
-			"libyaml-perl", "python3-dev", "python3-setuptools", "s3cmd",
-			"vim", "vim-common", "libfuse2", "neovim",
-		},
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates"},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
@@ -324,21 +295,36 @@ func (c *Config) getEssentialPackages() PackageGroup {
 }
 
 // getCloudFoundryPackages returns CloudFoundry-related packages.
+// Dev libs moved to brew: zlib, libxslt, libxml2, sqlite3.
 func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
-		Enabled:   true,
-		Condition: "",
-		DependsOn: []string{},
-		Packages: []string{
-			"zlib1g-dev", "ruby", "ruby-dev", "openssl",
-			"libxslt1-dev", "libxml2-dev", "libssl-dev", "libyaml-dev",
-			"libsqlite3-dev", "sqlite3", "jq",
-			"tmux", "screen", "tree",
-		},
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
-		Verify:      []string{"jq"},
+		Verify:      []string{},
 		PostInstall: "",
 	}
+}
+
+// getPostBrewPackages returns packages that have no brew formula and must be
+// installed via APT after Linuxbrew is available.
+func (c *Config) getPostBrewPackages() PackageGroup {
+	return PackageGroup{
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{"libperl-dev", "libfuse2", "apt-rdepends", "lsb-release", "perl-doc"},
+		PipPackages: []string{},
+		Verify:      []string{},
+		PostInstall: "",
+	}
+}
+
+// GetPostBrewPackages returns packages to install via APT after Linuxbrew.
+func (c *Config) GetPostBrewPackages() PackageGroup {
+	return c.getPostBrewPackages()
 }
 
 // addProviderPackages adds provider-specific package groups.
@@ -386,12 +372,13 @@ func (c *Config) getAWSPackages() PackageGroup {
 }
 
 // getAzurePackages returns Azure-specific packages.
+// azure-cli moved to brew.
 func (c *Config) getAzurePackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
 		Condition:   condProviderIsAzure,
-		DependsOn:   []string{"azure-cli"},
-		Packages:    []string{"azure-cli"},
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
 		Verify:      []string{"az"},
 		PostInstall: "configure_azure_cli",
@@ -399,12 +386,13 @@ func (c *Config) getAzurePackages() PackageGroup {
 }
 
 // getGCPPackages returns GCP-specific packages.
+// google-cloud-sdk moved to brew.
 func (c *Config) getGCPPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
 		Condition:   condProviderIsGCP,
-		DependsOn:   []string{"google-cloud-sdk"},
-		Packages:    []string{"google-cloud-sdk"},
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
 		Verify:      []string{"gcloud"},
 		PostInstall: "configure_gcp_cli",
@@ -845,8 +833,7 @@ func (c *Config) generateStackitScript() string {
 
 // generateAWSScript generates AWS-specific configuration script.
 func (c *Config) generateAWSScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# AWS CLI configuration")
 	lines = append(lines, "")
@@ -857,8 +844,7 @@ func (c *Config) generateAWSScript() string {
 
 // generateAzureScript generates Azure-specific configuration script.
 func (c *Config) generateAzureScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# Azure CLI configuration")
 	lines = append(lines, "")
@@ -869,8 +855,7 @@ func (c *Config) generateAzureScript() string {
 
 // generateGCPScript generates GCP-specific configuration script.
 func (c *Config) generateGCPScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# GCP CLI configuration")
 	lines = append(lines, "")
@@ -884,8 +869,7 @@ func (c *Config) generateGCPScript() string {
 
 // generateOpenStackScript generates OpenStack-specific configuration script.
 func (c *Config) generateOpenStackScript() string {
-	var lines []string
-
+	lines := make([]string, 0, 4) //nolint:mnd
 	lines = append(lines, "#!/bin/bash")
 	lines = append(lines, "# OpenStack CLI configuration")
 	lines = append(lines, "")

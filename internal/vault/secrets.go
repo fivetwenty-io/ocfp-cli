@@ -16,28 +16,37 @@ import (
 )
 
 const (
-	// Password generation.
+	// DefaultPasswordLength is the default number of characters for generated passwords.
 	DefaultPasswordLength = 32
-	SimplePasswordLength  = 24
+	// SimplePasswordLength is the number of characters for simplified password generation.
+	SimplePasswordLength = 24
 
-	// Key generation.
+	// DefaultRSAKeySize is the default RSA key size in bits for SSH key generation.
 	DefaultRSAKeySize = 2048
-	UUIDByteLength    = 16
-	DefaultKeyLength  = 32
-	JWTKeyLength      = 64
+	// UUIDByteLength is the number of random bytes used for UUID generation.
+	UUIDByteLength = 16
+	// DefaultKeyLength is the default encryption key length in bytes.
+	DefaultKeyLength = 32
+	// JWTKeyLength is the key length in bytes for JWT signing secrets.
+	JWTKeyLength = 64
 
-	// UUID version and variant bits.
-	UUIDVersion4    = 0x40
-	UUIDVariant10   = 0x80
+	// UUIDVersion4 is the version 4 bit pattern for UUID generation.
+	UUIDVersion4 = 0x40
+	// UUIDVariant10 is the variant 10 bit pattern for UUID generation.
+	UUIDVariant10 = 0x80
+	// UUIDVersionMask masks the lower nibble for setting UUID version bits.
 	UUIDVersionMask = 0x0f
+	// UUIDVariantMask masks the lower 6 bits for setting UUID variant bits.
 	UUIDVariantMask = 0x3f
 
-	// Encryption key defaults.
+	// BlobstoreKeyLength is the encryption key length in bytes for blobstore secrets.
 	BlobstoreKeyLength = 32
-	DBKeyLength        = 32
-	Encryption512Bit   = 64
+	// DBKeyLength is the encryption key length in bytes for database secrets.
+	DBKeyLength = 32
+	// Encryption512Bit is the byte length for a 512-bit encryption key.
+	Encryption512Bit = 64
 
-	// IP addressing.
+	// DefaultInternalIP is the default internal IP address for BOSH director deployments.
 	DefaultInternalIP = "10.0.0.6"
 )
 

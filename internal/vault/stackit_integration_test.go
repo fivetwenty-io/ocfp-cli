@@ -86,7 +86,7 @@ func (m *mockFullSafe) Delete(path, key string) error {
 	return nil
 }
 
-func (m *mockFullSafe) List(path string) ([]string, error) {
+func (m *mockFullSafe) List(_path string) ([]string, error) {
 	var keys []string
 	for k := range m.data {
 		keys = append(keys, k)
@@ -103,11 +103,11 @@ func (m *mockFullSafe) Import(path string, data map[string]interface{}) error {
 	return nil
 }
 
-func (m *mockFullSafe) GetEngineInfo(path string) (*EngineInfo, error) {
+func (m *mockFullSafe) GetEngineInfo(_path string) (*EngineInfo, error) {
 	return &EngineInfo{}, nil
 }
 
-func (m *mockFullSafe) GetJSON(path, key string) ([]byte, error) {
+func (m *mockFullSafe) GetJSON(_path, _key string) ([]byte, error) {
 	return []byte("{}"), nil
 }
 
@@ -128,16 +128,6 @@ func (m *mockFullSafe) GetString(path, key string) (string, error) {
 func (m *mockFullSafe) MustGet(path, key string) interface{} {
 	val, _ := m.Get(path, key)
 	return val
-}
-
-func (m *mockFullSafe) findPathsWithPrefix(prefix string) []string {
-	var paths []string
-	for path := range m.data {
-		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
-			paths = append(paths, path)
-		}
-	}
-	return paths
 }
 
 // Note: State manager mocking removed as it's not used in current tests.
@@ -566,33 +556,42 @@ func TestIntegration_PublicIPs_GroupingAndFiltering(t *testing.T) {
 	// Create test public IPs
 	allIPs := []*cpi.PublicIP{
 		{
-			ID:      "ip-1",
-			Address: "1.2.3.4",
+			ID:        "ip-1",
+			IPAddress: "1.2.3.4",
+			Address:   "1.2.3.4",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "test-bloc",
 				"job":         "bosh",
 				"index":       "0",
 				"environment": "mgmt",
+				"managed-by":  "ocfp",
 			},
 		},
 		{
-			ID:      "ip-2",
-			Address: "1.2.3.5",
+			ID:        "ip-2",
+			IPAddress: "1.2.3.5",
+			Address:   "1.2.3.5",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "test-bloc",
 				"job":         "router",
 				"index":       "0",
 				"environment": "ocf",
+				"managed-by":  "ocfp",
 			},
 		},
 		{
-			ID:      "ip-3",
-			Address: "1.2.3.6",
+			ID:        "ip-3",
+			IPAddress: "1.2.3.6",
+			Address:   "1.2.3.6",
+			Index:     "0",
 			Labels: map[string]string{
 				"bloc":        "other-bloc", // Different bloc
 				"job":         "bosh",
 				"index":       "0",
 				"environment": "mgmt",
+				"managed-by":  "ocfp",
 			},
 		},
 	}

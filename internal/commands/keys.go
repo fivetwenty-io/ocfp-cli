@@ -48,7 +48,7 @@ func fetchKeys(ctx context.Context, url, provider string) ([]string, error) {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) // #nosec G107 - URL constructed from validated input
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL is from trusted provider config
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}

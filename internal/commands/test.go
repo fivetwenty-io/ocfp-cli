@@ -18,23 +18,42 @@ import (
 )
 
 const (
-	// Test timeout constants.
-	DefaultTestTimeoutMinutes = 30   // Default test timeout in minutes
-	TestRetryDelaySeconds     = 5    // Delay between test retries
-	TestResultsFileMode       = 0600 // File mode for test results files
+	// DefaultTestTimeoutMinutes is the default timeout for test operations in minutes.
+	DefaultTestTimeoutMinutes = 30
+
+	// TestRetryDelaySeconds is the delay in seconds between test retries.
+	TestRetryDelaySeconds = 5
+
+	// TestResultsFileMode is the file permission mode for test result files.
+	TestResultsFileMode = 0600
 )
 
 // TestSuite represents a test suite type.
 type TestSuite string
 
 const (
-	TestSuiteC2C        TestSuite = "c2c"
+	// TestSuiteC2C is the container-to-container networking test suite.
+	TestSuiteC2C TestSuite = "c2c"
+
+	// TestSuiteBlacksmith is the Blacksmith service broker test suite.
 	TestSuiteBlacksmith TestSuite = "blacksmith"
-	TestSuiteNFS        TestSuite = "nfs"
-	TestSuiteSMB        TestSuite = "smb"
-	TestSuiteTCP        TestSuite = "tcp"
-	TestSuiteAll        TestSuite = "all"
-	TestSuiteSmoke      TestSuite = "smoke"
+
+	// TestSuiteNFS is the NFS volume services test suite.
+	TestSuiteNFS TestSuite = "nfs"
+
+	// TestSuiteSMB is the SMB volume services test suite.
+	TestSuiteSMB TestSuite = "smb"
+
+	// TestSuiteTCP is the TCP routing test suite.
+	TestSuiteTCP TestSuite = "tcp"
+
+	// TestSuiteAll runs all available test suites.
+	TestSuiteAll TestSuite = "all"
+
+	// TestSuiteSmoke is the smoke test suite for basic platform validation.
+	TestSuiteSmoke TestSuite = "smoke"
+
+	// TestSuiteAcceptance is the full acceptance test suite.
 	TestSuiteAcceptance TestSuite = "acceptance"
 )
 
@@ -105,7 +124,7 @@ the configured credentials and endpoints.`,
   ocfp test all --output results.xml`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"c2c", "blacksmith", "nfs", "smb", "tcp", "smoke", "acceptance", "all"},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runTestCommand(args[0], opts)
 		},
 	}
@@ -578,9 +597,16 @@ type TestResult struct {
 type TestStatus string
 
 const (
-	TestStatusPassed  TestStatus = "PASSED"
-	TestStatusFailed  TestStatus = "FAILED"
+	// TestStatusPassed indicates a test completed successfully.
+	TestStatusPassed TestStatus = "PASSED"
+
+	// TestStatusFailed indicates a test did not pass.
+	TestStatusFailed TestStatus = "FAILED"
+
+	// TestStatusSkipped indicates a test was skipped.
 	TestStatusSkipped TestStatus = "SKIPPED"
+
+	// TestStatusRunning indicates a test is currently in progress.
 	TestStatusRunning TestStatus = "RUNNING"
 )
 
@@ -779,7 +805,7 @@ func (r *TestRunner) createTestOrgSpace(ctx context.Context) error {
 	return nil
 }
 
-func (r *TestRunner) deployTestApps(ctx context.Context) error {
+func (r *TestRunner) deployTestApps(_ctx context.Context) error {
 	// Deploy test applications for C2C testing
 	// This would push sample apps used for testing
 	return nil
@@ -869,35 +895,35 @@ func (r *TestRunner) buildSmokeTestCommand(ctx context.Context) *exec.Cmd {
 
 func (r *TestRunner) buildC2CTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for C2C networking tests
-	return exec.CommandContext(ctx, "echo", "Running C2C test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running C2C test:", testName) //nolint:gosec // command args are from trusted config
 }
 
 func (r *TestRunner) buildBlacksmithTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for Blacksmith service broker tests
-	return exec.CommandContext(ctx, "echo", "Running Blacksmith test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running Blacksmith test:", testName) //nolint:gosec // command args are from trusted config
 }
 
 func (r *TestRunner) buildNFSTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for NFS volume service tests
-	return exec.CommandContext(ctx, "echo", "Running NFS test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running NFS test:", testName) //nolint:gosec // command args are from trusted config
 }
 
 func (r *TestRunner) buildSMBTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for SMB volume service tests
-	return exec.CommandContext(ctx, "echo", "Running SMB test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running SMB test:", testName) //nolint:gosec // command args are from trusted config
 }
 
 func (r *TestRunner) buildTCPTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for TCP routing tests
-	return exec.CommandContext(ctx, "echo", "Running TCP test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running TCP test:", testName) //nolint:gosec // command args are from trusted config
 }
 
 func (r *TestRunner) buildAcceptanceTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for acceptance tests
-	return exec.CommandContext(ctx, "echo", "Running acceptance test:", testName)
+	return exec.CommandContext(ctx, "echo", "Running acceptance test:", testName) //nolint:gosec // command args are from trusted config
 }
 
-func (r *TestRunner) cleanupTestApps(ctx context.Context) error {
+func (r *TestRunner) cleanupTestApps(_ctx context.Context) error {
 	// Delete test applications
 	return nil
 }

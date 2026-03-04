@@ -183,6 +183,7 @@ func TestScriptGeneration(t *testing.T) {
 }
 
 // TestSnapPackageGeneration tests snap package script generation.
+// Snap packages have been deprecated in favor of Linuxbrew.
 func TestSnapPackageGeneration(t *testing.T) {
 	t.Parallel()
 
@@ -191,23 +192,44 @@ func TestSnapPackageGeneration(t *testing.T) {
 	snapMgr := provision.NewSnapManager("stackit", cfg)
 
 	snapPackages := snapMgr.GetSnapPackages()
-	if len(snapPackages) == 0 {
-		t.Error("Expected snap packages to be configured")
+	if len(snapPackages) != 0 {
+		t.Errorf("Expected empty snap package list (deprecated), got %d packages", len(snapPackages))
 	}
 
-	// Check for Go package
+	ctx := context.Background()
+	script := snapMgr.GenerateSnapInstallScript(ctx)
+
+	if script != "" {
+		t.Error("Expected empty snap installation script (deprecated)")
+	}
+}
+
+// TestBrewPackageGeneration tests brew package script generation.
+func TestBrewPackageGeneration(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.NewTestConfig().Build()
+
+	brewMgr := provision.NewBrewManager("stackit", cfg)
+
+	brewPackages := brewMgr.GetBrewPackages()
+	if len(brewPackages) == 0 {
+		t.Error("Expected brew packages to be configured")
+	}
+
+	// Check for Go package (migrated from snap)
 	goFound := false
 
-	for _, pkg := range snapPackages {
+	for _, pkg := range brewPackages {
 		if pkg.Name == "go" {
 			goFound = true
 
 			if !pkg.Enabled {
-				t.Error("Expected Go snap package to be enabled")
+				t.Error("Expected Go brew package to be enabled")
 			}
 
-			if !pkg.Classic {
-				t.Error("Expected Go snap package to use classic confinement")
+			if pkg.Version != "1.24" {
+				t.Errorf("Expected Go version '1.24', got '%s'", pkg.Version)
 			}
 
 			break
@@ -215,27 +237,27 @@ func TestSnapPackageGeneration(t *testing.T) {
 	}
 
 	if !goFound {
-		t.Error("Expected Go snap package to be configured")
+		t.Error("Expected Go brew package to be configured")
 	}
 
 	ctx := context.Background()
-	script := snapMgr.GenerateSnapInstallScript(ctx)
+	script := brewMgr.GenerateBrewPackageScript(ctx)
 
 	if script == "" {
-		t.Error("Expected non-empty snap installation script")
+		t.Error("Expected non-empty brew installation script")
 	}
 
 	// Check script content
 	requiredContent := []string{
-		"snap install go",
-		"--classic",
-		"snapd",
-		"log_info",
+		"brew install",
+		"go@1.24",
+		"HOMEBREW_NO_AUTO_UPDATE",
+		"brew shellenv",
 	}
 
 	for _, content := range requiredContent {
 		if !strings.Contains(script, content) {
-			t.Errorf("Snap script missing required content: %s", content)
+			t.Errorf("Brew script missing required content: %s", content)
 		}
 	}
 }
@@ -253,8 +275,9 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 		t.Error("Expected advanced binary tools to be configured")
 	}
 
-	// Check for required tools
-	requiredTools := []string{"yq", "ripgrep", "fly", "bun", "nvim"}
+	// Check for required tools (yq and ripgrep moved to brew, now disabled here)
+	requiredTools := []string{"fly", "bun"}
+	brewDisabledTools := []string{"yq", "ripgrep", "vault"}
 	toolMap := make(map[string]bool)
 
 	for _, tool := range tools {
@@ -266,6 +289,12 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 			t.Errorf("Required tool not found: %s", reqTool)
 		} else if !enabled {
 			t.Errorf("Required tool not enabled: %s", reqTool)
+		}
+	}
+
+	for _, brewTool := range brewDisabledTools {
+		if enabled, exists := toolMap[brewTool]; exists && enabled {
+			t.Errorf("Expected tool '%s' to be disabled (installed via brew)", brewTool)
 		}
 	}
 
@@ -300,14 +329,22 @@ func TestCPANModuleGeneration(t *testing.T) {
 	cpanMgr := provision.NewCPANManager("stackit", cfg)
 
 	modules := cpanMgr.GetCPANModules()
-	if len(modules) != 3 {
-		t.Fatalf("Expected exactly 3 CPAN modules, got %d", len(modules))
-	}
 
+	// Verify all expected modules are present (networking + debugging)
 	expectedModules := map[string]struct{}{
+		"Net::IP":         {},
+		"NetAddr::IP":     {},
+		"JSON":            {},
+		"Net::CIDR":       {},
+		"YAML":            {},
+		"YAML::LibYAML":   {},
 		"Pry":             {},
 		"Carp::Always":    {},
 		"Smart::Comments": {},
+	}
+
+	if len(modules) != len(expectedModules) {
+		t.Fatalf("Expected %d CPAN modules, got %d", len(expectedModules), len(modules))
 	}
 
 	for _, module := range modules {
@@ -331,11 +368,14 @@ func TestCPANModuleGeneration(t *testing.T) {
 		t.Error("Expected non-empty CPAN installation script")
 	}
 
-	// Check script content
+	// Check script content includes networking and debugging modules
 	cpanContent := []string{
 		"cpanm",
 		"--notest",
 		"perl -e",
+		"Net::IP",
+		"Net::CIDR",
+		"YAML",
 		"Pry",
 		"Carp::Always",
 		"Smart::Comments",

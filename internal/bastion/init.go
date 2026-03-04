@@ -47,9 +47,10 @@ var (
 	ErrOCFPConfigurationFileNotFound     = errors.New("OCFP configuration file not found")
 	ErrBlocNotFoundInConfig              = errors.New("bloc not found in config file")
 	ErrScriptExecutionFailed             = errors.New("script execution failed")
+	ErrSSHPortNotReachable               = errors.New("SSH port 22 did not become reachable")
 )
 
-// Dynamic error constructor.
+// ErrUnsupportedProvider returns an error for an unrecognized cloud provider name.
 func ErrUnsupportedProvider(provider string) error {
 	return fmt.Errorf("unsupported provider: %s", provider) //nolint:err113 // dynamic error with context
 }
@@ -438,6 +439,8 @@ func (m *Manager) isAlreadyProvisioned(ctx context.Context) (bool, error) {
 }
 
 // setupInfrastructure handles provider setup, SSH connection, and configuration loading.
+//
+//nolint:funlen // sequential infrastructure setup steps must remain together for clarity
 func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	err := m.validatePrerequisites()
 	if err != nil {
@@ -490,8 +493,13 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	}
 
 	// Wait for SSH port to be ready
-	m.log.Info("Waiting for SSH service to be ready...")
-	err = m.waitForSSHReady(ctx, connDetails.Host, 3*time.Minute)
+	m.log.Infow("Waiting for SSH service to be ready",
+		"host", connDetails.Host,
+		"port", connDetails.Port,
+		"user", connDetails.User,
+		"key", connDetails.PrivateKeyPath)
+
+	err = m.waitForSSHReady(ctx, connDetails.Host, 3*time.Minute) //nolint:mnd
 	if err != nil {
 		return fmt.Errorf("SSH service did not become ready: %w", err)
 	}
@@ -517,29 +525,33 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 // It attempts TCP connections with exponential backoff until the timeout is reached.
 func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	retryInterval := 5 * time.Second
-	maxRetryInterval := 30 * time.Second
+	retryInterval := 5 * time.Second     //nolint:mnd
+	maxRetryInterval := 30 * time.Second //nolint:mnd
+
+	m.log.Infof("Connecting to %s:22 (timeout: %v)", host, timeout)
 
 	attempt := 0
 	for time.Now().Before(deadline) {
 		attempt++
 
-		// Try to establish TCP connection to port 22
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "22"), 10*time.Second)
+		dialer := &net.Dialer{Timeout: 10 * time.Second} //nolint:mnd
+
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "22"))
 		if err == nil {
-			// Connection successful
-			conn.Close()
+			_ = conn.Close()
+
 			m.log.Infof("SSH port 22 is reachable on %s after %d attempts", host, attempt)
+
 			return nil
 		}
 
-		// Log the connection attempt failure
 		remainingTime := time.Until(deadline)
 		if remainingTime <= 0 {
 			break
 		}
 
-		m.log.Debugf("SSH port 22 not ready yet (attempt %d): %v. Retrying in %v...", attempt, err, retryInterval)
+		m.log.Infof("SSH not ready (attempt %d, %v remaining): %v",
+			attempt, remainingTime.Truncate(time.Second), err)
 
 		// Wait before next attempt, respecting context cancellation
 		select {
@@ -547,14 +559,14 @@ func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time
 			return fmt.Errorf("SSH readiness check cancelled: %w", ctx.Err())
 		case <-time.After(retryInterval):
 			// Exponential backoff up to maxRetryInterval
-			retryInterval = time.Duration(float64(retryInterval) * 1.5)
+			retryInterval = time.Duration(float64(retryInterval) * 1.5) //nolint:mnd
 			if retryInterval > maxRetryInterval {
 				retryInterval = maxRetryInterval
 			}
 		}
 	}
 
-	return fmt.Errorf("SSH port 22 on %s did not become reachable within %v (tried %d times)", host, timeout, attempt)
+	return fmt.Errorf("%w on %s within %v (tried %d times)", ErrSSHPortNotReachable, host, timeout, attempt)
 }
 
 // getInitializationPhases returns the list of initialization phases.
@@ -570,6 +582,9 @@ func (m *Manager) getInitializationPhases() []struct {
 		// This enables agent forwarding on the server before any git operations
 		{"ssh_agent_forwarding", m.setupSSHAgentForwarding},
 
+		// Phase 0.5: Bastion SSH authorized_keys injection
+		{"bastion_keys", m.configureBastionKeys},
+
 		// Phase 1: Prerequisites and system setup
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
@@ -584,11 +599,15 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},
 
+		// Phase 3.5-3.7: Linuxbrew installation, packages, and post-brew APT
+		{"brew_install", m.installBrew},
+		{"brew_packages", m.installBrewPackages},
+		{"post_brew_apt", m.installPostBrewPackages},
+
 		// Phase 4: Git repositories (must run before binary_tools that depend on them)
 		{"git_repos", m.cloneGitRepositories},
 
 		// Phase 5: Package managers and tools
-		{"snap_packages", m.installSnapPackages},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
 		{"binary_tools", m.installBinaryTools},
@@ -639,6 +658,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		fn   func(context.Context) error
 	}{
 		{"ssh_agent_forwarding", m.setupSSHAgentForwarding}, // MUST BE FIRST
+		{"bastion_keys", m.configureBastionKeys},            // inject authorized_keys early
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
 		{"directories", m.createDirectories},
@@ -646,8 +666,11 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
-		{"packages", m.installPackages},       // avoid dpkg lock issues
-		{"git_repos", m.cloneGitRepositories}, // must run before binary_tools that depend on git repos
+		{"packages", m.installPackages},                 // avoid dpkg lock issues
+		{"brew_install", m.installBrew},                 // must complete before brew_packages
+		{"brew_packages", m.installBrewPackages},        // must complete before post_brew_apt
+		{"post_brew_apt", m.installPostBrewPackages},    // APT pkgs requiring brew tools (e.g. libperl-dev)
+		{"git_repos", m.cloneGitRepositories},           // must run before binary_tools that depend on git repos
 	}
 
 	err := m.runPhasesSequential(ctx, pre)
@@ -660,7 +683,6 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		name string
 		fn   func(context.Context) error
 	}{
-		{"snap_packages", m.installSnapPackages},
 		{"binary_tools", m.installBinaryTools},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
@@ -756,14 +778,14 @@ func (m *Manager) executePhaseWithErrorHandling(ctx context.Context, phase struc
 		return phase.fn(ctx)
 	})
 	if err != nil {
-		return m.handlePhaseFailure(phase.name, index, err, reporter)
+		return m.handlePhaseFailure(phase.name, index, total, err, reporter)
 	}
 
 	return m.handlePhaseSuccess(phase.name, index, total, reporter)
 }
 
 // handlePhaseFailure handles phase execution failure.
-func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, reporter *ProgressReporter) error {
+func (m *Manager) handlePhaseFailure(phaseName string, index, total int, err error, reporter *ProgressReporter) error {
 	m.progress.Errors = append(m.progress.Errors, err)
 
 	metadata := map[string]interface{}{
@@ -778,7 +800,7 @@ func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, rep
 	}
 
 	if reporter != nil {
-		reporter.ReportError(phaseName, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries)
+		reporter.ReportError(phaseName, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries, index+1, total)
 	}
 
 	return fmt.Errorf("phase %s failed: %w", phaseName, err)
@@ -904,9 +926,9 @@ func (m *Manager) validatePrerequisites() error {
 	}
 
 	// Create local directories
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "logs", "provision")
+	logDir := filepath.Join(config.OcfpHome(), "logs", "provision")
 
-	err := os.MkdirAll(logDir, logDirectoryMode)
+	err := os.MkdirAll(logDir, logDirectoryMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -1077,7 +1099,7 @@ func (m *Manager) previewProfileChanges(ctx context.Context) {
 	builder.WriteString("#!/bin/sh\n# OCFP environment variables\n# Generated by ocfp bastion provisioning\n\n")
 
 	for k, v := range envMgr.GetSystemEnvironmentVarsForPreview() {
-		builder.WriteString(fmt.Sprintf("export %s='%s'\n", k, v))
+		fmt.Fprintf(&builder, "export %s='%s'\n", k, v)
 	}
 
 	desired := builder.String()
@@ -1146,6 +1168,7 @@ func (m *Manager) previewAPTRepositories(ctx context.Context) {
 	}
 
 	_, _ = fmt.Fprintln(m.options.ProgressOut, "\nAPT repos plan:")
+
 	for _, repo := range repos {
 		if !repo.Enabled {
 			continue
@@ -1399,6 +1422,7 @@ func (m *Manager) shouldSkipPhase(phase string) bool {
 func (m *Manager) getProgressReporter() *ProgressReporter {
 	if m.options.ProgressOut != nil {
 		mode := SelectOutputMode(m.options.ProgressOut)
+
 		return NewProgressReporter(m.options.ProgressOut, mode, m.progress)
 	}
 
@@ -1407,14 +1431,14 @@ func (m *Manager) getProgressReporter() *ProgressReporter {
 
 // saveCheckpoint saves the current progress state.
 func (m *Manager) saveCheckpoint() error {
-	checkpointPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "checkpoints",
+	checkpointPath := filepath.Join(config.OcfpHome(), "checkpoints",
 		fmt.Sprintf("bastion-%s.json", m.config.Name))
 
 	// Implementation would save checkpoint data to file
 	// For now, just create the directory
 	dir := filepath.Dir(checkpointPath)
 
-	err := os.MkdirAll(dir, logDirectoryMode)
+	err := os.MkdirAll(dir, logDirectoryMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create checkpoint directory: %w", err)
 	}
@@ -1486,7 +1510,7 @@ func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
 
 	// Step 1: Enable SSHD agent forwarding
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 1, 3, "Enabling SSHD agent forwarding")
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 1, 3, "Enabling SSHD agent forwarding") //nolint:mnd
 	}
 
 	err := m.enableSSHDAgentForwarding(ctx)
@@ -1496,14 +1520,14 @@ func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
 
 	// Step 2: Configure SSH client forwarding
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 2, 3, "Configuring SSH client forwarding")
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 2, 3, "Configuring SSH client forwarding") //nolint:mnd
 	}
 
 	m.configureSSHClientForwarding(ctx)
 
 	// Step 3: Add GitHub host keys
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 3, 3, "Adding GitHub host keys")
+		m.reporter.ReportSubtaskProgress("ssh_agent_forwarding", 3, 3, "Adding GitHub host keys") //nolint:mnd
 	}
 
 	m.addGitHubHostKeys(ctx)
@@ -1659,7 +1683,7 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 }
 
 // setupAPTRepositories sets up APT repositories only.
-func (m *Manager) setupAPTRepositories(ctx context.Context) error {
+func (m *Manager) setupAPTRepositories(_ctx context.Context) error {
 	m.log.Info("Setting up APT repositories")
 
 	// For now, this is a minimal implementation
@@ -1681,44 +1705,6 @@ func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
 	return enabled
 }
 
-// filterActiveCPANModules returns CPAN modules that are enabled or have a name.
-func filterActiveCPANModules(mods []provision.CPANModule) []provision.CPANModule {
-	var active []provision.CPANModule
-
-	for _, mdu := range mods {
-		if mdu.Enabled || mdu.Name != "" {
-			active = append(active, mdu)
-		}
-	}
-
-	return active
-}
-
-// filterEnabledCPANModules returns only enabled CPAN modules.
-func filterEnabledCPANModules(mods []provision.CPANModule) []provision.CPANModule {
-	var enabled []provision.CPANModule
-
-	for _, mdu := range mods {
-		if mdu.Enabled {
-			enabled = append(enabled, mdu)
-		}
-	}
-
-	return enabled
-}
-
-// filterEnabledCFPlugins returns only enabled CF plugins.
-func filterEnabledCFPlugins(plugins []provision.CFPlugin) []provision.CFPlugin {
-	var enabled []provision.CFPlugin
-
-	for _, p := range plugins {
-		if p.Enabled {
-			enabled = append(enabled, p)
-		}
-	}
-
-	return enabled
-}
 
 // filterEnabledBinaryTools returns only enabled binary tools.
 func filterEnabledBinaryTools(tools []provision.BinaryTool) []provision.BinaryTool {
@@ -1746,99 +1732,29 @@ func filterEnabledAdvancedTools(tools []provision.AdvancedBinaryTool) []provisio
 	return enabled
 }
 
-// executeProvisioningScript creates, transfers and executes a provisioning script on the bastion.
-func (m *Manager) executeProvisioningScript(ctx context.Context, script string) error {
-	// Copy script to bastion
-	scriptPath := "/tmp/provision-bastion.sh"
-
-	// Create temporary script file locally
-	localScriptPath := filepath.Join(os.TempDir(), "provision-bastion.sh")
-
-	err := os.WriteFile(localScriptPath, []byte(script), scriptFileMode)
-	if err != nil {
-		return fmt.Errorf("failed to write script file: %w", err)
-	}
-
-	defer func() {
-		err := os.Remove(localScriptPath)
-		if err != nil {
-			m.log.Warn("Failed to remove temporary script file", "error", err.Error())
-		}
-	}()
-
-	// Transfer script to bastion
-	transferOpts := ssh.TransferOptions{
-		Recursive:    false,
-		Preserve:     false,
-		Compress:     false,
-		Progress:     nil,
-		MaxRetries:   0,
-		ChunkSize:    0,
-		Verify:       true,
-		BackupRemote: false,
-	}
-
-	err = m.sshClient.TransferFile(ctx, localScriptPath, scriptPath, transferOpts)
-	if err != nil {
-		return fmt.Errorf("failed to transfer script to bastion: %w", err)
-	}
-
-	// Execute script
-	cmd := fmt.Sprintf("chmod +x '%s' && '%s'", scriptPath, scriptPath)
-
-	result, err := m.sshClient.ExecuteCommand(ctx, cmd)
-	if err != nil {
-		m.log.Error("Script execution failed",
-			"exit_code", result.ExitCode,
-			"stdout", result.Stdout,
-			"stderr", result.Stderr)
-
-		return fmt.Errorf("%w: exit code %d, stderr: %s", ErrScriptExecutionFailed, result.ExitCode, result.Stderr)
-	}
-
-	m.log.Info("Provisioning script executed successfully")
-
-	return nil
-}
-
 func (m *Manager) installPackages(ctx context.Context) error {
 	m.log.Info("Installing system packages")
 
-	// Get package configuration
 	packages := m.provConfig.GetPackages()
 	if len(packages) == 0 {
 		m.log.Info("No packages to install")
+
 		return nil
 	}
 
-	// Report progress for packages
-	if m.reporter != nil {
-		total := 0
-		for _, group := range packages {
-			if group.Enabled {
-				total += len(group.Packages)
-			}
-		}
+	script := m.buildPackageInstallScript(packages)
 
-		current := 0
-		for _, group := range packages {
-			if !group.Enabled {
-				continue
-			}
-			for _, pkg := range group.Packages {
-				m.reporter.ReportSubtaskProgress("packages", current+1, total, pkg)
-				current++
-			}
-		}
-	}
+	return m.executeScript(ctx, script, "packages")
+}
 
-	// Generate package installation script
+
+// buildPackageInstallScript generates the full package installation script.
+func (m *Manager) buildPackageInstallScript(packages map[string]provision.PackageGroup) string {
 	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
 
-	// Build a minimal script with header and package installation
 	var scriptLines []string
 
-	// Add basic logging functions and post-install helper functions (needed by generatePackageScript)
+	// Add basic logging functions and post-install helper functions
 	scriptLines = append(scriptLines, `#!/bin/bash
 set -euo pipefail
 
@@ -1857,7 +1773,6 @@ log_error() {
 
 `)
 
-	// Add post-install helper functions that might be referenced by package post-install scripts
 	scriptLines = append(scriptLines, scriptGen.GeneratePostInstallFunctions())
 
 	// Add APT repository setup (required for provider-specific packages like stackit)
@@ -1870,19 +1785,19 @@ log_error() {
 
 	scriptLines = append(scriptLines, `
 
+# Recover from any previously interrupted dpkg operations
+sudo dpkg --configure -a
+
 # Ensure apt cache is up to date
 log_info 'Updating package cache'
 sudo apt-get update -qq
 
 `)
 
-	// Generate and append package installation script
 	packageScript := scriptGen.GeneratePackageScript(packages)
 	scriptLines = append(scriptLines, packageScript)
 
-	script := strings.Join(scriptLines, "\n")
-
-	return m.executeScript(ctx, script, "packages")
+	return strings.Join(scriptLines, "\n")
 }
 
 func (m *Manager) installBinaryTools(ctx context.Context) error {
@@ -1981,66 +1896,91 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 // gitCloneWorker processes git clone/update jobs with retry logic for rate limits.
 func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan<- error, reporter *ProgressReporter, total int, completed *int) {
 	for job := range jobs {
-		// Execute with retry + backoff for rate limits
-		backoff := gitBackoffInitial
-		maxAttempts := gitMaxAttempts
-
-		var err error
-		var result *ssh.CommandResult
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			result, err = m.sshClient.ExecuteCommand(ctx, job.cmd)
-			if err == nil {
-				break
-			}
-			// Log the actual error details
-			if result != nil {
-				m.log.Errorw("Git operation failed",
-					"repo", job.name,
-					"attempt", attempt,
-					"exit_code", result.ExitCode,
-					"stdout", result.Stdout,
-					"stderr", result.Stderr)
-			}
-
-			// Detect rate limit / transient
-			emsg := strings.ToLower(err.Error())
-			if strings.Contains(emsg, "rate limit") || strings.Contains(emsg, "429") || strings.Contains(emsg, "temporarily") || strings.Contains(emsg, "timeout") {
-				m.log.Warnw("Git op limited, backing off", "repo", job.name, "attempt", attempt, "delay", backoff.String())
-
-				select {
-				case <-ctx.Done():
-					break
-				case <-time.After(backoff):
-				}
-
-				backoff *= 2
-				// On final attempt, try without shallow depth
-				if attempt == maxAttempts-1 {
-					job.cmd = strings.ReplaceAll(job.cmd, " --depth 1", "")
-				}
-
-				continue
-			}
-			// Non-retryable
-			break
-		}
-
-		if err != nil {
-			// Include stderr in error message so error classification can detect permission issues
-			if result != nil && result.Stderr != "" {
-				errs <- fmt.Errorf("git op failed for %s: %w (stderr: %s)", job.name, err, result.Stderr)
-			} else {
-				errs <- fmt.Errorf("git op failed for %s: %w", job.name, err)
-			}
-		} else {
-			errs <- nil
-		}
+		result, err := m.executeGitJobWithRetry(ctx, &job)
+		errs <- m.buildGitJobError(job.name, result, err)
 
 		*completed++
 		if reporter != nil {
 			reporter.ReportSubtaskProgress("git_repos", *completed, total, job.name)
 		}
 	}
+}
+
+// executeGitJobWithRetry runs a git job with exponential backoff for transient errors.
+func (m *Manager) executeGitJobWithRetry(ctx context.Context, j *job) (*ssh.CommandResult, error) { //nolint:varnamelen
+	backoff := gitBackoffInitial
+
+	var (
+		err    error
+		result *ssh.CommandResult
+	)
+
+	for attempt := 1; attempt <= gitMaxAttempts; attempt++ {
+		result, err = m.sshClient.ExecuteCommand(ctx, j.cmd)
+		if err == nil {
+			return result, nil
+		}
+
+		m.logGitFailure(j.name, attempt, result)
+
+		if !m.isTransientGitError(err) {
+			return result, fmt.Errorf("git job %s failed: %w", j.name, err)
+		}
+
+		m.log.Warnw("Git op limited, backing off", "repo", j.name, "attempt", attempt, "delay", backoff.String())
+
+		select {
+		case <-ctx.Done():
+			return result, fmt.Errorf("git job %s cancelled: %w", j.name, err)
+		case <-time.After(backoff):
+		}
+
+		backoff *= 2
+
+		// On final attempt, try without shallow depth
+		if attempt == gitMaxAttempts-1 {
+			j.cmd = strings.ReplaceAll(j.cmd, " --depth 1", "")
+		}
+	}
+
+	return result, fmt.Errorf("git job %s failed after retries: %w", j.name, err)
+}
+
+// isTransientGitError checks if a git error is transient and worth retrying.
+func (m *Manager) isTransientGitError(err error) bool {
+	emsg := strings.ToLower(err.Error())
+
+	return strings.Contains(emsg, "rate limit") ||
+		strings.Contains(emsg, "429") ||
+		strings.Contains(emsg, "temporarily") ||
+		strings.Contains(emsg, "timeout")
+}
+
+// logGitFailure logs details of a failed git operation.
+func (m *Manager) logGitFailure(repoName string, attempt int, result *ssh.CommandResult) {
+	if result == nil {
+		return
+	}
+
+	m.log.Errorw("Git operation failed",
+		"repo", repoName,
+		"attempt", attempt,
+		"exit_code", result.ExitCode,
+		"stdout", result.Stdout,
+		"stderr", result.Stderr)
+}
+
+// buildGitJobError constructs the appropriate error for a git job result.
+func (m *Manager) buildGitJobError(name string, result *ssh.CommandResult, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if result != nil && result.Stderr != "" {
+		return fmt.Errorf("git op failed for %s: %w (stderr: %s)", name, err, result.Stderr)
+	}
+
+	return fmt.Errorf("git op failed for %s: %w", name, err)
 }
 
 // createGitJobs creates git clone/update jobs for each repository and enqueues them.
@@ -2076,7 +2016,7 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 	close(jobs)
 }
 
-func (m *Manager) setupGenesis(ctx context.Context) error {
+func (m *Manager) setupGenesis(_ctx context.Context) error {
 	// Genesis is now installed as part of the binary_tools phase
 	// This phase is kept for main installation once genesis 3.1 has an official release.
 	return nil
@@ -2094,6 +2034,7 @@ func (m *Manager) runCustomScripts(ctx context.Context) error {
 	}
 
 	m.log.Info("Provisioned marker created successfully")
+
 	return nil
 }
 
@@ -2102,7 +2043,7 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 
 	// Check if provisioning completed successfully
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("verification", 1, 10, "Checking provisioning marker")
+		m.reporter.ReportSubtaskProgress("verification", 1, 10, "Checking provisioning marker") //nolint:mnd
 	}
 
 	cmd := "test -f ~/.ocfp/provisioned && echo 'provisioned' || echo 'not-provisioned'"
@@ -2120,7 +2061,7 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
 	for i, tool := range tools {
 		if m.reporter != nil {
-			m.reporter.ReportSubtaskProgress("verification", i+2, 10, fmt.Sprintf("Verifying %s", tool))
+			m.reporter.ReportSubtaskProgress("verification", i+2, 10, "Verifying "+tool) //nolint:mnd
 		}
 
 		cmd := "command -v " + tool
@@ -2185,16 +2126,17 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 
 // findConfigFile locates the OCFP configuration file from standard paths.
 func (m *Manager) findConfigFile() (string, error) {
-	homeDir := os.Getenv("HOME")
 	configPaths := []string{
-		homeDir + "/.ocfp/config.yml",
+		filepath.Join(config.OcfpHome(), "config.yml"),
 		"config/config.yml",
 	}
 
 	for _, path := range configPaths {
-		_, err := os.Stat(path)
+		cleanPath := filepath.Clean(path)
+
+		_, err := os.Stat(cleanPath) //nolint:gosec // path components are from trusted HOME env
 		if err == nil {
-			return path, nil
+			return cleanPath, nil
 		}
 	}
 

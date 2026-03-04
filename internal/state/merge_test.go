@@ -411,7 +411,7 @@ func TestMergeResources_InvalidStrategy(t *testing.T) {
 	result, err := state.MergeResources(currentState, diffSet, opts)
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown merge strategy")
+	assert.Contains(t, err.Error(), "invalid merge strategy")
 }
 
 func TestMergeResources_TimestampHandling(t *testing.T) {

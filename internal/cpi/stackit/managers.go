@@ -40,6 +40,7 @@ type SecurityManager struct {
 	client *Client
 }
 
+// CreateSecurityGroup creates a new security group in STACKIT.
 func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -83,6 +84,7 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 	return out, nil
 }
 
+// GetSecurityGroup retrieves a security group by ID.
 func (m *SecurityManager) GetSecurityGroup(ctx context.Context, groupID string) (*cpi.SecurityGroup, error) {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -107,6 +109,7 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, groupID string) 
 	return out, nil
 }
 
+// ListSecurityGroups lists security groups with optional label filters.
 func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -147,6 +150,7 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	return out, nil
 }
 
+// DeleteSecurityGroup deletes a security group by ID.
 func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID string) error {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -161,6 +165,7 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID strin
 	return nil
 }
 
+// AddSecurityRule adds a security rule to a security group.
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
 	logger.Debugf("Adding security group rule: group=%s direction=%s protocol=%s ports=%d-%d cidr=%s",
 		groupID, rule.Direction, rule.Protocol, rule.PortRangeMin, rule.PortRangeMax, rule.RemoteIPCIDR)
@@ -216,6 +221,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	return nil
 }
 
+// RemoveSecurityRule removes a security rule from a security group.
 func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -230,6 +236,7 @@ func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string
 	return nil
 }
 
+// ListSecurityRules lists all rules in a security group.
 func (m *SecurityManager) ListSecurityRules(ctx context.Context, groupID string) ([]*cpi.SecurityRule, error) {
 	cli, err := m.client.getIAASClient()
 	if err != nil {
@@ -290,6 +297,7 @@ type LoadBalancerManager struct {
 	client *Client
 }
 
+// CreateLoadBalancer creates a new load balancer in STACKIT.
 func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.CreateLoadBalancerRequest) (*cpi.LoadBalancer, error) {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -335,6 +343,7 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 	return out, nil
 }
 
+// GetLoadBalancer retrieves a load balancer by ID.
 func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, loadBalancerID string) (*cpi.LoadBalancer, error) {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -385,6 +394,7 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, loadBalancerI
 	return out, nil
 }
 
+// ListLoadBalancers lists load balancers with optional filters.
 func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
 	// STACKIT load balancers do not support labels/tags.
 	// When metadata filters are provided, return empty list to enforce strict metadata requirements.
@@ -443,7 +453,8 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 	return list, nil
 }
 
-func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, loadBalancerID string, req *cpi.UpdateLoadBalancerRequest) error {
+// UpdateLoadBalancer updates a load balancer configuration.
+func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, loadBalancerID string, _req *cpi.UpdateLoadBalancerRequest) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
 		return err
@@ -459,6 +470,7 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, loadBalanc
 	return nil
 }
 
+// DeleteLoadBalancer deletes a load balancer by ID.
 func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, loadBalancerID string) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -473,6 +485,7 @@ func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, loadBalanc
 	return nil
 }
 
+// AddBackend adds a backend target to a load balancer.
 func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backend *cpi.Backend) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -496,6 +509,7 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 	return m.updateExistingPool(ctx, cli, lbID, poolName, pools[poolIdx], backend)
 }
 
+// RemoveBackend removes a backend target from a load balancer.
 func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, backendID string) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -549,14 +563,17 @@ func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, ba
 	return nil
 }
 
-func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
+// EnableBackend enables a backend target in a load balancer (not implemented for STACKIT).
+func (m *LoadBalancerManager) EnableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	return ErrEnableBackendNotImplemented
 }
 
-func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
+// DisableBackend disables a backend target in a load balancer (not implemented for STACKIT).
+func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	return ErrDisableBackendNotImplemented
 }
 
+// ConfigureHealthCheck configures a health check on a load balancer target pool.
 func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
 	cli, err := m.client.getLoadBalancerClient()
 	if err != nil {
@@ -593,7 +610,8 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 	return nil
 }
 
-func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
+// GetHealthStatus retrieves the health status of a load balancer (not implemented for STACKIT).
+func (m *LoadBalancerManager) GetHealthStatus(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
 	return nil, ErrGetHealthStatusNotImplemented
 }
 

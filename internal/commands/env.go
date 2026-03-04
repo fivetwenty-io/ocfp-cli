@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	// File permissions.
+	// ConfigFilePerm is the file permission mode for configuration files.
 	ConfigFilePerm os.FileMode = 0600
-	ConfigDirPerm  os.FileMode = 0750
 
-	// Tabwriter padding.
+	// ConfigDirPerm is the file permission mode for configuration directories.
+	ConfigDirPerm os.FileMode = 0750
+
+	// TabwriterPadding is the number of padding spaces used by the tabwriter.
 	TabwriterPadding = 2
 )
 
@@ -91,7 +93,7 @@ func newEnvExportCmd() *cobra.Command {
 		Long: `Export environment configuration as shell variables.
 If no environment is specified, exports the current environment.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, args []string) error {
 			return runEnvExport(args, format)
 		},
 	}
@@ -102,7 +104,7 @@ If no environment is specified, exports the current environment.`,
 }
 
 // runEnvList lists all available environments.
-func runEnvList(cmd *cobra.Command, args []string) error {
+func runEnvList(_cmd *cobra.Command, _args []string) error {
 	log := logger.WithOperation("env-list")
 
 	// Find all configuration files
@@ -143,7 +145,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 // runEnvShow displays details about an environment.
-func runEnvShow(cmd *cobra.Command, args []string) error {
+func runEnvShow(_cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-show")
 
 	envName, err := getEnvironmentName(args)
@@ -375,7 +377,7 @@ func displayAvailabilityZones(cfg *config.Config) error {
 }
 
 // runEnvSet sets the active environment.
-func runEnvSet(cmd *cobra.Command, args []string) error {
+func runEnvSet(_cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("env-set")
 	envName := args[0]
 
@@ -411,57 +413,10 @@ func findTargetEnvironment(envName string) (*environmentInfo, error) {
 	return nil, ErrEnvironmentNotFound(envName)
 }
 
-func updateOCFPConfig(envName string, targetEnv *environmentInfo, log logger.Logger) error {
-	ocfpConfigPath := filepath.Join(os.Getenv("HOME"), ".ocfp", "config.yml")
-
-	ocfpConfig, err := readExistingOCFPConfig(ocfpConfigPath, log)
+func updateOCFPConfig(envName string, targetEnv *environmentInfo, _ logger.Logger) error {
+	err := config.SetCurrentBloc(envName, targetEnv.ConfigFile)
 	if err != nil {
-		return err
-	}
-
-	ocfpConfig["current_environment"] = envName
-	ocfpConfig["bloc"] = envName
-	ocfpConfig["config_file"] = targetEnv.ConfigFile
-
-	return writeOCFPConfig(ocfpConfigPath, ocfpConfig)
-}
-
-func readExistingOCFPConfig(ocfpConfigPath string, log logger.Logger) (map[string]interface{}, error) {
-	ocfpConfig := make(map[string]interface{})
-	// #nosec G304 - ocfpConfigPath is constructed from safe paths
-	data, err := os.ReadFile(ocfpConfigPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ocfpConfig, nil
-		}
-
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	err = yaml.Unmarshal(data, &ocfpConfig)
-	if err != nil {
-		log.Warnf("Failed to parse existing config: %v", err)
-
-		return ocfpConfig, nil
-	}
-
-	return ocfpConfig, nil
-}
-
-func writeOCFPConfig(ocfpConfigPath string, ocfpConfig map[string]interface{}) error {
-	err := os.MkdirAll(filepath.Dir(ocfpConfigPath), ConfigDirPerm)
-	if err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	data, err := yaml.Marshal(ocfpConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	err = os.WriteFile(ocfpConfigPath, data, ConfigFilePerm)
-	if err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+		return fmt.Errorf("failed to update OCFP state: %w", err)
 	}
 
 	return nil
@@ -542,8 +497,8 @@ func findEnvironments() []environmentInfo {
 
 	// Search paths for configuration files
 	searchPaths := []string{
-		filepath.Join(os.Getenv("HOME"), ".ocfp", "configs"),
-		filepath.Join(os.Getenv("HOME"), ".ocfp"),
+		filepath.Join(config.OcfpHome(), "configs"),
+		config.OcfpHome(),
 		"./configs",
 		".",
 	}
@@ -559,7 +514,7 @@ func findEnvironments() []environmentInfo {
 
 		for _, match := range matches {
 			// Try to load and parse the file
-			data, err := os.ReadFile(match) // #nosec G304 - match is from glob pattern
+			data, err := os.ReadFile(match) //nolint:gosec // match is from glob pattern on trusted paths
 			if err != nil {
 				continue
 			}

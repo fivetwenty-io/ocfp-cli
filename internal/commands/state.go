@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -325,7 +324,7 @@ func renderStateOutput(currentState *state.State, outputFormat string) error {
 }
 
 // runStateDisplay is the default handler for 'state' command without subcommands.
-func runStateDisplay(cmd *cobra.Command, args []string) error {
+func runStateDisplay(cmd *cobra.Command, _args []string) error {
 	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return ErrBlocRequired
@@ -562,7 +561,7 @@ func initializeStateSyncReconciler(ctx context.Context, params *stateSyncParams)
 }
 
 // runStateSyncCommand is the execution handler for 'state sync' command.
-func runStateSyncCommand(cmd *cobra.Command, args []string) error {
+func runStateSyncCommand(cmd *cobra.Command, _args []string) error {
 	params, err := validateAndParseStateSyncParams()
 	if err != nil {
 		return err
@@ -623,7 +622,7 @@ func runStateSyncCommand(cmd *cobra.Command, args []string) error {
 // initializeStateLogger initializes the logger for state operations.
 func initializeStateLogger(blocName string, subcommand string) error {
 	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

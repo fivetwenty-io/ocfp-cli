@@ -15,64 +15,66 @@ type fakeStorageCreds struct {
 	deletedGroup string
 }
 
-func (f *fakeStorageCreds) DeleteCredentialsGroup(ctx context.Context, groupID string) error {
+func (f *fakeStorageCreds) DeleteCredentialsGroup(_ctx context.Context, groupID string) error {
 	f.deletedGroup = groupID
 
 	return nil
 }
 
 // cpi.StorageManager required methods (stubs).
-func (f *fakeStorageCreds) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) CreateVolume(_ctx context.Context, _req *cpi.VolumeRequest) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) GetVolume(_ctx context.Context, _id string) (*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) ListVolumes(_ctx context.Context, _filters map[string]string) ([]*cpi.Volume, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
+func (f *fakeStorageCreds) AttachVolume(_ctx context.Context, _volumeID string, _instanceID string, _device string) error {
 	return nil
 }
-func (f *fakeStorageCreds) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
+func (f *fakeStorageCreds) DetachVolume(_ctx context.Context, _volumeID string, _instanceID string) error {
 	return nil
 }
-func (f *fakeStorageCreds) ResizeVolume(ctx context.Context, id string, size int) error { return nil }
-func (f *fakeStorageCreds) DeleteVolume(ctx context.Context, id string) error           { return nil }
-func (f *fakeStorageCreds) CreateSnapshot(ctx context.Context, volumeID string, name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) ResizeVolume(_ctx context.Context, _id string, _size int) error {
+	return nil
+}
+func (f *fakeStorageCreds) DeleteVolume(_ctx context.Context, _id string) error { return nil }
+func (f *fakeStorageCreds) CreateSnapshot(_ctx context.Context, _volumeID string, _name string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) GetSnapshot(ctx context.Context, id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) GetSnapshot(_ctx context.Context, _id string) (*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) ListSnapshots(_ctx context.Context, _volumeID string, _filters map[string]string) ([]*cpi.Snapshot, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) DeleteSnapshot(ctx context.Context, id string) error { return nil }
-func (f *fakeStorageCreds) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) DeleteSnapshot(_ctx context.Context, _id string) error { return nil }
+func (f *fakeStorageCreds) CreateBucket(_ctx context.Context, _req *cpi.BucketRequest) (*cpi.Bucket, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) GetBucket(_ctx context.Context, _name string) (*cpi.Bucket, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeStorageCreds) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) ListBuckets(_ctx context.Context) ([]*cpi.Bucket, error) { //nolint:nilnil // test fake
 	return nil, nil
 }
-func (f *fakeStorageCreds) DeleteBucket(ctx context.Context, name string) error { return nil }
-func (f *fakeStorageCreds) EmptyBucket(ctx context.Context, name string) error  { return nil }
-func (f *fakeStorageCreds) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+func (f *fakeStorageCreds) DeleteBucket(_ctx context.Context, _name string) error { return nil }
+func (f *fakeStorageCreds) EmptyBucket(_ctx context.Context, _name string) error  { return nil }
+func (f *fakeStorageCreds) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
 	return true, nil
 }
-func (f *fakeStorageCreds) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) { //nolint:nilnil // test fake
+func (f *fakeStorageCreds) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
 
 type fakeProviderCreds struct{ s *fakeStorageCreds }
 
-func (p *fakeProviderCreds) Name() string                                  { return "stackit" }
-func (p *fakeProviderCreds) Region() string                                { return "eu01" }
-func (p *fakeProviderCreds) Authenticate(ctx context.Context) error        { return nil }
-func (p *fakeProviderCreds) ValidateCredentials(ctx context.Context) error { return nil }
+func (p *fakeProviderCreds) Name() string                                   { return "stackit" }
+func (p *fakeProviderCreds) Region() string                                 { return "eu01" }
+func (p *fakeProviderCreds) Authenticate(_ctx context.Context) error        { return nil }
+func (p *fakeProviderCreds) ValidateCredentials(_ctx context.Context) error { return nil }
 
 //nolint:ireturn
 func (p *fakeProviderCreds) Network() cpi.NetworkManager { return nil }
@@ -106,9 +108,9 @@ func (p *fakeProviderCreds) SecurityManager() cpi.SecurityManager { return p.Sec
 //nolint:ireturn
 func (p *fakeProviderCreds) LoadBalancerManager() cpi.LoadBalancerManager { return p.LoadBalancer() }
 
-func (p *fakeProviderCreds) SupportsStorage() bool                                 { return true }
-func (p *fakeProviderCreds) Initialize(ctx context.Context, cfg interface{}) error { return nil }
-func (p *fakeProviderCreds) Cleanup(ctx context.Context) error                     { return nil }
+func (p *fakeProviderCreds) SupportsStorage() bool                                   { return true }
+func (p *fakeProviderCreds) Initialize(_ctx context.Context, _cfg interface{}) error { return nil }
+func (p *fakeProviderCreds) Cleanup(_ctx context.Context) error                      { return nil }
 
 func TestTeardownDeletesCredentialsGroup(t *testing.T) {
 	t.Parallel()
@@ -473,6 +475,99 @@ func TestFilterResourcesCombinedBastionAndSelective(t *testing.T) {
 			for expectedType, expectedCount := range tc.expectedTypeLen {
 				if typeCounts[expectedType] != expectedCount {
 					t.Errorf("expected %d %s resources, got %d", expectedCount, expectedType, typeCounts[expectedType])
+				}
+			}
+		})
+	}
+}
+
+func TestMergeResources(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name        string
+		existing    []*commands.ResourceToDelete
+		discovered  []*commands.ResourceToDelete
+		expectedIDs []string
+	}{
+		{
+			name: "no duplicates added",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			expectedIDs: []string{"i-111", "vpc-222"},
+		},
+		{
+			name: "cloud-only resources added",
+			existing: []*commands.ResourceToDelete{
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "orphaned-bastion", ID: "i-333"},
+				{Type: "network", Name: "vpc", ID: "vpc-222"},
+			},
+			expectedIDs: []string{"vpc-222", "i-333"},
+		},
+		{
+			name:        "both empty",
+			existing:    []*commands.ResourceToDelete{},
+			discovered:  []*commands.ResourceToDelete{},
+			expectedIDs: []string{},
+		},
+		{
+			name:     "empty existing gets all discovered",
+			existing: []*commands.ResourceToDelete{},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+			},
+			expectedIDs: []string{"i-111"},
+		},
+		{
+			name: "empty discovered keeps existing",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "bastion", ID: "i-111"},
+			},
+			discovered:  []*commands.ResourceToDelete{},
+			expectedIDs: []string{"i-111"},
+		},
+		{
+			name: "mixed overlap and new",
+			existing: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "worker", ID: "i-111"},
+				{Type: "volume", Name: "vol", ID: "vol-222"},
+			},
+			discovered: []*commands.ResourceToDelete{
+				{Type: "instance", Name: "worker", ID: "i-111"},
+				{Type: "instance", Name: "orphaned-bastion", ID: "i-333"},
+				{Type: "security_group", Name: "sg", ID: "sg-444"},
+			},
+			expectedIDs: []string{"i-111", "vol-222", "i-333", "sg-444"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := commands.TestMergeResources(tc.existing, tc.discovered)
+
+			if len(result) != len(tc.expectedIDs) {
+				t.Fatalf("expected %d resources, got %d", len(tc.expectedIDs), len(result))
+			}
+
+			resultIDs := make(map[string]bool, len(result))
+			for _, r := range result {
+				resultIDs[r.ID] = true
+			}
+
+			for _, expectedID := range tc.expectedIDs {
+				if !resultIDs[expectedID] {
+					t.Errorf("expected resource ID %s not found in merged results", expectedID)
 				}
 			}
 		})

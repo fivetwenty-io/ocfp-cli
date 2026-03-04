@@ -32,7 +32,7 @@ var (
 	ErrTunnelCreationNotApplicableForLocal = errors.New("tunnel creation not applicable for local execution")
 )
 
-// Dynamic error constructor.
+// ErrUnknownExecutionMode returns an error for an unrecognized execution mode value.
 func ErrUnknownExecutionMode(mode int) error {
 	return fmt.Errorf("unknown execution mode: %d", mode) //nolint:err113 // dynamic error with context
 }
@@ -62,7 +62,7 @@ func NewModeDetector(cfg *config.Config) *ModeDetector {
 }
 
 // DetectExecutionMode determines whether we're running locally on bastion or remotely.
-func (md *ModeDetector) DetectExecutionMode(ctx context.Context) (ExecutionMode, error) {
+func (md *ModeDetector) DetectExecutionMode(_ctx context.Context) (ExecutionMode, error) {
 	md.log.Debug("Detecting execution mode")
 
 	// Check if we're on the bastion host itself
@@ -105,12 +105,12 @@ func (md *ModeDetector) checkHostnamePattern() bool {
 // checkMarkerFiles checks for bastion-specific marker files.
 func (md *ModeDetector) checkMarkerFiles() bool {
 	markerFiles := []string{
-		os.Getenv("HOME") + "/.ocfp/provisioned",
-		os.Getenv("HOME") + "/.ocfp/bastion-init-completed",
+		filepath.Join(config.OcfpHome(), "provisioned"),
+		filepath.Join(config.OcfpHome(), "bastion-init-completed"),
 	}
 
 	for _, marker := range markerFiles {
-		_, err := os.Stat(marker)
+		_, err := os.Stat(marker) //nolint:gosec // path components are from trusted HOME env
 		if err == nil {
 			md.log.Debugw("Found bastion marker file", "file", marker)
 
@@ -126,11 +126,11 @@ func (md *ModeDetector) checkDirectoryStructure() bool {
 	ocfpDirs := []string{
 		os.Getenv("HOME") + "/ocfp",
 		os.Getenv("HOME") + "/ocfp/deployments",
-		os.Getenv("HOME") + "/.ocfp",
+		config.OcfpHome(),
 	}
 
 	for _, dir := range ocfpDirs {
-		_, err := os.Stat(dir)
+		_, err := os.Stat(dir) //nolint:gosec // path components are from trusted HOME env
 		if os.IsNotExist(err) {
 			return false
 		}
@@ -254,7 +254,9 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"ocfp_directories", manager.setupOCFPDirectories},
 		{"apt_repositories", manager.setupAPTRepositories},
 		{"packages", manager.installPackages},
-		{"snap_packages", manager.installSnapPackages},
+		{"brew_install", manager.installBrew},
+		{"brew_packages", manager.installBrewPackages},
+		{"post_brew_apt", manager.installPostBrewPackages},
 		{"binary_tools", manager.installBinaryTools},
 		{"cpan_modules", manager.installCPANModules},
 		{"git_repos", manager.cloneGitRepositories},
@@ -330,7 +332,7 @@ type LocalCommandExecutor struct {
 }
 
 // Connect is a no-op for local execution.
-func (lce *LocalCommandExecutor) Connect(ctx context.Context) error {
+func (lce *LocalCommandExecutor) Connect(_ctx context.Context) error {
 	return nil
 }
 
@@ -340,7 +342,7 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 
 	start := time.Now()
 
-	command := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	command := exec.CommandContext(ctx, "bash", "-lc", cmd) //nolint:gosec // command args are from trusted config
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 
@@ -381,7 +383,7 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 }
 
 // TransferFile is a no-op for local execution (files are already local).
-func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (lce *LocalCommandExecutor) TransferFile(_ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
 	// Local mode: treat as copying a file from local path to target path on the same machine
 	// Strip any accidental "bastion:" prefix if present
 	remote = strings.TrimPrefix(remote, "bastion:")
@@ -437,7 +439,7 @@ func (lce *LocalCommandExecutor) TransferFile(ctx context.Context, local, remote
 }
 
 // CreateTunnel is not applicable for local execution.
-func (lce *LocalCommandExecutor) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (lce *LocalCommandExecutor) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return ErrTunnelCreationNotApplicableForLocal
 }
 
@@ -522,7 +524,7 @@ func getHostname() string {
 
 // isOCFPProvisioned checks if OCFP is provisioned.
 func isOCFPProvisioned() bool {
-	markerFile := os.Getenv("HOME") + "/.ocfp/provisioned"
+	markerFile := filepath.Join(config.OcfpHome(), "provisioned")
 	_, err := os.Stat(markerFile)
 
 	return err == nil

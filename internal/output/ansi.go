@@ -56,6 +56,14 @@ const (
 	ClearToEnd = "\033[K"
 )
 
+// Unicode status icons.
+const (
+	// IconCheck is the checkmark icon for completed/success status.
+	IconCheck = "\u2713" // ✓
+	// IconCross is the cross icon for failed/error status.
+	IconCross = "\u2717" // ✗
+)
+
 // ansiPattern matches ANSI escape sequences for stripping.
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
@@ -69,6 +77,7 @@ func MoveCursorUp(n int) string {
 	if n <= 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("\033[%dA", n)
 }
 
@@ -77,6 +86,7 @@ func MoveCursorDown(n int) string {
 	if n <= 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("\033[%dB", n)
 }
 
@@ -154,9 +164,9 @@ func ColorForStatus(status Status) string {
 func IconForStatus(status Status) string {
 	switch status {
 	case StatusCompleted:
-		return "✓"
+		return IconCheck
 	case StatusFailed:
-		return "✗"
+		return IconCross
 	case StatusRunning:
 		return "→"
 	case StatusSkipped:

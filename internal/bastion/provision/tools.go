@@ -13,7 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// Tool provisioning errors.
+// ErrVersionNotFoundWithPattern returns an error when a version cannot be found using the given regex pattern.
 func ErrVersionNotFoundWithPattern(pattern string) error {
 	return fmt.Errorf("version not found with pattern: %s", pattern) //nolint:err113 // dynamic error with context
 }
@@ -74,7 +74,7 @@ func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 }
 
 // GenerateAdvancedToolScript generates script for advanced tool installation.
-func (atm *AdvancedToolManager) GenerateAdvancedToolScript(ctx context.Context) string {
+func (atm *AdvancedToolManager) GenerateAdvancedToolScript(_ctx context.Context) string {
 	tools := atm.GetAdvancedBinaryTools()
 	if len(tools) == 0 {
 		return ""
@@ -103,7 +103,7 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionUR
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is from trusted internal config
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version info: %w", err)
 	}
@@ -149,7 +149,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
 			Name:           "vault",
-			Enabled:        true,
+			Enabled:        false, // installed via brew (hashicorp/tap)
 			CheckCommand:   "vault",
 			VersionURL:     "https://api.github.com/repos/hashicorp/vault/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
@@ -173,7 +173,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "yq",
-			Enabled:        true,
+			Enabled:        false, // installed via brew
 			CheckCommand:   "yq",
 			VersionURL:     "https://api.github.com/repos/mikefarah/yq/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
@@ -185,7 +185,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "ripgrep",
-			Enabled:        true,
+			Enabled:        false, // installed via brew
 			CheckCommand:   "rg",
 			VersionURL:     "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest",
 			VersionPattern: `"tag_name":\s*"([^"]+)"`,
@@ -456,7 +456,7 @@ func (atm *AdvancedToolManager) addCleanupStep(lines *[]string, tool AdvancedBin
 
 // generateVersionBasedInstall generates installation commands for version-based tools.
 func (atm *AdvancedToolManager) generateVersionBasedInstall(tool AdvancedBinaryTool) []string {
-	var lines []string
+	lines := make([]string, 0, 32) //nolint:mnd // rough capacity for version-based install script
 
 	lines = append(lines, atm.generateVersionDetermination(tool)...)
 	lines = append(lines, "")
@@ -520,8 +520,7 @@ func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryT
 }
 
 func (atm *AdvancedToolManager) generateDownloadCommands(tool AdvancedBinaryTool) []string {
-	var lines []string
-
+	lines := make([]string, 0, 2) //nolint:mnd // download command + success message
 	lines = append(lines, fmt.Sprintf("        if curl -fsSL \"$DOWNLOAD_URL\" -o '/tmp/%s-download'; then", tool.Name))
 	lines = append(lines, fmt.Sprintf("            log_success '%s downloaded successfully'", tool.Name))
 

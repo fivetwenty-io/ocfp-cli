@@ -55,7 +55,7 @@ func (m *mockSafeForFQDN) Delete(path, key string) error {
 	return nil
 }
 
-func (m *mockSafeForFQDN) List(path string) ([]string, error) {
+func (m *mockSafeForFQDN) List(_path string) ([]string, error) {
 	var keys []string
 	for k := range m.data {
 		keys = append(keys, k)
@@ -72,11 +72,11 @@ func (m *mockSafeForFQDN) Import(path string, data map[string]interface{}) error
 	return nil
 }
 
-func (m *mockSafeForFQDN) GetEngineInfo(path string) (*EngineInfo, error) {
+func (m *mockSafeForFQDN) GetEngineInfo(_path string) (*EngineInfo, error) {
 	return &EngineInfo{}, nil
 }
 
-func (m *mockSafeForFQDN) GetJSON(path, key string) ([]byte, error) {
+func (m *mockSafeForFQDN) GetJSON(_path, _key string) ([]byte, error) {
 	return []byte("{}"), nil
 }
 

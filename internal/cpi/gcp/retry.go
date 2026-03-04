@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -52,19 +53,22 @@ func WithRetry(ctx context.Context, operation string, fn RetryableFunc) error {
 }
 
 // WithRetryConfig executes a function with custom retry configuration.
-func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig, fn RetryableFunc) error {
+//
+//nolint:funlen // retry logic with context, backoff, and jitter must remain together
+func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig, fn RetryableFunc) error { //nolint:varnamelen
 	if config == nil {
 		config = DefaultRetryConfig()
 	}
 
 	var lastErr error
+
 	delay := config.InitialDelay
 
 	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
 		// Check context before each attempt
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("operation %s cancelled before attempt %d: %w", operation, attempt, ctx.Err())
 		default:
 		}
 
@@ -76,6 +80,7 @@ func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig,
 					"operation", operation,
 					"attempt", attempt)
 			}
+
 			return nil
 		}
 
@@ -86,6 +91,7 @@ func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig,
 			logger.Debugw("Non-retryable error, not retrying",
 				"operation", operation,
 				"error", err.Error())
+
 			return err
 		}
 
@@ -106,7 +112,7 @@ func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig,
 		jitteredDelay := addJitter(delay, config.JitterFactor)
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("operation %s cancelled during backoff: %w", operation, ctx.Err())
 		case <-time.After(jitteredDelay):
 		}
 
@@ -132,11 +138,12 @@ func addJitter(delay time.Duration, jitterFactor float64) time.Duration {
 	}
 
 	// Add random jitter between -jitterFactor and +jitterFactor
-	jitter := (rand.Float64()*2 - 1) * jitterFactor * float64(delay)
+	jitter := (rand.Float64()*2 - 1) * jitterFactor * float64(delay) //nolint:gosec // jitter does not need crypto-grade randomness
+
 	return delay + time.Duration(jitter)
 }
 
-// WaitForOperation waits for a GCP operation to complete with polling.
+// OperationWaiter waits for a GCP operation to complete with polling.
 type OperationWaiter struct {
 	PollInterval time.Duration
 	Timeout      time.Duration
@@ -145,8 +152,8 @@ type OperationWaiter struct {
 // DefaultOperationWaiter returns a default operation waiter.
 func DefaultOperationWaiter() *OperationWaiter {
 	return &OperationWaiter{
-		PollInterval: 5 * time.Second,
-		Timeout:      10 * time.Minute,
+		PollInterval: 5 * time.Second,  //nolint:mnd
+		Timeout:      10 * time.Minute, //nolint:mnd
 	}
 }
 
@@ -164,12 +171,12 @@ type OperationChecker func(ctx context.Context) (*OperationStatus, error)
 func (w *OperationWaiter) Wait(ctx context.Context, operation string, check OperationChecker) error {
 	timeout := w.Timeout
 	if timeout == 0 {
-		timeout = 10 * time.Minute
+		timeout = 10 * time.Minute //nolint:mnd
 	}
 
 	pollInterval := w.PollInterval
 	if pollInterval == 0 {
-		pollInterval = 5 * time.Second
+		pollInterval = 5 * time.Second //nolint:mnd
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -184,7 +191,8 @@ func (w *OperationWaiter) Wait(ctx context.Context, operation string, check Oper
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return ErrOperationTimeout
 			}
-			return ctx.Err()
+
+			return fmt.Errorf("operation %s cancelled: %w", operation, ctx.Err())
 
 		case <-ticker.C:
 			status, err := check(ctx)
@@ -196,6 +204,7 @@ func (w *OperationWaiter) Wait(ctx context.Context, operation string, check Oper
 				if !IsRetryable(err) {
 					return err
 				}
+
 				continue
 			}
 
@@ -203,9 +212,11 @@ func (w *OperationWaiter) Wait(ctx context.Context, operation string, check Oper
 				if status.Error != nil {
 					return status.Error
 				}
+
 				logger.Debugw("Operation completed",
 					"operation", operation,
 					"status", status.Status)
+
 				return nil
 			}
 
@@ -225,8 +236,8 @@ type ResourceWaiter struct {
 // DefaultResourceWaiter returns a default resource waiter.
 func DefaultResourceWaiter() *ResourceWaiter {
 	return &ResourceWaiter{
-		PollInterval: 5 * time.Second,
-		Timeout:      5 * time.Minute,
+		PollInterval: 5 * time.Second, //nolint:mnd
+		Timeout:      5 * time.Minute, //nolint:mnd
 	}
 }
 
@@ -237,12 +248,12 @@ type ResourceStateChecker func(ctx context.Context) (string, error)
 func (w *ResourceWaiter) WaitForState(ctx context.Context, resourceName string, desiredStates []string, check ResourceStateChecker) error {
 	timeout := w.Timeout
 	if timeout == 0 {
-		timeout = 5 * time.Minute
+		timeout = 5 * time.Minute //nolint:mnd
 	}
 
 	pollInterval := w.PollInterval
 	if pollInterval == 0 {
-		pollInterval = 5 * time.Second
+		pollInterval = 5 * time.Second //nolint:mnd
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -262,7 +273,8 @@ func (w *ResourceWaiter) WaitForState(ctx context.Context, resourceName string, 
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return ErrOperationTimeout
 			}
-			return ctx.Err()
+
+			return fmt.Errorf("waiting for resource %s cancelled: %w", resourceName, ctx.Err())
 
 		case <-ticker.C:
 			state, err := check(ctx)
@@ -271,6 +283,7 @@ func (w *ResourceWaiter) WaitForState(ctx context.Context, resourceName string, 
 				if IsNotFound(err) {
 					continue
 				}
+
 				return err
 			}
 
@@ -278,11 +291,12 @@ func (w *ResourceWaiter) WaitForState(ctx context.Context, resourceName string, 
 				logger.Debugw("Resource reached desired state",
 					"resource", resourceName,
 					"state", state)
+
 				return nil
 			}
 
 			// Check for error states
-			if state == "FAILED" || state == "ERROR" {
+			if state == OperationStateFailed || state == "ERROR" {
 				return ErrVolumeErrorState
 			}
 

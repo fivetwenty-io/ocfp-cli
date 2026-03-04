@@ -1,9 +1,10 @@
 package aws
 
 import (
+	"strings"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"strings"
 )
 
 // buildAWSTagFilters converts a filter map to AWS EC2 filters.
@@ -49,17 +50,28 @@ func buildAWSTagFilters(filters map[string]string) []types.Filter {
 			continue
 		}
 
+		// Strip "label." or "label:" prefix (CPI-agnostic filter convention)
+		cleanKey := key
+
+		switch {
+		case strings.HasPrefix(cleanKey, "label."):
+			cleanKey = strings.TrimPrefix(cleanKey, "label.")
+		case strings.HasPrefix(cleanKey, "label:"):
+			cleanKey = strings.TrimPrefix(cleanKey, "label:")
+		}
+
 		var filterName string
 
 		// Check if the key already has "tag:" prefix
-		if strings.HasPrefix(key, "tag:") {
-			filterName = key
-		} else if awsSpecificKeys[key] {
+		switch {
+		case strings.HasPrefix(cleanKey, "tag:"):
+			filterName = cleanKey
+		case awsSpecificKeys[cleanKey]:
 			// AWS-specific filter keys are passed through as-is
-			filterName = key
-		} else {
+			filterName = cleanKey
+		default:
 			// All other keys are assumed to be tags and need "tag:" prefix
-			filterName = "tag:" + key
+			filterName = "tag:" + cleanKey
 		}
 
 		awsFilters = append(awsFilters, types.Filter{

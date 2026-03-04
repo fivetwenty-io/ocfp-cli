@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/proxmox"
@@ -152,7 +153,7 @@ operational tooling for Cloud Foundry environments.`,
 		TraverseChildren:           false,
 		Hidden:                     false,
 		SilenceErrors:              true,
-		SilenceUsage:               false,
+		SilenceUsage:               true,
 		DisableFlagParsing:         false,
 		DisableAutoGenTag:          false,
 		DisableFlagsInUseLine:      false,
@@ -206,17 +207,11 @@ func bindFlagsToViper(cmd *cobra.Command) {
 
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, args []string) {
-		// Determine bloc name: flag takes precedence, then env var, then viper config
+	return func(cmd *cobra.Command, _args []string) {
+		// Determine bloc name: flag > env var > state file > viper config
 		effectiveBlocName := *blocName
 		if effectiveBlocName == "" {
-			// Try environment variable first
-			if envBloc := os.Getenv("OCFP_BLOC"); envBloc != "" {
-				effectiveBlocName = envBloc
-			} else {
-				// Fall back to viper config
-				effectiveBlocName = viper.GetString("bloc")
-			}
+			effectiveBlocName = resolveBlocName()
 		}
 
 		// Set in viper for other components to use
@@ -260,6 +255,20 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			setupCommandTracking(lock, commandName, subcommandName)
 		}
 	}
+}
+
+// resolveBlocName determines the bloc name from env var, state file, or viper config.
+func resolveBlocName() string {
+	if envBloc := os.Getenv("OCFP_BLOC"); envBloc != "" {
+		return envBloc
+	}
+
+	stateBloc, err := config.GetCurrentBloc()
+	if err == nil && stateBloc != "" {
+		return stateBloc
+	}
+
+	return viper.GetString("bloc")
 }
 
 // setupCommandTracking initializes command tracking and lock file creation.
@@ -314,7 +323,7 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 
 // createPostRunHandler creates the persistent post-run handler.
 func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, args []string) {
+	return func(_cmd *cobra.Command, _args []string) {
 		// Clean up lock file
 		if lock.tracker != nil && !lock.timestamp.IsZero() {
 			if viper.GetBool("debug") {
@@ -329,12 +338,12 @@ func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
 
 // getBaseDir returns the base directory for OCFP data.
 func getBaseDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	baseDir := config.OcfpHome()
+	if baseDir == "" {
+		return "", config.ErrOcfpHomeNotFound
 	}
 
-	return filepath.Join(home, ".ocfp"), nil
+	return baseDir, nil
 }
 
 // getExpectedLogPath constructs the expected log path for a command.
@@ -369,9 +378,8 @@ func initConfig(cfgFile string, verbose bool) {
 
 	// Set default config path
 	if os.Getenv("OCFP_CONFIG_PATH") == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			_ = os.Setenv("OCFP_CONFIG_PATH", filepath.Join(home, ".ocfp"))
+		if ocfpHome := config.OcfpHome(); ocfpHome != "" {
+			_ = os.Setenv("OCFP_CONFIG_PATH", ocfpHome)
 		}
 	}
 

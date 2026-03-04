@@ -12,7 +12,7 @@ type Config struct {
 	SubscriptionID    string
 	TenantID          string
 	ClientID          string
-	ClientSecret      string
+	ClientSecret      string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ClientCertificate string // Path to certificate for cert-based auth
 
 	// Authentication - Managed Identity
@@ -51,11 +51,11 @@ type Config struct {
 	DefaultTags map[string]string
 
 	// Advanced settings
-	CloudName                 string // "AzurePublic", "AzureGovernment", "AzureChina"
-	CustomEndpoint            string // For Azure Stack or testing
-	DisableInstanceMetadata   bool
-	EnableDiagnosticsLogging  bool
-	DebugLogging              bool
+	CloudName                string // "AzurePublic", "AzureGovernment", "AzureChina"
+	CustomEndpoint           string // For Azure Stack or testing
+	DisableInstanceMetadata  bool
+	EnableDiagnosticsLogging bool
+	DebugLogging             bool
 }
 
 const (
@@ -128,41 +128,14 @@ func (c *Config) Validate() error {
 		return &ConfigError{Field: "ResourceGroup", Message: "resource group is required"}
 	}
 
-	// If using service principal, validate required fields
-	if c.ClientID != "" {
-		if c.TenantID == "" {
-			return &ConfigError{Field: "TenantID", Message: "tenant ID required when client ID is provided"}
-		}
-		if c.ClientSecret == "" && c.ClientCertificate == "" && !c.UseManagedIdentity {
-			return &ConfigError{Field: "ClientSecret", Message: "client secret or certificate required when client ID is provided"}
-		}
+	err := c.validateServicePrincipal()
+	if err != nil {
+		return err
 	}
 
-	// Validate VNet CIDR if provided
-	if c.VNetAddressSpace != "" {
-		if !isValidCIDR(c.VNetAddressSpace) {
-			return &ConfigError{Field: "VNetAddressSpace", Message: "invalid CIDR block format"}
-		}
-	}
-
-	// Validate retry settings
-	if c.MaxRetries < 0 {
-		return &ConfigError{Field: "MaxRetries", Message: "max retries cannot be negative"}
-	}
-
-	if c.RetryMode != "" && c.RetryMode != "standard" && c.RetryMode != "adaptive" {
-		return &ConfigError{Field: "RetryMode", Message: "retry mode must be 'standard' or 'adaptive'"}
-	}
-
-	// Validate cloud name
-	validClouds := map[string]bool{
-		"AzurePublic":     true,
-		"AzureGovernment": true,
-		"AzureChina":      true,
-		"":                true, // empty defaults to AzurePublic
-	}
-	if !validClouds[c.CloudName] {
-		return &ConfigError{Field: "CloudName", Message: "cloud name must be 'AzurePublic', 'AzureGovernment', or 'AzureChina'"}
+	err = c.validateNetworkAndRetry()
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -171,6 +144,7 @@ func (c *Config) Validate() error {
 // isValidCIDR performs basic CIDR validation.
 func isValidCIDR(cidr string) bool {
 	_, _, err := net.ParseCIDR(cidr)
+
 	return err == nil
 }
 
@@ -189,6 +163,7 @@ func (c *Config) GetCloudName() string {
 	if c.CloudName == "" {
 		return "AzurePublic"
 	}
+
 	return c.CloudName
 }
 
@@ -200,4 +175,49 @@ func (c *Config) HasServicePrincipalCredentials() bool {
 // HasManagedIdentity returns true if managed identity is configured.
 func (c *Config) HasManagedIdentity() bool {
 	return c.UseManagedIdentity
+}
+
+// validateServicePrincipal validates service principal credential fields.
+func (c *Config) validateServicePrincipal() error {
+	if c.ClientID == "" {
+		return nil
+	}
+
+	if c.TenantID == "" {
+		return &ConfigError{Field: "TenantID", Message: "tenant ID required when client ID is provided"}
+	}
+
+	if c.ClientSecret == "" && c.ClientCertificate == "" && !c.UseManagedIdentity {
+		return &ConfigError{Field: "ClientSecret", Message: "client secret or certificate required when client ID is provided"}
+	}
+
+	return nil
+}
+
+// validateNetworkAndRetry validates network, retry, and cloud name settings.
+func (c *Config) validateNetworkAndRetry() error {
+	validCloudNames := map[string]bool{
+		"AzurePublic":     true,
+		"AzureGovernment": true,
+		"AzureChina":      true,
+		"":                true, // empty defaults to AzurePublic
+	}
+
+	if c.VNetAddressSpace != "" && !isValidCIDR(c.VNetAddressSpace) {
+		return &ConfigError{Field: "VNetAddressSpace", Message: "invalid CIDR block format"}
+	}
+
+	if c.MaxRetries < 0 {
+		return &ConfigError{Field: "MaxRetries", Message: "max retries cannot be negative"}
+	}
+
+	if c.RetryMode != "" && c.RetryMode != "standard" && c.RetryMode != "adaptive" {
+		return &ConfigError{Field: "RetryMode", Message: "retry mode must be 'standard' or 'adaptive'"}
+	}
+
+	if !validCloudNames[c.CloudName] {
+		return &ConfigError{Field: "CloudName", Message: "cloud name must be 'AzurePublic', 'AzureGovernment', or 'AzureChina'"}
+	}
+
+	return nil
 }

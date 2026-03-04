@@ -107,8 +107,10 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 			// - Network routing tables to update
 			// - Instance network stack to recognize the new IP
 			logger.Info("Waiting 30 seconds for network configuration to propagate...")
+
 			_, _ = fmt.Fprintf(os.Stdout, "    • Waiting for network configuration to stabilize...\n")
-			time.Sleep(30 * time.Second)
+
+			time.Sleep(30 * time.Second) //nolint:mnd
 			logger.Info("Network wait period completed")
 		}
 	}
@@ -120,7 +122,7 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 
 func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) bool {
 	// First check state file (fast path)
-	existingBastion, _ := m.stateManager.GetResource("instance", bastionName)
+	existingBastion, _ := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
 	if existingBastion != nil {
 		return true
 	}
@@ -302,12 +304,11 @@ func (m *Manager) saveFallbackAsManagementSubnet(subnetID string) {
 	_ = m.stateManager.SetOutput("mgmt_subnet_id", subnetID)
 }
 
-// getFirstAvailabilityZone returns the first availability zone from config or region-based default.
-// This mimics the Perl _get_first_availability_zone() function.
-func (m *Manager) getFirstAvailabilityZone() string {
-	// First check if azs is defined and has keys
+// getAvailabilityZone returns the availability zone for a given index from config or region-based default.
+// When config AZs are defined (e.g., AWS: us-east-1a, us-east-1b), returns the sorted AZ at the given index.
+// Falls back to STACKIT-style numeric suffix (e.g., eu01-1) when config AZs are absent or index is out of range.
+func (m *Manager) getAvailabilityZone(index int) string {
 	if len(m.config.AZs) > 0 {
-		// Sort keys to ensure consistent ordering
 		azNames := make([]string, 0, len(m.config.AZs))
 		for azName := range m.config.AZs {
 			azNames = append(azNames, azName)
@@ -315,16 +316,24 @@ func (m *Manager) getFirstAvailabilityZone() string {
 
 		sort.Strings(azNames)
 
-		return azNames[0]
+		if index < len(azNames) {
+			return azNames[index]
+		}
 	}
 
-	// Fallback to region-based default for STACKIT
+	// Fallback: provider-aware AZ formatting
 	region := m.options.Region
 	if region == "" {
 		region = "eu01"
 	}
 
-	return region + "-1" // e.g., eu01-1
+	return config.FormatAvailabilityZone(m.options.Provider, region, index)
+}
+
+// getFirstAvailabilityZone returns the first availability zone from config or region-based default.
+// This mimics the Perl _get_first_availability_zone() function.
+func (m *Manager) getFirstAvailabilityZone() string {
+	return m.getAvailabilityZone(0)
 }
 
 func (m *Manager) getBastionSecurityGroup() (string, error) {
@@ -395,6 +404,13 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	// Create instance request with static IP
 	req := m.buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData, useBootVolume, bootVolumeSize)
 	req.StaticPrivateIP = bastionIP // Set static IP (empty string means use DHCP)
+
+	// Tag instance with role for discovery by findBastionIP
+	if req.Tags == nil {
+		req.Tags = make(map[string]string)
+	}
+
+	req.Tags["role"] = "bastion"
 
 	instance, err := computeMgr.CreateInstance(ctx, req)
 	if err != nil {
@@ -859,7 +875,7 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 	keypairName := m.options.BlocName + "-keypair"
 
 	// Check if keypair already exists in state
-	existingKeypair, _ := m.stateManager.GetResource("keypair", keypairName)
+	existingKeypair, _ := m.stateManager.GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existingKeypair != nil {
 		shouldSkip, err := m.verifyExistingKeypair(ctx, keypairName)
 		if err != nil {
@@ -880,11 +896,11 @@ func (m *Manager) createKeyPair(ctx context.Context) error {
 // Returns (shouldSkip=false, err) if verification failed with an error.
 func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string) (bool, error) {
 	// Check if local key file exists
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	localKeyExists := false
 
-	_, err := os.Stat(keyFile)
+	_, err := os.Stat(keyFile) //nolint:gosec // path components are from trusted config
 	if err == nil {
 		localKeyExists = true
 	}
@@ -926,7 +942,7 @@ func (m *Manager) handleOrphanedCloudKeypair(ctx context.Context, keypairName, k
 	}
 
 	// Remove from state
-	_ = m.stateManager.RemoveResource("keypair", keypairName)
+	_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
 
 	return nil
 }
@@ -937,7 +953,7 @@ func (m *Manager) handleStaleKeypairState(keypairName string) {
 	_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s in state but not in cloud, recreating\n", keypairName)
 
 	// Remove from state
-	_ = m.stateManager.RemoveResource("keypair", keypairName)
+	_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
 }
 
 // createStackitKeyPair handles STACKIT-specific keypair creation.
@@ -953,7 +969,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 	publicKeyStr := strings.TrimSpace(string(publicKeyData))
 
 	// DEBUG: Log first 50 bytes of privateKeyData for verification
-	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))]))
+	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))])) //nolint:mnd
 	logger.Debugf("generateLocalSSHKeyPair returned publicKeyStr: %s", publicKeyStr)
 	logger.Debugf("Keys were read from existing file: %v", wasReadFromFile)
 
@@ -979,7 +995,7 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 	}
 
 	// DEBUG: Log keypair.PrivateKey that will be saved
-	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))])
+	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))]) //nolint:mnd
 
 	// Return the inverse of wasReadFromFile:
 	// - If read from existing file (wasReadFromFile=true), DON'T save again (return false)
@@ -995,23 +1011,25 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 // wasReadFromExistingFile is true when keys were read from existing local files, false when newly generated.
 func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	// Check if local keypair already exists
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	existingKeyPath := filepath.Join(keyDir, "id_ed25519")
 	existingPubPath := filepath.Join(keyDir, "id_ed25519.pub")
 
 	// If local keypair exists, reuse it
-	if _, err := os.Stat(existingKeyPath); err == nil {
-		if _, pubErr := os.Stat(existingPubPath); pubErr == nil {
+	_, keyStatErr := os.Stat(existingKeyPath) //nolint:gosec // path components are from trusted config
+	if keyStatErr == nil {                    //nolint:nestif // SSH key validation requires nested checks
+		_, pubStatErr := os.Stat(existingPubPath) //nolint:gosec // path components are from trusted config
+		if pubStatErr == nil {
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
 
-			privateKeyData, err := os.ReadFile(existingKeyPath) // #nosec G304 -- path is controlled
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", err)
+			privateKeyData, readErr := os.ReadFile(existingKeyPath) //nolint:gosec // path is controlled
+			if readErr != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", readErr)
 			}
 
-			publicKeyData, err := os.ReadFile(existingPubPath) // #nosec G304 -- path is controlled
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", err)
+			publicKeyData, readErr := os.ReadFile(existingPubPath) //nolint:gosec // path is controlled
+			if readErr != nil {
+				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", readErr)
 			}
 
 			// Return true to indicate keys were read from existing files - DON'T save them again!
@@ -1021,7 +1039,7 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 
 	// No existing keypair - generate a new one
 	keyManager := ssh.NewKeyManager()
-	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().Unix()))
+	tempKeyPath := filepath.Join(os.TempDir(), fmt.Sprintf("ocfp-temp-key-%d", time.Now().UnixNano()))
 
 	defer func() {
 		_ = os.Remove(tempKeyPath)
@@ -1068,6 +1086,7 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 		if localPubKey != cloudPubKey {
 			// Keys don't match - delete cloud keypair and force regeneration
 			logger.Warnf("Keypair %s exists in STACKIT but public key doesn't match local key", keypairName)
+
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair exists in STACKIT but doesn't match local key\n")
 			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Deleting cloud keypair and re-uploading local public key\n")
 
@@ -1085,6 +1104,7 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 
 		// Keys match - reuse existing keypair
 		logger.Infof("Keypair %s already exists in STACKIT and matches local key, skipping import", keypairName)
+
 		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT and matches local key, skipping upload\n")
 
 		// Create a KeyPair object for consistency
@@ -1159,12 +1179,12 @@ func (m *Manager) saveKeyPairToState(keypair *cpi.KeyPair, keypairName string) e
 // If we have the local keypair, we reuse it. Otherwise, we delete and recreate.
 // Returns the keypair and a boolean indicating whether the private key should be saved.
 func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// Check if we have the local keypair (Ed25519 preferred)
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(keyFile); err == nil {
+	if _, err := os.Stat(keyFile); err == nil { //nolint:gosec // path components are from trusted config
 		// Local keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local key found at %s, reusing", keypairName, keyFile)
@@ -1182,7 +1202,7 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 	rsaKeyFile := filepath.Join(keyDir, "id_rsa")
 
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(rsaKeyFile); err == nil {
+	if _, err := os.Stat(rsaKeyFile); err == nil { //nolint:gosec // path components are from trusted config
 		// Local RSA keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local RSA key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local RSA key found at %s, reusing", keypairName, rsaKeyFile)
@@ -1292,31 +1312,35 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 
 	m.config.Keys[keypairName] = privateKey
 
-	err = config.SaveConfig("", m.options.BlocName, m.config)
+	err = config.SaveBlocKeys(m.options.BlocName, m.config.Keys)
 	if err != nil {
-		logger.Warnf("Failed to save SSH key to config: %v", err)
+		logger.Warnf("Failed to save SSH key to state: %v", err)
 	} else {
-		logger.Infof("Saved SSH key to config file for portability")
+		logger.Infof("Saved SSH key to state file for portability")
 	}
 
 	return nil
 }
 
 func (m *Manager) savePrivateKey(privateKey string) error {
-	keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+	if strings.TrimSpace(privateKey) == "" {
+		return errEmptyPrivateKey
+	}
+
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// DEBUG: Log what we're about to save
-	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))])
+	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))]) //nolint:mnd
 
 	// Create directory if it doesn't exist
-	err := os.MkdirAll(keyDir, sshKeyDirMode)
+	err := os.MkdirAll(keyDir, sshKeyDirMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create SSH key directory: %w", err)
 	}
 
 	// Write private key
-	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode)
+	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
@@ -1392,12 +1416,12 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 		// Determine which key file to use (prefer ed25519, fallback to rsa)
 		keyFile := "id_ed25519"
 
-		keyDir := filepath.Join(os.Getenv("HOME"), ".ocfp", m.options.BlocName, "ssh")
+		keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 
 		//nolint:noinlineerr // Idiomatic file existence check for key type fallback
-		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil {
+		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil { //nolint:gosec // path components are from trusted config
 			// Check for RSA key fallback
-			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil {
+			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil { //nolint:gosec // path components are from trusted config
 				keyFile = "id_rsa"
 			}
 		}
@@ -1411,7 +1435,7 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 // Utility Functions
 // ==============================================================================
 
-func generateBastionUserData(cfg *config.Config) string {
+func generateBastionUserData(_cfg *config.Config) string {
 	return `#!/bin/bash
 # Bootstrap bastion instance
 apt-get update

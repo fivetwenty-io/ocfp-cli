@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	// Index parsing constants.
-	IndexParsingShift    = 10      // Shift for index parsing (* 10)
-	NonNumericIndexValue = 1 << 30 // Large value for non-numeric indices (1073741824)
+	// IndexParsingShift is the multiplier used when parsing multi-digit indices.
+	IndexParsingShift = 10
+
+	// NonNumericIndexValue is a sentinel value used for non-numeric indices during sorting.
+	NonNumericIndexValue = 1 << 30
 )
 
 // NewPublicIPsCmd creates the public-ips root command.
@@ -42,7 +44,7 @@ func newPublicIPsListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List public IPs",
 		Long:  "List current public IPs for the selected bloc (STACKIT only).",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runPublicIPsList(output)
 		},
 	}

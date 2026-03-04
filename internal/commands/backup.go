@@ -1,3 +1,4 @@
+// Package commands implements the CLI command handlers for OCFP operations.
 package commands
 
 import (
@@ -20,24 +21,36 @@ import (
 type BackupType string
 
 const (
-	BackupTypeFull        BackupType = "full"
-	BackupTypeIncremental BackupType = "incremental"
-	BackupTypeConfig      BackupType = "config"
-	BackupTypeData        BackupType = "data"
-	BackupTypeVault       BackupType = "vault"
+	// BackupTypeFull represents a full backup of all deployment data.
+	BackupTypeFull BackupType = "full"
 
-	// File permissions.
-	BackupDirPerm  os.FileMode = 0750
+	// BackupTypeIncremental represents an incremental backup since the last full backup.
+	BackupTypeIncremental BackupType = "incremental"
+
+	// BackupTypeConfig represents a backup of configuration files only.
+	BackupTypeConfig BackupType = "config"
+
+	// BackupTypeData represents a backup of state and data files only.
+	BackupTypeData BackupType = "data"
+
+	// BackupTypeVault represents a backup of vault secrets only.
+	BackupTypeVault BackupType = "vault"
+
+	// BackupDirPerm is the file permission mode for backup directories.
+	BackupDirPerm os.FileMode = 0750
+
+	// BackupFilePerm is the file permission mode for backup files.
 	BackupFilePerm os.FileMode = 0600
 
-	// String split parts count.
+	// S3DestinationParts is the expected number of parts when splitting S3 destination strings.
 	S3DestinationParts = 2
 
-	// Compression estimation divisor.
+	// CompressionEstimateDivisor is the divisor used to estimate compressed backup size.
 	CompressionEstimateDivisor = 3
 )
 
 var (
+	// ErrUnknownBackupType indicates an unrecognized backup type was specified.
 	ErrUnknownBackupType = errors.New("unknown backup type")
 )
 
@@ -86,7 +99,7 @@ Backups are stored in the configured Shield bucket or specified destination.`,
 
   # Dry run to see what would be backed up
   ocfp backup --dry-run`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runBackupCommand(opts)
 		},
 	}
@@ -917,7 +930,7 @@ func shouldExclude(path string, excludePaths []string) bool {
 func copyForBackup(_, dest string) error {
 	// This would implement recursive copying
 	// For now, return a placeholder
-	return fmt.Errorf("failed to create backup directory: %w", os.MkdirAll(dest, BackupDirPerm))
+	return fmt.Errorf("failed to create backup directory: %w", os.MkdirAll(dest, BackupDirPerm)) //nolint:gosec // path from trusted config
 }
 
 func createArchive(_, _ string, _ bool) error {
@@ -992,13 +1005,13 @@ func ensureBucketExists(ctx context.Context, storage cpi.StorageManager, bucket 
 	return nil
 }
 
-func backupBastion(ctx context.Context, cfg *config.Config, stagingDir string) error {
+func backupBastion(_ctx context.Context, _cfg *config.Config, _stagingDir string) error {
 	// SSH to bastion and create backup
 	// Placeholder implementation
 	return nil
 }
 
-func backupSecrets(ctx context.Context, cfg *config.Config, stagingDir string) error {
+func backupSecrets(_ctx context.Context, _cfg *config.Config, _stagingDir string) error {
 	// Export secrets from vault/credhub
 	// Placeholder implementation
 	return nil
@@ -1012,25 +1025,25 @@ func exportSecrets(_ context.Context, _ *config.Config, outputFile string) error
 
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
-	metadataDir := filepath.Join(os.Getenv("HOME"), ".ocfp", "backups")
+	metadataDir := filepath.Join(config.OcfpHome(), "backups")
 
-	err := os.MkdirAll(metadataDir, BackupDirPerm)
+	err := os.MkdirAll(metadataDir, BackupDirPerm) //nolint:gosec // path components are from trusted HOME env
 	if err != nil {
 		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
 
 	metadataFile := filepath.Join(metadataDir, backup.ID+".json")
 	// Would marshal and save backup metadata
-	return fmt.Errorf("failed to save backup metadata: %w", os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm))
+	return fmt.Errorf("failed to save backup metadata: %w", os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm)) //nolint:gosec // path components are from trusted config
 }
 
-func getLastBackup(deployment string) (*BackupMetadata, error) {
+func getLastBackup(_deployment string) (*BackupMetadata, error) {
 	// Get the most recent backup metadata
 	// Placeholder implementation
 	return nil, ErrNoPreviousBackupFound
 }
 
-func findChangedFiles(since time.Time, excludePaths []string) ([]string, error) {
+func findChangedFiles(_since time.Time, _excludePaths []string) ([]string, error) {
 	// Find files modified since the given time
 	// Placeholder implementation
 	return []string{}, nil
@@ -1042,7 +1055,7 @@ func countDirContents(dir string) (int, int64) {
 		size  int64
 	)
 
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(_path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			count++
 			size += info.Size()
