@@ -44,28 +44,6 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-directories")
 }
 
-// installSnapPackages installs snap packages.
-// Deprecated: Snap packages have been migrated to Linuxbrew.
-func (m *Manager) installSnapPackages(ctx context.Context) error {
-	m.log.Info("Installing snap packages")
-
-	// Report progress for snap packages
-	if m.reporter != nil {
-		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-		snaps := snapMgr.GetSnapPackages()
-		enabledSnaps := filterEnabledSnaps(snaps)
-
-		for i, s := range enabledSnaps {
-			m.reporter.ReportSubtaskProgress("snap_packages", i+1, len(enabledSnaps), s.Name)
-		}
-	}
-
-	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-	script := snapMgr.GenerateSnapInstallScript(ctx)
-
-	return m.executeScript(ctx, script, "snap-packages")
-}
-
 // installBrew installs Linuxbrew itself.
 func (m *Manager) installBrew(ctx context.Context) error {
 	m.log.Info("Installing Linuxbrew")
@@ -335,7 +313,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 	}
 
 	// For remote execution via SSH client
-	if m.sshClient != nil {
+	if m.sshClient != nil { //nolint:nestif // sequential SSH command execution with error diagnostics
 		// Create script content with proper shebang and functions
 		fullScript := m.wrapScriptWithFunctions(script)
 
@@ -374,18 +352,18 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 // extractTail returns the last n lines of a string.
 // If the string has fewer than n lines, the entire string is returned.
-func extractTail(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
+func extractTail(text string, maxLines int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return ""
 	}
 
-	lines := strings.Split(s, "\n")
-	if len(lines) <= n {
-		return s
+	lines := strings.Split(text, "\n")
+	if len(lines) <= maxLines {
+		return text
 	}
 
-	return strings.Join(lines[len(lines)-n:], "\n")
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
 
 // wrapScriptWithFunctions wraps script content with necessary functions.

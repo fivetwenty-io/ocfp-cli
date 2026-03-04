@@ -287,10 +287,10 @@ func (bm *BrewManager) generateTapInstalls(packages []BrewPackage) []string {
 
 		seen[pkg.Tap] = true
 
-		lines = append(lines, fmt.Sprintf("# Add tap: %s", pkg.Tap))
+		lines = append(lines, "# Add tap: "+pkg.Tap)
 		lines = append(lines, fmt.Sprintf("if ! brew tap | grep -q '%s'; then", pkg.Tap))
 		lines = append(lines, fmt.Sprintf("    log_info 'Adding brew tap: %s'", pkg.Tap))
-		lines = append(lines, fmt.Sprintf("    brew tap %s", pkg.Tap))
+		lines = append(lines, "    brew tap "+pkg.Tap)
 		lines = append(lines, "else")
 		lines = append(lines, fmt.Sprintf("    log_info 'Tap %s already added'", pkg.Tap))
 		lines = append(lines, "fi")
@@ -304,9 +304,13 @@ func (bm *BrewManager) generateTapInstalls(packages []BrewPackage) []string {
 // Packages are grouped into: regular formulae, casks, and those with custom
 // options (which must be installed individually). Brew handles idempotency
 // natively, so already-installed packages are simply skipped.
+//
+//nolint:funlen // batched install generation for formulae, casks, and custom options
 func (bm *BrewManager) generatePackageInstalls(packages []BrewPackage) []string {
 	var formulae []string
+
 	var casks []string
+
 	var customOptions []BrewPackage
 
 	for _, pkg := range packages {
@@ -316,11 +320,13 @@ func (bm *BrewManager) generatePackageInstalls(packages []BrewPackage) []string 
 
 		if pkg.Options != "" {
 			customOptions = append(customOptions, pkg)
+
 			continue
 		}
 
 		if pkg.Cask {
 			casks = append(casks, bm.brewPackageName(pkg))
+
 			continue
 		}
 
@@ -368,7 +374,7 @@ func (bm *BrewManager) generatePackageInstalls(packages []BrewPackage) []string 
 	// Install packages with custom options individually
 	for _, pkg := range customOptions {
 		installCmd := bm.buildBrewInstallCommand(pkg)
-		lines = append(lines, fmt.Sprintf("# Install brew package with options: %s", pkg.Name))
+		lines = append(lines, "# Install brew package with options: "+pkg.Name)
 		lines = append(lines, fmt.Sprintf("log_info 'Installing brew package: %s'", pkg.Name))
 		lines = append(lines, installCmd)
 		lines = append(lines, fmt.Sprintf("log_success 'Brew package %s installed'", pkg.Name))
@@ -401,12 +407,13 @@ func (bm *BrewManager) buildBrewInstallCommand(pkg BrewPackage) string {
 	}
 
 	// Use tap-qualified name if tap is specified
-	if pkg.Tap != "" {
+	switch {
+	case pkg.Tap != "":
 		installCmd += " " + pkg.Tap + "/" + pkg.Name
-	} else if pkg.Version != "" {
+	case pkg.Version != "":
 		// Version-pinned formula (e.g., go@1.24)
 		installCmd += " " + pkg.Name + "@" + pkg.Version
-	} else {
+	default:
 		installCmd += " " + pkg.Name
 	}
 

@@ -322,7 +322,7 @@ type BrewOverride struct {
 	Tap          string `json:"tap,omitempty"          mapstructure:"tap"          yaml:"tap,omitempty"`
 	Cask         *bool  `json:"cask,omitempty"         mapstructure:"cask"         yaml:"cask,omitempty"`
 	Version      string `json:"version,omitempty"      mapstructure:"version"      yaml:"version,omitempty"`
-	Options      string `json:"options,omitempty"       mapstructure:"options"      yaml:"options,omitempty"`
+	Options      string `json:"options,omitempty"      mapstructure:"options"      yaml:"options,omitempty"`
 	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
 }
 
