@@ -733,10 +733,16 @@ func (a *AWSVaultProvider) parseSubnetCIDR(cidr string) (*subnetNetworkInfo, err
 		return nil, ErrInvalidNetworkAddress(network)
 	}
 
+	prefixLen, _ := strconv.Atoi(cidrParts[1])
+	subnetSize := 1 << (32 - prefixLen) //nolint:mnd
+
 	cidrPrefix := strings.Join(networkParts[:NetworkPrefix], ".")
 	lastOctet, _ := strconv.Atoi(networkParts[3])
 	gateway := fmt.Sprintf("%s.%d", cidrPrefix, lastOctet+1)
-	lastHost := cidrPrefix + "." + strconv.Itoa(LastOctet)
+
+	// Last usable host = network + subnetSize - 2 (skip broadcast)
+	lastHostOffset := subnetSize - BroadcastAndNetworkAddrs
+	lastHost := addOffsetToIP(network, lastHostOffset)
 
 	return &subnetNetworkInfo{
 		network:    network,
@@ -848,24 +854,21 @@ func (a *AWSVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, s
 }
 
 // calculateSystemIPs calculates IP addresses for system components.
+// Uses addOffsetToIP to compute IPs relative to the subnet's actual network
+// address, ensuring IPs fall within the subnet range even for non-/24 subnets.
 func (a *AWSVaultProvider) calculateSystemIPs(cidr string, envType string) map[string]interface{} {
-	cidrParts := strings.Split(cidr, "/")
-	network := cidrParts[0]
-	networkParts := strings.Split(network, ".")
-	baseIP := strings.Join(networkParts[:NetworkPrefix], ".")
-
+	network := strings.Split(cidr, "/")[0]
 	systemIPs := make(map[string]interface{})
 
-	// Standard system IP assignments for AWS
 	switch envType {
 	case MgmtEnvType:
-		systemIPs["bosh_ip"] = baseIP + ".6"
-		systemIPs["jumpbox_ip"] = baseIP + "." + strconv.Itoa(JumpboxOffset)
+		systemIPs["bosh_ip"] = addOffsetToIP(network, BoshIPOffset)
+		systemIPs["jumpbox_ip"] = addOffsetToIP(network, JumpboxOffset)
 	case OCFEnvType:
-		systemIPs["cf_router_0_ip"] = baseIP + "." + strconv.Itoa(CFRouterOffset)
-		systemIPs["cf_router_1_ip"] = baseIP + ".11"
-		systemIPs["diego_cell_0_ip"] = baseIP + "." + strconv.Itoa(DiegoCellOffset)
-		systemIPs["diego_cell_1_ip"] = baseIP + "." + strconv.Itoa(DiegoCell1Offset)
+		systemIPs["cf_router_0_ip"] = addOffsetToIP(network, CFRouterOffset)
+		systemIPs["cf_router_1_ip"] = addOffsetToIP(network, CFRouter1Offset)
+		systemIPs["diego_cell_0_ip"] = addOffsetToIP(network, DiegoCellOffset)
+		systemIPs["diego_cell_1_ip"] = addOffsetToIP(network, DiegoCell1Offset)
 	}
 
 	return systemIPs

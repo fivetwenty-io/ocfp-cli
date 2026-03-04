@@ -34,10 +34,18 @@ const (
 	// LastOctet is the maximum usable last octet value for IP address generation.
 	LastOctet = 254
 
+	// BroadcastAndNetworkAddrs is the count of non-host addresses in a subnet
+	// (network address + broadcast address), used to compute the last usable host.
+	BroadcastAndNetworkAddrs = 2
+
 	// JumpboxOffset is the IP offset for jumpbox allocation within a subnet.
 	JumpboxOffset = 5
+	// BoshIPOffset is the IP offset for BOSH director allocation within a subnet.
+	BoshIPOffset = 6
 	// CFRouterOffset is the IP offset for Cloud Foundry router allocation.
 	CFRouterOffset = 10
+	// CFRouter1Offset is the IP offset for the second Cloud Foundry router.
+	CFRouter1Offset = 11
 	// DiegoCellOffset is the IP offset for the first Diego cell.
 	DiegoCellOffset = 20
 	// DiegoCell1Offset is the IP offset for the second Diego cell.

@@ -704,3 +704,71 @@ func TestAWS_ConfigureSubnets_FallbackDefaultCIDR(t *testing.T) {
 	assert.Equal(t, "10.0.0.0/16", call0.data["cidr_block"],
 		"Should default to 10.0.0.0/16 when no CIDR configured")
 }
+
+// TestAWS_CalculateSystemIPs_SubnetNotAtZeroBoundary verifies IPs are within
+// a /25 subnet that does not start at a .0 boundary (e.g. 10.5.0.128/25).
+func TestAWS_CalculateSystemIPs_SubnetNotAtZeroBoundary(t *testing.T) {
+	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+
+	ips := provider.calculateSystemIPs("10.5.0.128/25", MgmtEnvType)
+	assert.Equal(t, "10.5.0.134", ips["bosh_ip"],
+		"bosh_ip should be network+6 (10.5.0.128+6=10.5.0.134)")
+	assert.Equal(t, "10.5.0.133", ips["jumpbox_ip"],
+		"jumpbox_ip should be network+5 (10.5.0.128+5=10.5.0.133)")
+
+	ips = provider.calculateSystemIPs("10.5.0.128/25", OCFEnvType)
+	assert.Equal(t, "10.5.0.138", ips["cf_router_0_ip"],
+		"cf_router_0_ip should be network+10 (10.5.0.128+10=10.5.0.138)")
+	assert.Equal(t, "10.5.0.139", ips["cf_router_1_ip"],
+		"cf_router_1_ip should be network+11 (10.5.0.128+11=10.5.0.139)")
+	assert.Equal(t, "10.5.0.148", ips["diego_cell_0_ip"],
+		"diego_cell_0_ip should be network+20 (10.5.0.128+20=10.5.0.148)")
+	assert.Equal(t, "10.5.0.149", ips["diego_cell_1_ip"],
+		"diego_cell_1_ip should be network+21 (10.5.0.128+21=10.5.0.149)")
+}
+
+// TestAWS_CalculateSystemIPs_SubnetAtZeroBoundary verifies IPs are correct
+// for a subnet starting at .0 (regression test for the common case).
+func TestAWS_CalculateSystemIPs_SubnetAtZeroBoundary(t *testing.T) {
+	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+
+	ips := provider.calculateSystemIPs("10.0.0.0/24", MgmtEnvType)
+	assert.Equal(t, "10.0.0.6", ips["bosh_ip"])
+	assert.Equal(t, "10.0.0.5", ips["jumpbox_ip"])
+
+	ips = provider.calculateSystemIPs("10.0.0.0/24", OCFEnvType)
+	assert.Equal(t, "10.0.0.10", ips["cf_router_0_ip"])
+	assert.Equal(t, "10.0.0.11", ips["cf_router_1_ip"])
+	assert.Equal(t, "10.0.0.20", ips["diego_cell_0_ip"])
+	assert.Equal(t, "10.0.0.21", ips["diego_cell_1_ip"])
+}
+
+// TestAWS_ParseSubnetCIDR_Slash25 verifies lastHost is correct for /25 subnets.
+func TestAWS_ParseSubnetCIDR_Slash25(t *testing.T) {
+	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+
+	info, err := provider.parseSubnetCIDR("10.5.0.128/25")
+	require.NoError(t, err)
+	assert.Equal(t, "10.5.0.128", info.network)
+	assert.Equal(t, "10.5.0", info.cidrPrefix)
+	assert.Equal(t, "10.5.0.129", info.gateway)
+	assert.Equal(t, "10.5.0.254", info.lastHost,
+		"lastHost for /25 at .128 should be .128+126=.254")
+
+	info, err = provider.parseSubnetCIDR("10.5.1.0/25")
+	require.NoError(t, err)
+	assert.Equal(t, "10.5.1.0", info.network)
+	assert.Equal(t, "10.5.1.126", info.lastHost,
+		"lastHost for /25 at .0 should be .0+126=.126")
+}
+
+// TestAWS_ParseSubnetCIDR_Slash24 regression: /24 subnets still produce .254.
+func TestAWS_ParseSubnetCIDR_Slash24(t *testing.T) {
+	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+
+	info, err := provider.parseSubnetCIDR("10.0.0.0/24")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.0", info.network)
+	assert.Equal(t, "10.0.0.254", info.lastHost,
+		"lastHost for /24 should be .254")
+}
