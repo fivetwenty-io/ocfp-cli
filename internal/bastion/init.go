@@ -145,6 +145,18 @@ func (m *Manager) Initialize(ctx context.Context) error {
 
 	defer m.closeSSHClient()
 
+	// Always run SSH agent forwarding and bastion key sync — these are
+	// idempotent and must execute even when the bastion is already provisioned.
+	err = m.setupSSHAgentForwarding(ctx)
+	if err != nil {
+		m.log.Warnw("SSH agent forwarding setup failed", "error", err)
+	}
+
+	err = m.configureBastionKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("bastion key sync failed: %w", err)
+	}
+
 	// Handle OCFP-only mode
 	if m.options.OCFPOnly {
 		return m.runOCFPOnlyMode(ctx)
@@ -578,12 +590,8 @@ func (m *Manager) getInitializationPhases() []struct {
 		name string
 		fn   func(context.Context) error
 	}{
-		// Phase 0: CRITICAL - SSH agent forwarding MUST be first
-		// This enables agent forwarding on the server before any git operations
-		{"ssh_agent_forwarding", m.setupSSHAgentForwarding},
-
-		// Phase 0.5: Bastion SSH authorized_keys injection
-		{"bastion_keys", m.configureBastionKeys},
+		// Note: ssh_agent_forwarding and bastion_keys now run unconditionally
+		// in Initialize() before the provisioning gate, so they are not listed here.
 
 		// Phase 1: Prerequisites and system setup
 		{"prerequisite_check", m.runPrerequisiteChecks},
