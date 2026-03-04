@@ -47,6 +47,8 @@ var (
 	ErrProviderDoesNotSupportCredGroupDeletion = errors.New("provider does not support credentials group deletion")
 	ErrProviderDoesNotSupportPublicIPDeletion  = errors.New("provider does not support public IP deletion")
 	ErrTmuxNotInstalled                        = errors.New("tmux is not installed. Please install tmux to use this command")
+	ErrTmuxNotFound                            = errors.New("'tmux' command not found - please install tmux")
+	ErrTmuxSessionFailed                       = errors.New("failed to create tmux session")
 	ErrBlocRequired                            = errors.New("--bloc flag is required")
 	ErrAWSCredentialsNotFound                  = errors.New("AWS credentials not found in config or vault")
 	ErrInvalidMergeStrategy                    = errors.New("invalid merge strategy")
