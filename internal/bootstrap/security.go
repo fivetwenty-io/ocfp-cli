@@ -268,12 +268,13 @@ func (m *Manager) bastionSecurityGroupDef() securityGroupDef {
 				PortRangeMin: sshPort,
 				PortRangeMax: sshPort,
 				RemoteIPCIDR: cidr,
-				Description:  fmt.Sprintf("Allow SSH from %s", cidr),
+				Description:  "Allow SSH from " + cidr,
 			})
 		}
 	} else {
 		// Fallback to allow from anywhere if no IPs are configured
 		logger.Warnf("No allowed_ingress_ips configured, bastion SSH will be open to 0.0.0.0/0")
+
 		sshRules = append(sshRules, &cpi.SecurityRule{
 			Direction:    "ingress",
 			Protocol:     "tcp",
@@ -305,6 +306,7 @@ func (m *Manager) normalizeToCIDR(ip string) string {
 	if !strings.Contains(ip, "/") {
 		return ip + "/32"
 	}
+
 	return ip
 }
 
@@ -395,6 +397,11 @@ func (m *Manager) cfSSHSecurityGroupDef() securityGroupDef {
 // This fixes security groups that exist but have missing or incomplete rules.
 func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, groupDef *securityGroupDef) error {
 	secMgr := m.provider.Security()
+	if secMgr == nil {
+		logger.Debugf("Security manager not available, skipping rule reconciliation for group %s", groupID)
+
+		return nil
+	}
 
 	// List current rules
 	currentRules, err := secMgr.ListSecurityRules(ctx, groupID)
@@ -404,6 +411,7 @@ func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, 
 
 	// Find and add missing rules
 	addedCount := 0
+
 	for _, expectedRule := range groupDef.rules {
 		if !m.ruleExists(currentRules, expectedRule) {
 			logger.Infof("Adding missing rule to security group %s: %s %s port %d-%d",
@@ -414,6 +422,7 @@ func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, 
 			if err != nil {
 				return fmt.Errorf("failed to add security rule to group %s: %w", groupID, err)
 			}
+
 			addedCount++
 		}
 	}
@@ -435,11 +444,12 @@ func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi
 			return true
 		}
 	}
+
 	return false
 }
 
 // rulesMatch compares two security rules for equivalence.
-func (m *Manager) rulesMatch(r1, r2 *cpi.SecurityRule) bool {
+func (m *Manager) rulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is clear in context
 	// Direction must match
 	if r1.Direction != r2.Direction {
 		return false
@@ -448,18 +458,21 @@ func (m *Manager) rulesMatch(r1, r2 *cpi.SecurityRule) bool {
 	// Protocol must match (treat empty and "all" as equivalent)
 	proto1 := r1.Protocol
 	proto2 := r2.Protocol
+
 	if proto1 == "" {
-		proto1 = "all"
+		proto1 = protocolAll
 	}
+
 	if proto2 == "" {
-		proto2 = "all"
+		proto2 = protocolAll
 	}
+
 	if proto1 != proto2 {
 		return false
 	}
 
 	// For protocol "all", ports don't matter
-	if proto1 == "all" || proto2 == "all" {
+	if proto1 == protocolAll || proto2 == protocolAll {
 		// Check CIDR or remote group
 		return r1.RemoteIPCIDR == r2.RemoteIPCIDR && r1.RemoteGroup == r2.RemoteGroup
 	}

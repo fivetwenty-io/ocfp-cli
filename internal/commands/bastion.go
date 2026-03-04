@@ -151,6 +151,7 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 	return nil
 }
 
+// BastionContext holds the connection details for a bastion host.
 type BastionContext struct {
 	IP           string
 	User         string
@@ -158,7 +159,8 @@ type BastionContext struct {
 	SSHKeyOption string
 }
 
-func GetBastionContext(cmd *cobra.Command, log logger.Logger) (*BastionContext, error) {
+// GetBastionContext discovers or constructs the bastion host connection details for the current bloc.
+func GetBastionContext(_cmd *cobra.Command, log logger.Logger) (*BastionContext, error) {
 	user := viper.GetString("ssh.user")
 	key := viper.GetString("ssh.key")
 	blocName := viper.GetString("bloc")
@@ -241,6 +243,7 @@ func buildPlaceholderContext(user, key string) *BastionContext {
 	}
 }
 
+// FindProvisionScript locates a provisioning script by name in standard search paths.
 func FindProvisionScript(scriptName string) (string, error) {
 	// Get the directory where the binary is located
 	execPath, err := os.Executable()
@@ -259,7 +262,7 @@ func FindProvisionScript(scriptName string) (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		_, err := os.Stat(path)
+		_, err := os.Stat(path) //nolint:gosec // path components are from trusted config
 		if err == nil {
 			return path, nil
 		}
@@ -324,7 +327,8 @@ func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logg
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }
 
-func BuildEnvironmentVariables(log logger.Logger) string {
+// BuildEnvironmentVariables constructs environment variable export statements for remote bastion execution.
+func BuildEnvironmentVariables(_log logger.Logger) string {
 	// Build environment variables from environment for now
 	var envVars []string
 

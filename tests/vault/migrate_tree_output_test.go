@@ -251,9 +251,9 @@ func TestTreeRenderer_FailureSummary(t *testing.T) {
 
 	// Add some failures
 	renderer.RenderKeyValidation("key1", "abc", "xyz",
-		&vault.ValidationError{Message: "checksum mismatch"}, false)
+		&ValidationError{Message: "checksum mismatch"}, false)
 	renderer.RenderKeyValidation("key2", "def", "",
-		&vault.ValidationError{Message: "production vault unreachable"}, false)
+		&ValidationError{Message: "production vault unreachable"}, false)
 	renderer.RenderKeyValidation("key3", "ghi", "ghi", nil, true) // Success
 
 	// Render failure summary
@@ -271,21 +271,25 @@ func TestTreeRenderer_FailureSummary(t *testing.T) {
 		t.Error("Output should contain failure summary header")
 	}
 
-	// Verify failed keys are listed
-	if !strings.Contains(output, "key1") {
+	// Extract only the failure summary section (after "Validation Failures")
+	summaryIdx := strings.Index(output, "Validation Failures")
+	summarySection := output[summaryIdx:]
+
+	// Verify failed keys are listed in summary
+	if !strings.Contains(summarySection, "key1") {
 		t.Error("Summary should list key1")
 	}
-	if !strings.Contains(output, "key2") {
+	if !strings.Contains(summarySection, "key2") {
 		t.Error("Summary should list key2")
 	}
 
-	// Verify successful key is not in summary
-	if strings.Contains(output, "key3") {
+	// Verify successful key is not in failure summary
+	if strings.Contains(summarySection, "key3") {
 		t.Error("Summary should not list successful key3")
 	}
 
 	// Verify error messages
-	if !strings.Contains(output, "checksum mismatch") {
+	if !strings.Contains(summarySection, "checksum mismatch") {
 		t.Error("Summary should contain error message")
 	}
 }

@@ -366,7 +366,7 @@ func (t *OperationTimer) StopWithError(err error) {
 	t.Stop()
 
 	if err != nil && t.collector != nil {
-		var awsErr *AWSError
+		var awsErr *Error
 		if errors.As(err, &awsErr) {
 			t.collector.RecordError(t.operation, awsErr.Code)
 		} else {

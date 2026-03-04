@@ -37,6 +37,14 @@ func NewCPANManager(provider string, cfg *config.Config) *CPANManager {
 // GetCPANModules returns the list of CPAN modules to install.
 func (cm *CPANManager) GetCPANModules() []CPANModule {
 	return []CPANModule{
+		// Networking modules (migrated from APT Perl packages)
+		{Name: "Net::IP", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "NetAddr::IP", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "JSON", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "Net::CIDR", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "YAML", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "YAML::LibYAML", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		// Debugging and development modules
 		{Name: "Pry", NoTest: true, Enabled: true, Force: false, Sudo: true},
 		{Name: "Carp::Always", NoTest: true, Enabled: true, Force: false, Sudo: true},
 		{Name: "Smart::Comments", NoTest: true, Enabled: true, Force: false, Sudo: true},
@@ -44,13 +52,13 @@ func (cm *CPANManager) GetCPANModules() []CPANModule {
 }
 
 // GenerateCPANInstallScript generates script for CPAN module installation.
-func (cm *CPANManager) GenerateCPANInstallScript(ctx context.Context) string {
+func (cm *CPANManager) GenerateCPANInstallScript(_ctx context.Context) string {
 	modules := cm.GetCPANModules()
 	if len(modules) == 0 {
 		return ""
 	}
 
-	lines := []string{}
+	lines := make([]string, 0, len(modules)*2) //nolint:mnd // rough estimate for header+setup+modules+critical
 	lines = append(lines, cm.generateCPANHeader()...)
 	lines = append(lines, cm.generateCPANSetup()...)
 	lines = append(lines, cm.generateCPANModuleInstalls(modules)...)

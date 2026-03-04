@@ -14,6 +14,8 @@ import (
 )
 
 // CreateInstance creates a new virtual machine.
+//
+//nolint:funlen // Azure VM creation requires detailed parameter construction
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	if req == nil {
 		return nil, ErrInvalidRequest
@@ -32,6 +34,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 	// Create NIC first
 	nicName := req.Name + "-nic"
+
 	nic, err := m.createNetworkInterface(ctx, nicName, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network interface: %w", err)
@@ -59,7 +62,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 				LinuxConfiguration: &armcompute.LinuxConfiguration{
 					DisablePasswordAuthentication: to.Ptr(true),
 					SSH: &armcompute.SSHConfiguration{
-						PublicKeys: m.buildSSHKeys(req.KeyPair, req.KeyPairName),
+						PublicKeys: m.buildSSHKeys(ctx, req.KeyPair, req.KeyPairName),
 					},
 				},
 			},
@@ -82,6 +85,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		if vmParams.Properties.OSProfile == nil {
 			vmParams.Properties.OSProfile = &armcompute.OSProfile{}
 		}
+
 		vmParams.Properties.OSProfile.CustomData = to.Ptr(base64.StdEncoding.EncodeToString([]byte(req.UserData)))
 	}
 
@@ -113,7 +117,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 }
 
 // GetInstance retrieves a virtual machine by ID or name.
-func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
+func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -141,6 +145,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	pager := m.client.virtualMachinesClient.NewListPager(m.client.getResourceGroup(), nil)
 
 	var instances []*cpi.Instance
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -159,7 +164,9 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 }
 
 // StartInstance starts a virtual machine.
-func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
+//
+//nolint:varnamelen // id is clear in context
+func (m *ComputeManager) StartInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -183,7 +190,7 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
 }
 
 // StopInstance stops (deallocates) a virtual machine.
-func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
+func (m *ComputeManager) StopInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -207,7 +214,9 @@ func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
 }
 
 // RebootInstance restarts a virtual machine.
-func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
+//
+//nolint:varnamelen // id is clear in context
+func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -231,7 +240,9 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 }
 
 // DeleteInstance deletes a virtual machine.
-func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
+//
+//nolint:varnamelen // id is clear in context
+func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return err
@@ -352,6 +363,7 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 	pager := m.client.sshPublicKeysClient.NewListByResourceGroupPager(m.client.getResourceGroup(), nil)
 
 	var keyPairs []*cpi.KeyPair
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -367,6 +379,7 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 			if key.Properties != nil {
 				keyPair.PublicKey = DerefString(key.Properties.PublicKey)
 			}
+
 			keyPairs = append(keyPairs, keyPair)
 		}
 	}
@@ -422,6 +435,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 	pager := m.client.imagesClient.NewListByResourceGroupPager(m.client.getResourceGroup(), nil)
 
 	var images []*cpi.Image
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -440,7 +454,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 }
 
 // GetImage retrieves an image by ID or name.
-func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
+func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -466,6 +480,7 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 	pager := m.client.virtualMachineSizesClient.NewListPager(m.client.getLocation(), nil)
 
 	var flavors []*cpi.Flavor
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -481,7 +496,7 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 }
 
 // GetFlavor retrieves a VM size by name.
-func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
+func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) { //nolint:varnamelen
 	flavors, err := m.ListFlavors(ctx)
 	if err != nil {
 		return nil, err
@@ -537,6 +552,7 @@ func (m *ComputeManager) createNetworkInterface(ctx context.Context, nicName str
 		} else {
 			nsgID = req.SecurityGroups[0]
 		}
+
 		nicParams.Properties.NetworkSecurityGroup = &armnetwork.SecurityGroup{
 			ID: to.Ptr(nsgID),
 		}
@@ -571,7 +587,7 @@ func (m *ComputeManager) parseImageReference(image string) *armcompute.ImageRefe
 	// Parse marketplace image format: publisher:offer:sku:version
 	// Example: Canonical:UbuntuServer:18.04-LTS:latest
 	parts := splitImageParts(image)
-	if len(parts) >= 4 {
+	if len(parts) >= 4 { //nolint:mnd
 		return &armcompute.ImageReference{
 			Publisher: to.Ptr(parts[0]),
 			Offer:     to.Ptr(parts[1]),
@@ -590,8 +606,10 @@ func (m *ComputeManager) parseImageReference(image string) *armcompute.ImageRefe
 }
 
 func splitImageParts(image string) []string {
-	var parts []string
-	var current string
+	var (
+		parts   []string
+		current string
+	)
 
 	for _, c := range image {
 		if c == ':' {
@@ -601,6 +619,7 @@ func splitImageParts(image string) []string {
 			current += string(c)
 		}
 	}
+
 	if current != "" {
 		parts = append(parts, current)
 	}
@@ -608,17 +627,17 @@ func splitImageParts(image string) []string {
 	return parts
 }
 
-func (m *ComputeManager) buildSSHKeys(keyPair, keyPairName string) []*armcompute.SSHPublicKey {
+func (m *ComputeManager) buildSSHKeys(ctx context.Context, keyPair, keyPairName string) []*armcompute.SSHPublicKey {
 	name := keyPair
 	if name == "" {
 		name = keyPairName
 	}
+
 	if name == "" {
 		return nil
 	}
 
 	// Try to get the public key from the SSH public key resource
-	ctx := context.Background()
 	keyResource, err := m.GetKeyPair(ctx, name)
 	if err == nil && keyResource.PublicKey != "" {
 		return []*armcompute.SSHPublicKey{
@@ -630,9 +649,9 @@ func (m *ComputeManager) buildSSHKeys(keyPair, keyPairName string) []*armcompute
 	}
 
 	return nil
-}
+} //nolint:varnamelen // vm is clear in context
 
-func (m *ComputeManager) vmToInstance(vm *armcompute.VirtualMachine) *cpi.Instance {
+func (m *ComputeManager) vmToInstance(vm *armcompute.VirtualMachine) *cpi.Instance { //nolint:varnamelen
 	if vm == nil {
 		return nil
 	}
@@ -645,55 +664,62 @@ func (m *ComputeManager) vmToInstance(vm *armcompute.VirtualMachine) *cpi.Instan
 	}
 
 	if vm.Properties != nil {
-		// Hardware profile
-		if vm.Properties.HardwareProfile != nil && vm.Properties.HardwareProfile.VMSize != nil {
-			instance.Flavor = string(*vm.Properties.HardwareProfile.VMSize)
-		}
-
-		// Storage profile
-		if vm.Properties.StorageProfile != nil && vm.Properties.StorageProfile.ImageReference != nil {
-			imgRef := vm.Properties.StorageProfile.ImageReference
-			if imgRef.ID != nil {
-				instance.Image = DerefString(imgRef.ID)
-			} else {
-				instance.Image = fmt.Sprintf("%s:%s:%s:%s",
-					DerefString(imgRef.Publisher),
-					DerefString(imgRef.Offer),
-					DerefString(imgRef.SKU),
-					DerefString(imgRef.Version))
-			}
-		}
-
-		// Instance view for state
-		if vm.Properties.InstanceView != nil && vm.Properties.InstanceView.Statuses != nil {
-			for _, status := range vm.Properties.InstanceView.Statuses {
-				if status.Code != nil {
-					code := DerefString(status.Code)
-					if len(code) > 11 && code[:11] == "PowerState/" {
-						instance.State = MapVMPowerStateToResourceState(code)
-						break
-					}
-				}
-			}
-		}
-
-		// Network profile
-		if vm.Properties.NetworkProfile != nil && vm.Properties.NetworkProfile.NetworkInterfaces != nil {
-			for _, nicRef := range vm.Properties.NetworkProfile.NetworkInterfaces {
-				if nicRef.ID != nil {
-					// Would need to query NIC to get IP addresses
-					// For now, just note that NIC exists
-				}
-			}
-		}
+		m.populateVMFlavor(instance, vm.Properties)
+		m.populateVMImage(instance, vm.Properties)
+		m.populateVMState(instance, vm.Properties)
 	}
 
 	// Availability zone
-	if vm.Zones != nil && len(vm.Zones) > 0 {
+	if len(vm.Zones) > 0 {
 		instance.AvailabilityZone = DerefString(vm.Zones[0])
 	}
 
 	return instance
+}
+
+// populateVMFlavor sets the instance flavor from VM hardware profile.
+func (m *ComputeManager) populateVMFlavor(instance *cpi.Instance, props *armcompute.VirtualMachineProperties) {
+	if props.HardwareProfile != nil && props.HardwareProfile.VMSize != nil {
+		instance.Flavor = string(*props.HardwareProfile.VMSize)
+	}
+}
+
+// populateVMImage sets the instance image from VM storage profile.
+func (m *ComputeManager) populateVMImage(instance *cpi.Instance, props *armcompute.VirtualMachineProperties) {
+	if props.StorageProfile == nil || props.StorageProfile.ImageReference == nil {
+		return
+	}
+
+	imgRef := props.StorageProfile.ImageReference
+	if imgRef.ID != nil {
+		instance.Image = DerefString(imgRef.ID)
+	} else {
+		instance.Image = fmt.Sprintf("%s:%s:%s:%s",
+			DerefString(imgRef.Publisher),
+			DerefString(imgRef.Offer),
+			DerefString(imgRef.SKU),
+			DerefString(imgRef.Version))
+	}
+}
+
+// populateVMState sets the instance state from VM instance view.
+func (m *ComputeManager) populateVMState(instance *cpi.Instance, props *armcompute.VirtualMachineProperties) {
+	if props.InstanceView == nil || props.InstanceView.Statuses == nil {
+		return
+	}
+
+	for _, status := range props.InstanceView.Statuses {
+		if status.Code == nil {
+			continue
+		}
+
+		code := DerefString(status.Code)
+		if len(code) > 11 && code[:11] == "PowerState/" {
+			instance.State = MapVMPowerStateToResourceState(code)
+
+			return
+		}
+	}
 }
 
 func (m *ComputeManager) imageToImage(img *armcompute.Image) *cpi.Image {
@@ -710,7 +736,7 @@ func (m *ComputeManager) imageToImage(img *armcompute.Image) *cpi.Image {
 
 	if img.Properties != nil {
 		if img.Properties.ProvisioningState != nil {
-			image.State = string(*img.Properties.ProvisioningState)
+			image.State = *img.Properties.ProvisioningState
 		}
 	}
 
@@ -727,7 +753,7 @@ func (m *ComputeManager) vmSizeToFlavor(size *armcompute.VirtualMachineSize) *cp
 		Name:  DerefString(size.Name),
 		VCPUs: int(DerefInt32(size.NumberOfCores)),
 		RAM:   int(DerefInt32(size.MemoryInMB)),
-		Disk:  int(DerefInt32(size.ResourceDiskSizeInMB) / 1024), // Convert MB to GB
+		Disk:  int(DerefInt32(size.ResourceDiskSizeInMB) / 1024), //nolint:mnd // Convert MB to GB
 	}
 }
 
@@ -737,7 +763,8 @@ func matchesInstanceFilters(tags map[string]string, filters map[string]string) b
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tags[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tags[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}
@@ -751,7 +778,8 @@ func matchesImageFilters(tags map[string]string, filters map[string]string) bool
 	}
 
 	for key, value := range filters {
-		if tagValue, ok := tags[key]; !ok || tagValue != value {
+		cleanKey := stripLabelPrefix(key)
+		if tagValue, ok := tags[cleanKey]; !ok || tagValue != value {
 			return false
 		}
 	}

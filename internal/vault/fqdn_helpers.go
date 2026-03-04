@@ -3,7 +3,7 @@ package vault
 import "fmt"
 
 // DeriveFQDN generates an FQDN from service name and base domain.
-// Pattern: {service}.{base}
+// Pattern: {service}.{base}.
 func DeriveFQDN(service, base string) string {
 	if base == "" {
 		return ""
@@ -46,11 +46,9 @@ func PopulateFQDNsForEnv(envType string, explicit map[string]string, base string
 	}
 
 	// Also include any explicit FQDNs that aren't in the known services list
-	if explicit != nil {
-		for service, fqdn := range explicit {
-			if fqdn != "" {
-				fqdns[service] = fqdn
-			}
+	for service, fqdn := range explicit {
+		if fqdn != "" {
+			fqdns[service] = fqdn
 		}
 	}
 

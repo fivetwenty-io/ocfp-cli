@@ -65,135 +65,167 @@ var (
 	ErrStateIsNil                              = errors.New("state is nil")
 )
 
-// Dynamic error constructors.
+// ErrInvalidBackupType returns an error for an unrecognized backup type.
 func ErrInvalidBackupType(backupType string) error {
 	return fmt.Errorf("invalid backup type: %s", backupType) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidS3Destination returns an error for a malformed S3 destination.
 func ErrInvalidS3Destination(destination string) error {
 	return fmt.Errorf("invalid S3 destination: %s", destination) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownBastionAction returns an error for an unrecognized bastion action.
 func ErrUnknownBastionAction(action string) error {
 	return fmt.Errorf("unknown bastion action: %s. Available actions: init, provision", action) //nolint:err113 // dynamic error with context
 }
 
+// ErrScriptNotFound returns an error when a script cannot be located in any search path.
 func ErrScriptNotFound(scriptName string) error {
 	return fmt.Errorf("script '%s' not found in any search paths", scriptName) //nolint:err113 // dynamic error with context
 }
 
+// ErrNoBastionHostFound returns an error when no bastion host is found for the given bloc.
 func ErrNoBastionHostFound(blocName string) error {
 	return fmt.Errorf("no bastion host found for bloc %s", blocName) //nolint:err113 // dynamic error with context
 }
 
+// ErrProviderMustBeSpecifiedInBlocConfig returns an error when a bloc config is missing its provider.
 func ErrProviderMustBeSpecifiedInBlocConfig(blocName string) error {
 	return fmt.Errorf("provider must be specified in bloc config '%s'", blocName) //nolint:err113 // dynamic error with context
 }
 
+// ErrEnvironmentNotFound returns an error when the specified environment does not exist.
 func ErrEnvironmentNotFound(envName string) error {
 	return fmt.Errorf("environment '%s' not found", envName) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedExportFormat returns an error for an unsupported export format.
 func ErrUnsupportedExportFormat(format string) error {
 	return fmt.Errorf("unsupported export format: %s", format) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownComponent returns an error for an unrecognized deployment component.
 func ErrUnknownComponent(component string) error {
 	return fmt.Errorf("unknown component: %s", component) //nolint:err113 // dynamic error with context
 }
 
+// ErrFailedToFetchKeys returns an error when provider key retrieval fails.
 func ErrFailedToFetchKeys(provider, status string) error {
 	return fmt.Errorf("failed to fetch %s keys: %s", provider, status) //nolint:err113 // dynamic error with context
 }
 
+// ErrOutputNotFound returns an error when a state output key is not found.
 func ErrOutputNotFound(stateKey string) error {
 	return fmt.Errorf("output %s not found", stateKey) //nolint:err113 // dynamic error with context
 }
 
+// ErrOutputEmptyOrNotString returns an error when a state output is empty or not a string.
 func ErrOutputEmptyOrNotString(stateKey string) error {
 	return fmt.Errorf("output %s empty or not string", stateKey) //nolint:err113 // dynamic error with context
 }
 
+// ErrNoMatchingPublicIPForJob returns an error when no public IP matches the given job and index.
 func ErrNoMatchingPublicIPForJob(job, index string) error {
 	return fmt.Errorf("no matching public-ip for job %s index %s", job, index) //nolint:err113 // dynamic error with context
 }
 
+// ErrNetworkManagerNotAvailableForProvider returns an error when the provider lacks a network manager.
 func ErrNetworkManagerNotAvailableForProvider(provider string) error {
 	return fmt.Errorf("network manager not available for provider %s", provider) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidRestoreMode returns an error for an unrecognized restore mode.
 func ErrInvalidRestoreMode(mode string) error {
 	return fmt.Errorf("invalid restore mode: %s", mode) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedFormat returns an error for an unsupported output format.
 func ErrUnsupportedFormat(format string) error {
 	return fmt.Errorf("unsupported format: %s", format) //nolint:err113 // dynamic error with context
 }
 
+// ErrLBEntryNotFoundInConfig returns an error when a load balancer entry is missing from configuration.
 func ErrLBEntryNotFoundInConfig(name string) error {
 	return fmt.Errorf("lbs entry '%s' not found in config", name) //nolint:err113 // dynamic error with context
 }
 
+// ErrLBPortMustBeGreaterThanZero returns an error when a load balancer port is zero or negative.
 func ErrLBPortMustBeGreaterThanZero(name string) error {
 	return fmt.Errorf("lbs.%s.port must be > 0", name) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownProviderAction returns an error for an unrecognized provider action.
 func ErrUnknownProviderAction(action string) error {
 	return fmt.Errorf("unknown provider action '%s'. Available actions: login", action) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedProvider returns an error for an unsupported cloud provider.
 func ErrUnsupportedProvider(providerName string) error {
 	return fmt.Errorf("unsupported provider '%s'", providerName) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidCount returns an error for an invalid count value.
 func ErrInvalidCount(countStr string) error {
 	return fmt.Errorf("invalid count: %s", countStr) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownResourceType returns an error for an unrecognized resource type.
 func ErrUnknownResourceType(resource string) error {
 	return fmt.Errorf("unknown resource type: %s", resource) //nolint:err113 // dynamic error with context
 }
 
+// ErrCouldNotFindSSHKeyForBastion returns an error when the bastion SSH key is not found in any search path.
 func ErrCouldNotFindSSHKeyForBastion(searchPaths []string) error {
 	return fmt.Errorf("could not find SSH key for bastion. Searched paths: %v", searchPaths) //nolint:err113 // dynamic error with context
 }
 
+// ErrSSHKeyNotFound returns an error when the specified SSH key file does not exist.
 func ErrSSHKeyNotFound(keyPath string) error {
 	return fmt.Errorf("SSH key not found: %s", keyPath) //nolint:err113 // dynamic error with context
 }
 
+// ErrSSHKeyIncorrectPermissions returns an error when the SSH key has wrong permissions that cannot be fixed.
 func ErrSSHKeyIncorrectPermissions(keyPath string) error {
 	return fmt.Errorf("SSH key has incorrect permissions and couldn't fix: %s", keyPath) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedResourceType returns an error for an unsupported resource type.
 func ErrUnsupportedResourceType(resourceType string) error {
 	return fmt.Errorf("unsupported resource type: %s", resourceType) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedStorageResourceType returns an error for an unsupported storage resource type.
 func ErrUnsupportedStorageResourceType(resourceType string) error {
 	return fmt.Errorf("unsupported storage resource type: %s", resourceType) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedNetworkResourceType returns an error for an unsupported network resource type.
 func ErrUnsupportedNetworkResourceType(resourceType string) error {
 	return fmt.Errorf("unsupported network resource type: %s", resourceType) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownTestType returns an error for an unrecognized test type.
 func ErrUnknownTestType(testType string) error {
 	return fmt.Errorf("unknown test type: %s", testType) //nolint:err113 // dynamic error with context
 }
 
+// ErrTestsFailed returns an error summarizing test results when failures occur.
 func ErrTestsFailed(passed, failed, skipped int) error {
 	return fmt.Errorf("tests failed: %d passed, %d failed, %d skipped", passed, failed, skipped) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedTestSuite returns an error for an unsupported test suite.
 func ErrUnsupportedTestSuite(suite string) error {
 	return fmt.Errorf("unsupported test suite: %s", suite) //nolint:err113 // dynamic error with context
 }
 
+// ErrTestDirectoryNotFound returns an error when the test directory does not exist.
 func ErrTestDirectoryNotFound(dir string) error {
 	return fmt.Errorf("test directory not found: %s", dir) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnknownTestSuite returns an error for an unrecognized test suite.
 func ErrUnknownTestSuite(suite string) error {
 	return fmt.Errorf("unknown test suite: %s", suite) //nolint:err113 // dynamic error with context
 }

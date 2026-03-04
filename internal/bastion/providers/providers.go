@@ -1,3 +1,4 @@
+// Package providers implements cloud provider-specific bastion initialization.
 package providers
 
 import (
@@ -24,23 +25,28 @@ type AzureBastionInit struct {
 	log    logger.Logger
 }
 
+// NewAzureBastionInit creates a new Azure bastion initializer.
 func NewAzureBastionInit(cfg *config.Config) *AzureBastionInit {
 	return &AzureBastionInit{config: cfg, log: logger.Get()}
 }
 
+// Validate validates the Azure configuration.
 func (a *AzureBastionInit) Validate() error {
 	return ErrAzureProviderNotImplemented
 }
 
+// PrepareEnvironment prepares Azure-specific environment variables.
 func (a *AzureBastionInit) PrepareEnvironment() map[string]string {
 	return map[string]string{"OCFP_PROVIDER": "azure"}
 }
 
+// GetConnectionDetails returns SSH connection details for the Azure bastion.
 func (a *AzureBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return nil, ErrAzureProviderNotImplemented
 }
 
-func (a *AzureBastionInit) Initialize(ctx context.Context) error {
+// Initialize performs Azure bastion initialization.
+func (a *AzureBastionInit) Initialize(_ctx context.Context) error {
 	return ErrAzureProviderNotImplemented
 }
 
@@ -52,23 +58,28 @@ type OpenStackBastionInit struct {
 	log    logger.Logger
 }
 
+// NewOpenStackBastionInit creates a new OpenStack bastion initializer.
 func NewOpenStackBastionInit(cfg *config.Config) *OpenStackBastionInit {
 	return &OpenStackBastionInit{config: cfg, log: logger.Get()}
 }
 
+// Validate validates the OpenStack configuration.
 func (o *OpenStackBastionInit) Validate() error {
 	return ErrOpenStackProviderNotImplemented
 }
 
+// PrepareEnvironment prepares OpenStack-specific environment variables.
 func (o *OpenStackBastionInit) PrepareEnvironment() map[string]string {
 	return map[string]string{"OCFP_PROVIDER": "openstack"}
 }
 
+// GetConnectionDetails returns SSH connection details for the OpenStack bastion.
 func (o *OpenStackBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return nil, ErrOpenStackProviderNotImplemented
 }
 
-func (o *OpenStackBastionInit) Initialize(ctx context.Context) error {
+// Initialize performs OpenStack bastion initialization.
+func (o *OpenStackBastionInit) Initialize(_ctx context.Context) error {
 	return ErrOpenStackProviderNotImplemented
 }
 
@@ -78,22 +89,27 @@ type VMwareBastionInit struct {
 	log    logger.Logger
 }
 
+// NewVMwareBastionInit creates a new VMware bastion initializer.
 func NewVMwareBastionInit(cfg *config.Config) *VMwareBastionInit {
 	return &VMwareBastionInit{config: cfg, log: logger.Get()}
 }
 
+// Validate validates the VMware configuration.
 func (v *VMwareBastionInit) Validate() error {
 	return ErrVMwareProviderNotImplemented
 }
 
+// PrepareEnvironment prepares VMware-specific environment variables.
 func (v *VMwareBastionInit) PrepareEnvironment() map[string]string {
 	return map[string]string{"OCFP_PROVIDER": "vmware"}
 }
 
+// GetConnectionDetails returns SSH connection details for the VMware bastion.
 func (v *VMwareBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return nil, ErrVMwareProviderNotImplemented
 }
 
-func (v *VMwareBastionInit) Initialize(ctx context.Context) error {
+// Initialize performs VMware bastion initialization.
+func (v *VMwareBastionInit) Initialize(_ctx context.Context) error {
 	return ErrVMwareProviderNotImplemented
 }

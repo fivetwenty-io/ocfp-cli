@@ -338,7 +338,7 @@ func newLBSyncCmd() *cobra.Command {
 }
 
 func makeLBSyncRunFunc(name *string, removeUnused, dryRun *bool, output *string) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
+	return func(_cmd *cobra.Command, _args []string) error {
 		if *name == "" {
 			return ErrNameIsRequired
 		}

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
 // Log path structure constants.
@@ -275,10 +277,10 @@ func parseCommandList(commands string) []string {
 
 // getLogsBaseDir returns the base directory for logs.
 func getLogsBaseDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	baseDir := config.OcfpHome()
+	if baseDir == "" {
+		return "", config.ErrOcfpHomeNotFound
 	}
 
-	return filepath.Join(home, ".ocfp"), nil
+	return baseDir, nil
 }

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"golang.org/x/crypto/ssh"
@@ -37,12 +38,14 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
+	sshKeyDir := config.OcfpSSHKeyDir(blocName)
+
 	// Search paths in priority order
 	searchPaths := []string{
 		// Provider-specific key (bastion key from bootstrap) - prefer ed25519
 		// Primary location: ~/.ocfp/{bloc}/ssh/
-		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_ed25519"),
-		filepath.Join(homeDir, ".ocfp", blocName, "ssh", "id_rsa"),
+		filepath.Join(sshKeyDir, "id_ed25519"),
+		filepath.Join(sshKeyDir, "id_rsa"),
 		// Legacy location: ~/.ssh/ocfp/{bloc}/
 		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "ocfp", blocName, "id_rsa"),
@@ -68,9 +71,9 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 				km.log.Infow("Using SSH private key", "path", path)
 
 				return path, nil
-			} else {
-				km.log.Warnw("Invalid SSH key", "path", path)
 			}
+
+			km.log.Warnw("Invalid SSH key", "path", path)
 		}
 	}
 
@@ -274,6 +277,41 @@ func (km *KeyManager) FormatPublicKey(publicKey ssh.PublicKey, comment string) s
 	return keyStr
 }
 
+// FormatAuthorizedKeysBlock formats resolved keys (from ResolveKeySpecs) into an
+// authorized_keys content block with label comments.
+//
+// Output format:
+//
+//	# alice
+//	ssh-ed25519 AAAA...
+//	# bob (github/bob-user)
+//	ssh-ed25519 AAAA...
+//	ssh-rsa AAAA...
+func (km *KeyManager) FormatAuthorizedKeysBlock(resolvedKeys map[string][]string, specs map[string]string) string {
+	if len(resolvedKeys) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	for label, keys := range resolvedKeys {
+		spec := specs[label]
+
+		comment := label
+		if strings.Contains(spec, "/") {
+			comment = label + " (" + spec + ")"
+		}
+
+		builder.WriteString("# " + comment + "\n")
+
+		for _, key := range keys {
+			builder.WriteString(strings.TrimSpace(key) + "\n")
+		}
+	}
+
+	return builder.String()
+}
+
 // RestoreKeyFromConfig attempts to restore an SSH key from config if it exists.
 // Returns the path to the restored key file, or empty string if no key found in config.
 func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (string, error) {
@@ -281,17 +319,12 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", nil
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-
 	// Restore to primary location: ~/.ocfp/{bloc}/ssh/id_ed25519
-	keyDir := filepath.Join(homeDir, ".ocfp", blocName, "ssh")
+	keyDir := config.OcfpSSHKeyDir(blocName)
 	keyPath := filepath.Join(keyDir, "id_ed25519")
 
 	// Create directory if it doesn't exist
-	err = os.MkdirAll(keyDir, sshDirectoryMode)
+	err := os.MkdirAll(keyDir, sshDirectoryMode)
 	if err != nil {
 		return "", fmt.Errorf("failed to create SSH key directory: %w", err)
 	}

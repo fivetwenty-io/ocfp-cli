@@ -20,11 +20,11 @@ type mockSSHClient struct {
 	transferError    error
 }
 
-func (m *mockSSHClient) Connect(ctx context.Context) error {
+func (m *mockSSHClient) Connect(_ctx context.Context) error {
 	return nil
 }
 
-func (m *mockSSHClient) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (m *mockSSHClient) TransferFile(_ctx context.Context, local, remote string, _opts ssh.TransferOptions) error {
 	if m.transferError != nil {
 		return m.transferError
 	}
@@ -44,11 +44,16 @@ func (m *mockSSHClient) TransferFile(ctx context.Context, local, remote string, 
 	return nil
 }
 
-func (m *mockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+func (m *mockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+	// Return realistic values for common commands
+	if cmd == "echo $HOME" {
+		return &ssh.CommandResult{ExitCode: 0, Stdout: "/home/testuser\n", Stderr: ""}, nil
+	}
+
 	return &ssh.CommandResult{ExitCode: 0, Stdout: "", Stderr: ""}, nil
 }
 
-func (m *mockSSHClient) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (m *mockSSHClient) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return nil
 }
 
@@ -107,17 +112,15 @@ func TestManager_copyOCFPConfig_FiltersSingleBloc(t *testing.T) {
 
 	configPath := setupTestConfig(t, testConfig)
 
-	// Set HOME to temp dir so config is found
-	origHome := os.Getenv("HOME")
+	// Set OCFP_HOME to temp .ocfp dir so config is found
 	tmpHome := filepath.Dir(configPath)
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Move config to expected location
 	ocfpDir := filepath.Join(tmpHome, ".ocfp")
 	err := os.MkdirAll(ocfpDir, 0755)
 	require.NoError(t, err)
 
+	t.Setenv("OCFP_HOME", ocfpDir)
+
+	// Move config to expected location
 	expectedConfigPath := filepath.Join(ocfpDir, "config.yml")
 	err = os.Rename(configPath, expectedConfigPath)
 	require.NoError(t, err)
@@ -140,10 +143,10 @@ func TestManager_copyOCFPConfig_FiltersSingleBloc(t *testing.T) {
 
 	// Verify
 	require.NoError(t, err, "copyOCFPConfig should succeed")
-	assert.Contains(t, mockSSH.transferredFiles, "~/.ocfp/config.yml", "Should transfer to remote path")
+	assert.Contains(t, mockSSH.transferredFiles, "/home/testuser/.ocfp/config.yml", "Should transfer to remote path")
 
 	// Parse transferred content
-	transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+	transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 	var transferredConfig config.ConfigFile
 	err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 	require.NoError(t, err, "Transferred content should be valid YAML")
@@ -181,17 +184,15 @@ func TestManager_copyOCFPConfig_ErrorsOnMissingBloc(t *testing.T) {
 
 	configPath := setupTestConfig(t, testConfig)
 
-	// Set HOME to temp dir
-	origHome := os.Getenv("HOME")
+	// Set OCFP_HOME to temp .ocfp dir
 	tmpHome := filepath.Dir(configPath)
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Move config to expected location
 	ocfpDir := filepath.Join(tmpHome, ".ocfp")
 	err := os.MkdirAll(ocfpDir, 0755)
 	require.NoError(t, err)
 
+	t.Setenv("OCFP_HOME", ocfpDir)
+
+	// Move config to expected location
 	expectedConfigPath := filepath.Join(ocfpDir, "config.yml")
 	err = os.Rename(configPath, expectedConfigPath)
 	require.NoError(t, err)
@@ -262,14 +263,12 @@ func TestManager_copyOCFPConfig_PreservesGlobals(t *testing.T) {
 
 			configPath := setupTestConfig(t, testConfig)
 
-			origHome := os.Getenv("HOME")
 			tmpHome := filepath.Dir(configPath)
-			os.Setenv("HOME", tmpHome)
-			defer os.Setenv("HOME", origHome)
-
 			ocfpDir := filepath.Join(tmpHome, ".ocfp")
 			err := os.MkdirAll(ocfpDir, 0755)
 			require.NoError(t, err)
+
+			t.Setenv("OCFP_HOME", ocfpDir)
 
 			expectedConfigPath := filepath.Join(ocfpDir, "config.yml")
 			err = os.Rename(configPath, expectedConfigPath)
@@ -292,7 +291,7 @@ func TestManager_copyOCFPConfig_PreservesGlobals(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify
-			transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+			transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 			var transferredConfig config.ConfigFile
 			err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 			require.NoError(t, err)
@@ -307,9 +306,7 @@ func TestManager_copyOCFPConfig_ErrorsOnMissingFile(t *testing.T) {
 	// Setup: No config file at expected paths
 	tmpDir := t.TempDir()
 
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("OCFP_HOME", filepath.Join(tmpDir, ".ocfp"))
 
 	// Ensure working directory doesn't have config either
 	origWd, _ := os.Getwd()
@@ -363,10 +360,8 @@ func TestManager_copyOCFPConfig_AlternativeConfigPath(t *testing.T) {
 	err = os.WriteFile(configPath, yamlBytes, 0600)
 	require.NoError(t, err)
 
-	// Set HOME to different location so ~/.ocfp/config.yml doesn't exist
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", "/nonexistent")
-	defer os.Setenv("HOME", origHome)
+	// Set OCFP_HOME to nonexistent location so config.yml won't be found there
+	t.Setenv("OCFP_HOME", "/nonexistent/.ocfp")
 
 	// Change to tmpDir so config/config.yml is found
 	origWd, _ := os.Getwd()
@@ -390,9 +385,9 @@ func TestManager_copyOCFPConfig_AlternativeConfigPath(t *testing.T) {
 
 	// Verify
 	require.NoError(t, err, "Should succeed with alternative config path")
-	assert.Contains(t, mockSSH.transferredFiles, "~/.ocfp/config.yml")
+	assert.Contains(t, mockSSH.transferredFiles, "/home/testuser/.ocfp/config.yml")
 
-	transferredContent := mockSSH.transferredFiles["~/.ocfp/config.yml"]
+	transferredContent := mockSSH.transferredFiles["/home/testuser/.ocfp/config.yml"]
 	var transferredConfig config.ConfigFile
 	err = yaml.Unmarshal([]byte(transferredContent), &transferredConfig)
 	require.NoError(t, err)

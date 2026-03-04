@@ -41,7 +41,7 @@ func NewScriptGenerator(provider string, cfg *config.Config) *ScriptGenerator {
 func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provConfig ProvisionConfig, envVars map[string]string) (string, error) {
 	sg.log.Debug("Generating provisioning script")
 
-	var scriptParts []string
+	scriptParts := make([]string, 0, 16) //nolint:mnd // rough capacity for provisioning sections
 
 	// Core script sections
 	scriptParts = append(scriptParts, sg.generateScriptHeader())
@@ -64,6 +64,130 @@ func (sg *ScriptGenerator) GenerateProvisioningScript(ctx context.Context, provC
 	finalScript := sg.performVariableSubstitution(fullScript, envVars)
 
 	return finalScript, nil
+}
+
+// GeneratePostInstallFunctions returns post-install helper functions.
+func (sg *ScriptGenerator) GeneratePostInstallFunctions() string {
+	return `# Post-install functions
+install_aws_cli_v2() {
+    log_info "Installing AWS CLI v2"
+    cd /tmp
+    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -o -q awscliv2.zip
+    sudo ./aws/install --update
+    rm -rf awscliv2.zip aws/
+    log_success "AWS CLI v2 installed"
+}
+
+configure_stackit_cli() {
+    log_info "Configuring STACKIT CLI"
+    if [ -n "${STACKIT_PROJECT_ID:-}" ]; then
+        stackit config set --project-id "${STACKIT_PROJECT_ID}"
+        log_success "STACKIT CLI configured with project ID: ${STACKIT_PROJECT_ID}"
+    else
+        log_warning "STACKIT_PROJECT_ID not set, skipping STACKIT CLI configuration"
+    fi
+}
+
+configure_azure_cli() {
+    log_info "Configuring Azure CLI"
+    # Azure CLI configuration is handled via environment variables
+    log_success "Azure CLI ready (configured via environment variables)"
+}
+
+configure_gcp_cli() {
+    log_info "Configuring GCP CLI"
+    if [ -n "${GCP_PROJECT_ID:-}" ]; then
+        gcloud config set project "${GCP_PROJECT_ID}"
+        log_success "GCP CLI configured with project ID: ${GCP_PROJECT_ID}"
+    else
+        log_warning "GCP_PROJECT_ID not set, skipping GCP CLI configuration"
+    fi
+}
+
+configure_openstack_cli() {
+    log_info "Configuring OpenStack CLI"
+    # OpenStack CLI configuration is handled via environment variables
+    log_success "OpenStack CLI ready (configured via environment variables)"
+}
+
+configure_vmware_cli() {
+    log_info "Configuring VMware CLI"
+    # VMware CLI configuration is handled via environment variables
+    log_success "VMware CLI ready (configured via environment variables)"
+}
+
+# Wait for system to stabilize after boot
+log_info "Waiting for system to stabilize..."
+sleep 10`
+}
+
+// GenerateRepositoryScript generates APT repository setup.
+func (sg *ScriptGenerator) GenerateRepositoryScript(repositories []APTRepository) string {
+	if len(repositories) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript4*len(repositories))
+	lines = append(lines, "# APT repository setup", "NEED_APT_UPDATE=false")
+
+	for _, repo := range repositories {
+		if !repo.Enabled || sg.shouldSkipCondition(repo.Condition) {
+			continue
+		}
+
+		lines = append(lines, "# Add repository: "+repo.Name)
+		lines = sg.appendGPGKeyScript(lines, repo)
+		lines = sg.appendRepositorySourceScript(lines, repo)
+		lines = append(lines, "")
+	}
+
+	return strings.Join(sg.appendAptUpdateScript(lines), "\n")
+}
+
+// GeneratePackageScript generates package installation script.
+func (sg *ScriptGenerator) GeneratePackageScript(packages map[string]PackageGroup) string {
+	if len(packages) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript3*len(packages))
+	lines = append(lines, "# Package installation")
+
+	for groupName, group := range packages {
+		if !group.Enabled || sg.shouldSkipCondition(group.Condition) {
+			continue
+		}
+
+		lines = append(lines, fmt.Sprintf("# Install %s packages", groupName))
+		lines = sg.appendAPTPackagesScript(lines, groupName, group)
+		lines = sg.appendPipPackagesScript(lines, groupName, group)
+		lines = sg.appendPostInstallScript(lines, groupName, group)
+		lines = sg.appendVerifyScript(lines, groupName, group)
+		lines = append(lines, fmt.Sprintf("log_success '%s packages installed'", groupName), "")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// GenerateBinaryToolScript generates binary tool installation script.
+func (sg *ScriptGenerator) GenerateBinaryToolScript(tools []BinaryTool) string {
+	if len(tools) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, scriptBufferScript5+scriptBufferScript3*len(tools))
+	lines = append(lines, "# Binary tool installation")
+
+	for _, tool := range tools {
+		if !sg.shouldProcessTool(tool) {
+			continue
+		}
+
+		lines = append(lines, sg.generateToolInstallationScript(tool)...)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // generateScriptHeader generates the script header.
@@ -158,62 +282,6 @@ handle_error() {
 trap 'handle_error ${LINENO} $?' ERR
 
 `
-}
-
-// GeneratePostInstallFunctions returns post-install helper functions.
-func (sg *ScriptGenerator) GeneratePostInstallFunctions() string {
-	return `# Post-install functions
-install_aws_cli_v2() {
-    log_info "Installing AWS CLI v2"
-    cd /tmp
-    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-    unzip -o -q awscliv2.zip
-    sudo ./aws/install --update
-    rm -rf awscliv2.zip aws/
-    log_success "AWS CLI v2 installed"
-}
-
-configure_stackit_cli() {
-    log_info "Configuring STACKIT CLI"
-    if [ -n "${STACKIT_PROJECT_ID:-}" ]; then
-        stackit config set --project-id "${STACKIT_PROJECT_ID}"
-        log_success "STACKIT CLI configured with project ID: ${STACKIT_PROJECT_ID}"
-    else
-        log_warning "STACKIT_PROJECT_ID not set, skipping STACKIT CLI configuration"
-    fi
-}
-
-configure_azure_cli() {
-    log_info "Configuring Azure CLI"
-    # Azure CLI configuration is handled via environment variables
-    log_success "Azure CLI ready (configured via environment variables)"
-}
-
-configure_gcp_cli() {
-    log_info "Configuring GCP CLI"
-    if [ -n "${GCP_PROJECT_ID:-}" ]; then
-        gcloud config set project "${GCP_PROJECT_ID}"
-        log_success "GCP CLI configured with project ID: ${GCP_PROJECT_ID}"
-    else
-        log_warning "GCP_PROJECT_ID not set, skipping GCP CLI configuration"
-    fi
-}
-
-configure_openstack_cli() {
-    log_info "Configuring OpenStack CLI"
-    # OpenStack CLI configuration is handled via environment variables
-    log_success "OpenStack CLI ready (configured via environment variables)"
-}
-
-configure_vmware_cli() {
-    log_info "Configuring VMware CLI"
-    # VMware CLI configuration is handled via environment variables
-    log_success "VMware CLI ready (configured via environment variables)"
-}
-
-# Wait for system to stabilize after boot
-log_info "Waiting for system to stabilize..."
-sleep 10`
 }
 
 // generateEnvironmentSetup generates environment variable setup.
@@ -322,29 +390,6 @@ func (sg *ScriptGenerator) generateDirectoryScript(directories []DirectoryConfig
 	return strings.Join(lines, "\n")
 }
 
-// GenerateRepositoryScript generates APT repository setup.
-func (sg *ScriptGenerator) GenerateRepositoryScript(repositories []APTRepository) string {
-	if len(repositories) == 0 {
-		return ""
-	}
-
-	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript4*len(repositories))
-	lines = append(lines, "# APT repository setup", "NEED_APT_UPDATE=false")
-
-	for _, repo := range repositories {
-		if !repo.Enabled || sg.shouldSkipCondition(repo.Condition) {
-			continue
-		}
-
-		lines = append(lines, "# Add repository: "+repo.Name)
-		lines = sg.appendGPGKeyScript(lines, repo)
-		lines = sg.appendRepositorySourceScript(lines, repo)
-		lines = append(lines, "")
-	}
-
-	return strings.Join(sg.appendAptUpdateScript(lines), "\n")
-}
-
 // appendGPGKeyScript adds GPG key installation script for a repository.
 func (sg *ScriptGenerator) appendGPGKeyScript(lines []string, repo APTRepository) []string {
 	if repo.GPGKey.URL == "" {
@@ -412,31 +457,6 @@ func (sg *ScriptGenerator) appendAptUpdateScript(lines []string) []string {
 		"fi",
 		"",
 	)
-}
-
-// GeneratePackageScript generates package installation script.
-func (sg *ScriptGenerator) GeneratePackageScript(packages map[string]PackageGroup) string {
-	if len(packages) == 0 {
-		return ""
-	}
-
-	lines := make([]string, 0, scriptBufferScript3+scriptBufferScript3*len(packages))
-	lines = append(lines, "# Package installation")
-
-	for groupName, group := range packages {
-		if !group.Enabled || sg.shouldSkipCondition(group.Condition) {
-			continue
-		}
-
-		lines = append(lines, fmt.Sprintf("# Install %s packages", groupName))
-		lines = sg.appendAPTPackagesScript(lines, groupName, group)
-		lines = sg.appendPipPackagesScript(lines, groupName, group)
-		lines = sg.appendPostInstallScript(lines, groupName, group)
-		lines = sg.appendVerifyScript(lines, groupName, group)
-		lines = append(lines, fmt.Sprintf("log_success '%s packages installed'", groupName), "")
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 // appendAPTPackagesScript adds APT package installation script.
@@ -509,26 +529,6 @@ func (sg *ScriptGenerator) appendVerifyScript(lines []string, groupName string, 
 	}
 
 	return lines
-}
-
-// GenerateBinaryToolScript generates binary tool installation script.
-func (sg *ScriptGenerator) GenerateBinaryToolScript(tools []BinaryTool) string {
-	if len(tools) == 0 {
-		return ""
-	}
-
-	lines := make([]string, 0, scriptBufferScript5+scriptBufferScript3*len(tools))
-	lines = append(lines, "# Binary tool installation")
-
-	for _, tool := range tools {
-		if !sg.shouldProcessTool(tool) {
-			continue
-		}
-
-		lines = append(lines, sg.generateToolInstallationScript(tool)...)
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 // generateGitRepositoryScript generates git repository cloning script.
@@ -778,7 +778,7 @@ func (sg *ScriptGenerator) generateDownloadSteps(tool BinaryTool) []string {
 
 // generateDirectDownload generates script lines for direct URL download.
 func (sg *ScriptGenerator) generateDirectDownload(tool BinaryTool) []string {
-	var lines []string
+	lines := make([]string, 0, 8) //nolint:mnd // rough capacity for download, move, and permissions
 
 	// Download file
 	lines = append(lines, fmt.Sprintf("curl -fsSL '%s' -o '/tmp/%s'", tool.URL, tool.Name))
@@ -1001,9 +1001,22 @@ func (sg *ScriptGenerator) addSystemProvisioningSections(provConfig ProvisionCon
 
 // addPackageManagementSections adds package installation and tool management.
 func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, provConfig ProvisionConfig, scriptParts *[]string) {
-	// Package installation
+	// Package installation (minimal APT)
 	packages := provConfig.GetPackages()
 	sg.appendIfNotEmpty(scriptParts, sg.GeneratePackageScript(packages))
+
+	// Linuxbrew installation
+	brewMgr := NewBrewManager(sg.provider, sg.config)
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewInstallScript(ctx))
+
+	// Brew package installation
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewPackageScript(ctx))
+
+	// Post-brew APT packages (packages with no brew formula, installed after brew)
+	postBrewPackages := map[string]PackageGroup{
+		"post_brew": NewConfig(sg.provider, sg.config, nil).GetPostBrewPackages(),
+	}
+	sg.appendIfNotEmpty(scriptParts, sg.GeneratePackageScript(postBrewPackages))
 
 	// Git repositories (MUST come before binary tools that depend on them)
 	repos := provConfig.GetGitRepositories()
@@ -1021,12 +1034,8 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	sg.addThirdPartyPackageManagers(ctx, scriptParts)
 }
 
-// addThirdPartyPackageManagers adds snap, CPAN, and other package managers.
+// addThirdPartyPackageManagers adds CPAN, advanced tools, and CF plugins.
 func (sg *ScriptGenerator) addThirdPartyPackageManagers(ctx context.Context, scriptParts *[]string) {
-	// Snap packages
-	snapMgr := NewSnapManager(sg.provider, sg.config)
-	sg.appendIfNotEmpty(scriptParts, snapMgr.GenerateSnapInstallScript(ctx))
-
 	// CPAN modules
 	cpanMgr := NewCPANManager(sg.provider, sg.config)
 	sg.appendIfNotEmpty(scriptParts, cpanMgr.GenerateCPANInstallScript(ctx))

@@ -133,66 +133,36 @@ func TestClientManagers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Test manager methods
-	if client.NetworkManager() == nil {
-		t.Error("NetworkManager() returned nil")
+	// Table-driven nil checks and identity comparisons for manager pairs
+	type managerPair struct {
+		name  string
+		short interface{}
+		long  interface{}
 	}
 
-	if client.Network() == nil {
-		t.Error("Network() returned nil")
+	pairs := []managerPair{
+		{"Network", client.Network(), client.NetworkManager()},
+		{"Compute", client.Compute(), client.ComputeManager()},
+		{"Storage", client.Storage(), client.StorageManager()},
+		{"Security", client.Security(), client.SecurityManager()},
+		{"LoadBalancer", client.LoadBalancer(), client.LoadBalancerManager()},
 	}
 
-	if client.ComputeManager() == nil {
-		t.Error("ComputeManager() returned nil")
-	}
+	for _, p := range pairs {
+		t.Run(p.name+"_not_nil", func(t *testing.T) {
+			if p.short == nil {
+				t.Errorf("%s() returned nil", p.name)
+			}
+			if p.long == nil {
+				t.Errorf("%sManager() returned nil", p.name)
+			}
+		})
 
-	if client.Compute() == nil {
-		t.Error("Compute() returned nil")
-	}
-
-	if client.StorageManager() == nil {
-		t.Error("StorageManager() returned nil")
-	}
-
-	if client.Storage() == nil {
-		t.Error("Storage() returned nil")
-	}
-
-	if client.SecurityManager() == nil {
-		t.Error("SecurityManager() returned nil")
-	}
-
-	if client.Security() == nil {
-		t.Error("Security() returned nil")
-	}
-
-	if client.LoadBalancerManager() == nil {
-		t.Error("LoadBalancerManager() returned nil")
-	}
-
-	if client.LoadBalancer() == nil {
-		t.Error("LoadBalancer() returned nil")
-	}
-
-	// Verify legacy methods return same instances
-	if client.Network() != client.NetworkManager() {
-		t.Error("Network() and NetworkManager() should return same instance")
-	}
-
-	if client.Compute() != client.ComputeManager() {
-		t.Error("Compute() and ComputeManager() should return same instance")
-	}
-
-	if client.Storage() != client.StorageManager() {
-		t.Error("Storage() and StorageManager() should return same instance")
-	}
-
-	if client.Security() != client.SecurityManager() {
-		t.Error("Security() and SecurityManager() should return same instance")
-	}
-
-	if client.LoadBalancer() != client.LoadBalancerManager() {
-		t.Error("LoadBalancer() and LoadBalancerManager() should return same instance")
+		t.Run(p.name+"_same_instance", func(t *testing.T) {
+			if p.short != p.long {
+				t.Errorf("%s() and %sManager() should return same instance", p.name, p.name)
+			}
+		})
 	}
 }
 

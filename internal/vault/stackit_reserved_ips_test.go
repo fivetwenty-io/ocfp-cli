@@ -301,8 +301,8 @@ func TestSortAssignmentTypes(t *testing.T) {
 		},
 		{
 			name:  "all types",
-			input: []string{"reserved", "available", "blacksmith", "bastion", "ocfp_ui", "doomsday", "shield", "prometheus", "concourse", "jumpbox", "vault", "bosh"},
-			want:  []string{"bosh", "vault", "jumpbox", "concourse", "prometheus", "shield", "doomsday", "ocfp_ui", "bastion", "blacksmith", "available", "reserved"},
+			input: []string{"reserved", "available", "shout", "blacksmith", "bastion", "ocfp_ui", "doomsday", "shield", "prometheus", "concourse", "jumpbox", "vault", "bosh"},
+			want:  []string{"bosh", "vault", "jumpbox", "concourse", "prometheus", "shield", "doomsday", "ocfp_ui", "bastion", "blacksmith", "shout", "available", "reserved"},
 		},
 	}
 
@@ -326,7 +326,7 @@ func TestGetDefaultReservedIPAssignments(t *testing.T) {
 	expectedSystems := []string{
 		"bosh", "vault", "jumpbox", "concourse", "prometheus",
 		"shield", "doomsday", "ocfp_ui", "bastion", "blacksmith",
-		"available", "reserved",
+		"shout", "available", "reserved",
 	}
 
 	for _, system := range expectedSystems {
@@ -440,6 +440,10 @@ func TestCalculateReservedIPs_MgmtSubnet1(t *testing.T) {
 	// For subnet 1, doomsday should be assigned at offset 9
 	t.Run("doomsday_ip", func(t *testing.T) {
 		assert.Equal(t, "10.10.2.9", vaultIPs["doomsday_ip"])
+	})
+
+	t.Run("shout_ip", func(t *testing.T) {
+		assert.Equal(t, "10.10.2.10", vaultIPs["shout_ip"])
 	})
 
 	// Other simple offsets should still work

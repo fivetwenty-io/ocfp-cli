@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	gcpcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+)
+
+// GCP provider errors.
+var (
+	ErrGCPBastionIPNotDetermined = errors.New("could not determine bastion IP: check configuration or set GCP_BASTION_IP")
+	ErrNoSSHKeyFound             = errors.New("no SSH key found")
 )
 
 // GCPBastionInit implements bastion initialization for GCP.
@@ -98,20 +105,6 @@ func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
 	return env
 }
 
-// addGenesisEnv adds Genesis-specific environment variables.
-func (g *GCPBastionInit) addGenesisEnv(env map[string]string) {
-	// Genesis expects these variables
-	if g.config.ProjectID != "" {
-		env["GCP_PROJECT"] = g.config.ProjectID
-	}
-
-	zone := g.config.Region
-	if zone != "" {
-		env["GCP_ZONE"] = zone
-		env["GCP_REGION"] = gcpcpi.GetRegionFromZone(zone)
-	}
-}
-
 // GetConnectionDetails returns the SSH connection details for the bastion.
 func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	bastionIP, err := g.getBastionIP()
@@ -124,8 +117,9 @@ func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	if sshUser == "" {
 		sshUser = os.Getenv("OCFP_BASTION_USER")
 	}
+
 	if sshUser == "" {
-		sshUser = "ubuntu" // Common default for Ubuntu images on GCP
+		sshUser = defaultSSHUser // Common default for Ubuntu images on GCP
 	}
 
 	// Find SSH key
@@ -137,10 +131,52 @@ func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return &ConnectionDetails{
 		Host:           bastionIP,
 		User:           sshUser,
-		Port:           22,
+		Port:           22, //nolint:mnd
 		PrivateKeyPath: sshKey,
 		SSHOptions:     g.getSSHOptions(),
 	}, nil
+}
+
+// Initialize performs bastion initialization for GCP.
+func (g *GCPBastionInit) Initialize(_ctx context.Context) error {
+	g.log.Infow("Initializing GCP bastion", "bloc", g.config.Name)
+
+	// Validate configuration
+	err := g.Validate()
+	if err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Get connection details
+	details, err := g.GetConnectionDetails()
+	if err != nil {
+		return fmt.Errorf("failed to get connection details: %w", err)
+	}
+
+	g.log.Infow("Bastion connection details",
+		"host", details.Host,
+		"user", details.User,
+		"port", details.Port,
+		"key", details.PrivateKeyPath)
+
+	// Additional initialization steps would go here
+	// (e.g., testing connection, setting up remote environment)
+
+	return nil
+}
+
+// addGenesisEnv adds Genesis-specific environment variables.
+func (g *GCPBastionInit) addGenesisEnv(env map[string]string) {
+	// Genesis expects these variables
+	if g.config.ProjectID != "" {
+		env["GCP_PROJECT"] = g.config.ProjectID
+	}
+
+	zone := g.config.Region
+	if zone != "" {
+		env["GCP_ZONE"] = zone
+		env["GCP_REGION"] = gcpcpi.GetRegionFromZone(zone)
+	}
 }
 
 // getBastionIP retrieves the bastion IP address.
@@ -170,22 +206,26 @@ func (g *GCPBastionInit) getBastionIP() (string, error) {
 	// 4. Could query GCP API here if needed
 	// This would require initializing the GCP client
 
-	return "", fmt.Errorf("could not determine bastion IP: check configuration or set GCP_BASTION_IP")
+	return "", ErrGCPBastionIPNotDetermined
 }
 
 // getBastionIPFromState retrieves the bastion IP from state file.
+//
+//nolint:unparam // signature kept for interface compatibility
 func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 	// Look for state file in standard locations
 	statePaths := []string{
-		filepath.Join(os.Getenv("HOME"), ".ocfp", g.config.Name, "state.json"),
+		filepath.Join(config.OcfpBlocDir(g.config.Name), "state.json"),
 		filepath.Join(".", "state.json"),
 	}
 
 	for _, statePath := range statePaths {
-		if _, err := os.Stat(statePath); err == nil {
+		_, statErr := os.Stat(statePath) //nolint:gosec // path from trusted config
+		if statErr == nil {              //nolint:gosec // path components are from trusted config
 			// State file exists - would parse and extract bastion IP
 			// For now, return empty to fall through to other methods
 			g.log.Debugw("Found state file", "path", statePath)
+
 			break
 		}
 	}
@@ -199,14 +239,17 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 	// We'll use the SSHKeyDir and SSHKeyName
 	if g.config.Bastion.SSHKeyDir != "" && g.config.Bastion.SSHKeyName != "" {
 		keyPath := filepath.Join(g.config.Bastion.SSHKeyDir, g.config.Bastion.SSHKeyName)
-		if _, err := os.Stat(keyPath); err == nil {
+
+		_, statErr := os.Stat(keyPath)
+		if statErr == nil {
 			return keyPath, nil
 		}
 	}
 
 	// Check environment
 	if keyPath := os.Getenv("OCFP_SSH_KEY"); keyPath != "" {
-		if _, err := os.Stat(keyPath); err == nil {
+		_, statErr := os.Stat(keyPath) //nolint:gosec // path from trusted env variable
+		if statErr == nil {
 			return keyPath, nil
 		}
 	}
@@ -214,20 +257,21 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 	// Check standard locations
 	homeDir := os.Getenv("HOME")
 	keyPaths := []string{
-		filepath.Join(homeDir, ".ssh", fmt.Sprintf("%s-bastion", g.config.Name)),
-		filepath.Join(homeDir, ".ssh", fmt.Sprintf("%s-bastion.pem", g.config.Name)),
+		filepath.Join(homeDir, ".ssh", g.config.Name+"-bastion"),
+		filepath.Join(homeDir, ".ssh", g.config.Name+"-bastion.pem"),
 		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_rsa"),
 		filepath.Join(homeDir, ".ssh", "google_compute_engine"),
 	}
 
 	for _, keyPath := range keyPaths {
-		if _, err := os.Stat(keyPath); err == nil {
+		_, statErr := os.Stat(keyPath) //nolint:gosec // path components are from trusted HOME env
+		if statErr == nil {
 			return keyPath, nil
 		}
 	}
 
-	return "", fmt.Errorf("no SSH key found, checked: %s", strings.Join(keyPaths, ", "))
+	return "", fmt.Errorf("%w, checked: %s", ErrNoSSHKeyFound, strings.Join(keyPaths, ", "))
 }
 
 // getSSHOptions returns SSH options for GCP connections.
@@ -242,36 +286,9 @@ func (g *GCPBastionInit) getSSHOptions() []string {
 	}
 }
 
-// Initialize performs bastion initialization for GCP.
-func (g *GCPBastionInit) Initialize(ctx context.Context) error {
-	g.log.Infow("Initializing GCP bastion", "bloc", g.config.Name)
-
-	// Validate configuration
-	if err := g.Validate(); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
-	// Get connection details
-	details, err := g.GetConnectionDetails()
-	if err != nil {
-		return fmt.Errorf("failed to get connection details: %w", err)
-	}
-
-	g.log.Infow("Bastion connection details",
-		"host", details.Host,
-		"user", details.User,
-		"port", details.Port,
-		"key", details.PrivateKeyPath)
-
-	// Additional initialization steps would go here
-	// (e.g., testing connection, setting up remote environment)
-
-	return nil
-}
-
-// GCP-specific errors
+// GCP-specific errors.
 var (
-	ErrGCPProjectIDRequired      = fmt.Errorf("GCP project ID is required")
-	ErrGCPServiceAccountRequired = fmt.Errorf("GCP service account JSON or key path is required")
-	ErrGCPZoneRequired           = fmt.Errorf("GCP zone is required")
+	ErrGCPProjectIDRequired      = errors.New("GCP project ID is required")
+	ErrGCPServiceAccountRequired = errors.New("GCP service account JSON or key path is required")
+	ErrGCPZoneRequired           = errors.New("GCP zone is required")
 )

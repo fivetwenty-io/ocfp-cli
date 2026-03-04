@@ -13,59 +13,92 @@ import (
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cloudinit"
 )
 
+const (
+	// nodeStatusOnline is the status value for an online Proxmox node.
+	nodeStatusOnline = "online"
+
+	// Task wait timeouts in seconds.
+	taskTimeoutClone   = 300 // 5 minutes for clone operations
+	taskTimeoutDefault = 120 // 2 minutes for standard operations
+
+	// Flavor preset resource values.
+	flavorSmallRAM    = 1024
+	flavorSmallDisk   = 10
+	flavorMedCPU      = 2
+	flavorMedRAM      = 2048
+	flavorMedDisk     = 20
+	flavorLargeCPU    = 4
+	flavorLargeRAM    = 4096
+	flavorLargeDisk   = 40
+	flavorXLCPU       = 8
+	flavorXLRAM       = 8192
+	flavorXLDisk      = 80
+	flavorBastionCPU  = 2
+	flavorBastionRAM  = 4096
+	flavorBastionDisk = 50
+	flavorBoshCPU     = 4
+	flavorBoshRAM     = 8192
+	flavorBoshDisk    = 100
+
+	// vmStopDelay is the time to wait after stopping a VM before deleting it.
+	vmStopDelay = 2 * time.Second
+)
+
 // ComputeManager handles Proxmox compute operations.
 type ComputeManager struct {
 	client *Client
 }
 
 // Flavor presets for Proxmox (no native flavor concept).
+//
+//nolint:gochecknoglobals // package-level lookup table for flavor presets
 var flavorPresets = map[string]*cpi.Flavor{
 	"small": {
 		ID:          "small",
 		Name:        "Small",
 		VCPUs:       1,
-		RAM:         1024,
-		Disk:        10,
+		RAM:         flavorSmallRAM,
+		Disk:        flavorSmallDisk,
 		Description: "Small instance: 1 vCPU, 1GB RAM, 10GB disk",
 	},
 	"medium": {
 		ID:          "medium",
 		Name:        "Medium",
-		VCPUs:       2,
-		RAM:         2048,
-		Disk:        20,
+		VCPUs:       flavorMedCPU,
+		RAM:         flavorMedRAM,
+		Disk:        flavorMedDisk,
 		Description: "Medium instance: 2 vCPUs, 2GB RAM, 20GB disk",
 	},
 	"large": {
 		ID:          "large",
 		Name:        "Large",
-		VCPUs:       4,
-		RAM:         4096,
-		Disk:        40,
+		VCPUs:       flavorLargeCPU,
+		RAM:         flavorLargeRAM,
+		Disk:        flavorLargeDisk,
 		Description: "Large instance: 4 vCPUs, 4GB RAM, 40GB disk",
 	},
 	"xlarge": {
 		ID:          "xlarge",
 		Name:        "Extra Large",
-		VCPUs:       8,
-		RAM:         8192,
-		Disk:        80,
+		VCPUs:       flavorXLCPU,
+		RAM:         flavorXLRAM,
+		Disk:        flavorXLDisk,
 		Description: "Extra large instance: 8 vCPUs, 8GB RAM, 80GB disk",
 	},
 	"bastion": {
 		ID:          "bastion",
 		Name:        "Bastion",
-		VCPUs:       2,
-		RAM:         4096,
-		Disk:        50,
+		VCPUs:       flavorBastionCPU,
+		RAM:         flavorBastionRAM,
+		Disk:        flavorBastionDisk,
 		Description: "Bastion host: 2 vCPUs, 4GB RAM, 50GB disk",
 	},
 	"bosh": {
 		ID:          "bosh",
 		Name:        "BOSH Director",
-		VCPUs:       4,
-		RAM:         8192,
-		Disk:        100,
+		VCPUs:       flavorBoshCPU,
+		RAM:         flavorBoshRAM,
+		Disk:        flavorBoshDisk,
 		Description: "BOSH Director: 4 vCPUs, 8GB RAM, 100GB disk",
 	},
 }
@@ -92,106 +125,33 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return nil, fmt.Errorf("failed to get next VMID: %w", err)
 	}
 
-	// Build VM creation parameters
-	params := map[string]interface{}{
-		"vmid":    vmid,
-		"name":    req.Name,
-		"memory":  flavor.RAM,
-		"cores":   flavor.VCPUs,
-		"sockets": 1,
-		"cpu":     "host",
-		"ostype":  "l26", // Linux 2.6+ kernel
-		"agent":   "1",   // Enable QEMU guest agent
-	}
-
-	// Configure network
-	bridge := m.client.config.DefaultBridge
-	if req.NetworkID != "" {
-		bridge = req.NetworkID
-	}
-	params["net0"] = fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge)
-
-	// Configure storage for boot disk
-	storage := m.client.config.DefaultStorage
+	// Determine disk size
 	diskSize := flavor.Disk
 	if req.BootVolumeSize > 0 {
 		diskSize = req.BootVolumeSize
 	}
 
-	// If we have an image (template), clone from it
+	storage := m.client.config.DefaultStorage
+
+	// Create the VM either from template or blank
 	if req.Image != "" {
-		// Image is expected to be a template VMID
-		templateVMID, err := strconv.Atoi(req.Image)
-		if err != nil {
-			return nil, fmt.Errorf("invalid template VMID: %s", req.Image)
-		}
-
-		// Clone the template
-		upid, err := m.cloneTemplate(ctx, node, templateVMID, vmid, req.Name, storage)
-		if err != nil {
-			return nil, fmt.Errorf("failed to clone template: %w", err)
-		}
-
-		// Wait for clone to complete
-		if err := m.client.waitForTask(ctx, node, upid, 300); err != nil {
-			return nil, fmt.Errorf("clone task failed: %w", err)
-		}
-
-		// Resize disk if needed
-		if diskSize > 0 {
-			_ = m.resizeBootDisk(ctx, node, vmid, diskSize)
-		}
+		err = m.createFromTemplate(ctx, node, vmid, diskSize, storage, req)
 	} else {
-		// Create VM with blank disk
-		params["scsi0"] = fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize)
-		params["scsihw"] = "virtio-scsi-pci"
-		params["boot"] = "order=scsi0"
-
-		// Create the VM
-		qemuSvc := m.client.getQemuService()
-		upid, err := qemuSvc.Create(ctx, node, params)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create VM: %w", err)
-		}
-
-		// Wait for creation
-		if err := m.client.waitForTask(ctx, node, upid, 120); err != nil {
-			return nil, fmt.Errorf("VM creation task failed: %w", err)
-		}
+		err = m.createBlankVM(ctx, node, vmid, diskSize, storage, flavor, req)
 	}
 
-	// Configure cloud-init if user data is provided
-	if req.UserData != "" {
-		if err := m.configureCloudInit(ctx, node, vmid, req); err != nil {
-			logger.Warnf("Failed to configure cloud-init: %v", err)
-		}
-	}
-
-	// Apply tags via description
-	if len(req.Tags) > 0 {
-		m.setVMTags(ctx, node, vmid, req.Tags)
-	}
-
-	// Start the VM
-	qemuSvc := m.client.getQemuService()
-	upid, err := qemuSvc.Start(ctx, node, vmid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start VM: %w", err)
+		return nil, err
 	}
 
-	if err := m.client.waitForTask(ctx, node, upid, 120); err != nil {
-		return nil, fmt.Errorf("VM start task failed: %w", err)
-	}
-
-	// Get the created instance
-	return m.GetInstance(ctx, strconv.Itoa(vmid))
+	return m.finalizeAndStartVM(ctx, node, vmid, req)
 }
 
 // GetInstance retrieves a VM by ID.
 func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
 	vmid, err := strconv.Atoi(id)
 	if err != nil {
-		return nil, fmt.Errorf("invalid VMID: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidVMID, id)
 	}
 
 	node, err := m.findVMNode(ctx, vmid)
@@ -217,9 +177,12 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 }
 
 // ListInstances lists VMs with optional filters.
+//
+//nolint:funlen // VM listing across nodes with type assertions is inherently detailed
 func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
 	// Refresh nodes
-	if err := m.client.refreshNodes(ctx); err != nil {
+	err := m.client.refreshNodes(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -231,15 +194,17 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 	m.client.nodesMutex.RUnlock()
 
 	for _, nodeInfo := range nodes {
-		if nodeInfo.Status != "online" {
+		if nodeInfo.Status != nodeStatusOnline {
 			continue
 		}
 
 		// Get VMs on this node
 		path := fmt.Sprintf("/nodes/%s/qemu", nodeInfo.Name)
+
 		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err != nil {
 			logger.Warnf("Failed to list VMs on node %s: %v", nodeInfo.Name, err)
+
 			continue
 		}
 
@@ -249,7 +214,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 		}
 
 		for _, vmData := range vms {
-			vm, ok := vmData.(map[string]interface{})
+			vm, ok := vmData.(map[string]interface{}) //nolint:varnamelen // vm is clear in context
 			if !ok {
 				continue
 			}
@@ -287,7 +252,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
 	vmid, err := strconv.Atoi(id)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", id)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, id)
 	}
 
 	node, err := m.findVMNode(ctx, vmid)
@@ -296,19 +261,20 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error {
 	}
 
 	qemuSvc := m.client.getQemuService()
+
 	upid, err := qemuSvc.Start(ctx, node, vmid)
 	if err != nil {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
 
-	return m.client.waitForTask(ctx, node, upid, 120)
+	return m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
 }
 
 // StopInstance stops a VM.
 func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
 	vmid, err := strconv.Atoi(id)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", id)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, id)
 	}
 
 	node, err := m.findVMNode(ctx, vmid)
@@ -317,19 +283,20 @@ func (m *ComputeManager) StopInstance(ctx context.Context, id string) error {
 	}
 
 	qemuSvc := m.client.getQemuService()
+
 	upid, err := qemuSvc.Stop(ctx, node, vmid)
 	if err != nil {
 		return fmt.Errorf("failed to stop VM: %w", err)
 	}
 
-	return m.client.waitForTask(ctx, node, upid, 120)
+	return m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
 }
 
 // RebootInstance reboots a VM.
 func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 	vmid, err := strconv.Atoi(id)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", id)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, id)
 	}
 
 	node, err := m.findVMNode(ctx, vmid)
@@ -338,19 +305,20 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 	}
 
 	qemuSvc := m.client.getQemuService()
+
 	upid, err := qemuSvc.Reset(ctx, node, vmid)
 	if err != nil {
 		return fmt.Errorf("failed to reboot VM: %w", err)
 	}
 
-	return m.client.waitForTask(ctx, node, upid, 120)
+	return m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
 }
 
 // DeleteInstance deletes a VM.
-func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
+func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { //nolint:varnamelen // id is clear in context
 	vmid, err := strconv.Atoi(id)
 	if err != nil {
-		return fmt.Errorf("invalid VMID: %s", id)
+		return fmt.Errorf("%w: %s", ErrInvalidVMID, id)
 	}
 
 	node, err := m.findVMNode(ctx, vmid)
@@ -362,10 +330,11 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
 	_ = m.StopInstance(ctx, id)
 
 	// Wait a bit for VM to stop
-	time.Sleep(2 * time.Second)
+	time.Sleep(vmStopDelay)
 
 	// Delete the VM
 	path := fmt.Sprintf("/nodes/%s/qemu/%d", node, vmid)
+
 	_, err = m.client.pveClient.DeleteCtx(ctx, path, map[string]interface{}{
 		"purge": true,
 	})
@@ -377,33 +346,34 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
 }
 
 // CreateKeyPair creates a new key pair (not supported - use ImportKeyPair).
-func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (m *ComputeManager) CreateKeyPair(_ctx context.Context, _req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	return nil, ErrCreateKeyPairNotSupported
 }
 
 // ImportKeyPair imports a public key.
-func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (m *ComputeManager) ImportKeyPair(_ctx context.Context, name string, _publicKey string) error {
 	// Store the key for use in cloud-init
 	// In Proxmox, keys are typically stored per-VM via cloud-init
 	// We'll store this in a local cache for now
 	logger.Infof("Imported key pair: %s (will be used in cloud-init)", name)
+
 	return nil
 }
 
 // GetKeyPair retrieves a key pair.
-func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (m *ComputeManager) GetKeyPair(_ctx context.Context, _name string) (*cpi.KeyPair, error) {
 	// Key pairs are not stored centrally in Proxmox
 	return nil, ErrVMNotFound
 }
 
 // ListKeyPairs lists all key pairs.
-func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
+func (m *ComputeManager) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
 	// Key pairs are not stored centrally in Proxmox
 	return []*cpi.KeyPair{}, nil
 }
 
 // DeleteKeyPair deletes a key pair.
-func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
+func (m *ComputeManager) DeleteKeyPair(_ctx context.Context, _name string) error {
 	// Key pairs are not stored centrally in Proxmox
 	return nil
 }
@@ -430,11 +400,12 @@ func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 }
 
 // ListImages lists available templates.
-func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	var images []*cpi.Image
 
 	// Refresh nodes
-	if err := m.client.refreshNodes(ctx); err != nil {
+	err := m.client.refreshNodes(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -444,12 +415,13 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 	m.client.nodesMutex.RUnlock()
 
 	for _, nodeInfo := range nodes {
-		if nodeInfo.Status != "online" {
+		if nodeInfo.Status != nodeStatusOnline {
 			continue
 		}
 
 		// Get VMs on this node (templates are VMs with template flag)
 		path := fmt.Sprintf("/nodes/%s/qemu", nodeInfo.Name)
+
 		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err != nil {
 			continue
@@ -461,13 +433,13 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 		}
 
 		for _, vmData := range vms {
-			vm, ok := vmData.(map[string]interface{})
+			vm, ok := vmData.(map[string]interface{}) //nolint:varnamelen // vm is clear in context
 			if !ok {
 				continue
 			}
 
 			// Only include templates
-			template, ok := vm["template"].(float64)
+			template, ok := vm["template"].(float64) //nolint:varnamelen // ok is clear in context
 			if !ok || template != 1 {
 				continue
 			}
@@ -478,7 +450,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 			image := &cpi.Image{
 				ID:          strconv.Itoa(vmid),
 				Name:        name,
-				Description: fmt.Sprintf("Template on node %s", nodeInfo.Name),
+				Description: "Template on node " + nodeInfo.Name,
 				State:       "available",
 				Tags:        make(map[string]string),
 			}
@@ -491,7 +463,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 }
 
 // GetImage retrieves an image/template.
-func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
+func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) { //nolint:varnamelen // id is clear in context
 	images, err := m.ListImages(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -507,20 +479,117 @@ func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, e
 }
 
 // ListFlavors lists available flavor presets.
-func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
+func (m *ComputeManager) ListFlavors(_ctx context.Context) ([]*cpi.Flavor, error) {
 	flavors := make([]*cpi.Flavor, 0, len(flavorPresets))
 	for _, f := range flavorPresets {
 		flavors = append(flavors, f)
 	}
+
 	return flavors, nil
 }
 
 // GetFlavor retrieves a flavor preset.
-func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
+func (m *ComputeManager) GetFlavor(_ctx context.Context, id string) (*cpi.Flavor, error) {
 	if f, ok := flavorPresets[id]; ok {
 		return f, nil
 	}
+
 	return nil, ErrFlavorNotFound(id)
+}
+
+// createFromTemplate creates a VM by cloning a template.
+func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vmid, diskSize int, storage string, req *cpi.InstanceRequest) error {
+	templateVMID, err := strconv.Atoi(req.Image)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidTemplateVMID, req.Image)
+	}
+
+	upid, err := m.cloneTemplate(ctx, node, templateVMID, vmid, req.Name, storage)
+	if err != nil {
+		return fmt.Errorf("failed to clone template: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutClone)
+	if err != nil {
+		return fmt.Errorf("clone task failed: %w", err)
+	}
+
+	// Resize disk if needed
+	if diskSize > 0 {
+		_ = m.resizeBootDisk(ctx, node, vmid, diskSize)
+	}
+
+	return nil
+}
+
+// createBlankVM creates a VM with a blank disk.
+func (m *ComputeManager) createBlankVM(ctx context.Context, node string, vmid, diskSize int, storage string, flavor *cpi.Flavor, req *cpi.InstanceRequest) error {
+	// Build VM creation parameters
+	bridge := m.client.config.DefaultBridge
+	if req.NetworkID != "" {
+		bridge = req.NetworkID
+	}
+
+	params := map[string]interface{}{
+		"vmid":    vmid,
+		"name":    req.Name,
+		"memory":  flavor.RAM,
+		"cores":   flavor.VCPUs,
+		"sockets": 1,
+		"cpu":     "host",
+		"ostype":  "l26", // Linux 2.6+ kernel
+		"agent":   "1",   // Enable QEMU guest agent
+		"net0":    fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge),
+		"scsi0":   fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize),
+		"scsihw":  "virtio-scsi-pci",
+		"boot":    "order=scsi0",
+	}
+
+	qemuSvc := m.client.getQemuService()
+
+	upid, err := qemuSvc.Create(ctx, node, params)
+	if err != nil {
+		return fmt.Errorf("failed to create VM: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
+	if err != nil {
+		return fmt.Errorf("VM creation task failed: %w", err)
+	}
+
+	return nil
+}
+
+// finalizeAndStartVM applies cloud-init, tags, and starts the VM.
+func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+	// Configure cloud-init if user data is provided
+	if req.UserData != "" {
+		err := m.configureCloudInit(ctx, node, vmid, req)
+		if err != nil {
+			logger.Warnf("Failed to configure cloud-init: %v", err)
+		}
+	}
+
+	// Apply tags via description
+	if len(req.Tags) > 0 {
+		m.setVMTags(ctx, node, vmid, req.Tags)
+	}
+
+	// Start the VM
+	qemuSvc := m.client.getQemuService()
+
+	upid, err := qemuSvc.Start(ctx, node, vmid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start VM: %w", err)
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
+	if err != nil {
+		return nil, fmt.Errorf("VM start task failed: %w", err)
+	}
+
+	// Get the created instance
+	return m.GetInstance(ctx, strconv.Itoa(vmid))
 }
 
 // Helper methods
@@ -532,13 +601,18 @@ func (m *ComputeManager) getNextVMID(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to get next VMID: %w", err)
 	}
 
-	switch v := resp.(type) {
+	switch v := resp.(type) { //nolint:varnamelen // v is clear in context
 	case string:
-		return strconv.Atoi(v)
+		vmid, convErr := strconv.Atoi(v)
+		if convErr != nil {
+			return 0, fmt.Errorf("parsing next VMID response: %w", convErr)
+		}
+
+		return vmid, nil
 	case float64:
 		return int(v), nil
 	default:
-		return 0, fmt.Errorf("unexpected response type for nextid: %T", resp)
+		return 0, fmt.Errorf("%w for nextid: %T", ErrUnexpectedResponseType, resp)
 	}
 }
 
@@ -550,7 +624,8 @@ func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, erro
 	}
 
 	// Search all nodes
-	if err := m.client.refreshNodes(ctx); err != nil {
+	err := m.client.refreshNodes(ctx)
+	if err != nil {
 		return "", err
 	}
 
@@ -560,11 +635,12 @@ func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, erro
 	m.client.nodesMutex.RUnlock()
 
 	for _, nodeInfo := range nodes {
-		if nodeInfo.Status != "online" {
+		if nodeInfo.Status != nodeStatusOnline {
 			continue
 		}
 
 		path := fmt.Sprintf("/nodes/%s/qemu/%d/status/current", nodeInfo.Name, vmid)
+
 		_, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err == nil {
 			return nodeInfo.Name, nil
@@ -585,7 +661,12 @@ func (m *ComputeManager) cloneTemplate(ctx context.Context, node string, templat
 		"storage": storage,
 	}
 
-	return qemuSvc.Clone(ctx, node, templateVMID, params)
+	taskID, cloneErr := qemuSvc.Clone(ctx, node, templateVMID, params)
+	if cloneErr != nil {
+		return "", fmt.Errorf("cloning template VMID %d to %d: %w", templateVMID, newVMID, cloneErr)
+	}
+
+	return taskID, nil
 }
 
 // configureCloudInit configures cloud-init for a VM.
@@ -633,6 +714,7 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 		for k, v := range ipConfigs {
 			ipConfigInterface[k] = v
 		}
+
 		_, err = m.client.pveClient.PutCtx(ctx, path, ipConfigInterface)
 		if err != nil {
 			logger.Warnf("Failed to set cloud-init IP config: %v", err)
@@ -643,6 +725,8 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 }
 
 // resizeBootDisk resizes the boot disk.
+//
+//nolint:unparam // returns nil by design; errors are silently ignored for best-effort resize
 func (m *ComputeManager) resizeBootDisk(ctx context.Context, node string, vmid, sizeGB int) error {
 	qemuSvc := m.client.getQemuService()
 
@@ -668,6 +752,7 @@ func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, t
 	for k, v := range tags {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 	}
+
 	description := "Tags: " + strings.Join(parts, ", ")
 
 	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
@@ -698,6 +783,7 @@ func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[
 		for _, part := range parts {
 			if strings.HasPrefix(part, "bridge=") {
 				instance.NetworkID = strings.TrimPrefix(part, "bridge=")
+
 				break
 			}
 		}
@@ -732,36 +818,45 @@ func (m *ComputeManager) matchFlavor(cores, memoryMB int) string {
 			return id
 		}
 	}
+
 	return fmt.Sprintf("custom-%dc-%dm", cores, memoryMB)
 }
 
 // populateNetworkInfo populates IP addresses from VM status.
 func (m *ComputeManager) populateNetworkInfo(instance *cpi.Instance, status map[string]interface{}) {
-	// Try to get agent network info
-	if netInfo, ok := status["network"].(map[string]interface{}); ok {
-		for _, iface := range netInfo {
-			ifaceData, ok := iface.(map[string]interface{})
-			if !ok {
-				continue
-			}
+	netInfo, ok := status["network"].(map[string]interface{})
+	if !ok {
+		return
+	}
 
-			if ipAddresses, ok := ifaceData["ip-addresses"].([]interface{}); ok {
-				for _, ip := range ipAddresses {
-					ipData, ok := ip.(map[string]interface{})
-					if !ok {
-						continue
-					}
+	for _, iface := range netInfo {
+		m.extractIPFromInterface(instance, iface)
+	}
+}
 
-					ipAddr := getStringFromMap(ipData, "ip-address")
-					ipType := getStringFromMap(ipData, "ip-address-type")
+// extractIPFromInterface extracts IPv4 addresses from a network interface.
+func (m *ComputeManager) extractIPFromInterface(instance *cpi.Instance, iface interface{}) {
+	ifaceData, ok := iface.(map[string]interface{}) //nolint:varnamelen
+	if !ok {
+		return
+	}
 
-					if ipType == "ipv4" && !strings.HasPrefix(ipAddr, "127.") {
-						if instance.PrivateIP == "" {
-							instance.PrivateIP = ipAddr
-						}
-					}
-				}
-			}
+	ipAddresses, ok := ifaceData["ip-addresses"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, ip := range ipAddresses {
+		ipData, ok := ip.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		ipAddr := getStringFromMap(ipData, "ip-address")
+		ipType := getStringFromMap(ipData, "ip-address-type")
+
+		if ipType == "ipv4" && !strings.HasPrefix(ipAddr, "127.") && instance.PrivateIP == "" {
+			instance.PrivateIP = ipAddr
 		}
 	}
 }

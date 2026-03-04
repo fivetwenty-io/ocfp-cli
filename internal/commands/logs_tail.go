@@ -25,11 +25,10 @@ var (
 
 // logEntry represents a parsed JSON log entry from zap logger.
 type logEntry struct {
-	Level        string    `json:"level"`
-	TimestampStr string    `json:"timestamp"`
-	Caller       string    `json:"caller"`
-	Message      string    `json:"msg"`
-	_parsedTime  time.Time //nolint:unused // Reserved for future use
+	Level        string `json:"level"`
+	TimestampStr string `json:"timestamp"`
+	Caller       string `json:"caller"`
+	Message      string `json:"msg"`
 }
 
 // LogTailer handles tailing log files.
@@ -263,7 +262,7 @@ func checkLineCount(lines []string, targetCount int, readOffset int64) []string 
 // printFormattedLines outputs lines with formatting.
 func printFormattedLines(lines []string, outputFormat string) {
 	for _, line := range lines {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(line, outputFormat))
+		_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(line, outputFormat)) //nolint:gosec // output to stdout, not web context
 	}
 }
 
@@ -337,7 +336,7 @@ func printTrimmedLine(line, outputFormat string) {
 		trimmedLine = trimmedLine[:len(trimmedLine)-1]
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(trimmedLine, outputFormat))
+	_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(trimmedLine, outputFormat)) //nolint:gosec // output to stdout, not web context
 }
 
 // followMultipleFiles follows multiple files for new content.
@@ -452,7 +451,7 @@ func printFileHeader(path string) {
 // printLines prints multiple lines to stdout.
 func printLines(lines []string) {
 	for _, line := range lines {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", line)
+		_, _ = fmt.Fprintf(os.Stdout, "%s\n", line) //nolint:gosec // output to stdout, not web context
 	}
 }
 

@@ -1,3 +1,4 @@
+// Package ssh provides SSH client operations for bastion host communication.
 package ssh
 
 import (
@@ -6,7 +7,7 @@ import (
 )
 
 const (
-	// SSH connection defaults.
+	// DefaultSSHPort is the standard SSH connection port.
 	DefaultSSHPort = 22
 
 	// File permissions.
@@ -37,7 +38,7 @@ type ConnectionDetails struct {
 	Port           int
 	User           string
 	PrivateKeyPath string
-	Password       string
+	Password       string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	SSHOptions     []string
 	UseSSHPass     bool
 }

@@ -86,11 +86,11 @@ func testVaultPathStructure(t *testing.T, cfg *config.Config, blocName string) {
 	mgmtPath := pathBuilder.GetEnvironmentPath("mgmt")
 	assert.Equal(t, "secret/config/parity-test/mgmt", mgmtPath)
 
-	vpcPath := pathBuilder.GetVPCPath("mgmt")
-	assert.Equal(t, "secret/config/parity-test/mgmt/vpc", vpcPath)
+	netPath := pathBuilder.GetNetPath("mgmt")
+	assert.Equal(t, "secret/config/parity-test/mgmt/net", netPath)
 
 	subnetPath := pathBuilder.GetSubnetPath("mgmt", "ocfp", 0)
-	assert.Equal(t, "secret/config/parity-test/mgmt/vpc/subnets/ocfp-0", subnetPath)
+	assert.Equal(t, "secret/config/parity-test/mgmt/net/subnets/ocfp-0", subnetPath)
 
 	boshPath := pathBuilder.GetBOSHPath("mgmt")
 	assert.Equal(t, "secret/config/parity-test/mgmt/bosh", boshPath)
@@ -200,7 +200,7 @@ func TestStackitProviderSpecific(t *testing.T) {
 	t.Run("SaveConfigToVault", func(t *testing.T) {
 		t.Parallel()
 
-		err := provider.SaveConfigToVault()
+		err := provider.SaveConfigToVault(nil, 1, 1)
 		require.NoError(t, err)
 
 		// Verify config was stored
@@ -213,7 +213,7 @@ func TestStackitProviderSpecific(t *testing.T) {
 	t.Run("ConfigurePublicIPs", func(t *testing.T) {
 		t.Parallel()
 
-		err := provider.ConfigurePublicIPs()
+		err := provider.ConfigurePublicIPs(nil, 1, 1)
 		require.NoError(t, err)
 
 		// Verify public IPs were configured
@@ -222,9 +222,9 @@ func TestStackitProviderSpecific(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, publicIPs)
 
-		// Check for expected CF router IPs
-		assert.Contains(t, publicIPs, "cf_router_0")
-		assert.Contains(t, publicIPs, "cf_tcp_router_0")
+		// Check for expected router IPs (Perl contract: {job}_{index} format)
+		assert.Contains(t, publicIPs, "router_0")
+		assert.Contains(t, publicIPs, "tcp-router_0")
 	})
 }
 
@@ -309,11 +309,12 @@ func createStackitTestConfig() *config.Config {
 	cfg.Blobstore = createTestBlobstoreConfig()
 
 	cfg.DNS = []string{}
-	cfg.FQDNs = map[string]interface{}{}
+	cfg.FQDNs = &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}}
 	cfg.S3 = map[string]string{}
 	cfg.AllowedIngressIPs = []string{}
 	cfg.LBs = map[string]config.LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = config.Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }

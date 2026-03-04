@@ -1,3 +1,4 @@
+// Package stackit implements the CPI provider for STACKIT cloud.
 package stackit
 
 import (
@@ -36,7 +37,7 @@ type Client struct {
 type Config struct {
 	ProjectID           string
 	OrgID               string
-	AuthToken           string
+	AuthToken           string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken string
 	ServiceAccountJSON  string
 	Region              string
@@ -212,17 +213,45 @@ func (c *Client) SupportsStorage() bool {
 }
 
 // Initialize initializes the provider with configuration.
-//
-//nolint:cyclop,funlen // Multiple config type checks and setup required
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
-	// Handle different config types
-	var cfg *Config
+	cfg, err := parseStackitConfig(config)
+	if err != nil {
+		return err
+	}
+
+	// map[string]interface{} returns nil cfg to signal early return
+	if cfg == nil {
+		return nil
+	}
+
+	err = validateStackitAuth(cfg)
+	if err != nil {
+		return err
+	}
+
+	applyStackitConfigDefaults(cfg)
+
+	c.config = cfg
+
+	c.initStackitManagers()
+
+	// Authenticate
+	err = c.Authenticate(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize STACKIT provider: %w", err)
+	}
+
+	return nil
+}
+
+// parseStackitConfig extracts a Config from the provided config interface.
+// Returns nil Config for map[string]interface{} (already initialized).
+func parseStackitConfig(config interface{}) (*Config, error) {
 	switch configValue := config.(type) {
 	case *Config:
-		cfg = configValue
+		return configValue, nil
 	case *ocfpconfig.Config:
-		// Convert OCFP config to STACKIT config
-		cfg = &Config{
+		return &Config{
 			ProjectID:           configValue.ProjectID,
 			OrgID:               configValue.OrgID,
 			AuthToken:           configValue.AuthToken,
@@ -232,16 +261,18 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 			BaseURL:             configValue.APIEndpoint,
 			Timeout:             0,
 			MaxRetries:          0,
-		}
+		}, nil
 	case map[string]interface{}:
 		// Config was already parsed in NewProvider, just return success
 		// The client is already properly initialized with authentication
-		return nil
+		return nil, nil
 	default:
-		return ErrInvalidConfigTypeForStackitProvider(config)
+		return nil, ErrInvalidConfigTypeForStackitProvider(config)
 	}
+}
 
-	// Validate required fields
+// validateStackitAuth validates required fields and authentication credentials.
+func validateStackitAuth(cfg *Config) error {
 	if cfg.ProjectID == "" {
 		return ErrProjectIDRequiredForStackitProvider
 	}
@@ -251,15 +282,15 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	}
 
 	// Check for authentication - prefer service_account_json, then service_account_token, then auth_token
-	hasServiceAccountJSON := cfg.ServiceAccountJSON != ""
-	hasServiceAccountToken := cfg.ServiceAccountToken != ""
-	hasAuthToken := cfg.AuthToken != ""
-
-	if !hasServiceAccountJSON && !hasServiceAccountToken && !hasAuthToken {
+	if cfg.ServiceAccountJSON == "" && cfg.ServiceAccountToken == "" && cfg.AuthToken == "" {
 		return ErrStackitAuthenticationRequired
 	}
 
-	// Set defaults
+	return nil
+}
+
+// applyStackitConfigDefaults sets default values for unset Config fields.
+func applyStackitConfigDefaults(cfg *Config) {
 	if cfg.BaseURL == "" {
 		// Default to IAAS API endpoint host. Users can override via config base_url/api_endpoint.
 		cfg.BaseURL = "https://iaas.api.stackit.cloud"
@@ -272,10 +303,15 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
 	}
+}
 
-	c.config = cfg
+// Cleanup performs cleanup operations.
+func (c *Client) Cleanup(_ctx context.Context) error {
+	return nil
+}
 
-	// Initialize resource managers if not already set
+// initStackitManagers initializes resource managers that are not already set.
+func (c *Client) initStackitManagers() {
 	if c.network == nil {
 		c.network = &NetworkManager{client: c}
 	}
@@ -295,19 +331,6 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	if c.loadBalancer == nil {
 		c.loadBalancer = &LoadBalancerManager{client: c}
 	}
-
-	// Authenticate
-	err := c.Authenticate(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize STACKIT provider: %w", err)
-	}
-
-	return nil
-}
-
-// Cleanup performs cleanup operations.
-func (c *Client) Cleanup(ctx context.Context) error {
-	return nil
 }
 
 // buildBaseConfigOptions builds base SDK configuration options (region and auth) for all services.

@@ -11,7 +11,7 @@ type Config struct {
 	// Authentication
 	AccessKeyID     string
 	SecretAccessKey string
-	SessionToken    string
+	SessionToken    string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	Profile         string
 	RoleARN         string
 	RoleSessionName string

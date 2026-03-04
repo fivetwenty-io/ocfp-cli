@@ -45,6 +45,7 @@ const (
 	shieldIPSlot        = 9
 	blacksmithIPSlot    = 10
 	doomsdayIPSlot      = 9
+	shoutIPSlot         = 10
 	ocfpUIIPSlot        = 9
 	availableAIPSlot    = 11
 	availableBIPSlot    = 29
@@ -62,7 +63,6 @@ var (
 	ErrInvalidCIDROffsetNegative = errors.New("CIDR offset must be non-negative")
 	ErrInvalidCIDR               = errors.New("invalid CIDR")
 	ErrOffsetOutOfRange          = errors.New("offset out of range for uint32")
-	errSubnetOutOfBounds         = errors.New("subnet is outside parent network bounds")
 )
 
 // CreateNetwork creates the network/VPC.
@@ -180,14 +180,19 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 		return fmt.Errorf("failed to import network to state: %w", err)
 	}
 
-	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
-		logger.Warnf("Failed to set network_id output: %v", err)
+	setErr := m.stateManager.SetOutput("network_id", network.ID)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_id output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_cidr", network.CIDR); err != nil {
-		logger.Warnf("Failed to set network_cidr output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_cidr", network.CIDR)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
-		logger.Warnf("Failed to set network_name output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_name", networkName)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_name output: %v", setErr)
 	}
 
 	return nil
@@ -225,14 +230,19 @@ func (m *Manager) createNewNetwork(ctx context.Context, netMgr cpi.NetworkManage
 		return fmt.Errorf("failed to save network to state: %w", err)
 	}
 
-	if err := m.stateManager.SetOutput("network_name", networkName); err != nil {
-		logger.Warnf("Failed to set network_name output: %v", err)
+	setErr := m.stateManager.SetOutput("network_name", networkName)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_name output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_id", network.ID); err != nil {
-		logger.Warnf("Failed to set network_id output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_id", network.ID)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_id output: %v", setErr)
 	}
-	if err := m.stateManager.SetOutput("network_cidr", cidr); err != nil {
-		logger.Warnf("Failed to set network_cidr output: %v", err)
+
+	setErr = m.stateManager.SetOutput("network_cidr", cidr)
+	if setErr != nil {
+		logger.Warnf("Failed to set network_cidr output: %v", setErr)
 	}
 
 	logger.Infof("Network created successfully: id=%s", network.ID)
@@ -616,7 +626,7 @@ func (m *Manager) generateDefaultSubnets() []config.Subnet {
 	subnetCIDRs := allSubnets[1:]
 
 	// Create 3 subnets with different AZs
-	// STACKIT uses numeric AZ suffixes: {region}-{index+1} (e.g., eu01-1, eu01-2, eu01-3)
+	// AZ names come from config (e.g., AWS: us-east-1a) with STACKIT-style numeric fallback
 	subnets := make([]config.Subnet, 0, tripleSubnetSplitCount)
 
 	for i := range tripleSubnetSplitCount {
@@ -624,7 +634,7 @@ func (m *Manager) generateDefaultSubnets() []config.Subnet {
 			Name:             fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i),
 			CIDR:             subnetCIDRs[i],
 			Type:             "public",
-			AvailabilityZone: fmt.Sprintf("%s-%d", m.options.Region, i+1),
+			AvailabilityZone: m.getAvailabilityZone(i),
 		})
 	}
 
@@ -873,6 +883,7 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
 
 	if idx == 1 {
 		set("doomsday_ip", ipAt(doomsdayIPSlot))
+		set("shout_ip", ipAt(shoutIPSlot))
 	}
 
 	if idx == ocfpUIProviderIndex {

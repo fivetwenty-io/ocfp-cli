@@ -12,6 +12,8 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
+// CreateNetwork creates a new VPC in AWS with the specified configuration.
+//
 //nolint:funlen // VPC creation requires setup steps
 func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
 	if req.CIDR == "" {
@@ -175,6 +177,8 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) er
 	return nil
 }
 
+// CreateSubnet creates a new subnet within a VPC with route table association.
+//
 //nolint:funlen // Subnet creation with route table setup is complex
 func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	if req.NetworkID == "" {

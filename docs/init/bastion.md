@@ -203,6 +203,46 @@ bastion:
       version: "latest"
 ```
 
+### Bastion SSH Keys (`bastion.keys`)
+
+Inject SSH public keys into the bastion's `~/.ssh/authorized_keys` during `ocfp init bastion`. This allows additional users to SSH directly into the bastion host.
+
+```yaml
+bastion:
+  keys:
+    alice: "ssh-ed25519 AAAA... alice@example.com"
+    bob: "github/bob-github-username"
+    carol: "gitlab/carol-gitlab-username"
+```
+
+Each entry maps a label (used as a comment in `authorized_keys`) to a key spec.
+
+Key spec formats:
+
+- **Direct public key** — an SSH public key string starting with `ssh-rsa`, `ssh-ed25519`, or `ecdsa-sha2-*`
+
+- **`github/<username>`** — fetches all public keys from `https://github.com/<username>.keys`
+
+- **`gitlab/<username>`** — fetches all public keys from `https://gitlab.com/<username>.keys`
+
+Keys already present in `authorized_keys` are skipped (deduplicated). Failed lookups log a warning and continue processing other entries.
+
+### Jumpbox Users (`jumpbox.users`)
+
+Store SSH keys in Vault for jumpbox user accounts. These are written to the Vault jumpbox users path and used by the jumpbox BOSH release.
+
+```yaml
+jumpbox:
+  users:
+    alice: "ssh-ed25519 AAAA... alice@example.com"
+    bob: "github/bob-github-username"
+    carol: "gitlab/carol-gitlab-username"
+```
+
+The same key spec formats are supported (direct key, `github/<username>`, `gitlab/<username>`).
+
+**Deprecation notice:** The old top-level `users:` field on the bloc config is deprecated. Move entries under `jumpbox.users` instead. When `jumpbox.users` is empty, the old `users` field is used as a fallback and a deprecation warning is logged.
+
 ### Environment Variables
 
 Provider-specific environment variables are automatically configured:
@@ -518,6 +558,8 @@ genesis update
 
 ## See Also
 
+- [Security Groups](../networking/security-groups.md) for the 7 default security groups created during bootstrap
+- [Networking Overview](../networking/README.md) for the full networking bootstrap flow
 - [CF App-Autoscaler Documentation](https://github.com/cloudfoundry/app-autoscaler-cli-plugin)
 - [Genesis Documentation](https://genesisproject.io)
 - [BOSH CLI Documentation](https://bosh.io/docs/cli-v2/)

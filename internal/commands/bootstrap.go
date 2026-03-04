@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	// Bootstrap timeout duration.
+	// BootstrapTimeoutMinutes is the maximum duration in minutes for a bootstrap operation.
 	BootstrapTimeoutMinutes = 30
 )
 
@@ -160,7 +159,7 @@ func bindBootstrapViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
 }
 
-func runBootstrap(cmd *cobra.Command, args []string) error {
+func runBootstrap(cmd *cobra.Command, _args []string) error {
 	// Silence usage on execution errors
 	cmd.SilenceUsage = true
 
@@ -281,7 +280,7 @@ func determineBlocsToRun(selected []string, availableBlocs map[string]interface{
 
 // getAllBlocNames returns all bloc names from the configuration.
 func getAllBlocNames(blocs map[string]interface{}) []string {
-	toRun := []string{}
+	toRun := make([]string, 0, len(blocs))
 	for blocName := range blocs {
 		toRun = append(toRun, blocName)
 	}
@@ -368,7 +367,7 @@ func runBootstrapForBloc(configFile, blocName string) error {
 // initializeBlocLogger initializes the logger for a specific bloc.
 func initializeBlocLogger(blocName string) error {
 	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	logDir := config.OcfpHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

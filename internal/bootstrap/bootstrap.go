@@ -1,3 +1,4 @@
+// Package bootstrap handles infrastructure bootstrapping operations for OCFP environments.
 package bootstrap
 
 import (
@@ -123,10 +124,11 @@ func (m *Manager) Execute(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stdout, "  ✓ %s completed\n", step.name)
 		logger.Infof("Completed step: %s", step.name)
 
-		// Save state after each successful step
+		// Save state after each successful step — state persistence is critical
+		// for subsequent commands (ssh bastion, teardown) to find resources
 		saveErr := m.stateManager.Save()
 		if saveErr != nil {
-			logger.Warnf("Failed to save state after %s: %v", step.name, saveErr)
+			return fmt.Errorf("failed to save state after %s: %w", step.name, saveErr)
 		}
 	}
 
@@ -358,7 +360,7 @@ func (m *Manager) rollbackBootstrap(ctx context.Context) error {
 	_, _ = fmt.Fprintf(os.Stdout, "  Found %d resources to rollback\n", len(resourcesToDelete))
 
 	// Delete resources in reverse order (bastion -> volumes -> security groups -> subnets -> network)
-	deleteOrder := []string{"instance", "volume", "keypair", "bucket", "public_ip", "security_group", "subnet", "network"}
+	deleteOrder := []string{state.ResourceTypeInstance, state.ResourceTypeVolume, state.ResourceTypeKeyPair, state.ResourceTypeBucket, state.ResourceTypePublicIP, state.ResourceTypeSecurityGroup, state.ResourceTypeSubnet, state.ResourceTypeNetwork}
 	deletedCount := 0
 	failedCount := 0
 
@@ -433,24 +435,24 @@ type rollbackResource struct {
 // deleteResource deletes a single resource during rollback.
 func (m *Manager) deleteResource(ctx context.Context, resource *rollbackResource) error {
 	switch resource.Type {
-	case "instance":
+	case state.ResourceTypeInstance:
 		return m.deleteInstance(ctx, resource.ID)
-	case "volume":
+	case state.ResourceTypeVolume:
 		return m.deleteVolume(ctx, resource.ID)
-	case "keypair":
+	case state.ResourceTypeKeyPair:
 		return m.deleteKeyPair(ctx, resource.ID)
-	case "bucket":
+	case state.ResourceTypeBucket:
 		return m.deleteBucket(ctx, resource.ID)
-	case "public_ip":
+	case state.ResourceTypePublicIP:
 		return m.deletePublicIP(ctx, resource.ID)
-	case "security_group":
+	case state.ResourceTypeSecurityGroup:
 		return m.deleteSecurityGroup(ctx, resource.ID)
-	case "subnet":
+	case state.ResourceTypeSubnet:
 		// For STACKIT, subnets are virtual and don't need deletion
 		logger.Debugf("Skipping subnet deletion (virtual): %s", resource.ID)
 
 		return nil
-	case "network":
+	case state.ResourceTypeNetwork:
 		return m.deleteNetwork(ctx, resource.ID)
 	default:
 		logger.Warnf("Unknown resource type for rollback: %s", resource.Type)

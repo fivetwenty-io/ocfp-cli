@@ -210,3 +210,84 @@ blocs:
 		t.Fatalf("expected empty deployments url, got %q", cfg.GetDeploymentsURL())
 	}
 }
+
+func TestFormatAvailabilityZone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider string
+		region   string
+		index    int
+		want     string
+	}{
+		{
+			name:     "AWS index 0",
+			provider: "aws",
+			region:   "us-east-1",
+			index:    0,
+			want:     "us-east-1a",
+		},
+		{
+			name:     "AWS index 2",
+			provider: "aws",
+			region:   "us-west-2",
+			index:    2,
+			want:     "us-west-2c",
+		},
+		{
+			name:     "STACKIT index 0",
+			provider: "stackit",
+			region:   "eu01",
+			index:    0,
+			want:     "eu01-1",
+		},
+		{
+			name:     "STACKIT index 2",
+			provider: "stackit",
+			region:   "eu01",
+			index:    2,
+			want:     "eu01-3",
+		},
+		{
+			name:     "STACKIT case insensitive",
+			provider: "STACKIT",
+			region:   "eu01",
+			index:    1,
+			want:     "eu01-2",
+		},
+		{
+			name:     "GCP uses letter suffix",
+			provider: "gcp",
+			region:   "us-central1",
+			index:    1,
+			want:     "us-central1b",
+		},
+		{
+			name:     "Azure uses letter suffix",
+			provider: "azure",
+			region:   "eastus",
+			index:    0,
+			want:     "eastusa",
+		},
+		{
+			name:     "empty provider uses letter suffix",
+			provider: "",
+			region:   "us-east-1",
+			index:    0,
+			want:     "us-east-1a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := config.FormatAvailabilityZone(tt.provider, tt.region, tt.index)
+			if got != tt.want {
+				t.Errorf("FormatAvailabilityZone(%q, %q, %d) = %q, want %q",
+					tt.provider, tt.region, tt.index, got, tt.want)
+			}
+		})
+	}
+}

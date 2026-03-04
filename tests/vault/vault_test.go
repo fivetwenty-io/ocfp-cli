@@ -359,11 +359,12 @@ func createTestConfig() *config.Config {
 	cfg.Blobstore = createVaultTestBlobstoreConfig()
 
 	cfg.DNS = []string{}
-	cfg.FQDNs = map[string]interface{}{}
+	cfg.FQDNs = &config.FQDNConfig{Mgmt: map[string]string{}, OCF: map[string]string{}}
 	cfg.S3 = map[string]string{}
 	cfg.AllowedIngressIPs = []string{}
 	cfg.LBs = map[string]config.LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = config.Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }

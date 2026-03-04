@@ -1,3 +1,4 @@
+// Package logger provides structured file-based logging for the OCFP CLI using zap.
 package logger
 
 import (
@@ -8,14 +9,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+// Log directory and file permission constants.
 const (
-	// File permissions.
-	LogDirMode  = 0750
+	// LogDirMode is the file permission mode for log directories.
+	LogDirMode = 0750
+	// LogFileMode is the file permission mode for log files.
 	LogFileMode = 0600
 )
 
@@ -77,7 +81,7 @@ func Initialize(cfg Config) error {
 	}
 
 	// Always log to file (JSON) only; stdout/stderr reserved for user UX
-	cores := []zapcore.Core{}
+	cores := make([]zapcore.Core, 0, 1)
 
 	fileCore, err := createFileCore(cfg, encoderConfig)
 	if err != nil {
@@ -118,11 +122,8 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	// Place logs under ~/.ocfp/{bloc}/logs/{command}/[{subcommand}/]
 	baseDir := cfg.LogDir
 	if baseDir == "" {
-		// Fallback to ~/.ocfp if not provided
-		home, err := os.UserHomeDir()
-		if err == nil {
-			baseDir = filepath.Join(home, ".ocfp")
-		}
+		// Fallback to OcfpHome if not provided
+		baseDir = config.OcfpHome()
 	}
 
 	// Build path components

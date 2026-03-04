@@ -17,6 +17,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// envValueTrue is the string representation of true for environment variable comparisons.
+const envValueTrue = "true"
+
 // Client wraps the HashiCorp Vault API client with OCFP-specific functionality.
 type Client struct {
 	client    *api.Client
@@ -32,7 +35,7 @@ type Config struct {
 	Namespace string
 	AuthType  string
 	Username  string
-	Password  string
+	Password  string //nolint:gosec // field name is descriptive, not a hardcoded secret
 	RoleID    string
 	SecretID  string
 	CACert    string
@@ -139,7 +142,7 @@ func NewClientFromEnv() (*Client, error) {
 	address := os.Getenv("VAULT_ADDR")
 
 	// Default skip_verify from environment
-	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == "true"
+	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == envValueTrue
 
 	// If token is not in environment, try reading from ~/.saferc
 	if token == "" {
@@ -177,13 +180,13 @@ func NewClientFromEnv() (*Client, error) {
 
 // NewClientFromConfig creates a vault client from OCFP config.
 // If VAULT_TOKEN is not set, it will try to read from ~/.saferc.
-func NewClientFromConfig(ocfpCfg *config.Config) (*Client, error) {
+func NewClientFromConfig(_ocfpCfg *config.Config) (*Client, error) {
 	// Try to get token and address from environment first
 	token := os.Getenv("VAULT_TOKEN")
 	address := os.Getenv("VAULT_ADDR")
 
 	// Default skip_verify from environment
-	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == "true"
+	skipVerify := os.Getenv("VAULT_SKIP_VERIFY") == envValueTrue
 
 	// If token is not in environment, try reading from ~/.saferc
 	if token == "" {

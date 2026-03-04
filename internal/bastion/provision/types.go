@@ -1,3 +1,4 @@
+// Package provision handles bastion provisioning script generation and configuration.
 package provision
 
 // SystemConfig holds system-level configuration.
@@ -102,7 +103,7 @@ type CustomScript struct {
 	Execute   bool   `yaml:"execute"`
 }
 
-// ProvisionConfig defines the interface for provisioning configuration.
+//revive:disable-next-line:exported ProvisionConfig is used across packages and renaming would break the API.
 type ProvisionConfig interface {
 	GetSystemConfig() SystemConfig
 	GetDirectories() []DirectoryConfig

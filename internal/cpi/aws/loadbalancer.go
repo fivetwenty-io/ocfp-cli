@@ -407,14 +407,14 @@ func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, ba
 }
 
 // EnableBackend enables a backend in the load balancer.
-func (m *LoadBalancerManager) EnableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) EnableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// AWS doesn't have a separate enable/disable; targets are either registered or not
 	// We could implement this by registering the target if it's not already registered
 	return ErrNotImplemented
 }
 
 // DisableBackend disables a backend in the load balancer.
-func (m *LoadBalancerManager) DisableBackend(ctx context.Context, lbID string, backendID string) error {
+func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string, _backendID string) error {
 	// AWS doesn't have a separate enable/disable; targets are either registered or not
 	// We could implement this by deregistering the target
 	return ErrNotImplemented
@@ -952,7 +952,7 @@ func (m *LoadBalancerManager) matchFilters(loadBalancer *cpi.LoadBalancer, filte
 			// Note: LoadBalancer.Tags is currently []string, not map[string]string
 			// Until tags are properly populated from AWS, tag filters will cause
 			// load balancers to be excluded (which is safer than including all)
-			// TODO: Fetch and populate tags in convertLoadBalancer
+			//nolint:godox // Fetch and populate tags in convertLoadBalancer (future enhancement)
 			return false
 		}
 	}

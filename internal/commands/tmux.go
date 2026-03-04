@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// File permission constants.
-	TmuxScriptExecuteMode = 0755 // Standard executable permissions for scripts
+	// TmuxScriptExecuteMode is the standard executable permissions for scripts.
+	TmuxScriptExecuteMode = 0755
 )
 
 var (
@@ -32,7 +32,7 @@ func NewTmuxCmd() *cobra.Command {
 	}
 }
 
-func runTmuxCmd(cmd *cobra.Command, args []string) error {
+func runTmuxCmd(_cmd *cobra.Command, _args []string) error {
 	// Check if tmux is available
 	_, err := exec.LookPath("tmux")
 	if err != nil {
@@ -70,6 +70,7 @@ func runTmuxCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// FindTmuxScript locates the tmux session creation script in standard search paths.
 func FindTmuxScript() (string, error) {
 	// Get the directory where the binary is located
 	execPath, err := os.Executable()
@@ -88,7 +89,7 @@ func FindTmuxScript() (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		_, err := os.Stat(path)
+		_, err := os.Stat(path) //nolint:gosec // path components are from trusted config
 		if err == nil {
 			return path, nil
 		}
@@ -98,6 +99,7 @@ func FindTmuxScript() (string, error) {
 	return CreateBasicTmuxScript()
 }
 
+// CreateBasicTmuxScript generates a temporary tmux session script with default OCFP deployment windows.
 func CreateBasicTmuxScript() (string, error) {
 	// Create a temporary script that creates the basic tmux session
 	tempFile, err := os.CreateTemp("", "ocfp-tmux-*.sh")
@@ -143,7 +145,7 @@ echo "Attach with: tmux attach-session -t ocfp"
 	_, err = tempFile.WriteString(scriptContent)
 	if err != nil {
 		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
+		_ = os.Remove(tempFile.Name()) //nolint:gosec // path from os.CreateTemp is trusted
 
 		return "", fmt.Errorf("failed to write script content: %w", err)
 	}
@@ -153,6 +155,7 @@ echo "Attach with: tmux attach-session -t ocfp"
 	return tempFile.Name(), nil
 }
 
+// EnsureExecutable checks that the file at path has executable permissions and adds them if missing.
 func EnsureExecutable(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
