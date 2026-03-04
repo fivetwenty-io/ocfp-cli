@@ -23,11 +23,13 @@ func TestGetBrewPackages_Defaults(t *testing.T) {
 		t.Fatal("Expected non-empty default brew package list")
 	}
 
-	// Verify key packages are present
+	// Verify key packages are present (including migrated-from-APT packages)
 	expected := map[string]bool{
 		"rsync": false, "wget": false, "jq": false, "go": false,
 		"kubectl": false, "vim": false, "neovim": false, "vault": false,
 		"yq": false, "ripgrep": false, "tmux": false, "ruby": false,
+		"gcc": false, "make": false, "cpanminus": false, "gnupg": false,
+		"python@3": false, "readline": false, "libyaml": false, "zlib": false,
 	}
 
 	for _, pkg := range pkgs {
@@ -194,9 +196,9 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Fatal("Expected non-empty brew package script")
 	}
 
-	// Verify idempotency checks
-	if !strings.Contains(script, "command -v") {
-		t.Error("Expected idempotency checks in brew package script")
+	// Verify batch install (single brew install command with multiple packages)
+	if !strings.Contains(script, "brew install \\") {
+		t.Error("Expected batched brew install command in brew package script")
 	}
 
 	// Verify HOMEBREW_NO_AUTO_UPDATE

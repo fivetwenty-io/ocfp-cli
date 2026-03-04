@@ -256,6 +256,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"packages", manager.installPackages},
 		{"brew_install", manager.installBrew},
 		{"brew_packages", manager.installBrewPackages},
+		{"post_brew_apt", manager.installPostBrewPackages},
 		{"binary_tools", manager.installBinaryTools},
 		{"cpan_modules", manager.installCPANModules},
 		{"git_repos", manager.cloneGitRepositories},

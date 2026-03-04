@@ -146,6 +146,21 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		// From advanced tools
 		{Name: "vault", Enabled: true, CheckCommand: "vault", Tap: "hashicorp/tap"},
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
+
+		// Migrated from APT essential (system build tools)
+		{Name: "gcc", Enabled: true, CheckCommand: "gcc"},
+		{Name: "make", Enabled: true, CheckCommand: "make"},
+		{Name: "cpanminus", Enabled: true, CheckCommand: "cpanm"},
+		{Name: "libtool", Enabled: true, CheckCommand: "libtool"},
+		{Name: "gnupg", Enabled: true, CheckCommand: "gpg"},
+		{Name: "python@3", Enabled: true, CheckCommand: "python3"},
+
+		// Migrated from APT -dev packages (C libraries for native extensions)
+		{Name: "readline", Enabled: true, CheckCommand: ""},
+		{Name: "libyaml", Enabled: true, CheckCommand: ""},
+		{Name: "zlib", Enabled: true, CheckCommand: ""},
+		{Name: "libxml2", Enabled: true, CheckCommand: ""},
+		{Name: "libxslt", Enabled: true, CheckCommand: ""},
 	}
 }
 
@@ -285,41 +300,96 @@ func (bm *BrewManager) generateTapInstalls(packages []BrewPackage) []string {
 	return lines
 }
 
-// generatePackageInstalls generates brew install commands for each package.
+// generatePackageInstalls generates batched brew install commands.
+// Packages are grouped into: regular formulae, casks, and those with custom
+// options (which must be installed individually). Brew handles idempotency
+// natively, so already-installed packages are simply skipped.
 func (bm *BrewManager) generatePackageInstalls(packages []BrewPackage) []string {
-	var lines []string
+	var formulae []string
+	var casks []string
+	var customOptions []BrewPackage
 
 	for _, pkg := range packages {
 		if !pkg.Enabled || bm.shouldSkipCondition(pkg.Condition) {
 			continue
 		}
 
-		lines = append(lines, fmt.Sprintf("# Install brew package: %s", pkg.Name))
-
-		// Idempotency check
-		if pkg.CheckCommand != "" {
-			lines = append(lines, fmt.Sprintf("if command -v %s >/dev/null 2>&1; then", pkg.CheckCommand))
-			lines = append(lines, fmt.Sprintf("    log_info '%s already installed'", pkg.Name))
-			lines = append(lines, "else")
-		} else {
-			lines = append(lines, fmt.Sprintf("if brew list %s >/dev/null 2>&1; then", pkg.Name))
-			lines = append(lines, fmt.Sprintf("    log_info 'Brew package %s already installed'", pkg.Name))
-			lines = append(lines, "else")
+		if pkg.Options != "" {
+			customOptions = append(customOptions, pkg)
+			continue
 		}
 
+		if pkg.Cask {
+			casks = append(casks, bm.brewPackageName(pkg))
+			continue
+		}
+
+		formulae = append(formulae, bm.brewPackageName(pkg))
+	}
+
+	var lines []string
+
+	// Batch install all regular formulae
+	if len(formulae) > 0 {
+		lines = append(lines, fmt.Sprintf("# Install %d brew formulae", len(formulae)))
+		lines = append(lines, fmt.Sprintf("log_info 'Installing %d brew formulae'", len(formulae)))
+		lines = append(lines, "brew install \\")
+
+		for i, name := range formulae {
+			if i < len(formulae)-1 {
+				lines = append(lines, "    "+name+" \\")
+			} else {
+				lines = append(lines, "    "+name)
+			}
+		}
+
+		lines = append(lines, fmt.Sprintf("log_success 'Brew formulae installed (%d packages)'", len(formulae)))
+		lines = append(lines, "")
+	}
+
+	// Batch install all cask packages
+	if len(casks) > 0 {
+		lines = append(lines, fmt.Sprintf("# Install %d brew casks", len(casks)))
+		lines = append(lines, fmt.Sprintf("log_info 'Installing %d brew casks'", len(casks)))
+		lines = append(lines, "brew install --cask \\")
+
+		for i, name := range casks {
+			if i < len(casks)-1 {
+				lines = append(lines, "    "+name+" \\")
+			} else {
+				lines = append(lines, "    "+name)
+			}
+		}
+
+		lines = append(lines, fmt.Sprintf("log_success 'Brew casks installed (%d packages)'", len(casks)))
+		lines = append(lines, "")
+	}
+
+	// Install packages with custom options individually
+	for _, pkg := range customOptions {
 		installCmd := bm.buildBrewInstallCommand(pkg)
-		lines = append(lines, fmt.Sprintf("    log_info 'Installing brew package: %s'", pkg.Name))
-		lines = append(lines, "    "+installCmd)
-		lines = append(lines, "    if [ $? -eq 0 ]; then")
-		lines = append(lines, fmt.Sprintf("        log_success 'Brew package %s installed successfully'", pkg.Name))
-		lines = append(lines, "    else")
-		lines = append(lines, fmt.Sprintf("        log_error 'Failed to install brew package %s'", pkg.Name))
-		lines = append(lines, "    fi")
-		lines = append(lines, "fi")
+		lines = append(lines, fmt.Sprintf("# Install brew package with options: %s", pkg.Name))
+		lines = append(lines, fmt.Sprintf("log_info 'Installing brew package: %s'", pkg.Name))
+		lines = append(lines, installCmd)
+		lines = append(lines, fmt.Sprintf("log_success 'Brew package %s installed'", pkg.Name))
 		lines = append(lines, "")
 	}
 
 	return lines
+}
+
+// brewPackageName returns the formula name for a brew install command,
+// handling tap-qualified and version-pinned names.
+func (bm *BrewManager) brewPackageName(pkg BrewPackage) string {
+	if pkg.Tap != "" {
+		return pkg.Tap + "/" + pkg.Name
+	}
+
+	if pkg.Version != "" {
+		return pkg.Name + "@" + pkg.Version
+	}
+
+	return pkg.Name
 }
 
 // buildBrewInstallCommand builds the brew install command for a package.

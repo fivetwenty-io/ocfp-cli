@@ -376,3 +376,65 @@ func TestGetGitRepositories_ExcludesGenesisWhenBinaryMode(t *testing.T) {
 		}
 	}
 }
+
+func TestGetPostBrewPackages(t *testing.T) {
+	cfg := &config.Config{}
+	provCfg := NewConfig("aws", cfg, nil)
+	group := provCfg.GetPostBrewPackages()
+
+	if !group.Enabled {
+		t.Error("Expected post-brew package group to be enabled")
+	}
+
+	if len(group.Packages) == 0 {
+		t.Fatal("Expected post-brew package group to have packages")
+	}
+
+	required := []string{"libperl-dev", "libfuse2", "apt-rdepends", "lsb-release", "perl-doc"}
+	pkgSet := make(map[string]bool, len(group.Packages))
+
+	for _, p := range group.Packages {
+		pkgSet[p] = true
+	}
+
+	for _, req := range required {
+		if !pkgSet[req] {
+			t.Errorf("Expected post-brew package group to contain '%s'", req)
+		}
+	}
+}
+
+func TestGetEssentialPackages_BrewPrerequisitesOnly(t *testing.T) {
+	cfg := &config.Config{}
+	provCfg := NewConfig("aws", cfg, nil)
+	packages := provCfg.GetPackages()
+
+	essential, ok := packages["essential"]
+	if !ok {
+		t.Fatal("Expected 'essential' package group")
+	}
+
+	if !essential.Enabled {
+		t.Error("Expected essential package group to be enabled")
+	}
+
+	// Should only contain the 6 brew prerequisites
+	brewPrereqs := map[string]bool{
+		"build-essential": false, "procps": false, "curl": false,
+		"file": false, "git": false, "ca-certificates": false,
+	}
+
+	for _, pkg := range essential.Packages {
+		if _, ok := brewPrereqs[pkg]; ok {
+			brewPrereqs[pkg] = true
+		} else {
+			t.Errorf("Unexpected package in essential group: '%s'", pkg)
+		}
+	}
+
+	for pkg, found := range brewPrereqs {
+		if !found {
+			t.Errorf("Expected brew prerequisite '%s' in essential group", pkg)
+		}
+	}
+}

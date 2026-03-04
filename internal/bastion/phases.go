@@ -80,41 +80,32 @@ func (m *Manager) installBrew(ctx context.Context) error {
 func (m *Manager) installBrewPackages(ctx context.Context) error {
 	m.log.Info("Installing brew packages")
 
-	// Report progress for brew packages
-	if m.reporter != nil {
-		brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
-		pkgs := brewMgr.GetBrewPackages()
-		enabled := filterEnabledBrewPackages(pkgs)
-
-		for i, p := range enabled {
-			m.reporter.ReportSubtaskProgress("brew_packages", i+1, len(enabled), p.Name)
-		}
-	}
-
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
 	script := brewMgr.GenerateBrewPackageScript(ctx)
 
 	return m.executeScript(ctx, script, "brew-packages")
 }
 
+// installPostBrewPackages installs APT packages that have no brew formula,
+// after Linuxbrew is available (e.g. libperl-dev, libfuse2).
+func (m *Manager) installPostBrewPackages(ctx context.Context) error {
+	m.log.Info("Installing post-brew APT packages")
+
+	provCfg := provision.NewConfig(m.config.Provider, m.config, nil)
+	packages := map[string]provision.PackageGroup{
+		"post_brew": provCfg.GetPostBrewPackages(),
+	}
+
+	script := m.buildPackageInstallScript(packages)
+
+	return m.executeScript(ctx, script, "post-brew-apt")
+}
+
 // installCPANModules installs CPAN modules.
 func (m *Manager) installCPANModules(ctx context.Context) error {
 	m.log.Info("Installing CPAN modules")
 
-	// Report progress for CPAN modules
-	if m.reporter != nil {
-		cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-		modules := cpanMgr.GetCPANModules()
-		enabledModules := filterEnabledCPANModules(modules)
-
-		for i, mod := range enabledModules {
-			m.reporter.ReportSubtaskProgress("cpan_modules", i+1, len(enabledModules), mod.Name)
-		}
-	}
-
 	cpanMgr := provision.NewCPANManager(m.config.Provider, m.config)
-
-	// Install core CPAN modules
 	script := cpanMgr.GenerateCPANInstallScript(ctx)
 
 	return m.executeScript(ctx, script, "cpan-modules")
@@ -123,17 +114,6 @@ func (m *Manager) installCPANModules(ctx context.Context) error {
 // installCFPlugins installs CloudFoundry plugins.
 func (m *Manager) installCFPlugins(ctx context.Context) error {
 	m.log.Info("Installing CloudFoundry plugins")
-
-	// Report progress for CF plugins
-	if m.reporter != nil {
-		cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
-		plugins := cfMgr.GetCFPlugins()
-		enabledPlugins := filterEnabledCFPlugins(plugins)
-
-		for i, plugin := range enabledPlugins {
-			m.reporter.ReportSubtaskProgress("cf_plugins", i+1, len(enabledPlugins), plugin.Name)
-		}
-	}
 
 	cfMgr := provision.NewCFPluginManager(m.config.Provider, m.config)
 	script := cfMgr.GenerateCFPluginInstallScript(ctx)
@@ -370,6 +350,16 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 				"stdout", result.Stdout,
 				"stderr", result.Stderr)
 
+			// Include meaningful script output in the error so users can diagnose failures
+			output := extractTail(result.Stderr, 20) //nolint:mnd
+			if output == "" {
+				output = extractTail(result.Stdout, 20) //nolint:mnd
+			}
+
+			if output != "" {
+				return fmt.Errorf("script %s failed: %w\n--- script output ---\n%s", scriptName, err, output)
+			}
+
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
@@ -380,6 +370,22 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 	// For local execution, we would use os/exec
 	return ErrLocalScriptExecutionNotImplemented
+}
+
+// extractTail returns the last n lines of a string.
+// If the string has fewer than n lines, the entire string is returned.
+func extractTail(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+
+	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 // wrapScriptWithFunctions wraps script content with necessary functions.
