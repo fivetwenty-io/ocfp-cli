@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,9 @@ const (
 
 	// boshSystem is the BOSH system identifier for blobstore configuration.
 	boshSystem = "bosh"
+
+	// rdsGlobalCAURL is the URL for the AWS RDS Global CA certificate bundle.
+	rdsGlobalCAURL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
 )
 
 // AWSVaultProvider implements vault operations for AWS.
@@ -223,7 +228,49 @@ func (a *AWSVaultProvider) ConfigureDatabases(_envPath, envType string, _reporte
 		}
 	}
 
+	// Fetch and store RDS CA for BOSH database TLS connections
+	ca, err := a.fetchRDSGlobalCA()
+	if err != nil {
+		a.logger.Warnw("Failed to fetch RDS Global CA", "error", err)
+	} else {
+		// Config path: secret/config/{BLOC}/{envType}/dbs/bosh
+		dbPath := a.PathBuilder.GetDatabasePath(envType, "bosh")
+		if err := a.Safe.Set(dbPath, "ca", ca); err != nil {
+			return fmt.Errorf("failed to store RDS CA at config path: %w", err)
+		}
+
+		// Deployment path: secret/ocfp/aws/{envType}/{region-parts}/bosh/db/bosh
+		deployPath := a.buildDeploymentDBPath(envType)
+		if err := a.Safe.Set(deployPath, "ca", ca); err != nil {
+			return fmt.Errorf("failed to store RDS CA at deployment path: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
+func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
+	resp, err := http.Get(rdsGlobalCAURL) //nolint:gosec,noctx // trusted AWS URL
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch RDS CA: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read RDS CA response: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// buildDeploymentDBPath constructs the deployment vault path for database config.
+// Converts region (e.g., "us-east-1") to path segments (e.g., "us/east/1").
+func (a *AWSVaultProvider) buildDeploymentDBPath(envType string) string {
+	regionParts := strings.ReplaceAll(a.Config.Region, "-", "/")
+
+	return fmt.Sprintf("secret/ocfp/aws/%s/%s/bosh/db/bosh", envType, regionParts)
 }
 
 // ConfigureFQDNs configures fully qualified domain names (AWS Route53).
@@ -519,10 +566,15 @@ func (a *AWSVaultProvider) configureVPC(envType string) error {
 		cidrBlock = a.Config.Network.CIDR
 	}
 
+	dnsString := DefaultDNSServer
+	if len(a.Config.DNS) > 0 {
+		dnsString = a.Config.DNS[0]
+	}
+
 	networkData := map[string]interface{}{
 		"id":         a.getVPCID(), // VPC ID from state or config
 		"cidr_block": cidrBlock,
-		"dns":        a.Config.DNS,
+		"dns":        dnsString,
 		"region":     a.Config.Region,
 	}
 
@@ -724,11 +776,11 @@ func (a *AWSVaultProvider) configureSecurityGroups(envType string) error {
 		return fmt.Errorf("failed to set default security group: %w", err)
 	}
 
-	// Environment-specific security group
-	envSGPath := a.PathBuilder.GetSecurityGroupPath(envType, envType)
+	// OCFP security group (matches kit expectation at sgs/ocfp)
+	envSGPath := a.PathBuilder.GetSecurityGroupPath(envType, DefaultSubnetType)
 	envSGData := map[string]interface{}{
-		"id":          fmt.Sprintf("%s-%s", a.BlocName, envType),
-		"name":        envType,
+		"id":          fmt.Sprintf("%s-%s", a.BlocName, DefaultSubnetType),
+		"name":        DefaultSubnetType,
 		"description": fmt.Sprintf("Security group for %s environment", envType),
 	}
 
@@ -777,11 +829,11 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 	return nil
 }
 
-// configureIAM configures AWS IAM credentials.
+// configureIAM configures AWS IAM credentials at three vault paths:
+// - bosh/iam/bosh (for EC2 VM booting)
+// - bosh/iam/s3 (for blobstore access)
+// - bosh/s3 (backward compatibility)
 func (a *AWSVaultProvider) configureIAM(envType string) error {
-	s3Path := a.PathBuilder.GetS3Path(envType)
-
-	// Get AWS credentials from config s3 map
 	var accessKey, secretKey string
 	if a.Config.S3 != nil {
 		accessKey = a.Config.S3["access_key_id"]
@@ -789,24 +841,32 @@ func (a *AWSVaultProvider) configureIAM(envType string) error {
 	}
 
 	if accessKey == "" || secretKey == "" {
-		a.logger.Warn("No AWS credentials found for S3 access (check s3 config)")
+		a.logger.Warn("No AWS credentials found for IAM (check s3 config)")
 
 		return nil
 	}
 
-	s3Data := map[string]interface{}{
+	iamData := map[string]interface{}{
 		"access_key": accessKey,
 		"secret_key": secretKey,
 	}
 
-	// Add session token if available
-	if a.Config.SessionToken != "" {
-		s3Data["session_token"] = a.Config.SessionToken
+	// Write to bosh/iam/bosh (for EC2 VM booting)
+	boshIAMPath := a.PathBuilder.GetIAMBoshPath(envType)
+	if err := a.Safe.SetMultiple(boshIAMPath, iamData); err != nil {
+		return fmt.Errorf("failed to set IAM bosh credentials: %w", err)
 	}
 
-	err := a.Safe.SetMultiple(s3Path, s3Data)
-	if err != nil {
-		return fmt.Errorf("failed to set S3 IAM credentials: %w", err)
+	// Write to bosh/iam/s3 (for blobstore)
+	s3IAMPath := a.PathBuilder.GetIAMS3Path(envType)
+	if err := a.Safe.SetMultiple(s3IAMPath, iamData); err != nil {
+		return fmt.Errorf("failed to set IAM S3 credentials: %w", err)
+	}
+
+	// Write to bosh/s3 (backward compatibility)
+	s3Path := a.PathBuilder.GetS3Path(envType)
+	if err := a.Safe.SetMultiple(s3Path, iamData); err != nil {
+		return fmt.Errorf("failed to set S3 credentials: %w", err)
 	}
 
 	return nil
@@ -945,15 +1005,31 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 		secretAccessKey = a.Config.S3["secret_access_key"]
 	}
 
+	// Resolve configurable defaults
+	instanceType := a.Config.DefaultInstanceType
+	if instanceType == "" {
+		instanceType = "t3.large"
+	}
+
+	diskType := a.Config.DefaultDiskType
+	if diskType == "" {
+		diskType = "gp2"
+	}
+
 	// Build CPI configuration
 	cpiConfig := map[string]interface{}{
 		"access_key_id":           accessKeyID,
 		"secret_access_key":       secretAccessKey,
 		"region":                  a.Config.Region,
 		"default_region":          a.Config.Region,
+		"keypair_name":            a.BlocName + "-bastion",
 		"default_key_name":        a.BlocName + "-bastion",
+		"default_instance_type":   instanceType,
+		"default_disk_type":       diskType,
 		"default_security_groups": fmt.Sprintf(`["default","%s-%s"]`, a.BlocName, DefaultSubnetType),
-	} // Add session token if available
+	}
+
+	// Add session token if available
 	if a.Config.SessionToken != "" {
 		cpiConfig["session_token"] = a.Config.SessionToken
 	}
@@ -1066,8 +1142,8 @@ func (a *AWSVaultProvider) getBlobstoresForSystem(system, envType string) map[st
 	// AWS S3 bucket naming
 	switch system {
 	case boshSystem:
-		blobstores["artifacts"] = map[string]interface{}{
-			"name":   fmt.Sprintf("%s-%s-bosh-artifacts", a.BlocName, envType),
+		blobstores["bosh"] = map[string]interface{}{
+			"name":   fmt.Sprintf("%s-%s-bosh", a.BlocName, envType),
 			"region": a.Config.Region,
 			"type":   "s3",
 		}
