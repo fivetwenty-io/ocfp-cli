@@ -146,6 +146,7 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		// From advanced tools
 		{Name: "vault", Enabled: true, CheckCommand: "vault", Tap: "hashicorp/tap"},
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
+		{Name: "hl", Enabled: true, CheckCommand: "hl"},
 
 		// CF ecosystem tools (from cloudfoundry/tap)
 		{Name: "bosh-cli", Enabled: true, CheckCommand: "bosh", Tap: "cloudfoundry/tap"},
