@@ -384,6 +384,23 @@ func (a *AWSVaultProvider) ConfigureLoadBalancers(_envPath, envType string, _rep
 	return nil
 }
 
+// resolveAWSCredentials returns (accessKeyID, secretAccessKey) by checking
+// the top-level Config struct fields first, then falling back to Config.S3 map
+// entries for backward compatibility. Each field falls back independently.
+func (a *AWSVaultProvider) resolveAWSCredentials() (string, string) {
+	accessKeyID := a.Config.AccessKeyID
+	if accessKeyID == "" && a.Config.S3 != nil {
+		accessKeyID = a.Config.S3["access_key_id"]
+	}
+
+	secretAccessKey := a.Config.SecretAccessKey
+	if secretAccessKey == "" && a.Config.S3 != nil {
+		secretAccessKey = a.Config.S3["secret_access_key"]
+	}
+
+	return accessKeyID, secretAccessKey
+}
+
 // fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
 func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
 	resp, err := http.Get(rdsGlobalCAURL) //nolint:gosec,noctx // trusted AWS URL
@@ -839,14 +856,10 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 // - bosh/iam/s3 (for blobstore access)
 // - bosh/s3 (backward compatibility).
 func (a *AWSVaultProvider) configureIAM(envType string) error {
-	var accessKey, secretKey string
-	if a.Config.S3 != nil {
-		accessKey = a.Config.S3["access_key_id"]
-		secretKey = a.Config.S3["secret_access_key"]
-	}
+	accessKey, secretKey := a.resolveAWSCredentials()
 
 	if accessKey == "" || secretKey == "" {
-		a.logger.Warn("No AWS credentials found for IAM (check s3 config)")
+		a.logger.Warn("No AWS credentials found for IAM (check access_key_id/secret_access_key in bloc config)")
 
 		return nil
 	}
@@ -1011,12 +1024,7 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 
 	cpiPath := a.PathBuilder.GetEnvironmentPath(envType) + "/cpi/aws"
 
-	// Get credentials from config s3 map
-	var accessKeyID, secretAccessKey string
-	if a.Config.S3 != nil {
-		accessKeyID = a.Config.S3["access_key_id"]
-		secretAccessKey = a.Config.S3["secret_access_key"]
-	}
+	accessKeyID, secretAccessKey := a.resolveAWSCredentials()
 
 	// Resolve configurable defaults
 	instanceType := a.Config.DefaultInstanceType

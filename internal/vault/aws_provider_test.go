@@ -179,11 +179,9 @@ func TestAWS_Bug3_SecurityGroupOCFEnv(t *testing.T) {
 func TestAWS_Bug2_CPIHasAllFields(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{
-		Region: "us-east-1",
-		S3: map[string]string{
-			"access_key_id":     "AKID",
-			"secret_access_key": "SECRET",
-		},
+		Region:          "us-east-1",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "SECRET",
 	}
 	provider := newTestAWSProvider(cfg, mock)
 
@@ -214,10 +212,8 @@ func TestAWS_Bug2_CPIConfigurableDefaults(t *testing.T) {
 		Region:              "eu-west-1",
 		DefaultInstanceType: "m6i.xlarge",
 		DefaultDiskType:     "gp3",
-		S3: map[string]string{
-			"access_key_id":     "AKID",
-			"secret_access_key": "SECRET",
-		},
+		AccessKeyID:         "AKID",
+		SecretAccessKey:     "SECRET",
 	}
 	provider := newTestAWSProvider(cfg, mock)
 
@@ -233,11 +229,9 @@ func TestAWS_Bug2_CPIConfigurableDefaults(t *testing.T) {
 func TestAWS_Bug1_IAMWritesToThreePaths(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{
-		Region: "us-east-1",
-		S3: map[string]string{
-			"access_key_id":     "AKIAEXAMPLE",
-			"secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-		},
+		Region:          "us-east-1",
+		AccessKeyID:     "AKIAEXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
 	provider := newTestAWSProvider(cfg, mock)
 
@@ -313,4 +307,161 @@ func TestAWS_PathBuilder_GetIAMS3Path(t *testing.T) {
 
 	assert.Equal(t, "secret/config/mybloc/mgmt/bosh/iam/s3", pb.GetIAMS3Path(MgmtEnvType))
 	assert.Equal(t, "secret/config/mybloc/ocf/bosh/iam/s3", pb.GetIAMS3Path(OCFEnvType))
+}
+
+// TestAWS_Creds_CPIUsesTopLevel verifies CPI reads from top-level AccessKeyID/SecretAccessKey.
+func TestAWS_Creds_CPIUsesTopLevel(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:          "us-east-1",
+		AccessKeyID:     "TOP-AKID",
+		SecretAccessKey: "TOP-SECRET",
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+
+	cpi := mock.setMultipleCalls[0].data
+	assert.Equal(t, "TOP-AKID", cpi["access_key_id"])
+	assert.Equal(t, "TOP-SECRET", cpi["secret_access_key"])
+}
+
+// TestAWS_Creds_IAMUsesTopLevel verifies IAM reads from top-level AccessKeyID/SecretAccessKey.
+func TestAWS_Creds_IAMUsesTopLevel(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:          "us-east-1",
+		AccessKeyID:     "TOP-AKID",
+		SecretAccessKey: "TOP-SECRET",
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureIAM(MgmtEnvType)
+	require.NoError(t, err)
+
+	require.Equal(t, 3, len(mock.setMultipleCalls), "IAM should write to 3 paths")
+
+	boshCall := mock.findSetMultipleCall(provider.PathBuilder.GetIAMBoshPath(MgmtEnvType))
+	require.NotNil(t, boshCall)
+	assert.Equal(t, "TOP-AKID", boshCall.data["access_key"])
+	assert.Equal(t, "TOP-SECRET", boshCall.data["secret_key"])
+}
+
+// TestAWS_Creds_CPIFallsBackToS3Map verifies CPI falls back to S3 map when top-level is empty.
+func TestAWS_Creds_CPIFallsBackToS3Map(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region: "us-east-1",
+		S3: map[string]string{
+			"access_key_id":     "S3-AKID",
+			"secret_access_key": "S3-SECRET",
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+
+	cpi := mock.setMultipleCalls[0].data
+	assert.Equal(t, "S3-AKID", cpi["access_key_id"])
+	assert.Equal(t, "S3-SECRET", cpi["secret_access_key"])
+}
+
+// TestAWS_Creds_IAMFallsBackToS3Map verifies IAM falls back to S3 map when top-level is empty.
+func TestAWS_Creds_IAMFallsBackToS3Map(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region: "us-east-1",
+		S3: map[string]string{
+			"access_key_id":     "S3-AKID",
+			"secret_access_key": "S3-SECRET",
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureIAM(MgmtEnvType)
+	require.NoError(t, err)
+
+	require.Equal(t, 3, len(mock.setMultipleCalls))
+
+	boshCall := mock.findSetMultipleCall(provider.PathBuilder.GetIAMBoshPath(MgmtEnvType))
+	require.NotNil(t, boshCall)
+	assert.Equal(t, "S3-AKID", boshCall.data["access_key"])
+	assert.Equal(t, "S3-SECRET", boshCall.data["secret_key"])
+}
+
+// TestAWS_Creds_TopLevelTakesPrecedence verifies top-level fields win over S3 map.
+func TestAWS_Creds_TopLevelTakesPrecedence(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:          "us-east-1",
+		AccessKeyID:     "TOP-AKID",
+		SecretAccessKey: "TOP-SECRET",
+		S3: map[string]string{
+			"access_key_id":     "S3-AKID",
+			"secret_access_key": "S3-SECRET",
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+
+	cpi := mock.setMultipleCalls[0].data
+	assert.Equal(t, "TOP-AKID", cpi["access_key_id"], "Top-level should take precedence over S3 map")
+	assert.Equal(t, "TOP-SECRET", cpi["secret_access_key"], "Top-level should take precedence over S3 map")
+}
+
+// TestAWS_ResolveAWSCredentials_TopLevel verifies helper returns top-level fields.
+func TestAWS_ResolveAWSCredentials_TopLevel(t *testing.T) {
+	cfg := &config.Config{
+		AccessKeyID:     "TOP-KEY",
+		SecretAccessKey: "TOP-SECRET",
+	}
+	provider := newTestAWSProvider(cfg, &awsMockSafe{})
+
+	akid, sak := provider.resolveAWSCredentials()
+	assert.Equal(t, "TOP-KEY", akid)
+	assert.Equal(t, "TOP-SECRET", sak)
+}
+
+// TestAWS_ResolveAWSCredentials_S3Fallback verifies helper falls back to S3 map.
+func TestAWS_ResolveAWSCredentials_S3Fallback(t *testing.T) {
+	cfg := &config.Config{
+		S3: map[string]string{
+			"access_key_id":     "S3-KEY",
+			"secret_access_key": "S3-SECRET",
+		},
+	}
+	provider := newTestAWSProvider(cfg, &awsMockSafe{})
+
+	akid, sak := provider.resolveAWSCredentials()
+	assert.Equal(t, "S3-KEY", akid)
+	assert.Equal(t, "S3-SECRET", sak)
+}
+
+// TestAWS_ResolveAWSCredentials_Empty verifies helper returns empty when no credentials.
+func TestAWS_ResolveAWSCredentials_Empty(t *testing.T) {
+	cfg := &config.Config{}
+	provider := newTestAWSProvider(cfg, &awsMockSafe{})
+
+	akid, sak := provider.resolveAWSCredentials()
+	assert.Equal(t, "", akid)
+	assert.Equal(t, "", sak)
+}
+
+// TestAWS_ResolveAWSCredentials_MixedSources verifies independent fallback per field.
+func TestAWS_ResolveAWSCredentials_MixedSources(t *testing.T) {
+	cfg := &config.Config{
+		AccessKeyID: "TOP-KEY",
+		S3: map[string]string{
+			"secret_access_key": "S3-SECRET",
+		},
+	}
+	provider := newTestAWSProvider(cfg, &awsMockSafe{})
+
+	akid, sak := provider.resolveAWSCredentials()
+	assert.Equal(t, "TOP-KEY", akid, "access_key_id should come from top-level")
+	assert.Equal(t, "S3-SECRET", sak, "secret_access_key should fall back to S3 map")
 }
