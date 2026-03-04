@@ -128,8 +128,7 @@ func (c *Config) GetAPTRepositories() []APTRepository {
 
 	// Add provider-specific repositories
 	// Azure and GCP repos removed: azure-cli and google-cloud-sdk moved to brew.
-	switch c.provider {
-	case providerStackit:
+	if c.provider == providerStackit {
 		repos = append(repos, APTRepository{
 			Name:      "stackit",
 			Enabled:   true,
@@ -200,6 +199,11 @@ func (c *Config) GetCustomScripts() []CustomScript {
 	}
 
 	return scripts
+}
+
+// GetPostBrewPackages returns packages to install via APT after Linuxbrew.
+func (c *Config) GetPostBrewPackages() PackageGroup {
+	return c.getPostBrewPackages()
 }
 
 // shouldInstallGenesisFromSource determines if Genesis should be installed from source.
@@ -320,11 +324,6 @@ func (c *Config) getPostBrewPackages() PackageGroup {
 		Verify:      []string{},
 		PostInstall: "",
 	}
-}
-
-// GetPostBrewPackages returns packages to install via APT after Linuxbrew.
-func (c *Config) GetPostBrewPackages() PackageGroup {
-	return c.getPostBrewPackages()
 }
 
 // addProviderPackages adds provider-specific package groups.

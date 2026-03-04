@@ -41,7 +41,7 @@ func (m *awsMockSafe) SetMultiple(path string, data map[string]interface{}) erro
 	return nil
 }
 
-func (m *awsMockSafe) Get(_, _ string) (interface{}, error)           { return "", nil }
+func (m *awsMockSafe) Get(_, _ string) (interface{}, error)            { return "", nil }
 func (m *awsMockSafe) GetAll(_ string) (map[string]interface{}, error) { return nil, nil }
 func (m *awsMockSafe) Exists(_ string) (bool, error)                   { return false, nil }
 func (m *awsMockSafe) Delete(_, _ string) error                        { return nil }
@@ -58,17 +58,6 @@ func (m *awsMockSafe) findSetMultipleCall(path string) *setCall {
 	for i := range m.setMultipleCalls {
 		if m.setMultipleCalls[i].path == path {
 			return &m.setMultipleCalls[i]
-		}
-	}
-
-	return nil
-}
-
-// findSetSingleCall searches for a Set call by path and key.
-func (m *awsMockSafe) findSetSingleCall(path, key string) *setSingleCall {
-	for i := range m.setSingleCalls {
-		if m.setSingleCalls[i].path == path && m.setSingleCalls[i].key == key {
-			return &m.setSingleCalls[i]
 		}
 	}
 

@@ -229,48 +229,28 @@ func (a *AWSVaultProvider) ConfigureDatabases(_envPath, envType string, _reporte
 	}
 
 	// Fetch and store RDS CA for BOSH database TLS connections
-	ca, err := a.fetchRDSGlobalCA()
+	caCert, err := a.fetchRDSGlobalCA()
 	if err != nil {
 		a.logger.Warnw("Failed to fetch RDS Global CA", "error", err)
 	} else {
 		// Config path: secret/config/{BLOC}/{envType}/dbs/bosh
 		dbPath := a.PathBuilder.GetDatabasePath(envType, "bosh")
-		if err := a.Safe.Set(dbPath, "ca", ca); err != nil {
+
+		err = a.Safe.Set(dbPath, "ca", caCert)
+		if err != nil {
 			return fmt.Errorf("failed to store RDS CA at config path: %w", err)
 		}
 
 		// Deployment path: secret/ocfp/aws/{envType}/{region-parts}/bosh/db/bosh
 		deployPath := a.buildDeploymentDBPath(envType)
-		if err := a.Safe.Set(deployPath, "ca", ca); err != nil {
+
+		err = a.Safe.Set(deployPath, "ca", caCert)
+		if err != nil {
 			return fmt.Errorf("failed to store RDS CA at deployment path: %w", err)
 		}
 	}
 
 	return nil
-}
-
-// fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
-func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
-	resp, err := http.Get(rdsGlobalCAURL) //nolint:gosec,noctx // trusted AWS URL
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch RDS CA: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read RDS CA response: %w", err)
-	}
-
-	return string(body), nil
-}
-
-// buildDeploymentDBPath constructs the deployment vault path for database config.
-// Converts region (e.g., "us-east-1") to path segments (e.g., "us/east/1").
-func (a *AWSVaultProvider) buildDeploymentDBPath(envType string) string {
-	regionParts := strings.ReplaceAll(a.Config.Region, "-", "/")
-
-	return fmt.Sprintf("secret/ocfp/aws/%s/%s/bosh/db/bosh", envType, regionParts)
 }
 
 // ConfigureFQDNs configures fully qualified domain names (AWS Route53).
@@ -402,6 +382,31 @@ func (a *AWSVaultProvider) ConfigureLoadBalancers(_envPath, envType string, _rep
 	}
 
 	return nil
+}
+
+// fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
+func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
+	resp, err := http.Get(rdsGlobalCAURL) //nolint:gosec,noctx // trusted AWS URL
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch RDS CA: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read RDS CA response: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// buildDeploymentDBPath constructs the deployment vault path for database config.
+// Converts region (e.g., "us-east-1") to path segments (e.g., "us/east/1").
+func (a *AWSVaultProvider) buildDeploymentDBPath(envType string) string {
+	regionParts := strings.ReplaceAll(a.Config.Region, "-", "/")
+
+	return fmt.Sprintf("secret/ocfp/aws/%s/%s/bosh/db/bosh", envType, regionParts)
 }
 
 // shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
@@ -832,7 +837,7 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 // configureIAM configures AWS IAM credentials at three vault paths:
 // - bosh/iam/bosh (for EC2 VM booting)
 // - bosh/iam/s3 (for blobstore access)
-// - bosh/s3 (backward compatibility)
+// - bosh/s3 (backward compatibility).
 func (a *AWSVaultProvider) configureIAM(envType string) error {
 	var accessKey, secretKey string
 	if a.Config.S3 != nil {
@@ -853,19 +858,25 @@ func (a *AWSVaultProvider) configureIAM(envType string) error {
 
 	// Write to bosh/iam/bosh (for EC2 VM booting)
 	boshIAMPath := a.PathBuilder.GetIAMBoshPath(envType)
-	if err := a.Safe.SetMultiple(boshIAMPath, iamData); err != nil {
+
+	err := a.Safe.SetMultiple(boshIAMPath, iamData)
+	if err != nil {
 		return fmt.Errorf("failed to set IAM bosh credentials: %w", err)
 	}
 
 	// Write to bosh/iam/s3 (for blobstore)
 	s3IAMPath := a.PathBuilder.GetIAMS3Path(envType)
-	if err := a.Safe.SetMultiple(s3IAMPath, iamData); err != nil {
+
+	err = a.Safe.SetMultiple(s3IAMPath, iamData)
+	if err != nil {
 		return fmt.Errorf("failed to set IAM S3 credentials: %w", err)
 	}
 
 	// Write to bosh/s3 (backward compatibility)
 	s3Path := a.PathBuilder.GetS3Path(envType)
-	if err := a.Safe.SetMultiple(s3Path, iamData); err != nil {
+
+	err = a.Safe.SetMultiple(s3Path, iamData)
+	if err != nil {
 		return fmt.Errorf("failed to set S3 credentials: %w", err)
 	}
 
@@ -993,6 +1004,8 @@ func (a *AWSVaultProvider) configureShield(envType string) error {
 }
 
 // configureCPI configures AWS CPI configuration for an environment.
+//
+//nolint:funlen // CPI configuration with credential resolution, defaults, and vault writes
 func (a *AWSVaultProvider) configureCPI(envType string) error {
 	a.logger.Infow("Configuring AWS CPI credentials", "env_type", envType)
 

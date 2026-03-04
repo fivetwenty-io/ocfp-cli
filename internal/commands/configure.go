@@ -99,9 +99,12 @@ configuration to your infrastructure.`,
 	return cmd
 }
 
+//
+//nolint:funlen // sequential configuration phases cannot be meaningfully split
 func runConfigure(opts *configureOptions) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
 	log := logger.Get()
 
 	// Load configuration
@@ -370,7 +373,7 @@ func configureBastion(ctx context.Context, cfg *config.Config, provider cpi.Prov
 	if bastionIP != "" {
 		log.Infow("Resolved live bastion IP", "ip", bastionIP)
 		cfg.BastionIP = bastionIP           // getBastionIP() checks config.BastionIP first
-		cacheBastionIP(blocName, bastionIP)  // update state cache for future commands
+		cacheBastionIP(blocName, bastionIP) // update state cache for future commands
 	}
 
 	// Provision bastion via the Go Manager (23-phase orchestration)

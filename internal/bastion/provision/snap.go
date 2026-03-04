@@ -73,6 +73,7 @@ func (sm *SnapManager) GenerateSnapInstallScript(_ctx context.Context) string {
 }
 
 // getDefaultSnapPackages returns the default snap package configurations.
+//
 // Deprecated: Snap packages have been migrated to Linuxbrew.
 // This returns an empty list; the existing override system means
 // config-based enables on an empty list are harmless no-ops.
