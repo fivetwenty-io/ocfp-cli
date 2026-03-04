@@ -614,10 +614,11 @@ func (c *Config) getSafeTool() BinaryTool {
 }
 
 // getSpruceTool returns Spruce tool configuration.
+// Installed via brew (cloudfoundry-community/cf).
 func (c *Config) getSpruceTool() BinaryTool {
 	return BinaryTool{
 		Name:           "spruce",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/geofffranks/spruce/releases/latest",
@@ -633,10 +634,11 @@ func (c *Config) getSpruceTool() BinaryTool {
 }
 
 // getVaultTool returns Vault tool configuration.
+// Installed via brew (hashicorp/tap).
 func (c *Config) getVaultTool() BinaryTool {
 	return BinaryTool{
 		Name:           "vault",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/hashicorp/vault/releases/latest",
@@ -652,10 +654,11 @@ func (c *Config) getVaultTool() BinaryTool {
 }
 
 // getBoshTool returns BOSH tool configuration.
+// Installed via brew (cloudfoundry/tap).
 func (c *Config) getBoshTool() BinaryTool {
 	return BinaryTool{
 		Name:           "bosh",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/cloudfoundry/bosh-cli/releases/latest",
@@ -671,10 +674,11 @@ func (c *Config) getBoshTool() BinaryTool {
 }
 
 // getCredHubTool returns CredHub tool configuration.
+// Installed via brew (cloudfoundry/tap).
 func (c *Config) getCredHubTool() BinaryTool {
 	return BinaryTool{
 		Name:           "credhub",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/cloudfoundry/credhub-cli/releases/latest",
@@ -690,10 +694,11 @@ func (c *Config) getCredHubTool() BinaryTool {
 }
 
 // getUAATool returns UAA tool configuration.
+// Installed via brew (cloudfoundry/tap).
 func (c *Config) getUAATool() BinaryTool {
 	return BinaryTool{
 		Name:           "uaa",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/cloudfoundry/uaa-cli/releases/latest",
@@ -709,10 +714,11 @@ func (c *Config) getUAATool() BinaryTool {
 }
 
 // getBaoTool returns Bao (OpenBao) tool configuration.
+// Installed via brew.
 func (c *Config) getBaoTool() BinaryTool {
 	return BinaryTool{
 		Name:           "bao",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/openbao/openbao/releases/latest",
@@ -728,10 +734,11 @@ func (c *Config) getBaoTool() BinaryTool {
 }
 
 // getCFTool returns CF CLI tool configuration.
+// Installed via brew (cloudfoundry/tap).
 func (c *Config) getCFTool() BinaryTool {
 	return BinaryTool{
 		Name:           "cf",
-		Enabled:        true,
+		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
