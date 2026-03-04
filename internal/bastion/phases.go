@@ -366,9 +366,8 @@ func extractTail(text string, maxLines int) string {
 	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
 
-// wrapScriptWithFunctions wraps script content with necessary functions.
-func (m *Manager) wrapScriptWithFunctions(script string) string {
-	functions := `#!/bin/bash
+// bashScriptPreamble is the shell boilerplate prepended to bastion provisioning scripts.
+const bashScriptPreamble = `#!/bin/bash
 set -euo pipefail
 
 # Color codes for output
@@ -410,9 +409,18 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
 
+# Terminal type for tmux and curses-based tools (not set in non-PTY SSH)
+export TERM="${TERM:-screen}"
+
+# Include Linuxbrew terminfo so tmux can find terminal definitions
+if [ -d "/home/linuxbrew/.linuxbrew/share/terminfo" ]; then
+    export TERMINFO_DIRS="${TERMINFO_DIRS:+${TERMINFO_DIRS}:}/home/linuxbrew/.linuxbrew/share/terminfo:/usr/share/terminfo:/lib/terminfo"
+fi
+
 `
 
-	// Export environment variables needed by the scripts
+// wrapScriptWithFunctions wraps script content with necessary functions.
+func (m *Manager) wrapScriptWithFunctions(script string) string {
 	envVars := m.getEnvironmentVariables()
 
 	var envExports strings.Builder
@@ -424,7 +432,7 @@ export NEEDRESTART_SUSPEND=1
 
 	envExports.WriteString("\n")
 
-	return functions + envExports.String() + script
+	return bashScriptPreamble + envExports.String() + script
 }
 
 // escapeShellString escapes a string for safe shell execution.

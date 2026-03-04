@@ -54,7 +54,6 @@ func (c *Config) GetDirectories() []DirectoryConfig {
 		{Path: "${HOME}/.ocfp", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/bin", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ocfp/logs/provision", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
-		{Path: "${HOME}/deployments", Mode: directoryModeStandard, Owner: "", Group: "", Condition: ""},
 		{Path: "${HOME}/.ssh", Mode: directoryModeSSH, Owner: "", Group: "", Condition: ""},
 	}
 }
@@ -291,7 +290,7 @@ func (c *Config) getEssentialPackages() PackageGroup {
 		Enabled:     true,
 		Condition:   "",
 		DependsOn:   []string{},
-		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates"},
+		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates", "ncurses-term"},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
