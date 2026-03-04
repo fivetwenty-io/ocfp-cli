@@ -141,6 +141,10 @@ type Config struct {
 	// Structured public IPs configuration
 	PublicIPs PublicIPsConfig `json:"public_ips" mapstructure:"public_ips" yaml:"public_ips,omitempty"`
 
+	// AWS CPI defaults
+	DefaultInstanceType string `json:"default_instance_type" mapstructure:"default_instance_type" yaml:"default_instance_type,omitempty"`
+	DefaultDiskType     string `json:"default_disk_type"     mapstructure:"default_disk_type"     yaml:"default_disk_type,omitempty"`
+
 	// Buckets configuration
 	Buckets []BucketConfig `json:"buckets" mapstructure:"buckets" yaml:"buckets,omitempty"`
 
