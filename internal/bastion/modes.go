@@ -248,6 +248,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		name string
 		fn   func(context.Context) error
 	}{
+		{"bastion_keys", manager.configureBastionKeys},
 		{"prerequisite_check", manager.runPrerequisiteChecks},
 		{"system_setup", manager.setupSystem},
 		{"directories", manager.createDirectories},
