@@ -307,7 +307,7 @@ func (cfm *ConfigFileManager) writeGenesisBasicSettings(config *strings.Builder)
 	config.WriteString("# Repository management\n")
 	config.WriteString("legacy_repo_suffix: false\n")
 	config.WriteString("deployment_roots:\n")
-	config.WriteString("  - /home/ubuntu/ocfp/deployments\n\n")
+	config.WriteString("  - /home/ubuntu/ops/deployments\n\n")
 
 	// Display preferences
 	config.WriteString("# Display preferences\n")

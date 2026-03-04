@@ -51,8 +51,7 @@ func (dm *DirectoryManager) GetOCFPDirectories() []DirectoryConfig {
 // GetOCFPSymlinks returns OCFP symlinks to create.
 func (dm *DirectoryManager) GetOCFPSymlinks() map[string]string {
 	return map[string]string{
-		"${HOME}/ops":         "${HOME}/ocfp",
-		"${HOME}/deployments": "${HOME}/ocfp/deployments",
+		"${HOME}/ops": "${HOME}/ocfp",
 	}
 }
 
