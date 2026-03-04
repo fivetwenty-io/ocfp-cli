@@ -171,6 +171,60 @@ func TestClassifySSHArguments(t *testing.T) {
 	}
 }
 
+func TestAddSSHStandardOptions(t *testing.T) {
+	// Cannot use t.Parallel() because subtests use t.Setenv
+
+	t.Run("WithKeyAndAgent", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+
+		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key")
+
+		assert.Contains(t, result, "-i", "Should include -i flag")
+		assert.Contains(t, result, "/path/to/key", "Should include key path")
+		assert.Contains(t, result, "-A", "Should forward agent when SSH_AUTH_SOCK is set")
+		assert.NotContains(t, result, "IdentityAgent=none", "Should not disable agent")
+	})
+
+	t.Run("WithKeyNoAgent", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+
+		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key")
+
+		assert.Contains(t, result, "-i", "Should include -i flag")
+		assert.Contains(t, result, "/path/to/key", "Should include key path")
+		assert.NotContains(t, result, "-A", "Should not forward agent when SSH_AUTH_SOCK is empty")
+	})
+
+	t.Run("NoKeyWithAgent", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+
+		result := addSSHStandardOptions([]string{"ssh"}, "")
+
+		assert.NotContains(t, result, "-i", "Should not include -i flag without key")
+		assert.Contains(t, result, "-A", "Should forward agent when SSH_AUTH_SOCK is set")
+	})
+
+	t.Run("NoKeyNoAgent", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+
+		result := addSSHStandardOptions([]string{"ssh"}, "")
+
+		assert.NotContains(t, result, "-i", "Should not include -i flag without key")
+		assert.NotContains(t, result, "-A", "Should not forward agent without SSH_AUTH_SOCK")
+	})
+
+	t.Run("AlwaysIncludesStandardOptions", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+
+		result := addSSHStandardOptions([]string{"ssh"}, "")
+
+		assert.Contains(t, result, "UserKnownHostsFile=/dev/null")
+		assert.Contains(t, result, "StrictHostKeyChecking=no")
+		assert.Contains(t, result, "LogLevel=ERROR")
+		assert.Contains(t, result, "IdentitiesOnly=yes")
+	})
+}
+
 func TestBuildSSHCommandWithArguments(t *testing.T) {
 	t.Parallel()
 
