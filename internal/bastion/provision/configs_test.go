@@ -34,7 +34,7 @@ func TestGenerateGenesisConfig(t *testing.T) {
 		"# ~/.genesis/config",
 		"default_bosh_target: ask",
 		"deployment_roots:",
-		"  - /home/ubuntu/ocfp/deployments",
+		"  - /home/ubuntu/ops/deployments",
 		"output_style: fun",
 		"show_duration: true",
 		"confirm_release_overrides: outdated",
