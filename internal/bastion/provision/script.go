@@ -1012,6 +1012,12 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	// Brew package installation
 	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewPackageScript(ctx))
 
+	// Post-brew APT packages (packages with no brew formula, installed after brew)
+	postBrewPackages := map[string]PackageGroup{
+		"post_brew": NewConfig(sg.provider, sg.config, nil).GetPostBrewPackages(),
+	}
+	sg.appendIfNotEmpty(scriptParts, sg.GeneratePackageScript(postBrewPackages))
+
 	// Git repositories (MUST come before binary tools that depend on them)
 	repos := provConfig.GetGitRepositories()
 	sg.appendIfNotEmpty(scriptParts, sg.generateGitRepositoryScript(repos))

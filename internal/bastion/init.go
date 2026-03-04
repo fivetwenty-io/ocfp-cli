@@ -599,9 +599,10 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"apt_repositories", m.setupAPTRepositories},
 		{"packages", m.installPackages},
 
-		// Phase 3.5-3.6: Linuxbrew installation and packages
+		// Phase 3.5-3.7: Linuxbrew installation, packages, and post-brew APT
 		{"brew_install", m.installBrew},
 		{"brew_packages", m.installBrewPackages},
+		{"post_brew_apt", m.installPostBrewPackages},
 
 		// Phase 4: Git repositories (must run before binary_tools that depend on them)
 		{"git_repos", m.cloneGitRepositories},
@@ -665,9 +666,11 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
-		{"packages", m.installPackages},       // avoid dpkg lock issues
-		{"brew_install", m.installBrew},       // must complete before brew_packages
-		{"git_repos", m.cloneGitRepositories}, // must run before binary_tools that depend on git repos
+		{"packages", m.installPackages},                 // avoid dpkg lock issues
+		{"brew_install", m.installBrew},                 // must complete before brew_packages
+		{"brew_packages", m.installBrewPackages},        // must complete before post_brew_apt
+		{"post_brew_apt", m.installPostBrewPackages},    // APT pkgs requiring brew tools (e.g. libperl-dev)
+		{"git_repos", m.cloneGitRepositories},           // must run before binary_tools that depend on git repos
 	}
 
 	err := m.runPhasesSequential(ctx, pre)
@@ -680,7 +683,6 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		name string
 		fn   func(context.Context) error
 	}{
-		{"brew_packages", m.installBrewPackages},
 		{"binary_tools", m.installBinaryTools},
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
@@ -776,14 +778,14 @@ func (m *Manager) executePhaseWithErrorHandling(ctx context.Context, phase struc
 		return phase.fn(ctx)
 	})
 	if err != nil {
-		return m.handlePhaseFailure(phase.name, index, err, reporter)
+		return m.handlePhaseFailure(phase.name, index, total, err, reporter)
 	}
 
 	return m.handlePhaseSuccess(phase.name, index, total, reporter)
 }
 
 // handlePhaseFailure handles phase execution failure.
-func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, reporter *ProgressReporter) error {
+func (m *Manager) handlePhaseFailure(phaseName string, index, total int, err error, reporter *ProgressReporter) error {
 	m.progress.Errors = append(m.progress.Errors, err)
 
 	metadata := map[string]interface{}{
@@ -798,7 +800,7 @@ func (m *Manager) handlePhaseFailure(phaseName string, index int, err error, rep
 	}
 
 	if reporter != nil {
-		reporter.ReportError(phaseName, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries)
+		reporter.ReportError(phaseName, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries, index+1, total)
 	}
 
 	return fmt.Errorf("phase %s failed: %w", phaseName, err)
@@ -1703,44 +1705,6 @@ func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
 	return enabled
 }
 
-// filterEnabledBrewPackages returns only enabled brew packages.
-func filterEnabledBrewPackages(pkgs []provision.BrewPackage) []provision.BrewPackage {
-	var enabled []provision.BrewPackage
-
-	for _, p := range pkgs {
-		if p.Enabled {
-			enabled = append(enabled, p)
-		}
-	}
-
-	return enabled
-}
-
-// filterEnabledCPANModules returns only enabled CPAN modules.
-func filterEnabledCPANModules(mods []provision.CPANModule) []provision.CPANModule {
-	var enabled []provision.CPANModule
-
-	for _, mdu := range mods {
-		if mdu.Enabled {
-			enabled = append(enabled, mdu)
-		}
-	}
-
-	return enabled
-}
-
-// filterEnabledCFPlugins returns only enabled CF plugins.
-func filterEnabledCFPlugins(plugins []provision.CFPlugin) []provision.CFPlugin {
-	var enabled []provision.CFPlugin
-
-	for _, p := range plugins {
-		if p.Enabled {
-			enabled = append(enabled, p)
-		}
-	}
-
-	return enabled
-}
 
 // filterEnabledBinaryTools returns only enabled binary tools.
 func filterEnabledBinaryTools(tools []provision.BinaryTool) []provision.BinaryTool {
@@ -1771,7 +1735,6 @@ func filterEnabledAdvancedTools(tools []provision.AdvancedBinaryTool) []provisio
 func (m *Manager) installPackages(ctx context.Context) error {
 	m.log.Info("Installing system packages")
 
-	// Get package configuration
 	packages := m.provConfig.GetPackages()
 	if len(packages) == 0 {
 		m.log.Info("No packages to install")
@@ -1779,40 +1742,11 @@ func (m *Manager) installPackages(ctx context.Context) error {
 		return nil
 	}
 
-	m.reportPackageProgress(packages)
-
 	script := m.buildPackageInstallScript(packages)
 
 	return m.executeScript(ctx, script, "packages")
 }
 
-// reportPackageProgress reports progress for all enabled packages.
-func (m *Manager) reportPackageProgress(packages map[string]provision.PackageGroup) {
-	if m.reporter == nil {
-		return
-	}
-
-	total := 0
-
-	for _, group := range packages {
-		if group.Enabled {
-			total += len(group.Packages)
-		}
-	}
-
-	current := 0
-
-	for _, group := range packages {
-		if !group.Enabled {
-			continue
-		}
-
-		for _, pkg := range group.Packages {
-			m.reporter.ReportSubtaskProgress("packages", current+1, total, pkg)
-			current++
-		}
-	}
-}
 
 // buildPackageInstallScript generates the full package installation script.
 func (m *Manager) buildPackageInstallScript(packages map[string]provision.PackageGroup) string {
@@ -1850,6 +1784,9 @@ log_error() {
 	}
 
 	scriptLines = append(scriptLines, `
+
+# Recover from any previously interrupted dpkg operations
+sudo dpkg --configure -a
 
 # Ensure apt cache is up to date
 log_info 'Updating package cache'

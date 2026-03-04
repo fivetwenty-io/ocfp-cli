@@ -13,7 +13,7 @@ type ProgressReporter interface {
 	ReportPhaseStart(phase string, index, total int)
 	ReportPhaseComplete(phase string, duration time.Duration)
 	ReportSubtaskProgress(phase string, current, total int, label string)
-	ReportError(phase string, err error, attempt, maxAttempts int)
+	ReportError(phase string, err error, attempt, maxAttempts, number, total int)
 	ReportFinalSummary(success bool, duration time.Duration, phases int, errors int)
 }
 

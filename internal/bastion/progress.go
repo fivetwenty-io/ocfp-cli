@@ -210,7 +210,7 @@ func (pr *ProgressReporter) ReportPhaseSkipped(phase string, reason string) {
 }
 
 // ReportError reports an error with context.
-func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAttempts int) {
+func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAttempts, number, total int) {
 	if pr.renderer == nil {
 		return
 	}
@@ -226,8 +226,10 @@ func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAtt
 	} else {
 		// Final failure - report to renderer
 		phaseInfo := output.PhaseInfo{
-			ID:   phase,
-			Name: phase,
+			ID:     phase,
+			Name:   phase,
+			Number: number,
+			Total:  total,
 		}
 
 		renderErr := pr.renderer.PhaseFailed(phaseInfo, err)

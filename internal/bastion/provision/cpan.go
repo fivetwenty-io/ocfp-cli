@@ -37,6 +37,14 @@ func NewCPANManager(provider string, cfg *config.Config) *CPANManager {
 // GetCPANModules returns the list of CPAN modules to install.
 func (cm *CPANManager) GetCPANModules() []CPANModule {
 	return []CPANModule{
+		// Networking modules (migrated from APT Perl packages)
+		{Name: "Net::IP", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "NetAddr::IP", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "JSON", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "Net::CIDR", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "YAML", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		{Name: "YAML::LibYAML", NoTest: true, Enabled: true, Force: false, Sudo: true},
+		// Debugging and development modules
 		{Name: "Pry", NoTest: true, Enabled: true, Force: false, Sudo: true},
 		{Name: "Carp::Always", NoTest: true, Enabled: true, Force: false, Sudo: true},
 		{Name: "Smart::Comments", NoTest: true, Enabled: true, Force: false, Sudo: true},

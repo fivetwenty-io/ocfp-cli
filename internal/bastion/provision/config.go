@@ -280,27 +280,14 @@ func (c *Config) getCorePackages() map[string]PackageGroup {
 	}
 }
 
-// getEssentialPackages returns essential system packages.
-// Packages that moved to brew: rsync, wget, unzip, tig, ack-grep, ripgrep,
-// coreutils, htop, s3cmd, vim, vim-common, neovim, snapd.
+// getEssentialPackages returns brew prerequisite packages only.
+// All other packages moved to brew (system tools, dev libs) or CPAN (Perl modules).
 func (c *Config) getEssentialPackages() PackageGroup {
 	return PackageGroup{
-		Enabled:   true,
-		Condition: "",
-		DependsOn: []string{},
-		Packages: []string{
-			// Brew prerequisites
-			"build-essential", "curl", "git", "ca-certificates", "gcc", "make", "procps",
-			// System C libraries (CPAN, native gem extensions)
-			"cpanminus", "perl-doc", "libperl-dev",
-			"libnet-ip-perl", "libnetaddr-ip-perl", "libjson-perl", "libnet-cidr-perl",
-			"libreadline-dev", "libssl-dev", "libtool", "libyaml-dev",
-			"libyaml-libyaml-perl", "libyaml-perl", "libfuse2",
-			// Debian-specific
-			"apt-rdepends", "gnupg", "gpg", "lsb-release",
-			// Python (needed before brew python available)
-			"python3", "python3-pip", "python3-dev", "python3-setuptools",
-		},
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates"},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
@@ -308,20 +295,36 @@ func (c *Config) getEssentialPackages() PackageGroup {
 }
 
 // getCloudFoundryPackages returns CloudFoundry-related packages.
-// Packages that moved to brew: ruby, ruby-dev, openssl, sqlite3, jq, tmux, screen, tree.
+// Dev libs moved to brew: zlib, libxslt, libxml2, sqlite3.
 func (c *Config) getCloudFoundryPackages() PackageGroup {
 	return PackageGroup{
-		Enabled:   true,
-		Condition: "",
-		DependsOn: []string{},
-		Packages: []string{
-			// CF dev libs (native gem extensions)
-			"zlib1g-dev", "libxslt1-dev", "libxml2-dev", "libsqlite3-dev",
-		},
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
 	}
+}
+
+// getPostBrewPackages returns packages that have no brew formula and must be
+// installed via APT after Linuxbrew is available.
+func (c *Config) getPostBrewPackages() PackageGroup {
+	return PackageGroup{
+		Enabled:     true,
+		Condition:   "",
+		DependsOn:   []string{},
+		Packages:    []string{"libperl-dev", "libfuse2", "apt-rdepends", "lsb-release", "perl-doc"},
+		PipPackages: []string{},
+		Verify:      []string{},
+		PostInstall: "",
+	}
+}
+
+// GetPostBrewPackages returns packages to install via APT after Linuxbrew.
+func (c *Config) GetPostBrewPackages() PackageGroup {
+	return c.getPostBrewPackages()
 }
 
 // addProviderPackages adds provider-specific package groups.

@@ -329,14 +329,22 @@ func TestCPANModuleGeneration(t *testing.T) {
 	cpanMgr := provision.NewCPANManager("stackit", cfg)
 
 	modules := cpanMgr.GetCPANModules()
-	if len(modules) != 3 {
-		t.Fatalf("Expected exactly 3 CPAN modules, got %d", len(modules))
-	}
 
+	// Verify all expected modules are present (networking + debugging)
 	expectedModules := map[string]struct{}{
+		"Net::IP":         {},
+		"NetAddr::IP":     {},
+		"JSON":            {},
+		"Net::CIDR":       {},
+		"YAML":            {},
+		"YAML::LibYAML":   {},
 		"Pry":             {},
 		"Carp::Always":    {},
 		"Smart::Comments": {},
+	}
+
+	if len(modules) != len(expectedModules) {
+		t.Fatalf("Expected %d CPAN modules, got %d", len(expectedModules), len(modules))
 	}
 
 	for _, module := range modules {
@@ -360,11 +368,14 @@ func TestCPANModuleGeneration(t *testing.T) {
 		t.Error("Expected non-empty CPAN installation script")
 	}
 
-	// Check script content
+	// Check script content includes networking and debugging modules
 	cpanContent := []string{
 		"cpanm",
 		"--notest",
 		"perl -e",
+		"Net::IP",
+		"Net::CIDR",
+		"YAML",
 		"Pry",
 		"Carp::Always",
 		"Smart::Comments",
