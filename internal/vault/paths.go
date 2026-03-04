@@ -139,6 +139,18 @@ func (pb *PathBuilder) GetIAMPath(envType string) string {
 	return filepath.Join(pb.GetBOSHPath(envType), "iam")
 }
 
+// GetIAMBoshPath returns the IAM BOSH credentials path
+// Format: secret/config/{bloc}/{env-type}/bosh/iam/bosh.
+func (pb *PathBuilder) GetIAMBoshPath(envType string) string {
+	return filepath.Join(pb.GetIAMPath(envType), "bosh")
+}
+
+// GetIAMS3Path returns the IAM S3 credentials path
+// Format: secret/config/{bloc}/{env-type}/bosh/iam/s3.
+func (pb *PathBuilder) GetIAMS3Path(envType string) string {
+	return filepath.Join(pb.GetIAMPath(envType), "s3")
+}
+
 // GetS3Path returns the S3 credentials path
 // Format: secret/config/{bloc}/{env-type}/bosh/s3.
 func (pb *PathBuilder) GetS3Path(envType string) string {
