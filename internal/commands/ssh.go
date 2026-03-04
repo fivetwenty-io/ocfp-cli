@@ -372,10 +372,12 @@ func addSSHStandardOptions(cmd []string, keyPath string) []string {
 
 	if keyPath != "" {
 		cmd = append(cmd, "-i", keyPath)
-		cmd = append(cmd, "-o", "IdentityAgent=none")
 	}
 
-	if os.Getenv("SSH_AUTH_SOCK") != "" && keyPath == "" {
+	// Forward SSH agent to remote host when available.
+	// This is independent of which key is used for authentication —
+	// IdentitiesOnly=yes already constrains auth to the specified key.
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
 		cmd = append(cmd, "-A")
 	}
 
