@@ -211,6 +211,90 @@ blocs:
 	}
 }
 
+// TestAWSDefaultsGeneratesSubnets verifies applyAWSDefaults populates Subnets when empty.
+func TestAWSDefaultsGeneratesSubnets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte(`
+blocs:
+  test-aws:
+    name: test-aws
+    provider: aws
+    region: us-east-1
+    vpc_cidr_block: "10.0.0.0/16"
+`)
+
+	err := os.WriteFile(cfgPath, yml, 0o600)
+	if err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	cfg, err := config.LoadWithParams(cfgPath, "test-aws")
+	if err != nil {
+		t.Fatalf("LoadWithParams failed: %v", err)
+	}
+
+	if len(cfg.Subnets) == 0 {
+		t.Fatal("expected Subnets to be populated after applyAWSDefaults, got empty")
+	}
+
+	if len(cfg.Subnets) != 3 {
+		t.Fatalf("expected 3 subnets, got %d", len(cfg.Subnets))
+	}
+
+	// Each subnet should have a CIDR and type
+	for i, s := range cfg.Subnets {
+		if s.CIDR == "" {
+			t.Errorf("subnet %d has empty CIDR", i)
+		}
+
+		if s.Type != "ocfp" {
+			t.Errorf("subnet %d type = %q, want %q", i, s.Type, "ocfp")
+		}
+	}
+}
+
+// TestAWSDefaultsPreservesExistingSubnets verifies applyAWSDefaults does not overwrite configured subnets.
+func TestAWSDefaultsPreservesExistingSubnets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte(`
+blocs:
+  test-aws:
+    name: test-aws
+    provider: aws
+    region: us-east-1
+    vpc_cidr_block: "10.0.0.0/16"
+    subnets:
+      - cidr: "10.0.10.0/24"
+        type: custom
+`)
+
+	err := os.WriteFile(cfgPath, yml, 0o600)
+	if err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	cfg, err := config.LoadWithParams(cfgPath, "test-aws")
+	if err != nil {
+		t.Fatalf("LoadWithParams failed: %v", err)
+	}
+
+	if len(cfg.Subnets) != 1 {
+		t.Fatalf("expected 1 subnet (preserved), got %d", len(cfg.Subnets))
+	}
+
+	if cfg.Subnets[0].CIDR != "10.0.10.0/24" {
+		t.Errorf("subnet CIDR = %q, want %q", cfg.Subnets[0].CIDR, "10.0.10.0/24")
+	}
+}
+
 func TestFormatAvailabilityZone(t *testing.T) {
 	t.Parallel()
 

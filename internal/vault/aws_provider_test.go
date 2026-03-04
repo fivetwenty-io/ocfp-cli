@@ -589,3 +589,118 @@ func TestAWS_ResolveAWSCredentials_MixedSources(t *testing.T) {
 	assert.Equal(t, "TOP-KEY", akid, "access_key_id should come from top-level")
 	assert.Equal(t, "S3-SECRET", sak, "secret_access_key should fall back to S3 map")
 }
+
+// TestAWS_ConfigureSubnets_WithConfigSubnets verifies direct use of Config.Subnets.
+func TestAWS_ConfigureSubnets_WithConfigSubnets(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+		Subnets: []config.Subnet{
+			{CIDR: "10.0.64.0/18", Type: "ocfp"},
+			{CIDR: "10.0.128.0/18", Type: "ocfp"},
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.NoError(t, err)
+
+	// Should write subnet data for each configured subnet
+	path0 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", 0)
+	call0 := mock.findSetMultipleCall(path0)
+	require.NotNil(t, call0, "Should write subnet ocfp-0 at %s", path0)
+	assert.Equal(t, "10.0.64.0/18", call0.data["cidr_block"])
+
+	path1 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", 1)
+	call1 := mock.findSetMultipleCall(path1)
+	require.NotNil(t, call1, "Should write subnet ocfp-1 at %s", path1)
+	assert.Equal(t, "10.0.128.0/18", call1.data["cidr_block"])
+}
+
+// TestAWS_ConfigureSubnets_FallbackToNetworkSubnets verifies Network.Subnets fallback.
+func TestAWS_ConfigureSubnets_FallbackToNetworkSubnets(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+		Network: config.NetworkConfig{
+			Subnets: []config.Subnet{
+				{CIDR: "10.0.64.0/18", Type: "ocfp"},
+			},
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.NoError(t, err)
+
+	path0 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", 0)
+	call0 := mock.findSetMultipleCall(path0)
+	require.NotNil(t, call0, "Should fall back to Network.Subnets at %s", path0)
+	assert.Equal(t, "10.0.64.0/18", call0.data["cidr_block"])
+}
+
+// TestAWS_ConfigureSubnets_FallbackSubnet verifies fallback subnet from CIDR.
+func TestAWS_ConfigureSubnets_FallbackSubnet(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.NoError(t, err)
+
+	// Should create a fallback subnet at ocfp-0
+	path0 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, DefaultSubnetType, 0)
+	call0 := mock.findSetMultipleCall(path0)
+	require.NotNil(t, call0, "Should create fallback subnet at %s", path0)
+	assert.Equal(t, "10.0.0.0/16", call0.data["cidr_block"])
+}
+
+// TestAWS_ConfigureSubnets_FallbackUsesNetworkCIDR verifies fallback prefers Network.CIDR.
+func TestAWS_ConfigureSubnets_FallbackUsesNetworkCIDR(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+		Network: config.NetworkConfig{
+			CIDR: "172.16.0.0/12",
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.NoError(t, err)
+
+	path0 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, DefaultSubnetType, 0)
+	call0 := mock.findSetMultipleCall(path0)
+	require.NotNil(t, call0, "Should create fallback subnet")
+	assert.Equal(t, "172.16.0.0/12", call0.data["cidr_block"],
+		"Fallback should prefer Network.CIDR over VPCCIDRBlock")
+}
+
+// TestAWS_ConfigureSubnets_FallbackDefaultCIDR verifies default CIDR when nothing configured.
+func TestAWS_ConfigureSubnets_FallbackDefaultCIDR(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region: "us-east-1",
+		DNS:    []string{"10.0.0.2"},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.NoError(t, err)
+
+	path0 := provider.PathBuilder.GetSubnetPath(MgmtEnvType, DefaultSubnetType, 0)
+	call0 := mock.findSetMultipleCall(path0)
+	require.NotNil(t, call0, "Should create fallback subnet with default CIDR")
+	assert.Equal(t, "10.0.0.0/16", call0.data["cidr_block"],
+		"Should default to 10.0.0.0/16 when no CIDR configured")
+}

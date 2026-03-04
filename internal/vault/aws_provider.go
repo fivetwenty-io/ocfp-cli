@@ -634,7 +634,24 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 
 	subnetsPath := a.PathBuilder.GetSubnetsPath(envType)
 
-	for i, subnet := range a.Config.Subnets {
+	// Determine which subnet list to use
+	subnets := a.Config.Subnets
+
+	// Fallback: check Network.Subnets if top-level is empty
+	if len(subnets) == 0 && len(a.Config.Network.Subnets) > 0 {
+		a.logger.Infow("Using subnets from Network.Subnets",
+			"count", len(a.Config.Network.Subnets))
+		subnets = a.Config.Network.Subnets
+	}
+
+	// If still no subnets, create a fallback from network CIDR
+	if len(subnets) == 0 {
+		a.logger.Warn("No subnets configured, using fallback")
+
+		return a.configureFallbackSubnet(envType)
+	}
+
+	for i, subnet := range subnets {
 		err := a.configureSubnet(envType, i, subnet)
 		if err != nil {
 			return err
@@ -644,6 +661,28 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 	a.logger.Infow("Subnets configuration completed", "path", subnetsPath)
 
 	return nil
+}
+
+// configureFallbackSubnet creates a default subnet when none are configured.
+func (a *AWSVaultProvider) configureFallbackSubnet(envType string) error {
+	cidr := a.Config.Network.CIDR
+	if cidr == "" {
+		cidr = a.Config.VPCCIDRBlock
+	}
+
+	if cidr == "" {
+		cidr = "10.0.0.0/16"
+	}
+
+	fallbackSubnet := config.Subnet{
+		CIDR: cidr,
+		Type: DefaultSubnetType,
+	}
+
+	a.logger.Infow("Creating fallback subnet",
+		"cidr", cidr, "type", DefaultSubnetType)
+
+	return a.configureSubnet(envType, 0, fallbackSubnet)
 }
 
 // configureSubnet configures a single subnet.

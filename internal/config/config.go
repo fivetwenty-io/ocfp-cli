@@ -1165,6 +1165,20 @@ func applyAWSDefaults(cfg *Config) {
 		cfg.Bastion.OSVersion = "24.04"
 		cfg.Bastion.Image = "Ubuntu 24.04"
 	}
+
+	applyAWSSubnetDefaults(cfg)
+}
+
+// applyAWSSubnetDefaults populates cfg.Subnets for AWS when not configured.
+// Mirrors applyStackitDefaults behavior.
+func applyAWSSubnetDefaults(cfg *Config) {
+	if len(cfg.Subnets) == 0 && len(cfg.Network.Subnets) > 0 {
+		cfg.Subnets = cfg.Network.Subnets
+	}
+
+	if len(cfg.Subnets) == 0 {
+		cfg.Subnets = generateDefaultSubnets(cfg)
+	}
 }
 
 // applyAzureDefaults applies Azure-specific defaults.
