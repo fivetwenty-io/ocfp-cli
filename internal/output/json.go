@@ -22,14 +22,14 @@ type JSONRenderer struct {
 }
 
 // NewJSONRenderer creates a new JSON renderer.
-func NewJSONRenderer(w io.Writer) *JSONRenderer {
+func NewJSONRenderer(w io.Writer) *JSONRenderer { //nolint:varnamelen
 	log := logger.Get()
 
 	encoder := json.NewEncoder(w)
 	// Don't use indentation for JSON Lines format
 	encoder.SetIndent("", "")
 
-	r := &JSONRenderer{
+	r := &JSONRenderer{ //nolint:varnamelen
 		writer:   w,
 		log:      log,
 		encoder:  encoder,
@@ -175,7 +175,8 @@ func (r *JSONRenderer) emitEvent(eventType string, data map[string]interface{}) 
 	}
 
 	// Encode and write
-	if err := r.encoder.Encode(evt); err != nil {
+	err := r.encoder.Encode(evt)
+	if err != nil {
 		return fmt.Errorf("failed to encode JSON event: %w", err)
 	}
 

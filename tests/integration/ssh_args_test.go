@@ -9,74 +9,56 @@ import (
 )
 
 func TestSSHCommandWithArguments(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
 
 	t.Run("AcceptsNoArguments", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{})
 		require.NoError(t, err, "SSH command should accept no arguments")
 	})
 
 	t.Run("AcceptsSingleArgument", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"bastion"})
 		require.NoError(t, err, "SSH command should accept single argument")
 	})
 
 	t.Run("AcceptsMultipleArguments", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"bastion", "hostname"})
 		require.NoError(t, err, "SSH command should accept multiple arguments")
 	})
 
 	t.Run("AcceptsSSHFlags", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"-L", "8080:localhost:80", "bastion"})
 		require.NoError(t, err, "SSH command should accept SSH flags")
 	})
 
 	t.Run("AcceptsFlagsAndCommand", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"-L", "8080:localhost:80", "bastion", "uptime"})
 		require.NoError(t, err, "SSH command should accept flags and command")
 	})
 
 	t.Run("AcceptsCommandWithMultipleArgs", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"bastion", "ls", "-la", "/tmp"})
 		require.NoError(t, err, "SSH command should accept command with multiple arguments")
 	})
 
 	t.Run("AcceptsMultiStatementCommand", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"bastion", "ls", ";", "hostname", ";", "echo", "$OCFP_BLOC"})
 		require.NoError(t, err, "SSH command should accept multi-statement command")
 	})
 
 	t.Run("CommandUseUpdated", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		assert.Equal(t, "ssh [target] [command...]", cmd.Use, "Command use should show optional command")
 	})
 
 	t.Run("ExamplesIncludeCommandExecution", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		assert.Contains(t, cmd.Example, "hostname", "Examples should include command execution")
 		assert.Contains(t, cmd.Example, "Port forwarding", "Examples should include port forwarding")
@@ -84,7 +66,7 @@ func TestSSHCommandWithArguments(t *testing.T) {
 }
 
 func TestSSHArgumentParsing(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
 
 	testCases := []struct {
 		name        string
@@ -170,8 +152,6 @@ func TestSSHArgumentParsing(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			cmd := commands.NewSSHCmd()
 			err := cmd.Args(cmd, tc.args)
 			assert.NoError(t, err, "Args validation failed for: %s", tc.description)
@@ -180,11 +160,9 @@ func TestSSHArgumentParsing(t *testing.T) {
 }
 
 func TestBackwardCompatibility(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
 
 	t.Run("DefaultBastionTarget", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		// No args should still work (defaults to bastion)
 		err := cmd.Args(cmd, []string{})
@@ -192,8 +170,6 @@ func TestBackwardCompatibility(t *testing.T) {
 	})
 
 	t.Run("SingleTargetArgument", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		// Single target arg should still work
 		err := cmd.Args(cmd, []string{"bastion"})
@@ -201,8 +177,6 @@ func TestBackwardCompatibility(t *testing.T) {
 	})
 
 	t.Run("ExistingFlagsStillWork", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 
 		// Verify existing flags are still present
@@ -213,19 +187,15 @@ func TestBackwardCompatibility(t *testing.T) {
 }
 
 func TestEdgeCases(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
 
 	t.Run("EmptyCommandString", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		err := cmd.Args(cmd, []string{"bastion", ""})
 		assert.NoError(t, err, "Should handle empty command string")
 	})
 
 	t.Run("SpecialCharactersInCommand", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		specialChars := []string{"bastion", "echo", "$PATH", "&&", "echo", "$(whoami)"}
 		err := cmd.Args(cmd, specialChars)
@@ -233,8 +203,6 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("LongCommandString", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		longCmd := []string{"bastion"}
 		for i := 0; i < 50; i++ {
@@ -245,8 +213,6 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("MixedFlagsAndValues", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		mixed := []string{"-v", "-L", "8080:localhost:80", "bastion", "-t", "ls"}
 		err := cmd.Args(cmd, mixed)
@@ -255,11 +221,9 @@ func TestEdgeCases(t *testing.T) {
 }
 
 func TestSecurityValidation(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
 
 	t.Run("AllowedSSHFlags", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 
 		allowedFlags := [][]string{
@@ -281,8 +245,6 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("CommandInjectionPatterns", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 
 		// These should be accepted by Args validation but handled safely by buildSSHCommand

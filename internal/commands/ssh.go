@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	// File permissions.
+	// SSHKeyFileMode is the file permission mode for SSH private key files.
 	SSHKeyFileMode = 0600
 )
 
@@ -29,6 +29,8 @@ var (
 )
 
 // NewSSHCmd creates the SSH command.
+//
+//nolint:funlen // cobra command setup with examples and flags is inherently verbose
 func NewSSHCmd() *cobra.Command {
 	var (
 		user       string
@@ -97,7 +99,7 @@ SSH keys are searched in the following order:
 	return cmd
 }
 
-func runSSH(cmd *cobra.Command, args []string) error {
+func runSSH(_cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("ssh")
 
@@ -133,6 +135,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	} else {
 		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
 	}
+
 	log.Debugf("Using SSH key: %s", keyPath)
 
 	return executeSSH(ctx, sshCmd)
@@ -186,11 +189,13 @@ func classifySSHArguments(args []string) (target string, sshArgs []string, comma
 					sshArgs = append(sshArgs, args[argIndex])
 				}
 			}
+
 			argIndex++
 		} else {
 			// First non-flag argument is the target
 			target = arg
 			argIndex++
+
 			break
 		}
 	}
@@ -277,13 +282,13 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 // findSSHKey locates the SSH private key for the bastion.
 //
 //nolint:unparam // cfg reserved for future use in provider-specific key resolution
-func findSSHKey(blocName string, cfg *config.Config) (string, error) {
+func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
 
 	// Try Ed25519 key first (preferred)
-	keyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_ed25519")
+	keyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_ed25519")
 
-	info, err := os.Stat(keyPath)
+	info, err := os.Stat(keyPath) //nolint:gosec // path components are from trusted config
 	if err == nil && info.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", keyPath)
 
@@ -291,16 +296,21 @@ func findSSHKey(blocName string, cfg *config.Config) (string, error) {
 	}
 
 	// Fall back to RSA key
-	rsaKeyPath := filepath.Join(os.Getenv("HOME"), ".ocfp", blocName, "ssh", "id_rsa")
+	rsaKeyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_rsa")
 
-	rsaInfo, rsaErr := os.Stat(rsaKeyPath)
+	rsaInfo, rsaErr := os.Stat(rsaKeyPath) //nolint:gosec // path components are from trusted config
 	if rsaErr == nil && rsaInfo.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", rsaKeyPath)
 
 		return rsaKeyPath, nil
 	}
 
-	return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
+	// Distinguish between missing keys and empty keys for clearer diagnostics
+	if err != nil {
+		return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
+	}
+
+	return "", fmt.Errorf("SSH key at %s exists but is empty (0 bytes); no valid key found at %s either", keyPath, rsaKeyPath) //nolint:err113 // dynamic error with context
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
@@ -327,20 +337,26 @@ func verifySSHKey(keyPath string) error {
 
 // validateSSHInputs validates the host, user, and keyPath for SSH connections.
 func validateSSHInputs(host, user, keyPath string) error {
-	if err := security.ValidateInput(host, sshValidHostPattern); err != nil {
+	err := security.ValidateInput(host, sshValidHostPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid host: %v", err)
-		return err
+
+		return fmt.Errorf("invalid SSH host: %w", err)
 	}
 
-	if err := security.ValidateInput(user, sshValidUserPattern); err != nil {
+	err = security.ValidateInput(user, sshValidUserPattern)
+	if err != nil {
 		logger.WithOperation("buildSSHCommand").Errorf("invalid user: %v", err)
-		return err
+
+		return fmt.Errorf("invalid SSH user: %w", err)
 	}
 
 	if keyPath != "" {
-		if err := security.ValidateInput(keyPath, sshValidPathPattern); err != nil {
+		err = security.ValidateInput(keyPath, sshValidPathPattern)
+		if err != nil {
 			logger.WithOperation("buildSSHCommand").Errorf("invalid key path: %v", err)
-			return err
+
+			return fmt.Errorf("invalid SSH key path: %w", err)
 		}
 	}
 
@@ -383,8 +399,10 @@ func filterSSHOptions(extraOptions string) []string {
 	for _, opt := range options {
 		if strings.HasPrefix(opt, "-") && !allowedOptions[opt] {
 			logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH option: %s", opt)
+
 			continue
 		}
+
 		result = append(result, opt)
 	}
 
@@ -411,9 +429,11 @@ func filterSSHArgs(sshArgs []string) []string {
 
 			if !allowedSSHFlags[flag] {
 				logger.WithOperation("buildSSHCommand").Warnf("skipping unsafe SSH argument: %s", arg)
+
 				continue
 			}
 		}
+
 		result = append(result, arg)
 	}
 
@@ -423,7 +443,8 @@ func filterSSHArgs(sshArgs []string) []string {
 // buildSSHCommand constructs the SSH command with all options.
 func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
 	// Validate inputs
-	if err := validateSSHInputs(host, user, keyPath); err != nil {
+	err := validateSSHInputs(host, user, keyPath)
+	if err != nil {
 		return []string{"ssh", "--help"} // Return safe command
 	}
 

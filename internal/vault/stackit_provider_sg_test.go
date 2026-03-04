@@ -239,7 +239,7 @@ type setCall struct {
 	data map[string]interface{}
 }
 
-func (m *MockSafeInterface) Set(path, key string, value interface{}) error {
+func (m *MockSafeInterface) Set(_path, _key string, _value interface{}) error {
 	return nil
 }
 
@@ -251,46 +251,46 @@ func (m *MockSafeInterface) SetMultiple(path string, data map[string]interface{}
 	return nil
 }
 
-func (m *MockSafeInterface) Get(path, key string) (interface{}, error) {
+func (m *MockSafeInterface) Get(_path, _key string) (interface{}, error) {
 	return "", nil
 }
 
-func (m *MockSafeInterface) GetAll(path string) (map[string]interface{}, error) {
+func (m *MockSafeInterface) GetAll(_path string) (map[string]interface{}, error) {
 	return nil, nil
 }
 
-func (m *MockSafeInterface) Exists(path string) (bool, error) {
+func (m *MockSafeInterface) Exists(_path string) (bool, error) {
 	return false, nil
 }
 
-func (m *MockSafeInterface) Delete(path, key string) error {
+func (m *MockSafeInterface) Delete(_path, _key string) error {
 	return nil
 }
 
-func (m *MockSafeInterface) List(path string) ([]string, error) {
+func (m *MockSafeInterface) List(_path string) ([]string, error) {
 	return nil, nil
 }
 
-func (m *MockSafeInterface) Export(path string) (map[string]interface{}, error) {
+func (m *MockSafeInterface) Export(_path string) (map[string]interface{}, error) {
 	return nil, nil
 }
 
-func (m *MockSafeInterface) Import(path string, data map[string]interface{}) error {
+func (m *MockSafeInterface) Import(_path string, _data map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockSafeInterface) GetEngineInfo(path string) (*EngineInfo, error) {
+func (m *MockSafeInterface) GetEngineInfo(_path string) (*EngineInfo, error) {
 	return nil, nil
 }
 
-func (m *MockSafeInterface) MustGet(path, key string) interface{} {
+func (m *MockSafeInterface) MustGet(_path, _key string) interface{} {
 	return ""
 }
 
-func (m *MockSafeInterface) GetString(path, key string) (string, error) {
+func (m *MockSafeInterface) GetString(_path, _key string) (string, error) {
 	return "", nil
 }
 
-func (m *MockSafeInterface) GetJSON(path, key string) ([]byte, error) {
+func (m *MockSafeInterface) GetJSON(_path, _key string) ([]byte, error) {
 	return nil, nil
 }

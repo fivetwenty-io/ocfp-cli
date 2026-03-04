@@ -57,7 +57,7 @@ func (vm *VerificationManager) GetToolVerifications() []ToolVerification {
 }
 
 // GenerateVerificationScript generates comprehensive verification script.
-func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) string {
+func (vm *VerificationManager) GenerateVerificationScript(_ctx context.Context) string {
 	verifications := vm.GetToolVerifications()
 
 	lines := make([]string, 0, scriptBufferVerificationBase+scriptBufferVerificationPerItem*len(verifications))
@@ -69,7 +69,7 @@ func (vm *VerificationManager) GenerateVerificationScript(ctx context.Context) s
 }
 
 // GenerateHealthCheckScript generates health check for bastion services.
-func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) string {
+func (vm *VerificationManager) GenerateHealthCheckScript(_ctx context.Context) string {
 	testUrls := []string{
 		"google.com",
 		"github.com",
@@ -91,7 +91,7 @@ func (vm *VerificationManager) GenerateHealthCheckScript(ctx context.Context) st
 }
 
 // GenerateProvisioningSummaryScript generates final provisioning summary.
-func (vm *VerificationManager) GenerateProvisioningSummaryScript(ctx context.Context) string {
+func (vm *VerificationManager) GenerateProvisioningSummaryScript(_ctx context.Context) string {
 	components := []string{
 		"APT repositories",
 		"APT packages",
@@ -115,7 +115,7 @@ func (vm *VerificationManager) GenerateProvisioningSummaryScript(ctx context.Con
 }
 
 // GeneratePreRequisiteCheckScript generates prerequisite checking script.
-func (vm *VerificationManager) GeneratePreRequisiteCheckScript(ctx context.Context) string {
+func (vm *VerificationManager) GeneratePreRequisiteCheckScript(_ctx context.Context) string {
 	lines := make([]string, 0, scriptBufferVerification3)
 
 	lines = append(lines, "# Prerequisite checks")

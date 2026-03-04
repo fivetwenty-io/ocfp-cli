@@ -2,6 +2,8 @@ package vault
 
 // MgmtServices defines the known services for the mgmt environment.
 // FQDNs will be pre-populated for all these services.
+//
+//nolint:gochecknoglobals // package-level constant list of management services
 var MgmtServices = []string{
 	"vault",
 	"concourse",
@@ -16,6 +18,8 @@ var MgmtServices = []string{
 
 // OCFServices defines the known services for the ocf environment.
 // FQDNs will be pre-populated for all these services.
+//
+//nolint:gochecknoglobals // package-level constant list of OCF services
 var OCFServices = []string{
 	"cf",
 	"system",

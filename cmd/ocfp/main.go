@@ -1,3 +1,4 @@
+// Package main is the entry point for the OCFP CLI.
 package main
 
 import (

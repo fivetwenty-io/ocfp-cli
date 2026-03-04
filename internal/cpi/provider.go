@@ -215,6 +215,7 @@ type Resource interface {
 // ResourceState represents the state of a resource.
 type ResourceState string
 
+// ResourceStateCreating and related constants define the possible states for cloud resources.
 const (
 	ResourceStateCreating  ResourceState = "creating"
 	ResourceStateActive    ResourceState = "active"

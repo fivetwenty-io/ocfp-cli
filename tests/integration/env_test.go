@@ -163,18 +163,16 @@ func testEnvExportSubcommand(t *testing.T) {
 }
 
 func TestBootstrapCommand(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewBootstrapCmd() binds flags to global viper
 	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
-
+		// Cannot use t.Parallel() because NewBootstrapCmd() binds flags to global viper
 		cmd := commands.NewBootstrapCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "bootstrap", cmd.Use)
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
-		t.Parallel()
-
+		// Cannot use t.Parallel() because NewBootstrapCmd() binds flags to global viper
 		cmd := commands.NewBootstrapCmd()
 
 		// Test flag existence
@@ -184,18 +182,16 @@ func TestBootstrapCommand(t *testing.T) {
 }
 
 func TestTeardownCommand(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewTeardownCmd() binds flags to global viper
 	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
-
+		// Cannot use t.Parallel() because NewTeardownCmd() binds flags to global viper
 		cmd := commands.NewTeardownCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "teardown", cmd.Use)
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
-		t.Parallel()
-
+		// Cannot use t.Parallel() because NewTeardownCmd() binds flags to global viper
 		cmd := commands.NewTeardownCmd()
 
 		// Test flag existence

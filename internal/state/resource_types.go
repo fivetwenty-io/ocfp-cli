@@ -29,6 +29,7 @@ const (
 // ResourceCategory groups resources by their category.
 type ResourceCategory string
 
+// Resource category constants for grouping cloud resources.
 const (
 	CategoryNetwork ResourceCategory = "network"
 	CategoryCompute ResourceCategory = "compute"

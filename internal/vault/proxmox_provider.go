@@ -45,11 +45,13 @@ func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) er
 	if err != nil {
 		return fmt.Errorf("failed to save config to vault: %w", err)
 	}
+
 	phaseIndex++
 
 	// Configure both management and OCF environments
 	for _, envType := range []string{"mgmt", "ocf"} {
-		if err := p.configureEnvironment(envType, reporter, &phaseIndex, totalPhases); err != nil {
+		err := p.configureEnvironment(envType, reporter, &phaseIndex, totalPhases)
+		if err != nil {
 			return err
 		}
 	}
@@ -70,75 +72,9 @@ func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) er
 	return nil
 }
 
-// configureEnvironment configures vault paths for a specific environment type.
-func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
-	envPath := p.PathBuilder.GetEnvironmentPath(envType)
-
-	// Configure networks
-	if err := p.ConfigureNetworks(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure subnets (minimal for Proxmox - bridges don't have native subnets)
-	if err := p.ConfigureSubnets(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure security groups
-	if err := p.ConfigureSecurityGroups(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure blobstores (external for Proxmox)
-	if err := p.ConfigureBlobstores(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure databases
-	if err := p.ConfigureDatabases(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure load balancers (external for Proxmox)
-	if err := p.ConfigureLoadBalancers(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure FQDNs
-	if err := p.ConfigureFQDNs(envPath, envType, reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	return nil
-}
-
-// configureSharedComponents configures shared vault paths.
-func (p *ProxmoxVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
-	// Configure certificates
-	if err := p.ConfigureCertificates("", "", reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	// Configure public IPs
-	if err := p.ConfigurePublicIPs(reporter, *phaseIndex, totalPhases); err != nil {
-		return err
-	}
-	*phaseIndex++
-
-	return nil
-}
-
 // SaveConfigToVault saves the OCFP configuration to vault.
 func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := "config"
+	phaseName := PhaseConfig
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -172,8 +108,8 @@ func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 }
 
 // ConfigureNetworks configures network settings.
-func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("networks-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureNetworks(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "networks-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -208,8 +144,8 @@ func (p *ProxmoxVaultProvider) ConfigureNetworks(envPath, envType string, report
 }
 
 // ConfigureSubnets configures subnet settings (minimal for Proxmox).
-func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("subnets-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "subnets-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -239,8 +175,8 @@ func (p *ProxmoxVaultProvider) ConfigureSubnets(envPath, envType string, reporte
 }
 
 // ConfigureSecurityGroups configures security group settings.
-func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("security-groups-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "security-groups-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -270,8 +206,8 @@ func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(envPath, envType string, 
 }
 
 // ConfigureBlobstores configures blobstore settings.
-func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("blobstores-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -301,8 +237,8 @@ func (p *ProxmoxVaultProvider) ConfigureBlobstores(envPath, envType string, repo
 }
 
 // ConfigureDatabases configures database settings.
-func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("databases-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureDatabases(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "databases-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -332,8 +268,8 @@ func (p *ProxmoxVaultProvider) ConfigureDatabases(envPath, envType string, repor
 }
 
 // ConfigureLoadBalancers configures load balancer settings.
-func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("load-balancers-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "load-balancers-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -363,8 +299,8 @@ func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(envPath, envType string, r
 }
 
 // ConfigureFQDNs configures FQDN settings.
-func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := fmt.Sprintf("fqdns-%s", envType)
+func (p *ProxmoxVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := "fqdns-" + envType
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -399,8 +335,8 @@ func (p *ProxmoxVaultProvider) ConfigureFQDNs(envPath, envType string, reporter 
 }
 
 // ConfigureCertificates configures TLS certificates.
-func (p *ProxmoxVaultProvider) ConfigureCertificates(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := "certificates"
+func (p *ProxmoxVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := PhaseCertificates
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -430,7 +366,7 @@ func (p *ProxmoxVaultProvider) ConfigureCertificates(envPath, envType string, re
 
 // ConfigurePublicIPs configures public IP settings.
 func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	phaseName := "public-ips"
+	phaseName := PhasePublicIPs
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -467,4 +403,88 @@ func (p *ProxmoxVaultProvider) ConfigureIAAS(envPath, envType string, reporter p
 // GetProviderName returns the provider name.
 func (p *ProxmoxVaultProvider) GetProviderName() string {
 	return "proxmox"
+}
+
+// configureEnvironment configures vault paths for a specific environment type.
+func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
+	envPath := p.PathBuilder.GetEnvironmentPath(envType)
+
+	// Configure networks
+	err := p.ConfigureNetworks(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure subnets (minimal for Proxmox - bridges don't have native subnets)
+	err = p.ConfigureSubnets(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure security groups
+	err = p.ConfigureSecurityGroups(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure blobstores (external for Proxmox)
+	err = p.ConfigureBlobstores(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure databases
+	err = p.ConfigureDatabases(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure load balancers (external for Proxmox)
+	err = p.ConfigureLoadBalancers(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure FQDNs
+	err = p.ConfigureFQDNs(envPath, envType, reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	return nil
+}
+
+// configureSharedComponents configures shared vault paths.
+func (p *ProxmoxVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
+	// Configure certificates
+	err := p.ConfigureCertificates("", "", reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	// Configure public IPs
+	err = p.ConfigurePublicIPs(reporter, *phaseIndex, totalPhases)
+	if err != nil {
+		return err
+	}
+
+	*phaseIndex++
+
+	return nil
 }

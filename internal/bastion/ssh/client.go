@@ -19,6 +19,17 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+const (
+	// sshRetryBaseInterval is the initial delay between SSH connection retries.
+	sshRetryBaseInterval = 3 * time.Second
+	// sshRetryMaxInterval is the maximum delay between SSH connection retries.
+	sshRetryMaxInterval = 30 * time.Second
+	// sshRetryBackoffMultiplier is the multiplier for exponential backoff.
+	sshRetryBackoffMultiplier = 1.5
+	// sshpassArgCount is the number of fixed sshpass arguments (before appending ssh args).
+	sshpassArgCount = 3
+)
+
 // validateCommand validates that only safe commands are executed.
 func validateCommand(cmdSlice []string) error {
 	if len(cmdSlice) == 0 {
@@ -69,6 +80,8 @@ func NewClient(config *ConnectionDetails, options *ProvisioningOptions) *Client 
 }
 
 // Connect establishes an SSH connection to the bastion host with retry logic.
+//
+//nolint:funlen // retry loop with multiple connection strategies requires this length
 func (c *Client) Connect(ctx context.Context) error {
 	if c.connected {
 		return nil
@@ -80,10 +93,11 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// Retry configuration
 	maxRetries := 5
-	retryInterval := 3 * time.Second
-	maxRetryInterval := 30 * time.Second
+	retryInterval := sshRetryBaseInterval
+	maxRetryInterval := sshRetryMaxInterval
 
 	var lastErr error
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		// Prepare SSH client configuration
 		sshConfig, err := c.prepareSSHConfig()
@@ -139,7 +153,7 @@ func (c *Client) Connect(ctx context.Context) error {
 				return fmt.Errorf("SSH connection cancelled: %w", ctx.Err())
 			case <-time.After(retryInterval):
 				// Exponential backoff
-				retryInterval = time.Duration(float64(retryInterval) * 1.5)
+				retryInterval = time.Duration(float64(retryInterval) * sshRetryBackoffMultiplier)
 				if retryInterval > maxRetryInterval {
 					retryInterval = maxRetryInterval
 				}
@@ -599,8 +613,8 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 		_, err := exec.LookPath("sshpass")
 		if err == nil {
 			// Use sshpass for password authentication
-			sshpassArgs := []string{"-p", c.config.Password, "ssh"}
-
+			sshpassArgs := make([]string, 0, sshpassArgCount+len(args))
+			sshpassArgs = append(sshpassArgs, "-p", c.config.Password, "ssh")
 			sshpassArgs = append(sshpassArgs, args...)
 
 			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))

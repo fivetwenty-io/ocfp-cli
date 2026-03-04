@@ -13,6 +13,7 @@ import (
 // ErrorType represents different categories of errors.
 type ErrorType string
 
+// ErrorType constants for classifying bastion errors.
 const (
 	ErrorTypeNetwork       ErrorType = "network"
 	ErrorTypePermission    ErrorType = "permission"
@@ -30,8 +31,8 @@ const (
 	maxBackoffDelay = 30 * time.Second
 )
 
-// BastionError represents an error with context and retry information.
-type BastionError struct {
+// Error represents an error with context and retry information.
+type Error struct {
 	Type         ErrorType
 	Phase        string
 	Command      string
@@ -43,12 +44,12 @@ type BastionError struct {
 }
 
 // Error implements the error interface.
-func (be *BastionError) Error() string {
+func (be *Error) Error() string {
 	return fmt.Sprintf("[%s] %s: %s", be.Type, be.Phase, be.Message)
 }
 
 // Unwrap returns the underlying error.
-func (be *BastionError) Unwrap() error {
+func (be *Error) Unwrap() error {
 	return be.Cause
 }
 
@@ -68,14 +69,14 @@ func NewErrorHandler() *ErrorHandler {
 	}
 }
 
-// ClassifyError analyzes an error and returns a BastionError with context.
-func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *BastionError {
+// ClassifyError analyzes an error and returns a Error with context.
+func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Error {
 	if err == nil {
 		return nil
 	}
 
 	errMsg := strings.ToLower(err.Error())
-	bastionErr := &BastionError{
+	bastionErr := &Error{
 		Type:         "",
 		Phase:        phase,
 		Command:      command,
@@ -103,7 +104,7 @@ func (eh *ErrorHandler) ClassifyError(err error, phase, command string) *Bastion
 
 // ExecuteWithRetry executes a function with retry logic.
 func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn func() error) error {
-	var lastErr *BastionError
+	var lastErr *Error
 
 	for attempt := 1; attempt <= eh.maxRetries; attempt++ {
 		err := fn()
@@ -220,7 +221,7 @@ func (rew *RecoverableErrorWrapper) ExecuteTransfer(ctx context.Context, sshClie
 }
 
 // classifyNetworkError checks for network-related errors.
-func (eh *ErrorHandler) classifyNetworkError(errMsg string, bastionErr *BastionError) bool {
+func (eh *ErrorHandler) classifyNetworkError(errMsg string, bastionErr *Error) bool {
 	if !eh.containsAny(errMsg, []string{
 		"connection refused", "network unreachable", "timeout",
 		"dial tcp", "no route to host", "connection timed out",
@@ -242,7 +243,7 @@ func (eh *ErrorHandler) classifyNetworkError(errMsg string, bastionErr *BastionE
 }
 
 // classifyPermissionError checks for permission-related errors.
-func (eh *ErrorHandler) classifyPermissionError(errMsg string, bastionErr *BastionError) bool {
+func (eh *ErrorHandler) classifyPermissionError(errMsg string, bastionErr *Error) bool {
 	if !eh.containsAny(errMsg, []string{
 		"permission denied", "access denied", "operation not permitted",
 		"sudo", "not allowed", "unauthorized", "authentication failed",
@@ -263,7 +264,7 @@ func (eh *ErrorHandler) classifyPermissionError(errMsg string, bastionErr *Basti
 }
 
 // classifyConfigurationError checks for configuration-related errors.
-func (eh *ErrorHandler) classifyConfigurationError(errMsg string, bastionErr *BastionError) bool {
+func (eh *ErrorHandler) classifyConfigurationError(errMsg string, bastionErr *Error) bool {
 	if strings.Contains(errMsg, "command not found") {
 		return false
 	}
@@ -288,7 +289,7 @@ func (eh *ErrorHandler) classifyConfigurationError(errMsg string, bastionErr *Ba
 }
 
 // classifyDependencyError checks for dependency-related errors.
-func (eh *ErrorHandler) classifyDependencyError(errMsg string, bastionErr *BastionError) bool {
+func (eh *ErrorHandler) classifyDependencyError(errMsg string, bastionErr *Error) bool {
 	if !eh.containsAny(errMsg, []string{
 		"command not found", "no such file", "package", "dependency",
 		"module", "library", "install", "apt-get", "snap",
@@ -309,7 +310,7 @@ func (eh *ErrorHandler) classifyDependencyError(errMsg string, bastionErr *Basti
 }
 
 // classifyTimeoutError checks for timeout-related errors.
-func (eh *ErrorHandler) classifyTimeoutError(errMsg string, bastionErr *BastionError) bool {
+func (eh *ErrorHandler) classifyTimeoutError(errMsg string, bastionErr *Error) bool {
 	if !eh.containsAny(errMsg, []string{
 		"timeout", "deadline exceeded", "context canceled",
 		"operation timed out",
@@ -330,7 +331,7 @@ func (eh *ErrorHandler) classifyTimeoutError(errMsg string, bastionErr *BastionE
 }
 
 // classifyUnknownError sets default values for unknown errors.
-func (eh *ErrorHandler) classifyUnknownError(bastionErr *BastionError) {
+func (eh *ErrorHandler) classifyUnknownError(bastionErr *Error) {
 	bastionErr.Type = ErrorTypeUnknown
 	bastionErr.Retryable = true
 	bastionErr.Suggestions = []string{
@@ -356,7 +357,7 @@ func (eh *ErrorHandler) calculateDelay(attempt int) time.Duration {
 }
 
 // logSuggestions logs helpful suggestions for error recovery.
-func (eh *ErrorHandler) logSuggestions(bastionErr *BastionError) {
+func (eh *ErrorHandler) logSuggestions(bastionErr *Error) {
 	if len(bastionErr.Suggestions) == 0 {
 		return
 	}

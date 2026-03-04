@@ -84,54 +84,75 @@ func (gi *GenesisIntegration) tryGenesisCommand(command ...string) []string {
 	return paths
 }
 
-//nolint:gocognit,funlen // Complex path extraction logic requiring many statements
 func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 	if output == "" {
 		return nil
 	}
 
-	var paths []string
-
-	type envEntry struct {
-		Path      string `json:"path"`
-		Directory string `json:"directory"`
-		EnvPath   string `json:"environment_path"`
-		EnvDir    string `json:"environment_dir"`
-		File      string `json:"file"`
-		EnvFile   string `json:"env_file"`
-		Workspace string `json:"workspace"`
+	// Try structured JSON extraction first
+	if paths := gi.extractFromJSON(output); len(paths) > 0 {
+		return uniquePaths(paths)
 	}
 
+	// Fall back to regex-based path extraction
+	return uniquePaths(gi.extractFromRegex(output))
+}
+
+// envEntry represents a single environment entry from genesis JSON output.
+type envEntry struct {
+	Path      string `json:"path"`
+	Directory string `json:"directory"`
+	EnvPath   string `json:"environment_path"`
+	EnvDir    string `json:"environment_dir"`
+	File      string `json:"file"`
+	EnvFile   string `json:"env_file"`
+	Workspace string `json:"workspace"`
+}
+
+// extractFromJSON attempts to parse the output as JSON and extract genesis paths.
+// Returns nil if the output is not valid JSON or contains no environment entries.
+func (gi *GenesisIntegration) extractFromJSON(output string) []string {
 	var jsonPayload struct {
 		Environments []envEntry `json:"environments"`
 	}
 
 	err := json.Unmarshal([]byte(output), &jsonPayload)
-	//nolint:nestif // JSON unmarshaling with nested validation
-	if err == nil {
-		for _, entry := range jsonPayload.Environments {
-			paths = append(paths, gi.collectCandidatePaths(entry.Path, entry.Directory, entry.EnvPath, entry.EnvDir, entry.Workspace)...)
-
-			if entry.File != "" {
-				if normalized := gi.normalizeGenesisPath(entry.File); normalized != "" {
-					paths = append(paths, filepath.Dir(normalized))
-				}
-			}
-
-			if entry.EnvFile != "" {
-				if normalized := gi.normalizeGenesisPath(entry.EnvFile); normalized != "" {
-					paths = append(paths, filepath.Dir(normalized))
-				}
-			}
-		}
+	if err != nil {
+		return nil
 	}
 
-	if len(paths) > 0 {
-		return uniquePaths(paths)
+	var paths []string
+
+	for _, entry := range jsonPayload.Environments {
+		paths = append(paths, gi.collectCandidatePaths(entry.Path, entry.Directory, entry.EnvPath, entry.EnvDir, entry.Workspace)...)
+		paths = append(paths, gi.normalizedFileDir(entry.File)...)
+		paths = append(paths, gi.normalizedFileDir(entry.EnvFile)...)
 	}
 
+	return paths
+}
+
+// normalizedFileDir normalizes a file path and returns its directory as a single-element slice,
+// or nil if the path is empty or cannot be normalized.
+func (gi *GenesisIntegration) normalizedFileDir(filePath string) []string {
+	if filePath == "" {
+		return nil
+	}
+
+	if normalized := gi.normalizeGenesisPath(filePath); normalized != "" {
+		return []string{filepath.Dir(normalized)}
+	}
+
+	return nil
+}
+
+// extractFromRegex uses regex patterns to find absolute and tilde paths in the output,
+// then validates and normalizes them.
+func (gi *GenesisIntegration) extractFromRegex(output string) []string {
 	matches := absolutePathRegex.FindAllString(output, -1)
 	matches = append(matches, tildePathRegex.FindAllString(output, -1)...)
+
+	var paths []string
 
 	for _, match := range matches {
 		normalized := gi.normalizeGenesisPath(match)
@@ -150,18 +171,26 @@ func (gi *GenesisIntegration) extractGenesisPaths(output string) []string {
 			continue
 		}
 
-		switch strings.ToLower(filepath.Ext(normalized)) {
-		case ".yml", ".yaml":
-			dir := filepath.Dir(normalized)
+		paths = append(paths, gi.yamlFileDir(normalized)...)
+	}
 
-			info, statErr := os.Stat(dir)
-			if statErr == nil && info.IsDir() {
-				paths = append(paths, dir)
-			}
+	return paths
+}
+
+// yamlFileDir returns the parent directory of a YAML file path as a single-element slice.
+// Returns nil if the file is not a YAML file or its directory does not exist.
+func (gi *GenesisIntegration) yamlFileDir(normalized string) []string {
+	switch strings.ToLower(filepath.Ext(normalized)) {
+	case ".yml", ".yaml":
+		dir := filepath.Dir(normalized)
+
+		info, statErr := os.Stat(dir)
+		if statErr == nil && info.IsDir() {
+			return []string{dir}
 		}
 	}
 
-	return uniquePaths(paths)
+	return nil
 }
 
 func (gi *GenesisIntegration) collectCandidatePaths(values ...string) []string {

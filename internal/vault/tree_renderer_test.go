@@ -171,7 +171,7 @@ func TestTreeRenderer_StartEndDirectory(t *testing.T) {
 	os.Stdout = w
 
 	renderer := NewTreeRenderer(output.ModeConcise) // No color for easier testing
-	renderer.useUnicode = false                      // Use ASCII for predictable output
+	renderer.useUnicode = false                     // Use ASCII for predictable output
 
 	renderer.StartDirectory("config", false)
 	if len(renderer.indentStack) != 1 {

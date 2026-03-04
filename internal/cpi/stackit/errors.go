@@ -25,19 +25,22 @@ var (
 	ErrNetworkInterfaceNotFound                   = errors.New("network interface not found in any network")
 )
 
-// Dynamic error constructors.
+// ErrCouldNotFindServerAssociatedWithPublicIP returns an error when no server is associated with the given public IP.
 func ErrCouldNotFindServerAssociatedWithPublicIP(ipID string) error {
 	return fmt.Errorf("could not find server associated with public IP %s", ipID) //nolint:err113 // dynamic error with context
 }
 
+// ErrInvalidConfigTypeForStackitProvider returns an error for an unsupported configuration type.
 func ErrInvalidConfigTypeForStackitProvider(config interface{}) error {
 	return fmt.Errorf("invalid config type for STACKIT provider: %T", config) //nolint:err113 // dynamic error with context
 }
 
+// ErrBucketMetadataMissingInResponse returns an error when bucket metadata is absent from the API response.
 func ErrBucketMetadataMissingInResponse(name string) error {
 	return fmt.Errorf("bucket metadata missing in response for %s", name) //nolint:err113 // dynamic error with context
 }
 
+// ErrCredentialsGroupNotFoundAfterCreation returns an error when a newly created credentials group cannot be found.
 func ErrCredentialsGroupNotFoundAfterCreation(displayName string) error {
 	return fmt.Errorf("credentials group %q not found after creation", displayName) //nolint:err113 // dynamic error with context
 }

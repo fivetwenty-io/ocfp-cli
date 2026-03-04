@@ -1,3 +1,4 @@
+// Package deployments resolves deployment modes and paths for bastion provisioning.
 package deployments
 
 import (

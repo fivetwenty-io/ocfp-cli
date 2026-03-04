@@ -919,7 +919,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 }
 
 // CreateCredentialsGroup creates S3 access credentials (not implemented for AWS).
-func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
 	return nil, &cpi.ProviderError{
 		Provider: ProviderName,
 		Code:     "NotImplemented",

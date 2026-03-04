@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,4 +99,77 @@ func TestCreatePreRunHandler_PreservesFlagPriority(t *testing.T) {
 	// Flag should take precedence over env var
 	result := viper.GetString("bloc")
 	require.Equal(t, "flag-value", result, "Flag should take precedence over environment variable")
+}
+
+func TestCreatePreRunHandler_BlocResolutionPriority(t *testing.T) {
+	t.Run("uses state file when flag and env are empty", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+
+		tmpDir := t.TempDir()
+		t.Setenv("OCFP_HOME", tmpDir)
+		os.Unsetenv("OCFP_BLOC")
+
+		// Write state file with a current bloc
+		err := config.SetCurrentBloc("state-bloc", "/path/to/config.yml")
+		require.NoError(t, err)
+
+		flagValue := ""
+		blocName := &flagValue
+
+		lock := &lockInfo{}
+		handler := createPreRunHandler(blocName, lock)
+
+		rootCmd := createRootCommand()
+		handler(rootCmd, []string{})
+
+		assert.Equal(t, "state-bloc", viper.GetString("bloc"))
+	})
+
+	t.Run("env var takes precedence over state file", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+
+		tmpDir := t.TempDir()
+		t.Setenv("OCFP_HOME", tmpDir)
+		t.Setenv("OCFP_BLOC", "env-bloc")
+
+		// Write state file with a different bloc
+		err := config.SetCurrentBloc("state-bloc", "/path/to/config.yml")
+		require.NoError(t, err)
+
+		flagValue := ""
+		blocName := &flagValue
+
+		lock := &lockInfo{}
+		handler := createPreRunHandler(blocName, lock)
+
+		rootCmd := createRootCommand()
+		handler(rootCmd, []string{})
+
+		assert.Equal(t, "env-bloc", viper.GetString("bloc"))
+	})
+
+	t.Run("flag takes precedence over state file and env", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+
+		tmpDir := t.TempDir()
+		t.Setenv("OCFP_HOME", tmpDir)
+		t.Setenv("OCFP_BLOC", "env-bloc")
+
+		err := config.SetCurrentBloc("state-bloc", "/path/to/config.yml")
+		require.NoError(t, err)
+
+		flagValue := "flag-bloc"
+		blocName := &flagValue
+
+		lock := &lockInfo{}
+		handler := createPreRunHandler(blocName, lock)
+
+		rootCmd := createRootCommand()
+		handler(rootCmd, []string{})
+
+		assert.Equal(t, "flag-bloc", viper.GetString("bloc"))
+	})
 }

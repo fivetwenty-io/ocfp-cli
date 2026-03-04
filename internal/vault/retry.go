@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	// Vault retry defaults.
-	VaultMaxAttempts   = 3
-	VaultMaxDelaySec   = 30
+	// VaultMaxAttempts is the maximum number of retry attempts for vault operations.
+	VaultMaxAttempts = 3
+	// VaultMaxDelaySec is the maximum delay in seconds between retry attempts.
+	VaultMaxDelaySec = 30
+	// VaultBackoffFactor is the exponential backoff multiplier for retry delays.
 	VaultBackoffFactor = 2.0
 )
 
@@ -128,7 +130,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 		if !IsRetryable(err) {
 			log.Debugw("Error not retryable, giving up", "error", err, "attempt", attempt)
 
-			return &VaultError{
+			return &OperationError{
 				Operation: "retry",
 				Path:      "",
 				Key:       "",
@@ -144,7 +146,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 		}
 	}
 
-	return &VaultError{
+	return &OperationError{
 		Operation: "retry",
 		Path:      "",
 		Key:       "",
@@ -167,8 +169,8 @@ func calculateDelay(attempt int, config *RetryConfig) time.Duration {
 	return delay
 }
 
-// VaultError represents a vault-specific error with context.
-type VaultError struct {
+// OperationError represents a vault-specific error with context.
+type OperationError struct {
 	Operation string
 	Path      string
 	Key       string
@@ -176,9 +178,9 @@ type VaultError struct {
 	Retryable bool
 }
 
-// NewVaultError creates a new VaultError.
-func NewVaultError(operation, path, key string, err error) *VaultError {
-	return &VaultError{
+// NewOperationError creates a new OperationError.
+func NewOperationError(operation, path, key string, err error) *OperationError {
+	return &OperationError{
 		Operation: operation,
 		Path:      path,
 		Key:       key,
@@ -187,7 +189,7 @@ func NewVaultError(operation, path, key string, err error) *VaultError {
 	}
 }
 
-func (ve *VaultError) Error() string {
+func (ve *OperationError) Error() string {
 	if ve.Path != "" && ve.Key != "" {
 		return fmt.Sprintf("vault %s failed at %s:%s: %v", ve.Operation, ve.Path, ve.Key, ve.Err)
 	} else if ve.Path != "" {
@@ -197,11 +199,12 @@ func (ve *VaultError) Error() string {
 	return fmt.Sprintf("vault %s failed: %v", ve.Operation, ve.Err)
 }
 
-func (ve *VaultError) Unwrap() error {
+func (ve *OperationError) Unwrap() error {
 	return ve.Err
 }
 
-func (ve *VaultError) IsRetryable() bool {
+// IsRetryable reports whether the vault error is eligible for retry.
+func (ve *OperationError) IsRetryable() bool {
 	return ve.Retryable
 }
 
@@ -210,7 +213,7 @@ func RetryableVaultOperation(operation, path, key string, fn func() error) error
 	return WithRetry(func() error {
 		err := fn()
 		if err != nil {
-			return NewVaultError(operation, path, key, err)
+			return NewOperationError(operation, path, key, err)
 		}
 
 		return nil

@@ -266,17 +266,17 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	tmpFile = nil // Prevent deferred cleanup
 
 	// Set permissions
-	err = os.Chmod(tmpPath, perm)
+	err = os.Chmod(tmpPath, perm) //nolint:gosec // path from os.CreateTemp is trusted
 	if err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // path from os.CreateTemp is trusted
 
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 
 	// Atomically replace old file with new file
-	err = os.Rename(tmpPath, path)
+	err = os.Rename(tmpPath, path) //nolint:gosec // path components are from trusted config
 	if err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // path from os.CreateTemp is trusted
 
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}

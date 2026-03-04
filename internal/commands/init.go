@@ -20,11 +20,13 @@ import (
 )
 
 const (
-	// Default maximum workers for parallel operations.
+	// DefaultMaxWorkers is the default number of workers for parallel operations.
 	DefaultMaxWorkers = 4
 
-	// File permissions.
-	ManifestFilePerm  os.FileMode = 0600
+	// ManifestFilePerm is the file permission mode for manifest files.
+	ManifestFilePerm os.FileMode = 0600
+
+	// DeploymentDirPerm is the file permission mode for deployment directories.
 	DeploymentDirPerm os.FileMode = 0750
 )
 
@@ -33,6 +35,7 @@ var (
 	validDNSPattern      = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 	validUserPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 
+	// ErrInitCancelled indicates the user cancelled the initialization process.
 	ErrInitCancelled = errors.New("initialization cancelled by user")
 )
 
@@ -144,6 +147,7 @@ func (f *initFlags) getComponent(args []string) string {
 	return strings.ToLower(args[0])
 }
 
+// ErrMutuallyExclusiveFlags indicates that mutually exclusive command flags were specified together.
 var ErrMutuallyExclusiveFlags = errors.New("mutually exclusive flags")
 
 // validateModeFlags validates that mutually exclusive mode flags are not used together.
@@ -374,11 +378,11 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	// Check for deployment directories
 	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
 
-	_, err = os.Stat(deploymentDir)
+	_, err = os.Stat(deploymentDir) //nolint:gosec // path components are from trusted config
 	if os.IsNotExist(err) {
 		log.Infow("Creating deployment directory", "path", deploymentDir)
 
-		err = os.MkdirAll(deploymentDir, DeploymentDirPerm)
+		err = os.MkdirAll(deploymentDir, DeploymentDirPerm) //nolint:gosec // path components are from trusted config
 		if err != nil {
 			return fmt.Errorf("failed to create deployment directory: %w", err)
 		}
@@ -511,7 +515,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	manifestPath := filepath.Join(deploymentDir, "bosh.yml")
 
 	// Check if manifest exists
-	_, err := os.Stat(manifestPath)
+	_, err := os.Stat(manifestPath) //nolint:gosec // path components are from trusted config
 	if os.IsNotExist(err) {
 		log.Infow("Creating BOSH manifest", "path", manifestPath)
 
@@ -534,7 +538,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid deployment directory: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bosh", "create-env", manifestPath, // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "bosh", "create-env", manifestPath, //nolint:gosec // command args are validated above
 		"--state", filepath.Join(deploymentDir, "state.json"),
 		"--vars-store", filepath.Join(deploymentDir, "creds.yml"))
 
@@ -595,7 +599,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "bosh", "-d", "cf", "deploy", manifestPath, // #nosec G204 - input validated above
+	cmd = exec.CommandContext(ctx, "bosh", "-d", "cf", "deploy", manifestPath, //nolint:gosec // command args are validated above
 		"-o", filepath.Join(deploymentDir, "operations", "scale.yml"),
 		"-o", filepath.Join(deploymentDir, "operations", "use-postgres.yml"))
 
@@ -659,7 +663,7 @@ instance_groups:
     static_ips: [10.0.0.6]
 `, cfg.Bastion.Flavor, cfg.Network.CIDR)
 
-	err := os.WriteFile(path, []byte(manifest), ManifestFilePerm)
+	err := os.WriteFile(path, []byte(manifest), ManifestFilePerm) //nolint:gosec // path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write manifest file: %w", err)
 	}
@@ -679,7 +683,7 @@ export BOSH_CLIENT_SECRET=$(bosh int %s/creds.yml --path /admin_password)
 export BOSH_CA_CERT=$(bosh int %s/creds.yml --path /director_ssl/ca)
 `, cfg.Name, deploymentDir, deploymentDir)
 
-	err := os.WriteFile(envFile, []byte(envContent), ManifestFilePerm)
+	err := os.WriteFile(envFile, []byte(envContent), ManifestFilePerm) //nolint:gosec // path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write environment file: %w", err)
 	}

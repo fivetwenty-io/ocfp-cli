@@ -80,7 +80,7 @@ func makeFakeFlavors() []*cpi.Flavor {
 	}
 }
 
-func (f *fakeComputeEnhanced) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) CreateInstance(_ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
 	if f.shouldFailNext == "CreateInstance" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateInstance error")
@@ -110,7 +110,7 @@ func (f *fakeComputeEnhanced) CreateInstance(ctx context.Context, req *cpi.Insta
 	return instance, nil
 }
 
-func (f *fakeComputeEnhanced) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) GetInstance(_ctx context.Context, id string) (*cpi.Instance, error) {
 	if inst, ok := f.instances[id]; ok {
 		return inst, nil
 	}
@@ -118,7 +118,7 @@ func (f *fakeComputeEnhanced) GetInstance(ctx context.Context, id string) (*cpi.
 	return nil, fmt.Errorf("instance not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) ListInstances(_ctx context.Context, _filters map[string]string) ([]*cpi.Instance, error) {
 	var instances []*cpi.Instance
 	for _, inst := range f.instances {
 		instances = append(instances, inst)
@@ -127,15 +127,15 @@ func (f *fakeComputeEnhanced) ListInstances(ctx context.Context, filters map[str
 	return instances, nil
 }
 
-func (f *fakeComputeEnhanced) StartInstance(ctx context.Context, id string) error  { return nil }
-func (f *fakeComputeEnhanced) StopInstance(ctx context.Context, id string) error   { return nil }
-func (f *fakeComputeEnhanced) RebootInstance(ctx context.Context, id string) error { return nil }
-func (f *fakeComputeEnhanced) DeleteInstance(ctx context.Context, id string) error {
+func (f *fakeComputeEnhanced) StartInstance(_ctx context.Context, _id string) error  { return nil }
+func (f *fakeComputeEnhanced) StopInstance(_ctx context.Context, _id string) error   { return nil }
+func (f *fakeComputeEnhanced) RebootInstance(_ctx context.Context, _id string) error { return nil }
+func (f *fakeComputeEnhanced) DeleteInstance(_ctx context.Context, id string) error {
 	delete(f.instances, id)
 	return nil
 }
 
-func (f *fakeComputeEnhanced) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) CreateKeyPair(_ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
 	if f.shouldFailNext == "CreateKeyPair" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateKeyPair error")
@@ -155,7 +155,7 @@ func (f *fakeComputeEnhanced) CreateKeyPair(ctx context.Context, req *cpi.KeyPai
 	return keypair, nil
 }
 
-func (f *fakeComputeEnhanced) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
+func (f *fakeComputeEnhanced) ImportKeyPair(_ctx context.Context, name string, publicKey string) error {
 	f.keypairs[name] = &cpi.KeyPair{
 		ID:          "kp-import-" + name,
 		Name:        name,
@@ -167,7 +167,7 @@ func (f *fakeComputeEnhanced) ImportKeyPair(ctx context.Context, name string, pu
 	return nil
 }
 
-func (f *fakeComputeEnhanced) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) GetKeyPair(_ctx context.Context, name string) (*cpi.KeyPair, error) {
 	if kp, ok := f.keypairs[name]; ok {
 		return kp, nil
 	}
@@ -175,7 +175,7 @@ func (f *fakeComputeEnhanced) GetKeyPair(ctx context.Context, name string) (*cpi
 	return nil, fmt.Errorf("keypair not found: %s", name)
 }
 
-func (f *fakeComputeEnhanced) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
+func (f *fakeComputeEnhanced) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
 	var keypairs []*cpi.KeyPair
 	for _, kp := range f.keypairs {
 		keypairs = append(keypairs, kp)
@@ -184,12 +184,12 @@ func (f *fakeComputeEnhanced) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair,
 	return keypairs, nil
 }
 
-func (f *fakeComputeEnhanced) DeleteKeyPair(ctx context.Context, name string) error {
+func (f *fakeComputeEnhanced) DeleteKeyPair(_ctx context.Context, name string) error {
 	delete(f.keypairs, name)
 	return nil
 }
 
-func (f *fakeComputeEnhanced) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
+func (f *fakeComputeEnhanced) ListImages(_ctx context.Context, _filters map[string]string) ([]*cpi.Image, error) {
 	if f.shouldFailNext == "ListImages" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake ListImages error")
@@ -198,7 +198,7 @@ func (f *fakeComputeEnhanced) ListImages(ctx context.Context, filters map[string
 	return f.images, nil
 }
 
-func (f *fakeComputeEnhanced) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
+func (f *fakeComputeEnhanced) GetImage(_ctx context.Context, id string) (*cpi.Image, error) {
 	for _, img := range f.images {
 		if img.ID == id {
 			return img, nil
@@ -208,7 +208,7 @@ func (f *fakeComputeEnhanced) GetImage(ctx context.Context, id string) (*cpi.Ima
 	return nil, fmt.Errorf("image not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
+func (f *fakeComputeEnhanced) ListFlavors(_ctx context.Context) ([]*cpi.Flavor, error) {
 	if f.shouldFailNext == "ListFlavors" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake ListFlavors error")
@@ -217,7 +217,7 @@ func (f *fakeComputeEnhanced) ListFlavors(ctx context.Context) ([]*cpi.Flavor, e
 	return f.flavors, nil
 }
 
-func (f *fakeComputeEnhanced) GetFlavor(ctx context.Context, id string) (*cpi.Flavor, error) {
+func (f *fakeComputeEnhanced) GetFlavor(_ctx context.Context, id string) (*cpi.Flavor, error) {
 	for _, flavor := range f.flavors {
 		if flavor.ID == id || flavor.Name == id {
 			return flavor, nil
@@ -227,7 +227,7 @@ func (f *fakeComputeEnhanced) GetFlavor(ctx context.Context, id string) (*cpi.Fl
 	return nil, fmt.Errorf("flavor not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) CreateVolume(_ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	if f.shouldFailNext == "CreateVolume" {
 		f.shouldFailNext = ""
 		return nil, fmt.Errorf("fake CreateVolume error")
@@ -244,15 +244,15 @@ func (f *fakeComputeEnhanced) CreateVolume(ctx context.Context, req *cpi.VolumeR
 	}, nil
 }
 
-func (f *fakeComputeEnhanced) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) GetVolume(_ctx context.Context, _id string) (*cpi.Volume, error) {
 	return nil, nil
 }
 
-func (f *fakeComputeEnhanced) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
+func (f *fakeComputeEnhanced) ListVolumes(_ctx context.Context, _filters map[string]string) ([]*cpi.Volume, error) {
 	return nil, nil
 }
 
-func (f *fakeComputeEnhanced) DeleteVolume(ctx context.Context, id string) error { return nil }
+func (f *fakeComputeEnhanced) DeleteVolume(_ctx context.Context, _id string) error { return nil }
 
 // ==============================================================================
 // Helper Functions for Test Setup
@@ -373,7 +373,7 @@ func TestCreateBastion_Success(t *testing.T) {
 	}
 
 	// Verify state was saved
-	bastion, err := manager.StateManager().GetResource("instance", "prod-bastion")
+	bastion, err := manager.StateManager().GetResource(state.ResourceTypeInstance, "prod-bastion")
 	if err != nil || bastion == nil {
 		t.Fatal("Bastion not found in state")
 	}
@@ -659,7 +659,7 @@ func TestCreateBastion_InstanceCreationFails(t *testing.T) {
 	}
 
 	// Verify bastion was NOT saved to state
-	bastion, _ := manager.StateManager().GetResource("instance", "prod-bastion")
+	bastion, _ := manager.StateManager().GetResource(state.ResourceTypeInstance, "prod-bastion")
 	if bastion != nil {
 		t.Error("Bastion should not be in state after creation failure")
 	}
@@ -704,6 +704,156 @@ func TestCreateBastion_DependenciesSet(t *testing.T) {
 		if !found {
 			t.Errorf("Expected dependency %s not found in %v", expectedDep, deps)
 		}
+	}
+}
+
+// ==============================================================================
+// Test: getAvailabilityZone
+// ==============================================================================
+
+func TestGetAvailabilityZone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		azs      map[string]config.AvailabilityZone
+		region   string
+		provider string
+		index    int
+		want     string
+	}{
+		{
+			name: "AWS config AZs index 0",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region:   "us-east-1",
+			provider: "aws",
+			index:    0,
+			want:     "us-east-1a",
+		},
+		{
+			name: "AWS config AZs index 1",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region:   "us-east-1",
+			provider: "aws",
+			index:    1,
+			want:     "us-east-1b",
+		},
+		{
+			name: "AWS config AZs index 2",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+				"us-east-1b": {},
+				"us-east-1c": {},
+			},
+			region:   "us-east-1",
+			provider: "aws",
+			index:    2,
+			want:     "us-east-1c",
+		},
+		{
+			name:     "STACKIT fallback no AZs index 0",
+			azs:      nil,
+			region:   "eu01",
+			provider: "stackit",
+			index:    0,
+			want:     "eu01-1",
+		},
+		{
+			name:     "STACKIT fallback no AZs index 2",
+			azs:      nil,
+			region:   "eu01",
+			provider: "stackit",
+			index:    2,
+			want:     "eu01-3",
+		},
+		{
+			name: "AWS index out of range falls back to AWS format",
+			azs: map[string]config.AvailabilityZone{
+				"us-east-1a": {},
+			},
+			region:   "us-east-1",
+			provider: "aws",
+			index:    3,
+			want:     "us-east-1d",
+		},
+		{
+			name:     "empty region defaults to eu01 with STACKIT format",
+			azs:      nil,
+			region:   "",
+			provider: "stackit",
+			index:    0,
+			want:     "eu01-1",
+		},
+		{
+			name:     "empty AZs map falls back to STACKIT format",
+			azs:      map[string]config.AvailabilityZone{},
+			region:   "eu01",
+			provider: "stackit",
+			index:    1,
+			want:     "eu01-2",
+		},
+		{
+			name:     "AWS fallback no AZs produces letter suffix",
+			azs:      nil,
+			region:   "us-west-2",
+			provider: "aws",
+			index:    0,
+			want:     "us-west-2a",
+		},
+		{
+			name:     "GCP fallback no AZs produces letter suffix",
+			azs:      nil,
+			region:   "us-central1",
+			provider: "gcp",
+			index:    1,
+			want:     "us-central1b",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := t.TempDir()
+			sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = sm.Load("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := &config.Config{
+				Name:   "test",
+				Region: tt.region,
+				AZs:    tt.azs,
+			}
+
+			fakeNetwork := &fakeNet{}
+			fakeCompute := newFakeComputeEnhanced()
+			fakeProvider := &fakeProv{n: fakeNetwork, c: fakeCompute}
+
+			manager := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
+				BlocName: "test",
+				Provider: tt.provider,
+				Region:   tt.region,
+			})
+
+			got := manager.GetAvailabilityZone(tt.index)
+			if got != tt.want {
+				t.Errorf("getAvailabilityZone(%d) = %q, want %q", tt.index, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -768,14 +918,9 @@ func TestCreateBastion_AvailabilityZoneDefault(t *testing.T) {
 func TestCreateKeyPair_Success_AWS(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME for SSH key storage
-	originalHome := os.Getenv("HOME")
+	// Setup with temporary OCFP_HOME for SSH key storage
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	manager, fakeComp, _, _ := setupComputeTest(t, "aws")
 	ctx := context.Background()
@@ -788,7 +933,7 @@ func TestCreateKeyPair_Success_AWS(t *testing.T) {
 	keypairName := "prod-keypair"
 
 	// First verify no keypair exists in state
-	existing, _ := manager.StateManager().GetResource("keypair", keypairName)
+	existing, _ := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existing != nil {
 		t.Fatal("Keypair should not exist in state initially")
 	}
@@ -825,14 +970,9 @@ func TestCreateKeyPair_Success_AWS(t *testing.T) {
 func TestCreateKeyPair_Success_STACKIT(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME
-	originalHome := os.Getenv("HOME")
+	// Setup with temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	_, fakeComp, _, _ := setupComputeTest(t, "stackit")
 	ctx := context.Background()
@@ -892,7 +1032,7 @@ func TestCreateKeyPair_AlreadyExistsInState(t *testing.T) {
 
 	// Verify no CreateKeyPair call would be made (idempotency)
 	// The createKeyPair function should skip creation if already in state
-	existing, _ := manager.StateManager().GetResource("keypair", keypairName)
+	existing, _ := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if existing == nil {
 		t.Fatal("Keypair should exist in state")
 	}
@@ -910,14 +1050,9 @@ func TestCreateKeyPair_AlreadyExistsInState(t *testing.T) {
 func TestCreateKeyPair_DuplicateInAWS_NoLocalKey(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with clean temporary HOME
+	// Setup with clean temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	_, fakeComp, _, _ := setupComputeTest(t, "aws")
 	ctx := context.Background()
@@ -939,7 +1074,7 @@ func TestCreateKeyPair_DuplicateInAWS_NoLocalKey(t *testing.T) {
 	}
 
 	// Verify no local key exists
-	keyDir := filepath.Join(tmpHome, ".ocfp", "prod", "ssh")
+	keyDir := filepath.Join(tmpHome, "prod", "ssh")
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	if _, err := os.Stat(keyFile); err == nil {
 		t.Error("Local key should not exist")
@@ -1045,7 +1180,7 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 	_ = manager.StateManager().SetOutput("keypair_fingerprint", keypair.Fingerprint)
 
 	// Verify resource was saved
-	saved, err := manager.StateManager().GetResource("keypair", keypairName)
+	saved, err := manager.StateManager().GetResource(state.ResourceTypeKeyPair, keypairName)
 	if err != nil || saved == nil {
 		t.Fatal("Keypair not found in state")
 	}
@@ -1054,8 +1189,8 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 		t.Errorf("Saved keypair ID = %v, want %v", saved.ID, keypair.ID)
 	}
 
-	if saved.Type != "keypair" {
-		t.Errorf("Saved resource type = %v, want keypair", saved.Type)
+	if saved.Type != state.ResourceTypeKeyPair {
+		t.Errorf("Saved resource type = %v, want %v", saved.Type, state.ResourceTypeKeyPair)
 	}
 
 	// Verify properties
@@ -1096,14 +1231,9 @@ func TestCreateKeyPair_StatePersistence(t *testing.T) {
 func TestCreateKeyPair_PrivateKeySaved(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 
-	// Setup with temporary HOME
+	// Setup with temporary OCFP_HOME
 	tmpHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpHome)
-
-	defer func() {
-		_ = os.Setenv("HOME", originalHome)
-	}()
+	t.Setenv("OCFP_HOME", tmpHome)
 
 	manager, _, _, _ := setupComputeTest(t, "aws")
 
@@ -1111,7 +1241,7 @@ func TestCreateKeyPair_PrivateKeySaved(t *testing.T) {
 	privateKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST_PRIVATE_KEY_CONTENT\n-----END OPENSSH PRIVATE KEY-----"
 
 	// Manually create the key directory and save the key
-	keyDir := filepath.Join(tmpHome, ".ocfp", "prod", "ssh")
+	keyDir := filepath.Join(tmpHome, "prod", "ssh")
 	err := os.MkdirAll(keyDir, 0o700)
 	if err != nil {
 		t.Fatalf("Failed to create key directory: %v", err)

@@ -11,7 +11,8 @@ import (
 )
 
 func TestSSHCommand(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() because NewSSHCmd() binds flags to global viper
+
 	// Create test config directory
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "test-config.yml")
@@ -44,16 +45,12 @@ environments:
 
 	// Test SSH command creation
 	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "ssh [target] [command...]", cmd.Use)
 	})
 
 	t.Run("ValidateArgs", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 
 		// Test with no args (should be OK, uses default)
@@ -66,8 +63,6 @@ environments:
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSSHCmd()
 
 		// Test flag existence
@@ -78,18 +73,15 @@ environments:
 }
 
 func TestSCPCommand(t *testing.T) {
-	t.Parallel()
-	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
+	// Cannot use t.Parallel() because NewSCPCmd() binds flags to global viper
 
+	t.Run("CreateCommand", func(t *testing.T) {
 		cmd := commands.NewSCPCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "scp <source> <destination>", cmd.Use)
 	})
 
 	t.Run("ValidateArgs", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSCPCmd()
 
 		// Test with no args (should fail)
@@ -106,8 +98,6 @@ func TestSCPCommand(t *testing.T) {
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewSCPCmd()
 
 		// Test flag existence
@@ -119,18 +109,15 @@ func TestSCPCommand(t *testing.T) {
 }
 
 func TestRsyncCommand(t *testing.T) {
-	t.Parallel()
-	t.Run("CreateCommand", func(t *testing.T) {
-		t.Parallel()
+	// Cannot use t.Parallel() because NewRSyncCmd() binds flags to global viper
 
+	t.Run("CreateCommand", func(t *testing.T) {
 		cmd := commands.NewRSyncCmd()
 		assert.NotNil(t, cmd)
 		assert.Equal(t, "rsync <source> <destination>", cmd.Use)
 	})
 
 	t.Run("ValidateArgs", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewRSyncCmd()
 
 		// Test with no args (should fail)
@@ -147,8 +134,6 @@ func TestRsyncCommand(t *testing.T) {
 	})
 
 	t.Run("FlagParsing", func(t *testing.T) {
-		t.Parallel()
-
 		cmd := commands.NewRSyncCmd()
 
 		// Test flag existence

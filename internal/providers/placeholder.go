@@ -15,7 +15,7 @@ type PlaceholderProvider struct {
 }
 
 // NewPlaceholderProvider creates a new placeholder provider.
-func NewPlaceholderProvider(providerName string, cfg *config.Config, safe interface{}, blocName string) *PlaceholderProvider {
+func NewPlaceholderProvider(providerName string, cfg *config.Config, _safe interface{}, blocName string) *PlaceholderProvider {
 	return &PlaceholderProvider{
 		BaseVaultProvider: NewBaseVaultProvider(cfg, blocName),
 		providerName:      providerName,
@@ -29,63 +29,63 @@ func (p *PlaceholderProvider) GetProviderName() string {
 }
 
 // Configure logs not implemented message.
-func (p *PlaceholderProvider) Configure(reporter ProgressReporter) error {
+func (p *PlaceholderProvider) Configure(_reporter ProgressReporter) error {
 	p.logger.Warnw("Provider vault configuration not implemented", "provider", p.providerName)
 
 	return p.NotImplementedError("Configure")
 }
 
 // ConfigurePublicIPs logs not implemented message.
-func (p *PlaceholderProvider) ConfigurePublicIPs(reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigurePublicIPs(_reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider public IPs configuration not implemented", "provider", p.providerName)
 
 	return p.NotImplementedError("ConfigurePublicIPs")
 }
 
 // SaveConfigToVault logs not implemented message.
-func (p *PlaceholderProvider) SaveConfigToVault(reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) SaveConfigToVault(_reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider save config not implemented", "provider", p.providerName)
 
 	return p.NotImplementedError("SaveConfigToVault")
 }
 
 // ConfigureIAAS logs not implemented message.
-func (p *PlaceholderProvider) ConfigureIAAS(envPath, envType string, reporter ProgressReporter, phaseNum *int, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureIAAS(_envPath, envType string, _reporter ProgressReporter, _phaseNum *int, _totalPhases int) error {
 	p.logger.Warnw("Provider IaaS configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureIAAS")
 }
 
 // ConfigureBlobstores logs not implemented message.
-func (p *PlaceholderProvider) ConfigureBlobstores(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureBlobstores(_envPath, envType string, _reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider blobstores configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureBlobstores")
 }
 
 // ConfigureDatabases logs not implemented message.
-func (p *PlaceholderProvider) ConfigureDatabases(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureDatabases(_envPath, envType string, _reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider databases configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureDatabases")
 }
 
 // ConfigureLoadBalancers logs not implemented message.
-func (p *PlaceholderProvider) ConfigureLoadBalancers(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureLoadBalancers(_envPath, envType string, _reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider load balancers configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureLoadBalancers")
 }
 
 // ConfigureFQDNs logs not implemented message.
-func (p *PlaceholderProvider) ConfigureFQDNs(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureFQDNs(_envPath, envType string, _reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider FQDNs configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureFQDNs")
 }
 
 // ConfigureCertificates logs not implemented message.
-func (p *PlaceholderProvider) ConfigureCertificates(envPath, envType string, reporter ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PlaceholderProvider) ConfigureCertificates(_envPath, envType string, _reporter ProgressReporter, _phaseNum, _totalPhases int) error {
 	p.logger.Warnw("Provider certificates configuration not implemented", "provider", p.providerName, "env_type", envType)
 
 	return p.NotImplementedError("ConfigureCertificates")

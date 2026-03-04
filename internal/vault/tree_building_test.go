@@ -7,9 +7,9 @@ import (
 func TestBuildVaultTree_EmptyInput(t *testing.T) {
 	m := &Manager{}
 
-	tree, err := m.buildVaultTree([]string{})
+	tree, err := m.buildTree([]string{})
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	if tree == nil {
@@ -36,9 +36,9 @@ func TestBuildVaultTree_SinglePath(t *testing.T) {
 		"config/bosh:admin_password",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Verify root
@@ -89,9 +89,9 @@ func TestBuildVaultTree_NestedPaths(t *testing.T) {
 		"config/scf/mgmt/bosh/blobstores/bosh:host",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Navigate to certs node
@@ -157,9 +157,9 @@ func TestBuildVaultTree_MultipleKeysAtSamePath(t *testing.T) {
 		"database/postgres:port",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	database := tree.Root.Children["database"]
@@ -206,9 +206,9 @@ func TestBuildVaultTree_RootLevelKeys(t *testing.T) {
 		"config/nested:nested_key",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Root level keys should be in root node
@@ -237,14 +237,14 @@ func TestBuildVaultTree_MalformedEntries(t *testing.T) {
 
 	pathsWithKeys := []string{
 		"config/valid:key1",
-		"malformed_no_colon",      // Should be skipped
+		"malformed_no_colon", // Should be skipped
 		"config/valid:key2",
-		":multiple:colons:here",   // Takes first two parts
+		":multiple:colons:here", // Takes first two parts
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Verify valid entries were processed
@@ -267,14 +267,14 @@ func TestBuildVaultTree_EmptySegments(t *testing.T) {
 	m := &Manager{}
 
 	pathsWithKeys := []string{
-		"config//double/slash:key1",   // Double slash should be handled
-		"/leading/slash:key2",          // Leading slash
-		"trailing/slash/:key3",         // Trailing slash before colon
+		"config//double/slash:key1", // Double slash should be handled
+		"/leading/slash:key2",       // Leading slash
+		"trailing/slash/:key3",      // Trailing slash before colon
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Tree should still be built, empty segments should be skipped
@@ -295,9 +295,9 @@ func TestBuildVaultTree_DeepNesting(t *testing.T) {
 		"level1/level2/level3/level4/level5/level6:deep_key",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Navigate through all levels
@@ -335,9 +335,9 @@ func TestBuildVaultTree_OverlappingPaths(t *testing.T) {
 		"a:key3",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Verify 'a' has key3
@@ -376,9 +376,9 @@ func TestBuildVaultTree_ChildrenMapInitialization(t *testing.T) {
 		"path2:key2",
 	}
 
-	tree, err := m.buildVaultTree(pathsWithKeys)
+	tree, err := m.buildTree(pathsWithKeys)
 	if err != nil {
-		t.Fatalf("buildVaultTree failed: %v", err)
+		t.Fatalf("buildTree failed: %v", err)
 	}
 
 	// Verify all nodes have initialized maps

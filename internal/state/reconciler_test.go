@@ -18,23 +18,23 @@ type mockProvider struct {
 	region string
 }
 
-func (m *mockProvider) Name() string                                             { return m.name }
-func (m *mockProvider) Region() string                                           { return m.region }
-func (m *mockProvider) Authenticate(ctx context.Context) error                   { return nil }
-func (m *mockProvider) ValidateCredentials(ctx context.Context) error            { return nil }
-func (m *mockProvider) NetworkManager() cpi.NetworkManager                       { return nil }
-func (m *mockProvider) ComputeManager() cpi.ComputeManager                       { return nil }
-func (m *mockProvider) StorageManager() cpi.StorageManager                       { return nil }
-func (m *mockProvider) SecurityManager() cpi.SecurityManager                     { return nil }
-func (m *mockProvider) LoadBalancerManager() cpi.LoadBalancerManager             { return nil }
-func (m *mockProvider) Network() cpi.NetworkManager                              { return nil }
-func (m *mockProvider) Compute() cpi.ComputeManager                              { return nil }
-func (m *mockProvider) Storage() cpi.StorageManager                              { return nil }
-func (m *mockProvider) Security() cpi.SecurityManager                            { return nil }
-func (m *mockProvider) LoadBalancer() cpi.LoadBalancerManager                    { return nil }
-func (m *mockProvider) SupportsStorage() bool                                    { return true }
-func (m *mockProvider) Initialize(ctx context.Context, config interface{}) error { return nil }
-func (m *mockProvider) Cleanup(ctx context.Context) error                        { return nil }
+func (m *mockProvider) Name() string                                               { return m.name }
+func (m *mockProvider) Region() string                                             { return m.region }
+func (m *mockProvider) Authenticate(_ctx context.Context) error                    { return nil }
+func (m *mockProvider) ValidateCredentials(_ctx context.Context) error             { return nil }
+func (m *mockProvider) NetworkManager() cpi.NetworkManager                         { return nil }
+func (m *mockProvider) ComputeManager() cpi.ComputeManager                         { return nil }
+func (m *mockProvider) StorageManager() cpi.StorageManager                         { return nil }
+func (m *mockProvider) SecurityManager() cpi.SecurityManager                       { return nil }
+func (m *mockProvider) LoadBalancerManager() cpi.LoadBalancerManager               { return nil }
+func (m *mockProvider) Network() cpi.NetworkManager                                { return nil }
+func (m *mockProvider) Compute() cpi.ComputeManager                                { return nil }
+func (m *mockProvider) Storage() cpi.StorageManager                                { return nil }
+func (m *mockProvider) Security() cpi.SecurityManager                              { return nil }
+func (m *mockProvider) LoadBalancer() cpi.LoadBalancerManager                      { return nil }
+func (m *mockProvider) SupportsStorage() bool                                      { return true }
+func (m *mockProvider) Initialize(_ctx context.Context, _config interface{}) error { return nil }
+func (m *mockProvider) Cleanup(_ctx context.Context) error                         { return nil }
 
 func TestNewReconciler(t *testing.T) {
 	tests := []struct {

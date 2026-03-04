@@ -286,7 +286,7 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, volumeID string) erro
 }
 
 // AttachVolume attaches a volume to an instance.
-func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
+func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID, _device string) error {
 	logger.WithOperation("AttachVolume").Infof("Attaching volume %s to instance %s", volumeID, instanceID)
 
 	cli, err := m.client.getIAASClient()
@@ -419,7 +419,7 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*c
 }
 
 // ListSnapshots lists all snapshots for a volume with optional filters.
-func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
+func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, _filters map[string]string) ([]*cpi.Snapshot, error) {
 	logger.WithOperation("ListSnapshots").Debug("Listing snapshots via SDK")
 
 	cli, err := m.client.getIAASClient()
@@ -559,6 +559,7 @@ func (m *StorageManager) initializeBucketTags(bucket *cpi.Bucket, bucketName str
 	}
 }
 
+// CreateBucket creates a new object storage bucket in STACKIT.
 func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	logger.WithOperation("CreateBucket").Infof("Creating bucket: %s", req.Name)
 
@@ -1062,9 +1063,9 @@ func getNextContinuationToken(listResp *s3.ListObjectsV2Output) *string {
 
 // Delete all object versions if bucket has versioning enabled.
 func deleteAllObjectVersions(ctx context.Context, s3cli *s3.Client, bucket string) error {
-	var keyMarker, versionIdMarker *string
+	var keyMarker, versionIDMarker *string
 	for {
-		listVersionsResp, err := listObjectVersions(ctx, s3cli, bucket, keyMarker, versionIdMarker)
+		listVersionsResp, err := listObjectVersions(ctx, s3cli, bucket, keyMarker, versionIDMarker)
 		if err != nil {
 			return err
 		}
@@ -1080,18 +1081,18 @@ func deleteAllObjectVersions(ctx context.Context, s3cli *s3.Client, bucket strin
 			return err
 		}
 
-		keyMarker, versionIdMarker = getNextVersionMarkers(listVersionsResp)
-		if keyMarker == nil && versionIdMarker == nil {
+		keyMarker, versionIDMarker = getNextVersionMarkers(listVersionsResp)
+		if keyMarker == nil && versionIDMarker == nil {
 			return nil
 		}
 	}
 }
 
-func listObjectVersions(ctx context.Context, s3cli *s3.Client, bucket string, keyMarker, versionIdMarker *string) (*s3.ListObjectVersionsOutput, error) {
+func listObjectVersions(ctx context.Context, s3cli *s3.Client, bucket string, keyMarker, versionIDMarker *string) (*s3.ListObjectVersionsOutput, error) {
 	listVersionsResp, err := s3cli.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 		Bucket:          &bucket,
 		KeyMarker:       keyMarker,
-		VersionIdMarker: versionIdMarker,
+		VersionIdMarker: versionIDMarker,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list object versions in bucket %s: %w", bucket, err)

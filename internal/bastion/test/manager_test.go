@@ -179,14 +179,14 @@ func NewMockSSHClient() *MockSSHClient {
 }
 
 // Connect simulates SSH connection.
-func (m *MockSSHClient) Connect(ctx context.Context) error {
+func (m *MockSSHClient) Connect(_ctx context.Context) error {
 	m.connected = true
 
 	return nil
 }
 
 // ExecuteCommand simulates command execution.
-func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+func (m *MockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.CommandResult, error) {
 	m.commands = append(m.commands, cmd)
 
 	if result, exists := m.commandResults[cmd]; exists {
@@ -204,7 +204,7 @@ func (m *MockSSHClient) ExecuteCommand(ctx context.Context, cmd string) (*ssh.Co
 }
 
 // TransferFile simulates file transfer.
-func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, opts ssh.TransferOptions) error {
+func (m *MockSSHClient) TransferFile(_ctx context.Context, local, remote string, _opts ssh.TransferOptions) error {
 	transferKey := fmt.Sprintf("%s->%s", local, remote)
 
 	if err, exists := m.transferErrors[transferKey]; exists {
@@ -215,7 +215,7 @@ func (m *MockSSHClient) TransferFile(ctx context.Context, local, remote string, 
 }
 
 // CreateTunnel simulates tunnel creation.
-func (m *MockSSHClient) CreateTunnel(ctx context.Context, localPort, remotePort int) error {
+func (m *MockSSHClient) CreateTunnel(_ctx context.Context, _localPort, _remotePort int) error {
 	return nil
 }
 
@@ -255,22 +255,14 @@ func containsAny(text string, substrings []string) bool {
 }
 
 // setupTestEnvironment creates a test environment.
+// OCFP_HOME is set in TestMain for the whole package to support
+// tests that use t.Parallel(). This function returns the OCFP_HOME
+// directory for tests that need it.
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	t.Helper()
-	// Create temporary directory for test files
-	tempDir := t.TempDir()
 
-	// Set HOME environment variable for tests
-	prevHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", tempDir); err != nil {
-		t.Fatalf("failed to set HOME for test: %v", err)
-	}
+	ocfpHome := os.Getenv("OCFP_HOME")
+	cleanup := func() {}
 
-	cleanup := func() {
-		_ = os.Setenv("HOME", prevHome)
-	}
-
-	t.Cleanup(cleanup)
-
-	return tempDir, cleanup
+	return ocfpHome, cleanup
 }

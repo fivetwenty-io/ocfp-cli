@@ -56,6 +56,31 @@ var (
 	ErrNotFound = errors.New("resource not found")
 	// ErrNotImplemented indicates functionality not yet implemented.
 	ErrNotImplemented = errors.New("not implemented")
+
+	// ErrResourceGroupNotCreatable indicates resource group does not exist and cannot be created.
+	ErrResourceGroupNotCreatable = errors.New("resource group does not exist and CreateResourceGroup is false")
+	// ErrInvalidResourceIDFormat indicates an invalid Azure resource ID format.
+	ErrInvalidResourceIDFormat = errors.New("invalid Azure resource ID format")
+	// ErrNameTooShort indicates a name is shorter than the minimum length.
+	ErrNameTooShort = errors.New("name too short")
+	// ErrNameTooLong indicates a name exceeds the maximum length.
+	ErrNameTooLong = errors.New("name too long")
+	// ErrNameMustStartAlphanumeric indicates a name must start with an alphanumeric character.
+	ErrNameMustStartAlphanumeric = errors.New("name must start with an alphanumeric character")
+	// ErrNameMustEndAlphanumeric indicates a name must end with an alphanumeric character.
+	ErrNameMustEndAlphanumeric = errors.New("name must end with an alphanumeric character")
+	// ErrSubnetIDRequired indicates a subnet ID is required for internal load balancer.
+	ErrSubnetIDRequired = errors.New("subnet ID required for internal load balancer")
+	// ErrLoadBalancerNoProbes indicates a load balancer has no probes.
+	ErrLoadBalancerNoProbes = errors.New("load balancer has no probes")
+	// ErrInvalidSubnetIDFormat indicates an invalid subnet ID format.
+	ErrInvalidSubnetIDFormat = errors.New("invalid subnet ID format")
+	// ErrVMNoStorageProfile indicates a VM has no storage profile.
+	ErrVMNoStorageProfile = errors.New("VM has no storage profile")
+	// ErrVMNoDataDisks indicates a VM has no data disks.
+	ErrVMNoDataDisks = errors.New("VM has no data disks")
+	// ErrDiskNotAttached indicates a disk is not attached to a VM.
+	ErrDiskNotAttached = errors.New("disk not attached to VM")
 )
 
 // ErrorCode represents Azure-specific error codes.
@@ -92,8 +117,8 @@ const (
 	ErrCodeInvalidParameter ErrorCode = "InvalidParameter"
 )
 
-// AzureError represents an Azure-specific error.
-type AzureError struct {
+// Error represents an Azure-specific error.
+type Error struct {
 	Code       ErrorCode
 	Message    string
 	StatusCode int
@@ -103,7 +128,7 @@ type AzureError struct {
 	Err        error
 }
 
-func (e *AzureError) Error() string {
+func (e *Error) Error() string {
 	if e.Operation != "" {
 		return fmt.Sprintf("[Azure:%s] %s: %s (request: %s)", e.Operation, e.Code, e.Message, e.RequestID)
 	}
@@ -112,14 +137,14 @@ func (e *AzureError) Error() string {
 }
 
 // Unwrap returns the underlying error.
-func (e *AzureError) Unwrap() error {
+func (e *Error) Unwrap() error {
 	return e.Err
 }
 
 // IsRetryable returns true if the error is retryable.
 //
 //nolint:exhaustive // Only listing retryable error codes, others are non-retryable by default
-func (e *AzureError) IsRetryable() bool {
+func (e *Error) IsRetryable() bool {
 	switch e.Code {
 	case ErrCodeTooManyRequests, ErrCodeServiceUnavailable, ErrCodeInternalServerError:
 		return true
@@ -138,7 +163,7 @@ func (e *AzureError) IsRetryable() bool {
 }
 
 // IsNotFound returns true if the error indicates resource not found.
-func (e *AzureError) IsNotFound() bool {
+func (e *Error) IsNotFound() bool {
 	return e.Code == ErrCodeResourceNotFound ||
 		e.Code == ErrCodeResourceGroupNotFound ||
 		e.Code == ErrCodeSubscriptionNotFound ||
@@ -146,17 +171,17 @@ func (e *AzureError) IsNotFound() bool {
 }
 
 // IsAlreadyExists returns true if the error indicates resource already exists.
-func (e *AzureError) IsAlreadyExists() bool {
+func (e *Error) IsAlreadyExists() bool {
 	return e.Code == ErrCodeConflict || e.StatusCode == http.StatusConflict
 }
 
 // IsQuotaExceeded returns true if the error indicates quota exceeded.
-func (e *AzureError) IsQuotaExceeded() bool {
+func (e *Error) IsQuotaExceeded() bool {
 	return e.Code == ErrCodeQuotaExceeded
 }
 
 // IsResourceInUse returns true if the error indicates resource is in use.
-func (e *AzureError) IsResourceInUse() bool {
+func (e *Error) IsResourceInUse() bool {
 	return e.Code == ErrCodeResourceInUse
 }
 
@@ -166,7 +191,7 @@ func WrapAzureError(err error, operation string) error {
 		return nil
 	}
 
-	azureErr := &AzureError{
+	azureErr := &Error{
 		Code:      ErrCodeInternalServerError,
 		Message:   err.Error(),
 		Operation: operation,
@@ -183,7 +208,7 @@ func WrapAzureError(err error, operation string) error {
 
 		// Try to extract request ID from response headers
 		if respErr.RawResponse != nil {
-			azureErr.RequestID = respErr.RawResponse.Header.Get("x-ms-request-id")
+			azureErr.RequestID = respErr.RawResponse.Header.Get("X-Ms-Request-Id")
 		}
 	}
 
@@ -227,7 +252,7 @@ func mapStatusCodeToErrorCode(statusCode int) ErrorCode {
 }
 
 // logError logs an Azure error with full context.
-func logError(azureErr *AzureError) {
+func logError(azureErr *Error) {
 	args := buildLogArgs(azureErr)
 
 	if azureErr.IsRetryable() {
@@ -238,7 +263,7 @@ func logError(azureErr *AzureError) {
 }
 
 // buildLogArgs builds logging arguments based on available error data.
-func buildLogArgs(azureErr *AzureError) []interface{} {
+func buildLogArgs(azureErr *Error) []interface{} {
 	args := []interface{}{
 		"Azure error occurred",
 		"code", azureErr.Code,
@@ -268,7 +293,7 @@ func buildLogArgs(azureErr *AzureError) []interface{} {
 // mapToProviderError maps Azure errors to provider-specific errors.
 //
 //nolint:exhaustive,funlen // Only mapping specific error codes; error mapping requires multiple cases
-func mapToProviderError(azureErr *AzureError) error {
+func mapToProviderError(azureErr *Error) error {
 	// Check for Azure-specific NotFound error codes
 	errorCode := string(azureErr.Code)
 	if azureErr.IsNotFound() || strings.Contains(errorCode, "NotFound") {
@@ -345,7 +370,7 @@ func mapToProviderError(azureErr *AzureError) error {
 
 // IsNotFound checks if the error is a not found error.
 func IsNotFound(err error) bool {
-	var azureErr *AzureError
+	var azureErr *Error
 	if errors.As(err, &azureErr) {
 		return azureErr.IsNotFound()
 	}
@@ -355,7 +380,7 @@ func IsNotFound(err error) bool {
 
 // IsAlreadyExists checks if the error indicates the resource already exists.
 func IsAlreadyExists(err error) bool {
-	var azureErr *AzureError
+	var azureErr *Error
 	if errors.As(err, &azureErr) {
 		return azureErr.IsAlreadyExists()
 	}
@@ -365,7 +390,7 @@ func IsAlreadyExists(err error) bool {
 
 // IsRetryable checks if the error is retryable.
 func IsRetryable(err error) bool {
-	var azureErr *AzureError
+	var azureErr *Error
 	if errors.As(err, &azureErr) {
 		return azureErr.IsRetryable()
 	}
@@ -375,7 +400,7 @@ func IsRetryable(err error) bool {
 
 // IsThrottling checks if the error is due to rate limiting.
 func IsThrottling(err error) bool {
-	var azureErr *AzureError
+	var azureErr *Error
 	if errors.As(err, &azureErr) {
 		return azureErr.Code == ErrCodeTooManyRequests
 	}
@@ -385,7 +410,7 @@ func IsThrottling(err error) bool {
 
 // IsResourceInUse checks if the error indicates the resource is in use.
 func IsResourceInUse(err error) bool {
-	var azureErr *AzureError
+	var azureErr *Error
 	if errors.As(err, &azureErr) {
 		return azureErr.IsResourceInUse()
 	}

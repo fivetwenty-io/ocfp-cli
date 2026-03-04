@@ -68,7 +68,7 @@ The bastion host is automatically discovered using the bloc configuration.`,
 	return cmd
 }
 
-func runSCP(cmd *cobra.Command, args []string) error {
+func runSCP(_cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("scp")
 

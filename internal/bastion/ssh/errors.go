@@ -13,15 +13,17 @@ var (
 	ErrExternalSSHNotAvailable = errors.New("external SSH command not available")
 )
 
-// Dynamic error constructors for errors that require parameters.
+// ErrCommandNotAllowed returns an error indicating the given command is not permitted.
 func ErrCommandNotAllowed(cmd string) error {
 	return fmt.Errorf("command not allowed: %s", cmd) //nolint:err113 // dynamic error with context
 }
 
+// ErrShellMetacharacters returns an error when an argument contains unsafe shell metacharacters.
 func ErrShellMetacharacters(arg string) error {
 	return fmt.Errorf("argument contains shell metacharacters: %s", arg) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnexpectedSSHOutput returns an error for unexpected output from an external SSH test.
 func ErrUnexpectedSSHOutput(output string) error {
 	return fmt.Errorf("external SSH test returned unexpected output: %s", output) //nolint:err113 // dynamic error with context
 }
@@ -36,11 +38,12 @@ var (
 	ErrInvalidRSAKeyType        = errors.New("invalid RSA private key type")
 )
 
-// Dynamic error constructors for key manager errors.
+// ErrUnsupportedKeyType returns an error for an unsupported SSH key type.
 func ErrUnsupportedKeyType(keyType string) error {
 	return fmt.Errorf("unsupported key type: %s (supported: rsa, ed25519)", keyType) //nolint:err113 // dynamic error with context
 }
 
+// ErrUnsupportedKeyTypeForWriting returns an error when the key type cannot be serialized.
 func ErrUnsupportedKeyTypeForWriting(keyType string) error {
 	return fmt.Errorf("unsupported key type for writing: %s", keyType) //nolint:err113 // dynamic error with context
 }
@@ -53,7 +56,7 @@ var (
 	ErrExternalSCPNotAvailable  = errors.New("external SCP command not available")
 )
 
-// Dynamic error constructor for file integrity check.
+// ErrFileIntegrityCheckFailed returns an error when local and remote file hashes do not match.
 func ErrFileIntegrityCheckFailed(localHash, remoteHash string) error {
 	return fmt.Errorf("file integrity check failed: local=%s remote=%s", localHash, remoteHash) //nolint:err113 // dynamic error with context
 }

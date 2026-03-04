@@ -130,7 +130,11 @@ test-integration: ## Run integration tests
 .PHONY: test-plugins
 test-plugins: ## Run plugin tests
 	@echo "$(GREEN)Running plugin tests...$(RESET)"
-	@go test -v -race ./pkg/plugins/...
+	@if [ -d pkg/plugins ]; then \
+		go test -v -race ./pkg/plugins/...; \
+	else \
+		echo "$(YELLOW)⚠ pkg/plugins/ not found, skipping plugin tests$(RESET)"; \
+	fi
 	@echo "$(GREEN)✓ Plugin tests complete$(RESET)"
 
 .PHONY: test-short
@@ -237,7 +241,7 @@ ineffassign: ## Run ineffassign to detect ineffectual assignments
 		echo "$(YELLOW)Installing ineffassign...$(RESET)"; \
 		go install github.com/gordonklaus/ineffassign@latest; \
 	}
-	@ineffassign $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
+	@ineffassign ./...
 	@echo "$(GREEN)✓ Ineffassign analysis complete$(RESET)"
 
 .PHONY: errcheck
@@ -363,6 +367,33 @@ docs: ## Generate documentation
 	@echo "$(GREEN)✓ Documentation generated$(RESET)"
 
 ##@ Dependencies
+
+.PHONY: tools
+tools: ## Install/update all Go development tools
+	@echo "$(GREEN)Installing/updating Go development tools...$(RESET)"
+	@echo "$(WHITE)  golangci-lint$(RESET)"
+	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin
+	@echo "$(WHITE)  staticcheck$(RESET)"
+	@go install honnef.co/go/tools/cmd/staticcheck@latest
+	@echo "$(WHITE)  gocyclo$(RESET)"
+	@go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+	@echo "$(WHITE)  ineffassign$(RESET)"
+	@go install github.com/gordonklaus/ineffassign@latest
+	@echo "$(WHITE)  errcheck$(RESET)"
+	@go install github.com/kisielk/errcheck@latest
+	@echo "$(WHITE)  goimports$(RESET)"
+	@go install golang.org/x/tools/cmd/goimports@latest
+	@echo "$(WHITE)  revive$(RESET)"
+	@go install github.com/mgechev/revive@latest
+	@echo "$(WHITE)  deadcode$(RESET)"
+	@go install golang.org/x/tools/cmd/deadcode@latest
+	@echo "$(WHITE)  govulncheck$(RESET)"
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
+	@echo "$(WHITE)  gosec$(RESET)"
+	@go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@echo "$(WHITE)  mockgen$(RESET)"
+	@go install github.com/golang/mock/mockgen@latest
+	@echo "$(GREEN)✓ All tools installed/updated$(RESET)"
 
 .PHONY: deps
 deps: ## Download and verify dependencies

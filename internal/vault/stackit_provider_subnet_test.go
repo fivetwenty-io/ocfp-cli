@@ -141,7 +141,7 @@ func TestCalculateNetworkPrefix(t *testing.T) {
 	}
 }
 
-func TestGetNetworkIDFromStateReturnsEmptyWhenNoState(t *testing.T) {
+func TestGetNetworkCIDRFromStateReturnsEmptyWhenNoState(t *testing.T) {
 	cfg := &config.Config{}
 	provider := &StackitVaultProvider{
 		BaseVaultProvider: &providers.BaseVaultProvider{
@@ -152,6 +152,6 @@ func TestGetNetworkIDFromStateReturnsEmptyWhenNoState(t *testing.T) {
 	}
 
 	// When no state manager exists, should return empty string
-	networkID := provider.getNetworkIDFromState()
-	assert.Equal(t, "", networkID)
+	networkCIDR := provider.getNetworkCIDRFromState()
+	assert.Equal(t, "", networkCIDR)
 }

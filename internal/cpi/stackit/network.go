@@ -66,7 +66,7 @@ func (m *NetworkManager) DeleteLoadBalancer(ctx context.Context, loadBalancerID 
 }
 
 // GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
+func (m *NetworkManager) GetBackendPools(_ctx context.Context, lbID string) ([]*cpi.BackendPool, error) {
 	logger.WithOperation("GetBackendPools").Debugf("Listing backend pools via SDK for %s", lbID)
 	// Not directly exposed; return empty slice for now
 	return []*cpi.BackendPool{}, nil
@@ -228,17 +228,17 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) er
 }
 
 // CreateSubnet creates a subnet.
-func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
+func (m *NetworkManager) CreateSubnet(_ctx context.Context, _req *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	return nil, ErrSubnetsNotSupported
 }
 
 // GetSubnet retrieves a subnet.
-func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet, error) {
+func (m *NetworkManager) GetSubnet(_ctx context.Context, _id string) (*cpi.Subnet, error) {
 	return nil, ErrSubnetsNotSupportedUseNetworksAndLabels
 }
 
 // ListSubnets lists subnets in a network.
-func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
+func (m *NetworkManager) ListSubnets(_ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
 	// STACKIT does not expose subnets; return empty list
 	logger.WithOperation("ListSubnets").Debugf("STACKIT: returning no subnets for network %s", networkID)
 
@@ -246,7 +246,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 }
 
 // DeleteSubnet deletes a subnet.
-func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteSubnet(_ctx context.Context, id string) error {
 	logger.WithOperation("DeleteSubnet").Infof("STACKIT: subnets unsupported; nothing to delete: %s", id)
 
 	return nil
@@ -310,7 +310,7 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, floatingIPID string)
 }
 
 // ListFloatingIPs lists floating IPs.
-func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
+func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[string]string) ([]*cpi.FloatingIP, error) {
 	iaasClient, err := m.client.getIAASClient()
 	if err != nil {
 		return nil, err
@@ -421,7 +421,7 @@ func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, floatingIPID str
 }
 
 // CreateRouter creates a router.
-func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
+func (m *NetworkManager) CreateRouter(_ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
 	logger.WithOperation("CreateRouter").Infof("Creating router: %s", req.Name)
 
 	// Mock implementation
@@ -444,33 +444,33 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 }
 
 // GetRouter retrieves a router.
-func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router, error) {
+func (m *NetworkManager) GetRouter(_ctx context.Context, _id string) (*cpi.Router, error) {
 	// Pending: implement
 	return nil, ErrNotImplemented
 }
 
 // ListRouters lists routers.
-func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
+func (m *NetworkManager) ListRouters(_ctx context.Context) ([]*cpi.Router, error) {
 	// Pending: implement
 	return nil, ErrNotImplemented
 }
 
 // AttachRouterInterface attaches a subnet to a router.
-func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) AttachRouterInterface(_ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("AttachRouterInterface").Infof("Attaching subnet %s to router %s", subnetID, routerID)
 	// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DetachRouterInterface detaches a subnet from a router.
-func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routerID string, subnetID string) error {
+func (m *NetworkManager) DetachRouterInterface(_ctx context.Context, routerID string, subnetID string) error {
 	logger.WithOperation("DetachRouterInterface").Infof("Detaching subnet %s from router %s", subnetID, routerID)
 	// Pending: implement actual STACKIT API call
 	return nil
 }
 
 // DeleteRouter deletes a router.
-func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error {
+func (m *NetworkManager) DeleteRouter(_ctx context.Context, _id string) error {
 	// Pending: implement
 	return ErrNotImplemented
 }
@@ -939,8 +939,8 @@ func matchLabels(labels map[string]string, filters map[string]string) bool {
 		case strings.HasPrefix(filterKey, "label."):
 			key = strings.TrimPrefix(filterKey, "label.")
 		default:
-			// Treat unprefixed filters as label filters
-			key = filterKey
+			// Skip unknown filter types
+			continue
 		}
 
 		if labels == nil || labels[key] != filterValue {

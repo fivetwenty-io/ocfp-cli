@@ -3,179 +3,148 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// TestSaveConfigOmitsEmptyValues is an integration test that verifies
-// SaveConfig omits empty values when writing to disk.
-func TestSaveConfigOmitsEmptyValues(t *testing.T) {
-	// Create a temporary directory for test config
+// TestConfigFileNeverWrittenBySetCurrentBloc verifies that SetCurrentBloc
+// writes to state.yml and never touches config.yml.
+func TestConfigFileNeverWrittenBySetCurrentBloc(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("OCFP_HOME", tmpDir)
+
+	// Create a config.yml with specific content
+	configContent := "# User config - do not modify\nblocs:\n  my-bloc:\n    provider: aws\n"
 	configPath := filepath.Join(tmpDir, "config.yml")
 
-	// Create a config with some values set and many empty
-	testConfig := &Config{
-		Provider:        "aws",
-		Region:          "us-east-1",
-		AccessKeyID:     "AKIA123456789",
-		SecretAccessKey: "secretkey123",
-		VPCCIDRBlock:    "10.5.0.0/23",
-		// All other fields intentionally left empty/zero
-	}
-
-	// Save the config
-	err := SaveConfig(configPath, "test-bloc", testConfig)
+	err := os.WriteFile(configPath, []byte(configContent), 0o600)
 	if err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+		t.Fatalf("failed to write config.yml: %v", err)
 	}
 
-	// Read the saved file
+	// Record modification time
+	origInfo, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("failed to stat config.yml: %v", err)
+	}
+
+	// Set current bloc via state
+	err = SetCurrentBloc("my-bloc", configPath)
+	if err != nil {
+		t.Fatalf("SetCurrentBloc() error: %v", err)
+	}
+
+	// Verify config.yml content is unchanged
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("Failed to read saved config: %v", err)
+		t.Fatalf("failed to read config.yml: %v", err)
 	}
 
-	output := string(data)
-	t.Logf("Saved config file:\n%s", output)
-
-	// Verify non-empty values are present
-	expectedPresent := []string{
-		"provider: aws",
-		"region: us-east-1",
-		"access_key_id: AKIA123456789",
-		"secret_access_key: secretkey123",
-		"vpc_cidr_block: 10.5.0.0/23",
-	}
-	for _, expected := range expectedPresent {
-		if !strings.Contains(output, expected) {
-			t.Errorf("Expected saved config to contain %q", expected)
-		}
+	if string(data) != configContent {
+		t.Errorf("config.yml was modified!\nExpected:\n%s\nGot:\n%s", configContent, string(data))
 	}
 
-	// Verify empty values are NOT present
-	emptyFieldsToOmit := []string{
-		"name: \"\"",
-		"iaas: \"\"",
-		"project_id: \"\"",
-		"org_id: \"\"",
-		"auth_token: \"\"",
-		"service_account_token: \"\"",
-		"service_account_json: \"\"",
-		"username: \"\"",
-		"password: \"\"",
-		"project_name: \"\"",
-		"domain_name: \"\"",
-		"session_token: \"\"",
-		"bastion_ip: \"\"",
-	}
-	for _, omitted := range emptyFieldsToOmit {
-		if strings.Contains(output, omitted) {
-			t.Errorf("Expected saved config to omit %q, but it's present", omitted)
-		}
+	// Verify modification time is unchanged
+	newInfo, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("failed to stat config.yml after: %v", err)
 	}
 
-	// Verify empty nested structs are omitted
-	emptyStructsToOmit := []string{
-		"network:",
-		"bastion:",
-		"genesis:",
+	if !newInfo.ModTime().Equal(origInfo.ModTime()) {
+		t.Error("config.yml modification time changed, indicating it was written to")
 	}
-	for _, omitted := range emptyStructsToOmit {
-		if strings.Contains(output, omitted+"\n  ") ||
-			strings.Contains(output, omitted+" {}") ||
-			(strings.Contains(output, omitted) && strings.Contains(output, "id: \"\"")) {
-			t.Errorf("Expected saved config to omit empty %q section, but it's present", omitted)
-		}
+
+	// Verify state.yml was created
+	statePath := filepath.Join(tmpDir, "state.yml")
+
+	_, err = os.Stat(statePath)
+	if os.IsNotExist(err) {
+		t.Fatal("state.yml was not created")
 	}
 }
 
-// TestSaveConfigPreservesNonEmptyNestedStructs verifies that nested structs
-// with actual values are saved correctly.
-func TestSaveConfigPreservesNonEmptyNestedStructs(t *testing.T) {
+// TestConfigFileNeverWrittenBySaveBlocKeys verifies that SaveBlocKeys
+// writes to state.yml and never touches config.yml.
+func TestConfigFileNeverWrittenBySaveBlocKeys(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("OCFP_HOME", tmpDir)
+
+	// Create a config.yml with comments and 2-space indent
+	configContent := `# My hand-crafted config
+blocs:
+  prod:
+    provider: aws
+    region: us-east-1
+`
 	configPath := filepath.Join(tmpDir, "config.yml")
 
-	testConfig := &Config{
-		Provider: "aws",
-		Region:   "us-east-1",
-		Bastion: Bastion{
-			Flavor: "t3.large",
-			Image:  "ubuntu-22.04",
-		},
-	}
-
-	err := SaveConfig(configPath, "test-bloc", testConfig)
+	err := os.WriteFile(configPath, []byte(configContent), 0o600)
 	if err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+		t.Fatalf("failed to write config.yml: %v", err)
 	}
 
+	// Save keys via state file
+	keys := map[string]string{"prod-keypair": "private-key-data"}
+
+	err = SaveBlocKeys("prod", keys)
+	if err != nil {
+		t.Fatalf("SaveBlocKeys() error: %v", err)
+	}
+
+	// Verify config.yml content is unchanged
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("Failed to read saved config: %v", err)
+		t.Fatalf("failed to read config.yml: %v", err)
 	}
 
-	output := string(data)
-	t.Logf("Saved config file:\n%s", output)
-
-	// Bastion should be present with its values
-	if !strings.Contains(output, "bastion:") {
-		t.Error("Expected bastion section to be present")
-	}
-	if !strings.Contains(output, "flavor: t3.large") {
-		t.Error("Expected bastion flavor to be present")
-	}
-	if !strings.Contains(output, "image: ubuntu-22.04") {
-		t.Error("Expected bastion image to be present")
-	}
-
-	// Empty bastion fields should still be omitted
-	if strings.Contains(output, "os: \"\"") {
-		t.Error("Expected empty bastion.os to be omitted")
+	if string(data) != configContent {
+		t.Errorf("config.yml was modified!\nExpected:\n%s\nGot:\n%s", configContent, string(data))
 	}
 }
 
-// TestRoundTripConfig verifies that loading and saving a config preserves data.
-func TestRoundTripConfig(t *testing.T) {
+// TestKeyMergeFromStateInLoadWithParams verifies that LoadWithParams merges
+// keys from the state file into the loaded config.
+func TestKeyMergeFromStateInLoadWithParams(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("OCFP_HOME", tmpDir)
+
+	// Write a valid config file with a bloc
+	configContent := `blocs:
+  test-bloc:
+    provider: aws
+    region: us-east-1
+    iaas: aws
+`
 	configPath := filepath.Join(tmpDir, "config.yml")
 
-	original := &Config{
-		Provider:        "aws",
-		Region:          "us-east-1",
-		AccessKeyID:     "AKIA123",
-		SecretAccessKey: "secret",
-		VPCCIDRBlock:    "10.5.0.0/23",
-		DNS:             []string{"8.8.8.8"},
-		RouterPublicIPs: 2,
-	}
-
-	// Save
-	err := SaveConfig(configPath, "test-bloc", original)
+	err := os.WriteFile(configPath, []byte(configContent), 0o600)
 	if err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+		t.Fatalf("failed to write config.yml: %v", err)
 	}
 
-	// Load
-	testBlocConfig, err := LoadWithParams(configPath, "test-bloc")
+	// Save keys to state file
+	keys := map[string]string{"test-keypair": "my-private-key"}
+
+	err = SaveBlocKeys("test-bloc", keys)
 	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
+		t.Fatalf("SaveBlocKeys() error: %v", err)
 	}
 
-	// Verify values match
-	if testBlocConfig.Provider != original.Provider {
-		t.Errorf("Provider mismatch: got %q, want %q", testBlocConfig.Provider, original.Provider)
+	// Clear cache to force reload
+	configMutex.Lock()
+	cachedConfigs = make(map[string]*cachedConfig)
+	configMutex.Unlock()
+
+	// Load config -- keys should be merged from state
+	cfg, err := LoadWithParams(configPath, "test-bloc")
+	if err != nil {
+		t.Fatalf("LoadWithParams() error: %v", err)
 	}
-	if testBlocConfig.Region != original.Region {
-		t.Errorf("Region mismatch: got %q, want %q", testBlocConfig.Region, original.Region)
+
+	if cfg.Keys == nil {
+		t.Fatal("expected Keys to be non-nil after merge")
 	}
-	if testBlocConfig.AccessKeyID != original.AccessKeyID {
-		t.Errorf("AccessKeyID mismatch: got %q, want %q", testBlocConfig.AccessKeyID, original.AccessKeyID)
-	}
-	if testBlocConfig.RouterPublicIPs != original.RouterPublicIPs {
-		t.Errorf("RouterPublicIPs mismatch: got %d, want %d", testBlocConfig.RouterPublicIPs, original.RouterPublicIPs)
-	}
-	if len(testBlocConfig.DNS) != len(original.DNS) {
-		t.Errorf("DNS length mismatch: got %d, want %d", len(testBlocConfig.DNS), len(original.DNS))
+
+	if cfg.Keys["test-keypair"] != "my-private-key" {
+		t.Errorf("expected merged key, got %q", cfg.Keys["test-keypair"])
 	}
 }

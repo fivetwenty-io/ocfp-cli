@@ -43,9 +43,9 @@ func (tr *TreeRenderer) StartDirectory(name string, isLast bool) {
 
 	// Print directory with tree characters
 	if tr.useColor {
-		fmt.Printf("%s%s\033[34m%s/\033[0m\n", prefix, connector, name)
+		_, _ = fmt.Fprintf(os.Stdout, "%s%s\033[34m%s/\033[0m\n", prefix, connector, name)
 	} else {
-		fmt.Printf("%s%s%s/\n", prefix, connector, name)
+		_, _ = fmt.Fprintf(os.Stdout, "%s%s%s/\n", prefix, connector, name)
 	}
 
 	// Update indent stack for children
@@ -72,14 +72,14 @@ func (tr *TreeRenderer) RenderKeyValidation(
 	// Format key name with colon prefix
 	keyDisplay := ":" + key
 
-	if err != nil {
+	if err != nil { //nolint:nestif // error handling tree with fallback logic
 		// Validation failed
 		if tr.useColor {
-			fmt.Printf("%s%s%s %s → %s \033[31m✗\033[0m (%v)\n",
+			_, _ = fmt.Fprintf(os.Stdout, "%s%s%s %s → %s \033[31m✗\033[0m (%v)\n",
 				prefix, connector, keyDisplay,
 				truncateHash(inceptionHash), truncateHash(productionHash), err)
 		} else {
-			fmt.Printf("%s%s%s %s -> %s X (%v)\n",
+			_, _ = fmt.Fprintf(os.Stdout, "%s%s%s %s -> %s X (%v)\n",
 				prefix, connector, keyDisplay,
 				truncateHash(inceptionHash), truncateHash(productionHash), err)
 		}
@@ -94,11 +94,11 @@ func (tr *TreeRenderer) RenderKeyValidation(
 	} else {
 		// Validation success
 		if tr.useColor {
-			fmt.Printf("%s%s%s %s → %s \033[32m✓\033[0m\n",
+			_, _ = fmt.Fprintf(os.Stdout, "%s%s%s %s → %s \033[32m✓\033[0m\n",
 				prefix, connector, keyDisplay,
 				truncateHash(inceptionHash), truncateHash(productionHash))
 		} else {
-			fmt.Printf("%s%s%s %s -> %s ok\n",
+			_, _ = fmt.Fprintf(os.Stdout, "%s%s%s %s -> %s ok\n",
 				prefix, connector, keyDisplay,
 				truncateHash(inceptionHash), truncateHash(productionHash))
 		}
@@ -113,20 +113,22 @@ func (tr *TreeRenderer) RenderFailureSummary() error {
 		return nil
 	}
 
-	fmt.Println()
+	_, _ = fmt.Fprintln(os.Stdout)
+
 	if tr.useColor {
-		fmt.Println("\033[31m=== Validation Failures ===\033[0m")
+		_, _ = fmt.Fprintln(os.Stdout, "\033[31m=== Validation Failures ===\033[0m")
 	} else {
-		fmt.Println("=== Validation Failures ===")
+		_, _ = fmt.Fprintln(os.Stdout, "=== Validation Failures ===")
 	}
-	fmt.Println()
+
+	_, _ = fmt.Fprintln(os.Stdout)
 
 	for i, failure := range tr.failures {
-		fmt.Printf("%d. Key: %s\n", i+1, failure.Key)
-		fmt.Printf("   Inception:  %s\n", failure.InceptionChecksum)
-		fmt.Printf("   Production: %s\n", failure.ProductionChecksum)
-		fmt.Printf("   Error: %s\n", failure.ErrorMessage)
-		fmt.Println()
+		_, _ = fmt.Fprintf(os.Stdout, "%d. Key: %s\n", i+1, failure.Key)
+		_, _ = fmt.Fprintf(os.Stdout, "   Inception:  %s\n", failure.InceptionChecksum)
+		_, _ = fmt.Fprintf(os.Stdout, "   Production: %s\n", failure.ProductionChecksum)
+		_, _ = fmt.Fprintf(os.Stdout, "   Error: %s\n", failure.ErrorMessage)
+		_, _ = fmt.Fprintln(os.Stdout)
 	}
 
 	return nil
@@ -157,9 +159,10 @@ func detectUnicodeSupport() bool {
 }
 
 // getTreeChars returns appropriate tree characters based on position.
-func (tr *TreeRenderer) getTreeChars(isLast bool) (prefix, connector string) {
+func (tr *TreeRenderer) getTreeChars(isLast bool) (string, string) {
 	// Build prefix from indent stack
 	var parts []string
+
 	for _, needsBar := range tr.indentStack {
 		if needsBar {
 			if tr.useUnicode {
@@ -171,10 +174,13 @@ func (tr *TreeRenderer) getTreeChars(isLast bool) (prefix, connector string) {
 			parts = append(parts, "   ")
 		}
 	}
-	prefix = strings.Join(parts, "")
+
+	prefix := strings.Join(parts, "")
 
 	// Connector for current node
-	if isLast {
+	var connector string
+
+	if isLast { //nolint:nestif // tree rendering with conditional formatting
 		if tr.useUnicode {
 			connector = "└─ "
 		} else {
@@ -193,8 +199,9 @@ func (tr *TreeRenderer) getTreeChars(isLast bool) (prefix, connector string) {
 
 // truncateHash returns the first 8 characters of a hash for display.
 func truncateHash(hash string) string {
-	if len(hash) > 8 {
+	if len(hash) > 8 { //nolint:mnd
 		return hash[:8]
 	}
+
 	return hash
 }

@@ -1,3 +1,4 @@
+// Package aws implements the CPI provider for Amazon Web Services.
 package aws
 
 import (
@@ -173,7 +174,7 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 }
 
 // Cleanup releases resources and closes connections.
-func (c *Client) Cleanup(ctx context.Context) error {
+func (c *Client) Cleanup(_ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -407,7 +408,7 @@ func (c *Client) realInitializeAWSConfig(ctx context.Context) error {
 	if c.config.AccessKeyID != "" && c.config.SecretAccessKey != "" {
 		// Static credentials provided
 		opts = append(opts, awsconfig.WithCredentialsProvider(
-			aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+			aws.CredentialsProviderFunc(func(_ctx context.Context) (aws.Credentials, error) {
 				return aws.Credentials{
 					AccessKeyID:     c.config.AccessKeyID,
 					SecretAccessKey: c.config.SecretAccessKey,

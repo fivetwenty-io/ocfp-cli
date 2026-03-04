@@ -9,6 +9,9 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
+// envTrue is the string representation of true for environment variable comparisons.
+const envTrue = "true"
+
 var (
 	// ErrInvalidConfigType indicates the config type is not supported.
 	ErrInvalidConfigType = errors.New("invalid config type for Azure provider")
@@ -156,7 +159,7 @@ func detectCredentialsFromEnv(azureConfig *Config) {
 	}
 
 	// Try managed identity flag
-	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == "true" || useMI == "1" {
+	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == envTrue || useMI == "1" {
 		azureConfig.UseManagedIdentity = true
 		if userAssignedID := os.Getenv("AZURE_CLIENT_ID"); userAssignedID != "" && azureConfig.ClientID == "" {
 			azureConfig.UserAssignedIdentityID = userAssignedID
@@ -267,11 +270,13 @@ func getStringMap(m map[string]interface{}, key string) map[string]string {
 
 	if ifaceMap, ok := value.(map[string]interface{}); ok {
 		result := make(map[string]string)
+
 		for k, v := range ifaceMap {
 			if str, ok := v.(string); ok {
 				result[k] = str
 			}
 		}
+
 		return result
 	}
 
@@ -329,13 +334,14 @@ func DiscoverProvider() (*Config, error) {
 		if tenantID := os.Getenv("AZURE_TENANT_ID"); tenantID != "" {
 			config.TenantID = tenantID
 		}
+
 		if clientSecret := os.Getenv("AZURE_CLIENT_SECRET"); clientSecret != "" {
 			config.ClientSecret = clientSecret
 		}
 	}
 
 	// Check for managed identity
-	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == "true" || useMI == "1" {
+	if useMI := os.Getenv("AZURE_USE_MANAGED_IDENTITY"); useMI == envTrue || useMI == "1" {
 		config.UseManagedIdentity = true
 	}
 
@@ -358,7 +364,7 @@ func IsAzureEnvironment() bool {
 	}
 
 	// Check for Azure Instance Metadata Service marker
-	if os.Getenv("AZURE_USE_MANAGED_IDENTITY") == "true" {
+	if os.Getenv("AZURE_USE_MANAGED_IDENTITY") == envTrue {
 		return true
 	}
 

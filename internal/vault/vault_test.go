@@ -442,7 +442,7 @@ func (m *MockSafe) Import(path string, data map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockSafe) GetEngineInfo(path string) (*vault.EngineInfo, error) {
+func (m *MockSafe) GetEngineInfo(_path string) (*vault.EngineInfo, error) {
 	return &vault.EngineInfo{
 		Type:    "kv-v2",
 		Version: "2",
@@ -472,7 +472,7 @@ func (m *MockSafe) GetString(path, key string) (string, error) {
 	return "", vault.ErrNotAString
 }
 
-func (m *MockSafe) GetJSON(path, key string) ([]byte, error) {
+func (m *MockSafe) GetJSON(_path, _key string) ([]byte, error) {
 	return nil, vault.ErrNotImplementedInMock
 }
 

@@ -509,10 +509,10 @@ func formatTableOutput(output *SyncOutput) string {
 
 	// Errors
 	if len(output.Errors) > 0 {
-		builder.WriteString(fmt.Sprintf("\n=== Errors (%d) ===\n", len(output.Errors)))
+		fmt.Fprintf(&builder, "\n=== Errors (%d) ===\n", len(output.Errors))
 
 		for i, err := range output.Errors {
-			builder.WriteString(fmt.Sprintf("  %d. %s\n", i+1, err))
+			fmt.Fprintf(&builder, "  %d. %s\n", i+1, err)
 		}
 	}
 

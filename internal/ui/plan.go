@@ -1,3 +1,4 @@
+// Package ui provides terminal user interface components for the OCFP CLI.
 package ui
 
 import (

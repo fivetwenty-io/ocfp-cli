@@ -34,6 +34,7 @@ func createDefaultTestConfig() *Config {
 	cfg.Subnets = []Subnet{}
 	cfg.LBs = map[string]LBService{}
 	cfg.Users = map[string]string{}
+	cfg.Jumpbox = Jumpbox{Users: map[string]string{}}
 
 	return cfg
 }
@@ -51,9 +52,11 @@ func createDefaultBastionConfig() Bastion {
 		Tools:             createDefaultOverrideSets(),
 		CFPlugins:         createDefaultOverrideSets(),
 		Snaps:             createDefaultOverrideSets(),
+		Brews:             createDefaultOverrideSets(),
 		ToolOverrides:     nil,
 		CFPluginOverrides: nil,
 		SnapOverrides:     nil,
+		BrewOverrides:     nil,
 	}
 }
 
@@ -217,9 +220,14 @@ func (b *TestConfigBuilder) WithBootstrapBastion() *TestConfigBuilder {
 			Enable:  nil,
 			Disable: nil,
 		},
+		Brews: OverrideSets{
+			Enable:  nil,
+			Disable: nil,
+		},
 		ToolOverrides:     map[string]ToolOverride{},
 		CFPluginOverrides: map[string]CFPluginOverride{},
 		SnapOverrides:     map[string]SnapOverride{},
+		BrewOverrides:     map[string]BrewOverride{},
 	}
 
 	return b
@@ -276,9 +284,14 @@ func (b *TestConfigBuilder) WithVaultBastion() *TestConfigBuilder {
 			Enable:  nil,
 			Disable: nil,
 		},
+		Brews: OverrideSets{
+			Enable:  nil,
+			Disable: nil,
+		},
 		ToolOverrides:     nil,
 		CFPluginOverrides: nil,
 		SnapOverrides:     nil,
+		BrewOverrides:     nil,
 	}
 
 	return b
@@ -369,8 +382,13 @@ func TestBastionConfig() Bastion {
 			Enable:  nil,
 			Disable: nil,
 		},
+		Brews: OverrideSets{
+			Enable:  nil,
+			Disable: nil,
+		},
 		ToolOverrides:     map[string]ToolOverride{},
 		CFPluginOverrides: map[string]CFPluginOverride{},
 		SnapOverrides:     map[string]SnapOverride{},
+		BrewOverrides:     map[string]BrewOverride{},
 	}
 }

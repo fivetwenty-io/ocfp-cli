@@ -13,28 +13,39 @@ import (
 )
 
 const (
-	// Default retry configuration.
-	DefaultMaxAttempts     = 3
+	// DefaultMaxAttempts is the default maximum number of retry attempts.
+	DefaultMaxAttempts = 3
+	// DefaultInitialDelaySec is the default initial delay in seconds between retries.
 	DefaultInitialDelaySec = 2
-	DefaultMaxDelaySec     = 30
-	DefaultMultiplier      = 2.0
+	// DefaultMaxDelaySec is the default maximum delay in seconds between retries.
+	DefaultMaxDelaySec = 30
+	// DefaultMultiplier is the default backoff multiplier for retry delays.
+	DefaultMultiplier = 2.0
+	// DefaultRandomizeFactor is the default randomization factor for jitter.
 	DefaultRandomizeFactor = 0.1
 
-	// Exponential backoff configuration.
+	// DefaultInitialIntervalMS is the default initial interval in milliseconds for exponential backoff.
 	DefaultInitialIntervalMS = 500
-	DefaultMaxIntervalSec    = 60
-	ExponentialMultiplier    = 1.5
-	DefaultMaxElapsedMin     = 15
+	// DefaultMaxIntervalSec is the default maximum interval in seconds for exponential backoff.
+	DefaultMaxIntervalSec = 60
+	// ExponentialMultiplier is the multiplier used for exponential backoff calculations.
+	ExponentialMultiplier = 1.5
+	// DefaultMaxElapsedMin is the default maximum elapsed time in minutes before stopping retries.
+	DefaultMaxElapsedMin = 15
 
-	// Jitter calculation.
+	// JitterDivisor is the divisor used for calculating jitter range.
 	JitterDivisor = 2
+	// JitterQuarter is the divisor used for calculating quarter-jitter offset.
 	JitterQuarter = 4
 
-	// Conflict retry configuration.
+	// ConflictInitialIntervalMS is the initial interval in milliseconds for conflict retries.
 	ConflictInitialIntervalMS = 100
-	ConflictMaxIntervalSec    = 3
-	ConflictMultiplier        = 2.0
-	ConflictMaxElapsedSec     = 30
+	// ConflictMaxIntervalSec is the maximum interval in seconds for conflict retries.
+	ConflictMaxIntervalSec = 3
+	// ConflictMultiplier is the backoff multiplier for conflict retries.
+	ConflictMultiplier = 2.0
+	// ConflictMaxElapsedSec is the maximum elapsed time in seconds for conflict retries.
+	ConflictMaxElapsedSec = 30
 )
 
 // RetryConfig configures retry behavior.

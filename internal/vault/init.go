@@ -13,11 +13,14 @@ import (
 )
 
 const (
-	// Vault initialization defaults.
-	DefaultSecretShares    = 5
+	// DefaultSecretShares is the default number of Shamir secret shares for vault initialization.
+	DefaultSecretShares = 5
+	// DefaultSecretThreshold is the minimum number of shares required to unseal the vault.
 	DefaultSecretThreshold = 3
-	MaxUnsealKeys          = 10
-	UnsealCheckInterval    = 2
+	// MaxUnsealKeys is the maximum number of unseal keys supported.
+	MaxUnsealKeys = 10
+	// UnsealCheckInterval is the seconds between unseal status checks.
+	UnsealCheckInterval = 2
 )
 
 // InitManager handles vault initialization and unsealing.
