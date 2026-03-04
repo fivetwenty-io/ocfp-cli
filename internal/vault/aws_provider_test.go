@@ -451,6 +451,130 @@ func TestAWS_ResolveAWSCredentials_Empty(t *testing.T) {
 	assert.Equal(t, "", sak)
 }
 
+// TestAWS_BuildSubnetData_HasParityFields verifies subnet data includes STACKIT-parity fields.
+func TestAWS_BuildSubnetData_HasParityFields(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	networkInfo := &subnetNetworkInfo{
+		network:    "10.0.1.0",
+		cidrPrefix: "10.0.1",
+		gateway:    "10.0.1.1",
+		lastHost:   "10.0.1.254",
+	}
+
+	data := provider.buildSubnetData("ocfp", 0, "10.0.1.0/24", networkInfo, "us-east-1a")
+
+	// Original fields
+	assert.Equal(t, "test-bloc-ocfp-0", data["id"])
+	assert.Equal(t, "10.0.1.0/24", data["cidr_block"])
+	assert.Equal(t, "10.0.1", data["cidr_prefix"])
+	assert.Equal(t, "10.0.1.0", data["ip_0"])
+	assert.Equal(t, "10.0.1.254", data["ip_n"])
+	assert.Equal(t, "10.0.1.1", data["gateway"])
+	assert.Equal(t, "us-east-1a", data["az"])
+	assert.Equal(t, "ocfp", data["type"])
+
+	// DNS should be string, not array
+	assert.Equal(t, "10.0.0.2", data["dns"], "DNS should be a string (first element)")
+
+	// New parity fields
+	assert.Equal(t, "10.0.1.0/24", data["subnet_cidr"])
+	assert.Equal(t, "10.0.1", data["subnet_prefix"])
+	assert.Equal(t, "10.0.0.0/16", data["net_cidr"])
+	assert.Equal(t, "10.0.0", data["net_prefix"])
+	assert.Equal(t, "ocfp-0", data["name"])
+	assert.Equal(t, 0, data["subnet_num"])
+	assert.Equal(t, "aws", data["provider"])
+	assert.Equal(t, "subnet", data["provider_type"])
+	assert.Equal(t, "10.0.0.0/16", data["parent_cidr"])
+	assert.Equal(t, "test-bloc", data["environment"])
+	assert.Equal(t, "us-east-1", data["region"])
+	assert.NotEmpty(t, data["network_id"])
+	assert.Equal(t, "false", data["virtual"])
+}
+
+// TestAWS_BuildSubnetData_ReservedNoVirtual verifies reserved subnets omit virtual flag.
+func TestAWS_BuildSubnetData_ReservedNoVirtual(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	networkInfo := &subnetNetworkInfo{
+		network:    "10.0.0.0",
+		cidrPrefix: "10.0.0",
+		gateway:    "10.0.0.1",
+		lastHost:   "10.0.0.254",
+	}
+
+	data := provider.buildSubnetData("reserved", 0, "10.0.0.0/24", networkInfo, "us-east-1a")
+
+	_, hasVirtual := data["virtual"]
+	assert.False(t, hasVirtual, "Reserved subnets should not have virtual flag")
+}
+
+// TestAWS_BuildSubnetData_DNSDefaultsWhenEmpty verifies DNS defaults to DefaultDNSServer.
+func TestAWS_BuildSubnetData_DNSDefaultsWhenEmpty(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	networkInfo := &subnetNetworkInfo{
+		network:    "10.0.1.0",
+		cidrPrefix: "10.0.1",
+		gateway:    "10.0.1.1",
+		lastHost:   "10.0.1.254",
+	}
+
+	data := provider.buildSubnetData("ocfp", 0, "10.0.1.0/24", networkInfo, "us-east-1a")
+
+	assert.Equal(t, DefaultDNSServer, data["dns"], "DNS should default to DefaultDNSServer")
+}
+
+// TestAWS_ConfigureVPC_HasParityFields verifies VPC network data includes parity fields.
+func TestAWS_ConfigureVPC_HasParityFields(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureVPC(MgmtEnvType)
+	require.NoError(t, err)
+
+	vpcPath := provider.PathBuilder.GetNetPath(MgmtEnvType)
+	call := mock.findSetMultipleCall(vpcPath)
+	require.NotNil(t, call)
+
+	assert.Equal(t, "aws", call.data["provider"])
+	assert.Equal(t, "test-bloc-vpc", call.data["name"])
+	assert.Equal(t, "10.0.0.0/16", call.data["ipv4_cidr"])
+}
+
+// TestAWS_CalculateNetworkPrefix verifies network prefix extraction.
+func TestAWS_CalculateNetworkPrefix(t *testing.T) {
+	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+
+	assert.Equal(t, "10.0.0", provider.calculateNetworkPrefix("10.0.0.0/16"))
+	assert.Equal(t, "172.16.0", provider.calculateNetworkPrefix("172.16.0.0/12"))
+	assert.Equal(t, "", provider.calculateNetworkPrefix("invalid"))
+	assert.Equal(t, "", provider.calculateNetworkPrefix("10.0/16"))
+}
+
 // TestAWS_ResolveAWSCredentials_MixedSources verifies independent fallback per field.
 func TestAWS_ResolveAWSCredentials_MixedSources(t *testing.T) {
 	cfg := &config.Config{

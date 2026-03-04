@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,4 +168,40 @@ func TestUpdateEnvironmentSecretsUsesDiscoveredDirectory(t *testing.T) {
 	mgmtFile := filepath.Join(genesisDir, fmt.Sprintf("%s-mgmt.yml", blocName))
 	_, statErr := os.Stat(mgmtFile)
 	require.NoError(t, statErr)
+}
+
+func TestCreateEnvironmentFileIncludesOCFPBloc(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocName := "520-aws-wayne"
+	cfg := &config.Config{}
+	gi := NewGenesisIntegration(cfg, blocName)
+
+	mgmtFile := filepath.Join(tmpDir, "mgmt.yml")
+	err := gi.createEnvironmentFile(mgmtFile, MgmtEnvType, "https://vault.example")
+	require.NoError(t, err)
+
+	env, err := gi.readEnvironmentFile(mgmtFile)
+	require.NoError(t, err)
+
+	require.NotNil(t, env.OCFP, "OCFP config should be present in generated env file")
+	assert.Equal(t, blocName, env.OCFP.Bloc, "OCFP bloc should match blocName")
+	assert.Equal(t, fmt.Sprintf("%s-mgmt", blocName), env.Name)
+}
+
+func TestCreateEnvironmentFileOCFType(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocName := "520-aws-wayne"
+	cfg := &config.Config{}
+	gi := NewGenesisIntegration(cfg, blocName)
+
+	ocfFile := filepath.Join(tmpDir, "ocf.yml")
+	err := gi.createEnvironmentFile(ocfFile, OCFEnvType, "https://vault.example")
+	require.NoError(t, err)
+
+	env, err := gi.readEnvironmentFile(ocfFile)
+	require.NoError(t, err)
+
+	require.NotNil(t, env.OCFP, "OCFP config should be present in generated env file")
+	assert.Equal(t, blocName, env.OCFP.Bloc)
+	assert.Equal(t, fmt.Sprintf("%s-ocf", blocName), env.Name)
 }

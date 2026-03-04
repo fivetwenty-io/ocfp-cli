@@ -36,6 +36,11 @@ func NewGenesisIntegration(cfg *config.Config, blocName string) *GenesisIntegrat
 	}
 }
 
+// OCFPConfig represents OCFP-specific configuration in a Genesis environment file.
+type OCFPConfig struct {
+	Bloc string `yaml:"bloc,omitempty"`
+}
+
 // GenesisEnvironment represents a Genesis environment configuration.
 type GenesisEnvironment struct {
 	Name             string                 `yaml:"name,omitempty"`
@@ -44,6 +49,7 @@ type GenesisEnvironment struct {
 	Params           map[string]interface{} `yaml:"params,omitempty"`
 	Features         []string               `yaml:"features,omitempty"`
 	Kit              KitInfo                `yaml:"kit,omitempty"`
+	OCFP             *OCFPConfig            `yaml:"ocfp,omitempty"`
 }
 
 // SecretsProvider represents a secrets provider configuration.
@@ -199,6 +205,7 @@ func (gi *GenesisIntegration) createEnvironmentFile(filePath, envType, vaultURL 
 		Params:           gi.createDefaultParams(envType),
 		Features:         gi.createDefaultFeatures(envType),
 		Kit:              gi.createKitInfo(envType),
+		OCFP:             &OCFPConfig{Bloc: gi.blocName},
 	}
 
 	return gi.writeEnvironmentFile(filePath, env)

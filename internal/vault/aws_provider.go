@@ -594,10 +594,13 @@ func (a *AWSVaultProvider) configureVPC(envType string) error {
 	}
 
 	networkData := map[string]interface{}{
-		"id":         a.getVPCID(), // VPC ID from state or config
+		"id":         a.getVPCID(),
 		"cidr_block": cidrBlock,
 		"dns":        dnsString,
 		"region":     a.Config.Region,
+		"provider":   "aws",
+		"name":       a.BlocName + "-vpc",
+		"ipv4_cidr":  cidrBlock,
 	}
 
 	err := a.Safe.SetMultiple(vpcPath, networkData)
@@ -728,17 +731,65 @@ func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 
 // buildSubnetData constructs subnet metadata.
 func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
-	return map[string]interface{}{
+	netCIDR := a.Config.Network.CIDR
+	if netCIDR == "" {
+		netCIDR = a.Config.VPCCIDRBlock
+	}
+
+	netPrefix := a.calculateNetworkPrefix(netCIDR)
+	vpcID := a.getVPCID()
+
+	dnsString := DefaultDNSServer
+	if len(a.Config.DNS) > 0 {
+		dnsString = a.Config.DNS[0]
+	}
+
+	subnetData := map[string]interface{}{
 		"id":          fmt.Sprintf("%s-%s-%d", a.BlocName, subnetType, subnetNum),
 		"cidr_block":  cidr,
 		"cidr_prefix": networkInfo.cidrPrefix,
 		"ip_0":        networkInfo.network,
 		"ip_n":        networkInfo.lastHost,
 		"gateway":     networkInfo.gateway,
-		"dns":         a.Config.DNS,
+		"dns":         dnsString,
 		"az":          availabilityZone,
 		"type":        subnetType,
+
+		// Fields for STACKIT parity
+		"subnet_cidr":   cidr,
+		"subnet_prefix": networkInfo.cidrPrefix,
+		"net_cidr":      netCIDR,
+		"net_prefix":    netPrefix,
+		"name":          fmt.Sprintf("%s-%d", subnetType, subnetNum),
+		"subnet_num":    subnetNum,
+		"provider":      "aws",
+		"provider_type": "subnet",
+		"parent_cidr":   netCIDR,
+		"environment":   a.BlocName,
+		"region":        a.Config.Region,
+		"network_id":    vpcID,
 	}
+
+	if subnetType != "reserved" {
+		subnetData["virtual"] = "false"
+	}
+
+	return subnetData
+}
+
+// calculateNetworkPrefix extracts the first 3 octets from a CIDR.
+func (a *AWSVaultProvider) calculateNetworkPrefix(cidr string) string {
+	parts := strings.Split(cidr, "/")
+	if len(parts) != CIDRPartsCount {
+		return ""
+	}
+
+	octets := strings.Split(parts[0], ".")
+	if len(octets) < NetworkPrefix {
+		return ""
+	}
+
+	return strings.Join(octets[:NetworkPrefix], ".")
 }
 
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
