@@ -30,6 +30,8 @@ func TestGetBrewPackages_Defaults(t *testing.T) {
 		"yq": false, "ripgrep": false, "tmux": false, "ruby": false,
 		"gcc": false, "make": false, "cpanminus": false, "gnupg": false,
 		"python@3": false, "readline": false, "libyaml": false, "zlib": false,
+		"bosh-cli": false, "cf-cli": false, "credhub-cli": false,
+		"uaa-cli": false, "spruce": false, "openbao": false,
 	}
 
 	for _, pkg := range pkgs {
@@ -216,9 +218,14 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Error("Expected hashicorp/tap in brew package script for vault")
 	}
 
-	// Verify go version pinning
-	if !strings.Contains(script, "go@1.24") {
-		t.Error("Expected go@1.24 version pinning in brew package script")
+	// Verify cloudfoundry/tap for CF ecosystem tools
+	if !strings.Contains(script, "cloudfoundry/tap") {
+		t.Error("Expected cloudfoundry/tap in brew package script")
+	}
+
+	// Verify cloudfoundry-community/cf for spruce
+	if !strings.Contains(script, "cloudfoundry-community/cf") {
+		t.Error("Expected cloudfoundry-community/cf in brew package script")
 	}
 }
 
@@ -327,7 +334,7 @@ func TestBuildBrewInstallCommand(t *testing.T) {
 	}
 }
 
-func TestGetBrewPackages_GoVersionPinning(t *testing.T) {
+func TestGetBrewPackages_GoLatestVersion(t *testing.T) {
 	cfg := &config.Config{
 		Bastion: config.Bastion{
 			Brews:         config.OverrideSets{},
@@ -340,8 +347,8 @@ func TestGetBrewPackages_GoVersionPinning(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		if pkg.Name == "go" {
-			if pkg.Version != "1.24" {
-				t.Errorf("Expected go version '1.24', got '%s'", pkg.Version)
+			if pkg.Version != "" {
+				t.Errorf("Expected go with no version pin (latest), got '%s'", pkg.Version)
 			}
 
 			return

@@ -139,13 +139,25 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "tree", Enabled: true, CheckCommand: "tree"},
 
 		// From snap
-		{Name: "go", Enabled: true, CheckCommand: "go", Version: "1.24"},
+		{Name: "go", Enabled: true, CheckCommand: "go"},
 		{Name: "kubectl", Enabled: true, CheckCommand: "kubectl"},
 		{Name: "node", Enabled: false, CheckCommand: "node"}, // Disabled by default, use nvm
 
 		// From advanced tools
 		{Name: "vault", Enabled: true, CheckCommand: "vault", Tap: "hashicorp/tap"},
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
+
+		// CF ecosystem tools (from cloudfoundry/tap)
+		{Name: "bosh-cli", Enabled: true, CheckCommand: "bosh", Tap: "cloudfoundry/tap"},
+		{Name: "cf-cli", Enabled: true, CheckCommand: "cf", Tap: "cloudfoundry/tap"},
+		{Name: "credhub-cli", Enabled: true, CheckCommand: "credhub", Tap: "cloudfoundry/tap"},
+		{Name: "uaa-cli", Enabled: true, CheckCommand: "uaa", Tap: "cloudfoundry/tap"},
+
+		// CF community tools (from cloudfoundry-community/cf)
+		{Name: "spruce", Enabled: true, CheckCommand: "spruce", Tap: "cloudfoundry-community/cf"},
+
+		// OpenBao
+		{Name: "openbao", Enabled: true, CheckCommand: "bao"},
 
 		// Migrated from APT essential (system build tools)
 		{Name: "gcc", Enabled: true, CheckCommand: "gcc"},
