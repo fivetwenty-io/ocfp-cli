@@ -412,6 +412,11 @@ export NEEDRESTART_SUSPEND=1
 # Terminal type for tmux and curses-based tools (not set in non-PTY SSH)
 export TERM="${TERM:-screen}"
 
+# Source Linuxbrew environment if available (adds brew bins to PATH)
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
+
 # Include Linuxbrew terminfo so tmux can find terminal definitions
 if [ -d "/home/linuxbrew/.linuxbrew/share/terminfo" ]; then
     export TERMINFO_DIRS="${TERMINFO_DIRS:+${TERMINFO_DIRS}:}/home/linuxbrew/.linuxbrew/share/terminfo:/usr/share/terminfo:/lib/terminfo"

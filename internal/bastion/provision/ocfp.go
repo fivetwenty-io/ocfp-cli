@@ -486,7 +486,10 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 	return []string{
 		"# Run vault inception using OCFP CLI binary on bastion",
 		"if [ -n \"$OCFP_CLI_PATH\" ]; then",
-		"    # Ensure /usr/local/bin is in PATH for vault and safe commands",
+		"    # Source Linuxbrew environment for vault, safe, and other brew-installed tools",
+		"    if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then",
+		"        eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"",
+		"    fi",
 		"    export PATH=\"/usr/local/bin:${PATH}\"",
 		"    ",
 		"    # Ensure TERM/TERMINFO for tmux in non-PTY SSH",
