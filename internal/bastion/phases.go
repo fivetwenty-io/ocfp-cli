@@ -341,7 +341,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
-		m.log.Debugw("Script executed successfully", "script", scriptName)
+		m.log.Debugw("Script executed successfully", "script", scriptName, "stdout", result.Stdout)
 
 		return nil
 	}
@@ -365,6 +365,10 @@ func extractTail(text string, maxLines int) string {
 
 	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
+
+// brewShellEnvSetup sources the Linuxbrew environment so brew-installed binaries are on PATH.
+// Used for bare SSH commands (e.g., verification) that don't go through wrapScriptWithFunctions.
+const brewShellEnvSetup = `eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" 2>/dev/null; `
 
 // bashScriptPreamble is the shell boilerplate prepended to bastion provisioning scripts.
 const bashScriptPreamble = `#!/bin/bash
