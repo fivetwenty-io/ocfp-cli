@@ -30,7 +30,7 @@ func TestManagerInitialization(t *testing.T) {
 		LogFile:     "",
 	}
 
-	manager := bastion.NewManager(cfg, opts)
+	manager := bastion.NewManager(context.Background(), cfg, opts)
 
 	if manager == nil {
 		t.Fatal("Expected manager to be created, got nil")
@@ -58,7 +58,7 @@ func TestManagerDryRun(t *testing.T) {
 		LogFile:     "",
 	}
 
-	manager := bastion.NewManager(cfg, opts)
+	manager := bastion.NewManager(context.Background(), cfg, opts)
 	ctx := context.Background()
 
 	// This should succeed in dry run mode without actual connections
@@ -93,7 +93,7 @@ func TestProgressTracking(t *testing.T) {
 		LogFile:     "",
 	}
 
-	manager := bastion.NewManager(cfg, opts)
+	manager := bastion.NewManager(context.Background(), cfg, opts)
 
 	// Manager successfully created with tracking options
 	// (Can't test internal progress fields as they're unexported)

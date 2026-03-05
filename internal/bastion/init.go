@@ -68,6 +68,7 @@ type Manager struct {
 	deploymentModes   *deployments.Resolver
 	reporter          *ProgressReporter // Shared reporter for all phases
 	log               logger.Logger
+	githubToken       string // Cached GitHub token for bastion API calls
 }
 
 // task represents a phase execution task.
@@ -84,7 +85,7 @@ type job struct {
 }
 
 // NewManager creates a new bastion initialization manager.
-func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
+func NewManager(ctx context.Context, cfg *config.Config, opts *ProvisioningOptions) *Manager {
 	checkpointMgr := NewCheckpointManager(cfg)
 
 	// Load existing progress if resuming
@@ -129,6 +130,7 @@ func NewManager(cfg *config.Config, opts *ProvisioningOptions) *Manager {
 		errorHandler:      NewErrorHandler(),
 		deploymentModes:   deployments.NewResolver(cfg),
 		log:               logger.Get(),
+		githubToken:       resolveGitHubToken(ctx, logger.Get()),
 	}
 }
 
@@ -2394,6 +2396,30 @@ func (m *Manager) copySSHKeys(ctx context.Context) error {
 	return nil
 }
 
+// resolveGitHubToken checks for a GitHub token in the environment or via the gh CLI.
+// Called once at Manager creation to avoid repeated exec calls.
+func resolveGitHubToken(ctx context.Context, log logger.Logger) string {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token
+	}
+
+	ghCtx, cancel := context.WithTimeout(ctx, 5*time.Second) //nolint:mnd // short timeout for local CLI call
+	defer cancel()
+
+	out, err := exec.CommandContext(ghCtx, "gh", "auth", "token").Output() //nolint:gosec // gh is a trusted CLI tool
+	if err == nil {
+		if token := strings.TrimSpace(string(out)); token != "" {
+			log.Infow("Using GitHub token from gh CLI for bastion provisioning")
+
+			return token
+		}
+	}
+
+	log.Warnw("GITHUB_TOKEN not set and gh CLI not available; GitHub API calls on bastion may be rate-limited")
+
+	return ""
+}
+
 func (m *Manager) getEnvironmentVariables() map[string]string {
 	// This would get environment variables from the provider initializer
 	// For now, return basic variables
@@ -2404,6 +2430,11 @@ func (m *Manager) getEnvironmentVariables() map[string]string {
 
 	// Add provider-specific variables based on the provider
 	m.addProviderEnvVars(env)
+
+	// Pass cached GitHub token to avoid API rate limiting on bastion
+	if m.githubToken != "" {
+		env["GITHUB_TOKEN"] = m.githubToken
+	}
 
 	return env
 }
