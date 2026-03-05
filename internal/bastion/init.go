@@ -44,6 +44,7 @@ var (
 	ErrBlocNameRequired                  = errors.New("bloc name is required")
 	ErrProviderRequired                  = errors.New("provider is required")
 	ErrBastionProvisioningDidNotComplete = errors.New("bastion provisioning did not complete successfully")
+	ErrVerificationMissingTools          = errors.New("verification failed: missing required tools")
 	ErrOCFPConfigurationFileNotFound     = errors.New("OCFP configuration file not found")
 	ErrBlocNotFoundInConfig              = errors.New("bloc not found in config file")
 	ErrScriptExecutionFailed             = errors.New("script execution failed")
@@ -1796,32 +1797,20 @@ sudo apt-get update -qq
 func (m *Manager) installBinaryTools(ctx context.Context) error {
 	m.log.Info("Installing binary tools")
 
-	// Report progress for binary tools
-	if m.reporter != nil {
-		baseTools := m.provConfig.GetBinaryTools()
-		advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
-		advTools := advMgr.GetAdvancedBinaryTools()
+	// Collect enabled tool names for post-install progress reporting
+	baseTools := m.provConfig.GetBinaryTools()
+	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+	advTools := advMgr.GetAdvancedBinaryTools()
 
-		enabledBase := filterEnabledBinaryTools(baseTools)
-		enabledAdv := filterEnabledAdvancedTools(advTools)
-		totalTools := len(enabledBase) + len(enabledAdv)
+	enabledBase := filterEnabledBinaryTools(baseTools)
+	enabledAdv := filterEnabledAdvancedTools(advTools)
 
-		current := 0
-		for _, t := range enabledBase {
-			m.reporter.ReportSubtaskProgress("binary_tools", current+1, totalTools, t.Name)
-			current++
-		}
-
-		for _, t := range enabledAdv {
-			m.reporter.ReportSubtaskProgress("binary_tools", current+1, totalTools, t.Name)
-			current++
-		}
-	}
+	// Deduplicate tool names (a tool may appear in both base and advanced)
+	toolNames := deduplicateToolNames(enabledBase, enabledAdv)
 
 	// Generate and execute binary tools installation scripts
 	// 1. Base tools (genesis, safe, spruce, vault, bosh, cf, etc.)
 	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
-	baseTools := m.provConfig.GetBinaryTools()
 	baseScript := scriptGen.GenerateBinaryToolScript(baseTools)
 
 	if baseScript != "" {
@@ -1831,8 +1820,7 @@ func (m *Manager) installBinaryTools(ctx context.Context) error {
 		}
 	}
 
-	// 2. Advanced tools (neovim, etc.)
-	advMgr := provision.NewAdvancedToolManager(m.config.Provider, m.config)
+	// 2. Advanced tools (fly, bun, nvm, etc.)
 	advScript := advMgr.GenerateAdvancedToolScript(ctx)
 
 	if advScript != "" {
@@ -1842,7 +1830,55 @@ func (m *Manager) installBinaryTools(ctx context.Context) error {
 		}
 	}
 
+	// Report progress after execution with actual install verification
+	if m.reporter != nil {
+		m.reportBinaryToolResults(ctx, toolNames)
+	}
+
 	return nil
+}
+
+// reportBinaryToolResults checks each tool's availability and reports accurate progress.
+func (m *Manager) reportBinaryToolResults(ctx context.Context, toolNames []string) {
+	totalTools := len(toolNames)
+
+	for toolIndex, name := range toolNames {
+		cmd := fmt.Sprintf("command -v %s >/dev/null 2>&1 && echo installed || echo missing", name)
+
+		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
+
+		status := name
+		if err != nil || strings.TrimSpace(result.Stdout) != "installed" {
+			status = name + " (missing)"
+			m.log.Warnw("Binary tool not available after install", "tool", name)
+		}
+
+		m.reporter.ReportSubtaskProgress("binary_tools", toolIndex+1, totalTools, status)
+	}
+}
+
+// deduplicateToolNames returns a unique list of tool names from base and advanced tools,
+// using the check command (or name) as the deduplication key.
+func deduplicateToolNames(base []provision.BinaryTool, advanced []provision.AdvancedBinaryTool) []string {
+	seen := make(map[string]struct{})
+
+	var names []string
+
+	for _, t := range base {
+		if _, exists := seen[t.Name]; !exists {
+			seen[t.Name] = struct{}{}
+			names = append(names, t.Name)
+		}
+	}
+
+	for _, t := range advanced {
+		if _, exists := seen[t.Name]; !exists {
+			seen[t.Name] = struct{}{}
+			names = append(names, t.Name)
+		}
+	}
+
+	return names
 }
 
 func (m *Manager) cloneGitRepositories(ctx context.Context) error {
@@ -2035,8 +2071,11 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	m.log.Info("Verifying installation")
 
 	// Check if provisioning completed successfully
+	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
+	totalSteps := 1 + len(tools)
+
 	if m.reporter != nil {
-		m.reporter.ReportSubtaskProgress("verification", 1, 10, "Checking provisioning marker") //nolint:mnd
+		m.reporter.ReportSubtaskProgress("verification", 1, totalSteps, "Checking provisioning marker")
 	}
 
 	cmd := "test -f ~/.ocfp/provisioned && echo 'provisioned' || echo 'not-provisioned'"
@@ -2051,20 +2090,31 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	}
 
 	// Verify key tools are available
-	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
-	for i, tool := range tools {
-		if m.reporter != nil {
-			m.reporter.ReportSubtaskProgress("verification", i+2, 10, "Verifying "+tool) //nolint:mnd
-		}
+	var missingTools []string
 
+	for toolIndex, tool := range tools {
 		cmd := "command -v " + tool
 
 		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
+			missingTools = append(missingTools, tool)
 			m.log.Warnw("Tool not available", "tool", tool)
 		} else {
 			m.log.Debugw("Tool verified", "tool", tool)
 		}
+
+		if m.reporter != nil {
+			status := "Verified " + tool
+			if err != nil {
+				status = "Missing " + tool
+			}
+
+			m.reporter.ReportSubtaskProgress("verification", toolIndex+2, totalSteps, status) //nolint:mnd
+		}
+	}
+
+	if len(missingTools) > 0 {
+		return fmt.Errorf("%w: %s", ErrVerificationMissingTools, strings.Join(missingTools, ", "))
 	}
 
 	return nil
