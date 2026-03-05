@@ -24,6 +24,18 @@ OCFP creates public IPs for these jobs:
 | TCP Router | `tcp_router_public_ips` | 2 | TCP traffic routing for CF applications |
 | Ops | Not configurable | 1 | Operations and management access |
 
+## Adding More IPs
+
+IP counts are configurable via bloc config parameters (`cf_ssh_public_ips`, `jumpbox_public_ips`, `router_public_ips`, `tcp_router_public_ips`). The workflow for adding more IPs is:
+
+1. Edit your bloc configuration file (`~/.ocfp/blocs/<bloc>.yml`) to set the desired count
+
+2. Run `ocfp bootstrap` to allocate the new IPs
+
+3. Update the relevant load balancer (`ocfp lb sync` or typed LB commands)
+
+For a full step-by-step walkthrough, including CF kit feature considerations and vault path references, see [Adding More Public IPs](adding-ips.md).
+
 ## AWS
 
 AWS public IPs are Elastic IPs allocated in the VPC domain.
@@ -127,7 +139,7 @@ Source: `internal/cpi/proxmox/network.go`
 
 Public IPs can be referenced in LB configurations and `lb add-service` commands using token form:
 
-```
+```text
 public-ip:<job>[:index]
 ```
 
@@ -161,6 +173,7 @@ Each service entry includes `name`, `protocol`, `port`, and `targets` (list of `
 
 ## See Also
 
+- [Adding More Public IPs](adding-ips.md) for step-by-step guide to increasing IP counts
 - [LB Commands](../cmds/lb.md) for target tokens and LB configuration
 - [Load Balancers](load-balancers.md) for provider LB architecture
 - [Networking Overview](README.md) for the provider support matrix
