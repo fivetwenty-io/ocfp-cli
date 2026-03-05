@@ -161,7 +161,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 		},
 		{
 			Name:           "safe",
-			Enabled:        true,
+			Enabled:        false, // installed via base binary tools
 			CheckCommand:   "safe",
 			VersionURL:     "https://api.github.com/repos/cloudfoundry-community/safe/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
@@ -490,11 +490,13 @@ func (atm *AdvancedToolManager) generateVersionDetermination(tool AdvancedBinary
 		lines = append(lines, "    log_info \"Using configured version: $LATEST_VERSION\"")
 	} else {
 		// Use jq to parse JSON and extract tag_name, then remove leading 'v'
-		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -sL '%s' | jq -r '.tag_name' | sed 's/^v//')", tool.VersionURL))
-		lines = append(lines, "    if [ ! -z \"$LATEST_VERSION\" ]; then")
+		// Guard against jq returning "null" (API rate limit or invalid response)
+		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -sL '%s' | jq -r '.tag_name // empty' | sed 's/^v//')", tool.VersionURL))
+		lines = append(lines, "    if [ -n \"$LATEST_VERSION\" ] && [ \"$LATEST_VERSION\" != \"null\" ]; then")
 		lines = append(lines, "        log_info \"Latest version: $LATEST_VERSION\"")
 		lines = append(lines, "    else")
-		lines = append(lines, fmt.Sprintf("        log_error 'Failed to get latest version for %s'", tool.Name))
+		lines = append(lines, "        LATEST_VERSION=''")
+		lines = append(lines, fmt.Sprintf("        log_error 'Failed to get latest version for %s (API may be rate-limited)'", tool.Name))
 		lines = append(lines, fmt.Sprintf("        log_warning 'Skipping %s installation'", tool.Name))
 		lines = append(lines, "    fi")
 	}
@@ -506,7 +508,7 @@ func (atm *AdvancedToolManager) generateArchitectureMapping(tool AdvancedBinaryT
 	var lines []string
 
 	// Only proceed if version was determined successfully
-	lines = append(lines, "    if [ ! -z \"$LATEST_VERSION\" ]; then")
+	lines = append(lines, "    if [ -n \"$LATEST_VERSION\" ]; then")
 
 	if len(tool.ArchMap) > 0 {
 		lines = append(lines, "        # Map architecture")
