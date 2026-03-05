@@ -154,8 +154,8 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "credhub-cli", Enabled: true, CheckCommand: "credhub", Tap: "cloudfoundry/tap"},
 		{Name: "uaa-cli", Enabled: true, CheckCommand: "uaa", Tap: "cloudfoundry/tap"},
 
-		// CF community tools (from cloudfoundry-community/cf)
-		{Name: "spruce", Enabled: true, CheckCommand: "spruce", Tap: "cloudfoundry-community/cf"},
+		// CF community tools — spruce brew formula is macOS-only; installed via binary_tools instead
+		{Name: "spruce", Enabled: false, CheckCommand: "spruce", Tap: "cloudfoundry-community/cf"},
 
 		// OpenBao
 		{Name: "openbao", Enabled: true, CheckCommand: "bao"},

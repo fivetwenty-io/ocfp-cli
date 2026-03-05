@@ -223,10 +223,7 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Error("Expected cloudfoundry/tap in brew package script")
 	}
 
-	// Verify cloudfoundry-community/cf for spruce
-	if !strings.Contains(script, "cloudfoundry-community/cf") {
-		t.Error("Expected cloudfoundry-community/cf in brew package script")
-	}
+	// spruce brew formula is macOS-only; installed via binary_tools instead
 }
 
 func TestGenerateBrewPackageScript_CaskSupport(t *testing.T) {
