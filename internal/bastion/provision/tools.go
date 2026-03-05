@@ -337,6 +337,13 @@ func (atm *AdvancedToolManager) applyToolOverrides(tools []AdvancedBinaryTool) [
 func (atm *AdvancedToolManager) addScriptHeader(lines *[]string) {
 	*lines = append(*lines, "# Advanced binary tool installation")
 	*lines = append(*lines, "")
+	// Set up GitHub auth header to avoid API rate limiting (60 req/hr unauthenticated)
+	*lines = append(*lines, "# Use GitHub token if available to avoid rate limiting")
+	*lines = append(*lines, `GITHUB_AUTH_HEADER=""`)
+	*lines = append(*lines, `if [ -n "${GITHUB_TOKEN:-}" ]; then`)
+	*lines = append(*lines, `    GITHUB_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"`)
+	*lines = append(*lines, "fi")
+	*lines = append(*lines, "")
 }
 
 // addArchitectureDetection adds architecture detection helper.
@@ -491,7 +498,7 @@ func (atm *AdvancedToolManager) generateVersionDetermination(tool AdvancedBinary
 	} else {
 		// Use jq to parse JSON and extract tag_name, then remove leading 'v'
 		// Guard against jq returning "null" (API rate limit or invalid response)
-		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -sL '%s' | jq -r '.tag_name // empty' | sed 's/^v//')", tool.VersionURL))
+		lines = append(lines, fmt.Sprintf("    LATEST_VERSION=$(curl -sL -H \"${GITHUB_AUTH_HEADER}\" '%s' | jq -r '.tag_name // empty' | sed 's/^v//')", tool.VersionURL))
 		lines = append(lines, "    if [ -n \"$LATEST_VERSION\" ] && [ \"$LATEST_VERSION\" != \"null\" ]; then")
 		lines = append(lines, "        log_info \"Latest version: $LATEST_VERSION\"")
 		lines = append(lines, "    else")

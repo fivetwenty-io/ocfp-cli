@@ -106,7 +106,7 @@ func bastionInit(cmd *cobra.Command, log logger.Logger) error {
 	}
 
 	// Create bastion manager
-	bastionMgr := bastion.NewManager(cfg, &bastion.ProvisioningOptions{
+	bastionMgr := bastion.NewManager(ctx, cfg, &bastion.ProvisioningOptions{
 		DryRun:      false,
 		Resume:      false,
 		Parallel:    false,

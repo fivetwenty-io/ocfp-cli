@@ -464,7 +464,7 @@ func InitializeBastionWithMode(ctx context.Context, cfg *config.Config, opts *Pr
 
 		return executor.Initialize(ctx)
 	case RemoteMode:
-		manager := NewManager(cfg, opts)
+		manager := NewManager(ctx, cfg, opts)
 
 		return manager.Initialize(ctx)
 	default:
