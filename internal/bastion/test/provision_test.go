@@ -228,8 +228,8 @@ func TestBrewPackageGeneration(t *testing.T) {
 				t.Error("Expected Go brew package to be enabled")
 			}
 
-			if pkg.Version != "1.24" {
-				t.Errorf("Expected Go version '1.24', got '%s'", pkg.Version)
+			if pkg.Version != "1.26" {
+				t.Errorf("Expected Go version '1.26', got '%s'", pkg.Version)
 			}
 
 			break
@@ -250,7 +250,7 @@ func TestBrewPackageGeneration(t *testing.T) {
 	// Check script content
 	requiredContent := []string{
 		"brew install",
-		"go@1.24",
+		"go@1.26",
 		"HOMEBREW_NO_AUTO_UPDATE",
 		"brew shellenv",
 	}
