@@ -1843,7 +1843,7 @@ func (m *Manager) reportBinaryToolResults(ctx context.Context, toolNames []strin
 	totalTools := len(toolNames)
 
 	for toolIndex, name := range toolNames {
-		cmd := fmt.Sprintf("command -v %s >/dev/null 2>&1 && echo installed || echo missing", name)
+		cmd := fmt.Sprintf("%scommand -v %s >/dev/null 2>&1 && echo installed || echo missing", brewShellEnvSetup, name)
 
 		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 
@@ -2093,7 +2093,7 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	var missingTools []string
 
 	for toolIndex, tool := range tools {
-		cmd := "command -v " + tool
+		cmd := brewShellEnvSetup + "command -v " + tool
 
 		_, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
