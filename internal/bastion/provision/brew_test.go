@@ -334,7 +334,7 @@ func TestBuildBrewInstallCommand(t *testing.T) {
 	}
 }
 
-func TestGetBrewPackages_GoLatestVersion(t *testing.T) {
+func TestGetBrewPackages_GoPinnedVersion(t *testing.T) {
 	cfg := &config.Config{
 		Bastion: config.Bastion{
 			Brews:         config.OverrideSets{},
@@ -347,8 +347,8 @@ func TestGetBrewPackages_GoLatestVersion(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		if pkg.Name == "go" {
-			if pkg.Version != "" {
-				t.Errorf("Expected go with no version pin (latest), got '%s'", pkg.Version)
+			if pkg.Version != "1.26" {
+				t.Errorf("Expected go pinned to version '1.26', got '%s'", pkg.Version)
 			}
 
 			return

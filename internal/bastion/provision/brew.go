@@ -139,7 +139,7 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "tree", Enabled: true, CheckCommand: "tree"},
 
 		// From snap
-		{Name: "go", Enabled: true, CheckCommand: "go"},
+		{Name: "go", Enabled: true, CheckCommand: "go", Version: "1.26"},
 		{Name: "kubectl", Enabled: true, CheckCommand: "kubectl"},
 		{Name: "node", Enabled: false, CheckCommand: "node"}, // Disabled by default, use nvm
 
