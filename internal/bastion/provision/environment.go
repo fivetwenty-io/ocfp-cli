@@ -139,6 +139,15 @@ func (em *EnvironmentManager) generateProfileDScript(envVars map[string]string) 
 		"",
 	)
 
+	// Source Linuxbrew so brew-installed binaries are on PATH for login shells
+	lines = append(lines,
+		"# Linuxbrew environment",
+		`if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then`,
+		`    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"`,
+		"fi",
+		"",
+	)
+
 	for key, value := range envVars {
 		lines = append(lines, fmt.Sprintf("export %s='%s'", key, value))
 	}
