@@ -172,6 +172,18 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 			VerifyCommand:  "safe --version",
 		},
 		{
+			Name:           "spruce",
+			Enabled:        true,
+			CheckCommand:   "spruce",
+			VersionURL:     "https://api.github.com/repos/geofffranks/spruce/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://github.com/geofffranks/spruce/releases/download/v${VERSION}/spruce-linux-amd64",
+			Dest:           "/usr/local/bin/spruce",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			VerifyCommand:  "spruce --version",
+		},
+		{
 			Name:           "yq",
 			Enabled:        false, // installed via brew
 			CheckCommand:   "yq",
