@@ -52,18 +52,35 @@ func NewRSyncCmd() *cobra.Command {
 func getRSyncLongDescription() string {
 	return `RSyncs files between the local machine and the bastion host using rsync.
 
-The command supports bidirectional synchronization with advanced options:
+The command supports bidirectional synchronization using the bastion: prefix
+convention:
+- Local to bastion: ocfp rsync /local/dir/ bastion:/remote/dir/
+- Bastion to local: ocfp rsync bastion:/remote/dir/ /local/dir/
+
+The bastion: prefix is automatically resolved to the bastion host's public IP
+address, which is discovered from the bloc configuration. The --bloc flag is
+required to identify which environment to connect to.
+
+Advanced options include:
 - Archive mode preserves permissions, ownership, timestamps
 - Compression for efficient transfer
 - Delete mode for mirror synchronization
 - Include/exclude patterns for selective sync
 
-The bastion host is automatically discovered using the bloc configuration.`
+Prefer rsync over scp for large directories or repeated transfers, as rsync
+uses delta transfers to only send changed portions of files.
+
+SSH keys are searched in the following order:
+1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
+2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`
 }
 
 func getRSyncExamples() string {
 	return `  # Sync directory to bastion
   ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/
+
+  # Sync from bastion to local
+  ocfp rsync --bloc production bastion:/remote/dir/ /local/dir/
 
   # Sync from bastion with compression
   ocfp rsync --bloc production --compress bastion:/remote/dir/ /local/dir/
@@ -75,7 +92,13 @@ func getRSyncExamples() string {
   ocfp rsync --bloc production --dry-run /local/dir/ bastion:/remote/dir/
 
   # Exclude certain files
-  ocfp rsync --bloc production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/`
+  ocfp rsync --bloc production --exclude "*.tmp" --exclude ".git" /local/dir/ bastion:/remote/dir/
+
+  # Include only YAML files, exclude everything else
+  ocfp rsync --bloc production --include "*.yml" --exclude "*" /local/configs/ bastion:/remote/configs/
+
+  # Combine archive, verbose, and compress flags
+  ocfp rsync --bloc production -a -v -z /local/dir/ bastion:/remote/dir/`
 }
 
 func addRSyncFlags(cmd *cobra.Command, user, key *string, archive, compress, verbose, deleteFiles, dryRun *bool, exclude, include *[]string, rsyncOptions *string) {

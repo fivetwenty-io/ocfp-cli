@@ -33,11 +33,17 @@ func NewSCPCmd() *cobra.Command {
 		Short: "Copy files to/from bastion host",
 		Long: `SCP copies files between the local machine and the bastion host.
 
-The command supports bidirectional transfers:
+The command supports bidirectional transfers using the bastion: prefix convention:
 - Local to bastion: ocfp scp /local/file bastion:/remote/path
 - Bastion to local: ocfp scp bastion:/remote/file /local/path
 
-The bastion host is automatically discovered using the bloc configuration.`,
+The bastion: prefix is automatically resolved to the bastion host's public IP
+address, which is discovered from the bloc configuration. The --bloc flag is
+required to identify which environment to connect to.
+
+SSH keys are searched in the following order:
+1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
+2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`,
 		Example: `  # Copy file to bastion
   ocfp scp --bloc production /local/file.txt bastion:/tmp/
 
@@ -48,7 +54,13 @@ The bastion host is automatically discovered using the bloc configuration.`,
   ocfp scp --bloc production -r /local/dir/ bastion:/remote/dir/
 
   # Use specific SSH key
-  ocfp scp --bloc production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/`,
+  ocfp scp --bloc production --key ~/.ssh/custom-key.pem file.txt bastion:/tmp/
+
+  # Copy with compression enabled
+  ocfp scp --bloc production --scp-options "-C" /local/largefile.tar.gz bastion:/tmp/
+
+  # Copy a remote config directory recursively to local
+  ocfp scp --bloc production -r bastion:/opt/configs/ ./local-configs/`,
 		Args: cobra.ExactArgs(scpTwoArgs),
 		RunE: runSCP,
 	}
