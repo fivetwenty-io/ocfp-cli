@@ -30,7 +30,7 @@ func TestGetBrewPackages_Defaults(t *testing.T) {
 		"yq": false, "ripgrep": false, "tmux": false, "ruby": false,
 		"gcc": false, "make": false, "cpanminus": false, "gnupg": false,
 		"python@3": false, "readline": false, "libyaml": false, "zlib": false,
-		"bosh-cli": false, "cf-cli": false, "credhub-cli": false,
+		"bosh-cli": false, "cf-cli@8": false, "credhub-cli": false,
 		"uaa-cli": false, "spruce": false, "openbao": false,
 	}
 
@@ -218,12 +218,8 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Error("Expected hashicorp/tap in brew package script for vault")
 	}
 
-	// Verify cloudfoundry/tap for CF ecosystem tools
-	if !strings.Contains(script, "cloudfoundry/tap") {
-		t.Error("Expected cloudfoundry/tap in brew package script")
-	}
-
-	// spruce brew formula is macOS-only; installed via binary_tools instead
+	// CF ecosystem tools (bosh, cf, credhub, uaa, spruce) are installed via binary_tools
+	// because the cloudfoundry brew taps ship macOS-only binaries
 }
 
 func TestGenerateBrewPackageScript_CaskSupport(t *testing.T) {

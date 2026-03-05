@@ -148,13 +148,11 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
 		{Name: "hl", Enabled: true, CheckCommand: "hl"},
 
-		// CF ecosystem tools (from cloudfoundry/tap)
-		{Name: "bosh-cli", Enabled: true, CheckCommand: "bosh", Tap: "cloudfoundry/tap"},
-		{Name: "cf-cli", Enabled: true, CheckCommand: "cf", Tap: "cloudfoundry/tap"},
-		{Name: "credhub-cli", Enabled: true, CheckCommand: "credhub", Tap: "cloudfoundry/tap"},
-		{Name: "uaa-cli", Enabled: true, CheckCommand: "uaa", Tap: "cloudfoundry/tap"},
-
-		// CF community tools — spruce brew formula is macOS-only; installed via binary_tools instead
+		// CF ecosystem tools — brew tap ships macOS-only binaries; installed via binary_tools instead
+		{Name: "bosh-cli", Enabled: false, CheckCommand: "bosh", Tap: "cloudfoundry/tap"},
+		{Name: "cf-cli@8", Enabled: false, CheckCommand: "cf", Tap: "cloudfoundry/tap"},
+		{Name: "credhub-cli", Enabled: false, CheckCommand: "credhub", Tap: "cloudfoundry/tap"},
+		{Name: "uaa-cli", Enabled: false, CheckCommand: "uaa", Tap: "cloudfoundry/tap"},
 		{Name: "spruce", Enabled: false, CheckCommand: "spruce", Tap: "cloudfoundry-community/cf"},
 
 		// OpenBao

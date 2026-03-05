@@ -63,6 +63,7 @@ func NewAdvancedToolManager(provider string, cfg *config.Config) *AdvancedToolMa
 // GetAdvancedBinaryTools returns advanced binary tools configuration.
 func (atm *AdvancedToolManager) GetAdvancedBinaryTools() []AdvancedBinaryTool {
 	tools := atm.getBaseTool()
+	tools = append(tools, atm.getCFEcosystemTools()...)
 	tools = append(tools, atm.getBuildTools()...)
 	tools = append(tools, atm.getEditorTools()...)
 
@@ -206,6 +207,62 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 			InstallCommand: "sudo install /tmp/ripgrep-*/rg /usr/local/bin/rg",
 			Cleanup:        "/tmp/ripgrep*",
 			VerifyCommand:  "rg --version",
+		},
+	}
+}
+
+// getCFEcosystemTools returns CloudFoundry ecosystem tools.
+// These are installed via GitHub binary downloads because the cloudfoundry brew tap
+// ships macOS-only (Mach-O) binaries that do not work on Linux.
+func (atm *AdvancedToolManager) getCFEcosystemTools() []AdvancedBinaryTool {
+	return []AdvancedBinaryTool{
+		{
+			Name:           "bosh",
+			Enabled:        true,
+			CheckCommand:   "bosh",
+			VersionURL:     "https://api.github.com/repos/cloudfoundry/bosh-cli/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://github.com/cloudfoundry/bosh-cli/releases/download/v${VERSION}/bosh-cli-${VERSION}-linux-amd64",
+			Dest:           "/usr/local/bin/bosh",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			VerifyCommand:  "bosh --version",
+		},
+		{
+			Name:           "cf",
+			Enabled:        true,
+			CheckCommand:   "cf",
+			VersionURL:     "https://api.github.com/repos/cloudfoundry/cli/releases/latest",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			URLTemplate:    "https://github.com/cloudfoundry/cli/releases/download/v${VERSION}/cf8-cli_${VERSION}_linux_x86-64.tgz",
+			Extract:        true,
+			InstallCommand: "sudo install /tmp/cf8 /usr/local/bin/cf",
+			Cleanup:        "/tmp/cf8*",
+			VerifyCommand:  "cf version",
+		},
+		{
+			Name:           "credhub",
+			Enabled:        true,
+			CheckCommand:   "credhub",
+			VersionURL:     "https://api.github.com/repos/cloudfoundry/credhub-cli/releases/latest",
+			VersionPattern: `"tag_name":\s*"([^"]+)"`,
+			URLTemplate:    "https://github.com/cloudfoundry/credhub-cli/releases/download/${VERSION}/credhub-linux-amd64-${VERSION}.tgz",
+			Extract:        true,
+			InstallCommand: "sudo install /tmp/credhub /usr/local/bin/credhub",
+			Cleanup:        "/tmp/credhub*",
+			VerifyCommand:  "credhub --version",
+		},
+		{
+			Name:           "uaa",
+			Enabled:        true,
+			CheckCommand:   "uaa",
+			VersionURL:     "https://api.github.com/repos/cloudfoundry/uaa-cli/releases/latest",
+			VersionPattern: `"tag_name":\s*"([^"]+)"`,
+			URLTemplate:    "https://github.com/cloudfoundry/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
+			Dest:           "/usr/local/bin/uaa",
+			Mode:           fileModeExecutable,
+			Sudo:           true,
+			VerifyCommand:  "uaa version",
 		},
 	}
 }
@@ -384,7 +441,14 @@ func (atm *AdvancedToolManager) addSingleToolInstallation(lines *[]string, tool 
 }
 
 // getInstallCheckCondition builds the condition to check if tool is installed.
+// For tools with a VerifyCommand, we check that the tool actually runs successfully
+// (not just that it exists on PATH). This catches cases like a macOS binary installed
+// via brew on Linux — it will be on PATH but fail to execute.
 func (atm *AdvancedToolManager) getInstallCheckCondition(tool AdvancedBinaryTool) string {
+	if tool.VerifyCommand != "" {
+		return tool.VerifyCommand + " >/dev/null 2>&1"
+	}
+
 	if tool.CheckCommand != "" {
 		return fmt.Sprintf("command -v %s >/dev/null 2>&1", tool.CheckCommand)
 	}
@@ -419,6 +483,7 @@ func (atm *AdvancedToolManager) addInstallCheckWrapper(lines *[]string, checkCon
 func (atm *AdvancedToolManager) addToolInstallationSteps(lines *[]string, tool AdvancedBinaryTool) {
 	*lines = append(*lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
 
+	atm.addBrewUnlink(lines, tool)
 	atm.addInstallationMethod(lines, tool)
 	atm.addPostInstallSteps(lines, tool)
 	atm.addVerificationStep(lines, tool)
@@ -471,6 +536,17 @@ func (atm *AdvancedToolManager) addCleanupStep(lines *[]string, tool AdvancedBin
 	if tool.Cleanup != "" {
 		*lines = append(*lines, fmt.Sprintf("    rm -rf %s 2>/dev/null || true", tool.Cleanup))
 	}
+}
+
+// addBrewUnlink removes a conflicting brew-managed symlink for tools we install
+// via binary download. This prevents a broken brew binary (e.g., macOS Mach-O on
+// Linux) from shadowing the correctly-installed binary in /usr/local/bin.
+func (atm *AdvancedToolManager) addBrewUnlink(lines *[]string, tool AdvancedBinaryTool) {
+	if tool.CheckCommand == "" {
+		return
+	}
+
+	*lines = append(*lines, fmt.Sprintf("    brew unlink %s 2>/dev/null || true", tool.CheckCommand))
 }
 
 // generateVersionBasedInstall generates installation commands for version-based tools.
