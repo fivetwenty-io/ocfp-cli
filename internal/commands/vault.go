@@ -296,15 +296,24 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 		// First try the PATH
 		cmdPath, err := exec.LookPath(cmd)
 		if err != nil {
-			// If not in PATH, try /usr/local/bin explicitly (where bastion tools are installed)
-			explicitPath := filepath.Join("/usr/local/bin", cmd)
+			// If not in PATH, check known installation directories
+			found := false
 
-			_, statErr := os.Stat(explicitPath)
-			if statErr != nil {
-				return cmdErr
+			for _, dir := range []string{"/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"} {
+				explicitPath := filepath.Join(dir, cmd)
+
+				_, statErr := os.Stat(explicitPath)
+				if statErr == nil {
+					cmdPath = explicitPath
+					found = true
+
+					break
+				}
 			}
 
-			cmdPath = explicitPath
+			if !found {
+				return cmdErr
+			}
 		}
 
 		log.Infow("Found required command", "command", cmd, "path", cmdPath)
