@@ -268,7 +268,19 @@ func resolveBlocName() string {
 		return stateBloc
 	}
 
-	return viper.GetString("bloc")
+	if viperBloc := viper.GetString("bloc"); viperBloc != "" {
+		return viperBloc
+	}
+
+	// If exactly one bloc defined in config, use it
+	configFile := viper.GetString("config")
+
+	blocs, err := config.ListBlocNames(configFile)
+	if err == nil && len(blocs) == 1 {
+		return blocs[0]
+	}
+
+	return ""
 }
 
 // setupCommandTracking initializes command tracking and lock file creation.
