@@ -666,11 +666,11 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"ocfp_directories", m.setupOCFPDirectories},
 		{"configuration_files", m.createConfigFiles},
 		{"apt_repositories", m.setupAPTRepositories},
-		{"packages", m.installPackages},                 // avoid dpkg lock issues
-		{"brew_install", m.installBrew},                 // must complete before brew_packages
-		{"brew_packages", m.installBrewPackages},        // must complete before post_brew_apt
-		{"post_brew_apt", m.installPostBrewPackages},    // APT pkgs requiring brew tools (e.g. libperl-dev)
-		{"git_repos", m.cloneGitRepositories},           // must run before binary_tools that depend on git repos
+		{"packages", m.installPackages},              // avoid dpkg lock issues
+		{"brew_install", m.installBrew},              // must complete before brew_packages
+		{"brew_packages", m.installBrewPackages},     // must complete before post_brew_apt
+		{"post_brew_apt", m.installPostBrewPackages}, // APT pkgs requiring brew tools (e.g. libperl-dev)
+		{"git_repos", m.cloneGitRepositories},        // must run before binary_tools that depend on git repos
 	}
 
 	err := m.runPhasesSequential(ctx, pre)
@@ -1705,7 +1705,6 @@ func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
 	return enabled
 }
 
-
 // filterEnabledBinaryTools returns only enabled binary tools.
 func filterEnabledBinaryTools(tools []provision.BinaryTool) []provision.BinaryTool {
 	var enabled []provision.BinaryTool
@@ -1746,7 +1745,6 @@ func (m *Manager) installPackages(ctx context.Context) error {
 
 	return m.executeScript(ctx, script, "packages")
 }
-
 
 // buildPackageInstallScript generates the full package installation script.
 func (m *Manager) buildPackageInstallScript(packages map[string]provision.PackageGroup) string {
