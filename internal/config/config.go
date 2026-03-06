@@ -832,6 +832,35 @@ func cacheConfiguration(configPath, blocName string, cfg *Config) {
 	}
 }
 
+// ListBlocNames returns the sorted names of all blocs defined in the config file.
+// Returns an empty slice (not an error) if the file doesn't exist or has no blocs.
+func ListBlocNames(configFile string) ([]string, error) {
+	path := determineConfigPath(configFile)
+	if path == "" {
+		return nil, nil
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	var cfgFile ConfigFile
+
+	err := loadFromFile(path, &cfgFile)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(cfgFile.Blocs))
+	for name := range cfgFile.Blocs {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names, nil
+}
+
 // determineConfigPath determines the configuration file path.
 func determineConfigPath(configFile string) string {
 	// Priority 1: Explicit config file
