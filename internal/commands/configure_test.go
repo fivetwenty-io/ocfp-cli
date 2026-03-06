@@ -166,23 +166,23 @@ type configureTestProvider struct {
 	compute cpi.ComputeManager
 }
 
-func (p *configureTestProvider) Name() string                                   { return "aws" }
-func (p *configureTestProvider) Region() string                                 { return "us-east-1" }
-func (p *configureTestProvider) Authenticate(_ context.Context) error           { return nil }
-func (p *configureTestProvider) ValidateCredentials(_ context.Context) error    { return nil }
-func (p *configureTestProvider) Network() cpi.NetworkManager                    { return p.network } //nolint:ireturn
-func (p *configureTestProvider) Compute() cpi.ComputeManager                   { return p.compute } //nolint:ireturn
-func (p *configureTestProvider) Storage() cpi.StorageManager                   { return nil }        //nolint:ireturn
-func (p *configureTestProvider) Security() cpi.SecurityManager                 { return nil }        //nolint:ireturn
-func (p *configureTestProvider) LoadBalancer() cpi.LoadBalancerManager         { return nil }        //nolint:ireturn
-func (p *configureTestProvider) NetworkManager() cpi.NetworkManager             { return p.network } //nolint:ireturn
-func (p *configureTestProvider) ComputeManager() cpi.ComputeManager            { return p.compute } //nolint:ireturn
-func (p *configureTestProvider) StorageManager() cpi.StorageManager            { return nil }        //nolint:ireturn
-func (p *configureTestProvider) SecurityManager() cpi.SecurityManager          { return nil }        //nolint:ireturn
-func (p *configureTestProvider) LoadBalancerManager() cpi.LoadBalancerManager  { return nil }        //nolint:ireturn
-func (p *configureTestProvider) SupportsStorage() bool                          { return false }
+func (p *configureTestProvider) Name() string                                      { return "aws" }
+func (p *configureTestProvider) Region() string                                    { return "us-east-1" }
+func (p *configureTestProvider) Authenticate(_ context.Context) error              { return nil }
+func (p *configureTestProvider) ValidateCredentials(_ context.Context) error       { return nil }
+func (p *configureTestProvider) Network() cpi.NetworkManager                       { return p.network } //nolint:ireturn
+func (p *configureTestProvider) Compute() cpi.ComputeManager                       { return p.compute } //nolint:ireturn
+func (p *configureTestProvider) Storage() cpi.StorageManager                       { return nil }       //nolint:ireturn
+func (p *configureTestProvider) Security() cpi.SecurityManager                     { return nil }       //nolint:ireturn
+func (p *configureTestProvider) LoadBalancer() cpi.LoadBalancerManager             { return nil }       //nolint:ireturn
+func (p *configureTestProvider) NetworkManager() cpi.NetworkManager                { return p.network } //nolint:ireturn
+func (p *configureTestProvider) ComputeManager() cpi.ComputeManager                { return p.compute } //nolint:ireturn
+func (p *configureTestProvider) StorageManager() cpi.StorageManager                { return nil }       //nolint:ireturn
+func (p *configureTestProvider) SecurityManager() cpi.SecurityManager              { return nil }       //nolint:ireturn
+func (p *configureTestProvider) LoadBalancerManager() cpi.LoadBalancerManager      { return nil }       //nolint:ireturn
+func (p *configureTestProvider) SupportsStorage() bool                             { return false }
 func (p *configureTestProvider) Initialize(_ context.Context, _ interface{}) error { return nil }
-func (p *configureTestProvider) Cleanup(_ context.Context) error                { return nil }
+func (p *configureTestProvider) Cleanup(_ context.Context) error                   { return nil }
 
 func TestConfigureFloatingIPsFiltersByBloc(t *testing.T) {
 	t.Parallel()

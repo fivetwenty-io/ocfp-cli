@@ -41,7 +41,7 @@ func (m *awsMockSafe) SetMultiple(path string, data map[string]interface{}) erro
 	return nil
 }
 
-func (m *awsMockSafe) Get(_, _ string) (interface{}, error)           { return "", nil }
+func (m *awsMockSafe) Get(_, _ string) (interface{}, error)            { return "", nil }
 func (m *awsMockSafe) GetAll(_ string) (map[string]interface{}, error) { return nil, nil }
 func (m *awsMockSafe) Exists(_ string) (bool, error)                   { return false, nil }
 func (m *awsMockSafe) Delete(_, _ string) error                        { return nil }
