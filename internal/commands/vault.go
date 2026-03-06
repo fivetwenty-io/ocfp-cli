@@ -321,6 +321,12 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
 	_ = cmd.Run()
 
+	// Also kill bare inception-vault session if using a prefixed name (migration from older systems)
+	if paths["tmuxSession"] != "inception-vault" {
+		cmd = exec.CommandContext(ctx, "tmux", "kill-session", "-t", "inception-vault")
+		_ = cmd.Run()
+	}
+
 	// Kill any process listening on the vault port
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
 	cmd = exec.CommandContext(ctx, "sh", "-c", "lsof -ti :"+paths["port"]+" | xargs kill -9 2>/dev/null")
@@ -337,6 +343,12 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
 	cmd = exec.CommandContext(ctx, "safe", "target", "delete", paths["vaultName"])
 	_ = cmd.Run() // Ignore errors if target doesn't exist
+
+	// Also delete bare inception target if using a prefixed name (migration from older systems)
+	if paths["vaultName"] != "inception" {
+		cmd = exec.CommandContext(ctx, "safe", "target", "delete", "inception")
+		_ = cmd.Run()
+	}
 
 	// Remove vault data directory and all its contents
 	err := os.RemoveAll(paths["vaultDir"])
@@ -371,13 +383,59 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Starting vault in tmux session...")
 
-	// Create tmux session
+	// Kill both prefixed and bare session names defensively
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", paths["tmuxSession"])
+	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
+	_ = killCmd.Run()
 
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
+	if paths["tmuxSession"] != "inception-vault" {
+		killCmd = exec.CommandContext(ctx, "tmux", "kill-session", "-t", "inception-vault")
+		_ = killCmd.Run()
+	}
+
+	// Create tmux session with retry
+	var createErr error
+
+	for attempt := range 2 {
+		if attempt > 0 {
+			log.Info("Retrying tmux session creation...")
+			time.Sleep(1 * time.Second)
+		}
+
+		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+		cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", paths["tmuxSession"])
+
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			createErr = nil
+
+			break
+		}
+
+		createErr = err
+		log.Warnw("tmux new-session failed",
+			"attempt", attempt+1,
+			"error", err,
+			"output", string(output))
+
+		// Log existing sessions for diagnostics
+		listCmd := exec.CommandContext(ctx, "tmux", "list-sessions")
+
+		listOutput, listErr := listCmd.CombinedOutput()
+		if listErr != nil {
+			log.Warnw("tmux list-sessions failed", "error", listErr)
+		} else {
+			log.Infow("Existing tmux sessions", "sessions", string(listOutput))
+		}
+
+		// Kill the session in case it exists but in a bad state
+		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
+		killCmd = exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
+		_ = killCmd.Run()
+	}
+
+	if createErr != nil {
+		return fmt.Errorf("failed to create tmux session after retries: %w", createErr)
 	}
 
 	time.Sleep(1 * time.Second)
@@ -388,9 +446,9 @@ func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.Sug
 		paths["port"])
 
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd = exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m")
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m")
 
-	err = cmd.Run()
+	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("failed to send command to tmux: %w", err)
 	}
@@ -414,7 +472,7 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 
 		// Check tmux output for success indicators first (more reliable for safe local)
 		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p")
+		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-")
 
 		output, err := cmd.Output()
 		if err == nil {
@@ -429,7 +487,8 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 
 			// Check for success indicators
 			if strings.Contains(outputStr, "Now targeting") &&
-				strings.Contains(outputStr, "MEMORY-BACKED") {
+				(strings.Contains(outputStr, "MEMORY-BACKED") ||
+					strings.Contains(outputStr, "Storing data")) {
 				log.Info("")
 				log.Info("Vault initialized successfully!")
 
