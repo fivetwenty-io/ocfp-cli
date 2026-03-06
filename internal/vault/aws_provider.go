@@ -635,9 +635,18 @@ func (a *AWSVaultProvider) configureSubnet(envType string, subnetNum int, subnet
 		return err
 	}
 
-	availabilityZone := a.getAvailabilityZone(subnetNum)
+	// Get real subnet ID and AZ from bootstrap state
+	realSubnetID, stateAZ := a.getSubnetDataFromState(subnet.Name)
 
-	subnetData := a.buildSubnetData(subnetType, subnetNum, subnet.CIDR, networkInfo, availabilityZone)
+	availabilityZone := stateAZ
+	if availabilityZone == "" {
+		availabilityZone = subnet.AvailabilityZone
+	}
+	if availabilityZone == "" {
+		availabilityZone = a.getAvailabilityZone(subnetNum)
+	}
+
+	subnetData := a.buildSubnetData(subnetType, subnetNum, subnet.CIDR, networkInfo, availabilityZone, realSubnetID)
 
 	err = a.Safe.SetMultiple(subnetPath, subnetData)
 	if err != nil {
@@ -705,9 +714,14 @@ func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 }
 
 // buildSubnetData constructs subnet metadata.
-func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
+func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string, realSubnetID string) map[string]interface{} {
+	subnetID := realSubnetID
+	if subnetID == "" {
+		subnetID = fmt.Sprintf("%s-%s-%d", a.BlocName, subnetType, subnetNum)
+	}
+
 	return map[string]interface{}{
-		"id":          fmt.Sprintf("%s-%s-%d", a.BlocName, subnetType, subnetNum),
+		"id":          subnetID,
 		"cidr_block":  cidr,
 		"cidr_prefix": networkInfo.cidrPrefix,
 		"ip_0":        networkInfo.network,
@@ -1220,6 +1234,25 @@ func (a *AWSVaultProvider) getVPCID() string {
 
 	// Fallback to using bloc name as VPC identifier
 	return a.BlocName + "-vpc"
+}
+
+// getSubnetDataFromState retrieves the real AWS subnet ID and availability zone from bootstrap state.
+func (a *AWSVaultProvider) getSubnetDataFromState(subnetName string) (subnetID string, availabilityZone string) {
+	stateManager := a.loadStateManager()
+	if stateManager == nil {
+		return "", ""
+	}
+
+	resource, err := stateManager.GetResource("subnet", subnetName)
+	if err != nil || resource == nil {
+		return "", ""
+	}
+
+	if az, ok := resource.Properties["availability_zone"].(string); ok {
+		availabilityZone = az
+	}
+
+	return resource.ID, availabilityZone
 }
 
 // getPublicIPsFromState retrieves public IPs from state.
