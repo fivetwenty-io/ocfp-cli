@@ -605,18 +605,37 @@ func (a *AWSVaultProvider) configureVPC(envType string) error {
 
 // configureSubnets configures subnet settings in vault.
 func (a *AWSVaultProvider) configureSubnets(envType string) error {
-	a.logger.Infow("Configuring subnets", "env_type", envType)
+	a.logger.Infow("Configuring subnets",
+		"env_type", envType,
+		"subnet_count", len(a.Config.Subnets),
+		"network_subnet_count", len(a.Config.Network.Subnets),
+		"network_cidr", a.Config.Network.CIDR,
+	)
+
+	if len(a.Config.Subnets) == 0 {
+		a.logger.Warnw("No subnets configured - reserved IPs will not be written",
+			"env_type", envType,
+			"hint", "Ensure config has Network.Subnets from bootstrap state or a valid Network.CIDR for auto-generation",
+		)
+	}
 
 	subnetsPath := a.PathBuilder.GetSubnetsPath(envType)
 
 	for i, subnet := range a.Config.Subnets {
+		a.logger.Debugw("Processing subnet",
+			"index", i,
+			"name", subnet.Name,
+			"cidr", subnet.CIDR,
+			"type", subnet.Type,
+		)
+
 		err := a.configureSubnet(envType, i, subnet)
 		if err != nil {
 			return err
 		}
 	}
 
-	a.logger.Infow("Subnets configuration completed", "path", subnetsPath)
+	a.logger.Infow("Subnets configuration completed", "path", subnetsPath, "count", len(a.Config.Subnets))
 
 	return nil
 }
