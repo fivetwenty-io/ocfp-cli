@@ -31,6 +31,11 @@ const (
 
 	// rdsGlobalCAURL is the URL for the AWS RDS Global CA certificate bundle.
 	rdsGlobalCAURL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+
+	// PublicIPStatusPending is written to vault when no EIPs exist in state yet.
+	// Downstream consumers (Genesis CPI configs) must treat this value as "not yet provisioned"
+	// and must not use it as a real hostname or allocation ID.
+	PublicIPStatusPending = "pending"
 )
 
 // AWSVaultProvider implements vault operations for AWS.
@@ -41,6 +46,11 @@ type AWSVaultProvider struct {
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
 	logger      *zap.SugaredLogger
+
+	// KMSKeyARN is the AWS KMS key ARN for BOSH disk encryption.
+	// When non-empty, the ARN is written to vault. When empty, the KMS path is skipped
+	// so kits that require KMS receive a clear missing-path error rather than a broken empty value.
+	KMSKeyARN string
 }
 
 // NewAWSVaultProvider creates a new AWS vault provider.
@@ -94,13 +104,13 @@ func (a *AWSVaultProvider) ConfigurePublicIPs(_reporter providers.ProgressReport
 	// Try to get public IPs from state first
 	publicIPs := a.getPublicIPsFromState()
 
-	// If no IPs in state, create placeholder mapping
+	// If no EIPs in state, write a pending marker so downstream consumers know
+	// EIPs have not been provisioned yet. This prevents fake hostnames from
+	// reaching BOSH CPI configs.
 	if len(publicIPs) == 0 {
-		a.logger.Warn("No public IPs found in state, creating placeholder configuration")
+		a.logger.Warn("No public IPs found in state, writing pending marker")
 		publicIPs = map[string]interface{}{
-			"cf_router_0":     fmt.Sprintf("eip-router-0-%s.%s", a.BlocName, a.Config.Region),
-			"cf_router_1":     fmt.Sprintf("eip-router-1-%s.%s", a.BlocName, a.Config.Region),
-			"cf_tcp_router_0": fmt.Sprintf("eip-tcp-router-0-%s.%s", a.BlocName, a.Config.Region),
+			"status": PublicIPStatusPending,
 		}
 	}
 
@@ -856,8 +866,10 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 		return fmt.Errorf("failed to configure keys: %w", err)
 	}
 
-	// Configure KMS
-	a.configureKMS(envType)
+	// Configure KMS — only written when operator supplies --kms-key-arn.
+	if err = a.configureKMS(envType); err != nil {
+		return fmt.Errorf("failed to configure KMS for %s: %w", envType, err)
+	}
 
 	return nil
 }
@@ -905,12 +917,29 @@ func (a *AWSVaultProvider) configureIAM(envType string) error {
 	return nil
 }
 
-// configureKMS configures AWS KMS settings.
-func (a *AWSVaultProvider) configureKMS(envType string) {
-	// AWS KMS configuration
-	// For now, this is a placeholder
-	// In a full implementation, this would configure KMS keys for BOSH
-	a.logger.Infow("KMS configuration placeholder", "env_type", envType)
+// configureKMS writes the KMS key ARN to vault when one was provided by the operator.
+// If KMSKeyARN is empty, the path is intentionally skipped; kits that require KMS
+// will surface a clear missing-path error rather than reading an empty value.
+func (a *AWSVaultProvider) configureKMS(envType string) error {
+	if a.KMSKeyARN == "" {
+		a.logger.Infow("KMS key ARN not provided, skipping KMS vault path", "env_type", envType)
+
+		return nil
+	}
+
+	kmsPath := a.PathBuilder.GetKMSPath(envType)
+
+	kmsData := map[string]interface{}{
+		"key_arn": a.KMSKeyARN,
+	}
+
+	if err := a.Safe.SetMultiple(kmsPath, kmsData); err != nil {
+		return fmt.Errorf("failed to write KMS configuration: %w", err)
+	}
+
+	a.logger.Infow("KMS key ARN written to vault", "env_type", envType, "path", kmsPath)
+
+	return nil
 }
 
 // configureKeys configures SSH keys.
@@ -1046,7 +1075,7 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 
 	diskType := a.Config.DefaultDiskType
 	if diskType == "" {
-		diskType = "gp2"
+		diskType = "gp3"
 	}
 
 	// Build CPI configuration
