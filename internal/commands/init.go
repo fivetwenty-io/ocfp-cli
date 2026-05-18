@@ -15,6 +15,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -56,7 +57,7 @@ func NewInitCmd() *cobra.Command {
 		Short:     "Initialize OCFP components",
 		Long:      getInitLongDescription(),
 		Example:   getInitExamples(),
-		ValidArgs: []string{"pg", "cf", "bosh", RoleBastion, KeywordAll},
+		ValidArgs: []string{"aws", "pg", "cf", "bosh", RoleBastion, KeywordAll},
 		Args:      cobra.ExactArgs(1),
 		RunE:      initFlags.runInit,
 	}
@@ -138,7 +139,7 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return f.executeInitialization(ctx, cfg, component)
+	return f.executeInitialization(ctx, cmd, cfg, component)
 }
 
 // getComponent determines which component to initialize.
@@ -228,7 +229,7 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 }
 
 // executeInitialization performs the actual initialization based on component.
-func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Config, component string) error {
+func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Command, cfg *config.Config, component string) error {
 	// Validate mutually exclusive flags
 	err := f.validateModeFlags()
 	if err != nil {
@@ -236,6 +237,8 @@ func (f *initFlags) executeInitialization(ctx context.Context, cfg *config.Confi
 	}
 
 	switch component {
+	case "aws":
+		return initializeAWS(cmd)
 	case "pg":
 		return initializePostgreSQL()
 	case "cf":
@@ -297,6 +300,7 @@ func getInitLongDescription() string {
 	return `Initialize OCFP components including PostgreSQL, Cloud Foundry, and BOSH.
 
 Components:
+  aws     - Initialize AWS environment (requires --bloc flag or OCFP_BLOC env var)
   pg      - Initialize PostgreSQL database
   cf      - Initialize Cloud Foundry
   bosh    - Initialize BOSH Director
@@ -504,22 +508,31 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 	log.Info("Initializing BOSH Director")
 
-	// BOSH initialization steps:
-	// 1. Upload BOSH release
-	// 2. Upload stemcells
-	// 3. Deploy BOSH Director
-	// 4. Configure cloud config
-	// 5. Upload runtime config
+	// Load bootstrap state to obtain subnet ID and BOSH static IP.
+	stateDir, err := state.GetStateDir(cfg.Name)
+	if err != nil {
+		return fmt.Errorf("failed to resolve state directory: %w", err)
+	}
+
+	stateMgr, err := state.NewManager(stateDir)
+	if err != nil {
+		return fmt.Errorf("failed to create state manager: %w", err)
+	}
+
+	_, err = stateMgr.Load(cfg.Name)
+	if err != nil {
+		return fmt.Errorf("failed to load bootstrap state for bloc %s: %w", cfg.Name, err)
+	}
 
 	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
 	manifestPath := filepath.Join(deploymentDir, "bosh.yml")
 
 	// Check if manifest exists
-	_, err := os.Stat(manifestPath) //nolint:gosec // path components are from trusted config
+	_, err = os.Stat(manifestPath) //nolint:gosec // path components are from trusted config
 	if os.IsNotExist(err) {
 		log.Infow("Creating BOSH manifest", "path", manifestPath)
 
-		err = createBOSHManifest(cfg, manifestPath)
+		err = createBOSHManifest(cfg, manifestPath, stateMgr)
 		if err != nil {
 			return fmt.Errorf("failed to create BOSH manifest: %w", err)
 		}
@@ -625,10 +638,54 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// createBOSHManifest generates a BOSH deployment manifest.
-func createBOSHManifest(cfg *config.Config, path string) error {
-	// This would generate an actual BOSH manifest based on the configuration
-	// For now, return a placeholder
+// createBOSHManifest generates a BOSH deployment manifest hydrated from bootstrap state.
+//
+// Required state outputs (written by `ocfp bootstrap`):
+//   - subnet_<bloc>-ocfp-0_id      — real AWS subnet ID (e.g. subnet-0a1b2c3d)
+//   - reserved_<bloc>-ocfp-0_bosh_ip — static IP reserved for the BOSH director
+//
+// Returns ErrBootstrapStateRequired when either output is absent or empty.
+// Callers must run `ocfp bootstrap` before `ocfp init bosh` to populate these values.
+func createBOSHManifest(cfg *config.Config, path string, stateMgr *state.Manager) error {
+	subnetName := cfg.Name + "-ocfp-0"
+	subnetIDKey := "subnet_" + subnetName + "_id"
+	boshIPKey := "reserved_" + subnetName + "_bosh_ip"
+
+	subnetIDRaw, err := stateMgr.GetOutput(subnetIDKey)
+	if err != nil {
+		return fmt.Errorf("%w: subnet ID output %q missing — %v", ErrBootstrapStateRequired, subnetIDKey, err)
+	}
+
+	subnetID, ok := subnetIDRaw.(string)
+	if !ok || subnetID == "" {
+		return fmt.Errorf("%w: subnet ID output %q is empty or not a string", ErrBootstrapStateRequired, subnetIDKey)
+	}
+
+	boshIPRaw, err := stateMgr.GetOutput(boshIPKey)
+	if err != nil {
+		return fmt.Errorf("%w: BOSH IP output %q missing — %v", ErrBootstrapStateRequired, boshIPKey, err)
+	}
+
+	boshIP, ok := boshIPRaw.(string)
+	if !ok || boshIP == "" {
+		return fmt.Errorf("%w: BOSH IP output %q is empty or not a string", ErrBootstrapStateRequired, boshIPKey)
+	}
+
+	// Determine instance type: prefer Bastion.InstanceType, fall back to Bastion.Flavor.
+	instanceType := cfg.Bastion.InstanceType
+	if instanceType == "" {
+		instanceType = cfg.Bastion.Flavor
+	}
+
+	if instanceType == "" {
+		instanceType = "t3.medium"
+	}
+
+	networkCIDR := cfg.Network.CIDR
+	if networkCIDR == "" {
+		networkCIDR = cfg.VPCCIDRBlock
+	}
+
 	manifest := fmt.Sprintf(`---
 name: bosh
 releases:
@@ -650,9 +707,8 @@ networks:
   type: manual
   subnets:
   - range: %s
-    gateway: 10.0.0.1
     cloud_properties:
-      subnet: subnet-xxxxxx
+      subnet: %s
 
 instance_groups:
 - name: bosh
@@ -660,10 +716,10 @@ instance_groups:
   resource_pool: vms
   networks:
   - name: private
-    static_ips: [10.0.0.6]
-`, cfg.Bastion.Flavor, cfg.Network.CIDR)
+    static_ips: [%s]
+`, instanceType, networkCIDR, subnetID, boshIP)
 
-	err := os.WriteFile(path, []byte(manifest), ManifestFilePerm) //nolint:gosec // path is from trusted config
+	err = os.WriteFile(path, []byte(manifest), ManifestFilePerm) //nolint:gosec // path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write manifest file: %w", err)
 	}

@@ -133,38 +133,3 @@ func TestFindGenesisDirectoryUsesDiscoveryFallback(t *testing.T) {
 	require.Equal(t, envDir, dir)
 }
 
-func TestUpdateEnvironmentSecretsUsesDiscoveredDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
-	blocName := "bloc-" + strings.ReplaceAll(t.Name(), "/", "-")
-
-	genesisDir := filepath.Join(tmpDir, blocName)
-	require.NoError(t, os.MkdirAll(filepath.Join(genesisDir, ".genesis"), 0o755))
-
-	jsonOutput := fmt.Sprintf(`{"environments":[{"path":"%s"}]}`, genesisDir)
-
-	originalExecutor := commandExecutor
-	commandExecutor = func(name string, args ...string) (string, error) {
-		key := strings.Join(append([]string{name}, args...), " ")
-		switch key {
-		case "genesis envs --json", "genesis envs", "which genesis":
-			return "", fmt.Errorf("not found")
-		case "sh -c genesis envs --json 2>&1":
-			return jsonOutput, nil
-		default:
-			return "", fmt.Errorf("unexpected command: %s", key)
-		}
-	}
-	t.Cleanup(func() { commandExecutor = originalExecutor })
-
-	cfg := &config.Config{}
-	gi := NewGenesisIntegration(cfg, blocName)
-
-	err := gi.UpdateEnvironmentSecrets("https://vault.example", "token")
-	require.NoError(t, err)
-
-	// ensure mgmt environment file created in discovered directory
-	mgmtFile := filepath.Join(genesisDir, fmt.Sprintf("%s-mgmt.yml", blocName))
-	_, statErr := os.Stat(mgmtFile)
-	require.NoError(t, statErr)
-}

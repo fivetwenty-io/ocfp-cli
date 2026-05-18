@@ -1,0 +1,12 @@
+---
+genesis:
+    env: ocfp-aws-us-east-1-ocf
+    min_version: 3.2.0
+kit:
+    name: cf
+    version: latest
+    iaas: aws
+ocfp:
+    bloc: ocfp-aws-us-east-1
+params:
+    aws_region: us-east-1

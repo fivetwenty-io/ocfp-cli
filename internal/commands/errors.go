@@ -7,6 +7,11 @@ import (
 
 // Command errors.
 var (
+	// ErrBootstrapStateRequired is returned when createBOSHManifest cannot find
+	// required outputs (subnet ID, BOSH static IP) in state. Run `ocfp bootstrap`
+	// before `ocfp init bosh` to populate these values.
+	ErrBootstrapStateRequired = errors.New("bootstrap state is required: run `ocfp bootstrap` before `ocfp init bosh` to populate subnet and IP state")
+
 	ErrProviderDoesNotSupportStorageOperations = errors.New("provider does not support storage operations")
 	ErrNoPreviousBackupFound                   = errors.New("no previous backup found")
 	ErrNoProviderConfigured                    = errors.New("no provider configured")
