@@ -109,7 +109,7 @@ Routing is not supported by OCFP for Proxmox. Router operations return `ErrRoute
 - **Bridge mode** relies on host-level Linux routing
 - **SDN mode** relies on zone-level routing configured in Proxmox
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## CPI Router Types
 

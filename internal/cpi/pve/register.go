@@ -1,4 +1,4 @@
-package proxmox
+package pve
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 
 // Register registers the Proxmox provider with the CPI registry.
 func Register() error {
-	err := cpi.Register("proxmox", NewProvider)
+	err := cpi.Register("pve", NewProvider)
 	if err != nil {
 		return fmt.Errorf("failed to register Proxmox provider: %w", err)
 	}
@@ -25,14 +25,14 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 		return NewClient(nil)
 	}
 
-	// Convert generic config to Proxmox config
-	var proxmoxConfig *Config
+	// Convert generic config to PVE config
+	var pveConfig *Config
 
 	switch cfg := config.(type) {
 	case *Config:
-		proxmoxConfig = cfg
+		pveConfig = cfg
 	case map[string]interface{}:
-		proxmoxConfig = &Config{
+		pveConfig = &Config{
 			Host:           getString(cfg, "host"),
 			Node:           getString(cfg, "node"),
 			TokenID:        getString(cfg, "token_id"),
@@ -55,19 +55,19 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 	}
 
 	// Validate required fields
-	if proxmoxConfig.Host == "" {
+	if pveConfig.Host == "" {
 		return nil, ErrHostRequired
 	}
 
 	// Check for authentication - prefer API token, then username/password
-	hasAPIToken := proxmoxConfig.TokenID != "" && proxmoxConfig.TokenSecret != ""
-	hasUserPass := proxmoxConfig.Username != "" && proxmoxConfig.Password != ""
+	hasAPIToken := pveConfig.TokenID != "" && pveConfig.TokenSecret != ""
+	hasUserPass := pveConfig.Username != "" && pveConfig.Password != ""
 
 	if !hasAPIToken && !hasUserPass {
 		return nil, ErrAPITokenRequired
 	}
 
-	return NewClient(proxmoxConfig)
+	return NewClient(pveConfig)
 }
 
 // getString safely gets a string from a map.

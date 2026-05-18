@@ -1,5 +1,5 @@
-// Package proxmox implements the CPI provider for Proxmox Virtual Environment.
-package proxmox
+// Package pve implements the CPI provider for Proxmox Virtual Environment.
+package pve
 
 import (
 	"context"
@@ -172,7 +172,7 @@ func NewClient(config *Config) (*Client, error) {
 
 // Name returns the provider name.
 func (c *Client) Name() string {
-	return "proxmox"
+	return "pve"
 }
 
 // Region returns the configured region (node or cluster name).
@@ -190,7 +190,7 @@ func (c *Client) Region() string {
 
 // Authenticate validates and stores credentials.
 func (c *Client) Authenticate(ctx context.Context) error {
-	logger.Debug("Authenticating with Proxmox")
+	logger.Debug("Authenticating with PVE")
 
 	if c.config == nil {
 		return ErrConfigIsRequired
@@ -236,7 +236,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	// Create client
 	pveClient, err := pve.NewClient(opts)
 	if err != nil {
-		return fmt.Errorf("failed to create Proxmox client: %w", err)
+		return fmt.Errorf("failed to create PVE client: %w", err)
 	}
 
 	c.pveClient = pveClient
@@ -247,7 +247,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	logger.Info("Successfully authenticated with Proxmox")
+	logger.Info("Successfully authenticated with PVE")
 
 	return nil
 }
@@ -334,12 +334,12 @@ func (c *Client) SupportsStorage() bool {
 
 // Initialize initializes the provider with configuration.
 func (c *Client) Initialize(ctx context.Context, config interface{}) error {
-	cfg, err := c.parseProxmoxConfig(config)
+	cfg, err := c.parsePVEConfig(config)
 	if err != nil {
 		return err
 	}
 
-	// parseProxmoxConfig returns nil for map config type (already parsed)
+	// parsePVEConfig returns nil for map config type (already parsed)
 	if cfg == nil {
 		return nil
 	}
@@ -357,23 +357,23 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 		return ErrAPITokenRequired
 	}
 
-	applyProxmoxDefaults(cfg)
+	applyPVEDefaults(cfg)
 
 	c.config = cfg
 
-	c.initProxmoxManagers()
+	c.initPVEManagers()
 
 	// Authenticate
 	err = c.Authenticate(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize Proxmox provider: %w", err)
+		return fmt.Errorf("failed to initialize PVE provider: %w", err)
 	}
 
 	return nil
 }
 
-// applyProxmoxDefaults sets default values on a Proxmox config.
-func applyProxmoxDefaults(cfg *Config) {
+// applyPVEDefaults sets default values on a Proxmox VE config.
+func applyPVEDefaults(cfg *Config) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultHTTPTimeout
 	}
@@ -409,26 +409,62 @@ func (c *Client) Cleanup(_ctx context.Context) error {
 	return nil
 }
 
-// parseProxmoxConfig parses the configuration based on type.
+// parsePVEConfig parses the configuration based on type.
 // Returns nil config for map[string]interface{} (already parsed).
-func (c *Client) parseProxmoxConfig(config interface{}) (*Config, error) {
+//
+// Auth mode rules for *ocfpconfig.Config:
+//   - API token auth:  AuthToken != "" AND TokenSecret != ""  → sets TokenID + TokenSecret; Username/Password ignored.
+//   - User/pass auth:  Username != "" AND Password != ""      → sets Username + Password; TokenID/TokenSecret empty.
+//   - Mixed/partial:   AuthToken set but TokenSecret empty, or both modes partially set → ErrMixedAuthConfig.
+//   - Neither:         all four empty → no auth set; Initialize will catch it via ErrAPITokenRequired.
+func (c *Client) parsePVEConfig(config interface{}) (*Config, error) {
 	switch configValue := config.(type) {
 	case *Config:
 		return configValue, nil
 	case *ocfpconfig.Config:
-		return &Config{
+		hasTokenID := configValue.AuthToken != ""
+		hasTokenSecret := configValue.TokenSecret != ""
+		hasUsername := configValue.Username != ""
+		hasPassword := configValue.Password != ""
+
+		apiTokenMode := hasTokenID && hasTokenSecret
+		userPassMode := hasUsername && hasPassword
+
+		// Detect mixed/partial auth: any overlap or incomplete token pair is an error.
+		switch {
+		case apiTokenMode && userPassMode:
+			// Both fully set — ambiguous; operator must choose one mode.
+			return nil, ErrMixedAuthConfig
+		case hasTokenID && !hasTokenSecret && !userPassMode:
+			// AuthToken set but no TokenSecret and no fallback user/pass mode.
+			return nil, ErrMixedAuthConfig
+		case hasTokenSecret && !hasTokenID:
+			// TokenSecret set without AuthToken — incomplete token pair.
+			return nil, ErrMixedAuthConfig
+		}
+
+		cfg := &Config{
 			Host:           configValue.APIEndpoint,
-			Node:           configValue.Region, // Use region as node
-			TokenID:        configValue.AuthToken,
-			TokenSecret:    configValue.Password, // Token secret may be in password field
-			Username:       configValue.Username,
-			Password:       configValue.Password,
+			Node:           configValue.Region,
 			NetworkMode:    defaultNetworkMode,
 			DefaultBridge:  defaultBridge,
 			DefaultStorage: defaultStorage,
 			Timeout:        0,
 			MaxRetries:     0,
-		}, nil
+		}
+
+		if apiTokenMode {
+			// API token auth: use AuthToken as token_id, TokenSecret as token_secret.
+			cfg.TokenID = configValue.AuthToken
+			cfg.TokenSecret = configValue.TokenSecret
+		} else if userPassMode {
+			// Username/password auth: Password is the user's password, not a token secret.
+			cfg.Username = configValue.Username
+			cfg.Password = configValue.Password
+		}
+		// Neither set: leave auth fields empty; Initialize catches via ErrAPITokenRequired.
+
+		return cfg, nil
 	case map[string]interface{}:
 		// Config was already parsed in NewProvider, just return success
 		return nil, nil
@@ -437,8 +473,8 @@ func (c *Client) parseProxmoxConfig(config interface{}) (*Config, error) {
 	}
 }
 
-// initProxmoxManagers initializes resource managers if not already set.
-func (c *Client) initProxmoxManagers() {
+// initPVEManagers initializes resource managers if not already set.
+func (c *Client) initPVEManagers() {
 	if c.network == nil {
 		c.network = &NetworkManager{client: c}
 	}

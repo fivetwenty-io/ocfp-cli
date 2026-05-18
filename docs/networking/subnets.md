@@ -194,7 +194,7 @@ Proxmox subnet support depends on the network mode:
 
 Subnet operations in bridge mode return the bridge network as a single "subnet" for compatibility.
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## Bastion Placement
 

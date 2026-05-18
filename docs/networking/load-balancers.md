@@ -119,7 +119,7 @@ Source: `internal/cpi/stackit/network.go`
 
 Load balancers are not supported for Proxmox. All LB operations return `ErrLoadBalancersNotSupported`.
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## CPI Types
 
