@@ -1,0 +1,14 @@
+---
+genesis:
+    env: ocfp-aws-us-east-1-mgmt
+    use_create_env: true
+    min_version: 3.2.0
+kit:
+    name: bosh
+    version: latest
+    iaas: aws
+    features:
+        - ocfp
+        - vault
+ocfp:
+    bloc: ocfp-aws-us-east-1

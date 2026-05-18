@@ -128,6 +128,7 @@ func newVaultPopulateCmd() *cobra.Command {
 		vaultPath string
 		fromFile  string
 		force     bool
+		kmsKeyARN string
 	)
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
@@ -144,10 +145,13 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
   ocfp vault populate --from-file secrets.yml
 
   # Populate to specific vault path
-  ocfp vault populate --vault-path /concourse/main`,
+  ocfp vault populate --vault-path /concourse/main
+
+  # Populate with AWS KMS key for BOSH disk encryption (AWS only)
+  ocfp vault populate --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/mrk-abc123`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVaultPopulate(cmd, args, fromFile, force)
+			return runVaultPopulate(cmd, args, fromFile, force, kmsKeyARN)
 		},
 	}
 
@@ -155,12 +159,13 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "load secrets from file")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
 	cmd.Flags().Bool("dry-run", false, "preview actions without making changes")
+	cmd.Flags().StringVar(&kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for BOSH disk encryption (AWS only; omit to skip KMS configuration)")
 
 	return cmd
 }
 
 // runVaultPopulate executes the vault populate command.
-func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool) error {
+func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool, kmsKeyARN string) error {
 	log := logger.Get()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
@@ -197,6 +202,7 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 		DryRun:           dryRun,
 		Force:            force,
 		ProgressReporter: reporter,
+		KMSKeyARN:        kmsKeyARN,
 	}
 
 	// Handle file input

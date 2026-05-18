@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -59,8 +58,13 @@ func TestCreatePreRunHandler_BlocFromEnvVar(t *testing.T) {
 		viper.Reset()
 		t.Cleanup(viper.Reset)
 
-		// Ensure env var is not set
-		os.Unsetenv("OCFP_BLOC")
+		// Isolate from real ~/.ocfp/ so GetCurrentBloc and ListBlocNames
+		// don't read the developer's config file.
+		t.Setenv("OCFP_HOME", t.TempDir())
+		// Use t.Setenv so the env var is restored after the subtest, and
+		// set it to empty rather than calling os.Unsetenv which is not
+		// test-safe and doesn't restore the previous value.
+		t.Setenv("OCFP_BLOC", "")
 
 		// Create empty flag
 		flagValue := ""
@@ -108,7 +112,7 @@ func TestCreatePreRunHandler_BlocResolutionPriority(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		t.Setenv("OCFP_HOME", tmpDir)
-		os.Unsetenv("OCFP_BLOC")
+		t.Setenv("OCFP_BLOC", "")
 
 		// Write state file with a current bloc
 		err := config.SetCurrentBloc("state-bloc", "/path/to/config.yml")

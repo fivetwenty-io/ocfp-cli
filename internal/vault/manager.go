@@ -129,6 +129,11 @@ type PopulateOptions struct {
 	DryRun           bool
 	Force            bool
 	ProgressReporter ProgressReporter
+
+	// KMSKeyARN is the AWS KMS key ARN supplied via --kms-key-arn.
+	// When non-empty, the ARN is written to vault. When empty, the KMS vault path
+	// is skipped so kits that require KMS surface a clear missing-path error.
+	KMSKeyARN string
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -171,7 +176,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
@@ -496,13 +501,19 @@ func (m *Manager) targetExistsInSaferc(targetName string) bool {
 }
 
 // populateFullConfiguration performs full vault configuration.
-func (m *Manager) populateFullConfiguration(reporter ProgressReporter) error {
+// kmsKeyARN is threaded from PopulateOptions; it is set on AWS providers when non-empty.
+func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN string) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
 	provider, err := m.createVaultProvider()
 	if err != nil {
 		return fmt.Errorf("failed to create vault provider: %w", err)
+	}
+
+	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
+	if awsProvider, ok := provider.(*AWSVaultProvider); ok {
+		awsProvider.KMSKeyARN = kmsKeyARN
 	}
 
 	// Perform full configuration (provider reports all phases)

@@ -153,6 +153,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	lines = append(lines, "fi")
 	lines = append(lines, "")
 
+	lines = append(lines, om.generateGenesisRepoInitScript()...)
 	lines = append(lines, om.generateDeploymentConfiguration()...)
 
 	return strings.Join(lines, "\n")
@@ -233,6 +234,61 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 	}
 
 	return combined
+}
+
+// generateGenesisRepoInitScript emits idempotent genesis repo-init calls for the
+// mgmt (BOSH director) and ocf (CF) deployment repos. Repos must exist and have a
+// valid .genesis/config before env files are written or genesis secrets-provider
+// inception is run.
+//
+// Flags used:
+//   - --kit bosh / --kit cf   — kit for the deployment type
+//   - --ci-provider concourse — writes nested ci.provider.type: concourse (v3.2 format)
+//   - --skip-vault            — vault not yet deployed at repo-init time
+//   - --force                 — overwrite without prompt; makes re-runs idempotent
+//   - --directory             — explicit path so repos land under DEPLOYMENTS_ROOT
+//
+//nolint:funcorder // Helper placed after exported methods
+func (om *OCFPManager) generateGenesisRepoInitScript() []string {
+	return []string{
+		"# Initialise genesis deployment repos (must exist before env files are written)",
+		`# genesis repo-init creates .genesis/config and CI scaffold for each deployment.`,
+		`# --skip-vault defers vault config until genesis secrets-provider inception runs.`,
+		`# --force makes this section safe to re-run on an already-initialised repo.`,
+		"",
+		`log_info 'Initialising genesis deployment repos'`,
+		"",
+		`# mgmt repo — BOSH director kit`,
+		`MGMT_DIR="${DEPLOYMENTS_ROOT}/mgmt"`,
+		`mkdir -p "${MGMT_DIR}"`,
+		`log_info "Running genesis repo-init for mgmt (bosh kit)"`,
+		`if genesis repo-init \`,
+		`    --kit bosh \`,
+		`    --ci-provider concourse \`,
+		`    --skip-vault \`,
+		`    --force \`,
+		`    --directory "${MGMT_DIR}"; then`,
+		`    log_success 'genesis repo-init completed for mgmt'`,
+		"else",
+		`    log_warning 'genesis repo-init failed for mgmt — deployment may require manual init'`,
+		"fi",
+		"",
+		`# ocf repo — Cloud Foundry kit`,
+		`OCF_DIR="${DEPLOYMENTS_ROOT}/ocf"`,
+		`mkdir -p "${OCF_DIR}"`,
+		`log_info "Running genesis repo-init for ocf (cf kit)"`,
+		`if genesis repo-init \`,
+		`    --kit cf \`,
+		`    --ci-provider concourse \`,
+		`    --skip-vault \`,
+		`    --force \`,
+		`    --directory "${OCF_DIR}"; then`,
+		`    log_success 'genesis repo-init completed for ocf'`,
+		"else",
+		`    log_warning 'genesis repo-init failed for ocf — deployment may require manual init'`,
+		"fi",
+		"",
+	}
 }
 
 //nolint:funcorder // Helper method placed after exported methods
