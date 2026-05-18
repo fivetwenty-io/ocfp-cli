@@ -125,10 +125,11 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 // newVaultPopulateCmd creates the vault populate subcommand.
 func newVaultPopulateCmd() *cobra.Command {
 	var (
-		vaultPath string
-		fromFile  string
-		force     bool
-		kmsKeyARN string
+		vaultPath         string
+		fromFile          string
+		force             bool
+		kmsKeyARN         string
+		blobstoreEndpoint string
 	)
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
@@ -148,10 +149,13 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
   ocfp vault populate --vault-path /concourse/main
 
   # Populate with AWS KMS key for BOSH disk encryption (AWS only)
-  ocfp vault populate --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/mrk-abc123`,
+  ocfp vault populate --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/mrk-abc123
+
+  # Populate with PVE blobstore endpoint (PVE only)
+  ocfp vault populate --blobstore-endpoint https://s3.dc1.example.com`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVaultPopulate(cmd, args, fromFile, force, kmsKeyARN)
+			return runVaultPopulate(cmd, args, fromFile, force, kmsKeyARN, blobstoreEndpoint)
 		},
 	}
 
@@ -160,12 +164,13 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
 	cmd.Flags().Bool("dry-run", false, "preview actions without making changes")
 	cmd.Flags().StringVar(&kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for BOSH disk encryption (AWS only; omit to skip KMS configuration)")
+	cmd.Flags().StringVar(&blobstoreEndpoint, "blobstore-endpoint", "", "S3-compatible blobstore endpoint URL (PVE only; omit to skip blobstore endpoint configuration)")
 
 	return cmd
 }
 
 // runVaultPopulate executes the vault populate command.
-func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool, kmsKeyARN string) error {
+func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool, kmsKeyARN, blobstoreEndpoint string) error {
 	log := logger.Get()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
@@ -198,11 +203,12 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 
 	// Create populate options
 	opts := &vault.PopulateOptions{
-		Subcommand:       subcommand,
-		DryRun:           dryRun,
-		Force:            force,
-		ProgressReporter: reporter,
-		KMSKeyARN:        kmsKeyARN,
+		Subcommand:        subcommand,
+		DryRun:            dryRun,
+		Force:             force,
+		ProgressReporter:  reporter,
+		KMSKeyARN:         kmsKeyARN,
+		BlobstoreEndpoint: blobstoreEndpoint,
 	}
 
 	// Handle file input
