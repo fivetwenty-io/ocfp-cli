@@ -950,6 +950,8 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 		return providers.NewPlaceholderProvider("openstack", m.config, m.safe, m.blocName), nil
 	case "aws":
 		return NewAWSVaultProvider(m.config, m.safe, m.blocName), nil
+	case "pve":
+		return NewPVEVaultProvider(m.config, m.safe, m.blocName), nil
 	case "azure":
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("azure", m.config, m.safe, m.blocName), nil

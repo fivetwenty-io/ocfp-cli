@@ -10,18 +10,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// ProxmoxVaultProvider implements vault operations for Proxmox.
-type ProxmoxVaultProvider struct {
+// PVEVaultProvider implements vault operations for Proxmox VE.
+type PVEVaultProvider struct {
 	*providers.BaseVaultProvider
 
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
 	logger      *zap.SugaredLogger
+
+	// BlobstoreEndpoint is the S3-compatible endpoint URL supplied by the operator via
+	// --blobstore-endpoint. When empty, ConfigureBlobstores skips the endpoint vault
+	// write; kits that require a blobstore endpoint will surface a clear missing-path
+	// error rather than reading an empty value.
+	BlobstoreEndpoint string
 }
 
-// NewProxmoxVaultProvider creates a new Proxmox vault provider.
-func NewProxmoxVaultProvider(cfg *config.Config, safe SafeInterface, blocName string) *ProxmoxVaultProvider {
-	return &ProxmoxVaultProvider{
+// NewPVEVaultProvider creates a new Proxmox VE vault provider.
+func NewPVEVaultProvider(cfg *config.Config, safe SafeInterface, blocName string) *PVEVaultProvider {
+	return &PVEVaultProvider{
 		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, blocName),
 		Safe:              safe,
 		PathBuilder:       NewPathBuilder(cfg, blocName),
@@ -29,9 +35,9 @@ func NewProxmoxVaultProvider(cfg *config.Config, safe SafeInterface, blocName st
 	}
 }
 
-// Configure performs full vault configuration for Proxmox.
-func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) error {
-	p.logger.Infow("Starting Proxmox vault configuration", "bloc", p.BlocName)
+// Configure performs full vault configuration for Proxmox VE.
+func (p *PVEVaultProvider) Configure(reporter providers.ProgressReporter) error {
+	p.logger.Infow("Starting PVE vault configuration", "bloc", p.BlocName)
 
 	// Track phase numbers across entire configuration (0-based for ReportPhaseStart)
 	phaseIndex := 0
@@ -67,13 +73,13 @@ func (p *ProxmoxVaultProvider) Configure(reporter providers.ProgressReporter) er
 		reporter.ReportFinalSummary(true, 0, totalPhases, 0)
 	}
 
-	p.logger.Infow("Proxmox vault configuration completed", "bloc", p.BlocName)
+	p.logger.Infow("PVE vault configuration completed", "bloc", p.BlocName)
 
 	return nil
 }
 
 // SaveConfigToVault saves the OCFP configuration to vault.
-func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseConfig
 	phaseStart := time.Now()
 
@@ -86,7 +92,7 @@ func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 	configPath := p.PathBuilder.GetConfigPath()
 
 	configData := map[string]interface{}{
-		"provider":        "proxmox",
+		"provider":        "pve",
 		"bloc":            p.BlocName,
 		"host":            p.Config.APIEndpoint,
 		"node":            p.Config.Region,
@@ -108,7 +114,7 @@ func (p *ProxmoxVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 }
 
 // ConfigureNetworks configures network settings.
-func (p *ProxmoxVaultProvider) ConfigureNetworks(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "networks-" + envType
 	phaseStart := time.Now()
 
@@ -144,7 +150,7 @@ func (p *ProxmoxVaultProvider) ConfigureNetworks(_envPath, envType string, repor
 }
 
 // ConfigureSubnets configures subnet settings (minimal for Proxmox).
-func (p *ProxmoxVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
 	phaseStart := time.Now()
 
@@ -175,7 +181,7 @@ func (p *ProxmoxVaultProvider) ConfigureSubnets(_envPath, envType string, report
 }
 
 // ConfigureSecurityGroups configures security group settings.
-func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "security-groups-" + envType
 	phaseStart := time.Now()
 
@@ -206,7 +212,13 @@ func (p *ProxmoxVaultProvider) ConfigureSecurityGroups(_envPath, envType string,
 }
 
 // ConfigureBlobstores configures blobstore settings.
-func (p *ProxmoxVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+//
+// When BlobstoreEndpoint is empty, no vault write is made and the phase is reported
+// complete without data. Kits that require a blobstore endpoint will surface a clear
+// missing-path error rather than reading an empty value. When BlobstoreEndpoint is
+// set, the endpoint is written under the cf/blobstores/main path so that the CF kit
+// can resolve it without provider-specific logic.
+func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
 
@@ -214,14 +226,25 @@ func (p *ProxmoxVaultProvider) ConfigureBlobstores(_envPath, envType string, rep
 		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
 	}
 
-	p.logger.Infow("Configuring blobstores", "env_type", envType)
+	if p.BlobstoreEndpoint == "" {
+		p.logger.Infow("Blobstore endpoint not provided, skipping blobstore vault path; set --blobstore-endpoint to enable",
+			"env_type", envType)
 
-	// Proxmox doesn't have native object storage - document external requirement
-	blobstorePath := p.PathBuilder.GetBlobstoresPath(envType)
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
+		return nil
+	}
+
+	p.logger.Infow("Configuring blobstores", "env_type", envType, "endpoint", p.BlobstoreEndpoint)
+
+	// Path mirrors AWS cf/blobstores/main naming for kit compatibility.
+	blobstorePath := p.PathBuilder.GetSystemBlobstorePath(envType, "cf", "main")
 
 	blobstoreConfig := map[string]interface{}{
-		"note":     "Proxmox requires external S3-compatible storage (MinIO, Ceph, etc.)",
-		"provider": "external",
+		"endpoint": p.BlobstoreEndpoint,
+		"status":   "configured",
 	}
 
 	err := p.Safe.SetMultiple(blobstorePath, blobstoreConfig)
@@ -237,7 +260,7 @@ func (p *ProxmoxVaultProvider) ConfigureBlobstores(_envPath, envType string, rep
 }
 
 // ConfigureDatabases configures database settings.
-func (p *ProxmoxVaultProvider) ConfigureDatabases(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureDatabases(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "databases-" + envType
 	phaseStart := time.Now()
 
@@ -268,7 +291,7 @@ func (p *ProxmoxVaultProvider) ConfigureDatabases(_envPath, envType string, repo
 }
 
 // ConfigureLoadBalancers configures load balancer settings.
-func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureLoadBalancers(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "load-balancers-" + envType
 	phaseStart := time.Now()
 
@@ -299,7 +322,7 @@ func (p *ProxmoxVaultProvider) ConfigureLoadBalancers(_envPath, envType string, 
 }
 
 // ConfigureFQDNs configures FQDN settings.
-func (p *ProxmoxVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "fqdns-" + envType
 	phaseStart := time.Now()
 
@@ -335,7 +358,7 @@ func (p *ProxmoxVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter
 }
 
 // ConfigureCertificates configures TLS certificates.
-func (p *ProxmoxVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhaseCertificates
 	phaseStart := time.Now()
 
@@ -365,7 +388,7 @@ func (p *ProxmoxVaultProvider) ConfigureCertificates(_envPath, _envType string, 
 }
 
 // ConfigurePublicIPs configures public IP settings.
-func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+func (p *PVEVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := PhasePublicIPs
 	phaseStart := time.Now()
 
@@ -377,8 +400,12 @@ func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressRep
 
 	publicIPPath := p.PathBuilder.GetPublicIPsPath()
 
+	// Write a pending marker so downstream consumers can detect unconfigured state
+	// with a single key check ("status" == "pending"). PVE has no IaaS-managed
+	// floating IPs; the operator must allocate them externally. The "provider"
+	// key records that fact without conflicting with the AWS status semantics.
 	publicIPConfig := map[string]interface{}{
-		"note":     "Proxmox requires external IP management",
+		"status":   PublicIPStatusPending,
 		"provider": "external",
 	}
 
@@ -395,18 +422,18 @@ func (p *ProxmoxVaultProvider) ConfigurePublicIPs(reporter providers.ProgressRep
 }
 
 // ConfigureIAAS configures IAAS settings (implements VaultProvider interface).
-func (p *ProxmoxVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
-	// IAAS configuration is handled by ConfigureNetworks for Proxmox
+func (p *PVEVaultProvider) ConfigureIAAS(envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+	// IAAS configuration is handled by ConfigureNetworks for Proxmox VE
 	return p.ConfigureNetworks(envPath, envType, reporter, *phaseNum, totalPhases)
 }
 
 // GetProviderName returns the provider name.
-func (p *ProxmoxVaultProvider) GetProviderName() string {
-	return "proxmox"
+func (p *PVEVaultProvider) GetProviderName() string {
+	return "pve"
 }
 
 // configureEnvironment configures vault paths for a specific environment type.
-func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
+func (p *PVEVaultProvider) configureEnvironment(envType string, reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	envPath := p.PathBuilder.GetEnvironmentPath(envType)
 
 	// Configure networks
@@ -433,7 +460,7 @@ func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter pro
 
 	*phaseIndex++
 
-	// Configure blobstores (external for Proxmox)
+	// Configure blobstores (external for Proxmox; skipped when BlobstoreEndpoint is empty)
 	err = p.ConfigureBlobstores(envPath, envType, reporter, *phaseIndex, totalPhases)
 	if err != nil {
 		return err
@@ -465,11 +492,148 @@ func (p *ProxmoxVaultProvider) configureEnvironment(envType string, reporter pro
 
 	*phaseIndex++
 
+	// Configure CPI credentials for this environment
+	err = p.configureCPI(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure CPI for %s: %w", envType, err)
+	}
+
+	// Configure availability zones (Proxmox nodes as AZ entries)
+	err = p.ConfigureAZs(envType)
+	if err != nil {
+		return fmt.Errorf("failed to configure AZs for %s: %w", envType, err)
+	}
+
+	return nil
+}
+
+// configureCPI writes Proxmox VE CPI credentials to vault.
+//
+// Path: secret/config/{bloc}/{envType}/cpi/pve
+//
+// Auth mode selection (mutually exclusive):
+//   - API token auth: Config.AuthToken (token_id) + Config.TokenSecret (token_secret) both set.
+//     Writes token_id and token_secret. Does NOT write username or password.
+//   - User/password auth: Config.Username + Config.Password both set, AuthToken empty.
+//     Writes username and password. Does NOT write token_id or token_secret.
+//
+// Common fields written in both modes:
+//   - host   — PVE API endpoint (Config.APIEndpoint)
+//   - node   — Primary Proxmox node name (Config.Region)
+//   - status — literal "configured"
+//
+// Returns an error when host is empty, or when neither auth mode is fully configured.
+// Config.Password is never aliased as token_secret; use Config.TokenSecret explicitly.
+func (p *PVEVaultProvider) configureCPI(envType string) error {
+	p.logger.Infow("Configuring PVE CPI credentials", "env_type", envType)
+
+	host := p.Config.APIEndpoint
+	if host == "" {
+		return fmt.Errorf("pve configureCPI: api_endpoint (host) is required but not set in config")
+	}
+
+	node := p.Config.Region
+	cpiPath := p.PathBuilder.GetEnvironmentPath(envType) + "/cpi/pve"
+
+	apiTokenMode := p.Config.AuthToken != "" && p.Config.TokenSecret != ""
+	userPassMode := p.Config.Username != "" && p.Config.Password != "" && p.Config.AuthToken == ""
+
+	switch {
+	case apiTokenMode:
+		// API token auth: write token_id + token_secret only.
+		cpiConfig := map[string]interface{}{
+			"host":         host,
+			"node":         node,
+			"token_id":     p.Config.AuthToken,
+			"token_secret": p.Config.TokenSecret,
+			"status":       "configured",
+		}
+
+		if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
+			return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
+		}
+
+	case userPassMode:
+		// Username/password auth: write username + password only.
+		cpiConfig := map[string]interface{}{
+			"host":     host,
+			"node":     node,
+			"username": p.Config.Username,
+			"password": p.Config.Password,
+			"status":   "configured",
+		}
+
+		if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
+			return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
+		}
+
+	default:
+		return fmt.Errorf("pve configureCPI: no complete auth configuration found; set (auth_token + token_secret) for API token auth or (username + password) for user/password auth")
+	}
+
+	p.logger.Infow("PVE CPI credentials configured", "env_type", envType, "path", cpiPath)
+
+	return nil
+}
+
+// ConfigureAZs writes Proxmox node names as availability zone entries.
+//
+// Path pattern: secret/config/{bloc}/{envType}/net/azs/{node}
+//
+// Proxmox does not have availability zones in the cloud-provider sense. Each
+// Proxmox node in the cluster acts as an independent failure domain. This method
+// writes one vault entry per node so that BOSH directors can reference them as
+// AZ cloud properties.
+//
+// Node list source (in priority order):
+//  1. Config.Nodes — iterated when len > 0; one vault write per node.
+//  2. Config.Region — fallback single-node when Nodes is empty.
+//  3. Both empty — logs a warning and returns nil (no error).
+func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
+	p.logger.Infow("Configuring PVE AZs (nodes as AZ entries)", "env_type", envType)
+
+	// Multi-node: iterate Config.Nodes when set; single-node: fall back to Config.Region.
+	switch {
+	case len(p.Config.Nodes) > 0:
+		for _, node := range p.Config.Nodes {
+			azPath := p.PathBuilder.GetAZPath(envType, node)
+
+			azData := map[string]interface{}{
+				"node_name": node,
+				"status":    "configured",
+			}
+
+			if err := p.Safe.SetMultiple(azPath, azData); err != nil {
+				return fmt.Errorf("failed to set AZ entry for node %s: %w", node, err)
+			}
+
+			p.logger.Infow("PVE AZ entry configured", "env_type", envType, "node", node, "path", azPath)
+		}
+
+	case p.Config.Region != "":
+		node := p.Config.Region
+		azPath := p.PathBuilder.GetAZPath(envType, node)
+
+		azData := map[string]interface{}{
+			"node_name": node,
+			"status":    "configured",
+		}
+
+		if err := p.Safe.SetMultiple(azPath, azData); err != nil {
+			return fmt.Errorf("failed to set AZ entry for node %s: %w", node, err)
+		}
+
+		p.logger.Infow("PVE AZ entry configured", "env_type", envType, "node", node, "path", azPath)
+
+	default:
+		p.logger.Warnw("No nodes configured (Nodes slice and Region are both empty), skipping AZ configuration", "env_type", envType)
+	}
+
 	return nil
 }
 
 // configureSharedComponents configures shared vault paths.
-func (p *ProxmoxVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
+func (p *PVEVaultProvider) configureSharedComponents(reporter providers.ProgressReporter, phaseIndex *int, totalPhases int) error {
 	// Configure certificates
 	err := p.ConfigureCertificates("", "", reporter, *phaseIndex, totalPhases)
 	if err != nil {

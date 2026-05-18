@@ -1,4 +1,4 @@
-package proxmox
+package pve
 
 import (
 	"context"

@@ -89,10 +89,18 @@ type Config struct {
 	Provider string `json:"provider" mapstructure:"provider" yaml:"provider,omitempty"`
 	IaaS     string `json:"iaas"     mapstructure:"iaas"     yaml:"iaas,omitempty"`
 	Region   string `json:"region"   mapstructure:"region"   yaml:"region,omitempty"`
+	// Nodes lists Proxmox VE cluster nodes for multi-node AZ configuration.
+	// Each entry is written as a separate vault AZ entry under net/azs/{node}.
+	// PVE-specific; ignored by other providers.
+	Nodes []string `json:"nodes"    mapstructure:"nodes"    yaml:"nodes,omitempty"`
 	// Prefer snake_case to match README and user configs
-	ProjectID             string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
-	OrgID                 string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
-	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ProjectID string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
+	OrgID     string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
+	AuthToken string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	// TokenSecret holds the PVE API token secret for API token auth. Distinct from
+	// Password, which is used only for username/password auth. When AuthToken is set,
+	// TokenSecret must also be set; Password is ignored for auth purposes in that mode.
+	TokenSecret           string `json:"token_secret"             mapstructure:"token_secret"             yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token,omitempty"`
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
@@ -1289,7 +1297,7 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate provider
-	validProviders := []string{"stackit", "openstack", "aws", "azure", "gcp", "vmware"}
+	validProviders := []string{"stackit", "openstack", "aws", "azure", "gcp", "vmware", "pve"}
 	providerValid := false
 
 	for _, p := range validProviders {
