@@ -10,7 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/proxmox"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	stackit "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
@@ -61,7 +61,7 @@ func Execute() {
 		logger.Warnf("Failed to register AWS provider: %v", err)
 	}
 
-	err = proxmox.Register()
+	err = pve.Register()
 	if err != nil {
 		logger.Warnf("Failed to register Proxmox provider: %v", err)
 	}

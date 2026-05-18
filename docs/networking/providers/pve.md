@@ -34,7 +34,7 @@ network_mode: bridge  # or "sdn"
 
 All network operations check `m.client.config.NetworkMode` to dispatch to the correct implementation.
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## Bridge Mode
 

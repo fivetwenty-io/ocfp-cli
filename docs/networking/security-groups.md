@@ -154,7 +154,7 @@ Security groups use the Proxmox VE (PVE) firewall.
 - Available in both bridge and SDN network modes
 - Rules managed through the PVE firewall API
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## Configuration
 

@@ -1379,6 +1379,8 @@ func (m *Manager) getProviderInitializer() (providers.BastionInitializer, error)
 		return providers.NewOpenStackBastionInit(m.config), nil
 	case "vmware", "vsphere":
 		return providers.NewVMwareBastionInit(m.config), nil
+	case "pve":
+		return providers.NewPVEBastionInit(m.config), nil
 	default:
 		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}

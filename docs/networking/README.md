@@ -107,7 +107,7 @@ When no network CIDR is specified, OCFP uses `10.4.0.0/20`. The parent CIDR is s
 - [STACKIT](providers/stackit.md)
   Single network, virtual subnets, labeled public IPs, SDK LB
 
-- [Proxmox](providers/proxmox.md)
+- [Proxmox VE](providers/pve.md)
   Bridge mode, SDN mode, PVE firewall
 
 ## See Also

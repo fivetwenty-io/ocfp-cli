@@ -57,7 +57,7 @@ func NewInitCmd() *cobra.Command {
 		Short:     "Initialize OCFP components",
 		Long:      getInitLongDescription(),
 		Example:   getInitExamples(),
-		ValidArgs: []string{"aws", "pg", "cf", "bosh", RoleBastion, KeywordAll},
+		ValidArgs: []string{"aws", "pve", "pg", "cf", "bosh", RoleBastion, KeywordAll},
 		Args:      cobra.ExactArgs(1),
 		RunE:      initFlags.runInit,
 	}
@@ -239,6 +239,8 @@ func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Comman
 	switch component {
 	case "aws":
 		return initializeAWS(cmd)
+	case "pve":
+		return initializePVE(cmd)
 	case "pg":
 		return initializePostgreSQL()
 	case "cf":
@@ -300,7 +302,8 @@ func getInitLongDescription() string {
 	return `Initialize OCFP components including PostgreSQL, Cloud Foundry, and BOSH.
 
 Components:
-  aws     - Initialize AWS environment (requires --bloc flag or OCFP_BLOC env var)
+  aws     - Initialize AWS environment (requires --bloc ocfp-aws-<region>, or OCFP_BLOC)
+  pve     - Initialize Proxmox VE environment (requires --bloc ocfp-pve-<datacenter>, or OCFP_BLOC)
   pg      - Initialize PostgreSQL database
   cf      - Initialize Cloud Foundry
   bosh    - Initialize BOSH Director
@@ -323,6 +326,12 @@ initialization and validates prerequisites.`
 func getInitExamples() string {
 	return `  # Initialize all components
   ocfp init all
+
+  # Initialize AWS environment
+  ocfp init aws --bloc ocfp-aws-us-east-1
+
+  # Initialize Proxmox VE environment
+  ocfp init pve --bloc ocfp-pve-dc1
 
   # Initialize only PostgreSQL
   ocfp init pg
