@@ -134,6 +134,12 @@ type PopulateOptions struct {
 	// When non-empty, the ARN is written to vault. When empty, the KMS vault path
 	// is skipped so kits that require KMS surface a clear missing-path error.
 	KMSKeyARN string
+
+	// BlobstoreEndpoint is the S3-compatible endpoint URL supplied via
+	// --blobstore-endpoint (PVE only). When non-empty, the endpoint is written
+	// to vault so kits can resolve the blobstore URL. When empty, the blobstore
+	// endpoint vault write is skipped.
+	BlobstoreEndpoint string
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -176,7 +182,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts.BlobstoreEndpoint)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
@@ -502,7 +508,8 @@ func (m *Manager) targetExistsInSaferc(targetName string) bool {
 
 // populateFullConfiguration performs full vault configuration.
 // kmsKeyARN is threaded from PopulateOptions; it is set on AWS providers when non-empty.
-func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN string) error {
+// blobstoreEndpoint is threaded from PopulateOptions; it is set on PVE providers when non-empty.
+func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN, blobstoreEndpoint string) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
@@ -514,6 +521,11 @@ func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN
 	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
 	if awsProvider, ok := provider.(*AWSVaultProvider); ok {
 		awsProvider.KMSKeyARN = kmsKeyARN
+	}
+
+	// For PVE providers, apply the blobstore endpoint from the CLI flag before configuring.
+	if pveProvider, ok := provider.(*PVEVaultProvider); ok {
+		pveProvider.BlobstoreEndpoint = blobstoreEndpoint
 	}
 
 	// Perform full configuration (provider reports all phases)
