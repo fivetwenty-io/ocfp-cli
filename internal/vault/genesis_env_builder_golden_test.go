@@ -148,6 +148,67 @@ func TestWriteEnvFileV32_Golden_MgmtWithFeatures(t *testing.T) {
 	assertGolden(t, "mgmt-with-features.yml", got)
 }
 
+// TestWriteEnvFileV32_Golden_PVEMgmt verifies the byte-for-byte output of
+// marshalGenesisEnvV32 for a PVE BOSH director (create-env, mgmt) env with
+// no optional fields — the minimal valid PVE configuration.
+//
+// Contract: genesis.env must equal "ocfp-pve-dc1-mgmt"; use_create_env and
+// min_version must be present; kit.iaas must be "pve"; ocfp.bloc must be
+// "ocfp-pve-dc1"; no params or bosh-configs blocks emitted when absent.
+//
+// Fixture: testdata/envs/pve-mgmt.yml
+func TestWriteEnvFileV32_Golden_PVEMgmt(t *testing.T) {
+	env := GenesisEnvV32{
+		Genesis: GenesisBlockV32{
+			Env:          "ocfp-pve-dc1-mgmt",
+			UseCreateEnv: true,
+			MinVersion:   "3.2.0",
+		},
+		Kit: KitBlockV32{
+			Name:    "bosh",
+			Version: "latest",
+			IAAS:    "pve",
+		},
+		OCFP: &OCFPBlock{Bloc: "ocfp-pve-dc1"},
+	}
+
+	got, err := marshalGenesisEnvV32(env)
+	require.NoError(t, err)
+
+	assertGolden(t, "pve-mgmt.yml", got)
+}
+
+// TestWriteEnvFileV32_Golden_PVEOCFEnv verifies the byte-for-byte output for a
+// PVE OCF (CF, non-create-env) env — the application-tier deployment on PVE.
+//
+// Contract: use_create_env must be absent; kit.iaas must be "pve";
+// params.pve_datacenter must equal "dc1" (derived from the bloc's third segment);
+// ocfp.bloc must be "ocfp-pve-dc1".
+//
+// Fixture: testdata/envs/pve-ocf.yml
+func TestWriteEnvFileV32_Golden_PVEOCFEnv(t *testing.T) {
+	env := GenesisEnvV32{
+		Genesis: GenesisBlockV32{
+			Env:        "ocfp-pve-dc1-ocf",
+			MinVersion: "3.2.0",
+		},
+		Kit: KitBlockV32{
+			Name:    "cf",
+			Version: "latest",
+			IAAS:    "pve",
+		},
+		OCFP: &OCFPBlock{Bloc: "ocfp-pve-dc1"},
+		Params: map[string]any{
+			"pve_datacenter": "dc1",
+		},
+	}
+
+	got, err := marshalGenesisEnvV32(env)
+	require.NoError(t, err)
+
+	assertGolden(t, "pve-ocf.yml", got)
+}
+
 // TestWriteEnvFileV32_Golden_MgmtNoBloc verifies that when OCFPBlock.Bloc is
 // empty the ocfp: top-level key is entirely absent from the output.
 //
