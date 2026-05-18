@@ -28,7 +28,7 @@ flowchart TD
 The network mode is configured via `network_mode` in the bloc config:
 
 ```yaml
-provider: proxmox
+provider: pve
 network_mode: bridge  # or "sdn"
 ```
 
@@ -83,7 +83,7 @@ SDN mode supports subnets via the SDN API:
 ### Configuration
 
 ```yaml
-provider: proxmox
+provider: pve
 network_mode: sdn
 sdn_zone: myzone
 ```
@@ -125,7 +125,7 @@ These operations return typed errors when called.
 ```yaml
 blocs:
   - name: homelab
-    provider: proxmox
+    provider: pve
     region: local
 
     network_mode: bridge
@@ -142,7 +142,7 @@ blocs:
 ```yaml
 blocs:
   - name: homelab
-    provider: proxmox
+    provider: pve
     region: local
 
     network_mode: sdn
