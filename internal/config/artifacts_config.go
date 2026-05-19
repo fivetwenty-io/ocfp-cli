@@ -182,9 +182,9 @@ func (a *ArtifactsConfig) ResolvedDownloadURL() string {
 //
 // provider must be the resolved provider string (e.g., "pve").
 // bastionEnabled must be true when bastion.enabled is set in the parent config.
-// internalCAConfigured must be true when an internal CA is configured in the bloc.
-//
-// TODO: wire internalCAConfigured from actual CA detection in the parent Config.Validate call.
+// internalCAConfigured must be true when an internal CA can be sourced for the
+// bloc. The parent Config.Validate passes true unconditionally because the CA
+// is generated on demand from vault at bootstrap time.
 func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, internalCAConfigured bool) error {
 	if !a.Enabled {
 		return nil

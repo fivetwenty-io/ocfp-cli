@@ -28,7 +28,7 @@ type LookupResult struct {
 func Lookup(ctx context.Context, sm *state.Manager, provider cpi.Provider, blocName string) (*LookupResult, error) {
 	vmName := fmt.Sprintf("%s-artifacts", blocName)
 
-	if r, err := sm.GetResource(resourceType, vmName); err == nil && r != nil {
+	if r, err := sm.GetResource(ResourceType, vmName); err == nil && r != nil {
 		return resultFromResource(r), nil
 	}
 

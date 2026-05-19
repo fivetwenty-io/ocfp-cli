@@ -12,6 +12,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/goccy/go-yaml"
@@ -565,6 +566,16 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	}
 
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
+
+	// Best-effort vault wiring: when vault is reachable, the bootstrap artifacts
+	// step writes blobstore endpoint + creds to vault. When unreachable, the
+	// step prints a warning and the operator follows up with `ocfp vault populate`.
+	if vaultMgr, vaultErr := vault.NewManagerFromEnv(cfg, blocName); vaultErr == nil {
+		bootstrapManager.SetSafe(vaultMgr.GetSafe())
+	} else {
+		logger.Debugf("vault unavailable for bootstrap auto-write: %v", vaultErr)
+	}
+
 	ctx := context.Background()
 
 	err = bootstrapManager.Execute(ctx)
