@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // mockSSHClient implements the SSH client interface for testing.

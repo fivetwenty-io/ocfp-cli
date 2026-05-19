@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // GenesisEnvV32 represents a Genesis v3.2 environment file.
 // Top-level keys follow the schema validated by Genesis::Env::load().
 type GenesisEnvV32 struct {
-	Genesis     GenesisBlockV32   `yaml:"genesis"`
-	Kit         KitBlockV32       `yaml:"kit"`
-	// OCFP is pointer-typed so yaml.v3 omitempty works correctly.
+	Genesis GenesisBlockV32 `yaml:"genesis"`
+	Kit     KitBlockV32     `yaml:"kit"`
+	// OCFP is pointer-typed so omitempty works correctly.
 	// The marshalGenesisEnvV32 helper gates on OCFP.Bloc being non-empty.
 	OCFP        *OCFPBlock        `yaml:"ocfp,omitempty"`
 	Params      map[string]any    `yaml:"params,omitempty"`
@@ -80,74 +80,35 @@ type BOSHCloudConfig struct {
 // "---\n" document marker, matching Genesis env file conventions.
 // The OCFPBlock is omitted when Bloc is empty.
 func marshalGenesisEnvV32(env GenesisEnvV32) ([]byte, error) {
-	// Build an ordered yaml.Node so key order is deterministic:
+	// Build an ordered MapSlice so key order is deterministic:
 	// genesis, kit, ocfp (when present), params (when present), bosh-configs (when present).
-	root := &yaml.Node{Kind: yaml.DocumentNode}
-	mapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	root.Content = append(root.Content, mapping)
-
-	// genesis block
-	if err := appendMappingEntry(mapping, "genesis", env.Genesis); err != nil {
-		return nil, fmt.Errorf("marshal genesis block: %w", err)
+	doc := yaml.MapSlice{
+		{Key: "genesis", Value: env.Genesis},
+		{Key: "kit", Value: env.Kit},
 	}
 
-	// kit block
-	if err := appendMappingEntry(mapping, "kit", env.Kit); err != nil {
-		return nil, fmt.Errorf("marshal kit block: %w", err)
-	}
-
-	// ocfp block — omit when nil or Bloc is empty
 	if env.OCFP != nil && env.OCFP.Bloc != "" {
-		if err := appendMappingEntry(mapping, "ocfp", env.OCFP); err != nil {
-			return nil, fmt.Errorf("marshal ocfp block: %w", err)
-		}
+		doc = append(doc, yaml.MapItem{Key: "ocfp", Value: env.OCFP})
 	}
 
-	// params block — omit when nil or empty
 	if len(env.Params) > 0 {
-		if err := appendMappingEntry(mapping, "params", env.Params); err != nil {
-			return nil, fmt.Errorf("marshal params block: %w", err)
-		}
+		doc = append(doc, yaml.MapItem{Key: "params", Value: env.Params})
 	}
 
-	// bosh-configs block — omit when nil
 	if env.BOSHConfigs != nil {
-		if err := appendMappingEntry(mapping, "bosh-configs", env.BOSHConfigs); err != nil {
-			return nil, fmt.Errorf("marshal bosh-configs block: %w", err)
-		}
+		doc = append(doc, yaml.MapItem{Key: "bosh-configs", Value: env.BOSHConfigs})
 	}
 
-	encoded, err := yaml.Marshal(root)
+	encoded, err := yaml.MarshalWithOptions(doc, yaml.Indent(4), yaml.IndentSequence(true))
 	if err != nil {
 		return nil, fmt.Errorf("yaml marshal: %w", err)
 	}
 
-	// Genesis env files require a leading YAML document marker.
 	if !strings.HasPrefix(string(encoded), "---\n") {
 		encoded = append([]byte("---\n"), encoded...)
 	}
 
 	return encoded, nil
-}
-
-// appendMappingEntry encodes value to a yaml.Node and appends it as a
-// key→value pair to the given mapping node.
-func appendMappingEntry(mapping *yaml.Node, key string, value any) error {
-	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-
-	var valNode yaml.Node
-	if err := valNode.Encode(value); err != nil {
-		return fmt.Errorf("encode %q: %w", key, err)
-	}
-
-	// Encode wraps in a document node; unwrap it.
-	if valNode.Kind == yaml.DocumentNode && len(valNode.Content) == 1 {
-		mapping.Content = append(mapping.Content, keyNode, valNode.Content[0])
-	} else {
-		mapping.Content = append(mapping.Content, keyNode, &valNode)
-	}
-
-	return nil
 }
 
 // WriteEnvFileV32Opts holds all parameters for writing a Genesis v3.2

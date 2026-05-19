@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // TestFQDNConfigUnmarshalBase verifies FQDNConfig.Base handles both string and
