@@ -10,6 +10,11 @@ func (m *Manager) UseVirtualSubnets() bool {
 	return m.useVirtualSubnets()
 }
 
+// UseVirtualSubnetsForPVE exposes useVirtualSubnetsForPVE for testing.
+func (m *Manager) UseVirtualSubnetsForPVE() bool {
+	return m.useVirtualSubnetsForPVE()
+}
+
 // ProviderUsesLocalKeypairs exposes providerUsesLocalKeypairs for testing.
 func (m *Manager) ProviderUsesLocalKeypairs() bool {
 	return m.providerUsesLocalKeypairs()
