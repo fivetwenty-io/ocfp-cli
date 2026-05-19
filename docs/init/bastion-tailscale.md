@@ -60,7 +60,38 @@ Add `tag:ocfp-bastion` to your tailnet's ACL `tagOwners` so the bastion can adve
 
 Any group that owns the tag can mint auth keys that grant it. Tighten ACL rules as desired so only `tag:ocfp-bastion` machines can reach (or be reached by) the workloads behind the bastion.
 
-### 2. Reusable, pre-approved auth key
+### 2. SSH ACL rule
+
+The bastion runs `tailscale up --ssh`, which starts the tailscaled SSH server. The server only honors connections the tailnet ACL allows, so without an `ssh` block in the ACL, every `tailscale ssh` attempt is rejected. Add (or extend) the `ssh` array:
+
+```jsonc
+{
+  "ssh": [
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["tag:ocfp-bastion"],
+      "users":  ["ubuntu", "root", "autogroup:nonroot"]
+    }
+  ]
+}
+```
+
+- `action`
+  `"accept"` skips the per-session Tailscale identity check. Use `"check"` if you want operators to re-auth in a browser on a configurable cadence (default 12h cache).
+
+- `src`
+  `autogroup:member` covers every signed-in tailnet member. Narrow to `["group:ops"]` (or any other group you define) if you want to restrict bastion SSH to a subset of users.
+
+- `dst`
+  `tag:ocfp-bastion` matches the tag the bastion self-assigns at join via `--advertise-tags=tag:ocfp-bastion`. Keeps the rule scoped to OCFP bastions instead of every machine in the tailnet.
+
+- `users`
+  Local usernames on the bastion that a tailnet user is allowed to land as. `ubuntu` matches the default user from `~/.ocfp/config.pve.yml`; `autogroup:nonroot` catches any future non-root account; `root` is optional and only useful when an operator needs raw root rather than `sudo`.
+
+Verify after saving with `tailscale ssh ubuntu@<bastion-host>` from a workstation in the tailnet. The session should land directly without a password or key prompt.
+
+### 3. Reusable, pre-approved auth key
 
 Create the auth key under Tailscale admin → Settings → Keys → Generate auth key:
 
@@ -78,7 +109,7 @@ Create the auth key under Tailscale admin → Settings → Keys → Generate aut
 
 Copy the `tskey-...` value.
 
-### 3. Vault entry
+### 4. Vault entry
 
 Store the key in Vault so `ocfp init pve` can pick it up without an env var:
 
