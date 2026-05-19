@@ -4,6 +4,9 @@ package pve
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -196,9 +199,17 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return ErrConfigIsRequired
 	}
 
-	// Build client options
+	// Build client options. The apiclient's Options.Host must be a bare
+	// hostname (no scheme, no port); scheme is implied by Options.Protocol
+	// (default https) and port by Options.Port (default 8006). Operators
+	// commonly pass api_endpoint as a full URL — parse and split here so
+	// either form works.
+	host, port, protocol := splitPVEEndpoint(c.config.Host)
+
 	opts := pve.Options{
-		Host:      c.config.Host,
+		Host:      host,
+		Port:      port,
+		Protocol:  protocol,
 		Timeout:   c.config.Timeout,
 		AutoLogin: true,
 	}
@@ -206,9 +217,11 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	// Configure authentication
 	switch {
 	case c.config.TokenID != "" && c.config.TokenSecret != "":
-		// API Token authentication (preferred)
-		opts.APIToken = c.config.TokenSecret
-		opts.APITokenName = c.config.TokenID
+		// API Token authentication (preferred). The apiclient parses the
+		// full "user@realm!name=secret" string; APITokenName is the literal
+		// header prefix ("PVEAPIToken"), not the token ID.
+		opts.APIToken = fmt.Sprintf("%s=%s", c.config.TokenID, c.config.TokenSecret)
+		opts.APITokenName = "PVEAPIToken"
 	case c.config.Username != "" && c.config.Password != "":
 		// Username/password authentication
 		opts.Username = c.config.Username
@@ -339,8 +352,22 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 		return err
 	}
 
-	// parsePVEConfig returns nil for map config type (already parsed)
+	// parsePVEConfig returns nil for map config type because NewProvider already
+	// parsed the map into c.config. Authenticate still has to run, so reuse
+	// the stored config rather than bailing out.
 	if cfg == nil {
+		if c.config == nil {
+			return ErrConfigIsRequired
+		}
+
+		applyPVEDefaults(c.config)
+		c.initPVEManagers()
+
+		err = c.Authenticate(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to initialize PVE provider: %w", err)
+		}
+
 		return nil
 	}
 
@@ -370,6 +397,67 @@ func (c *Client) Initialize(ctx context.Context, config interface{}) error {
 	}
 
 	return nil
+}
+
+// splitPVEEndpoint accepts an endpoint in any of these forms and returns the
+// bare host, port (0 when unspecified so the apiclient applies its default),
+// and protocol ("" when unspecified so the apiclient defaults to https):
+//
+//   - "pve.example.com"               → ("pve.example.com", 0, "")
+//   - "pve.example.com:8006"          → ("pve.example.com", 8006, "")
+//   - "https://pve.example.com:8006"  → ("pve.example.com", 8006, "https")
+//   - "http://pve.example.com:8006"   → ("pve.example.com", 8006, "http")
+//
+// Trailing path components and userinfo are discarded. Invalid ports are
+// ignored (zero returned) so the apiclient's default takes effect.
+func splitPVEEndpoint(endpoint string) (host string, port int, protocol string) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", 0, ""
+	}
+
+	// If a scheme is present, use net/url to parse.
+	if strings.Contains(endpoint, "://") {
+		u, err := url.Parse(endpoint)
+		if err == nil {
+			protocol = u.Scheme
+			host = u.Hostname()
+
+			if p := u.Port(); p != "" {
+				if n, err := strconv.Atoi(p); err == nil {
+					port = n
+				}
+			}
+
+			return host, port, protocol
+		}
+	}
+
+	// No scheme: may be "host" or "host:port".
+	if strings.Contains(endpoint, ":") {
+		h, p, err := splitHostPort(endpoint)
+		if err == nil {
+			host = h
+			if n, err := strconv.Atoi(p); err == nil {
+				port = n
+			}
+
+			return host, port, ""
+		}
+	}
+
+	return endpoint, 0, ""
+}
+
+// splitHostPort splits "host:port" without resolving anything. Returns an
+// error if the format is unrecognised.
+func splitHostPort(hp string) (host string, port string, err error) {
+	idx := strings.LastIndex(hp, ":")
+	if idx <= 0 || idx == len(hp)-1 {
+		return "", "", fmt.Errorf("invalid host:port %q", hp)
+	}
+
+	return hp[:idx], hp[idx+1:], nil
 }
 
 // applyPVEDefaults sets default values on a Proxmox VE config.
