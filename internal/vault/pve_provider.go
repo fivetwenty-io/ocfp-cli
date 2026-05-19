@@ -2,11 +2,14 @@ package vault
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"go.uber.org/zap"
 )
 
@@ -162,7 +165,15 @@ func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter 
 	return nil
 }
 
-// ConfigureSubnets configures subnet settings (minimal for Proxmox).
+// ConfigureSubnets writes per-subnet entries to vault, sourcing CIDR, gateway,
+// and availability zone from bootstrap state's `subnet` resources. Each subnet
+// matching the bloc-name prefix is written to:
+//
+//	{subnetsPath}/{subnetName}                          → cidr, az, gateway
+//	{subnetsPath}/{subnetName}/reserved-ips/{role}      → ip
+//
+// When no bootstrap state is present the method falls back to the legacy
+// single-blob write so `populate` does not fail in stateless contexts.
 func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
 	phaseStart := time.Now()
@@ -173,17 +184,61 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 	p.logger.Infow("Configuring subnets", "env_type", envType)
 
-	// Proxmox bridges don't have native subnets - store CIDR metadata
-	subnetPath := p.PathBuilder.GetSubnetsPath(envType)
+	sm := p.loadStateManager()
+	if sm == nil {
+		// No state? Fall back to old behavior so populate still writes something.
+		if err := p.writeFallbackSubnet(envType); err != nil {
+			return err
+		}
 
-	subnetConfig := map[string]interface{}{
-		"note": "Proxmox bridges do not have native subnets",
-		"cidr": p.Config.VPCCIDRBlock,
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
+		return nil
 	}
 
-	err := p.Safe.SetMultiple(subnetPath, subnetConfig)
-	if err != nil {
-		return fmt.Errorf("failed to set subnet configuration: %w", err)
+	subnets, err := sm.GetResourcesByType("subnet")
+	if err != nil || len(subnets) == 0 {
+		if err := p.writeFallbackSubnet(envType); err != nil {
+			return err
+		}
+
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
+
+		return nil
+	}
+
+	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
+
+	for _, sub := range subnets {
+		if !strings.HasPrefix(sub.Name, p.BlocName+"-") {
+			continue
+		}
+
+		cidr, _ := sub.Properties["cidr"].(string)
+		az, _ := sub.Properties["availability_zone"].(string)
+		gateway, _ := sub.Properties["gateway"].(string)
+
+		if cidr == "" {
+			continue
+		}
+
+		subnetPath := filepath.Join(subnetsPath, sub.Name)
+		if err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
+			"cidr":    cidr,
+			"az":      az,
+			"gateway": gateway,
+		}); err != nil {
+			return fmt.Errorf("failed to write subnet %s: %w", sub.Name, err)
+		}
+
+		// Reserved IPs — pull each `reserved_{name}_{role}_ip` output.
+		if err := p.writeReservedIPs(sm, subnetPath, sub.Name); err != nil {
+			return err
+		}
 	}
 
 	if reporter != nil {
@@ -191,6 +246,82 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 	}
 
 	return nil
+}
+
+// writeFallbackSubnet preserves the legacy single-blob write so vault populate
+// keeps a positive marker at the subnets path when bootstrap state is absent.
+func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
+	subnetPath := p.PathBuilder.GetSubnetsPath(envType)
+
+	err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
+		"note": "Proxmox SDN: single vnet subnet; no bootstrap state found",
+		"cidr": p.Config.VPCCIDRBlock,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set subnet configuration: %w", err)
+	}
+
+	return nil
+}
+
+// writeReservedIPs iterates bootstrap state outputs looking for keys of the
+// form `reserved_{subnetName}_{role}_ip` and writes each non-empty value to
+// `{subnetPath}/reserved-ips/{role}` so genesis kits can resolve reserved IPs
+// by role name. State outputs are the canonical source — they are populated
+// by bootstrap.compute when subnets are reserved.
+func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subnetName string) error {
+	current := sm.Current()
+	if current == nil || len(current.Outputs) == 0 {
+		return nil
+	}
+
+	prefix := "reserved_" + subnetName + "_"
+	suffix := "_ip"
+
+	for key, val := range current.Outputs {
+		if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) {
+			continue
+		}
+
+		role := strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix)
+		if role == "" {
+			continue
+		}
+
+		ip, ok := val.(string)
+		if !ok || ip == "" {
+			continue
+		}
+
+		rolePath := filepath.Join(subnetPath, "reserved-ips", role)
+		if err := p.Safe.SetMultiple(rolePath, map[string]interface{}{
+			"ip": ip,
+		}); err != nil {
+			return fmt.Errorf("failed to write reserved IP for %s/%s: %w", subnetName, role, err)
+		}
+	}
+
+	return nil
+}
+
+// loadStateManager loads the bloc's bootstrap state, returning nil on any
+// failure so callers can fall through to stateless behavior.
+func (p *PVEVaultProvider) loadStateManager() *state.Manager {
+	stateDir, err := state.GetStateDir(p.BlocName)
+	if err != nil {
+		return nil
+	}
+
+	sm, err := state.NewManager(stateDir)
+	if err != nil {
+		return nil
+	}
+
+	if _, err := sm.Load(p.BlocName); err != nil {
+		return nil
+	}
+
+	return sm
 }
 
 // ConfigureSecurityGroups configures security group settings.
@@ -289,6 +420,11 @@ func (p *PVEVaultProvider) resolveBlobstoreMode() string {
 }
 
 // configureExternalBlobstore writes the external-mode config + credentials.
+//
+// For mgmt env, it also writes the BOSH director blobstore entry at
+// {bloc}/mgmt/bosh/blobstores/bosh so genesis BOSH kit can consume the same
+// S3-compatible endpoint as the CF blobstore. Previously only the CF path
+// was written, leaving the BOSH director blobstore unconfigured for PVE.
 func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath string) error {
 	if p.BlobstoreEndpoint == "" {
 		return fmt.Errorf("pve blobstore external mode requires --blobstore-endpoint")
@@ -325,6 +461,47 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		err = p.Safe.SetMultiple(credsPath, credsConfig)
 		if err != nil {
 			return fmt.Errorf("failed to set blobstore credentials: %w", err)
+		}
+	}
+
+	if envType == "mgmt" {
+		err = p.configureBOSHBlobstore(region)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// configureBOSHBlobstore writes the BOSH director's external blobstore config
+// and credentials so the genesis BOSH kit can deploy with an S3-compatible
+// blobstore (RustFS/MinIO/Ceph). Path mirrors AWS naming convention.
+func (p *PVEVaultProvider) configureBOSHBlobstore(region string) error {
+	boshPath := p.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh")
+
+	p.logger.Infow("Configuring external BOSH director blobstore", "endpoint", p.BlobstoreEndpoint, "region", region, "path", boshPath)
+
+	boshConfig := map[string]interface{}{
+		"mode":       "external",
+		"endpoint":   p.BlobstoreEndpoint,
+		"region":     region,
+		"path_style": true,
+		"status":     "configured",
+	}
+
+	err := p.Safe.SetMultiple(boshPath, boshConfig)
+	if err != nil {
+		return fmt.Errorf("failed to set BOSH blobstore configuration: %w", err)
+	}
+
+	if p.BlobstoreAccessKey != "" || p.BlobstoreSecretKey != "" {
+		err = p.Safe.SetMultiple(boshPath+"/creds", map[string]interface{}{
+			"access_key": p.BlobstoreAccessKey,
+			"secret_key": p.BlobstoreSecretKey,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set BOSH blobstore credentials: %w", err)
 		}
 	}
 
