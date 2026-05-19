@@ -13,6 +13,7 @@ import (
 	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
 const (
@@ -107,7 +108,28 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		tlsMat = &mat
 		caPEM = mat.CertPEM
 	case config.ArtifactsTLSModeInternalCA:
-		return fmt.Errorf("artifacts: internal-ca TLS mode is not yet wired; set artifacts.tls.mode to self-signed or disabled")
+		if m.safe == nil {
+			return fmt.Errorf("artifacts: internal-ca TLS mode requires vault access; set OCFP_VAULT_ADDR/TOKEN or switch artifacts.tls.mode to self-signed/disabled")
+		}
+
+		ca, caErr := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
+		if caErr != nil {
+			return fmt.Errorf("artifacts: load bloc CA: %w", caErr)
+		}
+
+		cn := m.config.Artifacts.TLS.CommonName
+		if cn == "" {
+			cn = vmName
+		}
+
+		leaf, leafErr := artifacts.IssueLeafCert(ca, cn, []string{cn, vmName}, []net.IP{ip})
+		if leafErr != nil {
+			return fmt.Errorf("artifacts: issue leaf cert: %w", leafErr)
+		}
+
+		tlsMat = &leaf
+		// caPEM is the CA cert (what genesis kits pin), NOT the leaf cert.
+		caPEM = ca.CertPEM
 	case config.ArtifactsTLSModeDisabled:
 		// Plain HTTP on :9000; no TLS material.
 	default:
@@ -184,6 +206,17 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	err = m.recordArtifactsState(vmName, inst, vol, ip, creds, ep, tlsMat)
 	if err != nil {
 		return fmt.Errorf("artifacts: record state: %w", err)
+	}
+
+	if m.safe != nil {
+		writer := vault.NewArtifactsWriter(m.config, m.safe, m.options.BlocName)
+
+		err = writer.WriteArtifacts(ctx, m.options.BlocName, ep, creds, tlsMat)
+		if err != nil {
+			return fmt.Errorf("artifacts: write vault: %w", err)
+		}
+	} else {
+		_, _ = fmt.Fprintln(os.Stderr, "warning: artifacts vault writer unavailable; run `ocfp vault populate --blobstore-endpoint=...` to sync")
 	}
 
 	bucketErr := artifacts.EnsureBuckets(ctx, ep, creds, artifactsBucketList(m.options.BlocName, m.config))

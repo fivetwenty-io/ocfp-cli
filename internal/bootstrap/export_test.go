@@ -34,3 +34,8 @@ func (m *Manager) AdjustSubnetForProvider(subnetID string) string {
 func (m *Manager) BastionStaticIPPrefix() int {
 	return m.bastionStaticIPPrefix()
 }
+
+// HasSafe returns true when a vault Safe client is wired into the manager.
+func (m *Manager) HasSafe() bool {
+	return m.safe != nil
+}
