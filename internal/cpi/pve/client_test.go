@@ -2,6 +2,56 @@ package pve
 
 import "testing"
 
+// TestSupportsStorage covers the mode-gating on the blobstore. PVE has no
+// native object store, so SupportsStorage must only report true when an
+// external S3-compatible endpoint is configured. The bootstrap layer keys off
+// this return to decide whether to attempt bucket creation; reporting true in
+// local mode is what caused the 10× ErrBucketsNotSupported failures previously.
+func TestSupportsStorage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		mode string
+		want bool
+	}{
+		{name: "empty defaults to local (no support)", mode: "", want: false},
+		{name: "local mode", mode: "local", want: false},
+		{name: "external mode", mode: "external", want: true},
+		{name: "external mode mixed case", mode: "External", want: true},
+		{name: "unknown mode", mode: "weird", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &Client{config: &Config{BlobstoreMode: tt.mode}}
+			if got := client.SupportsStorage(); got != tt.want {
+				t.Errorf("SupportsStorage() = %v, want %v (mode=%q)", got, tt.want, tt.mode)
+			}
+		})
+	}
+}
+
+// TestSupportsStorageNilConfig guards the zero-value path: a Client with no
+// config (e.g., produced by NewClient(nil) before Initialize completes) must
+// not panic and must report false.
+func TestSupportsStorageNilConfig(t *testing.T) {
+	t.Parallel()
+
+	var c *Client
+
+	if c.SupportsStorage() {
+		t.Errorf("nil receiver SupportsStorage() = true, want false")
+	}
+
+	c = &Client{config: nil}
+	if c.SupportsStorage() {
+		t.Errorf("nil-config SupportsStorage() = true, want false")
+	}
+}
+
 // TestSplitPVEEndpoint covers the parser that lets operators write the PVE
 // endpoint as a bare host, host:port, or full URL — apiclient's Options
 // fields require them split, and the wrong form caused URL doubling

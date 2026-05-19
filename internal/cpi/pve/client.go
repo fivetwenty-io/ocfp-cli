@@ -67,6 +67,18 @@ type Config struct {
 	// TLS settings
 	VerifySSL bool   // Verify SSL certificates
 	CAPath    string // Custom CA certificate path
+
+	// Blobstore configuration.
+	// BlobstoreMode is "local" (default) or "external". Local mode skips
+	// bucket creation entirely. External mode requires an S3-compatible
+	// endpoint and credentials (Ceph RGW, RustFS, etc.).
+	BlobstoreMode      string
+	BlobstoreEndpoint  string
+	BlobstoreRegion    string
+	BlobstoreAccessKey string
+	BlobstoreSecretKey string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	BlobstoreCAPath    string // path to CA bundle for self-signed endpoints
+	BlobstorePathStyle bool   // true for Ceph/RustFS (default true)
 }
 
 // NodeInfo holds information about a Proxmox node.
@@ -340,9 +352,19 @@ func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
 	return c.loadBalancer
 }
 
-// SupportsStorage returns true as Proxmox supports storage operations.
+// SupportsStorage reports whether the configured blobstore mode is external.
+//
+// PVE has no native object-storage layer, so bucket creation only makes sense
+// when an S3-compatible endpoint (Ceph RGW, RustFS, etc.) is configured.
+// Local mode (the default) makes the bootstrap bucket-creation step a no-op,
+// preventing the long stream of ErrBucketsNotSupported errors that otherwise
+// fail step 7/7.
 func (c *Client) SupportsStorage() bool {
-	return true
+	if c == nil || c.config == nil {
+		return false
+	}
+
+	return strings.EqualFold(c.config.BlobstoreMode, "external")
 }
 
 // Initialize initializes the provider with configuration.

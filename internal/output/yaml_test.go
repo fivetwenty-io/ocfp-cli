@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 func TestYAMLRenderer_PhaseStart(t *testing.T) {
@@ -38,12 +38,12 @@ func TestYAMLRenderer_PhaseStart(t *testing.T) {
 
 	// Verify event structure
 	assert.Equal(t, "phase_start", event["event"])
-	assert.Equal(t, 1, event["sequence"])
+	assert.EqualValues(t, 1, event["sequence"])
 	assert.NotEmpty(t, event["timestamp"])
 	assert.Equal(t, "test_phase", event["phase_id"])
 	assert.Equal(t, "Test Phase", event["phase_name"])
-	assert.Equal(t, 1, event["phase_number"])
-	assert.Equal(t, 5, event["total_phases"])
+	assert.EqualValues(t, 1, event["phase_number"])
+	assert.EqualValues(t, 5, event["total_phases"])
 
 	// Verify timestamp is ISO8601
 	timestamp, ok := event["timestamp"].(string)
@@ -80,14 +80,14 @@ func TestYAMLRenderer_PhaseProgress(t *testing.T) {
 
 	// Verify event structure
 	assert.Equal(t, "phase_progress", event["event"])
-	assert.Equal(t, 1, event["sequence"])
+	assert.EqualValues(t, 1, event["sequence"])
 	assert.Equal(t, "files", event["category"])
-	assert.Equal(t, 3, event["current"])
-	assert.Equal(t, 10, event["total"])
+	assert.EqualValues(t, 3, event["current"])
+	assert.EqualValues(t, 10, event["total"])
 	assert.Equal(t, "config.yaml", event["item"])
 	assert.Equal(t, "running", event["status"])
-	assert.Equal(t, 30, event["percentage"]) // YAML unmarshals to int
-	assert.Equal(t, 5000, event["eta_ms"])   // 5 seconds in milliseconds
+	assert.EqualValues(t, 30, event["percentage"])
+	assert.EqualValues(t, 5000, event["eta_ms"])
 }
 
 func TestYAMLRenderer_PhaseProgressWithoutETA(t *testing.T) {
@@ -151,7 +151,7 @@ func TestYAMLRenderer_PhaseComplete(t *testing.T) {
 	assert.Equal(t, "test_phase", event["phase_id"])
 
 	// Verify duration is approximately 2 seconds (allow some tolerance)
-	durationMS, ok := event["duration_ms"].(int)
+	durationMS, ok := event["duration_ms"].(uint64)
 	require.True(t, ok)
 	assert.InDelta(t, 2000, durationMS, 100, "duration should be ~2000ms")
 }
@@ -189,9 +189,9 @@ func TestYAMLRenderer_PhaseFailed(t *testing.T) {
 	assert.Contains(t, event["error"], "assert.AnError")
 
 	// Verify duration
-	durationMS, ok := event["duration_ms"].(int)
+	durationMS, ok := event["duration_ms"].(uint64)
 	require.True(t, ok)
-	assert.Greater(t, durationMS, 400, "duration should be at least 400ms")
+	assert.Greater(t, durationMS, uint64(400), "duration should be at least 400ms")
 }
 
 func TestYAMLRenderer_PhaseSkipped(t *testing.T) {
@@ -252,11 +252,11 @@ func TestYAMLRenderer_Finalize_Success(t *testing.T) {
 
 	// Verify event structure
 	assert.Equal(t, "summary", event["event"])
-	assert.Equal(t, 5, event["total_phases"])
-	assert.Equal(t, 5, event["completed_phases"])
-	assert.Equal(t, 0, event["failed_phases"])
-	assert.Equal(t, 0, event["skipped_phases"])
-	assert.Equal(t, 10000, event["duration_ms"]) // YAML unmarshals to int
+	assert.EqualValues(t, 5, event["total_phases"])
+	assert.EqualValues(t, 5, event["completed_phases"])
+	assert.EqualValues(t, 0, event["failed_phases"])
+	assert.EqualValues(t, 0, event["skipped_phases"])
+	assert.EqualValues(t, 10000, event["duration_ms"])
 	assert.True(t, event["success"].(bool))
 
 	// Verify errors field is not present when empty
@@ -334,18 +334,18 @@ func TestYAMLRenderer_SequenceMonotonicity(t *testing.T) {
 	docs := splitYAMLDocs(output)
 	assert.Len(t, docs, 3)
 
-	sequences := []int{}
+	sequences := []uint64{}
 	for _, doc := range docs {
 		var event map[string]interface{}
 		err := yaml.Unmarshal([]byte(doc), &event)
 		require.NoError(t, err)
-		seq := event["sequence"].(int)
+		seq := event["sequence"].(uint64)
 		sequences = append(sequences, seq)
 	}
 
-	assert.Equal(t, 1, sequences[0])
-	assert.Equal(t, 2, sequences[1])
-	assert.Equal(t, 3, sequences[2])
+	assert.EqualValues(t, 1, sequences[0])
+	assert.EqualValues(t, 2, sequences[1])
+	assert.EqualValues(t, 3, sequences[2])
 }
 
 func TestYAMLRenderer_DocumentSeparators(t *testing.T) {

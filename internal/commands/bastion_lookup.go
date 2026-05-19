@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"net"
 	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -10,14 +12,30 @@ import (
 	"github.com/spf13/viper"
 )
 
+// bastionReachabilityProbeTimeout bounds the TCP probe we use to validate
+// cached bastion addresses. Long enough to handle LAN latency, short enough
+// that a stale cache entry doesn't make `ocfp ssh bastion` feel hung when
+// it falls through to provider discovery.
+const bastionReachabilityProbeTimeout = 2 * time.Second
+
 // findBastionIP attempts to discover the bastion IP using multiple label strategies
 // and a final name-based fallback for compatibility with Perl tooling.
 func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	log := logger.WithOperation("findBastionIP")
 
-	// Try local state cache first
+	// Try local state cache first, but only trust it when the bastion is
+	// actually reachable. Bootstrap records the *requested* static IP at
+	// VM-create time; on PVE templates with predictable interface names
+	// the guest may end up on a DHCP lease instead, leaving the cached
+	// value stale. A 2s TCP probe catches that case and forces us to fall
+	// through to provider-side discovery (QGA / reserved IP) which sees
+	// the bastion's real address.
 	if ip, found := tryStateCache(blocName, log); found {
-		return ip, nil
+		if isBastionReachable(ip) {
+			return ip, nil
+		}
+
+		log.Debugf("State-cache bastion IP %s did not answer on port 22 within %s; falling back to provider discovery", ip, bastionReachabilityProbeTimeout)
 	}
 
 	// Delegate to instance-level discovery and extract the IP
@@ -52,7 +70,20 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	// its private address. The instance returned by findBastionInstance is
 	// the lightweight ListInstances form which won't carry IPs; fetch the
 	// detailed record so we can read whatever the provider knows.
-	if detailed, getErr := provider.Compute().GetInstance(ctx, inst.ID); getErr == nil && detailed != nil {
+	detailed, getErr := provider.Compute().GetInstance(ctx, inst.ID)
+	if getErr != nil {
+		log.Debugf("GetInstance(%s) failed during bastion lookup: %v", inst.ID, getErr)
+	} else if detailed != nil {
+		log.Debugf("GetInstance(%s) returned PrivateIP=%q PublicIP=%q FloatingIP=%q",
+			inst.ID, detailed.PrivateIP, detailed.PublicIP, detailed.FloatingIP)
+
+		if publicIP := firstNonEmpty(detailed.FloatingIP, detailed.PublicIP); publicIP != "" {
+			log.Debugf("Found bastion public IP via GetInstance %s: %s", inst.Name, publicIP)
+			cacheBastionIP(blocName, publicIP)
+
+			return publicIP, nil
+		}
+
 		if privateIP := firstNonEmpty(detailed.PrivateIP, inst.PrivateIP); privateIP != "" {
 			log.Debugf("Found bastion private IP for instance %s: %s", inst.Name, privateIP)
 			cacheBastionIP(blocName, privateIP)
@@ -66,6 +97,18 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		cacheBastionIP(blocName, inst.PrivateIP)
 
 		return inst.PrivateIP, nil
+	}
+
+	// Last-resort: the bootstrap reserves a static address for the bastion
+	// in the bloc's primary subnet and records it as
+	// reserved_<subnet>_bastion_ip. Use it when no provider-side IP is
+	// available (typical when the guest agent hasn't reported yet on a
+	// fresh PVE VM started with DHCP).
+	if reservedIP := tryReservedBastionIP(blocName, log); reservedIP != "" {
+		log.Debugf("Found bastion IP from reserved-IP state output: %s", reservedIP)
+		cacheBastionIP(blocName, reservedIP)
+
+		return reservedIP, nil
 	}
 
 	return "", ErrNoBastionHostFound(blocName)
@@ -173,6 +216,84 @@ func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, b
 	}
 
 	return nil
+}
+
+// isBastionReachable probes TCP port 22 to validate a candidate bastion
+// address before trusting a cached value. Returns true only when a TCP
+// handshake completes within bastionReachabilityProbeTimeout. Used to
+// guard against the bootstrap-time IP drifting from the running guest's
+// actual address (PVE template + predictable interface names → DHCP
+// fallback inside the VM).
+func isBastionReachable(ipAddr string) bool {
+	if ipAddr == "" {
+		return false
+	}
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddr, "22"), bastionReachabilityProbeTimeout)
+	if err != nil {
+		return false
+	}
+
+	_ = conn.Close()
+
+	return true
+}
+
+// tryReservedBastionIP reads the reserved bastion address that bootstrap
+// records when laying out the primary OCFP subnet. The output key follows
+// the pattern reserved_<subnet>_bastion_ip and the subnet name itself
+// follows <bloc>-ocfp-0. The historic state files may also list the
+// address under reserved_<bloc>_bastion_ip, so both keys are tried.
+//
+// Returns the IP address as a string, or "" when neither key is present.
+func tryReservedBastionIP(blocName string, log logger.Logger) string {
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		log.Debugf("Reserved-IP fallback: state dir lookup failed for %s: %v", blocName, err)
+
+		return ""
+	}
+
+	stateManager, err := state.NewManager(stateDir)
+	if err != nil {
+		log.Debugf("Reserved-IP fallback: state manager init failed for %s: %v", stateDir, err)
+
+		return ""
+	}
+
+	_, err = stateManager.Load(blocName)
+	if err != nil {
+		log.Debugf("Reserved-IP fallback: state load failed for %s: %v", blocName, err)
+
+		return ""
+	}
+
+	candidates := []string{
+		"reserved_" + blocName + "-ocfp-0_bastion_ip",
+		"reserved_" + blocName + "_bastion_ip",
+	}
+
+	for _, key := range candidates {
+		raw, getErr := stateManager.GetOutput(key)
+		if getErr != nil {
+			log.Debugf("Reserved-IP fallback: %s not present: %v", key, getErr)
+
+			continue
+		}
+
+		ipAddr, ok := raw.(string)
+		if !ok || ipAddr == "" {
+			log.Debugf("Reserved-IP fallback: %s empty or non-string", key)
+
+			continue
+		}
+
+		log.Debugf("Reserved-IP fallback: matched %s=%s", key, ipAddr)
+
+		return ipAddr
+	}
+
+	return ""
 }
 
 func tryStateCache(blocName string, log logger.Logger) (string, bool) {

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/output"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // ValidationEntry represents a single validation event.

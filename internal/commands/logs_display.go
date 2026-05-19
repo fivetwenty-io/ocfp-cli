@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // Output format constants for logs display.

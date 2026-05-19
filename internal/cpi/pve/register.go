@@ -55,6 +55,14 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 			CAPath:         getString(cfg, "ca_path"),
 			Timeout:        0,
 			MaxRetries:     0,
+
+			BlobstoreMode:      getString(cfg, "blobstore_mode"),
+			BlobstoreEndpoint:  getString(cfg, "blobstore_endpoint"),
+			BlobstoreRegion:    getString(cfg, "blobstore_region"),
+			BlobstoreAccessKey: getString(cfg, "blobstore_access_key"),
+			BlobstoreSecretKey: getString(cfg, "blobstore_secret_key"),
+			BlobstoreCAPath:    getString(cfg, "blobstore_ca_path"),
+			BlobstorePathStyle: getBoolDefault(cfg, "blobstore_path_style", true),
 		}
 	default:
 		return nil, ErrInvalidConfigType(config)
@@ -107,4 +115,17 @@ func getBool(m map[string]interface{}, key string) bool {
 	}
 
 	return false
+}
+
+// getBoolDefault returns the bool value at key when present, otherwise the
+// supplied default. Used for config keys whose absence should not be confused
+// with an explicit false (e.g. blobstore_path_style defaults true).
+func getBoolDefault(m map[string]interface{}, key string, def bool) bool {
+	if v, ok := m[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+
+	return def
 }

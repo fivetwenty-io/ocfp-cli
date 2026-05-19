@@ -14,7 +14,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 const (

@@ -500,7 +500,20 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		DefaultUsername:  m.bastionDefaultUsername(),
 		GatewayIP:        m.bastionGatewayIP(),
 		DNSServers:       m.config.Network.DNSServers,
+		Hostname:         bastionName,
+		DomainSuffix:     m.bastionDomainSuffix(),
 	}
+}
+
+// bastionDomainSuffix returns the domain suffix that should be appended to the
+// bastion hostname to form its FQDN. Sourced from FQDNs.Base when set; empty
+// otherwise (the VM then receives an unqualified hostname only).
+func (m *Manager) bastionDomainSuffix() string {
+	if m.config == nil || m.config.FQDNs == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(m.config.FQDNs.Base)
 }
 
 // bastionPublicKey returns the OpenSSH single-line public key the bastion VM

@@ -19,10 +19,23 @@ type PVEVaultProvider struct {
 	logger      *zap.SugaredLogger
 
 	// BlobstoreEndpoint is the S3-compatible endpoint URL supplied by the operator via
-	// --blobstore-endpoint. When empty, ConfigureBlobstores skips the endpoint vault
-	// write; kits that require a blobstore endpoint will surface a clear missing-path
-	// error rather than reading an empty value.
+	// --blobstore-endpoint. When empty and BlobstoreMode is local/empty, ConfigureBlobstores
+	// writes only the local-mode marker. When BlobstoreEndpoint is set, the endpoint plus
+	// region/path_style flags are written to cf/blobstores/main, and credentials go to a
+	// separate cf/blobstores/main/creds path.
 	BlobstoreEndpoint string
+
+	// BlobstoreMode is "local" (default) or "external". Determines whether bucket
+	// creation runs and what gets written to vault.
+	BlobstoreMode string
+
+	// BlobstoreRegion is the S3 region (default "us-east-1" when empty).
+	BlobstoreRegion string
+
+	// BlobstoreAccessKey + BlobstoreSecretKey carry external-mode S3 credentials.
+	// Written to a separate vault path so the config path stays secret-free.
+	BlobstoreAccessKey string
+	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
 }
 
 // NewPVEVaultProvider creates a new Proxmox VE vault provider.
@@ -211,13 +224,19 @@ func (p *PVEVaultProvider) ConfigureSecurityGroups(_envPath, envType string, rep
 	return nil
 }
 
-// ConfigureBlobstores configures blobstore settings.
+// ConfigureBlobstores writes blobstore configuration to vault.
 //
-// When BlobstoreEndpoint is empty, no vault write is made and the phase is reported
-// complete without data. Kits that require a blobstore endpoint will surface a clear
-// missing-path error rather than reading an empty value. When BlobstoreEndpoint is
-// set, the endpoint is written under the cf/blobstores/main path so that the CF kit
-// can resolve it without provider-specific logic.
+// Two modes are honoured:
+//
+//   - local (default): writes only `mode: local` and `status: configured` to
+//     cf/blobstores/main. No endpoint, region, or credentials are written.
+//
+//   - external: writes mode, endpoint, region, and path_style to
+//     cf/blobstores/main. Credentials go to cf/blobstores/main/creds so the
+//     config path stays free of secrets. Empty endpoint in external mode
+//     surfaces an error rather than writing a half-configured entry.
+//
+// Path mirrors AWS cf/blobstores/main naming for kit compatibility.
 func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
@@ -226,25 +245,68 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
 	}
 
-	if p.BlobstoreEndpoint == "" {
-		p.logger.Infow("Blobstore endpoint not provided, skipping blobstore vault path; set --blobstore-endpoint to enable",
-			"env_type", envType)
-
-		if reporter != nil {
-			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
-		}
-
-		return nil
-	}
-
-	p.logger.Infow("Configuring blobstores", "env_type", envType, "endpoint", p.BlobstoreEndpoint)
-
-	// Path mirrors AWS cf/blobstores/main naming for kit compatibility.
+	mode := p.resolveBlobstoreMode()
 	blobstorePath := p.PathBuilder.GetSystemBlobstorePath(envType, "cf", "main")
 
+	switch mode {
+	case "external":
+		err := p.configureExternalBlobstore(envType, blobstorePath)
+		if err != nil {
+			return err
+		}
+	default:
+		p.logger.Infow("Configuring local-mode blobstore (no external endpoint)", "env_type", envType)
+
+		err := p.Safe.SetMultiple(blobstorePath, map[string]interface{}{
+			"mode":   "local",
+			"status": "configured",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set blobstore (local mode) configuration: %w", err)
+		}
+	}
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
+	return nil
+}
+
+// resolveBlobstoreMode picks the active mode, preferring an explicit operator
+// choice and falling back to `external` whenever an endpoint was supplied
+// (backwards compatible with the old --blobstore-endpoint-only contract).
+func (p *PVEVaultProvider) resolveBlobstoreMode() string {
+	if p.BlobstoreMode != "" {
+		return p.BlobstoreMode
+	}
+
+	if p.BlobstoreEndpoint != "" {
+		return "external"
+	}
+
+	return "local"
+}
+
+// configureExternalBlobstore writes the external-mode config + credentials.
+func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath string) error {
+	if p.BlobstoreEndpoint == "" {
+		return fmt.Errorf("pve blobstore external mode requires --blobstore-endpoint")
+	}
+
+	region := p.BlobstoreRegion
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	p.logger.Infow("Configuring external blobstore", "env_type", envType, "endpoint", p.BlobstoreEndpoint, "region", region)
+
 	blobstoreConfig := map[string]interface{}{
-		"endpoint": p.BlobstoreEndpoint,
-		"status":   "configured",
+		"mode":       "external",
+		"endpoint":   p.BlobstoreEndpoint,
+		"region":     region,
+		"path_style": true,
+		"status":     "configured",
 	}
 
 	err := p.Safe.SetMultiple(blobstorePath, blobstoreConfig)
@@ -252,8 +314,18 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 		return fmt.Errorf("failed to set blobstore configuration: %w", err)
 	}
 
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	if p.BlobstoreAccessKey != "" || p.BlobstoreSecretKey != "" {
+		credsPath := blobstorePath + "/creds"
+
+		credsConfig := map[string]interface{}{
+			"access_key": p.BlobstoreAccessKey,
+			"secret_key": p.BlobstoreSecretKey,
+		}
+
+		err = p.Safe.SetMultiple(credsPath, credsConfig)
+		if err != nil {
+			return fmt.Errorf("failed to set blobstore credentials: %w", err)
+		}
 	}
 
 	return nil

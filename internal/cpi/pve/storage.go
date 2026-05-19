@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -25,6 +26,11 @@ const (
 // StorageManager handles Proxmox storage operations.
 type StorageManager struct {
 	client *Client
+
+	// External-blobstore state (mode=external). Both fields are zero in
+	// local mode; see blobstore.go for the lazy-init path.
+	blobstoreMu sync.Mutex
+	blobstoreS3 *blobstoreS3Client
 }
 
 // CreateVolume creates a new volume on a storage pool.
@@ -473,39 +479,85 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error {
 	return nil
 }
 
-// Object storage operations (not natively supported)
+// Object storage operations.
+//
+// PVE has no native object storage. When BlobstoreMode is "local" (the
+// default) all bucket methods short-circuit with ErrBucketsNotSupported and
+// SupportsStorage() reports false so the bootstrap layer skips bucket
+// creation. When BlobstoreMode is "external" the methods route to an
+// S3-compatible endpoint (Ceph RGW, RustFS, etc.) wired in blobstore.go.
 
-// CreateBucket creates a bucket (not supported).
-func (m *StorageManager) CreateBucket(_ctx context.Context, _req *cpi.BucketRequest) (*cpi.Bucket, error) {
-	return nil, ErrBucketsNotSupported
+// CreateBucket creates a bucket. External mode only.
+func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
+	if !m.client.config.isExternalBlobstore() {
+		return nil, ErrBucketsNotSupported
+	}
+
+	return m.createBucketExternal(ctx, req)
 }
 
-// GetBucket retrieves a bucket.
-func (m *StorageManager) GetBucket(_ctx context.Context, _name string) (*cpi.Bucket, error) {
-	return nil, ErrBucketsNotSupported
+// GetBucket retrieves a bucket. External mode only.
+func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
+	if !m.client.config.isExternalBlobstore() {
+		return nil, ErrBucketsNotSupported
+	}
+
+	return m.getBucketExternal(ctx, name)
 }
 
-// ListBuckets lists buckets.
-func (m *StorageManager) ListBuckets(_ctx context.Context) ([]*cpi.Bucket, error) {
-	return []*cpi.Bucket{}, nil
+// ListBuckets lists buckets. Returns an empty slice in local mode so callers
+// that walk all buckets degrade gracefully.
+func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) {
+	if !m.client.config.isExternalBlobstore() {
+		return []*cpi.Bucket{}, nil
+	}
+
+	return m.listBucketsExternal(ctx)
 }
 
-// DeleteBucket deletes a bucket.
-func (m *StorageManager) DeleteBucket(_ctx context.Context, _name string) error {
-	return ErrBucketsNotSupported
+// DeleteBucket deletes a bucket. External mode only.
+func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
+	if !m.client.config.isExternalBlobstore() {
+		return ErrBucketsNotSupported
+	}
+
+	return m.deleteBucketExternal(ctx, name)
 }
 
-// EmptyBucket empties a bucket.
-func (m *StorageManager) EmptyBucket(_ctx context.Context, _name string) error {
-	return ErrBucketsNotSupported
+// EmptyBucket empties a bucket. External mode only.
+func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
+	if !m.client.config.isExternalBlobstore() {
+		return ErrBucketsNotSupported
+	}
+
+	return m.emptyBucketExternal(ctx, name)
 }
 
-// IsBucketEmpty checks if a bucket is empty.
-func (m *StorageManager) IsBucketEmpty(_ctx context.Context, _name string) (bool, error) {
-	return false, ErrBucketsNotSupported
+// IsBucketEmpty checks if a bucket is empty. External mode only.
+func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
+	if !m.client.config.isExternalBlobstore() {
+		return false, ErrBucketsNotSupported
+	}
+
+	return m.isBucketEmptyExternal(ctx, name)
 }
 
-// CreateCredentialsGroup creates a credentials group (not supported).
-func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, _req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
-	return nil, ErrBucketsNotSupported
+// CreateCredentialsGroup is a Stackit-specific concept; for PVE external mode
+// the operator pre-provisions S3 credentials. Return a stub so callers that
+// always invoke this don't break.
+func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
+	if !m.client.config.isExternalBlobstore() {
+		return nil, ErrBucketsNotSupported
+	}
+
+	name := ""
+	if req != nil {
+		name = req.Name
+	}
+
+	return &cpi.CredentialsGroup{
+		ID:        name,
+		Name:      name,
+		CreatedAt: time.Now(),
+	}, nil
 }

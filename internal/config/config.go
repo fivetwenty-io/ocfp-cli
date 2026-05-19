@@ -14,7 +14,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // FQDN configuration errors.
@@ -169,7 +169,31 @@ type Config struct {
 	Keys map[string]string `json:"keys" mapstructure:"keys" yaml:"keys,omitempty"`
 }
 
-// BlobstoreConfig controls versioning/lifecycle policies for expected buckets.
+// BlobstoreMode constants for PVE bloc-scoped blobstore configuration.
+const (
+	// BlobstoreModeLocal indicates no external object storage; bucket creation is skipped.
+	BlobstoreModeLocal = "local"
+	// BlobstoreModeExternal indicates an S3-compatible blobstore (Ceph RGW, RustFS, etc.).
+	BlobstoreModeExternal = "external"
+	// BlobstoreDefaultRegion is the default S3 region used when none is configured.
+	BlobstoreDefaultRegion = "us-east-1"
+)
+
+// ErrBlobstoreEndpointRequired is returned when mode=external without an endpoint.
+var ErrBlobstoreEndpointRequired = errors.New("blobstore.endpoint is required when mode is external")
+
+// ErrBlobstoreCredentialsRequired is returned when mode=external without credentials.
+var ErrBlobstoreCredentialsRequired = errors.New("blobstore.access_key and blobstore.secret_key are required when mode is external")
+
+// ErrBlobstoreInvalidMode is returned for an unrecognized blobstore mode value.
+var ErrBlobstoreInvalidMode = errors.New("blobstore.mode must be 'local' or 'external'")
+
+// BlobstoreConfig controls versioning/lifecycle policies for expected buckets
+// AND provides bloc-scoped blobstore mode/endpoint/credentials for providers
+// (PVE) that lack a native object-storage layer.
+//
+// Mode defaults to "local". External mode points at any S3-compatible service
+// (Ceph RGW, RustFS, etc.) and requires endpoint + access_key + secret_key.
 type BlobstoreConfig struct {
 	EnablePolicies bool `json:"enablePolicies,omitempty" mapstructure:"enablePolicies" yaml:"enablePolicies,omitempty"`
 
@@ -178,6 +202,134 @@ type BlobstoreConfig struct {
 	CFBuildpacks  BucketSettings `json:"cfBuildpacks,omitempty"  mapstructure:"cfBuildpacks"  yaml:"cfBuildpacks,omitempty"`
 	CFDroplets    BucketSettings `json:"cfDroplets,omitempty"    mapstructure:"cfDroplets"    yaml:"cfDroplets,omitempty"`
 	CFAppPackages BucketSettings `json:"cfAppPackages,omitempty" mapstructure:"cfAppPackages" yaml:"cfAppPackages,omitempty"`
+
+	// Bloc-scoped S3-compatible blobstore configuration (used primarily by
+	// the PVE provider, which has no native object store).
+	Mode      string `json:"mode,omitempty"       mapstructure:"mode"       yaml:"mode,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"   mapstructure:"endpoint"   yaml:"endpoint,omitempty"`
+	Region    string `json:"region,omitempty"     mapstructure:"region"     yaml:"region,omitempty"`
+	AccessKey string `json:"access_key,omitempty" mapstructure:"access_key" yaml:"access_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` //nolint:gosec // field name is descriptive
+	CACert    string `json:"ca_cert,omitempty"    mapstructure:"ca_cert"    yaml:"ca_cert,omitempty"`
+	PathStyle *bool  `json:"path_style,omitempty" mapstructure:"path_style" yaml:"path_style,omitempty"`
+}
+
+// UnmarshalYAML accepts both camelCase and snake_case keys for the new bloc-
+// scoped blobstore fields, while preserving the existing camelCase policy
+// fields. Aliases handled: access_key/accessKey, secret_key/secretKey,
+// path_style/pathStyle, ca_cert/caCert.
+//
+// Validation is intentionally NOT performed here; callers run Validate after
+// load so the error path matches the rest of the config package.
+func (b *BlobstoreConfig) UnmarshalYAML(data []byte) error {
+	type rawBlobstore struct {
+		EnablePolicies bool           `yaml:"enablePolicies,omitempty"`
+		BoshBlobstore  BucketSettings `yaml:"boshBlobstore,omitempty"`
+		CFBuildpacks   BucketSettings `yaml:"cfBuildpacks,omitempty"`
+		CFDroplets     BucketSettings `yaml:"cfDroplets,omitempty"`
+		CFAppPackages  BucketSettings `yaml:"cfAppPackages,omitempty"`
+
+		Mode        string `yaml:"mode,omitempty"`
+		Endpoint    string `yaml:"endpoint,omitempty"`
+		Region      string `yaml:"region,omitempty"`
+		AccessKey   string `yaml:"access_key,omitempty"`
+		AccessKeyCC string `yaml:"accessKey,omitempty"`
+		SecretKey   string `yaml:"secret_key,omitempty"`
+		SecretKeyCC string `yaml:"secretKey,omitempty"`
+		CACert      string `yaml:"ca_cert,omitempty"`
+		CACertCC    string `yaml:"caCert,omitempty"`
+		PathStyle   *bool  `yaml:"path_style,omitempty"`
+		PathStyleCC *bool  `yaml:"pathStyle,omitempty"`
+	}
+
+	var raw rawBlobstore
+
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		return fmt.Errorf("decoding blobstore config: %w", err)
+	}
+
+	b.EnablePolicies = raw.EnablePolicies
+	b.BoshBlobstore = raw.BoshBlobstore
+	b.CFBuildpacks = raw.CFBuildpacks
+	b.CFDroplets = raw.CFDroplets
+	b.CFAppPackages = raw.CFAppPackages
+
+	b.Mode = strings.ToLower(strings.TrimSpace(raw.Mode))
+	b.Endpoint = raw.Endpoint
+	b.Region = raw.Region
+	b.AccessKey = firstSetString(raw.AccessKey, raw.AccessKeyCC)
+	b.SecretKey = firstSetString(raw.SecretKey, raw.SecretKeyCC)
+	b.CACert = firstSetString(raw.CACert, raw.CACertCC)
+
+	switch {
+	case raw.PathStyle != nil:
+		b.PathStyle = raw.PathStyle
+	case raw.PathStyleCC != nil:
+		b.PathStyle = raw.PathStyleCC
+	}
+
+	return nil
+}
+
+// ResolvedMode returns the effective blobstore mode, defaulting to local when
+// unset.
+func (b *BlobstoreConfig) ResolvedMode() string {
+	if b == nil {
+		return BlobstoreModeLocal
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(b.Mode))
+	if mode == "" {
+		return BlobstoreModeLocal
+	}
+
+	return mode
+}
+
+// ResolvedPathStyle returns the effective path_style setting, defaulting to
+// true (Ceph/RustFS friendly) when not configured.
+func (b *BlobstoreConfig) ResolvedPathStyle() bool {
+	if b == nil || b.PathStyle == nil {
+		return true
+	}
+
+	return *b.PathStyle
+}
+
+// ResolvedRegion returns the configured region or the default region when
+// unset.
+func (b *BlobstoreConfig) ResolvedRegion() string {
+	if b == nil || strings.TrimSpace(b.Region) == "" {
+		return BlobstoreDefaultRegion
+	}
+
+	return b.Region
+}
+
+// Validate ensures external mode has required fields.
+func (b *BlobstoreConfig) Validate() error {
+	if b == nil {
+		return nil
+	}
+
+	mode := b.ResolvedMode()
+	switch mode {
+	case BlobstoreModeLocal, "":
+		return nil
+	case BlobstoreModeExternal:
+		if strings.TrimSpace(b.Endpoint) == "" {
+			return ErrBlobstoreEndpointRequired
+		}
+
+		if strings.TrimSpace(b.AccessKey) == "" || strings.TrimSpace(b.SecretKey) == "" {
+			return ErrBlobstoreCredentialsRequired
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrBlobstoreInvalidMode, b.Mode)
+	}
 }
 
 // Common default network CIDR for several providers.
@@ -214,6 +366,67 @@ type NetworkConfig struct {
 	DNSServers     []string `json:"dnsServers,omitempty"     mapstructure:"dnsServers"     yaml:"dnsServers,omitempty"`
 	SubnetStrategy string   `json:"subnetStrategy,omitempty" mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"`
 	Subnets        []Subnet `json:"subnets,omitempty"        mapstructure:"subnets"        yaml:"subnets,omitempty"`
+}
+
+// UnmarshalYAML accepts the historical snake_case key network_cidr alongside
+// the documented cidr / networkCidr forms. goccy/go-yaml matches struct tags
+// case-sensitively, so without this hook a config that writes network_cidr
+// silently falls back to the package default and the bastion lands on the
+// wrong subnet — a trap that has bitten PVE bridge-mode deployments.
+//
+// Precedence when more than one key is set: cidr > networkCidr > network_cidr.
+// NetworkCIDR is populated for downstream consumers that look only at that
+// field.
+func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
+	type rawNetwork struct {
+		ID             string   `yaml:"id,omitempty"`
+		Name           string   `yaml:"name,omitempty"`
+		CIDR           string   `yaml:"cidr,omitempty"`
+		NetworkCIDR    string   `yaml:"networkCidr,omitempty"`
+		NetworkCIDRSC  string   `yaml:"network_cidr,omitempty"`
+		SubnetID       string   `yaml:"subnetId,omitempty"`
+		SubnetIDSC     string   `yaml:"subnet_id,omitempty"`
+		DNS            []string `yaml:"dns,omitempty"`
+		DNSServers     []string `yaml:"dnsServers,omitempty"`
+		DNSServersSC   []string `yaml:"dns_servers,omitempty"`
+		SubnetStrategy string   `yaml:"subnetStrategy,omitempty"`
+		Subnets        []Subnet `yaml:"subnets,omitempty"`
+	}
+
+	var raw rawNetwork
+
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		return fmt.Errorf("decoding network config: %w", err)
+	}
+
+	n.ID = raw.ID
+	n.Name = raw.Name
+	n.CIDR = firstSetString(raw.CIDR, raw.NetworkCIDR, raw.NetworkCIDRSC)
+	n.NetworkCIDR = firstSetString(raw.NetworkCIDR, raw.NetworkCIDRSC, raw.CIDR)
+	n.SubnetID = firstSetString(raw.SubnetID, raw.SubnetIDSC)
+	n.DNS = raw.DNS
+
+	if len(raw.DNSServers) > 0 {
+		n.DNSServers = raw.DNSServers
+	} else {
+		n.DNSServers = raw.DNSServersSC
+	}
+
+	n.SubnetStrategy = raw.SubnetStrategy
+	n.Subnets = raw.Subnets
+
+	return nil
+}
+
+func firstSetString(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
 }
 
 // Subnet configuration.
@@ -539,7 +752,7 @@ type FQDNConfig struct {
 // UnmarshalYAML handles fqdns.base being either a string or a single-element
 // YAML sequence, coercing the latter into a plain string so callers always see
 // FQDNConfig.Base as a string.
-func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
+func (f *FQDNConfig) UnmarshalYAML(data []byte) error {
 	type aux struct {
 		Base interface{}       `yaml:"base"`
 		Mgmt map[string]string `yaml:"mgmt"`
@@ -548,7 +761,7 @@ func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
 
 	var raw aux
 
-	decodeErr := value.Decode(&raw)
+	decodeErr := yaml.Unmarshal(data, &raw)
 	if decodeErr != nil {
 		return fmt.Errorf("decoding fqdns config: %w", decodeErr)
 	}
@@ -1315,6 +1528,11 @@ func validate(cfg *Config) error {
 
 	if !providerValid {
 		return ErrInvalidProvider(cfg.Provider)
+	}
+
+	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).
+	if err := cfg.Blobstore.Validate(); err != nil {
+		return fmt.Errorf("blobstore config: %w", err)
 	}
 
 	return nil

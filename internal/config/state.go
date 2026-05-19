@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // StateFile represents CLI-managed state stored separately from user config.
@@ -98,53 +98,12 @@ func SaveState(state *StateFile) error {
 
 // marshalYAMLWithIndent marshals a value to YAML with a specified indentation.
 func marshalYAMLWithIndent(v interface{}, indent int) ([]byte, error) {
-	var buf []byte
-
-	node := &yaml.Node{}
-
-	data, err := yaml.Marshal(v)
+	data, err := yaml.MarshalWithOptions(v, yaml.Indent(indent))
 	if err != nil {
 		return nil, fmt.Errorf("yaml marshal: %w", err)
 	}
 
-	err = yaml.Unmarshal(data, node)
-	if err != nil {
-		return nil, fmt.Errorf("yaml unmarshal node: %w", err)
-	}
-
-	enc := newIndentEncoder(&buf, indent)
-
-	err = enc.Encode(node)
-	if err != nil {
-		return nil, fmt.Errorf("yaml encode: %w", err)
-	}
-
-	err = enc.Close()
-	if err != nil {
-		return nil, fmt.Errorf("yaml encoder close: %w", err)
-	}
-
-	return buf, nil
-}
-
-// bufWriter wraps a byte slice pointer to implement io.Writer.
-type bufWriter struct {
-	buf *[]byte
-}
-
-func (w *bufWriter) Write(p []byte) (int, error) {
-	*w.buf = append(*w.buf, p...)
-
-	return len(p), nil
-}
-
-// newIndentEncoder creates a yaml.Encoder writing to buf with the given indent.
-func newIndentEncoder(buf *[]byte, indent int) *yaml.Encoder {
-	writer := &bufWriter{buf: buf}
-	enc := yaml.NewEncoder(writer)
-	enc.SetIndent(indent)
-
-	return enc
+	return data, nil
 }
 
 // GetCurrentBloc returns the current bloc name from the state file.

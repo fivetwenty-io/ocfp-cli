@@ -187,13 +187,13 @@ func TestFormatPVETag(t *testing.T) {
 		value string
 		want  string
 	}{
-		{name: "bloc name", key: "bloc", value: "520-pve-wayne", want: "bloc-520-pve-wayne"},
-		{name: "role", key: "role", value: "bastion", want: "role-bastion"},
-		{name: "uppercase is lowered", key: "Role", value: "Bastion", want: "role-bastion"},
-		{name: "slashes replaced", key: "managed-by", value: "ocfp/cli", want: "managed-by-ocfp_cli"},
-		{name: "spaces replaced", key: "env", value: "prod east", want: "env-prod_east"},
-		{name: "dots preserved", key: "version", value: "1.2.3", want: "version-1.2.3"},
-		{name: "empty value still tags key", key: "managed-by", value: "", want: "managed-by-"},
+		{name: "bloc name", key: "bloc", value: "520-pve-wayne", want: "bloc--520-pve-wayne"},
+		{name: "role", key: "role", value: "bastion", want: "role--bastion"},
+		{name: "uppercase is lowered", key: "Role", value: "Bastion", want: "role--bastion"},
+		{name: "slashes replaced", key: "managed-by", value: "ocfp/cli", want: "managed-by--ocfp_cli"},
+		{name: "spaces replaced", key: "env", value: "prod east", want: "env--prod_east"},
+		{name: "dots preserved", key: "version", value: "1.2.3", want: "version--1.2.3"},
+		{name: "empty value still tags key", key: "managed-by", value: "", want: "managed-by--"},
 		{name: "both empty drops tag", key: "", value: "", want: ""},
 	}
 
@@ -221,11 +221,11 @@ func TestParsePVETags(t *testing.T) {
 		want []string
 	}{
 		{name: "empty", raw: "", want: nil},
-		{name: "single", raw: "bloc-prod", want: []string{"bloc-prod"}},
-		{name: "two", raw: "bloc-prod;role-bastion", want: []string{"bloc-prod", "role-bastion"}},
-		{name: "trailing separator", raw: "bloc-prod;", want: []string{"bloc-prod"}},
-		{name: "duplicate separators", raw: ";bloc-prod;;role-bastion;", want: []string{"bloc-prod", "role-bastion"}},
-		{name: "whitespace trimmed", raw: " bloc-prod ; role-bastion ", want: []string{"bloc-prod", "role-bastion"}},
+		{name: "single", raw: "bloc--prod", want: []string{"bloc--prod"}},
+		{name: "two", raw: "bloc--prod;role--bastion", want: []string{"bloc--prod", "role--bastion"}},
+		{name: "trailing separator", raw: "bloc--prod;", want: []string{"bloc--prod"}},
+		{name: "duplicate separators", raw: ";bloc--prod;;role--bastion;", want: []string{"bloc--prod", "role--bastion"}},
+		{name: "whitespace trimmed", raw: " bloc--prod ; role--bastion ", want: []string{"bloc--prod", "role--bastion"}},
 	}
 
 	for _, tt := range tests {
@@ -252,7 +252,7 @@ func TestParsePVETags(t *testing.T) {
 func TestMatchesLabelFilters(t *testing.T) {
 	t.Parallel()
 
-	tags := []string{"bloc-520-pve-wayne", "role-bastion", "managed-by-ocfp"}
+	tags := []string{"bloc--520-pve-wayne", "role--bastion", "managed-by--ocfp"}
 
 	tests := []struct {
 		name    string
@@ -346,6 +346,90 @@ func TestExtractIPConfigAddress(t *testing.T) {
 	}
 }
 
+// TestExtractAgentPrimaryIPv4 covers the QGA network-get-interfaces parser
+// used to resolve a running VM's primary address when ipconfig0 is DHCP and
+// status/current has no network data.
+func TestExtractAgentPrimaryIPv4(t *testing.T) {
+	t.Parallel()
+
+	ipv4 := func(addr string) map[string]interface{} {
+		return map[string]interface{}{"ip-address": addr, "ip-address-type": "ipv4"}
+	}
+
+	ipv6 := func(addr string) map[string]interface{} {
+		return map[string]interface{}{"ip-address": addr, "ip-address-type": "ipv6"}
+	}
+
+	tests := []struct {
+		name string
+		resp interface{}
+		want string
+	}{
+		{name: "nil response", resp: nil, want: ""},
+		{
+			name: "result wrapper with primary nic",
+			resp: map[string]interface{}{
+				"result": []interface{}{
+					map[string]interface{}{
+						"name":         "lo",
+						"ip-addresses": []interface{}{ipv4("127.0.0.1")},
+					},
+					map[string]interface{}{
+						"name":         "ens18",
+						"ip-addresses": []interface{}{ipv6("fe80::1"), ipv4("10.4.4.3")},
+					},
+				},
+			},
+			want: "10.4.4.3",
+		},
+		{
+			name: "bare array response",
+			resp: []interface{}{
+				map[string]interface{}{
+					"name":         "ens18",
+					"ip-addresses": []interface{}{ipv4("192.168.1.67")},
+				},
+			},
+			want: "192.168.1.67",
+		},
+		{
+			name: "skip link-local and loopback",
+			resp: map[string]interface{}{
+				"result": []interface{}{
+					map[string]interface{}{
+						"name":         "ens18",
+						"ip-addresses": []interface{}{ipv4("169.254.10.20"), ipv4("127.0.0.5"), ipv4("10.4.4.3")},
+					},
+				},
+			},
+			want: "10.4.4.3",
+		},
+		{
+			name: "no ipv4 anywhere",
+			resp: map[string]interface{}{
+				"result": []interface{}{
+					map[string]interface{}{
+						"name":         "ens18",
+						"ip-addresses": []interface{}{ipv6("fe80::1")},
+					},
+				},
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := extractAgentPrimaryIPv4(tt.resp)
+			if got != tt.want {
+				t.Errorf("extractAgentPrimaryIPv4(%v) = %q, want %q", tt.resp, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestBuildPVEIPConfig covers the ipconfig0 builder that determines whether
 // the bastion gets DHCP or a static address with gateway.
 func TestBuildPVEIPConfig(t *testing.T) {
@@ -399,6 +483,7 @@ func TestBuildPVEDirectCloudInitConfig(t *testing.T) {
 	const samplePubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5xxxxxx ocfp-test"
 
 	req := &cpi.InstanceRequest{
+		NetworkID:       "vmbr1",
 		StaticPrivateIP: "192.168.1.67",
 		GatewayIP:       "192.168.1.1",
 		DNSServers:      []string{"1.1.1.1", "8.8.8.8"},
@@ -406,7 +491,11 @@ func TestBuildPVEDirectCloudInitConfig(t *testing.T) {
 		PublicKey:       samplePubKey,
 	}
 
-	got := buildPVEDirectCloudInitConfig(req)
+	got := buildPVEDirectCloudInitConfig(req, cloudInitSnippetPlan{})
+
+	if got["net0"] != "virtio,bridge=vmbr1,firewall=1" {
+		t.Errorf("net0 = %v", got["net0"])
+	}
 
 	if got["ipconfig0"] != "ip=192.168.1.67/24,gw=192.168.1.1" {
 		t.Errorf("ipconfig0 = %v", got["ipconfig0"])
@@ -425,7 +514,13 @@ func TestBuildPVEDirectCloudInitConfig(t *testing.T) {
 		t.Fatalf("sshkeys missing or wrong type: %T", got["sshkeys"])
 	}
 
-	// Should be URL-encoded — round-trip back to the original (+ trailing newline).
+	// PVE rejects "+" as the form-urlencoded space character — only the
+	// percent-encoded form (%20) is accepted. Guard against regression.
+	if strings.Contains(rawSSH, "+") {
+		t.Errorf("sshkeys contains '+' (form-urlencoded space); PVE requires %%20: %q", rawSSH)
+	}
+
+	// Round-trip back to the original (+ trailing newline).
 	decoded, err := url.QueryUnescape(rawSSH)
 	if err != nil {
 		t.Fatalf("sshkeys not URL-decodable: %v", err)
@@ -436,13 +531,31 @@ func TestBuildPVEDirectCloudInitConfig(t *testing.T) {
 	}
 }
 
+// TestPveEncodeSSHKeys_NoPlus pins the encoding rule: spaces in OpenSSH
+// public key lines must come out as %20, never as the +-form. This is the
+// single character that differs between net/url's QueryEscape and what PVE
+// accepts on the sshkeys parameter.
+func TestPveEncodeSSHKeys_NoPlus(t *testing.T) {
+	t.Parallel()
+
+	encoded := pveEncodeSSHKeys("ssh-ed25519 ABC ocfp")
+
+	if strings.Contains(encoded, "+") {
+		t.Errorf("encoded sshkeys contains '+': %q", encoded)
+	}
+
+	if !strings.Contains(encoded, "%20") {
+		t.Errorf("encoded sshkeys missing %%20 separators: %q", encoded)
+	}
+}
+
 // TestBuildPVEDirectCloudInitConfig_EmptyRequest verifies the helper
 // produces nothing for an InstanceRequest with no cloud-init fields set
 // — letting the caller skip the PUT entirely on plain VMs.
 func TestBuildPVEDirectCloudInitConfig_EmptyRequest(t *testing.T) {
 	t.Parallel()
 
-	got := buildPVEDirectCloudInitConfig(&cpi.InstanceRequest{})
+	got := buildPVEDirectCloudInitConfig(&cpi.InstanceRequest{}, cloudInitSnippetPlan{})
 
 	// Even an empty request produces ipconfig0=ip=dhcp by design — DHCP is
 	// the safe default for any VM lacking explicit network config. So we

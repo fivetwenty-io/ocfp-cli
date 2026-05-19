@@ -171,24 +171,35 @@ func TestPVEVaultProvider_ConfigureAZs_EmptyBoth(t *testing.T) {
 	assert.Empty(t, mock.setMultipleCalls, "empty Region must produce no vault writes")
 }
 
-// TestPVEVaultProvider_ConfigureBlobstores_SkipsWhenEmpty — BlobstoreEndpoint ""
-// must not produce any SetMultiple call.
-func TestPVEVaultProvider_ConfigureBlobstores_SkipsWhenEmpty(t *testing.T) {
+// TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker — no
+// BlobstoreMode and no BlobstoreEndpoint defaults to local mode, which writes
+// a single `mode: local, status: configured` marker so kits can detect the
+// configured-but-not-external state. Previously this produced zero writes,
+// but downstream kit code now needs a positive signal.
+func TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "pve-node1"}
 	provider := newTestPVEProvider(cfg, mock)
-	// BlobstoreEndpoint deliberately left at zero value.
 
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	assert.Empty(t, mock.setMultipleCalls, "empty BlobstoreEndpoint must skip vault write")
+	require.Len(t, mock.setMultipleCalls, 1, "local mode must write a single marker")
+
+	expectedPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
+	call := mock.setMultipleCalls[0]
+	assert.Equal(t, expectedPath, call.path)
+	assert.Equal(t, "local", call.data["mode"])
+	assert.Equal(t, "configured", call.data["status"])
+	assert.NotContains(t, call.data, "endpoint", "local mode must not write endpoint")
+	assert.NotContains(t, call.data, "access_key", "local mode must not write credentials")
 }
 
-// TestPVEVaultProvider_ConfigureBlobstores_WritesWhenSet — a non-empty
-// BlobstoreEndpoint triggers one SetMultiple at the cf/blobstores/main path
-// with the endpoint value and status "configured".
-func TestPVEVaultProvider_ConfigureBlobstores_WritesWhenSet(t *testing.T) {
+// TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly — a non-empty
+// BlobstoreEndpoint with no explicit mode promotes the entry to external
+// mode (backwards-compatible with --blobstore-endpoint-only setups) and
+// writes endpoint + region + path_style on cf/blobstores/main.
+func TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly(t *testing.T) {
 	const endpoint = "https://s3.pve.example.com:9000"
 
 	mock := &awsMockSafe{}
@@ -199,13 +210,46 @@ func TestPVEVaultProvider_ConfigureBlobstores_WritesWhenSet(t *testing.T) {
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 1, "non-empty BlobstoreEndpoint must produce one write")
+	require.Len(t, mock.setMultipleCalls, 1, "external mode without creds writes one entry")
 
 	expectedPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
 	call := mock.setMultipleCalls[0]
 	assert.Equal(t, expectedPath, call.path)
+	assert.Equal(t, "external", call.data["mode"])
 	assert.Equal(t, endpoint, call.data["endpoint"])
+	assert.Equal(t, "us-east-1", call.data["region"])
+	assert.Equal(t, true, call.data["path_style"])
 	assert.Equal(t, "configured", call.data["status"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds — full external
+// configuration with access/secret produces two SetMultiple calls: one to the
+// blobstore config path, one to a /creds child so the config path stays
+// secret-free.
+func TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://s3.example.com"
+	provider.BlobstoreRegion = "eu-west-1"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
+	require.NoError(t, err)
+
+	require.Len(t, mock.setMultipleCalls, 2, "external mode with creds writes config + creds")
+
+	configCall := mock.setMultipleCalls[0]
+	assert.Equal(t, "external", configCall.data["mode"])
+	assert.Equal(t, "eu-west-1", configCall.data["region"])
+	assert.NotContains(t, configCall.data, "access_key", "config path must not carry secrets")
+
+	credsCall := mock.setMultipleCalls[1]
+	assert.Contains(t, credsCall.path, "/creds")
+	assert.Equal(t, "AKIA-test", credsCall.data["access_key"])
+	assert.Equal(t, "secret-test", credsCall.data["secret_key"])
 }
 
 // TestPVEVaultProvider_ConfigurePublicIPs_StatusPending — with no state manager

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/olekukonko/tablewriter"
-	yaml "gopkg.in/yaml.v3"
+	yaml "github.com/goccy/go-yaml"
 )
 
 // Table represents a CLI-friendly plan with titled sections.

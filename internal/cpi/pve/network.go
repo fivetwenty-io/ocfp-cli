@@ -46,12 +46,27 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 }
 
 // DeleteNetwork deletes a network.
+//
+// Bridge mode is a no-op by design: Proxmox Linux bridges are operator-
+// managed host infrastructure, not OCFP-lifecycle resources. CreateNetwork
+// in bridge mode calls EnsureBridge which adopts an existing bridge when
+// one is present, so we can't distinguish "OCFP created this" from "the
+// operator created this and we adopted it" at delete time. Deleting either
+// case is a foot-gun — taking down vmbr0/vmbr1 will brick the host's
+// management plane. Operators who genuinely want to remove a bridge can do
+// so via the PVE UI or `ip link delete`. SDN VNets ARE OCFP-created, so
+// those still get cleaned up.
 func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 	if m.client.config.NetworkMode == networkModeSDN {
 		return m.deleteSDNNetwork(ctx, id)
 	}
 
-	return m.deleteBridgeNetwork(ctx, id)
+	logger.WithOperation("DeleteNetwork").Infof(
+		"PVE bridge mode: skipping host bridge %s (operator-managed; remove manually if intended)",
+		id,
+	)
+
+	return nil
 }
 
 // Subnet operations (limited support - Proxmox bridges don't have native subnets)
@@ -552,26 +567,6 @@ func (m *NetworkManager) listSDNNetworks(ctx context.Context, filters map[string
 	}
 
 	return networks, nil
-}
-
-// deleteBridgeNetwork deletes a bridge network.
-func (m *NetworkManager) deleteBridgeNetwork(ctx context.Context, id string) error { //nolint:varnamelen
-	node, err := m.client.getNode(ctx)
-	if err != nil {
-		return err
-	}
-
-	netSvc := m.client.getNetworkService()
-
-	err = netSvc.DeleteBridge(ctx, node, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete bridge: %w", err)
-	}
-
-	// Reload network configuration
-	_ = netSvc.Reload(ctx, node)
-
-	return nil
 }
 
 // deleteSDNNetwork deletes an SDN VNet.

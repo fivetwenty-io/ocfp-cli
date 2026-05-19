@@ -20,7 +20,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/output"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // Vault operation timing constants.
@@ -140,6 +140,21 @@ type PopulateOptions struct {
 	// to vault so kits can resolve the blobstore URL. When empty, the blobstore
 	// endpoint vault write is skipped.
 	BlobstoreEndpoint string
+
+	// BlobstoreMode selects the PVE blobstore mode: "local" (default; bucket
+	// creation skipped) or "external" (S3-compatible endpoint). Empty falls
+	// back to "local" downstream.
+	BlobstoreMode string
+
+	// BlobstoreRegion is the S3 region for external mode. Empty falls back to
+	// "us-east-1" downstream.
+	BlobstoreRegion string
+
+	// BlobstoreAccessKey and BlobstoreSecretKey carry the S3 credentials when
+	// external mode is requested. Written to a dedicated vault path so the
+	// blobstore config path stays secret-free.
+	BlobstoreAccessKey string
+	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -182,7 +197,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts.BlobstoreEndpoint)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
@@ -507,9 +522,10 @@ func (m *Manager) targetExistsInSaferc(targetName string) bool {
 }
 
 // populateFullConfiguration performs full vault configuration.
-// kmsKeyARN is threaded from PopulateOptions; it is set on AWS providers when non-empty.
-// blobstoreEndpoint is threaded from PopulateOptions; it is set on PVE providers when non-empty.
-func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN, blobstoreEndpoint string) error {
+// kmsKeyARN is threaded from PopulateOptions and applied to AWS providers.
+// PVE blobstore fields are threaded via *PopulateOptions so all five
+// blobstore-related flags reach the PVEVaultProvider.
+func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN string, opts *PopulateOptions) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
@@ -523,9 +539,14 @@ func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN
 		awsProvider.KMSKeyARN = kmsKeyARN
 	}
 
-	// For PVE providers, apply the blobstore endpoint from the CLI flag before configuring.
+	// For PVE providers, propagate every blobstore flag in one shot so
+	// external-mode bootstraps reach the S3 client with full credentials.
 	if pveProvider, ok := provider.(*PVEVaultProvider); ok {
-		pveProvider.BlobstoreEndpoint = blobstoreEndpoint
+		pveProvider.BlobstoreEndpoint = opts.BlobstoreEndpoint
+		pveProvider.BlobstoreMode = opts.BlobstoreMode
+		pveProvider.BlobstoreRegion = opts.BlobstoreRegion
+		pveProvider.BlobstoreAccessKey = opts.BlobstoreAccessKey
+		pveProvider.BlobstoreSecretKey = opts.BlobstoreSecretKey
 	}
 
 	// Perform full configuration (provider reports all phases)
