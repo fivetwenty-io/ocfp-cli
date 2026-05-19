@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 // Snippet content types and naming conventions for PVE storage upload.
@@ -469,6 +470,8 @@ func (m *ComputeManager) uploadCloudInitSnippets(ctx context.Context, node strin
 
 	err := m.uploadSnippet(ctx, node, storage, userFilename, userData)
 	if err != nil {
+		logger.Warnf("Failed to upload user-data snippet to %s/%s: %v", node, storage, err)
+
 		plan.Storage = ""
 
 		return plan
