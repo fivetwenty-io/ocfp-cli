@@ -441,6 +441,7 @@ type InstanceRequest struct {
 	UseBootVolume    bool   // Use boot volume instead of direct image (for STACKIT diskless flavors)
 	StaticPrivateIP       string // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
 	StaticPrivateIPPrefix int    // Optional: subnet prefix length (e.g. 18) to pair with StaticPrivateIP when the address itself lacks /N. Used by PVE to write the correct mask in cloud-init ipconfig0 when the L3 subnet (e.g. an SDN vnet /18) is larger than the logical AZ subnet ocfp carves from it. Zero = leave to provider default.
+	TailscaleAuthKey      string // Optional: tailscale auth key. When non-empty, bastion cloud-init runs `tailscale up --authkey=... --hostname=... --advertise-tags=tag:ocfp-bastion --ssh` after installing tailscale via curl. Zero value = skip tailscale install entirely.
 	PublicKey        string // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername  string // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP        string // Optional: explicit default gateway for static IP configurations (PVE bridge mode)

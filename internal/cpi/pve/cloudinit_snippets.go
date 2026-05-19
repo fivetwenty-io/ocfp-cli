@@ -258,7 +258,76 @@ func buildUserDataSnippet(req *cpi.InstanceRequest) []byte {
 	buf.WriteString("chpasswd: { expire: false }\n")
 	buf.WriteString("ssh_pwauth: false\n")
 
+	if authKey := sanitizeTailscaleAuthKey(req.TailscaleAuthKey); authKey != "" {
+		buf.WriteString("runcmd:\n")
+		buf.WriteString("  - curl -fsSL https://tailscale.com/install.sh | sh\n")
+
+		upCmd := fmt.Sprintf(
+			"tailscale up --authkey=%q --hostname=%q --advertise-tags=tag:ocfp-bastion --ssh",
+			authKey, host)
+
+		if routes := deriveAdvertiseRoutes(req); routes != "" {
+			upCmd += " --advertise-routes=" + routes
+		}
+
+		fmt.Fprintf(&buf, "  - %s\n", upCmd)
+	}
+
 	return buf.Bytes()
+}
+
+// deriveAdvertiseRoutes computes the bastion's parent vnet CIDR for
+// `tailscale up --advertise-routes=<cidr>` so the bastion forwards traffic
+// from the tailnet into the bloc's private network. Returns "" when either
+// the bastion's static IP or its prefix is missing so the runcmd still
+// succeeds without route advertisement.
+func deriveAdvertiseRoutes(req *cpi.InstanceRequest) string {
+	addr := strings.TrimSpace(req.StaticPrivateIP)
+	if addr == "" {
+		return ""
+	}
+
+	if idx := strings.Index(addr, "/"); idx != -1 {
+		addr = addr[:idx]
+	}
+
+	prefix := req.StaticPrivateIPPrefix
+	if prefix <= 0 || prefix > 32 {
+		return ""
+	}
+
+	ip := net.ParseIP(addr).To4()
+	if ip == nil {
+		return ""
+	}
+
+	mask := net.CIDRMask(prefix, 32)
+	network := ip.Mask(mask)
+
+	return fmt.Sprintf("%s/%d", network.String(), prefix)
+}
+
+// sanitizeTailscaleAuthKey strips characters that could break out of the
+// double-quoted `--authkey="..."` argument we emit in the bastion runcmd
+// (double-quote, backslash, newline, backtick, dollar). The output is safe to
+// drop verbatim between double quotes in a POSIX shell command line.
+func sanitizeTailscaleAuthKey(s string) string {
+	s = strings.TrimSpace(s)
+
+	var b strings.Builder
+
+	b.Grow(len(s))
+
+	for _, r := range s {
+		switch r {
+		case '"', '\\', '\n', '\r', '`', '$':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }
 
 // buildNetworkDataSnippet renders a cloud-init network-data v2 document that
