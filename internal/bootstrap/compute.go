@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -404,6 +405,7 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	// Create instance request with static IP
 	req := m.buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData, useBootVolume, bootVolumeSize)
 	req.StaticPrivateIP = bastionIP // Set static IP (empty string means use DHCP)
+	req.StaticPrivateIPPrefix = m.bastionStaticIPPrefix()
 
 	// Tag instance with role for discovery by findBastionIP
 	if req.Tags == nil {
@@ -554,6 +556,35 @@ func (m *Manager) bastionDefaultUsername() string {
 	}
 
 	return ""
+}
+
+// bastionStaticIPPrefix returns the subnet prefix length the bastion VM
+// should advertise as "local" — the parent vnet/network CIDR's prefix, not
+// the per-AZ subnet ocfp carves out for accounting. PVE SDN simple zones
+// present a single L3 subnet per vnet (e.g. 10.64.64.0/18); the gateway lives
+// in that parent network. Pairing the bastion IP with a narrower mask (e.g.
+// /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
+// and breaks egress. Zero means "let the provider default decide."
+func (m *Manager) bastionStaticIPPrefix() int {
+	if m.config == nil {
+		return 0
+	}
+
+	for _, cidr := range []string{m.config.Network.CIDR, m.config.Network.NetworkCIDR} {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+
+		if _, ipnet, err := net.ParseCIDR(cidr); err == nil && ipnet != nil {
+			ones, _ := ipnet.Mask.Size()
+			if ones > 0 && ones <= 32 {
+				return ones
+			}
+		}
+	}
+
+	return 0
 }
 
 // bastionGatewayIP returns the explicit default-gateway IP for the bastion's

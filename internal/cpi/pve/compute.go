@@ -706,6 +706,17 @@ func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vm
 		m.setVMTags(ctx, node, vmid, req.Tags)
 	}
 
+	// Attach security groups so the per-VM firewall actually allows the
+	// traffic the bootstrap configured. Cluster-level groups exist but do
+	// nothing until they're referenced by a VM-level rule. Failures here
+	// are logged-and-continued because the VM is still useful even with no
+	// SGs attached, but the operator will need to fix the firewall manually.
+	if len(req.SecurityGroupIDs) > 0 {
+		if err := m.applyVMSecurityGroups(ctx, node, vmid, req.SecurityGroupIDs); err != nil {
+			logger.Warnf("Failed to attach security groups to VM %d: %v", vmid, err)
+		}
+	}
+
 	// Start the VM
 	qemuSvc := m.client.getQemuService()
 
@@ -925,9 +936,15 @@ func pveEncodeSSHKeys(keys string) string {
 }
 
 // buildPVEIPConfig converts the static-IP request into PVE's ipconfig0
-// string. DHCP is implied when no static address is requested. The /24
-// assumption matches the bastion CIDR layout but should be replaced with the
-// caller-supplied prefix once that information flows through the request.
+// string. DHCP is implied when no static address is requested. When the
+// caller supplies an address without a /N prefix, StaticPrivateIPPrefix
+// drives the mask; /24 is the last-resort fallback.
+//
+// Why the prefix matters: cloud-init configures the guest with the IP/mask
+// pair we hand it. If the mask excludes the gateway (e.g. ip=10.64.80.3/24
+// with gw=10.64.64.1), the guest has no on-link route to the gateway and
+// drops all egress on the floor. PVE SDN simple zones present one L3 subnet
+// per vnet — that vnet CIDR is what the bastion must see as "local."
 func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 	if req.StaticPrivateIP == "" {
 		return "ip=dhcp"
@@ -935,7 +952,12 @@ func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 
 	addr := req.StaticPrivateIP
 	if !strings.Contains(addr, "/") {
-		addr += "/24"
+		prefix := req.StaticPrivateIPPrefix
+		if prefix <= 0 || prefix > 32 {
+			prefix = 24
+		}
+
+		addr = fmt.Sprintf("%s/%d", addr, prefix)
 	}
 
 	cfg := "ip=" + addr
@@ -944,6 +966,56 @@ func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 	}
 
 	return cfg
+}
+
+// applyVMSecurityGroups binds cluster-level firewall groups to a VM's
+// per-VM firewall and enables the firewall so the rules take effect.
+//
+// PVE's firewall model: cluster-level groups (created by SecurityManager)
+// hold rule sets but match no traffic on their own. A VM picks up a group
+// only when its own /nodes/{node}/qemu/{vmid}/firewall/rules list contains
+// a rule of type=group referencing it. Without that binding, firewall=1 on
+// the NIC drops everything by default (cluster firewall enable: 1 implies
+// per-VM input DROP when no ACCEPT applies).
+//
+// Idempotency: PVE rejects duplicate group references; existing matches are
+// logged and skipped.
+func (m *ComputeManager) applyVMSecurityGroups(ctx context.Context, node string, vmid int, sgIDs []string) error {
+	rulesPath := fmt.Sprintf("/nodes/%s/qemu/%d/firewall/rules", node, vmid)
+	optionsPath := fmt.Sprintf("/nodes/%s/qemu/%d/firewall/options", node, vmid)
+
+	// Enable the per-VM firewall explicitly. Without this PUT, PVE may
+	// leave the firewall in "off" state even when the NIC carries
+	// firewall=1, depending on cluster defaults.
+	_, err := m.client.pveClient.PutCtx(ctx, optionsPath, map[string]interface{}{
+		"enable": 1,
+	})
+	if err != nil {
+		logger.Warnf("Failed to enable VM %d firewall options: %v", vmid, err)
+	}
+
+	for _, sgID := range sgIDs {
+		pveGroup := sanitizePVEGroupName(sgID)
+
+		params := map[string]interface{}{
+			"type":   "group",
+			"action": pveGroup,
+			"enable": 1,
+		}
+
+		if _, postErr := m.client.pveClient.PostCtx(ctx, rulesPath, params); postErr != nil {
+			if strings.Contains(postErr.Error(), "already exists") || strings.Contains(postErr.Error(), "duplicate") {
+				logger.Debugf("Security group %s already bound to VM %d", pveGroup, vmid)
+				continue
+			}
+
+			return fmt.Errorf("attach security group %s to VM %d: %w", pveGroup, vmid, postErr)
+		}
+
+		logger.Infof("Attached security group %s to VM %d", pveGroup, vmid)
+	}
+
+	return nil
 }
 
 // resizeBootDisk resizes the boot disk.
