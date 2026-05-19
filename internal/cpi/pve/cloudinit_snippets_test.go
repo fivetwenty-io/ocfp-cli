@@ -68,6 +68,174 @@ func TestBuildUserDataSnippetHostnameOnly(t *testing.T) {
 	}
 }
 
+// TestBuildUserDataSnippet_TailscaleRuncmd asserts that when TailscaleAuthKey
+// is set the rendered cloud-config contains a runcmd entry that installs
+// tailscale and joins the tailnet with the configured hostname and ocfp tags.
+func TestBuildUserDataSnippet_TailscaleRuncmd(t *testing.T) {
+	t.Parallel()
+
+	req := &cpi.InstanceRequest{
+		Hostname:         "lab-bastion",
+		TailscaleAuthKey: "tskey-abc",
+	}
+
+	out := string(buildUserDataSnippet(req))
+
+	checks := []string{
+		"runcmd:",
+		"curl -fsSL https://tailscale.com/install.sh | sh",
+		`tailscale up --authkey="tskey-abc" --hostname="lab-bastion" --advertise-tags=tag:ocfp-bastion --ssh`,
+	}
+
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("snippet missing %q\n----\n%s", want, out)
+		}
+	}
+}
+
+// TestBuildUserDataSnippet_TailscaleAbsentByDefault ensures the tailscale
+// install + join block is omitted entirely when no auth key is supplied.
+func TestBuildUserDataSnippet_TailscaleAbsentByDefault(t *testing.T) {
+	t.Parallel()
+
+	out := string(buildUserDataSnippet(&cpi.InstanceRequest{
+		Hostname: "lab-bastion",
+	}))
+
+	if strings.Contains(out, "tailscale") {
+		t.Errorf("snippet should not mention tailscale when TailscaleAuthKey is empty:\n%s", out)
+	}
+}
+
+// TestBuildUserDataSnippet_TailscaleAdvertiseRoutes verifies the bastion
+// advertises its parent vnet CIDR (derived from StaticPrivateIP +
+// StaticPrivateIPPrefix) so tailnet peers can reach bloc-internal VMs once
+// the routes are approved in the Tailscale admin.
+func TestBuildUserDataSnippet_TailscaleAdvertiseRoutes(t *testing.T) {
+	t.Parallel()
+
+	req := &cpi.InstanceRequest{
+		Hostname:              "wayne-bastion",
+		TailscaleAuthKey:      "tskey-xyz",
+		StaticPrivateIP:       "10.64.64.3",
+		StaticPrivateIPPrefix: 18,
+	}
+
+	out := string(buildUserDataSnippet(req))
+
+	if !strings.Contains(out, "--advertise-routes=10.64.64.0/18") {
+		t.Errorf("snippet missing --advertise-routes flag:\n%s", out)
+	}
+}
+
+// TestBuildUserDataSnippet_TailscaleSkipsRoutesWhenPrefixMissing keeps the
+// runcmd usable on legacy paths that haven't wired StaticPrivateIPPrefix —
+// tailscale still joins the tailnet, just without route advertisement.
+func TestBuildUserDataSnippet_TailscaleSkipsRoutesWhenPrefixMissing(t *testing.T) {
+	t.Parallel()
+
+	req := &cpi.InstanceRequest{
+		Hostname:         "legacy-bastion",
+		TailscaleAuthKey: "tskey-abc",
+		StaticPrivateIP:  "10.4.0.3",
+	}
+
+	out := string(buildUserDataSnippet(req))
+
+	if strings.Contains(out, "--advertise-routes") {
+		t.Errorf("snippet should not advertise routes without prefix:\n%s", out)
+	}
+
+	if !strings.Contains(out, "tailscale up --authkey=") {
+		t.Errorf("tailscale up should still run:\n%s", out)
+	}
+}
+
+// TestDeriveAdvertiseRoutes exercises the CIDR-from-ip+prefix math directly
+// so regressions surface independent of the snippet renderer.
+func TestDeriveAdvertiseRoutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		req    *cpi.InstanceRequest
+		expect string
+	}{
+		{
+			name:   "wayne vnet /18",
+			req:    &cpi.InstanceRequest{StaticPrivateIP: "10.64.64.3", StaticPrivateIPPrefix: 18},
+			expect: "10.64.64.0/18",
+		},
+		{
+			name:   "norm vnet /18",
+			req:    &cpi.InstanceRequest{StaticPrivateIP: "10.65.192.3", StaticPrivateIPPrefix: 18},
+			expect: "10.65.192.0/18",
+		},
+		{
+			name:   "embedded prefix tolerated",
+			req:    &cpi.InstanceRequest{StaticPrivateIP: "10.64.64.3/24", StaticPrivateIPPrefix: 18},
+			expect: "10.64.64.0/18",
+		},
+		{
+			name:   "empty ip yields empty",
+			req:    &cpi.InstanceRequest{StaticPrivateIPPrefix: 18},
+			expect: "",
+		},
+		{
+			name:   "zero prefix yields empty",
+			req:    &cpi.InstanceRequest{StaticPrivateIP: "10.0.0.3"},
+			expect: "",
+		},
+		{
+			name:   "invalid prefix yields empty",
+			req:    &cpi.InstanceRequest{StaticPrivateIP: "10.0.0.3", StaticPrivateIPPrefix: 99},
+			expect: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := deriveAdvertiseRoutes(tt.req); got != tt.expect {
+				t.Errorf("deriveAdvertiseRoutes() = %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
+// TestSanitizeTailscaleAuthKey verifies shell-quote dangerous characters are
+// stripped so the rendered `tailscale up --authkey="..."` line can never be
+// broken out of by a malicious or accidentally-quoted auth key.
+func TestSanitizeTailscaleAuthKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "clean", in: "tskey-abc123", want: "tskey-abc123"},
+		{name: "strip double quotes", in: `tskey-"abc"`, want: "tskey-abc"},
+		{name: "strip backslash", in: `tskey-\abc`, want: "tskey-abc"},
+		{name: "strip newline", in: "tskey-\nabc", want: "tskey-abc"},
+		{name: "strip backtick", in: "tskey-`abc`", want: "tskey-abc"},
+		{name: "strip dollar", in: "tskey-$abc", want: "tskey-abc"},
+		{name: "trim whitespace", in: "  tskey-abc  ", want: "tskey-abc"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := sanitizeTailscaleAuthKey(tt.in); got != tt.want {
+				t.Errorf("sanitizeTailscaleAuthKey(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestGenerateDeterministicMAC pins three properties: (1) same input ->
 // same MAC across runs, (2) locally-administered bit set on the first byte,
 // (3) multicast bit cleared on the first byte. (3) is what keeps the address
