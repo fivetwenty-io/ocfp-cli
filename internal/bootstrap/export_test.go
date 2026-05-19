@@ -24,3 +24,8 @@ func (m *Manager) ProviderDisplayName() string {
 func (m *Manager) AdjustSubnetForProvider(subnetID string) string {
 	return m.adjustSubnetForProvider(subnetID)
 }
+
+// BastionStaticIPPrefix exposes bastionStaticIPPrefix for testing.
+func (m *Manager) BastionStaticIPPrefix() int {
+	return m.bastionStaticIPPrefix()
+}
