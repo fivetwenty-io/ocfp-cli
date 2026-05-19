@@ -134,7 +134,64 @@ Vault path helpers are defined in `internal/vault/paths.go:93` and `internal/vau
 provider: pve
 network_mode: sdn
 sdn_zone: myzone
+iso_storage: local      # snippets-capable storage; see PVE Setup Requirements
 ```
+
+## PVE Setup Requirements
+
+These one-time host configurations must be in place before the first bootstrap.
+
+### Snippets-capable storage pool
+
+Cloud-init customization beyond hostname or SSH key (for example, the bastion Tailscale install) flows through PVE snippets. Snippets are filesystem-only on PVE — the upload API rejects `content=snippets`, so the snippet directory must exist and the pool must advertise the `snippets` content type.
+
+Enable `snippets` on a directory-backed pool (typically `local`):
+
+```bash
+pvesm set local --content import,backup,vztmpl,iso,snippets
+```
+
+Pin the pool in the bloc config so OCFP does not need to auto-detect:
+
+```yaml
+iso_storage: local
+```
+
+Verify the pool now advertises `snippets`:
+
+```bash
+pvesh get /nodes/{node}/storage | grep snippets
+```
+
+### Snippet upload limitation
+
+PVE 7.x and 8.x reject `content=snippets` on the `/storage/{id}/upload` endpoint even when the pool is configured for snippets. There is no first-party REST path to upload a snippet — files must be placed on the host filesystem.
+
+OCFP attempts the upload and logs a warning when it fails (`Failed to upload user-data snippet to {node}/{storage}`). When upload fails, the bastion boots with PVE's direct cloud-init config only; advanced features that need `runcmd` (e.g. Tailscale install) are skipped silently from the guest's perspective.
+
+Operator workaround until upstream PVE adds API support:
+
+1. Generate the cloud-config locally (the same content `buildUserDataSnippet` would have produced).
+2. `scp <file>.yml root@{pve}:/var/lib/vz/snippets/`
+3. `qm set <vmid> --cicustom "user=local:snippets/<file>.yml"`
+4. Restart the VM.
+
+The `scripts/init-all-pve-blocs.sh` runbook does not currently include this fallback — operators run it manually for each affected bastion.
+
+### SDN zone + vnets
+
+SDN mode requires a configured zone (e.g. `lab`) plus one vnet per bloc. OCFP does not create the zone — operators create it once in the PVE GUI (Datacenter → SDN → Zones). Vnets are adopted by name; if a vnet of the configured name already exists, OCFP imports it into state rather than recreating it.
+
+### PVE API token + role
+
+OCFP authenticates via a PVE API token. The token's role needs:
+
+- `Datastore.Allocate, Datastore.AllocateSpace, Datastore.Audit, Datastore.AllocateTemplate` on `/storage`
+- `VM.Allocate, VM.Audit, VM.Config.*, VM.Console, VM.Monitor, VM.PowerMgmt` on `/vms`
+- `SDN.Allocate, SDN.Audit` on `/sdn` (SDN mode)
+- `Pool.Allocate` on `/pool` (optional, for VM grouping)
+
+Configure once via `pveum role add` + `pveum acl modify`. The token secret goes into the bloc config under `token_secret`.
 
 ### Operations
 
