@@ -572,15 +572,20 @@ func TestBuildPVEDirectCloudInitConfig_EmptyRequest(t *testing.T) {
 
 	got := buildPVEDirectCloudInitConfig(&cpi.InstanceRequest{}, cloudInitSnippetPlan{})
 
-	// Even an empty request produces ipconfig0=ip=dhcp by design — DHCP is
-	// the safe default for any VM lacking explicit network config. So we
-	// expect exactly one key.
-	if len(got) != 1 {
-		t.Fatalf("expected 1 key in default config, got %d: %v", len(got), got)
+	// Empty request → ipconfig0=ip=dhcp + an explicit nameserver. The
+	// nameserver default keeps PVE from falling back to the host's
+	// /etc/resolv.conf, which a host-side tailscale with accept-dns=true
+	// rewrites to MagicDNS and makes unreachable for new VMs.
+	if len(got) != 2 {
+		t.Fatalf("expected 2 keys in default config, got %d: %v", len(got), got)
 	}
 
 	if got["ipconfig0"] != "ip=dhcp" {
 		t.Errorf("ipconfig0 default = %v, want ip=dhcp", got["ipconfig0"])
+	}
+
+	if got["nameserver"] != defaultPVECloudInitDNS {
+		t.Errorf("nameserver default = %v, want %q", got["nameserver"], defaultPVECloudInitDNS)
 	}
 }
 

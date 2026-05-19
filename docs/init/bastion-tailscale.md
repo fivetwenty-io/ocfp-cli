@@ -23,8 +23,12 @@ The emitted commands are exactly:
 ```yaml
 runcmd:
   - curl -fsSL https://tailscale.com/install.sh | sh
-  - tailscale up --authkey="<key>" --hostname="<bastion-host>" --advertise-tags=tag:ocfp-bastion --ssh --advertise-routes=<vnet-cidr>
+  - tailscale up --authkey="<key>" --hostname="<bastion-host>" --advertise-tags=tag:ocfp-bastion --ssh --accept-dns=false --accept-routes=false --advertise-routes=<vnet-cidr>
 ```
+
+`--accept-dns=false` keeps `tailscaled` from rewriting `/etc/resolv.conf` to point at MagicDNS (`100.100.100.100`). If the bastion ever loses its tailnet connection (DERP flap, brief NAT outage), MagicDNS becomes unreachable; if it owned `/etc/resolv.conf`, the bastion would lose DNS entirely and could never recover its tailnet join. Leaving DNS to cloud-init keeps a reachable fallback.
+
+`--accept-routes=false` keeps `tailscaled` from pulling other machines' advertised routes (including the bloc's own `/18`) into the bastion's policy routing table 52. If the bastion accepted its own advertised `/18`, return packets for local VMs would be looped back through `tailscale0` instead of the local SDN bridge, breaking egress. Advertisement is one-way: the bastion offers the route to peers but does not import it.
 
 The auth key is shell-sanitized before rendering (`sanitizeTailscaleAuthKey` in the same file) so dangerous characters cannot escape the quoted argument.
 
