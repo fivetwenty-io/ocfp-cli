@@ -445,8 +445,33 @@ func buildProviderConfig(cfg *config.Config, region string) map[string]interface
 
 	addServiceAccountConfig(providerConfig, cfg)
 	addAPIEndpointConfig(providerConfig, cfg)
+	addPVEProviderConfig(providerConfig, cfg)
 
 	return providerConfig
+}
+
+// addPVEProviderConfig adds Proxmox VE-specific fields to the provider config map.
+// PVE auth uses token_id/token_secret or username/password; bloc fields map directly.
+func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Config) {
+	if cfg.TokenSecret != "" {
+		providerConfig["token_secret"] = cfg.TokenSecret
+	}
+
+	if cfg.Username != "" {
+		providerConfig["username"] = cfg.Username
+	}
+
+	if cfg.Password != "" {
+		providerConfig["password"] = cfg.Password
+	}
+
+	if cfg.Network.Name != "" {
+		providerConfig["default_bridge"] = cfg.Network.Name
+	}
+
+	// VerifySSL is always passed so the provider sees an explicit value
+	// (defaults to false in the bloc Config zero value).
+	providerConfig["verify_ssl"] = cfg.VerifySSL
 }
 
 // addServiceAccountConfig adds service account configuration to provider config.

@@ -88,7 +88,10 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		}, nil
 	}
 
-	// For bridge mode, subnets are not supported
+	// Bridge mode has no native subnet API. Bootstrap uses logical/virtual
+	// subnets (state-only) for PVE so CreateSubnet should never be invoked
+	// against the provider in that mode. Return the typed error to surface
+	// any caller that bypasses the bootstrap layer.
 	return nil, ErrSubnetsNotSupported
 }
 
@@ -136,7 +139,20 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 }
 
 // DeleteSubnet deletes a subnet.
-func (m *NetworkManager) DeleteSubnet(_ctx context.Context, _id string) error {
+//
+// Bridge mode (the default) has no native subnet concept — bootstrap records
+// subnets as logical "virtual:<name>" entries in state only, so there is
+// nothing for the provider to delete and this is a no-op success. Returning
+// success lets the teardown loop drop the state-only record without retry.
+// SDN-mode subnet deletion needs the parent vnet to construct the API path
+// and is not exposed through this single-ID interface.
+func (m *NetworkManager) DeleteSubnet(_ctx context.Context, id string) error {
+	if strings.HasPrefix(id, "virtual:") || m.client.config.NetworkMode != networkModeSDN {
+		logger.WithOperation("DeleteSubnet").Infof("PVE: logical subnet, nothing to delete: %s", id)
+
+		return nil
+	}
+
 	return ErrSubnetsNotSupported
 }
 

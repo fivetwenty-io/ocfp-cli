@@ -106,6 +106,11 @@ type Config struct {
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
 	APIEndpoint      string                      `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint,omitempty"`
+	// VerifySSL controls TLS certificate verification for provider API calls.
+	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
+	// certs work out of the box. Set true when targeting a PVE host with a
+	// CA-signed certificate to fail-closed on cert mismatches.
+	VerifySSL        bool                        `json:"verify_ssl"          mapstructure:"verify_ssl"          yaml:"verify_ssl,omitempty"`
 	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
 	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
