@@ -32,10 +32,16 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 	case *Config:
 		pveConfig = cfg
 	case map[string]interface{}:
+		// Accept both PVE-native keys and the generic provider-config keys
+		// emitted by bootstrap's buildProviderConfig (base_url, region, auth_token).
+		host := firstNonEmpty(getString(cfg, "host"), getString(cfg, "base_url"), getString(cfg, "api_endpoint"))
+		node := firstNonEmpty(getString(cfg, "node"), getString(cfg, "region"))
+		tokenID := firstNonEmpty(getString(cfg, "token_id"), getString(cfg, "auth_token"))
+
 		pveConfig = &Config{
-			Host:           getString(cfg, "host"),
-			Node:           getString(cfg, "node"),
-			TokenID:        getString(cfg, "token_id"),
+			Host:           host,
+			Node:           node,
+			TokenID:        tokenID,
 			TokenSecret:    getString(cfg, "token_secret"),
 			Username:       getString(cfg, "username"),
 			Password:       getString(cfg, "password"),
@@ -75,6 +81,17 @@ func getString(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
+		}
+	}
+
+	return ""
+}
+
+// firstNonEmpty returns the first non-empty string in the argument list, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
 		}
 	}
 

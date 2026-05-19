@@ -3,6 +3,8 @@ package pve
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,63 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// pveGroupNameRegex matches the constraint PVE places on firewall group names:
+// must start with a letter and be 2-18 chars of [A-Za-z0-9_-]. Names that
+// don't satisfy this (e.g. OCFP bloc names starting with a digit, or names
+// longer than 18 chars) are sanitized via sanitizePVEGroupName before being
+// sent on the wire. The original name is preserved in the group's comment.
+var pveGroupNameRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{1,17}$`)
+
+// pveOCFPCommentRegex extracts the original OCFP name embedded by
+// CreateSecurityGroup in the PVE firewall group comment. CreateSecurityGroup
+// writes one of these forms:
+//
+//	"ocfp:<name>"
+//	"ocfp:<name> - <description>"
+//	"<description> (ocfp:<name>)"   // legacy, still parsed for backward compat
+//
+// The capture group returns just <name>.
+var pveOCFPCommentRegex = regexp.MustCompile(`ocfp:([A-Za-z0-9._-]+)`)
+
+// pveRedundantDescPrefix matches the legacy "Security group for " / "Security
+// group " prefix that bootstrap descriptions historically carried. Stripped
+// from the comment because the PVE UI column is already labelled "Comment" on
+// a firewall-groups page — the words add no information.
+var pveRedundantDescPrefix = regexp.MustCompile(`(?i)^security group(?:\s+for)?\s+`)
+
+const pveGroupNameMaxLen = 18
+
+// extractOCFPNameFromComment returns the original OCFP-side name if the PVE
+// group comment carries an "ocfp:<name>" marker (see CreateSecurityGroup).
+// Returns empty string when no marker is present, in which case callers
+// should fall back to the on-wire PVE group ID.
+func extractOCFPNameFromComment(comment string) string {
+	match := pveOCFPCommentRegex.FindStringSubmatch(comment)
+	if len(match) >= 2 {
+		return match[1]
+	}
+
+	return ""
+}
+
+// sanitizePVEGroupName returns name unchanged when it already satisfies the
+// PVE firewall group regex; otherwise it returns a deterministic, regex-safe
+// identifier derived from a 32-bit FNV-1a hash of the original. The mapping
+// is stable for the lifetime of the input string so subsequent
+// Get/Delete/Assign calls can reproduce it without state lookup.
+func sanitizePVEGroupName(name string) string {
+	if pveGroupNameRegex.MatchString(name) {
+		return name
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+
+	// "g-" prefix guarantees the first-char-must-be-letter constraint;
+	// 8 hex chars keeps total length at 10 (well under the 18 limit).
+	return fmt.Sprintf("g-%08x", h.Sum32())
+}
+
 // SecurityManager handles Proxmox firewall operations.
 type SecurityManager struct {
 	client *Client
@@ -18,31 +77,46 @@ type SecurityManager struct {
 
 // CreateSecurityGroup creates a firewall security group.
 func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	logger.WithOperation("CreateSecurityGroup").Infof("Creating firewall group: %s", req.Name)
+	pveName := sanitizePVEGroupName(req.Name)
+
+	logger.WithOperation("CreateSecurityGroup").Infof("Creating firewall group: %s (pve_name=%s)", req.Name, pveName)
+
+	// Preserve the original (human-readable) name in the group comment so
+	// operators can map the PVE-side identifier back to the OCFP resource.
+	// Format: "ocfp:<name> - <description>" — the marker leads so the PVE
+	// firewall UI sorts/filters by it cleanly. Strip the redundant
+	// "Security group [for]" prefix that bootstrap descriptions historically
+	// included.
+	desc := strings.TrimSpace(pveRedundantDescPrefix.ReplaceAllString(req.Description, ""))
+
+	comment := "ocfp:" + req.Name
+	if desc != "" {
+		comment = comment + " - " + desc
+	}
 
 	// Create cluster-level firewall group
 	params := map[string]interface{}{
-		"group":   req.Name,
-		"comment": req.Description,
+		"group":   pveName,
+		"comment": comment,
 	}
 
 	_, err := m.client.pveClient.PostCtx(ctx, "/cluster/firewall/groups", params)
 	if err != nil {
 		// Check if already exists
 		if strings.Contains(err.Error(), "already exists") {
-			logger.Infof("Firewall group %s already exists", req.Name)
+			logger.Infof("Firewall group %s already exists", pveName)
 		} else {
 			return nil, fmt.Errorf("failed to create firewall group: %w", err)
 		}
 	}
 
-	// Add rules if provided
+	// Add rules if provided — use the sanitized PVE name on the wire.
 	for _, rule := range req.Rules {
-		_ = m.AddSecurityRule(ctx, req.Name, rule)
+		_ = m.AddSecurityRule(ctx, pveName, rule)
 	}
 
 	return &cpi.SecurityGroup{
-		ID:          req.Name,
+		ID:          pveName,
 		Name:        req.Name,
 		Description: req.Description,
 		Rules:       req.Rules,
@@ -53,7 +127,8 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 
 // GetSecurityGroup retrieves a firewall group.
 func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen // id is clear in context
-	path := "/cluster/firewall/groups/" + id
+	pveID := sanitizePVEGroupName(id)
+	path := "/cluster/firewall/groups/" + pveID
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
@@ -100,7 +175,7 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 	}
 
 	return &cpi.SecurityGroup{
-		ID:    id,
+		ID:    pveID,
 		Name:  id,
 		Rules: rules,
 		Tags:  make(map[string]string),
@@ -127,17 +202,27 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 			continue
 		}
 
-		name := getStringFromMap(groupData, "group")
+		pveID := getStringFromMap(groupData, "group")
+		comment := getStringFromMap(groupData, "comment")
 
-		// Apply name filter
-		if nameFilter, ok := filters["name"]; ok && name != nameFilter {
+		// Recover the original OCFP-side name when CreateSecurityGroup had to
+		// hash it for PVE's 18-char regex; otherwise the on-wire ID is the
+		// human name.
+		displayName := extractOCFPNameFromComment(comment)
+		if displayName == "" {
+			displayName = pveID
+		}
+
+		// Apply name filter — match against the OCFP-side name so callers can
+		// look up resources using the names they created with.
+		if nameFilter, ok := filters["name"]; ok && displayName != nameFilter && pveID != nameFilter {
 			continue
 		}
 
 		groups = append(groups, &cpi.SecurityGroup{
-			ID:          name,
-			Name:        name,
-			Description: getStringFromMap(groupData, "comment"),
+			ID:          pveID,
+			Name:        displayName,
+			Description: comment,
 			Tags:        make(map[string]string),
 		})
 	}
@@ -145,12 +230,34 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 	return groups, nil
 }
 
-// DeleteSecurityGroup deletes a firewall group.
+// DeleteSecurityGroup deletes a firewall group. PVE refuses to delete a
+// non-empty group ("Security group '<id>' is not empty"), so we flush every
+// rule first by repeatedly deleting position 0 until the group is empty,
+// then issue the group DELETE. Deleting position 0 each iteration is robust
+// against PVE renumbering remaining rules after each delete.
 func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) error {
-	path := "/cluster/firewall/groups/" + id
+	pveID := sanitizePVEGroupName(id)
+	groupPath := "/cluster/firewall/groups/" + pveID
 
-	_, err := m.client.pveClient.DeleteCtx(ctx, path, nil)
-	if err != nil {
+	for {
+		resp, err := m.client.pveClient.GetCtx(ctx, groupPath, nil)
+		if err != nil {
+			// Group already gone — treat as success.
+			return nil
+		}
+
+		rules, ok := resp.([]interface{})
+		if !ok || len(rules) == 0 {
+			break
+		}
+
+		rulePath := groupPath + "/0"
+		if _, err := m.client.pveClient.DeleteCtx(ctx, rulePath, nil); err != nil {
+			return fmt.Errorf("failed to remove firewall rule before group delete: %w", err)
+		}
+	}
+
+	if _, err := m.client.pveClient.DeleteCtx(ctx, groupPath, nil); err != nil {
 		return fmt.Errorf("failed to delete firewall group: %w", err)
 	}
 
@@ -159,7 +266,7 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 
 // AddSecurityRule adds a rule to a firewall group.
 func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
-	path := "/cluster/firewall/groups/" + groupID
+	path := "/cluster/firewall/groups/" + sanitizePVEGroupName(groupID)
 
 	// Map direction
 	ruleType := "in"
@@ -215,7 +322,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 // RemoveSecurityRule removes a rule from a firewall group.
 func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string, ruleID string) error {
-	path := fmt.Sprintf("/cluster/firewall/groups/%s/%s", groupID, ruleID)
+	path := fmt.Sprintf("/cluster/firewall/groups/%s/%s", sanitizePVEGroupName(groupID), ruleID)
 
 	_, err := m.client.pveClient.DeleteCtx(ctx, path, nil)
 	if err != nil {

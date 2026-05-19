@@ -109,13 +109,31 @@ func (m *Manager) CreateSubnets(ctx context.Context) error {
 	networkID := networkResource.ID
 	logger.Infof("Creating subnets for network: id=%s", networkID)
 
-	// Handle STACKIT virtual subnet strategy
-	// STACKIT doesn't support traditional subnets, use virtual subnets instead
-	if m.config.Network.SubnetStrategy == subnetStrategyTriple || strings.EqualFold(m.options.Provider, "stackit") {
+	// Providers without native subnets use logical/virtual subnets backed by
+	// state-only records. STACKIT has no subnet primitive; PVE bridge mode
+	// is flat L2 (no per-subnet API). Either case routes through the same
+	// state-population path that splits the parent CIDR into named children.
+	if m.useVirtualSubnets() {
 		return m.createStackitVirtualSubnets(networkID)
 	}
 
 	return m.createStandardSubnets(ctx, networkID)
+}
+
+// useVirtualSubnets reports whether the current bloc should populate
+// logical (state-only) subnets instead of calling the provider's
+// CreateSubnet API.
+func (m *Manager) useVirtualSubnets() bool {
+	if m.config.Network.SubnetStrategy == subnetStrategyTriple {
+		return true
+	}
+
+	switch strings.ToLower(m.options.Provider) {
+	case "stackit", "pve":
+		return true
+	}
+
+	return false
 }
 
 func (m *Manager) findExistingNetwork(ctx context.Context, netMgr cpi.NetworkManager, networkName string) *cpi.Network {

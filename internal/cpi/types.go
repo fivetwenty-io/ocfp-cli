@@ -440,6 +440,10 @@ type InstanceRequest struct {
 	BootVolumeSize   int    // Size in GB for boot volume (for diskless flavors)
 	UseBootVolume    bool   // Use boot volume instead of direct image (for STACKIT diskless flavors)
 	StaticPrivateIP  string // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
+	PublicKey        string // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
+	DefaultUsername  string // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
+	GatewayIP        string // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
+	DNSServers       []string // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
 }
 
 // BucketRequest represents a request for creating buckets.

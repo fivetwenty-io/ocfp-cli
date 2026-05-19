@@ -3,14 +3,14 @@ package pve
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
-
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cloudinit"
 )
 
 const (
@@ -227,10 +227,24 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 			vmid := getIntFromMap(vm, "vmid")
 			name := getStringFromMap(vm, "name")
 			status := getStringFromMap(vm, "status")
+			vmTags := parsePVETags(getStringFromMap(vm, "tags"))
 
 			// Apply name filter
 			if nameFilter, ok := filters["name"]; ok && name != nameFilter {
 				continue
+			}
+
+			// Apply label filters against the PVE tag set written by
+			// setVMTags. A VM with no tags can't satisfy any label filter
+			// — this is what makes label-based bastion discovery skip
+			// unrelated VMs on the cluster.
+			if !matchesLabelFilters(vmTags, filters) {
+				continue
+			}
+
+			tagMap := make(map[string]string, len(vmTags))
+			for _, tag := range vmTags {
+				tagMap[tag] = ""
 			}
 
 			instance := &cpi.Instance{
@@ -238,7 +252,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 				Name:             name,
 				State:            m.mapVMState(status),
 				AvailabilityZone: nodeInfo.Name,
-				Tags:             make(map[string]string),
+				Tags:             tagMap,
 			}
 
 			instances = append(instances, instance)
@@ -669,59 +683,110 @@ func (m *ComputeManager) cloneTemplate(ctx context.Context, node string, templat
 	return taskID, nil
 }
 
-// configureCloudInit configures cloud-init for a VM.
+// configureCloudInit applies cloud-init configuration to a freshly cloned
+// VM. The order matters: we PUT the directly-supported fields (ipconfig0,
+// nameserver, ciuser, sshkeys) first so basic networking + SSH work even
+// when snippet upload of the larger UserData payload fails. Many Proxmox
+// storage backends (local-lvm, lvm-thin, ZFS) don't accept "snippets"
+// content, so attempting that path with the default storage is best-effort.
 func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) error {
-	ciSvc := m.client.getCloudinitService()
+	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
-	// Build IP config if static IP requested
-	var networkSpecs []cloudinit.NICSpec
-	if req.StaticPrivateIP != "" {
-		networkSpecs = []cloudinit.NICSpec{
-			{
-				AddressCIDR: req.StaticPrivateIP + "/24", // Assume /24 if not specified
-				DHCP:        false,
-			},
-		}
-	} else {
-		networkSpecs = []cloudinit.NICSpec{
-			{DHCP: true},
-		}
-	}
-
-	// Build IP configs
-	ipConfigs, err := ciSvc.BuildIPConfigs(networkSpecs, nil)
-	if err != nil {
-		logger.Warnf("Failed to build IP configs: %v", err)
-	}
-
-	// Configure VM with cloud-init
-	storage := m.client.config.DefaultStorage
-	if m.client.config.ISOStorage != "" {
-		storage = m.client.config.ISOStorage
-	}
-
-	// Attach cloud-init drive
-	err = ciSvc.Attach(ctx, node, vmid, storage, []byte(req.UserData))
-	if err != nil {
-		return fmt.Errorf("failed to attach cloud-init: %w", err)
-	}
-
-	// Set cloud-init IP config
-	if len(ipConfigs) > 0 {
-		path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
-		// Convert map[string]string to map[string]interface{}
-		ipConfigInterface := make(map[string]interface{})
-		for k, v := range ipConfigs {
-			ipConfigInterface[k] = v
-		}
-
-		_, err = m.client.pveClient.PutCtx(ctx, path, ipConfigInterface)
+	// 1) Direct cloud-init config — these don't require a snippets-capable
+	//    storage and are what makes the VM reachable after first boot.
+	directConfig := buildPVEDirectCloudInitConfig(req)
+	if len(directConfig) > 0 {
+		_, err := m.client.pveClient.PutCtx(ctx, configPath, directConfig)
 		if err != nil {
-			logger.Warnf("Failed to set cloud-init IP config: %v", err)
+			return fmt.Errorf("failed to set cloud-init direct config: %w", err)
+		}
+	}
+
+	// 2) Optional user-data snippet — preserves the larger inline bash
+	//    script some bastion paths still pass via req.UserData. If this
+	//    fails (typical for local-lvm-only clusters) we keep the VM
+	//    reachable via the direct config above.
+	if req.UserData != "" {
+		ciSvc := m.client.getCloudinitService()
+		storage := m.snippetStorageFor(node)
+
+		err := ciSvc.Attach(ctx, node, vmid, storage, []byte(req.UserData))
+		if err != nil {
+			logger.Warnf("Failed to upload cloud-init user-data snippet to storage %s (continuing with direct config only): %v", storage, err)
 		}
 	}
 
 	return nil
+}
+
+// buildPVEDirectCloudInitConfig assembles the cloud-init PUT body that uses
+// only PVE config keys (no snippet upload required):
+//
+//   - ipconfig0/nameserver: static IP + gateway + DNS resolvers for the NIC.
+//   - ciuser: default cloud-init user (image dependent — set when caller
+//     supplied an explicit value via InstanceRequest.DefaultUsername).
+//   - sshkeys: URL-encoded OpenSSH public key list, the form PVE expects.
+//
+// An empty map is returned when there's nothing to configure, in which case
+// the caller skips the PUT entirely.
+func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest) map[string]interface{} {
+	out := make(map[string]interface{})
+
+	if ipconfig := buildPVEIPConfig(req); ipconfig != "" {
+		out["ipconfig0"] = ipconfig
+	}
+
+	if len(req.DNSServers) > 0 {
+		out["nameserver"] = strings.Join(req.DNSServers, " ")
+	}
+
+	if req.DefaultUsername != "" {
+		out["ciuser"] = req.DefaultUsername
+	}
+
+	if pub := strings.TrimSpace(req.PublicKey); pub != "" {
+		// Proxmox's API requires the sshkeys value to be URL-encoded —
+		// otherwise the spaces and trailing comments in OpenSSH lines
+		// confuse the form parser. The apiclient passes our string through
+		// directly, so we encode here.
+		out["sshkeys"] = url.QueryEscape(pub + "\n")
+	}
+
+	return out
+}
+
+// buildPVEIPConfig converts the static-IP request into PVE's ipconfig0
+// string. DHCP is implied when no static address is requested. The /24
+// assumption matches the bastion CIDR layout but should be replaced with the
+// caller-supplied prefix once that information flows through the request.
+func buildPVEIPConfig(req *cpi.InstanceRequest) string {
+	if req.StaticPrivateIP == "" {
+		return "ip=dhcp"
+	}
+
+	addr := req.StaticPrivateIP
+	if !strings.Contains(addr, "/") {
+		addr += "/24"
+	}
+
+	cfg := "ip=" + addr
+	if req.GatewayIP != "" {
+		cfg += ",gw=" + req.GatewayIP
+	}
+
+	return cfg
+}
+
+// snippetStorageFor returns the storage pool to use for cloud-init snippet
+// uploads. ISOStorage takes precedence (it's where the operator pinned
+// snippet-capable storage), otherwise we fall back to the cluster-default
+// "local" which is dir-typed on stock installs.
+func (m *ComputeManager) snippetStorageFor(_node string) string {
+	if m.client.config.ISOStorage != "" {
+		return m.client.config.ISOStorage
+	}
+
+	return "local"
 }
 
 // resizeBootDisk resizes the boot disk.
@@ -741,24 +806,150 @@ func (m *ComputeManager) resizeBootDisk(ctx context.Context, node string, vmid, 
 	return nil // Silently fail if disk not found
 }
 
-// setVMTags sets tags on a VM via description field.
+// setVMTags writes the OCFP tag set to PVE in both representations PVE
+// supports:
+//
+//   - The native VM tags field as a semicolon-separated list of identifiers
+//     (each "<key>-<value>" lowercased and ASCII-sanitised so it matches PVE's
+//     allowed tag charset). This is what's filterable in the UI and what
+//     ListInstances reads back to evaluate label-based queries.
+//   - The description field as readable "key=value" lines, preserving the
+//     original casing/values for operators inspecting the VM.
+//
+// Both writes happen in one PUT so the VM is fully labelled before the start
+// task completes.
 func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, tags map[string]string) {
 	if len(tags) == 0 {
 		return
 	}
 
-	// Build description from tags
-	var parts []string
-	for k, v := range tags {
-		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	// Stable ordering for reproducible PVE tag strings and descriptions.
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
 	}
 
-	description := "Tags: " + strings.Join(parts, ", ")
+	sort.Strings(keys)
+
+	tagList := make([]string, 0, len(keys))
+	descParts := make([]string, 0, len(keys))
+
+	for _, k := range keys {
+		v := tags[k]
+		descParts = append(descParts, fmt.Sprintf("%s=%s", k, v))
+
+		if tag := formatPVETag(k, v); tag != "" {
+			tagList = append(tagList, tag)
+		}
+	}
+
+	description := "OCFP tags: " + strings.Join(descParts, ", ")
+	pveTagStr := strings.Join(tagList, ";")
 
 	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
-	_, _ = m.client.pveClient.PutCtx(ctx, path, map[string]interface{}{
+
+	params := map[string]interface{}{
 		"description": description,
-	})
+	}
+
+	if pveTagStr != "" {
+		params["tags"] = pveTagStr
+	}
+
+	_, _ = m.client.pveClient.PutCtx(ctx, path, params)
+}
+
+// formatPVETag renders a "<key>=<value>" pair as a single PVE-compatible tag
+// identifier of the form "<key>-<value>". PVE accepts a restricted character
+// set per tag (lowercase ASCII alphanumerics plus a handful of separators)
+// so any other byte is collapsed to "_". Empty results are filtered out by
+// the caller.
+func formatPVETag(key, value string) string {
+	combined := strings.ToLower(strings.TrimSpace(key) + "-" + strings.TrimSpace(value))
+	if combined == "-" {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	builder.Grow(len(combined))
+
+	for _, runeValue := range combined {
+		switch {
+		case runeValue >= 'a' && runeValue <= 'z',
+			runeValue >= '0' && runeValue <= '9',
+			runeValue == '-', runeValue == '_', runeValue == '.':
+			builder.WriteRune(runeValue)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+
+	return builder.String()
+}
+
+// parsePVETags splits PVE's semicolon-separated tag string back into the set
+// of canonical tag identifiers. Empty input returns nil.
+func parsePVETags(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ";")
+	out := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+
+	return out
+}
+
+// matchesLabelFilters reports whether the given PVE-side tag set satisfies
+// every "label.<key>=<value>" entry in filters. Non-label filters are
+// ignored here — the caller applies them separately (e.g. the "name"
+// filter is matched against the VM's name).
+//
+// The convention mirrors setVMTags: a filter "label.bloc=520-pve-wayne"
+// matches when the tag "bloc-520-pve-wayne" (post-sanitisation) is
+// present. A VM with no tags can never satisfy a label filter — that's the
+// desirable behaviour because it keeps untagged VMs from being returned as
+// false-positive bastions.
+func matchesLabelFilters(vmTags []string, filters map[string]string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+
+	for key, value := range filters {
+		if !strings.HasPrefix(key, "label.") {
+			continue
+		}
+
+		want := formatPVETag(strings.TrimPrefix(key, "label."), value)
+		if want == "" {
+			continue
+		}
+
+		found := false
+
+		for _, tag := range vmTags {
+			if tag == want {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 // vmToInstance converts Proxmox VM data to CPI Instance.
@@ -794,7 +985,50 @@ func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[
 		m.populateNetworkInfo(instance, status)
 	}
 
+	// QGA may not have reported yet (fresh VM, missing/disabled agent). Fall
+	// back to the static IP declared in cloud-init config so callers like
+	// `ocfp ssh bastion` can still resolve the host immediately after
+	// bootstrap.
+	if instance.PrivateIP == "" {
+		if ip := extractIPConfigAddress(getStringFromMap(config, "ipconfig0")); ip != "" {
+			instance.PrivateIP = ip
+		}
+	}
+
 	return instance, nil
+}
+
+// extractIPConfigAddress pulls just the IPv4 address out of a Proxmox
+// cloud-init ipconfigN string. The expected shape is
+//
+//	"ip=192.168.1.67/24,gw=192.168.1.1[,ip6=...]"
+//
+// or "ip=dhcp". An empty string is returned for dhcp / unparseable input.
+func extractIPConfigAddress(ipconfig string) string {
+	if ipconfig == "" {
+		return ""
+	}
+
+	for _, part := range strings.Split(ipconfig, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, "ip=") {
+			continue
+		}
+
+		val := strings.TrimPrefix(part, "ip=")
+		if strings.EqualFold(val, "dhcp") {
+			return ""
+		}
+
+		// Strip the CIDR suffix if present.
+		if slash := strings.IndexByte(val, '/'); slash >= 0 {
+			val = val[:slash]
+		}
+
+		return val
+	}
+
+	return ""
 }
 
 // mapVMState maps Proxmox VM status to CPI ResourceState.

@@ -47,6 +47,27 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 		}
 	}
 
+	// Last resort: providers without a public-IP primitive (PVE bridge mode,
+	// on-prem deployments reachable via VPN/Tailscale) expose the bastion on
+	// its private address. The instance returned by findBastionInstance is
+	// the lightweight ListInstances form which won't carry IPs; fetch the
+	// detailed record so we can read whatever the provider knows.
+	if detailed, getErr := provider.Compute().GetInstance(ctx, inst.ID); getErr == nil && detailed != nil {
+		if privateIP := firstNonEmpty(detailed.PrivateIP, inst.PrivateIP); privateIP != "" {
+			log.Debugf("Found bastion private IP for instance %s: %s", inst.Name, privateIP)
+			cacheBastionIP(blocName, privateIP)
+
+			return privateIP, nil
+		}
+	}
+
+	if inst.PrivateIP != "" {
+		log.Debugf("Falling back to bastion private IP from instance %s: %s", inst.Name, inst.PrivateIP)
+		cacheBastionIP(blocName, inst.PrivateIP)
+
+		return inst.PrivateIP, nil
+	}
+
 	return "", ErrNoBastionHostFound(blocName)
 }
 
@@ -101,30 +122,53 @@ func tryLabelBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, 
 }
 
 func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) *cpi.Instance {
-	log.Debugf("Name instance discovery: listing instances with label.bloc=%s", blocName)
-
-	instances, err := provider.Compute().ListInstances(ctx, map[string]string{
-		"label.bloc": blocName,
-	})
-	if err != nil {
-		log.Debugf("Name instance discovery: failed to list instances: %v", err)
-
-		return nil
+	// Try the tagged path first — providers that honour label filters return
+	// the right VM directly. Then fall back to an unfiltered listing so
+	// untagged legacy VMs (e.g. PVE bastions created before native tag
+	// support landed) are still discoverable by name match against
+	// "<bloc>-bastion".
+	listAttempts := []map[string]string{
+		{"label.bloc": blocName},
+		nil,
 	}
 
-	if len(instances) == 0 {
-		log.Debugf("Name instance discovery: no instances found for bloc=%s", blocName)
+	expectedName := blocName + "-" + RoleBastion
 
-		return nil
-	}
+	for _, filters := range listAttempts {
+		log.Debugf("Name instance discovery: listing instances filters=%v", filters)
 
-	log.Debugf("Name instance discovery: checking %d instances for bastion name pattern", len(instances))
+		instances, err := provider.Compute().ListInstances(ctx, filters)
+		if err != nil {
+			log.Debugf("Name instance discovery: list with filters=%v failed: %v", filters, err)
 
-	for _, inst := range instances {
-		if isBastionInstance(inst.Name) {
-			log.Debugf("Name instance discovery: matched instance %s by name pattern", inst.Name)
+			continue
+		}
 
-			return inst
+		if len(instances) == 0 {
+			log.Debugf("Name instance discovery: no instances returned for filters=%v", filters)
+
+			continue
+		}
+
+		log.Debugf("Name instance discovery: checking %d instances for bastion name pattern", len(instances))
+
+		// Prefer exact "<bloc>-bastion" matches before falling back to any
+		// instance whose name merely contains "bastion" — important on
+		// shared PVE clusters where multiple blocs' bastions coexist.
+		for _, inst := range instances {
+			if strings.EqualFold(inst.Name, expectedName) {
+				log.Debugf("Name instance discovery: matched %s by exact name", inst.Name)
+
+				return inst
+			}
+		}
+
+		for _, inst := range instances {
+			if isBastionInstance(inst.Name) {
+				log.Debugf("Name instance discovery: matched %s by name pattern", inst.Name)
+
+				return inst
+			}
 		}
 	}
 
@@ -154,23 +198,36 @@ func tryStateCache(blocName string, log logger.Logger) (string, bool) {
 		return "", false
 	}
 
-	outputVal, err := stateManager.GetOutput("bastion_public_ip")
-	if err != nil {
-		log.Debugf("State cache: bastion_public_ip not found in state: %v", err)
+	// Resolution order:
+	//   1. bastion_ssh_host  — set by bootstrap as the canonical SSH target
+	//      (public IP when available, else private/Tailscale IP for PVE-style
+	//      bridge deployments).
+	//   2. bastion_public_ip — historical key used by AWS/STACKIT paths and
+	//      legacy state files.
+	//   3. bastion_private_ip — last-resort fallback for state files written
+	//      before bastion_ssh_host existed and which only have the private
+	//      address recorded (e.g. PVE bootstraps prior to the SSH-host fix).
+	for _, key := range []string{"bastion_ssh_host", "bastion_public_ip", "bastion_private_ip"} {
+		outputVal, getErr := stateManager.GetOutput(key)
+		if getErr != nil {
+			log.Debugf("State cache: %s not found in state: %v", key, getErr)
 
-		return "", false
+			continue
+		}
+
+		bastionIP, ok := outputVal.(string)
+		if !ok || bastionIP == "" {
+			log.Debugf("State cache: %s is empty or not a string", key)
+
+			continue
+		}
+
+		logDiscoveryResult(log, "state-cache", key, "", bastionIP)
+
+		return bastionIP, true
 	}
 
-	bastionIP, ok := outputVal.(string)
-	if !ok || bastionIP == "" {
-		log.Debugf("State cache: bastion_public_ip is empty or not a string")
-
-		return "", false
-	}
-
-	logDiscoveryResult(log, "state-cache", "", "", bastionIP)
-
-	return bastionIP, true
+	return "", false
 }
 
 func isBastionInstance(name string) bool {
