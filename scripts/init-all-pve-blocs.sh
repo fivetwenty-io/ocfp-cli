@@ -22,5 +22,5 @@ fi
 
 for bloc in $BLOCS; do
   echo "=== $bloc ==="
-  ocfp init pve --bloc "$bloc"
+  ocfp init pve --bloc "$bloc" --force
 done
