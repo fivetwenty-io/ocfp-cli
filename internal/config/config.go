@@ -127,6 +127,7 @@ type Config struct {
 	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion,omitempty"`
+	Artifacts        ArtifactsConfig             `json:"artifacts"           mapstructure:"artifacts"           yaml:"artifacts,omitempty"`
 	Jumpbox          Jumpbox                     `json:"jumpbox"             mapstructure:"jumpbox"             yaml:"jumpbox,omitempty"`
 	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis,omitempty"`
 	DeploymentsData  map[string]interface{}      `json:"deployments"         mapstructure:"deployments"         yaml:"deployments,omitempty"`
@@ -1157,6 +1158,7 @@ func applyDefaults(cfg *Config, provider string) error {
 
 	applyGenesisDefaults(cfg)
 	applyBastionGenesisDefaults(cfg)
+	cfg.Artifacts.Defaults()
 
 	return nil
 }
@@ -1533,6 +1535,14 @@ func validate(cfg *Config) error {
 	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).
 	if err := cfg.Blobstore.Validate(); err != nil {
 		return fmt.Errorf("blobstore config: %w", err)
+	}
+
+	// Validate opt-in ocfp-artifacts VM config.
+	// Bastion-enabled proxy: a configured Flavor implies bastion provisioning.
+	// TODO: wire internal-CA detection once CA config lands.
+	bastionEnabled := cfg.Bastion.Flavor != ""
+	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, false); err != nil {
+		return fmt.Errorf("artifacts config: %w", err)
 	}
 
 	return nil

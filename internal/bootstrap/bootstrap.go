@@ -36,6 +36,7 @@ type Options struct {
 	DryRun         bool
 	All            bool
 	Bastion        bool
+	Artifacts      bool
 	Servers        bool
 	Volumes        bool
 	Snapshots      bool
@@ -96,6 +97,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		{"Create Key Pair", m.createKeyPair, "servers", true},
 		// {"Create Volumes", m.createVolumes, "volumes", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
+		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
 		{"Create Buckets", m.CreateBuckets, "buckets", false},
 	}
 
@@ -189,7 +191,8 @@ func (m *Manager) getBootstrapMode() string {
 
 	// Check if any selective resource type flags are set
 	if m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs {
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Artifacts {
 		selectedTypes := m.collectSelectedResourceTypes()
 
 		return "SELECTIVE (create: " + strings.Join(selectedTypes, ", ") + ")"
@@ -232,6 +235,10 @@ func (m *Manager) collectSelectedResourceTypes() []string {
 
 	if m.options.KeyPairs {
 		selectedTypes = append(selectedTypes, "key-pairs")
+	}
+
+	if m.options.Artifacts {
+		selectedTypes = append(selectedTypes, "artifacts")
 	}
 
 	return selectedTypes
@@ -280,7 +287,8 @@ func (m *Manager) filterBastionSteps(allSteps []bootstrapStep) []bootstrapStep {
 // isSelectiveModeActive checks if any selective resource type flags are set.
 func (m *Manager) isSelectiveModeActive() bool {
 	return m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Artifacts
 }
 
 // filterSelectiveSteps filters steps based on selective flags.
@@ -315,6 +323,8 @@ func (m *Manager) shouldIncludeStep(step bootstrapStep, needsNetwork bool) bool 
 		return m.options.Volumes
 	case "buckets":
 		return m.options.Buckets
+	case "artifacts":
+		return m.options.Artifacts
 	default:
 		return false
 	}

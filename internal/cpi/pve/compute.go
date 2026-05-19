@@ -39,6 +39,9 @@ const (
 	flavorBoshCPU     = 4
 	flavorBoshRAM     = 8192
 	flavorBoshDisk    = 100
+	flavorArtifactsCPU  = 4
+	flavorArtifactsRAM  = 8192
+	flavorArtifactsDisk = 50
 
 	// vmStopDelay is the time to wait after stopping a VM before deleting it.
 	vmStopDelay = 2 * time.Second
@@ -105,6 +108,14 @@ var flavorPresets = map[string]*cpi.Flavor{
 		RAM:         flavorBoshRAM,
 		Disk:        flavorBoshDisk,
 		Description: "BOSH Director: 4 vCPUs, 8GB RAM, 100GB disk",
+	},
+	"artifacts": {
+		ID:          "artifacts",
+		Name:        "Artifacts (RustFS)",
+		VCPUs:       flavorArtifactsCPU,
+		RAM:         flavorArtifactsRAM,
+		Disk:        flavorArtifactsDisk,
+		Description: "Artifacts (RustFS) host: 4 vCPUs, 8GB RAM, 50GB disk",
 	},
 }
 

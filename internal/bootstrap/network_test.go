@@ -1,9 +1,12 @@
 package bootstrap_test
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 // TestSplitIntoN tests the SplitIntoN CIDR splitting function.
@@ -485,4 +488,89 @@ func BenchmarkCIDRUtilities(b *testing.B) {
 			_ = bootstrap.CIDRGatewayIP(cidr)
 		}
 	})
+}
+
+// setupArtifactsIPTest creates a Manager backed by a stackit fake with the given network CIDR.
+func setupArtifactsIPTest(t *testing.T, networkCIDR string) (*bootstrap.Manager, *state.Manager) {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = sm.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := createTestConfig()
+	cfg.Network.NetworkCIDR = networkCIDR
+
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+
+	mgr := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "stackit",
+		Region:   "eu01",
+		Yes:      true,
+	})
+
+	return mgr, sm
+}
+
+// TestArtifactsIPSlot_ResolvesToDotEleven verifies artifacts_ip is subnet base + 11.
+// With 10.4.0.0/20 triple strategy, prod-ocfp-0 = 10.4.4.0/22, so .11 = 10.4.4.11.
+func TestArtifactsIPSlot_ResolvesToDotEleven(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm := setupArtifactsIPTest(t, "10.4.0.0/20")
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	got, err := sm.GetOutput("reserved_prod-ocfp-0_artifacts_ip")
+	if err != nil {
+		t.Fatalf("missing artifacts_ip output: %v", err)
+	}
+
+	const want = "10.4.4.11"
+	if got != want {
+		t.Errorf("artifacts_ip = %q, want %q", got, want)
+	}
+}
+
+// TestAvailableAIPSlot_ResolvesToDotTwelve verifies available_a is subnet base + 12
+// after the artifacts slot takes .11.
+func TestAvailableAIPSlot_ResolvesToDotTwelve(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm := setupArtifactsIPTest(t, "10.4.0.0/20")
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	got, err := sm.GetOutput("reserved_prod-ocfp-0_available_a")
+	if err != nil {
+		t.Fatalf("missing available_a output: %v", err)
+	}
+
+	const want = "10.4.4.12"
+	if got != want {
+		t.Errorf("available_a = %q, want %q", got, want)
+	}
 }
