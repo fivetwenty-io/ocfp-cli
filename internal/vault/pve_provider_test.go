@@ -1,12 +1,14 @@
 package vault
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -198,7 +200,9 @@ func TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker(t *testing.T
 // TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly — a non-empty
 // BlobstoreEndpoint with no explicit mode promotes the entry to external
 // mode (backwards-compatible with --blobstore-endpoint-only setups) and
-// writes endpoint + region + path_style on cf/blobstores/main.
+// writes endpoint + region + path_style on cf/blobstores/main. For mgmt env,
+// the BOSH director blobstore path is also written so genesis BOSH kit can
+// consume the same S3-compatible endpoint.
 func TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly(t *testing.T) {
 	const endpoint = "https://s3.pve.example.com:9000"
 
@@ -210,22 +214,31 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly(t *testing.T)
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 1, "external mode without creds writes one entry")
+	require.Len(t, mock.setMultipleCalls, 2, "mgmt external mode without creds writes cf + bosh config entries")
 
-	expectedPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
-	call := mock.setMultipleCalls[0]
-	assert.Equal(t, expectedPath, call.path)
-	assert.Equal(t, "external", call.data["mode"])
-	assert.Equal(t, endpoint, call.data["endpoint"])
-	assert.Equal(t, "us-east-1", call.data["region"])
-	assert.Equal(t, true, call.data["path_style"])
-	assert.Equal(t, "configured", call.data["status"])
+	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
+
+	cfCall := mock.findSetMultipleCall(cfPath)
+	require.NotNil(t, cfCall, "CF blobstore config must be written")
+	assert.Equal(t, "external", cfCall.data["mode"])
+	assert.Equal(t, endpoint, cfCall.data["endpoint"])
+	assert.Equal(t, "us-east-1", cfCall.data["region"])
+	assert.Equal(t, true, cfCall.data["path_style"])
+	assert.Equal(t, "configured", cfCall.data["status"])
+
+	boshCall := mock.findSetMultipleCall(boshPath)
+	require.NotNil(t, boshCall, "BOSH director blobstore config must be written for mgmt env")
+	assert.Equal(t, "external", boshCall.data["mode"])
+	assert.Equal(t, endpoint, boshCall.data["endpoint"])
+	assert.Equal(t, true, boshCall.data["path_style"])
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds — full external
-// configuration with access/secret produces two SetMultiple calls: one to the
-// blobstore config path, one to a /creds child so the config path stays
-// secret-free.
+// configuration with access/secret on mgmt env produces four SetMultiple
+// calls: CF config + CF creds, BOSH director config + BOSH director creds.
+// Credentials always live under /creds children so the parent config paths
+// stay secret-free.
 func TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "pve-node1"}
@@ -239,17 +252,52 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds(t *testing.T) {
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 2, "external mode with creds writes config + creds")
+	require.Len(t, mock.setMultipleCalls, 4, "mgmt external mode with creds writes cf config+creds and bosh config+creds")
 
-	configCall := mock.setMultipleCalls[0]
-	assert.Equal(t, "external", configCall.data["mode"])
-	assert.Equal(t, "eu-west-1", configCall.data["region"])
-	assert.NotContains(t, configCall.data, "access_key", "config path must not carry secrets")
+	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
 
-	credsCall := mock.setMultipleCalls[1]
-	assert.Contains(t, credsCall.path, "/creds")
-	assert.Equal(t, "AKIA-test", credsCall.data["access_key"])
-	assert.Equal(t, "secret-test", credsCall.data["secret_key"])
+	cfConfig := mock.findSetMultipleCall(cfPath)
+	require.NotNil(t, cfConfig)
+	assert.Equal(t, "external", cfConfig.data["mode"])
+	assert.Equal(t, "eu-west-1", cfConfig.data["region"])
+	assert.NotContains(t, cfConfig.data, "access_key", "cf config path must not carry secrets")
+
+	cfCreds := mock.findSetMultipleCall(cfPath + "/creds")
+	require.NotNil(t, cfCreds)
+	assert.Equal(t, "AKIA-test", cfCreds.data["access_key"])
+	assert.Equal(t, "secret-test", cfCreds.data["secret_key"])
+
+	boshConfig := mock.findSetMultipleCall(boshPath)
+	require.NotNil(t, boshConfig)
+	assert.Equal(t, "external", boshConfig.data["mode"])
+	assert.Equal(t, "eu-west-1", boshConfig.data["region"])
+	assert.NotContains(t, boshConfig.data, "access_key", "bosh config path must not carry secrets")
+
+	boshCreds := mock.findSetMultipleCall(boshPath + "/creds")
+	require.NotNil(t, boshCreds)
+	assert.Equal(t, "AKIA-test", boshCreds.data["access_key"])
+	assert.Equal(t, "secret-test", boshCreds.data["secret_key"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvSkipsBOSH — ocf env
+// must NOT write BOSH director blobstore paths (those belong to mgmt only).
+func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvSkipsBOSH(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://s3.example.com"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
+	require.NoError(t, err)
+
+	require.Len(t, mock.setMultipleCalls, 2, "ocf external mode writes only cf config + creds")
+
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh")
+	assert.Nil(t, mock.findSetMultipleCall(boshPath), "ocf env must not write BOSH blobstore")
 }
 
 // TestPVEVaultProvider_ConfigurePublicIPs_StatusPending — with no state manager
@@ -280,4 +328,165 @@ func TestPVEVaultProvider_GetProviderName(t *testing.T) {
 	provider := newTestPVEProvider(cfg, mock)
 
 	assert.Equal(t, "pve", provider.GetProviderName())
+}
+
+// seedPVEState creates a fresh bloc state on disk under a temp OCFP_HOME so
+// the provider's loadStateManager() can read it back. Returns the loaded
+// manager so callers can append resources/outputs before invoking the SUT.
+func seedPVEState(t *testing.T, blocName string) *state.Manager {
+	t.Helper()
+
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	stateDir, err := state.GetStateDir(blocName)
+	require.NoError(t, err)
+
+	sm, err := state.NewManager(stateDir)
+	require.NoError(t, err)
+
+	_, err = sm.Load(blocName)
+	require.NoError(t, err)
+
+	// Persist the (empty) state so subsequent Load calls in the SUT succeed
+	// against a real file rather than the fresh in-memory state.
+	require.NoError(t, sm.Save())
+
+	return sm
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries — given two
+// subnet resources in bootstrap state, ConfigureSubnets must write one vault
+// entry per subnet under .../net/subnets/{name} with cidr, az, and gateway.
+func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-infra",
+		Type: "subnet",
+		Name: blocName + "-infra",
+		Properties: map[string]interface{}{
+			"cidr":              "10.64.64.0/22",
+			"availability_zone": "",
+			"gateway":           "10.64.64.1",
+		},
+	}))
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-0",
+		Type: "subnet",
+		Name: blocName + "-ocfp-0",
+		Properties: map[string]interface{}{
+			"cidr":              "10.64.68.0/22",
+			"availability_zone": "pvea",
+			"gateway":           "10.64.68.1",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.NoError(t, err)
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+
+	infraPath := filepath.Join(subnetsPath, blocName+"-infra")
+	infraCall := mock.findSetMultipleCall(infraPath)
+	require.NotNil(t, infraCall, "infra subnet must be written at %s", infraPath)
+	assert.Equal(t, "10.64.64.0/22", infraCall.data["cidr"])
+	assert.Equal(t, "10.64.64.1", infraCall.data["gateway"])
+	assert.Equal(t, "", infraCall.data["az"])
+
+	ocfp0Path := filepath.Join(subnetsPath, blocName+"-ocfp-0")
+	ocfp0Call := mock.findSetMultipleCall(ocfp0Path)
+	require.NotNil(t, ocfp0Call, "ocfp-0 subnet must be written at %s", ocfp0Path)
+	assert.Equal(t, "10.64.68.0/22", ocfp0Call.data["cidr"])
+	assert.Equal(t, "pvea", ocfp0Call.data["az"])
+	assert.Equal(t, "10.64.68.1", ocfp0Call.data["gateway"])
+
+	// Fallback blob path must NOT be written when state-driven entries exist.
+	fallback := mock.findSetMultipleCall(subnetsPath)
+	assert.Nil(t, fallback, "with state present, no fallback blob should be written at %s", subnetsPath)
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_NoStateFallsBack — without an OCFP_HOME
+// pointing at real state, ConfigureSubnets must still produce a single
+// fallback write so populate doesn't leave the path empty.
+func TestPVEVaultProvider_ConfigureSubnets_NoStateFallsBack(t *testing.T) {
+	// Point OCFP_HOME at an empty temp dir so state.Load creates a fresh
+	// in-memory state with no subnet resources — exercising the empty-resources
+	// fallback branch.
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.NoError(t, err)
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+	call := mock.findSetMultipleCall(subnetsPath)
+	require.NotNil(t, call, "fallback blob must be written at %s", subnetsPath)
+	assert.Equal(t, "10.64.64.0/19", call.data["cidr"])
+	assert.Contains(t, call.data["note"], "no bootstrap state",
+		"fallback note must indicate state was absent")
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated — when state has
+// a `reserved_{subnet}_{role}_ip` output, ConfigureSubnets writes the IP under
+// .../subnets/{name}/reserved-ips/{role} so genesis kits can resolve roles
+// without parsing CIDR math themselves.
+func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-infra",
+		Type: "subnet",
+		Name: blocName + "-infra",
+		Properties: map[string]interface{}{
+			"cidr":    "10.64.64.0/22",
+			"gateway": "10.64.64.1",
+		},
+	}))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-infra_bastion_ip", "10.64.64.10"))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-infra_jumpbox_ip", "10.64.64.11"))
+	// Empty + unrelated outputs must be ignored.
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-infra_empty_ip", ""))
+	require.NoError(t, sm.SetOutput("unrelated_output", "noise"))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.NoError(t, err)
+
+	subnetPath := filepath.Join(
+		provider.PathBuilder.GetSubnetsPath(MgmtEnvType),
+		blocName+"-infra",
+	)
+
+	bastionPath := filepath.Join(subnetPath, "reserved-ips", "bastion")
+	bastionCall := mock.findSetMultipleCall(bastionPath)
+	require.NotNil(t, bastionCall, "bastion reserved IP must be written at %s", bastionPath)
+	assert.Equal(t, "10.64.64.10", bastionCall.data["ip"])
+
+	jumpboxPath := filepath.Join(subnetPath, "reserved-ips", "jumpbox")
+	jumpboxCall := mock.findSetMultipleCall(jumpboxPath)
+	require.NotNil(t, jumpboxCall, "jumpbox reserved IP must be written at %s", jumpboxPath)
+	assert.Equal(t, "10.64.64.11", jumpboxCall.data["ip"])
+
+	// Empty-IP outputs must not produce a write.
+	emptyPath := filepath.Join(subnetPath, "reserved-ips", "empty")
+	assert.Nil(t, mock.findSetMultipleCall(emptyPath),
+		"empty-valued reserved IP output must not be written")
 }
