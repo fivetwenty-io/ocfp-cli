@@ -264,7 +264,7 @@ func buildUserDataSnippet(req *cpi.InstanceRequest) []byte {
 		buf.WriteString("  - curl -fsSL https://tailscale.com/install.sh | sh\n")
 
 		upCmd := fmt.Sprintf(
-			"tailscale up --authkey=%q --hostname=%q --advertise-tags=tag:ocfp-bastion --ssh",
+			"tailscale up --authkey=%q --hostname=%q --advertise-tags=tag:ocfp-bastion --ssh --accept-dns=false --accept-routes=false",
 			authKey, host)
 
 		if routes := deriveAdvertiseRoutes(req); routes != "" {

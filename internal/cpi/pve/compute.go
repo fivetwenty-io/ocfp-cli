@@ -45,6 +45,15 @@ const (
 
 	// vmStopDelay is the time to wait after stopping a VM before deleting it.
 	vmStopDelay = 2 * time.Second
+
+	// defaultPVECloudInitDNS is the nameserver string PVE applies to a VM's
+	// cloud-init when the request omits DNSServers. Without an explicit value,
+	// PVE falls back to the host's /etc/resolv.conf — which a host-side
+	// tailscaled running with accept-dns=true overwrites with MagicDNS
+	// (100.100.100.100). New VMs then inherit that unreachable resolver and
+	// can't bootstrap their own tailnet join. Public resolvers keep first boot
+	// unconditional regardless of the host's tailscale state.
+	defaultPVECloudInitDNS = "1.1.1.1 8.8.8.8"
 )
 
 // ComputeManager handles Proxmox compute operations.
@@ -891,6 +900,8 @@ func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest, plan cloudInitSnipp
 
 	if len(req.DNSServers) > 0 {
 		out["nameserver"] = strings.Join(req.DNSServers, " ")
+	} else {
+		out["nameserver"] = defaultPVECloudInitDNS
 	}
 
 	if req.DefaultUsername != "" {
