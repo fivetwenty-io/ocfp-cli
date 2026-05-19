@@ -558,6 +558,7 @@ genesis update
 
 ## See Also
 
+- [Bastion Tailscale](bastion-tailscale.md) for joining the bastion to a tailnet at first boot (PVE and other no-public-IP providers)
 - [Security Groups](../networking/security-groups.md) for the 7 default security groups created during bootstrap
 - [Networking Overview](../networking/README.md) for the full networking bootstrap flow
 - [CF App-Autoscaler Documentation](https://github.com/cloudfoundry/app-autoscaler-cli-plugin)
