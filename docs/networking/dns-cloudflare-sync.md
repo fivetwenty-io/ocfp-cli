@@ -1,6 +1,6 @@
 # Cloudflare DNS Sync
 
-This document covers `scripts/cloudflare-dns-sync.sh`, which keeps wildcard DNS for each bloc pointed at the bastion's tailnet IP. The workflow targets PVE today but generalizes to any deployment where the bastion sits on a Tailscale tailnet and you want public DNS to resolve internal hostnames.
+This document covers `scripts/cloudflare-dns-sync`, which keeps wildcard DNS for each bloc pointed at the bastion's tailnet IP. The workflow targets PVE today but generalizes to any deployment where the bastion sits on a Tailscale tailnet and you want public DNS to resolve internal hostnames.
 
 ## Use case
 
@@ -21,7 +21,7 @@ When a bastion is rebuilt or rotates its tailnet IP for any reason, re-running t
 Complete these once per workstation that will run the sync.
 
 - Cloudflare API token
-  Generate a token under `My Profile → API Tokens → Create Token`. Scope it `Zone:DNS:Edit` on the specific zone you target. Export as `CLOUDFLARE_API_TOKEN` before running the script.
+  Generate a token under `My Profile → API Tokens → Create Token`. Scope it `Zone:DNS:Edit` on the specific zone you target. Export as `CF_API_TOKEN` before running the script.
 
 - `fqdns.base` per bloc
   Each bloc in `~/.ocfp/config.pve.yml` (or whatever `OCFP_CONFIG` points at) must have a `fqdns.base` value. Example:
@@ -37,15 +37,15 @@ Complete these once per workstation that will run the sync.
   The script discovers the bastion's tailnet IP via `tailscale status --json` on the machine running the script. The operator workstation must be joined to the same tailnet, and each bloc's bastion must already be up and joined (see [Bastion Tailscale](../init/bastion-tailscale.md)).
 
 - Local tools
-  `bash`, `curl`, `jq`, `yq`, and the `tailscale` CLI.
+  `uv` (which fetches `pyyaml` + `requests` on first run via PEP 723 inline metadata) and the `tailscale` CLI.
 
 ## Running the sync
 
-From the repo root (or anywhere `scripts/cloudflare-dns-sync.sh` is reachable):
+From the repo root (or anywhere `scripts/cloudflare-dns-sync` is reachable):
 
 ```bash
-export CLOUDFLARE_API_TOKEN=...
-scripts/cloudflare-dns-sync.sh
+export CF_API_TOKEN=...
+scripts/cloudflare-dns-sync
 ```
 
 The script:
@@ -58,22 +58,30 @@ The script:
 
 4. Upserts `<base>` and `*.<base>` A records pointing at that IP (TTL 60, not proxied).
 
-The script is idempotent. Re-running is safe — existing records are updated in place, missing records are created. Records the script does not own are never touched.
+The script is idempotent. Re-running is safe — existing records are updated in place, missing records are created, unchanged records are left alone. Records the script does not own are never touched.
+
+Per-record output:
+
+- `new  <name> -> <ip>` — record was created.
+
+- `upd  <name> -> <ip> (was <old-ip>)` — record existed; content updated.
+
+- `ok   <name> -> <ip> (unchanged)` — record exists and already points at the right IP.
 
 Skips are logged and non-fatal:
 
-- `skip <bloc> — no fqdns.base`
+- `skip <bloc> - no fqdns.base`
   Bloc has no `fqdns.base`. Add it to config, re-run.
 
-- `skip <bloc> — no tailscale IP for <bloc>-bastion`
+- `skip <bloc> - no tailscale IP for <bloc>-bastion`
   Bastion not yet joined to the tailnet, or hostname mismatch. Verify with `tailscale status` and re-run.
 
 ## Customization
 
 The script reads three environment variables.
 
-- `CLOUDFLARE_API_TOKEN` (required)
-  API token with `Zone:DNS:Edit` on the target zone.
+- `CF_API_TOKEN` (required)
+  API token with `Zone:DNS:Edit` on the target zone. Accepts `CLOUDFLARE_API_TOKEN` as a legacy alias.
 
 - `CLOUDFLARE_ZONE` (optional)
   Zone name. Defaults to `fivetwenty.io`. Set to your own zone before first run.
@@ -86,8 +94,8 @@ Example targeting a different zone and config:
 ```bash
 CLOUDFLARE_ZONE=lab.example.com \
 OCFP_CONFIG=~/work/ocfp/staging.yml \
-CLOUDFLARE_API_TOKEN=... \
-scripts/cloudflare-dns-sync.sh
+CF_API_TOKEN=... \
+scripts/cloudflare-dns-sync
 ```
 
 ## Manual fallback
@@ -114,7 +122,7 @@ The script is intentionally small (one zone, one provider, two records per bloc)
 - Keep TTL low
   The script uses TTL 60 so a bastion rebuild propagates within a minute. Adjust for your provider's minimum.
 
-When porting to a non-Cloudflare zone, keep the iteration shape (yq over blocs, tailnet lookup per bloc, two records per bloc) and swap out the curl invocations.
+When porting to a non-Cloudflare zone, keep the iteration shape (read blocs from YAML, tailnet lookup per bloc, two records per bloc) and swap out the Cloudflare API calls.
 
 ## See Also
 
