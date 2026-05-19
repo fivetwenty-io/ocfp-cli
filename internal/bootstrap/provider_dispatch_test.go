@@ -77,6 +77,41 @@ func TestUseVirtualSubnets(t *testing.T) {
 	}
 }
 
+// TestUseVirtualSubnetsForPVE verifies the explicit PVE-only helper used by
+// bootstrap code that needs to be unambiguous about the provider it is
+// branching on (vs the broader useVirtualSubnets predicate which also
+// covers STACKIT and the ocfp-triple strategy).
+func TestUseVirtualSubnetsForPVE(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider string
+		want     bool
+	}{
+		{name: "pve lowercase", provider: "pve", want: true},
+		{name: "PVE uppercase", provider: "PVE", want: true},
+		{name: "Pve mixed case", provider: "Pve", want: true},
+		{name: "stackit not PVE", provider: "stackit", want: false},
+		{name: "aws not PVE", provider: "aws", want: false},
+		{name: "empty provider", provider: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := makeProviderManager(t, tt.provider, "")
+
+			got := m.UseVirtualSubnetsForPVE()
+			if got != tt.want {
+				t.Errorf("UseVirtualSubnetsForPVE(provider=%q) = %v, want %v",
+					tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestProviderUsesLocalKeypairs verifies the dispatcher that routes providers
 // without a server-side CreateKeyPair primitive through the local-gen +
 // import-public-key path.
