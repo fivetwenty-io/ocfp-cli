@@ -3,6 +3,7 @@ package pve
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -72,9 +73,38 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 // Subnet operations (limited support - Proxmox bridges don't have native subnets)
 
 // CreateSubnet creates a subnet (limited support).
+//
+// PVE SDN simple zones expose exactly one L3 subnet per vnet (created
+// manually or as part of zone provisioning). Bootstrap logically carves
+// multiple AZ subnets out of that single vnet CIDR and routes through the
+// virtual-subnet path so this method is normally never invoked for PVE.
+// As a belt-and-suspenders safeguard, when CreateSubnet IS called in SDN
+// mode and the requested CIDR is fully contained within the parent vnet's
+// existing SDN subnet CIDR, we synthesize a success response pointing at
+// the parent and skip the API POST — the underlying SDN subnet already
+// exists and PVE will reject a duplicate create. The original POST path
+// remains as the cold-start fallback when the parent SDN subnet has not
+// yet been provisioned for the vnet.
 func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	// In SDN mode, we can create subnets
 	if m.client.config.NetworkMode == networkModeSDN {
+		if parent := m.findContainingSDNSubnet(ctx, req.NetworkID, req.CIDR); parent != nil {
+			logger.WithOperation("CreateSubnet").Infof(
+				"PVE SDN: requested CIDR %s is within existing vnet subnet %s; reusing parent",
+				req.CIDR, parent.CIDR,
+			)
+
+			return &cpi.Subnet{
+				ID:        parent.ID,
+				Name:      req.Name,
+				NetworkID: req.NetworkID,
+				CIDR:      parent.CIDR,
+				State:     cpi.ResourceStateActive,
+				Tags:      req.Tags,
+				CreatedAt: time.Now(),
+			}, nil
+		}
+
 		params := map[string]interface{}{
 			"subnet": req.CIDR,
 			"vnet":   req.NetworkID,
@@ -580,6 +610,57 @@ func (m *NetworkManager) deleteSDNNetwork(ctx context.Context, id string) error 
 
 	// Apply SDN changes
 	_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
+
+	return nil
+}
+
+// findContainingSDNSubnet returns the existing SDN subnet on the given vnet
+// whose CIDR fully contains childCIDR, or nil if the parent subnet does not
+// yet exist or the lookup fails. A nil return signals the caller should fall
+// back to creating the subnet via the API.
+func (m *NetworkManager) findContainingSDNSubnet(ctx context.Context, vnet, childCIDR string) *cpi.Subnet {
+	if vnet == "" || childCIDR == "" {
+		return nil
+	}
+
+	if m.client == nil || m.client.pveClient == nil {
+		return nil
+	}
+
+	_, childNet, err := net.ParseCIDR(childCIDR)
+	if err != nil || childNet == nil {
+		return nil
+	}
+
+	existing, err := m.ListSubnets(ctx, vnet)
+	if err != nil {
+		return nil
+	}
+
+	for _, candidate := range existing {
+		if candidate == nil || candidate.CIDR == "" {
+			continue
+		}
+
+		_, parentNet, parseErr := net.ParseCIDR(candidate.CIDR)
+		if parseErr != nil || parentNet == nil {
+			continue
+		}
+
+		// Child must be contained in parent: parent's network must include
+		// the child's network address and the child's prefix must be at
+		// least as specific as the parent's.
+		parentOnes, _ := parentNet.Mask.Size()
+		childOnes, _ := childNet.Mask.Size()
+
+		if childOnes < parentOnes {
+			continue
+		}
+
+		if parentNet.Contains(childNet.IP) {
+			return candidate
+		}
+	}
 
 	return nil
 }

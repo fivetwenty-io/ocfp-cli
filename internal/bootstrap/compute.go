@@ -240,30 +240,51 @@ func (m *Manager) resolveBastionNetworking() (string, *bastionSubnetInfo, error)
 }
 
 func (m *Manager) findBastionSubnet() (*bastionSubnetInfo, error) {
-	// Look for first OCFP subnet
+	// PVE blocs carve a dedicated infra subnet that owns the bastion,
+	// director, and shared service reservations. Prefer that subnet when
+	// running on PVE; fall through to the legacy ocfp-0 lookup if the
+	// infra subnet is absent (mixed-mode upgrades, partial state, etc.).
+	if m.useVirtualSubnetsForPVE() {
+		infraName := m.options.BlocName + pveInfraSubnetSuffix
+		if info, ok := m.lookupSubnetByName(infraName); ok {
+			return info, nil
+		}
+	}
+
 	bastionSubnet := m.options.BlocName + "-ocfp-0"
-
-	if subnet, _ := m.stateManager.GetResource("subnet", bastionSubnet); subnet != nil {
-		cidr, ok := subnet.Properties["cidr"].(string)
-		if !ok {
-			return nil, ErrInvalidCIDRTypeForSubnet(bastionSubnet)
-		}
-
-		// Extract availability zone from subnet properties, fallback to default if not set
-		availabilityZone, _ := subnet.Properties["availability_zone"].(string)
-		if availabilityZone == "" {
-			availabilityZone = m.getFirstAvailabilityZone()
-		}
-
-		return &bastionSubnetInfo{
-			ID:               subnet.ID,
-			CIDR:             cidr,
-			Name:             bastionSubnet,
-			AvailabilityZone: availabilityZone,
-		}, nil
+	if info, ok := m.lookupSubnetByName(bastionSubnet); ok {
+		return info, nil
 	}
 
 	return nil, ErrBastionSubnetNotFound(bastionSubnet)
+}
+
+// lookupSubnetByName resolves a subnet from state by name, returning a
+// populated bastionSubnetInfo when present. The availability zone falls
+// back to the first configured/default AZ when the stored value is empty,
+// which mirrors the original findBastionSubnet behavior.
+func (m *Manager) lookupSubnetByName(name string) (*bastionSubnetInfo, bool) {
+	subnet, _ := m.stateManager.GetResource("subnet", name)
+	if subnet == nil {
+		return nil, false
+	}
+
+	cidr, ok := subnet.Properties["cidr"].(string)
+	if !ok {
+		return nil, false
+	}
+
+	availabilityZone, _ := subnet.Properties["availability_zone"].(string)
+	if availabilityZone == "" {
+		availabilityZone = m.getFirstAvailabilityZone()
+	}
+
+	return &bastionSubnetInfo{
+		ID:               subnet.ID,
+		CIDR:             cidr,
+		Name:             name,
+		AvailabilityZone: availabilityZone,
+	}, true
 }
 
 func (m *Manager) findFallbackSubnet() (*bastionSubnetInfo, error) {

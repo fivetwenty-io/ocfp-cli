@@ -297,6 +297,134 @@ func TestBOSHSubnetBoundaries_RegressionTest(t *testing.T) {
 	})
 }
 
+// TestSplitToTargetPrefix_PVELayout verifies that SplitToTargetPrefix produces
+// the canonical PVE SDN carve: a /18 vnet split into four /22 children
+// anchored at the vnet base. This is the layout backing {bloc}-infra plus
+// {bloc}-ocfp-{0,1,2}.
+func TestSplitToTargetPrefix_PVELayout(t *testing.T) {
+	parent := "10.64.64.0/18"
+	expected := []string{
+		"10.64.64.0/22",
+		"10.64.68.0/22",
+		"10.64.72.0/22",
+		"10.64.76.0/22",
+	}
+
+	subnets := SplitToTargetPrefix(parent, 22, 4)
+	require.Len(t, subnets, 4, "expected 4 child subnets for /18 -> /22 x 4")
+	assert.Equal(t, expected, subnets,
+		"SplitToTargetPrefix(%s, 22, 4) should match the PVE layout exactly", parent)
+
+	for i, sn := range subnets {
+		assert.True(t, IsSubnetWithinParent(parent, sn),
+			"subnet %d (%s) must remain within parent %s", i, sn, parent)
+	}
+}
+
+// TestSplitToTargetPrefix_TooNarrow asserts that a parent with insufficient
+// capacity for the requested child count returns nil rather than overflowing
+// into adjacent address space.
+func TestSplitToTargetPrefix_TooNarrow(t *testing.T) {
+	tests := []struct {
+		name         string
+		parentCIDR   string
+		targetPrefix int
+		count        int
+	}{
+		{
+			name:         "parent_equals_target_cannot_split",
+			parentCIDR:   "10.0.0.0/22",
+			targetPrefix: 22,
+			count:        4,
+		},
+		{
+			name:         "count_exceeds_capacity",
+			parentCIDR:   "10.0.0.0/20",
+			targetPrefix: 22,
+			count:        8, // /20 holds only 4 /22s
+		},
+		{
+			name:         "tiny_parent_against_large_count",
+			parentCIDR:   "10.0.0.0/24",
+			targetPrefix: 26,
+			count:        16, // /24 holds only 4 /26s
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subnets := SplitToTargetPrefix(tt.parentCIDR, tt.targetPrefix, tt.count)
+			assert.Nil(t, subnets,
+				"SplitToTargetPrefix(%s, %d, %d) should return nil when parent lacks capacity",
+				tt.parentCIDR, tt.targetPrefix, tt.count)
+		})
+	}
+}
+
+// TestSplitToTargetPrefix_InvalidPrefix asserts the helper rejects target
+// prefixes that are not strictly longer than the parent or that fall outside
+// the IPv4 prefix range.
+func TestSplitToTargetPrefix_InvalidPrefix(t *testing.T) {
+	tests := []struct {
+		name         string
+		parentCIDR   string
+		targetPrefix int
+		count        int
+	}{
+		{
+			name:         "target_shorter_than_parent",
+			parentCIDR:   "10.0.0.0/22",
+			targetPrefix: 20,
+			count:        2,
+		},
+		{
+			name:         "target_equals_parent",
+			parentCIDR:   "10.0.0.0/20",
+			targetPrefix: 20,
+			count:        1,
+		},
+		{
+			name:         "target_zero",
+			parentCIDR:   "10.0.0.0/20",
+			targetPrefix: 0,
+			count:        4,
+		},
+		{
+			name:         "target_negative",
+			parentCIDR:   "10.0.0.0/20",
+			targetPrefix: -1,
+			count:        4,
+		},
+		{
+			name:         "target_exceeds_ipv4",
+			parentCIDR:   "10.0.0.0/20",
+			targetPrefix: 33,
+			count:        4,
+		},
+		{
+			name:         "invalid_parent",
+			parentCIDR:   "not-a-cidr",
+			targetPrefix: 22,
+			count:        4,
+		},
+		{
+			name:         "zero_count",
+			parentCIDR:   "10.0.0.0/18",
+			targetPrefix: 22,
+			count:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subnets := SplitToTargetPrefix(tt.parentCIDR, tt.targetPrefix, tt.count)
+			assert.Nil(t, subnets,
+				"SplitToTargetPrefix(%s, %d, %d) should return nil for invalid prefix/count",
+				tt.parentCIDR, tt.targetPrefix, tt.count)
+		})
+	}
+}
+
 // TestEdgeCases_SubnetBoundaries tests edge cases for subnet boundary validation.
 func TestEdgeCases_SubnetBoundaries(t *testing.T) {
 	t.Run("smallest_possible_subnet", func(t *testing.T) {
