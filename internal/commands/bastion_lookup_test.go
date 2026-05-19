@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 // stubCompute implements cpi.ComputeManager with configurable ListInstances behavior.
@@ -198,6 +200,94 @@ func TestFindBastionInstance(t *testing.T) {
 				t.Errorf("expected instance ID %s, got %s", tc.wantID, inst.ID)
 			}
 		})
+	}
+}
+
+// TestTryReservedBastionIP confirms the last-resort fallback that reads the
+// reserved bastion address bootstrap records under the bloc's primary
+// subnet. This path keeps `ocfp ssh bastion` working on PVE bridges where
+// the guest agent hasn't reported and ipconfig0 was set to DHCP.
+func TestTryReservedBastionIP(t *testing.T) {
+	blocName := "tst-bloc"
+
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		t.Fatalf("GetStateDir: %v", err)
+	}
+
+	mgr, err := state.NewManager(stateDir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	_, err = mgr.Load(blocName)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = mgr.SetOutput("reserved_"+blocName+"-ocfp-0_bastion_ip", "10.4.4.3")
+	if err != nil {
+		t.Fatalf("SetOutput: %v", err)
+	}
+
+	err = mgr.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got := tryReservedBastionIP(blocName, logger.WithOperation("test"))
+	if got != "10.4.4.3" {
+		t.Errorf("tryReservedBastionIP = %q, want 10.4.4.3", got)
+	}
+}
+
+// TestTryReservedBastionIP_LegacyKey verifies the alternate
+// reserved_<bloc>_bastion_ip layout is still picked up.
+func TestTryReservedBastionIP_LegacyKey(t *testing.T) {
+	blocName := "legacy-bloc"
+
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		t.Fatalf("GetStateDir: %v", err)
+	}
+
+	mgr, err := state.NewManager(stateDir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	_, err = mgr.Load(blocName)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = mgr.SetOutput("reserved_"+blocName+"_bastion_ip", "192.168.1.67")
+	if err != nil {
+		t.Fatalf("SetOutput: %v", err)
+	}
+
+	err = mgr.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got := tryReservedBastionIP(blocName, logger.WithOperation("test"))
+	if got != "192.168.1.67" {
+		t.Errorf("tryReservedBastionIP = %q, want 192.168.1.67", got)
+	}
+}
+
+// TestTryReservedBastionIP_Missing returns empty when no key is present.
+func TestTryReservedBastionIP_Missing(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	got := tryReservedBastionIP("missing-bloc", logger.WithOperation("test"))
+	if got != "" {
+		t.Errorf("tryReservedBastionIP = %q, want empty", got)
 	}
 }
 

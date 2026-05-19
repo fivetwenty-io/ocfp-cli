@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 const (

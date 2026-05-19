@@ -47,6 +47,11 @@ const (
 // ComputeManager handles Proxmox compute operations.
 type ComputeManager struct {
 	client *Client
+
+	// snippetStorages caches the per-node lookup of snippet-capable storage
+	// pools so we don't re-walk /nodes/{node}/storage for every VM created
+	// in a session. See resolveSnippetStorage.
+	snippetStorages *snippetStorageCache
 }
 
 // Flavor presets for Proxmox (no native flavor concept).
@@ -173,7 +178,119 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 		return nil, fmt.Errorf("failed to get VM config: %w", err)
 	}
 
-	return m.vmToInstance(vmid, node, status, config)
+	instance, err := m.vmToInstance(vmid, node, status, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prefer the guest agent's runtime view of the NIC over whatever
+	// ipconfig0 promised at create time. PVE templates with predictable
+	// interface naming (ens18) silently ignore PVE's network-data v1
+	// which targets eth0, so the guest falls back to DHCP and ends up on
+	// a different address than the static IP recorded in ipconfig0.
+	// Trusting ipconfig0 in that case ships a stale answer to callers
+	// like `ocfp ssh bastion`.
+	if instance.State == cpi.ResourceStateActive {
+		if ipAddr := m.queryAgentPrimaryIP(ctx, node, vmid); ipAddr != "" {
+			if ipAddr != instance.PrivateIP {
+				logger.Debugf("PVE: vmid=%d guest-agent reports IP %s (overriding ipconfig0 value %q)", vmid, ipAddr, instance.PrivateIP)
+			}
+
+			instance.PrivateIP = ipAddr
+		}
+	}
+
+	return instance, nil
+}
+
+// queryAgentPrimaryIP asks the QEMU guest agent for the VM's primary IPv4
+// address. Returns an empty string when the agent is unreachable (not
+// installed, disabled in the VM config, or still booting), in which case
+// callers should fall back to other discovery paths.
+func (m *ComputeManager) queryAgentPrimaryIP(ctx context.Context, node string, vmid int) string {
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", node, vmid)
+
+	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
+	if err != nil {
+		logger.Debugf("PVE: guest-agent network-get-interfaces failed for vmid=%d: %v", vmid, err)
+
+		return ""
+	}
+
+	return extractAgentPrimaryIPv4(resp)
+}
+
+// extractAgentPrimaryIPv4 walks the QGA network-get-interfaces response and
+// returns the first non-loopback, non-link-local IPv4 address. The response
+// shape from PVE is:
+//
+//	{"result": [
+//	  {"name": "lo",    "ip-addresses": [{"ip-address": "127.0.0.1", "ip-address-type": "ipv4"}, ...]},
+//	  {"name": "ens18", "ip-addresses": [{"ip-address": "10.4.4.3",  "ip-address-type": "ipv4"}, ...]}
+//	]}
+//
+// Some PVE versions return the array at the top level rather than under
+// "result"; both shapes are handled.
+func extractAgentPrimaryIPv4(resp interface{}) string {
+	ifaces := agentInterfaceList(resp)
+	for _, raw := range ifaces {
+		iface, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if name, _ := iface["name"].(string); strings.EqualFold(name, "lo") {
+			continue
+		}
+
+		if ipAddr := pickIPv4FromInterface(iface); ipAddr != "" {
+			return ipAddr
+		}
+	}
+
+	return ""
+}
+
+func agentInterfaceList(resp interface{}) []interface{} {
+	switch typedResp := resp.(type) {
+	case map[string]interface{}:
+		if result, ok := typedResp["result"].([]interface{}); ok {
+			return result
+		}
+	case []interface{}:
+		return typedResp
+	}
+
+	return nil
+}
+
+func pickIPv4FromInterface(iface map[string]interface{}) string {
+	ipAddrs, ok := iface["ip-addresses"].([]interface{})
+	if !ok {
+		return ""
+	}
+
+	for _, raw := range ipAddrs {
+		addr, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		ipType, _ := addr["ip-address-type"].(string)
+		ipAddr, _ := addr["ip-address"].(string)
+
+		if !strings.EqualFold(ipType, "ipv4") || ipAddr == "" {
+			continue
+		}
+
+		if strings.HasPrefix(ipAddr, "127.") || strings.HasPrefix(ipAddr, "169.254.") {
+			continue
+		}
+
+		return ipAddr
+	}
+
+	return ""
 }
 
 // ListInstances lists VMs with optional filters.
@@ -684,17 +801,27 @@ func (m *ComputeManager) cloneTemplate(ctx context.Context, node string, templat
 }
 
 // configureCloudInit applies cloud-init configuration to a freshly cloned
-// VM. The order matters: we PUT the directly-supported fields (ipconfig0,
-// nameserver, ciuser, sshkeys) first so basic networking + SSH work even
-// when snippet upload of the larger UserData payload fails. Many Proxmox
-// storage backends (local-lvm, lvm-thin, ZFS) don't accept "snippets"
-// content, so attempting that path with the default storage is best-effort.
+// VM. The flow is:
+//
+//  1. Generate a deterministic MAC and upload user-data + network-data
+//     snippets to a snippets-capable storage pool (auto-resolved, or the
+//     operator-supplied iso_storage). When successful, the resulting
+//     cicustom + MAC are folded into the direct config PUT in step 2.
+//  2. PUT the directly-supported fields (net0 with explicit MAC, ipconfig0,
+//     nameserver, ciuser, sshkeys, cicustom). These don't require any
+//     storage configuration and are what makes the VM reachable after
+//     first boot even if snippet upload failed.
+//
+// Critically, this path does NOT call ciSvc.Attach: the cloned template
+// already has an ide2 cloud-init drive on the correct storage, and Attach
+// re-points it at the snippet storage which can fail VM start when that
+// pool does not advertise the `images` content type.
 func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) error {
 	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
-	// 1) Direct cloud-init config — these don't require a snippets-capable
-	//    storage and are what makes the VM reachable after first boot.
-	directConfig := buildPVEDirectCloudInitConfig(req)
+	plan := m.uploadCloudInitSnippets(ctx, node, vmid, req)
+
+	directConfig := buildPVEDirectCloudInitConfig(req, plan)
 	if len(directConfig) > 0 {
 		_, err := m.client.pveClient.PutCtx(ctx, configPath, directConfig)
 		if err != nil {
@@ -702,18 +829,8 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 		}
 	}
 
-	// 2) Optional user-data snippet — preserves the larger inline bash
-	//    script some bastion paths still pass via req.UserData. If this
-	//    fails (typical for local-lvm-only clusters) we keep the VM
-	//    reachable via the direct config above.
-	if req.UserData != "" {
-		ciSvc := m.client.getCloudinitService()
-		storage := m.snippetStorageFor(node)
-
-		err := ciSvc.Attach(ctx, node, vmid, storage, []byte(req.UserData))
-		if err != nil {
-			logger.Warnf("Failed to upload cloud-init user-data snippet to storage %s (continuing with direct config only): %v", storage, err)
-		}
+	if plan.Storage == "" && req.UserData != "" {
+		logger.Debugf("Skipping cloud-init user-data snippet upload: no snippets-capable storage available (set provider's iso_storage to a snippets-capable pool to enable)")
 	}
 
 	return nil
@@ -722,15 +839,29 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 // buildPVEDirectCloudInitConfig assembles the cloud-init PUT body that uses
 // only PVE config keys (no snippet upload required):
 //
+//   - net0: NIC + bridge override so cloned templates land on the operator's
+//     chosen bridge instead of whatever the template baked in (a template
+//     copied from vmbr0 must be re-pointed at vmbr1 to reach the LAN). When
+//     plan.MAC is set, the NIC carries the deterministic MAC so the
+//     network-data v2 snippet can match on it.
 //   - ipconfig0/nameserver: static IP + gateway + DNS resolvers for the NIC.
 //   - ciuser: default cloud-init user (image dependent — set when caller
 //     supplied an explicit value via InstanceRequest.DefaultUsername).
 //   - sshkeys: URL-encoded OpenSSH public key list, the form PVE expects.
+//   - cicustom: references the uploaded snippets when plan.Storage is set.
+//     With a `network=` entry present, PVE skips its own v1 network-data
+//     generation — that's what fixes the eth0 vs ens18 NIC-name drift.
 //
 // An empty map is returned when there's nothing to configure, in which case
 // the caller skips the PUT entirely.
-func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest) map[string]interface{} {
+func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest, plan cloudInitSnippetPlan) map[string]interface{} {
 	out := make(map[string]interface{})
+
+	if req.NetworkID != "" {
+		// Match the format createBlankVM writes so the two paths produce
+		// equivalent VMs. firewall=1 keeps the PVE-side rules wired in.
+		out["net0"] = buildPVENet0(req.NetworkID, plan.MAC)
+	}
 
 	if ipconfig := buildPVEIPConfig(req); ipconfig != "" {
 		out["ipconfig0"] = ipconfig
@@ -745,14 +876,52 @@ func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest) map[string]interfac
 	}
 
 	if pub := strings.TrimSpace(req.PublicKey); pub != "" {
-		// Proxmox's API requires the sshkeys value to be URL-encoded —
-		// otherwise the spaces and trailing comments in OpenSSH lines
-		// confuse the form parser. The apiclient passes our string through
-		// directly, so we encode here.
-		out["sshkeys"] = url.QueryEscape(pub + "\n")
+		out["sshkeys"] = pveEncodeSSHKeys(pub)
+	}
+
+	if cicustom := buildPVECICustom(plan); cicustom != "" {
+		out["cicustom"] = cicustom
 	}
 
 	return out
+}
+
+// buildPVENet0 renders the net0 string, prefixing the deterministic MAC when
+// one was generated. Format: "virtio=<mac>,bridge=<bridge>,firewall=1".
+func buildPVENet0(bridge, mac string) string {
+	if mac == "" {
+		return fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge)
+	}
+
+	return fmt.Sprintf("virtio=%s,bridge=%s,firewall=1", mac, bridge)
+}
+
+// buildPVECICustom renders the cicustom value, including the network entry
+// only when the network-data snippet was uploaded successfully. PVE accepts
+// the entries in any order; we emit user= first to match its documentation.
+func buildPVECICustom(plan cloudInitSnippetPlan) string {
+	if plan.Storage == "" || plan.UserFilename == "" {
+		return ""
+	}
+
+	out := fmt.Sprintf("user=%s:snippets/%s", plan.Storage, plan.UserFilename)
+	if plan.HasNetwork && plan.NetworkFilename != "" {
+		out += fmt.Sprintf(",network=%s:snippets/%s", plan.Storage, plan.NetworkFilename)
+	}
+
+	return out
+}
+
+// pveEncodeSSHKeys encodes one or more OpenSSH public keys (one per line,
+// trailing newline preserved) into the percent-encoded form Proxmox accepts
+// for the cloud-init sshkeys parameter.
+//
+// Proxmox is strict here: it rejects the form-urlencoded `+` for space and
+// only accepts standard percent-encoded `%20`. url.QueryEscape produces the
+// `+` form, so we post-process it. We also do not strip the trailing newline
+// — multi-key payloads rely on the per-line terminator.
+func pveEncodeSSHKeys(keys string) string {
+	return strings.ReplaceAll(url.QueryEscape(keys+"\n"), "+", "%20")
 }
 
 // buildPVEIPConfig converts the static-IP request into PVE's ipconfig0
@@ -775,18 +944,6 @@ func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 	}
 
 	return cfg
-}
-
-// snippetStorageFor returns the storage pool to use for cloud-init snippet
-// uploads. ISOStorage takes precedence (it's where the operator pinned
-// snippet-capable storage), otherwise we fall back to the cluster-default
-// "local" which is dir-typed on stock installs.
-func (m *ComputeManager) snippetStorageFor(_node string) string {
-	if m.client.config.ISOStorage != "" {
-		return m.client.config.ISOStorage
-	}
-
-	return "local"
 }
 
 // resizeBootDisk resizes the boot disk.
@@ -860,15 +1017,20 @@ func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, t
 }
 
 // formatPVETag renders a "<key>=<value>" pair as a single PVE-compatible tag
-// identifier of the form "<key>-<value>". PVE accepts a restricted character
-// set per tag (lowercase ASCII alphanumerics plus a handful of separators)
-// so any other byte is collapsed to "_". Empty results are filtered out by
-// the caller.
+// identifier of the form "<key>--<value>". PVE accepts a restricted character
+// set per tag (lowercase ASCII alphanumerics plus a handful of separators),
+// so any other byte is collapsed to "_". A doubled "--" delimits key from
+// value so single "-" can appear freely inside either side. Empty results
+// are filtered out by the caller.
 func formatPVETag(key, value string) string {
-	combined := strings.ToLower(strings.TrimSpace(key) + "-" + strings.TrimSpace(value))
-	if combined == "-" {
+	k := strings.ToLower(strings.TrimSpace(key))
+	v := strings.ToLower(strings.TrimSpace(value))
+
+	if k == "" && v == "" {
 		return ""
 	}
+
+	combined := k + "--" + v
 
 	var builder strings.Builder
 
@@ -915,7 +1077,7 @@ func parsePVETags(raw string) []string {
 // filter is matched against the VM's name).
 //
 // The convention mirrors setVMTags: a filter "label.bloc=520-pve-wayne"
-// matches when the tag "bloc-520-pve-wayne" (post-sanitisation) is
+// matches when the tag "bloc--520-pve-wayne" (post-sanitisation) is
 // present. A VM with no tags can never satisfy a label filter — that's the
 // desirable behaviour because it keeps untagged VMs from being returned as
 // false-positive bastions.

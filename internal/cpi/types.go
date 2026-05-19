@@ -444,6 +444,13 @@ type InstanceRequest struct {
 	DefaultUsername  string // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP        string // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
 	DNSServers       []string // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
+	// Hostname is the short host name the VM should adopt at first boot.
+	// Used to drive the user-data snippet's `hostname:` and `fqdn:` keys so
+	// the cloned VM stops booting as the template default (e.g. "ubuntu-22045").
+	Hostname string
+	// DomainSuffix combines with Hostname to produce the FQDN. Typically the
+	// bloc's FQDNs.Base. Empty falls back to just Hostname.
+	DomainSuffix string
 }
 
 // BucketRequest represents a request for creating buckets.

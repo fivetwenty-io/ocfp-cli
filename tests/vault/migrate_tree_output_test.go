@@ -9,7 +9,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/output"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // TestVaultMigrateTreeOutput_Integration is an integration test for tree-based output.

@@ -19,7 +19,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/pmezard/go-difflib/difflib"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 const (

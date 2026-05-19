@@ -11,7 +11,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // TestBastionConfigFiltering tests the config filtering behavior for bastion init.
