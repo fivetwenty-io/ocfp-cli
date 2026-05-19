@@ -15,6 +15,17 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
+)
+
+// bastionTailscaleVaultPath is where the operator pre-stores a reusable,
+// pre-approved tailscale auth key tagged tag:ocfp-bastion. Bootstrap reads
+// it once per bastion creation and hands it to cloud-init via the
+// TailscaleAuthKey field on cpi.InstanceRequest. Missing key = bastion
+// boots without tailscale, which is a soft warning rather than a failure.
+const (
+	bastionTailscaleVaultPath = "secret/ocfp/tailscale/auth_key"
+	bastionTailscaleVaultKey  = "value"
 )
 
 // Compute-specific constants.
@@ -525,7 +536,34 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		DNSServers:       m.config.Network.DNSServers,
 		Hostname:         bastionName,
 		DomainSuffix:     m.bastionDomainSuffix(),
+		TailscaleAuthKey: m.bastionTailscaleAuthKey(),
 	}
+}
+
+// bastionTailscaleAuthKey fetches the tailscale auth key from vault so the
+// bastion cloud-init can join the tailnet at first boot. The lookup is a
+// best-effort: if vault is unreachable, the path is missing, or the value
+// is empty, this returns "" and the bastion boots without tailscale (the
+// operator may add it manually later). Any error is logged at warn level
+// — bootstrap should not abort because a side-feature is not configured.
+func (m *Manager) bastionTailscaleAuthKey() string {
+	client, err := vault.NewClientFromEnv()
+	if err != nil {
+		logger.Warnf("Tailscale auth key skipped: cannot reach vault: %v", err)
+
+		return ""
+	}
+
+	safe := vault.NewSafe(client)
+
+	key, err := safe.GetString(bastionTailscaleVaultPath, bastionTailscaleVaultKey)
+	if err != nil {
+		logger.Warnf("Tailscale auth key skipped: %s not readable: %v", bastionTailscaleVaultPath, err)
+
+		return ""
+	}
+
+	return strings.TrimSpace(key)
 }
 
 // bastionDomainSuffix returns the domain suffix that should be appended to the
