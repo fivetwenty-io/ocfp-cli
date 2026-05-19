@@ -18,20 +18,28 @@ import (
 //   - {bloc}/ocf/cf/blobstores/main/creds        (CF blobstore credentials)
 //   - {bloc}/ocfp/artifacts                      (operational metadata)
 //
-// CA cert (when TLS is enabled) is written into the blobstore config paths
-// under `ca_cert` so genesis kits can pin it.
+// The CA cert (when TLS is enabled) is read from `ep.CACert` and written into
+// the blobstore config paths under `ca_cert` so genesis kits can pin it. For
+// internal-ca mode this is the bloc CA cert, not the leaf cert.
 type ArtifactsWriter struct {
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
 	BlocName    string
+	TLSMode     string
 }
 
 // NewArtifactsWriter constructs an ArtifactsWriter bound to a bloc.
 func NewArtifactsWriter(cfg *config.Config, safe SafeInterface, blocName string) *ArtifactsWriter {
+	mode := ""
+	if cfg != nil {
+		mode = cfg.Artifacts.TLS.Mode
+	}
+
 	return &ArtifactsWriter{
 		Safe:        safe,
 		PathBuilder: NewPathBuilder(cfg, blocName),
 		BlocName:    blocName,
+		TLSMode:     mode,
 	}
 }
 
@@ -42,10 +50,7 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 		w.BlocName = blocName
 	}
 
-	caPEM := ""
-	if tls != nil {
-		caPEM = tls.CertPEM
-	}
+	caPEM := ep.CACert
 
 	pairs := []struct {
 		path string
@@ -80,7 +85,7 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 		"endpoint": ep.URL,
 		"host":     ep.Host,
 		"port":     ep.Port,
-		"tls_mode": tlsModeLabel(tls, caPEM),
+		"tls_mode": tlsModeLabel(w.TLSMode, tls, caPEM),
 	}
 
 	if tls != nil {
@@ -114,13 +119,21 @@ func blobstoreEntry(ep artifacts.Endpoint, caPEM, bucketName string) map[string]
 	return entry
 }
 
-func tlsModeLabel(tls *artifacts.TLSMaterial, caPEM string) string {
+// tlsModeLabel returns the operational mode label. `mode` is the bloc-config
+// value (authoritative); the tls/caPEM args are fallbacks for callers that
+// don't plumb mode through.
+func tlsModeLabel(mode string, tls *artifacts.TLSMaterial, caPEM string) string {
+	switch mode {
+	case config.ArtifactsTLSModeInternalCA, config.ArtifactsTLSModeSelfSigned, config.ArtifactsTLSModeDisabled:
+		return mode
+	}
+
 	switch {
 	case tls != nil:
-		return "self-signed"
+		return config.ArtifactsTLSModeSelfSigned
 	case caPEM != "":
-		return "internal-ca"
+		return config.ArtifactsTLSModeInternalCA
 	default:
-		return "disabled"
+		return config.ArtifactsTLSModeDisabled
 	}
 }

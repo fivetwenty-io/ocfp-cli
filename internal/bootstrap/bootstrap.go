@@ -13,6 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
 const (
@@ -56,6 +57,7 @@ type Manager struct {
 	stateManager *state.Manager
 	options      *Options
 	metadata     *MetadataManager
+	safe         vault.SafeInterface
 }
 
 // NewManager creates a new bootstrap manager.
@@ -67,6 +69,14 @@ func NewManager(cfg *config.Config, provider cpi.Provider, stateManager *state.M
 		options:      opts,
 		metadata:     NewMetadataManager(opts.BlocName),
 	}
+}
+
+// SetSafe wires a vault Safe client into the bootstrap manager. When set, the
+// artifacts step calls ArtifactsWriter.WriteArtifacts to populate blobstore
+// vault paths. When unset, bootstrap proceeds without writing vault (a warning
+// is printed) so bare-cluster bootstraps without vault still succeed.
+func (m *Manager) SetSafe(safe vault.SafeInterface) {
+	m.safe = safe
 }
 
 // StateManager returns the state manager.

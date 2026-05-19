@@ -1539,9 +1539,11 @@ func validate(cfg *Config) error {
 
 	// Validate opt-in ocfp-artifacts VM config.
 	// Bastion-enabled proxy: a configured Flavor implies bastion provisioning.
-	// TODO: wire internal-CA detection once CA config lands.
+	// internalCAConfigured is unconditionally true: the bloc CA is generated on
+	// demand by bootstrap (vault.LoadOrGenerateBlocCA), so the validator never
+	// has to refuse internal-ca mode for missing config.
 	bastionEnabled := cfg.Bastion.Flavor != ""
-	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, false); err != nil {
+	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true); err != nil {
 		return fmt.Errorf("artifacts config: %w", err)
 	}
 
