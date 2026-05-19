@@ -446,7 +446,7 @@ func TestBuildPVEIPConfig(t *testing.T) {
 			want: "ip=dhcp",
 		},
 		{
-			name: "static ip without prefix gets /24",
+			name: "static ip without prefix falls back to /24",
 			req:  &cpi.InstanceRequest{StaticPrivateIP: "192.168.1.67"},
 			want: "ip=192.168.1.67/24",
 		},
@@ -454,6 +454,21 @@ func TestBuildPVEIPConfig(t *testing.T) {
 			name: "static ip with explicit prefix preserved",
 			req:  &cpi.InstanceRequest{StaticPrivateIP: "10.0.0.5/26"},
 			want: "ip=10.0.0.5/26",
+		},
+		{
+			name: "caller-supplied prefix wins over /24 default",
+			req:  &cpi.InstanceRequest{StaticPrivateIP: "10.64.80.3", StaticPrivateIPPrefix: 18, GatewayIP: "10.64.64.1"},
+			want: "ip=10.64.80.3/18,gw=10.64.64.1",
+		},
+		{
+			name: "prefix on InstanceRequest ignored when address already carries one",
+			req:  &cpi.InstanceRequest{StaticPrivateIP: "10.0.0.5/26", StaticPrivateIPPrefix: 18},
+			want: "ip=10.0.0.5/26",
+		},
+		{
+			name: "invalid prefix (>32) falls back to /24",
+			req:  &cpi.InstanceRequest{StaticPrivateIP: "192.168.1.67", StaticPrivateIPPrefix: 99},
+			want: "ip=192.168.1.67/24",
 		},
 		{
 			name: "static ip with gateway",
