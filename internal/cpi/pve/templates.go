@@ -63,16 +63,19 @@ type TemplateSpec struct {
 //nolint:gochecknoglobals // intentional package-level lookup table
 var templateCatalog = map[string]TemplateSpec{
 	"ubuntu-noble-template": {
-		Name:           "ubuntu-noble-template",
-		SourceURL:      "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-		SourceFilename: "noble-server-cloudimg-amd64.img",
+		Name: "ubuntu-noble-template",
+		SourceURL: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+		// Ubuntu's .img cloud images are actually qcow2-formatted.
+		// PVE's "import" content type rejects .img extensions, so store
+		// with .qcow2 to match the validator regex.
+		SourceFilename: "ubuntu-noble-amd64.qcow2",
 		Memory:         2048,
 		Cores:          2,
 	},
 	"ubuntu-jammy-template": {
-		Name:           "ubuntu-jammy-template",
-		SourceURL:      "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-		SourceFilename: "jammy-server-cloudimg-amd64.img",
+		Name: "ubuntu-jammy-template",
+		SourceURL: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+		SourceFilename: "ubuntu-jammy-amd64.qcow2",
 		Memory:         2048,
 		Cores:          2,
 	},
@@ -169,7 +172,7 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 		return 0, fmt.Errorf("download image: %w", err)
 	}
 
-	scratchVolID := fmt.Sprintf("%s:iso/%s", isoStorage, spec.SourceFilename)
+	scratchVolID := fmt.Sprintf("%s:import/%s", isoStorage, spec.SourceFilename)
 
 	err = m.createTemplateVM(ctx, node, targetStorage, vmid, scratchVolID, spec)
 	if err != nil {
@@ -288,10 +291,12 @@ func (c *Client) nextTemplateVMID(ctx context.Context) (int, error) {
 func (c *Client) downloadTemplateImage(ctx context.Context, node, storage string, spec TemplateSpec) error {
 	nodesSvc := nodes.New(c.pveClient)
 
-	content := "iso"
-
+	// PVE 8.2+ uses content type "import" for raw cloud images that will be
+	// imported into a VM disk via the `import-from=<volid>` config syntax.
+	// The legacy "iso" content type rejects scsi0 import with a wrong-type
+	// error.
 	params := &nodes.CreateStorageDownloadUrlParams{
-		Content:  content,
+		Content:  "import",
 		Filename: spec.SourceFilename,
 		Url:      spec.SourceURL,
 	}
