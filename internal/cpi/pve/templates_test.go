@@ -38,8 +38,11 @@ func TestLookupCatalogSpec_KnownNames(t *testing.T) {
 				t.Errorf("spec.SourceURL = %q, want it to reference %q", spec.SourceURL, tc.wantSourceHost)
 			}
 
-			if !strings.HasSuffix(spec.SourceURL, spec.SourceFilename) {
-				t.Errorf("spec.SourceFilename %q does not match tail of SourceURL %q", spec.SourceFilename, spec.SourceURL)
+			// SourceFilename is independent of the URL filename: Ubuntu's .img
+			// downloads are qcow2-formatted, so we store with a .qcow2
+			// extension to satisfy PVE's "import" content-type validator.
+			if !strings.HasSuffix(spec.SourceFilename, ".qcow2") {
+				t.Errorf("spec.SourceFilename %q must end in .qcow2 for PVE import content type", spec.SourceFilename)
 			}
 
 			if spec.Memory <= 0 || spec.Cores <= 0 {

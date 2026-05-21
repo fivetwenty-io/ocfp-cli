@@ -111,6 +111,10 @@ type Config struct {
 	// certs work out of the box. Set true when targeting a PVE host with a
 	// CA-signed certificate to fail-closed on cert mismatches.
 	VerifySSL        bool                        `json:"verify_ssl"          mapstructure:"verify_ssl"          yaml:"verify_ssl,omitempty"`
+	// IsoStorage is the PVE storage pool that hosts ISO content and
+	// cloud-init snippets. PVE-specific. Used by snippet upload and by
+	// template auto-provisioning to stage downloaded cloud images.
+	IsoStorage       string                      `json:"iso_storage"         mapstructure:"iso_storage"         yaml:"iso_storage,omitempty"`
 	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
 	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`

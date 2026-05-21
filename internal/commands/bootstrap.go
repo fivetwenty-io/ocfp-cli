@@ -473,6 +473,10 @@ func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Con
 		providerConfig["default_bridge"] = cfg.Network.Name
 	}
 
+	if cfg.IsoStorage != "" {
+		providerConfig["iso_storage"] = cfg.IsoStorage
+	}
+
 	// VerifySSL is always passed so the provider sees an explicit value
 	// (defaults to false in the bloc Config zero value).
 	providerConfig["verify_ssl"] = cfg.VerifySSL
