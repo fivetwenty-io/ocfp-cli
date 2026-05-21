@@ -421,6 +421,10 @@ type VolumeRequest struct {
 	AvailabilityZone string
 	Encrypted        bool
 	Tags             map[string]string
+	// InstanceID is the VM id that will own the volume. Required by providers
+	// where volumes cannot be unowned (PVE local-lvm/local-zfs reject vmid=0);
+	// ignored by providers whose volumes exist independently of an instance.
+	InstanceID string
 }
 
 // InstanceRequest represents a request for creating instances.
