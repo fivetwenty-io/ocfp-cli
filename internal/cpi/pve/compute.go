@@ -34,7 +34,7 @@ const (
 	flavorXLRAM       = 8192
 	flavorXLDisk      = 80
 	flavorBastionCPU  = 2
-	flavorBastionRAM  = 4096
+	flavorBastionRAM  = 8192
 	flavorBastionDisk = 50
 	flavorBoshCPU     = 4
 	flavorBoshRAM     = 8192
@@ -108,7 +108,7 @@ var flavorPresets = map[string]*cpi.Flavor{
 		VCPUs:       flavorBastionCPU,
 		RAM:         flavorBastionRAM,
 		Disk:        flavorBastionDisk,
-		Description: "Bastion host: 2 vCPUs, 4GB RAM, 50GB disk",
+		Description: "Bastion host: 2 vCPUs, 8GB RAM, 50GB disk",
 	},
 	"bosh": {
 		ID:          "bosh",
