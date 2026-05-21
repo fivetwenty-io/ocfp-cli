@@ -33,6 +33,30 @@ type StorageManager struct {
 	blobstoreS3 *blobstoreS3Client
 }
 
+// pveVolumeName returns a volume filename that satisfies PVE's storage-pool
+// naming constraints. ZFS, LVM-thin, and RBD require `vm-{vmid}-*`; dir/NFS
+// accept any name but happily store one that follows convention. When vmid is
+// zero we keep the caller's name verbatim so unowned volumes (which only land
+// on dir-style storage) preserve their descriptive identity.
+func pveVolumeName(reqName string, vmid int) string {
+	if vmid <= 0 {
+		return reqName
+	}
+
+	prefix := fmt.Sprintf("vm-%d-", vmid)
+	if strings.HasPrefix(reqName, prefix) {
+		return reqName
+	}
+
+	suffix := "disk"
+	if reqName != "" {
+		parts := strings.Split(reqName, "-")
+		suffix = parts[len(parts)-1]
+	}
+
+	return prefix + suffix
+}
+
 // parseVolumeOwnerVMID returns the PVE VMID that should own a new volume.
 // Empty InstanceID returns 0 (the caller may still error from PVE, but some
 // pools accept unowned volumes — this preserves that). Non-numeric or negative
@@ -80,12 +104,6 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 
 	storageSvc := m.client.getStorageService()
 
-	// Generate volume name
-	volName := req.Name
-	if volName == "" {
-		volName = fmt.Sprintf("vol-%d", time.Now().UnixNano())
-	}
-
 	// PVE storage pools (local-lvm, local-zfs, ceph-rbd) reject vmid=0: a
 	// volume must belong to a VM. Callers that create the VM first plumb the
 	// owning instance id through req.InstanceID.
@@ -94,8 +112,18 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		return nil, fmt.Errorf("resolve volume owner: %w", err)
 	}
 
-	// Create the volume
-	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, "qcow2", vmid, volName)
+	// Generate volume name. Block storage pools enforce `vm-{vmid}-*`; we
+	// rewrite the caller's descriptive name into that form when a VMID is
+	// supplied so the same call works across pool types.
+	volName := pveVolumeName(req.Name, vmid)
+	if volName == "" {
+		volName = fmt.Sprintf("vol-%d", time.Now().UnixNano())
+	}
+
+	// Omit format so PVE picks the storage's native default (qcow2 for
+	// dir/NFS, raw for LVM/ZFS/RBD). Forcing qcow2 here breaks every block
+	// storage type because ZFSPoolPlugin et al. reject it.
+	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, "", vmid, volName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}
