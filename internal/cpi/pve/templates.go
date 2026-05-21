@@ -109,17 +109,16 @@ func (m *ComputeManager) LookupTemplateByName(ctx context.Context, name string) 
 //
 //  1. Lookup — if present, return its VMID.
 //  2. Allocate a VMID from the 9000+ range via cluster.nextid.
-//  3. Download the source image to `isoStorage` via PVE's download-url task.
+//  3. Download the source image to the configured ISO storage via PVE's
+//     download-url task.
 //  4. Create the template VM with `import-from=<scratch-volid>` so PVE
 //     converts the downloaded image directly into the VM's scsi0 disk.
 //  5. Convert to a template via qemu.Template.
 //
 // Returns the VMID of the resulting template (existing or newly created).
-//
-// targetStorage is the storage pool that backs the template's disk (e.g.,
-// "local-lvm"). isoStorage is where the source .img is downloaded to (e.g.,
-// "local"). Both must be reachable from `node`.
-func (m *ComputeManager) ProvisionTemplate(ctx context.Context, node, targetStorage, isoStorage, name string) (int, error) {
+// Storage pools are pulled from the PVE Client config (DefaultStorage for the
+// template disk, ISOStorage for the scratch download).
+func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (int, error) {
 	spec, ok := templateCatalog[name]
 	if !ok {
 		return 0, fmt.Errorf("%w: %s", ErrTemplateAutoProvisionUnknown, name)
@@ -143,13 +142,19 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, node, targetStor
 		return vmid, nil
 	}
 
-	if node == "" {
-		var nerr error
+	targetStorage := m.client.config.DefaultStorage
+	if targetStorage == "" {
+		return 0, fmt.Errorf("PVE config DefaultStorage required for template provisioning")
+	}
 
-		node, nerr = m.client.getNode(ctx)
-		if nerr != nil {
-			return 0, fmt.Errorf("resolve node: %w", nerr)
-		}
+	isoStorage := m.client.config.ISOStorage
+	if isoStorage == "" {
+		return 0, fmt.Errorf("PVE config ISOStorage required for template provisioning (set provider.iso_storage)")
+	}
+
+	node, err := m.client.getNode(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("resolve node: %w", err)
 	}
 
 	vmid, err := m.client.nextTemplateVMID(ctx)
@@ -157,7 +162,7 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, node, targetStor
 		return 0, fmt.Errorf("allocate VMID: %w", err)
 	}
 
-	log.Infof("provisioning template %s as vmid %d on node %s", name, vmid, node)
+	log.Infof("provisioning template %s as vmid %d on node %s (target=%s, iso=%s)", name, vmid, node, targetStorage, isoStorage)
 
 	err = m.client.downloadTemplateImage(ctx, node, isoStorage, spec)
 	if err != nil {

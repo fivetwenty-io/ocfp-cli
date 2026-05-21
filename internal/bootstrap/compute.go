@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
@@ -785,10 +787,55 @@ func (m *Manager) lookupImageByName(ctx context.Context, imageNameOrID string) (
 		return id, nil
 	}
 
+	// Auto-provision: if the missing name is a known PVE catalog template,
+	// build it on the cluster and return the new VMID. Operators get a
+	// recoverable lab instead of "image not found."
+	if id, ok := m.tryAutoProvisionPVETemplate(ctx, imageNameOrID); ok {
+		return id, nil
+	}
+
 	// Log debug info and return error
 	m.logImageSearchResults(images, imageNameOrID)
 
 	return "", errImageNotFoundWithName(imageNameOrID)
+}
+
+// tryAutoProvisionPVETemplate dispatches to the PVE provider's template
+// provisioner when (a) the bloc targets PVE and (b) the missing name is in
+// the OCFP-shipped template catalog. Returns the VMID as a decimal string
+// (the form resolveImageID's caller expects).
+func (m *Manager) tryAutoProvisionPVETemplate(ctx context.Context, name string) (string, bool) {
+	if !shouldAutoProvisionTemplate(m.options.Provider, name) {
+		return "", false
+	}
+
+	pveCompute, ok := m.provider.ComputeManager().(*pveclient.ComputeManager)
+	if !ok {
+		return "", false
+	}
+
+	logger.Infof("pve: template %q absent, auto-provisioning", name)
+
+	vmid, err := pveCompute.ProvisionTemplate(ctx, name)
+	if err != nil {
+		logger.Errorf("pve: template auto-provision failed for %q: %v", name, err)
+
+		return "", false
+	}
+
+	return strconv.Itoa(vmid), true
+}
+
+// shouldAutoProvisionTemplate decides whether the auto-provision path applies
+// for the given provider + image name. Pure function for testability.
+func shouldAutoProvisionTemplate(provider, name string) bool {
+	if !strings.EqualFold(provider, "pve") {
+		return false
+	}
+
+	_, known := pveclient.LookupCatalogSpec(name)
+
+	return known
 }
 
 func (m *Manager) tryPatternMatch(filters map[string]string, images []*cpi.Image, imageNameOrID string) (string, bool) {
