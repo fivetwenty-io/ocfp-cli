@@ -255,9 +255,10 @@ func artifactsTags(base map[string]string, blocName string) map[string]string {
 // attachArtifactsDataVolume creates and attaches the bulk data volume.
 func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmName string) (*cpi.Volume, error) {
 	vol, err := m.provider.StorageManager().CreateVolume(ctx, &cpi.VolumeRequest{
-		Name:   vmName + "-data",
-		SizeGB: m.config.Artifacts.Data.DiskSizeGiB,
-		Type:   m.config.Artifacts.Data.StoragePool,
+		Name:       vmName + "-data",
+		SizeGB:     m.config.Artifacts.Data.DiskSizeGiB,
+		Type:       m.config.Artifacts.Data.StoragePool,
+		InstanceID: instanceID,
 		Tags: map[string]string{
 			"ocfp:role": "artifacts-data",
 			"ocfp:bloc": m.options.BlocName,

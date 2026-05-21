@@ -33,6 +33,27 @@ type StorageManager struct {
 	blobstoreS3 *blobstoreS3Client
 }
 
+// parseVolumeOwnerVMID returns the PVE VMID that should own a new volume.
+// Empty InstanceID returns 0 (the caller may still error from PVE, but some
+// pools accept unowned volumes — this preserves that). Non-numeric or negative
+// values fail fast so we don't send a malformed vmid to PVE.
+func parseVolumeOwnerVMID(req *cpi.VolumeRequest) (int, error) {
+	if req == nil || req.InstanceID == "" {
+		return 0, nil
+	}
+
+	vmid, err := strconv.Atoi(req.InstanceID)
+	if err != nil {
+		return 0, fmt.Errorf("InstanceID %q is not numeric: %w", req.InstanceID, err)
+	}
+
+	if vmid < 0 {
+		return 0, fmt.Errorf("InstanceID %d must be non-negative", vmid)
+	}
+
+	return vmid, nil
+}
+
 // CreateVolume creates a new volume on a storage pool.
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	logger.WithOperation("CreateVolume").Infof("Creating volume: %s", req.Name)
@@ -65,8 +86,16 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		volName = fmt.Sprintf("vol-%d", time.Now().UnixNano())
 	}
 
+	// PVE storage pools (local-lvm, local-zfs, ceph-rbd) reject vmid=0: a
+	// volume must belong to a VM. Callers that create the VM first plumb the
+	// owning instance id through req.InstanceID.
+	vmid, err := parseVolumeOwnerVMID(req)
+	if err != nil {
+		return nil, fmt.Errorf("resolve volume owner: %w", err)
+	}
+
 	// Create the volume
-	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, "qcow2", 0, volName)
+	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, "qcow2", vmid, volName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}

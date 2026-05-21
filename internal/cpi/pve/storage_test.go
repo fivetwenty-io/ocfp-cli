@@ -10,6 +10,48 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
+func TestParseVolumeOwnerVMID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		req     *cpi.VolumeRequest
+		want    int
+		wantErr bool
+	}{
+		{name: "nil request → 0", req: nil, want: 0},
+		{name: "empty InstanceID → 0", req: &cpi.VolumeRequest{}, want: 0},
+		{name: "numeric InstanceID → vmid", req: &cpi.VolumeRequest{InstanceID: "143"}, want: 143},
+		{name: "non-numeric InstanceID → error", req: &cpi.VolumeRequest{InstanceID: "not-a-vmid"}, wantErr: true},
+		{name: "negative InstanceID → error", req: &cpi.VolumeRequest{InstanceID: "-7"}, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseVolumeOwnerVMID(tc.req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseVolumeOwnerVMID: want error, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseVolumeOwnerVMID: %v", err)
+			}
+
+			if got != tc.want {
+				t.Errorf("parseVolumeOwnerVMID = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStorageManagerLocalModeRejects covers the BlobstoreMode=local guard on
 // each bucket entrypoint. Local mode must return ErrBucketsNotSupported (or
 // the documented empty-result equivalents) without instantiating the S3
