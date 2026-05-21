@@ -10,6 +10,36 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
+func TestPVEVolumeName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		reqName string
+		vmid    int
+		want    string
+	}{
+		{name: "vmid 0 + name → name", reqName: "ocfp-wayne-artifacts-data", vmid: 0, want: "ocfp-wayne-artifacts-data"},
+		{name: "vmid set + name → vm-{vmid}-{suffix}", reqName: "ocfp-wayne-artifacts-data", vmid: 138, want: "vm-138-data"},
+		{name: "vmid set + single-word name → vm-{vmid}-{name}", reqName: "scratch", vmid: 9000, want: "vm-9000-scratch"},
+		{name: "vmid set + empty name → vm-{vmid}-disk", reqName: "", vmid: 42, want: "vm-42-disk"},
+		{name: "vmid set + name already conforming → preserved", reqName: "vm-138-cloudinit", vmid: 138, want: "vm-138-cloudinit"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := pveVolumeName(tc.reqName, tc.vmid)
+			if got != tc.want {
+				t.Errorf("pveVolumeName(%q, %d) = %q, want %q", tc.reqName, tc.vmid, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseVolumeOwnerVMID(t *testing.T) {
 	t.Parallel()
 
