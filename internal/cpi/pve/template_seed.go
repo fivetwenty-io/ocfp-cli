@@ -131,12 +131,52 @@ func seedLogin(sess *TermproxySession) error {
 		return fmt.Errorf("wait shell prompt: %w", err)
 	}
 
+	// Disable terminal echo so our marker matching doesn't get false
+	// positives from the kernel's input echo (when we send
+	// "echo OCFP_CMD_OK_X\r\n" the tty echoes those bytes back before the
+	// shell runs anything; without `stty -echo` ExpectRegex would match
+	// the echo and conclude the command finished prematurely, which
+	// turned the whole seed flow into "send + immediately exit" with no
+	// commands actually executing).
+	if err := sess.SendLine("stty -echo; export PS1='PROMPT> '"); err != nil {
+		return err
+	}
+
+	// Drain whatever the shell prints after PS1 changes so subsequent
+	// ExpectRegex calls start from a clean buffer.
+	sess.Drain(2 * time.Second)
+
 	return nil
 }
 
 // seedWriteUnits installs jq + qemu-guest-agent, writes the script + unit
 // files, and enables the services.
 func seedWriteUnits(sess *TermproxySession) error {
+	// Wait for cloud-init to finish before we touch apt — its first-boot
+	// runcmd phase holds the apt lock, and our `sudo tee` calls race with
+	// it (observed empirically: file writes time out while cloud-init is
+	// still emitting `Ign:` messages for apt update). The `|| true` is
+	// load-bearing: cloud-init exits 2 ("recoverable error") when any
+	// non-fatal module reports issues — common with apt's signature
+	// warnings on first-boot — even though `status: done` is the actual
+	// state we care about. We treat presence-of-boot-finished as the
+	// real signal via a follow-up file check.
+	if err := runShell(sess, "sudo cloud-init status --wait || true", templateSeedAptTimeout); err != nil {
+		return fmt.Errorf("wait cloud-init: %w", err)
+	}
+
+	if err := runShell(sess, "test -f /var/lib/cloud/instance/boot-finished", templateSeedShellTimeout); err != nil {
+		return fmt.Errorf("boot-finished sentinel missing: %w", err)
+	}
+
+	// Refresh package metadata first: cloud-init's default
+	// `package_update_upgrade_install` only fetches if upgrades are
+	// requested, leaving the apt cache empty on noble cloud images.
+	// Without this, `apt install` reports "Unable to locate package".
+	if err := runShell(sess, "sudo DEBIAN_FRONTEND=noninteractive apt-get update -q", templateSeedAptTimeout); err != nil {
+		return fmt.Errorf("apt update: %w", err)
+	}
+
 	// apt non-interactive; jq required by firstboot/watchdog scripts; agent
 	// useful for future operator introspection (qm guest exec works after
 	// this is installed).
@@ -192,21 +232,30 @@ func seedFinalize(sess *TermproxySession) error {
 	return nil
 }
 
-// runShell sends a command, appends a sentinel echo so we can match the
-// prompt regardless of $PS1 customizations, and waits for the sentinel.
+// runShell sends a command and waits for an exit-code-tagged sentinel that
+// proves the command ran (regardless of exit status). The sentinel includes
+// $? so we can distinguish "command finished with non-zero exit" from
+// "command never ran" and surface real failures.
 func runShell(sess *TermproxySession, cmd string, timeout time.Duration) error {
-	marker := fmt.Sprintf("OCFP_CMD_OK_%d", time.Now().UnixNano())
-	wrapped := cmd + " && echo " + marker
+	tag := fmt.Sprintf("OCFP_CMD_DONE_%d", time.Now().UnixNano())
+	// Use `;` so the marker prints even when the command fails. Capture
+	// $? in the marker so non-zero exit codes are observable.
+	wrapped := fmt.Sprintf("%s ; printf '\\n%s:%%d\\n' $?", cmd, tag)
 
 	if err := sess.SendLine(wrapped); err != nil {
 		return err
 	}
 
-	markerSpecific := regexp.MustCompile(regexp.QuoteMeta(marker))
+	// Match the marker AND the exit code that follows it.
+	markerSpecific := regexp.MustCompile(regexp.QuoteMeta(tag) + `:(\d+)`)
 
 	out, err := sess.ExpectRegex(markerSpecific, timeout)
 	if err != nil {
 		return fmt.Errorf("%w (output tail: %q)", err, tail(out, 400))
+	}
+
+	if matches := markerSpecific.FindStringSubmatch(out); len(matches) == 2 && matches[1] != "0" {
+		return fmt.Errorf("command exited %s (output tail: %q)", matches[1], tail(out, 400))
 	}
 
 	return nil
