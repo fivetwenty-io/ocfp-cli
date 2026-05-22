@@ -1,0 +1,515 @@
+#!/usr/bin/env perl
+# OCFP PVE Bastion Provisioning Script
+#
+# Invoked by `ocfp bastion provision` via:
+#   scp scripts/provision/bastion <user>@<bastion>:/tmp/provision-bastion.pl
+#   ssh <user>@<bastion> "bash -lc '... perl /tmp/provision-bastion.pl | tee ~/provision.log'"
+#
+# Environment variables set by the OCFP CLI (BuildEnvironmentVariables):
+#   OCFP_BLOC          - bloc name, e.g. ocfp-pve-wayne
+#   OCFP_PROVIDER      - always "pve" for this script
+#   PVE_HOST           - PVE API host, e.g. sm-0.lab.fivetwenty.io
+#   PVE_NODE           - PVE node name, e.g. pve
+#   PVE_TOKEN_ID       - PVE API token ID, e.g. ocfp-cpi@pve!wayne
+#   PVE_TOKEN_SECRET   - PVE API token secret UUID
+#
+# All env vars are optional — script warns and continues with defaults
+# where safe. Hard-fail only when the actual install step fails.
+#
+# Idempotent: each tool install is guarded by `which`/file-exists check.
+# Re-runs are safe.
+#
+# Exit: 0 on full success; non-zero with failing stage name printed to STDERR.
+
+use strict;
+use warnings;
+use POSIX qw(strftime);
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+my $LOG_FILE = "$ENV{HOME}/provision.log";
+
+# Ensure log directory exists (HOME should always be set by sshd)
+my $home = $ENV{HOME} // '/root';
+$LOG_FILE = "$home/provision.log";
+
+open(my $LOG, '>>', $LOG_FILE) or die "Cannot open log $LOG_FILE: $!\n";
+
+# Autoflush both handles
+$LOG->autoflush(1);
+select STDOUT; $| = 1;
+
+sub ts { return strftime('%Y-%m-%dT%H:%M:%SZ', gmtime) }
+
+sub log_info {
+    my ($msg) = @_;
+    my $line = sprintf("[%s] [INFO]  %s\n", ts(), $msg);
+    print $line;
+    print $LOG $line;
+}
+
+sub log_ok {
+    my ($msg) = @_;
+    my $line = sprintf("[%s] [OK]    %s\n", ts(), $msg);
+    print $line;
+    print $LOG $line;
+}
+
+sub log_warn {
+    my ($msg) = @_;
+    my $line = sprintf("[%s] [WARN]  %s\n", ts(), $msg);
+    print $line;
+    print $LOG $line;
+}
+
+sub log_error {
+    my ($msg) = @_;
+    my $line = sprintf("[%s] [ERROR] %s\n", ts(), $msg);
+    print STDERR $line;
+    print $LOG $line;
+}
+
+# ---------------------------------------------------------------------------
+# Environment validation
+# ---------------------------------------------------------------------------
+
+log_info("=== OCFP PVE Bastion Provisioning ===");
+log_info("Log file: $LOG_FILE");
+
+# Read env vars; warn if absent but do not abort — the provision script
+# installs tools; actual PVE API calls happen via the CLI later.
+for my $var (qw(OCFP_BLOC OCFP_PROVIDER PVE_HOST PVE_NODE PVE_TOKEN_ID PVE_TOKEN_SECRET)) {
+    if (!defined $ENV{$var} || $ENV{$var} eq '') {
+        log_warn("$var not set — some PVE-specific steps may be skipped");
+    } else {
+        # Redact secrets in log
+        if ($var =~ /SECRET|TOKEN_SECRET/) {
+            log_info("$var = [REDACTED]");
+        } else {
+            log_info("$var = $ENV{$var}");
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# run($stage, @cmd) — run a command; die with stage name on non-zero exit.
+sub run {
+    my ($stage, @cmd) = @_;
+    my $cmd_str = join(' ', @cmd);
+    log_info("[$stage] running: $cmd_str");
+    my $rc = system(@cmd);
+    if ($rc != 0) {
+        my $exit = ($rc >> 8);
+        log_error("[$stage] FAILED (exit $exit): $cmd_str");
+        close $LOG;
+        die "STAGE_FAILED:$stage\n";
+    }
+    return 1;
+}
+
+# run_shell($stage, $shell_cmd) — run a shell string via bash -c.
+sub run_shell {
+    my ($stage, $shell) = @_;
+    return run($stage, '/bin/bash', '-c', $shell);
+}
+
+# which_tool($name) — returns 1 if tool is on PATH, 0 otherwise.
+# Uses run_shell form so shell handles redirection correctly.
+sub which_tool {
+    my ($name) = @_;
+    # Sanitise: allow only word chars and hyphens (tool names).
+    return 0 unless $name =~ /\A[\w\-]+\z/;
+    my $rc = system('/bin/bash', '-c', "which '$name' >/dev/null 2>&1");
+    return ($rc == 0) ? 1 : 0;
+}
+
+# file_exists($path) — returns 1 if file/symlink exists.
+sub file_exists {
+    my ($path) = @_;
+    # Expand ~ manually since stat() does not shell-expand
+    $path =~ s{^~/}{$home/};
+    return (-e $path) ? 1 : 0;
+}
+
+# github_latest_tag($owner, $repo) — fetches latest release tag_name via
+# GitHub API. Falls back to empty string on any error. Uses curl (always
+# present on Ubuntu Noble).
+sub github_latest_tag {
+    my ($owner, $repo) = @_;
+    my $url  = "https://api.github.com/repos/$owner/$repo/releases/latest";
+    my $auth = '';
+    if (defined $ENV{GITHUB_TOKEN} && $ENV{GITHUB_TOKEN} ne '') {
+        $auth = "-H 'Authorization: token $ENV{GITHUB_TOKEN}'";
+    }
+    # Use backtick; swallow stderr; parse tag_name with grep+sed (no JSON module needed).
+    my $json = `curl -sfL $auth '$url' 2>/dev/null`;
+    if ($json =~ /"tag_name"\s*:\s*"([^"]+)"/) {
+        my $tag = $1;
+        $tag =~ s/^v//;   # strip leading 'v'
+        return $tag;
+    }
+    return '';
+}
+
+# install_binary($stage, $url, $dest, $mode) — download URL to $dest with $mode.
+sub install_binary {
+    my ($stage, $url, $dest, $mode) = @_;
+    $mode //= '0755';
+    my $pid = $$;
+    run_shell($stage, "curl -sfL '$url' -o '/tmp/__ocfp_bin_${pid}' && sudo install -m $mode '/tmp/__ocfp_bin_${pid}' '$dest' && rm -f '/tmp/__ocfp_bin_${pid}'");
+}
+
+# ---------------------------------------------------------------------------
+# Summary table accumulator
+# ---------------------------------------------------------------------------
+
+my @summary;  # [ [ stage, tool, version_or_status ] ]
+
+sub record_version {
+    my ($stage, $tool, $vcmd) = @_;
+    my $ver = `$vcmd 2>&1` // '';
+    chomp $ver;
+    $ver = substr($ver, 0, 80);   # truncate long output
+    push @summary, [$stage, $tool, $ver];
+    log_info("[$stage] $tool => $ver");
+}
+
+# ---------------------------------------------------------------------------
+# Stage A: apt-get update + build deps
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'A-apt-deps';
+    log_info("=== Stage $stage: apt-get update + build dependencies ===");
+
+    run($stage, qw(sudo apt-get update -qq));
+
+    my @pkgs = qw(
+        curl
+        jq
+        git
+        build-essential
+        perl
+        libssl-dev
+        libffi-dev
+        libcurl4-openssl-dev
+        ca-certificates
+        gnupg
+        lsb-release
+        unzip
+        wget
+        file
+        socat
+        uuid-runtime
+        python3
+        python3-pip
+    );
+
+    # Check which packages are missing before installing
+    my @missing;
+    for my $pkg (@pkgs) {
+        # All package names come from a controlled literal list above; no
+        # shell-metacharacter risk. Use bash -c so the pipe runs in a real shell
+        # instead of being passed as literal arguments (list-form system() does not
+        # invoke a shell, so the pipe would never execute).
+        my $rc = system('/bin/bash', '-c',
+            "dpkg-query -W -f='\${Status}' $pkg 2>/dev/null | grep -q 'install ok installed'");
+        push @missing, $pkg if $rc != 0;
+    }
+
+    if (@missing) {
+        log_info("[$stage] installing: @missing");
+        run($stage, 'sudo', 'apt-get', 'install', '-y', '-q', @missing);
+    } else {
+        log_ok("[$stage] all build deps already installed");
+    }
+
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage B: yq (mikefarah/yq v4 latest)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'B-yq';
+    log_info("=== Stage $stage: yq install ===");
+
+    if (which_tool('yq')) {
+        log_ok("[$stage] yq already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('mikefarah', 'yq');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest yq version; trying fallback v4.44.3");
+            $ver = '4.44.3';
+        }
+        my $url = "https://github.com/mikefarah/yq/releases/download/v${ver}/yq_linux_amd64";
+        log_info("[$stage] downloading yq v$ver");
+        install_binary($stage, $url, '/usr/local/bin/yq', '0755');
+        log_ok("[$stage] yq installed");
+    }
+
+    record_version($stage, 'yq', 'yq --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage C: safe (cloudfoundry-community/safe latest)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'C-safe';
+    log_info("=== Stage $stage: safe install ===");
+
+    if (which_tool('safe')) {
+        log_ok("[$stage] safe already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('cloudfoundry-community', 'safe');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest safe version; trying fallback v1.8.0");
+            $ver = '1.8.0';
+        }
+        my $url = "https://github.com/cloudfoundry-community/safe/releases/download/v${ver}/safe-${ver}-linux-amd64";
+        log_info("[$stage] downloading safe v$ver");
+        install_binary($stage, $url, '/usr/local/bin/safe', '0755');
+        log_ok("[$stage] safe installed");
+    }
+
+    record_version($stage, 'safe', 'safe --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage D: vault CLI (HashiCorp)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'D-vault';
+    log_info("=== Stage $stage: vault CLI install ===");
+
+    if (which_tool('vault')) {
+        log_ok("[$stage] vault already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('hashicorp', 'vault');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest vault version; trying fallback 1.17.0");
+            $ver = '1.17.0';
+        }
+        my $pid = $$;
+        my $url = "https://releases.hashicorp.com/vault/${ver}/vault_${ver}_linux_amd64.zip";
+        log_info("[$stage] downloading vault v$ver");
+        run_shell($stage,
+            "curl -sfL '$url' -o '/tmp/__vault_${pid}.zip' && " .
+            "unzip -o -q '/tmp/__vault_${pid}.zip' vault -d '/tmp/__vault_${pid}dir' && " .
+            "sudo install -m 0755 '/tmp/__vault_${pid}dir/vault' '/usr/local/bin/vault' && " .
+            "rm -rf '/tmp/__vault_${pid}.zip' '/tmp/__vault_${pid}dir'"
+        );
+        log_ok("[$stage] vault installed");
+    }
+
+    record_version($stage, 'vault', 'vault version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage E: bosh CLI v7+ (cloudfoundry/bosh-cli latest)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'E-bosh';
+    log_info("=== Stage $stage: bosh CLI install ===");
+
+    if (which_tool('bosh')) {
+        log_ok("[$stage] bosh already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('cloudfoundry', 'bosh-cli');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest bosh-cli version; trying fallback 7.8.0");
+            $ver = '7.8.0';
+        }
+        my $url = "https://github.com/cloudfoundry/bosh-cli/releases/download/v${ver}/bosh-cli-${ver}-linux-amd64";
+        log_info("[$stage] downloading bosh v$ver");
+        install_binary($stage, $url, '/usr/local/bin/bosh', '0755');
+        log_ok("[$stage] bosh installed");
+    }
+
+    record_version($stage, 'bosh', 'bosh --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage F: cf CLI v8+ (cloudfoundry/cli latest)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'F-cf';
+    log_info("=== Stage $stage: cf CLI install ===");
+
+    if (which_tool('cf')) {
+        log_ok("[$stage] cf already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('cloudfoundry', 'cli');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest cf-cli version; trying fallback 8.9.0");
+            $ver = '8.9.0';
+        }
+        # CF CLI ships as a tarball containing binary named 'cf8' + 'cf' symlink.
+        my $pid = $$;
+        my $url = "https://github.com/cloudfoundry/cli/releases/download/v${ver}/cf8-cli_${ver}_linux_x86-64.tgz";
+        log_info("[$stage] downloading cf v$ver");
+        run_shell($stage,
+            "curl -sfL '$url' -o '/tmp/__cf_${pid}.tgz' && " .
+            "mkdir -p '/tmp/__cf_${pid}dir' && " .
+            "tar --no-same-owner --no-same-permissions -C '/tmp/__cf_${pid}dir' -xzf '/tmp/__cf_${pid}.tgz' && " .
+            # The tarball may contain 'cf8' or 'cf' depending on release.
+            "CF_BIN=\$(ls '/tmp/__cf_${pid}dir/cf'* 2>/dev/null | head -1) && " .
+            "[ -n \"\$CF_BIN\" ] && " .
+            "sudo install -m 0755 \"\$CF_BIN\" '/usr/local/bin/cf' && " .
+            "rm -rf '/tmp/__cf_${pid}.tgz' '/tmp/__cf_${pid}dir'"
+        );
+        log_ok("[$stage] cf installed");
+    }
+
+    record_version($stage, 'cf', 'cf --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage G: cloudflared (cloudflare/cloudflared latest)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'G-cloudflared';
+    log_info("=== Stage $stage: cloudflared install ===");
+
+    if (which_tool('cloudflared')) {
+        log_ok("[$stage] cloudflared already installed, skipping");
+    } else {
+        my $ver = github_latest_tag('cloudflare', 'cloudflared');
+        if ($ver eq '') {
+            log_warn("[$stage] could not determine latest cloudflared version; trying fallback 2024.12.0");
+            $ver = '2024.12.0';
+        }
+        my $url = "https://github.com/cloudflare/cloudflared/releases/download/${ver}/cloudflared-linux-amd64";
+        log_info("[$stage] downloading cloudflared $ver");
+        install_binary($stage, $url, '/usr/local/bin/cloudflared', '0755');
+        log_ok("[$stage] cloudflared installed");
+    }
+
+    record_version($stage, 'cloudflared', 'cloudflared --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage H: genesis (genesis-community/genesis v3.2.x-dev)
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'H-genesis';
+    log_info("=== Stage $stage: genesis install ===");
+
+    my $genesis_dir  = "$home/genesis";
+    my $genesis_bin  = "$home/.local/bin/genesis";
+    my $local_bin    = "$home/.local/bin";
+
+    # Create ~/.local/bin if absent
+    run_shell($stage, "mkdir -p '$local_bin'");
+
+    if (which_tool('genesis') || file_exists($genesis_bin)) {
+        log_ok("[$stage] genesis already on PATH or at $genesis_bin, skipping clone");
+    } else {
+        if (-d "$genesis_dir/.git") {
+            log_info("[$stage] genesis repo already cloned at $genesis_dir; updating");
+            run_shell($stage, "cd '$genesis_dir' && git fetch --all -q");
+        } else {
+            log_info("[$stage] cloning genesis to $genesis_dir");
+            run_shell($stage,
+                "git clone -q --depth 200 " .
+                "https://github.com/genesis-community/genesis.git '$genesis_dir'"
+            );
+        }
+
+        # Check out v3.2.x-dev branch
+        run_shell($stage,
+            "cd '$genesis_dir' && " .
+            "git checkout v3.2.x-dev 2>/dev/null || " .
+            "git checkout -b v3.2.x-dev origin/v3.2.x-dev"
+        );
+
+        # Symlink genesis binary into ~/.local/bin
+        run_shell($stage, "ln -sfn '$genesis_dir/bin/genesis' '$genesis_bin'");
+        log_ok("[$stage] genesis symlinked to $genesis_bin");
+    }
+
+    # Ensure ~/.local/bin is on PATH for this session (needed for which_tool check)
+    unless ($ENV{PATH} =~ /\.local\/bin/) {
+        $ENV{PATH} = "$local_bin:$ENV{PATH}";
+    }
+
+    # Add ~/.local/bin to PATH in ~/.bashrc if not already present
+    run_shell($stage,
+        "grep -qF '.local/bin' '$home/.bashrc' || " .
+        "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> '$home/.bashrc'"
+    );
+
+    record_version($stage, 'genesis', "$genesis_bin --version 2>&1 || echo '(genesis present but --version not available)'");
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage I: summary table
+# ---------------------------------------------------------------------------
+{
+    my $stage = 'I-summary';
+    log_info("=== Stage $stage: provisioning summary ===");
+
+    my $line = sprintf("%-6s  %-20s  %s\n", 'Stage', 'Tool', 'Version');
+    print $line;
+    print $LOG $line;
+
+    my $sep = '-' x 72 . "\n";
+    print $sep;
+    print $LOG $sep;
+
+    for my $row (@summary) {
+        my ($s, $tool, $ver) = @{$row};
+        $line = sprintf("%-6s  %-20s  %s\n", $s, $tool, $ver);
+        print $line;
+        print $LOG $line;
+    }
+
+    # Also verify each critical binary is accessible after all installs
+    my @critical = qw(curl jq git yq safe bosh cf cloudflared);
+    log_info("[$stage] verifying critical binaries on PATH ...");
+
+    my @missing_critical;
+    for my $bin (@critical) {
+        if (which_tool($bin) || -x "/usr/local/bin/$bin" || -x "$home/.local/bin/$bin") {
+            log_ok("[$stage] $bin: OK");
+        } else {
+            log_warn("[$stage] $bin: NOT FOUND on PATH");
+            push @missing_critical, $bin;
+        }
+    }
+
+    # genesis special check (may be in ~/.local/bin rather than PATH)
+    my $genesis_bin = "$home/.local/bin/genesis";
+    if (which_tool('genesis') || -x $genesis_bin) {
+        log_ok("[$stage] genesis: OK");
+    } else {
+        log_warn("[$stage] genesis: NOT FOUND");
+        push @missing_critical, 'genesis';
+    }
+
+    if (@missing_critical) {
+        log_warn("[$stage] missing binaries after provision: @missing_critical");
+    } else {
+        log_ok("[$stage] all critical binaries verified");
+    }
+
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+log_info("=== OCFP PVE Bastion Provisioning COMPLETE ===");
+close $LOG;
+exit 0;
