@@ -88,10 +88,11 @@ type PVEDefaults struct {
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
-	Debug   bool               `mapstructure:"debug"   yaml:"debug"`
-	Verbose bool               `mapstructure:"verbose" yaml:"verbose"`
-	PVE     *PVEDefaults       `mapstructure:"pve"     yaml:"pve,omitempty"`
-	Blocs   map[string]*Config `mapstructure:"blocs"   yaml:"blocs"`
+	Debug     bool               `mapstructure:"debug"     yaml:"debug"`
+	Verbose   bool               `mapstructure:"verbose"   yaml:"verbose"`
+	PVE       *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
+	Tailscale *TailscaleConfig   `mapstructure:"tailscale" yaml:"tailscale,omitempty"`
+	Blocs     map[string]*Config `mapstructure:"blocs"     yaml:"blocs"`
 }
 
 // Config represents a bloc configuration.
@@ -183,6 +184,11 @@ type Config struct {
 
 	// SSH Keys storage for portability (bloc-name -> ed25519 private key)
 	Keys map[string]string `json:"keys" mapstructure:"keys" yaml:"keys,omitempty"`
+
+	// Tailscale carries per-bloc tailscale configuration. Per-bloc values
+	// take precedence over the global ConfigFile.Tailscale defaults via
+	// mergeTailscaleDefaults at load time.
+	Tailscale *TailscaleConfig `json:"tailscale,omitempty" mapstructure:"tailscale" yaml:"tailscale,omitempty"`
 }
 
 // BlobstoreMode constants for PVE bloc-scoped blobstore configuration.
@@ -1000,6 +1006,7 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 	}
 
 	mergePVEDefaults(blocConfig, configFileData.PVE)
+	mergeTailscaleDefaults(blocConfig, configFileData.Tailscale)
 
 	return blocConfig, nil
 }
@@ -1567,6 +1574,12 @@ func validate(cfg *Config) error {
 	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).
 	if err := cfg.Blobstore.Validate(); err != nil {
 		return fmt.Errorf("blobstore config: %w", err)
+	}
+
+	// Validate the merged tailscale config (mutual exclusion of literal
+	// auth_key vs auth_key_vault_path).
+	if err := cfg.Tailscale.Validate(); err != nil {
+		return err
 	}
 
 	// Validate opt-in ocfp-artifacts VM config.
