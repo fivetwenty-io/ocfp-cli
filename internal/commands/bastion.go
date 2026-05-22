@@ -2,12 +2,14 @@ package commands
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
+	bastionproviders "github.com/ocfp/ocfp-cli-go/internal/bastion/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -135,6 +137,13 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 		return fmt.Errorf("cannot find bastion provision script: %w", err)
 	}
 
+	// Load provider config env vars so bloc-level settings (bridge, storage
+	// pool, ISO storage) flow into the remote execution environment even when
+	// the operator has not manually exported them.  Operator-exported values
+	// always take precedence (BuildEnvironmentVariables checks os.Getenv and
+	// skips vars that are already set there).
+	configEnv := loadProviderEnv(cmd, log)
+
 	// Copy and execute script
 	err = copyAndExecuteScript(
 		bastionContext,
@@ -142,6 +151,7 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 		"/tmp/provision-bastion.pl",
 		"bastion provision",
 		"~/provision.log",
+		configEnv,
 		log,
 	)
 	if err != nil {
@@ -149,6 +159,62 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 	}
 
 	return nil
+}
+
+// loadProviderEnv loads the PrepareEnvironment map from the bloc's bastion
+// initializer.  Returns an empty map on any error so callers fall back to
+// the operator-environment-only path gracefully.
+func loadProviderEnv(_ *cobra.Command, log logger.Logger) map[string]string {
+	blocName := viper.GetString("bloc")
+	if blocName == "" {
+		return map[string]string{}
+	}
+
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
+	if err != nil {
+		log.Warnf("Cannot load bloc config for env preparation: %v", err)
+
+		return map[string]string{}
+	}
+
+	provider := cfg.Provider
+	if provider == "" {
+		provider = cfg.IaaS
+	}
+
+	init, err := newBastionInitializer(provider, cfg)
+	if err != nil {
+		log.Warnf("Cannot create bastion initializer for env preparation: %v", err)
+
+		return map[string]string{}
+	}
+
+	return init.PrepareEnvironment()
+}
+
+// newBastionInitializer returns the provider-specific bastion initializer for the given
+// provider name and bloc config.  Mirrors the switch in bastion.Manager.getProviderInitializer.
+//
+//nolint:ireturn // returning interface type is intentional for provider pluggability
+func newBastionInitializer(provider string, cfg *config.Config) (bastionproviders.BastionInitializer, error) {
+	switch strings.ToLower(provider) {
+	case "pve":
+		return bastionproviders.NewPVEBastionInit(cfg), nil
+	case "aws":
+		return bastionproviders.NewAWSBastionInit(cfg), nil
+	case "stackit":
+		return bastionproviders.NewStackitBastionInit(cfg), nil
+	case "azure":
+		return bastionproviders.NewAzureBastionInit(cfg), nil
+	case "gcp":
+		return bastionproviders.NewGCPBastionInit(cfg), nil
+	case "openstack":
+		return bastionproviders.NewOpenStackBastionInit(cfg), nil
+	case "vmware", "vsphere":
+		return bastionproviders.NewVMwareBastionInit(cfg), nil
+	default:
+		return nil, fmt.Errorf("unsupported provider for bastion init: %q", provider)
+	}
 }
 
 // BastionContext holds the connection details for a bastion host.
@@ -271,15 +337,17 @@ func FindProvisionScript(scriptName string) (string, error) {
 	return "", ErrScriptNotFound(scriptName)
 }
 
-func copyAndExecuteScript(ctx *BastionContext, scriptPath, remoteScript, operationName, logPath string, log logger.Logger) error {
+func copyAndExecuteScript(ctx *BastionContext, scriptPath, remoteScript, operationName, logPath string, configEnv map[string]string, log logger.Logger) error {
 	// Copy the script to bastion
 	err := copyScriptToBastion(ctx, scriptPath, remoteScript, log)
 	if err != nil {
 		return err
 	}
 
-	// Prepare environment variables
-	envString := BuildEnvironmentVariables(log)
+	// Merge config-derived env (from PrepareEnvironment) with the operator
+	// environment.  Operator-exported values take precedence: configEnv
+	// entries are only used when the named var is absent from os.Getenv.
+	envString := BuildEnvironmentVariables(configEnv, log)
 
 	// Execute the script on bastion
 	err = executeRemoteScript(ctx, remoteScript, envString, operationName, logPath, log)
@@ -307,14 +375,34 @@ func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, l
 }
 
 func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
-	// Build SSH command and append remote execution string
-	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	// B-3 fix: avoid nested single-quote quoting by base64-encoding the env
+	// block.  The remote side decodes and evals it before invoking the script.
+	// This sidesteps the shell-quoting depth problem entirely regardless of
+	// what characters appear in env values (apostrophes, spaces, newlines, etc.).
+	//
+	// Security note: the base64 blob is still visible in `ps aux` on the local
+	// machine while the SSH process runs, and is trivially decoded.  For
+	// stronger isolation use SendEnv with a matching AcceptEnv on the sshd
+	// side (requires sshd config change on the bastion).  The base64 path is
+	// chosen here because it requires no sshd reconfiguration.
+	envB64 := base64.StdEncoding.EncodeToString([]byte(envString))
 
-	remote := fmt.Sprintf("bash -lc 'set -euo pipefail; %s perl %s | tee %s'", envString, remoteScript, logPath)
+	// The remote command: decode the base64 blob into a file, source it, then
+	// run the Perl script.  Using a temp file for the env avoids `eval` on
+	// arbitrary shell text and keeps PVE_TOKEN_SECRET off the ps command line
+	// of the Perl process itself.
+	remote := fmt.Sprintf(
+		"bash -lc 'set -euo pipefail; _e=$(mktemp); echo %s | base64 -d > \"$_e\"; . \"$_e\"; rm -f \"$_e\"; perl %s | tee %s'",
+		envB64, remoteScript, logPath,
+	)
+
+	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Executing %s on bastion", operationName)
-	log.Debugf("SSH exec: %s", strings.Join(sshCmd, " "))
+	// Log without the base64 payload to prevent token secrets appearing in
+	// debug output.  Only log the operation name and remote script path.
+	log.Debugf("SSH exec: ssh %s@%s perl %s | tee %s (env vars encoded)", ctx.User, ctx.IP, remoteScript, logPath)
 
 	execCtx := context.Background()
 
@@ -327,30 +415,71 @@ func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logg
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }
 
-// BuildEnvironmentVariables constructs environment variable export statements for remote bastion execution.
-func BuildEnvironmentVariables(_log logger.Logger) string {
-	// Build environment variables from environment for now
+// BuildEnvironmentVariables constructs shell assignment statements for remote bastion execution.
+// configEnv holds values from the bloc's PrepareEnvironment call.  Operator-exported values
+// (os.Getenv) take precedence: a configEnv entry is only used when the named var is not already
+// set in the process environment.
+//
+// The resulting string is NOT interpolated directly into a shell command line;
+// executeRemoteScript base64-encodes it and decodes+sources it on the remote side, which
+// eliminates all shell-quoting depth issues (B-3 fix).
+func BuildEnvironmentVariables(configEnv map[string]string, _log logger.Logger) string {
 	var envVars []string
 
-	if blocName := os.Getenv("OCFP_BLOC"); blocName != "" {
-		envVars = append(envVars, fmt.Sprintf("OCFP_BLOC='%s'", blocName))
+	// Ordered list of every var name forwarded to the bastion.
+	// Operator env takes precedence; configEnv fills in what the operator left unset.
+	varNames := []string{
+		// OCFP common vars - always forwarded regardless of provider.
+		"OCFP_BLOC",
+		"OCFP_PROVIDER",
+
+		// STACKIT provider vars.
+		"STACKIT_PROJECT_ID",
+		"STACKIT_ORG_ID",
+		"STACKIT_REGION",
+
+		// PVE provider vars.
+		// PVE_HOST, PVE_NODE, PVE_TOKEN_ID, PVE_TOKEN_SECRET are read by the
+		// provision/bastion Perl script via $ENV{...} for environment validation
+		// logging and any PVE API calls it makes.
+		// PVE_BRIDGE, PVE_STORAGE_POOL, and PVE_ISO_STORAGE allow the script
+		// to receive operator-specific storage/network topology without
+		// hard-coding defaults.
+		"PVE_HOST",
+		"PVE_NODE",
+		"PVE_TOKEN_ID",
+		"PVE_TOKEN_SECRET",
+		"PVE_BRIDGE",
+		"PVE_STORAGE_POOL",
+		"PVE_ISO_STORAGE",
 	}
 
-	if provider := os.Getenv("OCFP_PROVIDER"); provider != "" {
-		envVars = append(envVars, fmt.Sprintf("OCFP_PROVIDER='%s'", provider))
+	for _, name := range varNames {
+		appendEnvVar(&envVars, name, configEnv)
 	}
 
-	if stackitProjectID := os.Getenv("STACKIT_PROJECT_ID"); stackitProjectID != "" {
-		envVars = append(envVars, fmt.Sprintf("STACKIT_PROJECT_ID='%s'", stackitProjectID))
+	return strings.Join(envVars, "\n")
+}
+
+// appendEnvVar resolves a value for name: operator env (os.Getenv) wins;
+// configEnv supplies the fallback from the bloc PrepareEnvironment map.
+// When the resolved value is non-empty, a shell assignment line
+// (NAME='value') is appended to *vars.  Single quotes inside the value are
+// escaped with the standard shell idiom so the sourced file is safe even
+// when values contain apostrophes.
+func appendEnvVar(vars *[]string, name string, configEnv map[string]string) {
+	// Operator-exported value takes precedence.
+	val := os.Getenv(name)
+	if val == "" {
+		// Fall back to the bloc config-derived value when set.
+		val = configEnv[name]
 	}
 
-	if stackitOrgID := os.Getenv("STACKIT_ORG_ID"); stackitOrgID != "" {
-		envVars = append(envVars, fmt.Sprintf("STACKIT_ORG_ID='%s'", stackitOrgID))
+	if val == "" {
+		return
 	}
 
-	if stackitRegion := os.Getenv("STACKIT_REGION"); stackitRegion != "" {
-		envVars = append(envVars, fmt.Sprintf("STACKIT_REGION='%s'", stackitRegion))
-	}
-
-	return strings.Join(envVars, " ")
+	// Escape single quotes inside the value: end quote, escaped quote, reopen quote.
+	escaped := strings.ReplaceAll(val, "'", `'\''`)
+	*vars = append(*vars, fmt.Sprintf("%s='%s'", name, escaped))
 }
