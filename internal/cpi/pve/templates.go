@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cluster"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/nodes"
@@ -56,6 +57,13 @@ type TemplateSpec struct {
 
 	// Cores is the template VM core count.
 	Cores int
+
+	// RequireBastionUnits, when true, makes ProvisionTemplate boot the VM
+	// after create and seed it with the OCFP firstboot + watchdog units
+	// via termproxy before converting to a template. Bastions need this
+	// because tailscale install + watchdog must be baked into the image
+	// (PVE 9.x can't deliver snippets to per-VM clones).
+	RequireBastionUnits bool
 }
 
 // templateCatalog is the compile-time registry of known templates.
@@ -78,6 +86,20 @@ var templateCatalog = map[string]TemplateSpec{
 		SourceFilename: "ubuntu-jammy-amd64.qcow2",
 		Memory:         2048,
 		Cores:          2,
+	},
+	// Bastion templates: same source image, plus seeded firstboot + watchdog
+	// units (Change 2 in plans/pve-snippet-delivery-and-tailscale-config.md).
+	// The seed boots the VM once, installs jq + qemu-guest-agent, writes the
+	// scripts under /usr/local/sbin/, enables systemd units, and shuts down
+	// before `qm template`. Cloned bastions inherit the units and run them on
+	// first boot with per-VM config delivered via SMBIOS.
+	"ubuntu-noble-bastion-template": {
+		Name:                "ubuntu-noble-bastion-template",
+		SourceURL:           "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+		SourceFilename:      "ubuntu-noble-amd64.qcow2",
+		Memory:              2048,
+		Cores:               2,
+		RequireBastionUnits: true,
 	},
 }
 
@@ -179,6 +201,12 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 		return 0, fmt.Errorf("create template VM: %w", err)
 	}
 
+	if spec.RequireBastionUnits {
+		if err := m.seedBastionTemplate(ctx, node, vmid); err != nil {
+			return 0, fmt.Errorf("seed bastion template: %w", err)
+		}
+	}
+
 	err = m.convertToTemplate(ctx, node, vmid)
 	if err != nil {
 		return 0, fmt.Errorf("convert to template: %w", err)
@@ -187,6 +215,89 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 	log.Infof("template %s ready (vmid %d)", name, vmid)
 
 	return vmid, nil
+}
+
+// seedBastionTemplate configures the template VM for cloud-init login, starts
+// it, drives the firstboot+watchdog seed via termproxy, and waits for the VM
+// to halt cleanly. The VM stays in `stopped` state on return so the caller
+// can `qm template` it.
+func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, vmid int) error {
+	log := logger.WithOperation("seedBastionTemplate")
+
+	// Update the VM config with the credentials + DHCP needed for termproxy
+	// login and apt internet egress. These are wiped by `cloud-init clean`
+	// inside the seed; cloned VMs get their own ciuser/cipassword from the
+	// bloc config.
+	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+
+	_, err := m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
+		"ciuser":     templateSeedCIUser,
+		"cipassword": templateSeedCIPassword,
+		"ipconfig0":  "ip=dhcp",
+	})
+	if err != nil {
+		return fmt.Errorf("seed config PUT: %w", err)
+	}
+
+	qemuSvc := m.client.getQemuService()
+
+	startUPID, err := qemuSvc.Start(ctx, node, vmid)
+	if err != nil {
+		return fmt.Errorf("seed start: %w", err)
+	}
+
+	if startUPID != "" {
+		if err := m.client.waitForTask(ctx, node, startUPID, 60); err != nil {
+			return fmt.Errorf("await seed start: %w", err)
+		}
+	}
+
+	log.Infof("template VM %d booted; running seed via termproxy", vmid)
+
+	if err := m.seedTemplateVM(ctx, node, vmid); err != nil {
+		return fmt.Errorf("seed termproxy: %w", err)
+	}
+
+	// Wait for the guest's `shutdown -h now` to actually halt the VM.
+	if err := waitForVMStopped(ctx, m.client, node, vmid, 120*time.Second); err != nil {
+		// Fallback: force stop if the guest never finished shutting down.
+		log.Warnf("seed VM did not stop within deadline; forcing stop: %v", err)
+
+		stopUPID, stopErr := qemuSvc.Stop(ctx, node, vmid)
+		if stopErr != nil {
+			return fmt.Errorf("seed force stop: %w", stopErr)
+		}
+
+		if stopUPID != "" {
+			_ = m.client.waitForTask(ctx, node, stopUPID, 30)
+		}
+	}
+
+	return nil
+}
+
+// waitForVMStopped polls qemu status until the VM reports `stopped` or the
+// deadline elapses.
+func waitForVMStopped(ctx context.Context, c *Client, node string, vmid int, timeout time.Duration) error {
+	qemuSvc := c.getQemuService()
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		status, err := qemuSvc.Status(ctx, node, vmid)
+		if err == nil && status != nil {
+			if s, ok := status["status"].(string); ok && s == "stopped" {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for vmid %d to stop", vmid)
 }
 
 // createTemplateVM creates the VM that will become the template. The
