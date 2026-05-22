@@ -2,9 +2,66 @@ package pve
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
+
+func TestTailscaleSpecToSMBIOSPayload_NilEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := TailscaleSpecToSMBIOSPayload(nil); !got.IsEmpty() {
+		t.Errorf("nil spec → expected empty payload, got %+v", got)
+	}
+
+	if got := TailscaleSpecToSMBIOSPayload(&cpi.TailscaleSpec{}); !got.IsEmpty() {
+		t.Errorf("spec with no AuthKey → expected empty payload, got %+v", got)
+	}
+}
+
+func TestTailscaleSpecToSMBIOSPayload_FullSpec(t *testing.T) {
+	t.Parallel()
+
+	spec := &cpi.TailscaleSpec{
+		AuthKey:         "tskey-abc",
+		Hostname:        "ocfp-wayne-bastion",
+		Tags:            []string{"tag:ocfp-bastion"},
+		AcceptDNS:       false,
+		AcceptRoutes:    false,
+		SSH:             true,
+		ExitNode:        "",
+		AdvertiseRoutes: "10.64.64.0/18",
+	}
+
+	got := TailscaleSpecToSMBIOSPayload(spec)
+
+	if got.Serial != "tskey-abc" {
+		t.Errorf("Serial = %q, want %q", got.Serial, "tskey-abc")
+	}
+
+	if got.Family != smbiosFamilyBastion {
+		t.Errorf("Family = %q, want %q", got.Family, smbiosFamilyBastion)
+	}
+
+	var sku map[string]interface{}
+	if err := json.Unmarshal([]byte(got.SKU), &sku); err != nil {
+		t.Fatalf("SKU not valid JSON: %v\n%s", err, got.SKU)
+	}
+
+	if sku["hostname"] != "ocfp-wayne-bastion" {
+		t.Errorf("sku hostname = %v, want ocfp-wayne-bastion", sku["hostname"])
+	}
+
+	if sku["ssh"] != true {
+		t.Errorf("sku ssh = %v, want true", sku["ssh"])
+	}
+
+	if sku["advertise_routes"] != "10.64.64.0/18" {
+		t.Errorf("sku advertise_routes = %v, want 10.64.64.0/18", sku["advertise_routes"])
+	}
+}
 
 func TestSMBIOSPayload_IsEmpty(t *testing.T) {
 	t.Parallel()

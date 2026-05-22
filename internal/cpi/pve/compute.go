@@ -864,6 +864,23 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 		logger.Debugf("Skipping cloud-init user-data snippet upload: no snippets-capable storage available (set provider's iso_storage to a snippets-capable pool to enable)")
 	}
 
+	// SMBIOS injection: bastions get tailscale config delivered here. The
+	// snippet path above is fundamentally broken on PVE 9.x (snippets-upload
+	// API enum excludes them); SMBIOS is how the firstboot script baked into
+	// the bastion template reads per-VM config. See
+	// plans/pve-snippet-delivery-and-tailscale-config.md.
+	smbiosPayload := TailscaleSpecToSMBIOSPayload(req.Tailscale)
+	if !smbiosPayload.IsEmpty() {
+		smbiosVal := BuildSMBIOSConfigValue(smbiosPayload)
+
+		_, err := m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
+			"smbios1": smbiosVal,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set smbios1 for tailscale: %w", err)
+		}
+	}
+
 	return nil
 }
 
