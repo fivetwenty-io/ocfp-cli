@@ -206,6 +206,55 @@ blocs:
 | `bastion.ssh_user` | optional | Defaults to `ubuntu`. |
 | `bastion.keys` | optional | Extra public keys merged into authorized_keys via cloud-init. |
 
+## Global PVE credential defaults
+
+When you manage several PVE blocs that share the same API token, repeating the credentials in every bloc is error-prone and hard to rotate. The top-level `pve:` section in `~/.ocfp/config.yml` lets you set shared credentials once; each bloc inherits them automatically.
+
+### How it works
+
+The config file supports a `pve:` key at the top level, alongside `blocs:`. Any credential field set there becomes the default for every PVE bloc in the file. A bloc can override any individual field — the merge is field-by-field, not all-or-nothing.
+
+```yaml
+pve:
+  auth_token:   "root@pam!ocfp-shared-token"
+  token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+blocs:
+  prod:
+    provider: pve
+    api_endpoint: https://pve.prod.example.internal:8006
+    # auth_token and token_secret inherited from global pve: section
+
+  staging:
+    provider: pve
+    api_endpoint: https://pve.staging.example.internal:8006
+    auth_token:   "root@pam!staging-token"   # overrides global auth_token
+    token_secret: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"  # overrides global token_secret
+```
+
+In this example, `prod` inherits both credential fields from the global section. `staging` supplies its own values for both fields, so the global values are not used for that bloc.
+
+### Precedence rule
+
+If a bloc sets any of `auth_token`, `token_secret`, `username`, or `password`, that field's value wins for that bloc. Otherwise the value falls back to the global `pve:` section. The merge is field-by-field — a bloc may inherit `username` and `password` while overriding `auth_token` and `token_secret`.
+
+### Credential field reference
+
+| Field | YAML key | Purpose | Security note |
+|-------|----------|---------|---------------|
+| Token ID | `auth_token` | PVE API token in the form `user@realm!token-name` | Do not include the `=<uuid>` part here |
+| Token secret | `token_secret` | The UUID secret printed once when the token was created | Treat as a password; never commit to version control |
+| Username | `username` | PVE username (alternative to token auth) | Use only when API tokens are unavailable |
+| Password | `password` | PVE password for the above username | Token auth is strongly preferred |
+
+Only these four fields are supported in the global `pve:` section. Non-credential fields (`api_endpoint`, `verify_ssl`, `iso_storage`, `nodes`) are always bloc-specific; they cannot be set globally.
+
+### Backward compatibility
+
+Configs without a top-level `pve:` section behave exactly as before — no changes to existing bloc configs are required.
+
+> **Do not commit real credentials.** The global `pve:` section is subject to the same rule as bloc-level credentials: use redacted placeholders in shared config files and inject live values via Vault, environment variables, or local-only files outside version control.
+
 ## Run bootstrap
 
 Dry-run first:
