@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestConfigFileNeverWrittenBySetCurrentBloc verifies that SetCurrentBloc
@@ -147,4 +150,61 @@ func TestKeyMergeFromStateInLoadWithParams(t *testing.T) {
 	if cfg.Keys["test-keypair"] != "my-private-key" {
 		t.Errorf("expected merged key, got %q", cfg.Keys["test-keypair"])
 	}
+}
+
+// TestLoadAppliesPVEDefaultsWithBlocOverride verifies the end-to-end YAML
+// loading path: global pve: credentials are inherited by blocs that omit them,
+// and bloc-level values override the global defaults on a field-by-field basis.
+func TestLoadAppliesPVEDefaultsWithBlocOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("OCFP_HOME", tmpDir)
+
+	configContent := `pve:
+  auth_token: "root@pam!ocfp-bosh-cpi-root"
+  token_secret: "global-secret"
+  username: "global-user"
+  password: "global-pass"
+blocs:
+  inherit-all:
+    provider: pve
+    api_endpoint: https://pve.inherit.example
+  override-token:
+    provider: pve
+    api_endpoint: https://pve.override.example
+    auth_token: "root@pam!override-token"
+    token_secret: "override-secret"
+`
+	configPath := filepath.Join(tmpDir, "config.yml")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o600))
+
+	// Clear cache so each sub-test loads fresh from disk.
+	clearCache := func() {
+		configMutex.Lock()
+		cachedConfigs = make(map[string]*cachedConfig)
+		configMutex.Unlock()
+	}
+
+	t.Run("inherit-all bloc gets all global defaults", func(t *testing.T) {
+		clearCache()
+
+		cfg, err := LoadWithParams(configPath, "inherit-all")
+		require.NoError(t, err)
+
+		assert.Equal(t, "root@pam!ocfp-bosh-cpi-root", cfg.AuthToken, "AuthToken must come from global pve defaults")
+		assert.Equal(t, "global-secret", cfg.TokenSecret, "TokenSecret must come from global pve defaults")
+		assert.Equal(t, "global-user", cfg.Username, "Username must come from global pve defaults")
+		assert.Equal(t, "global-pass", cfg.Password, "Password must come from global pve defaults")
+	})
+
+	t.Run("override-token bloc overrides token fields, inherits username+password", func(t *testing.T) {
+		clearCache()
+
+		cfg, err := LoadWithParams(configPath, "override-token")
+		require.NoError(t, err)
+
+		assert.Equal(t, "root@pam!override-token", cfg.AuthToken, "AuthToken must use bloc-level value")
+		assert.Equal(t, "override-secret", cfg.TokenSecret, "TokenSecret must use bloc-level value")
+		assert.Equal(t, "global-user", cfg.Username, "Username must fall back to global pve defaults")
+		assert.Equal(t, "global-pass", cfg.Password, "Password must fall back to global pve defaults")
+	})
 }
