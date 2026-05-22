@@ -1,7 +1,7 @@
 # Stratos Push — Wayne CF (★★ FINAL GATE)
 
 Pushes the branded FiveTwenty Stratos console app to Wayne CF and verifies it
-at `https://console.cf.wayne.pve.lab.fivetwenty.io`. This is the final
+at `https://console.apps.ocf.wayne.lab.fivetwenty.io`. This is the final
 gate for the Wayne bloc bring-up.
 
 **Run from:** operator Mac. All `cf` and `bun` commands run locally. The
@@ -20,14 +20,14 @@ All of the following must be complete before this step:
 - [Wayne Bastion Bringup](02-bastion-bringup.md) — bastion running on `10.64.64.3`
 - 03-cloudflare-tunnel-bootstrap.md — `ocfp-wayne` tunnel configured on bastion
 - 04-env-bosh-and-cf-deploy.md — CF deployed and healthy at
-  `https://api.cf.wayne.pve.lab.fivetwenty.io`
-- 04-dns-reconciliation.md — `*.cf.wayne.pve.lab.fivetwenty.io` DNS CNAME records
+  `https://api.system.ocf.wayne.lab.fivetwenty.io`
+- 04-dns-reconciliation.md — `*.apps.ocf.wayne.lab.fivetwenty.io` DNS CNAME records
   pointing through the cloudflared tunnel to HAProxy `10.64.64.50`
 
 Verify CF is reachable before proceeding:
 
 ```bash
-curl -sk https://api.cf.wayne.pve.lab.fivetwenty.io/v2/info | jq .name
+curl -sk https://api.system.ocf.wayne.lab.fivetwenty.io/v2/info | jq .name
 ```
 
 Expected: `"vcap"` (or similar CF version string). Any connection error means
@@ -94,7 +94,7 @@ lab vault first.
 ## 2. Target Wayne CF from operator Mac
 
 ```bash
-cf api https://api.cf.wayne.pve.lab.fivetwenty.io --skip-ssl-validation
+cf api https://api.system.ocf.wayne.lab.fivetwenty.io --skip-ssl-validation
 ```
 
 Log in as admin, pulling the password from vault:
@@ -112,7 +112,7 @@ cf target
 Expected output includes:
 
 ```
-API endpoint:   https://api.cf.wayne.pve.lab.fivetwenty.io
+API endpoint:   https://api.system.ocf.wayne.lab.fivetwenty.io
 User:           admin
 ```
 
@@ -234,16 +234,16 @@ applications:
 ```
 
 The `host: console` field tells CF to use `console` as the hostname prefix,
-producing `console.<default-domain>`. With `cf.wayne.pve.lab.fivetwenty.io` as
-the default domain this resolves to `console.cf.wayne.pve.lab.fivetwenty.io` —
+producing `console.<default-domain>`. With `ocf.wayne.lab.fivetwenty.io` as
+the default domain this resolves to `console.apps.ocf.wayne.lab.fivetwenty.io` —
 matching the DNS record created in the DNS reconciliation runbook.
 
-If the default domain is not `cf.wayne.pve.lab.fivetwenty.io`, add an explicit
+If the default domain is not `ocf.wayne.lab.fivetwenty.io`, add an explicit
 route:
 
 ```yaml
     routes:
-      - route: console.cf.wayne.pve.lab.fivetwenty.io
+      - route: console.apps.ocf.wayne.lab.fivetwenty.io
 ```
 
 Check the CF default domain:
@@ -272,7 +272,7 @@ name:              console
 requested state:   started
 instances:         1/1
 usage:             1.5G x 1 instances
-routes:            console.cf.wayne.pve.lab.fivetwenty.io
+routes:            console.apps.ocf.wayne.lab.fivetwenty.io
 ```
 
 ---
@@ -289,7 +289,7 @@ Expected:
 
 ```
 name      requested state   instances   memory   disk   urls
-console   started           1/1         1.5G     2G     console.cf.wayne.pve.lab.fivetwenty.io
+console   started           1/1         1.5G     2G     console.apps.ocf.wayne.lab.fivetwenty.io
 ```
 
 For detail:
@@ -303,7 +303,7 @@ Check that `state` is `running` for the instance and health check is passing.
 ### 7.2 HTTP reachability
 
 ```bash
-curl -sI https://console.cf.wayne.pve.lab.fivetwenty.io
+curl -sI https://console.apps.ocf.wayne.lab.fivetwenty.io
 ```
 
 Expected: `HTTP/2 200` (or `HTTP/1.1 200 OK`). A redirect to HTTPS is also
@@ -311,7 +311,7 @@ acceptable if the `--skip-ssl-validation` flag is needed for curl.
 
 ### 7.3 Browser smoke test
 
-Open `https://console.cf.wayne.pve.lab.fivetwenty.io` in a browser.
+Open `https://console.apps.ocf.wayne.lab.fivetwenty.io` in a browser.
 
 Expected: FiveTwenty branded Stratos login page — FiveTwenty logo, brand
 colors, and product name. If the default Stratos branding appears instead,
@@ -329,7 +329,7 @@ This script verifies HTTP 200, login form presence, and the branded page title.
 
 ## 8. Log in to Stratos UI
 
-1. Open `https://console.cf.wayne.pve.lab.fivetwenty.io`
+1. Open `https://console.apps.ocf.wayne.lab.fivetwenty.io`
 2. Enter credentials:
 
    - **Username:** `admin`
@@ -337,7 +337,7 @@ This script verifies HTTP 200, login form presence, and the branded page title.
 
 3. On first login Stratos prompts to configure a CF endpoint. Use:
 
-   - **API endpoint:** `https://api.cf.wayne.pve.lab.fivetwenty.io`
+   - **API endpoint:** `https://api.system.ocf.wayne.lab.fivetwenty.io`
    - **Skip SSL validation:** enabled (self-signed cert behind cloudflared tunnel)
 
 4. After connecting, navigate to **Organizations → system → Spaces**. The
@@ -386,13 +386,13 @@ Verify the Cloudflare DNS records from the DNS reconciliation runbook exist:
 flarectl dns list --zone lab.fivetwenty.io | grep cf.wayne
 ```
 
-Expected: CNAME records pointing `*.cf.wayne.pve.lab.fivetwenty.io` to the
+Expected: CNAME records pointing `*.apps.ocf.wayne.lab.fivetwenty.io` to the
 cloudflared tunnel hostname (`<uuid>.cfargotunnel.com`).
 
 Test DNS resolution locally:
 
 ```bash
-dig console.cf.wayne.pve.lab.fivetwenty.io +short
+dig console.apps.ocf.wayne.lab.fivetwenty.io +short
 ```
 
 Expected: an IP address (Cloudflare anycast), not `NXDOMAIN`.
@@ -405,27 +405,27 @@ should trust it by default (Cloudflare is a trusted CA).
 If the browser shows an untrusted cert:
 
 - Confirm cloudflared is running on the bastion: `ssh ubuntu@10.64.64.3 systemctl status cloudflared`
-- Verify the tunnel config maps `console.cf.wayne.pve.lab.fivetwenty.io` to
+- Verify the tunnel config maps `console.apps.ocf.wayne.lab.fivetwenty.io` to
   `http://10.64.64.50` (HAProxy, port 80), not to an HTTPS backend. Cloudflare
   handles TLS termination at its edge; the origin connection from cloudflared
   to HAProxy is plain HTTP inside the private network.
 
 ### 9.4 Stratos cannot connect to CF API
 
-Stratos calls `https://api.cf.wayne.pve.lab.fivetwenty.io` from inside the CF
+Stratos calls `https://api.system.ocf.wayne.lab.fivetwenty.io` from inside the CF
 cell. The cell must be able to reach the Gorouter through the CF network. If
 Stratos shows a connection error after login:
 
-1. Verify the `api.cf.wayne.pve.lab.fivetwenty.io` DNS record exists:
+1. Verify the `api.system.ocf.wayne.lab.fivetwenty.io` DNS record exists:
 
    ```bash
-   dig api.cf.wayne.pve.lab.fivetwenty.io +short
+   dig api.system.ocf.wayne.lab.fivetwenty.io +short
    ```
 
 2. Verify the CF API responds to an in-cluster request (from the bastion):
 
    ```bash
-   ssh ubuntu@10.64.64.3 curl -sk https://api.cf.wayne.pve.lab.fivetwenty.io/v2/info | jq .name
+   ssh ubuntu@10.64.64.3 curl -sk https://api.system.ocf.wayne.lab.fivetwenty.io/v2/info | jq .name
    ```
 
 3. If the CF API cert is self-signed and Stratos rejects it, set
@@ -462,8 +462,8 @@ If default branding appears:
 
 | Item | Value |
 |------|-------|
-| CF API | `https://api.cf.wayne.pve.lab.fivetwenty.io` |
-| Stratos URL | `https://console.cf.wayne.pve.lab.fivetwenty.io` |
+| CF API | `https://api.system.ocf.wayne.lab.fivetwenty.io` |
+| Stratos URL | `https://console.apps.ocf.wayne.lab.fivetwenty.io` |
 | CF org / space | `system` / `stratos` |
 | App name | `console` |
 | CF admin password vault path | `secret/exodus/ocfp-pve-wayne-cf:admin_password` |
@@ -481,7 +481,7 @@ With Stratos live, the Wayne bloc bring-up is complete. Final state:
 - PVE CPI service account and token in vault
 - Bastion running at `10.64.64.3`, provisioned with all operator tooling
 - Cloudflared tunnel `ocfp-wayne` routing public traffic to the CF cluster
-- DNS records for `*.cf.wayne.pve.lab.fivetwenty.io` live in Cloudflare
+- DNS records for `*.apps.ocf.wayne.lab.fivetwenty.io` live in Cloudflare
 - CF foundation healthy (BOSH director + CF deployment)
 - Stratos console deployed and accessible with FiveTwenty branding
 
