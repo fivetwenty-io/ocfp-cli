@@ -97,6 +97,23 @@ func (p *PVEBastionInit) PrepareEnvironment() map[string]string {
 		env["PVE_PASSWORD_BASE64"] = encoded
 	}
 
+	// PVE network/storage topology vars consumed by the provision/bastion Perl script.
+	// Config field mapping:
+	//   PVE_BRIDGE       → config.Network.Name  (set by bootstrap as default_bridge)
+	//   PVE_STORAGE_POOL → config.Artifacts.Data.StoragePool (VM root-disk pool)
+	//   PVE_ISO_STORAGE  → config.IsoStorage    (cloud-init ISO / snippet pool)
+	if p.config.Network.Name != "" {
+		env["PVE_BRIDGE"] = p.config.Network.Name
+	}
+
+	if p.config.Artifacts.Data.StoragePool != "" {
+		env["PVE_STORAGE_POOL"] = p.config.Artifacts.Data.StoragePool
+	}
+
+	if p.config.IsoStorage != "" {
+		env["PVE_ISO_STORAGE"] = p.config.IsoStorage
+	}
+
 	// Add Genesis-specific variables if configured
 	p.addGenesisEnv(env)
 
@@ -146,13 +163,44 @@ func (p *PVEBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return details, nil
 }
 
-// Initialize performs the actual bastion initialization.
-func (p *PVEBastionInit) Initialize(_ctx context.Context) error {
-	p.log.Info("Initializing Proxmox VE bastion")
+// Initialize validates PVE configuration and probes API connectivity.
+//
+// Validation always runs: missing host or auth credentials return an error
+// immediately so the caller gets a clear diagnostic before any network I/O.
+//
+// Connectivity probe: Initialize attempts to authenticate with the PVE API
+// via the registered CPI provider (which calls GET /version under the hood).
+// A probe failure is treated as a non-fatal warning — the bastion host may be
+// reachable by SSH even when the PVE API is temporarily unavailable or the
+// operator plans to provide connectivity later. This matches the staged-init
+// contract used by the AWS provider.
+func (p *PVEBastionInit) Initialize(ctx context.Context) error {
+	p.log.Infow("Initializing Proxmox VE bastion", "bloc", p.config.Name, "host", p.config.APIEndpoint)
 
-	// This method coordinates the initialization process
-	// The actual work is done by the Manager class, but this method
-	// can perform Proxmox VE-specific setup if needed
+	// Validate required configuration fields before attempting any I/O.
+	if err := p.Validate(); err != nil {
+		return fmt.Errorf("pve bastion configuration invalid: %w", err)
+	}
+
+	// Probe PVE API connectivity. Use the CPI provider so we exercise the same
+	// auth path (token or user/pass) that the rest of the CLI uses at runtime.
+	provider, err := cpi.GetProvider("pve")
+	if err != nil {
+		p.log.Warnw("PVE CPI provider not registered; skipping connectivity probe", "error", err)
+
+		return nil
+	}
+
+	if err := provider.Initialize(ctx, p.config); err != nil {
+		p.log.Warnw("PVE API connectivity probe failed; continuing with staged initialization",
+			"host", p.config.APIEndpoint,
+			"error", err,
+		)
+
+		return nil
+	}
+
+	p.log.Infow("PVE API connectivity confirmed", "host", p.config.APIEndpoint)
 
 	return nil
 }
