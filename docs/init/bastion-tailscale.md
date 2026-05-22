@@ -109,15 +109,56 @@ Create the auth key under Tailscale admin → Settings → Keys → Generate aut
 
 Copy the `tskey-...` value.
 
-### 4. Vault entry
+### 4. Tailscale config in `~/.ocfp/config.yml`
 
-Store the key in Vault so `ocfp init pve` can pick it up without an env var:
+OCFP reads tailscale settings from the config file at two scopes:
 
-```bash
-safe write secret/ocfp/tailscale/auth_key value="tskey-..."
+- A top-level `tailscale:` block supplies global defaults for every bloc.
+
+- A per-bloc `tailscale:` block under `blocs.<name>.tailscale` overrides global on a field-by-field basis.
+
+Per-bloc fields take precedence. There is no fallback to a hard-coded vault path — operators who relied on the legacy `secret/ocfp/tailscale/auth_key` location must move the value into the config.
+
+The auth key may be supplied as a literal value or as a vault-path indirection. The two are mutually exclusive within a single scope:
+
+```yaml
+tailscale:
+  # Pick one of the next two. Setting both is a config error.
+  auth_key: "tskey-..."                          # literal
+  auth_key_vault_path: "secret/ocfp/tailscale:auth_key"  # "path:key" -> vault read at runtime
+
+  tags:
+    - "tag:ocfp-bastion"
+  accept_dns: false
+  accept_routes: false
+  ssh: true
+  # exit_node: ""           # optional tailnet exit node
+  # advertise_routes: ""    # optional CIDR; auto-derived from bastion static IP+prefix when empty
+  # hostname: ""            # optional override; defaults to the bastion VM name
+
+blocs:
+  example-bloc:
+    provider: pve
+    # ... usual bloc fields ...
+    tailscale:
+      # Per-bloc overrides; any field omitted here inherits from the
+      # top-level tailscale: block above.
+      auth_key: "tskey-bloc-specific-..."
+      hostname: "example-bastion"
 ```
 
-Both ocfp and any per-operator tooling can read this same path; rotate by overwriting it.
+Storing the key in vault stays a supported option — point `auth_key_vault_path` at any `path:key` location:
+
+```bash
+safe write secret/team/tailscale auth_key="tskey-..."
+```
+
+```yaml
+tailscale:
+  auth_key_vault_path: "secret/team/tailscale:auth_key"
+```
+
+Rotate by overwriting the literal in the config or the value at the vault path; re-running `ocfp init pve` re-renders the cloud-init snippet but does not re-create existing bastion VMs (see the rotation section below).
 
 ## Boot-time flow
 
@@ -131,7 +172,7 @@ sequenceDiagram
     participant TS as Tailscale control plane
 
     Operator->>ocfp: ocfp init pve --bloc <name>
-    ocfp->>Vault: read secret/ocfp/tailscale/auth_key
+    ocfp->>Vault: read <tailscale.auth_key_vault_path> (or skip if literal auth_key is set)
     ocfp->>PVE: create bastion VM with cloud-init (TailscaleAuthKey set)
     PVE->>Bastion: boot with rendered user-data
     Bastion->>Bastion: runcmd: install tailscale
@@ -163,17 +204,17 @@ sudo tailscale status
 Common causes:
 
 - Empty `TailscaleAuthKey`
-  Cloud-init skipped the runcmd block. Re-check Vault and re-run `ocfp init pve`.
+  Bootstrap could not resolve a key from `tailscale.auth_key` or `tailscale.auth_key_vault_path` (per-bloc or global). Verify the config block and re-run `ocfp init pve`.
 
 - Auth key expired or revoked
-  `tailscale up` returned a 401. Mint a new key, write it to Vault, and re-run.
+  `tailscale up` returned a 401. Mint a new key, update the literal or the vault entry referenced by `tailscale.auth_key_vault_path`, and re-run.
 
 - Tag not in `tagOwners`
   Tailscale rejects `--advertise-tags`. Add the tag to ACL `tagOwners` and re-run.
 
 ## Re-running and rotation
 
-`ocfp init pve` is idempotent. Re-running on an already-joined bastion re-renders the cloud-init snippet but the VM is not re-created, so `tailscale up` does not re-run. To rotate the auth key for already-joined bastions, rotate at the Tailscale layer (Settings → Keys), then update Vault. Existing machines keep working on their machine keys.
+`ocfp init pve` is idempotent. Re-running on an already-joined bastion re-renders the cloud-init snippet but the VM is not re-created, so `tailscale up` does not re-run. To rotate the auth key for already-joined bastions, rotate at the Tailscale layer (Settings → Keys), then update the literal in the config or the value at the configured vault path. Existing machines keep working on their machine keys.
 
 To force a fresh join (e.g., recovering a bastion that was removed from the tailnet), SSH to the bastion and run `tailscale up --authkey=...` manually, or destroy and re-create the VM.
 
