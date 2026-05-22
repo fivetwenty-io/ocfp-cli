@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cluster"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/nodes"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -230,10 +228,18 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	// bloc config.
 	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
+	// Override net0 to use vmbr1 (PVE host's default WAN bridge) for the
+	// template build phase. The bloc's own SDN bridge (lvnet001 etc.)
+	// typically doesn't run DHCP — VMs there use static IPs from state —
+	// so the template VM can't reach apt without an internet-capable
+	// bridge during seed. vmbr1 is wiped from the template config below
+	// before convert-to-template via cloud-init clean so cloned VMs get
+	// the per-bloc bridge from their own InstanceRequest.
 	_, err := m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
 		"ciuser":     templateSeedCIUser,
 		"cipassword": templateSeedCIPassword,
 		"ipconfig0":  "ip=dhcp",
+		"net0":       "virtio,bridge=vmbr1",
 	})
 	if err != nil {
 		return fmt.Errorf("seed config PUT: %w", err)
@@ -361,45 +367,71 @@ func (m *ComputeManager) convertToTemplate(ctx context.Context, node string, vmi
 	return nil
 }
 
-// nextTemplateVMID asks PVE for the next free VMID at or above 9000. The
-// `vmid` query parameter is the lower bound; PVE returns the first unused
-// id ≥ that value.
+// nextTemplateVMID returns the lowest free VMID in the OCFP template range
+// (≥ 9000). Despite its name, PVE's `/cluster/nextid?vmid=N` validates that
+// N specifically is free — it does NOT return the next free id ≥ N. We
+// instead probe the cluster's resource list once and pick the smallest gap.
 func (c *Client) nextTemplateVMID(ctx context.Context) (int, error) {
-	clusterSvc := cluster.New(c.pveClient)
-
-	floor := templateVMIDFloor
-
-	resp, err := clusterSvc.ListNextid(ctx, &cluster.ListNextidParams{Vmid: &floor})
+	used, err := c.usedClusterVMIDs(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("cluster.ListNextid: %w", err)
+		return 0, fmt.Errorf("inventory cluster VMIDs: %w", err)
 	}
 
-	if resp == nil || len(*resp) == 0 {
-		return 0, fmt.Errorf("cluster.ListNextid: empty response")
+	for id := int(templateVMIDFloor); id < int(templateVMIDFloor)+100; id++ {
+		if !used[id] {
+			return id, nil
+		}
 	}
 
-	// PVE returns the next id as a JSON-encoded string (e.g. `"9000"`).
-	// Trim quotes and parse.
-	raw := strings.TrimSpace(string(*resp))
-	raw = strings.Trim(raw, `"`)
+	return 0, fmt.Errorf("no free VMID in template range %d-%d", templateVMIDFloor, int(templateVMIDFloor)+99)
+}
 
-	id, err := strconv.Atoi(raw)
+// usedClusterVMIDs returns the set of VMIDs currently allocated across the
+// cluster (both running VMs and stopped templates).
+func (c *Client) usedClusterVMIDs(ctx context.Context) (map[int]bool, error) {
+	resp, err := c.pveClient.GetCtx(ctx, "/cluster/resources?type=vm", nil)
 	if err != nil {
-		return 0, fmt.Errorf("parse VMID %q: %w", raw, err)
+		return nil, fmt.Errorf("GET /cluster/resources: %w", err)
 	}
 
-	if int64(id) < templateVMIDFloor {
-		return 0, fmt.Errorf("cluster.ListNextid returned %d below floor %d", id, templateVMIDFloor)
+	raw, ok := resp.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("cluster/resources: unexpected response shape %T", resp)
 	}
 
-	return id, nil
+	used := make(map[int]bool, len(raw))
+
+	for _, item := range raw {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if v, ok := entry["vmid"].(float64); ok {
+			used[int(v)] = true
+		}
+	}
+
+	return used, nil
 }
 
 // downloadTemplateImage triggers PVE's native download-url task to fetch the
 // cloud image directly onto the node into `storage`. Blocks until the task
-// completes. If the file already exists on storage, PVE returns success
-// without re-downloading.
+// completes. Earlier doc claimed PVE returns success if the file already
+// exists; it doesn't — it refuses to overwrite. Probe first and skip the
+// download when the file is already present (the bastion template re-uses
+// the vanilla template's qcow2).
 func (c *Client) downloadTemplateImage(ctx context.Context, node, storage string, spec TemplateSpec) error {
+	exists, err := c.importVolumeExists(ctx, node, storage, spec.SourceFilename)
+	if err != nil {
+		logger.Warnf("could not probe import storage for %s; attempting download anyway: %v", spec.SourceFilename, err)
+	}
+
+	if exists {
+		logger.Debugf("image %s already on %s; skipping download", spec.SourceFilename, storage)
+		return nil
+	}
+
 	nodesSvc := nodes.New(c.pveClient)
 
 	// PVE 8.2+ uses content type "import" for raw cloud images that will be
@@ -432,6 +464,36 @@ func (c *Client) downloadTemplateImage(ctx context.Context, node, storage string
 	}
 
 	return nil
+}
+
+// importVolumeExists returns true when filename is already in storage's
+// "import" content view (PVE 8.2+ filename format: <storage>:import/<file>).
+func (c *Client) importVolumeExists(ctx context.Context, node, storage, filename string) (bool, error) {
+	path := fmt.Sprintf("/nodes/%s/storage/%s/content?content=import", node, storage)
+
+	resp, err := c.pveClient.GetCtx(ctx, path, nil)
+	if err != nil {
+		return false, err
+	}
+
+	raw, ok := resp.([]interface{})
+	if !ok {
+		return false, nil
+	}
+
+	want := fmt.Sprintf("%s:import/%s", storage, filename)
+	for _, item := range raw {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if vid, ok := entry["volid"].(string); ok && vid == want {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // parseUPID extracts a UPID string from a raw-JSON response. The PVE
