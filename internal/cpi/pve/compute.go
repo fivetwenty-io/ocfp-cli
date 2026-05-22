@@ -22,23 +22,23 @@ const (
 	taskTimeoutDefault = 120 // 2 minutes for standard operations
 
 	// Flavor preset resource values.
-	flavorSmallRAM    = 1024
-	flavorSmallDisk   = 10
-	flavorMedCPU      = 2
-	flavorMedRAM      = 2048
-	flavorMedDisk     = 20
-	flavorLargeCPU    = 4
-	flavorLargeRAM    = 4096
-	flavorLargeDisk   = 40
-	flavorXLCPU       = 8
-	flavorXLRAM       = 8192
-	flavorXLDisk      = 80
-	flavorBastionCPU  = 2
-	flavorBastionRAM  = 8192
-	flavorBastionDisk = 50
-	flavorBoshCPU     = 4
-	flavorBoshRAM     = 8192
-	flavorBoshDisk    = 100
+	flavorSmallRAM      = 1024
+	flavorSmallDisk     = 10
+	flavorMedCPU        = 2
+	flavorMedRAM        = 2048
+	flavorMedDisk       = 20
+	flavorLargeCPU      = 4
+	flavorLargeRAM      = 4096
+	flavorLargeDisk     = 40
+	flavorXLCPU         = 8
+	flavorXLRAM         = 8192
+	flavorXLDisk        = 80
+	flavorBastionCPU    = 2
+	flavorBastionRAM    = 8192
+	flavorBastionDisk   = 50
+	flavorBoshCPU       = 4
+	flavorBoshRAM       = 8192
+	flavorBoshDisk      = 100
 	flavorArtifactsCPU  = 4
 	flavorArtifactsRAM  = 8192
 	flavorArtifactsDisk = 50
@@ -867,8 +867,7 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 	// SMBIOS injection: bastions get tailscale config delivered here. The
 	// snippet path above is fundamentally broken on PVE 9.x (snippets-upload
 	// API enum excludes them); SMBIOS is how the firstboot script baked into
-	// the bastion template reads per-VM config. See
-	// plans/pve-snippet-delivery-and-tailscale-config.md.
+	// the bastion template reads per-VM config.
 	smbiosPayload := TailscaleSpecToSMBIOSPayload(req.Tailscale)
 	if !smbiosPayload.IsEmpty() {
 		smbiosVal := BuildSMBIOSConfigValue(smbiosPayload)

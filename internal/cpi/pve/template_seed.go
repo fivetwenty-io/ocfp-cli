@@ -15,7 +15,7 @@ import (
 // before it is converted to a PVE template. We drive the VM via termproxy
 // because PVE 9.x's snippets-upload API is blocked, the upstream Ubuntu Noble
 // cloud image ships without qemu-guest-agent, and SSH to the PVE host is
-// out of scope. See plans/pve-snippet-delivery-and-tailscale-config.md.
+// out of scope.
 
 const (
 	// templateSeedCIUser is the cloud-init user the seed step authenticates
@@ -34,10 +34,10 @@ const (
 	// timeouts for the seed phases. Real-world numbers from lab runs:
 	// cloud-init done in ~90s, apt install in ~45s, write_files in <5s,
 	// daemon-reload + enable + shutdown in <5s.
-	templateSeedBootTimeout   = 240 * time.Second
-	templateSeedLoginTimeout  = 60 * time.Second
-	templateSeedAptTimeout    = 180 * time.Second
-	templateSeedShellTimeout  = 30 * time.Second
+	templateSeedBootTimeout  = 240 * time.Second
+	templateSeedLoginTimeout = 60 * time.Second
+	templateSeedAptTimeout   = 180 * time.Second
+	templateSeedShellTimeout = 30 * time.Second
 )
 
 // shellPromptRe matches a typical interactive prompt at end-of-buffer. We
