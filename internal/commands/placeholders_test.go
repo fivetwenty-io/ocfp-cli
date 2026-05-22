@@ -246,7 +246,7 @@ func TestBuildEnvironmentVariables(t *testing.T) {
 	t.Setenv("OCFP_BLOC", "test-bloc")
 	t.Setenv("OCFP_PROVIDER", "stackit")
 
-	envString := commands.BuildEnvironmentVariables(nil)
+	envString := commands.BuildEnvironmentVariables(nil, nil)
 	assert.Contains(t, envString, "OCFP_BLOC='test-bloc'")
 	assert.Contains(t, envString, "OCFP_PROVIDER='stackit'")
 }
