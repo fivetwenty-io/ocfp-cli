@@ -6,18 +6,18 @@ set -euo pipefail
 # Runs FROM the operator Mac (DNS resolves via cloudflared tunnel).
 # Requires: dig, curl, cf, safe CLIs installed; vault unsealed and safe targeted.
 #
-# Console URL:  https://console.cf.wayne.pve.lab.fivetwenty.io
-# CF API:       https://api.cf.wayne.pve.lab.fivetwenty.io
-# UAA/login:    https://login.cf.wayne.pve.lab.fivetwenty.io
+# Console URL:  https://console.apps.ocf.wayne.lab.fivetwenty.io
+# CF API:       https://api.system.ocf.wayne.lab.fivetwenty.io
+# UAA/login:    https://login.system.ocf.wayne.lab.fivetwenty.io
 # CF app:       org=system  space=stratos  name=console
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-CONSOLE_FQDN="${CONSOLE_FQDN:-console.cf.wayne.pve.lab.fivetwenty.io}"
-CF_API_FQDN="${CF_API_FQDN:-api.cf.wayne.pve.lab.fivetwenty.io}"
-UAA_FQDN="${UAA_FQDN:-login.cf.wayne.pve.lab.fivetwenty.io}"
+CONSOLE_FQDN="${CONSOLE_FQDN:-console.apps.ocf.wayne.lab.fivetwenty.io}"
+CF_API_FQDN="${CF_API_FQDN:-api.system.ocf.wayne.lab.fivetwenty.io}"
+UAA_FQDN="${UAA_FQDN:-login.system.ocf.wayne.lab.fivetwenty.io}"
 ADMIN_PASS_VAULT_PATH="${ADMIN_PASS_VAULT_PATH:-secret/exodus/ocfp-pve-wayne-cf/cf:admin_password}"
 CF_ORG="${CF_ORG:-system}"
 CF_SPACE="${CF_SPACE:-stratos}"

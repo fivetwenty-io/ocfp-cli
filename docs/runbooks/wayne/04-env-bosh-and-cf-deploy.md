@@ -203,7 +203,7 @@ Secret categories generated include:
 | Loggregator | Doppler keys, traffic controller |
 | Router | TLS certs for gorouter |
 | HAProxy | Backend health check credentials |
-| System domain | Wildcard TLS cert for `*.cf.wayne.pve.lab.fivetwenty.io` |
+| System domain | Wildcard TLS cert for `*.apps.ocf.wayne.lab.fivetwenty.io` |
 
 Accept auto-generated values. This step takes 1-2 minutes due to RSA key
 generation.
@@ -237,7 +237,7 @@ Required assertions:
 
 | Field | Required value |
 |-------|---------------|
-| `system_domain` | `cf.wayne.pve.lab.fivetwenty.io` |
+| `system_domain` | `ocf.wayne.lab.fivetwenty.io` |
 | haproxy static IP | `10.64.64.50` |
 | cloud-config `range` | `10.64.64.0/18` (not `192.168.1.0/24`) |
 
@@ -293,8 +293,8 @@ Expected from the `curl`: a JSON blob containing `cf_version`, `api_version`, an
   "support": "https://support.cloudfoundry.org",
   "version": 0,
   "description": "",
-  "authorization_endpoint": "https://login.cf.wayne.pve.lab.fivetwenty.io",
-  "token_endpoint": "https://uaa.cf.wayne.pve.lab.fivetwenty.io",
+  "authorization_endpoint": "https://login.system.ocf.wayne.lab.fivetwenty.io",
+  "token_endpoint": "https://uaa.system.ocf.wayne.lab.fivetwenty.io",
   "api_version": "2.189.0",
   ...
 }
@@ -406,8 +406,8 @@ The output must show `10.64.64.x` ranges, not `192.168.1.x`.
 | mgmt-BOSH | `https://10.64.64.10:25555` |
 | env-BOSH | `https://10.64.64.12:25555` |
 | HAProxy | `10.64.64.50` |
-| CF API | `https://api.cf.wayne.pve.lab.fivetwenty.io` |
-| CF apps domain | `*.cf.wayne.pve.lab.fivetwenty.io` → 10.64.64.50 |
+| CF API | `https://api.system.ocf.wayne.lab.fivetwenty.io` |
+| CF apps domain | `*.apps.ocf.wayne.lab.fivetwenty.io` → 10.64.64.50 |
 
 ---
 
@@ -417,10 +417,10 @@ With CF running and smoke tests passing, proceed to:
 
 1. **Cloudflare tunnel + DNS** — see `05-stratos-push.md` (W5i + W5j):
    bring up the `ocfp-wayne` cloudflared tunnel on the bastion, then cut
-   over DNS records `cf.wayne.pve.lab.fivetwenty.io` and
-   `*.cf.wayne.pve.lab.fivetwenty.io` in the `lab.fivetwenty.io` zone to
+   over DNS records `ocf.wayne.lab.fivetwenty.io` and
+   `*.apps.ocf.wayne.lab.fivetwenty.io` in the `lab.fivetwenty.io` zone to
    route public traffic through the tunnel to HAProxy at `10.64.64.50`.
 
 2. After DNS cutover completes, the CF API is reachable from the internet
-   at `https://api.cf.wayne.pve.lab.fivetwenty.io` and Stratos can be pushed
+   at `https://api.system.ocf.wayne.lab.fivetwenty.io` and Stratos can be pushed
    to the `system/stratos` space.

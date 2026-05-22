@@ -8,15 +8,15 @@ set -euo pipefail
 #
 # Vault path convention: secret/exodus/<genesis-env-name>/cf
 # Genesis env: ocfp-pve-wayne-cf  HAProxy IP: 10.64.64.50
-# System domain: cf.wayne.pve.lab.fivetwenty.io
+# System domain: ocf.wayne.lab.fivetwenty.io
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 CF_ENV_NAME="${CF_ENV_NAME:-ocfp-pve-wayne-cf}"
-CF_API_URL="${CF_API_URL:-https://api.cf.wayne.pve.lab.fivetwenty.io}"
-CF_LOGIN_URL="${CF_LOGIN_URL:-https://login.cf.wayne.pve.lab.fivetwenty.io}"
+CF_API_URL="${CF_API_URL:-https://api.system.ocf.wayne.lab.fivetwenty.io}"
+CF_LOGIN_URL="${CF_LOGIN_URL:-https://login.system.ocf.wayne.lab.fivetwenty.io}"
 CF_HAPROXY_IP="${CF_HAPROXY_IP:-10.64.64.50}"
 VAULT_EXODUS_BASE="${VAULT_EXODUS_BASE:-secret/exodus/ocfp-pve-wayne-cf/cf}"
 CF_ADMIN_USER="${CF_ADMIN_USER:-admin}"
@@ -253,7 +253,7 @@ log_info "         (skipped if host is unreachable — internal-only path)"
 
 HAPROXY_RC=0
 HAPROXY_OUT="$(curl -sk --max-time 10 \
-  -H "Host: api.cf.wayne.pve.lab.fivetwenty.io" \
+  -H "Host: api.system.ocf.wayne.lab.fivetwenty.io" \
   "https://${CF_HAPROXY_IP}/v2/info" 2>&1)" || HAPROXY_RC=$?
 
 if [[ "${HAPROXY_RC}" -ne 0 ]]; then
