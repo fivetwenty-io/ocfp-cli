@@ -445,7 +445,8 @@ type InstanceRequest struct {
 	UseBootVolume    bool   // Use boot volume instead of direct image (for STACKIT diskless flavors)
 	StaticPrivateIP       string // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
 	StaticPrivateIPPrefix int    // Optional: subnet prefix length (e.g. 18) to pair with StaticPrivateIP when the address itself lacks /N. Used by PVE to write the correct mask in cloud-init ipconfig0 when the L3 subnet (e.g. an SDN vnet /18) is larger than the logical AZ subnet ocfp carves from it. Zero = leave to provider default.
-	TailscaleAuthKey      string // Optional: tailscale auth key. When non-empty, bastion cloud-init runs `tailscale up --authkey=... --hostname=... --advertise-tags=tag:ocfp-bastion --ssh` after installing tailscale via curl. Zero value = skip tailscale install entirely.
+	TailscaleAuthKey      string // DEPRECATED: use Tailscale instead. Retained for callers not yet migrated; ignored when Tailscale is non-nil.
+	Tailscale             *TailscaleSpec // Optional: full tailscale config. When non-nil + AuthKey set, the PVE provider injects via SMBIOS for the bastion firstboot/watchdog to read.
 	PublicKey        string // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername  string // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP        string // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
@@ -457,6 +458,48 @@ type InstanceRequest struct {
 	// DomainSuffix combines with Hostname to produce the FQDN. Typically the
 	// bloc's FQDNs.Base. Empty falls back to just Hostname.
 	DomainSuffix string
+}
+
+// TailscaleSpec describes how a VM should join the tailnet at first boot.
+// Bootstrap resolves it from the bloc/provider tailscale: config + the vault
+// auth-key path, then sets it on InstanceRequest.Tailscale. The PVE provider
+// translates it into an SMBIOS payload the firstboot script reads.
+type TailscaleSpec struct {
+	// AuthKey is the tailscale auth key (resolved from vault). Required.
+	// Should be reusable + preauthorized so the watchdog can re-up after
+	// a tailnet drop without operator intervention.
+	AuthKey string
+
+	// Hostname is the tailnet hostname (also used for the bastion's
+	// /etc/hostname). Defaults to InstanceRequest.Name when empty.
+	Hostname string
+
+	// Tags is the list of tailscale ACL tags (e.g. ["tag:ocfp-bastion"]).
+	// At least one tag is recommended so ACLs can target OCFP bastions.
+	Tags []string
+
+	// AcceptDNS, when true, lets tailscaled rewrite /etc/resolv.conf.
+	// Default false: avoids "MagicDNS unreachable on tailnet drop breaks
+	// reconnect" failure mode from commit 3a2efab.
+	AcceptDNS bool
+
+	// AcceptRoutes, when true, lets the node import other peers' advertised
+	// subnet routes. Default false on bastions: prevents loops where the
+	// bastion's own /18 returns via tailscale0 instead of the local bridge.
+	AcceptRoutes bool
+
+	// SSH, when true, enables tailscale-ssh on the node so operators can
+	// SSH via the tailnet. Default true.
+	SSH bool
+
+	// ExitNode, when non-empty, configures this node to route all egress
+	// through the named tailnet exit node. Empty disables.
+	ExitNode string
+
+	// AdvertiseRoutes is the subnet CIDR this node advertises (e.g.
+	// "10.64.64.0/18"). Bootstrap derives from StaticPrivateIP+prefix.
+	// Empty skips --advertise-routes.
+	AdvertiseRoutes string
 }
 
 // BucketRequest represents a request for creating buckets.

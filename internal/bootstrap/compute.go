@@ -440,6 +440,9 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	req := m.buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData, useBootVolume, bootVolumeSize)
 	req.StaticPrivateIP = bastionIP // Set static IP (empty string means use DHCP)
 	req.StaticPrivateIPPrefix = m.bastionStaticIPPrefix()
+	// Build the full tailscale spec from defaults + the now-known IP+prefix.
+	// PVE provider translates this into SMBIOS for the firstboot script.
+	req.Tailscale = m.bastionTailscaleSpec(bastionName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
 
 	// Tag instance with role for discovery by findBastionIP
 	if req.Tags == nil {
@@ -566,6 +569,59 @@ func (m *Manager) bastionTailscaleAuthKey() string {
 	}
 
 	return strings.TrimSpace(key)
+}
+
+// bastionTailscaleSpec returns the full tailscale spec for the bastion,
+// resolved from the vault-stored auth key plus sensible OCFP defaults. When
+// the auth key is unavailable, returns nil so the PVE provider skips the
+// SMBIOS injection step entirely (the bastion still boots; tailscale just
+// isn't configured at first boot).
+func (m *Manager) bastionTailscaleSpec(hostname, staticIP string, prefix int) *cpi.TailscaleSpec {
+	authKey := m.bastionTailscaleAuthKey()
+	if authKey == "" {
+		return nil
+	}
+
+	advertise := deriveBastionAdvertiseRoutes(staticIP, prefix)
+
+	return &cpi.TailscaleSpec{
+		AuthKey:         authKey,
+		Hostname:        hostname,
+		Tags:            []string{"tag:ocfp-bastion"},
+		AcceptDNS:       false,
+		AcceptRoutes:    false,
+		SSH:             true,
+		AdvertiseRoutes: advertise,
+	}
+}
+
+// deriveBastionAdvertiseRoutes computes the bastion's parent vnet CIDR from
+// its static IP + prefix so tailscale can advertise the subnet to the tailnet.
+// Returns "" when either input is missing — the firstboot script skips
+// --advertise-routes in that case.
+func deriveBastionAdvertiseRoutes(staticIP string, prefix int) string {
+	addr := strings.TrimSpace(staticIP)
+	if addr == "" {
+		return ""
+	}
+
+	if idx := strings.Index(addr, "/"); idx != -1 {
+		addr = addr[:idx]
+	}
+
+	if prefix <= 0 || prefix > 32 {
+		return ""
+	}
+
+	ip := net.ParseIP(addr).To4()
+	if ip == nil {
+		return ""
+	}
+
+	mask := net.CIDRMask(prefix, 32)
+	network := ip.Mask(mask)
+
+	return fmt.Sprintf("%s/%d", network.String(), prefix)
 }
 
 // bastionDomainSuffix returns the domain suffix that should be appended to the
