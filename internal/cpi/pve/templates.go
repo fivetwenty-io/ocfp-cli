@@ -69,7 +69,7 @@ type TemplateSpec struct {
 //nolint:gochecknoglobals // intentional package-level lookup table
 var templateCatalog = map[string]TemplateSpec{
 	"ubuntu-noble-template": {
-		Name: "ubuntu-noble-template",
+		Name:      "ubuntu-noble-template",
 		SourceURL: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
 		// Ubuntu's .img cloud images are actually qcow2-formatted.
 		// PVE's "import" content type rejects .img extensions, so store
@@ -79,16 +79,15 @@ var templateCatalog = map[string]TemplateSpec{
 		Cores:          2,
 	},
 	"ubuntu-jammy-template": {
-		Name: "ubuntu-jammy-template",
-		SourceURL: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+		Name:           "ubuntu-jammy-template",
+		SourceURL:      "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
 		SourceFilename: "ubuntu-jammy-amd64.qcow2",
 		Memory:         2048,
 		Cores:          2,
 	},
 	// Bastion templates: same source image, plus seeded firstboot + watchdog
-	// units (Change 2 in plans/pve-snippet-delivery-and-tailscale-config.md).
-	// The seed boots the VM once, installs jq + qemu-guest-agent, writes the
-	// scripts under /usr/local/sbin/, enables systemd units, and shuts down
+	// units. The seed boots the VM once, installs jq + qemu-guest-agent, writes
+	// the scripts under /usr/local/sbin/, enables systemd units, and shuts down
 	// before `qm template`. Cloned bastions inherit the units and run them on
 	// first boot with per-VM config delivered via SMBIOS.
 	"ubuntu-noble-bastion-template": {
@@ -311,19 +310,19 @@ func waitForVMStopped(ctx context.Context, c *Client, node string, vmid int, tim
 // image directly into scsi0 — no separate `qm importdisk` call needed.
 func (m *ComputeManager) createTemplateVM(ctx context.Context, node, targetStorage string, vmid int, scratchVolID string, spec TemplateSpec) error {
 	params := map[string]interface{}{
-		"vmid":     vmid,
-		"name":     spec.Name,
-		"memory":   spec.Memory,
-		"cores":    spec.Cores,
-		"net0":     "virtio,bridge=" + m.client.config.DefaultBridge,
-		"scsihw":   "virtio-scsi-pci",
-		"scsi0":    fmt.Sprintf("%s:0,import-from=%s,discard=on,ssd=1", targetStorage, scratchVolID),
-		"ide2":     targetStorage + ":cloudinit",
-		"serial0":  "socket",
-		"vga":      "serial0",
-		"agent":    "enabled=1",
-		"ostype":   "l26",
-		"boot":     "order=scsi0",
+		"vmid":    vmid,
+		"name":    spec.Name,
+		"memory":  spec.Memory,
+		"cores":   spec.Cores,
+		"net0":    "virtio,bridge=" + m.client.config.DefaultBridge,
+		"scsihw":  "virtio-scsi-pci",
+		"scsi0":   fmt.Sprintf("%s:0,import-from=%s,discard=on,ssd=1", targetStorage, scratchVolID),
+		"ide2":    targetStorage + ":cloudinit",
+		"serial0": "socket",
+		"vga":     "serial0",
+		"agent":   "enabled=1",
+		"ostype":  "l26",
+		"boot":    "order=scsi0",
 	}
 
 	qemuSvc := m.client.getQemuService()
