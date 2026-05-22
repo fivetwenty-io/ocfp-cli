@@ -208,3 +208,69 @@ blocs:
 		assert.Equal(t, "global-pass", cfg.Password, "Password must fall back to global pve defaults")
 	})
 }
+
+// TestLoadAppliesTailscaleDefaultsWithBlocOverride exercises the end-to-end
+// YAML loading path: global tailscale: defaults are inherited by blocs that
+// omit fields, and bloc-level fields override the global defaults
+// individually.
+func TestLoadAppliesTailscaleDefaultsWithBlocOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("OCFP_HOME", tmpDir)
+
+	configContent := `tailscale:
+  auth_key_vault_path: "secret/ocfp/tailscale:auth_key"
+  tags:
+    - "tag:ocfp-bastion"
+  accept_dns: false
+  ssh: true
+blocs:
+  inherit-all:
+    provider: pve
+    api_endpoint: https://pve.inherit.example
+  override-key:
+    provider: pve
+    api_endpoint: https://pve.override.example
+    tailscale:
+      auth_key: "tskey-bloc-literal"
+      hostname: "override-host"
+`
+	configPath := filepath.Join(tmpDir, "config.yml")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o600))
+
+	clearCache := func() {
+		configMutex.Lock()
+		cachedConfigs = make(map[string]*cachedConfig)
+		configMutex.Unlock()
+	}
+
+	t.Run("inherit-all bloc gets all global tailscale defaults", func(t *testing.T) {
+		clearCache()
+
+		cfg, err := LoadWithParams(configPath, "inherit-all")
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Tailscale, "Tailscale must be populated from global defaults")
+
+		assert.Equal(t, "", cfg.Tailscale.AuthKey)
+		assert.Equal(t, "secret/ocfp/tailscale:auth_key", cfg.Tailscale.AuthKeyVaultPath)
+		assert.Equal(t, []string{"tag:ocfp-bastion"}, cfg.Tailscale.Tags)
+		require.NotNil(t, cfg.Tailscale.AcceptDNS)
+		assert.False(t, *cfg.Tailscale.AcceptDNS)
+		require.NotNil(t, cfg.Tailscale.SSH)
+		assert.True(t, *cfg.Tailscale.SSH)
+	})
+
+	t.Run("override-key bloc uses literal auth_key without inheriting vault path", func(t *testing.T) {
+		clearCache()
+
+		cfg, err := LoadWithParams(configPath, "override-key")
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Tailscale)
+
+		assert.Equal(t, "tskey-bloc-literal", cfg.Tailscale.AuthKey, "bloc literal wins")
+		assert.Equal(t, "", cfg.Tailscale.AuthKeyVaultPath, "global vault path must not bleed through when bloc sets literal")
+		assert.Equal(t, "override-host", cfg.Tailscale.Hostname)
+		assert.Equal(t, []string{"tag:ocfp-bastion"}, cfg.Tailscale.Tags, "tags inherited from global")
+		require.NotNil(t, cfg.Tailscale.SSH)
+		assert.True(t, *cfg.Tailscale.SSH)
+	})
+}

@@ -20,15 +20,10 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
-// bastionTailscaleVaultPath is where the operator pre-stores a reusable,
-// pre-approved tailscale auth key tagged tag:ocfp-bastion. Bootstrap reads
-// it once per bastion creation and hands it to cloud-init via the
-// TailscaleAuthKey field on cpi.InstanceRequest. Missing key = bastion
-// boots without tailscale, which is a soft warning rather than a failure.
-const (
-	bastionTailscaleVaultPath = "secret/ocfp/tailscale/auth_key"
-	bastionTailscaleVaultKey  = "value"
-)
+// bastionTailscaleDefaultTag is the ACL tag bastions advertise when the
+// operator hasn't customised tailscale.tags. Kept here so ACL templates in
+// docs can refer to the same value the resolver emits.
+const bastionTailscaleDefaultTag = "tag:ocfp-bastion"
 
 // Compute-specific constants.
 const (
@@ -541,58 +536,147 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		DNSServers:       m.config.Network.DNSServers,
 		Hostname:         bastionName,
 		DomainSuffix:     m.bastionDomainSuffix(),
-		TailscaleAuthKey: m.bastionTailscaleAuthKey(),
+		TailscaleAuthKey: m.resolveBastionTailscaleAuthKey(),
 	}
 }
 
-// bastionTailscaleAuthKey fetches the tailscale auth key from vault so the
-// bastion cloud-init can join the tailnet at first boot. The lookup is a
-// best-effort: if vault is unreachable, the path is missing, or the value
-// is empty, this returns "" and the bastion boots without tailscale (the
-// operator may add it manually later). Any error is logged at warn level
-// — bootstrap should not abort because a side-feature is not configured.
-func (m *Manager) bastionTailscaleAuthKey() string {
+// resolveBastionTailscaleAuthKey returns the tailscale auth key from the
+// merged bloc/global tailscale config. Either a literal AuthKey or a
+// vault-path indirection ("path:key") is accepted; bloc>global precedence is
+// already applied by mergeTailscaleDefaults at load time. There is no
+// fallback to a legacy hard-coded vault path — operators who relied on the
+// old behaviour must migrate the value into tailscale.auth_key_vault_path.
+//
+// Errors are soft: vault unreachable, path missing, or value empty all yield
+// "" and a warn-log, so bootstrap completes and the bastion boots without
+// tailscale (the operator may join it manually).
+func (m *Manager) resolveBastionTailscaleAuthKey() string {
+	if m.config == nil || m.config.Tailscale == nil {
+		return ""
+	}
+
+	ts := m.config.Tailscale
+
+	if key := strings.TrimSpace(ts.AuthKey); key != "" {
+		return key
+	}
+
+	rawPath := strings.TrimSpace(ts.AuthKeyVaultPath)
+	if rawPath == "" {
+		return ""
+	}
+
+	path, key, ok := splitVaultPathKey(rawPath)
+	if !ok {
+		logger.Warnf("Tailscale auth key skipped: invalid auth_key_vault_path %q (expected \"path:key\")", rawPath)
+
+		return ""
+	}
+
+	safe := m.tailscaleSafe()
+	if safe == nil {
+		return ""
+	}
+
+	val, err := safe.GetString(path, key)
+	if err != nil {
+		logger.Warnf("Tailscale auth key skipped: %s:%s not readable: %v", path, key, err)
+
+		return ""
+	}
+
+	return strings.TrimSpace(val)
+}
+
+// tailscaleSafe returns the vault Safe the auth-key resolver should consult.
+// Prefers the manager-attached safe (test injection or the artifacts pipeline)
+// and falls back to a fresh env-based client. Returns nil with a warn-log when
+// no client is available.
+func (m *Manager) tailscaleSafe() vault.SafeInterface {
+	if m.safe != nil {
+		return m.safe
+	}
+
 	client, err := vault.NewClientFromEnv()
 	if err != nil {
 		logger.Warnf("Tailscale auth key skipped: cannot reach vault: %v", err)
 
-		return ""
+		return nil
 	}
 
-	safe := vault.NewSafe(client)
+	return vault.NewSafe(client)
+}
 
-	key, err := safe.GetString(bastionTailscaleVaultPath, bastionTailscaleVaultKey)
-	if err != nil {
-		logger.Warnf("Tailscale auth key skipped: %s not readable: %v", bastionTailscaleVaultPath, err)
-
-		return ""
+// splitVaultPathKey parses the operator-facing "path:key" form into its two
+// components. The last colon separates the key, allowing path values that
+// contain colons themselves (rare in practice but valid in vault).
+func splitVaultPathKey(s string) (path, key string, ok bool) {
+	idx := strings.LastIndex(s, ":")
+	if idx <= 0 || idx == len(s)-1 {
+		return "", "", false
 	}
 
-	return strings.TrimSpace(key)
+	return s[:idx], s[idx+1:], true
 }
 
 // bastionTailscaleSpec returns the full tailscale spec for the bastion,
-// resolved from the vault-stored auth key plus sensible OCFP defaults. When
-// the auth key is unavailable, returns nil so the PVE provider skips the
-// SMBIOS injection step entirely (the bastion still boots; tailscale just
-// isn't configured at first boot).
+// resolved from the merged tailscale config plus sensible OCFP defaults
+// for fields the operator left unset. Returns nil when no auth key is
+// configured so the PVE provider skips SMBIOS injection entirely.
 func (m *Manager) bastionTailscaleSpec(hostname, staticIP string, prefix int) *cpi.TailscaleSpec {
-	authKey := m.bastionTailscaleAuthKey()
+	authKey := m.resolveBastionTailscaleAuthKey()
 	if authKey == "" {
 		return nil
 	}
 
-	advertise := deriveBastionAdvertiseRoutes(staticIP, prefix)
-
-	return &cpi.TailscaleSpec{
+	cfg := tailscaleConfigOrEmpty(m.config)
+	spec := &cpi.TailscaleSpec{
 		AuthKey:         authKey,
-		Hostname:        hostname,
-		Tags:            []string{"tag:ocfp-bastion"},
-		AcceptDNS:       false,
-		AcceptRoutes:    false,
-		SSH:             true,
-		AdvertiseRoutes: advertise,
+		Hostname:        firstNonEmpty(cfg.Hostname, hostname),
+		Tags:            tagsOrDefault(cfg.Tags),
+		AcceptDNS:       boolOrDefault(cfg.AcceptDNS, false),
+		AcceptRoutes:    boolOrDefault(cfg.AcceptRoutes, false),
+		SSH:             boolOrDefault(cfg.SSH, true),
+		ExitNode:        cfg.ExitNode,
+		AdvertiseRoutes: firstNonEmpty(cfg.AdvertiseRoutes, deriveBastionAdvertiseRoutes(staticIP, prefix)),
 	}
+
+	return spec
+}
+
+func tailscaleConfigOrEmpty(c *config.Config) *config.TailscaleConfig {
+	if c == nil || c.Tailscale == nil {
+		return &config.TailscaleConfig{}
+	}
+
+	return c.Tailscale
+}
+
+func tagsOrDefault(tags []string) []string {
+	if len(tags) == 0 {
+		return []string{bastionTailscaleDefaultTag}
+	}
+
+	out := make([]string, len(tags))
+	copy(out, tags)
+
+	return out
+}
+
+func boolOrDefault(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+
+	return *p
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+
+	return b
 }
 
 // deriveBastionAdvertiseRoutes computes the bastion's parent vnet CIDR from
