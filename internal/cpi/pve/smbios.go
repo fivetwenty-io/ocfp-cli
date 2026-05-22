@@ -2,7 +2,10 @@ package pve
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
+
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
 // SMBIOSPayload carries role-specific configuration OCFP injects into a VM via
@@ -38,6 +41,42 @@ type SMBIOSPayload struct {
 // skip the smbios1 PUT entirely so PVE keeps its zero-config default.
 func (p SMBIOSPayload) IsEmpty() bool {
 	return p.Serial == "" && p.SKU == "" && p.Family == ""
+}
+
+// TailscaleSpecToSMBIOSPayload translates a CPI-level TailscaleSpec into the
+// SMBIOS payload the firstboot script on the bastion reads via dmidecode.
+// Returns the zero value when the spec is nil or has no auth key, so callers
+// can short-circuit the smbios1 PUT.
+func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
+	if ts == nil || ts.AuthKey == "" {
+		return SMBIOSPayload{}
+	}
+
+	// Marshal the role config as compact JSON; the firstboot script
+	// `jq`-parses fields with sane defaults so we can add keys later
+	// without breaking older templates.
+	sku, err := json.Marshal(map[string]interface{}{
+		"v":                1,
+		"hostname":         ts.Hostname,
+		"tags":             ts.Tags,
+		"accept_dns":       ts.AcceptDNS,
+		"accept_routes":    ts.AcceptRoutes,
+		"ssh":              ts.SSH,
+		"exit_node":        ts.ExitNode,
+		"advertise_routes": ts.AdvertiseRoutes,
+	})
+	if err != nil {
+		// Marshalling fixed-shape data shouldn't realistically fail; if it
+		// does, fall back to a minimal payload so the bastion at least has
+		// the auth key and can join the tailnet manually.
+		return SMBIOSPayload{Serial: ts.AuthKey, Family: smbiosFamilyBastion}
+	}
+
+	return SMBIOSPayload{
+		Serial: ts.AuthKey,
+		SKU:    string(sku),
+		Family: smbiosFamilyBastion,
+	}
 }
 
 // BuildSMBIOSConfigValue renders the payload as the `smbios1` config-value
