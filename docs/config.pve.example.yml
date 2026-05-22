@@ -1,0 +1,199 @@
+---
+# OCFP config.yml — Proxmox VE (PVE) example
+#
+# Default location: ~/.ocfp/config.yml
+# Override via: OCFP_HOME env var or -f / --config flag.
+#
+# Top-level structure:
+#   debug / verbose        — logging knobs
+#   pve                    — global PVE credential defaults (shared across blocs)
+#   tailscale              — global tailscale defaults (shared across blocs)
+#   blocs                  — map of named OCFP blocs (one per datacenter / environment tier)
+#
+# PVE bloc names must match ^ocfp-pve-[a-z0-9-]+$.
+
+debug: false
+verbose: false
+
+# ─── Global PVE credential defaults ───────────────────────────────────────────
+# Per-bloc auth_token / token_secret / username / password override these.
+# Use this section when all blocs share one PVE API token (common in a lab).
+pve:
+  # API token — preferred over username/password.
+  # Format: <user>@<realm>!<token-name>  (e.g. ocfp-cpi@pve!wayne)
+  auth_token: "ocfp-cpi@pve!wayne"
+  token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+  # Username/password auth — fallback; leave blank when using API token.
+  # username: "ocfp-cpi@pve"
+  # password: ""
+
+# ─── Global tailscale defaults ────────────────────────────────────────────────
+# Per-bloc tailscale: section overrides these on a field-by-field basis.
+# auth_key and auth_key_vault_path are mutually exclusive within any scope.
+tailscale:
+  # Literal auth key (reusable / ephemeral depending on Tailscale ACL).
+  # auth_key: "tskey-auth-..."
+  #
+  # OR read the key from vault at bootstrap time ("path:field" notation).
+  auth_key_vault_path: "secret/ocfp/wayne/tailscale:auth_key"
+  tags:
+    - "tag:ocfp"
+    - "tag:bastion"
+  accept_dns: true
+  accept_routes: true
+  ssh: true
+
+# ─── Blocs ────────────────────────────────────────────────────────────────────
+blocs:
+  # ── Wayne lab PVE bloc ──────────────────────────────────────────────────────
+  ocfp-pve-wayne:
+    # provider and iaas are synonyms; either is accepted.
+    provider: pve
+    iaas: pve
+
+    # PVE API endpoint.  Host only (the CLI splits host / port / scheme).
+    # Accepted forms:
+    #   "sm-0.lab.fivetwenty.io"           → port 8006, https (default)
+    #   "sm-0.lab.fivetwenty.io:8006"      → explicit port
+    #   "https://sm-0.lab.fivetwenty.io"   → explicit scheme
+    api_endpoint: "sm-0.lab.fivetwenty.io"
+
+    # region maps to the PVE node name used for VM placement.
+    # Leave empty to let the CLI auto-select the least-loaded online node.
+    region: "pve"
+
+    # Proxmox cluster nodes for multi-node AZ entries written to vault.
+    # Each entry becomes a separate vault AZ entry under net/azs/{node}.
+    # For a single-node lab, list just the one node.
+    nodes:
+      - "pve"
+
+    # ── Authentication ─────────────────────────────────────────────────────
+    # These override the global pve: defaults above.
+    # API token auth (preferred — comment out or leave blank to inherit global).
+    auth_token: "ocfp-cpi@pve!wayne"
+    token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+    # Username/password auth — only used when auth_token / token_secret are empty.
+    # username: "ocfp-cpi@pve"
+    # password: ""
+
+    # ── TLS ────────────────────────────────────────────────────────────────
+    # verify_ssl: false skips certificate verification — safe for self-signed
+    # PVE certs in a private lab.  Set true when the PVE host has a CA-signed cert.
+    verify_ssl: false
+
+    # ── Storage ────────────────────────────────────────────────────────────
+    # iso_storage — PVE storage that accepts ISO content and cloud-init snippets.
+    # Used for cloud-image downloads and template auto-provisioning.
+    iso_storage: "local"
+
+    # ── Network ────────────────────────────────────────────────────────────
+    network:
+      # cidr / network_cidr — management network CIDR.
+      cidr: "10.64.64.0/18"
+
+      # DNS resolvers advertised to VMs.
+      dns:
+        - "1.1.1.1"
+        - "8.8.8.8"
+
+    # Top-level DNS resolvers (mirrors network.dns; kept for older path compat).
+    dns:
+      - "1.1.1.1"
+      - "8.8.8.8"
+
+    # ── Availability zones ─────────────────────────────────────────────────
+    # For PVE, AZs are mapped to Proxmox node names.
+    # When nodes: is set, the CLI populates these automatically.
+    # Define explicitly to override auto-derivation.
+    azs:
+      z1:
+        zone: "pve"
+
+    # ── Subnets ────────────────────────────────────────────────────────────
+    # OCFP carves the network CIDR into subnets named ocfp-0…ocfp-N.
+    # Provide explicit entries to control which bridge each subnet lands on.
+    subnets:
+      - name: "ocfp-0"
+        cidr: "10.64.64.0/20"
+        availabilityZone: "z1"
+        type: "ocfp"
+
+    # ── Bastion ────────────────────────────────────────────────────────────
+    bastion:
+      # Template VM name on the PVE cluster.
+      # OCFP auto-provisions from the catalog when the template is missing.
+      # Catalog names: ubuntu-noble-template, ubuntu-jammy-template,
+      #                ubuntu-noble-bastion-template (pre-baked firstboot units).
+      image: "ubuntu-noble-bastion-template"
+
+      # SSH user inside the cloned bastion VM.
+      sshUser: "ubuntu"
+
+      # Root disk size (GiB).  PVE cloud-init images start at 2-3 GiB;
+      # OCFP resizes to rootDiskSize on first boot.
+      rootDiskSize: 50
+
+      # Authorized SSH keys injected via cloud-init.
+      # Values: literal public key, "github/<username>", or "gitlab/<username>".
+      keys:
+        wayne: "github/wayneeseguin"
+
+      git:
+        user:
+          name: "Wayne E. Seguin"
+          email: "wayneeseguin@fivetwenty.io"
+
+      genesis:
+        enabled: true
+        branch: "v3.1.x-dev"
+        version_prefix: "3.1.0"
+
+    # ── Genesis ────────────────────────────────────────────────────────────
+    genesis:
+      enabled: true
+      branch: "v3.1.x-dev"
+      version_prefix: "3.1.0"
+
+    # ── Blobstore ──────────────────────────────────────────────────────────
+    # PVE has no native object storage.
+    # mode: local   → bucket-creation step is skipped (default for PVE).
+    # mode: external → requires an S3-compatible endpoint (Ceph RGW, RustFS, etc.)
+    blobstore:
+      mode: "local"
+      # External S3-compatible blobstore (uncomment when mode: external).
+      # endpoint: "https://rgw.lab.fivetwenty.io"
+      # region: "us-east-1"
+      # access_key: "..."
+      # secret_key: "..."
+      # ca_cert: "/path/to/ca.crt"    # optional — for self-signed endpoints
+      # path_style: true              # true for Ceph/RustFS (default true)
+
+    # ── FQDNs ──────────────────────────────────────────────────────────────
+    fqdns:
+      base: "lab.fivetwenty.io"
+      mgmt:
+        bosh: "bosh.mgmt.lab.fivetwenty.io"
+        vault: "vault.mgmt.lab.fivetwenty.io"
+      ocf:
+        cf_api: "api.cf.lab.fivetwenty.io"
+        cf_login: "login.cf.lab.fivetwenty.io"
+        cf_uaa: "uaa.cf.lab.fivetwenty.io"
+
+    # ── Jumpbox users ──────────────────────────────────────────────────────
+    jumpbox:
+      users:
+        admin: "github/wayneeseguin"
+
+    # ── Per-bloc tailscale override ────────────────────────────────────────
+    # All fields are optional; unset fields inherit from the global tailscale:.
+    tailscale:
+      hostname: "bastion-wayne"
+      tags:
+        - "tag:ocfp"
+        - "tag:bastion"
+      accept_dns: true
+      accept_routes: true
+      ssh: true
