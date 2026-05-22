@@ -22,6 +22,7 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/fivetwenty-io/pve-apiclient-go/v3 v3.1.1
 	github.com/goccy/go-yaml v1.19.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/vault/api v1.20.0
 	github.com/hashicorp/vault/api/auth/approle v0.10.0
 	github.com/hashicorp/vault/api/auth/userpass v0.10.0
