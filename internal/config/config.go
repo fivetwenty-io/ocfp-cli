@@ -74,12 +74,23 @@ func testSafetyGuard(operation string) {
 	}
 }
 
+// PVEDefaults holds global default PVE credentials that apply to any bloc
+// whose corresponding credential field is not set. Bloc-level values always
+// take precedence over these defaults.
+type PVEDefaults struct {
+	AuthToken   string `json:"auth_token"   mapstructure:"auth_token"   yaml:"auth_token,omitempty"`   //nolint:gosec // field name is descriptive, not a hardcoded secret
+	TokenSecret string `json:"token_secret" mapstructure:"token_secret" yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Username    string `json:"username"     mapstructure:"username"     yaml:"username,omitempty"`
+	Password    string `json:"password"     mapstructure:"password"     yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+}
+
 // ConfigFile represents the top-level configuration file structure.
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
 	Debug   bool               `mapstructure:"debug"   yaml:"debug"`
 	Verbose bool               `mapstructure:"verbose" yaml:"verbose"`
+	PVE     *PVEDefaults       `mapstructure:"pve"     yaml:"pve,omitempty"`
 	Blocs   map[string]*Config `mapstructure:"blocs"   yaml:"blocs"`
 }
 
@@ -432,6 +443,21 @@ func firstSetString(values ...string) string {
 	}
 
 	return ""
+}
+
+// mergePVEDefaults fills empty PVE credential fields on bloc from defaults.
+// Bloc values take precedence; defaults supply values only when the bloc
+// field is empty. Non-credential fields on bloc are never modified.
+// No-ops when either argument is nil.
+func mergePVEDefaults(bloc *Config, defaults *PVEDefaults) {
+	if bloc == nil || defaults == nil {
+		return
+	}
+
+	bloc.AuthToken = firstSetString(bloc.AuthToken, defaults.AuthToken)
+	bloc.TokenSecret = firstSetString(bloc.TokenSecret, defaults.TokenSecret)
+	bloc.Username = firstSetString(bloc.Username, defaults.Username)
+	bloc.Password = firstSetString(bloc.Password, defaults.Password)
 }
 
 // Subnet configuration.
@@ -972,6 +998,8 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 	if blocConfig.Name == "" {
 		blocConfig.Name = blocName
 	}
+
+	mergePVEDefaults(blocConfig, configFileData.PVE)
 
 	return blocConfig, nil
 }
