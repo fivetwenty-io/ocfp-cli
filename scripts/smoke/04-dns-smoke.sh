@@ -29,7 +29,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 BLOC="${BLOC:-wayne}"
-DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-cf.wayne.pve.lab.fivetwenty.io}"
+DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-ocf.wayne.lab.fivetwenty.io}"
 TEST_APP="${TEST_APP:-test-app}"
 HAPROXY_IP="${HAPROXY_IP:-10.64.64.50}"
 TUNNEL_NAME="${TUNNEL_NAME:-ocfp-wayne}"
