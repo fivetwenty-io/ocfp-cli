@@ -52,15 +52,20 @@ func TestPVEVaultProvider_configureCPI_WritesPath_APITokenMode(t *testing.T) {
 	assert.True(t, strings.HasSuffix(call.path, expectedSuffix),
 		"CPI path %q should end with %q", call.path, expectedSuffix)
 
-	assert.Equal(t, "https://pve.example.com:8006", call.data["host"])
+	assert.Equal(t, "pve.example.com", call.data["host"], "host stored as bare hostname for CPI client compatibility")
 	assert.Equal(t, "root@pam!mytoken", call.data["token_id"])
 	assert.Equal(t, "supersecret", call.data["token_secret"])
 	assert.Equal(t, "pve-node1", call.data["node"])
 	assert.Equal(t, "configured", call.data["status"])
 
-	// API token mode must NOT write username or password keys.
+	// API token mode must NOT write username (user/pass-only key).
 	assert.Nil(t, call.data["username"], "username key must be absent in API token mode")
-	assert.Nil(t, call.data["password"], "password key must be absent in API token mode")
+	// password key must be present but empty so the bosh kit's plain
+	// (( vault ... :password )) lookup resolves without requiring vault-try.
+	assert.Equal(t, "", call.data["password"], "password key must be empty string in API token mode")
+	// api_token is rendered in bosh-pve-cpi-release format
+	// "user@realm!tokenid=secret" — the CPI's PVE client requires it joined.
+	assert.Equal(t, "root@pam!mytoken=supersecret", call.data["api_token"], "api_token must combine token_id and token_secret as user@realm!tokenid=secret")
 }
 
 // TestPVEVaultProvider_configureCPI_WritesPath_UserPassMode — username/password auth
@@ -87,7 +92,7 @@ func TestPVEVaultProvider_configureCPI_WritesPath_UserPassMode(t *testing.T) {
 	assert.True(t, strings.HasSuffix(call.path, expectedSuffix),
 		"CPI path %q should end with %q", call.path, expectedSuffix)
 
-	assert.Equal(t, "https://pve.example.com:8006", call.data["host"])
+	assert.Equal(t, "pve.example.com", call.data["host"], "host stored as bare hostname for CPI client compatibility")
 	assert.Equal(t, "root@pam", call.data["username"])
 	assert.Equal(t, "s3cr3t", call.data["password"])
 	assert.Equal(t, "pve-node1", call.data["node"])
@@ -96,6 +101,9 @@ func TestPVEVaultProvider_configureCPI_WritesPath_UserPassMode(t *testing.T) {
 	// User/pass mode must NOT write token_id or token_secret keys.
 	assert.Nil(t, call.data["token_id"], "token_id key must be absent in user/pass mode")
 	assert.Nil(t, call.data["token_secret"], "token_secret key must be absent in user/pass mode")
+	// api_token key must be present but empty so the kit's plain
+	// (( vault ... :api_token )) lookup resolves without requiring vault-try.
+	assert.Equal(t, "", call.data["api_token"], "api_token key must be empty string in user/pass mode")
 }
 
 // TestPVEVaultProvider_configureCPI_MissingHostAndAuth — empty APIEndpoint produces
@@ -174,10 +182,11 @@ func TestPVEVaultProvider_ConfigureAZs_EmptyBoth(t *testing.T) {
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker — no
-// BlobstoreMode and no BlobstoreEndpoint defaults to local mode, which writes
-// a single `mode: local, status: configured` marker so kits can detect the
-// configured-but-not-external state. Previously this produced zero writes,
-// but downstream kit code now needs a positive signal.
+// BlobstoreMode and no BlobstoreEndpoint defaults to local mode.  Two writes
+// land on mgmt env: a cf/blobstores/main marker (mode=local) plus a
+// non-functional bosh/blobstores/bosh placeholder so the bosh manifest hook's
+// `:name` / `:region` lookups can resolve.  Neither write carries credentials
+// or an endpoint.
 func TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "pve-node1"}
@@ -186,15 +195,21 @@ func TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker(t *testing.T
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 1, "local mode must write a single marker")
+	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
 
-	expectedPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
-	call := mock.setMultipleCalls[0]
-	assert.Equal(t, expectedPath, call.path)
-	assert.Equal(t, "local", call.data["mode"])
-	assert.Equal(t, "configured", call.data["status"])
-	assert.NotContains(t, call.data, "endpoint", "local mode must not write endpoint")
-	assert.NotContains(t, call.data, "access_key", "local mode must not write credentials")
+	cfCall := mock.findSetMultipleCall(cfPath)
+	require.NotNil(t, cfCall, "cf blobstore marker must be written in local mode")
+	assert.Equal(t, "local", cfCall.data["mode"])
+	assert.Equal(t, "configured", cfCall.data["status"])
+	assert.NotContains(t, cfCall.data, "endpoint", "local mode must not write endpoint")
+	assert.NotContains(t, cfCall.data, "access_key", "local mode must not write credentials")
+
+	boshCall := mock.findSetMultipleCall(boshPath)
+	require.NotNil(t, boshCall, "bosh blobstore meta placeholder must be written in local mode")
+	assert.Equal(t, "local", boshCall.data["mode"])
+	assert.NotContains(t, boshCall.data, "endpoint", "local mode bosh placeholder must not write endpoint")
+	assert.NotContains(t, boshCall.data, "access_key", "local mode bosh placeholder must not write credentials")
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly — a non-empty
