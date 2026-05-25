@@ -1121,7 +1121,7 @@ func newLBCFSSHCmd() *cobra.Command {
 
 			blocName := viper.GetString("bloc")
 			if name == "" {
-				name = blocName + "-cf-ssh"
+				name = blocName + "-ocf-cf-ssh"
 			}
 
 			cfg, lbMgr, netMgr, cleanup, err := setupProviderAndManagers(ctx, configFile, blocName)
