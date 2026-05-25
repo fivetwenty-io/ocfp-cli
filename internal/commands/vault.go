@@ -259,20 +259,25 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 // newVaultInceptionCmd creates the vault inception subcommand.
 func newVaultInceptionCmd() *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
-		Use:   "inception",
-		Short: "Initialize inception vault for bootstrap",
+		Use:     "inception",
+		Aliases: []string{"init"},
+		Short:   "Initialize inception vault for bootstrap",
 		Long: `Initialize vault with inception secrets for a new deployment.
 
 This command creates a local inception vault using 'safe local' running in a tmux session.
 The inception vault is used temporarily during bootstrap until the production vault is available.
 
 The vault runs on port 8234 by default and stores data in ~/.ocfp/{bloc}/vault/data.
-Root and unseal keys are saved to ~/.ocfp/{bloc}/vault/{root.key,unseal.keys}.`,
+Root and unseal keys are saved to ~/.ocfp/{bloc}/vault/{root.key,unseal.keys}.
+
+The 'init' alias is available for operator convenience: 'ocfp vault init' is equivalent.`,
 		Example: `  # Initialize inception vault
   ocfp vault inception
+  ocfp vault init               # alias
 
   # Initialize with specific bloc
-  ocfp vault inception --bloc production`,
+  ocfp vault inception --bloc production
+  ocfp vault init --bloc production`,
 		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runVaultInception()
 		},
