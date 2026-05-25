@@ -3381,7 +3381,7 @@ func (b *lbServiceBuilder) addCFSSHService() {
 	targets := b.buildTargetsFromIPs(ips, "cf-ssh")
 
 	b.services["cf-ssh"] = map[string]interface{}{
-		"name":     b.blocName + "-cf-ssh",
+		"name":     b.blocName + "-ocf-cf-ssh",
 		"protocol": "tcp",
 		"port":     SSHAltPort,
 		"targets":  targets,
