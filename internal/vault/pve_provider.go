@@ -143,14 +143,23 @@ func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter 
 	// Proxmox uses bridges instead of VPCs
 	networkPath := p.PathBuilder.GetNetPath(envType)
 
-	networkConfig := map[string]interface{}{
-		"type":   "bridge",
-		"bridge": "vmbr0",
-		"cidr":   p.Config.VPCCIDRBlock,
+	cidr := p.Config.VPCCIDRBlock
+	if p.Config.Network.CIDR != "" {
+		cidr = p.Config.Network.CIDR
 	}
 
-	if p.Config.Network.CIDR != "" {
-		networkConfig["cidr"] = p.Config.Network.CIDR
+	// dns / region are read directly by the bosh kit via
+	// meta.ocfp.bosh.{dns,region} (see kits/bosh/ocfp/meta.yml) — must be
+	// present even on stateless lab populates.
+	dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), pveCIDRGateway(cidr), "1.1.1.1")
+	region := p.Config.Region
+
+	networkConfig := map[string]interface{}{
+		"type":   "bridge",
+		"bridge": pveFirstNonEmpty(p.Config.Network.Name, "vmbr0"),
+		"cidr":   cidr,
+		"dns":    dns,
+		"region": region,
 	}
 
 	err := p.Safe.SetMultiple(networkPath, networkConfig)
@@ -250,10 +259,16 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 // writeFallbackSubnet preserves the legacy single-blob write so vault populate
 // keeps a positive marker at the subnets path when bootstrap state is absent.
+//
+// Also writes the canonical `subnets/ocfp-0` entry the bosh kit expects
+// (cidr_block, gateway, az, id) plus reserved-ips/bosh_ip.  These are the
+// keys read by kits/bosh/ocfp/meta.yml via
+// `vault meta.ocfp.vault.config "/net/subnets/ocfp-0:..."` —
+// without them the manifest hook fails before it can apply env yml overrides.
 func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
-	subnetPath := p.PathBuilder.GetSubnetsPath(envType)
+	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
 
-	err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
+	err := p.Safe.SetMultiple(subnetsPath, map[string]interface{}{
 		"note": "Proxmox SDN: single vnet subnet; no bootstrap state found",
 		"cidr": p.Config.VPCCIDRBlock,
 	})
@@ -261,7 +276,120 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		return fmt.Errorf("failed to set subnet configuration: %w", err)
 	}
 
+	cidr := p.Config.Network.CIDR
+	if cidr == "" {
+		cidr = p.Config.VPCCIDRBlock
+	}
+
+	gateway := pveCIDRGateway(cidr)
+	bridgeID := pveFirstNonEmpty(p.Config.Network.Name, "vmbr0")
+	az := pveFirstAZ(p.Config)
+	boshIP := pveOffsetIP(gateway, 9)
+	jumpboxIP := pveOffsetIP(gateway, 8)
+
+	// PVE single-network mode: populate ocfp-0..ocfp-2 with identical data so
+	// the bosh kit's cloud-config-director hook (which hardcodes specific
+	// subnet refs like 'ocfp-2' for the compilation network) resolves without
+	// special-casing.  All three logical subnets share the same underlying
+	// lvnet bridge — this is conventional for single-vnet PVE deployments.
+	for i := 0; i < 3; i++ {
+		subnetPath := p.PathBuilder.GetSubnetPath(envType, "ocfp", i)
+		if err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
+			"cidr":       cidr,
+			"cidr_block": cidr,
+			"gateway":    gateway,
+			"az":         az,
+			"id":         bridgeID,
+		}); err != nil {
+			return fmt.Errorf("failed to set ocfp-%d subnet entry: %w", i, err)
+		}
+
+		if boshIP == "" {
+			continue
+		}
+
+		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
+		if err := p.Safe.SetMultiple(reservedPath, map[string]interface{}{
+			"bosh_ip":     boshIP,
+			"ip":          boshIP,
+			"director_ip": boshIP,
+			"jumpbox_ip":  jumpboxIP,
+		}); err != nil {
+			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
+		}
+	}
+
 	return nil
+}
+
+// pveFirstDNS returns the first DNS entry from a slice, or "" if the slice is empty.
+func pveFirstDNS(dns []string) string {
+	if len(dns) == 0 {
+		return ""
+	}
+	return dns[0]
+}
+
+// pveCIDRGateway returns the conventional gateway IP for a CIDR
+// ("10.64.64.0/18" -> "10.64.64.1").  Returns "" on parse failure.
+func pveCIDRGateway(cidr string) string {
+	for i := 0; i < len(cidr); i++ {
+		if cidr[i] == '/' {
+			cidr = cidr[:i]
+			break
+		}
+	}
+	// Replace last octet with .1.
+	last := -1
+	for i := len(cidr) - 1; i >= 0; i-- {
+		if cidr[i] == '.' {
+			last = i
+			break
+		}
+	}
+	if last <= 0 {
+		return ""
+	}
+	return cidr[:last+1] + "1"
+}
+
+// pveOffsetIP returns base IP with its last octet incremented by `off`.
+// Caps at 254 to stay below broadcast.  Returns "" on parse failure.
+func pveOffsetIP(base string, off int) string {
+	last := -1
+	for i := len(base) - 1; i >= 0; i-- {
+		if base[i] == '.' {
+			last = i
+			break
+		}
+	}
+	if last <= 0 || last == len(base)-1 {
+		return ""
+	}
+	octet := 0
+	for _, c := range base[last+1:] {
+		if c < '0' || c > '9' {
+			return ""
+		}
+		octet = octet*10 + int(c-'0')
+	}
+	result := octet + off
+	if result < 0 || result > 254 {
+		return ""
+	}
+	return fmt.Sprintf("%s%d", base[:last+1], result)
+}
+
+// pveFirstAZ returns the first Proxmox node name as the AZ identifier, or "z1"
+// when no nodes are configured.  Mirrors the kit's `meta.ocfp.bosh.az` default.
+func pveFirstAZ(cfg *config.Config) string {
+	if len(cfg.Nodes) > 0 {
+		return cfg.Nodes[0]
+	}
+	if cfg.Region != "" {
+		return cfg.Region
+	}
+	return "z1"
 }
 
 // writeReservedIPs iterates bootstrap state outputs looking for keys of the
@@ -394,6 +522,24 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 		})
 		if err != nil {
 			return fmt.Errorf("failed to set blobstore (local mode) configuration: %w", err)
+		}
+	}
+
+	// In local mode, seed bosh-director blobstore meta so the manifest hook can
+	// resolve `:name` / `:region` placeholders (kits/bosh/ocfp/meta.yml).  These
+	// are non-functional defaults; a working blobstore still requires either
+	// external mode here or an env-yml override.  External mode already writes
+	// this path with real endpoint+creds via configureBOSHBlobstore.
+	if envType == "mgmt" && mode != "external" {
+		boshBlobPath := p.PathBuilder.GetSystemBlobstorePath(envType, "bosh", "bosh")
+		region := pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
+		bucket := pveFirstNonEmpty(p.BlocName+"-bosh", "bosh-blobs")
+		if err := p.Safe.SetMultiple(boshBlobPath, map[string]interface{}{
+			"name":   bucket,
+			"region": region,
+			"mode":   mode,
+		}); err != nil {
+			return fmt.Errorf("failed to set bosh blobstore meta: %w", err)
 		}
 	}
 
@@ -787,42 +933,184 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	apiTokenMode := p.Config.AuthToken != "" && p.Config.TokenSecret != ""
 	userPassMode := p.Config.Username != "" && p.Config.Password != "" && p.Config.AuthToken == ""
 
+	if !apiTokenMode && !userPassMode {
+		return fmt.Errorf("pve configureCPI: no complete auth configuration found; set (auth_token + token_secret) for API token auth or (username + password) for user/password auth")
+	}
+
+	// All PVE CPI keys read by ~/src/kits/bosh/ocfp/pve/base.yml under
+	// `meta.ocfp.cpi.*`.  The kit reads these directly via `(( vault ... ))`
+	// (no spruce default), so every key must be present even when the
+	// operator wants the env yml's params.* override to win.
+	// All values are written as strings because spruce's (( vault ... )) operator
+	// requires string-typed leaves; numeric or boolean JSON values surface as
+	// "is not a string" during manifest rendering.
+	//
+	// host is stored as bare hostname (no scheme, no port) because the
+	// bosh-pve-cpi-release Go client concatenates "https://" + host + ":" +
+	// port internally — a stored URL would double-prefix.
+	cpiConfig := map[string]interface{}{
+		"host":             pveHostnameOnly(host),
+		"node":             node,
+		"port":             fmt.Sprintf("%d", pveCPIPort(host)),
+		"user":             pveCPIUser(p.Config.AuthToken, p.Config.Username),
+		"verify_ssl":       fmt.Sprintf("%t", p.Config.VerifySSL),
+		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "lvnet001"),
+		"vm_storage":       pveStorageOrDefault(p.Config, "vm", "local-lvm"),
+		"disk_storage":     pveStorageOrDefault(p.Config, "disk", "zfs-1"),
+		"stemcell_storage": pveStorageOrDefault(p.Config, "stemcell", "local"),
+		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
+		"vmid_range_start": fmt.Sprintf("%d", pveVMIDRangeStart(p.Config)),
+		"status":           "configured",
+	}
+
+	// password and api_token are mutually exclusive auth modes but the kit
+	// reads both via plain (( vault ... )) — the key MUST exist even when its
+	// auth mode is inactive, so write the unused one as an empty string.
+	// password and api_token are mutually exclusive auth modes but the kit
+	// reads both via plain (( vault ... )) — the key MUST exist even when its
+	// auth mode is inactive, so write the unused one as an empty string.
+	//
+	// api_token is rendered in the bosh-pve-cpi-release format
+	// "user@realm!tokenid=secret" so the CPI's Proxmox client can authenticate
+	// directly with PVE.
 	switch {
 	case apiTokenMode:
-		// API token auth: write token_id + token_secret only.
-		cpiConfig := map[string]interface{}{
-			"host":         host,
-			"node":         node,
-			"token_id":     p.Config.AuthToken,
-			"token_secret": p.Config.TokenSecret,
-			"status":       "configured",
-		}
-
-		if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
-			return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
-		}
-
+		cpiConfig["token_id"] = p.Config.AuthToken
+		cpiConfig["token_secret"] = p.Config.TokenSecret
+		cpiConfig["api_token"] = p.Config.AuthToken + "=" + p.Config.TokenSecret
+		cpiConfig["password"] = ""
 	case userPassMode:
-		// Username/password auth: write username + password only.
-		cpiConfig := map[string]interface{}{
-			"host":     host,
-			"node":     node,
-			"username": p.Config.Username,
-			"password": p.Config.Password,
-			"status":   "configured",
-		}
+		cpiConfig["username"] = p.Config.Username
+		cpiConfig["password"] = p.Config.Password
+		cpiConfig["api_token"] = ""
+	}
 
-		if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
-			return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
-		}
-
-	default:
-		return fmt.Errorf("pve configureCPI: no complete auth configuration found; set (auth_token + token_secret) for API token auth or (username + password) for user/password auth")
+	if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
+		return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
 	}
 
 	p.logger.Infow("PVE CPI credentials configured", "env_type", envType, "path", cpiPath)
 
 	return nil
+}
+
+// pveHostnameOnly strips scheme and trailing :port from a URL-shaped host
+// value, returning the bare hostname.  "https://pve.example.com:8006" →
+// "pve.example.com".  Leaves bare hostnames unchanged.
+func pveHostnameOnly(host string) string {
+	if idx := indexOf(host, "://"); idx >= 0 {
+		host = host[idx+3:]
+	}
+	// strip trailing :port if present
+	for i := len(host) - 1; i >= 0; i-- {
+		if host[i] == ':' {
+			port := host[i+1:]
+			allDigits := port != ""
+			for _, c := range port {
+				if c < '0' || c > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				host = host[:i]
+			}
+			break
+		}
+		if host[i] == '/' {
+			break
+		}
+	}
+	// strip any trailing path
+	if idx := indexOf(host, "/"); idx >= 0 {
+		host = host[:idx]
+	}
+	return host
+}
+
+func indexOf(s, sub string) int {
+	if len(sub) == 0 || len(sub) > len(s) {
+		return -1
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+// pveCPIPort returns the PVE API port from the host URL or the standard 8006.
+func pveCPIPort(host string) int {
+	const defaultPort = 8006
+	// host is "https://pve.example.com:8006".  Cheap parse — proper URL parsing
+	// adds a dependency for one substring extraction.
+	for i := len(host) - 1; i >= 0; i-- {
+		if host[i] == ':' {
+			port := 0
+			for _, c := range host[i+1:] {
+				if c < '0' || c > '9' {
+					return defaultPort
+				}
+				port = port*10 + int(c-'0')
+			}
+			if port > 0 {
+				return port
+			}
+			break
+		}
+		if host[i] == '/' {
+			break
+		}
+	}
+	return defaultPort
+}
+
+// pveCPIUser extracts the user@realm portion from a PVE API token id
+// ("user@realm!tokenName"), or returns the raw username when API tokens
+// are not in use.  Defaults to "root@pam" when both are empty so the kit's
+// (( vault ... :user )) lookup never resolves to an empty string.
+func pveCPIUser(authToken, username string) string {
+	if authToken != "" {
+		for i, c := range authToken {
+			if c == '!' {
+				return authToken[:i]
+			}
+		}
+		return authToken
+	}
+	if username != "" {
+		return username
+	}
+	return "root@pam"
+}
+
+// pveFirstNonEmpty returns the first non-empty string from its arguments.
+func pveFirstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// pveStorageOrDefault honors per-role storage hints from the artifacts
+// config when present (artifacts.data.storage_pool maps to disk_storage), and
+// falls back to the supplied default for the rest.  Future enhancement: split
+// vm/disk/stemcell storage into dedicated config fields.
+func pveStorageOrDefault(cfg *config.Config, role, def string) string {
+	if cfg.Artifacts.Data.StoragePool != "" && role == "disk" {
+		return cfg.Artifacts.Data.StoragePool
+	}
+	return def
+}
+
+// pveVMIDRangeStart returns the configured VMID range start or the
+// conservative default 200 (matches the bosh kit's spruce default).
+func pveVMIDRangeStart(_ *config.Config) int {
+	const defaultStart = 200
+	return defaultStart
 }
 
 // ConfigureAZs writes Proxmox node names as availability zone entries.
