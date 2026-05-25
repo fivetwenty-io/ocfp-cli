@@ -172,6 +172,46 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
 }
 
+// resolveLocalOCFPBinary locates a linux/amd64 ocfp binary on the operator
+// machine.  Search order:
+//  1. OCFP_BINARY_PATH env var (operator override)
+//  2. ./build/ocfp-linux-amd64 (when invoked from the ocfp CLI repo)
+//  3. <dir-of-running-ocfp>/../build/ocfp-linux-amd64 (installed sibling)
+//  4. ~/w/fivetwenty/studios/ocfp/src/clis/ocfp/build/ocfp-linux-amd64
+//     (common developer checkout layout)
+//
+// Returns the first existing path or an error listing every location tried so
+// the operator knows what to fix.
+func resolveLocalOCFPBinary() (string, error) {
+	if env := os.Getenv("OCFP_BINARY_PATH"); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env, nil
+		}
+	}
+
+	candidates := []string{"./build/ocfp-linux-amd64"}
+
+	exe, err := os.Executable()
+	if err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "build", "ocfp-linux-amd64"))
+	}
+
+	home, herr := os.UserHomeDir()
+	if herr == nil {
+		candidates = append(candidates,
+			filepath.Join(home, "w", "fivetwenty", "studios", "ocfp", "src", "clis", "ocfp", "build", "ocfp-linux-amd64"),
+		)
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("ocfp linux/amd64 binary not found; set OCFP_BINARY_PATH or build with 'make build-linux' (searched: %s)", strings.Join(candidates, ", "))
+}
+
 // uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
 //
 //nolint:funlen // sequential upload steps (checksum, transfer, install) must remain together
@@ -179,7 +219,11 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	// NOTE: Currently uploading from local build until official OCFP releases are published.
 	// Once official releases are available via GitHub releases or package repositories,
 	// this should be updated to download and install from the official source.
-	localBinaryPath := "./build/ocfp-linux-amd64"
+	localBinaryPath, err := resolveLocalOCFPBinary()
+	if err != nil {
+		return err
+	}
+
 	remoteTempPath := "/tmp/ocfp-upload"
 	remoteFinalPath := "/usr/local/bin/ocfp"
 
