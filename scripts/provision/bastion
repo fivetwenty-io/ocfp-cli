@@ -405,37 +405,40 @@ sub record_version {
     my $stage = 'H-genesis';
     log_info("=== Stage $stage: genesis install ===");
 
-    my $genesis_dir  = "$home/genesis";
+    my $genesis_dir  = "$home/ocfp/genesis";
     my $genesis_bin  = "$home/.local/bin/genesis";
     my $local_bin    = "$home/.local/bin";
+    my $branch       = 'v3.2.x-dev';
+    my $version      = '3.2.0';  # pack version must be semver (genesis new_enough)
 
     # Create ~/.local/bin if absent
     run_shell($stage, "mkdir -p '$local_bin'");
 
     if (which_tool('genesis') || file_exists($genesis_bin)) {
-        log_ok("[$stage] genesis already on PATH or at $genesis_bin, skipping clone");
+        log_ok("[$stage] genesis already on PATH or at $genesis_bin, skipping build");
     } else {
+        # Full clone (pack needs git history + a complete worktree to brand the
+        # build). Shallow/default-branch clones break `git checkout <branch>`.
         if (-d "$genesis_dir/.git") {
-            log_info("[$stage] genesis repo already cloned at $genesis_dir; updating");
-            run_shell($stage, "cd '$genesis_dir' && git fetch --all -q");
+            log_info("[$stage] genesis repo present at $genesis_dir; fetching $branch");
+            run_shell($stage, "cd '$genesis_dir' && git fetch -q origin '$branch'");
         } else {
-            log_info("[$stage] cloning genesis to $genesis_dir");
+            log_info("[$stage] cloning genesis ($branch) to $genesis_dir");
             run_shell($stage,
-                "git clone -q --depth 200 " .
+                "git clone -q -b '$branch' " .
                 "https://github.com/genesis-community/genesis.git '$genesis_dir'"
             );
         }
 
-        # Check out v3.2.x-dev branch
-        run_shell($stage,
-            "cd '$genesis_dir' && " .
-            "git checkout v3.2.x-dev 2>/dev/null || " .
-            "git checkout -b v3.2.x-dev origin/v3.2.x-dev"
-        );
+        run_shell($stage, "cd '$genesis_dir' && git checkout -q '$branch' && git pull -q origin '$branch'");
 
-        # Symlink genesis binary into ~/.local/bin
-        run_shell($stage, "ln -sfn '$genesis_dir/bin/genesis' '$genesis_bin'");
-        log_ok("[$stage] genesis symlinked to $genesis_bin");
+        # Build a packed, versioned genesis (GEESE self-extracting stub) and
+        # install it — the proper delivery method. Running genesis unpacked from
+        # the repo worktree is unsupported and can hang.
+        log_info("[$stage] building packed genesis $version via ./pack");
+        run_shell($stage, "cd '$genesis_dir' && rm -f genesis-* && ./pack '$version'");
+        run_shell($stage, "install -m 0755 '$genesis_dir/genesis-$version' '$genesis_bin'");
+        log_ok("[$stage] packed genesis installed to $genesis_bin");
     }
 
     # Ensure ~/.local/bin is on PATH for this session (needed for which_tool check)
