@@ -63,19 +63,32 @@ log() { echo "==> $*"; }
 log "OCFP artifacts provision starting (bloc=${OCFP_BLOC:-unknown})"
 
 # ----------------------------------------------------------------------------
-# 1. Packages
+# 1. Packages (apt) and AWS CLI v2 (official installer)
 # ----------------------------------------------------------------------------
+# awscli v1 was removed from Ubuntu Noble's repos in favor of AWS CLI v2,
+# which ships only via the official zip installer. Install AWS CLI v2 to
+# /usr/local/bin/aws independently of apt.
 needed_pkgs=()
-for pkg in zfsutils-linux unzip jq awscli; do
+for pkg in zfsutils-linux unzip jq curl ca-certificates; do
   dpkg -s "${pkg}" >/dev/null 2>&1 || needed_pkgs+=("${pkg}")
 done
 if [[ ${#needed_pkgs[@]} -gt 0 ]]; then
-  log "Installing packages: ${needed_pkgs[*]}"
+  log "Installing apt packages: ${needed_pkgs[*]}"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y "${needed_pkgs[@]}"
 else
-  log "All required packages already installed"
+  log "All required apt packages already installed"
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+  log "Installing AWS CLI v2 from awscli.amazonaws.com"
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  unzip -q -o /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install --update
+  rm -rf /tmp/aws /tmp/awscliv2.zip
+else
+  log "AWS CLI already installed: $(aws --version 2>&1)"
 fi
 
 # ----------------------------------------------------------------------------
