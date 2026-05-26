@@ -236,7 +236,7 @@ func (c *Config) getGenesisConfig() config.Genesis {
 
 	// Apply default values for Branch and Repo if not set (but don't override Enabled)
 	if genesisConfig.Branch == "" {
-		genesisConfig.Branch = "v3.1.x-dev"
+		genesisConfig.Branch = "v3.2.x-dev"
 	}
 
 	if genesisConfig.Repo == "" {
@@ -257,7 +257,7 @@ func (c *Config) getGenesisRepository() GitRepository {
 
 	branch := genesisConfig.Branch
 	if branch == "" {
-		branch = "v3.1.x-dev" // Default from applyDefaults
+		branch = "v3.2.x-dev" // Default from applyDefaults
 	}
 
 	return GitRepository{
@@ -465,7 +465,7 @@ func (c *Config) getGenesisTool() BinaryTool {
 
 	version := genesisConfig.VersionPrefix
 	if version == "" {
-		version = "3.1.0"
+		version = "3.2.0"
 	}
 
 	// Check for binary download mode (tool override with URL)
