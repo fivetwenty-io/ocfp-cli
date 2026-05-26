@@ -12,7 +12,7 @@ Before starting this runbook, verify the following are complete:
 - [Bastion Bringup](02-bastion-bringup.md) — bastion VM (VMID 101, `10.64.64.3`) is up, provisioned, and vault is reachable on it; PVE CPI dev tarball is extracted at `/var/vcap/store/bosh-pve-cpi/release/` on bastion
 - Genesis bosh kit cloned with PVE overlay and hooks:
   - `~/w/fivetwenty/studios/ocfp/src/kits/bosh` — must include the PVE CPI overlays (`overlay/cpis/pve*.yml`), OCFP PVE config files (`ocfp/pve/`), and updated hooks (`hooks/blueprint.pm`, `hooks/cpi-config.pm`, `hooks/cloud-config.pm`)
-- Deployments repo cloned at `~/w/fivetwenty/studios/ocfp/src/deployments/fivetwenty-ocfp` with `bosh/ocfp-pve-wayne-mgmt.yml` present
+- Deployments repo cloned at `~/w/fivetwenty/studios/ocfp/src/deployments/fivetwenty-ocfp` with `bosh/ocfp-lab-wayne-mgmt.yml` present
 - Operator shell environment set:
 
 ```bash
@@ -42,13 +42,13 @@ cd ~/w/fivetwenty/studios/ocfp/src/deployments/fivetwenty-ocfp/bosh
 Confirm the env file is present:
 
 ```bash
-ls ocfp-pve-wayne-mgmt.yml
+ls ocfp-lab-wayne-mgmt.yml
 ```
 
 Quick-inspect the operator-side `pve_host` override:
 
 ```bash
-grep pve_host ocfp-pve-wayne-mgmt.yml
+grep pve_host ocfp-lab-wayne-mgmt.yml
 ```
 
 Expected: `pve_host: sm-0.lab.fivetwenty.io`. This value is set in `bosh-configs.cpi` so that `genesis deploy` from your Mac connects to PVE over Tailscale. The director itself uses `10.64.64.1` (the `lvnet001` bridge IP) once it is running — that override lives in `blocs/wayne-pve.yml` and does not affect this deploy step.
@@ -130,7 +130,7 @@ Genesis populates the director from vault secrets at the kit's secret base path 
 ### 3.3 Generate missing secrets
 
 ```bash
-genesis secrets add ocfp-pve-wayne-mgmt
+genesis secrets add ocfp-lab-wayne-mgmt
 ```
 
 Genesis checks each required secret against vault. It generates any that are missing and prompts for any it cannot auto-generate. CPI secrets were already written during the CPI account setup — genesis will find them and skip prompting.
@@ -144,7 +144,7 @@ After it completes, verify no errors appear in the output. Re-run if the command
 Generate the manifest without deploying to confirm the interpolated values look correct:
 
 ```bash
-genesis manifest ocfp-pve-wayne-mgmt > /tmp/mgmt-manifest.yml
+genesis manifest ocfp-lab-wayne-mgmt > /tmp/mgmt-manifest.yml
 ```
 
 Inspect the key values:
@@ -161,9 +161,9 @@ Expected values:
 | `static_ip` / `internal_ip` | `10.64.64.10` |
 | `pve_node` | `pve` |
 
-If `pve_host` shows `10.64.64.1` instead of the Tailscale FQDN, the operator-side override in `bosh-configs.cpi.pve_host` is not being picked up. Confirm `ocfp-pve-wayne-mgmt.yml` contains the `bosh-configs` stanza from Step 1.
+If `pve_host` shows `10.64.64.1` instead of the Tailscale FQDN, the operator-side override in `bosh-configs.cpi.pve_host` is not being picked up. Confirm `ocfp-lab-wayne-mgmt.yml` contains the `bosh-configs` stanza from Step 1.
 
-If the manifest contains `((` placeholders, secrets are missing. Re-run `genesis secrets add ocfp-pve-wayne-mgmt` and resolve any errors before proceeding.
+If the manifest contains `((` placeholders, secrets are missing. Re-run `genesis secrets add ocfp-lab-wayne-mgmt` and resolve any errors before proceeding.
 
 ---
 
@@ -180,7 +180,7 @@ If the manifest contains `((` placeholders, secrets are missing. Re-run `genesis
 > Proceed only after confirming all checks above.
 
 ```bash
-genesis deploy ocfp-pve-wayne-mgmt
+genesis deploy ocfp-lab-wayne-mgmt
 ```
 
 Genesis prompts for confirmation before proceeding. Type `yes` to continue.
@@ -198,7 +198,7 @@ Watch for these stage progressions in the output:
 A successful deploy ends with:
 
 ```
-Deployed 'bosh' to 'ocfp-pve-wayne-mgmt'
+Deployed 'bosh' to 'ocfp-lab-wayne-mgmt'
 ```
 
 ---
@@ -208,7 +208,7 @@ Deployed 'bosh' to 'ocfp-pve-wayne-mgmt'
 ### 6.1 Director info
 
 ```bash
-genesis bosh ocfp-pve-wayne-mgmt -- env
+genesis bosh ocfp-lab-wayne-mgmt -- env
 ```
 
 Expected: director version, CPI name `pve`, and the director UUID. If this command times out, the director is not reachable at `10.64.64.10:25555` — see Troubleshooting.
@@ -216,7 +216,7 @@ Expected: director version, CPI name `pve`, and the director UUID. If this comma
 ### 6.2 Stemcells
 
 ```bash
-genesis bosh ocfp-pve-wayne-mgmt -- stemcells
+genesis bosh ocfp-lab-wayne-mgmt -- stemcells
 ```
 
 Expected: at least one stemcell row (genesis uploads the Ubuntu stemcell during the deploy via cloud-config).
@@ -224,7 +224,7 @@ Expected: at least one stemcell row (genesis uploads the Ubuntu stemcell during 
 ### 6.3 VMs
 
 ```bash
-genesis bosh ocfp-pve-wayne-mgmt -- vms
+genesis bosh ocfp-lab-wayne-mgmt -- vms
 ```
 
 Expected: empty table or just the director itself. No other deployments exist at this point.
@@ -263,7 +263,7 @@ This script is placed by the provision step. It verifies the BOSH director API i
 If the deploy fails with a CPI error, retrieve the CPI log:
 
 ```bash
-genesis bosh ocfp-pve-wayne-mgmt -- cpi
+genesis bosh ocfp-lab-wayne-mgmt -- cpi
 ```
 
 Common CPI errors:
@@ -276,7 +276,7 @@ Common CPI errors:
 Verify the operator-side `pve_host` is the Tailscale FQDN, not the internal bridge IP:
 
 ```bash
-grep pve_host ocfp-pve-wayne-mgmt.yml
+grep pve_host ocfp-lab-wayne-mgmt.yml
 ```
 
 Expected: `sm-0.lab.fivetwenty.io`. The internal IP `10.64.64.1` is the director-side value used after the director is running. Using it from the Mac will fail because lvnet001 is not routed to your Mac.
@@ -289,7 +289,7 @@ If the CPI reports a VMID conflict, list VMIDs in use on sm-0:
 ssh root@sm-0 qm list
 ```
 
-The CPI auto-assigns VMIDs starting at 200 (default `vmid_range_start` in the PVE overlay). VMIDs 100 (drgao) and 101 (bastion) are hand-assigned and outside this range. If any VMIDs ≥ 200 conflict with unrelated VMs, adjust `pve_vmid_range_start` in `ocfp-pve-wayne-mgmt.yml` under `bosh-configs.cpi` or manually clean up the conflicting VMs before retrying.
+The CPI auto-assigns VMIDs starting at 200 (default `vmid_range_start` in the PVE overlay). VMIDs 100 (drgao) and 101 (bastion) are hand-assigned and outside this range. If any VMIDs ≥ 200 conflict with unrelated VMs, adjust `pve_vmid_range_start` in `ocfp-lab-wayne-mgmt.yml` under `bosh-configs.cpi` or manually clean up the conflicting VMs before retrying.
 
 ### Storage allocation failures
 
@@ -324,7 +324,7 @@ The trace includes the full spruce merge output, bosh CLI invocations, and vault
 To tear down a failed or partial deploy:
 
 ```bash
-genesis delete-env ocfp-pve-wayne-mgmt
+genesis delete-env ocfp-lab-wayne-mgmt
 ```
 
 Then on sm-0, confirm the director VM is gone:
@@ -347,7 +347,7 @@ ssh root@sm-0 qm stop <vmid> && ssh root@sm-0 qm destroy <vmid> --purge
 |---|---|
 | Director IP | `10.64.64.10` |
 | BOSH API port | `25555` |
-| Director name | `ocfp-pve-wayne-mgmt` |
+| Director name | `ocfp-lab-wayne-mgmt` |
 | Vault secrets base | `secret/ocfp/pve/wayne/mgmt/` |
 | Admin password vault path | `secret/ocfp/pve/wayne/mgmt/users/admin:password` |
 | Genesis trace log | `~/.genesis/mylogs/last-trace` |

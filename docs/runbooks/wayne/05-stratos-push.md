@@ -5,7 +5,7 @@ at `https://console.apps.ocf.wayne.lab.fivetwenty.io`. This is the final
 gate for the Wayne bloc bring-up.
 
 **Run from:** operator Mac. All `cf` and `bun` commands run locally. The
-cloudflared tunnel and HAProxy at `10.64.64.50` carry traffic from Cloudflare
+cloudflared tunnel and HAProxy at `10.64.64.20` carry traffic from Cloudflare
 to the CF routers — no direct IP access to the cluster is required.
 
 ---
@@ -22,7 +22,7 @@ All of the following must be complete before this step:
 - 04-env-bosh-and-cf-deploy.md — CF deployed and healthy at
   `https://api.system.ocf.wayne.lab.fivetwenty.io`
 - 04-dns-reconciliation.md — `*.apps.ocf.wayne.lab.fivetwenty.io` DNS CNAME records
-  pointing through the cloudflared tunnel to HAProxy `10.64.64.50`
+  pointing through the cloudflared tunnel to HAProxy `10.64.64.20`
 
 Verify CF is reachable before proceeding:
 
@@ -100,7 +100,7 @@ cf api https://api.system.ocf.wayne.lab.fivetwenty.io --skip-ssl-validation
 Log in as admin, pulling the password from vault:
 
 ```bash
-cf login -u admin -p "$(safe get secret/exodus/ocfp-pve-wayne-cf:admin_password)"
+cf login -u admin -p "$(safe get secret/exodus/ocfp-lab-wayne-ocf-cf:admin_password)"
 ```
 
 Verify the session targets the correct foundation:
@@ -333,7 +333,7 @@ This script verifies HTTP 200, login form presence, and the branded page title.
 2. Enter credentials:
 
    - **Username:** `admin`
-   - **Password:** `$(safe get secret/exodus/ocfp-pve-wayne-cf:admin_password)`
+   - **Password:** `$(safe get secret/exodus/ocfp-lab-wayne-ocf-cf:admin_password)`
 
 3. On first login Stratos prompts to configure a CF endpoint. Use:
 
@@ -406,7 +406,7 @@ If the browser shows an untrusted cert:
 
 - Confirm cloudflared is running on the bastion: `ssh ubuntu@10.64.64.3 systemctl status cloudflared`
 - Verify the tunnel config maps `console.apps.ocf.wayne.lab.fivetwenty.io` to
-  `http://10.64.64.50` (HAProxy, port 80), not to an HTTPS backend. Cloudflare
+  `http://10.64.64.20` (HAProxy, port 80), not to an HTTPS backend. Cloudflare
   handles TLS termination at its edge; the origin connection from cloudflared
   to HAProxy is plain HTTP inside the private network.
 
@@ -466,10 +466,10 @@ If default branding appears:
 | Stratos URL | `https://console.apps.ocf.wayne.lab.fivetwenty.io` |
 | CF org / space | `system` / `stratos` |
 | App name | `console` |
-| CF admin password vault path | `secret/exodus/ocfp-pve-wayne-cf:admin_password` |
+| CF admin password vault path | `secret/exodus/ocfp-lab-wayne-ocf-cf:admin_password` |
 | Stratos source | `~/w/fivetwenty/studios/ocfp/src/apps/stratos` (branch: `develop`) |
 | Build command | `bun install && bun run prebuild-ui` |
-| HAProxy (CF ingress) | `10.64.64.50` |
+| HAProxy (CF ingress) | `10.64.64.20` |
 | Cloudflared tunnel | `ocfp-wayne` (running on bastion `10.64.64.3`) |
 
 ---
