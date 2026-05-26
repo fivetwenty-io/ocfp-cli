@@ -71,9 +71,9 @@ func TestCreateSecurityGroups_Success(t *testing.T) {
 		t.Fatalf("CreateSecurityGroups failed: %v", err)
 	}
 
-	// Verify all 7 security groups were created
-	if len(fakeNet.createdSecurityGroups) != 7 {
-		t.Errorf("Created %d security groups, want 7", len(fakeNet.createdSecurityGroups))
+	// Verify all 8 security groups were created
+	if len(fakeNet.createdSecurityGroups) != 8 {
+		t.Errorf("Created %d security groups, want 8", len(fakeNet.createdSecurityGroups))
 	}
 
 	expectedGroups := []string{
@@ -84,6 +84,7 @@ func TestCreateSecurityGroups_Success(t *testing.T) {
 		"prod-ocf-cf-router-ingress",
 		"prod-ocf-cf-tcp-router-ingress",
 		"prod-ocf-cf-ssh-ingress",
+		"prod-artifacts",
 	}
 
 	// Verify each expected group exists
@@ -146,9 +147,9 @@ func TestCreateSecurityGroups_SkipsExisting(t *testing.T) {
 		t.Fatalf("CreateSecurityGroups failed: %v", err)
 	}
 
-	// Verify only 6 new security groups were created (bastion skipped)
-	if len(fakeNet.createdSecurityGroups) != 6 {
-		t.Errorf("Created %d security groups, want 6 (bastion should be skipped)", len(fakeNet.createdSecurityGroups))
+	// Verify only 7 new security groups were created (bastion skipped)
+	if len(fakeNet.createdSecurityGroups) != 7 {
+		t.Errorf("Created %d security groups, want 7 (bastion should be skipped)", len(fakeNet.createdSecurityGroups))
 	}
 
 	// Verify bastion was not re-created
@@ -345,6 +346,75 @@ func TestCFSSHSecurityGroupDef(t *testing.T) {
 
 	if sg.ID != "sg-prod-ocf-cf-ssh-ingress" {
 		t.Errorf("CF SSH SG ID = %v, want sg-prod-ocf-cf-ssh-ingress", sg.ID)
+	}
+}
+
+func TestArtifactsSecurityGroupDef(t *testing.T) {
+	t.Parallel()
+
+	manager, _, _ := setupSecurityTest(t)
+	ctx := context.Background()
+
+	err := manager.CreateSecurityGroups(ctx)
+	if err != nil {
+		t.Fatalf("CreateSecurityGroups failed: %v", err)
+	}
+
+	sg, err := manager.StateManager().GetResource("security_group", "prod-artifacts")
+	if err != nil {
+		t.Fatal("Artifacts security group not found")
+	}
+
+	if sg.ID != "sg-prod-artifacts" {
+		t.Errorf("Artifacts SG ID = %v, want sg-prod-artifacts", sg.ID)
+	}
+}
+
+func TestSecurityGroupRules_ArtifactsHasS3AndSSH(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeNet, _ := setupSecurityTest(t)
+	ctx := context.Background()
+
+	err := manager.CreateSecurityGroups(ctx)
+	if err != nil {
+		t.Fatalf("CreateSecurityGroups failed: %v", err)
+	}
+
+	var artifactsSG *cpi.SecurityGroup
+	for _, sg := range fakeNet.createdSecurityGroups {
+		if sg.Name == "prod-artifacts" {
+			artifactsSG = sg
+			break
+		}
+	}
+
+	if artifactsSG == nil {
+		t.Fatal("Artifacts security group not found")
+	}
+
+	// RustFS S3 (9000), console (9001), and intra-SDN SSH (22) must be open
+	// from the bloc network CIDR so the bastion and BOSH-managed VMs can reach
+	// the blobstore and the provision step can SSH in.
+	expectedPorts := []int{22, 9000, 9001}
+	foundPorts := make(map[int]bool)
+
+	for _, rule := range artifactsSG.Rules {
+		if rule.Direction != "ingress" || rule.Protocol != "tcp" {
+			continue
+		}
+
+		foundPorts[rule.PortRangeMin] = true
+
+		if rule.RemoteIPCIDR != "10.4.0.0/20" {
+			t.Errorf("Artifacts rule port %d RemoteIPCIDR = %v, want 10.4.0.0/20 (bloc CIDR)", rule.PortRangeMin, rule.RemoteIPCIDR)
+		}
+	}
+
+	for _, port := range expectedPorts {
+		if !foundPorts[port] {
+			t.Errorf("Expected port %d not found in artifacts security group", port)
+		}
 	}
 }
 
