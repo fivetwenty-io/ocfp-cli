@@ -34,16 +34,18 @@ func NewArtifactsCmd() *cobra.Command {
 blobstore for BOSH and Cloud Foundry deployments.
 
 Actions:
-  lookup   Print the resolved VM ID, IP, endpoint, and credentials.
-  status   Show VM power state and endpoint metadata.
-  start    Power on the VM.
-  stop     Gracefully shut down the VM.
-  restart  Power-cycle the VM.
-  destroy  Delete the VM (requires --yes).
+  lookup    Print the resolved VM ID, IP, endpoint, and credentials.
+  status    Show VM power state and endpoint metadata.
+  provision Install/configure RustFS on the VM and create buckets.
+  start     Power on the VM.
+  stop      Gracefully shut down the VM.
+  restart   Power-cycle the VM.
+  destroy   Delete the VM (requires --yes).
 
 All actions require --bloc.`,
 		Example: `  ocfp artifacts lookup --bloc dev
   ocfp artifacts status --bloc dev --json
+  ocfp artifacts provision --bloc dev
   ocfp artifacts start --bloc dev
   ocfp artifacts stop --bloc dev
   ocfp artifacts destroy --bloc dev --yes`,
@@ -54,8 +56,14 @@ All actions require --bloc.`,
 	cmd.Flags().String("bloc", "", "Bloc name (required)")
 	cmd.Flags().Bool("json", false, "Emit output as JSON")
 	cmd.Flags().Bool("yes", false, "Skip confirmation prompts (required for destroy)")
+	cmd.Flags().Bool("dry-run", false, "Preview provision actions without executing")
+	cmd.Flags().String("user", "ubuntu", "SSH username for the provision connection")
+	cmd.Flags().String("key", "", "Path to SSH private key for the provision connection")
 
 	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
+	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
+	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
+	_ = viper.BindPFlag("dry-run", cmd.Flags().Lookup("dry-run"))
 
 	return cmd
 }
@@ -86,6 +94,8 @@ func runArtifactsCmd(cmd *cobra.Command, args []string) error {
 		return artifactsLookup(ctx, asJSON)
 	case "status":
 		return artifactsStatus(ctx, asJSON)
+	case "provision":
+		return artifactsProvision(cmd, ctx, log)
 	case "start":
 		return artifactsLifecycle(ctx, "start")
 	case "stop":
