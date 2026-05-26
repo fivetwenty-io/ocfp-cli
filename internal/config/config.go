@@ -1214,11 +1214,13 @@ func applyGenesisDefaults(cfg *Config) {
 	}
 
 	if cfg.Genesis.Branch == "" {
-		cfg.Genesis.Branch = "v3.1.x-dev"
+		cfg.Genesis.Branch = "v3.2.x-dev"
 	}
 
 	if cfg.Genesis.VersionPrefix == "" {
-		cfg.Genesis.VersionPrefix = "3.1.0"
+		// Pack version must be semver-parseable (genesis `semver`/`new_enough`
+		// reject "x"/"-dev"); the dev line is identified by Branch, not version.
+		cfg.Genesis.VersionPrefix = "3.2.0"
 	}
 }
 
@@ -1229,11 +1231,11 @@ func applyBastionGenesisDefaults(cfg *Config) {
 	}
 
 	if cfg.Bastion.Genesis.Branch == "" {
-		cfg.Bastion.Genesis.Branch = "v3.1.x-dev"
+		cfg.Bastion.Genesis.Branch = "v3.2.x-dev"
 	}
 
 	if cfg.Bastion.Genesis.VersionPrefix == "" {
-		cfg.Bastion.Genesis.VersionPrefix = "3.1.0"
+		cfg.Bastion.Genesis.VersionPrefix = "3.2.0"
 	}
 }
 
