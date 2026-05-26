@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -14,11 +13,12 @@ import (
 	"github.com/spf13/viper"
 )
 
-// validPVEBlocPattern matches PVE bloc names of the form ocfp-pve-<slug> where
-// <slug> is one or more lowercase alphanumeric segments separated by dashes.
-// Examples accepted: "ocfp-pve-dc1", "ocfp-pve-eu-west-1"
-// Examples rejected: "ocfp-aws-us-east-1", "pve-bloc", "ocfp-pve-"
-var validPVEBlocPattern = regexp.MustCompile(`^ocfp-pve-[a-z0-9-]+$`)
+// PVE bloc names follow the same generic format as every other provider:
+// lowercase alphanumeric and internal dashes, min length 2. They are NOT tied
+// to an "ocfp-pve-" prefix — a bloc named "ocfp-lab-wayne" is valid. Datacenter
+// identity comes from config (see pveDatacenter), not the bloc name.
+// Examples accepted: "ocfp-pve-dc1", "ocfp-lab-wayne", "prod"
+// Examples rejected: "ocfp-pve-DC1", "ocfp-pve-", "a", "ocfp-pve-dc1_x"
 
 // resolveInitPVEBloc determines the effective bloc name for `ocfp init pve`.
 //
@@ -42,14 +42,11 @@ func resolveInitPVEBloc(cmd *cobra.Command) (string, error) {
 	return "", ErrBlocMissing
 }
 
-// validatePVEBlocName reports whether name satisfies the PVE bloc format.
-// Returns ErrBlocFormatInvalid when name does not match.
+// validatePVEBlocName reports whether name satisfies the bloc format.
+// PVE blocs use the same permissive format as every other provider
+// (see validateBlocName). Returns ErrBlocFormatInvalid when name does not match.
 func validatePVEBlocName(name string) error {
-	if !validPVEBlocPattern.MatchString(name) {
-		return fmt.Errorf("%w: got %q (PVE blocs must match ^ocfp-pve-[a-z0-9-]+$)", ErrBlocFormatInvalid, name)
-	}
-
-	return nil
+	return validateBlocName(name)
 }
 
 // initPVEParams collects resolved inputs for `ocfp init pve`.
@@ -91,7 +88,7 @@ func resolveInitPVEParams(cmd *cobra.Command) (*initPVEParams, error) {
 //
 // Config is persisted via config.SetCurrentBloc so that subsequent `ocfp`
 // invocations can resolve the bloc without re-supplying the flag.
-func initializePVE(cmd *cobra.Command) error {
+func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 	log := logger.Get()
 
 	params, err := resolveInitPVEParams(cmd)
@@ -99,23 +96,42 @@ func initializePVE(cmd *cobra.Command) error {
 		return err
 	}
 
-	log.Infow("Initializing PVE environment", "bloc", params.bloc)
+	datacenter := resolvePVEDatacenter(params.bloc, cfg)
+
+	log.Infow("Initializing PVE environment", "bloc", params.bloc, "datacenter", datacenter)
 
 	if err := persistBlocToState(params.bloc); err != nil {
 		return err
 	}
 
-	if err := writePVEDeploymentEnvFile(params.bloc, "mgmt", "bosh", true); err != nil {
+	if err := writePVEDeploymentEnvFile(params.bloc, "mgmt", "bosh", true, datacenter); err != nil {
 		return err
 	}
 
-	if err := writePVEDeploymentEnvFile(params.bloc, "ocf", "cf", false); err != nil {
+	if err := writePVEDeploymentEnvFile(params.bloc, "ocf", "cf", false, datacenter); err != nil {
 		return err
 	}
 
 	log.Infow("PVE environment initialized", "bloc", params.bloc)
 
 	return nil
+}
+
+// resolvePVEDatacenter determines the PVE datacenter identity for a bloc.
+//
+// The datacenter is sourced from the bloc config's Region field (the generic
+// per-bloc location identifier; for PVE this is the Proxmox datacenter/node,
+// e.g. "pve"). When no config is available (nil cfg or empty Region) it falls
+// back to deriving the segment from an "ocfp-pve-<dc>" bloc name, preserving
+// the prior behaviour for legacy datacenter-style bloc names.
+func resolvePVEDatacenter(bloc string, cfg *config.Config) string {
+	if cfg != nil {
+		if r := strings.TrimSpace(cfg.Region); r != "" {
+			return r
+		}
+	}
+
+	return pveDatacenterFromBloc(bloc)
 }
 
 // pveDatacenterFromBloc extracts the datacenter segment from a PVE bloc name.
@@ -133,19 +149,19 @@ func pveDatacenterFromBloc(bloc string) string {
 // deployment under the given bloc.
 //
 // Parameters:
-//   - bloc         OCFP bloc identifier (e.g. "ocfp-pve-dc1")
+//   - bloc         OCFP bloc identifier (e.g. "ocfp-lab-wayne", "ocfp-pve-dc1")
 //   - deployment   deployment slot name: "mgmt" or "ocf"
 //   - kit          Genesis kit name: "bosh" for mgmt, "cf" for ocf
 //   - useCreateEnv true for BOSH proto-director (create-env) deployments
+//   - datacenter   PVE datacenter identity (from config Region; see resolvePVEDatacenter)
 //
 // Path: $OCFP_HOME/<bloc>/deployments/<deployment>/<bloc>-<deployment>.yml
 // IAAS is always "pve" for this command.
 //
 // The ocf env file includes a params block with pve_datacenter set to the
-// datacenter segment of the bloc (everything after "ocfp-pve-"). The mgmt
-// env file carries no params block, matching the create-env pattern used by
-// the AWS bosh kit.
-func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) error {
+// supplied datacenter. The mgmt env file carries no params block, matching the
+// create-env pattern used by the AWS bosh kit.
+func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, datacenter string) error {
 	ocfpHome := config.OcfpHome()
 	if ocfpHome == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
@@ -170,7 +186,7 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) 
 	// does not carry params, matching the AWS mgmt pattern.
 	if deployment == "ocf" {
 		opts.Params = map[string]any{
-			"pve_datacenter": pveDatacenterFromBloc(bloc),
+			"pve_datacenter": datacenter,
 		}
 	}
 

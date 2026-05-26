@@ -240,7 +240,7 @@ func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Comman
 	case "aws":
 		return initializeAWS(cmd)
 	case "pve":
-		return initializePVE(cmd)
+		return initializePVE(cmd, cfg)
 	case "pg":
 		return initializePostgreSQL()
 	case "cf":
@@ -303,7 +303,7 @@ func getInitLongDescription() string {
 
 Components:
   aws     - Initialize AWS environment (requires --bloc ocfp-aws-<region>, or OCFP_BLOC)
-  pve     - Initialize Proxmox VE environment (requires --bloc ocfp-pve-<datacenter>, or OCFP_BLOC)
+  pve     - Initialize Proxmox VE environment (requires --bloc <name>, or OCFP_BLOC; datacenter from config region)
   pg      - Initialize PostgreSQL database
   cf      - Initialize Cloud Foundry
   bosh    - Initialize BOSH Director
