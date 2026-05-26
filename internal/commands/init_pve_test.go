@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,8 @@ func setupPVEInitEnv(t *testing.T) string {
 }
 
 // TestValidatePVEBlocName_Valid verifies that well-formed PVE bloc names pass.
+// PVE bloc names are not tied to an ocfp-pve- prefix; any lowercase
+// alphanumeric-and-dash name is accepted, matching the generic bloc format.
 func TestValidatePVEBlocName_Valid(t *testing.T) {
 	cases := []struct {
 		name string
@@ -34,6 +37,8 @@ func TestValidatePVEBlocName_Valid(t *testing.T) {
 		{"geo slug", "ocfp-pve-london-east"},
 		{"numeric suffix", "ocfp-pve-eu-west-1"},
 		{"alphanumeric slug", "ocfp-pve-abc123"},
+		{"lab bloc name", "ocfp-lab-wayne"},
+		{"short name", "prod"},
 	}
 
 	for _, tc := range cases {
@@ -51,12 +56,11 @@ func TestValidatePVEBlocName_Invalid(t *testing.T) {
 		bloc string
 	}{
 		{"empty string", ""},
-		{"wrong iaas prefix", "ocfp-aws-us-east-1"},
-		{"missing ocfp- prefix", "pve-dc1"},
 		{"uppercase in slug", "ocfp-pve-DC1"},
-		{"empty datacenter segment", "ocfp-pve-"},
+		{"trailing dash", "ocfp-pve-"},
+		{"leading dash", "-ocfp-pve-dc1"},
 		{"underscore not allowed", "ocfp-pve-dc1_x"},
-		{"bare pve only", "pve"},
+		{"single char", "a"},
 		{"space in name", "ocfp-pve-dc 1"},
 	}
 
@@ -144,7 +148,7 @@ func TestInitPVE_MissingBlocReturnsError(t *testing.T) {
 	setupPVEInitEnv(t)
 	os.Unsetenv("OCFP_BLOC")
 
-	err := initializePVE(makeCmdNoBloc(t))
+	err := initializePVE(makeCmdNoBloc(t), nil)
 
 	require.Error(t, err, "initializePVE must return an error when no bloc is provided")
 	assert.True(t,
@@ -167,7 +171,7 @@ func TestInitPVE_StaleViperBlocBlocked(t *testing.T) {
 	viper.Set("bloc", "ocfp-pve-stale-prior")
 
 	// No --bloc flag, no OCFP_BLOC — must fail even though viper is non-empty.
-	err := initializePVE(makeCmdNoBloc(t))
+	err := initializePVE(makeCmdNoBloc(t), nil)
 
 	require.Error(t, err, "initializePVE must error when only a stale viper bloc is present")
 	assert.True(t,
@@ -183,11 +187,10 @@ func TestInitPVE_InvalidBlocReturnsError(t *testing.T) {
 		name string
 		bloc string
 	}{
-		{"wrong iaas", "ocfp-aws-us-east-1"},
-		{"missing ocfp prefix", "pve-dc1"},
 		{"uppercase", "ocfp-pve-DC1"},
 		{"trailing dash", "ocfp-pve-"},
 		{"underscore", "ocfp-pve-dc1_x"},
+		{"single char", "a"},
 		{"empty", ""},
 	}
 
@@ -205,7 +208,7 @@ func TestInitPVE_InvalidBlocReturnsError(t *testing.T) {
 				t.Setenv("OCFP_BLOC", tc.bloc)
 			}
 
-			err := initializePVE(makeCmdNoBloc(t))
+			err := initializePVE(makeCmdNoBloc(t), nil)
 
 			require.Error(t, err, "initializePVE must return an error for bloc=%q", tc.bloc)
 
@@ -232,7 +235,7 @@ func TestInitPVE_ValidBlocWritesEnvFile(t *testing.T) {
 	const bloc = "ocfp-pve-dc1"
 	viper.Set("bloc", bloc)
 
-	err := initializePVE(makeBlocCmd(t, bloc))
+	err := initializePVE(makeBlocCmd(t, bloc), nil)
 	require.NoError(t, err)
 
 	envPath := filepath.Join(tmpDir, bloc, "deployments", "mgmt", bloc+"-mgmt.yml")
@@ -259,7 +262,7 @@ func TestInitPVE_BlocFromEnvVarWhenFlagAbsent(t *testing.T) {
 	const envBloc = "ocfp-pve-london-east"
 	t.Setenv("OCFP_BLOC", envBloc)
 
-	err := initializePVE(makeCmdNoBloc(t))
+	err := initializePVE(makeCmdNoBloc(t), nil)
 	require.NoError(t, err)
 
 	envPath := filepath.Join(tmpDir, envBloc, "deployments", "mgmt", envBloc+"-mgmt.yml")
@@ -285,7 +288,7 @@ func TestInitPVE_WritesBothEnvFiles(t *testing.T) {
 	const bloc = "ocfp-pve-cluster-1"
 	viper.Set("bloc", bloc)
 
-	err := initializePVE(makeBlocCmd(t, bloc))
+	err := initializePVE(makeBlocCmd(t, bloc), nil)
 	require.NoError(t, err)
 
 	mgmtPath := filepath.Join(tmpDir, bloc, "deployments", "mgmt", bloc+"-mgmt.yml")
@@ -309,7 +312,7 @@ func TestInitPVE_MgmtFileHasCreateEnvAndBoshKit(t *testing.T) {
 	const bloc = "ocfp-pve-dc1"
 	viper.Set("bloc", bloc)
 
-	require.NoError(t, initializePVE(makeBlocCmd(t, bloc)))
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), nil))
 
 	mgmtPath := filepath.Join(tmpDir, bloc, "deployments", "mgmt", bloc+"-mgmt.yml")
 	data, err := os.ReadFile(mgmtPath)
@@ -340,7 +343,7 @@ func TestInitPVE_OcfFileHasNoCreateEnvAndCfKit(t *testing.T) {
 	const bloc = "ocfp-pve-dc1"
 	viper.Set("bloc", bloc)
 
-	require.NoError(t, initializePVE(makeBlocCmd(t, bloc)))
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), nil))
 
 	ocfPath := filepath.Join(tmpDir, bloc, "deployments", "ocf", bloc+"-ocf.yml")
 	data, err := os.ReadFile(ocfPath)
@@ -373,7 +376,7 @@ func TestInitPVE_OcfFileHasPVEDatacenterParam(t *testing.T) {
 	const bloc = "ocfp-pve-dc1"
 	viper.Set("bloc", bloc)
 
-	require.NoError(t, initializePVE(makeBlocCmd(t, bloc)))
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), nil))
 
 	// ocf file must have params.pve_datacenter: dc1
 	ocfPath := filepath.Join(tmpDir, bloc, "deployments", "ocf", bloc+"-ocf.yml")
@@ -401,6 +404,36 @@ func TestInitPVE_OcfFileHasPVEDatacenterParam(t *testing.T) {
 		"mgmt file must not have a params: block; content:\n%s", string(mgmtData))
 }
 
+// TestInitPVE_DatacenterFromConfigRegion verifies that when a bloc config is
+// supplied, params.pve_datacenter is sourced from cfg.Region rather than parsed
+// from the bloc name. This unblocks blocs like "ocfp-lab-wayne" whose name does
+// not carry an ocfp-pve- datacenter segment.
+func TestInitPVE_DatacenterFromConfigRegion(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	tmpDir := setupPVEInitEnv(t)
+
+	const bloc = "ocfp-lab-wayne"
+	viper.Set("bloc", bloc)
+
+	cfg := &config.Config{Name: bloc, Provider: "pve", Region: "pve"}
+
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), cfg))
+
+	ocfPath := filepath.Join(tmpDir, bloc, "deployments", "ocf", bloc+"-ocf.yml")
+	ocfData, err := os.ReadFile(ocfPath)
+	require.NoError(t, err, "ocf env file must exist at %s", ocfPath)
+
+	var ocfParsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(ocfData, &ocfParsed))
+
+	paramsBlock, ok := ocfParsed["params"].(map[string]interface{})
+	require.True(t, ok, "ocf file must have a params: block; content:\n%s", string(ocfData))
+	assert.Equal(t, "pve", paramsBlock["pve_datacenter"],
+		"params.pve_datacenter must come from cfg.Region; content:\n%s", string(ocfData))
+}
+
 // TestInitPVE_BothFilesHaveBlocAndPVEIAAS verifies that both env files carry
 // ocfp.bloc: <bloc> and kit.iaas: pve.
 func TestInitPVE_BothFilesHaveBlocAndPVEIAAS(t *testing.T) {
@@ -412,7 +445,7 @@ func TestInitPVE_BothFilesHaveBlocAndPVEIAAS(t *testing.T) {
 	const bloc = "ocfp-pve-cluster-1"
 	viper.Set("bloc", bloc)
 
-	require.NoError(t, initializePVE(makeBlocCmd(t, bloc)))
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), nil))
 
 	paths := []struct {
 		label string
@@ -460,7 +493,7 @@ func TestInitPVE_FlagOverridesEnvVar(t *testing.T) {
 	viper.Set("bloc", flagBloc) // mirrors what cobra/viper would set from the flag
 
 	// cmd has --bloc=flagBloc explicitly on the command line (Changed == true).
-	err := initializePVE(makeBlocCmd(t, flagBloc))
+	err := initializePVE(makeBlocCmd(t, flagBloc), nil)
 	require.NoError(t, err)
 
 	// env file must be under flagBloc, not envBloc.
