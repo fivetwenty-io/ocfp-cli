@@ -69,11 +69,13 @@ func NewBastionCmd() *cobra.Command {
 	cmd.Flags().String("user", "ubuntu", "SSH username for bastion connection")
 	cmd.Flags().String("key", "", "Path to SSH private key")
 	cmd.Flags().String("bloc", "", "Bloc name for configuration")
+	cmd.Flags().Bool("dry-run", false, "Preview actions without executing remote changes")
 
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
 	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
 	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
+	_ = viper.BindPFlag("dry-run", cmd.Flags().Lookup("dry-run"))
 
 	return cmd
 }
@@ -109,7 +111,7 @@ func bastionInit(cmd *cobra.Command, log logger.Logger) error {
 
 	// Create bastion manager
 	bastionMgr := bastion.NewManager(cfg, &bastion.ProvisioningOptions{
-		DryRun:      false,
+		DryRun:      viper.GetBool("dry-run"),
 		Resume:      false,
 		Parallel:    false,
 		ProgressOut: os.Stdout,
@@ -135,6 +137,13 @@ func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
 	scriptPath, err := FindProvisionScript("bastion")
 	if err != nil {
 		return fmt.Errorf("cannot find bastion provision script: %w", err)
+	}
+
+	if viper.GetBool("dry-run") {
+		log.Infof("[dry-run] would copy %s to %s@%s:/tmp/provision-bastion.pl and run it",
+			scriptPath, bastionContext.User, bastionContext.IP)
+
+		return nil
 	}
 
 	// Load provider config env vars so bloc-level settings (bridge, storage

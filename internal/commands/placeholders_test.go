@@ -183,6 +183,15 @@ func TestNewBastionCmd(t *testing.T) {
 	assert.NoError(t, cmd.Args(cmd, []string{"init"}))
 }
 
+func TestNewBastionCmdDryRunFlag(t *testing.T) {
+	cmd := commands.NewBastionCmd()
+
+	flag := cmd.Flags().Lookup("dry-run")
+	require.NotNil(t, flag, "bastion command must register a --dry-run flag")
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Equal(t, "bool", flag.Value.Type())
+}
+
 func TestBastionCommand(t *testing.T) {
 	tests := []struct {
 		name        string
