@@ -235,11 +235,21 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 			continue
 		}
 
+		// Derive gateway (first host) and dns from the subnet when state omits
+		// them; genesis's dynamic-subnet cloud-config builder reads per-subnet
+		// dns/gateway directly and emits dns: [null] / a bad gateway otherwise.
+		if gateway == "" {
+			gateway = pveCIDRGateway(cidr)
+		}
+
+		dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
+
 		subnetPath := filepath.Join(subnetsPath, sub.Name)
 		if err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
 			"cidr":    cidr,
 			"az":      az,
 			"gateway": gateway,
+			"dns":     dns,
 		}); err != nil {
 			return fmt.Errorf("failed to write subnet %s: %w", sub.Name, err)
 		}
@@ -282,6 +292,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	}
 
 	gateway := pveCIDRGateway(cidr)
+	dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
 	bridgeID := pveFirstNonEmpty(p.Config.Network.Name, "vmbr0")
 	az := pveFirstAZ(p.Config)
 	boshIP := pveOffsetIP(gateway, 9)
@@ -298,6 +309,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 			"cidr":       cidr,
 			"cidr_block": cidr,
 			"gateway":    gateway,
+			"dns":        dns,
 			"az":         az,
 			"id":         bridgeID,
 		}); err != nil {
