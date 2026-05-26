@@ -160,7 +160,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 	// Create the VM either from template or blank
 	if req.Image != "" {
-		err = m.createFromTemplate(ctx, node, vmid, diskSize, storage, req)
+		err = m.createFromTemplate(ctx, node, vmid, diskSize, storage, flavor, req)
 	} else {
 		err = m.createBlankVM(ctx, node, vmid, diskSize, storage, flavor, req)
 	}
@@ -649,7 +649,7 @@ func (m *ComputeManager) GetFlavor(_ctx context.Context, id string) (*cpi.Flavor
 }
 
 // createFromTemplate creates a VM by cloning a template.
-func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vmid, diskSize int, storage string, req *cpi.InstanceRequest) error {
+func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vmid, diskSize int, storage string, flavor *cpi.Flavor, req *cpi.InstanceRequest) error {
 	templateVMID, err := strconv.Atoi(req.Image)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrInvalidTemplateVMID, req.Image)
@@ -665,9 +665,37 @@ func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vm
 		return fmt.Errorf("clone task failed: %w", err)
 	}
 
+	// A clone inherits the template's memory/cores, not the flavor's. Apply the
+	// flavor sizing explicitly so e.g. the bastion gets its 8GB/2-core spec
+	// rather than the template's minimal 2GB. createBlankVM sets these at
+	// creation; the template path must set them after clone.
+	if err := m.applyFlavorSizing(ctx, node, vmid, flavor); err != nil {
+		return fmt.Errorf("failed to apply flavor sizing: %w", err)
+	}
+
 	// Resize disk if needed
 	if diskSize > 0 {
 		_ = m.resizeBootDisk(ctx, node, vmid, diskSize)
+	}
+
+	return nil
+}
+
+// applyFlavorSizing sets the VM's memory and cores to the flavor spec via a
+// config PUT. Cloned templates otherwise keep the template's sizing.
+func (m *ComputeManager) applyFlavorSizing(ctx context.Context, node string, vmid int, flavor *cpi.Flavor) error {
+	if flavor == nil {
+		return nil
+	}
+
+	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	params := map[string]interface{}{
+		"memory": flavor.RAM,
+		"cores":  flavor.VCPUs,
+	}
+
+	if _, err := m.client.pveClient.PutCtx(ctx, configPath, params); err != nil {
+		return fmt.Errorf("failed to set memory/cores: %w", err)
 	}
 
 	return nil
