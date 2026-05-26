@@ -66,8 +66,23 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 	return m.executeScript(ctx, script, "snap-packages")
 }
 
+// brewSkipped reports whether Linuxbrew phases should be skipped for this
+// provider. On PVE the bastion's tools are delivered by the provision script
+// (scripts/provision/bastion) into /usr/local/bin, and the lab CPU types often
+// lack the SSSE3 instructions Linuxbrew's x86_64 bottles require, so brew is
+// both redundant and unrunnable there.
+func (m *Manager) brewSkipped() bool {
+	return strings.EqualFold(m.config.Provider, "pve")
+}
+
 // installBrew installs Linuxbrew itself.
 func (m *Manager) installBrew(ctx context.Context) error {
+	if m.brewSkipped() {
+		m.log.Infow("Skipping Linuxbrew install (tools provided via provision script)", "provider", m.config.Provider)
+
+		return nil
+	}
+
 	m.log.Info("Installing Linuxbrew")
 
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
@@ -78,6 +93,12 @@ func (m *Manager) installBrew(ctx context.Context) error {
 
 // installBrewPackages installs brew packages.
 func (m *Manager) installBrewPackages(ctx context.Context) error {
+	if m.brewSkipped() {
+		m.log.Infow("Skipping brew packages (tools provided via provision script)", "provider", m.config.Provider)
+
+		return nil
+	}
+
 	m.log.Info("Installing brew packages")
 
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
