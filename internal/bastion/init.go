@@ -258,12 +258,12 @@ func (m *Manager) upgradeGenesisFromSource(ctx context.Context, genesisConfig co
 func (m *Manager) extractGenesisConfig(genesisConfig config.Genesis) (string, string, string) {
 	version := genesisConfig.VersionPrefix
 	if version == "" {
-		version = "3.1.0"
+		version = "3.2.0"
 	}
 
 	branch := genesisConfig.Branch
 	if branch == "" {
-		branch = "v3.1.x-dev"
+		branch = "v3.2.x-dev"
 	}
 
 	repo := genesisConfig.Repo
