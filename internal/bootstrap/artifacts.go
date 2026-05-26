@@ -65,7 +65,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: resolve networking: %w", err)
 	}
 
-	sgID, err := m.getBastionSecurityGroup()
+	sgID, err := m.getArtifactsSecurityGroup()
 	if err != nil {
 		return fmt.Errorf("artifacts: resolve security group: %w", err)
 	}

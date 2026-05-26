@@ -383,6 +383,29 @@ func (m *Manager) getBastionSecurityGroup() (string, error) {
 	return "", ErrBastionSecurityGroupNotFound(sgName)
 }
 
+// getArtifactsSecurityGroup resolves the dedicated artifacts security group
+// (<bloc>-artifacts) created by CreateSecurityGroups. It falls back to the
+// bastion security group for backward compatibility with blocs bootstrapped
+// before the artifacts group existed, so re-running artifacts on an older
+// state file still attaches the VM to a reachable group.
+func (m *Manager) getArtifactsSecurityGroup() (string, error) {
+	sgName := m.options.BlocName + "-artifacts"
+
+	if sg, _ := m.stateManager.GetResource("security_group", sgName); sg != nil {
+		return sg.ID, nil
+	}
+
+	//nolint:noinlineerr // Idiomatic error checking pattern for optional fallback
+	if val, err := m.stateManager.GetOutput("sg_artifacts_id"); err == nil {
+		if id, ok := val.(string); ok && id != "" {
+			return id, nil
+		}
+	}
+
+	// Fall back to the bastion SG for pre-artifacts-SG state files.
+	return m.getBastionSecurityGroup()
+}
+
 // ==============================================================================
 // Bastion Instance Creation
 // ==============================================================================
