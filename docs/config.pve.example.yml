@@ -10,7 +10,7 @@
 #   tailscale              — global tailscale defaults (shared across blocs)
 #   blocs                  — map of named OCFP blocs (one per datacenter / environment tier)
 #
-# PVE bloc names must match ^ocfp-pve-[a-z0-9-]+$.
+# PVE bloc names must match ^ocfp-[a-z0-9-]+$ (lab blocs use the ocfp-lab-<user> form).
 
 debug: false
 verbose: false
@@ -47,10 +47,16 @@ tailscale:
 # ─── Blocs ────────────────────────────────────────────────────────────────────
 blocs:
   # ── Wayne lab PVE bloc ──────────────────────────────────────────────────────
-  ocfp-pve-wayne:
+  ocfp-lab-wayne:
     # provider and iaas are synonyms; either is accepted.
     provider: pve
     iaas: pve
+
+    # How `ocfp bastion init`/`ssh` reach the bastion. PVE has no cloud IP
+    # discovery, and the SDN bridge IP is unreachable from an operator machine,
+    # so set this to the bastion's tailscale FQDN (or 100.x IP). Omit only if
+    # you always run from inside the bloc network or export PVE_BASTION_IP.
+    bastion_ip: "ocfp-lab-wayne-bastion.<tailnet>.ts.net"
 
     # PVE API endpoint.  Host only (the CLI splits host / port / scheme).
     # Accepted forms:
@@ -172,15 +178,18 @@ blocs:
       # path_style: true              # true for Ceph/RustFS (default true)
 
     # ── FQDNs ──────────────────────────────────────────────────────────────
+    # Scheme: <base> is ocf.<user>.lab.fivetwenty.io; mgmt utilities sit under
+    # .util.<base>, CF system endpoints under .system.<base>, and apps under
+    # apps.<base>.
     fqdns:
-      base: "lab.fivetwenty.io"
+      base: "ocf.wayne.lab.fivetwenty.io"
       mgmt:
-        bosh: "bosh.mgmt.lab.fivetwenty.io"
-        vault: "vault.mgmt.lab.fivetwenty.io"
+        bosh: "bosh.util.ocf.wayne.lab.fivetwenty.io"
+        vault: "vault.util.ocf.wayne.lab.fivetwenty.io"
       ocf:
-        cf_api: "api.cf.lab.fivetwenty.io"
-        cf_login: "login.cf.lab.fivetwenty.io"
-        cf_uaa: "uaa.cf.lab.fivetwenty.io"
+        cf_api: "api.system.ocf.wayne.lab.fivetwenty.io"
+        cf_login: "login.system.ocf.wayne.lab.fivetwenty.io"
+        cf_uaa: "uaa.system.ocf.wayne.lab.fivetwenty.io"
 
     # ── Jumpbox users ──────────────────────────────────────────────────────
     jumpbox:
