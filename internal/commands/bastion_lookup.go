@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
@@ -22,6 +23,18 @@ const bastionReachabilityProbeTimeout = 2 * time.Second
 // and a final name-based fallback for compatibility with Perl tooling.
 func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
 	log := logger.WithOperation("findBastionIP")
+
+	// Explicit operator override wins. The bloc config's bastion_ip is the
+	// documented way to reach a bastion whose provider-side address is not
+	// routable from the operator (PVE bridge-mode SDN IP unreachable from the
+	// Mac; the tailscale IP is the real entry point). Provider discovery below
+	// only ever yields the private SDN address, so honour the override first —
+	// matching the bastion-init resolution path.
+	if ip := configBastionIP(blocName, log); ip != "" {
+		log.Debugf("Using bastion_ip override from config: %s", ip)
+
+		return ip, nil
+	}
 
 	// Try local state cache first, but only trust it when the bastion is
 	// actually reachable. Bootstrap records the *requested* static IP at
@@ -294,6 +307,21 @@ func tryReservedBastionIP(blocName string, log logger.Logger) string {
 	}
 
 	return ""
+}
+
+// configBastionIP returns the bloc config's explicit bastion_ip override, or
+// "" when no config is loadable or the field is unset. This is the operator's
+// reachable entry point (e.g. a tailscale IP) for providers whose discovered
+// address is not routable from the operator host.
+func configBastionIP(blocName string, log logger.Logger) string {
+	cfg, err := config.LoadWithParams(viper.GetString("config"), blocName)
+	if err != nil {
+		log.Debugf("config bastion_ip: load failed for %s: %v", blocName, err)
+
+		return ""
+	}
+
+	return strings.TrimSpace(cfg.BastionIP)
 }
 
 func tryStateCache(blocName string, log logger.Logger) (string, bool) {

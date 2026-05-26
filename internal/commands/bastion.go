@@ -253,6 +253,34 @@ func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, err
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Resolve the SSH key up front; every path below needs it.
+	if key == "" {
+		k, kerr := findSSHKey(blocName, cfg)
+		if kerr == nil {
+			key = k
+		}
+	}
+
+	// Fall back to the configured bastion SSH user (defaults to "ubuntu") when
+	// no --user flag was supplied, so the context has a usable login.
+	if user == "" {
+		user = cfg.Bastion.SSHUser
+	}
+
+	// Explicit operator override wins and short-circuits provider discovery.
+	// bastion_ip is the documented reachable entry point (e.g. tailscale IP)
+	// for bastions whose provider-side address is not routable from the
+	// operator. Honouring it here avoids a needless provider API round-trip
+	// and works even when the provider client cannot initialise.
+	if ip := strings.TrimSpace(cfg.BastionIP); ip != "" {
+		return &BastionContext{
+			IP:           ip,
+			User:         user,
+			SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+			SSHKeyOption: strings.TrimSpace(key),
+		}, nil
+	}
+
 	if cfg.Provider == "" && cfg.IaaS == "" {
 		return nil, ErrNoProviderConfigured
 	}
@@ -267,14 +295,6 @@ func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, err
 	bastionIP, err := getBastionIP(ctx, provider, blocName)
 	if err != nil || bastionIP == "" {
 		return nil, err
-	}
-
-	// Find key if not specified
-	if key == "" {
-		k, kerr := findSSHKey(blocName, cfg)
-		if kerr == nil {
-			key = k
-		}
 	}
 
 	return &BastionContext{
