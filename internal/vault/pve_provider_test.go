@@ -401,7 +401,7 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	require.NoError(t, sm.Save())
 
 	mock := &awsMockSafe{}
-	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19", DNS: []string{"10.64.64.1"}}
 	provider := newTestPVEProvider(cfg, mock)
 
 	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
@@ -415,6 +415,9 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	assert.Equal(t, "10.64.64.0/22", infraCall.data["cidr"])
 	assert.Equal(t, "10.64.64.1", infraCall.data["gateway"])
 	assert.Equal(t, "", infraCall.data["az"])
+	// Per-subnet DNS must be written so genesis's dynamic-subnet cloud-config
+	// builder does not emit dns: [null]. With config DNS set, every subnet uses it.
+	assert.Equal(t, "10.64.64.1", infraCall.data["dns"])
 
 	ocfp0Path := filepath.Join(subnetsPath, blocName+"-ocfp-0")
 	ocfp0Call := mock.findSetMultipleCall(ocfp0Path)
@@ -422,6 +425,7 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	assert.Equal(t, "10.64.68.0/22", ocfp0Call.data["cidr"])
 	assert.Equal(t, "pvea", ocfp0Call.data["az"])
 	assert.Equal(t, "10.64.68.1", ocfp0Call.data["gateway"])
+	assert.Equal(t, "10.64.64.1", ocfp0Call.data["dns"])
 
 	// Fallback blob path must NOT be written when state-driven entries exist.
 	fallback := mock.findSetMultipleCall(subnetsPath)
@@ -451,6 +455,47 @@ func TestPVEVaultProvider_ConfigureSubnets_NoStateFallsBack(t *testing.T) {
 	assert.Equal(t, "10.64.64.0/19", call.data["cidr"])
 	assert.Contains(t, call.data["note"], "no bootstrap state",
 		"fallback note must indicate state was absent")
+
+	// The fallback per-subnet entries must carry gateway and dns derived from
+	// the CIDR, so genesis builds a valid subnet (no dns: [null], correct gw).
+	ocfp0Path := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", 0)
+	ocfp0 := mock.findSetMultipleCall(ocfp0Path)
+	require.NotNil(t, ocfp0, "fallback ocfp-0 subnet must be written at %s", ocfp0Path)
+	assert.Equal(t, "10.64.64.1", ocfp0.data["gateway"])
+	assert.Equal(t, "10.64.64.1", ocfp0.data["dns"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent — when a
+// state subnet omits gateway and no config DNS is set, ConfigureSubnets derives
+// both from the subnet CIDR (gateway = first host; dns = gateway) so the
+// genesis cloud-config builder always has a usable gateway and resolver.
+func TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-0",
+		Type: "subnet",
+		Name: blocName + "-ocfp-0",
+		Properties: map[string]interface{}{
+			"cidr":              "10.64.68.0/22",
+			"availability_zone": "pvea",
+			"gateway":           "",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+	ocfp0 := mock.findSetMultipleCall(filepath.Join(subnetsPath, blocName+"-ocfp-0"))
+	require.NotNil(t, ocfp0, "ocfp-0 subnet must be written")
+	assert.Equal(t, "10.64.68.1", ocfp0.data["gateway"], "gateway derived from CIDR")
+	assert.Equal(t, "10.64.68.1", ocfp0.data["dns"], "dns derived from subnet gateway")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated — when state has
