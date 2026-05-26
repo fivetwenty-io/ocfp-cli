@@ -374,7 +374,16 @@ func (p *PVEBastionInit) getBastionIP() (string, error) {
 		return ip, nil
 	}
 
-	return "", ErrCouldNotDetermineBastionIP
+	// PVE has no cloud-managed IP discovery the way AWS/StackIt do: the SDN
+	// bridge IP is unreachable from an operator context, so the bastion must be
+	// addressed explicitly (tailscale FQDN/IP from the operator Mac, or the SDN
+	// IP from inside the bloc network). Fail fast with the remedy rather than
+	// after a long SSH-reachability timeout.
+	return "", fmt.Errorf(
+		"%w for PVE bloc %q: set bastion_ip in the bloc config (the tailscale "+
+			"FQDN/IP for operator context, e.g. ocfp-%s-bastion.<tailnet>.ts.net) "+
+			"or export PVE_BASTION_IP",
+		ErrCouldNotDetermineBastionIP, p.config.Name, p.config.Name)
 }
 
 // getBastionIPFromAPI retrieves bastion IP from Proxmox VE API.
