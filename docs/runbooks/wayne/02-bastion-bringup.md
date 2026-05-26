@@ -1,6 +1,6 @@
 # Wayne Bastion Bringup
 
-Brings up VMID 101 (`ocfp-pve-wayne-bastion`) on sm-0 and provisions it with
+Brings up VMID 101 (`ocfp-lab-wayne-bastion`) on sm-0 and provisions it with
 all operator tooling. Bastion IP: `10.64.64.3/18` on `lvnet001`.
 
 The bastion is provisioned via the OCFP CLI directly — not via a genesis kit.
@@ -119,9 +119,9 @@ authored manually and copied to the PVE host before cloning the bastion VM.
 Create the cloud-init user-data file on your Mac:
 
 ```yaml
-# ocfp-pve-wayne-bastion-101-user.yml
+# ocfp-lab-wayne-bastion-101-user.yml
 #cloud-config
-hostname: ocfp-pve-wayne-bastion
+hostname: ocfp-lab-wayne-bastion
 manage_etc_hosts: true
 users:
   - name: ubuntu
@@ -142,8 +142,8 @@ PVE snippets must live in `/var/lib/vz/snippets/` on the PVE host. Copy the
 file directly over SSH:
 
 ```bash
-scp ocfp-pve-wayne-bastion-101-user.yml \
-    root@sm-0:/var/lib/vz/snippets/ocfp-pve-wayne-bastion-101-user.yml
+scp ocfp-lab-wayne-bastion-101-user.yml \
+    root@sm-0:/var/lib/vz/snippets/ocfp-lab-wayne-bastion-101-user.yml
 ```
 
 Verify the upload:
@@ -155,10 +155,10 @@ ssh root@sm-0 ls -la /var/lib/vz/snippets/ | grep wayne-bastion
 ### 3.3 Inspect the snippet on the host
 
 ```bash
-ssh root@sm-0 cat /var/lib/vz/snippets/ocfp-pve-wayne-bastion-101-user.yml
+ssh root@sm-0 cat /var/lib/vz/snippets/ocfp-lab-wayne-bastion-101-user.yml
 ```
 
-Confirm `hostname: ocfp-pve-wayne-bastion` is present. Tailscale config is NOT
+Confirm `hostname: ocfp-lab-wayne-bastion` is present. Tailscale config is NOT
 in this file — it is injected via SMBIOS at clone time (§4.1).
 
 ---
@@ -176,14 +176,14 @@ ssh root@sm-0 qm status 9001
 # If running: ssh root@sm-0 qm stop 9001
 
 # Clone template 9001 → VMID 101
-ssh root@sm-0 qm clone 9001 101 --name ocfp-pve-wayne-bastion --full --storage data
+ssh root@sm-0 qm clone 9001 101 --name ocfp-lab-wayne-bastion --full --storage data
 
 # Wire the network and cloud-init snippet
 ssh root@sm-0 qm set 101 \
   --net0 virtio,bridge=lvnet001 \
   --ipconfig0 ip=10.64.64.3/18,gw=10.64.64.1 \
   --nameserver 1.1.1.1 \
-  --cicustom "user=local:snippets/ocfp-pve-wayne-bastion-101-user.yml"
+  --cicustom "user=local:snippets/ocfp-lab-wayne-bastion-101-user.yml"
 
 # Start the bastion
 ssh root@sm-0 qm start 101
@@ -194,7 +194,7 @@ ssh root@sm-0 qm start 101
 Once the bastion VM is reachable (wait ~60–90 s for cloud-init to finish):
 
 ```bash
-ocfp bastion provision --bloc wayne
+ocfp bastion provision --bloc ocfp-lab-wayne
 ```
 
 This command:
@@ -229,7 +229,64 @@ bastion in a second terminal if you want progress:
 ssh ubuntu@10.64.64.3 tail -f ~/provision.log
 ```
 
-### 4.3 Copy CPI dev tarball to bastion
+### 4.3 Initialize the bastion (`ocfp bastion init`)
+
+`provision` only installs tools. `init` is the second half of the flow — it
+builds the canonical operator filesystem layout and wires configuration, exactly
+as it does for AWS and StackIt bastions. Skipping it leaves the bastion without
+`~/ocfp`, `~/ops`, `~/deployments`, or `~/bin`, and without the vault/genesis
+wiring the deploy steps assume.
+
+#### Prerequisite: `bastion_ip`
+
+`init` runs from your operator machine and SSHs to the bastion. From the Mac the
+bastion is reachable only over tailscale (not the SDN IP `10.64.64.3`), so the
+bloc must declare how to reach it. Set `bastion_ip` under the `ocfp-lab-wayne`
+bloc in `~/.ocfp/config.pve.yml` to the bastion's tailscale FQDN (or IP):
+
+```yaml
+blocs:
+  ocfp-lab-wayne:
+    <<: *pve_common
+    bastion_ip: ocfp-wayne-bastion.<tailnet>.ts.net   # or the 100.x tailscale IP
+    # ...
+```
+
+Without it `init` fails fast with a message naming this remedy. Alternatively
+export `PVE_BASTION_IP` for a one-off run.
+
+#### Preview, then run
+
+Dry-run first to see the planned phases without touching the bastion:
+
+```bash
+ocfp bastion init --bloc ocfp-lab-wayne --dry-run
+ocfp bastion init --bloc ocfp-lab-wayne
+```
+
+`init` is idempotent: tool phases skip any binary already installed by
+`provision`, so it is safe to re-run. It creates:
+
+- The `~/ocfp` tree (`cli`, `deployments`, `releases`, `artifacts`, `kits`),
+  plus `~/bin`, `~/.ocfp/logs`, and `~/.genesis`.
+- The `~/ops → ~/ocfp` and `~/deployments → ~/ocfp/deployments` symlinks, and
+  the `~/bin/ocfp` binary symlink.
+- OCFP config files and the genesis logging config.
+- Vault inception (skips if already initialized), then vault populate.
+- `ocfp configure` — clones the deployment repos into `~/ocfp/deployments`.
+- Genesis secrets providers pointed at the inception vault.
+- The `~/.ocfp/provisioned` marker (written only on full success).
+
+#### Verify
+
+```bash
+ssh ubuntu@10.64.64.3 'ls -ld ~/ocfp ~/ops ~/deployments ~/bin && test -f ~/.ocfp/provisioned && echo provisioned'
+```
+
+Expect the four paths to exist (`~/ops` a symlink to `~/ocfp`) and
+`provisioned` printed. This matches the layout on an AWS/StackIt bastion.
+
+### 4.4 Copy CPI dev tarball to bastion
 
 After provisioning completes, copy the PVE CPI dev tarball to the bastion so
 the mgmt-BOSH `create-env` step can reference it:
@@ -252,7 +309,7 @@ ssh ubuntu@10.64.64.3 "
 
 This satisfies the ops-file path assumption in `manifests/bosh/cpi.yml` (the
 path `bosh-pve-cpi/release/` must exist before `genesis deploy
-ocfp-pve-wayne-mgmt`).
+ocfp-lab-wayne-mgmt`).
 
 ---
 
@@ -261,7 +318,7 @@ ocfp-pve-wayne-mgmt`).
 ### 5.1 Connect via OCFP CLI
 
 ```bash
-ocfp bastion ssh --bloc wayne
+ocfp bastion ssh --bloc ocfp-lab-wayne
 ```
 
 Or connect directly:
@@ -404,7 +461,7 @@ The script is idempotent — fix the root cause (network, missing apt mirror,
 GitHub API rate limit) and re-run:
 
 ```bash
-ocfp bastion provision --bloc wayne
+ocfp bastion provision --bloc ocfp-lab-wayne
 ```
 
 ### 7.4 VM unreachable after start
@@ -439,7 +496,7 @@ unless you want to regenerate it.
 | Bastion IP | 10.64.64.3/18 |
 | Gateway | 10.64.64.1 |
 | Bridge | lvnet001 |
-| Snippet | `ocfp-pve-wayne-bastion-101-user.yml` |
+| Snippet | `ocfp-lab-wayne-bastion-101-user.yml` |
 | Tailscale FQDN | `wayne-bastion.<tailnet>.ts.net` |
 | Provision log | `~/provision.log` on bastion |
 | CPI tarball path (bastion) | `/var/vcap/store/bosh-pve-cpi/bosh-pve-cpi-dev.tgz` |
@@ -453,7 +510,7 @@ With the bastion running and tooled, proceed to the mgmt-BOSH deploy (W5e):
 
 ```bash
 cd ~/w/fivetwenty/studios/ocfp/src/deployments/fivetwenty-ocfp/bosh
-genesis deploy ocfp-pve-wayne-mgmt
+genesis deploy ocfp-lab-wayne-mgmt
 ```
 
 This is a hard user gate. Confirm the bastion is healthy before proceeding.
