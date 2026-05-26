@@ -59,6 +59,7 @@ All actions require --bloc.`,
 	cmd.Flags().Bool("dry-run", false, "Preview provision actions without executing")
 	cmd.Flags().String("user", "ubuntu", "SSH username for the provision connection")
 	cmd.Flags().String("key", "", "Path to SSH private key for the provision connection")
+	cmd.Flags().Bool("no-proxy-jump", false, "Connect directly to the artifacts VM (use when running on the bastion or otherwise on the SDN)")
 
 	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))

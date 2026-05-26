@@ -14,6 +14,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -41,10 +42,35 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 	// The bastion is the jump host: reachable from the operator (tailscale /
 	// bastion_ip) and able to reach the artifacts SDN address. The artifacts VM
 	// authorizes the same bloc keypair as the bastion, so one key serves both
-	// hops.
-	bastionCtx, err := GetBastionContext(cmd, log)
-	if err != nil {
-		return fmt.Errorf("resolve bastion jump host: %w", err)
+	// hops. --no-proxy-jump bypasses the jump when the operator is already on
+	// the SDN (e.g. running this command from the bastion itself), because
+	// OpenSSH's implicit ProxyJump inner ssh does not inherit the outer -o
+	// options and falls back to default host-key checking, which fails when the
+	// jump target's host key is unknown on the local machine.
+	noProxyJump, _ := cmd.Flags().GetBool("no-proxy-jump")
+
+	var (
+		sshUser  = viper.GetString("ssh.user")
+		sshKey   string
+		proxyOpt string
+	)
+
+	if noProxyJump {
+		sshKey = strings.TrimSpace(viper.GetString("ssh.key"))
+		if sshKey == "" {
+			if k, kerr := findSSHKey(acx.blocName, acx.cfg); kerr == nil {
+				sshKey = k
+			}
+		}
+	} else {
+		bastionCtx, err := GetBastionContext(cmd, log)
+		if err != nil {
+			return fmt.Errorf("resolve bastion jump host: %w", err)
+		}
+
+		sshUser = bastionCtx.User
+		sshKey = bastionCtx.SSHKeyOption
+		proxyOpt = fmt.Sprintf("-o ProxyJump=%s@%s", bastionCtx.User, bastionCtx.IP)
 	}
 
 	cert, key, err := resolveArtifactsProvisionTLS(acx.cfg, acx.lookup, acx.blocName)
@@ -60,18 +86,22 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 		return fmt.Errorf("cannot find artifacts provision script: %w", err)
 	}
 
-	proxyOpt := fmt.Sprintf("-o ProxyJump=%s@%s", bastionCtx.User, bastionCtx.IP)
 	target := acx.lookup.PrivateIP
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if dryRun {
-		log.Infof("[dry-run] would scp %s to %s@%s:%s (ProxyJump %s@%s) and run it as root",
-			scriptPath, bastionCtx.User, target, artifactsRemoteScript, bastionCtx.User, bastionCtx.IP)
+		jumpDesc := "direct (no ProxyJump)"
+		if proxyOpt != "" {
+			jumpDesc = proxyOpt
+		}
+
+		log.Infof("[dry-run] would scp %s to %s@%s:%s via %s and run it as root",
+			scriptPath, sshUser, target, artifactsRemoteScript, jumpDesc)
 
 		return nil
 	}
 
-	return runArtifactsRemoteScript(bastionCtx.User, target, bastionCtx.SSHKeyOption, proxyOpt, scriptPath, renderEnvAssignments(env), log)
+	return runArtifactsRemoteScript(sshUser, target, sshKey, proxyOpt, scriptPath, renderEnvAssignments(env), log)
 }
 
 // resolveArtifactsProvisionTLS produces the cert + key PEMs the RustFS service
