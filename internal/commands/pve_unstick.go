@@ -238,6 +238,8 @@ func NewPVECmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(NewPVEUnstickCmd())
+	cmd.AddCommand(NewPVEProbeCmd())
+	cmd.AddCommand(NewPVEStemcellCmd())
 
 	return cmd
 }
