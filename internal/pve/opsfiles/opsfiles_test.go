@@ -252,6 +252,40 @@ func TestPVEGuestAgentTemplate_IncludesNobleStemcell(t *testing.T) {
 	}
 }
 
+// TestPVEGuestAgentTemplate_IncludesJammyStemcell — addon must also target the
+// ubuntu-jammy family so labs can roll between Jammy and Noble without losing
+// the QGA install path.
+func TestPVEGuestAgentTemplate_IncludesJammyStemcell(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "ubuntu-jammy") {
+		t.Error("PVEGuestAgentRuntimeConfig: missing stemcell \"ubuntu-jammy\" in include block")
+	}
+}
+
+// TestPVEGuestAgentTemplate_InstalledFlagSentinel — the detached install must
+// drop /var/vcap/sys/log/pve-guest-agent/installed.flag on success so the
+// unstick-agent path can distinguish "install never ran" from "install done,
+// agent wedged".
+func TestPVEGuestAgentTemplate_InstalledFlagSentinel(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "installed.flag") {
+		t.Error("PVEGuestAgentRuntimeConfig: missing installed.flag sentinel drop")
+	}
+}
+
+// TestPVEGuestAgentTemplate_ActiveWaitLoop — the detached install must briefly
+// poll `systemctl is-active --quiet qemu-guest-agent.service` so the log
+// records a concrete success state before the background block exits.
+func TestPVEGuestAgentTemplate_ActiveWaitLoop(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "is-active --quiet qemu-guest-agent.service") {
+		t.Error("PVEGuestAgentRuntimeConfig: missing systemctl is-active --quiet wait loop")
+	}
+}
+
 // TestWriteRuntimeConfigToDir_CreatesFile — T04: WriteRuntimeConfigToDir writes
 // pve-guest-agent.yml to the target dir with correct content and mode 0600.
 func TestWriteRuntimeConfigToDir_CreatesFile(t *testing.T) {
