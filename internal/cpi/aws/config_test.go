@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -153,16 +154,8 @@ func TestConfigValidate(t *testing.T) {
 				}
 
 				if tt.errMsg != "" {
-					errStr := err.Error()
-					contains := false
-					for i := 0; i <= len(errStr)-len(tt.errMsg); i++ {
-						if errStr[i:i+len(tt.errMsg)] == tt.errMsg {
-							contains = true
-							break
-						}
-					}
-					if !contains {
-						t.Errorf("expected error containing '%s', got '%s'", tt.errMsg, errStr)
+					if !strings.Contains(err.Error(), tt.errMsg) {
+						t.Errorf("expected error containing '%s', got '%s'", tt.errMsg, err.Error())
 					}
 				}
 			} else {
