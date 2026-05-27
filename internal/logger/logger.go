@@ -80,15 +80,22 @@ func Initialize(cfg Config) error {
 		ConsoleSeparator:    "",
 	}
 
-	// Always log to file (JSON) only; stdout/stderr reserved for user UX
+	// Always log to file (JSON) only; stdout/stderr reserved for user UX.
+	// When NoLog is set the caller has opted out of file logging entirely
+	// (used by short-lived commands that produce no useful trace), so
+	// install a no-op core instead of creating a log file.
 	cores := make([]zapcore.Core, 0, 1)
 
-	fileCore, err := createFileCore(cfg, encoderConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create file logger: %w", err)
-	}
+	if cfg.NoLog {
+		cores = append(cores, zapcore.NewNopCore())
+	} else {
+		fileCore, err := createFileCore(cfg, encoderConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create file logger: %w", err)
+		}
 
-	cores = append(cores, fileCore)
+		cores = append(cores, fileCore)
+	}
 
 	// Create the logger
 	core := zapcore.NewTee(cores...)
@@ -362,46 +369,3 @@ func Sync() error {
 	return nil
 }
 
-// ArchiveOldLogs compresses and archives logs older than specified days.
-func ArchiveOldLogs(logDir string, daysOld int) error {
-	cutoff := time.Now().AddDate(0, 0, -daysOld)
-	archiveDir := filepath.Join(logDir, "archive")
-
-	// Create archive directory if it doesn't exist
-	err := os.MkdirAll(archiveDir, LogDirMode)
-	if err != nil {
-		return fmt.Errorf("failed to create archive directory: %w", err)
-	}
-
-	// Walk through log directory
-	entries, err := os.ReadDir(logDir)
-	if err != nil {
-		return fmt.Errorf("failed to read log directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		// Check if file is a log file
-		if !strings.HasSuffix(entry.Name(), ".log") {
-			continue
-		}
-
-		// Get file info
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		// Check if file is old enough to archive
-		if info.ModTime().Before(cutoff) {
-			// Pending: implement compression and move to archive
-			// For now, just log that we would archive it
-			Debugf("Would archive old log: %s", entry.Name())
-		}
-	}
-
-	return nil
-}
