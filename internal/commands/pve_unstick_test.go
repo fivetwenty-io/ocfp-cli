@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,6 +140,102 @@ func TestNewPVECmd(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "pve command must have 'unstick' subcommand")
+}
+
+// TestQGAWaitFromEnv covers the OCFP_QGA_WAIT parsing helper. Invalid values
+// must fall back to the default rather than fail the operator's recovery flow.
+func TestQGAWaitFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		want time.Duration
+	}{
+		{"unset", "", 30 * time.Second},
+		{"valid 60", "60", 60 * time.Second},
+		{"valid 5", "5", 5 * time.Second},
+		{"invalid garbage falls back to default", "abc", 30 * time.Second},
+		{"empty string falls back to default", "", 30 * time.Second},
+		{"zero falls back to default", "0", 30 * time.Second},
+		{"negative falls back to default", "-10", 30 * time.Second},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OCFP_QGA_WAIT", tc.env)
+			got := qgaWaitFromEnv()
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestQGAPingUntil_SuccessFirstTry verifies the bounded poll returns
+// immediately when the prober reports the agent reachable on the first probe.
+func TestQGAPingUntil_SuccessFirstTry(t *testing.T) {
+	calls := 0
+	prober := func(_ context.Context, _ []string, _ string, _ int) (bool, string) {
+		calls++
+		return true, ""
+	}
+
+	start := time.Now()
+	ok, diag := qgaPingUntil(context.Background(), prober, nil, "pve.example", 100, 5*time.Second)
+	elapsed := time.Since(start)
+
+	assert.True(t, ok, "expected probe success on first try")
+	assert.Empty(t, diag)
+	assert.Equal(t, 1, calls, "prober must be called exactly once on first-try success")
+	assert.Less(t, elapsed, 500*time.Millisecond, "first-try success must not sleep")
+}
+
+// TestQGAPingUntil_TimeoutReturnsLastDiag verifies a stubborn QGA returns the
+// last underlying diagnostic when the deadline expires.
+func TestQGAPingUntil_TimeoutReturnsLastDiag(t *testing.T) {
+	prober := func(_ context.Context, _ []string, _ string, _ int) (bool, string) {
+		return false, "QEMU guest agent is not running"
+	}
+
+	ok, diag := qgaPingUntil(context.Background(), prober, nil, "pve.example", 100, 50*time.Millisecond)
+
+	assert.False(t, ok, "expected probe timeout")
+	assert.Contains(t, diag, "QEMU guest agent is not running")
+}
+
+// TestQGAPingUntil_CancelledContextReturnsImmediately verifies the loop honors
+// caller cancellation rather than running to the wall-clock deadline.
+func TestQGAPingUntil_CancelledContextReturnsImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	prober := func(_ context.Context, _ []string, _ string, _ int) (bool, string) {
+		return false, "not reachable"
+	}
+
+	start := time.Now()
+	ok, _ := qgaPingUntil(ctx, prober, nil, "pve.example", 100, 10*time.Second)
+	elapsed := time.Since(start)
+
+	assert.False(t, ok)
+	assert.Less(t, elapsed, time.Second, "cancelled context must short-circuit the wait")
+}
+
+// TestFormatQGAUnreachableError verifies the actionable error message contains
+// every recovery hint the runbook depends on.
+func TestFormatQGAUnreachableError(t *testing.T) {
+	err := formatQGAUnreachableError("uaa/0", "cf", 123, 30*time.Second, "guest agent is not running")
+	require.Error(t, err)
+
+	msg := err.Error()
+	for _, want := range []string{
+		"vmid 123",
+		"30s",
+		"guest agent is not running",
+		"OCFP_QGA_WAIT",
+		"bosh -d cf recreate uaa/0",
+		"/var/vcap/sys/log/pve-guest-agent/install.log",
+		"installed.flag",
+	} {
+		assert.Contains(t, msg, want, "actionable error missing %q", want)
+	}
 }
 
 // TestNewPVEUnstickCmd_RequiredFlags verifies that missing required flags produce errors.
