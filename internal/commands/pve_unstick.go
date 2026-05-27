@@ -9,10 +9,150 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
 )
+
+// defaultQGAWait is the bounded wait the unstick path applies when probing the
+// in-guest qemu-guest-agent. The runtime-config addon installs QGA via a
+// detached apt run on first boot; under healthy mirrors the install completes
+// within seconds, so 30s comfortably absorbs that window without dragging out
+// the failure mode when QGA truly never installs.
+const defaultQGAWait = 30 * time.Second
+
+// qgaProber probes whether qemu-guest-agent on the given PVE host/vmid is
+// responsive. It returns (true, "") on success and (false, lastDiag) when the
+// probe fails, where lastDiag is the underlying diagnostic the caller may
+// surface to the operator.
+//
+// Implementations must respect ctx cancellation.
+type qgaProber func(ctx context.Context, sshArgs []string, pveHost string, vmid int) (bool, string)
+
+// qgaWaitFromEnv returns the QGA probe wait derived from OCFP_QGA_WAIT
+// (interpreted as integer seconds), falling back to defaultQGAWait on missing,
+// invalid, or non-positive values. The helper never errors: operators in a
+// recovery flow should not be blocked by a typo in an env var.
+func qgaWaitFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("OCFP_QGA_WAIT"))
+	if raw == "" {
+		return defaultQGAWait
+	}
+
+	secs, err := strconv.Atoi(raw)
+	if err != nil || secs <= 0 {
+		return defaultQGAWait
+	}
+
+	return time.Duration(secs) * time.Second
+}
+
+// qgaPingOnce issues a single `qm guest cmd <vmid> ping` via the supplied SSH
+// arguments. Success requires both ssh exit 0 and the absence of a guest-agent
+// error in the combined output.
+//
+// The returned diagnostic string is the combined stdout/stderr, trimmed for
+// readability when surfaced to the operator.
+func qgaPingOnce(ctx context.Context, sshArgs []string, pveHost string, vmid int) (bool, string) {
+	target := "root@" + pveHost
+	vmidStr := strconv.Itoa(vmid)
+
+	args := make([]string, 0, len(sshArgs)+5)
+	args = append(args, sshArgs...)
+	args = append(args, target, "qm", "guest", "cmd", vmidStr, "ping")
+
+	cmd := exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // vmid is a validated integer; sshArgs and pveHost are operator-provided
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	err := cmd.Run()
+	diag := strings.TrimSpace(out.String())
+
+	if err != nil {
+		return false, diag
+	}
+
+	return true, ""
+}
+
+// qgaPingUntil polls prober until it reports success or maxWait elapses.
+// Between probes it sleeps a fixed 2s, the same cadence the upstream
+// scripts/cf path uses. Context cancellation short-circuits both the active
+// probe (via the prober's ctx) and the sleep.
+//
+// On timeout it returns the most recent diagnostic so the caller can include
+// the underlying PVE error in its actionable message.
+func qgaPingUntil(
+	ctx context.Context,
+	prober qgaProber,
+	sshArgs []string,
+	pveHost string,
+	vmid int,
+	maxWait time.Duration,
+) (bool, string) {
+	deadline := time.Now().Add(maxWait)
+	last := ""
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, last
+		}
+
+		ok, diag := prober(ctx, sshArgs, pveHost, vmid)
+		if ok {
+			return true, ""
+		}
+
+		last = diag
+
+		if !time.Now().Before(deadline) {
+			return false, last
+		}
+
+		select {
+		case <-ctx.Done():
+			return false, last
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// formatQGAUnreachableError builds the actionable error the unstick path
+// surfaces when the QGA probe times out. The message names the concrete
+// remediation paths (increase wait, recreate VM, console-install, inspect the
+// addon install log + installed.flag sentinel) so the operator does not have
+// to remember the runbook to recover.
+func formatQGAUnreachableError(instance, deployment string, vmid int, qgaWait time.Duration, lastDiag string) error {
+	if lastDiag == "" {
+		lastDiag = "(no output)"
+	}
+
+	secs := int(qgaWait / time.Second)
+	if secs <= 0 {
+		secs = 1
+	}
+
+	return fmt.Errorf( //nolint:err113 // descriptive operator-facing error, not caller-testable
+		"qemu-guest-agent on vmid %d did not respond within %s.\n"+
+			"Last `qm guest cmd <vmid> ping` output:\n  %s\n\n"+
+			"The BOSH Noble stemcell does not pre-install qemu-guest-agent;\n"+
+			"the `pve-guest-agent` runtime-config addon installs it via a\n"+
+			"detached apt run on first boot, AFTER bosh-agent reaches NATS.\n"+
+			"When bosh-agent never reaches NATS (the wedge this command\n"+
+			"unsticks), the install never runs and there is no in-guest\n"+
+			"recovery channel.\n\n"+
+			"Options:\n"+
+			"  - Increase the wait: OCFP_QGA_WAIT=%d ocfp pve unstick %s\n"+
+			"  - Recreate the VM:    bosh -d %s recreate %s\n"+
+			"  - Install qemu-guest-agent by hand via the PVE VM console.\n"+
+			"  - Check the addon's install log on the VM (once reachable):\n"+
+			"      /var/vcap/sys/log/pve-guest-agent/install.log\n"+
+			"      /var/vcap/sys/log/pve-guest-agent/installed.flag",
+		vmid, qgaWait, lastDiag, max(secs*4, 120), instance, deployment, instance,
+	)
+}
 
 // boshVMsOutput is the top-level structure of `bosh vms --json` output.
 type boshVMsOutput struct {
@@ -309,7 +449,9 @@ Environment variables:
 // Steps:
 //  1. Resolve VMID from `bosh vms --json`
 //  2. Resolve PVE host from vars file via `bosh int`
-//  3. SSH to PVE host and restart bosh-agent via qm guest exec
+//  3. Probe qemu-guest-agent reachability with a bounded wait; surface an
+//     actionable diagnostic if the install window has not yet closed
+//  4. SSH to PVE host and restart bosh-agent via qm guest exec
 func runPVEUnstick(ctx context.Context, f *unstickFlags, instanceRef string) error {
 	log := logger.Get()
 
@@ -330,6 +472,30 @@ func runPVEUnstick(ctx context.Context, f *unstickFlags, instanceRef string) err
 	log.Infow("resolved PVE host", "host", pveHost)
 
 	sshUnsafe := os.Getenv("OCFP_SSH_UNSAFE") == "1"
+	sshArgs := buildSSHArgs(sshUnsafe)
+
+	qgaWait := qgaWaitFromEnv()
+	log.Infow("probing qemu-guest-agent", "vmid", vmid, "max_wait", qgaWait.String())
+
+	ok, lastDiag := qgaPingUntil(ctx, qgaPingOnce, sshArgs, pveHost, vmid, qgaWait)
+	if !ok {
+		return formatQGAUnreachableError(instanceRef, f.boshDeployment, vmid, qgaWait, lastDiag)
+	}
+
+	log.Info("qemu-guest-agent responsive")
 
 	return unstickAgent(ctx, pveHost, vmid, sshUnsafe)
+}
+
+// buildSSHArgs returns the SSH option list shared by the QGA probe and the
+// guest-exec restart. Centralising this keeps the two call sites in sync when
+// host-key handling changes.
+func buildSSHArgs(sshUnsafe bool) []string {
+	args := []string{"-o", "BatchMode=yes"}
+
+	if sshUnsafe {
+		args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	}
+
+	return args
 }
