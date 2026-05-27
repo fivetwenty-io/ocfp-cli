@@ -42,7 +42,7 @@ func TestConciseRenderer_PhaseStart(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    8,
 		Total:     25,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := renderer.PhaseStart(info)
@@ -70,7 +70,7 @@ func TestConciseRenderer_PhaseProgress(t *testing.T) {
 		Name:      "Repositories",
 		Number:    8,
 		Total:     25,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 	err := renderer.PhaseStart(phaseInfo)
 	require.NoError(t, err)

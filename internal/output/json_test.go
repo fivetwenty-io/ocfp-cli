@@ -21,7 +21,7 @@ func TestJSONRenderer_PhaseStart(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    1,
 		Total:     5,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
@@ -152,7 +152,11 @@ func TestJSONRenderer_PhaseFailed(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewJSONRenderer(&buf)
 
-	startTime := time.Now().Add(-500 * time.Millisecond)
+	// Fix clock so duration is exactly 500ms — no scheduler jitter.
+	fixedNow := fixedTime
+	r.now = func() time.Time { return fixedNow }
+
+	startTime := fixedNow.Add(-500 * time.Millisecond)
 	info := PhaseInfo{
 		ID:        "test_phase",
 		Name:      "Test Phase",
@@ -177,10 +181,10 @@ func TestJSONRenderer_PhaseFailed(t *testing.T) {
 	assert.Equal(t, "test_phase", event["phase_id"])
 	assert.Contains(t, event["error"], "assert.AnError")
 
-	// Verify duration
+	// Duration is exactly 500ms — deterministic via fixed clock.
 	durationMS, ok := event["duration_ms"].(float64)
 	require.True(t, ok)
-	assert.Greater(t, durationMS, 400.0, "duration should be at least 400ms")
+	assert.Equal(t, float64(500), durationMS)
 }
 
 func TestJSONRenderer_PhaseSkipped(t *testing.T) {
@@ -192,7 +196,7 @@ func TestJSONRenderer_PhaseSkipped(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    3,
 		Total:     5,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseSkipped(info, "not applicable")
@@ -289,7 +293,7 @@ func TestJSONRenderer_SequenceMonotonicity(t *testing.T) {
 		Name:      "Phase 1",
 		Number:    1,
 		Total:     3,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
@@ -333,8 +337,8 @@ func TestJSONRenderer_JSONLinesFormat(t *testing.T) {
 	r := NewJSONRenderer(&buf)
 
 	// Emit multiple events
-	info1 := PhaseInfo{ID: "p1", Name: "Phase 1", Number: 1, Total: 2, StartTime: time.Now()}
-	info2 := PhaseInfo{ID: "p2", Name: "Phase 2", Number: 2, Total: 2, StartTime: time.Now()}
+	info1 := PhaseInfo{ID: "p1", Name: "Phase 1", Number: 1, Total: 2, StartTime: fixedTime}
+	info2 := PhaseInfo{ID: "p2", Name: "Phase 2", Number: 2, Total: 2, StartTime: fixedTime}
 
 	err := r.PhaseStart(info1)
 	require.NoError(t, err)
@@ -375,7 +379,7 @@ func TestJSONRenderer_ThreadSafety(t *testing.T) {
 				Name:      "Test Phase",
 				Number:    n,
 				Total:     numGoroutines,
-				StartTime: time.Now(),
+				StartTime: fixedTime,
 			}
 
 			err := r.PhaseStart(info)
@@ -420,7 +424,7 @@ func TestJSONRenderer_AllFields(t *testing.T) {
 		Name:      "Comprehensive Test",
 		Number:    1,
 		Total:     1,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
