@@ -36,6 +36,8 @@ func TestRegister_RegistersProvider(t *testing.T) {
 // TestNewProvider_ValidConfig covers all minimal valid auth paths:
 // API token (token_id + token_secret) and username/password.
 func TestNewProvider_ValidConfig(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		config *Config
@@ -84,6 +86,8 @@ func TestNewProvider_ValidConfig(t *testing.T) {
 
 // TestNewProvider_ValidMapConfig verifies the map[string]interface{} path.
 func TestNewProvider_ValidMapConfig(t *testing.T) {
+	t.Parallel()
+
 	config := map[string]interface{}{
 		"host":         "https://pve.example.com:8006",
 		"token_id":     "root@pam!mytoken",
@@ -104,6 +108,8 @@ func TestNewProvider_ValidMapConfig(t *testing.T) {
 // TestNewProvider_NilConfig verifies nil config returns an uninitialized
 // client without error (deferred initialization via Initialize).
 func TestNewProvider_NilConfig(t *testing.T) {
+	t.Parallel()
+
 	provider, err := NewProvider(nil)
 	if err != nil {
 		t.Fatalf("NewProvider(nil) unexpected error: %v", err)
@@ -117,6 +123,8 @@ func TestNewProvider_NilConfig(t *testing.T) {
 // TestNewProvider_MissingHost verifies that an empty Host field causes an error
 // that references "host".
 func TestNewProvider_MissingHost(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		config interface{}
@@ -154,6 +162,8 @@ func TestNewProvider_MissingHost(t *testing.T) {
 // TestNewProvider_MissingAuth verifies that a valid host with no auth credentials
 // causes an error referencing "token" or "auth".
 func TestNewProvider_MissingAuth(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		config interface{}
@@ -207,6 +217,8 @@ func TestNewProvider_MissingAuth(t *testing.T) {
 // TestNewProvider_InvalidConfigType verifies that an unsupported config type
 // returns an error.
 func TestNewProvider_InvalidConfigType(t *testing.T) {
+	t.Parallel()
+
 	_, err := NewProvider("not-a-valid-config")
 	if err == nil {
 		t.Fatal("expected error for invalid config type, got nil")
@@ -215,6 +227,8 @@ func TestNewProvider_InvalidConfigType(t *testing.T) {
 
 // TestProvider_Name verifies that a created provider returns "pve" from Name().
 func TestProvider_Name(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		config interface{}
@@ -253,6 +267,8 @@ func TestProvider_Name(t *testing.T) {
 
 // TestGetString_MapHelper covers the getString helper used during map config parsing.
 func TestGetString_MapHelper(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		m        map[string]interface{}
@@ -451,6 +467,8 @@ func TestParsePVEConfig_MixedMode_ViaInitialize(t *testing.T) {
 
 // TestGetBool_MapHelper covers the getBool helper used during map config parsing.
 func TestGetBool_MapHelper(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		m        map[string]interface{}

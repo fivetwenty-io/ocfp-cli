@@ -23,6 +23,8 @@ func listenTCP(t *testing.T) (net.Listener, int) {
 
 // T52 — dial an open port → OK.
 func TestTCPDialProbe_Open(t *testing.T) {
+	t.Parallel()
+
 	ln, port := listenTCP(t)
 	defer ln.Close()
 
@@ -43,6 +45,8 @@ func TestTCPDialProbe_Open(t *testing.T) {
 
 // T53 — dial a port with no listener → FAIL with remediation.
 func TestTCPDialProbe_Closed(t *testing.T) {
+	t.Parallel()
+
 	// Allocate a port and immediately close the listener so nothing is listening.
 	ln, port := listenTCP(t)
 	ln.Close()
@@ -67,6 +71,8 @@ func TestTCPDialProbe_Closed(t *testing.T) {
 }
 
 func TestTCPDialProbe_EmptyHost_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "", Port: 25555}
 	r := p.Run(context.Background())
 	if r.OK {
@@ -78,6 +84,8 @@ func TestTCPDialProbe_EmptyHost_FAIL(t *testing.T) {
 }
 
 func TestTCPDialProbe_ZeroPort_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "127.0.0.1", Port: 0}
 	r := p.Run(context.Background())
 	if r.OK {
@@ -89,6 +97,8 @@ func TestTCPDialProbe_ZeroPort_FAIL(t *testing.T) {
 }
 
 func TestTCPDialProbe_NegativePort_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "127.0.0.1", Port: -1}
 	r := p.Run(context.Background())
 	if r.OK {
@@ -97,6 +107,8 @@ func TestTCPDialProbe_NegativePort_FAIL(t *testing.T) {
 }
 
 func TestTCPDialProbe_PortAboveMax_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "127.0.0.1", Port: 65536}
 	r := p.Run(context.Background())
 	if r.OK {
@@ -105,6 +117,8 @@ func TestTCPDialProbe_PortAboveMax_FAIL(t *testing.T) {
 }
 
 func TestTCPDialProbe_CancelledContext_FAIL(t *testing.T) {
+	t.Parallel()
+
 	ln, port := listenTCP(t)
 	defer ln.Close()
 
@@ -126,6 +140,8 @@ func TestTCPDialProbe_CancelledContext_FAIL(t *testing.T) {
 }
 
 func TestTCPDialProbe_DefaultTimeout_Used(t *testing.T) {
+	t.Parallel()
+
 	// Timeout=0 → default applied; probe should not panic or hang.
 	ln, port := listenTCP(t)
 	defer ln.Close()
@@ -142,6 +158,8 @@ func TestTCPDialProbe_DefaultTimeout_Used(t *testing.T) {
 }
 
 func TestTCPDialProbe_LabelInName(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "host", Port: 25555, Label: "director"}
 	name := p.Name()
 	if !strings.Contains(name, "director") {
@@ -150,6 +168,8 @@ func TestTCPDialProbe_LabelInName(t *testing.T) {
 }
 
 func TestTCPDialProbe_NoLabel_NameContainsHostPort(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.TCPDialProbe{Host: "10.0.0.1", Port: 4222}
 	name := p.Name()
 	if !strings.Contains(name, "10.0.0.1") || !strings.Contains(name, "4222") {
@@ -158,6 +178,8 @@ func TestTCPDialProbe_NoLabel_NameContainsHostPort(t *testing.T) {
 }
 
 func TestTCPDialProbe_OpenPort_RemediationEmpty(t *testing.T) {
+	t.Parallel()
+
 	ln, port := listenTCP(t)
 	defer ln.Close()
 

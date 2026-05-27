@@ -116,7 +116,11 @@ func TestJSONRenderer_PhaseComplete(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewJSONRenderer(&buf)
 
-	startTime := time.Now().Add(-2 * time.Second)
+	// Use a fixed "now" so duration is exactly 2000ms regardless of scheduler jitter.
+	fixedNow := time.Date(2024, 1, 1, 0, 0, 2, 0, time.UTC)
+	r.now = func() time.Time { return fixedNow }
+
+	startTime := fixedNow.Add(-2 * time.Second)
 	info := PhaseInfo{
 		ID:        "test_phase",
 		Name:      "Test Phase",
@@ -138,10 +142,10 @@ func TestJSONRenderer_PhaseComplete(t *testing.T) {
 	assert.Equal(t, "phase_complete", event["event"])
 	assert.Equal(t, "test_phase", event["phase_id"])
 
-	// Verify duration is approximately 2 seconds (allow some tolerance)
+	// Duration is exactly 2000ms — deterministic via fixed clock.
 	durationMS, ok := event["duration_ms"].(float64)
 	require.True(t, ok)
-	assert.InDelta(t, 2000, durationMS, 100, "duration should be ~2000ms")
+	assert.Equal(t, float64(2000), durationMS)
 }
 
 func TestJSONRenderer_PhaseFailed(t *testing.T) {

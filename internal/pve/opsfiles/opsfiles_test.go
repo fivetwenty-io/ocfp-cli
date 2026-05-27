@@ -9,26 +9,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/pve/opsfiles"
 )
 
-// T01 TestEmbed_NatsTuning_NotEmpty — embedded content non-empty and contains
+// TestNatsTuning_PingInterval30s — T01c: embedded content non-empty and contains
 // the key tuning values confirmed in R3-01.
-func TestEmbed_NatsTuning_NotEmpty(t *testing.T) {
+func TestNatsTuning_PingInterval30s(t *testing.T) {
 	t.Parallel()
 
 	if opsfiles.NatsTuning == "" {
 		t.Fatal("NatsTuning: embedded content is empty")
 	}
-
-	for _, want := range []string{"ping_interval", "30s"} {
-		if !strings.Contains(opsfiles.NatsTuning, want) {
-			t.Errorf("NatsTuning: expected to contain %q", want)
-		}
-	}
-}
-
-// TestNatsTuning_PingInterval30s — alias for T01c per task-list naming.
-func TestNatsTuning_PingInterval30s(t *testing.T) {
-	t.Parallel()
-
 	if !strings.Contains(opsfiles.NatsTuning, "ping_interval") {
 		t.Error("NatsTuning: missing ping_interval key")
 	}
@@ -74,26 +62,14 @@ func TestNatsTuning_DocsMention120sGraceAndHMTimeout(t *testing.T) {
 	}
 }
 
-// T02 TestEmbed_HMTuning_NotEmpty — embedded content non-empty and contains
-// the key tuning values confirmed in R3-01.
-func TestEmbed_HMTuning_NotEmpty(t *testing.T) {
+// TestHMTuning_ResurrectorDisabled — T02/T01d: embedded content non-empty and
+// contains the key tuning values confirmed in R3-01.
+func TestHMTuning_ResurrectorDisabled(t *testing.T) {
 	t.Parallel()
 
 	if opsfiles.HMTuning == "" {
 		t.Fatal("HMTuning: embedded content is empty")
 	}
-
-	for _, want := range []string{"resurrector_enabled", "false"} {
-		if !strings.Contains(opsfiles.HMTuning, want) {
-			t.Errorf("HMTuning: expected to contain %q", want)
-		}
-	}
-}
-
-// TestHMTuning_ResurrectorDisabled — alias for T01d per task-list naming.
-func TestHMTuning_ResurrectorDisabled(t *testing.T) {
-	t.Parallel()
-
 	if !strings.Contains(opsfiles.HMTuning, "resurrector_enabled") {
 		t.Error("HMTuning: missing resurrector_enabled key")
 	}
@@ -108,24 +84,17 @@ func TestHMTuning_ResurrectorDisabled(t *testing.T) {
 	}
 }
 
-// T03 TestEmbed_OSConf_NotEmpty — embedded content non-empty and references
-// the qemu-guest-agent package confirmed in R3-01.
-func TestEmbed_OSConf_NotEmpty(t *testing.T) {
+// TestOSConfTemplate_ContainsExactSHA1 — T03/T01b: embedded content non-empty,
+// references qemu-guest-agent, and contains the exact SHA1 confirmed in R3-01.
+func TestOSConfTemplate_ContainsExactSHA1(t *testing.T) {
 	t.Parallel()
 
 	if opsfiles.OSConf == "" {
 		t.Fatal("OSConf: embedded content is empty")
 	}
-
 	if !strings.Contains(opsfiles.OSConf, "qemu-guest-agent") {
 		t.Error("OSConf: expected to contain \"qemu-guest-agent\"")
 	}
-}
-
-// TestOSConfTemplate_ContainsExactSHA1 — alias for T01b per task-list naming.
-func TestOSConfTemplate_ContainsExactSHA1(t *testing.T) {
-	t.Parallel()
-
 	const wantSHA1 = "d20772d8ce6e781ceb13cac7df5950bfa4330ba1"
 	if !strings.Contains(opsfiles.OSConf, wantSHA1) {
 		t.Errorf("OSConf: expected exact sha1 %q not found", wantSHA1)
@@ -270,26 +239,18 @@ func TestAll_ReturnsThreeEntries(t *testing.T) {
 	}
 }
 
-// TestEmbed_PVEGuestAgent_NotEmpty — T04b/T04c: PVEGuestAgentRuntimeConfig must
-// be non-empty and contain the detached-install markers confirmed in R3-01.
-func TestEmbed_PVEGuestAgent_NotEmpty(t *testing.T) {
+// TestPVEGuestAgentTemplate_ContainsSetsid — T04b: PVEGuestAgentRuntimeConfig
+// must be non-empty, reference qemu-guest-agent, and contain the setsid
+// detached-install pattern confirmed in R3-01.
+func TestPVEGuestAgentTemplate_ContainsSetsid(t *testing.T) {
 	t.Parallel()
 
 	if opsfiles.PVEGuestAgentRuntimeConfig == "" {
 		t.Fatal("PVEGuestAgentRuntimeConfig: embedded content is empty")
 	}
-
-	for _, want := range []string{"qemu-guest-agent", "setsid"} {
-		if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, want) {
-			t.Errorf("PVEGuestAgentRuntimeConfig: expected to contain %q", want)
-		}
+	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "qemu-guest-agent") {
+		t.Error("PVEGuestAgentRuntimeConfig: expected to contain \"qemu-guest-agent\"")
 	}
-}
-
-// TestPVEGuestAgentTemplate_ContainsSetsid — alias for T04b per task-list naming.
-func TestPVEGuestAgentTemplate_ContainsSetsid(t *testing.T) {
-	t.Parallel()
-
 	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "setsid") {
 		t.Error("PVEGuestAgentRuntimeConfig: missing setsid detached-install pattern")
 	}

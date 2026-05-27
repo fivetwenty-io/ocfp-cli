@@ -53,6 +53,8 @@ func recordingRunBosh(stubs []stubCall) (stemcell.RunBosh, *[][]string) {
 // ---- T38 TestIsStemcellUploaded_Present -------------------------------------
 
 func TestIsStemcellUploaded_Present(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
@@ -75,6 +77,8 @@ func TestIsStemcellUploaded_Present(t *testing.T) {
 // ---- T39 TestIsStemcellUploaded_Absent --------------------------------------
 
 func TestIsStemcellUploaded_Absent(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
@@ -97,6 +101,8 @@ func TestIsStemcellUploaded_Absent(t *testing.T) {
 
 // TestIsStemcellUploaded_EmptyDirector ensures an empty rows set returns false without error.
 func TestIsStemcellUploaded_EmptyDirector(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh([]stubCall{
 		{argPrefix: "stemcells", out: makeBoshStemcellsJSON(nil)},
 	})
@@ -113,6 +119,8 @@ func TestIsStemcellUploaded_EmptyDirector(t *testing.T) {
 
 // TestIsStemcellUploaded_NameMismatch ensures a different name doesn't match.
 func TestIsStemcellUploaded_NameMismatch(t *testing.T) {
+	t.Parallel()
+
 	version := "1.584"
 	rows := []map[string]string{
 		{"Name": "bosh-vsphere-esxi-ubuntu-noble-go_agent", "Version": version},
@@ -133,6 +141,8 @@ func TestIsStemcellUploaded_NameMismatch(t *testing.T) {
 
 // TestIsStemcellUploaded_RunBoshError propagates RunBosh errors.
 func TestIsStemcellUploaded_RunBoshError(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh([]stubCall{
 		{argPrefix: "stemcells", err: fmt.Errorf("bosh not logged in")},
 	})
@@ -146,6 +156,8 @@ func TestIsStemcellUploaded_RunBoshError(t *testing.T) {
 
 // TestIsStemcellUploaded_InvalidJSON propagates JSON parse errors.
 func TestIsStemcellUploaded_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh([]stubCall{
 		{argPrefix: "stemcells", out: []byte("not-json{")},
 	})
@@ -159,6 +171,8 @@ func TestIsStemcellUploaded_InvalidJSON(t *testing.T) {
 
 // TestIsStemcellUploaded_EmptyName rejects empty name.
 func TestIsStemcellUploaded_EmptyName(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh(nil)
 	_, err := stemcell.IsStemcellUploaded(context.Background(), rb, "", "1.584")
 	if err == nil {
@@ -168,6 +182,8 @@ func TestIsStemcellUploaded_EmptyName(t *testing.T) {
 
 // TestIsStemcellUploaded_EmptyVersion rejects empty version.
 func TestIsStemcellUploaded_EmptyVersion(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh(nil)
 	_, err := stemcell.IsStemcellUploaded(context.Background(), rb, "bosh-openstack-kvm-ubuntu-noble-go_agent", "")
 	if err == nil {
@@ -178,6 +194,8 @@ func TestIsStemcellUploaded_EmptyVersion(t *testing.T) {
 // ---- TestFetchSHA1_FromBoshIO -----------------------------------------------
 
 func TestFetchSHA1_FromBoshIO(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 	wantSHA1 := "abc123def456"
@@ -217,6 +235,8 @@ func TestFetchSHA1_FromBoshIO(t *testing.T) {
 
 // TestFetchSHA1_VersionNotFound returns a descriptive error when the version is absent.
 func TestFetchSHA1_VersionNotFound(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 
 	fixture := `[{"version":"1.100","regular":{"sha1":"sha","url":"https://example.com"}}]`
@@ -239,6 +259,8 @@ func TestFetchSHA1_VersionNotFound(t *testing.T) {
 
 // TestFetchSHA1_HTTP4xx propagates non-2xx responses as errors.
 func TestFetchSHA1_HTTP4xx(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
@@ -254,6 +276,8 @@ func TestFetchSHA1_HTTP4xx(t *testing.T) {
 
 // TestFetchSHA1_EmptySHA1 returns error when sha1 field is empty.
 func TestFetchSHA1_EmptySHA1(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
@@ -275,6 +299,8 @@ func TestFetchSHA1_EmptySHA1(t *testing.T) {
 
 // TestFetchSHA1_NilClient returns error for nil http client.
 func TestFetchSHA1_NilClient(t *testing.T) {
+	t.Parallel()
+
 	_, err := stemcell.FetchSHA1(context.Background(), nil, "bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err == nil {
 		t.Fatal("expected error for nil client, got nil")
@@ -284,6 +310,8 @@ func TestFetchSHA1_NilClient(t *testing.T) {
 // ---- T40 TestEnsureStemcell_SkipsIfPresent ----------------------------------
 
 func TestEnsureStemcell_SkipsIfPresent(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
@@ -321,6 +349,8 @@ func TestEnsureStemcell_SkipsIfPresent(t *testing.T) {
 // ---- TestEnsureStemcell_UploadsIfAbsent -------------------------------------
 
 func TestEnsureStemcell_UploadsIfAbsent(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 	sha1 := "deadbeef01"
@@ -376,6 +406,8 @@ func TestEnsureStemcell_UploadsIfAbsent(t *testing.T) {
 
 // TestEnsureStemcell_FetchSHA1Error propagates fetchSHA1 errors.
 func TestEnsureStemcell_FetchSHA1Error(t *testing.T) {
+	t.Parallel()
+
 	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
@@ -396,6 +428,8 @@ func TestEnsureStemcell_FetchSHA1Error(t *testing.T) {
 
 // TestEnsureStemcell_EmptyInputs validates input checks.
 func TestEnsureStemcell_EmptyInputs(t *testing.T) {
+	t.Parallel()
+
 	rb, _ := recordingRunBosh(nil)
 	noopFetch := func(ctx context.Context, n, v string) (string, error) { return "sha1", nil }
 
@@ -410,6 +444,7 @@ func TestEnsureStemcell_EmptyInputs(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
+			t.Parallel()
 			err := stemcell.EnsureStemcell(context.Background(), rb, noopFetch, tc.name, tc.version, tc.url)
 			if err == nil {
 				t.Fatalf("%s: expected error, got nil", tc.label)

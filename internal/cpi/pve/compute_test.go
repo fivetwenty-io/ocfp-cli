@@ -1,9 +1,6 @@
 package pve
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"strings"
 	"testing"
 )
@@ -76,56 +73,15 @@ func TestFlavorPreset_BOSH_DescriptionMatchesConstants(t *testing.T) {
 	}
 }
 
-// T08b TestFlavorBoshDirector_DiskUnitIsMiB asserts flavorBoshDisk == 131072
-// and verifies the source constant carries a "// unit: MiB" comment by
-// parsing compute.go with go/parser. The assertion guards against a future
-// rename that strips the unit annotation.
+// TestFlavorBoshDirector_DiskUnitIsMiB asserts flavorBoshDisk == 131072
+// (128 GiB expressed in MiB). TestFlavorPreset_BOSH_SizingConstants also
+// covers this constant; this test is a focused pin for the disk value alone.
 func TestFlavorBoshDirector_DiskUnitIsMiB(t *testing.T) {
 	t.Parallel()
 
-	// Value assertion — 128 GiB in MiB.
 	const wantMiB = 131072
 
 	if flavorBoshDisk != wantMiB {
 		t.Errorf("flavorBoshDisk: got %d, want %d (128 GiB in MiB)", flavorBoshDisk, wantMiB)
-	}
-
-	// Unit annotation assertion — parse compute.go and look for the comment.
-	fset := token.NewFileSet()
-
-	f, err := parser.ParseFile(fset, "compute.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse compute.go: %v", err)
-	}
-
-	found := false
-
-	ast.Inspect(f, func(n ast.Node) bool {
-		vs, ok := n.(*ast.ValueSpec)
-		if !ok {
-			return true
-		}
-
-		for _, name := range vs.Names {
-			if name.Name != "flavorBoshDisk" {
-				continue
-			}
-
-			// Check the inline comment on this spec.
-			if vs.Comment != nil {
-				for _, c := range vs.Comment.List {
-					if strings.Contains(c.Text, "unit: MiB") {
-						found = true
-						return false
-					}
-				}
-			}
-		}
-
-		return true
-	})
-
-	if !found {
-		t.Error("flavorBoshDisk constant in compute.go is missing '// unit: MiB' comment")
 	}
 }

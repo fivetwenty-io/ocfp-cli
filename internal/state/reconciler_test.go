@@ -215,16 +215,129 @@ func TestParseMergeStrategy(t *testing.T) {
 	}
 }
 
-// mustCreateTestManager creates a test state manager in a temp directory.
+// TestReconcile_NonDryRun exercises the DryRun=false path so that
+// mergeChanges and saveState are both called and verified.
+func TestReconcile_NonDryRun(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("add-only non-dry-run writes state file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manager, err := state.NewManager(tmpDir)
+		require.NoError(t, err)
+
+		provider := &mockProvider{name: "test-provider", region: "test-region"}
+		blocName := "test-bloc"
+
+		reconciler, err := state.NewReconciler(provider, manager, blocName)
+		require.NoError(t, err)
+
+		opts := state.ReconcileOptions{
+			DryRun:   false,
+			Strategy: state.MergeStrategyAddOnly,
+		}
+
+		result, err := reconciler.Reconcile(ctx, opts)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// mergeChanges was called: result counts reflect merge output (0 from empty diff)
+		assert.Equal(t, 0, result.ResourcesAdded)
+		assert.Equal(t, 0, result.ResourcesUpdated)
+		assert.Equal(t, 0, result.ResourcesRemoved)
+
+		// saveState was called: state file must exist on disk
+		stateFile := filepath.Join(tmpDir, blocName+".json")
+		_, statErr := os.Stat(stateFile)
+		assert.NoError(t, statErr, "state file should exist after non-dry-run reconcile")
+	})
+
+	t.Run("update non-dry-run writes state file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manager, err := state.NewManager(tmpDir)
+		require.NoError(t, err)
+
+		provider := &mockProvider{name: "aws", region: "eu-west-1"}
+		blocName := "update-bloc"
+
+		reconciler, err := state.NewReconciler(provider, manager, blocName)
+		require.NoError(t, err)
+
+		opts := state.ReconcileOptions{
+			DryRun:   false,
+			Strategy: state.MergeStrategyUpdate,
+		}
+
+		result, err := reconciler.Reconcile(ctx, opts)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		stateFile := filepath.Join(tmpDir, blocName+".json")
+		_, statErr := os.Stat(stateFile)
+		assert.NoError(t, statErr, "state file should exist after update strategy non-dry-run reconcile")
+	})
+
+	t.Run("full non-dry-run writes state file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manager, err := state.NewManager(tmpDir)
+		require.NoError(t, err)
+
+		provider := &mockProvider{name: "gcp", region: "us-central1"}
+		blocName := "full-bloc"
+
+		reconciler, err := state.NewReconciler(provider, manager, blocName)
+		require.NoError(t, err)
+
+		opts := state.ReconcileOptions{
+			DryRun:   false,
+			Strategy: state.MergeStrategyFull,
+		}
+
+		result, err := reconciler.Reconcile(ctx, opts)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		stateFile := filepath.Join(tmpDir, blocName+".json")
+		_, statErr := os.Stat(stateFile)
+		assert.NoError(t, statErr, "state file should exist after full strategy non-dry-run reconcile")
+	})
+
+	t.Run("non-dry-run loaded state matches reconciled content", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manager, err := state.NewManager(tmpDir)
+		require.NoError(t, err)
+
+		provider := &mockProvider{name: "stackit", region: "eu-de-1"}
+		blocName := "roundtrip-bloc"
+
+		reconciler, err := state.NewReconciler(provider, manager, blocName)
+		require.NoError(t, err)
+
+		opts := state.ReconcileOptions{
+			DryRun:   false,
+			Strategy: state.MergeStrategyAddOnly,
+		}
+
+		_, err = reconciler.Reconcile(ctx, opts)
+		require.NoError(t, err)
+
+		// Load state via a fresh manager to confirm file is valid and readable.
+		manager2, err := state.NewManager(tmpDir)
+		require.NoError(t, err)
+
+		loaded, err := manager2.Load(blocName)
+		require.NoError(t, err)
+
+		assert.Equal(t, blocName, loaded.BlocName)
+		assert.Equal(t, "stackit", loaded.Provider)
+		assert.Equal(t, "eu-de-1", loaded.Region)
+	})
+}
+
+// mustCreateTestManager creates a test state manager in a per-test temp directory.
 func mustCreateTestManager(t *testing.T) *state.Manager {
 	t.Helper()
 
-	tmpDir := filepath.Join(os.TempDir(), "ocfp-test-state")
-	t.Cleanup(func() {
-		_ = os.RemoveAll(tmpDir)
-	})
-
-	manager, err := state.NewManager(tmpDir)
+	manager, err := state.NewManager(t.TempDir())
 	require.NoError(t, err)
 
 	return manager

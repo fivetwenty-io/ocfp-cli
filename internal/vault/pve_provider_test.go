@@ -161,13 +161,6 @@ func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 	assert.Equal(t, "pve-node1", mock.setMultipleCalls[0].data["node_name"])
 }
 
-// TestPVEVaultProvider_ConfigureAZs_MultiNode — Nodes []string slice not yet
-// present in config.Config (tracked as N3 in adversarial review). Skip until
-// Config.Nodes is added.
-func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
-	t.Skip("Config.Nodes []string not yet in config.Config (N3); re-enable when field is added")
-}
-
 // TestPVEVaultProvider_ConfigureAZs_EmptyBoth — empty Region means no write,
 // no error.
 func TestPVEVaultProvider_ConfigureAZs_EmptyBoth(t *testing.T) {

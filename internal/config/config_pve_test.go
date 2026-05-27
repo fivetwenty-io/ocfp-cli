@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 	"io"
-	"os"
 	"strings"
 	"testing"
 
@@ -33,7 +32,7 @@ func TestValidate_PVE_BothEmpty_ReturnsError(t *testing.T) {
 
 	cfg := minimalPVEConfig("", "", "", "")
 
-	err := validatePVEAuth(cfg)
+	err := validatePVEAuth(cfg, io.Discard)
 
 	require.Error(t, err, "expected error when both auth modes are empty")
 	assert.ErrorIs(t, err, ErrPVEAuthRequired)
@@ -46,7 +45,7 @@ func TestValidate_PVE_PasswordOnly_Valid(t *testing.T) {
 
 	cfg := minimalPVEConfig("", "", "root@pam", "s3cr3t")
 
-	err := validatePVEAuth(cfg)
+	err := validatePVEAuth(cfg, io.Discard)
 
 	require.NoError(t, err, "expected no error for password-only auth")
 }
@@ -58,41 +57,29 @@ func TestValidate_PVE_TokenOnly_Valid(t *testing.T) {
 
 	cfg := minimalPVEConfig("root@pam!ocfp-bosh=abc123", "secret-uuid", "", "")
 
-	err := validatePVEAuth(cfg)
+	err := validatePVEAuth(cfg, io.Discard)
 
 	require.NoError(t, err, "expected no error for token-only auth")
 }
 
 // TestValidate_PVE_BothSet_WarnsNotErrors asserts that validate does not
 // return an error when both auth modes are set, and that a warning is written
-// to stderr mentioning token precedence.
+// to the provided writer mentioning token precedence.
 func TestValidate_PVE_BothSet_WarnsNotErrors(t *testing.T) {
 	t.Parallel()
 
 	cfg := minimalPVEConfig("root@pam!ocfp-bosh=abc123", "secret-uuid", "root@pam", "s3cr3t")
 
-	// Capture stderr to assert warning content.
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err, "failed to create os.Pipe for stderr capture")
-
-	os.Stderr = w
-
-	validateErr := validatePVEAuth(cfg)
-
-	w.Close()
-	os.Stderr = origStderr
-
 	var buf bytes.Buffer
-	_, copyErr := io.Copy(&buf, r)
-	require.NoError(t, copyErr, "failed to read captured stderr")
+
+	validateErr := validatePVEAuth(cfg, &buf)
 
 	// Must not return an error — both modes configured is a warning, not fatal.
 	require.NoError(t, validateErr, "expected no error when both auth modes are set")
 
 	// Warning must mention api token precedence.
 	output := buf.String()
-	assert.True(t, strings.Contains(output, "WARNING"), "expected WARNING in stderr output")
+	assert.True(t, strings.Contains(output, "WARNING"), "expected WARNING in warning output")
 	assert.True(t, strings.Contains(output, "api token"), "expected 'api token' mention in warning")
 }
 
@@ -106,7 +93,7 @@ func TestValidate_PVE_PartialTokenAuth_ReturnsError(t *testing.T) {
 	// username/password also absent — password mode absent.
 	cfg := minimalPVEConfig("root@pam!ocfp-bosh=abc123", "", "", "")
 
-	err := validatePVEAuth(cfg)
+	err := validatePVEAuth(cfg, io.Discard)
 
 	require.Error(t, err, "expected error when auth_token is set but token_secret is missing and no password auth configured")
 	assert.ErrorIs(t, err, ErrPVEAuthRequired)
@@ -122,33 +109,10 @@ func TestValidate_PVE_PartialPasswordAuth_ReturnsError(t *testing.T) {
 	// auth_token/token_secret absent — token mode absent.
 	cfg := minimalPVEConfig("", "", "", "s3cr3t")
 
-	err := validatePVEAuth(cfg)
+	err := validatePVEAuth(cfg, io.Discard)
 
 	require.Error(t, err, "expected error when password is set but username is missing and no token auth configured")
 	assert.ErrorIs(t, err, ErrPVEAuthRequired)
-}
-
-// TestValidate_NonPVE_SkipsAuthCheck asserts that validate() does not invoke
-// PVE auth validation for non-PVE providers, i.e. an openstack bloc with no
-// credentials set must not return ErrPVEAuthRequired.
-func TestValidate_NonPVE_SkipsAuthCheck(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Name:     "test-openstack",
-		Provider: "openstack",
-		// No credentials set.
-	}
-
-	// validate() returns ErrInvalidProvider or blobstore errors for openstack
-	// with missing fields — but it must NOT return ErrPVEAuthRequired.
-	err := validatePVEAuth(cfg)
-
-	// validatePVEAuth called directly with a non-PVE provider: the function
-	// only inspects the credential fields, not the provider field, so it will
-	// return ErrPVEAuthRequired if no creds set. The guard lives in validate().
-	// This test exercises the integration guard via validate() directly.
-	_ = err // Not relevant for non-PVE guard test; see integration test below.
 }
 
 // TestValidate_Integration_PVE_BothEmpty asserts that the top-level validate()

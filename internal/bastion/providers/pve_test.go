@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newPVEConfig returns a fully populated PVE config for use in tests.
@@ -41,13 +43,8 @@ func TestPVEBastionInit_Validate_MissingHost(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 
 	err := provider.Validate()
-	if err == nil {
-		t.Fatal("expected error for empty APIEndpoint, got nil")
-	}
-
-	if !errors.Is(err, ErrPVEHostRequired) {
-		t.Errorf("expected ErrPVEHostRequired, got: %v", err)
-	}
+	require.Error(t, err, "expected error for empty APIEndpoint, got nil")
+	require.ErrorIs(t, err, ErrPVEHostRequired)
 }
 
 // TestPVEBastionInit_Validate_MissingAuth verifies that when no auth credentials
@@ -65,13 +62,8 @@ func TestPVEBastionInit_Validate_MissingAuth(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 
 	err := provider.Validate()
-	if err == nil {
-		t.Fatal("expected ErrPVEAuthRequired for missing auth, got nil")
-	}
-
-	if !errors.Is(err, ErrPVEAuthRequired) {
-		t.Errorf("expected ErrPVEAuthRequired, got: %v", err)
-	}
+	require.Error(t, err, "expected ErrPVEAuthRequired for missing auth, got nil")
+	require.ErrorIs(t, err, ErrPVEAuthRequired)
 }
 
 // TestPVEBastionInit_Validate_Valid verifies that a fully configured provider passes
@@ -81,9 +73,7 @@ func TestPVEBastionInit_Validate_Valid(t *testing.T) {
 
 	provider := NewPVEBastionInit(newPVEConfig())
 
-	if err := provider.Validate(); err != nil {
-		t.Errorf("expected no error for valid config, got: %v", err)
-	}
+	require.NoError(t, provider.Validate(), "expected no error for valid config")
 }
 
 // TestPVEBastionInit_PrepareEnvironment verifies the environment map returned by
@@ -96,23 +86,18 @@ func TestPVEBastionInit_PrepareEnvironment(t *testing.T) {
 	env := provider.PrepareEnvironment()
 
 	// OCFP_PROVIDER must be "pve"
-	if got, ok := env["OCFP_PROVIDER"]; !ok {
-		t.Error("OCFP_PROVIDER key missing from PrepareEnvironment result")
-	} else if got != "pve" {
-		t.Errorf("expected OCFP_PROVIDER=pve, got %q", got)
-	}
+	got, ok := env["OCFP_PROVIDER"]
+	require.True(t, ok, "OCFP_PROVIDER key missing from PrepareEnvironment result")
+	assert.Equal(t, "pve", got, "OCFP_PROVIDER must equal pve")
 
 	// GENESIS_ENVIRONMENT must be set to the bloc name (Genesis v3.2+ requirement)
-	if got, ok := env["GENESIS_ENVIRONMENT"]; !ok {
-		t.Error("GENESIS_ENVIRONMENT key missing from PrepareEnvironment result")
-	} else if got != "my-bloc" {
-		t.Errorf("expected GENESIS_ENVIRONMENT=my-bloc, got %q", got)
-	}
+	got, ok = env["GENESIS_ENVIRONMENT"]
+	require.True(t, ok, "GENESIS_ENVIRONMENT key missing from PrepareEnvironment result")
+	assert.Equal(t, "my-bloc", got, "GENESIS_ENVIRONMENT must equal my-bloc")
 
 	// GENESIS_ENV (bare / deprecated) must NOT be present
-	if _, ok := env["GENESIS_ENV"]; ok {
-		t.Error("deprecated GENESIS_ENV key must not be present in PrepareEnvironment result")
-	}
+	_, ok = env["GENESIS_ENV"]
+	assert.False(t, ok, "deprecated GENESIS_ENV key must not be present in PrepareEnvironment result")
 }
 
 // TestPVEBastionInit_PrepareEnvironment_GenesisDisabled verifies that when Genesis
@@ -135,21 +120,16 @@ func TestPVEBastionInit_PrepareEnvironment_GenesisDisabled(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 	env := provider.PrepareEnvironment()
 
-	if got, ok := env["GENESIS_ENVIRONMENT"]; !ok {
-		t.Error("GENESIS_ENVIRONMENT key missing when Genesis disabled")
-	} else if got != "my-bloc" {
-		t.Errorf("expected GENESIS_ENVIRONMENT=my-bloc, got %q", got)
-	}
+	got, ok := env["GENESIS_ENVIRONMENT"]
+	require.True(t, ok, "GENESIS_ENVIRONMENT key missing when Genesis disabled")
+	assert.Equal(t, "my-bloc", got, "GENESIS_ENVIRONMENT must equal my-bloc")
 
-	if got, ok := env["GENESIS_SKIP_INSTALL"]; !ok {
-		t.Error("GENESIS_SKIP_INSTALL missing when Genesis disabled")
-	} else if got != "1" {
-		t.Errorf("expected GENESIS_SKIP_INSTALL=1, got %q", got)
-	}
+	got, ok = env["GENESIS_SKIP_INSTALL"]
+	require.True(t, ok, "GENESIS_SKIP_INSTALL missing when Genesis disabled")
+	assert.Equal(t, "1", got, "GENESIS_SKIP_INSTALL must equal 1")
 
-	if _, ok := env["GENESIS_ENV"]; ok {
-		t.Error("deprecated GENESIS_ENV key must not be present")
-	}
+	_, ok = env["GENESIS_ENV"]
+	assert.False(t, ok, "deprecated GENESIS_ENV key must not be present")
 }
 
 // TestPVEBastionInit_GetConnectionDetails verifies that GetConnectionDetails returns
@@ -172,26 +152,17 @@ func TestPVEBastionInit_GetConnectionDetails(t *testing.T) {
 	if err != nil {
 		// Expected when no SSH key exists in test environment.
 		// Confirm the error is NOT from IP resolution — i.e. bastionIP was found.
-		if errors.Is(err, ErrCouldNotDetermineBastionIP) {
-			t.Errorf("GetConnectionDetails failed on IP lookup despite BastionIP being set: %v", err)
-		}
+		assert.False(t, errors.Is(err, ErrCouldNotDetermineBastionIP),
+			"GetConnectionDetails failed on IP lookup despite BastionIP being set: %v", err)
 		// SSH key not found is acceptable in a unit test environment.
 		t.Logf("GetConnectionDetails returned expected key-lookup error: %v", err)
 
 		return
 	}
 
-	if details.Host != "10.0.1.50" {
-		t.Errorf("expected Host=10.0.1.50, got %q", details.Host)
-	}
-
-	if details.Port != defaultSSHPort {
-		t.Errorf("expected Port=%d, got %d", defaultSSHPort, details.Port)
-	}
-
-	if details.User != "ubuntu" {
-		t.Errorf("expected User=ubuntu, got %q", details.User)
-	}
+	assert.Equal(t, "10.0.1.50", details.Host)
+	assert.Equal(t, defaultSSHPort, details.Port)
+	assert.Equal(t, "ubuntu", details.User)
 }
 
 // TestPVEBastionInit_GetConnectionDetails_BastionIPFromConfig verifies that when
@@ -211,13 +182,8 @@ func TestPVEBastionInit_GetConnectionDetails_BastionIPFromConfig(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 
 	ip, err := provider.getBastionIP()
-	if err != nil {
-		t.Fatalf("expected no error for BastionIP in config, got: %v", err)
-	}
-
-	if ip != "192.168.10.5" {
-		t.Errorf("expected IP 192.168.10.5, got %q", ip)
-	}
+	require.NoError(t, err, "expected no error for BastionIP in config")
+	assert.Equal(t, "192.168.10.5", ip)
 }
 
 // TestPVEBastionInit_GetConnectionDetails_NoBastionIP verifies that when no IP is
@@ -234,13 +200,8 @@ func TestPVEBastionInit_GetConnectionDetails_NoBastionIP(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 
 	_, err := provider.getBastionIP()
-	if err == nil {
-		t.Fatal("expected error when no bastion IP available, got nil")
-	}
-
-	if !errors.Is(err, ErrCouldNotDetermineBastionIP) {
-		t.Errorf("expected ErrCouldNotDetermineBastionIP, got: %v", err)
-	}
+	require.Error(t, err, "expected error when no bastion IP available, got nil")
+	require.ErrorIs(t, err, ErrCouldNotDetermineBastionIP)
 }
 
 // TestPVEBastionInit_PrepareEnvironment_APITokenMode verifies that API token auth
@@ -259,25 +220,19 @@ func TestPVEBastionInit_PrepareEnvironment_APITokenMode(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 	env := provider.PrepareEnvironment()
 
-	if got, ok := env["PVE_TOKEN_ID"]; !ok {
-		t.Error("PVE_TOKEN_ID missing for API token auth")
-	} else if got != "root@pam!ci" {
-		t.Errorf("PVE_TOKEN_ID = %q, want root@pam!ci", got)
-	}
+	got, ok := env["PVE_TOKEN_ID"]
+	require.True(t, ok, "PVE_TOKEN_ID missing for API token auth")
+	assert.Equal(t, "root@pam!ci", got, "PVE_TOKEN_ID must equal root@pam!ci")
 
-	if got, ok := env["PVE_TOKEN_SECRET"]; !ok {
-		t.Error("PVE_TOKEN_SECRET missing for API token auth")
-	} else if got != "tok-secret-uuid" {
-		t.Errorf("PVE_TOKEN_SECRET = %q, want tok-secret-uuid", got)
-	}
+	got, ok = env["PVE_TOKEN_SECRET"]
+	require.True(t, ok, "PVE_TOKEN_SECRET missing for API token auth")
+	assert.Equal(t, "tok-secret-uuid", got, "PVE_TOKEN_SECRET must equal tok-secret-uuid")
 
-	if _, ok := env["PVE_USERNAME"]; ok {
-		t.Error("PVE_USERNAME must not be present in API token auth mode")
-	}
+	_, ok = env["PVE_USERNAME"]
+	assert.False(t, ok, "PVE_USERNAME must not be present in API token auth mode")
 
-	if _, ok := env["PVE_PASSWORD_BASE64"]; ok {
-		t.Error("PVE_PASSWORD_BASE64 must not be present in API token auth mode")
-	}
+	_, ok = env["PVE_PASSWORD_BASE64"]
+	assert.False(t, ok, "PVE_PASSWORD_BASE64 must not be present in API token auth mode")
 }
 
 // TestPVEBastionInit_PrepareEnvironment_UserPassMode verifies that username/password
@@ -296,21 +251,17 @@ func TestPVEBastionInit_PrepareEnvironment_UserPassMode(t *testing.T) {
 	provider := NewPVEBastionInit(cfg)
 	env := provider.PrepareEnvironment()
 
-	if _, ok := env["PVE_USERNAME"]; !ok {
-		t.Error("PVE_USERNAME missing for username/password auth mode")
-	}
+	_, ok := env["PVE_USERNAME"]
+	assert.True(t, ok, "PVE_USERNAME missing for username/password auth mode")
 
-	if _, ok := env["PVE_PASSWORD_BASE64"]; !ok {
-		t.Error("PVE_PASSWORD_BASE64 missing for username/password auth mode")
-	}
+	_, ok = env["PVE_PASSWORD_BASE64"]
+	assert.True(t, ok, "PVE_PASSWORD_BASE64 missing for username/password auth mode")
 
-	if _, ok := env["PVE_TOKEN_ID"]; ok {
-		t.Error("PVE_TOKEN_ID must not be present in username/password auth mode")
-	}
+	_, ok = env["PVE_TOKEN_ID"]
+	assert.False(t, ok, "PVE_TOKEN_ID must not be present in username/password auth mode")
 
-	if _, ok := env["PVE_TOKEN_SECRET"]; ok {
-		t.Error("PVE_TOKEN_SECRET must not be present in username/password auth mode")
-	}
+	_, ok = env["PVE_TOKEN_SECRET"]
+	assert.False(t, ok, "PVE_TOKEN_SECRET must not be present in username/password auth mode")
 }
 
 // TestPVEBastionInit_Validate_APITokenMode verifies that AuthToken + TokenSecret
@@ -327,9 +278,7 @@ func TestPVEBastionInit_Validate_APITokenMode(t *testing.T) {
 
 	provider := NewPVEBastionInit(cfg)
 
-	if err := provider.Validate(); err != nil {
-		t.Errorf("Validate() unexpected error for API token auth: %v", err)
-	}
+	require.NoError(t, provider.Validate(), "Validate() unexpected error for API token auth")
 }
 
 // TestPVEBastionInit_Validate_UserPassMode verifies that Username + Password
@@ -346,9 +295,7 @@ func TestPVEBastionInit_Validate_UserPassMode(t *testing.T) {
 
 	provider := NewPVEBastionInit(cfg)
 
-	if err := provider.Validate(); err != nil {
-		t.Errorf("Validate() unexpected error for user/password auth: %v", err)
-	}
+	require.NoError(t, provider.Validate(), "Validate() unexpected error for user/password auth")
 }
 
 // TestPVEBastionInit_Validate_PartialTokenAuth verifies that AuthToken without
@@ -371,13 +318,8 @@ func TestPVEBastionInit_Validate_PartialTokenAuth(t *testing.T) {
 	// hasUserPass = Username=="" → false
 	// Neither mode complete → ErrPVEAuthRequired
 	err := provider.Validate()
-	if err == nil {
-		t.Fatal("expected ErrPVEAuthRequired when TokenSecret is empty and AuthToken is set, got nil")
-	}
-
-	if !errors.Is(err, ErrPVEAuthRequired) {
-		t.Errorf("expected ErrPVEAuthRequired, got: %v", err)
-	}
+	require.Error(t, err, "expected ErrPVEAuthRequired when TokenSecret is empty and AuthToken is set, got nil")
+	require.ErrorIs(t, err, ErrPVEAuthRequired)
 }
 
 // NOTE: No TestPVE_getBastionIPFromAPI_* tests are included.

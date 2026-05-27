@@ -84,7 +84,7 @@ func TestResolveInitPVEParams_MissingBloc(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	setupPVEInitEnv(t)
-	os.Unsetenv("OCFP_BLOC")
+	t.Setenv("OCFP_BLOC", "")
 
 	// cmd has no --bloc set on command line (Changed == false).
 	params, err := resolveInitPVEParams(makeCmdNoBloc(t))
@@ -147,7 +147,7 @@ func TestInitPVE_MissingBlocReturnsError(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	setupPVEInitEnv(t)
-	os.Unsetenv("OCFP_BLOC")
+	t.Setenv("OCFP_BLOC", "")
 
 	err := initializePVE(makeCmdNoBloc(t), nil)
 
@@ -166,7 +166,7 @@ func TestInitPVE_StaleViperBlocBlocked(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	setupPVEInitEnv(t)
-	os.Unsetenv("OCFP_BLOC")
+	t.Setenv("OCFP_BLOC", "")
 
 	// Simulate createPreRunHandler populating viper from a stale state file.
 	viper.Set("bloc", "ocfp-pve-stale-prior")
@@ -201,7 +201,7 @@ func TestInitPVE_InvalidBlocReturnsError(t *testing.T) {
 			t.Cleanup(viper.Reset)
 
 			setupPVEInitEnv(t)
-			os.Unsetenv("OCFP_BLOC")
+			t.Setenv("OCFP_BLOC", "")
 
 			// Use env var path so the bloc value reaches format validation.
 			// Empty string would be caught by ErrBlocMissing instead — skip env var for that case.

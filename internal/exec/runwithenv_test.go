@@ -36,11 +36,10 @@ func TestRunWithEnv_InjectsEnvNotArgv(t *testing.T) {
 		t.Errorf("expected env output to contain %q, got:\n%s", secretKey+"="+secretVal, output)
 	}
 
-	// Argv of `env` itself contains no secret — `env` takes no args here.
-	// This asserts the call site did not interpolate the secret into args.
-	if strings.Contains("env", secretVal) {
-		t.Errorf("secret value must not appear in argv; found in: env")
-	}
+	// Argv leakage check is N/A here: RunWithEnv wraps os/exec with no test
+	// seam to inspect Cmd.Args after construction. The secret is injected via
+	// Cmd.Env only; the command string ("env") is a literal constant that
+	// cannot contain secretVal by construction.
 }
 
 // T37 TestRunWithEnv_EmptyExtraEnv_Equivalent

@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -11,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockFullSafe implements SafeInterface with full tracking capabilities for integration tests.
+// mockFullSafe implements SafeInterface with full tracking capabilities for mock-based tests.
 type mockFullSafe struct {
 	data      map[string]map[string]interface{}
 	setCalls  []setMultipleCall
@@ -135,8 +136,8 @@ func (m *mockFullSafe) MustGet(path, key string) interface{} {
 
 // Note: NetworkManager mocking not needed as we test provider logic directly.
 
-// TestIntegration_PathStructure_AllPathsUseCorrectFormat verifies all vault paths follow correct structure.
-func TestIntegration_PathStructure_AllPathsUseCorrectFormat(t *testing.T) {
+// TestStackitMock_PathStructure_AllPathsUseCorrectFormat verifies all vault paths follow correct structure.
+func TestStackitMock_PathStructure_AllPathsUseCorrectFormat(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -172,7 +173,7 @@ func TestIntegration_PathStructure_AllPathsUseCorrectFormat(t *testing.T) {
 			assert.NotContains(t, path, "/vpc/", "Should use net/ not vpc/ in path: %s", path)
 			if len(path) > 0 && path != "" {
 				// If path contains network-related data, it should use net/
-				if contains(path, "subnet") || contains(path, "network") {
+				if strings.Contains(path, "subnet") || strings.Contains(path, "network") {
 					assert.Contains(t, path, "/net/", "Network paths should use net/: %s", path)
 				}
 			}
@@ -183,15 +184,15 @@ func TestIntegration_PathStructure_AllPathsUseCorrectFormat(t *testing.T) {
 	t.Run("s3_credentials_use_correct_path", func(t *testing.T) {
 		// S3 creds should be at bosh/s3, not bosh/iam/s3
 		for path := range safe.data {
-			if contains(path, "s3") {
+			if strings.Contains(path, "s3") {
 				assert.NotContains(t, path, "/bosh/iam/s3", "Should not use bosh/iam/s3 path: %s", path)
 			}
 		}
 	})
 }
 
-// TestIntegration_SubnetFields_AllFieldsPresent verifies all 22 subnet fields are populated.
-func TestIntegration_SubnetFields_AllFieldsPresent(t *testing.T) {
+// TestStackitMock_SubnetFields_AllFieldsPresent verifies all 22 subnet fields are populated.
+func TestStackitMock_SubnetFields_AllFieldsPresent(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -245,8 +246,8 @@ func TestIntegration_SubnetFields_AllFieldsPresent(t *testing.T) {
 	})
 }
 
-// TestIntegration_NetworkFields_AllFieldsPresent verifies network fields including new additions.
-func TestIntegration_NetworkFields_AllFieldsPresent(t *testing.T) {
+// TestStackitMock_NetworkFields_AllFieldsPresent verifies network fields including new additions.
+func TestStackitMock_NetworkFields_AllFieldsPresent(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -291,8 +292,8 @@ func TestIntegration_NetworkFields_AllFieldsPresent(t *testing.T) {
 	}
 }
 
-// TestIntegration_KeypairFields_AllFieldsPresent verifies keypair fields.
-func TestIntegration_KeypairFields_AllFieldsPresent(t *testing.T) {
+// TestStackitMock_KeypairFields_AllFieldsPresent verifies keypair fields.
+func TestStackitMock_KeypairFields_AllFieldsPresent(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -327,8 +328,8 @@ func TestIntegration_KeypairFields_AllFieldsPresent(t *testing.T) {
 	}
 }
 
-// TestIntegration_SecurityGroups_PathLogic verifies SG path logic (CF vs standard).
-func TestIntegration_SecurityGroups_PathLogic(t *testing.T) {
+// TestStackitMock_SecurityGroups_PathLogic verifies SG path logic (CF vs standard).
+func TestStackitMock_SecurityGroups_PathLogic(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -382,8 +383,8 @@ func TestIntegration_SecurityGroups_PathLogic(t *testing.T) {
 	})
 }
 
-// TestIntegration_AZFormat_JSONString verifies AZ cloud_properties is JSON string.
-func TestIntegration_AZFormat_JSONString(t *testing.T) {
+// TestStackitMock_AZFormat_JSONString verifies AZ cloud_properties is JSON string.
+func TestStackitMock_AZFormat_JSONString(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -417,8 +418,8 @@ func TestIntegration_AZFormat_JSONString(t *testing.T) {
 	assert.Contains(t, cloudPropsStr, "eu01-1", "JSON string should contain AZ value")
 }
 
-// TestIntegration_FQDNFiltering_MgmtVsOCF verifies FQDN filtering logic.
-func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
+// TestStackitMock_FQDNFiltering_MgmtVsOCF verifies FQDN filtering logic.
+func TestStackitMock_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 	cfg := &config.Config{
 		Name:       "test-bloc",
 		Provider:   "stackit",
@@ -491,8 +492,8 @@ func TestIntegration_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 	})
 }
 
-// TestIntegration_ReservedIPs_MgmtVsOCF verifies reserved IP calculations.
-func TestIntegration_ReservedIPs_MgmtVsOCF(t *testing.T) {
+// TestStackitMock_ReservedIPs_MgmtVsOCF verifies reserved IP calculations.
+func TestStackitMock_ReservedIPs_MgmtVsOCF(t *testing.T) {
 	provider := &StackitVaultProvider{
 		logger: logger.Get(),
 	}
@@ -541,8 +542,8 @@ func TestIntegration_ReservedIPs_MgmtVsOCF(t *testing.T) {
 	})
 }
 
-// TestIntegration_PublicIPs_GroupingAndFiltering verifies public IP handling.
-func TestIntegration_PublicIPs_GroupingAndFiltering(t *testing.T) {
+// TestStackitMock_PublicIPs_GroupingAndFiltering verifies public IP handling.
+func TestStackitMock_PublicIPs_GroupingAndFiltering(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -551,8 +552,6 @@ func TestIntegration_PublicIPs_GroupingAndFiltering(t *testing.T) {
 
 	safe := newMockFullSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
-	_ = safe // safe used in later tests
-
 	// Create test public IPs
 	allIPs := []*cpi.PublicIP{
 		{
@@ -633,8 +632,8 @@ func TestIntegration_PublicIPs_GroupingAndFiltering(t *testing.T) {
 	})
 }
 
-// TestIntegration_ErrorHandling_GracefulDegradation verifies error handling.
-func TestIntegration_ErrorHandling_GracefulDegradation(t *testing.T) {
+// TestStackitMock_ErrorHandling_GracefulDegradation verifies error handling.
+func TestStackitMock_ErrorHandling_GracefulDegradation(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -643,7 +642,6 @@ func TestIntegration_ErrorHandling_GracefulDegradation(t *testing.T) {
 
 	safe := newMockFullSafe()
 	provider := NewStackitVaultProvider(cfg, safe, "test-bloc")
-	_ = safe // safe used indirectly by provider
 
 	t.Run("missing_security_groups_no_error", func(t *testing.T) {
 		// Configure SGs with no state - should not error
@@ -669,8 +667,8 @@ func TestIntegration_ErrorHandling_GracefulDegradation(t *testing.T) {
 	})
 }
 
-// TestIntegration_FullVaultPopulate_EndToEnd tests complete vault populate flow.
-func TestIntegration_FullVaultPopulate_EndToEnd(t *testing.T) {
+// TestStackitMock_FullVaultPopulate_EndToEnd tests complete vault populate flow.
+func TestStackitMock_FullVaultPopulate_EndToEnd(t *testing.T) {
 	cfg := &config.Config{
 		Name:       "test-bloc",
 		Provider:   "stackit",
@@ -734,8 +732,8 @@ func TestIntegration_FullVaultPopulate_EndToEnd(t *testing.T) {
 	})
 }
 
-// TestIntegration_DataConsistency_CrossFeature verifies data consistency across features.
-func TestIntegration_DataConsistency_CrossFeature(t *testing.T) {
+// TestStackitMock_DataConsistency_CrossFeature verifies data consistency across features.
+func TestStackitMock_DataConsistency_CrossFeature(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -777,9 +775,9 @@ func TestIntegration_DataConsistency_CrossFeature(t *testing.T) {
 	})
 }
 
-// TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs verifies that when
+// TestStackitMock_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs verifies that when
 // no subnets are configured, a default ocfp-0 virtual subnet is created with all reserved IPs.
-func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testing.T) {
+func TestStackitMock_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testing.T) {
 	tests := []struct {
 		name         string
 		networkCIDR  string
@@ -873,9 +871,9 @@ func TestIntegration_FallbackSubnet_CreatesDefaultSubnetWithReservedIPs(t *testi
 	}
 }
 
-// TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured verifies that fallback
+// TestStackitMock_FallbackSubnet_NotCalledWhenSubnetsConfigured verifies that fallback
 // is NOT triggered when subnets are explicitly configured.
-func TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T) {
+func TestStackitMock_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T) {
 	cfg := &config.Config{
 		Name:     "test-bloc",
 		Provider: "stackit",
@@ -907,7 +905,7 @@ func TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T)
 	// Verify only one subnet was created (not fallback + configured)
 	var subnetPaths []string
 	for path := range safe.data {
-		if contains(path, "net/subnets/ocfp-") {
+		if strings.Contains(path, "net/subnets/ocfp-") {
 			subnetPaths = append(subnetPaths, path)
 		}
 	}
@@ -917,18 +915,4 @@ func TestIntegration_FallbackSubnet_NotCalledWhenSubnetsConfigured(t *testing.T)
 
 	// Verify CIDR matches configured value, not default fallback
 	assert.Equal(t, "10.0.1.0/24", configuredSubnet["subnet_cidr"], "Should not use fallback default CIDR")
-}
-
-// Helper function to check if string contains substring.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && findSubstring(s, substr)
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
