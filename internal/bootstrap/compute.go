@@ -25,6 +25,10 @@ import (
 // docs can refer to the same value the resolver emits.
 const bastionTailscaleDefaultTag = "tag:ocfp-bastion"
 
+// sleepFn is the sleep implementation used by this package. Tests override it
+// to eliminate the STACKIT eventual-consistency wait without changing prod behavior.
+var sleepFn = time.Sleep
+
 // Compute-specific constants.
 const (
 	bastionRootDiskSize   = 50
@@ -119,7 +123,7 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 
 			_, _ = fmt.Fprintf(os.Stdout, "    • Waiting for network configuration to stabilize...\n")
 
-			time.Sleep(30 * time.Second) //nolint:mnd
+			sleepFn(30 * time.Second) //nolint:mnd
 			logger.Info("Network wait period completed")
 		}
 	}
