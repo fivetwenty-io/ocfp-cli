@@ -399,10 +399,53 @@ sub record_version {
 }
 
 # ---------------------------------------------------------------------------
-# Stage H: genesis (genesis-community/genesis v3.2.x-dev)
+# Stage H: AWS CLI v2 (official installer)
+# ---------------------------------------------------------------------------
+# Required for operating against the bloc's ocfp-artifacts RustFS endpoint
+# (and for any future external S3-compatible blobstores). Ubuntu Noble's
+# apt repo dropped awscli v1 in favor of the official zip installer.
+{
+    my $stage = 'H-awscli';
+    log_info("=== Stage $stage: AWS CLI v2 install ===");
+
+    if (which_tool('aws')) {
+        log_ok("[$stage] aws already installed, skipping");
+    } else {
+        my $arch = `uname -m`;
+        chomp $arch;
+        my $zip_arch;
+        if ($arch eq 'x86_64' || $arch eq 'amd64') {
+            $zip_arch = 'x86_64';
+        } elsif ($arch eq 'aarch64' || $arch eq 'arm64') {
+            $zip_arch = 'aarch64';
+        } else {
+            log_warn("[$stage] unsupported arch '$arch'; skipping awscli install");
+            $zip_arch = '';
+        }
+
+        if ($zip_arch ne '') {
+            my $url = "https://awscli.amazonaws.com/awscli-exe-linux-${zip_arch}.zip";
+            my $pid = $$;
+            log_info("[$stage] downloading AWS CLI v2 ($zip_arch)");
+            run_shell($stage,
+                "curl -sfL '$url' -o '/tmp/__awscli_${pid}.zip' && " .
+                "unzip -q -o '/tmp/__awscli_${pid}.zip' -d '/tmp/__awscli_${pid}dir' && " .
+                "sudo '/tmp/__awscli_${pid}dir/aws/install' --update && " .
+                "rm -rf '/tmp/__awscli_${pid}.zip' '/tmp/__awscli_${pid}dir'"
+            );
+            log_ok("[$stage] aws installed");
+        }
+    }
+
+    record_version($stage, 'aws', 'aws --version');
+    log_ok("=== Stage $stage complete ===");
+}
+
+# ---------------------------------------------------------------------------
+# Stage I: genesis (genesis-community/genesis v3.2.x-dev)
 # ---------------------------------------------------------------------------
 {
-    my $stage = 'H-genesis';
+    my $stage = 'I-genesis';
     log_info("=== Stage $stage: genesis install ===");
 
     my $genesis_dir  = "$home/ocfp/genesis";
@@ -457,10 +500,10 @@ sub record_version {
 }
 
 # ---------------------------------------------------------------------------
-# Stage I: summary table
+# Stage J: summary table
 # ---------------------------------------------------------------------------
 {
-    my $stage = 'I-summary';
+    my $stage = 'J-summary';
     log_info("=== Stage $stage: provisioning summary ===");
 
     my $line = sprintf("%-6s  %-20s  %s\n", 'Stage', 'Tool', 'Version');
@@ -479,7 +522,7 @@ sub record_version {
     }
 
     # Also verify each critical binary is accessible after all installs
-    my @critical = qw(curl jq git yq safe bosh cf cloudflared);
+    my @critical = qw(curl jq git yq safe bosh cf cloudflared aws);
     log_info("[$stage] verifying critical binaries on PATH ...");
 
     my @missing_critical;

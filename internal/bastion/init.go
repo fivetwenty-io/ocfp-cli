@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
@@ -19,7 +20,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/pmezard/go-difflib/difflib"
-	"github.com/goccy/go-yaml"
 )
 
 const (
@@ -625,6 +625,7 @@ func (m *Manager) getInitializationPhases() []struct {
 		// CRITICAL: ocfp_configure MUST run before genesis_secrets_providers
 		// as it clones the deployment repositories containing .genesis directories
 		{"ocfp_cli_setup", m.setupOCFPCLI},
+		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		{"ocfp_configure", m.runOCFPConfigure},
@@ -702,6 +703,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"shell_environment", m.setupShellEnvironment},
 		{"system_environment", m.setupSystemEnvironment},
 		{"ocfp_cli_setup", m.setupOCFPCLI},
+		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		{"ocfp_configure", m.runOCFPConfigure},

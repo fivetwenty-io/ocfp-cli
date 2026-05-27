@@ -216,8 +216,9 @@ The provision script installs these tools in order:
 | E | bosh v7+ | GitHub release binary |
 | F | cf v8+ | GitHub release tarball |
 | G | cloudflared | GitHub release binary |
-| H | genesis v3.2.x-dev | git clone + `~/.local/bin` symlink |
-| I | summary | prints version table |
+| H | AWS CLI v2 | official `awscli.amazonaws.com` zip installer |
+| I | genesis v3.2.x-dev | git clone + `~/.local/bin` symlink |
+| J | summary | prints version table |
 
 The script is idempotent. Re-running it skips any stage whose binary is already
 on `PATH`.
