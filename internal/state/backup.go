@@ -191,16 +191,19 @@ func (m *Manager) getLatestBackup(blocName string) (*BackupInfo, error) {
 	return &backups[0], nil
 }
 
-// restoreFromBackup restores state from the latest backup.
-// This is used for rollback on save failures.
-func (m *Manager) restoreFromBackup(blocName string) error {
+// restoreFromBackupLocked performs the restore-from-disk work without
+// touching m.mu. Callers that already hold the write lock (e.g.
+// SaveWithBackup) use the returned *State to publish under their own
+// lock; callers that do not hold the lock should acquire it before
+// assigning m.current.
+func (m *Manager) restoreFromBackupLocked(blocName string) (*State, error) {
 	backup, err := m.getLatestBackup(blocName)
 	if err != nil {
-		return fmt.Errorf("failed to get latest backup: %w", err)
+		return nil, fmt.Errorf("failed to get latest backup: %w", err)
 	}
 
 	if backup == nil {
-		return ErrNoBackupsAvailable
+		return nil, ErrNoBackupsAvailable
 	}
 
 	statePath := m.getStatePath(blocName)
@@ -208,18 +211,18 @@ func (m *Manager) restoreFromBackup(blocName string) error {
 	// Re-validate the destination path before restore — same defense as
 	// createBackup, applied symmetrically.
 	if err := security.ValidatePath(statePath); err != nil {
-		return fmt.Errorf("invalid state path: %w", err)
+		return nil, fmt.Errorf("invalid state path: %w", err)
 	}
 
 	// Copy backup to state file
 	data, err := os.ReadFile(backup.Path) // #nosec G304 - backup.Path from listBackups
 	if err != nil {
-		return fmt.Errorf("failed to read backup file: %w", err)
+		return nil, fmt.Errorf("failed to read backup file: %w", err)
 	}
 
 	err = os.WriteFile(statePath, data, stateFileMode)
 	if err != nil {
-		return fmt.Errorf("failed to restore state file: %w", err)
+		return nil, fmt.Errorf("failed to restore state file: %w", err)
 	}
 
 	logger.Infof("Restored state from backup: %s", backup.Path)
@@ -229,14 +232,10 @@ func (m *Manager) restoreFromBackup(blocName string) error {
 
 	err = json.Unmarshal(data, &state)
 	if err != nil {
-		return fmt.Errorf("failed to parse restored state: %w", err)
+		return nil, fmt.Errorf("failed to parse restored state: %w", err)
 	}
 
-	m.mu.Lock()
-	m.current = &state
-	m.mu.Unlock()
-
-	return nil
+	return &state, nil
 }
 
 // atomicWrite performs an atomic write operation using a temporary file.
@@ -301,8 +300,10 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 
 // SaveWithBackup saves the current state with automatic backup and rollback on failure.
 func (m *Manager) SaveWithBackup() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// Hold a write lock: this function mutates m.current.UpdatedAt and
+	// races with concurrent readers if held under RLock.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.current == nil {
 		return ErrNoStateLoaded
@@ -330,16 +331,21 @@ func (m *Manager) SaveWithBackup() error {
 	// Step 4: Atomically write state file
 	err = atomicWrite(statePath, data, stateFileMode)
 	if err != nil {
-		// Attempt rollback if backup exists
+		// Attempt rollback if backup exists. We already hold the
+		// write lock, so use the locked variant of restoreFromBackup
+		// to avoid re-acquiring the same mutex (sync.RWMutex is
+		// non-reentrant).
 		if backupPath != "" {
 			logger.Warnf("State save failed, attempting rollback...")
 
-			rollbackErr := m.restoreFromBackup(blocName)
+			restored, rollbackErr := m.restoreFromBackupLocked(blocName)
 			if rollbackErr != nil {
 				logger.Errorf("Rollback failed: %v", rollbackErr)
 
 				return fmt.Errorf("failed to write state: %w (rollback also failed: %w)", err, rollbackErr)
 			}
+
+			m.current = restored
 
 			logger.Info("Successfully rolled back to previous state")
 		}

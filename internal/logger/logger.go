@@ -213,9 +213,11 @@ func SetLevel(level string) {
 		return
 	}
 
-	loggerMu.RLock()
+	// atom is a zap.AtomicLevel whose SetLevel is internally
+	// goroutine-safe (atomic store). No outer mutex required, and
+	// taking RLock here was misleading because the operation is a
+	// conceptual write of the level value.
 	atom.SetLevel(zapLevel)
-	loggerMu.RUnlock()
 }
 
 // Get returns the global logger instance.
