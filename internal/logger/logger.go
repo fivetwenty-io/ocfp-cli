@@ -347,14 +347,15 @@ func WithOperation(operation string) *zap.SugaredLogger {
 // Sync flushes any buffered log entries.
 func Sync() error {
 	loggerMu.RLock()
+	defer loggerMu.RUnlock()
 
-	if log != nil {
-		defer loggerMu.RUnlock()
-
-		return fmt.Errorf("failed to sync logger: %w", log.Sync())
+	if log == nil {
+		return nil
 	}
 
-	loggerMu.RUnlock()
+	if err := log.Sync(); err != nil {
+		return fmt.Errorf("failed to sync logger: %w", err)
+	}
 
 	return nil
 }
