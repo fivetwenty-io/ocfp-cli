@@ -62,9 +62,6 @@ func ExampleInteractiveRenderer() {
 				fmt.Printf("Error: %v\n", err)
 				return
 			}
-
-			// Simulate work
-			time.Sleep(50 * time.Millisecond)
 		}
 
 		// Complete phase
