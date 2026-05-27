@@ -458,6 +458,14 @@ type InstanceRequest struct {
 	// DomainSuffix combines with Hostname to produce the FQDN. Typically the
 	// bloc's FQDNs.Base. Empty falls back to just Hostname.
 	DomainSuffix string
+	// VCPUsOverride, when > 0, replaces the flavor preset's vCPU count for
+	// this request only. Zero leaves the preset value. Honored by providers
+	// that read the flavor at create time (currently PVE).
+	VCPUsOverride int
+	// MemoryMiBOverride, when > 0, replaces the flavor preset's RAM (in MiB)
+	// for this request only. Zero leaves the preset value. Honored by
+	// providers that read the flavor at create time (currently PVE).
+	MemoryMiBOverride int
 }
 
 // TailscaleSpec describes how a VM should join the tailnet at first boot.

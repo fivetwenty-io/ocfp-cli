@@ -27,6 +27,10 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 		{"Data.StoragePool", a.Data.StoragePool, "local-zfs"},
 		{"Data.Mountpoint", a.Data.Mountpoint, "/data"},
 		{"TLS.Mode", a.TLS.Mode, ArtifactsTLSModeSelfSigned},
+		// CPU and MemoryMiB are left at zero by Defaults; zero means "use the
+		// flavor preset". Setting them in config overrides the preset.
+		{"CPU", a.CPU, 0},
+		{"MemoryMiB", a.MemoryMiB, 0},
 	}
 
 	for _, tc := range tests {
@@ -36,6 +40,21 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 				t.Errorf("got %v, want %v", tc.got, tc.want)
 			}
 		})
+	}
+}
+
+// TestArtifactsConfigDefaultsIdempotentOverrides verifies that explicit CPU
+// and MemoryMiB overrides survive Defaults().
+func TestArtifactsConfigDefaultsIdempotentOverrides(t *testing.T) {
+	a := ArtifactsConfig{CPU: 6, MemoryMiB: 12288}
+	a.Defaults()
+
+	if a.CPU != 6 {
+		t.Errorf("Defaults overwrote CPU: got %d", a.CPU)
+	}
+
+	if a.MemoryMiB != 12288 {
+		t.Errorf("Defaults overwrote MemoryMiB: got %d", a.MemoryMiB)
 	}
 }
 
@@ -88,6 +107,8 @@ func TestArtifactsConfigYAMLRoundtripSnakeCase(t *testing.T) {
 	input := `
 enabled: true
 flavor: artifacts
+cpu: 8
+memory_mib: 16384
 template: ubuntu-2204-cloudinit
 rustfs:
   version: 1.0.0-beta.3
@@ -151,6 +172,14 @@ tls:
 		t.Errorf("TLS.CommonName: got %q", a.TLS.CommonName)
 	}
 
+	if a.CPU != 8 {
+		t.Errorf("CPU: got %d", a.CPU)
+	}
+
+	if a.MemoryMiB != 16384 {
+		t.Errorf("MemoryMiB: got %d", a.MemoryMiB)
+	}
+
 	// Marshal back and spot-check key presence.
 	out, err := yaml.Marshal(&a)
 	if err != nil {
@@ -169,6 +198,8 @@ tls:
 func TestArtifactsConfigYAMLRoundtripCamelCase(t *testing.T) {
 	input := `
 enabled: true
+cpu: 2
+memoryMiB: 2048
 rustfs:
   downloadURL: https://example.com/rustfs-cc.zip
   s3Port: 8080
@@ -227,6 +258,14 @@ tls:
 
 	if a.TLS.CommonName != "cc.example.com" {
 		t.Errorf("TLS.CommonName (camelCase): got %q", a.TLS.CommonName)
+	}
+
+	if a.CPU != 2 {
+		t.Errorf("CPU (camelCase): got %d", a.CPU)
+	}
+
+	if a.MemoryMiB != 2048 {
+		t.Errorf("MemoryMiB (camelCase): got %d", a.MemoryMiB)
 	}
 }
 
