@@ -388,9 +388,13 @@ func buildArtifactsEndpoint(ip net.IP, cfg config.ArtifactsConfig, caPEM string)
 
 // artifactsBucketList enumerates the BOSH + CF buckets to create on the
 // artifacts endpoint. Names follow the existing {bloc}-{env}-{type} convention.
+//
+// One bucket per BOSH director (mgmt and ocf/env), and four buckets for the
+// CF cloud-controller blobstore (droplets, packages, buildpacks, resource-pool).
 func artifactsBucketList(blocName string, _cfg *config.Config) []artifacts.BucketSpec {
 	return []artifacts.BucketSpec{
 		{Name: blocName + "-mgmt-bosh"},
+		{Name: blocName + "-ocf-bosh"},
 		{Name: blocName + "-ocf-cf-droplets"},
 		{Name: blocName + "-ocf-cf-packages"},
 		{Name: blocName + "-ocf-cf-buildpacks"},
