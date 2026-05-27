@@ -4,7 +4,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1439,9 +1438,14 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 		if err != nil {
 			return nil
 		}
+
+		if octets[i] < 0 || octets[i] > octetBitmask {
+			return nil
+		}
 	}
 
-	// Convert to uint32
+	// Convert to uint32 — each octet is now bounded to [0, 255] so the
+	// cast cannot silently wrap.
 	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3])
 
 	// Calculate subnet size
@@ -1565,22 +1569,6 @@ func (cfg *Config) GetConfiguredDeployments() []string {
 	}
 
 	return cfg.Deployments.Configured()
-}
-
-// isValidCIDR reports whether s is a valid CIDR notation accepted by net.ParseCIDR.
-//
-// Host-bit policy: inputs with host bits set (e.g. "10.0.0.1/24") are accepted
-// because net.ParseCIDR succeeds and returns the masked network address. Callers
-// that require a strict network address (IP == network address) must enforce that
-// constraint separately.
-func isValidCIDR(s string) bool {
-	if s == "" {
-		return false
-	}
-
-	_, _, err := net.ParseCIDR(s)
-
-	return err == nil
 }
 
 // validate validates the configuration.

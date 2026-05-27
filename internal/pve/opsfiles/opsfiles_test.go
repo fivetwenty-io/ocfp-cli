@@ -143,8 +143,8 @@ func TestWriteToDeploymentsDir_CreatesFiles_WithCorrectContent(t *testing.T) {
 			t.Errorf("Stat(%q): %v", path, err)
 			continue
 		}
-		if perm := info.Mode().Perm(); perm != 0644 {
-			t.Errorf("%s: file mode %04o, want 0644", tc.file, perm)
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s: file mode %04o, want 0600", tc.file, perm)
 		}
 	}
 }
@@ -255,7 +255,7 @@ func TestPVEGuestAgentTemplate_IncludesBothStemcells(t *testing.T) {
 }
 
 // TestWriteRuntimeConfigToDir_CreatesFile — T04: WriteRuntimeConfigToDir writes
-// pve-guest-agent.yml to the target dir with correct content and mode 0644.
+// pve-guest-agent.yml to the target dir with correct content and mode 0600.
 func TestWriteRuntimeConfigToDir_CreatesFile(t *testing.T) {
 	t.Parallel()
 
@@ -282,8 +282,8 @@ func TestWriteRuntimeConfigToDir_CreatesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(%q): %v", path, err)
 	}
-	if perm := info.Mode().Perm(); perm != 0644 {
-		t.Errorf("file mode %04o, want 0644", perm)
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file mode %04o, want 0600", perm)
 	}
 }
 

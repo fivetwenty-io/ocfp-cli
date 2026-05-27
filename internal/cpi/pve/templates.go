@@ -221,6 +221,14 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, vmid int) error {
 	log := logger.WithOperation("seedBastionTemplate")
 
+	// Generate a fresh one-shot password per template build. The
+	// credential lives only inside this process and the VM's cloud-init
+	// state until `cloud-init clean` wipes it later in this same function.
+	password, err := generateSeedPassword()
+	if err != nil {
+		return fmt.Errorf("generate seed password: %w", err)
+	}
+
 	// Update the VM config with the credentials + DHCP needed for termproxy
 	// login and apt internet egress. These are wiped by `cloud-init clean`
 	// inside the seed; cloned VMs get their own ciuser/cipassword from the
@@ -234,9 +242,9 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	// bridge during seed. vmbr1 is wiped from the template config below
 	// before convert-to-template via cloud-init clean so cloned VMs get
 	// the per-bloc bridge from their own InstanceRequest.
-	_, err := m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
+	_, err = m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
 		"ciuser":     templateSeedCIUser,
-		"cipassword": templateSeedCIPassword,
+		"cipassword": password,
 		"ipconfig0":  "ip=dhcp",
 		"net0":       "virtio,bridge=vmbr1",
 	})
@@ -259,7 +267,7 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 
 	log.Infof("template VM %d booted; running seed via termproxy", vmid)
 
-	if err := m.seedTemplateVM(ctx, node, vmid); err != nil {
+	if err := m.seedTemplateVM(ctx, node, vmid, password); err != nil {
 		return fmt.Errorf("seed termproxy: %w", err)
 	}
 

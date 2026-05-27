@@ -234,7 +234,7 @@ func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
 	base := filepath.Join(ocfpHome, bloc, "deployments", deployment)
 
 	opsDir := filepath.Join(base, "ops")
-	if err := os.MkdirAll(opsDir, 0755); err != nil {
+	if err := os.MkdirAll(opsDir, 0o750); err != nil {
 		return fmt.Errorf("writePVEOpsFiles: create ops dir %q: %w", opsDir, err)
 	}
 
@@ -243,7 +243,7 @@ func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
 	}
 
 	rcDir := filepath.Join(base, "runtime-configs")
-	if err := os.MkdirAll(rcDir, 0755); err != nil {
+	if err := os.MkdirAll(rcDir, 0o750); err != nil {
 		return fmt.Errorf("writePVEOpsFiles: create runtime-configs dir %q: %w", rcDir, err)
 	}
 

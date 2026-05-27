@@ -58,18 +58,42 @@ func TestSeedConstants_PresentAndNonEmpty(t *testing.T) {
 		t.Error("templateSeedCIUser empty")
 	}
 
-	if templateSeedCIPassword == "" {
-		t.Error("templateSeedCIPassword empty")
+	if templateSeedPasswordPrefix == "" {
+		t.Error("templateSeedPasswordPrefix empty")
 	}
 
-	// Password must be long enough that random guessing is impractical
-	// during the few minutes the template VM is alive.
-	if len(templateSeedCIPassword) < 16 {
-		t.Errorf("templateSeedCIPassword too short: %d chars", len(templateSeedCIPassword))
+	if templateSeedPasswordBytes < 16 {
+		t.Errorf("templateSeedPasswordBytes too small: %d", templateSeedPasswordBytes)
+	}
+}
+
+func TestGenerateSeedPassword(t *testing.T) {
+	t.Parallel()
+
+	pw, err := generateSeedPassword()
+	if err != nil {
+		t.Fatalf("generateSeedPassword: %v", err)
 	}
 
-	// Sentinel: catch if someone replaces the password with a real secret.
-	if !strings.Contains(templateSeedCIPassword, "OcfpSeed") {
-		t.Error("templateSeedCIPassword must keep the OcfpSeed prefix so the ephemeral nature is obvious")
+	// Password must keep the prefix so an accidental log capture is
+	// recognisable as the ephemeral seed credential.
+	if !strings.HasPrefix(pw, templateSeedPasswordPrefix) {
+		t.Errorf("generateSeedPassword = %q, want prefix %q", pw, templateSeedPasswordPrefix)
+	}
+
+	// Length: prefix + 2 hex chars per random byte.
+	wantLen := len(templateSeedPasswordPrefix) + 2*templateSeedPasswordBytes
+	if len(pw) != wantLen {
+		t.Errorf("generateSeedPassword len = %d, want %d", len(pw), wantLen)
+	}
+
+	// Two calls must not collide.
+	pw2, err := generateSeedPassword()
+	if err != nil {
+		t.Fatalf("generateSeedPassword (second call): %v", err)
+	}
+
+	if pw == pw2 {
+		t.Error("generateSeedPassword returned identical passwords across two calls")
 	}
 }

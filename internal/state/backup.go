@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
 const (
@@ -52,6 +53,14 @@ func (m *Manager) createBackup(blocName string) (string, error) {
 	// Create timestamped backup path
 	timestamp := time.Now().Format("20060102-150405")
 	backupPath := fmt.Sprintf("%s%s.%s", statePath, backupSuffix, timestamp)
+
+	// Re-validate the derived backup path before any write. statePath is
+	// already validated in callers but backupPath is a fresh string built
+	// from operator-derived inputs; ValidatePath rejects traversal and
+	// other unsafe components.
+	if err := security.ValidatePath(backupPath); err != nil {
+		return "", fmt.Errorf("invalid backup path: %w", err)
+	}
 
 	// Copy state file to backup
 	data, err := os.ReadFile(statePath) // #nosec G304 - statePath is validated
@@ -195,6 +204,12 @@ func (m *Manager) restoreFromBackup(blocName string) error {
 	}
 
 	statePath := m.getStatePath(blocName)
+
+	// Re-validate the destination path before restore — same defense as
+	// createBackup, applied symmetrically.
+	if err := security.ValidatePath(statePath); err != nil {
+		return fmt.Errorf("invalid state path: %w", err)
+	}
 
 	// Copy backup to state file
 	data, err := os.ReadFile(backup.Path) // #nosec G304 - backup.Path from listBackups
