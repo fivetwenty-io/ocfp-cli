@@ -30,7 +30,7 @@ const (
 // per-node. The PVE storage list is stable for the lifetime of a session, so
 // querying once per node avoids re-walking the cluster for every VM.
 type snippetStorageCache struct {
-	mu   sync.Mutex
+	mu     sync.Mutex
 	byNode map[string]string
 }
 

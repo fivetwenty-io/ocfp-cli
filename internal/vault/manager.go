@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/output"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
-	"github.com/goccy/go-yaml"
 )
 
 // Vault operation timing constants.

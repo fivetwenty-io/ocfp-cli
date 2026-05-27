@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/olekukonko/tablewriter"
 	yaml "github.com/goccy/go-yaml"
+	"github.com/olekukonko/tablewriter"
 )
 
 // Table represents a CLI-friendly plan with titled sections.

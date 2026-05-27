@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 const (

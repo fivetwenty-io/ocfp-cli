@@ -69,8 +69,8 @@ func TestMergePVEDefaults(t *testing.T) {
 			},
 		},
 		{
-			name: "bloc has no creds defaults nil all bloc fields remain empty no panic",
-			bloc: &Config{},
+			name:     "bloc has no creds defaults nil all bloc fields remain empty no panic",
+			bloc:     &Config{},
 			defaults: nil,
 			want: Config{
 				AuthToken:   "",

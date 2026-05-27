@@ -224,42 +224,42 @@ func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, interna
 // common_name/commonName.
 func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
 	type rawRustfs struct {
-		Version        string `yaml:"version,omitempty"`
-		DownloadURL    string `yaml:"download_url,omitempty"`
-		DownloadURLCC  string `yaml:"downloadURL,omitempty"`
-		S3Port         int    `yaml:"s3_port,omitempty"`
-		S3PortCC       int    `yaml:"s3Port,omitempty"`
-		ConsolePort    int    `yaml:"console_port,omitempty"`
-		ConsolePortCC  int    `yaml:"consolePort,omitempty"`
-		AccessKey      string `yaml:"access_key,omitempty"`
-		AccessKeyCC    string `yaml:"accessKey,omitempty"`
-		SecretKey      string `yaml:"secret_key,omitempty"`
-		SecretKeyCC    string `yaml:"secretKey,omitempty"`
+		Version       string `yaml:"version,omitempty"`
+		DownloadURL   string `yaml:"download_url,omitempty"`
+		DownloadURLCC string `yaml:"downloadURL,omitempty"`
+		S3Port        int    `yaml:"s3_port,omitempty"`
+		S3PortCC      int    `yaml:"s3Port,omitempty"`
+		ConsolePort   int    `yaml:"console_port,omitempty"`
+		ConsolePortCC int    `yaml:"consolePort,omitempty"`
+		AccessKey     string `yaml:"access_key,omitempty"`
+		AccessKeyCC   string `yaml:"accessKey,omitempty"`
+		SecretKey     string `yaml:"secret_key,omitempty"`
+		SecretKeyCC   string `yaml:"secretKey,omitempty"`
 	}
 
 	type rawData struct {
-		DiskSizeGiB    int    `yaml:"disk_size_gib,omitempty"`
-		DiskSizeGiBCC  int    `yaml:"diskSizeGiB,omitempty"`
-		StoragePool    string `yaml:"storage_pool,omitempty"`
-		StoragePoolCC  string `yaml:"storagePool,omitempty"`
-		ZFSDataset     string `yaml:"zfs_dataset,omitempty"`
-		ZFSDatasetCC   string `yaml:"zfsDataset,omitempty"`
-		Mountpoint     string `yaml:"mountpoint,omitempty"`
+		DiskSizeGiB   int    `yaml:"disk_size_gib,omitempty"`
+		DiskSizeGiBCC int    `yaml:"diskSizeGiB,omitempty"`
+		StoragePool   string `yaml:"storage_pool,omitempty"`
+		StoragePoolCC string `yaml:"storagePool,omitempty"`
+		ZFSDataset    string `yaml:"zfs_dataset,omitempty"`
+		ZFSDatasetCC  string `yaml:"zfsDataset,omitempty"`
+		Mountpoint    string `yaml:"mountpoint,omitempty"`
 	}
 
 	type rawTLS struct {
-		Mode          string `yaml:"mode,omitempty"`
-		CommonName    string `yaml:"common_name,omitempty"`
-		CommonNameCC  string `yaml:"commonName,omitempty"`
+		Mode         string `yaml:"mode,omitempty"`
+		CommonName   string `yaml:"common_name,omitempty"`
+		CommonNameCC string `yaml:"commonName,omitempty"`
 	}
 
 	type rawArtifacts struct {
-		Enabled  bool       `yaml:"enabled,omitempty"`
-		Flavor   string     `yaml:"flavor,omitempty"`
-		Template string     `yaml:"template,omitempty"`
-		Rustfs   rawRustfs  `yaml:"rustfs,omitempty"`
-		Data     rawData    `yaml:"data,omitempty"`
-		TLS      rawTLS     `yaml:"tls,omitempty"`
+		Enabled  bool      `yaml:"enabled,omitempty"`
+		Flavor   string    `yaml:"flavor,omitempty"`
+		Template string    `yaml:"template,omitempty"`
+		Rustfs   rawRustfs `yaml:"rustfs,omitempty"`
+		Data     rawData   `yaml:"data,omitempty"`
+		TLS      rawTLS    `yaml:"tls,omitempty"`
 	}
 
 	var raw rawArtifacts
