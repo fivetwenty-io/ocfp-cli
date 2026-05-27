@@ -472,6 +472,33 @@ clean: ## Clean build artifacts and test cache
 ci: deps check-all test-all security ## Run full CI pipeline locally
 	@echo "$(GREEN)✓ CI pipeline complete$(RESET)"
 
+.PHONY: integration-pve
+integration-pve: ## Run PVE integration lifecycle harness (requires OCFP_PVE_HOST + auth creds)
+	@if [ -z "$$OCFP_PVE_HOST" ]; then \
+		echo "$(RED)ERROR: OCFP_PVE_HOST is not set$(RESET)"; \
+		echo "$(YELLOW)Set OCFP_PVE_HOST to the PVE API hostname (e.g. pve.example.com)$(RESET)"; \
+		echo "$(YELLOW)Also set OCFP_PVE_TOKEN or OCFP_PVE_USER+OCFP_PVE_PASSWORD and OCFP_STEMCELL_PATH$(RESET)"; \
+		exit 2; \
+	fi
+	@if [ -z "$$OCFP_CPI_BIN" ]; then \
+		echo "$(YELLOW)WARNING: OCFP_CPI_BIN not set; defaulting to ./bin/cpi$(RESET)"; \
+	fi
+	go test -tags=integration -count=1 -v -timeout 30m ./tests/integration/...
+
+.PHONY: integration-pve-lifecycle
+integration-pve-lifecycle: ## Run only TestPVELifecycle_16Steps (requires same env vars as integration-pve)
+	@if [ -z "$$OCFP_PVE_HOST" ]; then \
+		echo "$(RED)ERROR: OCFP_PVE_HOST is not set$(RESET)"; \
+		echo "$(YELLOW)Set OCFP_PVE_HOST to the PVE API hostname (e.g. pve.example.com)$(RESET)"; \
+		echo "$(YELLOW)Also set OCFP_PVE_TOKEN or OCFP_PVE_USER+OCFP_PVE_PASSWORD and OCFP_STEMCELL_PATH$(RESET)"; \
+		exit 2; \
+	fi
+	go test -tags=integration -count=1 -v -timeout 30m -run TestPVELifecycle_16Steps ./tests/integration/...
+
+.PHONY: integration-pve-dry-run
+integration-pve-dry-run: ## Validate integration config without hitting a live PVE cluster (DRY_RUN=1)
+	DRY_RUN=1 go test -tags=integration -count=1 -v -timeout 5m -run TestDryRun ./tests/integration/...
+
 ##@ Info
 
 .PHONY: version
