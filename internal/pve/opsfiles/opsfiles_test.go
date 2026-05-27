@@ -40,6 +40,40 @@ func TestNatsTuning_PingInterval30s(t *testing.T) {
 	}
 }
 
+// TestNatsTuning_PingMaxOutstandingThree — director NATS grace must be widened
+// from the default (2) to 3, taking the total ping window from ~90s to ~120s.
+// HM agent_timeout=180s still tears down truly dead agents, so the wider
+// window does not mask real failures.
+func TestNatsTuning_PingMaxOutstandingThree(t *testing.T) {
+	t.Parallel()
+
+	// Match the actual replace op so we cannot pass on an unrelated literal `3`
+	// elsewhere in the file (e.g. a doc example).
+	wantBlock := "path: /instance_groups/name=bosh/properties/nats/ping_max_outstanding?\n  value: 3"
+	if !strings.Contains(opsfiles.NatsTuning, wantBlock) {
+		t.Errorf("NatsTuning: missing ping_max_outstanding=3 replace op; expected substring:\n%s", wantBlock)
+	}
+
+	// Guard against regressions back to the upstream default.
+	staleBlock := "path: /instance_groups/name=bosh/properties/nats/ping_max_outstanding?\n  value: 2"
+	if strings.Contains(opsfiles.NatsTuning, staleBlock) {
+		t.Error("NatsTuning: ping_max_outstanding still set to 2; upstream bumped to 3 (commit 5d41a74)")
+	}
+}
+
+// TestNatsTuning_DocsMention120sGraceAndHMTimeout — the rationale block must
+// name the resulting ~120s grace window and call out HM agent_timeout=180s so
+// future readers know why the wider NATS window is safe.
+func TestNatsTuning_DocsMention120sGraceAndHMTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []string{"~120 s", "agent_timeout=180s"} {
+		if !strings.Contains(opsfiles.NatsTuning, want) {
+			t.Errorf("NatsTuning: doc block missing rationale marker %q", want)
+		}
+	}
+}
+
 // T02 TestEmbed_HMTuning_NotEmpty — embedded content non-empty and contains
 // the key tuning values confirmed in R3-01.
 func TestEmbed_HMTuning_NotEmpty(t *testing.T) {
