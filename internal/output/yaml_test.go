@@ -21,7 +21,7 @@ func TestYAMLRenderer_PhaseStart(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    1,
 		Total:     5,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
@@ -164,7 +164,11 @@ func TestYAMLRenderer_PhaseFailed(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewYAMLRenderer(&buf)
 
-	startTime := time.Now().Add(-500 * time.Millisecond)
+	// Fix clock so duration is exactly 500ms — no scheduler jitter.
+	fixedNow := fixedTime
+	r.now = func() time.Time { return fixedNow }
+
+	startTime := fixedNow.Add(-500 * time.Millisecond)
 	info := PhaseInfo{
 		ID:        "test_phase",
 		Name:      "Test Phase",
@@ -192,10 +196,10 @@ func TestYAMLRenderer_PhaseFailed(t *testing.T) {
 	assert.Equal(t, "test_phase", event["phase_id"])
 	assert.Contains(t, event["error"], "assert.AnError")
 
-	// Verify duration
+	// Duration is exactly 500ms — deterministic via fixed clock.
 	durationMS, ok := event["duration_ms"].(uint64)
 	require.True(t, ok)
-	assert.Greater(t, durationMS, uint64(400), "duration should be at least 400ms")
+	assert.EqualValues(t, 500, durationMS)
 }
 
 func TestYAMLRenderer_PhaseSkipped(t *testing.T) {
@@ -207,7 +211,7 @@ func TestYAMLRenderer_PhaseSkipped(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    3,
 		Total:     5,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseSkipped(info, "not applicable")
@@ -313,7 +317,7 @@ func TestYAMLRenderer_SequenceMonotonicity(t *testing.T) {
 		Name:      "Phase 1",
 		Number:    1,
 		Total:     3,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
@@ -357,8 +361,8 @@ func TestYAMLRenderer_DocumentSeparators(t *testing.T) {
 	r := NewYAMLRenderer(&buf)
 
 	// Emit multiple events
-	info1 := PhaseInfo{ID: "p1", Name: "Phase 1", Number: 1, Total: 2, StartTime: time.Now()}
-	info2 := PhaseInfo{ID: "p2", Name: "Phase 2", Number: 2, Total: 2, StartTime: time.Now()}
+	info1 := PhaseInfo{ID: "p1", Name: "Phase 1", Number: 1, Total: 2, StartTime: fixedTime}
+	info2 := PhaseInfo{ID: "p2", Name: "Phase 2", Number: 2, Total: 2, StartTime: fixedTime}
 
 	err := r.PhaseStart(info1)
 	require.NoError(t, err)
@@ -404,7 +408,7 @@ func TestYAMLRenderer_ThreadSafety(t *testing.T) {
 				Name:      "Test Phase",
 				Number:    n,
 				Total:     numGoroutines,
-				StartTime: time.Now(),
+				StartTime: fixedTime,
 			}
 
 			err := r.PhaseStart(info)
@@ -441,7 +445,7 @@ func TestYAMLRenderer_AllFields(t *testing.T) {
 		Name:      "Comprehensive Test",
 		Number:    1,
 		Total:     1,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
@@ -478,7 +482,7 @@ func TestYAMLRenderer_OutputFormat(t *testing.T) {
 		Name:      "Test",
 		Number:    1,
 		Total:     1,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := r.PhaseStart(info)
