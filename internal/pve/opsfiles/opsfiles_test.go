@@ -242,15 +242,13 @@ func TestPVEGuestAgentTemplate_AptTimeout120s(t *testing.T) {
 	}
 }
 
-// TestPVEGuestAgentTemplate_IncludesBothStemcells — runtime-config must target
-// both ubuntu-jammy and ubuntu-noble stemcell families.
-func TestPVEGuestAgentTemplate_IncludesBothStemcells(t *testing.T) {
+// TestPVEGuestAgentTemplate_IncludesNobleStemcell — runtime-config must target
+// the ubuntu-noble stemcell family.
+func TestPVEGuestAgentTemplate_IncludesNobleStemcell(t *testing.T) {
 	t.Parallel()
 
-	for _, os := range []string{"ubuntu-jammy", "ubuntu-noble"} {
-		if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, os) {
-			t.Errorf("PVEGuestAgentRuntimeConfig: missing stemcell %q in include block", os)
-		}
+	if !strings.Contains(opsfiles.PVEGuestAgentRuntimeConfig, "ubuntu-noble") {
+		t.Error("PVEGuestAgentRuntimeConfig: missing stemcell \"ubuntu-noble\" in include block")
 	}
 }
 
