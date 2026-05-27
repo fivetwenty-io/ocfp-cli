@@ -13,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-
-	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
 // tailscaleLANRouteHazardMsg is the operator-readable explanation drawn
@@ -65,36 +63,6 @@ func ValidateNetworkPairing(directorCIDR, cfCloudConfigCIDR string) error {
 	}
 
 	return nil
-}
-
-// ValidateBlocConfig extracts the director CIDR and cf cloud-config CIDR from
-// cfg and calls ValidateNetworkPairing.
-//
-// Returns nil (skip) when cfg is nil or either CIDR field is empty — an
-// incomplete config cannot be validated.
-//
-// DirectorCIDR source: cfg.Network.CIDR (the BOSH director network range).
-// CFCloudConfigCIDR source: cfg.CFCloudConfigCIDR (not yet a Config field;
-// returns nil/skip until that field is added — this function is forward-safe).
-func ValidateBlocConfig(cfg *config.Config) error {
-	if cfg == nil {
-		return nil
-	}
-
-	directorCIDR := cfg.Network.CIDR
-	if directorCIDR == "" {
-		// Prefer NetworkCIDR alias when primary is empty.
-		directorCIDR = cfg.Network.NetworkCIDR
-	}
-
-	cfCloudConfigCIDR := cfg.CFCloudConfigCIDR
-
-	// Either absent — config incomplete, skip validation.
-	if directorCIDR == "" || cfCloudConfigCIDR == "" {
-		return nil
-	}
-
-	return ValidateNetworkPairing(directorCIDR, cfCloudConfigCIDR)
 }
 
 // parseCIDR wraps net.ParseCIDR and returns the normalized network address
