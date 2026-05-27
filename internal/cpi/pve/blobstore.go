@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -408,7 +409,11 @@ func (m *StorageManager) SetBucketLifecycle(ctx context.Context, name string, no
 		return nil
 	}
 
-	days := int32(noncurrentDays) //nolint:gosec // operator-supplied, range checked above
+	if noncurrentDays > math.MaxInt32 {
+		return fmt.Errorf("set bucket lifecycle %s: noncurrentDays %d exceeds int32 max", name, noncurrentDays)
+	}
+
+	days := int32(noncurrentDays) //nolint:gosec // bounded to [1, MaxInt32] above
 
 	_, err = cli.cli.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
 		Bucket: aws.String(name),
