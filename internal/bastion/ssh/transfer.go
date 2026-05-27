@@ -581,8 +581,10 @@ func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []stri
 		return exec.CommandContext(ctx, "scp", args...), err //nolint:gosec // command args are from trusted config
 	}
 
-	sshpassArgs := make([]string, 0, 3+len(args)) //nolint:mnd // 3 fixed args: -p, password, scp
-	sshpassArgs = append(sshpassArgs, "-p", tm.client.config.Password, "scp")
+	// Use -e so sshpass reads the password from SSHPASS env var, not argv.
+	// This keeps the password out of the process table (ps/proc/argv).
+	sshpassArgs := make([]string, 0, 1+len(args)) //nolint:mnd // 1 fixed arg: scp (password via SSHPASS env)
+	sshpassArgs = append(sshpassArgs, "-e", "scp")
 	sshpassArgs = append(sshpassArgs, args...)
 
 	err = validateCommand(append([]string{"sshpass"}, sshpassArgs...))
@@ -590,7 +592,10 @@ func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []stri
 		return nil, fmt.Errorf("invalid sshpass command: %w", err)
 	}
 
-	return exec.CommandContext(ctx, "sshpass", sshpassArgs...), nil // #nosec G204 - command is validated above
+	cmd := exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
+	cmd.Env = append(os.Environ(), "SSHPASS="+tm.client.config.Password)
+
+	return cmd, nil
 }
 
 func (tm *TransferManager) executeSCPCommand(cmd *exec.Cmd, operation string) error {
