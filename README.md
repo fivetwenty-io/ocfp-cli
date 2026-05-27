@@ -446,6 +446,18 @@ Alternatively, set `OCFP_ENABLE_BUCKET_POLICIES=1` to enable policies from the e
 
 Note: For the STACKIT provider, if no region is specified via config, `--region`, or `OCFP_REGION`, OCFP defaults to `eu01`.
 
+## PVE Robustness
+
+Recent work hardened the Proxmox VE provider against a set of real-cluster failure
+modes discovered during lab operations. Key changes: Tailscale provisioning is now
+opt-in per bloc (`tailscale.enabled: true`), the VMID range default was corrected
+to 100, PVE credentials are validated at config load, and the BOSH Director flavor
+was resized to 8 vCPU / 16 GiB / 128 GiB.
+
+- [Breaking and behavior changes](docs/migrations/pve-robustness-changes.md) — read before deploying to existing PVE blocs
+- [PVE commands](docs/commands/pve-commands.md) — `ocfp pve unstick` and the integration harness
+- [Architecture overview](docs/architecture/pve-robustness.md) — package layout, probe flow, and config additions
+
 ## Provider Support
 
 ### Currently Implemented
