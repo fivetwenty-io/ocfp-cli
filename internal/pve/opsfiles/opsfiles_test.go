@@ -98,6 +98,38 @@ func TestOSConfTemplate_ContainsExactSHA1(t *testing.T) {
 	}
 }
 
+// TestOSConf_DetachedInstall — director-side QGA install must use the same
+// setsid-detached, bounded-timeout pattern as the runtime-config addon so a
+// slow apt mirror cannot stall `bosh create-env` pre-start.
+func TestOSConf_DetachedInstall(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []string{
+		"setsid",
+		"timeout 120",
+		"timeout 180",
+		"command -v qemu-ga",
+	} {
+		if !strings.Contains(opsfiles.OSConf, want) {
+			t.Errorf("OSConf: missing detached-install marker %q", want)
+		}
+	}
+}
+
+// TestOSConf_NoEnableStaticUnit — `systemctl enable` on Noble fails because
+// qemu-guest-agent.service is a STATIC unit. The director-side install must
+// use `start` only.
+func TestOSConf_NoEnableStaticUnit(t *testing.T) {
+	t.Parallel()
+
+	if strings.Contains(opsfiles.OSConf, "enable --now qemu-guest-agent") {
+		t.Error("OSConf: `enable --now qemu-guest-agent` fails on Noble (STATIC unit); use start only")
+	}
+	if strings.Contains(opsfiles.OSConf, "systemctl enable qemu-guest-agent") {
+		t.Error("OSConf: `systemctl enable qemu-guest-agent` fails on Noble (STATIC unit); use start only")
+	}
+}
+
 // T04 TestWriteToDeploymentsDir_CreatesFiles_WithCorrectContent — writes all
 // three files to a temp dir and verifies presence and content for each.
 func TestWriteToDeploymentsDir_CreatesFiles_WithCorrectContent(t *testing.T) {
