@@ -1,0 +1,66 @@
+---
+# Ops file: relax the director NATS server's ping window so BOSH agents
+# under sustained CPU/IO load are not RST'd mid-deploy.
+#
+# Background
+# ----------
+# The bosh release's `nats` job templates `ping_interval: 5s` and
+# `ping_max_outstanding: 2` into nats.cfg. That gives any connected
+# agent ~15 seconds to PONG before the server resets its TCP
+# connection. The agent's NATS Go client reconnects, but core NATS
+# does not buffer messages for offline subscribers, so any
+# get_state / run_script the director published during the gap is
+# lost — and the next attempt surfaces as
+#   `Timed out sending '<verb>' to instance: <inst>'`
+# in the deploy log, with `bosh vms` showing `unresponsive agent`.
+#
+# In practice 15 s is too tight: UAA Java boot (Flyway + Spring
+# init), monit reloads after configure-jobs, large package installs
+# on diego-cells all easily block the agent's NATS handler past that
+# window. Bumping ping_interval to 30 s (with ping_max_outstanding=2
+# kept at default) widens the grace period to ~90 s. Heartbeat-based
+# liveness detection (hm.agent.heartbeat.*) is unaffected — that
+# channel is independent of the mbus PING/PONG.
+#
+# Usage: applied automatically by `scripts/bosh create-env`.
+# Takes effect on the next director redeploy.
+#
+# Known limitation: the bosh nats job (cloudfoundry/bosh/jobs/nats/spec)
+# does not expose `write_deadline` as a property — only ping_interval,
+# ping_max_outstanding, and max_payload_mb. During heavy deploy churn
+# (cf-deployment with 16+ instance groups) agents can still get RST'd
+# server-side when bosh-nats-sync triggers SIGHUP reloads in quick
+# succession and an agent's NATS handler is busy. Mitigations available
+# within stock knobs: keep ping window wide (this file), reduce
+# bosh-nats-sync poll frequency (below), avoid back-to-back recreates
+# that churn auth.json. To raise write_deadline would require forking
+# the bosh release or templating nats.cfg out of band — not done here.
+#
+# bosh-nats-sync polling
+# ----------------------
+# `bosh-nats-sync` polls the director every N seconds for the live
+# agent CN list and rewrites /var/vcap/data/nats/auth.json + SIGHUPs the
+# nats server when the CN set changes. With the stock 10 s cadence a
+# 2-hour CF deploy generates ~720 sync cycles and ~40 reload events,
+# each of which can drop in-flight RPCs to any agent whose connection
+# was being authenticated. Extending to 60 s cuts that by 6× without
+# meaningfully delaying new-VM admission (a new agent waits up to 60 s
+# for its CN to land in auth.json before its first NATS connection — in
+# a CF deploy creating one VM per ~2 min, that is invisible).
+#
+# Forensic data: 28.6 % of gorouter "connection refused → api:9024"
+# events fell within ±5 s of a Reloaded line; cutting reload frequency
+# 6× is the highest-leverage single knob currently available without a
+# fork.
+
+- type: replace
+  path: /instance_groups/name=bosh/properties/nats/ping_interval?
+  value: 30s
+
+- type: replace
+  path: /instance_groups/name=bosh/properties/nats/ping_max_outstanding?
+  value: 2
+
+- type: replace
+  path: /instance_groups/name=bosh/properties/nats-sync?/intervals?/poll_user_sync?
+  value: 60
