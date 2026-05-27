@@ -66,9 +66,12 @@ func Probe(ctx context.Context, ep Endpoint, creds Credentials) error {
 }
 
 func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // SHARED MIN
+	var httpClient *http.Client
 
-	if ep.CACert != "" {
+	switch {
+	case ep.CACert != "":
+		// Operator supplied a CA bundle — pin to that pool.
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		pool, _ := x509.SystemCertPool()
 		if pool == nil {
 			pool = x509.NewCertPool()
@@ -79,20 +82,25 @@ func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
 		}
 
 		tlsCfg.RootCAs = pool
-	} else {
-		// No CA supplied and the endpoint is TLS: skip verification. RustFS
-		// self-signed certs without persisted CA are the most common case.
-		if ep.CACert == "" {
-			tlsCfg.InsecureSkipVerify = true //nolint:gosec // RustFS self-signed path
+		httpClient = &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment},
+			Timeout:   bucketProbeTimeout,
 		}
-	}
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsCfg,
-			Proxy:           http.ProxyFromEnvironment,
-		},
-		Timeout: bucketProbeTimeout,
+	case ep.SkipTLSVerify:
+		// Operator explicitly opted out of verification (e.g. RustFS self-signed without CA).
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true} //nolint:gosec // operator-controlled; SkipTLSVerify must be set explicitly
+		httpClient = &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment},
+			Timeout:   bucketProbeTimeout,
+		}
+
+	default:
+		// No CA and no skip flag — use system TLS defaults.
+		httpClient = &http.Client{
+			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
+			Timeout:   bucketProbeTimeout,
+		}
 	}
 
 	region := ep.Region

@@ -66,7 +66,14 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 	hdr := http.Header{}
 	hdr.Set("Authorization", tokenHeader)
 
-	conn, _, err := dialer.DialContext(ctx, wsURL, hdr)
+	conn, resp, err := dialer.DialContext(ctx, wsURL, hdr)
+	if resp != nil {
+		defer func() {
+			if cerr := resp.Body.Close(); cerr != nil {
+				logger.Debugf("close websocket upgrade response body: %v", cerr)
+			}
+		}()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("websocket dial: %w", err)
 	}

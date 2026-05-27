@@ -73,9 +73,10 @@ Remediation — run on database/0 (UAA rebuilds seed data on next boot):
 type UAAFlywayProbe struct {
 	// RunBosh is the function used to execute bosh ssh. Tests inject a mock;
 	// production code passes a closure over the real bosh binary.
+	// ctx is propagated to exec.CommandContext so Ctrl-C cancels the subprocess.
 	// args are passed directly to the bosh binary, e.g.:
 	//   ["-e", env, "-d", dep, "ssh", "database/0", "-c", script, "-r"]
-	RunBosh func(args ...string) ([]byte, error)
+	RunBosh func(ctx context.Context, args ...string) ([]byte, error)
 
 	// Deployment is the BOSH deployment name (e.g. "cf-lab").
 	Deployment string
@@ -139,7 +140,7 @@ func (p *UAAFlywayProbe) Run(ctx context.Context) Result {
 		"-r",
 	}
 
-	out, err := p.RunBosh(args...)
+	out, err := p.RunBosh(ctx, args...)
 	combined := string(out)
 
 	if err != nil {

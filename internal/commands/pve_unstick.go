@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -71,9 +72,9 @@ func coerceVMID(raw string) (int, error) {
 //   - JSON parse failure → wrapped error
 //   - no matching instance → descriptive error with instance name and deployment
 //   - VMID parse failure → delegated to coerceVMID
-func resolveVMIDForInstance(boshEnv, boshDeployment, instanceRef string) (int, error) {
+func resolveVMIDForInstance(ctx context.Context, boshEnv, boshDeployment, instanceRef string) (int, error) {
 	args := []string{"-e", boshEnv, "-d", boshDeployment, "vms", "--json"}
-	cmd := exec.Command("bosh", args...) //nolint:gosec // args are from trusted config/flags
+	cmd := exec.CommandContext(ctx, "bosh", args...) //nolint:gosec // args are from trusted config/flags
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
@@ -146,8 +147,8 @@ func matchesInstanceRef(boshInstance, ref string) bool {
 //
 // varsFile is the path to the BOSH vars file containing pve_host.
 // Failure mode: exec error or empty result → descriptive error.
-func resolvePVEHostFromVars(varsFile string) (string, error) {
-	cmd := exec.Command("bosh", "int", varsFile, "--path=/pve_host") //nolint:gosec // varsFile is operator-provided path
+func resolvePVEHostFromVars(ctx context.Context, varsFile string) (string, error) {
+	cmd := exec.CommandContext(ctx, "bosh", "int", varsFile, "--path=/pve_host") //nolint:gosec // varsFile is operator-provided path
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
@@ -282,7 +283,7 @@ Environment variables:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
-			return runPVEUnstick(f, args[0])
+			return runPVEUnstick(cmd.Context(), f, args[0])
 		},
 	}
 
@@ -303,19 +304,19 @@ Environment variables:
 //  1. Resolve VMID from `bosh vms --json`
 //  2. Resolve PVE host from vars file via `bosh int`
 //  3. SSH to PVE host and restart bosh-agent via qm guest exec
-func runPVEUnstick(f *unstickFlags, instanceRef string) error {
+func runPVEUnstick(ctx context.Context, f *unstickFlags, instanceRef string) error {
 	log := logger.Get()
 
 	log.Infow("unstick-agent", "instance", instanceRef, "deployment", f.boshDeployment)
 
-	vmid, err := resolveVMIDForInstance(f.boshEnv, f.boshDeployment, instanceRef)
+	vmid, err := resolveVMIDForInstance(ctx, f.boshEnv, f.boshDeployment, instanceRef)
 	if err != nil {
 		return err
 	}
 
 	log.Infow("resolved VMID", "instance", instanceRef, "vmid", vmid)
 
-	pveHost, err := resolvePVEHostFromVars(f.varsFile)
+	pveHost, err := resolvePVEHostFromVars(ctx, f.varsFile)
 	if err != nil {
 		return err
 	}

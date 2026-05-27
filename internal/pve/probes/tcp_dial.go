@@ -80,7 +80,11 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	default:
 	}
 
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	// DialContext honours both the per-probe timeout and the caller's ctx (e.g. SIGINT
+	// via signal.NotifyContext), so the leading ctx.Done() fast-path above is kept
+	// only as a lightweight check before the syscall.
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return Result{
 			OK:     false,
