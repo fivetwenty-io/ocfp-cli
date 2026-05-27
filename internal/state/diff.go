@@ -3,7 +3,6 @@ package state
 import (
 	"fmt"
 	"reflect"
-	"time"
 )
 
 // DiffType represents the type of change detected.
@@ -269,5 +268,5 @@ func UpdateResourceFromDiscovered(stateRes *Resource, discoveredRes *Resource) {
 	}
 
 	// Update timestamp
-	stateRes.UpdatedAt = time.Now()
+	stateRes.UpdatedAt = nowFn()
 }
