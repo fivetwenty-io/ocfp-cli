@@ -41,11 +41,15 @@ const (
 	// 16 GiB RAM avoids OOM during package-upload bursts; 128 GiB disk
 	// gives compiler packages headroom; 8 vCPU keeps the compiler API
 	// responsive. Values sourced from lab manifests/bosh/vars.yml.
-	flavorBoshCPU       = 8      // unit: count
-	flavorBoshRAM       = 16384  // unit: MiB
-	flavorBoshDisk      = 131072 // unit: MiB
-	flavorArtifactsCPU  = 4
-	flavorArtifactsRAM  = 8192
+	flavorBoshCPU      = 8      // unit: count
+	flavorBoshRAM      = 16384  // unit: MiB
+	flavorBoshDisk     = 131072 // unit: MiB
+	flavorArtifactsCPU = 4
+	// flavorArtifactsRAM is the artifacts VM default memory. 4 GiB is enough
+	// for a RustFS instance with a single ZFS pool; operators that need more
+	// (heavy concurrency, large object workloads) can override via
+	// config.Artifacts.MemoryMiB.
+	flavorArtifactsRAM  = 4096 // unit: MiB
 	flavorArtifactsDisk = 50
 
 	// vmStopDelay is the time to wait after stopping a VM before deleting it.
@@ -129,7 +133,7 @@ var flavorPresets = map[string]*cpi.Flavor{
 		VCPUs:       flavorArtifactsCPU,
 		RAM:         flavorArtifactsRAM,
 		Disk:        flavorArtifactsDisk,
-		Description: "Artifacts (RustFS) host: 4 vCPUs, 8GB RAM, 50GB disk",
+		Description: "Artifacts (RustFS) host: 4 vCPUs, 4GB RAM, 50GB disk",
 	},
 }
 
@@ -138,10 +142,12 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	logger.WithOperation("CreateInstance").Infof("Creating VM: %s", req.Name)
 
 	// Get flavor specs
-	flavor, ok := flavorPresets[req.Flavor]
+	preset, ok := flavorPresets[req.Flavor]
 	if !ok {
 		return nil, ErrFlavorNotFound(req.Flavor)
 	}
+
+	flavor := effectiveFlavor(preset, req)
 
 	// Select optimal node for the VM
 	node, err := m.client.selectOptimalNode(ctx, flavor.VCPUs, flavor.RAM)
@@ -687,6 +693,31 @@ func (m *ComputeManager) createFromTemplate(ctx context.Context, node string, vm
 	}
 
 	return nil
+}
+
+// effectiveFlavor returns the flavor preset with any per-request CPU/RAM
+// overrides applied. When no overrides are set the original pointer is
+// returned (no allocation). When overrides are present a copy is returned so
+// the package-global preset is never mutated.
+func effectiveFlavor(preset *cpi.Flavor, req *cpi.InstanceRequest) *cpi.Flavor {
+	if preset == nil || req == nil {
+		return preset
+	}
+
+	if req.VCPUsOverride <= 0 && req.MemoryMiBOverride <= 0 {
+		return preset
+	}
+
+	out := *preset
+	if req.VCPUsOverride > 0 {
+		out.VCPUs = req.VCPUsOverride
+	}
+
+	if req.MemoryMiBOverride > 0 {
+		out.RAM = req.MemoryMiBOverride
+	}
+
+	return &out
 }
 
 // applyFlavorSizing sets the VM's memory and cores to the flavor spec via a
