@@ -332,6 +332,105 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	return nil
 }
 
+// helperScripts enumerates operator-facing bash tools shipped to the bastion's
+// ~/bin alongside the OCFP CLI. Each entry maps an operator-side source path
+// (relative to scripts/) to the basename installed on the bastion.
+//
+// Add entries here when a new self-contained helper is added to scripts/.
+var helperScripts = []struct {
+	source string // relative to scripts/
+	dest   string // basename installed to ~/bin
+}{
+	{"blobstores", "blobstores"},
+}
+
+// installHelperScripts uploads operator-facing helper tools (currently just
+// `blobstores`) from scripts/ to ~/bin on the bastion.  These are bash
+// programs that depend only on tools already present after binary_tools +
+// brew_packages (safe, aws, jq, curl), so the phase runs after
+// ocfp_cli_setup as the natural pairing with the CLI binary install.
+//
+// Missing source scripts are logged and skipped (not fatal) so an older
+// operator checkout that predates a given helper still completes init.
+func (m *Manager) installHelperScripts(ctx context.Context) error {
+	m.log.Info("Installing operator helper scripts to ~/bin/")
+
+	for _, h := range helperScripts {
+		localPath, err := resolveHelperScript(h.source)
+		if err != nil {
+			m.log.Warnw("Skipping helper script (source not found)",
+				"name", h.source, "error", err)
+			continue
+		}
+
+		remoteTemp := "/tmp/" + h.dest + "-upload"
+
+		opts := ssh.TransferOptions{Verify: true}
+
+		err = m.sshClient.TransferFile(ctx, localPath, remoteTemp, opts)
+		if err != nil {
+			return fmt.Errorf("transferring helper script %s: %w", h.source, err)
+		}
+
+		// ~/bin is created by the directories phase and owned by the SSH user;
+		// no sudo needed. mkdir -p is defensive in case install runs out of
+		// order or directories phase was skipped.
+		installCmd := fmt.Sprintf(
+			`bash -c 'mkdir -p "$HOME/bin" && install -m 0755 %q "$HOME/bin/%s" && rm -f %q'`,
+			remoteTemp, h.dest, remoteTemp,
+		)
+
+		_, err = m.sshClient.ExecuteCommand(ctx, installCmd)
+		if err != nil {
+			_, _ = m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("rm -f %q", remoteTemp))
+
+			return fmt.Errorf("installing helper script %s: %w", h.dest, err)
+		}
+
+		m.log.Infow("Installed helper script", "name", h.dest)
+	}
+
+	return nil
+}
+
+// resolveHelperScript locates a script under scripts/ on the operator host.
+// Search order mirrors resolveLocalOCFPBinary: env override, cwd, sibling of
+// the running ocfp binary, and the canonical developer-checkout path.
+func resolveHelperScript(name string) (string, error) {
+	if env := os.Getenv("OCFP_HELPER_SCRIPTS_DIR"); env != "" {
+		p := filepath.Join(env, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	candidates := []string{filepath.Join("scripts", name)}
+
+	exe, err := os.Executable()
+	if err == nil {
+		execDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(execDir, "..", "scripts", name),
+			filepath.Join(execDir, "scripts", name),
+		)
+	}
+
+	home, herr := os.UserHomeDir()
+	if herr == nil {
+		candidates = append(candidates,
+			filepath.Join(home, "w", "fivetwenty", "studios", "ocfp", "src", "clis", "ocfp", "scripts", name),
+		)
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("helper script %q not found (searched: %s)", name, strings.Join(candidates, ", "))
+}
+
 // setupVaultInception runs vault inception.
 func (m *Manager) setupVaultInception(ctx context.Context) error {
 	m.log.Info("Setting up vault inception")

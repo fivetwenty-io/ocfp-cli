@@ -302,6 +302,111 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 `init bastion` is idempotent — it writes a `~/.ocfp/provisioned` marker on the bastion and re-runs complete in under a second.
 
+## Testing the artifacts blobstore
+
+`ocfp bastion init` installs:
+
+- AWS CLI v2 at `/usr/local/bin/aws` (official zip installer); and
+- the `blobstores` helper at `~/bin/blobstores` from `scripts/blobstores` in this repo.
+
+The artifacts VM listens on the bloc SDN (e.g. `10.64.64.11:9000`) and the bastion is the closest host with route to it.
+
+### Quick check (recommended)
+
+From the bastion:
+
+```bash
+blobstores validate --bloc ocfp-lab-wayne
+```
+
+Expected: reachability OK, `s3 ls` succeeds, each of five buckets prints `head + upload + download + delete`, ending with `all blobstore checks passed`. Exit 0 on success, 2 on any failure, 3 on missing prerequisites.
+
+Subcommands: `validate` (default), `endpoint`, `creds`, `buckets`, `help`. Pass `--bloc <name>` or export `OCFP_BLOC`. For verified TLS, use `--ca-bundle <path>`.
+
+### Manual recipes
+
+### 1. Export credentials
+
+Credentials are persisted to Vault when the artifacts VM is created. From the bastion:
+
+```bash
+BLOC=ocfp-lab-wayne
+EP=https://10.64.64.11:9000   # use http://… if tls.mode is disabled
+
+export AWS_ACCESS_KEY_ID=$(safe get secret/config/$BLOC/mgmt/bosh/blobstores/bosh/creds:access_key)
+export AWS_SECRET_ACCESS_KEY=$(safe get secret/config/$BLOC/mgmt/bosh/blobstores/bosh/creds:secret_key)
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+Alternatively the same values are in the local state file:
+
+```bash
+jq -r '.resources["artifacts.'"$BLOC"'-artifacts"] |
+       "AK=\(.access_key)\nSK=\(.secret_key)"' \
+  ~/.ocfp/state/$BLOC.json
+```
+
+### 2. Reachability and TLS
+
+```bash
+# Service answering?
+curl -k -sS -o /dev/null -w "%{http_code}\n" $EP/      # 403 or 200 = up
+
+# Inspect cert (bloc CA + SANs)
+openssl s_client -connect 10.64.64.11:9000 \
+  -servername $BLOC-artifacts </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+For `tls.mode: internal-ca` the cert is signed by the bloc CA in Vault. Fetch it once and skip `--no-verify-ssl`:
+
+```bash
+safe get secret/ocfp/$BLOC/ca:certificate > /tmp/$BLOC-ca.pem
+AWS_CA_BUNDLE=/tmp/$BLOC-ca.pem aws --endpoint-url $EP s3 ls
+```
+
+SANs cover `<bloc>-artifacts` and the SDN IP only — `127.0.0.1` and external hostnames will mismatch.
+
+### 3. List buckets
+
+```bash
+aws --endpoint-url $EP --no-verify-ssl s3 ls
+```
+
+Expect five buckets named `<bloc>-mgmt-bosh`, `<bloc>-ocf-cf-droplets`, `<bloc>-ocf-cf-packages`, `<bloc>-ocf-cf-buildpacks`, and `<bloc>-ocf-cf-resource-pool`.
+
+### 4. Round-trip a probe object
+
+```bash
+echo "ping $(date -u +%FT%TZ)" > /tmp/probe.txt
+aws --endpoint-url $EP --no-verify-ssl s3 cp /tmp/probe.txt s3://$BLOC-mgmt-bosh/probe.txt
+aws --endpoint-url $EP --no-verify-ssl s3 ls   s3://$BLOC-mgmt-bosh/
+aws --endpoint-url $EP --no-verify-ssl s3 cp   s3://$BLOC-mgmt-bosh/probe.txt - && echo OK
+aws --endpoint-url $EP --no-verify-ssl s3 rm   s3://$BLOC-mgmt-bosh/probe.txt
+```
+
+### 5. Sweep every bucket
+
+```bash
+for b in mgmt-bosh ocf-cf-droplets ocf-cf-packages ocf-cf-buildpacks ocf-cf-resource-pool; do
+  bucket=$BLOC-$b
+  if aws --endpoint-url $EP --no-verify-ssl s3api head-bucket --bucket $bucket 2>/dev/null; then
+    echo "OK   $bucket"
+  else
+    echo "FAIL $bucket"
+  fi
+done
+```
+
+### 6. CLI-side checks
+
+```bash
+ocfp artifacts status --bloc $BLOC --json
+ocfp artifacts lookup --bloc $BLOC --json
+```
+
+Both run from anywhere with a configured `~/.ocfp/config.pve.yml`; `lookup` reports the endpoint and credentials, `status` adds the VM power state.
+
 ## PVE-specific limitations
 
 The `pve` provider intentionally does not implement these resource types (PVE has no native equivalent):
