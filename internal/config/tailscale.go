@@ -23,7 +23,13 @@ var ErrTailscaleAuthKeyConflict = errors.New("tailscale: auth_key and auth_key_v
 // The pointer-bool fields distinguish "unset" (inherit from global, or
 // fall through to bootstrap default) from "explicit false". A plain bool
 // would conflate the two.
+//
+// Enabled controls whether Tailscale is provisioned. Nil means disabled
+// (default-false). Set enabled: true explicitly in YAML to opt in. A
+// per-bloc explicit false overrides a global true.
 type TailscaleConfig struct {
+	Enabled *bool `json:"enabled,omitempty" mapstructure:"enabled" yaml:"enabled,omitempty"`
+
 	AuthKey          string `json:"auth_key,omitempty"            mapstructure:"auth_key"            yaml:"auth_key,omitempty"`            //nolint:gosec // field name describes a credential, not a hardcoded one
 	AuthKeyVaultPath string `json:"auth_key_vault_path,omitempty" mapstructure:"auth_key_vault_path" yaml:"auth_key_vault_path,omitempty"` //nolint:gosec // descriptive field name
 
@@ -34,6 +40,14 @@ type TailscaleConfig struct {
 	SSH             *bool    `json:"ssh,omitempty"              mapstructure:"ssh"              yaml:"ssh,omitempty"`
 	ExitNode        string   `json:"exit_node,omitempty"        mapstructure:"exit_node"        yaml:"exit_node,omitempty"`
 	AdvertiseRoutes string   `json:"advertise_routes,omitempty" mapstructure:"advertise_routes" yaml:"advertise_routes,omitempty"`
+}
+
+// TailscaleEnabled reports whether Tailscale provisioning is active for
+// the given config scope. Returns false when cfg is nil, when
+// cfg.Enabled is nil (default-false), or when *cfg.Enabled is false.
+// Only an explicit enabled: true in YAML returns true.
+func TailscaleEnabled(cfg *TailscaleConfig) bool {
+	return cfg != nil && cfg.Enabled != nil && *cfg.Enabled
 }
 
 // Validate ensures a single tailscale scope holds at most one auth-key
@@ -100,6 +114,11 @@ func mergeTailscaleDefaults(bloc *Config, defaults *TailscaleConfig) {
 		v := *defaults.SSH
 		merged.SSH = &v
 	}
+
+	if merged.Enabled == nil && defaults.Enabled != nil {
+		v := *defaults.Enabled
+		merged.Enabled = &v
+	}
 }
 
 func cloneTailscaleConfig(src *TailscaleConfig) *TailscaleConfig {
@@ -111,6 +130,11 @@ func cloneTailscaleConfig(src *TailscaleConfig) *TailscaleConfig {
 
 	if src.Tags != nil {
 		clone.Tags = append([]string(nil), src.Tags...)
+	}
+
+	if src.Enabled != nil {
+		v := *src.Enabled
+		clone.Enabled = &v
 	}
 
 	if src.AcceptDNS != nil {

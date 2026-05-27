@@ -135,3 +135,87 @@ func TestMergeTailscaleDefaults(t *testing.T) {
 		})
 	})
 }
+
+// T45: TailscaleEnabled returns false when cfg is nil.
+func TestTailscaleEnabled_NilConfig(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, TailscaleEnabled(nil))
+}
+
+// T46: TailscaleEnabled returns false when cfg.Enabled pointer is nil
+// (the zero/unset case — default-false semantics).
+func TestTailscaleEnabled_NilPointer(t *testing.T) {
+	t.Parallel()
+
+	cfg := &TailscaleConfig{AuthKey: "tskey-1"} // Enabled omitted → nil
+
+	assert.False(t, TailscaleEnabled(cfg))
+}
+
+// T47: TailscaleEnabled returns true only when *cfg.Enabled == true.
+func TestTailscaleEnabled_True(t *testing.T) {
+	t.Parallel()
+
+	cfg := &TailscaleConfig{Enabled: boolPtr(true)}
+
+	assert.True(t, TailscaleEnabled(cfg))
+}
+
+// T47b: TailscaleEnabled returns false when *cfg.Enabled == false,
+// even when an auth key is configured.
+func TestTailscaleEnabled_ExplicitFalse(t *testing.T) {
+	t.Parallel()
+
+	cfg := &TailscaleConfig{Enabled: boolPtr(false), AuthKey: "tskey-1"}
+
+	assert.False(t, TailscaleEnabled(cfg))
+}
+
+// T48: mergeTailscaleDefaults propagates Enabled from global to bloc
+// when bloc Enabled is nil, and bloc explicit false overrides global true.
+func TestMergeTailscaleDefaults_BlocOverridesGlobal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("global enabled propagates to bloc with nil Enabled", func(t *testing.T) {
+		t.Parallel()
+
+		bloc := &Config{Tailscale: &TailscaleConfig{AuthKey: "bloc-key"}}
+		defaults := &TailscaleConfig{Enabled: boolPtr(true), AuthKey: "global-key"}
+
+		mergeTailscaleDefaults(bloc, defaults)
+
+		require.NotNil(t, bloc.Tailscale.Enabled, "Enabled must be propagated")
+		assert.True(t, *bloc.Tailscale.Enabled)
+		assert.Equal(t, "bloc-key", bloc.Tailscale.AuthKey, "bloc auth_key wins")
+	})
+
+	t.Run("bloc explicit false overrides global true", func(t *testing.T) {
+		t.Parallel()
+
+		bloc := &Config{Tailscale: &TailscaleConfig{Enabled: boolPtr(false), AuthKey: "bloc-key"}}
+		defaults := &TailscaleConfig{Enabled: boolPtr(true), AuthKey: "global-key"}
+
+		mergeTailscaleDefaults(bloc, defaults)
+
+		require.NotNil(t, bloc.Tailscale.Enabled)
+		assert.False(t, *bloc.Tailscale.Enabled, "bloc explicit false must not be overwritten by global true")
+		assert.Equal(t, "bloc-key", bloc.Tailscale.AuthKey)
+	})
+
+	t.Run("nil bloc tailscale cloned from global with Enabled preserved", func(t *testing.T) {
+		t.Parallel()
+
+		bloc := &Config{}
+		defaults := &TailscaleConfig{Enabled: boolPtr(true), AuthKey: "global-key"}
+
+		mergeTailscaleDefaults(bloc, defaults)
+
+		require.NotNil(t, bloc.Tailscale)
+		require.NotNil(t, bloc.Tailscale.Enabled)
+		assert.True(t, *bloc.Tailscale.Enabled)
+		// Cloned pointer must be independent — mutating source must not affect clone.
+		*defaults.Enabled = false
+		assert.True(t, *bloc.Tailscale.Enabled, "clone must be independent of source")
+	})
+}
