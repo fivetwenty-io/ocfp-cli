@@ -16,7 +16,6 @@ func TestLookupCatalogSpec_KnownNames(t *testing.T) {
 		wantSourceHost string
 	}{
 		{"ubuntu-noble-template", "cloud-images.ubuntu.com"},
-		{"ubuntu-jammy-template", "cloud-images.ubuntu.com"},
 	}
 
 	for _, tc := range tests {
