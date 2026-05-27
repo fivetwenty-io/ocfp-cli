@@ -8,6 +8,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/opsfiles"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -112,6 +113,17 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 
+	ocfpHome := config.OcfpHome()
+	if ocfpHome == "" {
+		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
+	}
+
+	for _, deployment := range []string{"mgmt", "ocf"} {
+		if err := writePVEOpsFiles(ocfpHome, params.bloc, deployment); err != nil {
+			return err
+		}
+	}
+
 	log.Infow("PVE environment initialized", "bloc", params.bloc)
 
 	return nil
@@ -192,6 +204,51 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 
 	if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
 		return fmt.Errorf("failed to write genesis env file %s: %w", envFilePath, err)
+	}
+
+	return nil
+}
+
+// writePVEOpsFiles writes the PVE-specific BOSH ops files and runtime-config
+// for a single deployment under the given bloc into the conventional subdirs:
+//
+//   - $OCFP_HOME/<bloc>/deployments/<deployment>/ops/
+//     (nats-tuning.yml, hm-tuning.yml, os-conf.yml)
+//   - $OCFP_HOME/<bloc>/deployments/<deployment>/runtime-configs/
+//     (pve-guest-agent.yml)
+//
+// Both directories are created with MkdirAll mode 0755 if they do not exist.
+// ocfpHome must be non-empty; bloc and deployment must be non-empty validated
+// strings (enforced by resolveInitPVEParams before this is called).
+func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
+	if ocfpHome == "" {
+		return fmt.Errorf("writePVEOpsFiles: ocfpHome must not be empty")
+	}
+	if bloc == "" {
+		return fmt.Errorf("writePVEOpsFiles: bloc must not be empty")
+	}
+	if deployment == "" {
+		return fmt.Errorf("writePVEOpsFiles: deployment must not be empty")
+	}
+
+	base := filepath.Join(ocfpHome, bloc, "deployments", deployment)
+
+	opsDir := filepath.Join(base, "ops")
+	if err := os.MkdirAll(opsDir, 0755); err != nil {
+		return fmt.Errorf("writePVEOpsFiles: create ops dir %q: %w", opsDir, err)
+	}
+
+	if err := opsfiles.WriteToDeploymentsDir(opsDir); err != nil {
+		return fmt.Errorf("writePVEOpsFiles: write ops files for %s/%s: %w", bloc, deployment, err)
+	}
+
+	rcDir := filepath.Join(base, "runtime-configs")
+	if err := os.MkdirAll(rcDir, 0755); err != nil {
+		return fmt.Errorf("writePVEOpsFiles: create runtime-configs dir %q: %w", rcDir, err)
+	}
+
+	if err := opsfiles.WriteRuntimeConfigToDir(rcDir); err != nil {
+		return fmt.Errorf("writePVEOpsFiles: write runtime-config for %s/%s: %w", bloc, deployment, err)
 	}
 
 	return nil

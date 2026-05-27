@@ -8,6 +8,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/opsfiles"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -513,4 +514,106 @@ func TestInitPVE_FlagOverridesEnvVar(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(tmpDir, envBloc))
 	assert.True(t, os.IsNotExist(statErr),
 		"directory for env-bloc %q must not exist when flag overrides it", envBloc)
+}
+
+// TestWritePVEOpsFiles_CreatesOpsAndRuntimeConfigs verifies that writePVEOpsFiles
+// materializes the 3 BOSH ops files and the runtime-config in the correct
+// subdirectories under $OCFP_HOME/<bloc>/deployments/<deployment>/.
+func TestWritePVEOpsFiles_CreatesOpsAndRuntimeConfigs(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	const (
+		bloc       = "ocfp-pve-dc1"
+		deployment = "mgmt"
+	)
+
+	err := writePVEOpsFiles(base, bloc, deployment)
+	require.NoError(t, err, "writePVEOpsFiles must succeed")
+
+	deployBase := filepath.Join(base, bloc, "deployments", deployment)
+
+	// Verify each ops file exists and is non-empty.
+	for filename, content := range opsfiles.All() {
+		path := filepath.Join(deployBase, "ops", filename)
+		data, readErr := os.ReadFile(path)
+		require.NoErrorf(t, readErr, "ops file %q must exist", path)
+		assert.NotEmpty(t, data, "ops file %q must not be empty", filename)
+		assert.Equal(t, content, string(data),
+			"ops file %q content must match embedded constant", filename)
+	}
+
+	// Verify runtime-config exists and is non-empty.
+	rcPath := filepath.Join(deployBase, "runtime-configs", "pve-guest-agent.yml")
+	rcData, readErr := os.ReadFile(rcPath)
+	require.NoError(t, readErr, "runtime-config must exist at %s", rcPath)
+	assert.NotEmpty(t, rcData, "runtime-config must not be empty")
+	assert.Equal(t, opsfiles.PVEGuestAgentRuntimeConfig, string(rcData),
+		"runtime-config content must match embedded constant")
+}
+
+// TestWritePVEOpsFiles_EmptyArgs_ReturnsError verifies that empty ocfpHome,
+// bloc, or deployment each produce a descriptive error without touching the FS.
+func TestWritePVEOpsFiles_EmptyArgs_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	cases := []struct {
+		name       string
+		ocfpHome   string
+		bloc       string
+		deployment string
+		wantSubstr string
+	}{
+		{"empty ocfpHome", "", "ocfp-pve-dc1", "mgmt", "ocfpHome must not be empty"},
+		{"empty bloc", base, "", "mgmt", "bloc must not be empty"},
+		{"empty deployment", base, "ocfp-pve-dc1", "", "deployment must not be empty"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := writePVEOpsFiles(tc.ocfpHome, tc.bloc, tc.deployment)
+			require.Error(t, err, "writePVEOpsFiles must error for case %q", tc.name)
+			assert.Contains(t, err.Error(), tc.wantSubstr,
+				"error %q must mention %q", err.Error(), tc.wantSubstr)
+		})
+	}
+}
+
+// TestInitPVE_WiresOpsFilesEmission is an integration test that runs the full
+// initializePVE flow against a temporary OCFP_HOME and verifies that ops files
+// and runtime-configs are written for both the mgmt and ocf deployments.
+func TestInitPVE_WiresOpsFilesEmission(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	tmpDir := setupPVEInitEnv(t)
+
+	const bloc = "ocfp-pve-dc1"
+	viper.Set("bloc", bloc)
+
+	cfg := &config.Config{Name: bloc, Provider: "pve", Region: "dc1"}
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), cfg))
+
+	for _, deployment := range []string{"mgmt", "ocf"} {
+		deployBase := filepath.Join(tmpDir, bloc, "deployments", deployment)
+
+		// All 3 ops files must exist.
+		for filename := range opsfiles.All() {
+			path := filepath.Join(deployBase, "ops", filename)
+			info, statErr := os.Stat(path)
+			require.NoErrorf(t, statErr,
+				"ops file %q must exist for deployment %q", path, deployment)
+			assert.Greater(t, info.Size(), int64(0),
+				"ops file %q for deployment %q must be non-empty", filename, deployment)
+		}
+
+		// Runtime-config must exist.
+		rcPath := filepath.Join(deployBase, "runtime-configs", "pve-guest-agent.yml")
+		info, statErr := os.Stat(rcPath)
+		require.NoErrorf(t, statErr,
+			"runtime-config must exist at %q for deployment %q", rcPath, deployment)
+		assert.Greater(t, info.Size(), int64(0),
+			"runtime-config for deployment %q must be non-empty", deployment)
+	}
 }
