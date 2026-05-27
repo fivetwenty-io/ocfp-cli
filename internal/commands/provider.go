@@ -265,8 +265,7 @@ func getSTACKITCredentialsFromConfig(blocName string, log *zap.Logger) (string, 
 
 func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, string, error) {
 	// Check if safe command is available
-	_, err := exec.LookPath("safe")
-	if err != nil {
+	if err := runner.LookPath("safe"); err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
 
 		return "", "", nil
@@ -279,14 +278,12 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	err = security.ValidateInput(tokenPath, validPathPattern)
+	err := security.ValidateInput(tokenPath, validPathPattern)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", tokenPath)
 	if err == nil {
 		token := strings.TrimSpace(string(output))
 		if token != "" {
@@ -305,9 +302,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath) // #nosec G204 - input validated above
-
-	output, err = cmd.Output()
+	output, err = runner.Output(ctx, "safe", "get", jsonPath)
 	if err == nil {
 		jsonCreds := strings.TrimSpace(string(output))
 		if jsonCreds != "" {
@@ -352,6 +347,8 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
 
+	// Uses exec.CommandContext directly: stdout/stderr split required for separate
+	// display vs error reporting; runner.Run() (CombinedOutput) would merge them.
 	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) //nolint:gosec // command args are validated above
 
 	var stdout, stderr bytes.Buffer
@@ -414,6 +411,8 @@ func configureSTACKITProject(projectID string, log *zap.Logger) error {
 		return fmt.Errorf("invalid project ID: %w", err)
 	}
 
+	// Uses exec.CommandContext directly: stdout/stderr split required for separate
+	// display vs error reporting; runner.Run() (CombinedOutput) would merge them.
 	cmd := exec.CommandContext(ctx, "stackit", "config", "set", "--project-id", projectID) // #nosec G204 - input validated above
 
 	var stdout, stderr bytes.Buffer
@@ -506,8 +505,7 @@ func getAWSCredentialsFromConfig(blocName string, log *zap.Logger) *AWSCredentia
 
 func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentials, error) {
 	// Check if safe command is available
-	_, err := exec.LookPath("safe")
-	if err != nil {
+	if err := runner.LookPath("safe"); err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
 
 		return nil, nil
@@ -519,6 +517,8 @@ func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentia
 	defer cancel()
 
 	credentials := &AWSCredentials{}
+
+	var err error
 
 	err = retrieveAWSAccessKeyFromVault(ctx, blocName, credentials)
 	if err != nil {
@@ -560,9 +560,7 @@ func retrieveAWSAccessKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid access key path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", accessKeyPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", accessKeyPath)
 	if err == nil {
 		credentials.AccessKeyID = strings.TrimSpace(string(output))
 	}
@@ -579,9 +577,7 @@ func retrieveAWSSecretKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid secret key path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", secretKeyPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", secretKeyPath)
 	if err == nil {
 		credentials.SecretAccessKey = strings.TrimSpace(string(output))
 	}
@@ -598,9 +594,7 @@ func retrieveAWSSessionTokenFromVault(ctx context.Context, blocName string, cred
 		return fmt.Errorf("invalid session token path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", sessionTokenPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", sessionTokenPath)
 	if err == nil {
 		credentials.SessionToken = strings.TrimSpace(string(output))
 	}
@@ -617,9 +611,7 @@ func retrieveAWSRegionFromVault(ctx context.Context, blocName string, credential
 		return fmt.Errorf("invalid region path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", regionPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", regionPath)
 	if err == nil {
 		credentials.Region = strings.TrimSpace(string(output))
 	}
@@ -673,6 +665,8 @@ func configureAWSProfile(profileName string, credentials *AWSCredentials, log *z
 func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log *zap.Logger) error {
 	log.Debug("Setting AWS access key ID")
 
+	// Uses exec.CommandContext directly: stderr captured separately for error
+	// context; runner.Run() (CombinedOutput) would merge stdout into the error message.
 	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName) // #nosec G204 - input validated above
 
 	var stderr bytes.Buffer
@@ -712,6 +706,8 @@ func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey str
 func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logger) error {
 	log.Debug("Setting AWS region", zap.String("region", region))
 
+	// Uses exec.CommandContext directly: stderr captured separately for error
+	// context; runner.Run() (CombinedOutput) would merge stdout into the error message.
 	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "region", region, "--profile", profileName) // #nosec G204 - input validated above
 
 	var stderr bytes.Buffer
@@ -849,6 +845,8 @@ func validateAWSCredentials(profileName string, log *zap.Logger) error {
 		return fmt.Errorf("invalid profile name: %w", err)
 	}
 
+	// Uses exec.CommandContext directly: stdout displayed to user on success, stderr
+	// inspected for specific error strings; runner.Run() (CombinedOutput) would merge them.
 	cmd := exec.CommandContext(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName) // #nosec G204 - input validated above
 
 	var stdout, stderr bytes.Buffer
@@ -921,11 +919,8 @@ func loginGCP(log *zap.Logger) error {
 		log.Info("Using service account credentials", zap.String("path", credPath))
 
 		// Try to activate using gcloud if available
-		_, err := exec.LookPath("gcloud")
-		if err == nil {
-			cmd := exec.CommandContext(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath) //nolint:gosec // command args are from trusted config
-
-			output, err := cmd.CombinedOutput()
+		if err := runner.LookPath("gcloud"); err == nil {
+			output, err := runner.Run(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath)
 			if err != nil {
 				log.Warn("gcloud auth failed (may not be required)", zap.Error(err), zap.String("output", string(output)))
 			} else {
@@ -1045,8 +1040,7 @@ func loginAzureFromServicePrincipal(log *zap.Logger) bool {
 
 // loginAzureFromCLI checks for Azure CLI authentication.
 func loginAzureFromCLI(log *zap.Logger) bool {
-	_, err := exec.LookPath("az")
-	if err != nil {
+	if err := runner.LookPath("az"); err != nil {
 		return false
 	}
 
@@ -1055,6 +1049,8 @@ func loginAzureFromCLI(log *zap.Logger) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
+	// Uses exec.CommandContext directly: stdout displayed to user on success, stderr
+	// suppressed; runner.Run() (CombinedOutput) would mix stderr into the display output.
 	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
 
 	var stdout, stderr bytes.Buffer
@@ -1062,7 +1058,7 @@ func loginAzureFromCLI(log *zap.Logger) bool {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err = cmd.Run()
+	err := cmd.Run()
 	if err == nil {
 		log.Info("Already authenticated with Azure CLI")
 
