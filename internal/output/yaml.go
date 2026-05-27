@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 // YAMLRenderer implements the Renderer interface for YAML stream output.

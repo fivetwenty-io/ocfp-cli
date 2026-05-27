@@ -9,9 +9,9 @@ func TestBuildPVEAPITokenHeader(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		cfg         *Config
-		want        string
+		name string
+		cfg  *Config
+		want string
 	}{
 		{"both fields", &Config{TokenID: "root@pam!foo", TokenSecret: "abc"}, "PVEAPIToken=root@pam!foo=abc"},
 		{"missing id", &Config{TokenSecret: "abc"}, ""},

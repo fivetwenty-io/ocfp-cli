@@ -70,13 +70,17 @@ func (f *fakeSafe) Delete(path, key string) error {
 	return nil
 }
 
-func (f *fakeSafe) List(string) ([]string, error)                            { return nil, nil }
-func (f *fakeSafe) Export(string) (map[string]interface{}, error)            { return nil, nil }
-func (f *fakeSafe) Import(string, map[string]interface{}) error              { return nil }
-func (f *fakeSafe) GetEngineInfo(string) (*EngineInfo, error)                { return nil, nil }
-func (f *fakeSafe) MustGet(path, key string) interface{}                     { v, _ := f.Get(path, key); return v }
-func (f *fakeSafe) GetString(path, key string) (string, error)               { v, _ := f.Get(path, key); s, _ := v.(string); return s, nil }
-func (f *fakeSafe) GetJSON(string, string) ([]byte, error)                   { return nil, nil }
+func (f *fakeSafe) List(string) ([]string, error)                 { return nil, nil }
+func (f *fakeSafe) Export(string) (map[string]interface{}, error) { return nil, nil }
+func (f *fakeSafe) Import(string, map[string]interface{}) error   { return nil }
+func (f *fakeSafe) GetEngineInfo(string) (*EngineInfo, error)     { return nil, nil }
+func (f *fakeSafe) MustGet(path, key string) interface{}          { v, _ := f.Get(path, key); return v }
+func (f *fakeSafe) GetString(path, key string) (string, error) {
+	v, _ := f.Get(path, key)
+	s, _ := v.(string)
+	return s, nil
+}
+func (f *fakeSafe) GetJSON(string, string) ([]byte, error) { return nil, nil }
 
 func TestLoadOrGenerateBlocCA_ColdPathGeneratesAndWrites(t *testing.T) {
 	t.Parallel()

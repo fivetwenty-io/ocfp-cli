@@ -121,9 +121,9 @@ func ensureBucket(ctx context.Context, cli *s3.Client, name string) error {
 	}
 
 	var (
-		alreadyExists       *s3types.BucketAlreadyExists
-		alreadyOwnedByYou   *s3types.BucketAlreadyOwnedByYou
-		apiErr              smithy.APIError
+		alreadyExists     *s3types.BucketAlreadyExists
+		alreadyOwnedByYou *s3types.BucketAlreadyOwnedByYou
+		apiErr            smithy.APIError
 	)
 
 	switch {

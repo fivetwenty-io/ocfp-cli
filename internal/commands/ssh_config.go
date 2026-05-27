@@ -180,4 +180,3 @@ func writeHostBlock(sb *strings.Builder, hostAlias, hostName, user, keyPath, pro
 	fmt.Fprint(sb, "    LogLevel ERROR\n")
 	fmt.Fprint(sb, "    IdentitiesOnly yes\n")
 }
-

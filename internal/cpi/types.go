@@ -429,28 +429,28 @@ type VolumeRequest struct {
 
 // InstanceRequest represents a request for creating instances.
 type InstanceRequest struct {
-	Name             string
-	Flavor           string
-	Image            string
-	KeyPair          string // Legacy field name
-	KeyPairName      string
-	NetworkID        string
-	SubnetID         string
-	SecurityGroups   []string // Legacy field name
-	SecurityGroupIDs []string
-	UserData         string
-	AvailabilityZone string
-	Tags             map[string]string
-	BootVolumeSize   int    // Size in GB for boot volume (for diskless flavors)
-	UseBootVolume    bool   // Use boot volume instead of direct image (for STACKIT diskless flavors)
-	StaticPrivateIP       string // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
-	StaticPrivateIPPrefix int    // Optional: subnet prefix length (e.g. 18) to pair with StaticPrivateIP when the address itself lacks /N. Used by PVE to write the correct mask in cloud-init ipconfig0 when the L3 subnet (e.g. an SDN vnet /18) is larger than the logical AZ subnet ocfp carves from it. Zero = leave to provider default.
-	TailscaleAuthKey      string // DEPRECATED: use Tailscale instead. Retained for callers not yet migrated; ignored when Tailscale is non-nil.
+	Name                  string
+	Flavor                string
+	Image                 string
+	KeyPair               string // Legacy field name
+	KeyPairName           string
+	NetworkID             string
+	SubnetID              string
+	SecurityGroups        []string // Legacy field name
+	SecurityGroupIDs      []string
+	UserData              string
+	AvailabilityZone      string
+	Tags                  map[string]string
+	BootVolumeSize        int            // Size in GB for boot volume (for diskless flavors)
+	UseBootVolume         bool           // Use boot volume instead of direct image (for STACKIT diskless flavors)
+	StaticPrivateIP       string         // Optional: specific private IP to assign (STACKIT-specific, matches Perl implementation)
+	StaticPrivateIPPrefix int            // Optional: subnet prefix length (e.g. 18) to pair with StaticPrivateIP when the address itself lacks /N. Used by PVE to write the correct mask in cloud-init ipconfig0 when the L3 subnet (e.g. an SDN vnet /18) is larger than the logical AZ subnet ocfp carves from it. Zero = leave to provider default.
+	TailscaleAuthKey      string         // DEPRECATED: use Tailscale instead. Retained for callers not yet migrated; ignored when Tailscale is non-nil.
 	Tailscale             *TailscaleSpec // Optional: full tailscale config. When non-nil + AuthKey set, the PVE provider injects via SMBIOS for the bastion firstboot/watchdog to read.
-	PublicKey        string // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
-	DefaultUsername  string // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
-	GatewayIP        string // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
-	DNSServers       []string // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
+	PublicKey             string         // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
+	DefaultUsername       string         // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
+	GatewayIP             string         // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
+	DNSServers            []string       // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
 	// Hostname is the short host name the VM should adopt at first boot.
 	// Used to drive the user-data snippet's `hostname:` and `fqdn:` keys so
 	// the cloned VM stops booting as the template default (e.g. "ubuntu-22045").

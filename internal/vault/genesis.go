@@ -71,7 +71,6 @@ func (gi *GenesisIntegration) GetVaultPath(envType string) string {
 	return fmt.Sprintf("secret/config/%s/%s", gi.blocName, envType)
 }
 
-
 // findGenesisDirectory locates the Genesis environments directory.
 func (gi *GenesisIntegration) findGenesisDirectory() (string, error) {
 	possiblePaths := []string{
@@ -125,4 +124,3 @@ func (gi *GenesisIntegration) isGenesisDirectory(path string) bool {
 
 	return false
 }
-

@@ -15,19 +15,19 @@ import (
 // not invoke any of them.
 type stubSafe struct{}
 
-func (stubSafe) Set(string, string, interface{}) error                         { return nil }
-func (stubSafe) SetMultiple(string, map[string]interface{}) error              { return nil }
-func (stubSafe) Get(string, string) (interface{}, error)                       { return nil, nil }
-func (stubSafe) GetAll(string) (map[string]interface{}, error)                 { return nil, nil }
-func (stubSafe) Exists(string) (bool, error)                                   { return false, nil }
-func (stubSafe) Delete(string, string) error                                   { return nil }
-func (stubSafe) List(string) ([]string, error)                                 { return nil, nil }
-func (stubSafe) Export(string) (map[string]interface{}, error)                 { return nil, nil }
-func (stubSafe) Import(string, map[string]interface{}) error                   { return nil }
-func (stubSafe) GetEngineInfo(string) (*vault.EngineInfo, error)               { return nil, nil }
-func (stubSafe) MustGet(string, string) interface{}                            { return nil }
-func (stubSafe) GetString(string, string) (string, error)                      { return "", nil }
-func (stubSafe) GetJSON(string, string) ([]byte, error)                        { return nil, nil }
+func (stubSafe) Set(string, string, interface{}) error            { return nil }
+func (stubSafe) SetMultiple(string, map[string]interface{}) error { return nil }
+func (stubSafe) Get(string, string) (interface{}, error)          { return nil, nil }
+func (stubSafe) GetAll(string) (map[string]interface{}, error)    { return nil, nil }
+func (stubSafe) Exists(string) (bool, error)                      { return false, nil }
+func (stubSafe) Delete(string, string) error                      { return nil }
+func (stubSafe) List(string) ([]string, error)                    { return nil, nil }
+func (stubSafe) Export(string) (map[string]interface{}, error)    { return nil, nil }
+func (stubSafe) Import(string, map[string]interface{}) error      { return nil }
+func (stubSafe) GetEngineInfo(string) (*vault.EngineInfo, error)  { return nil, nil }
+func (stubSafe) MustGet(string, string) interface{}               { return nil }
+func (stubSafe) GetString(string, string) (string, error)         { return "", nil }
+func (stubSafe) GetJSON(string, string) ([]byte, error)           { return nil, nil }
 
 func TestManagerSetSafeWiresVaultClient(t *testing.T) {
 	t.Parallel()
