@@ -218,8 +218,8 @@ func TestCleanup_NilContext_ReturnsError(t *testing.T) {
 	tr.Track(cleanup.Resource{Kind: cleanup.KindVM, CID: "vm-1"})
 
 	called := false
-	//nolint:staticcheck // intentional nil context for error path test
-	err := tr.Cleanup(nil, map[cleanup.ResourceKind]func(context.Context, cleanup.Resource) error{
+	var ctx context.Context // intentionally nil to exercise nil-context rejection path
+	err := tr.Cleanup(ctx, map[cleanup.ResourceKind]func(context.Context, cleanup.Resource) error{
 		cleanup.KindVM: func(_ context.Context, _ cleanup.Resource) error {
 			called = true
 			return nil
