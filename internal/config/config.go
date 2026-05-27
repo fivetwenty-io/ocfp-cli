@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
-	"github.com/goccy/go-yaml"
 )
 
 // FQDN configuration errors.
@@ -117,16 +117,29 @@ type Config struct {
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
-	APIEndpoint      string                      `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint,omitempty"`
+	APIEndpoint string `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint,omitempty"`
 	// VerifySSL controls TLS certificate verification for provider API calls.
 	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
 	// certs work out of the box. Set true when targeting a PVE host with a
 	// CA-signed certificate to fail-closed on cert mismatches.
-	VerifySSL        bool                        `json:"verify_ssl"          mapstructure:"verify_ssl"          yaml:"verify_ssl,omitempty"`
+	VerifySSL bool `json:"verify_ssl"          mapstructure:"verify_ssl"          yaml:"verify_ssl,omitempty"`
 	// IsoStorage is the PVE storage pool that hosts ISO content and
 	// cloud-init snippets. PVE-specific. Used by snippet upload and by
 	// template auto-provisioning to stage downloaded cloud images.
-	IsoStorage       string                      `json:"iso_storage"         mapstructure:"iso_storage"         yaml:"iso_storage,omitempty"`
+	IsoStorage string `json:"iso_storage"         mapstructure:"iso_storage"         yaml:"iso_storage,omitempty"`
+	// VMStorage is the PVE storage pool used for ephemeral (root) VM disks.
+	// PVE-specific. Maps to pve.vm_storage in the bosh-pve-cpi-release job
+	// properties. When empty, configureCPI falls back to
+	// Artifacts.Data.StoragePool, then to the hardcoded default "local-lvm".
+	// Example: "data" (lvmthin pool), "local-lvm" (default thin LVM).
+	VMStorage string `json:"vm_storage"          mapstructure:"vm_storage"          yaml:"vm_storage,omitempty"`
+	// DiskStorage is the PVE storage pool used for persistent BOSH disks.
+	// PVE-specific. Maps to pve.disk_storage in the bosh-pve-cpi-release job
+	// properties. When empty, configureCPI falls back to
+	// Artifacts.Data.StoragePool, then to the hardcoded default "zfs-1".
+	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
+	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
+	DiskStorage      string                      `json:"disk_storage"        mapstructure:"disk_storage"        yaml:"disk_storage,omitempty"`
 	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
 	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
@@ -189,6 +202,34 @@ type Config struct {
 	// take precedence over the global ConfigFile.Tailscale defaults via
 	// mergeTailscaleDefaults at load time.
 	Tailscale *TailscaleConfig `json:"tailscale,omitempty" mapstructure:"tailscale" yaml:"tailscale,omitempty"`
+
+	// CFCloudConfigCIDR is the subnet CIDR written into the CF cloud-config
+	// network section. It must match the BOSH director network CIDR
+	// (Network.CIDR) to avoid the Tailscale LAN route hazard. PVE-specific.
+	// When empty, network pairing validation is skipped.
+	CFCloudConfigCIDR string `json:"cf_cloud_config_cidr,omitempty" mapstructure:"cf_cloud_config_cidr" yaml:"cf_cloud_config_cidr,omitempty"`
+
+	// VmidRangeStart is the lower bound (inclusive) of the PVE VMID range the
+	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
+	// the default value 100 so the CPI never clobbers operator-reserved IDs.
+	// Maps to vmid_range_start in the bosh-pve-cpi-release job properties.
+	VmidRangeStart int `json:"vmid_range_start,omitempty" mapstructure:"vmid_range_start" yaml:"vmid_range_start,omitempty"`
+
+	// VmidRangeEnd is the upper bound (inclusive) of the PVE VMID range the
+	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
+	// the default value 5999. Must be greater than VmidRangeStart when both are
+	// non-zero. Maps to vmid_range_end in the bosh-pve-cpi-release job properties.
+	VmidRangeEnd int `json:"vmid_range_end,omitempty" mapstructure:"vmid_range_end" yaml:"vmid_range_end,omitempty"`
+
+	// CfMaxInFlight is the maximum number of concurrent create_vm calls the
+	// BOSH director issues per instance group during a CF deploy. PVE-specific.
+	// Maps to cf_max_in_flight in the cloud-config update block and the
+	// ops-serialize-deploy.yml ops file. Resolution order (Decision D1):
+	//   1. This field when > 0 (explicit operator override).
+	//   2. Live PVE node CPU count clamped to [4, 16] (requires API connectivity).
+	//   3. Default 12 (sized to PVE's default storage worker thread count).
+	// Set to 0 (or omit) to let the CLI derive the value automatically.
+	CfMaxInFlight int `json:"cf_max_in_flight,omitempty" mapstructure:"cf_max_in_flight" yaml:"cf_max_in_flight,omitempty"`
 }
 
 // BlobstoreMode constants for PVE bloc-scoped blobstore configuration.
@@ -1592,6 +1633,90 @@ func validate(cfg *Config) error {
 	bastionEnabled := cfg.Bastion.Flavor != ""
 	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true); err != nil {
 		return fmt.Errorf("artifacts config: %w", err)
+	}
+
+	// Validate PVE credential configuration (Decision D2):
+	// - Neither auth mode configured: error (cannot authenticate).
+	// - Both auth modes configured: warn; token wins by convention.
+	// - Exactly one auth mode configured: ok.
+	if strings.EqualFold(cfg.Provider, "pve") {
+		if err := validatePVEAuth(cfg); err != nil {
+			return err
+		}
+
+		if err := validatePVEVMIDRange(cfg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validatePVEAuth checks PVE-specific credential configuration.
+//
+// Auth modes:
+//   - API token auth: both auth_token and token_secret non-empty.
+//   - User/password auth: both username and password non-empty.
+//
+// Rules (Decision D2):
+//   - Neither mode configured → ErrPVEAuthRequired.
+//   - Both modes configured → log warning; token wins at runtime (not an error).
+//   - Exactly one mode configured → valid.
+func validatePVEAuth(cfg *Config) error {
+	apiTokenMode := cfg.AuthToken != "" && cfg.TokenSecret != ""
+	userPassMode := cfg.Username != "" && cfg.Password != ""
+
+	switch {
+	case !apiTokenMode && !userPassMode:
+		return ErrPVEAuthRequired
+
+	case apiTokenMode && userPassMode:
+		// Both auth modes set; API token wins at runtime per CPI auth-selection
+		// logic. Log a warning so operators know the password credentials are
+		// ignored. This is not an error because the config is functional.
+		fmt.Fprintf(os.Stderr, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
+	}
+
+	return nil
+}
+
+// pveVMIDRangeMax is the maximum VMID PVE supports.
+const pveVMIDRangeMax = 999999999
+
+// validatePVEVMIDRange validates the VMID range configuration for PVE blocs.
+//
+// Rules (both fields are optional; zero means "use default"):
+//   - Both zero: valid (defaults 100/5999 apply at CPI config time).
+//   - VmidRangeStart < 0 or VmidRangeEnd < 0: invalid.
+//   - Either field non-zero and start >= end: invalid.
+//   - Either field > pveVMIDRangeMax: invalid.
+//
+// Only one auth-unrelated error sentinel is used so callers can errors.Is-check
+// without parsing the message.
+func validatePVEVMIDRange(cfg *Config) error {
+	start := cfg.VmidRangeStart
+	end := cfg.VmidRangeEnd
+
+	// Both zero: defaults apply later; no error.
+	if start == 0 && end == 0 {
+		return nil
+	}
+
+	// Negative values are always invalid.
+	if start < 0 || end < 0 {
+		return ErrPVEVMIDRangeInvalid
+	}
+
+	// Upper-bound sanity: PVE rejects VMIDs above 999999999.
+	if start > pveVMIDRangeMax || end > pveVMIDRangeMax {
+		return ErrPVEVMIDRangeInvalid
+	}
+
+	// When either is non-zero, end must be strictly greater than start.
+	// This catches: start=200, end=0 (end would default to 5999 < start if
+	// start is intentionally high) — treated as invalid to force explicit config.
+	if end <= start {
+		return ErrPVEVMIDRangeInvalid
 	}
 
 	return nil
