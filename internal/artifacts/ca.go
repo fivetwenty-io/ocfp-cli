@@ -82,8 +82,8 @@ func GenerateInternalCA(blocName string) (CAMaterial, error) {
 		return CAMaterial{}, fmt.Errorf("marshaling CA private key: %w", err)
 	}
 
-	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockCertificate, Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockECPrivateKey, Bytes: keyDER}))
 
 	sum := sha256.Sum256(der)
 
@@ -151,8 +151,8 @@ func IssueLeafCert(ca CAMaterial, leafCN string, dnsNames []string, ips []net.IP
 		return TLSMaterial{}, fmt.Errorf("marshaling leaf private key: %w", err)
 	}
 
-	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockCertificate, Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockECPrivateKey, Bytes: keyDER}))
 
 	sum := sha256.Sum256(der)
 
@@ -165,7 +165,7 @@ func IssueLeafCert(ca CAMaterial, leafCN string, dnsNames []string, ips []net.IP
 
 func parseCA(ca CAMaterial) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certBlock, _ := pem.Decode([]byte(ca.CertPEM))
-	if certBlock == nil || certBlock.Type != "CERTIFICATE" {
+	if certBlock == nil || certBlock.Type != pemBlockCertificate {
 		return nil, nil, ErrCACertPEMInvalid
 	}
 

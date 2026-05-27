@@ -70,7 +70,7 @@ func (m *ComputeManager) resolveSnippetStorage(ctx context.Context, node string)
 // listNodeStorages fetches /nodes/{node}/storage and normalises the entries
 // the resolver cares about (name, content, enabled).
 func (m *ComputeManager) listNodeStorages(ctx context.Context, node string) []nodeStorage {
-	path := fmt.Sprintf("/nodes/%s/storage", node)
+	path := buildPVEPath(node, "storage")
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
@@ -157,7 +157,7 @@ func storageSupportsSnippets(content string) bool {
 // — the template clone already attaches an ide2 cloud-init drive on the
 // correct storage, and re-pointing it at a non-images pool fails VM start.
 func (m *ComputeManager) uploadSnippet(ctx context.Context, node, storage, filename string, payload []byte) error {
-	path := fmt.Sprintf("/nodes/%s/storage/%s/upload", node, storage)
+	path := buildPVEPathf(node, "storage/%s/upload", storage)
 	fields := map[string]string{
 		"content":  snippetContentType,
 		"filename": filename,

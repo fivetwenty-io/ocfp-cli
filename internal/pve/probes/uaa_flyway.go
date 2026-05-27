@@ -175,7 +175,7 @@ func (p *UAAFlywayProbe) Run(ctx context.Context) Result {
 	if m == nil {
 		return Result{
 			OK:     false,
-			Detail: fmt.Sprintf("probe output unparseable — no known sentinel found; raw (last 500): %s", truncate(combined, 500)),
+			Detail: "probe output unparseable — no known sentinel found; raw (last 500): " + truncate(combined, 500),
 		}
 	}
 

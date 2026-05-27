@@ -162,7 +162,7 @@ func pveDatacenterFromBloc(bloc string) string {
 //
 // Parameters:
 //   - bloc         OCFP bloc identifier (e.g. "ocfp-lab-wayne", "ocfp-pve-dc1")
-//   - deployment   deployment slot name: "mgmt" or "ocf"
+//   - deployment   slot name: "mgmt" or "ocf"
 //   - kit          Genesis kit name: "bosh" for mgmt, "cf" for ocf
 //   - useCreateEnv true for BOSH proto-director (create-env) deployments
 //   - datacenter   PVE datacenter identity (from config Region; see resolvePVEDatacenter)

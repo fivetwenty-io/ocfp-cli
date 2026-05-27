@@ -286,9 +286,9 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	}
 
 	params := map[string]interface{}{
-		"type":   ruleType,
-		"action": "ACCEPT",
-		"enable": 1,
+		pveKeyType:   ruleType,
+		"action":     "ACCEPT",
+		pveKeyEnable: 1,
 	}
 
 	if rule.Protocol != "" && rule.Protocol != "all" {

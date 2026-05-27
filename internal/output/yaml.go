@@ -40,15 +40,15 @@ func NewYAMLRenderer(w io.Writer) *YAMLRenderer {
 // PhaseStart signals the beginning of a new operation phase.
 func (r *YAMLRenderer) PhaseStart(info PhaseInfo) error {
 	r.log.Debugw("Phase started",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"phase_name", info.Name,
 	)
 
 	return r.emitEvent("phase_start", map[string]interface{}{
-		"phase_id":     info.ID,
-		"phase_name":   info.Name,
-		"phase_number": info.Number,
-		"total_phases": info.Total,
+		eventKeyPhaseID:    info.ID,
+		"phase_name":        info.Name,
+		"phase_number":      info.Number,
+		eventKeyTotalPhases: info.Total,
 	})
 }
 
@@ -76,13 +76,13 @@ func (r *YAMLRenderer) PhaseComplete(info PhaseInfo) error {
 	duration := time.Since(info.StartTime)
 
 	r.log.Infow("Phase completed",
-		"phase_id", info.ID,
-		"duration_ms", duration.Milliseconds(),
+		eventKeyPhaseID, info.ID,
+		eventKeyDurationMs, duration.Milliseconds(),
 	)
 
 	return r.emitEvent("phase_complete", map[string]interface{}{
-		"phase_id":    info.ID,
-		"duration_ms": duration.Milliseconds(),
+		eventKeyPhaseID:   info.ID,
+		eventKeyDurationMs: duration.Milliseconds(),
 	})
 }
 
@@ -91,27 +91,27 @@ func (r *YAMLRenderer) PhaseFailed(info PhaseInfo, err error) error {
 	duration := time.Since(info.StartTime)
 
 	r.log.Errorw("Phase failed",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"error", err.Error(),
 	)
 
 	return r.emitEvent("phase_failed", map[string]interface{}{
-		"phase_id":    info.ID,
-		"error":       err.Error(),
-		"duration_ms": duration.Milliseconds(),
+		eventKeyPhaseID:   info.ID,
+		"error":            err.Error(),
+		eventKeyDurationMs: duration.Milliseconds(),
 	})
 }
 
 // PhaseSkipped marks the current phase as skipped with reason.
 func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 	r.log.Debugw("Phase skipped",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"reason", reason,
 	)
 
 	return r.emitEvent("phase_skipped", map[string]interface{}{
-		"phase_id": info.ID,
-		"reason":   reason,
+		eventKeyPhaseID: info.ID,
+		"reason":         reason,
 	})
 }
 
@@ -119,16 +119,16 @@ func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 func (r *YAMLRenderer) Finalize(summary Summary) error {
 	r.log.Infow("Operation finalized",
 		"success", summary.Success,
-		"duration_ms", summary.Duration.Milliseconds(),
+		eventKeyDurationMs, summary.Duration.Milliseconds(),
 	)
 
 	data := map[string]interface{}{
-		"total_phases":     summary.TotalPhases,
-		"completed_phases": summary.CompletedPhases,
-		"failed_phases":    summary.FailedPhases,
-		"skipped_phases":   summary.SkippedPhases,
-		"duration_ms":      summary.Duration.Milliseconds(),
-		"success":          summary.Success,
+		eventKeyTotalPhases: summary.TotalPhases,
+		"completed_phases":   summary.CompletedPhases,
+		"failed_phases":      summary.FailedPhases,
+		"skipped_phases":     summary.SkippedPhases,
+		eventKeyDurationMs:  summary.Duration.Milliseconds(),
+		"success":            summary.Success,
 	}
 
 	// Add errors if present
