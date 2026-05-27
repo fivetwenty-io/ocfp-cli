@@ -10,10 +10,12 @@ import (
 )
 
 // ArtifactsWriter persists ocfp-artifacts blobstore configuration into vault.
-// Implements artifacts.VaultWriter. The writer fans out to four paths:
+// Implements artifacts.VaultWriter. The writer fans out to seven paths:
 //
-//   - {bloc}/mgmt/bosh/blobstores/bosh           (BOSH director config)
-//   - {bloc}/mgmt/bosh/blobstores/bosh/creds     (BOSH director credentials)
+//   - {bloc}/mgmt/bosh/blobstores/bosh           (mgmt-BOSH director config)
+//   - {bloc}/mgmt/bosh/blobstores/bosh/creds     (mgmt-BOSH director credentials)
+//   - {bloc}/ocf/bosh/blobstores/bosh            (env-BOSH director config)
+//   - {bloc}/ocf/bosh/blobstores/bosh/creds      (env-BOSH director credentials)
 //   - {bloc}/ocf/cf/blobstores/main              (CF blobstore config)
 //   - {bloc}/ocf/cf/blobstores/main/creds        (CF blobstore credentials)
 //   - {bloc}/ocfp/artifacts                      (operational metadata)
@@ -59,6 +61,10 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh"),
 			body: blobstoreEntry(ep, caPEM, fmt.Sprintf("%s-mgmt-bosh", w.BlocName)),
+		},
+		{
+			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh"),
+			body: blobstoreEntry(ep, caPEM, fmt.Sprintf("%s-ocf-bosh", w.BlocName)),
 		},
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "cf", "main"),
@@ -108,8 +114,12 @@ func blobstoreEntry(ep artifacts.Endpoint, caPEM, bucketName string) map[string]
 		"endpoint":   ep.URL,
 		"region":     ep.Region,
 		"path_style": ep.PathStyle,
-		"bucket":     bucketName,
-		"status":     "configured",
+		// `bucket` is the historical key. `name` aliases it to match the
+		// genesis-kit convention (meta.ocfp.bosh.s3.bucket_name reads
+		// `:name`). Both are written so old + new consumers both work.
+		"bucket": bucketName,
+		"name":   bucketName,
+		"status": "configured",
 	}
 
 	if caPEM != "" {
