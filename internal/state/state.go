@@ -3,6 +3,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,8 +153,11 @@ func (m *Manager) Load(blocName string) (*State, error) {
 
 // Save persists the current state.
 func (m *Manager) Save() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// Hold a write lock: Save mutates m.current.UpdatedAt below, so an
+	// RLock would be a data race against any other goroutine reading
+	// m.current.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.current == nil {
 		return ErrNoStateLoaded
@@ -410,31 +414,11 @@ func (m *Manager) GetDependencies(resource string) ([]string, error) {
 func (m *Manager) Lock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
 
-	// Check if lock exists
-	_, err := os.Stat(lockPath)
-	if err == nil {
-		// Read lock info
-		err = security.ValidatePath(lockPath)
-		if err != nil {
-			return fmt.Errorf("invalid lock path: %w", err)
-		}
-
-		data, err := os.ReadFile(lockPath) // #nosec G304 - lockPath is validated above
-		if err != nil {
-			return fmt.Errorf("failed to read lock file: %w", err)
-		}
-
-		var lockInfo map[string]interface{}
-
-		err = json.Unmarshal(data, &lockInfo)
-		if err == nil {
-			return ErrStateIsLockedBy(lockInfo["owner"], lockInfo["created_at"])
-		}
-
-		return ErrStateIsLocked
+	err := security.ValidatePath(lockPath)
+	if err != nil {
+		return fmt.Errorf("invalid lock path: %w", err)
 	}
 
-	// Create lock file
 	lockInfo := map[string]interface{}{
 		"owner":      os.Getenv("USER"),
 		"hostname":   getHostname(),
@@ -447,14 +431,52 @@ func (m *Manager) Lock(blocName string) error {
 		return fmt.Errorf("failed to create lock info: %w", err)
 	}
 
-	err = os.WriteFile(lockPath, data, stateFileMode)
+	// Atomic create-or-fail: O_CREATE|O_EXCL fails with EEXIST when the
+	// lock file already exists, eliminating the stat-then-create TOCTOU
+	// window of the previous implementation. Two concurrent callers can
+	// no longer both observe a missing lock and both create one.
+	f, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, stateFileMode) // #nosec G304 - lockPath validated above
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readExistingLock(lockPath)
+		}
+
 		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+
+	if _, writeErr := f.Write(data); writeErr != nil {
+		_ = f.Close()
+		_ = os.Remove(lockPath)
+
+		return fmt.Errorf("failed to write lock file: %w", writeErr)
+	}
+
+	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(lockPath)
+
+		return fmt.Errorf("failed to close lock file: %w", closeErr)
 	}
 
 	logger.Debugf("Acquired state lock for bloc %s", blocName)
 
 	return nil
+}
+
+// readExistingLock reads the lock file at lockPath (already validated by
+// the caller) and returns the appropriate "already locked" error, with
+// owner attribution when the file parses cleanly.
+func readExistingLock(lockPath string) error {
+	data, err := os.ReadFile(lockPath) // #nosec G304 - lockPath validated by caller
+	if err != nil {
+		return fmt.Errorf("failed to read lock file: %w", err)
+	}
+
+	var lockInfo map[string]interface{}
+	if err := json.Unmarshal(data, &lockInfo); err == nil {
+		return ErrStateIsLockedBy(lockInfo["owner"], lockInfo["created_at"])
+	}
+
+	return ErrStateIsLocked
 }
 
 // Unlock releases the lock on the state.

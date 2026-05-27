@@ -108,7 +108,10 @@ type Client struct {
 	// Proxmox API client
 	pveClient pve.Client
 
-	// Domain-specific services (lazy initialized)
+	// Domain-specific services (lazy initialized). Protected by
+	// servicesMu — getXService() are called concurrently from multiple
+	// manager goroutines.
+	servicesMu       sync.Mutex
 	qemuService      qemu.Service
 	storageService   storage.Service
 	networkService   network.Service
@@ -610,6 +613,9 @@ func (c *Client) initPVEManagers() {
 //
 //nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getQemuService() qemu.Service {
+	c.servicesMu.Lock()
+	defer c.servicesMu.Unlock()
+
 	if c.qemuService == nil {
 		c.qemuService = qemu.New(c.pveClient)
 	}
@@ -621,6 +627,9 @@ func (c *Client) getQemuService() qemu.Service {
 //
 //nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getStorageService() storage.Service {
+	c.servicesMu.Lock()
+	defer c.servicesMu.Unlock()
+
 	if c.storageService == nil {
 		c.storageService = storage.New(c.pveClient)
 	}
@@ -632,6 +641,9 @@ func (c *Client) getStorageService() storage.Service {
 //
 //nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getNetworkService() network.Service {
+	c.servicesMu.Lock()
+	defer c.servicesMu.Unlock()
+
 	if c.networkService == nil {
 		c.networkService = network.New(c.pveClient)
 	}
@@ -643,6 +655,9 @@ func (c *Client) getNetworkService() network.Service {
 //
 //nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getTasksService() tasks.Service {
+	c.servicesMu.Lock()
+	defer c.servicesMu.Unlock()
+
 	if c.tasksService == nil {
 		c.tasksService = tasks.New(c.pveClient)
 	}
@@ -654,6 +669,9 @@ func (c *Client) getTasksService() tasks.Service {
 //
 //nolint:ireturn // returns interface by design for PVE service abstraction
 func (c *Client) getCloudinitService() cloudinit.Service {
+	c.servicesMu.Lock()
+	defer c.servicesMu.Unlock()
+
 	if c.cloudinitService == nil {
 		c.cloudinitService = cloudinit.New(c.pveClient)
 	}
