@@ -38,6 +38,9 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewBastionCmd())
 	root.AddCommand(commands.NewArtifactsCmd())
 
+	// PVE-specific operational commands
+	root.AddCommand(commands.NewPVECmd())
+
 	// Logging and diagnostics
 	root.AddCommand(commands.NewLogsCmd())
 }
