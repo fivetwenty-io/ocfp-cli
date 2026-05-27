@@ -324,6 +324,9 @@ func TestDiffSet_Summary(t *testing.T) {
 }
 
 func TestUpdateResourceFromDiscovered(t *testing.T) {
+	fixedNow := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	t.Cleanup(state.SetNowFn(func() time.Time { return fixedNow }))
+
 	stateRes := &state.Resource{
 		ID:       "net-001",
 		Type:     "network",
@@ -352,7 +355,6 @@ func TestUpdateResourceFromDiscovered(t *testing.T) {
 		},
 	}
 
-	beforeUpdate := time.Now()
 	state.UpdateResourceFromDiscovered(stateRes, discoveredRes)
 
 	// Verify updates
@@ -361,5 +363,5 @@ func TestUpdateResourceFromDiscovered(t *testing.T) {
 	assert.Equal(t, "active", stateRes.State)
 	assert.Equal(t, map[string]interface{}{"new_key": "new_value"}, stateRes.Properties)
 	assert.Equal(t, map[string]string{"new_tag": "new_tag_value"}, stateRes.Tags)
-	assert.True(t, stateRes.UpdatedAt.After(beforeUpdate) || stateRes.UpdatedAt.Equal(beforeUpdate))
+	assert.Equal(t, fixedNow, stateRes.UpdatedAt)
 }

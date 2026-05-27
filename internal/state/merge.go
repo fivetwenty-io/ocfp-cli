@@ -2,7 +2,6 @@ package state
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
@@ -71,7 +70,7 @@ func MergeResources(currentState *State, diffSet *DiffSet, opts MergeOptions) (*
 	}
 
 	// Update state metadata
-	currentState.UpdatedAt = time.Now()
+	currentState.UpdatedAt = nowFn()
 
 	logger.Infof("Merge complete: added=%d, updated=%d, deleted=%d, skipped=%d",
 		result.ResourcesAdded, result.ResourcesUpdated, result.ResourcesDeleted, result.ResourcesSkipped)
@@ -99,7 +98,7 @@ func mergeAddOnly(currentState *State, diffSet *DiffSet, opts MergeOptions) *Mer
 		resource := copyResource(diff.DiscoveredResource)
 
 		if opts.UpdateTimestamps {
-			now := time.Now()
+			now := nowFn()
 			resource.CreatedAt = now
 			resource.UpdatedAt = now
 		}
@@ -171,7 +170,7 @@ func mergeAddedResources(currentState *State, added []*ResourceDiff, opts MergeO
 		resource := copyResource(diff.DiscoveredResource)
 
 		if opts.UpdateTimestamps {
-			now := time.Now()
+			now := nowFn()
 			resource.CreatedAt = now
 			resource.UpdatedAt = now
 		}
@@ -201,7 +200,7 @@ func mergeModifiedResources(currentState *State, modified []*ResourceDiff, opts 
 			resource := copyResource(diff.DiscoveredResource)
 
 			if opts.UpdateTimestamps {
-				now := time.Now()
+				now := nowFn()
 				resource.CreatedAt = now
 				resource.UpdatedAt = now
 			}
@@ -216,7 +215,7 @@ func mergeModifiedResources(currentState *State, modified []*ResourceDiff, opts 
 		UpdateResourceFromDiscovered(stateResource, diff.DiscoveredResource)
 
 		if opts.UpdateTimestamps {
-			stateResource.UpdatedAt = time.Now()
+			stateResource.UpdatedAt = nowFn()
 		}
 
 		result.ResourcesUpdated++
