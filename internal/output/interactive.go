@@ -504,4 +504,3 @@ func (r *InteractiveRenderer) colorizeStatus(line string, status Status) string 
 		return line
 	}
 }
-

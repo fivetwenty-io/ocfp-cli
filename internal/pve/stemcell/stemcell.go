@@ -6,6 +6,7 @@ package stemcell
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,10 +60,10 @@ var DefaultHTTPClient = &http.Client{
 //   - empty Tables or Rows → returns false (not an error; director has no stemcells).
 func IsStemcellUploaded(ctx context.Context, runBosh RunBosh, name, version string) (bool, error) {
 	if name == "" {
-		return false, fmt.Errorf("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return false, errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if version == "" {
-		return false, fmt.Errorf("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return false, errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	out, err := runBosh(ctx, "stemcells", "--json")
@@ -110,16 +111,16 @@ func IsStemcellUploaded(ctx context.Context, runBosh RunBosh, name, version stri
 //   - sha1 field empty → descriptive error (version entry present but no regular build).
 func FetchSHA1(ctx context.Context, httpClient *http.Client, name, version string) (string, error) {
 	if name == "" {
-		return "", fmt.Errorf("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return "", errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if version == "" {
-		return "", fmt.Errorf("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return "", errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if httpClient == nil {
-		return "", fmt.Errorf("stemcell: httpClient must not be nil") //nolint:err113 // descriptive error, not caller-testable
+		return "", errors.New("stemcell: httpClient must not be nil") //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	apiURL := fmt.Sprintf("https://bosh.io/api/v1/stemcells/%s", name)
+	apiURL := "https://bosh.io/api/v1/stemcells/" + name
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("stemcell: build request for %s: %w", apiURL, err)
@@ -177,13 +178,13 @@ func FetchSHA1(ctx context.Context, httpClient *http.Client, name, version strin
 //   - upload runBosh error → propagated.
 func EnsureStemcell(ctx context.Context, runBosh RunBosh, fetchSHA1 SHA1Fetcher, name, version, url string) error {
 	if name == "" {
-		return fmt.Errorf("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if version == "" {
-		return fmt.Errorf("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if url == "" {
-		return fmt.Errorf("stemcell: url must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("stemcell: url must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	uploaded, err := IsStemcellUploaded(ctx, runBosh, name, version)

@@ -233,7 +233,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 // installed, disabled in the VM config, or still booting), in which case
 // callers should fall back to other discovery paths.
 func (m *ComputeManager) queryAgentPrimaryIP(ctx context.Context, node string, vmid int) string {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", node, vmid)
+	path := buildPVEPathf(node, "qemu/%d/agent/network-get-interfaces", vmid)
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
@@ -341,7 +341,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 		}
 
 		// Get VMs on this node
-		path := fmt.Sprintf("/nodes/%s/qemu", nodeInfo.Name)
+		path := buildPVEPath(nodeInfo.Name, "qemu")
 
 		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err != nil {
@@ -492,7 +492,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 	time.Sleep(vmStopDelay)
 
 	// Delete the VM
-	path := fmt.Sprintf("/nodes/%s/qemu/%d", node, vmid)
+	path := buildPVEPathf(node, "qemu/%d", vmid)
 
 	_, err = m.client.pveClient.DeleteCtx(ctx, path, map[string]interface{}{
 		"purge": true,
@@ -579,7 +579,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]str
 		}
 
 		// Get VMs on this node (templates are VMs with template flag)
-		path := fmt.Sprintf("/nodes/%s/qemu", nodeInfo.Name)
+		path := buildPVEPath(nodeInfo.Name, "qemu")
 
 		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err != nil {
@@ -696,10 +696,10 @@ func (m *ComputeManager) applyFlavorSizing(ctx context.Context, node string, vmi
 		return nil
 	}
 
-	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	configPath := buildPVEPathf(node, "qemu/%d/config", vmid)
 	params := map[string]interface{}{
-		"memory": flavor.RAM,
-		"cores":  flavor.VCPUs,
+		pveKeyMemory: flavor.RAM,
+		pveKeyCores:  flavor.VCPUs,
 	}
 
 	if _, err := m.client.pveClient.PutCtx(ctx, configPath, params); err != nil {
@@ -718,18 +718,18 @@ func (m *ComputeManager) createBlankVM(ctx context.Context, node string, vmid, d
 	}
 
 	params := map[string]interface{}{
-		"vmid":    vmid,
-		"name":    req.Name,
-		"memory":  flavor.RAM,
-		"cores":   flavor.VCPUs,
-		"sockets": 1,
-		"cpu":     "host",
-		"ostype":  "l26", // Linux 2.6+ kernel
-		"agent":   "1",   // Enable QEMU guest agent
-		"net0":    fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge),
-		"scsi0":   fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize),
-		"scsihw":  "virtio-scsi-pci",
-		"boot":    "order=scsi0",
+		"vmid":       vmid,
+		pveKeyName:   req.Name,
+		pveKeyMemory: flavor.RAM,
+		pveKeyCores:  flavor.VCPUs,
+		"sockets":    1,
+		"cpu":        "host",
+		"ostype":     "l26", // Linux 2.6+ kernel
+		"agent":      "1",   // Enable QEMU guest agent
+		pveKeyNet0:   fmt.Sprintf("virtio,bridge=%s,firewall=1", bridge),
+		pveKeyScsi0:  fmt.Sprintf("%s:%d,format=qcow2", storage, diskSize),
+		"scsihw":     "virtio-scsi-pci",
+		"boot":       "order=scsi0",
 	}
 
 	qemuSvc := m.client.getQemuService()
@@ -837,7 +837,7 @@ func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, erro
 			continue
 		}
 
-		path := fmt.Sprintf("/nodes/%s/qemu/%d/status/current", nodeInfo.Name, vmid)
+		path := buildPVEPathf(nodeInfo.Name, "qemu/%d/status/current", vmid)
 
 		_, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err == nil {
@@ -884,7 +884,7 @@ func (m *ComputeManager) cloneTemplate(ctx context.Context, node string, templat
 // re-points it at the snippet storage which can fail VM start when that
 // pool does not advertise the `images` content type.
 func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) error {
-	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	configPath := buildPVEPathf(node, "qemu/%d/config", vmid)
 
 	plan := m.uploadCloudInitSnippets(ctx, node, vmid, req)
 
@@ -1055,14 +1055,14 @@ func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 // Idempotency: PVE rejects duplicate group references; existing matches are
 // logged and skipped.
 func (m *ComputeManager) applyVMSecurityGroups(ctx context.Context, node string, vmid int, sgIDs []string) error {
-	rulesPath := fmt.Sprintf("/nodes/%s/qemu/%d/firewall/rules", node, vmid)
-	optionsPath := fmt.Sprintf("/nodes/%s/qemu/%d/firewall/options", node, vmid)
+	rulesPath := buildPVEPathf(node, "qemu/%d/firewall/rules", vmid)
+	optionsPath := buildPVEPathf(node, "qemu/%d/firewall/options", vmid)
 
 	// Enable the per-VM firewall explicitly. Without this PUT, PVE may
 	// leave the firewall in "off" state even when the NIC carries
 	// firewall=1, depending on cluster defaults.
 	_, err := m.client.pveClient.PutCtx(ctx, optionsPath, map[string]interface{}{
-		"enable": 1,
+		pveKeyEnable: 1,
 	})
 	if err != nil {
 		logger.Warnf("Failed to enable VM %d firewall options: %v", vmid, err)
@@ -1072,9 +1072,9 @@ func (m *ComputeManager) applyVMSecurityGroups(ctx context.Context, node string,
 		pveGroup := sanitizePVEGroupName(sgID)
 
 		params := map[string]interface{}{
-			"type":   "group",
-			"action": pveGroup,
-			"enable": 1,
+			pveKeyType:   "group",
+			"action":     pveGroup,
+			pveKeyEnable: 1,
 		}
 
 		if _, postErr := m.client.pveClient.PostCtx(ctx, rulesPath, params); postErr != nil {
@@ -1149,7 +1149,7 @@ func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, t
 	description := "OCFP tags: " + strings.Join(descParts, ", ")
 	pveTagStr := strings.Join(tagList, ";")
 
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	path := buildPVEPathf(node, "qemu/%d/config", vmid)
 
 	params := map[string]interface{}{
 		"description": description,

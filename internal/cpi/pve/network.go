@@ -466,7 +466,7 @@ func (m *NetworkManager) getBridgeNetwork(ctx context.Context, id string) (*cpi.
 	}
 
 	// Get bridge details
-	path := fmt.Sprintf("/nodes/%s/network/%s", node, id)
+	path := buildPVEPathf(node, "network/%s", id)
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
@@ -518,7 +518,7 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 		return nil, err
 	}
 
-	path := fmt.Sprintf("/nodes/%s/network", node)
+	path := buildPVEPath(node, "network")
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {

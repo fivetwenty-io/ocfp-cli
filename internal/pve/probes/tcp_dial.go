@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -67,7 +68,7 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 		timeout = defaultTCPTimeout
 	}
 
-	addr := net.JoinHostPort(p.Host, fmt.Sprintf("%d", p.Port))
+	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
 	label := p.label(addr)
 
 	// Honour context cancellation before attempting the dial.
@@ -103,7 +104,7 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	}
 
 	_ = conn.Close() // best-effort; error is harmless after successful dial
-	return Result{OK: true, Detail: fmt.Sprintf("%s: open", label)}
+	return Result{OK: true, Detail: label + ": open"}
 }
 
 // label returns a human-readable identifier for the probe target.

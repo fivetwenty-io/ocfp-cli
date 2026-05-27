@@ -166,7 +166,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 	}
 
 	// Get volume details from storage content
-	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, storage, id)
+	path := buildPVEPathf(node, "storage/%s/content/%s", storage, id)
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
@@ -213,7 +213,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 	}
 
 	// List storage content
-	path := fmt.Sprintf("/nodes/%s/storage/%s/content", node, storage)
+	path := buildPVEPathf(node, "storage/%s/content", storage)
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {

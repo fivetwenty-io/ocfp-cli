@@ -407,4 +407,3 @@ func (r *ConciseRenderer) writeSubtaskTree(phaseID string) error {
 
 	return nil
 }
-

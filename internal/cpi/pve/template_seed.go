@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -87,7 +88,7 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 
 	tokenHeader := buildPVEAPITokenHeader(m.client.config)
 	if tokenHeader == "" {
-		return fmt.Errorf("template seed requires API token auth (TokenID + TokenSecret)") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("template seed requires API token auth (TokenID + TokenSecret)") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	log.Infof("opening termproxy to vmid %d", vmid)
@@ -128,7 +129,7 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 // template VM via cloud-init.
 func seedLogin(sess *TermproxySession, password string) error {
 	// Wake the serial; cloud-init may be writing boot messages.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_ = sess.SendLine("")
 		time.Sleep(500 * time.Millisecond)
 	}
