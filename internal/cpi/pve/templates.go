@@ -78,13 +78,6 @@ var templateCatalog = map[string]TemplateSpec{
 		Memory:         2048,
 		Cores:          2,
 	},
-	"ubuntu-jammy-template": {
-		Name:           "ubuntu-jammy-template",
-		SourceURL:      "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-		SourceFilename: "ubuntu-jammy-amd64.qcow2",
-		Memory:         2048,
-		Cores:          2,
-	},
 	// Bastion templates: same source image, plus seeded firstboot + watchdog
 	// units. The seed boots the VM once, installs jq + qemu-guest-agent, writes
 	// the scripts under /usr/local/sbin/, enables systemd units, and shuts down

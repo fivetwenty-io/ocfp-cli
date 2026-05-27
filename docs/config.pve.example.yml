@@ -131,7 +131,7 @@ blocs:
     bastion:
       # Template VM name on the PVE cluster.
       # OCFP auto-provisions from the catalog when the template is missing.
-      # Catalog names: ubuntu-noble-template, ubuntu-jammy-template,
+      # Catalog names: ubuntu-noble-template,
       #                ubuntu-noble-bastion-template (pre-baked firstboot units).
       image: "ubuntu-noble-bastion-template"
 

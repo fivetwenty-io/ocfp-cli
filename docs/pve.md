@@ -60,7 +60,6 @@ Supported catalog names (case-sensitive — set `bastion.image` to one of
 these to opt into auto-provisioning):
 
 - `ubuntu-noble-template` — Ubuntu 24.04 LTS, vanilla (artifacts/jumpbox/etc.)
-- `ubuntu-jammy-template` — Ubuntu 22.04 LTS, vanilla
 - `ubuntu-noble-bastion-template` — Ubuntu 24.04 LTS with OCFP firstboot + watchdog units pre-baked (required for tailscale-enabled bastions; see [`docs/init/bastion-tailscale.md`](init/bastion-tailscale.md))
 
 The `*-bastion-template` variant takes an extra ~3 minutes on first build per cluster: OCFP boots the cloned image with seed credentials, drives the serial console via PVE's termproxy WebSocket to install `jq` + `qemu-guest-agent`, writes the firstboot + watchdog systemd units, then converts to a template. Subsequent bastion bootstraps clone in ~30s. The flow is API-only — no SSH to the PVE host, no snippet upload (PVE 9.x rejects `content=snippets` on `/storage/<pool>/upload`).

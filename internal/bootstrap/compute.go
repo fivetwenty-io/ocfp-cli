@@ -1080,8 +1080,6 @@ func (m *Manager) buildImageFilters(imageNameOrID string) map[string]string {
 			switch {
 			case strings.Contains(imageNameLower, "24.04"):
 				filters["name"] = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
-			case strings.Contains(imageNameLower, "22.04"):
-				filters["name"] = "ubuntu/images/hvm-ssd-gp3/ubuntu-jammy-22.04-amd64-server-*"
 			case strings.Contains(imageNameLower, "20.04"):
 				filters["name"] = "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
 			}

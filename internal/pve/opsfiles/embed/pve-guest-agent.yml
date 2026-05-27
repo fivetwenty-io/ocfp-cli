@@ -67,5 +67,4 @@ addons:
         exit 0
   include:
     stemcell:
-    - os: ubuntu-jammy
     - os: ubuntu-noble
