@@ -18,6 +18,9 @@ type YAMLRenderer struct {
 	log      logger.Logger
 	mu       sync.Mutex
 	sequence int
+
+	// now returns the current time. Defaults to time.Now; injectable for tests.
+	now func() time.Time
 }
 
 // NewYAMLRenderer creates a new YAML renderer.
@@ -28,6 +31,7 @@ func NewYAMLRenderer(w io.Writer) *YAMLRenderer {
 		writer:   w,
 		log:      log,
 		sequence: 0,
+		now:      time.Now,
 	}
 
 	log.Infow("YAML renderer created",
@@ -45,7 +49,7 @@ func (r *YAMLRenderer) PhaseStart(info PhaseInfo) error {
 	)
 
 	return r.emitEvent("phase_start", map[string]interface{}{
-		eventKeyPhaseID:    info.ID,
+		eventKeyPhaseID:     info.ID,
 		"phase_name":        info.Name,
 		"phase_number":      info.Number,
 		eventKeyTotalPhases: info.Total,
@@ -73,7 +77,7 @@ func (r *YAMLRenderer) PhaseProgress(progress ProgressInfo) error {
 
 // PhaseComplete marks successful completion of the current phase.
 func (r *YAMLRenderer) PhaseComplete(info PhaseInfo) error {
-	duration := time.Since(info.StartTime)
+	duration := r.now().Sub(info.StartTime)
 
 	r.log.Infow("Phase completed",
 		eventKeyPhaseID, info.ID,
@@ -81,14 +85,14 @@ func (r *YAMLRenderer) PhaseComplete(info PhaseInfo) error {
 	)
 
 	return r.emitEvent("phase_complete", map[string]interface{}{
-		eventKeyPhaseID:   info.ID,
+		eventKeyPhaseID:    info.ID,
 		eventKeyDurationMs: duration.Milliseconds(),
 	})
 }
 
 // PhaseFailed marks failure of the current phase with error details.
 func (r *YAMLRenderer) PhaseFailed(info PhaseInfo, err error) error {
-	duration := time.Since(info.StartTime)
+	duration := r.now().Sub(info.StartTime)
 
 	r.log.Errorw("Phase failed",
 		eventKeyPhaseID, info.ID,
@@ -96,7 +100,7 @@ func (r *YAMLRenderer) PhaseFailed(info PhaseInfo, err error) error {
 	)
 
 	return r.emitEvent("phase_failed", map[string]interface{}{
-		eventKeyPhaseID:   info.ID,
+		eventKeyPhaseID:    info.ID,
 		"error":            err.Error(),
 		eventKeyDurationMs: duration.Milliseconds(),
 	})
@@ -111,7 +115,7 @@ func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 
 	return r.emitEvent("phase_skipped", map[string]interface{}{
 		eventKeyPhaseID: info.ID,
-		"reason":         reason,
+		"reason":        reason,
 	})
 }
 
@@ -124,11 +128,11 @@ func (r *YAMLRenderer) Finalize(summary Summary) error {
 
 	data := map[string]interface{}{
 		eventKeyTotalPhases: summary.TotalPhases,
-		"completed_phases":   summary.CompletedPhases,
-		"failed_phases":      summary.FailedPhases,
-		"skipped_phases":     summary.SkippedPhases,
+		"completed_phases":  summary.CompletedPhases,
+		"failed_phases":     summary.FailedPhases,
+		"skipped_phases":    summary.SkippedPhases,
 		eventKeyDurationMs:  summary.Duration.Milliseconds(),
-		"success":            summary.Success,
+		"success":           summary.Success,
 	}
 
 	// Add errors if present
@@ -160,7 +164,7 @@ func (r *YAMLRenderer) emitEvent(eventType string, data map[string]interface{}) 
 	evt := map[string]interface{}{
 		"event":     eventType,
 		"sequence":  r.sequence,
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp": r.now().Format(time.RFC3339),
 	}
 
 	// Merge data fields

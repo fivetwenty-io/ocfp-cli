@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
@@ -91,9 +90,6 @@ func TestCleanupOldBackups(t *testing.T) {
 
 		err = manager.SaveWithBackup()
 		assert.NoError(t, err)
-
-		// Sleep to ensure different timestamps
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	// Count backup files
@@ -283,8 +279,6 @@ func TestBackupTimestamps(t *testing.T) {
 
 		err = manager.SaveWithBackup()
 		assert.NoError(t, err)
-
-		time.Sleep(100 * time.Millisecond)
 	}
 
 	// List backup files and verify they have sequential timestamps

@@ -50,6 +50,8 @@ func serveJSON(t *testing.T, body []byte) (*httptest.Server, *string) {
 
 // T31 TestVMExists_FoundInList — VM appears in /nodes/{node}/qemu by vmid.
 func TestVMExists_FoundInList(t *testing.T) {
+	t.Parallel()
+
 	vms := []map[string]interface{}{
 		{"vmid": 900, "name": "other"},
 		{"vmid": 901, "name": "bosh-director"},
@@ -71,6 +73,8 @@ func TestVMExists_FoundInList(t *testing.T) {
 
 // T34 TestVMExists_NotInList — VM absent from list.
 func TestVMExists_NotInList(t *testing.T) {
+	t.Parallel()
+
 	vms := []map[string]interface{}{
 		{"vmid": 900, "name": "other"},
 	}
@@ -88,6 +92,8 @@ func TestVMExists_NotInList(t *testing.T) {
 
 // TestVMExists_FoundByName — VM found when matching by name field.
 func TestVMExists_FoundByName(t *testing.T) {
+	t.Parallel()
+
 	vms := []map[string]interface{}{
 		{"vmid": 901, "name": "bosh-director"},
 	}
@@ -105,6 +111,8 @@ func TestVMExists_FoundByName(t *testing.T) {
 
 // TestVMExists_EmptyList — empty data array returns false.
 func TestVMExists_EmptyList(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -119,6 +127,8 @@ func TestVMExists_EmptyList(t *testing.T) {
 
 // TestVMExists_EmptyNameOrID — rejects empty argument.
 func TestVMExists_EmptyNameOrID(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -130,6 +140,8 @@ func TestVMExists_EmptyNameOrID(t *testing.T) {
 
 // TestVMExists_NoNode — rejects missing Node.
 func TestVMExists_NoNode(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 	v.Node = ""
@@ -142,6 +154,8 @@ func TestVMExists_NoNode(t *testing.T) {
 
 // TestVMExists_HTTPError — propagates HTTP error status.
 func TestVMExists_HTTPError(t *testing.T) {
+	t.Parallel()
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}))
@@ -158,6 +172,8 @@ func TestVMExists_HTTPError(t *testing.T) {
 
 // T32 TestVNetExists_Found — vnet in /cluster/sdn/vnets.
 func TestVNetExists_Found(t *testing.T) {
+	t.Parallel()
+
 	vnets := []map[string]interface{}{
 		{"vnet": "itvnet", "type": "vnet"},
 		{"vnet": "other", "type": "vnet"},
@@ -179,6 +195,8 @@ func TestVNetExists_Found(t *testing.T) {
 
 // T35 TestVNetExists_Absent — vnet not in list.
 func TestVNetExists_Absent(t *testing.T) {
+	t.Parallel()
+
 	vnets := []map[string]interface{}{
 		{"vnet": "other", "type": "vnet"},
 	}
@@ -196,6 +214,8 @@ func TestVNetExists_Absent(t *testing.T) {
 
 // TestVNetExists_EmptyID — rejects empty vnetID.
 func TestVNetExists_EmptyID(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -209,6 +229,8 @@ func TestVNetExists_EmptyID(t *testing.T) {
 
 // T54 TestZoneExists_Present — zone in /cluster/sdn/zones.
 func TestZoneExists_Present(t *testing.T) {
+	t.Parallel()
+
 	zones := []map[string]interface{}{
 		{"zone": "simple", "type": "simple"},
 		{"zone": "other", "type": "vlan"},
@@ -230,6 +252,8 @@ func TestZoneExists_Present(t *testing.T) {
 
 // T55 TestZoneExists_Absent — zone not in list.
 func TestZoneExists_Absent(t *testing.T) {
+	t.Parallel()
+
 	zones := []map[string]interface{}{
 		{"zone": "other", "type": "vlan"},
 	}
@@ -247,6 +271,8 @@ func TestZoneExists_Absent(t *testing.T) {
 
 // TestZoneExists_EmptyZone — rejects empty zone argument.
 func TestZoneExists_EmptyZone(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -260,6 +286,8 @@ func TestZoneExists_EmptyZone(t *testing.T) {
 
 // T56 TestSubnetPresent_Match — subnet CIDR in /cluster/sdn/vnets/{vnet}/subnets.
 func TestSubnetPresent_Match(t *testing.T) {
+	t.Parallel()
+
 	subnets := []map[string]interface{}{
 		{"cidr": "10.250.0.0/24", "subnet": "simple-10.250.0.0-24"},
 	}
@@ -280,6 +308,8 @@ func TestSubnetPresent_Match(t *testing.T) {
 
 // TestSubnetPresent_MatchByDashedID — matches when CIDR in dashed subnet ID.
 func TestSubnetPresent_MatchByDashedID(t *testing.T) {
+	t.Parallel()
+
 	subnets := []map[string]interface{}{
 		{"cidr": "", "subnet": "simple-10.250.0.0-24"},
 	}
@@ -297,6 +327,8 @@ func TestSubnetPresent_MatchByDashedID(t *testing.T) {
 
 // TestSubnetPresent_Absent — CIDR not in any entry.
 func TestSubnetPresent_Absent(t *testing.T) {
+	t.Parallel()
+
 	subnets := []map[string]interface{}{
 		{"cidr": "192.168.1.0/24", "subnet": "simple-192.168.1.0-24"},
 	}
@@ -314,6 +346,8 @@ func TestSubnetPresent_Absent(t *testing.T) {
 
 // TestSubnetPresent_EmptyVnet — rejects empty vnetID.
 func TestSubnetPresent_EmptyVnet(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -325,6 +359,8 @@ func TestSubnetPresent_EmptyVnet(t *testing.T) {
 
 // TestSubnetPresent_EmptyCIDR — rejects empty CIDR.
 func TestSubnetPresent_EmptyCIDR(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -338,6 +374,8 @@ func TestSubnetPresent_EmptyCIDR(t *testing.T) {
 
 // T57 TestBridgeExists_Present — bridge in /nodes/{node}/network.
 func TestBridgeExists_Present(t *testing.T) {
+	t.Parallel()
+
 	ifaces := []map[string]interface{}{
 		{"iface": "eth0", "type": "eth"},
 		{"iface": "vmbr0", "type": "bridge"},
@@ -359,6 +397,8 @@ func TestBridgeExists_Present(t *testing.T) {
 
 // T58 TestBridgeExists_Absent — bridge not in list.
 func TestBridgeExists_Absent(t *testing.T) {
+	t.Parallel()
+
 	ifaces := []map[string]interface{}{
 		{"iface": "eth0", "type": "eth"},
 	}
@@ -376,6 +416,8 @@ func TestBridgeExists_Absent(t *testing.T) {
 
 // TestBridgeExists_EmptyBridge — rejects empty bridge argument.
 func TestBridgeExists_EmptyBridge(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -387,6 +429,8 @@ func TestBridgeExists_EmptyBridge(t *testing.T) {
 
 // TestBridgeExists_NoNode — rejects missing Node.
 func TestBridgeExists_NoNode(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 	v.Node = ""
@@ -401,6 +445,8 @@ func TestBridgeExists_NoNode(t *testing.T) {
 
 // T33 TestVolumeExists_Found — volume volid in /nodes/{node}/storage/{storage}/content.
 func TestVolumeExists_Found(t *testing.T) {
+	t.Parallel()
+
 	contents := []map[string]interface{}{
 		{"volid": "local-lvm:vm-901-disk-0", "format": "raw"},
 		{"volid": "local-lvm:vm-900-disk-0", "format": "raw"},
@@ -422,6 +468,8 @@ func TestVolumeExists_Found(t *testing.T) {
 
 // TestVolumeExists_Absent — volume not in list.
 func TestVolumeExists_Absent(t *testing.T) {
+	t.Parallel()
+
 	contents := []map[string]interface{}{
 		{"volid": "local-lvm:vm-900-disk-0", "format": "raw"},
 	}
@@ -439,6 +487,8 @@ func TestVolumeExists_Absent(t *testing.T) {
 
 // TestVolumeExists_InvalidDiskCID — rejects diskCID without colon separator.
 func TestVolumeExists_InvalidDiskCID(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -450,6 +500,8 @@ func TestVolumeExists_InvalidDiskCID(t *testing.T) {
 
 // TestVolumeExists_EmptyDiskCID — rejects empty diskCID.
 func TestVolumeExists_EmptyDiskCID(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 
@@ -461,6 +513,8 @@ func TestVolumeExists_EmptyDiskCID(t *testing.T) {
 
 // TestVolumeExists_NoNode — rejects missing Node.
 func TestVolumeExists_NoNode(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := newVerifier(ts)
 	v.Node = ""
@@ -475,6 +529,8 @@ func TestVolumeExists_NoNode(t *testing.T) {
 
 // TestTokenAuth_SetsAuthorizationHeader — token auth sends Authorization header.
 func TestTokenAuth_SetsAuthorizationHeader(t *testing.T) {
+	t.Parallel()
+
 	var gotAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -499,6 +555,8 @@ func TestTokenAuth_SetsAuthorizationHeader(t *testing.T) {
 
 // TestTicketAuth_SendsCookieHeader — password auth sends PVEAuthCookie.
 func TestTicketAuth_SendsCookieHeader(t *testing.T) {
+	t.Parallel()
+
 	var gotCookie string
 	callCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -543,6 +601,8 @@ func TestTicketAuth_SendsCookieHeader(t *testing.T) {
 
 // TestNoAuth_ReturnsError — no token and no credentials returns error.
 func TestNoAuth_ReturnsError(t *testing.T) {
+	t.Parallel()
+
 	ts, _ := serveJSON(t, pveData(t, []map[string]interface{}{}))
 	v := &verify.PVEVerifier{
 		Client: ts.Client(),
@@ -561,6 +621,8 @@ func TestNoAuth_ReturnsError(t *testing.T) {
 
 // TestNewVerifier_SetsFields — NewVerifier populates all fields correctly.
 func TestNewVerifier_SetsFields(t *testing.T) {
+	t.Parallel()
+
 	v := verify.NewVerifier("https://pve:8006/api2/json", "node1", "tok", "", "")
 	if v.Base != "https://pve:8006/api2/json" {
 		t.Errorf("expected Base set, got %q", v.Base)

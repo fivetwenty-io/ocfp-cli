@@ -49,7 +49,8 @@ func stubS3Handler(t *testing.T, seen *[]string) http.Handler {
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			w.WriteHeader(http.StatusOK)
+			t.Errorf("unexpected S3 request path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
 		}
 	})
 }

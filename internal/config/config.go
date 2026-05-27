@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1645,7 +1646,7 @@ func validate(cfg *Config) error {
 // validatePVE runs all PVE-specific validation steps: auth mode, VMID range,
 // and director/CF cloud-config CIDR pairing.
 func validatePVE(cfg *Config) error {
-	if err := validatePVEAuth(cfg); err != nil {
+	if err := validatePVEAuth(cfg, os.Stderr); err != nil {
 		return err
 	}
 
@@ -1680,9 +1681,12 @@ func validatePVE(cfg *Config) error {
 //
 // Rules (Decision D2):
 //   - Neither mode configured → ErrPVEAuthRequired.
-//   - Both modes configured → log warning; token wins at runtime (not an error).
+//   - Both modes configured → write warning to warnW; token wins at runtime (not an error).
 //   - Exactly one mode configured → valid.
-func validatePVEAuth(cfg *Config) error {
+//
+// warnW receives any diagnostic text; pass os.Stderr in production callers and
+// a *bytes.Buffer in tests to avoid global stderr mutation.
+func validatePVEAuth(cfg *Config, warnW io.Writer) error {
 	apiTokenMode := cfg.AuthToken != "" && cfg.TokenSecret != ""
 	userPassMode := cfg.Username != "" && cfg.Password != ""
 
@@ -1694,7 +1698,7 @@ func validatePVEAuth(cfg *Config) error {
 		// Both auth modes set; API token wins at runtime per CPI auth-selection
 		// logic. Log a warning so operators know the password credentials are
 		// ignored. This is not an error because the config is functional.
-		fmt.Fprintf(os.Stderr, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
+		fmt.Fprintf(warnW, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
 	}
 
 	return nil

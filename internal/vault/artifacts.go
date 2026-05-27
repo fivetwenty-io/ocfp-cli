@@ -110,8 +110,8 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 
 func blobstoreEntry(ep artifacts.Endpoint, caPEM, bucketName string) map[string]interface{} {
 	entry := map[string]interface{}{
-		"mode":       "external",
-		"endpoint":   ep.URL,
+		"mode":     "external",
+		"endpoint": ep.URL,
 		// host + port are written alongside endpoint because the bosh
 		// director's blobstore job template (and minio overlay convention)
 		// uses `host` + `port` keys, not `endpoint`. Genesis kits read them

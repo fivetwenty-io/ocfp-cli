@@ -16,7 +16,21 @@ type stubProbe struct {
 func (s *stubProbe) Name() string                        { return s.name }
 func (s *stubProbe) Run(_ context.Context) probes.Result { return s.result }
 
+// calledProbe records whether Run was invoked, then delegates to stubProbe.
+type calledProbe struct {
+	stub   stubProbe
+	called bool
+}
+
+func (c *calledProbe) Name() string { return c.stub.name }
+func (c *calledProbe) Run(ctx context.Context) probes.Result {
+	c.called = true
+	return c.stub.Run(ctx)
+}
+
 func TestRunAll_AllPass_ReturnsOK(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	p1 := &stubProbe{name: "p1", result: probes.Result{OK: true, Detail: "fine"}}
 	p2 := &stubProbe{name: "p2", result: probes.Result{OK: true, Detail: "also fine"}}
@@ -28,13 +42,12 @@ func TestRunAll_AllPass_ReturnsOK(t *testing.T) {
 }
 
 func TestRunAll_FirstFail_StopsAndReturnsFail(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	failResult := probes.Result{OK: false, Detail: "boom", Remediation: "fix it"}
 	p1 := &stubProbe{name: "p1", result: failResult}
-	p2Called := false
-	p2 := &stubProbe{name: "p2", result: probes.Result{OK: true}}
-	// Override p2 Run to detect whether it was called.
-	_ = p2 // p2 is registered but RunAll must abort before reaching it.
+	p2 := &calledProbe{stub: stubProbe{name: "p2", result: probes.Result{OK: true}}}
 
 	got := probes.RunAll(ctx, p1, p2)
 	if got.OK {
@@ -46,10 +59,14 @@ func TestRunAll_FirstFail_StopsAndReturnsFail(t *testing.T) {
 	if got.Remediation != "fix it" {
 		t.Errorf("RunAll: Remediation=%q want %q", got.Remediation, "fix it")
 	}
-	_ = p2Called // second probe must not have run; stub doesn't track this but RunAll guarantees it
+	if p2.called {
+		t.Error("RunAll: second probe must not be called after first probe fails")
+	}
 }
 
 func TestRunAll_SecondFail_ReturnsSecondResult(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	p1 := &stubProbe{name: "p1", result: probes.Result{OK: true}}
 	p2 := &stubProbe{name: "p2", result: probes.Result{OK: false, Detail: "p2 failed"}}
@@ -64,6 +81,8 @@ func TestRunAll_SecondFail_ReturnsSecondResult(t *testing.T) {
 }
 
 func TestRunAll_NoProbes_ReturnsOK(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	got := probes.RunAll(ctx)
 	if !got.OK {

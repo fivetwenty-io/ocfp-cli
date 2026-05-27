@@ -184,19 +184,6 @@ func TestPVEStemcellUpload_SHA1Override_SkipsFetch(t *testing.T) {
 		{out: []byte("upload ok"), err: nil}, // upload-stemcell
 	}
 
-	// nil fetchFn → fakeStemcellBuilder installs a panic fetcher so any call fails the test.
-	builder := fakeStemcellBuilder(boshResps, nil)
-
-	cmd := newPVEStemcellUploadCmdWithBuilder(builder)
-	cmd.SetArgs([]string{
-		"bosh-openstack-kvm-ubuntu-noble-go_agent",
-		"1.584",
-		"https://example.com/stemcell.tgz",
-		"--sha1", "override123",
-		"--env", "pve",
-	})
-
-	// The panic fetcher must NOT fire. If it does, the test panics (immediate failure).
 	// We need a builder that honours the sha1Override the same way defaultStemcellUploadBuilder
 	// does. Because fakeStemcellBuilder does not inspect sha1Override, we use a custom
 	// builder here that returns the override directly.
