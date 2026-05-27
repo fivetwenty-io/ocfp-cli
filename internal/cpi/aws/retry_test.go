@@ -3,9 +3,34 @@ package aws
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
+
+// fakeClock is a controllable clock for tests.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newFakeClock(t time.Time) *fakeClock { return &fakeClock{now: t} }
+
+func (fc *fakeClock) Now() time.Time {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+
+	return fc.now
+}
+
+// Advance moves the fake clock forward by d.
+func (fc *fakeClock) Advance(d time.Duration) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+
+	fc.now = fc.now.Add(d)
+}
 
 func TestRetryWithBackoff_Success(t *testing.T) {
 	ctx := context.Background()
@@ -79,9 +104,15 @@ func TestRetryWithBackoff_NonRetryableError(t *testing.T) {
 
 func TestRetryWithBackoff_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	config := DefaultRetryConfig()
 	config.MaxRetries = 5
 	config.BaseDelay = 100 * time.Millisecond
+
+	// calledCh closes after the first opFunc call — safe to cancel then.
+	calledCh := make(chan struct{})
+	callOnce := sync.OnceFunc(func() { close(calledCh) })
 
 	callCount := 0
 	errChan := make(chan error, 1)
@@ -89,19 +120,24 @@ func TestRetryWithBackoff_ContextCancellation(t *testing.T) {
 	go func() {
 		err := RetryWithBackoff(ctx, config, "test-op", func() error {
 			callCount++
+			callOnce()
 
 			return &Error{Code: ErrCodeThrottling}
 		})
 		errChan <- err
 	}()
 
-	// Cancel context after a short delay
-	time.Sleep(50 * time.Millisecond)
+	// Cancel after confirming the first attempt ran — no fixed sleep.
+	<-calledCh
 	cancel()
 
 	err := <-errChan
 	if err == nil {
 		t.Error("Expected context cancellation error, got nil")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected error wrapping context.Canceled, got: %v", err)
 	}
 
 	if callCount == 0 {
@@ -129,7 +165,8 @@ func TestCalculateBackoff(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		tt := tt
+		t.Run(fmt.Sprintf("attempt_%d", tt.attempt), func(t *testing.T) {
 			delay := calculateBackoff(tt.attempt, config, nil)
 			if delay < tt.minExpected || delay > tt.maxExpected {
 				t.Errorf("Attempt %d: expected delay between %v and %v, got %v",
@@ -200,6 +237,9 @@ func TestCircuitBreaker_HalfOpen(t *testing.T) {
 	config.HalfOpenMaxRequests = 2
 	cb := NewCircuitBreaker(config)
 
+	fc := newFakeClock(time.Now())
+	cb.setClock(fc)
+
 	testErr := errors.New("test error")
 
 	// Open the circuit
@@ -213,8 +253,8 @@ func TestCircuitBreaker_HalfOpen(t *testing.T) {
 		t.Fatalf("Expected open state, got %s", cb.State())
 	}
 
-	// Wait for timeout
-	time.Sleep(150 * time.Millisecond)
+	// Advance past the timeout instead of sleeping.
+	fc.Advance(150 * time.Millisecond)
 
 	// Next request should transition to half-open
 	callCount := 0
@@ -236,6 +276,9 @@ func TestCircuitBreaker_RecoveryToClosedState(t *testing.T) {
 	config.HalfOpenMaxRequests = 3
 	cb := NewCircuitBreaker(config)
 
+	fc := newFakeClock(time.Now())
+	cb.setClock(fc)
+
 	// Open the circuit
 	for i := 0; i < 2; i++ {
 		_ = cb.Execute(context.Background(), "test-op", func() error {
@@ -243,8 +286,8 @@ func TestCircuitBreaker_RecoveryToClosedState(t *testing.T) {
 		})
 	}
 
-	// Wait for timeout
-	time.Sleep(100 * time.Millisecond)
+	// Advance past the timeout instead of sleeping.
+	fc.Advance(100 * time.Millisecond)
 
 	// Execute successful requests in half-open state
 	for i := 0; i < 3; i++ {
