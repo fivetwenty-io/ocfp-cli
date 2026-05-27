@@ -1,0 +1,20 @@
+# "tiers" key is intentionally absent — triggers missing required top key error.
+bosh_vars: manifests/bosh/vars.yml
+bosh_creds: manifests/bosh/creds.yml
+cf_vars: manifests/cf/vars.yml
+
+tier1:
+  vmid_range_start: 900
+  vmid_range_end: 999
+  network_ip: 192.168.1.250
+  network_range: 192.168.1.0/24
+  network_gateway: 192.168.1.1
+  network_bridge: vmbr0
+  vm_cores: 1
+  vm_memory_mib: 1024
+  disk_size_mib: 1024
+
+tier2:
+  bosh_env_alias: pve
+
+tier3: {}
