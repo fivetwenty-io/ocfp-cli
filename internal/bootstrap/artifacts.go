@@ -181,6 +181,8 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		DNSServers:            m.config.Network.DNSServers,
 		Hostname:              vmName,
 		DomainSuffix:          m.bastionDomainSuffix(),
+		VCPUsOverride:         m.config.Artifacts.CPU,
+		MemoryMiBOverride:     m.config.Artifacts.MemoryMiB,
 	}
 
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)

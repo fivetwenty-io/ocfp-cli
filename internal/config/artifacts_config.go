@@ -100,6 +100,15 @@ type ArtifactsConfig struct {
 	// Defaults to "artifacts".
 	Flavor string `json:"flavor,omitempty" mapstructure:"flavor" yaml:"flavor,omitempty"`
 
+	// CPU overrides the flavor's vCPU count for the artifacts VM. Zero (the
+	// default) leaves the flavor preset value unchanged.
+	CPU int `json:"cpu,omitempty" mapstructure:"cpu" yaml:"cpu,omitempty"`
+
+	// MemoryMiB overrides the flavor's RAM (in MiB) for the artifacts VM.
+	// Zero (the default) leaves the flavor preset value unchanged. The PVE
+	// "artifacts" preset defaults to 4096 MiB (4 GiB).
+	MemoryMiB int `json:"memory_mib,omitempty" mapstructure:"memory_mib" yaml:"memory_mib,omitempty"`
+
 	// Template is the cloud-init image template name used to create the VM.
 	// Defaults to "ubuntu-2204-cloudinit".
 	Template string `json:"template,omitempty" mapstructure:"template" yaml:"template,omitempty"`
@@ -252,12 +261,15 @@ type rawArtifactsTLS struct {
 
 // rawArtifacts is the intermediate form used by UnmarshalYAML.
 type rawArtifacts struct {
-	Enabled  bool               `yaml:"enabled,omitempty"`
-	Flavor   string             `yaml:"flavor,omitempty"`
-	Template string             `yaml:"template,omitempty"`
-	Rustfs   rawArtifactsRustfs `yaml:"rustfs,omitempty"`
-	Data     rawArtifactsData   `yaml:"data,omitempty"`
-	TLS      rawArtifactsTLS    `yaml:"tls,omitempty"`
+	Enabled     bool               `yaml:"enabled,omitempty"`
+	Flavor      string             `yaml:"flavor,omitempty"`
+	CPU         int                `yaml:"cpu,omitempty"`
+	MemoryMiB   int                `yaml:"memory_mib,omitempty"`
+	MemoryMiBCC int                `yaml:"memoryMiB,omitempty"`
+	Template    string             `yaml:"template,omitempty"`
+	Rustfs      rawArtifactsRustfs `yaml:"rustfs,omitempty"`
+	Data        rawArtifactsData   `yaml:"data,omitempty"`
+	TLS         rawArtifactsTLS    `yaml:"tls,omitempty"`
 }
 
 // mapRawRustfs converts the raw rustfs aliases into a RustfsConfig.
@@ -315,6 +327,15 @@ func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
 
 	a.Enabled = raw.Enabled
 	a.Flavor = raw.Flavor
+	a.CPU = raw.CPU
+
+	switch {
+	case raw.MemoryMiB != 0:
+		a.MemoryMiB = raw.MemoryMiB
+	case raw.MemoryMiBCC != 0:
+		a.MemoryMiB = raw.MemoryMiBCC
+	}
+
 	a.Template = raw.Template
 	a.Rustfs = mapRawRustfs(raw.Rustfs)
 	a.Data = mapRawData(raw.Data)
