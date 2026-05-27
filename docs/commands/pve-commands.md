@@ -148,6 +148,56 @@ To recover manually:
 
 ---
 
+## Resurrection gate (helper)
+
+`commands.WithResurrectionGate` is a Go helper that wraps any deploy function
+with a BOSH resurrection toggle. Before calling the deploy function it runs
+`bosh update-resurrection off` for the current deployment; after the deploy
+completes (success or failure) it runs `bosh update-resurrection on` via
+`defer`. This is a per-deployment CLI flag, separate from the director-wide
+`resurrector_enabled` ops-file setting. Both controls exist: the ops file
+disables the HM resurrector globally, while the per-deployment flag is stored
+in the director database and honored by `bosh recreate` and the scan-and-fix
+plugin.
+
+The motivation is a false-positive recreate loop that occurs when a BOSH agent
+stalls past the `agent_timeout` threshold during a deploy. The HM sees the
+agent as unresponsive and issues a recreate, which interrupts the in-flight
+deploy. Toggling resurrection off for the duration of the deploy eliminates
+this race.
+
+When a `ocfp pve deploy` command (or equivalent) is added, wire it as follows:
+
+```go
+// pseudocode — adapt runBosh to the actual BOSH client used by the command
+err := commands.WithResurrectionGate(ctx, runBosh, func() error {
+    return deployFn(ctx, deployArgs)
+})
+```
+
+`runBosh` must accept variadic string arguments and return an error; it is the
+same helper already used to invoke other `bosh` sub-commands in the deploy
+path. `deployFn` is the actual deploy call.
+
+**SIGKILL caveat.** If the `ocfp` process is killed with SIGKILL while the
+deploy is running, the deferred `update-resurrection on` does not execute and
+the flag stays off. Before starting any subsequent deploy, verify the flag is
+restored:
+
+```bash
+bosh -d <deployment> resurrection
+```
+
+Run `bosh -d <deployment> update-resurrection on` to restore it manually if
+needed. Integration test harnesses should assert the flag state at the start
+of each run.
+
+Toggle failures (the `update-resurrection off` or the deferred `on`) are
+warning-only. They do not abort the deploy and do not mask the deploy
+function's own error. The deploy always proceeds even when the toggle fails.
+
+---
+
 ## See also
 
 - [PVE provider configuration](../pve.md) — bloc config reference and auth setup
