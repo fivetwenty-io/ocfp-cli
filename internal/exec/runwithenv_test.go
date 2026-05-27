@@ -76,8 +76,8 @@ func TestRunWithEnv_EmptyExtraEnv_Equivalent(t *testing.T) {
 func TestRunWithEnv_NilContext(t *testing.T) {
 	t.Parallel()
 
-	//nolint:staticcheck // intentional nil ctx for test
-	_, err := ocfpexec.RunWithEnv(nil, nil, "true")
+	var ctx context.Context // intentionally nil to exercise ErrNilContext path
+	_, err := ocfpexec.RunWithEnv(ctx, nil, "true")
 	if !errors.Is(err, ocfpexec.ErrNilContext) {
 		t.Errorf("expected ErrNilContext, got: %v", err)
 	}

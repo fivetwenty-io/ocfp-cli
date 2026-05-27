@@ -279,8 +279,8 @@ func TestCall_NilContext(t *testing.T) {
 	defer client.Close()
 
 	req := cpirpc.Request{Method: "info"}
-	//nolint:staticcheck // intentionally passing nil to verify guard
-	_, err := client.Call(nil, req)
+	var ctx context.Context // intentionally nil to exercise nil-context guard
+	_, err := client.Call(ctx, req)
 	if err == nil {
 		t.Fatal("expected error for nil context, got nil")
 	}
