@@ -82,11 +82,11 @@ func TestCreateBOSHManifest_MissingBoshIPReturnsError(t *testing.T) {
 // does not contain any placeholder patterns.
 func TestCreateBOSHManifest_PopulatedStateWritesRealValues(t *testing.T) {
 	const (
-		bloc          = "test-bloc"
-		realSubnetID  = "subnet-0a1b2c3d4e5f6a7b8"
-		realBoshIP    = "10.4.0.4"
-		forbiddenID   = "subnet-xxxxxx"
-		forbiddenIP   = "10.0.0.6"
+		bloc         = "test-bloc"
+		realSubnetID = "subnet-0a1b2c3d4e5f6a7b8"
+		realBoshIP   = "10.4.0.4"
+		forbiddenID  = "subnet-xxxxxx"
+		forbiddenIP  = "10.0.0.6"
 	)
 
 	cfg := buildMinimalConfig(t, bloc)

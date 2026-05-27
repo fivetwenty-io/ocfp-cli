@@ -16,12 +16,12 @@ func TestArtifactsBucketList_ContainsAllRequiredBuckets(t *testing.T) {
 	got := artifactsBucketList("ocfp-lab-wayne", nil)
 
 	want := map[string]bool{
-		"ocfp-lab-wayne-mgmt-bosh":             true,
-		"ocfp-lab-wayne-ocf-bosh":              true,
-		"ocfp-lab-wayne-ocf-cf-droplets":       true,
-		"ocfp-lab-wayne-ocf-cf-packages":       true,
-		"ocfp-lab-wayne-ocf-cf-buildpacks":     true,
-		"ocfp-lab-wayne-ocf-cf-resource-pool":  true,
+		"ocfp-lab-wayne-mgmt-bosh":            true,
+		"ocfp-lab-wayne-ocf-bosh":             true,
+		"ocfp-lab-wayne-ocf-cf-droplets":      true,
+		"ocfp-lab-wayne-ocf-cf-packages":      true,
+		"ocfp-lab-wayne-ocf-cf-buildpacks":    true,
+		"ocfp-lab-wayne-ocf-cf-resource-pool": true,
 	}
 
 	if len(got) != len(want) {

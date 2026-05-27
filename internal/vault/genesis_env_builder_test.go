@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/goccy/go-yaml"
 )
 
 // goldenAWSBOSHDirectorEnv is the expected YAML for WriteEnvFileV32 with

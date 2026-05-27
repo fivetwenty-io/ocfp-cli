@@ -3,8 +3,8 @@ package config_test
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
 // TestNetworkConfigUnmarshalAliases proves the YAML decoder accepts the

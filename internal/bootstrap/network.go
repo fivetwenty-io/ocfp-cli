@@ -66,9 +66,9 @@ const (
 	shoutIPSlot      = 10
 	ocfpUIIPSlot     = 9
 	// artifactsIPSlot is the RustFS blobstore VM. See plans/ocfp-artifacts-rustfs-vm.md.
-	artifactsIPSlot  = 11
-	availableAIPSlot = 12
-	availableBIPSlot = 29
+	artifactsIPSlot     = 11
+	availableAIPSlot    = 12
+	availableBIPSlot    = 29
 	reservedBIPSlot     = 10
 	reservedCIPSlot     = 30
 	ocfpUIProviderIndex = 2

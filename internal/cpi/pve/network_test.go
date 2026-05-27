@@ -237,21 +237,21 @@ func (f *fakePVEClient) UploadCtx(_ context.Context, _ string, _ map[string]stri
 	return nil, nil //nolint:nilnil // test stub
 }
 
-func (f *fakePVEClient) Login() error                                 { return nil }
-func (f *fakePVEClient) Logout() error                                { return nil }
-func (f *fakePVEClient) UpdateTicket(_ string)                        {}
-func (f *fakePVEClient) UpdateCSRFToken(_ string)                     {}
-func (f *fakePVEClient) SetTimeout(_ time.Duration)                   {}
-func (f *fakePVEClient) SetKeepAlive(_ int)                           {}
-func (f *fakePVEClient) SetLogger(_ pveclient.Logger)                 {}
-func (f *fakePVEClient) SetLogConfig(_ pveclient.LogConfig)           {}
-func (f *fakePVEClient) AddLogHook(_ pveclient.Hook)                  {}
-func (f *fakePVEClient) GetLogConfig() pveclient.LogConfig            { return pveclient.LogConfig{} }
-func (f *fakePVEClient) SetMetrics(_ *pmetrics.DefaultMetrics)        {}
-func (f *fakePVEClient) SetTFAHandler(_ pveclient.TFAHandler)         {}
-func (f *fakePVEClient) InvalidateCache(_ string) int                 { return 0 }
-func (f *fakePVEClient) ClearCache()                                  {}
-func (f *fakePVEClient) CacheStats() *pveclient.CacheStats            { return nil }
+func (f *fakePVEClient) Login() error                          { return nil }
+func (f *fakePVEClient) Logout() error                         { return nil }
+func (f *fakePVEClient) UpdateTicket(_ string)                 {}
+func (f *fakePVEClient) UpdateCSRFToken(_ string)              {}
+func (f *fakePVEClient) SetTimeout(_ time.Duration)            {}
+func (f *fakePVEClient) SetKeepAlive(_ int)                    {}
+func (f *fakePVEClient) SetLogger(_ pveclient.Logger)          {}
+func (f *fakePVEClient) SetLogConfig(_ pveclient.LogConfig)    {}
+func (f *fakePVEClient) AddLogHook(_ pveclient.Hook)           {}
+func (f *fakePVEClient) GetLogConfig() pveclient.LogConfig     { return pveclient.LogConfig{} }
+func (f *fakePVEClient) SetMetrics(_ *pmetrics.DefaultMetrics) {}
+func (f *fakePVEClient) SetTFAHandler(_ pveclient.TFAHandler)  {}
+func (f *fakePVEClient) InvalidateCache(_ string) int          { return 0 }
+func (f *fakePVEClient) ClearCache()                           {}
+func (f *fakePVEClient) CacheStats() *pveclient.CacheStats     { return nil }
 
 // Compile-time interface conformance.
 var _ pveclient.Client = (*fakePVEClient)(nil)

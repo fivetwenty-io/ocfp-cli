@@ -61,4 +61,3 @@ func TestSystemEnvironmentVars_GenesisEnvironmentValue(t *testing.T) {
 		t.Errorf("expected %q in system env script, got:\n%s", expected, script)
 	}
 }
-
