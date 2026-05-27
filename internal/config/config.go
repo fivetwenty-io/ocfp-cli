@@ -1629,28 +1629,38 @@ func validate(cfg *Config) error {
 	// - Both auth modes configured: warn; token wins by convention.
 	// - Exactly one auth mode configured: ok.
 	if strings.EqualFold(cfg.Provider, "pve") {
-		if err := validatePVEAuth(cfg); err != nil {
+		if err := validatePVE(cfg); err != nil {
 			return err
 		}
+	}
 
-		if err := validatePVEVMIDRange(cfg); err != nil {
-			return err
-		}
+	return nil
+}
 
-		// Validate that the director network CIDR and CF cloud-config CIDR
-		// refer to the same network when both are present. A mismatch
-		// re-triggers the Tailscale LAN route hazard on PVE blocs.
-		// Either field absent means the operator has not applied both
-		// overrides yet — skip validation rather than fail.
-		directorCIDR := cfg.Network.CIDR
-		if directorCIDR == "" {
-			directorCIDR = cfg.Network.NetworkCIDR
-		}
+// validatePVE runs all PVE-specific validation steps: auth mode, VMID range,
+// and director/CF cloud-config CIDR pairing.
+func validatePVE(cfg *Config) error {
+	if err := validatePVEAuth(cfg); err != nil {
+		return err
+	}
 
-		if directorCIDR != "" && cfg.CFCloudConfigCIDR != "" {
-			if err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR); err != nil {
-				return fmt.Errorf("invalid configuration: %w", err)
-			}
+	if err := validatePVEVMIDRange(cfg); err != nil {
+		return err
+	}
+
+	// Validate that the director network CIDR and CF cloud-config CIDR
+	// refer to the same network when both are present. A mismatch
+	// re-triggers the Tailscale LAN route hazard on PVE blocs.
+	// Either field absent means the operator has not applied both
+	// overrides yet — skip validation rather than fail.
+	directorCIDR := cfg.Network.CIDR
+	if directorCIDR == "" {
+		directorCIDR = cfg.Network.NetworkCIDR
+	}
+
+	if directorCIDR != "" && cfg.CFCloudConfigCIDR != "" {
+		if err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
 		}
 	}
 

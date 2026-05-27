@@ -27,13 +27,6 @@ type InteractiveRenderer struct {
 	writtenSubtasks map[string]map[string]subtaskState
 }
 
-// subtaskState tracks the last written state of a subtask.
-type subtaskState struct {
-	current int
-	total   int
-	status  Status
-}
-
 // InteractiveConfig holds configuration for the interactive renderer.
 type InteractiveConfig struct {
 	// UseColor enables ANSI color codes.
@@ -131,7 +124,7 @@ func (r *InteractiveRenderer) PhaseProgress(progress ProgressInfo) error {
 	r.updateSubtask(phaseID, progress)
 
 	// Log milestone progress (25%, 50%, 75%, 100%)
-	if r.shouldLogMilestone(progress.Percentage) {
+	if shouldLogMilestone(progress.Percentage) {
 		r.log.Debugw("Phase progress milestone",
 			"phase_id", phaseID,
 			"percentage", progress.Percentage,
@@ -160,8 +153,8 @@ func (r *InteractiveRenderer) PhaseComplete(info PhaseInfo) error {
 
 	// Format: [N/Total] ✓ Phase completed: name (phase_duration) (cumulative_duration)
 	line := fmt.Sprintf("[%02d/%d] %s Phase completed: %s (%s) (%s)\n",
-		info.Number, info.Total, r.statusIcon(StatusCompleted),
-		info.Name, r.formatDuration(duration), r.formatDuration(info.CumulativeDuration))
+		info.Number, info.Total, statusIcon(StatusCompleted),
+		info.Name, formatDuration(duration), formatDuration(info.CumulativeDuration))
 
 	if r.config.UseColor {
 		line = Green(line)
@@ -193,7 +186,7 @@ func (r *InteractiveRenderer) PhaseFailed(info PhaseInfo, err error) error {
 	defer r.mu.Unlock()
 
 	line := fmt.Sprintf("[%02d/%d] %s Phase failed: %s - %v\n",
-		info.Number, info.Total, r.statusIcon(StatusFailed),
+		info.Number, info.Total, statusIcon(StatusFailed),
 		info.Name, err)
 
 	if r.config.UseColor {
@@ -221,7 +214,7 @@ func (r *InteractiveRenderer) PhaseSkipped(info PhaseInfo, reason string) error 
 	defer r.mu.Unlock()
 
 	line := fmt.Sprintf("[%02d/%d] %s Phase skipped: %s (%s)\n",
-		info.Number, info.Total, r.statusIcon(StatusSkipped),
+		info.Number, info.Total, statusIcon(StatusSkipped),
 		info.Name, reason)
 
 	if r.config.UseColor {
@@ -343,7 +336,7 @@ func (r *InteractiveRenderer) writeSummaryStatus(summary Summary) error {
 		return err
 	}
 
-	err = r.writeLinef(fmt.Sprintf("Duration: %s\n", r.formatDuration(summary.Duration)))
+	err = r.writeLinef(fmt.Sprintf("Duration: %s\n", formatDuration(summary.Duration)))
 	if err != nil {
 		return err
 	}
@@ -494,24 +487,6 @@ func (r *InteractiveRenderer) writeSubtaskTree(phaseID string) error {
 	return nil
 }
 
-// statusIcon returns the Unicode icon for a given status.
-func (r *InteractiveRenderer) statusIcon(status Status) string {
-	switch status {
-	case StatusRunning:
-		return "⟳"
-	case StatusCompleted:
-		return IconCheck
-	case StatusFailed:
-		return IconCross
-	case StatusSkipped:
-		return "⤷"
-	case StatusPending:
-		return "⏳"
-	default:
-		return "?"
-	}
-}
-
 // colorizeStatus applies color to a line based on status.
 func (r *InteractiveRenderer) colorizeStatus(line string, status Status) string {
 	switch status {
@@ -530,37 +505,3 @@ func (r *InteractiveRenderer) colorizeStatus(line string, status Status) string 
 	}
 }
 
-// shouldLogMilestone determines if this percentage represents a milestone worth logging.
-func (r *InteractiveRenderer) shouldLogMilestone(percentage float64) bool {
-	// Log at 25%, 50%, 75%, 100%
-	milestones := []float64{25.0, 50.0, 75.0, 100.0}
-	for _, milestone := range milestones {
-		if percentage >= milestone-1.0 && percentage <= milestone+1.0 {
-			return true
-		}
-	}
-
-	return false
-}
-
-// formatDuration formats a duration in a human-readable format.
-func (r *InteractiveRenderer) formatDuration(d time.Duration) string { //nolint:varnamelen
-	// Round to nearest second for readability
-	d = d.Round(time.Second)
-
-	if d < time.Minute {
-		return fmt.Sprintf("%.0fs", d.Seconds())
-	}
-
-	minutes := int(d.Minutes())
-	seconds := int(d.Seconds()) - (minutes * 60) //nolint:mnd
-
-	if minutes < 60 { //nolint:mnd
-		return fmt.Sprintf("%dm%02ds", minutes, seconds)
-	}
-
-	hours := minutes / 60 //nolint:mnd
-	minutes %= 60
-
-	return fmt.Sprintf("%dh%02dm%02ds", hours, minutes, seconds)
-}
