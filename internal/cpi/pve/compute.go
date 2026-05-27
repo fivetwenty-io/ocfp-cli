@@ -22,23 +22,28 @@ const (
 	taskTimeoutDefault = 120 // 2 minutes for standard operations
 
 	// Flavor preset resource values.
-	flavorSmallRAM      = 1024
-	flavorSmallDisk     = 10
-	flavorMedCPU        = 2
-	flavorMedRAM        = 2048
-	flavorMedDisk       = 20
-	flavorLargeCPU      = 4
-	flavorLargeRAM      = 4096
-	flavorLargeDisk     = 40
-	flavorXLCPU         = 8
-	flavorXLRAM         = 8192
-	flavorXLDisk        = 80
-	flavorBastionCPU    = 2
-	flavorBastionRAM    = 8192
-	flavorBastionDisk   = 50
-	flavorBoshCPU       = 4
-	flavorBoshRAM       = 8192
-	flavorBoshDisk      = 100
+	flavorSmallRAM    = 1024
+	flavorSmallDisk   = 10
+	flavorMedCPU      = 2
+	flavorMedRAM      = 2048
+	flavorMedDisk     = 20
+	flavorLargeCPU    = 4
+	flavorLargeRAM    = 4096
+	flavorLargeDisk   = 40
+	flavorXLCPU       = 8
+	flavorXLRAM       = 8192
+	flavorXLDisk      = 80
+	flavorBastionCPU  = 2
+	flavorBastionRAM  = 8192
+	flavorBastionDisk = 50
+	// flavorBosh* constants are sized for a BOSH Director that runs UAA,
+	// CredHub, Postgres, NATS, and a blobstore under CF deploy load.
+	// 16 GiB RAM avoids OOM during package-upload bursts; 128 GiB disk
+	// gives compiler packages headroom; 8 vCPU keeps the compiler API
+	// responsive. Values sourced from lab manifests/bosh/vars.yml.
+	flavorBoshCPU       = 8      // unit: count
+	flavorBoshRAM       = 16384  // unit: MiB
+	flavorBoshDisk      = 131072 // unit: MiB
 	flavorArtifactsCPU  = 4
 	flavorArtifactsRAM  = 8192
 	flavorArtifactsDisk = 50
@@ -116,7 +121,7 @@ var flavorPresets = map[string]*cpi.Flavor{
 		VCPUs:       flavorBoshCPU,
 		RAM:         flavorBoshRAM,
 		Disk:        flavorBoshDisk,
-		Description: "BOSH Director: 4 vCPUs, 8GB RAM, 100GB disk",
+		Description: "BOSH Director: 8 vCPUs, 16GB RAM, 128GB disk",
 	},
 	"artifacts": {
 		ID:          "artifacts",
