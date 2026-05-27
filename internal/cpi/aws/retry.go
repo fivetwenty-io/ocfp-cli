@@ -226,10 +226,21 @@ func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
 	}
 }
 
+// clock abstracts wall-clock access for testability.
+type clock interface {
+	Now() time.Time
+}
+
+// realClock is the production clock implementation.
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
+
 // CircuitBreaker implements the circuit breaker pattern.
 type CircuitBreaker struct {
 	config *CircuitBreakerConfig
 	mu     sync.RWMutex
+	clk    clock
 
 	state              CircuitBreakerState
 	failures           int
@@ -246,12 +257,22 @@ func NewCircuitBreaker(config *CircuitBreakerConfig) *CircuitBreaker {
 
 	return &CircuitBreaker{
 		config:             config,
+		clk:                realClock{},
 		state:              StateClosed,
 		failures:           0,
 		consecutiveSuccess: 0,
 		lastFailureTime:    time.Time{},
 		halfOpenRequests:   0,
 	}
+}
+
+// setClock replaces the clock used by this CircuitBreaker.
+// Intended for use in tests only.
+func (cb *CircuitBreaker) setClock(c clock) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	cb.clk = c
 }
 
 // Execute runs a function through the circuit breaker.
@@ -305,7 +326,7 @@ func (cb *CircuitBreaker) canAttempt() bool {
 
 	case StateOpen:
 		// Check if timeout has elapsed
-		if time.Since(cb.lastFailureTime) > cb.config.Timeout {
+		if cb.clk.Now().Sub(cb.lastFailureTime) > cb.config.Timeout {
 			cb.state = StateHalfOpen
 			cb.halfOpenRequests = 0
 
@@ -373,7 +394,7 @@ func (cb *CircuitBreaker) onSuccess(operation string) {
 func (cb *CircuitBreaker) onFailure(operation string) {
 	cb.failures++
 	cb.consecutiveSuccess = 0
-	cb.lastFailureTime = time.Now()
+	cb.lastFailureTime = cb.clk.Now()
 
 	switch cb.state {
 	case StateClosed:

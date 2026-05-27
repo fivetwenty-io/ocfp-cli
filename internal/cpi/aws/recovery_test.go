@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -176,6 +177,12 @@ func TestWaitForResourceState_Timeout(t *testing.T) {
 
 func TestWaitForResourceState_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// checkedCh closes after the first state check, signalling the goroutine
+	// is active and blocked on a select — safe to cancel without a sleep.
+	checkedCh := make(chan struct{})
+	checkOnce := sync.OnceFunc(func() { close(checkedCh) })
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -183,6 +190,8 @@ func TestWaitForResourceState_ContextCancellation(t *testing.T) {
 			ctx,
 			"test-resource",
 			func() (string, error) {
+				checkOnce()
+
 				return "pending", nil
 			},
 			[]string{"available"},
@@ -193,8 +202,8 @@ func TestWaitForResourceState_ContextCancellation(t *testing.T) {
 		errChan <- err
 	}()
 
-	// Cancel context after a short delay
-	time.Sleep(20 * time.Millisecond)
+	// Wait for the first check to complete, then cancel — no fixed sleep.
+	<-checkedCh
 	cancel()
 
 	err := <-errChan
