@@ -218,27 +218,39 @@ func buildUserDataSnippet(req *cpi.InstanceRequest) []byte {
 		fqdn = host + "." + domain
 	}
 
-	user := strings.TrimSpace(req.DefaultUsername)
-	pubKey := strings.TrimSpace(req.PublicKey)
-
 	var buf bytes.Buffer
 
 	buf.WriteString("#cloud-config\n")
 
+	appendHostnameFields(&buf, host, fqdn)
+	appendUserBlock(&buf, req)
+	appendTailscaleRuncmd(&buf, req, host)
+
+	return buf.Bytes()
+}
+
+// appendHostnameFields writes the hostname, fqdn, and host-management lines.
+func appendHostnameFields(buf *bytes.Buffer, host, fqdn string) {
 	if host != "" {
-		fmt.Fprintf(&buf, "hostname: %s\n", host)
+		fmt.Fprintf(buf, "hostname: %s\n", host)
 	}
 
 	if fqdn != "" {
-		fmt.Fprintf(&buf, "fqdn: %s\n", fqdn)
+		fmt.Fprintf(buf, "fqdn: %s\n", fqdn)
 	}
 
 	buf.WriteString("manage_etc_hosts: true\n")
 	buf.WriteString("preserve_hostname: false\n")
+}
+
+// appendUserBlock writes the users stanza with sudo, shell, and SSH keys.
+func appendUserBlock(buf *bytes.Buffer, req *cpi.InstanceRequest) {
+	user := strings.TrimSpace(req.DefaultUsername)
+	pubKey := strings.TrimSpace(req.PublicKey)
 
 	if user != "" {
 		buf.WriteString("users:\n")
-		fmt.Fprintf(&buf, "  - name: %s\n", user)
+		fmt.Fprintf(buf, "  - name: %s\n", user)
 		buf.WriteString("    sudo: ALL=(ALL) NOPASSWD:ALL\n")
 		buf.WriteString("    shell: /bin/bash\n")
 
@@ -251,30 +263,35 @@ func buildUserDataSnippet(req *cpi.InstanceRequest) []byte {
 					continue
 				}
 
-				fmt.Fprintf(&buf, "      - %s\n", trimmed)
+				fmt.Fprintf(buf, "      - %s\n", trimmed)
 			}
 		}
 	}
 
 	buf.WriteString("chpasswd: { expire: false }\n")
 	buf.WriteString("ssh_pwauth: false\n")
+}
 
-	if authKey := sanitizeTailscaleAuthKey(req.TailscaleAuthKey); authKey != "" {
-		buf.WriteString("runcmd:\n")
-		buf.WriteString("  - curl -fsSL https://tailscale.com/install.sh | sh\n")
-
-		upCmd := fmt.Sprintf(
-			"tailscale up --authkey=%q --hostname=%q --advertise-tags=tag:ocfp-bastion --ssh --accept-dns=false --accept-routes=false",
-			authKey, host)
-
-		if routes := deriveAdvertiseRoutes(req); routes != "" {
-			upCmd += " --advertise-routes=" + routes
-		}
-
-		fmt.Fprintf(&buf, "  - %s\n", upCmd)
+// appendTailscaleRuncmd writes the runcmd stanza that installs and connects Tailscale.
+// No-op when req.TailscaleAuthKey is empty or contains only unsafe characters.
+func appendTailscaleRuncmd(buf *bytes.Buffer, req *cpi.InstanceRequest, host string) {
+	authKey := sanitizeTailscaleAuthKey(req.TailscaleAuthKey)
+	if authKey == "" {
+		return
 	}
 
-	return buf.Bytes()
+	buf.WriteString("runcmd:\n")
+	buf.WriteString("  - curl -fsSL https://tailscale.com/install.sh | sh\n")
+
+	upCmd := fmt.Sprintf(
+		"tailscale up --authkey=%q --hostname=%q --advertise-tags=tag:ocfp-bastion --ssh --accept-dns=false --accept-routes=false",
+		authKey, host)
+
+	if routes := deriveAdvertiseRoutes(req); routes != "" {
+		upCmd += " --advertise-routes=" + routes
+	}
+
+	fmt.Fprintf(buf, "  - %s\n", upCmd)
 }
 
 // deriveAdvertiseRoutes computes the bastion's parent vnet CIDR for

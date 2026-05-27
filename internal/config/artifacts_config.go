@@ -217,51 +217,96 @@ func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, interna
 	return nil
 }
 
+// rawArtifactsRustfs holds snake_case + camelCase aliases for the rustfs sub-section.
+type rawArtifactsRustfs struct {
+	Version       string `yaml:"version,omitempty"`
+	DownloadURL   string `yaml:"download_url,omitempty"`
+	DownloadURLCC string `yaml:"downloadURL,omitempty"`
+	S3Port        int    `yaml:"s3_port,omitempty"`
+	S3PortCC      int    `yaml:"s3Port,omitempty"`
+	ConsolePort   int    `yaml:"console_port,omitempty"`
+	ConsolePortCC int    `yaml:"consolePort,omitempty"`
+	AccessKey     string `yaml:"access_key,omitempty"`
+	AccessKeyCC   string `yaml:"accessKey,omitempty"`
+	SecretKey     string `yaml:"secret_key,omitempty"`
+	SecretKeyCC   string `yaml:"secretKey,omitempty"`
+}
+
+// rawArtifactsData holds snake_case + camelCase aliases for the data sub-section.
+type rawArtifactsData struct {
+	DiskSizeGiB   int    `yaml:"disk_size_gib,omitempty"`
+	DiskSizeGiBCC int    `yaml:"diskSizeGiB,omitempty"`
+	StoragePool   string `yaml:"storage_pool,omitempty"`
+	StoragePoolCC string `yaml:"storagePool,omitempty"`
+	ZFSDataset    string `yaml:"zfs_dataset,omitempty"`
+	ZFSDatasetCC  string `yaml:"zfsDataset,omitempty"`
+	Mountpoint    string `yaml:"mountpoint,omitempty"`
+}
+
+// rawArtifactsTLS holds snake_case + camelCase aliases for the tls sub-section.
+type rawArtifactsTLS struct {
+	Mode         string `yaml:"mode,omitempty"`
+	CommonName   string `yaml:"common_name,omitempty"`
+	CommonNameCC string `yaml:"commonName,omitempty"`
+}
+
+// rawArtifacts is the intermediate form used by UnmarshalYAML.
+type rawArtifacts struct {
+	Enabled  bool               `yaml:"enabled,omitempty"`
+	Flavor   string             `yaml:"flavor,omitempty"`
+	Template string             `yaml:"template,omitempty"`
+	Rustfs   rawArtifactsRustfs `yaml:"rustfs,omitempty"`
+	Data     rawArtifactsData   `yaml:"data,omitempty"`
+	TLS      rawArtifactsTLS    `yaml:"tls,omitempty"`
+}
+
+// mapRawRustfs converts the raw rustfs aliases into a RustfsConfig.
+func mapRawRustfs(r rawArtifactsRustfs) RustfsConfig {
+	out := RustfsConfig{
+		Version:     r.Version,
+		DownloadURL: firstSetString(r.DownloadURL, r.DownloadURLCC),
+		AccessKey:   firstSetString(r.AccessKey, r.AccessKeyCC),
+		SecretKey:   firstSetString(r.SecretKey, r.SecretKeyCC),
+	}
+
+	if r.S3Port != 0 {
+		out.S3Port = r.S3Port
+	} else if r.S3PortCC != 0 {
+		out.S3Port = r.S3PortCC
+	}
+
+	if r.ConsolePort != 0 {
+		out.ConsolePort = r.ConsolePort
+	} else if r.ConsolePortCC != 0 {
+		out.ConsolePort = r.ConsolePortCC
+	}
+
+	return out
+}
+
+// mapRawData converts the raw data aliases into an ArtifactsDataConfig.
+func mapRawData(r rawArtifactsData) ArtifactsDataConfig {
+	out := ArtifactsDataConfig{
+		StoragePool: firstSetString(r.StoragePool, r.StoragePoolCC),
+		ZFSDataset:  firstSetString(r.ZFSDataset, r.ZFSDatasetCC),
+		Mountpoint:  r.Mountpoint,
+	}
+
+	if r.DiskSizeGiB != 0 {
+		out.DiskSizeGiB = r.DiskSizeGiB
+	} else if r.DiskSizeGiBCC != 0 {
+		out.DiskSizeGiB = r.DiskSizeGiBCC
+	}
+
+	return out
+}
+
 // UnmarshalYAML accepts both snake_case and camelCase keys for ArtifactsConfig
 // fields, mirroring the BlobstoreConfig pattern. Aliases handled:
 // download_url/downloadURL, s3_port/s3Port, console_port/consolePort,
 // disk_size_gib/diskSizeGiB, storage_pool/storagePool, zfs_dataset/zfsDataset,
 // common_name/commonName.
 func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
-	type rawRustfs struct {
-		Version       string `yaml:"version,omitempty"`
-		DownloadURL   string `yaml:"download_url,omitempty"`
-		DownloadURLCC string `yaml:"downloadURL,omitempty"`
-		S3Port        int    `yaml:"s3_port,omitempty"`
-		S3PortCC      int    `yaml:"s3Port,omitempty"`
-		ConsolePort   int    `yaml:"console_port,omitempty"`
-		ConsolePortCC int    `yaml:"consolePort,omitempty"`
-		AccessKey     string `yaml:"access_key,omitempty"`
-		AccessKeyCC   string `yaml:"accessKey,omitempty"`
-		SecretKey     string `yaml:"secret_key,omitempty"`
-		SecretKeyCC   string `yaml:"secretKey,omitempty"`
-	}
-
-	type rawData struct {
-		DiskSizeGiB   int    `yaml:"disk_size_gib,omitempty"`
-		DiskSizeGiBCC int    `yaml:"diskSizeGiB,omitempty"`
-		StoragePool   string `yaml:"storage_pool,omitempty"`
-		StoragePoolCC string `yaml:"storagePool,omitempty"`
-		ZFSDataset    string `yaml:"zfs_dataset,omitempty"`
-		ZFSDatasetCC  string `yaml:"zfsDataset,omitempty"`
-		Mountpoint    string `yaml:"mountpoint,omitempty"`
-	}
-
-	type rawTLS struct {
-		Mode         string `yaml:"mode,omitempty"`
-		CommonName   string `yaml:"common_name,omitempty"`
-		CommonNameCC string `yaml:"commonName,omitempty"`
-	}
-
-	type rawArtifacts struct {
-		Enabled  bool      `yaml:"enabled,omitempty"`
-		Flavor   string    `yaml:"flavor,omitempty"`
-		Template string    `yaml:"template,omitempty"`
-		Rustfs   rawRustfs `yaml:"rustfs,omitempty"`
-		Data     rawData   `yaml:"data,omitempty"`
-		TLS      rawTLS    `yaml:"tls,omitempty"`
-	}
-
 	var raw rawArtifacts
 
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -271,38 +316,8 @@ func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
 	a.Enabled = raw.Enabled
 	a.Flavor = raw.Flavor
 	a.Template = raw.Template
-
-	a.Rustfs = RustfsConfig{
-		Version:     raw.Rustfs.Version,
-		DownloadURL: firstSetString(raw.Rustfs.DownloadURL, raw.Rustfs.DownloadURLCC),
-		AccessKey:   firstSetString(raw.Rustfs.AccessKey, raw.Rustfs.AccessKeyCC),
-		SecretKey:   firstSetString(raw.Rustfs.SecretKey, raw.Rustfs.SecretKeyCC),
-	}
-
-	if raw.Rustfs.S3Port != 0 {
-		a.Rustfs.S3Port = raw.Rustfs.S3Port
-	} else if raw.Rustfs.S3PortCC != 0 {
-		a.Rustfs.S3Port = raw.Rustfs.S3PortCC
-	}
-
-	if raw.Rustfs.ConsolePort != 0 {
-		a.Rustfs.ConsolePort = raw.Rustfs.ConsolePort
-	} else if raw.Rustfs.ConsolePortCC != 0 {
-		a.Rustfs.ConsolePort = raw.Rustfs.ConsolePortCC
-	}
-
-	a.Data = ArtifactsDataConfig{
-		StoragePool: firstSetString(raw.Data.StoragePool, raw.Data.StoragePoolCC),
-		ZFSDataset:  firstSetString(raw.Data.ZFSDataset, raw.Data.ZFSDatasetCC),
-		Mountpoint:  raw.Data.Mountpoint,
-	}
-
-	if raw.Data.DiskSizeGiB != 0 {
-		a.Data.DiskSizeGiB = raw.Data.DiskSizeGiB
-	} else if raw.Data.DiskSizeGiBCC != 0 {
-		a.Data.DiskSizeGiB = raw.Data.DiskSizeGiBCC
-	}
-
+	a.Rustfs = mapRawRustfs(raw.Rustfs)
+	a.Data = mapRawData(raw.Data)
 	a.TLS = ArtifactsTLSConfig{
 		Mode:       raw.TLS.Mode,
 		CommonName: firstSetString(raw.TLS.CommonName, raw.TLS.CommonNameCC),

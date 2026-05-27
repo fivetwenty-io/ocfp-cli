@@ -18,7 +18,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 const (
@@ -69,51 +68,8 @@ func (m *StorageManager) blobstoreClient() (*blobstoreS3Client, error) {
 		return nil, fmt.Errorf("blobstore: build http client: %w", err)
 	}
 
-	awsCfg := aws.Config{
-		Region:                      region,
-		Credentials:                 aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.BlobstoreAccessKey, cfg.BlobstoreSecretKey, "")),
-		BearerAuthTokenProvider:     nil,
-		HTTPClient:                  httpClient,
-		EndpointResolver:            nil,
-		EndpointResolverWithOptions: nil,
-		RetryMaxAttempts:            0,
-		RetryMode:                   "",
-		Retryer:                     nil,
-		ConfigSources:               nil,
-		APIOptions:                  nil,
-		Logger:                      nil,
-		ClientLogMode:               0,
-		DefaultsMode:                "",
-		RuntimeEnvironment: aws.RuntimeEnvironment{
-			EnvironmentIdentifier:     "",
-			Region:                    "",
-			EC2InstanceMetadataRegion: "",
-		},
-		AppID:                       "",
-		BaseEndpoint:                aws.String(cfg.BlobstoreEndpoint),
-		DisableRequestCompression:   false,
-		RequestMinCompressSizeBytes: 0,
-		AccountIDEndpointMode:       aws.AccountIDEndpointModeDisabled,
-		RequestChecksumCalculation:  aws.RequestChecksumCalculationWhenSupported,
-		ResponseChecksumValidation:  aws.ResponseChecksumValidationWhenSupported,
-		Interceptors: smithyhttp.InterceptorRegistry{
-			BeforeExecution:       nil,
-			BeforeSerialization:   nil,
-			AfterSerialization:    nil,
-			BeforeRetryLoop:       nil,
-			BeforeAttempt:         nil,
-			BeforeSigning:         nil,
-			AfterSigning:          nil,
-			BeforeTransmit:        nil,
-			AfterTransmit:         nil,
-			BeforeDeserialization: nil,
-			AfterDeserialization:  nil,
-			AfterAttempt:          nil,
-			AfterExecution:        nil,
-		},
-		AuthSchemePreference: nil,
-		ServiceOptions:       nil,
-	}
+	creds := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.BlobstoreAccessKey, cfg.BlobstoreSecretKey, ""))
+	awsCfg := buildAWSConfig(region, cfg.BlobstoreEndpoint, httpClient, creds)
 
 	s3cli := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.UsePathStyle = cfg.BlobstorePathStyle
@@ -132,6 +88,20 @@ func (c *Config) isExternalBlobstore() bool {
 	}
 
 	return c.BlobstoreMode == "external"
+}
+
+// buildAWSConfig assembles an aws.Config for the S3-compatible blobstore.
+// All zero-value fields are left at their SDK defaults.
+func buildAWSConfig(region, endpoint string, httpClient *http.Client, creds aws.CredentialsProvider) aws.Config {
+	return aws.Config{
+		Region:                     region,
+		Credentials:                creds,
+		HTTPClient:                 httpClient,
+		BaseEndpoint:               aws.String(endpoint),
+		AccountIDEndpointMode:      aws.AccountIDEndpointModeDisabled,
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenSupported,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenSupported,
+	}
 }
 
 // buildBlobstoreHTTPClient produces an *http.Client matching the operator's

@@ -269,9 +269,6 @@ func TestFinalizeWithFailure(t *testing.T) {
 // The interactive renderer now uses a simpler progressive display without full-screen redraws
 
 func TestFormatDuration(t *testing.T) {
-	buf := &bytes.Buffer{}
-	r := NewInteractiveRenderer(buf)
-
 	tests := []struct {
 		duration time.Duration
 		want     string
@@ -284,7 +281,7 @@ func TestFormatDuration(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := r.formatDuration(tt.duration)
+		got := formatDuration(tt.duration)
 		if got != tt.want {
 			t.Errorf("formatDuration(%v) = %s, want %s", tt.duration, got, tt.want)
 		}
