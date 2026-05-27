@@ -112,6 +112,12 @@ func blobstoreEntry(ep artifacts.Endpoint, caPEM, bucketName string) map[string]
 	entry := map[string]interface{}{
 		"mode":       "external",
 		"endpoint":   ep.URL,
+		// host + port are written alongside endpoint because the bosh
+		// director's blobstore job template (and minio overlay convention)
+		// uses `host` + `port` keys, not `endpoint`. Genesis kits read them
+		// from this entry via `(( vault ... ":host" ))` / `:port`.
+		"host":       ep.Host,
+		"port":       ep.Port,
 		"region":     ep.Region,
 		"path_style": ep.PathStyle,
 		// `bucket` is the historical key. `name` aliases it to match the

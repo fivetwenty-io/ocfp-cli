@@ -164,6 +164,16 @@ func TestArtifactsWriter_WritesAllThreeBlobstoreTriples(t *testing.T) {
 			t.Errorf("%s name = %v, want %s (kit-convention alias)", basePath, body["name"], c.wantBucket)
 		}
 
+		// host + port required for bosh director blobstore job
+		// (host/port keys, not endpoint).
+		if body["host"] != "10.64.64.11" {
+			t.Errorf("%s host = %v, want 10.64.64.11", basePath, body["host"])
+		}
+
+		if body["port"] != 9000 {
+			t.Errorf("%s port = %v, want 9000", basePath, body["port"])
+		}
+
 		creds, ok := safe.data[basePath+"/creds"]
 		if !ok {
 			t.Errorf("missing creds entry at %s/creds", basePath)
