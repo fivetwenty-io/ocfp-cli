@@ -405,9 +405,6 @@ func TestConciseRenderer_GrepFriendly(t *testing.T) {
 }
 
 func TestConciseRenderer_StatusIcons(t *testing.T) {
-	var buf bytes.Buffer
-	renderer := NewConciseRenderer(&buf)
-
 	tests := []struct {
 		status       Status
 		expectedIcon string
@@ -421,7 +418,7 @@ func TestConciseRenderer_StatusIcons(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.status.String(), func(t *testing.T) {
-			icon := renderer.statusIcon(tt.status)
+			icon := statusIcon(tt.status)
 			assert.Equal(t, tt.expectedIcon, icon)
 		})
 	}
@@ -499,9 +496,6 @@ func TestConciseRenderer_PhaseNumberFormatting(t *testing.T) {
 }
 
 func TestConciseRenderer_FormatDuration(t *testing.T) {
-	var buf bytes.Buffer
-	renderer := NewConciseRenderer(&buf)
-
 	tests := []struct {
 		duration time.Duration
 		expected string
@@ -513,7 +507,7 @@ func TestConciseRenderer_FormatDuration(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := renderer.formatDuration(tt.duration)
+		result := formatDuration(tt.duration)
 		assert.Equal(t, tt.expected, result)
 	}
 }
