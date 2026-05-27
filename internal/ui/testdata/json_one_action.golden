@@ -1,0 +1,21 @@
+{
+  "title": "Deployment Plan",
+  "summary": "1 action pending",
+  "sections": [
+    {
+      "title": "",
+      "headers": [
+        "Action",
+        "Target",
+        "Status"
+      ],
+      "rows": [
+        [
+          "create",
+          "bosh-director",
+          "pending"
+        ]
+      ]
+    }
+  ]
+}

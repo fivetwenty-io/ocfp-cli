@@ -1,0 +1,22 @@
+title: Full Deployment Plan
+summary: 3 actions across 2 sections
+sections:
+- title: ""
+  headers:
+  - Action
+  - Target
+  - Status
+  rows:
+  - - create
+    - bosh-director
+    - pending
+  - - update
+    - cf
+    - pending
+- title: Cleanup
+  headers:
+  - Resource
+  - Reason
+  rows:
+  - - old-stemcell
+    - superseded
