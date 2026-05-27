@@ -29,4 +29,23 @@ var (
 	// previously issued keys on secret rotation, so the operator must
 	// acknowledge the blast radius explicitly.
 	ErrSecretRotationRequiresReset = errors.New("rotating RustFS credentials invalidates all keys; pass --reset-all to confirm")
+
+	// ErrCABlocNameRequired is returned when GenerateInternalCA is called with
+	// an empty bloc name.
+	ErrCABlocNameRequired = errors.New("bloc name required for CA generation")
+
+	// ErrCAMaterialIncomplete is returned when IssueLeafCert is called with
+	// a CAMaterial that is missing the cert or key PEM.
+	ErrCAMaterialIncomplete = errors.New("CA material missing cert or key")
+
+	// ErrCACertPEMInvalid is returned when the CA cert PEM cannot be decoded
+	// as a CERTIFICATE block.
+	ErrCACertPEMInvalid = errors.New("CA cert PEM is not a CERTIFICATE block")
+
+	// ErrCAKeyPEMInvalid is returned when the CA key PEM cannot be decoded.
+	ErrCAKeyPEMInvalid = errors.New("CA key PEM not decodable")
+
+	// ErrCACertNoPEM is returned by newS3Client when the supplied CA cert
+	// PEM contains no parseable certificates.
+	ErrCACertNoPEM = errors.New("artifacts CA cert: no certificates parsed")
 )

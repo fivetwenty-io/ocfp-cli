@@ -72,7 +72,7 @@ func parseVolumeOwnerVMID(req *cpi.VolumeRequest) (int, error) {
 	}
 
 	if vmid < 0 {
-		return 0, fmt.Errorf("InstanceID %d must be non-negative", vmid)
+		return 0, fmt.Errorf("InstanceID %d must be non-negative", vmid) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return vmid, nil

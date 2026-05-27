@@ -222,13 +222,13 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 // strings (enforced by resolveInitPVEParams before this is called).
 func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
 	if ocfpHome == "" {
-		return fmt.Errorf("writePVEOpsFiles: ocfpHome must not be empty")
+		return fmt.Errorf("writePVEOpsFiles: ocfpHome must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if bloc == "" {
-		return fmt.Errorf("writePVEOpsFiles: bloc must not be empty")
+		return fmt.Errorf("writePVEOpsFiles: bloc must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if deployment == "" {
-		return fmt.Errorf("writePVEOpsFiles: deployment must not be empty")
+		return fmt.Errorf("writePVEOpsFiles: deployment must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	base := filepath.Join(ocfpHome, bloc, "deployments", deployment)

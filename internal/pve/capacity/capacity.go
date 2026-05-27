@@ -112,7 +112,7 @@ type pveNodeStatusResponse struct {
 //     caller can fall through to default rather than returning zero-value capacity.
 func (q *RESTQuerier) NodeStatus(ctx context.Context, node string) (*NodeStatus, error) {
 	if node == "" {
-		return nil, fmt.Errorf("pve/capacity: node name must not be empty")
+		return nil, fmt.Errorf("pve/capacity: node name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	url := fmt.Sprintf("%s/nodes/%s/status", q.Base, node)
@@ -139,7 +139,7 @@ func (q *RESTQuerier) NodeStatus(ctx context.Context, node string) (*NodeStatus,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pve/capacity: HTTP GET %s: unexpected status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("pve/capacity: HTTP GET %s: unexpected status %d", url, resp.StatusCode) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -159,7 +159,7 @@ func (q *RESTQuerier) NodeStatus(ctx context.Context, node string) (*NodeStatus,
 	}
 
 	if cpuCount == 0 {
-		return nil, fmt.Errorf("pve/capacity: node %q returned zero CPU count; cannot derive capacity", node)
+		return nil, fmt.Errorf("pve/capacity: node %q returned zero CPU count; cannot derive capacity", node) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return &NodeStatus{

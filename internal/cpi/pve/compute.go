@@ -482,8 +482,11 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 		return err
 	}
 
-	// Stop the VM first if running
-	_ = m.StopInstance(ctx, id)
+	// Stop the VM first if running; log but do not abort if stop fails —
+	// the delete API handles powered-on VMs on most PVE versions.
+	if stopErr := m.StopInstance(ctx, id); stopErr != nil {
+		logger.WithOperation("DeleteInstance").Debugf("stop before delete vmid=%s: %v", id, stopErr)
+	}
 
 	// Wait a bit for VM to stop
 	time.Sleep(vmStopDelay)
@@ -1156,7 +1159,9 @@ func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, t
 		params["tags"] = pveTagStr
 	}
 
-	_, _ = m.client.pveClient.PutCtx(ctx, path, params)
+	if _, err := m.client.pveClient.PutCtx(ctx, path, params); err != nil {
+		logger.WithOperation("setVMTags").Warnf("failed to set VM tags vmid=%d: %v", vmid, err)
+	}
 }
 
 // formatPVETag renders a "<key>=<value>" pair as a single PVE-compatible tag

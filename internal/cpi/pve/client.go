@@ -479,7 +479,7 @@ func splitPVEEndpoint(endpoint string) (host string, port int, protocol string) 
 func splitHostPort(hp string) (host string, port string, err error) {
 	idx := strings.LastIndex(hp, ":")
 	if idx <= 0 || idx == len(hp)-1 {
-		return "", "", fmt.Errorf("invalid host:port %q", hp)
+		return "", "", fmt.Errorf("invalid host:port %q", hp) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return hp[:idx], hp[idx+1:], nil

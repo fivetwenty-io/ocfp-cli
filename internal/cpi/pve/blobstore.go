@@ -155,7 +155,7 @@ func buildBlobstoreHTTPClient(caPath string, insecure bool) (*http.Client, error
 		}
 
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA bundle %s: no certificates parsed", caPath)
+			return nil, fmt.Errorf("CA bundle %s: no certificates parsed", caPath) //nolint:err113 // descriptive error, not caller-testable
 		}
 
 		tlsConfig.RootCAs = pool
@@ -410,7 +410,7 @@ func (m *StorageManager) SetBucketLifecycle(ctx context.Context, name string, no
 	}
 
 	if noncurrentDays > math.MaxInt32 {
-		return fmt.Errorf("set bucket lifecycle %s: noncurrentDays %d exceeds int32 max", name, noncurrentDays)
+		return fmt.Errorf("set bucket lifecycle %s: noncurrentDays %d exceeds int32 max", name, noncurrentDays) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	days := int32(noncurrentDays) //nolint:gosec // bounded to [1, MaxInt32] above

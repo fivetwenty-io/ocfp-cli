@@ -235,7 +235,7 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 
 		// Initialize logger once flags and viper are available
 		// Use effectiveBlocName directly to ensure correct value
-		_ = logger.Initialize(logger.Config{
+		if initErr := logger.Initialize(logger.Config{
 			Level:      "",
 			Debug:      viper.GetBool("debug"),
 			Verbose:    viper.GetBool("verbose"),
@@ -247,7 +247,9 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			Subcommand: subcommandName,
 			RequestID:  "",
 			DirectorID: "",
-		})
+		}); initErr != nil {
+			fmt.Fprintln(os.Stderr, "logger init:", initErr)
+		}
 
 		// Create lock file for active command tracking
 		// Skip if no-log is enabled or if this is the logs command itself

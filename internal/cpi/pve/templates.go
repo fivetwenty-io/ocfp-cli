@@ -166,12 +166,12 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 
 	targetStorage := m.client.config.DefaultStorage
 	if targetStorage == "" {
-		return 0, fmt.Errorf("PVE config DefaultStorage required for template provisioning")
+		return 0, fmt.Errorf("PVE config DefaultStorage required for template provisioning") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	isoStorage := m.client.config.ISOStorage
 	if isoStorage == "" {
-		return 0, fmt.Errorf("PVE config ISOStorage required for template provisioning (set provider.iso_storage)")
+		return 0, fmt.Errorf("PVE config ISOStorage required for template provisioning (set provider.iso_storage)") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -305,12 +305,12 @@ func waitForVMStopped(ctx context.Context, c *Client, node string, vmid int, tim
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for VM stop: %w", ctx.Err())
 		case <-time.After(3 * time.Second):
 		}
 	}
 
-	return fmt.Errorf("timeout waiting for vmid %d to stop", vmid)
+	return fmt.Errorf("timeout waiting for vmid %d to stop", vmid) //nolint:err113 // descriptive error, not caller-testable
 }
 
 // createTemplateVM creates the VM that will become the template. The
@@ -390,7 +390,7 @@ func (c *Client) nextTemplateVMID(ctx context.Context) (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("no free VMID in template range %d-%d", templateVMIDFloor, int(templateVMIDFloor)+99)
+	return 0, fmt.Errorf("no free VMID in template range %d-%d", templateVMIDFloor, int(templateVMIDFloor)+99) //nolint:err113 // descriptive error, not caller-testable
 }
 
 // usedClusterVMIDs returns the set of VMIDs currently allocated across the
@@ -403,7 +403,7 @@ func (c *Client) usedClusterVMIDs(ctx context.Context) (map[int]bool, error) {
 
 	raw, ok := resp.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("cluster/resources: unexpected response shape %T", resp)
+		return nil, fmt.Errorf("cluster/resources: unexpected response shape %T", resp) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	used := make(map[int]bool, len(raw))
@@ -480,7 +480,7 @@ func (c *Client) importVolumeExists(ctx context.Context, node, storage, filename
 
 	resp, err := c.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("list import volumes: %w", err)
 	}
 
 	raw, ok := resp.([]interface{})
@@ -525,5 +525,5 @@ func parseUPID(resp *nodes.CreateStorageDownloadUrlResponse) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("unrecognized UPID payload: %s", string(raw))
+	return "", fmt.Errorf("unrecognized UPID payload: %s", string(raw)) //nolint:err113 // descriptive error, not caller-testable
 }
