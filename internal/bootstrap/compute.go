@@ -644,9 +644,19 @@ func splitVaultPathKey(s string) (path, key string, ok bool) {
 
 // bastionTailscaleSpec returns the full tailscale spec for the bastion,
 // resolved from the merged tailscale config plus sensible OCFP defaults
-// for fields the operator left unset. Returns nil when no auth key is
-// configured so the PVE provider skips SMBIOS injection entirely.
+// for fields the operator left unset. Returns nil when Tailscale is not
+// explicitly enabled (enabled: true required) or when no auth key is
+// configured, so the PVE provider skips SMBIOS injection entirely.
 func (m *Manager) bastionTailscaleSpec(hostname, staticIP string, prefix int) *cpi.TailscaleSpec {
+	var tsCfg *config.TailscaleConfig
+	if m.config != nil {
+		tsCfg = m.config.Tailscale
+	}
+
+	if !config.TailscaleEnabled(tsCfg) {
+		return nil
+	}
+
 	authKey := m.resolveBastionTailscaleAuthKey()
 	if authKey == "" {
 		return nil
@@ -749,9 +759,9 @@ func (m *Manager) bastionDomainSuffix() string {
 //
 // Order of preference:
 //
-//	1. keypair_public_key output written by createKeyPair (canonical source).
-//	2. <bloc>/ssh/id_ed25519.pub read from local disk (fallback if state was
-//	   wiped but the operator kept the keys).
+//  1. keypair_public_key output written by createKeyPair (canonical source).
+//  2. <bloc>/ssh/id_ed25519.pub read from local disk (fallback if state was
+//     wiped but the operator kept the keys).
 func (m *Manager) bastionPublicKey() string {
 	if val, err := m.stateManager.GetOutput("keypair_public_key"); err == nil {
 		if pub, ok := val.(string); ok && strings.TrimSpace(pub) != "" {

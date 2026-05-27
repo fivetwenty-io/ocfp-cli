@@ -47,15 +47,15 @@ func (f *fakeTailscaleSafe) GetString(path, key string) (string, error) {
 	return "", errors.New("not found")
 }
 
-func (f *fakeTailscaleSafe) Set(_, _ string, _ interface{}) error           { return nil }
+func (f *fakeTailscaleSafe) Set(_, _ string, _ interface{}) error                 { return nil }
 func (f *fakeTailscaleSafe) SetMultiple(_ string, _ map[string]interface{}) error { return nil }
-func (f *fakeTailscaleSafe) Get(_, _ string) (interface{}, error)           { return nil, nil }
+func (f *fakeTailscaleSafe) Get(_, _ string) (interface{}, error)                 { return nil, nil }
 func (f *fakeTailscaleSafe) GetAll(_ string) (map[string]interface{}, error) {
 	return nil, nil
 }
-func (f *fakeTailscaleSafe) Exists(_ string) (bool, error)            { return false, nil }
-func (f *fakeTailscaleSafe) Delete(_, _ string) error                 { return nil }
-func (f *fakeTailscaleSafe) List(_ string) ([]string, error)          { return nil, nil }
+func (f *fakeTailscaleSafe) Exists(_ string) (bool, error)   { return false, nil }
+func (f *fakeTailscaleSafe) Delete(_, _ string) error        { return nil }
+func (f *fakeTailscaleSafe) List(_ string) ([]string, error) { return nil, nil }
 func (f *fakeTailscaleSafe) Export(_ string) (map[string]interface{}, error) {
 	return nil, nil
 }
@@ -63,8 +63,8 @@ func (f *fakeTailscaleSafe) Import(_ string, _ map[string]interface{}) error { r
 func (f *fakeTailscaleSafe) GetEngineInfo(_ string) (*vault.EngineInfo, error) {
 	return nil, nil
 }
-func (f *fakeTailscaleSafe) MustGet(_, _ string) interface{}              { return nil }
-func (f *fakeTailscaleSafe) GetJSON(_, _ string) ([]byte, error)          { return nil, nil }
+func (f *fakeTailscaleSafe) MustGet(_, _ string) interface{}     { return nil }
+func (f *fakeTailscaleSafe) GetJSON(_, _ string) ([]byte, error) { return nil, nil }
 
 func newTestManager(t *testing.T, cfg *config.Config, safe vault.SafeInterface) *Manager {
 	t.Helper()
@@ -159,6 +159,7 @@ func TestBastionTailscaleSpec_AppliesConfigOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Tailscale: &config.TailscaleConfig{
+		Enabled:      boolPtr(true),
 		AuthKey:      "tskey-1",
 		Tags:         []string{"tag:custom"},
 		AcceptDNS:    boolPtr(true),
@@ -196,13 +197,56 @@ func TestBastionTailscaleSpec_NilWhenNoAuthKey(t *testing.T) {
 	assert.Nil(t, spec)
 }
 
+// T49: TestBastionTailscaleSpec_DisabledReturnsNil asserts that
+// bastionTailscaleSpec returns nil when Enabled is false, even when a valid
+// auth key is configured. An explicit opt-in (enabled: true) is required.
+func TestBastionTailscaleSpec_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enabled nil returns nil (default-false)", func(t *testing.T) {
+		t.Parallel()
+
+		// Auth key is present but Enabled is nil — must still return nil.
+		cfg := &config.Config{Tailscale: &config.TailscaleConfig{AuthKey: "tskey-1"}}
+		m := newTestManager(t, cfg, nil)
+
+		spec := m.bastionTailscaleSpec("bastion-host", "10.64.64.3", 18)
+
+		assert.Nil(t, spec, "Enabled nil must disable Tailscale (default-false)")
+	})
+
+	t.Run("enabled explicit false returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &config.Config{Tailscale: &config.TailscaleConfig{
+			Enabled: boolPtr(false),
+			AuthKey: "tskey-1",
+		}}
+		m := newTestManager(t, cfg, nil)
+
+		spec := m.bastionTailscaleSpec("bastion-host", "10.64.64.3", 18)
+
+		assert.Nil(t, spec, "Enabled false must disable Tailscale even with valid auth key")
+	})
+
+	t.Run("nil config returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		m := newTestManager(t, nil, nil)
+
+		spec := m.bastionTailscaleSpec("bastion-host", "10.64.64.3", 18)
+
+		assert.Nil(t, spec, "nil config must not panic and must return nil")
+	})
+}
+
 // TestBastionTailscaleSpec_DefaultsWhenConfigSparse exercises the bootstrap
 // fallbacks when only auth_key is set; tags default to tag:ocfp-bastion, SSH
 // defaults to true, accept_dns and accept_routes default to false.
 func TestBastionTailscaleSpec_DefaultsWhenConfigSparse(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Tailscale: &config.TailscaleConfig{AuthKey: "tskey-1"}}
+	cfg := &config.Config{Tailscale: &config.TailscaleConfig{Enabled: boolPtr(true), AuthKey: "tskey-1"}}
 	m := newTestManager(t, cfg, nil)
 
 	spec := m.bastionTailscaleSpec("bastion-host", "10.64.64.3", 18)
