@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
 )
@@ -1646,6 +1647,22 @@ func validate(cfg *Config) error {
 
 		if err := validatePVEVMIDRange(cfg); err != nil {
 			return err
+		}
+
+		// Validate that the director network CIDR and CF cloud-config CIDR
+		// refer to the same network when both are present. A mismatch
+		// re-triggers the Tailscale LAN route hazard on PVE blocs.
+		// Either field absent means the operator has not applied both
+		// overrides yet — skip validation rather than fail.
+		directorCIDR := cfg.Network.CIDR
+		if directorCIDR == "" {
+			directorCIDR = cfg.Network.NetworkCIDR
+		}
+
+		if directorCIDR != "" && cfg.CFCloudConfigCIDR != "" {
+			if err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR); err != nil {
+				return fmt.Errorf("invalid configuration: %w", err)
+			}
 		}
 	}
 
