@@ -1,0 +1,10 @@
+Deployment Plan
+
+1 action pending
+
++--------+---------------+---------+
+| Action | Target        | Status  |
++--------+---------------+---------+
+| create | bosh-director | pending |
++--------+---------------+---------+
+
