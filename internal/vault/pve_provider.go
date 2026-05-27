@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/capacity"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"go.uber.org/zap"
 )
@@ -960,19 +962,39 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	// host is stored as bare hostname (no scheme, no port) because the
 	// bosh-pve-cpi-release Go client concatenates "https://" + host + ":" +
 	// port internally — a stored URL would double-prefix.
+	//
+	// Storage classification (R3-10 matrix):
+	//   disk_storage candidates determine storage_backend and disk_format.
+	//   Shared backends:  rbd, cephfs, nfs, cifs, glusterfs, pbs → storage_backend=shared
+	//   Local backends:   lvm, lvmthin, zfspool, dir, btrfs      → storage_backend=block
+	//   dir is special:   storage_backend=dir
+	//   zfspool requires: disk_format=raw (qcow2 unsupported on block devices)
+	//   All others:       disk_format=qcow2
+	vmStorage := pveCPIVMStorage(p.Config)
+	diskStorage := pveCPIDiskStorage(p.Config)
+	// Decision D1: resolve cf_max_in_flight via config → pvesh query → default 12.
+	// A nil querier is passed here so the query step is always skipped during
+	// vault populate (no PVE API credentials are available at that point; the
+	// config value or the default is always sufficient). Operators who want the
+	// live-derived value should set cf_max_in_flight in the bloc config explicitly.
+	cfMaxInFlight := pveCFMaxInFlight(p.Config)
 	cpiConfig := map[string]interface{}{
+		"cf_max_in_flight": fmt.Sprintf("%d", cfMaxInFlight),
+		"disk_format":      pveDiskFormat(diskStorage),
+		"disk_storage":     diskStorage,
 		"host":             pveHostnameOnly(host),
+		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
+		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "lvnet001"),
 		"node":             node,
 		"port":             fmt.Sprintf("%d", pveCPIPort(host)),
+		"status":           "configured",
+		"stemcell_storage": pveStorageOrDefault(p.Config, "stemcell", "local"),
+		"storage_backend":  pveStorageBackend(diskStorage),
 		"user":             pveCPIUser(p.Config.AuthToken, p.Config.Username),
 		"verify_ssl":       fmt.Sprintf("%t", p.Config.VerifySSL),
-		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "lvnet001"),
-		"vm_storage":       pveStorageOrDefault(p.Config, "vm", "local-lvm"),
-		"disk_storage":     pveStorageOrDefault(p.Config, "disk", "zfs-1"),
-		"stemcell_storage": pveStorageOrDefault(p.Config, "stemcell", "local"),
-		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
+		"vm_storage":       vmStorage,
+		"vmid_range_end":   fmt.Sprintf("%d", pveVMIDRangeEnd(p.Config)),
 		"vmid_range_start": fmt.Sprintf("%d", pveVMIDRangeStart(p.Config)),
-		"status":           "configured",
 	}
 
 	// password and api_token are mutually exclusive auth modes but the kit
@@ -1107,22 +1129,136 @@ func pveFirstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// pveCPIVMStorage resolves the effective vm_storage vault key value.
+//
+// Priority:
+//  1. Config.VMStorage — explicit operator override (new field).
+//  2. Artifacts.Data.StoragePool — legacy fallback kept for backwards compat.
+//  3. "local-lvm" — conservative hardcoded default.
+func pveCPIVMStorage(cfg *config.Config) string {
+	if cfg.VMStorage != "" {
+		return cfg.VMStorage
+	}
+	if cfg.Artifacts.Data.StoragePool != "" {
+		return cfg.Artifacts.Data.StoragePool
+	}
+	return "local-lvm"
+}
+
+// pveCPIDiskStorage resolves the effective disk_storage vault key value.
+//
+// Priority:
+//  1. Config.DiskStorage — explicit operator override (new field).
+//  2. Artifacts.Data.StoragePool — legacy fallback; maps persistent-disk pool to
+//     disk_storage so blocs that already configured artifacts.data.storage_pool
+//     continue working without migration.
+//  3. "zfs-1" — conservative hardcoded default matching Wayne-lab reference setup.
+func pveCPIDiskStorage(cfg *config.Config) string {
+	if cfg.DiskStorage != "" {
+		return cfg.DiskStorage
+	}
+	if cfg.Artifacts.Data.StoragePool != "" {
+		return cfg.Artifacts.Data.StoragePool
+	}
+	return "zfs-1"
+}
+
 // pveStorageOrDefault honors per-role storage hints from the artifacts
-// config when present (artifacts.data.storage_pool maps to disk_storage), and
-// falls back to the supplied default for the rest.  Future enhancement: split
-// vm/disk/stemcell storage into dedicated config fields.
+// config when present (artifacts.data.storage_pool maps to stemcell_storage),
+// and falls back to the supplied default.
+// NOTE: vm_storage and disk_storage are now resolved by pveCPIVMStorage and
+// pveCPIDiskStorage respectively; this helper is retained for stemcell_storage.
 func pveStorageOrDefault(cfg *config.Config, role, def string) string {
-	if cfg.Artifacts.Data.StoragePool != "" && role == "disk" {
+	if cfg.Artifacts.Data.StoragePool != "" && role == "stemcell" {
 		return cfg.Artifacts.Data.StoragePool
 	}
 	return def
 }
 
-// pveVMIDRangeStart returns the configured VMID range start or the
-// conservative default 200 (matches the bosh kit's spruce default).
-func pveVMIDRangeStart(_ *config.Config) int {
-	const defaultStart = 200
-	return defaultStart
+// pveStorageBackend returns the BOSH-CPI storage_backend classification for a
+// PVE storage pool name.
+//
+// Shared backends (cluster-visible): rbd, cephfs, nfs, cifs, glusterfs, pbs.
+// Dir backend: dir (special-cased; CPI uses "dir" not "block" or "shared").
+// Local/block backends: lvm, lvmthin, zfspool, btrfs — all return "block".
+// Unknown pool names: "block" (conservative default, suitable for most installs).
+//
+// Source: R3-10 storage matrix; matches bosh-pve-cpi-release _LOCAL_DISK_TYPES.
+func pveStorageBackend(poolName string) string {
+	switch strings.ToLower(strings.TrimSpace(poolName)) {
+	case "rbd", "cephfs", "nfs", "cifs", "glusterfs", "pbs":
+		return "shared"
+	case "dir":
+		return "dir"
+	case "lvm", "lvmthin", "zfspool", "btrfs":
+		return "block"
+	default:
+		// Unknown pool: default to "block" (most common local install type).
+		// Caller logs a warning via configureCPI summary; no error returned here
+		// because the pool name may be a site-specific alias.
+		return "block"
+	}
+}
+
+// pveDiskFormat returns the disk_format required by the given storage pool.
+//
+// zfspool block devices do NOT support qcow2; they require raw format.
+// lvm and lvmthin also require raw for the same reason (block devices).
+// All other pool types default to qcow2 (dir, rbd, nfs, cifs, glusterfs, pbs).
+//
+// Source: R3-10; Wayne-lab storage-pools.yml; bosh-pve-cpi docs.
+func pveDiskFormat(poolName string) string {
+	switch strings.ToLower(strings.TrimSpace(poolName)) {
+	case "zfspool", "lvm", "lvmthin":
+		return "raw"
+	default:
+		return "qcow2"
+	}
+}
+
+// pveVMIDRangeStart returns the configured VMID range start, or the default
+// value 100 when the Config field is zero (unset). 100 is the lab-tested lower
+// bound: it clears the PVE internal IDs (1-99) and reserved template range
+// (9000+) without overlapping the OCFP lab allocation space.
+func pveVMIDRangeStart(cfg *config.Config) int {
+	const defaultStart = 100
+	if cfg == nil || cfg.VmidRangeStart <= 0 {
+		return defaultStart
+	}
+	return cfg.VmidRangeStart
+}
+
+// pveVMIDRangeEnd returns the configured VMID range end, or the default value
+// 5999 when the Config field is zero (unset). 5999 leaves the range 6000-8999
+// free for operator use and keeps PVE template IDs (9000+) unreachable by the
+// CPI allocator.
+func pveVMIDRangeEnd(cfg *config.Config) int {
+	const defaultEnd = 5999
+	if cfg == nil || cfg.VmidRangeEnd <= 0 {
+		return defaultEnd
+	}
+	return cfg.VmidRangeEnd
+}
+
+// pveCFMaxInFlight resolves the cf_max_in_flight value written to vault.
+//
+// Resolution order per Decision D1:
+//  1. Config.CfMaxInFlight > 0 — explicit operator override; used as-is.
+//  2. Live PVE node query — not attempted here (no credentials at vault-populate
+//     time); callers that have API access may pass a non-nil Querier to
+//     capacity.Resolve directly.
+//  3. Default 12 — sized to PVE's default storage worker thread count.
+//
+// The function always returns a positive integer. A nil Config is safe.
+func pveCFMaxInFlight(cfg *config.Config) int {
+	if cfg != nil && cfg.CfMaxInFlight > 0 {
+		return cfg.CfMaxInFlight
+	}
+
+	// No live query during vault populate (no PVE credentials available).
+	// Resolve with nil querier; falls straight to the default.
+	resolved := capacity.Resolve(context.Background(), nil, "", 0, 0)
+	return resolved.MaxInFlight
 }
 
 // ConfigureAZs writes Proxmox node names as availability zone entries.
