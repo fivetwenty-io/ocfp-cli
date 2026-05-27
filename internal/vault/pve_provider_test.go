@@ -550,3 +550,430 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 	assert.Nil(t, mock.findSetMultipleCall(emptyPath),
 		"empty-valued reserved IP output must not be written")
 }
+
+// ---------------------------------------------------------------------------
+// IMP-10: Storage backend classification + VMStorage/DiskStorage Config fields
+// ---------------------------------------------------------------------------
+
+// T29 TestPVEStorageBackend_LVMThin_ReturnsBlock verifies lvmthin classifies
+// as "block" storage backend.
+func TestPVEStorageBackend_LVMThin_ReturnsBlock(t *testing.T) {
+	t.Parallel()
+
+	got := pveStorageBackend("lvmthin")
+	assert.Equal(t, "block", got)
+}
+
+// T29b TestPVEStorageBackend_ZFSPool_ReturnsBlock verifies zfspool classifies
+// as "block" storage backend.
+func TestPVEStorageBackend_ZFSPool_ReturnsBlock(t *testing.T) {
+	t.Parallel()
+
+	got := pveStorageBackend("zfspool")
+	assert.Equal(t, "block", got)
+}
+
+// T30 TestPVEStorageBackend_NFS_ReturnsShared verifies nfs classifies as
+// "shared" storage backend.
+func TestPVEStorageBackend_NFS_ReturnsShared(t *testing.T) {
+	t.Parallel()
+
+	got := pveStorageBackend("nfs")
+	assert.Equal(t, "shared", got)
+}
+
+// TestPVEStorageBackend_SharedTypes verifies all shared types return "shared".
+func TestPVEStorageBackend_SharedTypes(t *testing.T) {
+	t.Parallel()
+
+	shared := []string{"rbd", "cephfs", "nfs", "cifs", "glusterfs", "pbs"}
+	for _, s := range shared {
+		s := s
+		t.Run(s, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "shared", pveStorageBackend(s), "storage type %q should be shared", s)
+		})
+	}
+}
+
+// T29c TestPVEStorageBackend_ZFSPool_DiskFormatRaw verifies zfspool requires
+// raw disk format (qcow2 not supported on block devices).
+func TestPVEStorageBackend_ZFSPool_DiskFormatRaw(t *testing.T) {
+	t.Parallel()
+
+	got := pveDiskFormat("zfspool")
+	assert.Equal(t, "raw", got, "zfspool block devices require disk_format: raw")
+}
+
+// T29d TestPVEStorageBackend_Unknown_DefaultsToBlock verifies unknown pool
+// names default to "block" (conservative safe default).
+func TestPVEStorageBackend_Unknown_DefaultsToBlock(t *testing.T) {
+	t.Parallel()
+
+	got := pveStorageBackend("some-unknown-pool")
+	assert.Equal(t, "block", got, "unknown pool type must default to block (conservative)")
+}
+
+// T29e TestConfigureCPI_VMStorageField_WritesVmStorageKey verifies that when
+// Config.VMStorage is set, configureCPI writes that value to the vm_storage
+// vault key.
+func TestConfigureCPI_VMStorageField_WritesVmStorageKey(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		VMStorage:   "data",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "data", data["vm_storage"], "vm_storage must reflect Config.VMStorage")
+}
+
+// T29f TestConfigureCPI_VMStorageEmpty_FallsBackToBlobstorePool verifies that
+// when Config.VMStorage is empty and Artifacts.Data.StoragePool is set,
+// configureCPI falls back to Artifacts.Data.StoragePool for vm_storage.
+func TestConfigureCPI_VMStorageEmpty_FallsBackToBlobstorePool(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		// VMStorage empty — should fall back to Artifacts.Data.StoragePool.
+		Artifacts: config.ArtifactsConfig{
+			Data: config.ArtifactsDataConfig{
+				StoragePool: "local-zfs",
+			},
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "local-zfs", data["vm_storage"], "vm_storage must fall back to Artifacts.Data.StoragePool when VMStorage is empty")
+}
+
+// TestConfigureCPI_DiskStorageEmpty_FallsBackToBlobstorePool verifies that
+// when Config.DiskStorage is empty and Artifacts.Data.StoragePool is set,
+// configureCPI falls back to Artifacts.Data.StoragePool for disk_storage.
+func TestConfigureCPI_DiskStorageEmpty_FallsBackToBlobstorePool(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		// DiskStorage empty — should fall back to Artifacts.Data.StoragePool.
+		Artifacts: config.ArtifactsConfig{
+			Data: config.ArtifactsDataConfig{
+				StoragePool: "local-zfs",
+			},
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "local-zfs", data["disk_storage"], "disk_storage must fall back to Artifacts.Data.StoragePool when DiskStorage is empty")
+}
+
+// TestConfigureCPI_DiskStorageField_WritesStorageBackendAndFormat verifies that
+// when Config.DiskStorage is set, the storage_backend and disk_format keys
+// reflect the classification of that storage type.
+func TestConfigureCPI_DiskStorageField_WritesStorageBackendAndFormat(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		DiskStorage: "zfs-1",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "zfs-1", data["disk_storage"])
+	// zfs-1 is an alias for zfspool storage; storage_backend defaults to "block"
+	// for unknown pool names (conservative safe default).
+	assert.Equal(t, "block", data["storage_backend"], "unknown pool name zfs-1 must default storage_backend to block")
+	// zfs-1 is not a recognized raw-requiring type by pool name; format is qcow2
+	// unless the user set DiskStorage to the exact PVE storage type keyword.
+	assert.Equal(t, "qcow2", data["disk_format"])
+}
+
+// TestConfigureCPI_DiskStorageZfspool_WritesRawFormat verifies that when
+// DiskStorage is set to the literal "zfspool" type keyword, disk_format is "raw"
+// and storage_backend is "block".
+func TestConfigureCPI_DiskStorageZfspool_WritesRawFormat(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		DiskStorage: "zfspool",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "block", data["storage_backend"])
+	assert.Equal(t, "raw", data["disk_format"], "zfspool type requires disk_format: raw")
+}
+
+// TestConfigureCPI_WritesAllExpectedStorageKeys verifies every required storage
+// key is present in the vault write for completeness (T29 range check).
+func TestConfigureCPI_WritesAllExpectedStorageKeys(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	requiredKeys := []string{
+		"disk_format",
+		"disk_storage",
+		"storage_backend",
+		"vm_storage",
+	}
+	for _, k := range requiredKeys {
+		_, ok := data[k]
+		assert.True(t, ok, "cpiConfig must contain key %q", k)
+	}
+}
+
+// TestConfigureCPI_WritesVmidRangeEnd (T05) — when VmidRangeEnd is set in
+// Config, configureCPI writes the exact value to vmid_range_end in the vault
+// payload.
+func TestConfigureCPI_WritesVmidRangeEnd(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint:  "https://pve.example.com:8006",
+		AuthToken:    "root@pam!tok",
+		TokenSecret:  "secret",
+		Region:       "pve01",
+		VmidRangeEnd: 4000,
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "4000", data["vmid_range_end"],
+		"vmid_range_end must reflect Config.VmidRangeEnd when set")
+}
+
+// TestPVEVMIDRangeStart_UsesConfigValue (T06) — pveVMIDRangeStart returns the
+// configured value when Config.VmidRangeStart is non-zero.
+func TestPVEVMIDRangeStart_UsesConfigValue(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{VmidRangeStart: 500}
+	got := pveVMIDRangeStart(cfg)
+	assert.Equal(t, 500, got, "pveVMIDRangeStart must return Config.VmidRangeStart when non-zero")
+}
+
+// TestPVEVMIDRangeStart_FallsBackTo100 (T06b) — pveVMIDRangeStart returns 100
+// when Config.VmidRangeStart is zero (unset).
+func TestPVEVMIDRangeStart_FallsBackTo100(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{VmidRangeStart: 0}
+	got := pveVMIDRangeStart(cfg)
+	assert.Equal(t, 100, got, "pveVMIDRangeStart must return 100 when VmidRangeStart is zero")
+}
+
+// TestPVEVMIDRangeEnd_ReadsConfig (T05) — pveVMIDRangeEnd returns the
+// configured value when Config.VmidRangeEnd is non-zero.
+func TestPVEVMIDRangeEnd_ReadsConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{VmidRangeEnd: 4000}
+	got := pveVMIDRangeEnd(cfg)
+	assert.Equal(t, 4000, got, "pveVMIDRangeEnd must return Config.VmidRangeEnd when non-zero")
+}
+
+// TestPVEVMIDRangeEnd_Default (T06) — pveVMIDRangeEnd returns 5999 when
+// Config.VmidRangeEnd is zero (unset).
+func TestPVEVMIDRangeEnd_Default(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{VmidRangeEnd: 0}
+	got := pveVMIDRangeEnd(cfg)
+	assert.Equal(t, 5999, got, "pveVMIDRangeEnd must return 5999 when VmidRangeEnd is zero")
+}
+
+// TestPVEVMIDRangeEnd_NilConfig — pveVMIDRangeEnd returns 5999 when Config is nil.
+func TestPVEVMIDRangeEnd_NilConfig(t *testing.T) {
+	t.Parallel()
+
+	got := pveVMIDRangeEnd(nil)
+	assert.Equal(t, 5999, got, "pveVMIDRangeEnd must return 5999 for nil Config")
+}
+
+// TestPVEVMIDRangeStart_NilConfig — pveVMIDRangeStart returns 100 when Config is nil.
+func TestPVEVMIDRangeStart_NilConfig(t *testing.T) {
+	t.Parallel()
+
+	got := pveVMIDRangeStart(nil)
+	assert.Equal(t, 100, got, "pveVMIDRangeStart must return 100 for nil Config")
+}
+
+// TestConfigureCPI_VmidRangeStart_ReadsConfig (T05b) — when VmidRangeStart is
+// set in Config, configureCPI writes the exact value to vmid_range_start.
+func TestConfigureCPI_VmidRangeStart_ReadsConfig(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint:    "https://pve.example.com:8006",
+		AuthToken:      "root@pam!tok",
+		TokenSecret:    "secret",
+		Region:         "pve01",
+		VmidRangeStart: 300,
+		VmidRangeEnd:   5999,
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "300", data["vmid_range_start"],
+		"vmid_range_start must reflect Config.VmidRangeStart when set")
+}
+
+// TestConfigureCPI_VmidRangeDefaults — when both VmidRangeStart and VmidRangeEnd
+// are zero, configureCPI writes the defaults (100 / 5999).
+func TestConfigureCPI_VmidRangeDefaults(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		// VmidRangeStart and VmidRangeEnd both zero (unset).
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "100", data["vmid_range_start"],
+		"default vmid_range_start must be 100 when VmidRangeStart is zero")
+	assert.Equal(t, "5999", data["vmid_range_end"],
+		"default vmid_range_end must be 5999 when VmidRangeEnd is zero")
+}
+
+// ---------------------------------------------------------------------------
+// IMP-08: cf_max_in_flight (T24, T25)
+// ---------------------------------------------------------------------------
+
+// T24 TestConfigureCPI_WritesCfMaxInFlight_FromConfig verifies that when
+// Config.CfMaxInFlight > 0, configureCPI writes that value to the vault key
+// cf_max_in_flight as a string.
+func TestConfigureCPI_WritesCfMaxInFlight_FromConfig(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint:   "https://pve.example.com:8006",
+		AuthToken:     "root@pam!tok",
+		TokenSecret:   "secret",
+		Region:        "pve01",
+		CfMaxInFlight: 8,
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "8", data["cf_max_in_flight"],
+		"cf_max_in_flight must reflect Config.CfMaxInFlight when set")
+}
+
+// T25 TestConfigureCPI_WritesCfMaxInFlight_DefaultWhenUnset verifies that when
+// Config.CfMaxInFlight == 0 (unset), configureCPI writes the default value
+// "12" to the vault key cf_max_in_flight.
+func TestConfigureCPI_WritesCfMaxInFlight_DefaultWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		// CfMaxInFlight deliberately omitted (zero).
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "12", data["cf_max_in_flight"],
+		"cf_max_in_flight must be the default 12 when Config.CfMaxInFlight is zero")
+}
+
+// TestConfigureCPI_CfMaxInFlight_KeyAlwaysPresent verifies cf_max_in_flight is
+// always present in the vault payload regardless of other config values.
+func TestConfigureCPI_CfMaxInFlight_KeyAlwaysPresent(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	_, ok := mock.setMultipleCalls[0].data["cf_max_in_flight"]
+	assert.True(t, ok, "cf_max_in_flight key must always be present in the CPI vault payload")
+}
