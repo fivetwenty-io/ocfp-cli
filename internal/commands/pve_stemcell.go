@@ -20,9 +20,9 @@ type stemcellUploadBuilder func(boshEnv, sha1Override string) (stemcell.RunBosh,
 //   - SHA1Fetcher calls stemcell.FetchSHA1 via DefaultHTTPClient unless sha1Override
 //     is non-empty, in which case the fetcher returns sha1Override immediately.
 func defaultStemcellUploadBuilder(boshEnv, sha1Override string) (stemcell.RunBosh, stemcell.SHA1Fetcher) {
-	runBosh := func(args ...string) ([]byte, error) {
+	runBosh := func(ctx context.Context, args ...string) ([]byte, error) {
 		full := append([]string{"-e", boshEnv}, args...)
-		cmd := exec.Command("bosh", full...) //nolint:gosec // args come from validated flag + positional inputs
+		cmd := exec.CommandContext(ctx, "bosh", full...) //nolint:gosec // args come from validated flag + positional inputs
 		return cmd.Output()
 	}
 
@@ -65,7 +65,7 @@ func NewPVEStemcellCmd() *cobra.Command {
 //
 // Usage: ocfp pve stemcell upload <name> <version> <url>
 //
-//   - name:    full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+//   - name:    full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-noble-go_agent"
 //   - version: exact version string, e.g. "1.584"
 //   - url:     download URL for the stemcell tarball
 //
@@ -104,11 +104,11 @@ When the stemcell is absent it fetches the SHA1 checksum from bosh.io
   bosh -e <env> upload-stemcell --sha1 <sha1> <url>
 
 Pass --sha1 to supply a known checksum and skip the bosh.io HTTP call.`,
-		Example: `  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-jammy-go_agent 1.584 \
-      https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-jammy-go_agent?v=1.584
+		Example: `  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
+      https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584
 
-  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-jammy-go_agent 1.584 \
-      https://storage.example.com/stemcells/jammy-1.584.tgz \
+  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
+      https://storage.example.com/stemcells/noble-1.584.tgz \
       --sha1 abc123deadbeef`,
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {

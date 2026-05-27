@@ -9,12 +9,13 @@ const ResourceType = "artifacts"
 // full https://host:port (or http:// when TLS is disabled). PathStyle is always
 // true for RustFS. Region is "us-east-1" (SigV4 needs a value; unused by RustFS).
 type Endpoint struct {
-	URL       string
-	Host      string
-	Port      int
-	Region    string
-	PathStyle bool
-	CACert    string // empty when TLS is disabled
+	URL           string
+	Host          string
+	Port          int
+	Region        string
+	PathStyle     bool
+	CACert        string // empty when TLS is disabled
+	SkipTLSVerify bool   `yaml:"skip_tls_verify" json:"skip_tls_verify"` // operators using self-signed certs must set this explicitly
 }
 
 // VaultWriter persists artifacts blobstore credentials and metadata to vault.
