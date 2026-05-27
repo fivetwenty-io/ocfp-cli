@@ -1,5 +1,13 @@
 package bootstrap
 
+import "time"
+
+// SetSleepFn replaces the package-level sleepFn. Call once from TestMain
+// before parallel tests start to avoid data races on the shared variable.
+func SetSleepFn(fn func(time.Duration)) {
+	sleepFn = fn
+}
+
 // GetAvailabilityZone exposes getAvailabilityZone for testing.
 func (m *Manager) GetAvailabilityZone(index int) string {
 	return m.getAvailabilityZone(index)
