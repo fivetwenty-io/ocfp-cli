@@ -37,7 +37,7 @@ func All() map[string]string {
 // Returns a wrapped error identifying the failing path on any write failure.
 func WriteToDeploymentsDir(dir string) error {
 	if dir == "" {
-		return fmt.Errorf("opsfiles: WriteToDeploymentsDir: dir must not be empty")
+		return fmt.Errorf("opsfiles: WriteToDeploymentsDir: dir must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -59,7 +59,7 @@ func WriteToDeploymentsDir(dir string) error {
 // Returns a wrapped error identifying the failing path on any write failure.
 func WriteRuntimeConfigToDir(dir string) error {
 	if dir == "" {
-		return fmt.Errorf("opsfiles: WriteRuntimeConfigToDir: dir must not be empty")
+		return fmt.Errorf("opsfiles: WriteRuntimeConfigToDir: dir must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if err := os.MkdirAll(dir, 0o750); err != nil {

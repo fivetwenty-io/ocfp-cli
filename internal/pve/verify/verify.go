@@ -141,7 +141,7 @@ func (v *PVEVerifier) ensureTicket(ctx context.Context) error {
 	}
 
 	if v.Username == "" || v.Password == "" {
-		return fmt.Errorf("pve verify: no APIToken and no Username/Password configured")
+		return fmt.Errorf("pve verify: no APIToken and no Username/Password configured") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	body := url.Values{
@@ -172,7 +172,7 @@ func (v *PVEVerifier) ensureTicket(ctx context.Context) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("pve verify: ticket auth HTTP %d: %s", resp.StatusCode, string(raw))
+		return fmt.Errorf("pve verify: ticket auth HTTP %d: %s", resp.StatusCode, string(raw)) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	var envelope struct {
@@ -184,7 +184,7 @@ func (v *PVEVerifier) ensureTicket(ctx context.Context) error {
 		return fmt.Errorf("pve verify: parse ticket response: %w", err)
 	}
 	if envelope.Data.Ticket == "" {
-		return fmt.Errorf("pve verify: ticket auth returned empty ticket")
+		return fmt.Errorf("pve verify: ticket auth returned empty ticket") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	v.ticket = envelope.Data.Ticket
@@ -222,7 +222,7 @@ func (v *PVEVerifier) get(ctx context.Context, path string) (json.RawMessage, er
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("pve verify: GET %s HTTP %d: %s", path, resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("pve verify: GET %s HTTP %d: %s", path, resp.StatusCode, string(raw)) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	var envelope pveResponse
@@ -233,23 +233,32 @@ func (v *PVEVerifier) get(ctx context.Context, path string) (json.RawMessage, er
 	return envelope.Data, nil
 }
 
-// asList unmarshals a raw JSON array of objects. Non-array data returns nil.
+// asList unmarshals a raw JSON array of objects.
+// A nil or JSON-null payload returns (nil, nil) — callers treat that as an
+// empty list. Any other unmarshal failure propagates so callers can surface
+// the ambiguity rather than silently returning "not found".
 func asList(raw json.RawMessage) ([]map[string]interface{}, error) {
 	if raw == nil {
 		return nil, nil
 	}
+
+	// PVE occasionally returns the JSON literal null for empty lists.
+	if string(raw) == "null" {
+		return nil, nil
+	}
+
 	var items []map[string]interface{}
 	if err := json.Unmarshal(raw, &items); err != nil {
-		// PVE occasionally returns null for empty lists.
-		return nil, nil //nolint:nilerr // null/non-array treated as empty
+		return nil, fmt.Errorf("parse response list: %w", err)
 	}
+
 	return items, nil
 }
 
 // requireNode returns v.Node or an error when it is empty.
 func (v *PVEVerifier) requireNode() (string, error) {
 	if v.Node == "" {
-		return "", fmt.Errorf("pve verify: Node is required for this check but was not set")
+		return "", fmt.Errorf("pve verify: Node is required for this check but was not set") //nolint:err113 // descriptive error, not caller-testable
 	}
 	return v.Node, nil
 }
@@ -266,7 +275,7 @@ func (v *PVEVerifier) VMExists(ctx context.Context, nameOrID string) (bool, erro
 		return false, err
 	}
 	if strings.TrimSpace(nameOrID) == "" {
-		return false, fmt.Errorf("pve verify VMExists: nameOrID must not be empty")
+		return false, fmt.Errorf("pve verify VMExists: nameOrID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	want := strings.TrimSpace(nameOrID)
@@ -303,7 +312,7 @@ func (v *PVEVerifier) VMExists(ctx context.Context, nameOrID string) (bool, erro
 // /cluster/sdn/vnets list. Matches on the "vnet" field.
 func (v *PVEVerifier) VNetExists(ctx context.Context, vnetID string) (bool, error) {
 	if strings.TrimSpace(vnetID) == "" {
-		return false, fmt.Errorf("pve verify VNetExists: vnetID must not be empty")
+		return false, fmt.Errorf("pve verify VNetExists: vnetID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	raw, err := v.get(ctx, pveAPIPathVNets)
@@ -329,7 +338,7 @@ func (v *PVEVerifier) VNetExists(ctx context.Context, vnetID string) (bool, erro
 // /cluster/sdn/zones list. Matches on the "zone" field.
 func (v *PVEVerifier) ZoneExists(ctx context.Context, zone string) (bool, error) {
 	if strings.TrimSpace(zone) == "" {
-		return false, fmt.Errorf("pve verify ZoneExists: zone must not be empty")
+		return false, fmt.Errorf("pve verify ZoneExists: zone must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	raw, err := v.get(ctx, pveAPIPathZones)
@@ -361,10 +370,10 @@ func (v *PVEVerifier) ZoneExists(ctx context.Context, zone string) (bool, error)
 //     "subnet" ID field.
 func (v *PVEVerifier) SubnetPresent(ctx context.Context, vnetID, subnetCIDR string) (bool, error) {
 	if strings.TrimSpace(vnetID) == "" {
-		return false, fmt.Errorf("pve verify SubnetPresent: vnetID must not be empty")
+		return false, fmt.Errorf("pve verify SubnetPresent: vnetID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 	if strings.TrimSpace(subnetCIDR) == "" {
-		return false, fmt.Errorf("pve verify SubnetPresent: subnetCIDR must not be empty")
+		return false, fmt.Errorf("pve verify SubnetPresent: subnetCIDR must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	want := strings.TrimSpace(subnetCIDR)
@@ -405,7 +414,7 @@ func (v *PVEVerifier) BridgeExists(ctx context.Context, bridge string) (bool, er
 		return false, err
 	}
 	if strings.TrimSpace(bridge) == "" {
-		return false, fmt.Errorf("pve verify BridgeExists: bridge must not be empty")
+		return false, fmt.Errorf("pve verify BridgeExists: bridge must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	path := fmt.Sprintf(pveAPIPathNetwork, url.PathEscape(node))
@@ -442,12 +451,12 @@ func (v *PVEVerifier) VolumeExists(ctx context.Context, diskCID string) (bool, e
 		return false, err
 	}
 	if strings.TrimSpace(diskCID) == "" {
-		return false, fmt.Errorf("pve verify VolumeExists: diskCID must not be empty")
+		return false, fmt.Errorf("pve verify VolumeExists: diskCID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	idx := strings.Index(diskCID, ":")
 	if idx <= 0 {
-		return false, fmt.Errorf("pve verify VolumeExists: diskCID %q is not '<storage>:<volid>'", diskCID)
+		return false, fmt.Errorf("pve verify VolumeExists: diskCID %q is not '<storage>:<volid>'", diskCID) //nolint:err113 // descriptive error, not caller-testable
 	}
 	storage := diskCID[:idx]
 

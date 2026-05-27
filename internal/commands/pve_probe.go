@@ -146,16 +146,16 @@ func runPVEProbe(cmd *cobra.Command, f *probeFlags, bloc string, builder probeBu
 	result := probes.RunAll(ctx, probeList...)
 
 	if result.OK {
-		fmt.Fprintf(cmd.OutOrStdout(), "OK  bloc=%s detail=%q\n", bloc, result.Detail)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "OK  bloc=%s detail=%q\n", bloc, result.Detail)
 		return nil
 	}
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "FAIL  bloc=%s detail=%q\n", bloc, result.Detail)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "FAIL  bloc=%s detail=%q\n", bloc, result.Detail)
 
 	if result.Remediation != "" {
-		fmt.Fprintln(cmd.ErrOrStderr())
-		fmt.Fprintln(cmd.ErrOrStderr(), result.Remediation)
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), result.Remediation)
 	}
 
-	return fmt.Errorf("probe failed for bloc %q: %s", bloc, result.Detail)
+	return fmt.Errorf("probe failed for bloc %q: %s", bloc, result.Detail) //nolint:err113 // descriptive error, not caller-testable
 }

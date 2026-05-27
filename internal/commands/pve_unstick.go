@@ -102,7 +102,7 @@ func resolveVMIDForInstance(boshEnv, boshDeployment, instanceRef string) (int, e
 	}
 
 	if rawCID == "" {
-		return 0, fmt.Errorf("no VM CID found for instance %q in deployment %q — check `bosh vms -d %s`",
+		return 0, fmt.Errorf("no VM CID found for instance %q in deployment %q — check `bosh vms -d %s`", //nolint:err113 // descriptive error, not caller-testable
 			instanceRef, boshDeployment, boshDeployment)
 	}
 
@@ -158,7 +158,7 @@ func resolvePVEHostFromVars(varsFile string) (string, error) {
 
 	host := strings.TrimSpace(out.String())
 	if host == "" {
-		return "", fmt.Errorf("pve_host is empty in vars file %q", varsFile)
+		return "", fmt.Errorf("pve_host is empty in vars file %q", varsFile) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return host, nil
@@ -209,11 +209,11 @@ func unstickAgent(pveHost string, vmid int, sshUnsafe bool) error {
 	// qm guest exec returns JSON; PVE signals success via "exitcode" : 0 in the output.
 	// Check both the ssh exit code and the PVE-level exit code.
 	if err != nil || !strings.Contains(combined, `"exitcode" : 0`) {
-		return fmt.Errorf("qm guest exec failed (ssh rc: %v):\n%s", err, combined)
+		return fmt.Errorf("qm guest exec failed (ssh rc: %v):\n%s", err, combined) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if !strings.Contains(combined, "active") {
-		return fmt.Errorf("bosh-agent did not report active after restart:\n%s", combined)
+		return fmt.Errorf("bosh-agent did not report active after restart:\n%s", combined) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	log.Info("bosh-agent active")

@@ -162,11 +162,11 @@ func runPVEStemcellUpload(
 	}
 
 	if uploaded {
-		fmt.Fprintf(cmd.OutOrStdout(), "already uploaded; skipping  name=%s version=%s\n", name, version)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already uploaded; skipping  name=%s version=%s\n", name, version)
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "uploading stemcell  name=%s version=%s env=%s\n", name, version, f.env)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "uploading stemcell  name=%s version=%s env=%s\n", name, version, f.env)
 
 	if err := stemcell.EnsureStemcell(ctx, runBosh, fetchSHA1, name, version, url); err != nil {
 		return fmt.Errorf("pve stemcell upload: %w", err)

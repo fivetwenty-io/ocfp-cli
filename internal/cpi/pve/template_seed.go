@@ -88,7 +88,7 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 
 	tokenHeader := buildPVEAPITokenHeader(m.client.config)
 	if tokenHeader == "" {
-		return fmt.Errorf("template seed requires API token auth (TokenID + TokenSecret)")
+		return fmt.Errorf("template seed requires API token auth (TokenID + TokenSecret)") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	log.Infof("opening termproxy to vmid %d", vmid)
@@ -98,7 +98,11 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 		return fmt.Errorf("open termproxy: %w", err)
 	}
 
-	defer sess.Close()
+	defer func() {
+		if err := sess.Close(); err != nil {
+			log.Debugf("close termproxy session: %v", err)
+		}
+	}()
 
 	if err := seedLogin(sess, password); err != nil {
 		return fmt.Errorf("seed login: %w", err)
@@ -274,7 +278,7 @@ func runShell(sess *TermproxySession, cmd string, timeout time.Duration) error {
 	}
 
 	if matches := markerSpecific.FindStringSubmatch(out); len(matches) == 2 && matches[1] != "0" {
-		return fmt.Errorf("command exited %s (output tail: %q)", matches[1], tail(out, 400))
+		return fmt.Errorf("command exited %s (output tail: %q)", matches[1], tail(out, 400)) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return nil
