@@ -14,8 +14,9 @@ import (
 )
 
 // RunBosh executes a bosh CLI command and returns its combined stdout output.
+// ctx is propagated to exec.CommandContext so Ctrl-C cancels the subprocess.
 // The caller is responsible for injecting the BOSH environment flag (e.g. -e <env>).
-type RunBosh func(args ...string) ([]byte, error)
+type RunBosh func(ctx context.Context, args ...string) ([]byte, error)
 
 // SHA1Fetcher resolves the regular sha1 for the given stemcell name+version from
 // an authoritative source (typically bosh.io).
@@ -49,7 +50,7 @@ var DefaultHTTPClient = &http.Client{
 // Inputs:
 //   - ctx: cancelled contexts propagate into RunBosh error handling.
 //   - runBosh: injected executor; called with ["stemcells", "--json"].
-//   - name: full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-jammy-go_agent".
+//   - name: full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-noble-go_agent".
 //   - version: exact version string to match, e.g. "1.584".
 //
 // Failure modes:
@@ -64,7 +65,7 @@ func IsStemcellUploaded(ctx context.Context, runBosh RunBosh, name, version stri
 		return false, fmt.Errorf("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	out, err := runBosh("stemcells", "--json")
+	out, err := runBosh(ctx, "stemcells", "--json")
 	if err != nil {
 		return false, fmt.Errorf("stemcell: bosh stemcells --json: %w", err)
 	}
@@ -198,7 +199,7 @@ func EnsureStemcell(ctx context.Context, runBosh RunBosh, fetchSHA1 SHA1Fetcher,
 		return fmt.Errorf("stemcell: fetch sha1 for %s@%s: %w", name, version, err)
 	}
 
-	if _, err := runBosh("upload-stemcell", "--sha1", sha1, url); err != nil {
+	if _, err := runBosh(ctx, "upload-stemcell", "--sha1", sha1, url); err != nil {
 		return fmt.Errorf("stemcell: bosh upload-stemcell %s@%s: %w", name, version, err)
 	}
 

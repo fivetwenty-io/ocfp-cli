@@ -10,13 +10,13 @@ import (
 )
 
 // mockRunBosh returns a RunBosh func that emits output and optionally an error.
-func mockRunBosh(output string, err error) func(args ...string) ([]byte, error) {
-	return func(args ...string) ([]byte, error) {
+func mockRunBosh(output string, err error) func(ctx context.Context, args ...string) ([]byte, error) {
+	return func(_ context.Context, args ...string) ([]byte, error) {
 		return []byte(output), err
 	}
 }
 
-func newProbe(runBosh func(...string) ([]byte, error)) *probes.UAAFlywayProbe {
+func newProbe(runBosh func(context.Context, ...string) ([]byte, error)) *probes.UAAFlywayProbe {
 	return &probes.UAAFlywayProbe{
 		RunBosh:    runBosh,
 		Deployment: "cf-lab",
@@ -185,7 +185,7 @@ func TestUAAFlywayProbe_EmptyEnv_FAIL(t *testing.T) {
 func TestUAAFlywayProbe_DefaultInstance_DatabaseZero(t *testing.T) {
 	var capturedArgs []string
 	p := &probes.UAAFlywayProbe{
-		RunBosh: func(args ...string) ([]byte, error) {
+		RunBosh: func(_ context.Context, args ...string) ([]byte, error) {
 			capturedArgs = args
 			return []byte("OK_FRESH"), nil
 		},

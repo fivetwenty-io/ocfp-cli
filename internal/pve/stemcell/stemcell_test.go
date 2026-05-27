@@ -38,7 +38,7 @@ type stubCall struct {
 
 func recordingRunBosh(stubs []stubCall) (stemcell.RunBosh, *[][]string) {
 	calls := &[][]string{}
-	fn := func(args ...string) ([]byte, error) {
+	fn := func(_ context.Context, args ...string) ([]byte, error) {
 		*calls = append(*calls, args)
 		for _, s := range stubs {
 			if len(args) > 0 && strings.HasPrefix(args[0], s.argPrefix) {
@@ -53,7 +53,7 @@ func recordingRunBosh(stubs []stubCall) (stemcell.RunBosh, *[][]string) {
 // ---- T38 TestIsStemcellUploaded_Present -------------------------------------
 
 func TestIsStemcellUploaded_Present(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
 	rows := []map[string]string{
@@ -75,7 +75,7 @@ func TestIsStemcellUploaded_Present(t *testing.T) {
 // ---- T39 TestIsStemcellUploaded_Absent --------------------------------------
 
 func TestIsStemcellUploaded_Absent(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
 	// Different version in the director.
@@ -102,7 +102,7 @@ func TestIsStemcellUploaded_EmptyDirector(t *testing.T) {
 	})
 
 	got, err := stemcell.IsStemcellUploaded(context.Background(), rb,
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.584")
+		"bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,14 +115,14 @@ func TestIsStemcellUploaded_EmptyDirector(t *testing.T) {
 func TestIsStemcellUploaded_NameMismatch(t *testing.T) {
 	version := "1.584"
 	rows := []map[string]string{
-		{"Name": "bosh-vsphere-esxi-ubuntu-jammy-go_agent", "Version": version},
+		{"Name": "bosh-vsphere-esxi-ubuntu-noble-go_agent", "Version": version},
 	}
 	rb, _ := recordingRunBosh([]stubCall{
 		{argPrefix: "stemcells", out: makeBoshStemcellsJSON(rows)},
 	})
 
 	got, err := stemcell.IsStemcellUploaded(context.Background(), rb,
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent", version)
+		"bosh-openstack-kvm-ubuntu-noble-go_agent", version)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestIsStemcellUploaded_RunBoshError(t *testing.T) {
 	})
 
 	_, err := stemcell.IsStemcellUploaded(context.Background(), rb,
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.584")
+		"bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err == nil {
 		t.Fatal("expected error from RunBosh failure, got nil")
 	}
@@ -151,7 +151,7 @@ func TestIsStemcellUploaded_InvalidJSON(t *testing.T) {
 	})
 
 	_, err := stemcell.IsStemcellUploaded(context.Background(), rb,
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.584")
+		"bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err == nil {
 		t.Fatal("expected JSON parse error, got nil")
 	}
@@ -169,7 +169,7 @@ func TestIsStemcellUploaded_EmptyName(t *testing.T) {
 // TestIsStemcellUploaded_EmptyVersion rejects empty version.
 func TestIsStemcellUploaded_EmptyVersion(t *testing.T) {
 	rb, _ := recordingRunBosh(nil)
-	_, err := stemcell.IsStemcellUploaded(context.Background(), rb, "bosh-openstack-kvm-ubuntu-jammy-go_agent", "")
+	_, err := stemcell.IsStemcellUploaded(context.Background(), rb, "bosh-openstack-kvm-ubuntu-noble-go_agent", "")
 	if err == nil {
 		t.Fatal("expected error for empty version, got nil")
 	}
@@ -178,7 +178,7 @@ func TestIsStemcellUploaded_EmptyVersion(t *testing.T) {
 // ---- TestFetchSHA1_FromBoshIO -----------------------------------------------
 
 func TestFetchSHA1_FromBoshIO(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 	wantSHA1 := "abc123def456"
 
@@ -217,7 +217,7 @@ func TestFetchSHA1_FromBoshIO(t *testing.T) {
 
 // TestFetchSHA1_VersionNotFound returns a descriptive error when the version is absent.
 func TestFetchSHA1_VersionNotFound(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 
 	fixture := `[{"version":"1.100","regular":{"sha1":"sha","url":"https://example.com"}}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +246,7 @@ func TestFetchSHA1_HTTP4xx(t *testing.T) {
 
 	client := &http.Client{Transport: rewriteHostTransport{base: srv.URL}}
 
-	_, err := stemcell.FetchSHA1(context.Background(), client, "bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.584")
+	_, err := stemcell.FetchSHA1(context.Background(), client, "bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err == nil {
 		t.Fatal("expected HTTP error, got nil")
 	}
@@ -254,7 +254,7 @@ func TestFetchSHA1_HTTP4xx(t *testing.T) {
 
 // TestFetchSHA1_EmptySHA1 returns error when sha1 field is empty.
 func TestFetchSHA1_EmptySHA1(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
 	// Entry exists but regular.sha1 is empty (light stemcell only, no regular build).
@@ -275,7 +275,7 @@ func TestFetchSHA1_EmptySHA1(t *testing.T) {
 
 // TestFetchSHA1_NilClient returns error for nil http client.
 func TestFetchSHA1_NilClient(t *testing.T) {
-	_, err := stemcell.FetchSHA1(context.Background(), nil, "bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.584")
+	_, err := stemcell.FetchSHA1(context.Background(), nil, "bosh-openstack-kvm-ubuntu-noble-go_agent", "1.584")
 	if err == nil {
 		t.Fatal("expected error for nil client, got nil")
 	}
@@ -284,7 +284,7 @@ func TestFetchSHA1_NilClient(t *testing.T) {
 // ---- T40 TestEnsureStemcell_SkipsIfPresent ----------------------------------
 
 func TestEnsureStemcell_SkipsIfPresent(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
 	rows := []map[string]string{
@@ -321,7 +321,7 @@ func TestEnsureStemcell_SkipsIfPresent(t *testing.T) {
 // ---- TestEnsureStemcell_UploadsIfAbsent -------------------------------------
 
 func TestEnsureStemcell_UploadsIfAbsent(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 	sha1 := "deadbeef01"
 	url := "https://bosh.io/d/stemcells/" + name + "?v=" + version
@@ -376,7 +376,7 @@ func TestEnsureStemcell_UploadsIfAbsent(t *testing.T) {
 
 // TestEnsureStemcell_FetchSHA1Error propagates fetchSHA1 errors.
 func TestEnsureStemcell_FetchSHA1Error(t *testing.T) {
-	name := "bosh-openstack-kvm-ubuntu-jammy-go_agent"
+	name := "bosh-openstack-kvm-ubuntu-noble-go_agent"
 	version := "1.584"
 
 	rb, _ := recordingRunBosh([]stubCall{
@@ -404,8 +404,8 @@ func TestEnsureStemcell_EmptyInputs(t *testing.T) {
 		label              string
 	}{
 		{"", "1.0", "https://example.com", "empty name"},
-		{"bosh-openstack-kvm-ubuntu-jammy-go_agent", "", "https://example.com", "empty version"},
-		{"bosh-openstack-kvm-ubuntu-jammy-go_agent", "1.0", "", "empty url"},
+		{"bosh-openstack-kvm-ubuntu-noble-go_agent", "", "https://example.com", "empty version"},
+		{"bosh-openstack-kvm-ubuntu-noble-go_agent", "1.0", "", "empty url"},
 	}
 	for _, tc := range cases {
 		tc := tc

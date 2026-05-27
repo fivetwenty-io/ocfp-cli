@@ -39,7 +39,7 @@ func fakeStemcellBuilder(boshResponses []boshResponse, fetchFn stemcell.SHA1Fetc
 	return func(_, sha1Override string) (stemcell.RunBosh, stemcell.SHA1Fetcher) {
 		callIdx := 0
 
-		runBosh := func(args ...string) ([]byte, error) {
+		runBosh := func(_ context.Context, args ...string) ([]byte, error) {
 			if callIdx >= len(boshResponses) {
 				panic("RunBosh called more times than expected")
 			}
@@ -93,7 +93,7 @@ func TestPVEStemcellUpload_NoArgs_Usage(t *testing.T) {
 // "already uploaded; skipping".
 func TestPVEStemcellUpload_AlreadyUploaded_NoOp(t *testing.T) {
 	rows := []map[string]string{
-		{"Name": "bosh-openstack-kvm-ubuntu-jammy-go_agent", "Version": "1.584"},
+		{"Name": "bosh-openstack-kvm-ubuntu-noble-go_agent", "Version": "1.584"},
 	}
 
 	boshResps := []boshResponse{
@@ -111,7 +111,7 @@ func TestPVEStemcellUpload_AlreadyUploaded_NoOp(t *testing.T) {
 
 	cmd := newPVEStemcellUploadCmdWithBuilder(builder)
 	cmd.SetArgs([]string{
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent",
+		"bosh-openstack-kvm-ubuntu-noble-go_agent",
 		"1.584",
 		"https://example.com/stemcell.tgz",
 		"--env", "pve",
@@ -126,7 +126,7 @@ func TestPVEStemcellUpload_AlreadyUploaded_NoOp(t *testing.T) {
 
 	outStr := stdout.String()
 	assert.Contains(t, outStr, "already uploaded; skipping", "stdout must report skip")
-	assert.Contains(t, outStr, "bosh-openstack-kvm-ubuntu-jammy-go_agent", "stdout must name the stemcell")
+	assert.Contains(t, outStr, "bosh-openstack-kvm-ubuntu-noble-go_agent", "stdout must name the stemcell")
 	assert.Contains(t, outStr, "1.584", "stdout must include the version")
 	assert.Empty(t, stderr.String(), "stderr must be empty on skip")
 	assert.False(t, fetchCalled, "SHA1Fetcher must not be called when stemcell is already uploaded")
@@ -146,7 +146,7 @@ func TestPVEStemcellUpload_AbsentAndUploaded(t *testing.T) {
 	fetchCalled := false
 	fetchFn := func(_ context.Context, name, version string) (string, error) {
 		fetchCalled = true
-		assert.Equal(t, "bosh-openstack-kvm-ubuntu-jammy-go_agent", name)
+		assert.Equal(t, "bosh-openstack-kvm-ubuntu-noble-go_agent", name)
 		assert.Equal(t, "1.584", version)
 		return "deadbeef", nil
 	}
@@ -155,7 +155,7 @@ func TestPVEStemcellUpload_AbsentAndUploaded(t *testing.T) {
 
 	cmd := newPVEStemcellUploadCmdWithBuilder(builder)
 	cmd.SetArgs([]string{
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent",
+		"bosh-openstack-kvm-ubuntu-noble-go_agent",
 		"1.584",
 		"https://example.com/stemcell.tgz",
 		"--env", "pve",
@@ -189,7 +189,7 @@ func TestPVEStemcellUpload_SHA1Override_SkipsFetch(t *testing.T) {
 
 	cmd := newPVEStemcellUploadCmdWithBuilder(builder)
 	cmd.SetArgs([]string{
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent",
+		"bosh-openstack-kvm-ubuntu-noble-go_agent",
 		"1.584",
 		"https://example.com/stemcell.tgz",
 		"--sha1", "override123",
@@ -203,7 +203,7 @@ func TestPVEStemcellUpload_SHA1Override_SkipsFetch(t *testing.T) {
 	overrideBuilder := func(_, sha1Override string) (stemcell.RunBosh, stemcell.SHA1Fetcher) {
 		callIdx := 0
 
-		runBosh := func(_ ...string) ([]byte, error) {
+		runBosh := func(_ context.Context, _ ...string) ([]byte, error) {
 			resp := boshResps[callIdx]
 			callIdx++
 
@@ -221,7 +221,7 @@ func TestPVEStemcellUpload_SHA1Override_SkipsFetch(t *testing.T) {
 
 	cmd2 := newPVEStemcellUploadCmdWithBuilder(overrideBuilder)
 	cmd2.SetArgs([]string{
-		"bosh-openstack-kvm-ubuntu-jammy-go_agent",
+		"bosh-openstack-kvm-ubuntu-noble-go_agent",
 		"1.584",
 		"https://example.com/stemcell.tgz",
 		"--sha1", "override123",

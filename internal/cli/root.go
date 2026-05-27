@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
@@ -27,7 +30,12 @@ type lockInfo struct {
 }
 
 // Execute constructs the root command, configures flags, and runs it.
+// A signal.NotifyContext wrapping os.Interrupt and SIGTERM ensures that
+// Ctrl-C propagates cancellation into every cmd.Context() call site.
 func Execute() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	flags := setupFlags()
 	rootCmd := createRootCommand()
 
@@ -74,7 +82,7 @@ func Execute() {
 	// Register all commands
 	RegisterCommands(rootCmd)
 
-	err = rootCmd.Execute()
+	err = rootCmd.ExecuteContext(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
