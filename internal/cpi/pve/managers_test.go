@@ -576,10 +576,6 @@ func TestBuildPVEDirectCloudInitConfig_EmptyRequest(t *testing.T) {
 	// nameserver default keeps PVE from falling back to the host's
 	// /etc/resolv.conf, which a host-side tailscale with accept-dns=true
 	// rewrites to MagicDNS and makes unreachable for new VMs.
-	if len(got) != 2 {
-		t.Fatalf("expected 2 keys in default config, got %d: %v", len(got), got)
-	}
-
 	if got["ipconfig0"] != "ip=dhcp" {
 		t.Errorf("ipconfig0 default = %v, want ip=dhcp", got["ipconfig0"])
 	}

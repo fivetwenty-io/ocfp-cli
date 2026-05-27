@@ -16,7 +16,8 @@ func mockRunBosh(output string, err error) func(ctx context.Context, args ...str
 	}
 }
 
-func newProbe(runBosh func(context.Context, ...string) ([]byte, error)) *probes.UAAFlywayProbe {
+func newProbe(t *testing.T, runBosh func(context.Context, ...string) ([]byte, error)) *probes.UAAFlywayProbe {
+	t.Helper()
 	return &probes.UAAFlywayProbe{
 		RunBosh:    runBosh,
 		Deployment: "cf-lab",
@@ -27,7 +28,9 @@ func newProbe(runBosh func(context.Context, ...string) ([]byte, error)) *probes.
 
 // T18 — FAILED_ROWS=2 → FAIL with DROP DATABASE remediation.
 func TestUAAFlywayProbe_FailedRows_ReturnsRemediation(t *testing.T) {
-	p := newProbe(mockRunBosh("FAILED_ROWS=2", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("FAILED_ROWS=2", nil))
 	r := p.Run(context.Background())
 
 	if r.OK {
@@ -48,7 +51,9 @@ func TestUAAFlywayProbe_FailedRows_ReturnsRemediation(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_FailedRows_IncludesCount(t *testing.T) {
-	p := newProbe(mockRunBosh("FAILED_ROWS=5", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("FAILED_ROWS=5", nil))
 	r := p.Run(context.Background())
 	if r.OK {
 		t.Fatal("expected OK=false for FAILED_ROWS=5")
@@ -59,7 +64,9 @@ func TestUAAFlywayProbe_FailedRows_IncludesCount(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_FailedRows_Zero_IsOK(t *testing.T) {
-	p := newProbe(mockRunBosh("FAILED_ROWS=0", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("FAILED_ROWS=0", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for FAILED_ROWS=0, got detail=%q", r.Detail)
@@ -68,7 +75,9 @@ func TestUAAFlywayProbe_FailedRows_Zero_IsOK(t *testing.T) {
 
 // T19 — OK_DB_MISSING → PASS.
 func TestUAAFlywayProbe_OKDBMissing_PASS(t *testing.T) {
-	p := newProbe(mockRunBosh("OK_DB_MISSING", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("OK_DB_MISSING", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for OK_DB_MISSING, got detail=%q", r.Detail)
@@ -79,7 +88,9 @@ func TestUAAFlywayProbe_OKDBMissing_PASS(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_OKFresh_PASS(t *testing.T) {
-	p := newProbe(mockRunBosh("OK_FRESH", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("OK_FRESH", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for OK_FRESH, got detail=%q", r.Detail)
@@ -87,7 +98,9 @@ func TestUAAFlywayProbe_OKFresh_PASS(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_SkipNoPXC_PASS(t *testing.T) {
-	p := newProbe(mockRunBosh("SKIP_NO_PXC", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("SKIP_NO_PXC", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for SKIP_NO_PXC, got detail=%q", r.Detail)
@@ -95,7 +108,9 @@ func TestUAAFlywayProbe_SkipNoPXC_PASS(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_SkipNoMySQLBin_PASS(t *testing.T) {
-	p := newProbe(mockRunBosh("SKIP_NO_MYSQL_BIN", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("SKIP_NO_MYSQL_BIN", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for SKIP_NO_MYSQL_BIN, got detail=%q", r.Detail)
@@ -104,7 +119,9 @@ func TestUAAFlywayProbe_SkipNoMySQLBin_PASS(t *testing.T) {
 
 // T20 — PROBE_ERROR → OK (non-fatal, detail recorded).
 func TestUAAFlywayProbe_PROBEERROR_PASS_WithDetail(t *testing.T) {
-	p := newProbe(mockRunBosh("PROBE_ERROR: some mysql error here", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("PROBE_ERROR: some mysql error here", nil))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for PROBE_ERROR (non-fatal), got detail=%q", r.Detail)
@@ -115,8 +132,10 @@ func TestUAAFlywayProbe_PROBEERROR_PASS_WithDetail(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_BoshSSHError_DeploymentAbsent_PASS(t *testing.T) {
+	t.Parallel()
+
 	// bosh ssh fails and stderr contains "doesn't exist" → CF not yet deployed → OK.
-	p := newProbe(mockRunBosh("doesn't exist", fmt.Errorf("bosh ssh exit 1")))
+	p := newProbe(t, mockRunBosh("doesn't exist", fmt.Errorf("bosh ssh exit 1")))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true when deployment doesn't exist, got detail=%q", r.Detail)
@@ -124,8 +143,10 @@ func TestUAAFlywayProbe_BoshSSHError_DeploymentAbsent_PASS(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_BoshSSHError_Generic_PASS(t *testing.T) {
+	t.Parallel()
+
 	// Generic bosh ssh failure → non-fatal (log + continue).
-	p := newProbe(mockRunBosh("connection refused", fmt.Errorf("bosh ssh exit 255")))
+	p := newProbe(t, mockRunBosh("connection refused", fmt.Errorf("bosh ssh exit 255")))
 	r := p.Run(context.Background())
 	if !r.OK {
 		t.Fatalf("expected OK=true for generic bosh ssh failure (non-fatal), got detail=%q", r.Detail)
@@ -136,7 +157,9 @@ func TestUAAFlywayProbe_BoshSSHError_Generic_PASS(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_UnparseableOutput_FAIL(t *testing.T) {
-	p := newProbe(mockRunBosh("some unexpected output\nno sentinel here", nil))
+	t.Parallel()
+
+	p := newProbe(t, mockRunBosh("some unexpected output\nno sentinel here", nil))
 	r := p.Run(context.Background())
 	if r.OK {
 		t.Fatal("expected OK=false for unparseable probe output")
@@ -147,6 +170,8 @@ func TestUAAFlywayProbe_UnparseableOutput_FAIL(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_NilRunBosh_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.UAAFlywayProbe{
 		RunBosh:    nil,
 		Deployment: "cf-lab",
@@ -159,6 +184,8 @@ func TestUAAFlywayProbe_NilRunBosh_FAIL(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_EmptyDeployment_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.UAAFlywayProbe{
 		RunBosh:    mockRunBosh("OK_FRESH", nil),
 		Deployment: "",
@@ -171,6 +198,8 @@ func TestUAAFlywayProbe_EmptyDeployment_FAIL(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_EmptyEnv_FAIL(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.UAAFlywayProbe{
 		RunBosh:    mockRunBosh("OK_FRESH", nil),
 		Deployment: "cf-lab",
@@ -183,6 +212,8 @@ func TestUAAFlywayProbe_EmptyEnv_FAIL(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_DefaultInstance_DatabaseZero(t *testing.T) {
+	t.Parallel()
+
 	var capturedArgs []string
 	p := &probes.UAAFlywayProbe{
 		RunBosh: func(_ context.Context, args ...string) ([]byte, error) {
@@ -207,13 +238,17 @@ func TestUAAFlywayProbe_DefaultInstance_DatabaseZero(t *testing.T) {
 }
 
 func TestUAAFlywayProbe_Name(t *testing.T) {
-	p := newProbe(nil)
+	t.Parallel()
+
+	p := newProbe(t, nil)
 	if p.Name() != "uaa-flyway" {
 		t.Errorf("Name()=%q want %q", p.Name(), "uaa-flyway")
 	}
 }
 
 func TestUAAFlywayProbe_RemediationIncludesEnvAndDeployment(t *testing.T) {
+	t.Parallel()
+
 	p := &probes.UAAFlywayProbe{
 		RunBosh:    mockRunBosh("FAILED_ROWS=1", nil),
 		Deployment: "cf-production",

@@ -470,9 +470,10 @@ func TestMergeResources_TimestampHandling(t *testing.T) {
 		assert.Equal(t, 1, result.ResourcesAdded)
 
 		resource := state2.Resources["net-001"]
-		// Timestamps should be zero since we didn't update them and discovered resource didn't have them
-		assert.True(t, resource.CreatedAt.IsZero() || !resource.CreatedAt.IsZero())
-		assert.True(t, resource.UpdatedAt.IsZero() || !resource.UpdatedAt.IsZero())
+		// UpdateTimestamps=false: copyResource preserves source timestamps.
+		// The discovered resource had zero timestamps, so both must be zero.
+		assert.True(t, resource.CreatedAt.IsZero(), "CreatedAt should be zero when UpdateTimestamps=false and source has no timestamp")
+		assert.True(t, resource.UpdatedAt.IsZero(), "UpdatedAt should be zero when UpdateTimestamps=false and source has no timestamp")
 	})
 }
 

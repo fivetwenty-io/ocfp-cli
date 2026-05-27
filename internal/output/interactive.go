@@ -17,6 +17,9 @@ type InteractiveRenderer struct {
 	config *InteractiveConfig
 	mu     sync.Mutex
 
+	// now returns the current time. Defaults to time.Now; injectable for tests.
+	now func() time.Time
+
 	// Track subtasks per phase for tree structure (same as Concise)
 	phaseSubtasks   map[string][]subtaskInfo
 	currentPhase    *PhaseInfo
@@ -61,6 +64,7 @@ func NewInteractiveRenderer(w io.Writer) *InteractiveRenderer { //nolint:varname
 		writer:          w,
 		log:             log,
 		config:          config,
+		now:             time.Now,
 		phaseSubtasks:   make(map[string][]subtaskInfo),
 		completedPhases: make([]string, 0),
 		writtenSubtasks: make(map[string]map[string]subtaskState),
@@ -82,7 +86,7 @@ func (r *InteractiveRenderer) PhaseStart(info PhaseInfo) error {
 	defer r.mu.Unlock()
 
 	r.currentPhase = &info
-	r.phaseStartTime = time.Now()
+	r.phaseStartTime = r.now()
 	r.phaseSubtasks[info.ID] = make([]subtaskInfo, 0)
 	r.writtenSubtasks[info.ID] = make(map[string]subtaskState)
 
@@ -149,7 +153,7 @@ func (r *InteractiveRenderer) PhaseComplete(info PhaseInfo) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	duration := time.Since(r.phaseStartTime)
+	duration := r.now().Sub(r.phaseStartTime)
 
 	// Format: [N/Total] ✓ Phase completed: name (phase_duration) (cumulative_duration)
 	line := fmt.Sprintf("[%02d/%d] %s Phase completed: %s (%s) (%s)\n",
