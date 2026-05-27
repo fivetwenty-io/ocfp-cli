@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	ocfpexec "github.com/ocfp/ocfp-cli-go/internal/exec"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
@@ -375,31 +376,28 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 }
 
 func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error {
-	// Execute stackit auth command with token
+	// Pass the token via env var so it never appears in the process table (ps).
+	// The STACKIT CLI reads STACKIT_SERVICE_ACCOUNT_TOKEN when the flag is absent.
 	log.Info("Authenticating with STACKIT token...")
-	log.Debug("Executing stackit auth activate-service-account with token")
+	log.Debug("Executing stackit auth activate-service-account (token via env)")
 
 	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken) //nolint:gosec // command args are from trusted config
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	out, err := ocfpexec.RunWithEnv(ctx,
+		map[string]string{"STACKIT_SERVICE_ACCOUNT_TOKEN": serviceAccountToken},
+		"stackit", "auth", "activate-service-account",
+	)
 	if err != nil {
-		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("output", string(out)))
 
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(out) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(out))
 	}
 
 	return nil
@@ -692,21 +690,20 @@ func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log
 }
 
 // setAWSSecretAccessKey configures the AWS secret access key for a profile.
+// The secret value is written directly to the credentials file rather than
+// passed via `aws configure set` argv, which would expose it in the process
+// table. writeAWSCredentialsKey handles the file operation.
 func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey string, log *zap.Logger) error {
 	log.Debug("Setting AWS secret access key")
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_secret_access_key", secretAccessKey, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Error("Failed to configure AWS secret access key", zap.Error(err), zap.String("stderr", stderr.String()))
+	if err := writeAWSCredentialsKey(profileName, "aws_secret_access_key", secretAccessKey); err != nil {
+		log.Error("Failed to configure AWS secret access key", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
 	}
+
+	// Suppress unused ctx warning: retained in signature for API consistency.
+	_ = ctx
 
 	return nil
 }
@@ -732,20 +729,111 @@ func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logg
 }
 
 // setAWSSessionToken configures the AWS session token for a profile.
+// The token value is written directly to the credentials file rather than
+// passed via `aws configure set` argv, which would expose it in the process
+// table. writeAWSCredentialsKey handles the file operation.
 func setAWSSessionToken(ctx context.Context, profileName, sessionToken string, log *zap.Logger) error {
 	log.Debug("Setting AWS session token")
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_session_token", sessionToken, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Error("Failed to configure AWS session token", zap.Error(err), zap.String("stderr", stderr.String()))
+	if err := writeAWSCredentialsKey(profileName, "aws_session_token", sessionToken); err != nil {
+		log.Error("Failed to configure AWS session token", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS session token: %w", err)
+	}
+
+	// Suppress unused ctx warning: retained in signature for API consistency.
+	_ = ctx
+
+	return nil
+}
+
+// writeAWSCredentialsKey writes a single key=value into the AWS credentials
+// file (~/.aws/credentials) for the named profile. It reads the existing file,
+// updates or inserts the key under the matching [profile] section, and rewrites
+// the file. This avoids passing secret values as subprocess argv.
+//
+// File format follows the standard INI profile layout used by the AWS CLI.
+// Permissions on the file are preserved when the file already exists; new
+// files are created with mode 0600.
+func writeAWSCredentialsKey(profileName, key, value string) error {
+	const credentialsFileMode = 0600
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	credFile := home + "/.aws/credentials"
+
+	// Ensure .aws directory exists.
+	if mkErr := os.MkdirAll(home+"/.aws", 0700); mkErr != nil { //nolint:mnd // 0700 = owner rwx
+		return fmt.Errorf("cannot create .aws directory: %w", mkErr)
+	}
+
+	// Read existing content (empty slice if file absent).
+	existing, err := os.ReadFile(credFile) //nolint:gosec // path is user home directory
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot read credentials file: %w", err)
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	sectionHeader := "[" + profileName + "]"
+	prefix := key + " = "
+
+	inSection := false
+	keyFound := false
+	insertAfter := -1 // index of section header, used if key not found
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == sectionHeader {
+			inSection = true
+			insertAfter = i
+
+			continue
+		}
+
+		if inSection {
+			// New section starts — stop searching.
+			if strings.HasPrefix(trimmed, "[") {
+				break
+			}
+
+			if strings.HasPrefix(trimmed, key+" =") || strings.HasPrefix(trimmed, key+"=") {
+				lines[i] = prefix + value
+				keyFound = true
+
+				break
+			}
+
+			// Track last line in section for insertion.
+			if trimmed != "" {
+				insertAfter = i
+			}
+		}
+	}
+
+	if !inSection {
+		// Section not present — append it.
+		if len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+
+		lines = append(lines, sectionHeader, prefix+value)
+	} else if !keyFound {
+		// Section exists but key missing — insert after last populated line.
+		newLines := make([]string, 0, len(lines)+1)
+		newLines = append(newLines, lines[:insertAfter+1]...)
+		newLines = append(newLines, prefix+value)
+		newLines = append(newLines, lines[insertAfter+1:]...)
+		lines = newLines
+	}
+
+	content := strings.Join(lines, "\n")
+
+	if err := os.WriteFile(credFile, []byte(content), credentialsFileMode); err != nil { //nolint:gosec // path is user home directory
+		return fmt.Errorf("cannot write credentials file: %w", err)
 	}
 
 	return nil
