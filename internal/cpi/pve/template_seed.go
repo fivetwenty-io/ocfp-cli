@@ -53,7 +53,6 @@ var (
 	loginPromptRe = regexp.MustCompile(`login:\s*$`)
 	pwPromptRe    = regexp.MustCompile(`Password:\s*$`)
 	shellPromptRe = regexp.MustCompile(`[\$#]\s*$`)
-	cmdMarkerRe   = regexp.MustCompile(`OCFP_CMD_OK_\d+`)
 )
 
 // generateSeedPassword returns a fresh, prefixed, hex-encoded random

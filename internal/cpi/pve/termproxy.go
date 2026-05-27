@@ -30,10 +30,6 @@ import (
 // noVNC client uses cookie-auth because it operates inside a logged-in
 // browser session; token clients must NOT send a cookie or PVE returns 401.
 
-const (
-	termproxyDefaultIdleTimeout = 5 * time.Second
-)
-
 // TermproxySession carries an authenticated PVE serial-console WebSocket plus
 // a small read buffer. Calls are NOT goroutine-safe.
 type TermproxySession struct {
@@ -359,10 +355,3 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-
-	return b
-}

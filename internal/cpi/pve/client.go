@@ -14,7 +14,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/cloudinit"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/network"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/qemu"
 	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/storage"
@@ -111,12 +110,11 @@ type Client struct {
 	// Domain-specific services (lazy initialized). Protected by
 	// servicesMu — getXService() are called concurrently from multiple
 	// manager goroutines.
-	servicesMu       sync.Mutex
-	qemuService      qemu.Service
-	storageService   storage.Service
-	networkService   network.Service
-	tasksService     tasks.Service
-	cloudinitService cloudinit.Service
+	servicesMu     sync.Mutex
+	qemuService    qemu.Service
+	storageService storage.Service
+	networkService network.Service
+	tasksService   tasks.Service
 
 	// Cluster node cache
 	nodes        []NodeInfo
@@ -663,20 +661,6 @@ func (c *Client) getTasksService() tasks.Service {
 	}
 
 	return c.tasksService
-}
-
-// getCloudinitService returns the cloud-init service, initializing on first use.
-//
-//nolint:ireturn // returns interface by design for PVE service abstraction
-func (c *Client) getCloudinitService() cloudinit.Service {
-	c.servicesMu.Lock()
-	defer c.servicesMu.Unlock()
-
-	if c.cloudinitService == nil {
-		c.cloudinitService = cloudinit.New(c.pveClient)
-	}
-
-	return c.cloudinitService
 }
 
 // waitForTask waits for a Proxmox task to complete.

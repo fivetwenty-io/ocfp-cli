@@ -172,7 +172,7 @@ func resolvePVEHostFromVars(ctx context.Context, varsFile string) (string, error
 //
 // The probe script is passed as a single argument to /bin/sh -c, avoiding any
 // shell escaping of individual systemctl arguments.
-func unstickAgent(pveHost string, vmid int, sshUnsafe bool) error {
+func unstickAgent(ctx context.Context, pveHost string, vmid int, sshUnsafe bool) error {
 	log := logger.Get()
 
 	sshArgs := []string{"-o", "BatchMode=yes"}
@@ -190,16 +190,22 @@ func unstickAgent(pveHost string, vmid int, sshUnsafe bool) error {
 
 	vmidStr := strconv.Itoa(vmid)
 
-	// Argv form — vmid is a discrete integer string argument, never interpolated into a shell command.
-	allArgs := append(sshArgs,
+	// Argv form — vmid is a discrete integer string argument, never
+	// interpolated into a shell command. Allocate a fresh slice so we
+	// never alias sshArgs when it has spare capacity (the previous
+	// `append(sshArgs, ...)` could silently mutate the caller's slice).
+	suffix := []string{
 		target,
 		"qm", "guest", "exec", vmidStr, "--timeout", "20",
 		"--", "/bin/sh", "-c", probe,
-	)
+	}
+	allArgs := make([]string, 0, len(sshArgs)+len(suffix))
+	allArgs = append(allArgs, sshArgs...)
+	allArgs = append(allArgs, suffix...)
 
 	log.Infow("restarting bosh-agent via qemu-guest-agent", "pve_host", pveHost, "vmid", vmid)
 
-	cmd := exec.Command("ssh", allArgs...) //nolint:gosec // args constructed from validated integer + trusted config
+	cmd := exec.CommandContext(ctx, "ssh", allArgs...) //nolint:gosec // args constructed from validated integer + trusted config
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
@@ -325,5 +331,5 @@ func runPVEUnstick(ctx context.Context, f *unstickFlags, instanceRef string) err
 
 	sshUnsafe := os.Getenv("OCFP_SSH_UNSAFE") == "1"
 
-	return unstickAgent(pveHost, vmid, sshUnsafe)
+	return unstickAgent(ctx, pveHost, vmid, sshUnsafe)
 }
