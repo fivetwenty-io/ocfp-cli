@@ -894,12 +894,12 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 
 	// If configPath is empty, return an error
 	if configPath == "" {
-		return nil, fmt.Errorf("No configuration file found.  Should find ~/.ocfp/config.yml or specify -f configfile.yml")
+		return nil, ErrNoConfigFile
 	}
 
 	// If blocName is empty, return an error
 	if blocName == "" {
-		return nil, fmt.Errorf("No blocname provided")
+		return nil, ErrNoBlocName
 	}
 
 	// Try to get from cache first

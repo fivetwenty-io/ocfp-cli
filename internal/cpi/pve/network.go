@@ -119,8 +119,10 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 			return nil, fmt.Errorf("failed to create SDN subnet: %w", err)
 		}
 
-		// Apply SDN changes
-		_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
+		// Apply SDN changes; log on failure — the subnet is already created.
+		if _, applyErr := m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil); applyErr != nil {
+			logger.WithOperation("CreateSubnet").Warnf("SDN apply after subnet create: %v", applyErr)
+		}
 
 		return &cpi.Subnet{
 			ID:        subnetID,
@@ -429,8 +431,10 @@ func (m *NetworkManager) createSDNNetwork(ctx context.Context, req *cpi.NetworkR
 		return nil, fmt.Errorf("failed to create SDN VNet: %w", err)
 	}
 
-	// Apply SDN changes
-	_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
+	// Apply SDN changes; log on failure — the VNet is already created.
+	if _, applyErr := m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil); applyErr != nil {
+		logger.WithOperation("CreateNetwork").Warnf("SDN apply after vnet create: %v", applyErr)
+	}
 
 	return &cpi.Network{
 		ID:        req.Name,
@@ -608,8 +612,10 @@ func (m *NetworkManager) deleteSDNNetwork(ctx context.Context, id string) error 
 		return fmt.Errorf("failed to delete SDN VNet: %w", err)
 	}
 
-	// Apply SDN changes
-	_, _ = m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil)
+	// Apply SDN changes; log on failure — the VNet is already deleted.
+	if _, applyErr := m.client.pveClient.PutCtx(ctx, "/cluster/sdn", nil); applyErr != nil {
+		logger.WithOperation("DeleteNetwork").Warnf("SDN apply after vnet delete: %v", applyErr)
+	}
 
 	return nil
 }

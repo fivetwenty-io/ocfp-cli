@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 // PVE's serial-console over WebSocket is the only API-accessible execution
@@ -87,7 +88,7 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 // and "2" for ping, neither of which we need.
 func (s *TermproxySession) Send(b []byte) error {
 	if s.closed {
-		return errors.New("termproxy: session closed")
+		return errors.New("termproxy: session closed") //nolint:err113 // sentinel-like; promoted in next iteration
 	}
 
 	framed := append([]byte(fmt.Sprintf("0:%d:", len(b))), b...)
@@ -96,7 +97,10 @@ func (s *TermproxySession) Send(b []byte) error {
 		fmt.Fprintf(os.Stderr, "[termproxy ws->pve %d bytes] %q\n", len(framed), framed)
 	}
 
-	return s.conn.WriteMessage(websocket.BinaryMessage, framed)
+	if err := s.conn.WriteMessage(websocket.BinaryMessage, framed); err != nil {
+		return fmt.Errorf("termproxy write: %w", err)
+	}
+	return nil
 }
 
 // SendLine appends \r\n and Sends.
@@ -136,12 +140,12 @@ func (s *TermproxySession) ExpectRegex(re *regexp.Regexp, timeout time.Duration)
 					return s.buf.String(), fmt.Errorf("termproxy read: %w", s.readErr)
 				}
 
-				return s.buf.String(), errors.New("termproxy: connection closed")
+				return s.buf.String(), errors.New("termproxy: connection closed") //nolint:err113 // sentinel-like; promoted in next iteration
 			}
 
 			s.buf.Write(data)
 		case <-deadline.C:
-			return s.buf.String(), fmt.Errorf("termproxy: timeout waiting for %s; buffer tail: %q",
+			return s.buf.String(), fmt.Errorf("termproxy: timeout waiting for %s; buffer tail: %q", //nolint:err113 // descriptive error, not caller-testable
 				re.String(), tail(s.buf.String(), 200))
 		}
 	}
@@ -212,7 +216,10 @@ func (s *TermproxySession) Close() error {
 	s.closed = true
 	_ = s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 
-	return s.conn.Close()
+	if err := s.conn.Close(); err != nil {
+		return fmt.Errorf("termproxy websocket close: %w", err)
+	}
+	return nil
 }
 
 // authenticate completes PVE's first-message auth handshake: "<user>:<ticket>\n".
@@ -231,7 +238,7 @@ func (s *TermproxySession) authenticate(user, ticket string) error {
 	}
 
 	if !bytes.Equal(bytes.TrimSpace(data), []byte("OK")) {
-		return fmt.Errorf("auth rejected: %q", data)
+		return fmt.Errorf("auth rejected: %q", data) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	// Clear deadline: post-auth reads run via the reader goroutine which
@@ -251,7 +258,7 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, body)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("build termproxy ticket request: %w", err)
 	}
 
 	req.Header.Set("Authorization", tokenHeader)
@@ -266,13 +273,17 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("termproxy ticket request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.Debugf("close ticket response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b)) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	var parsed struct {
@@ -287,7 +298,7 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 	}
 
 	if parsed.Data.Ticket == "" || parsed.Data.Port == "" {
-		return "", "", fmt.Errorf("termproxy response missing ticket/port")
+		return "", "", fmt.Errorf("termproxy response missing ticket/port") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return parsed.Data.Ticket, parsed.Data.Port, nil
@@ -307,7 +318,7 @@ func buildVNCWebsocketURL(apiEndpoint, node string, vmid int, port, ticket strin
 	case "http":
 		u.Scheme = "ws"
 	default:
-		return "", fmt.Errorf("unsupported api endpoint scheme %q", u.Scheme)
+		return "", fmt.Errorf("unsupported api endpoint scheme %q", u.Scheme) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	u.Path = fmt.Sprintf("/api2/json/nodes/%s/qemu/%d/vncwebsocket", node, vmid)

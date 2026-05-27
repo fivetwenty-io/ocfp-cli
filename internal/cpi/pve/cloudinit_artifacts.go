@@ -64,7 +64,7 @@ func (in ArtifactsCloudInitInputs) validate() error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("ArtifactsCloudInitInputs: missing required fields: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("ArtifactsCloudInitInputs: missing required fields: %s", strings.Join(missing, ", ")) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return nil

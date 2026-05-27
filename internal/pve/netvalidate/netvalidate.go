@@ -39,7 +39,7 @@ var ErrCIDRMismatch = errors.New("director network CIDR and cf cloud-config CIDR
 // explanation when they differ.
 func ValidateNetworkPairing(directorCIDR, cfCloudConfigCIDR string) error {
 	if directorCIDR == "" || cfCloudConfigCIDR == "" {
-		return fmt.Errorf("ValidateNetworkPairing: both CIDRs must be non-empty; got %q and %q", directorCIDR, cfCloudConfigCIDR)
+		return fmt.Errorf("ValidateNetworkPairing: both CIDRs must be non-empty; got %q and %q", directorCIDR, cfCloudConfigCIDR) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	dirNet, err := parseCIDR(directorCIDR)
@@ -71,7 +71,7 @@ func ValidateNetworkPairing(directorCIDR, cfCloudConfigCIDR string) error {
 func parseCIDR(cidr string) (string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse CIDR %q: %w", cidr, err)
 	}
 
 	return ipNet.String(), nil

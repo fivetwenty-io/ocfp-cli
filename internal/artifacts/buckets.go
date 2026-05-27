@@ -58,8 +58,11 @@ func Probe(ctx context.Context, ep Endpoint, creds Credentials) error {
 	defer cancel()
 
 	_, err = cli.ListBuckets(probeCtx, &s3.ListBucketsInput{})
+	if err != nil {
+		return fmt.Errorf("probing artifacts endpoint: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
@@ -72,7 +75,7 @@ func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
 		}
 
 		if !pool.AppendCertsFromPEM([]byte(ep.CACert)) {
-			return nil, fmt.Errorf("artifacts CA cert: no certificates parsed")
+			return nil, ErrCACertNoPEM
 		}
 
 		tlsCfg.RootCAs = pool
@@ -135,5 +138,5 @@ func ensureBucket(ctx context.Context, cli *s3.Client, name string) error {
 		return nil
 	}
 
-	return err
+	return fmt.Errorf("creating bucket %q: %w", name, err)
 }

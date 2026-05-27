@@ -148,8 +148,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, opts ReconcileOptions) (*Rec
 		return nil, err
 	}
 
-	// Step 2: Discover resources from provider
-	discoveredResources, _ := r.discoverAllResources(ctx, result)
+	// Step 2: Discover resources from provider.
+	// discoverAllResources appends per-resource errors into result internally;
+	// the returned error is always nil, so the blank identifier is intentional.
+	discoveredResources, discoverErr := r.discoverAllResources(ctx, result)
+	_ = discoverErr // errors are appended into result inside discoverAllResources
 
 	// Step 3: Compare and update result
 	diffSet := r.compareAndUpdateResult(currentState, discoveredResources, result)

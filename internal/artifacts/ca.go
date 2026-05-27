@@ -35,7 +35,7 @@ type CAMaterial struct {
 // critical so downstream verifiers honor the constraint.
 func GenerateInternalCA(blocName string) (CAMaterial, error) {
 	if blocName == "" {
-		return CAMaterial{}, fmt.Errorf("bloc name required")
+		return CAMaterial{}, ErrCABlocNameRequired
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -100,7 +100,7 @@ func GenerateInternalCA(blocName string) (CAMaterial, error) {
 // the CA (the leaf's CertPEM is NOT a trust anchor).
 func IssueLeafCert(ca CAMaterial, leafCN string, dnsNames []string, ips []net.IP) (TLSMaterial, error) {
 	if ca.CertPEM == "" || ca.KeyPEM == "" {
-		return TLSMaterial{}, fmt.Errorf("CA material missing cert or key")
+		return TLSMaterial{}, ErrCAMaterialIncomplete
 	}
 
 	caCert, caKey, err := parseCA(ca)
@@ -166,7 +166,7 @@ func IssueLeafCert(ca CAMaterial, leafCN string, dnsNames []string, ips []net.IP
 func parseCA(ca CAMaterial) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certBlock, _ := pem.Decode([]byte(ca.CertPEM))
 	if certBlock == nil || certBlock.Type != "CERTIFICATE" {
-		return nil, nil, fmt.Errorf("CA cert PEM is not a CERTIFICATE block")
+		return nil, nil, ErrCACertPEMInvalid
 	}
 
 	caCert, err := x509.ParseCertificate(certBlock.Bytes)
@@ -176,7 +176,7 @@ func parseCA(ca CAMaterial) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 
 	keyBlock, _ := pem.Decode([]byte(ca.KeyPEM))
 	if keyBlock == nil {
-		return nil, nil, fmt.Errorf("CA key PEM not decodable")
+		return nil, nil, ErrCAKeyPEMInvalid
 	}
 
 	caKey, err := x509.ParseECPrivateKey(keyBlock.Bytes)
@@ -190,7 +190,7 @@ func parseCA(ca CAMaterial) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 func computeSubjectKeyID(pub *ecdsa.PublicKey) ([]byte, error) {
 	derPub, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshaling PKIX public key: %w", err)
 	}
 
 	sum := sha256.Sum256(derPub)

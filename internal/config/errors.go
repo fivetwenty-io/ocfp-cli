@@ -9,6 +9,14 @@ import (
 var (
 	ErrProviderOrIaasRequired = errors.New("provider or iaas must be specified")
 	ErrNoConfigPath           = errors.New("no config file path available")
+
+	// ErrNoConfigFile is returned when no configuration file is found at the
+	// default locations and no explicit path was provided.
+	ErrNoConfigFile = errors.New("no configuration file found; use ~/.ocfp/config.yml or specify -f configfile.yml")
+
+	// ErrNoBlocName is returned when LoadWithParams is called without a bloc name.
+	ErrNoBlocName = errors.New("no bloc name provided")
+
 	// ErrPVEAuthRequired is returned when a PVE bloc has neither API token auth
 	// (auth_token + token_secret) nor user/password auth (username + password)
 	// configured. At least one complete auth mode is required.
