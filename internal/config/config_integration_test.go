@@ -227,9 +227,15 @@ blocs:
   inherit-all:
     provider: pve
     api_endpoint: https://pve.inherit.example
+    # Minimal password auth to satisfy PVE credential validation (D2).
+    username: "root@pam"
+    password: "test-password"
   override-key:
     provider: pve
     api_endpoint: https://pve.override.example
+    # Minimal password auth to satisfy PVE credential validation (D2).
+    username: "root@pam"
+    password: "test-password"
     tailscale:
       auth_key: "tskey-bloc-literal"
       hostname: "override-host"

@@ -9,6 +9,15 @@ import (
 var (
 	ErrProviderOrIaasRequired = errors.New("provider or iaas must be specified")
 	ErrNoConfigPath           = errors.New("no config file path available")
+	// ErrPVEAuthRequired is returned when a PVE bloc has neither API token auth
+	// (auth_token + token_secret) nor user/password auth (username + password)
+	// configured. At least one complete auth mode is required.
+	ErrPVEAuthRequired = errors.New("pve config: at least one auth mode required: set (auth_token + token_secret) or (username + password)")
+
+	// ErrPVEVMIDRangeInvalid is returned when the configured vmid_range_start
+	// and vmid_range_end values are inconsistent: end must be greater than start,
+	// both must be positive, and end must not exceed the PVE maximum (999999999).
+	ErrPVEVMIDRangeInvalid = errors.New("pve config: vmid_range_end must be > vmid_range_start > 0 and <= 999999999")
 )
 
 // ErrBlocNotFound returns an error indicating the specified bloc was not found in the configuration file.
