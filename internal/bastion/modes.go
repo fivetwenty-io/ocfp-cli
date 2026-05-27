@@ -265,6 +265,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"shell_environment", manager.setupShellEnvironment},
 		{"system_environment", manager.setupSystemEnvironment},
 		{"ocfp_cli_setup", manager.setupOCFPCLI},
+		{"helper_scripts", manager.installHelperScripts},
 		{"genesis", manager.setupGenesis},
 		{"vault_inception", manager.setupVaultInception},
 		{"ocfp_configure", manager.runOCFPConfigure},
