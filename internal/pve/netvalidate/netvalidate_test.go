@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
 )
 
@@ -119,9 +118,9 @@ func TestValidateNetworkPairing_MismatchedCIDRs_ReturnsError(t *testing.T) {
 }
 
 // T28 TestValidateNetworkPairing_EmptyInputs_SkipsValidation verifies that
-// empty CIDR strings return an error (not a mismatch error — an argument
-// error), and that ValidateBlocConfig returns nil for an empty config,
-// honoring the "skip when incomplete" contract.
+// empty CIDR strings return an argument error (not a mismatch error).
+// The "skip when incomplete" contract is enforced by the caller (config.validate)
+// which guards both fields before calling ValidateNetworkPairing.
 func TestValidateNetworkPairing_EmptyInputs_SkipsValidation(t *testing.T) {
 	t.Parallel()
 
@@ -155,72 +154,6 @@ func TestValidateNetworkPairing_EmptyInputs_SkipsValidation(t *testing.T) {
 		}
 		if errors.Is(err, netvalidate.ErrCIDRMismatch) {
 			t.Errorf("expected argument error, not ErrCIDRMismatch, got: %v", err)
-		}
-	})
-
-	t.Run("ValidateBlocConfig nil config skips", func(t *testing.T) {
-		t.Parallel()
-		err := netvalidate.ValidateBlocConfig(nil)
-		if err != nil {
-			t.Errorf("expected nil for nil config, got: %v", err)
-		}
-	})
-
-	t.Run("ValidateBlocConfig empty network CIDR skips", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.Config{
-			Network: config.NetworkConfig{
-				CIDR: "",
-			},
-		}
-		err := netvalidate.ValidateBlocConfig(cfg)
-		if err != nil {
-			t.Errorf("expected nil when director CIDR absent, got: %v", err)
-		}
-	})
-
-	t.Run("ValidateBlocConfig empty cf cloud-config CIDR skips", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.Config{
-			Network: config.NetworkConfig{
-				CIDR: "10.64.64.0/18",
-			},
-			// CFCloudConfigCIDR not set — skip
-		}
-		err := netvalidate.ValidateBlocConfig(cfg)
-		if err != nil {
-			t.Errorf("expected nil when cf CIDR absent, got: %v", err)
-		}
-	})
-
-	t.Run("ValidateBlocConfig matching CIDRs returns nil", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.Config{
-			Network: config.NetworkConfig{
-				CIDR: "10.64.64.0/18",
-			},
-			CFCloudConfigCIDR: "10.64.64.0/18",
-		}
-		err := netvalidate.ValidateBlocConfig(cfg)
-		if err != nil {
-			t.Errorf("expected nil for matching CIDRs, got: %v", err)
-		}
-	})
-
-	t.Run("ValidateBlocConfig mismatched CIDRs returns error", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.Config{
-			Network: config.NetworkConfig{
-				CIDR: "192.168.1.0/24",
-			},
-			CFCloudConfigCIDR: "10.64.64.0/18",
-		}
-		err := netvalidate.ValidateBlocConfig(cfg)
-		if err == nil {
-			t.Fatal("expected error for mismatched CIDRs in bloc config, got nil")
-		}
-		if !errors.Is(err, netvalidate.ErrCIDRMismatch) {
-			t.Errorf("expected ErrCIDRMismatch, got: %v", err)
 		}
 	})
 }
@@ -270,25 +203,5 @@ func TestValidateNetworkPairing_ParseErrors(t *testing.T) {
 				t.Errorf("expected parse error, not ErrCIDRMismatch, for invalid CIDR input; got: %v", err)
 			}
 		})
-	}
-}
-
-// TestValidateBlocConfig_NetworkCIDRAliasUsed verifies that ValidateBlocConfig
-// falls back to NetworkCIDR when CIDR is empty, matching NetworkConfig field
-// precedence documented in the UnmarshalYAML comment.
-func TestValidateBlocConfig_NetworkCIDRAliasUsed(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		Network: config.NetworkConfig{
-			CIDR:        "",
-			NetworkCIDR: "10.64.64.0/18",
-		},
-		CFCloudConfigCIDR: "10.64.64.0/18",
-	}
-
-	err := netvalidate.ValidateBlocConfig(cfg)
-	if err != nil {
-		t.Errorf("expected nil when NetworkCIDR alias matches CFCloudConfigCIDR, got: %v", err)
 	}
 }

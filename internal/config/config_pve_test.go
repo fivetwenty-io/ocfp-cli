@@ -336,3 +336,62 @@ func TestValidate_Integration_PVE_ValidVMIDRange(t *testing.T) {
 	err := validate(cfg)
 	require.NoError(t, err)
 }
+
+// --- Network pairing validation tests ---
+
+// minimalPVEConfigWithCIDRs returns a PVE Config with token auth set and the
+// supplied director/cf-cloud-config CIDRs populated.
+func minimalPVEConfigWithCIDRs(directorCIDR, cfCloudConfigCIDR string) *Config {
+	return &Config{
+		Name:              "test-pve",
+		Provider:          "pve",
+		AuthToken:         "root@pam!tok",
+		TokenSecret:       "secret",
+		CFCloudConfigCIDR: cfCloudConfigCIDR,
+		Network: NetworkConfig{
+			CIDR: directorCIDR,
+		},
+	}
+}
+
+// TestValidate_PVENetworkPairing_MismatchReturnsError asserts that validate()
+// returns an error mentioning "tailscale" when Network.CIDR and
+// CFCloudConfigCIDR are both set but refer to different networks.
+func TestValidate_PVENetworkPairing_MismatchReturnsError(t *testing.T) {
+	t.Parallel()
+
+	cfg := minimalPVEConfigWithCIDRs("192.168.1.0/24", "10.64.64.0/18")
+
+	err := validate(cfg)
+
+	require.Error(t, err, "mismatched CIDRs must return an error")
+	assert.True(t, strings.Contains(strings.ToLower(err.Error()), "tailscale"),
+		"error must mention tailscale hazard; got: %v", err)
+}
+
+// TestValidate_PVENetworkPairing_MatchOK asserts that validate() returns nil
+// when Network.CIDR and CFCloudConfigCIDR refer to the same network (host
+// bits stripped for comparison).
+func TestValidate_PVENetworkPairing_MatchOK(t *testing.T) {
+	t.Parallel()
+
+	// Both refer to the same /24 network; host-bit variant intentional.
+	cfg := minimalPVEConfigWithCIDRs("192.168.1.0/24", "192.168.1.5/24")
+
+	err := validate(cfg)
+
+	require.NoError(t, err, "matching CIDRs must not return an error")
+}
+
+// TestValidate_PVENetworkPairing_OneEmptySkips asserts that validate() returns
+// nil when only one CIDR is set (incomplete pair — validator skips).
+func TestValidate_PVENetworkPairing_OneEmptySkips(t *testing.T) {
+	t.Parallel()
+
+	// Only Network.CIDR set; CFCloudConfigCIDR absent.
+	cfg := minimalPVEConfigWithCIDRs("192.168.1.0/24", "")
+
+	err := validate(cfg)
+
+	require.NoError(t, err, "single CIDR set must not trigger network pairing error")
+}
