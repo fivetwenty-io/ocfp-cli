@@ -104,11 +104,11 @@ type Config struct {
 	// Nodes lists Proxmox VE cluster nodes for multi-node AZ configuration.
 	// Each entry is written as a separate vault AZ entry under net/azs/{node}.
 	// PVE-specific; ignored by other providers.
-	Nodes []string `json:"nodes"    mapstructure:"nodes"    yaml:"nodes,omitempty"`
+	Nodes []string `json:"nodes" mapstructure:"nodes" yaml:"nodes,omitempty"`
 	// Prefer snake_case to match README and user configs
-	ProjectID string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
-	OrgID     string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
-	AuthToken string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ProjectID string `json:"project_id" mapstructure:"project_id" yaml:"project_id,omitempty"`
+	OrgID     string `json:"org_id"     mapstructure:"org_id"     yaml:"org_id,omitempty"`
+	AuthToken string `json:"auth_token" mapstructure:"auth_token" yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	// TokenSecret holds the PVE API token secret for API token auth. Distinct from
 	// Password, which is used only for username/password auth. When AuthToken is set,
 	// TokenSecret must also be set; Password is ignored for auth purposes in that mode.
@@ -117,22 +117,22 @@ type Config struct {
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
-	APIEndpoint string `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint,omitempty"`
+	APIEndpoint string `json:"api_endpoint" mapstructure:"api_endpoint" yaml:"api_endpoint,omitempty"`
 	// VerifySSL controls TLS certificate verification for provider API calls.
 	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
 	// certs work out of the box. Set true when targeting a PVE host with a
 	// CA-signed certificate to fail-closed on cert mismatches.
-	VerifySSL bool `json:"verify_ssl"          mapstructure:"verify_ssl"          yaml:"verify_ssl,omitempty"`
+	VerifySSL bool `json:"verify_ssl" mapstructure:"verify_ssl" yaml:"verify_ssl,omitempty"`
 	// IsoStorage is the PVE storage pool that hosts ISO content and
 	// cloud-init snippets. PVE-specific. Used by snippet upload and by
 	// template auto-provisioning to stage downloaded cloud images.
-	IsoStorage string `json:"iso_storage"         mapstructure:"iso_storage"         yaml:"iso_storage,omitempty"`
+	IsoStorage string `json:"iso_storage" mapstructure:"iso_storage" yaml:"iso_storage,omitempty"`
 	// VMStorage is the PVE storage pool used for ephemeral (root) VM disks.
 	// PVE-specific. Maps to pve.vm_storage in the bosh-pve-cpi-release job
 	// properties. When empty, configureCPI falls back to
 	// Artifacts.Data.StoragePool, then to the hardcoded default "local-lvm".
 	// Example: "data" (lvmthin pool), "local-lvm" (default thin LVM).
-	VMStorage string `json:"vm_storage"          mapstructure:"vm_storage"          yaml:"vm_storage,omitempty"`
+	VMStorage string `json:"vm_storage" mapstructure:"vm_storage" yaml:"vm_storage,omitempty"`
 	// DiskStorage is the PVE storage pool used for persistent BOSH disks.
 	// PVE-specific. Maps to pve.disk_storage in the bosh-pve-cpi-release job
 	// properties. When empty, configureCPI falls back to
@@ -410,6 +410,11 @@ const (
 	octetShift24        = 24
 	octetShift16        = 16
 	octetShift8         = 8
+
+	// providerStackIT is the canonical lower-case provider name for STACKIT.
+	providerStackIT = "stackit"
+	// dnsCloudflare is Cloudflare's primary resolver, used as the default DNS.
+	dnsCloudflare = "1.1.1.1"
 )
 
 // BucketSettings specify data-plane policies.
@@ -627,7 +632,7 @@ type BrewOverride struct {
 	Tap          string `json:"tap,omitempty"          mapstructure:"tap"          yaml:"tap,omitempty"`
 	Cask         *bool  `json:"cask,omitempty"         mapstructure:"cask"         yaml:"cask,omitempty"`
 	Version      string `json:"version,omitempty"      mapstructure:"version"      yaml:"version,omitempty"`
-	Options      string `json:"options,omitempty"       mapstructure:"options"      yaml:"options,omitempty"`
+	Options      string `json:"options,omitempty"      mapstructure:"options"      yaml:"options,omitempty"`
 	CheckCommand string `json:"checkCommand,omitempty" mapstructure:"checkCommand" yaml:"checkCommand,omitempty"`
 }
 
@@ -1219,7 +1224,7 @@ func loadFromFile(path string, target interface{}) error {
 // applyDefaults applies provider-specific defaults.
 func applyDefaults(cfg *Config, provider string) error {
 	switch strings.ToLower(provider) {
-	case "stackit":
+	case providerStackIT:
 		applyStackitDefaults(cfg)
 	case "openstack":
 		applyOpenStackDefaults(cfg)
@@ -1292,12 +1297,12 @@ func applyStackitDefaults(cfg *Config) {
 	}
 
 	if len(cfg.DNS) == 0 {
-		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.DNS = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
-		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
-		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNS = []string{dnsCloudflare, "8.8.8.8"}
+		cfg.Network.DNSServers = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if cfg.Bastion.Flavor == "" {
@@ -1340,7 +1345,7 @@ func applyStackitDefaults(cfg *Config) {
 // AWS/GCP/Azure use letter suffixes (e.g., us-east-1a, us-east-1b).
 // STACKIT uses numeric suffixes with a dash (e.g., eu01-1, eu01-2).
 func FormatAvailabilityZone(provider, region string, index int) string {
-	if strings.EqualFold(provider, "stackit") {
+	if strings.EqualFold(provider, providerStackIT) {
 		return fmt.Sprintf("%s-%d", region, index+1)
 	}
 
@@ -1490,12 +1495,12 @@ func applyAWSDefaults(cfg *Config) {
 	}
 
 	if len(cfg.DNS) == 0 {
-		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.DNS = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
-		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
-		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNS = []string{dnsCloudflare, "8.8.8.8"}
+		cfg.Network.DNSServers = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	// Apply instanceType alias for AWS (prefer instanceType over flavor if both set)
@@ -1588,7 +1593,7 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate provider
-	validProviders := []string{"stackit", "openstack", "aws", "azure", "gcp", "vmware", "pve"}
+	validProviders := []string{providerStackIT, "openstack", "aws", "azure", "gcp", "vmware", "pve"}
 	providerValid := false
 
 	for _, p := range validProviders {

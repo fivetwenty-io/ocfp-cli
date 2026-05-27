@@ -19,6 +19,13 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+const (
+	// termproxyWSHandshakeTimeout is the WebSocket dial handshake deadline.
+	termproxyWSHandshakeTimeout = 10 * time.Second
+	// termproxyReadChanSize is the buffer depth of the reader goroutine channel.
+	termproxyReadChanSize = 16
+)
+
 // PVE's serial-console over WebSocket is the only API-accessible execution
 // channel into a VM that lacks qemu-guest-agent. We use it during
 // ProvisionTemplate to seed the firstboot units into the cloned image before
@@ -55,7 +62,7 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 	}
 
 	dialer := &websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout: termproxyWSHandshakeTimeout,
 		TLSClientConfig:  &tls.Config{InsecureSkipVerify: !verifySSL}, //nolint:gosec // operator-controlled
 	}
 
@@ -188,7 +195,7 @@ done:
 // Called lazily on the first Expect/Drain so unit tests that only exercise
 // helpers don't spin up a goroutine.
 func (s *TermproxySession) startReader() {
-	s.readCh = make(chan []byte, 16)
+	s.readCh = make(chan []byte, termproxyReadChanSize)
 
 	go func() {
 		defer close(s.readCh)
@@ -268,7 +275,7 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: termproxyWSHandshakeTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: !verifySSL}, //nolint:gosec // operator-controlled
 		},
@@ -301,7 +308,7 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 	}
 
 	if parsed.Data.Ticket == "" || parsed.Data.Port == "" {
-		return "", "", fmt.Errorf("termproxy response missing ticket/port") //nolint:err113 // descriptive error, not caller-testable
+		return "", "", errors.New("termproxy response missing ticket/port") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	return parsed.Data.Ticket, parsed.Data.Port, nil
@@ -354,4 +361,3 @@ func tail(s string, n int) string {
 
 	return s[len(s)-n:]
 }
-

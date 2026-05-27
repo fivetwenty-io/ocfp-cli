@@ -11,6 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// pveDefaultProbePort is the BOSH director API port dialled by defaultProbeBuilder.
+	pveDefaultProbePort = 25555
+	// pveDefaultProbeTimeout is the TCP dial timeout used by defaultProbeBuilder.
+	pveDefaultProbeTimeout = 5 * time.Second
+)
+
 // probeBuilder constructs the slice of Probe instances for a given bloc config.
 // Factored out to allow test injection of fake probes.
 type probeBuilder func(boshEnv, deployment, directorIP string) []probes.Probe
@@ -37,8 +44,8 @@ func defaultProbeBuilder(boshEnv, deployment, directorIP string) []probes.Probe 
 
 	tcp := &probes.TCPDialProbe{
 		Host:    directorIP,
-		Port:    25555,
-		Timeout: 5 * time.Second,
+		Port:    pveDefaultProbePort,
+		Timeout: pveDefaultProbeTimeout,
 		Label:   "bosh-director-api",
 	}
 

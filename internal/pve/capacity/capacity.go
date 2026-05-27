@@ -9,6 +9,7 @@ package capacity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -112,7 +113,7 @@ type pveNodeStatusResponse struct {
 //     caller can fall through to default rather than returning zero-value capacity.
 func (q *RESTQuerier) NodeStatus(ctx context.Context, node string) (*NodeStatus, error) {
 	if node == "" {
-		return nil, fmt.Errorf("pve/capacity: node name must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return nil, errors.New("pve/capacity: node name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	url := fmt.Sprintf("%s/nodes/%s/status", q.Base, node)

@@ -25,6 +25,8 @@ const (
 	blobstoreDeleteBatchSize = 1000
 	// blobstoreLifecycleRuleID is the rule ID used for noncurrent expiration.
 	blobstoreLifecycleRuleID = "DeleteOldObjects"
+	// blobstoreHTTPTimeout is the HTTP client timeout for blobstore requests.
+	blobstoreHTTPTimeout = 60 * time.Second
 )
 
 // blobstoreS3Client wraps an aws-sdk-go-v2 S3 client configured against the
@@ -136,7 +138,7 @@ func buildBlobstoreHTTPClient(caPath string, insecure bool) (*http.Client, error
 		Proxy:           http.ProxyFromEnvironment,
 	}
 
-	return &http.Client{Transport: transport, Timeout: 60 * time.Second}, nil
+	return &http.Client{Transport: transport, Timeout: blobstoreHTTPTimeout}, nil
 }
 
 // createBucketExternal creates a bucket via the S3-compatible API.

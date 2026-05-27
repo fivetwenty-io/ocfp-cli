@@ -36,6 +36,11 @@ const (
 	MergeStrategyFull
 )
 
+const (
+	// resourceStateActive is the state string for discovered live resources.
+	resourceStateActive = "active"
+)
+
 // String returns the string representation of a merge strategy.
 func (s MergeStrategy) String() string {
 	switch s {
@@ -518,7 +523,7 @@ func (r *Reconciler) discoverSecurityGroups(
 			Type:     ResourceTypeSecurityGroup,
 			Name:     secGroup.Name,
 			Provider: r.provider.Name(),
-			State:    "active",
+			State:    resourceStateActive,
 			Properties: map[string]interface{}{
 				"description": secGroup.Description,
 				"rules_count": len(secGroup.Rules),
@@ -711,7 +716,7 @@ func (r *Reconciler) discoverKeyPairs(
 			Type:     ResourceTypeKeyPair,
 			Name:     keyPair.Name,
 			Provider: r.provider.Name(),
-			State:    "active",
+			State:    resourceStateActive,
 			Properties: map[string]interface{}{
 				"fingerprint": keyPair.Fingerprint,
 			},
@@ -796,7 +801,7 @@ func (r *Reconciler) discoverStorageResources(ctx context.Context) ([]*Resource,
 				Type:     ResourceTypeBucket,
 				Name:     bucket.Name,
 				Provider: r.provider.Name(),
-				State:    "active",
+				State:    resourceStateActive,
 				Properties: map[string]interface{}{
 					"region": bucket.Region,
 				},

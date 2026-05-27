@@ -18,6 +18,11 @@ import (
 const (
 	tlsCertValidityYears = 5
 	tlsSerialBits        = 128
+
+	// pemBlockCertificate is the PEM block type header for X.509 certificates.
+	pemBlockCertificate = "CERTIFICATE"
+	// pemBlockECPrivateKey is the PEM block type header for EC private keys.
+	pemBlockECPrivateKey = "EC PRIVATE KEY"
 )
 
 // TLSMaterial is the cert/key pair plus a stable SHA-256 fingerprint of the
@@ -70,8 +75,8 @@ func GenerateSelfSignedTLS(commonName string, dnsNames []string, ipAddrs []net.I
 		return TLSMaterial{}, fmt.Errorf("marshaling private key: %w", err)
 	}
 
-	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockCertificate, Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: pemBlockECPrivateKey, Bytes: keyDER}))
 
 	sum := sha256.Sum256(der)
 
