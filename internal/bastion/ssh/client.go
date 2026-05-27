@@ -27,7 +27,9 @@ const (
 	// sshRetryBackoffMultiplier is the multiplier for exponential backoff.
 	sshRetryBackoffMultiplier = 1.5
 	// sshpassArgCount is the number of fixed sshpass arguments (before appending ssh args).
-	sshpassArgCount = 3
+	// With -e mode the only fixed arg is the subcommand name (e.g. "ssh"); password
+	// is injected via SSHPASS env, never in argv.
+	sshpassArgCount = 1
 )
 
 // validateCommand validates that only safe commands are executed.
@@ -608,13 +610,14 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 	// Execute SSH command
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 
-	// Set up environment if password authentication is needed
+	// Set up environment if password authentication is needed.
+	// Password is injected via SSHPASS env var; -e tells sshpass to read it
+	// from the environment instead of argv, keeping the secret out of ps output.
 	if c.config.UseSSHPass && c.config.Password != "" {
 		_, err := exec.LookPath("sshpass")
 		if err == nil {
-			// Use sshpass for password authentication
 			sshpassArgs := make([]string, 0, sshpassArgCount+len(args))
-			sshpassArgs = append(sshpassArgs, "-p", c.config.Password, "ssh")
+			sshpassArgs = append(sshpassArgs, "-e", "ssh")
 			sshpassArgs = append(sshpassArgs, args...)
 
 			err := validateCommand(append([]string{"sshpass"}, sshpassArgs...))
@@ -623,6 +626,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 			}
 
 			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
+			cmd.Env = append(os.Environ(), "SSHPASS="+c.config.Password)
 		} else {
 			c.log.Warn("sshpass not available for password authentication")
 		}
