@@ -1,6 +1,7 @@
 package security
 
 import (
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,6 +26,25 @@ var (
 func ValidatePath(path string) error {
 	if path == "" {
 		return ErrEmptyPath
+	}
+
+	// Null bytes can truncate paths at the OS level and bypass suffix checks.
+	if strings.ContainsRune(path, '\x00') {
+		return ErrPathContainsNullByte(path)
+	}
+
+	// URL-encoded traversal: decode once and reject if the decoded form introduces
+	// a ".." path component that was hidden by percent-encoding.
+	if decoded, err := url.PathUnescape(path); err != nil {
+		// Malformed percent-encoding — reject.
+		return ErrPathContainsDangerousPattern(path)
+	} else if decoded != path {
+		// Encoding was present; check whether the decoded form traverses.
+		for _, seg := range strings.Split(decoded, "/") {
+			if seg == ".." {
+				return ErrPathContainsDangerousPattern(path)
+			}
+		}
 	}
 
 	// Clean the path
