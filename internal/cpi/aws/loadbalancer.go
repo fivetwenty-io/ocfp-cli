@@ -44,11 +44,23 @@ var (
 // LoadBalancerManager handles AWS Application Load Balancer operations.
 type LoadBalancerManager struct {
 	client *Client
+	// elb overrides the real ELBv2 client; non-nil only in tests.
+	elb ELBv2API
+}
+
+// getELB returns the injected ELBv2API stub when set (tests), otherwise
+// falls back to the real SDK client via client.getELBClient.
+func (m *LoadBalancerManager) getELB(ctx context.Context) (ELBv2API, error) {
+	if m.elb != nil {
+		return m.elb, nil
+	}
+
+	return m.client.getELBClient(ctx)
 }
 
 // CreateLoadBalancer creates a new Application Load Balancer.
 func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.CreateLoadBalancerRequest) (*cpi.LoadBalancer, error) {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return nil, WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -118,7 +130,7 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 
 // GetLoadBalancer retrieves a load balancer by ARN or name.
 func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, lbID string) (*cpi.LoadBalancer, error) {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return nil, WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -174,25 +186,30 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, lbID string) 
 
 // ListLoadBalancers lists all load balancers with optional filters.
 func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map[string]string) ([]*cpi.LoadBalancer, error) {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return nil, WrapAWSError(err, "failed to get ELBv2 client")
 	}
 
-	input := &elbv2.DescribeLoadBalancersInput{}
-
-	// Handle pagination
+	// Handle pagination manually so the interface (not *elbv2.Client) can be used.
 	var loadBalancers []elbv2types.LoadBalancer
 
-	paginator := elbv2.NewDescribeLoadBalancersPaginator(elbClient, input)
-
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
+	var marker *string
+	for {
+		page, err := elbClient.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
+			Marker: marker,
+		})
 		if err != nil {
 			return nil, WrapAWSError(err, "failed to list load balancers")
 		}
 
 		loadBalancers = append(loadBalancers, page.LoadBalancers...)
+
+		if page.NextMarker == nil {
+			break
+		}
+
+		marker = page.NextMarker
 	}
 
 	// Convert to CPI type
@@ -212,7 +229,7 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 
 // UpdateLoadBalancer updates a load balancer's configuration.
 func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, lbID string, req *cpi.UpdateLoadBalancerRequest) error {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -262,7 +279,7 @@ func (m *LoadBalancerManager) UpdateLoadBalancer(ctx context.Context, lbID strin
 
 // DeleteLoadBalancer deletes a load balancer.
 func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, lbID string) error {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -302,7 +319,7 @@ func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, lbID strin
 
 // AddBackend adds a backend to the load balancer.
 func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backend *cpi.Backend) error {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -366,7 +383,7 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 
 // RemoveBackend removes a backend from the load balancer.
 func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, backendID string) error {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -422,7 +439,7 @@ func (m *LoadBalancerManager) DisableBackend(_ctx context.Context, _lbID string,
 
 // ConfigureHealthCheck configures health check for the load balancer.
 func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID string, check *cpi.HealthCheck) error {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -446,7 +463,7 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 
 // GetHealthStatus retrieves the health status of backends.
 func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) (*cpi.HealthStatus, error) {
-	elbClient, err := m.client.getELBClient(ctx)
+	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return nil, WrapAWSError(err, "failed to get ELBv2 client")
 	}
@@ -500,7 +517,7 @@ func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) 
 // updateTargetGroupHealthChecks updates health checks for target groups.
 func (m *LoadBalancerManager) updateTargetGroupHealthChecks(
 	ctx context.Context,
-	elbClient *elbv2.Client,
+	elbClient ELBv2API,
 	targetGroups []elbv2types.TargetGroup,
 	check *cpi.HealthCheck,
 ) error {
@@ -697,7 +714,7 @@ func (m *LoadBalancerManager) mapLoadBalancerState(state elbv2types.LoadBalancer
 }
 
 // waitForLoadBalancerActive waits for a load balancer to become active.
-func (m *LoadBalancerManager) waitForLoadBalancerActive(ctx context.Context, client *elbv2.Client, lbArn string) error {
+func (m *LoadBalancerManager) waitForLoadBalancerActive(ctx context.Context, client ELBv2API, lbArn string) error {
 	deadline := time.Now().Add(loadBalancerWaitTimeout)
 
 	for time.Now().Before(deadline) {
@@ -735,7 +752,7 @@ func (m *LoadBalancerManager) waitForLoadBalancerActive(ctx context.Context, cli
 }
 
 // getLoadBalancerArn gets the ARN for a load balancer by name or ARN.
-func (m *LoadBalancerManager) getLoadBalancerArn(ctx context.Context, client *elbv2.Client, lbID string) (string, error) {
+func (m *LoadBalancerManager) getLoadBalancerArn(ctx context.Context, client ELBv2API, lbID string) (string, error) {
 	// If already an ARN, return it
 	if strings.HasPrefix(lbID, "arn:aws:elasticloadbalancing:") {
 		return lbID, nil
@@ -759,7 +776,7 @@ func (m *LoadBalancerManager) getLoadBalancerArn(ctx context.Context, client *el
 }
 
 // getTargetGroupsForLoadBalancer gets all target groups for a load balancer.
-func (m *LoadBalancerManager) getTargetGroupsForLoadBalancer(ctx context.Context, client *elbv2.Client, lbArn string) ([]elbv2types.TargetGroup, error) {
+func (m *LoadBalancerManager) getTargetGroupsForLoadBalancer(ctx context.Context, client ELBv2API, lbArn string) ([]elbv2types.TargetGroup, error) {
 	// Get listeners for the load balancer
 	listenersInput := &elbv2.DescribeListenersInput{
 		LoadBalancerArn: aws.String(lbArn),
@@ -801,7 +818,7 @@ func (m *LoadBalancerManager) getTargetGroupsForLoadBalancer(ctx context.Context
 }
 
 // getBackendsFromTargetGroup gets all backends from a target group.
-func (m *LoadBalancerManager) getBackendsFromTargetGroup(ctx context.Context, client *elbv2.Client, tgArn string) ([]*cpi.Backend, error) {
+func (m *LoadBalancerManager) getBackendsFromTargetGroup(ctx context.Context, client ELBv2API, tgArn string) ([]*cpi.Backend, error) {
 	input := &elbv2.DescribeTargetHealthInput{
 		TargetGroupArn: aws.String(tgArn),
 	}
@@ -827,7 +844,7 @@ func (m *LoadBalancerManager) getBackendsFromTargetGroup(ctx context.Context, cl
 }
 
 // createDefaultTargetGroup creates a default target group for a load balancer.
-func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, client *elbv2.Client, lbName string, port int) (string, error) {
+func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, client ELBv2API, lbName string, port int) (string, error) {
 	// Validate port
 	if port < 0 || port > 65535 {
 		return "", fmt.Errorf("invalid port number %d: must be between 0 and 65535: %w", port, ErrInvalidRequest)
@@ -887,7 +904,7 @@ func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, clie
 }
 
 // ensureDefaultListener ensures a default listener exists for the load balancer.
-func (m *LoadBalancerManager) ensureDefaultListener(ctx context.Context, client *elbv2.Client, lbArn string, targetGroupArn string) error {
+func (m *LoadBalancerManager) ensureDefaultListener(ctx context.Context, client ELBv2API, lbArn string, targetGroupArn string) error {
 	// Check if listeners already exist
 	input := &elbv2.DescribeListenersInput{
 		LoadBalancerArn: aws.String(lbArn),
