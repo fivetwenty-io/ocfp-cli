@@ -1,11 +1,9 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -347,26 +345,17 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
 
-	// Uses exec.CommandContext directly: stdout/stderr split required for separate
-	// display vs error reporting; runner.Run() (CombinedOutput) would merge them.
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) //nolint:gosec // command args are validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name())
 	if err != nil {
-		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(stdout) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(stdout))
 	}
 
 	return nil
@@ -411,26 +400,17 @@ func configureSTACKITProject(projectID string, log *zap.Logger) error {
 		return fmt.Errorf("invalid project ID: %w", err)
 	}
 
-	// Uses exec.CommandContext directly: stdout/stderr split required for separate
-	// display vs error reporting; runner.Run() (CombinedOutput) would merge them.
-	cmd := exec.CommandContext(ctx, "stackit", "config", "set", "--project-id", projectID) // #nosec G204 - input validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "stackit", "config", "set", "--project-id", projectID)
 	if err != nil {
-		log.Error("Failed to configure STACKIT project", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure STACKIT project", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("STACKIT project configuration failed: %w", err)
 	}
 
 	log.Info("Successfully configured STACKIT project", zap.String("projectID", projectID))
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(stdout) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(stdout))
 	}
 
 	return nil
@@ -665,17 +645,9 @@ func configureAWSProfile(profileName string, credentials *AWSCredentials, log *z
 func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log *zap.Logger) error {
 	log.Debug("Setting AWS access key ID")
 
-	// Uses exec.CommandContext directly: stderr captured separately for error
-	// context; runner.Run() (CombinedOutput) would merge stdout into the error message.
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	_, stderr, err := runner.RunSplit(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName)
 	if err != nil {
-		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("failed to configure AWS access key ID: %w", err)
 	}
@@ -706,17 +678,9 @@ func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey str
 func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logger) error {
 	log.Debug("Setting AWS region", zap.String("region", region))
 
-	// Uses exec.CommandContext directly: stderr captured separately for error
-	// context; runner.Run() (CombinedOutput) would merge stdout into the error message.
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "region", region, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	_, stderr, err := runner.RunSplit(ctx, "aws", "configure", "set", "region", region, "--profile", profileName)
 	if err != nil {
-		log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("failed to configure AWS region: %w", err)
 	}
@@ -845,18 +809,9 @@ func validateAWSCredentials(profileName string, log *zap.Logger) error {
 		return fmt.Errorf("invalid profile name: %w", err)
 	}
 
-	// Uses exec.CommandContext directly: stdout displayed to user on success, stderr
-	// inspected for specific error strings; runner.Run() (CombinedOutput) would merge them.
-	cmd := exec.CommandContext(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName) // #nosec G204 - input validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName)
 	if err != nil {
-		stderrStr := stderr.String()
+		stderrStr := string(stderr)
 
 		// Check if it's a network connectivity issue vs credential issue
 		if strings.Contains(stderrStr, "Could not connect to the endpoint") {
@@ -881,7 +836,7 @@ func validateAWSCredentials(profileName string, log *zap.Logger) error {
 	log.Info("Successfully logged into AWS provider", zap.String("profile", profileName))
 
 	_, _ = fmt.Fprintf(os.Stdout, "Successfully configured AWS profile: %s\n", profileName)
-	_, _ = fmt.Fprintf(os.Stdout, "\nCaller Identity:\n%s\n", stdout.String())
+	_, _ = fmt.Fprintf(os.Stdout, "\nCaller Identity:\n%s\n", string(stdout))
 	_, _ = fmt.Fprintf(os.Stdout, "\nTo use this profile, run commands with: --profile %s\n", profileName)
 	_, _ = fmt.Fprintf(os.Stdout, "Or set environment variable: export AWS_PROFILE=%s\n", profileName)
 
@@ -1049,21 +1004,12 @@ func loginAzureFromCLI(log *zap.Logger) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	// Uses exec.CommandContext directly: stdout displayed to user on success, stderr
-	// suppressed; runner.Run() (CombinedOutput) would mix stderr into the display output.
-	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	stdout, _, err := runner.RunSplit(ctx, "az", "account", "show", "--output", "json")
 	if err == nil {
 		log.Info("Already authenticated with Azure CLI")
 
 		_, _ = fmt.Fprintln(os.Stdout, "Azure CLI authentication active")
-		_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", stdout.String())
+		_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", string(stdout))
 
 		return true
 	}
