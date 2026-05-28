@@ -424,14 +424,6 @@ func stNewFastPollStorageManager(fakeEC2 *stFakeEC2, fakeS3 *stFakeS3) *StorageM
 	return m
 }
 
-// stSetFastPoll is kept for backward compatibility with call sites that
-// already use it. It sets the per-instance poll interval via the helper.
-// Deprecated: prefer stNewFastPollStorageManager at construction time.
-func stSetFastPoll(_ *testing.T) {
-	// no-op: fast poll now done at construction; this shim satisfies
-	// existing call sites without introducing a global var race.
-}
-
 // ---------------------------------------------------------------------------
 // EBS — CreateVolume
 // ---------------------------------------------------------------------------
@@ -1342,7 +1334,7 @@ type fakeAPIError struct {
 	msg  string
 }
 
-func (e *fakeAPIError) Error() string                { return fmt.Sprintf("%s: %s", e.code, e.msg) }
-func (e *fakeAPIError) ErrorCode() string            { return e.code }
-func (e *fakeAPIError) ErrorMessage() string         { return e.msg }
+func (e *fakeAPIError) Error() string                 { return fmt.Sprintf("%s: %s", e.code, e.msg) }
+func (e *fakeAPIError) ErrorCode() string             { return e.code }
+func (e *fakeAPIError) ErrorMessage() string          { return e.msg }
 func (e *fakeAPIError) ErrorFault() smithy.ErrorFault { return smithy.FaultUnknown }

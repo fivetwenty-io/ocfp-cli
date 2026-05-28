@@ -46,8 +46,8 @@ type secFakeEC2 struct {
 	revokeEgressErr error
 
 	// Capture last inputs for assertion.
-	lastCreateSGInput        *ec2.CreateSecurityGroupInput
-	lastDeleteSGInput        *ec2.DeleteSecurityGroupInput
+	lastCreateSGInput         *ec2.CreateSecurityGroupInput
+	lastDeleteSGInput         *ec2.DeleteSecurityGroupInput
 	lastAuthorizeIngressInput *ec2.AuthorizeSecurityGroupIngressInput
 	lastAuthorizeEgressInput  *ec2.AuthorizeSecurityGroupEgressInput
 	lastRevokeIngressInput    *ec2.RevokeSecurityGroupIngressInput

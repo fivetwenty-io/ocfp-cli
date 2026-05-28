@@ -130,7 +130,7 @@ func (p *PVEBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the bastion.
-func (p *PVEBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (p *PVEBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	p.log.Debug("Getting Proxmox VE bastion connection details")
 
 	bastionIP, err := p.getBastionIP()
@@ -161,48 +161,6 @@ func (p *PVEBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	p.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
-}
-
-// Initialize validates PVE configuration and probes API connectivity.
-//
-// Validation always runs: missing host or auth credentials return an error
-// immediately so the caller gets a clear diagnostic before any network I/O.
-//
-// Connectivity probe: Initialize attempts to authenticate with the PVE API
-// via the registered CPI provider (which calls GET /version under the hood).
-// A probe failure is treated as a non-fatal warning — the bastion host may be
-// reachable by SSH even when the PVE API is temporarily unavailable or the
-// operator plans to provide connectivity later. This matches the staged-init
-// contract used by the AWS provider.
-func (p *PVEBastionInit) Initialize(ctx context.Context) error {
-	p.log.Infow("Initializing Proxmox VE bastion", "bloc", p.config.Name, "host", p.config.APIEndpoint)
-
-	// Validate required configuration fields before attempting any I/O.
-	if err := p.Validate(); err != nil {
-		return fmt.Errorf("pve bastion configuration invalid: %w", err)
-	}
-
-	// Probe PVE API connectivity. Use the CPI provider so we exercise the same
-	// auth path (token or user/pass) that the rest of the CLI uses at runtime.
-	provider, err := cpi.GetProvider("pve")
-	if err != nil {
-		p.log.Warnw("PVE CPI provider not registered; skipping connectivity probe", "error", err)
-
-		return nil
-	}
-
-	if err := provider.Initialize(ctx, p.config); err != nil {
-		p.log.Warnw("PVE API connectivity probe failed; continuing with staged initialization",
-			"host", p.config.APIEndpoint,
-			"error", err,
-		)
-
-		return nil
-	}
-
-	p.log.Infow("PVE API connectivity confirmed", "host", p.config.APIEndpoint)
-
-	return nil
 }
 
 // getSSHUser returns the SSH user for bastion connection.
@@ -414,7 +372,7 @@ func (p *PVEBastionInit) getBastionIPFromAPI() (string, error) {
 
 	p.log.Debugw("Searching for bastion instance", "name", bastionName)
 
-	instances, err := provider.Compute().ListInstances(context.Background(), filters)
+	instances, err := provider.ComputeManager().ListInstances(context.Background(), filters)
 	if err != nil {
 		p.log.Debugw("Failed to list instances", "error", err)
 

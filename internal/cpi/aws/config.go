@@ -151,37 +151,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// isValidCIDR performs basic CIDR validation.
+// isValidCIDR validates an IPv4 CIDR block using the standard library.
 func isValidCIDR(cidr string) bool {
-	// Basic validation - would use net.ParseCIDR in real implementation
-	// For now, just check basic structure: must have exactly 3 dots before slash
-	if len(cidr) < 9 || len(cidr) > 18 {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
 		return false
 	}
 
-	// Check for presence of '/' and count dots before it
-	slashIndex := -1
-	dotCount := 0
-
-	//nolint:varnamelen // c is idiomatic for character iteration
-	for i, c := range cidr {
-		if c == '/' {
-			slashIndex = i
-
-			break
-		}
-
-		if c == '.' {
-			dotCount++
-		}
-	}
-
-	// Must have slash and exactly 3 dots before it (IPv4)
-	if slashIndex < 7 || dotCount != 3 {
-		return false
-	}
-
-	return true
+	return ip.To4() != nil
 }
 
 // ConfigError represents a configuration validation error.

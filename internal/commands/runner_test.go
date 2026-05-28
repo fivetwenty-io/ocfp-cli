@@ -16,12 +16,12 @@ import (
 // "<name> <space-joined-args>"; if not found, the request key "<name>" is tried.
 // The first match wins. An entry with a non-nil error causes that method to fail.
 type fakeRunner struct {
-	outputs      map[string][]byte // key -> stdout bytes returned by Output()
-	combined     map[string][]byte // key -> combined bytes returned by Run()
-	splitStdout  map[string][]byte // key -> stdout bytes returned by RunSplit()
-	splitStderr  map[string][]byte // key -> stderr bytes returned by RunSplit()
-	errs         map[string]error  // key -> error for either method
-	missing      map[string]bool   // key -> true means LookPath returns "not found"
+	outputs     map[string][]byte // key -> stdout bytes returned by Output()
+	combined    map[string][]byte // key -> combined bytes returned by Run()
+	splitStdout map[string][]byte // key -> stdout bytes returned by RunSplit()
+	splitStderr map[string][]byte // key -> stderr bytes returned by RunSplit()
+	errs        map[string]error  // key -> error for either method
+	missing     map[string]bool   // key -> true means LookPath returns "not found"
 }
 
 func newFakeRunner() *fakeRunner {

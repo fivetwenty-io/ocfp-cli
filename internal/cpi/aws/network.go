@@ -812,29 +812,7 @@ func convertSubnetState(state types.SubnetState) cpi.ResourceState {
 
 // buildTags builds AWS tags from name and tag map.
 func buildTags(name string, tags map[string]string) []types.Tag {
-	awsTags := []types.Tag{
-		{
-			Key:   aws.String("Name"),
-			Value: aws.String(name),
-		},
-	}
-
-	// Add managed-by tag only if not already present in tags
-	if _, exists := tags["managed-by"]; !exists {
-		awsTags = append(awsTags, types.Tag{
-			Key:   aws.String("managed-by"),
-			Value: aws.String("ocfp"),
-		})
-	}
-
-	for k, v := range tags {
-		awsTags = append(awsTags, types.Tag{
-			Key:   aws.String(k),
-			Value: aws.String(v),
-		})
-	}
-
-	return awsTags
+	return buildNamedResourceTags(name, tags)
 }
 
 // extractTags extracts tags from AWS tag list.
@@ -1065,24 +1043,7 @@ func convertAddress(addr *types.Address) *cpi.FloatingIP {
 
 // buildTagsFromMap builds AWS tags from a tag map.
 func buildTagsFromMap(tags map[string]string) []types.Tag {
-	awsTags := make([]types.Tag, 0, len(tags)+1)
-
-	// Add managed-by tag only if not already present in tags
-	if _, exists := tags["managed-by"]; !exists {
-		awsTags = append(awsTags, types.Tag{
-			Key:   aws.String("managed-by"),
-			Value: aws.String("ocfp"),
-		})
-	}
-
-	for k, v := range tags {
-		awsTags = append(awsTags, types.Tag{
-			Key:   aws.String(k),
-			Value: aws.String(v),
-		})
-	}
-
-	return awsTags
+	return buildResourceTags(tags)
 }
 
 // Router operations (AWS doesn't have direct router resources, but we can manage route tables)

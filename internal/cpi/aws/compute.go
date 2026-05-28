@@ -21,6 +21,10 @@ const (
 	instanceDeleteTimeout = 5 * time.Minute  //nolint:mnd // standard timeout
 
 	filterKeyName = "name"
+
+	// EBS volume size bounds (in GB) per AWS limits.
+	ebsMinSizeGB = 1
+	ebsMaxSizeGB = 16384
 )
 
 // getEC2 returns the EC2API to use for this manager.
@@ -31,7 +35,7 @@ func (m *ComputeManager) getEC2(ctx context.Context) (EC2API, error) {
 		return m.ec2, nil
 	}
 
-	return m.getEC2(ctx)
+	return m.client.getEC2Client(ctx)
 }
 
 // CreateInstance creates a new EC2 instance with the specified configuration.
@@ -109,14 +113,19 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 	// Root device size configuration
 	if req.BootVolumeSize > 0 {
+		if req.BootVolumeSize < ebsMinSizeGB || req.BootVolumeSize > ebsMaxSizeGB {
+			return nil, fmt.Errorf("boot volume size %d GB out of range [%d, %d]",
+				req.BootVolumeSize, ebsMinSizeGB, ebsMaxSizeGB)
+		}
+
 		input.BlockDeviceMappings = []types.BlockDeviceMapping{
 			{
 				DeviceName: aws.String("/dev/sda1"), // Standard root device name
 				Ebs: &types.EbsBlockDevice{
-					VolumeSize:          aws.Int32(int32(req.BootVolumeSize)), //nolint:gosec // size is validated by caller
+					VolumeSize:          aws.Int32(int32(req.BootVolumeSize)),
 					VolumeType:          types.VolumeTypeGp3,
 					DeleteOnTermination: aws.Bool(true),
-					Encrypted:           aws.Bool(false),
+					Encrypted:           aws.Bool(true),
 				},
 			},
 		}

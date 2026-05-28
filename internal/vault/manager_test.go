@@ -28,12 +28,12 @@ func TestIsValidTmuxSession_Invalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{
 		"",
-		"session name",    // space
-		"session;name",    // semicolon
-		"session$(cmd)",   // shell expansion
-		"session\nname",   // newline
-		"../traversal",    // path traversal
-		"session|pipe",    // pipe
+		"session name",  // space
+		"session;name",  // semicolon
+		"session$(cmd)", // shell expansion
+		"session\nname", // newline
+		"../traversal",  // path traversal
+		"session|pipe",  // pipe
 	}
 	for _, s := range cases {
 		assert.False(t, isValidTmuxSession(s), "expected invalid: %q", s)

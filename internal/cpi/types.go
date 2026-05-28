@@ -289,58 +289,6 @@ type Bucket struct {
 
 // Request types for resource creation
 
-// CreateNetworkRequest for creating a network.
-type CreateNetworkRequest struct {
-	Name       string
-	CIDR       string
-	DNSServers []string
-	Tags       map[string]string
-}
-
-// CreateSubnetRequest for creating a subnet.
-type CreateSubnetRequest struct {
-	Name             string
-	NetworkID        string
-	CIDR             string
-	AvailabilityZone string
-	Type             string // public, private
-	Tags             map[string]string
-}
-
-// CreateInstanceRequest for creating an instance.
-type CreateInstanceRequest struct {
-	Name             string
-	Flavor           string
-	Image            string
-	NetworkID        string
-	SubnetID         string
-	SecurityGroups   []string
-	KeyPair          string
-	UserData         string
-	AvailabilityZone string
-	Tags             map[string]string
-}
-
-// CreateVolumeRequest for creating a volume.
-type CreateVolumeRequest struct {
-	Name             string
-	Size             int // GB
-	Type             string
-	Encrypted        bool
-	SnapshotID       string // Source snapshot ID for creating volume from snapshot
-	SourceSnapshot   string // Deprecated: Use SnapshotID instead
-	AvailabilityZone string
-	Tags             map[string]string
-}
-
-// CreateSnapshotRequest for creating a snapshot.
-type CreateSnapshotRequest struct {
-	Name        string
-	VolumeID    string
-	Description string
-	Tags        map[string]string
-}
-
 // CreateSecurityGroupRequest for creating a security group.
 type CreateSecurityGroupRequest struct {
 	Name        string
@@ -353,16 +301,6 @@ type CreateSecurityGroupRequest struct {
 // AllocateFloatingIPRequest for allocating a floating IP.
 type AllocateFloatingIPRequest struct {
 	NetworkID string
-	Tags      map[string]string
-}
-
-// CreatePublicIPRequest for creating a public IP.
-type CreatePublicIPRequest struct {
-	Name      string
-	Job       string // router, cf-ssh, jumpbox, tcp-router, ops
-	Index     string // 0-based index
-	NetworkID string
-	Labels    map[string]string
 	Tags      map[string]string
 }
 

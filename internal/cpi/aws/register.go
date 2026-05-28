@@ -42,16 +42,16 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 		return nil, err
 	}
 
-	// Validate required fields
-	if awsConfig.Region == "" {
-		return nil, ErrRegionRequired
-	}
-
 	// Auto-detect region from environment if not set
 	detectRegionFromEnv(awsConfig)
 
 	// Auto-detect credentials from environment if not set
 	detectCredentialsFromEnv(awsConfig)
+
+	// Validate required fields after env-var fallback
+	if awsConfig.Region == "" {
+		return nil, ErrRegionRequired
+	}
 
 	return NewClient(awsConfig)
 }

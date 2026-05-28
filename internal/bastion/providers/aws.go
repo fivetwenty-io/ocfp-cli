@@ -103,40 +103,46 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the bastion.
-func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+//
+// SECURITY: The returned SSHOptions disable strict host-key checking. Bastion
+// IPs are dynamic and the operator-managed bastion is implicitly trusted. If
+// the threat model requires host-key pinning, override SSHOptions at the
+// caller.
+//
+// SECURITY: When the SSH key is passphrase-protected, the bloc name is used
+// as the passphrase. This is a known limitation; rotate to vault-sourced
+// passphrases before exposing the bloc name through CI logs.
+func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
 	a.log.Debug("Getting AWS bastion connection details")
 
-	bastionIP, err := a.getBastionIP()
+	bastionIP, err := a.getBastionIP(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	// Get SSH user (EC2 default is usually ec2-user or ubuntu)
 	sshUser := a.config.Bastion.SSHUser
 	if sshUser == "" {
-		sshUser = "ec2-user" // Default for AWS EC2
+		sshUser = defaultAWSSSHUser
 	}
 
-	// Find SSH private key
 	keyManager := ssh.NewKeyManager()
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
 		restoredPath, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
 		if restoreErr != nil {
-			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+			return nil, fmt.Errorf("failed to find SSH private key (lookup: %w; restore: %w)", err, restoreErr)
 		}
 
 		privateKeyPath = restoredPath
 	}
 
-	// Check if key is password protected
 	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
 	if err != nil {
-		a.log.Warn("Failed to check if key is encrypted", "error", err.Error())
+		a.log.Warn("Failed to check if key is encrypted", "error", err)
 	}
 
-	// Prepare SSH options (just the option values, not the -o flag)
+	// SSH options — see SECURITY note above on host-key checking.
 	sshOptions := []string{
 		"StrictHostKeyChecking=no",
 		"UserKnownHostsFile=/dev/null",
@@ -155,20 +161,12 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 		UseSSHPass:     false,
 	}
 
-	// Set password if key is encrypted
 	if isEncrypted {
 		details.Password = a.config.Name
 		details.UseSSHPass = true
 	}
 
 	return details, nil
-}
-
-// Initialize performs the actual bastion initialization.
-func (a *AWSBastionInit) Initialize(_ctx context.Context) error {
-	a.log.Info("Initializing AWS bastion")
-
-	return nil
 }
 
 // addGenesisEnv adds Genesis-specific environment variables to the provided map.
@@ -202,15 +200,22 @@ func (a *AWSBastionInit) addGenesisEnv(env map[string]string) {
 // getBastionIP retrieves the bastion host IP address.
 // Resolution order:
 //  1. Explicit config field (BastionIP)
-//  2. Environment variable AWS_BASTION_IP
+//  2. Environment variable AWS_BASTION_IP — operator escape hatch for offline
+//     or air-gapped lookups; bypasses state and EC2 API calls
 //  3. State file (bastion_public_ip output or instance resource)
-//  4. EC2 DescribeInstances filtered by tag:Name={bloc}-bastion + instance-state-name=running
-func (a *AWSBastionInit) getBastionIP() (string, error) {
+//  4. EC2 DescribeInstances filtered by tag:Name={bloc}-bastion +
+//     instance-state-name=running
+//
+// ctx is propagated to the EC2 fallback so callers can apply cancellation
+// and deadlines to the discovery path.
+func (a *AWSBastionInit) getBastionIP(ctx context.Context) (string, error) {
 	if a.config.BastionIP != "" {
 		return a.config.BastionIP, nil
 	}
 
 	if ip := os.Getenv("AWS_BASTION_IP"); ip != "" {
+		a.log.Debugw("Using bastion IP from AWS_BASTION_IP env var", "ip", ip)
+
 		return ip, nil
 	}
 
@@ -219,9 +224,9 @@ func (a *AWSBastionInit) getBastionIP() (string, error) {
 		return ip, nil
 	}
 
-	a.log.Debugw("State lookup failed, falling back to EC2 API", "error", err.Error())
+	a.log.Infow("State lookup failed, falling back to EC2 API", "error", err.Error())
 
-	return a.getBastionIPFromEC2(context.Background())
+	return a.getBastionIPFromEC2(ctx)
 }
 
 // getBastionIPFromEC2 queries EC2 for a running instance tagged Name={bloc}-bastion

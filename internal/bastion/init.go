@@ -460,7 +460,7 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	}
 
 	// Get connection details
-	providerConnDetails, err := initializer.GetConnectionDetails()
+	providerConnDetails, err := initializer.GetConnectionDetails(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get connection details: %w", err)
 	}

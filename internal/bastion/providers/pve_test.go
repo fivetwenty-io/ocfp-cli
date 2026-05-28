@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -148,7 +149,7 @@ func TestPVEBastionInit_GetConnectionDetails(t *testing.T) {
 
 	provider := NewPVEBastionInit(cfg)
 
-	details, err := provider.GetConnectionDetails()
+	details, err := provider.GetConnectionDetails(context.Background())
 	if err != nil {
 		// Expected when no SSH key exists in test environment.
 		// Confirm the error is NOT from IP resolution — i.e. bastionIP was found.
