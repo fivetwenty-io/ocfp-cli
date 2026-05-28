@@ -185,6 +185,11 @@ func isRetryable(err error, retryableErrors []string) bool {
 
 // calculateDelay calculates the next delay with jitter.
 func calculateDelay(baseDelay time.Duration, cfg *RetryConfig) time.Duration {
+	// No jitter when factor is zero or negative; crypto/rand.Int requires max > 0.
+	if cfg.RandomizeFactor <= 0 {
+		return baseDelay
+	}
+
 	// Add jitter to prevent thundering herd
 	jitter := cfg.RandomizeFactor * float64(baseDelay)
 	// Use crypto/rand for secure random number generation
