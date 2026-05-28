@@ -17,53 +17,53 @@ import (
 // The unique name avoids collisions with sibling test agents sharing this package.
 type nwFakeEC2 struct {
 	// VPC
-	createVpcOut      *ec2.CreateVpcOutput
-	createVpcErr      error
-	describeVpcsOut   *ec2.DescribeVpcsOutput
-	describeVpcsErr   error
-	deleteVpcErr      error
-	modifyVpcAttrErr  error
+	createVpcOut     *ec2.CreateVpcOutput
+	createVpcErr     error
+	describeVpcsOut  *ec2.DescribeVpcsOutput
+	describeVpcsErr  error
+	deleteVpcErr     error
+	modifyVpcAttrErr error
 
 	// Subnets
-	createSubnetOut    *ec2.CreateSubnetOutput
-	createSubnetErr    error
-	describeSubnetsOut *ec2.DescribeSubnetsOutput
-	describeSubnetsErr error
-	deleteSubnetErr    error
+	createSubnetOut     *ec2.CreateSubnetOutput
+	createSubnetErr     error
+	describeSubnetsOut  *ec2.DescribeSubnetsOutput
+	describeSubnetsErr  error
+	deleteSubnetErr     error
 	modifySubnetAttrErr error
 
 	// Internet gateways
-	createIGWOut       *ec2.CreateInternetGatewayOutput
-	createIGWErr       error
-	describeIGWsOut    *ec2.DescribeInternetGatewaysOutput
-	describeIGWsErr    error
-	attachIGWErr       error
-	detachIGWErr       error
-	deleteIGWErr       error
+	createIGWOut    *ec2.CreateInternetGatewayOutput
+	createIGWErr    error
+	describeIGWsOut *ec2.DescribeInternetGatewaysOutput
+	describeIGWsErr error
+	attachIGWErr    error
+	detachIGWErr    error
+	deleteIGWErr    error
 
 	// Route tables
-	createRTOut        *ec2.CreateRouteTableOutput
-	createRTErr        error
-	describeRTsOut     *ec2.DescribeRouteTablesOutput
-	describeRTsErr     error
-	createRouteErr     error
-	assocRTOut         *ec2.AssociateRouteTableOutput
-	assocRTErr         error
-	disassocRTErr      error
-	deleteRTErr        error
+	createRTOut    *ec2.CreateRouteTableOutput
+	createRTErr    error
+	describeRTsOut *ec2.DescribeRouteTablesOutput
+	describeRTsErr error
+	createRouteErr error
+	assocRTOut     *ec2.AssociateRouteTableOutput
+	assocRTErr     error
+	disassocRTErr  error
+	deleteRTErr    error
 
 	// ENIs
 	describeENIsOut *ec2.DescribeNetworkInterfacesOutput
 	describeENIsErr error
 
 	// Elastic IPs
-	allocAddrOut    *ec2.AllocateAddressOutput
-	allocAddrErr    error
+	allocAddrOut     *ec2.AllocateAddressOutput
+	allocAddrErr     error
 	describeAddrsOut *ec2.DescribeAddressesOutput
 	describeAddrsErr error
-	assocAddrErr    error
-	disassocAddrErr error
-	releaseAddrErr  error
+	assocAddrErr     error
+	disassocAddrErr  error
+	releaseAddrErr   error
 
 	// Track call counts for assertions
 	modifyVpcAttrCalls int

@@ -18,13 +18,11 @@ import (
 )
 
 const (
-	volumeWaitTimeout    = 5 * time.Minute
-	volumeAttachTimeout  = 5 * time.Minute
-	snapshotWaitTimeout  = 30 * time.Minute
-	volumePollInterval   = 5 * time.Second
-	snapshotPollInterval = 10 * time.Second
-	tagKeyName           = "Name"
-	initialTagCapacity   = 2
+	volumeWaitTimeout   = 5 * time.Minute
+	volumeAttachTimeout = 5 * time.Minute
+	volumePollInterval  = 5 * time.Second
+	tagKeyName          = "Name"
+	initialTagCapacity  = 2
 )
 
 // getEC2 returns the EC2API to use for this manager.
@@ -72,6 +70,11 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		size = 10 // Default 10GB
 	}
 
+	if size < ebsMinSizeGB || size > ebsMaxSizeGB {
+		return nil, fmt.Errorf("volume size %d GB out of range [%d, %d]",
+			size, ebsMinSizeGB, ebsMaxSizeGB)
+	}
+
 	// Determine volume type
 	volumeType := req.VolumeType
 	if volumeType == "" {
@@ -92,7 +95,6 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	}
 
 	// Build create volume input
-	//nolint:gosec // Size validation handled above, max volume size is provider-enforced
 	input := &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(req.AvailabilityZone),
 		Size:             aws.Int32(int32(size)),
@@ -312,12 +314,16 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID 
 func (m *StorageManager) ResizeVolume(ctx context.Context, volumeID string, newSize int) error {
 	logger.WithOperation("ResizeVolume").Infof("Resizing volume %s to %d GB", volumeID, newSize)
 
+	if newSize < ebsMinSizeGB || newSize > ebsMaxSizeGB {
+		return fmt.Errorf("volume size %d GB out of range [%d, %d]",
+			newSize, ebsMinSizeGB, ebsMaxSizeGB)
+	}
+
 	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
 
-	//nolint:gosec // Size validation handled by caller, max volume size is provider-enforced
 	input := &ec2.ModifyVolumeInput{
 		VolumeId: aws.String(volumeID),
 		Size:     aws.Int32(int32(newSize)),
@@ -614,7 +620,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 
 		_, err = cli.PutBucketTagging(ctx, tagInput)
 		if err != nil {
-			logger.WithOperation("CreateBucket").Warnf("Failed to add tags to bucket %s: %v", req.Name, err)
+			return nil, wrapError(err, fmt.Sprintf("bucket %s created but tagging failed", req.Name))
 		}
 	}
 
@@ -896,8 +902,17 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 
 		page, pageErr := cli.ListObjectVersions(ctx, versionInput)
 		if pageErr != nil {
-			// Versioning may not be enabled; treat as no versions.
-			break
+			// Treat NoSuchBucket / versioning-not-supported as "no versions to delete".
+			// Anything else means we cannot guarantee the bucket is empty.
+			var apiErr smithy.APIError
+			if errors.As(pageErr, &apiErr) {
+				switch apiErr.ErrorCode() {
+				case "NoSuchBucket", "MethodNotAllowed", "NotImplemented":
+					return nil
+				}
+			}
+
+			return wrapError(pageErr, "list object versions")
 		}
 
 		objects := make([]s3types.ObjectIdentifier, 0, len(page.Versions)+len(page.DeleteMarkers))

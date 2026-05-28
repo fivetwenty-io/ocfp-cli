@@ -25,11 +25,17 @@ type Provider interface {
 	SecurityManager() SecurityManager
 	LoadBalancerManager() LoadBalancerManager
 
-	// Legacy method names for backward compatibility
+	// Legacy method names retained for backward compatibility.
+	//
+	// Deprecated: Use NetworkManager() instead.
 	Network() NetworkManager
+	// Deprecated: Use ComputeManager() instead.
 	Compute() ComputeManager
+	// Deprecated: Use StorageManager() instead.
 	Storage() StorageManager
+	// Deprecated: Use SecurityManager() instead.
 	Security() SecurityManager
+	// Deprecated: Use LoadBalancerManager() instead.
 	LoadBalancer() LoadBalancerManager
 
 	// Additional provider capabilities
@@ -242,12 +248,7 @@ func (e *ProviderError) Error() string {
 
 // IsNotFound returns true if the error indicates a resource was not found.
 func IsNotFound(err error) bool {
-	perr := &ProviderError{
-		Provider: "",
-		Code:     "",
-		Message:  "",
-		Details:  nil,
-	}
+	var perr *ProviderError
 	if errors.As(err, &perr) {
 		return perr.Code == "NotFound" || perr.Code == "404"
 	}
@@ -257,12 +258,7 @@ func IsNotFound(err error) bool {
 
 // IsAlreadyExists returns true if the error indicates a resource already exists.
 func IsAlreadyExists(err error) bool {
-	perr := &ProviderError{
-		Provider: "",
-		Code:     "",
-		Message:  "",
-		Details:  nil,
-	}
+	var perr *ProviderError
 	if errors.As(err, &perr) {
 		return perr.Code == "AlreadyExists" || perr.Code == "409"
 	}
@@ -272,12 +268,7 @@ func IsAlreadyExists(err error) bool {
 
 // IsUnauthorized returns true if the error indicates an authentication failure.
 func IsUnauthorized(err error) bool {
-	perr := &ProviderError{
-		Provider: "",
-		Code:     "",
-		Message:  "",
-		Details:  nil,
-	}
+	var perr *ProviderError
 	if errors.As(err, &perr) {
 		return perr.Code == "Unauthorized" || perr.Code == "401"
 	}

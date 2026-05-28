@@ -41,9 +41,9 @@ const (
 	// 16 GiB RAM avoids OOM during package-upload bursts; 128 GiB disk
 	// gives compiler packages headroom; 8 vCPU keeps the compiler API
 	// responsive. Values sourced from lab manifests/bosh/vars.yml.
-	flavorBoshCPU      = 8      // unit: count
-	flavorBoshRAM      = 16384  // unit: MiB
-	flavorBoshDisk     = 131072 // unit: MiB
+	flavorBoshCPU  = 8      // unit: count
+	flavorBoshRAM  = 16384  // unit: MiB
+	flavorBoshDisk = 131072 // unit: MiB
 	// flavorArtifactsCPU is the artifacts VM default vCPU count. RustFS is
 	// memory-bound, not CPU-bound, and a single-node artifacts host serves
 	// low-concurrency BOSH release/stemcell traffic; 2 vCPUs is sufficient.

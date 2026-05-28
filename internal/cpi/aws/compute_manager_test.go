@@ -13,9 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
@@ -32,10 +29,10 @@ type computeFakeEC2 struct {
 	// DescribeInstances — supports a sequence of calls (queue) for waiter tests.
 	// If describeQueue is non-empty, each call consumes the front.
 	// Once empty, describeOut/describeErr are used.
-	describeQueue   []*ec2.DescribeInstancesOutput
+	describeQueue    []*ec2.DescribeInstancesOutput
 	describeQueueErr []error
-	describeOut     *ec2.DescribeInstancesOutput
-	describeErr     error
+	describeOut      *ec2.DescribeInstancesOutput
+	describeErr      error
 
 	// StartInstances / StopInstances / RebootInstances / TerminateInstances
 	startInstancesOut     *ec2.StartInstancesOutput
@@ -47,12 +44,12 @@ type computeFakeEC2 struct {
 	terminateInstancesErr error
 
 	// CreateKeyPair / ImportKeyPair / DescribeKeyPairs / DeleteKeyPair
-	createKeyPairOut  *ec2.CreateKeyPairOutput
-	createKeyPairErr  error
-	importKeyPairErr  error
+	createKeyPairOut    *ec2.CreateKeyPairOutput
+	createKeyPairErr    error
+	importKeyPairErr    error
 	describeKeyPairsOut *ec2.DescribeKeyPairsOutput
 	describeKeyPairsErr error
-	deleteKeyPairErr   error
+	deleteKeyPairErr    error
 
 	// DescribeImages
 	describeImagesOut *ec2.DescribeImagesOutput
@@ -281,104 +278,6 @@ func newComputeMgr(fake *computeFakeEC2) *ComputeManager {
 		client: nil,
 		ec2:    fake,
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Stub for S3 / ELBv2 / STS — unused but kept for compilation of other
-// test helpers that reference these interface types in the package.
-// ---------------------------------------------------------------------------
-
-// computeFakeS3 satisfies S3API; all methods return errors (unused in compute tests).
-type computeFakeS3 struct{}
-
-func (computeFakeS3) CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) HeadBucket(ctx context.Context, params *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) GetBucketTagging(ctx context.Context, params *s3.GetBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) PutBucketTagging(ctx context.Context, params *s3.PutBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) GetBucketVersioning(ctx context.Context, params *s3.GetBucketVersioningInput, optFns ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) GetBucketEncryption(ctx context.Context, params *s3.GetBucketEncryptionInput, optFns ...func(*s3.Options)) (*s3.GetBucketEncryptionOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) DeleteBucket(ctx context.Context, params *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) ListObjectVersions(ctx context.Context, params *s3.ListObjectVersionsInput, optFns ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-func (computeFakeS3) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
-	return nil, errors.New("computeFakeS3: not implemented")
-}
-
-// computeFakeELB satisfies ELBv2API; all methods return errors.
-type computeFakeELB struct{}
-
-func (computeFakeELB) CreateLoadBalancer(ctx context.Context, params *elbv2.CreateLoadBalancerInput, optFns ...func(*elbv2.Options)) (*elbv2.CreateLoadBalancerOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DescribeLoadBalancers(ctx context.Context, params *elbv2.DescribeLoadBalancersInput, optFns ...func(*elbv2.Options)) (*elbv2.DescribeLoadBalancersOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DeleteLoadBalancer(ctx context.Context, params *elbv2.DeleteLoadBalancerInput, optFns ...func(*elbv2.Options)) (*elbv2.DeleteLoadBalancerOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) SetSecurityGroups(ctx context.Context, params *elbv2.SetSecurityGroupsInput, optFns ...func(*elbv2.Options)) (*elbv2.SetSecurityGroupsOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) AddTags(ctx context.Context, params *elbv2.AddTagsInput, optFns ...func(*elbv2.Options)) (*elbv2.AddTagsOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) CreateTargetGroup(ctx context.Context, params *elbv2.CreateTargetGroupInput, optFns ...func(*elbv2.Options)) (*elbv2.CreateTargetGroupOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DescribeTargetGroups(ctx context.Context, params *elbv2.DescribeTargetGroupsInput, optFns ...func(*elbv2.Options)) (*elbv2.DescribeTargetGroupsOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) ModifyTargetGroup(ctx context.Context, params *elbv2.ModifyTargetGroupInput, optFns ...func(*elbv2.Options)) (*elbv2.ModifyTargetGroupOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DeleteTargetGroup(ctx context.Context, params *elbv2.DeleteTargetGroupInput, optFns ...func(*elbv2.Options)) (*elbv2.DeleteTargetGroupOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) RegisterTargets(ctx context.Context, params *elbv2.RegisterTargetsInput, optFns ...func(*elbv2.Options)) (*elbv2.RegisterTargetsOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DeregisterTargets(ctx context.Context, params *elbv2.DeregisterTargetsInput, optFns ...func(*elbv2.Options)) (*elbv2.DeregisterTargetsOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DescribeTargetHealth(ctx context.Context, params *elbv2.DescribeTargetHealthInput, optFns ...func(*elbv2.Options)) (*elbv2.DescribeTargetHealthOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) DescribeListeners(ctx context.Context, params *elbv2.DescribeListenersInput, optFns ...func(*elbv2.Options)) (*elbv2.DescribeListenersOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-func (computeFakeELB) CreateListener(ctx context.Context, params *elbv2.CreateListenerInput, optFns ...func(*elbv2.Options)) (*elbv2.CreateListenerOutput, error) {
-	return nil, errors.New("computeFakeELB: not implemented")
-}
-
-// computeFakeSTS satisfies STSAPI.
-type computeFakeSTS struct{}
-
-func (computeFakeSTS) GetCallerIdentity(ctx context.Context, params *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
-	return nil, errors.New("computeFakeSTS: not implemented")
 }
 
 // ---------------------------------------------------------------------------

@@ -25,16 +25,16 @@ func (s *stubProvider) Region() string { return s.region }
 func (s *stubProvider) Authenticate(_ context.Context) error        { return nil }
 func (s *stubProvider) ValidateCredentials(_ context.Context) error { return nil }
 
-func (s *stubProvider) NetworkManager() NetworkManager         { return nil }
-func (s *stubProvider) ComputeManager() ComputeManager         { return nil }
-func (s *stubProvider) StorageManager() StorageManager         { return nil }
-func (s *stubProvider) SecurityManager() SecurityManager       { return nil }
+func (s *stubProvider) NetworkManager() NetworkManager           { return nil }
+func (s *stubProvider) ComputeManager() ComputeManager           { return nil }
+func (s *stubProvider) StorageManager() StorageManager           { return nil }
+func (s *stubProvider) SecurityManager() SecurityManager         { return nil }
 func (s *stubProvider) LoadBalancerManager() LoadBalancerManager { return nil }
 
-func (s *stubProvider) Network() NetworkManager        { return nil }
-func (s *stubProvider) Compute() ComputeManager        { return nil }
-func (s *stubProvider) Storage() StorageManager        { return nil }
-func (s *stubProvider) Security() SecurityManager      { return nil }
+func (s *stubProvider) Network() NetworkManager           { return nil }
+func (s *stubProvider) Compute() ComputeManager           { return nil }
+func (s *stubProvider) Storage() StorageManager           { return nil }
+func (s *stubProvider) Security() SecurityManager         { return nil }
 func (s *stubProvider) LoadBalancer() LoadBalancerManager { return nil }
 
 func (s *stubProvider) SupportsStorage() bool { return false }
@@ -338,8 +338,8 @@ func TestRegister_ConcurrentDuplicates(t *testing.T) {
 	name := uniqueName(t, "concdup")
 
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
+		wg        sync.WaitGroup
+		mu        sync.Mutex
 		successes int
 		failures  int
 	)

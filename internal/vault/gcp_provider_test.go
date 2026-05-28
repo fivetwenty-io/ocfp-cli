@@ -34,18 +34,18 @@ func (m *gcpMockSafe) SetMultiple(path string, data map[string]interface{}) erro
 	return nil
 }
 
-func (m *gcpMockSafe) Set(_, _ string, _ interface{}) error                        { return nil }
-func (m *gcpMockSafe) Get(_, _ string) (interface{}, error)                        { return "", nil }
-func (m *gcpMockSafe) GetAll(_ string) (map[string]interface{}, error)             { return nil, nil }
-func (m *gcpMockSafe) Exists(_ string) (bool, error)                               { return false, nil }
-func (m *gcpMockSafe) Delete(_, _ string) error                                    { return nil }
-func (m *gcpMockSafe) List(_ string) ([]string, error)                             { return nil, nil }
-func (m *gcpMockSafe) Export(_ string) (map[string]interface{}, error)             { return nil, nil }
-func (m *gcpMockSafe) Import(_ string, _ map[string]interface{}) error             { return nil }
-func (m *gcpMockSafe) GetEngineInfo(_ string) (*EngineInfo, error)                 { return nil, nil }
-func (m *gcpMockSafe) MustGet(_, _ string) interface{}                             { return "" }
-func (m *gcpMockSafe) GetString(_, _ string) (string, error)                      { return "", nil }
-func (m *gcpMockSafe) GetJSON(_, _ string) ([]byte, error)                        { return nil, nil }
+func (m *gcpMockSafe) Set(_, _ string, _ interface{}) error            { return nil }
+func (m *gcpMockSafe) Get(_, _ string) (interface{}, error)            { return "", nil }
+func (m *gcpMockSafe) GetAll(_ string) (map[string]interface{}, error) { return nil, nil }
+func (m *gcpMockSafe) Exists(_ string) (bool, error)                   { return false, nil }
+func (m *gcpMockSafe) Delete(_, _ string) error                        { return nil }
+func (m *gcpMockSafe) List(_ string) ([]string, error)                 { return nil, nil }
+func (m *gcpMockSafe) Export(_ string) (map[string]interface{}, error) { return nil, nil }
+func (m *gcpMockSafe) Import(_ string, _ map[string]interface{}) error { return nil }
+func (m *gcpMockSafe) GetEngineInfo(_ string) (*EngineInfo, error)     { return nil, nil }
+func (m *gcpMockSafe) MustGet(_, _ string) interface{}                 { return "" }
+func (m *gcpMockSafe) GetString(_, _ string) (string, error)           { return "", nil }
+func (m *gcpMockSafe) GetJSON(_, _ string) ([]byte, error)             { return nil, nil }
 
 // findCall returns the first SetMultiple call for path, or nil.
 func (m *gcpMockSafe) findCall(path string) *gcpSetCall {

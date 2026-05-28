@@ -103,7 +103,7 @@ func (s *StackitBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the bastion.
-func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (s *StackitBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	s.log.Debug("Getting STACKIT bastion connection details")
 
 	bastionIP, err := s.getBastionIP()
@@ -134,17 +134,6 @@ func (s *StackitBastionInit) GetConnectionDetails() (*ConnectionDetails, error) 
 	s.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
-}
-
-// Initialize performs the actual bastion initialization.
-func (s *StackitBastionInit) Initialize(_ctx context.Context) error {
-	s.log.Info("Initializing STACKIT bastion")
-
-	// This method coordinates the initialization process
-	// The actual work is done by the Manager class, but this method
-	// can perform STACKIT-specific setup if needed
-
-	return nil
 }
 
 // getSSHUser returns the SSH user for bastion connection.
@@ -344,7 +333,7 @@ func (s *StackitBastionInit) getBastionIPFromAPI() (string, error) {
 
 	s.log.Debugw("Searching for bastion instance", "name", bastionName)
 
-	instances, err := provider.Compute().ListInstances(context.Background(), filters)
+	instances, err := provider.ComputeManager().ListInstances(context.Background(), filters)
 	if err != nil {
 		s.log.Debugw("Failed to list instances", "error", err)
 
