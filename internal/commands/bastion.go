@@ -348,12 +348,14 @@ func FindProvisionScript(scriptName string) (string, error) {
 
 	execDir := filepath.Dir(execPath)
 
+	home, _ := homeDir()
+
 	// Look for the script in various locations
 	searchPaths := []string{
 		filepath.Join("scripts", "provision", scriptName),
 		filepath.Join(execDir, "..", "scripts", "provision", scriptName),
 		filepath.Join("/opt", "ocfp", "scripts", "provision", scriptName),
-		filepath.Join(os.Getenv("HOME"), "ocfp", "ocfp-cli", "scripts", "provision", scriptName),
+		filepath.Join(home, "ocfp", "ocfp-cli", "scripts", "provision", scriptName),
 	}
 
 	for _, path := range searchPaths {
