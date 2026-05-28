@@ -288,12 +288,12 @@ The 'init' alias is available for operator convenience: 'ocfp vault init' is equ
 
 // getVaultInceptionPaths returns the paths for vault inception based on bloc name and test mode.
 func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
-	homeDir := os.Getenv("HOME")
+	home, _ := homeDir()
 
-	vaultDir := filepath.Join(homeDir, ".vault")
-	vaultKeyFile := filepath.Join(homeDir, "vault.key")
-	rootKeyFile := filepath.Join(homeDir, "vault.key")
-	unsealKeysFile := filepath.Join(homeDir, "vault.key")
+	vaultDir := filepath.Join(home, ".vault")
+	vaultKeyFile := filepath.Join(home, "vault.key")
+	rootKeyFile := filepath.Join(home, "vault.key")
+	unsealKeysFile := filepath.Join(home, "vault.key")
 	tmuxSession := "inception-vault"
 	vaultName := "inception"
 	port := VaultInceptionPort
@@ -307,10 +307,10 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	}
 
 	if testMode {
-		vaultDir = filepath.Join(homeDir, ".test-vault")
-		vaultKeyFile = filepath.Join(homeDir, "test-vault.key")
-		rootKeyFile = filepath.Join(homeDir, "test-vault.key")
-		unsealKeysFile = filepath.Join(homeDir, "test-vault.key")
+		vaultDir = filepath.Join(home, ".test-vault")
+		vaultKeyFile = filepath.Join(home, "test-vault.key")
+		rootKeyFile = filepath.Join(home, "test-vault.key")
+		unsealKeysFile = filepath.Join(home, "test-vault.key")
 		tmuxSession = "test-inception-vault"
 		vaultName = "test-inception"
 		port = TestVaultInceptionPort

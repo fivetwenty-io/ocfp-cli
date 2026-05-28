@@ -459,11 +459,13 @@ func performDataRestore(ctx context.Context, cfg *config.Config, restore *Restor
 
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
+	home, _ := homeDir()
+
 	// Restore data components
 	dataComponents := map[string]string{
-		"deployments": filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name),
-		"bosh-state":  filepath.Join(os.Getenv("HOME"), ".bosh"),
-		"cf-state":    filepath.Join(os.Getenv("HOME"), ".cf"),
+		"deployments": filepath.Join(home, "deployments", cfg.Name),
+		"bosh-state":  filepath.Join(home, ".bosh"),
+		"cf-state":    filepath.Join(home, ".cf"),
 	}
 
 	for component, destPath := range dataComponents {
