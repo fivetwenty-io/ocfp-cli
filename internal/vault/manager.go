@@ -1101,7 +1101,7 @@ func (m *Manager) killTmuxSession(ctx context.Context, session string) error {
 	}
 
 	// Wait for graceful shutdown
-	time.Sleep(gracefulShutdownWaitSeconds * time.Second)
+	sleepFn(gracefulShutdownWaitSeconds * time.Second)
 
 	// Kill the tmux session
 	// #nosec G204 - session name is validated above
@@ -1172,7 +1172,7 @@ func (m *Manager) killSafeProcesses(port int) error {
 	}
 
 	// Wait for graceful shutdown
-	time.Sleep(processTerminationWaitSeconds * time.Second)
+	sleepFn(processTerminationWaitSeconds * time.Second)
 
 	// Check if processes are still running
 	// #nosec G204 - findCmd is constructed from integer port constant, no user input
