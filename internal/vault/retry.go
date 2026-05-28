@@ -7,6 +7,10 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
+// sleepFn is the sleep implementation used by retry logic. Tests override it
+// to eliminate real waits without changing production behavior.
+var sleepFn = time.Sleep
+
 const (
 	// VaultMaxAttempts is the maximum number of retry attempts for vault operations.
 	VaultMaxAttempts = 3
@@ -112,7 +116,7 @@ func WithRetry(operation func() error, config *RetryConfig) error {
 		if attempt > 1 {
 			delay := calculateDelay(attempt-1, config)
 			log.Debugw("Retrying operation", "attempt", attempt, "delay", delay)
-			time.Sleep(delay)
+			sleepFn(delay)
 		}
 
 		err := operation()
