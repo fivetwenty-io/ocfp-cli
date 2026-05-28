@@ -32,6 +32,53 @@ func TestFlavorArtifacts_DefaultRAM4GB(t *testing.T) {
 	}
 }
 
+// TestFlavorArtifacts_DefaultCPU2 pins the artifacts preset to 2 vCPUs.
+// RustFS is memory-bound, not CPU-bound: a single-node artifacts VM serves
+// low-concurrency BOSH release/stemcell uploads and pulls, so 2 vCPUs is
+// the right baseline. Operators that need more can override via
+// config.Artifacts.CPU.
+func TestFlavorArtifacts_DefaultCPU2(t *testing.T) {
+	t.Parallel()
+
+	const wantCPU = 2
+
+	if flavorArtifactsCPU != wantCPU {
+		t.Errorf("flavorArtifactsCPU: got %d, want %d", flavorArtifactsCPU, wantCPU)
+	}
+
+	f, ok := flavorPresets["artifacts"]
+	if !ok {
+		t.Fatal(`flavorPresets["artifacts"] missing`)
+	}
+
+	if f.VCPUs != wantCPU {
+		t.Errorf(`flavorPresets["artifacts"].VCPUs: got %d, want %d`, f.VCPUs, wantCPU)
+	}
+
+	if !strings.Contains(f.Description, "2 vCPUs") {
+		t.Errorf("Description %q should mention 2 vCPUs", f.Description)
+	}
+}
+
+// TestFlavorArtifacts_CPUOverride confirms an operator-supplied CPU value
+// (config.Artifacts.CPU → InstanceRequest.VCPUsOverride) replaces the
+// preset default without mutating the shared preset.
+func TestFlavorArtifacts_CPUOverride(t *testing.T) {
+	t.Parallel()
+
+	base := flavorPresets["artifacts"]
+	presetCPU := base.VCPUs
+
+	got := effectiveFlavor(base, &cpi.InstanceRequest{VCPUsOverride: 6})
+	if got.VCPUs != 6 {
+		t.Errorf("override VCPUs: got %d, want 6", got.VCPUs)
+	}
+
+	if base.VCPUs != presetCPU {
+		t.Errorf("preset mutated: got %d, want %d", base.VCPUs, presetCPU)
+	}
+}
+
 // TestEffectiveFlavor_NoOverrides returns the original preset pointer when no
 // per-request overrides are set, avoiding an allocation in the common path.
 func TestEffectiveFlavor_NoOverrides(t *testing.T) {
