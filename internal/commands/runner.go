@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -14,6 +15,9 @@ type commandRunner interface {
 	Output(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Run runs name with args and returns combined stdout+stderr (analogous to cmd.CombinedOutput()).
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	// RunSplit runs name with args and returns stdout and stderr separately.
+	// Callers that only need one stream may discard the other.
+	RunSplit(ctx context.Context, name string, args ...string) (stdout []byte, stderr []byte, err error)
 	// LookPath checks whether name is available on PATH (analogous to exec.LookPath).
 	LookPath(name string) error
 }
@@ -34,6 +38,22 @@ func (osCommandRunner) Output(ctx context.Context, name string, args ...string) 
 // Failure modes: exec failure, non-zero exit, context cancellation.
 func (osCommandRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // caller is responsible for safe arg construction
+}
+
+// RunSplit executes name with args, returning stdout and stderr as separate byte slices.
+// Inputs: ctx must be non-nil; name must be a valid executable.
+// Failure modes: exec failure, non-zero exit, context cancellation. Both buffers
+// are populated up to the point of failure before error is returned.
+func (osCommandRunner) RunSplit(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // caller is responsible for safe arg construction
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+
+	return stdoutBuf.Bytes(), stderrBuf.Bytes(), err
 }
 
 // LookPath reports whether name is available on PATH.
