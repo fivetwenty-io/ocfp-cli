@@ -120,6 +120,16 @@ func RetryOperation(ctx context.Context, maxRetries int, fn RetryableFunc) error
 	return RetryWithBackoff(ctx, config, IsRetryable, fn)
 }
 
+// clock abstracts wall-clock access for testability.
+type clock interface {
+	Now() time.Time
+}
+
+// realClock is the production clock implementation.
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
+
 // CircuitBreaker implements a simple circuit breaker pattern.
 type CircuitBreaker struct {
 	failures     int
@@ -127,6 +137,7 @@ type CircuitBreaker struct {
 	resetTimeout time.Duration
 	lastFailure  time.Time
 	state        CircuitState
+	clk          clock
 }
 
 // CircuitState represents the state of the circuit breaker.
@@ -147,7 +158,14 @@ func NewCircuitBreaker(threshold int, resetTimeout time.Duration) *CircuitBreake
 		threshold:    threshold,
 		resetTimeout: resetTimeout,
 		state:        CircuitClosed,
+		clk:          realClock{},
 	}
+}
+
+// setClock replaces the clock used by this CircuitBreaker.
+// Intended for use in tests only.
+func (cb *CircuitBreaker) setClock(c clock) {
+	cb.clk = c
 }
 
 // Allow checks if the request should be allowed.
@@ -157,7 +175,7 @@ func (cb *CircuitBreaker) Allow() bool {
 		return true
 	case CircuitOpen:
 		// Check if we should transition to half-open
-		if time.Since(cb.lastFailure) > cb.resetTimeout {
+		if cb.clk.Now().Sub(cb.lastFailure) > cb.resetTimeout {
 			cb.state = CircuitHalfOpen
 
 			return true
@@ -180,7 +198,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 // RecordFailure records a failed operation.
 func (cb *CircuitBreaker) RecordFailure() {
 	cb.failures++
-	cb.lastFailure = time.Now()
+	cb.lastFailure = cb.clk.Now()
 
 	if cb.failures >= cb.threshold {
 		cb.state = CircuitOpen
