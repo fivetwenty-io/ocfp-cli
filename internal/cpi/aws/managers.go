@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
@@ -9,16 +10,25 @@ import (
 // NetworkManager implements network operations for AWS.
 type NetworkManager struct {
 	client *Client
+	ec2    EC2API // non-nil in tests; nil in production (falls back to client.getEC2Client)
+
+	// vpcWaiter and subnetWaiter are function vars so tests can inject a no-op.
+	vpcWaiter    func(ctx context.Context, client EC2API, vpcID string) error
+	subnetWaiter func(ctx context.Context, client EC2API, subnetID string) error
 }
 
 // ComputeManager implements compute operations for AWS.
 type ComputeManager struct {
 	client *Client
+	ec2    EC2API // non-nil in tests; nil in production (falls back to client.getEC2Client)
 }
 
 // StorageManager implements storage operations for AWS.
 type StorageManager struct {
-	client *Client
+	client       *Client
+	ec2          EC2API        // non-nil in tests; nil in production (falls back to client.getEC2Client)
+	s3           S3API         // non-nil in tests; nil in production (falls back to client.getS3Client)
+	pollInterval time.Duration // zero → use default volumePollInterval constant
 }
 
 // Network interface implementation - methods in network.go
