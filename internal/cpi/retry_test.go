@@ -481,37 +481,37 @@ func TestCalculateDelay_CappedAtMaxDelay(t *testing.T) {
 	}
 }
 
-// TestCalculateDelay_ZeroJitter documents that calculateDelay panics when
-// RandomizeFactor=0, because crypto/rand.Int requires max > 0. This is a
-// known limitation of the production code. The test asserts the panic
-// occurs rather than silently succeeding with wrong behavior.
+// TestCalculateDelay_ZeroJitter verifies that calculateDelay returns baseDelay
+// exactly when RandomizeFactor is zero, and does not panic.
 func TestCalculateDelay_ZeroJitter(t *testing.T) {
 	t.Parallel()
 
 	base := 200 * time.Millisecond
-	cfg := &RetryConfig{
-		RandomizeFactor: 0,
-		MaxDelay:        time.Minute,
+
+	tests := []struct {
+		name   string
+		factor float64
+	}{
+		{"zero factor", 0},
+		{"negative factor", -0.5},
 	}
 
-	// calculateDelay will panic: jitter = 0*float64(base) = 0 → big.NewInt(0)
-	// → crypto/rand.Int panics with "argument to Int is <= 0".
-	// Capture and assert the panic to document this constraint.
-	panicked := false
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				panicked = true
+			cfg := &RetryConfig{
+				RandomizeFactor: tc.factor,
+				MaxDelay:        time.Minute,
 			}
-		}()
-		_ = calculateDelay(base, cfg)
-	}()
 
-	if !panicked {
-		// Production code was fixed — update this test to verify zero-jitter
-		// returns exactly base.
-		t.Log("calculateDelay no longer panics with RandomizeFactor=0 — verify result equals base")
+			got := calculateDelay(base, cfg)
+
+			if got != base {
+				t.Errorf("calculateDelay with RandomizeFactor=%v: got %v, want %v", tc.factor, got, base)
+			}
+		})
 	}
 }
 
