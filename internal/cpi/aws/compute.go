@@ -23,11 +23,22 @@ const (
 	filterKeyName = "name"
 )
 
+// getEC2 returns the EC2API to use for this manager.
+// In tests, m.ec2 is set directly.  In production, m.ec2 is nil and
+// this falls back to the real client, preserving existing behaviour.
+func (m *ComputeManager) getEC2(ctx context.Context) (EC2API, error) {
+	if m.ec2 != nil {
+		return m.ec2, nil
+	}
+
+	return m.getEC2(ctx)
+}
+
 // CreateInstance creates a new EC2 instance with the specified configuration.
 //
 //nolint:funlen // EC2 instance creation requires extensive configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +152,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 //
 //nolint:varnamelen // id is a standard parameter name
 func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Instance, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +177,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 
 // ListInstances lists all instances, optionally filtered.
 func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +236,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 
 // StartInstance starts a stopped instance.
 func (m *ComputeManager) StartInstance(ctx context.Context, instanceID string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -242,7 +253,7 @@ func (m *ComputeManager) StartInstance(ctx context.Context, instanceID string) e
 
 // StopInstance stops a running instance.
 func (m *ComputeManager) StopInstance(ctx context.Context, instanceID string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -261,7 +272,7 @@ func (m *ComputeManager) StopInstance(ctx context.Context, instanceID string) er
 //
 //nolint:varnamelen // id is a standard parameter name
 func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -284,7 +295,7 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 //
 //nolint:varnamelen // id is a standard parameter name
 func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -309,7 +320,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error {
 
 // CreateKeyPair creates a new SSH key pair.
 func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +366,7 @@ func (m *ComputeManager) CreateKeyPair(ctx context.Context, req *cpi.KeyPairRequ
 
 // ImportKeyPair imports an existing public key.
 func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicKey string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -379,7 +390,7 @@ func (m *ComputeManager) ImportKeyPair(ctx context.Context, name string, publicK
 
 // GetKeyPair retrieves a key pair by name.
 func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyPair, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +424,7 @@ func (m *ComputeManager) GetKeyPair(ctx context.Context, name string) (*cpi.KeyP
 
 // ListKeyPairs lists all key pairs.
 func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +451,7 @@ func (m *ComputeManager) ListKeyPairs(ctx context.Context) ([]*cpi.KeyPair, erro
 
 // DeleteKeyPair deletes a key pair.
 func (m *ComputeManager) DeleteKeyPair(ctx context.Context, name string) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -477,7 +488,7 @@ func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 
 // ListImages lists available AMIs.
 func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]string) ([]*cpi.Image, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +557,7 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 
 // GetImage retrieves an image by ID.
 func (m *ComputeManager) GetImage(ctx context.Context, imageID string) (*cpi.Image, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +582,7 @@ func (m *ComputeManager) GetImage(ctx context.Context, imageID string) (*cpi.Ima
 
 // ListFlavors lists available instance types.
 func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +604,7 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 
 // GetFlavor retrieves an instance type by ID.
 func (m *ComputeManager) GetFlavor(ctx context.Context, flavorID string) (*cpi.Flavor, error) {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -759,7 +770,7 @@ func ec2StateToResourceState(state *types.InstanceState) cpi.ResourceState {
 
 // waitForInstanceState waits for an instance to reach the desired state.
 func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID string, desiredState types.InstanceStateName, timeout time.Duration) error {
-	client, err := m.client.getEC2Client(ctx)
+	client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
