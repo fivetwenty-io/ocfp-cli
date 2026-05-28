@@ -16,18 +16,22 @@ import (
 // "<name> <space-joined-args>"; if not found, the request key "<name>" is tried.
 // The first match wins. An entry with a non-nil error causes that method to fail.
 type fakeRunner struct {
-	outputs  map[string][]byte // key -> stdout bytes returned by Output()
-	combined map[string][]byte // key -> combined bytes returned by Run()
-	errs     map[string]error  // key -> error for either method
-	missing  map[string]bool   // key -> true means LookPath returns "not found"
+	outputs      map[string][]byte // key -> stdout bytes returned by Output()
+	combined     map[string][]byte // key -> combined bytes returned by Run()
+	splitStdout  map[string][]byte // key -> stdout bytes returned by RunSplit()
+	splitStderr  map[string][]byte // key -> stderr bytes returned by RunSplit()
+	errs         map[string]error  // key -> error for either method
+	missing      map[string]bool   // key -> true means LookPath returns "not found"
 }
 
 func newFakeRunner() *fakeRunner {
 	return &fakeRunner{
-		outputs:  make(map[string][]byte),
-		combined: make(map[string][]byte),
-		errs:     make(map[string]error),
-		missing:  make(map[string]bool),
+		outputs:     make(map[string][]byte),
+		combined:    make(map[string][]byte),
+		splitStdout: make(map[string][]byte),
+		splitStderr: make(map[string][]byte),
+		errs:        make(map[string]error),
+		missing:     make(map[string]bool),
 	}
 }
 
@@ -89,6 +93,37 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	return []byte{}, nil
 }
 
+// RunSplit implements commandRunner.RunSplit for tests.
+// Returns pre-registered stdout and stderr slices, or empty slices when not registered.
+// Inputs: ctx may be context.Background(); name must match a registered key.
+// Failure modes: returns registered error if any; returns empty slices if nothing registered.
+func (f *fakeRunner) RunSplit(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	k := f.key(name, args)
+	if err, ok := f.errs[k]; ok {
+		return nil, nil, err
+	}
+
+	if err, ok := f.errs[name]; ok {
+		return nil, nil, err
+	}
+
+	var stdout, stderr []byte
+
+	if v, ok := f.splitStdout[k]; ok {
+		stdout = v
+	} else if v, ok := f.splitStdout[name]; ok {
+		stdout = v
+	}
+
+	if v, ok := f.splitStderr[k]; ok {
+		stderr = v
+	} else if v, ok := f.splitStderr[name]; ok {
+		stderr = v
+	}
+
+	return stdout, stderr, nil
+}
+
 // LookPath implements commandRunner.LookPath for tests.
 // Inputs: name must be a non-empty binary name.
 // Failure modes: returns error when name registered in missing map.
@@ -107,6 +142,59 @@ func installFakeRunner(fake *fakeRunner) func() {
 	runner = fake
 
 	return func() { runner = orig }
+}
+
+// TestFakeRunnerRunSplitArgs verifies fakeRunner.RunSplit returns registered
+// stdout/stderr for the correct key and separates the two streams.
+func TestFakeRunnerRunSplitArgs(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeRunner()
+	key := "aws sts get-caller-identity --profile myprof"
+	fake.splitStdout[key] = []byte(`{"Account":"123456789012"}`)
+	fake.splitStderr[key] = []byte("")
+
+	stdout, stderr, err := fake.RunSplit(context.Background(), "aws", "sts", "get-caller-identity", "--profile", "myprof")
+	require.NoError(t, err)
+	assert.Equal(t, `{"Account":"123456789012"}`, string(stdout))
+	assert.Empty(t, string(stderr))
+}
+
+// TestFakeRunnerRunSplitError verifies fakeRunner.RunSplit propagates registered errors.
+func TestFakeRunnerRunSplitError(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeRunner()
+	fake.splitStderr["aws sts get-caller-identity --profile bad"] = []byte("AccessDenied")
+	fake.errs["aws sts get-caller-identity --profile bad"] = errors.New("exit status 254")
+
+	_, _, err := fake.RunSplit(context.Background(), "aws", "sts", "get-caller-identity", "--profile", "bad")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit status 254")
+}
+
+// TestOsCommandRunnerRunSplit verifies osCommandRunner.RunSplit separates stdout and stderr.
+func TestOsCommandRunnerRunSplit(t *testing.T) {
+	t.Parallel()
+
+	r := osCommandRunner{}
+
+	stdout, stderr, err := r.RunSplit(context.Background(), "sh", "-c", "echo out; echo err >&2")
+	require.NoError(t, err)
+	assert.Equal(t, "out\n", string(stdout))
+	assert.Equal(t, "err\n", string(stderr))
+}
+
+// TestOsCommandRunnerRunSplitError verifies RunSplit returns error on non-zero exit
+// while still capturing stderr written before the exit.
+func TestOsCommandRunnerRunSplitError(t *testing.T) {
+	t.Parallel()
+
+	r := osCommandRunner{}
+
+	_, stderr, err := r.RunSplit(context.Background(), "sh", "-c", "echo oops >&2; exit 1")
+	require.Error(t, err)
+	assert.Equal(t, "oops\n", string(stderr))
 }
 
 // TestOsCommandRunnerInterface verifies that osCommandRunner satisfies the
