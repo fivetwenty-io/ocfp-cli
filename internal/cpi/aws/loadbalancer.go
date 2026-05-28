@@ -11,7 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 const (
@@ -306,12 +308,22 @@ func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, lbID strin
 		return WrapAWSError(err, "failed to delete load balancer")
 	}
 
-	// Delete associated target groups
+	// Delete associated target groups; collect failures so callers see orphans.
+	var tgErrs []error
+
 	for _, tg := range targetGroups {
 		delInput := &elbv2.DeleteTargetGroupInput{
 			TargetGroupArn: tg.TargetGroupArn,
 		}
-		_, _ = elbClient.DeleteTargetGroup(ctx, delInput)
+
+		if _, delErr := elbClient.DeleteTargetGroup(ctx, delInput); delErr != nil {
+			tgErrs = append(tgErrs, fmt.Errorf("delete target group %s: %w",
+				aws.ToString(tg.TargetGroupArn), delErr))
+		}
+	}
+
+	if len(tgErrs) > 0 {
+		return fmt.Errorf("load balancer deleted but target group cleanup failed: %w", errors.Join(tgErrs...))
 	}
 
 	return nil
@@ -415,7 +427,9 @@ func (m *LoadBalancerManager) RemoveBackend(ctx context.Context, lbID string, ba
 
 		_, err := elbClient.DeregisterTargets(ctx, input)
 		if err != nil {
-			// Log error but continue to try other target groups
+			logger.WithOperation("RemoveBackend").Warnf("deregister targets from %s: %v",
+				aws.ToString(targetGroup.TargetGroupArn), err)
+
 			continue
 		}
 	}

@@ -76,7 +76,7 @@ func TestValidatePorts(t *testing.T) {
 
 	invalidCases := []*cpi.SecurityRule{
 		{PortRangeMin: -1, PortRangeMax: 80},
-		{PortRangeMin: 80, PortRangeMax: 70},     // min > max
+		{PortRangeMin: 80, PortRangeMax: 70}, // min > max
 		{PortRangeMin: 80, PortRangeMax: 65536},
 	}
 	for _, rule := range invalidCases {
@@ -456,32 +456,32 @@ func TestSetPorts(t *testing.T) {
 		wantTo   *int32
 	}{
 		{
-			name: "both ports set",
+			name:     "both ports set",
 			protocol: "tcp", min: 80, max: 443,
 			wantFrom: aws.Int32(80), wantTo: aws.Int32(443),
 		},
 		{
-			name: "only min set — to mirrors from",
+			name:     "only min set — to mirrors from",
 			protocol: "tcp", min: 22, max: 0,
 			wantFrom: aws.Int32(22), wantTo: aws.Int32(22),
 		},
 		{
-			name: "only max set — from mirrors to",
+			name:     "only max set — from mirrors to",
 			protocol: "tcp", min: 0, max: 8080,
 			wantFrom: aws.Int32(8080), wantTo: aws.Int32(8080),
 		},
 		{
-			name: "both zero",
+			name:     "both zero",
 			protocol: "tcp", min: 0, max: 0,
 			wantFrom: nil, wantTo: nil,
 		},
 		{
-			name: "icmp — no ports set even when provided",
+			name:     "icmp — no ports set even when provided",
 			protocol: "icmp", min: 8, max: 0,
 			wantFrom: nil, wantTo: nil,
 		},
 		{
-			name: "all — no ports set",
+			name:     "all — no ports set",
 			protocol: "all", min: 80, max: 80,
 			wantFrom: nil, wantTo: nil,
 		},

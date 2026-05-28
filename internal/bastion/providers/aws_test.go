@@ -153,7 +153,7 @@ func TestGetBastionIP_StatePresent_NoEC2Call(t *testing.T) {
 	a := NewAWSBastionInit(cfg)
 	a.ec2Client = fake
 
-	ip, err := a.getBastionIP()
+	ip, err := a.getBastionIP(context.Background())
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestGetBastionIP_StateMissing_EC2FallbackInvoked(t *testing.T) {
 	a := NewAWSBastionInit(cfg)
 	a.ec2Client = fake
 
-	ip, err := a.getBastionIP()
+	ip, err := a.getBastionIP(context.Background())
 	if err != nil {
 		t.Fatalf("expected no error from EC2 fallback, got: %v", err)
 	}

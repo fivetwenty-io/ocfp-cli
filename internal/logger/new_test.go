@@ -162,12 +162,12 @@ func TestDetermineLogLevel_Matrix(t *testing.T) {
 // (or are suppressed) in the observer.
 func TestInitialize_LevelMatrix(t *testing.T) {
 	cases := []struct {
-		name          string
-		cfg           func(dir string) Config
-		wantLevel     zapcore.Level
-		sendsDebug    bool // debug message expected in observer?
-		sendsInfo     bool
-		sendsWarn     bool
+		name       string
+		cfg        func(dir string) Config
+		wantLevel  zapcore.Level
+		sendsDebug bool // debug message expected in observer?
+		sendsInfo  bool
+		sendsWarn  bool
 	}{
 		{
 			name: "Trace=true → debug+info+warn visible",
