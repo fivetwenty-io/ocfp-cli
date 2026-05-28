@@ -12,6 +12,68 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
+// getEC2 returns the EC2API to use. In tests m.ec2 is set; in production
+// it falls back to the real client, preserving existing behaviour.
+func (m *NetworkManager) getEC2(ctx context.Context) (EC2API, error) {
+	if m.ec2 != nil {
+		return m.ec2, nil
+	}
+
+	return m.client.getEC2Client(ctx)
+}
+
+// defaultVPCWaiter calls the real AWS VPC available waiter.
+// The waiter factory requires a concrete *ec2.Client — it is used only on the
+// production path where getEC2Client already returns one.
+func defaultVPCWaiter(ctx context.Context, client EC2API, vpcID string) error {
+	concreteClient, ok := client.(*ec2.Client)
+	if !ok {
+		return fmt.Errorf("VPC waiter requires *ec2.Client, got %T", client)
+	}
+
+	const vpcWaitTimeout = 2 * time.Minute //nolint:mnd // Standard AWS VPC creation wait time
+
+	return ec2.NewVpcAvailableWaiter(concreteClient).Wait(ctx, &ec2.DescribeVpcsInput{
+		VpcIds: []string{vpcID},
+	}, vpcWaitTimeout)
+}
+
+// defaultSubnetWaiter calls the real AWS subnet available waiter.
+func defaultSubnetWaiter(ctx context.Context, client EC2API, subnetID string) error {
+	concreteClient, ok := client.(*ec2.Client)
+	if !ok {
+		return fmt.Errorf("subnet waiter requires *ec2.Client, got %T", client)
+	}
+
+	const subnetWaitTimeout = 2 * time.Minute //nolint:mnd // Standard AWS subnet creation wait time
+
+	return ec2.NewSubnetAvailableWaiter(concreteClient).Wait(ctx, &ec2.DescribeSubnetsInput{
+		SubnetIds: []string{subnetID},
+	}, subnetWaitTimeout)
+}
+
+// waitForVPC calls the VPC waiter, falling back to defaultVPCWaiter when no
+// override is set.
+func (m *NetworkManager) waitForVPC(ctx context.Context, client EC2API, vpcID string) error {
+	fn := m.vpcWaiter
+	if fn == nil {
+		fn = defaultVPCWaiter
+	}
+
+	return fn(ctx, client, vpcID)
+}
+
+// waitForSubnet calls the subnet waiter, falling back to defaultSubnetWaiter
+// when no override is set.
+func (m *NetworkManager) waitForSubnet(ctx context.Context, client EC2API, subnetID string) error {
+	fn := m.subnetWaiter
+	if fn == nil {
+		fn = defaultSubnetWaiter
+	}
+
+	return fn(ctx, client, subnetID)
+}
+
 // CreateNetwork creates a new VPC in AWS with the specified configuration.
 //
 //nolint:funlen // VPC creation requires setup steps
@@ -30,7 +92,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 		return nil, wrapError(err, "invalid CIDR block")
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -76,13 +138,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 	}
 
 	// Wait for VPC to be available
-	const vpcWaitTimeout = 2 * time.Minute //nolint:mnd // Standard AWS VPC creation wait time
-
-	waiter := ec2.NewVpcAvailableWaiter(ec2Client)
-
-	err = waiter.Wait(ctx, &ec2.DescribeVpcsInput{
-		VpcIds: []string{vpcID},
-	}, vpcWaitTimeout)
+	err = m.waitForVPC(ctx, ec2Client, vpcID)
 	if err != nil {
 		return nil, wrapError(err, "VPC creation timeout")
 	}
@@ -102,7 +158,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 
 // GetNetwork retrieves a VPC by ID.
 func (m *NetworkManager) GetNetwork(ctx context.Context, networkID string) (*cpi.Network, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +185,7 @@ func (m *NetworkManager) GetNetwork(ctx context.Context, networkID string) (*cpi
 
 // ListNetworks lists all VPCs, optionally filtered.
 func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]string) ([]*cpi.Network, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +211,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 
 // DeleteNetwork deletes a VPC with dependency checking.
 func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -203,7 +259,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		return nil, wrapError(err, "invalid subnet CIDR block")
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -232,13 +288,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 	subnetID := aws.ToString(output.Subnet.SubnetId)
 
 	// Wait for subnet to be available
-	const subnetWaitTimeout = 2 * time.Minute //nolint:mnd // Standard AWS subnet creation wait time
-
-	waiter := ec2.NewSubnetAvailableWaiter(ec2Client)
-
-	err = waiter.Wait(ctx, &ec2.DescribeSubnetsInput{
-		SubnetIds: []string{subnetID},
-	}, subnetWaitTimeout)
+	err = m.waitForSubnet(ctx, ec2Client, subnetID)
 	if err != nil {
 		return nil, wrapError(err, "subnet creation timeout")
 	}
@@ -280,7 +330,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 
 // GetSubnet retrieves a subnet by ID.
 func (m *NetworkManager) GetSubnet(ctx context.Context, subnetID string) (*cpi.Subnet, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +355,7 @@ func (m *NetworkManager) GetSubnet(ctx context.Context, subnetID string) (*cpi.S
 
 // ListSubnets lists all subnets in a VPC.
 func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*cpi.Subnet, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +384,7 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 
 // DeleteSubnet deletes a subnet with ENI checks.
 func (m *NetworkManager) DeleteSubnet(ctx context.Context, subnetID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -374,7 +424,7 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, subnetID string) erro
 // Helper functions
 
 // ensureInternetGateway ensures an Internet Gateway exists for the VPC.
-func (m *NetworkManager) ensureInternetGateway(ctx context.Context, ec2Client *ec2.Client, vpcID string) error {
+func (m *NetworkManager) ensureInternetGateway(ctx context.Context, ec2Client EC2API, vpcID string) error {
 	// Check if IGW already exists
 	igws, err := ec2Client.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
 		Filters: []types.Filter{
@@ -428,7 +478,7 @@ func (m *NetworkManager) ensureInternetGateway(ctx context.Context, ec2Client *e
 }
 
 // ensurePublicRouteTable ensures a route table with internet access exists for public subnets.
-func (m *NetworkManager) ensurePublicRouteTable(ctx context.Context, ec2Client *ec2.Client, vpcID, subnetID string) error {
+func (m *NetworkManager) ensurePublicRouteTable(ctx context.Context, ec2Client EC2API, vpcID, subnetID string) error {
 	igwID, err := m.getInternetGatewayID(ctx, ec2Client, vpcID)
 	if err != nil {
 		return err
@@ -443,7 +493,7 @@ func (m *NetworkManager) ensurePublicRouteTable(ctx context.Context, ec2Client *
 }
 
 // getInternetGatewayID retrieves the internet gateway ID for a VPC.
-func (m *NetworkManager) getInternetGatewayID(ctx context.Context, ec2Client *ec2.Client, vpcID string) (string, error) {
+func (m *NetworkManager) getInternetGatewayID(ctx context.Context, ec2Client EC2API, vpcID string) (string, error) {
 	igws, err := ec2Client.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
 		Filters: []types.Filter{
 			{
@@ -460,7 +510,7 @@ func (m *NetworkManager) getInternetGatewayID(ctx context.Context, ec2Client *ec
 }
 
 // getOrCreatePublicRouteTable gets an existing public route table or creates a new one.
-func (m *NetworkManager) getOrCreatePublicRouteTable(ctx context.Context, ec2Client *ec2.Client, vpcID, igwID string) (string, error) {
+func (m *NetworkManager) getOrCreatePublicRouteTable(ctx context.Context, ec2Client EC2API, vpcID, igwID string) (string, error) {
 	// Check for existing public route table
 	routeTables, err := ec2Client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
 		Filters: []types.Filter{
@@ -486,7 +536,7 @@ func (m *NetworkManager) getOrCreatePublicRouteTable(ctx context.Context, ec2Cli
 }
 
 // createPublicRouteTable creates a new public route table with IGW route.
-func (m *NetworkManager) createPublicRouteTable(ctx context.Context, ec2Client *ec2.Client, vpcID, igwID string) (string, error) {
+func (m *NetworkManager) createPublicRouteTable(ctx context.Context, ec2Client EC2API, vpcID, igwID string) (string, error) {
 	rtOutput, err := ec2Client.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{
 		VpcId: aws.String(vpcID),
 		TagSpecifications: []types.TagSpecification{
@@ -529,7 +579,7 @@ func (m *NetworkManager) createPublicRouteTable(ctx context.Context, ec2Client *
 }
 
 // associateRouteTableWithSubnet associates a route table with a subnet.
-func (m *NetworkManager) associateRouteTableWithSubnet(ctx context.Context, ec2Client *ec2.Client, rtID, subnetID string) error {
+func (m *NetworkManager) associateRouteTableWithSubnet(ctx context.Context, ec2Client EC2API, rtID, subnetID string) error {
 	_, err := ec2Client.AssociateRouteTable(ctx, &ec2.AssociateRouteTableInput{
 		RouteTableId: aws.String(rtID),
 		SubnetId:     aws.String(subnetID),
@@ -542,7 +592,7 @@ func (m *NetworkManager) associateRouteTableWithSubnet(ctx context.Context, ec2C
 }
 
 // checkAndCleanVPCDependencies checks and optionally cleans VPC dependencies.
-func (m *NetworkManager) checkAndCleanVPCDependencies(ctx context.Context, ec2Client *ec2.Client, vpcID string) error {
+func (m *NetworkManager) checkAndCleanVPCDependencies(ctx context.Context, ec2Client EC2API, vpcID string) error {
 	err := m.checkVPCSubnets(ctx, ec2Client, vpcID)
 	if err != nil {
 		return err
@@ -557,7 +607,7 @@ func (m *NetworkManager) checkAndCleanVPCDependencies(ctx context.Context, ec2Cl
 }
 
 // checkVPCSubnets verifies that VPC has no remaining subnets.
-func (m *NetworkManager) checkVPCSubnets(ctx context.Context, ec2Client *ec2.Client, vpcID string) error {
+func (m *NetworkManager) checkVPCSubnets(ctx context.Context, ec2Client EC2API, vpcID string) error {
 	subnets, err := ec2Client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
 		Filters: []types.Filter{
 			{
@@ -582,7 +632,7 @@ func (m *NetworkManager) checkVPCSubnets(ctx context.Context, ec2Client *ec2.Cli
 }
 
 // deleteVPCRouteTables deletes custom route tables for the VPC.
-func (m *NetworkManager) deleteVPCRouteTables(ctx context.Context, ec2Client *ec2.Client, vpcID string) error {
+func (m *NetworkManager) deleteVPCRouteTables(ctx context.Context, ec2Client EC2API, vpcID string) error {
 	routeTables, err := ec2Client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
 		Filters: []types.Filter{
 			{
@@ -621,7 +671,7 @@ func (m *NetworkManager) isMainRouteTable(routeTable types.RouteTable) bool {
 }
 
 // deleteRouteTable disassociates and deletes a route table.
-func (m *NetworkManager) deleteRouteTable(ctx context.Context, ec2Client *ec2.Client, routeTable types.RouteTable) error {
+func (m *NetworkManager) deleteRouteTable(ctx context.Context, ec2Client EC2API, routeTable types.RouteTable) error {
 	rtID := aws.ToString(routeTable.RouteTableId)
 
 	// Disassociate route table from all subnets
@@ -648,7 +698,7 @@ func (m *NetworkManager) deleteRouteTable(ctx context.Context, ec2Client *ec2.Cl
 }
 
 // deleteVPCInternetGateways detaches and deletes internet gateways for the VPC.
-func (m *NetworkManager) deleteVPCInternetGateways(ctx context.Context, ec2Client *ec2.Client, vpcID string) error {
+func (m *NetworkManager) deleteVPCInternetGateways(ctx context.Context, ec2Client EC2API, vpcID string) error {
 	igws, err := ec2Client.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
 		Filters: []types.Filter{
 			{
@@ -674,7 +724,7 @@ func (m *NetworkManager) deleteVPCInternetGateways(ctx context.Context, ec2Clien
 }
 
 // detachAndDeleteInternetGateway detaches and deletes an internet gateway.
-func (m *NetworkManager) detachAndDeleteInternetGateway(ctx context.Context, ec2Client *ec2.Client, igwID, vpcID string) error {
+func (m *NetworkManager) detachAndDeleteInternetGateway(ctx context.Context, ec2Client EC2API, igwID, vpcID string) error {
 	// Detach IGW
 	_, err := ec2Client.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{
 		InternetGatewayId: aws.String(igwID),
@@ -816,7 +866,7 @@ func validateCIDR(cidr string) error {
 
 // AllocateFloatingIP allocates an Elastic IP address.
 func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -858,7 +908,7 @@ func (m *NetworkManager) AllocateFloatingIP(ctx context.Context, req *cpi.Alloca
 
 // GetFloatingIP retrieves an Elastic IP by allocation ID.
 func (m *NetworkManager) GetFloatingIP(ctx context.Context, allocationID string) (*cpi.FloatingIP, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -883,7 +933,7 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, allocationID string)
 
 // ListFloatingIPs lists all Elastic IPs.
 func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string]string) ([]*cpi.FloatingIP, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -910,7 +960,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, filters map[string
 
 // AssociateFloatingIP associates an Elastic IP with an instance.
 func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, allocationID, instanceID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -928,7 +978,7 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, allocationID, 
 
 // DisassociateFloatingIP disassociates an Elastic IP from its instance.
 func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, allocationID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -967,7 +1017,7 @@ func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, allocationI
 
 // ReleaseFloatingIP releases an Elastic IP.
 func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, allocationID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -1047,7 +1097,7 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 		}
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1083,7 +1133,7 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 
 // GetRouter retrieves a route table by ID.
 func (m *NetworkManager) GetRouter(ctx context.Context, routeTableID string) (*cpi.Router, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1108,7 +1158,7 @@ func (m *NetworkManager) GetRouter(ctx context.Context, routeTableID string) (*c
 
 // ListRouters lists all route tables.
 func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1128,7 +1178,7 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 
 // AttachRouterInterface associates a route table with a subnet.
 func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routeTableID, subnetID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -1146,7 +1196,7 @@ func (m *NetworkManager) AttachRouterInterface(ctx context.Context, routeTableID
 
 // DetachRouterInterface disassociates a route table from a subnet.
 func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routeTableID, subnetID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -1197,7 +1247,7 @@ func (m *NetworkManager) DetachRouterInterface(ctx context.Context, routeTableID
 
 // DeleteRouter deletes a route table.
 func (m *NetworkManager) DeleteRouter(ctx context.Context, routeTableID string) error {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
