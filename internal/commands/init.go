@@ -389,7 +389,8 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	}
 
 	// Check for deployment directories
-	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
+	home, _ := homeDir()
+	deploymentDir := filepath.Join(home, "deployments", cfg.Name)
 
 	_, err = os.Stat(deploymentDir) //nolint:gosec // path components are from trusted config
 	if os.IsNotExist(err) {
@@ -533,7 +534,8 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to load bootstrap state for bloc %s: %w", cfg.Name, err)
 	}
 
-	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
+	home, _ := homeDir()
+	deploymentDir := filepath.Join(home, "deployments", cfg.Name)
 	manifestPath := filepath.Join(deploymentDir, "bosh.yml")
 
 	// Check if manifest exists
@@ -598,7 +600,8 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	// 4. Configure CF organizations and spaces
 	// 5. Set up CF admin user
 
-	deploymentDir := filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name)
+	home, _ := homeDir()
+	deploymentDir := filepath.Join(home, "deployments", cfg.Name)
 
 	// Upload cloud foundry deployment
 	log.Info("Uploading Cloud Foundry deployment")
