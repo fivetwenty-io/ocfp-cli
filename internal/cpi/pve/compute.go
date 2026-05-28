@@ -44,7 +44,11 @@ const (
 	flavorBoshCPU      = 8      // unit: count
 	flavorBoshRAM      = 16384  // unit: MiB
 	flavorBoshDisk     = 131072 // unit: MiB
-	flavorArtifactsCPU = 4
+	// flavorArtifactsCPU is the artifacts VM default vCPU count. RustFS is
+	// memory-bound, not CPU-bound, and a single-node artifacts host serves
+	// low-concurrency BOSH release/stemcell traffic; 2 vCPUs is sufficient.
+	// Operators with heavier concurrency can override via config.Artifacts.CPU.
+	flavorArtifactsCPU = 2
 	// flavorArtifactsRAM is the artifacts VM default memory. 4 GiB is enough
 	// for a RustFS instance with a single ZFS pool; operators that need more
 	// (heavy concurrency, large object workloads) can override via
@@ -133,7 +137,7 @@ var flavorPresets = map[string]*cpi.Flavor{
 		VCPUs:       flavorArtifactsCPU,
 		RAM:         flavorArtifactsRAM,
 		Disk:        flavorArtifactsDisk,
-		Description: "Artifacts (RustFS) host: 4 vCPUs, 4GB RAM, 50GB disk",
+		Description: "Artifacts (RustFS) host: 2 vCPUs, 4GB RAM, 50GB disk",
 	},
 }
 
