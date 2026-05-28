@@ -27,6 +27,16 @@ const (
 // SecurityManager handles AWS security group operations.
 type SecurityManager struct {
 	client *Client
+	ec2    EC2API
+}
+
+// getEC2 returns the injected EC2API if set, otherwise falls back to the real client.
+func (m *SecurityManager) getEC2(ctx context.Context) (EC2API, error) {
+	if m.ec2 != nil {
+		return m.ec2, nil
+	}
+
+	return m.client.getEC2Client(ctx)
 }
 
 // CreateSecurityGroup creates a new security group in AWS.
@@ -39,7 +49,7 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 		return nil, fmt.Errorf("network ID (VPC ID) is required for AWS security groups: %w", ErrInvalidRequest)
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, wrapError(err, "get EC2 client")
 	}
@@ -66,7 +76,7 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, groupID string) 
 		return nil, ErrInvalidRequest
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, wrapError(err, "get EC2 client")
 	}
@@ -93,7 +103,7 @@ func (m *SecurityManager) GetSecurityGroupByName(ctx context.Context, name, vpcI
 		return nil, ErrInvalidRequest
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, wrapError(err, "get EC2 client")
 	}
@@ -132,7 +142,7 @@ func (m *SecurityManager) GetSecurityGroupByName(ctx context.Context, name, vpcI
 
 // ListSecurityGroups lists all security groups matching the given filters.
 func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[string]string) ([]*cpi.SecurityGroup, error) {
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, wrapError(err, "get EC2 client")
 	}
@@ -183,7 +193,7 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, groupID strin
 		return ErrInvalidRequest
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return wrapError(err, "get EC2 client")
 	}
@@ -220,7 +230,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 		return err
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return wrapError(err, "get EC2 client")
 	}
@@ -305,7 +315,7 @@ func (m *SecurityManager) RemoveSecurityRule(ctx context.Context, groupID string
 		return err
 	}
 
-	ec2Client, err := m.client.getEC2Client(ctx)
+	ec2Client, err := m.getEC2(ctx)
 	if err != nil {
 		return wrapError(err, "get EC2 client")
 	}
@@ -543,7 +553,7 @@ func (m *SecurityManager) buildCreateInput(req *cpi.CreateSecurityGroupRequest, 
 	}
 }
 
-func (m *SecurityManager) configureSecurityGroupRules(ctx context.Context, ec2Client *ec2.Client, groupID string, rules []*cpi.SecurityRule) {
+func (m *SecurityManager) configureSecurityGroupRules(ctx context.Context, ec2Client EC2API, groupID string, rules []*cpi.SecurityRule) {
 	if len(rules) == 0 {
 		return
 	}
@@ -697,7 +707,7 @@ func (m *SecurityManager) generateRuleID(direction, protocol string, fromPort, t
 }
 
 // ruleExists checks if a security rule already exists in a security group.
-func (m *SecurityManager) ruleExists(ctx context.Context, ec2Client *ec2.Client, groupID string, rule *cpi.SecurityRule) (bool, error) {
+func (m *SecurityManager) ruleExists(ctx context.Context, ec2Client EC2API, groupID string, rule *cpi.SecurityRule) (bool, error) {
 	resp, err := ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
 		GroupIds: []string{groupID},
 	})
