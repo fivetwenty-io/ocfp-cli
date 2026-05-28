@@ -49,13 +49,15 @@ func TestValidatePath(t *testing.T) {
 		// On darwin/linux filepath.Clean normalises \\; the regex catches the remaining ".."
 		{name: "backslash traversal", path: `..\..\etc\passwd`, wantErr: true, errFrag: "dangerous"},
 
-		// URL-encoded traversal — validator does NOT URL-decode inputs.
-		// "%2e%2e/etc/passwd" contains "/etc/passwd" literally, so it IS caught
-		// by the /etc/passwd pattern. A variant that does NOT contain a blocked
-		// suffix (e.g., "%2e%2e/escape") passes — callers must URL-decode first.
+		// URL-encoded traversal — validator URL-decodes once and rejects paths where
+		// the decoded form contains ".." as a path component.
 		{name: "percent-encoded with /etc/passwd suffix", path: "%2e%2e/etc/passwd", wantErr: true, errFrag: "dangerous"},
-		// This variant has no blocked suffix and no literal ".."; it passes validation.
-		{name: "percent-encoded traversal no blocked suffix passes", path: "%2e%2e/escape", wantErr: false},
+		// Previously a gap: "%2e%2e/escape" decodes to "../escape" which has a ".." component.
+		{name: "percent-encoded traversal no blocked suffix rejected", path: "%2e%2e/escape", wantErr: true, errFrag: "dangerous"},
+		// Mixed-case full encoding — all segments decode to "..".
+		{name: "full percent-encoded traversal", path: "%2e%2e%2fetc%2fpasswd", wantErr: true, errFrag: "dangerous"},
+		// Legitimate %20 in filename — decoded form has no ".." component; must pass.
+		{name: "percent-encoded space in filename", path: "/home/user/my%20file.txt", wantErr: false},
 
 		// Dangerous absolute prefixes
 		{name: "proc filesystem", path: "/proc/self/mem", wantErr: true, errFrag: "dangerous"},
@@ -75,10 +77,10 @@ func TestValidatePath(t *testing.T) {
 		{name: "paren open", path: "/tmp/foo(bar", wantErr: true, errFrag: "metacharacter"},
 		{name: "paren close", path: "/tmp/foo)bar", wantErr: true, errFrag: "metacharacter"},
 
-		// Null byte — filepath.Clean treats it as part of the string; the path
-		// passes unless another rule catches it. Document the current behavior.
-		// This is NOT expected to return an error under the current implementation.
-		{name: "null byte in path", path: "/tmp/foo\x00bar", wantErr: false},
+		// Null byte — rejected explicitly; OS path truncation attack vector.
+		{name: "null byte in path", path: "/tmp/foo\x00bar", wantErr: true, errFrag: "null byte"},
+		// Null byte at start.
+		{name: "null byte at start", path: "\x00/etc/passwd", wantErr: true, errFrag: "null byte"},
 	}
 
 	for _, tc := range tests {
