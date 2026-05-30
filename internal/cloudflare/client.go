@@ -93,22 +93,27 @@ type idName struct {
 	Name string `json:"name"`
 }
 
-// ResolveAccountAndZone returns the account id (first account the token can
-// see) and the zone id for the named zone.
+// zoneResult is a zone record including the account that owns it. Deriving the
+// account from the zone (rather than guessing the first account the token can
+// see) keeps multi-account tokens correct.
+type zoneResult struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Account idName `json:"account"`
+}
+
+// ResolveAccountAndZone returns the account id that owns the named zone and the
+// zone id, both read from the zone record.
 func (c *Client) ResolveAccountAndZone(ctx context.Context, zone string) (accountID, zoneID string, err error) {
-	var accounts []idName
-	if err = c.do(ctx, http.MethodGet, "/accounts", nil, &accounts); err != nil {
-		return "", "", fmt.Errorf("list accounts: %w", err)
-	}
-	if len(accounts) == 0 {
-		return "", "", fmt.Errorf("cloudflare: token sees no accounts")
-	}
-	var zones []idName
+	var zones []zoneResult
 	if err = c.do(ctx, http.MethodGet, "/zones?name="+url.QueryEscape(zone), nil, &zones); err != nil {
 		return "", "", fmt.Errorf("resolve zone %q: %w", zone, err)
 	}
 	if len(zones) == 0 {
 		return "", "", fmt.Errorf("cloudflare: zone %q not found (token access?)", zone)
 	}
-	return accounts[0].ID, zones[0].ID, nil
+	if zones[0].Account.ID == "" {
+		return "", "", fmt.Errorf("cloudflare: zone %q response has no account id", zone)
+	}
+	return zones[0].Account.ID, zones[0].ID, nil
 }

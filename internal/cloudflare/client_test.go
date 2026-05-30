@@ -38,8 +38,7 @@ func (f *fakeDoer) Do(req *http.Request) (*http.Response, error) {
 func TestResolveAccountAndZone(t *testing.T) {
 	t.Parallel()
 	f := &fakeDoer{responses: map[string]string{
-		"GET /client/v4/accounts": `{"success":true,"result":[{"id":"acct-123","name":"FiveTwenty"}]}`,
-		"GET /client/v4/zones":    `{"success":true,"result":[{"id":"zone-abc","name":"fivetwenty.io"}]}`,
+		"GET /client/v4/zones": `{"success":true,"result":[{"id":"zone-abc","name":"fivetwenty.io","account":{"id":"acct-123","name":"FiveTwenty"}}]}`,
 	}}
 	c := NewClient("tok", f)
 	acct, zone, err := c.ResolveAccountAndZone(context.Background(), "fivetwenty.io")
