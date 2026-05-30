@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/cloudflare"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/pve/verify"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -589,6 +591,10 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
+	if cerr := m.teardownCloudflare(); cerr != nil {
+		log.Warnf("cloudflare teardown: %v", cerr)
+	}
+
 	sortedResources, err := m.prepareResourcesForDeletion(ctx)
 	if err != nil {
 		return err
@@ -622,6 +628,84 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	log.Infow("Teardown completed", "deleted", deletedCount, "total", len(sortedResources))
 
 	return nil
+}
+
+// teardownCloudflare deletes the bloc's tunnel DNS records and the tunnel
+// itself, using identifiers persisted at bootstrap. All failures are
+// soft-warn: a stale Cloudflare record must never block lab teardown.
+func (m *TeardownManager) teardownCloudflare() error {
+	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
+		return nil
+	}
+	cf := m.config.Cloudflare
+
+	safe := cloudflareSafe()
+	if safe == nil {
+		return nil
+	}
+	token := resolveCloudflareAPIToken(safe, cf)
+	if token == "" {
+		logger.Get().Warn("cloudflare teardown skipped: API token unavailable")
+		return nil
+	}
+	vp := "secret/config/" + m.options.BlocName + "/cloudflare"
+	tunnelID, _ := safe.GetString(vp, "tunnel_id")
+	accountID, _ := safe.GetString(vp, "account_id")
+	if tunnelID == "" || accountID == "" {
+		return nil
+	}
+
+	ctx := context.Background()
+	client := cloudflare.NewClient(token, nil)
+	if _, zoneID, zerr := client.ResolveAccountAndZone(cf.Zone); zerr == nil {
+		for _, name := range []string{"*." + cf.AppsDomain, "*." + cf.SystemDomain, cf.SSHHostname} {
+			if name == "" || name == "*." {
+				continue
+			}
+			if derr := client.DeleteCNAME(ctx, zoneID, name); derr != nil {
+				logger.Get().Warnf("cloudflare dns delete %s: %v", name, derr)
+			}
+		}
+	}
+	if derr := client.DeleteTunnel(ctx, accountID, tunnelID); derr != nil {
+		logger.Get().Warnf("cloudflare tunnel delete: %v", derr)
+	}
+	_ = safe.Set(vp, "tunnel_id", "")
+	_ = safe.Set(vp, "tunnel_token", "")
+	logger.Get().Infof("Cloudflare tunnel %s torn down", tunnelID)
+	return nil
+}
+
+// cloudflareSafe builds a vault Safe from env, mirroring bootstrap's
+// tailscaleSafe fallback. Returns nil (warn) when vault is unreachable.
+func cloudflareSafe() vault.SafeInterface {
+	client, err := vault.NewClientFromEnv()
+	if err != nil {
+		logger.Get().Warnf("cloudflare teardown: cannot reach vault: %v", err)
+		return nil
+	}
+	return vault.NewSafe(client)
+}
+
+// resolveCloudflareAPIToken reads the literal token or the "path:key" vault
+// indirection. Empty on any soft failure.
+func resolveCloudflareAPIToken(safe vault.SafeInterface, cf *config.CloudflareConfig) string {
+	if t := strings.TrimSpace(cf.APIToken); t != "" {
+		return t
+	}
+	raw := strings.TrimSpace(cf.APITokenVaultPath)
+	if raw == "" || safe == nil {
+		return ""
+	}
+	idx := strings.LastIndex(raw, ":")
+	if idx <= 0 || idx == len(raw)-1 {
+		return ""
+	}
+	val, err := safe.GetString(raw[:idx], raw[idx+1:])
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(val)
 }
 
 // DeleteResource deletes a single resource.
