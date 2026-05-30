@@ -80,7 +80,7 @@ if [[ -n "$cf_token" ]]; then
     dpkg -i /tmp/cloudflared.deb || apt-get install -f -y
   fi
   # Idempotent: reinstall the service with the current token.
-  cloudflared service install "$cf_token" || { cloudflared service uninstall >/dev/null 2>&1; cloudflared service install "$cf_token"; }
+  cloudflared service install "$cf_token" || { cloudflared service uninstall >/dev/null 2>&1 || true; cloudflared service install "$cf_token"; }
   systemctl enable --now cloudflared >/dev/null 2>&1 || true
 fi
 `

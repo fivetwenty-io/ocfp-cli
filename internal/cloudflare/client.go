@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -84,7 +86,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 // ErrNotFound signals a 404 (used so delete is idempotent).
-var ErrNotFound = fmt.Errorf("cloudflare: not found")
+var ErrNotFound = errors.New("cloudflare: not found")
 
 type idName struct {
 	ID   string `json:"id"`
@@ -93,16 +95,16 @@ type idName struct {
 
 // ResolveAccountAndZone returns the account id (first account the token can
 // see) and the zone id for the named zone.
-func (c *Client) ResolveAccountAndZone(zone string) (accountID, zoneID string, err error) {
+func (c *Client) ResolveAccountAndZone(ctx context.Context, zone string) (accountID, zoneID string, err error) {
 	var accounts []idName
-	if err = c.do(context.Background(), http.MethodGet, "/accounts", nil, &accounts); err != nil {
+	if err = c.do(ctx, http.MethodGet, "/accounts", nil, &accounts); err != nil {
 		return "", "", fmt.Errorf("list accounts: %w", err)
 	}
 	if len(accounts) == 0 {
 		return "", "", fmt.Errorf("cloudflare: token sees no accounts")
 	}
 	var zones []idName
-	if err = c.do(context.Background(), http.MethodGet, "/zones?name="+zone, nil, &zones); err != nil {
+	if err = c.do(ctx, http.MethodGet, "/zones?name="+url.QueryEscape(zone), nil, &zones); err != nil {
 		return "", "", fmt.Errorf("resolve zone %q: %w", zone, err)
 	}
 	if len(zones) == 0 {

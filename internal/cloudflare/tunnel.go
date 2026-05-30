@@ -2,8 +2,10 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // Tunnel is a created-or-fetched cfd tunnel plus its connector token.
@@ -29,7 +31,7 @@ type OriginRequest struct {
 func (c *Client) EnsureTunnel(ctx context.Context, accountID, name string) (Tunnel, error) {
 	base := "/accounts/" + accountID + "/cfd_tunnel"
 	var existing []idName
-	if err := c.do(ctx, http.MethodGet, base+"?name="+name+"&is_deleted=false", nil, &existing); err != nil {
+	if err := c.do(ctx, http.MethodGet, base+"?name="+url.QueryEscape(name)+"&is_deleted=false", nil, &existing); err != nil {
 		return Tunnel{}, fmt.Errorf("list tunnels: %w", err)
 	}
 	var id string
@@ -102,7 +104,7 @@ func (c *Client) DeleteTunnel(ctx context.Context, accountID, tunnelID string) e
 	base := "/accounts/" + accountID + "/cfd_tunnel/" + tunnelID
 	// Best-effort: clean stale connections so delete is not blocked.
 	_ = c.do(ctx, http.MethodDelete, base+"/connections", nil, nil)
-	if err := c.do(ctx, http.MethodDelete, base, nil, nil); err != nil && err != ErrNotFound {
+	if err := c.do(ctx, http.MethodDelete, base, nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("delete tunnel: %w", err)
 	}
 	return nil
