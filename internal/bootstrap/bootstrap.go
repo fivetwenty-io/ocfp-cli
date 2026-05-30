@@ -58,6 +58,11 @@ type Manager struct {
 	options      *Options
 	metadata     *MetadataManager
 	safe         vault.SafeInterface
+
+	// cloudflareTunnelToken is the connector token from the Create Cloudflare
+	// Tunnel step, consumed by bastionCloudflareSpec for the SMBIOS payload.
+	// Empty when the feature is disabled.
+	cloudflareTunnelToken string
 }
 
 // NewManager creates a new bootstrap manager.
@@ -105,6 +110,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		{"Create Security Groups", m.CreateSecurityGroups, "security", true},
 		{"Create Public IPs", m.CreatePublicIPs, "network", false},
 		{"Create Key Pair", m.createKeyPair, "servers", true},
+		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
 		// {"Create Volumes", m.createVolumes, "volumes", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
 		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
