@@ -465,6 +465,7 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	// Build the full tailscale spec from defaults + the now-known IP+prefix.
 	// PVE provider translates this into SMBIOS for the firstboot script.
 	req.Tailscale = m.bastionTailscaleSpec(bastionName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
+	req.Cloudflare = m.bastionCloudflareSpec()
 
 	// Tag instance with role for discovery by findBastionIP
 	if req.Tags == nil {
@@ -706,6 +707,50 @@ func boolOrDefault(p *bool, def bool) bool {
 	}
 
 	return *p
+}
+
+// resolveBastionCloudflareAPIToken returns the CF API token from the merged
+// cloudflare config (literal or "path:key" vault indirection). Soft errors
+// yield "" so bootstrap can warn-and-skip.
+func (m *Manager) resolveBastionCloudflareAPIToken() string {
+	if m.config == nil || m.config.Cloudflare == nil {
+		return ""
+	}
+	cf := m.config.Cloudflare
+	if tok := strings.TrimSpace(cf.APIToken); tok != "" {
+		return tok
+	}
+	rawPath := strings.TrimSpace(cf.APITokenVaultPath)
+	if rawPath == "" {
+		return ""
+	}
+	path, key, ok := splitVaultPathKey(rawPath)
+	if !ok {
+		logger.Warnf("Cloudflare API token skipped: invalid api_token_vault_path %q (expected \"path:key\")", rawPath)
+		return ""
+	}
+	safe := m.tailscaleSafe()
+	if safe == nil {
+		return ""
+	}
+	val, err := safe.GetString(path, key)
+	if err != nil {
+		logger.Warnf("Cloudflare API token skipped: %s:%s not readable: %v", path, key, err)
+		return ""
+	}
+	return strings.TrimSpace(val)
+}
+
+// bastionCloudflareSpec returns the bastion cloudflared spec, or nil when the
+// feature is disabled or no connector token has been provisioned yet.
+func (m *Manager) bastionCloudflareSpec() *cpi.CloudflareSpec {
+	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
+		return nil
+	}
+	if strings.TrimSpace(m.cloudflareTunnelToken) == "" {
+		return nil
+	}
+	return &cpi.CloudflareSpec{TunnelToken: m.cloudflareTunnelToken}
 }
 
 func firstNonEmpty(a, b string) string {
