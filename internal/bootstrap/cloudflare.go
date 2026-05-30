@@ -30,7 +30,7 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 	name := firstNonEmpty(cf.TunnelName, "ocfp-lab-"+m.options.BlocName)
 	client := cloudflare.NewClient(token, nil)
 
-	accountID, zoneID, err := client.ResolveAccountAndZone(cf.Zone)
+	accountID, zoneID, err := client.ResolveAccountAndZone(ctx, cf.Zone)
 	if err != nil {
 		return fmt.Errorf("cloudflare resolve account/zone: %w", err)
 	}
@@ -62,11 +62,17 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 		}
 	}
 
-	if safe := m.tailscaleSafe(); safe != nil {
-		vp := "secret/config/" + m.options.BlocName + "/cloudflare"
-		_ = safe.Set(vp, "tunnel_id", tun.ID)
-		_ = safe.Set(vp, "tunnel_token", tun.Token)
-		_ = safe.Set(vp, "account_id", accountID)
+	safe := m.tailscaleSafe()
+	if safe == nil {
+		return fmt.Errorf("cloudflare: vault unavailable, cannot persist tunnel identifiers")
+	}
+	vp := "secret/config/" + m.options.BlocName + "/cloudflare"
+	if err := safe.SetMultiple(vp, map[string]interface{}{
+		"tunnel_id":    tun.ID,
+		"tunnel_token": tun.Token,
+		"account_id":   accountID,
+	}); err != nil {
+		return fmt.Errorf("cloudflare: persist tunnel identifiers to vault: %w", err)
 	}
 	m.cloudflareTunnelToken = strings.TrimSpace(tun.Token)
 	logger.Infof("Cloudflare tunnel %q ready (id %s)", name, tun.ID)

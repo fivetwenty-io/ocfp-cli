@@ -1,6 +1,7 @@
 package cloudflare
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -41,7 +42,7 @@ func TestResolveAccountAndZone(t *testing.T) {
 		"GET /client/v4/zones":    `{"success":true,"result":[{"id":"zone-abc","name":"fivetwenty.io"}]}`,
 	}}
 	c := NewClient("tok", f)
-	acct, zone, err := c.ResolveAccountAndZone("fivetwenty.io")
+	acct, zone, err := c.ResolveAccountAndZone(context.Background(), "fivetwenty.io")
 	require.NoError(t, err)
 	assert.Equal(t, "acct-123", acct)
 	assert.Equal(t, "zone-abc", zone)

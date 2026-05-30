@@ -2,6 +2,7 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -58,7 +59,7 @@ func (c *Client) DeleteCNAME(ctx context.Context, zoneID, name string) error {
 		return nil
 	}
 	path := "/zones/" + zoneID + "/dns_records/" + existing[0].ID
-	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil && err != ErrNotFound {
+	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("delete dns %q: %w", name, err)
 	}
 	return nil

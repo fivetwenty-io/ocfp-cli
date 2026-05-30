@@ -387,11 +387,11 @@ type InstanceRequest struct {
 	Tailscale             *TailscaleSpec // Optional: full tailscale config. When non-nil + AuthKey set, the PVE provider injects via SMBIOS for the bastion firstboot/watchdog to read.
 	// Cloudflare, when non-nil, provisions a cloudflared connector on the
 	// bastion via SMBIOS alongside tailscale.
-	Cloudflare            *CloudflareSpec
-	PublicKey             string         // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
-	DefaultUsername       string         // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
-	GatewayIP             string         // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
-	DNSServers            []string       // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
+	Cloudflare      *CloudflareSpec
+	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
+	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
+	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
+	DNSServers      []string // Optional: DNS resolvers to push via cloud-init (PVE nameserver)
 	// Hostname is the short host name the VM should adopt at first boot.
 	// Used to drive the user-data snippet's `hostname:` and `fqdn:` keys so
 	// the cloned VM stops booting as the template default (e.g. "ubuntu-22045").

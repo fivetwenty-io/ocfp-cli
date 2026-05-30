@@ -591,7 +591,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
-	if cerr := m.teardownCloudflare(); cerr != nil {
+	if cerr := m.teardownCloudflare(ctx); cerr != nil {
 		log.Warnf("cloudflare teardown: %v", cerr)
 	}
 
@@ -633,7 +633,7 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 // teardownCloudflare deletes the bloc's tunnel DNS records and the tunnel
 // itself, using identifiers persisted at bootstrap. All failures are
 // soft-warn: a stale Cloudflare record must never block lab teardown.
-func (m *TeardownManager) teardownCloudflare() error {
+func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
 		return nil
 	}
@@ -655,9 +655,8 @@ func (m *TeardownManager) teardownCloudflare() error {
 		return nil
 	}
 
-	ctx := context.Background()
 	client := cloudflare.NewClient(token, nil)
-	if _, zoneID, zerr := client.ResolveAccountAndZone(cf.Zone); zerr == nil {
+	if _, zoneID, zerr := client.ResolveAccountAndZone(ctx, cf.Zone); zerr == nil {
 		for _, name := range []string{"*." + cf.AppsDomain, "*." + cf.SystemDomain, cf.SSHHostname} {
 			if name == "" || name == "*." {
 				continue
@@ -670,8 +669,13 @@ func (m *TeardownManager) teardownCloudflare() error {
 	if derr := client.DeleteTunnel(ctx, accountID, tunnelID); derr != nil {
 		logger.Get().Warnf("cloudflare tunnel delete: %v", derr)
 	}
-	_ = safe.Set(vp, "tunnel_id", "")
-	_ = safe.Set(vp, "tunnel_token", "")
+	if err := safe.SetMultiple(vp, map[string]interface{}{
+		"tunnel_id":    "",
+		"tunnel_token": "",
+		"account_id":   "",
+	}); err != nil {
+		logger.Get().Warnf("cloudflare teardown: failed to clear vault keys: %v", err)
+	}
 	logger.Get().Infof("Cloudflare tunnel %s torn down", tunnelID)
 	return nil
 }
