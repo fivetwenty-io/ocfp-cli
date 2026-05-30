@@ -44,6 +44,21 @@ tailscale:
   accept_routes: true
   ssh: true
 
+# ─── Global cloudflare defaults ──────────────────────────────────────────────
+# Cloudflare Tunnel (per-bloc). Disabled unless enabled: true. The ocfp CLI
+# creates a remotely-managed tunnel via the CF API, installs a cloudflared
+# connector on the bastion (via SMBIOS, like tailscale), and upserts wildcard
+# CNAMEs so *.apps/*.system resolve through the tunnel for every client.
+# Per-bloc cloudflare: section overrides these on a field-by-field basis.
+cloudflare:
+  enabled: true
+  api_token_vault_path: "secret/config/ocfp-lab-wayne/cloudflare:api_token"
+  zone: "fivetwenty.io"
+  # tunnel_name defaults to "ocfp-lab-<bloc>"
+  origin: "https://10.64.64.20"          # HAProxy (steady state)
+  ssh_origin: "ssh://10.64.64.37:2222"
+  # apps_domain/system_domain/ssh_hostname are per-bloc (see bloc override)
+
 # ─── Blocs ────────────────────────────────────────────────────────────────────
 blocs:
   # ── Wayne lab PVE bloc ──────────────────────────────────────────────────────
@@ -206,3 +221,13 @@ blocs:
       accept_dns: true
       accept_routes: true
       ssh: true
+
+    # ── Per-bloc cloudflare override ───────────────────────────────────────
+    # All fields are optional; unset fields inherit from the global cloudflare:.
+    cloudflare:
+      enabled: true
+      origin: "https://10.64.64.38"      # HAProxy .20 not yet listening; .38 works today
+      apps_domain: "apps.ocf.wayne.lab.fivetwenty.io"
+      system_domain: "system.ocf.wayne.lab.fivetwenty.io"
+      ssh_hostname: "ssh.system.ocf.wayne.lab.fivetwenty.io"
+      origin_server_name: "api.system.ocf.wayne.lab.fivetwenty.io"
