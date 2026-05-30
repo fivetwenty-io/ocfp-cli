@@ -44,6 +44,16 @@ func TestCloudflareEnabled(t *testing.T) {
 	assert.True(t, CloudflareEnabled(&CloudflareConfig{Enabled: boolPtr(true)}))
 }
 
+func TestConfigEmbedsCloudflare(t *testing.T) {
+	t.Parallel()
+	cf := &ConfigFile{Cloudflare: &CloudflareConfig{Zone: "fivetwenty.io"}}
+	bloc := &Config{Cloudflare: &CloudflareConfig{Origin: "https://10.64.64.38"}}
+	require.NotNil(t, cf.Cloudflare)
+	require.NotNil(t, bloc.Cloudflare)
+	assert.Equal(t, "fivetwenty.io", cf.Cloudflare.Zone)
+	assert.Equal(t, "https://10.64.64.38", bloc.Cloudflare.Origin)
+}
+
 func TestMergeCloudflareDefaults(t *testing.T) {
 	t.Parallel()
 
