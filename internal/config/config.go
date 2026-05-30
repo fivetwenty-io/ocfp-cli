@@ -92,8 +92,9 @@ type ConfigFile struct {
 	Debug     bool               `mapstructure:"debug"     yaml:"debug"`
 	Verbose   bool               `mapstructure:"verbose"   yaml:"verbose"`
 	PVE       *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
-	Tailscale *TailscaleConfig   `mapstructure:"tailscale" yaml:"tailscale,omitempty"`
-	Blocs     map[string]*Config `mapstructure:"blocs"     yaml:"blocs"`
+	Tailscale  *TailscaleConfig   `mapstructure:"tailscale"  yaml:"tailscale,omitempty"`
+	Cloudflare *CloudflareConfig  `mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+	Blocs      map[string]*Config `mapstructure:"blocs"      yaml:"blocs"`
 }
 
 // Config represents a bloc configuration.
@@ -1059,6 +1060,7 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 
 	mergePVEDefaults(blocConfig, configFileData.PVE)
 	mergeTailscaleDefaults(blocConfig, configFileData.Tailscale)
+	mergeCloudflareDefaults(blocConfig, configFileData.Cloudflare)
 
 	return blocConfig, nil
 }
@@ -1622,6 +1624,10 @@ func validate(cfg *Config) error {
 	// Validate the merged tailscale config (mutual exclusion of literal
 	// auth_key vs auth_key_vault_path).
 	if err := cfg.Tailscale.Validate(); err != nil {
+		return err
+	}
+
+	if err := cfg.Cloudflare.Validate(); err != nil {
 		return err
 	}
 
