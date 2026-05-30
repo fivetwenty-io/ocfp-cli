@@ -71,6 +71,18 @@ tailscale up \
   --hostname="$hostname" \
   --advertise-tags="$tags" \
   $ssh_flag $accept_dns $accept_routes $adv_routes $exit_node
+
+# --- cloudflared connector (remotely-managed tunnel) ---
+cf_token=$(jq -r '.cloudflare.token // ""' <<<"$sku")
+if [[ -n "$cf_token" ]]; then
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+    dpkg -i /tmp/cloudflared.deb || apt-get install -f -y
+  fi
+  # Idempotent: reinstall the service with the current token.
+  cloudflared service install "$cf_token" || { cloudflared service uninstall >/dev/null 2>&1; cloudflared service install "$cf_token"; }
+  systemctl enable --now cloudflared >/dev/null 2>&1 || true
+fi
 `
 
 // watchdogScript re-runs `tailscale up` whenever tailnet shows the node as
@@ -111,6 +123,13 @@ tailscale up \
   --hostname="$hostname" \
   --advertise-tags="$tags" \
   $ssh_flag $accept_dns $accept_routes $adv_routes $exit_node
+
+# --- keep cloudflared connector up ---
+cf_token=$(jq -r '.cloudflare.token // ""' <<<"$sku")
+if [[ -n "$cf_token" ]] && ! systemctl is-active --quiet cloudflared; then
+  logger -t ocfp-tailscale-watchdog "cloudflared inactive; restarting"
+  systemctl restart cloudflared || cloudflared service install "$cf_token"
+fi
 `
 
 // firstbootService runs firstbootScript once per VM lifecycle. The sentinel
