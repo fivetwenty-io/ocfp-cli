@@ -204,6 +204,11 @@ type Config struct {
 	// mergeTailscaleDefaults at load time.
 	Tailscale *TailscaleConfig `json:"tailscale,omitempty" mapstructure:"tailscale" yaml:"tailscale,omitempty"`
 
+	// Cloudflare carries per-bloc Cloudflare Tunnel configuration. Per-bloc
+	// values take precedence over the global ConfigFile.Cloudflare defaults
+	// via mergeCloudflareDefaults at load time.
+	Cloudflare *CloudflareConfig `json:"cloudflare,omitempty" mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+
 	// CFCloudConfigCIDR is the subnet CIDR written into the CF cloud-config
 	// network section. It must match the BOSH director network CIDR
 	// (Network.CIDR) to avoid the Tailscale LAN route hazard. PVE-specific.
