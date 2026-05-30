@@ -643,7 +643,7 @@ func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 	if safe == nil {
 		return nil
 	}
-	token := resolveCloudflareAPIToken(safe, cf)
+	token := vault.ResolveSecretRef(safe, cf.APIToken, cf.APITokenVaultPath)
 	if token == "" {
 		logger.Get().Warn("cloudflare teardown skipped: API token unavailable")
 		return nil
@@ -689,27 +689,6 @@ func cloudflareSafe() vault.SafeInterface {
 		return nil
 	}
 	return vault.NewSafe(client)
-}
-
-// resolveCloudflareAPIToken reads the literal token or the "path:key" vault
-// indirection. Empty on any soft failure.
-func resolveCloudflareAPIToken(safe vault.SafeInterface, cf *config.CloudflareConfig) string {
-	if t := strings.TrimSpace(cf.APIToken); t != "" {
-		return t
-	}
-	raw := strings.TrimSpace(cf.APITokenVaultPath)
-	if raw == "" || safe == nil {
-		return ""
-	}
-	idx := strings.LastIndex(raw, ":")
-	if idx <= 0 || idx == len(raw)-1 {
-		return ""
-	}
-	val, err := safe.GetString(raw[:idx], raw[idx+1:])
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(val)
 }
 
 // DeleteResource deletes a single resource.
