@@ -76,7 +76,12 @@ tailscale up \
 cf_token=$(jq -r '.cloudflare.token // ""' <<<"$sku")
 if [[ -n "$cf_token" ]]; then
   if ! command -v cloudflared >/dev/null 2>&1; then
-    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+    # Pinned version + sha256 — bump both together when upgrading. An
+    # unexpected/tampered package aborts firstboot rather than installing.
+    cfd_ver="2026.5.2"
+    cfd_sha="f7378c11f55a061b4f1f7d1bccdd07bdfd947ed95634c5f6f4ba71a20d5b1d1d"
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${cfd_ver}/cloudflared-linux-amd64.deb" -o /tmp/cloudflared.deb
+    echo "${cfd_sha}  /tmp/cloudflared.deb" | sha256sum -c - || { echo "ocfp-firstboot: cloudflared checksum mismatch" >&2; exit 1; }
     dpkg -i /tmp/cloudflared.deb || apt-get install -f -y
   fi
   # Idempotent: reinstall the service with the current token.

@@ -123,6 +123,12 @@ func TestFirstbootScript_InstallsCloudflared(t *testing.T) {
 	if !strings.Contains(firstbootScript, "cloudflared-linux-amd64.deb") {
 		t.Error("firstbootScript must fetch the official cloudflared package")
 	}
+	if !strings.Contains(firstbootScript, `cfd_ver="2026.5.2"`) {
+		t.Error("firstbootScript must pin a specific cloudflared version, not 'latest'")
+	}
+	if !strings.Contains(firstbootScript, "sha256sum -c") {
+		t.Error("firstbootScript must verify the cloudflared package checksum before install")
+	}
 }
 
 func TestWatchdogScript_RestartsCloudflared(t *testing.T) {
