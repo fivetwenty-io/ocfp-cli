@@ -89,9 +89,9 @@ type PVEDefaults struct {
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
-	Debug     bool               `mapstructure:"debug"     yaml:"debug"`
-	Verbose   bool               `mapstructure:"verbose"   yaml:"verbose"`
-	PVE       *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
+	Debug      bool               `mapstructure:"debug"     yaml:"debug"`
+	Verbose    bool               `mapstructure:"verbose"   yaml:"verbose"`
+	PVE        *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
 	Tailscale  *TailscaleConfig   `mapstructure:"tailscale"  yaml:"tailscale,omitempty"`
 	Cloudflare *CloudflareConfig  `mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
 	Blocs      map[string]*Config `mapstructure:"blocs"      yaml:"blocs"`
