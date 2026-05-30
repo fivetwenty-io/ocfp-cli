@@ -112,3 +112,21 @@ func TestFirstbootScript_ShebangAndFailFast(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstbootScript_InstallsCloudflared(t *testing.T) {
+	if !strings.Contains(firstbootScript, "cloudflare.token") {
+		t.Error("firstbootScript must read .cloudflare.token from sku JSON")
+	}
+	if !strings.Contains(firstbootScript, "cloudflared service install") {
+		t.Error("firstbootScript must install the cloudflared connector service")
+	}
+	if !strings.Contains(firstbootScript, "cloudflared-linux-amd64.deb") {
+		t.Error("firstbootScript must fetch the official cloudflared package")
+	}
+}
+
+func TestWatchdogScript_RestartsCloudflared(t *testing.T) {
+	if !strings.Contains(watchdogScript, "cloudflared") {
+		t.Error("watchdogScript should keep cloudflared running")
+	}
+}
