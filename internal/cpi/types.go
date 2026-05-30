@@ -385,6 +385,9 @@ type InstanceRequest struct {
 	StaticPrivateIPPrefix int            // Optional: subnet prefix length (e.g. 18) to pair with StaticPrivateIP when the address itself lacks /N. Used by PVE to write the correct mask in cloud-init ipconfig0 when the L3 subnet (e.g. an SDN vnet /18) is larger than the logical AZ subnet ocfp carves from it. Zero = leave to provider default.
 	TailscaleAuthKey      string         // DEPRECATED: use Tailscale instead. Retained for callers not yet migrated; ignored when Tailscale is non-nil.
 	Tailscale             *TailscaleSpec // Optional: full tailscale config. When non-nil + AuthKey set, the PVE provider injects via SMBIOS for the bastion firstboot/watchdog to read.
+	// Cloudflare, when non-nil, provisions a cloudflared connector on the
+	// bastion via SMBIOS alongside tailscale.
+	Cloudflare            *CloudflareSpec
 	PublicKey             string         // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername       string         // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP             string         // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
@@ -446,6 +449,15 @@ type TailscaleSpec struct {
 	// "10.64.64.0/18"). Bootstrap derives from StaticPrivateIP+prefix.
 	// Empty skips --advertise-routes.
 	AdvertiseRoutes string
+}
+
+// CloudflareSpec is the bastion-side cloudflared connector config delivered
+// via SMBIOS. Only the connector token is needed for a remotely-managed
+// tunnel; ingress lives in Cloudflare.
+type CloudflareSpec struct {
+	// TunnelToken is the connector token from EnsureTunnel. Empty disables
+	// cloudflared provisioning on the bastion.
+	TunnelToken string
 }
 
 // BucketRequest represents a request for creating buckets.

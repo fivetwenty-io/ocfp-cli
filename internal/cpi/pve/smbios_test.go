@@ -158,6 +158,18 @@ func TestBuildSMBIOSConfigValue_OmitsEmptyFields(t *testing.T) {
 	}
 }
 
+func TestBastionSMBIOSPayload_IncludesCloudflareToken(t *testing.T) {
+	ts := &cpi.TailscaleSpec{AuthKey: "tskey-1", Hostname: "ocfp-lab-wayne-bastion"}
+	cf := &cpi.CloudflareSpec{TunnelToken: "cf-conn-token"}
+	p := BastionSpecToSMBIOSPayload(ts, cf)
+	if p.Serial != "tskey-1" {
+		t.Fatalf("serial = %q, want tskey-1", p.Serial)
+	}
+	if !strings.Contains(p.SKU, `"cloudflare"`) || !strings.Contains(p.SKU, "cf-conn-token") {
+		t.Fatalf("sku missing cloudflare token: %s", p.SKU)
+	}
+}
+
 func TestBuildSMBIOSConfigValue_RealisticPayloadFitsSlot(t *testing.T) {
 	t.Parallel()
 

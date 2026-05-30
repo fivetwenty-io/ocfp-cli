@@ -43,11 +43,11 @@ func (p SMBIOSPayload) IsEmpty() bool {
 	return p.Serial == "" && p.SKU == "" && p.Family == ""
 }
 
-// TailscaleSpecToSMBIOSPayload translates a CPI-level TailscaleSpec into the
-// SMBIOS payload the firstboot script on the bastion reads via dmidecode.
-// Returns the zero value when the spec is nil or has no auth key, so callers
-// can short-circuit the smbios1 PUT.
-func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
+// BastionSpecToSMBIOSPayload builds the SMBIOS payload from the bastion's
+// tailscale + cloudflare specs. Serial carries the tailscale auth key; SKU is
+// a JSON blob the firstboot script jq-parses, now including a "cloudflare"
+// object with the connector token.
+func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) SMBIOSPayload {
 	if ts == nil || ts.AuthKey == "" {
 		return SMBIOSPayload{}
 	}
@@ -55,7 +55,7 @@ func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
 	// Marshal the role config as compact JSON; the firstboot script
 	// `jq`-parses fields with sane defaults so we can add keys later
 	// without breaking older templates.
-	sku, err := json.Marshal(map[string]interface{}{
+	skuMap := map[string]interface{}{
 		"v":                1,
 		"hostname":         ts.Hostname,
 		"tags":             ts.Tags,
@@ -64,7 +64,11 @@ func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
 		"ssh":              ts.SSH,
 		"exit_node":        ts.ExitNode,
 		"advertise_routes": ts.AdvertiseRoutes,
-	})
+	}
+	if cf != nil && cf.TunnelToken != "" {
+		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
+	}
+	sku, err := json.Marshal(skuMap)
 	if err != nil {
 		// Marshalling fixed-shape data shouldn't realistically fail; if it
 		// does, fall back to a minimal payload so the bastion at least has
@@ -77,6 +81,12 @@ func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
 		SKU:    string(sku),
 		Family: smbiosFamilyBastion,
 	}
+}
+
+// TailscaleSpecToSMBIOSPayload is retained for callers with no cloudflare spec.
+// It delegates to BastionSpecToSMBIOSPayload with a nil cloudflare spec.
+func TailscaleSpecToSMBIOSPayload(ts *cpi.TailscaleSpec) SMBIOSPayload {
+	return BastionSpecToSMBIOSPayload(ts, nil)
 }
 
 // BuildSMBIOSConfigValue renders the payload as the `smbios1` config-value
