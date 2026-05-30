@@ -710,35 +710,15 @@ func boolOrDefault(p *bool, def bool) bool {
 }
 
 // resolveBastionCloudflareAPIToken returns the CF API token from the merged
-// cloudflare config (literal or "path:key" vault indirection). Soft errors
-// yield "" so bootstrap can warn-and-skip.
+// cloudflare config (literal or "path:key" vault indirection). An empty result
+// means unavailable, so bootstrap can warn-and-skip.
 func (m *Manager) resolveBastionCloudflareAPIToken() string {
 	if m.config == nil || m.config.Cloudflare == nil {
 		return ""
 	}
 	cf := m.config.Cloudflare
-	if tok := strings.TrimSpace(cf.APIToken); tok != "" {
-		return tok
-	}
-	rawPath := strings.TrimSpace(cf.APITokenVaultPath)
-	if rawPath == "" {
-		return ""
-	}
-	path, key, ok := splitVaultPathKey(rawPath)
-	if !ok {
-		logger.Warnf("Cloudflare API token skipped: invalid api_token_vault_path %q (expected \"path:key\")", rawPath)
-		return ""
-	}
-	safe := m.tailscaleSafe()
-	if safe == nil {
-		return ""
-	}
-	val, err := safe.GetString(path, key)
-	if err != nil {
-		logger.Warnf("Cloudflare API token skipped: %s:%s not readable: %v", path, key, err)
-		return ""
-	}
-	return strings.TrimSpace(val)
+
+	return vault.ResolveSecretRef(m.tailscaleSafe(), cf.APIToken, cf.APITokenVaultPath)
 }
 
 // bastionCloudflareSpec returns the bastion cloudflared spec, or nil when the
