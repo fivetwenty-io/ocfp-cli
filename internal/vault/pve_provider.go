@@ -280,10 +280,17 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
 
-	err := p.Safe.SetMultiple(subnetsPath, map[string]interface{}{
+	marker := map[string]interface{}{
 		"note": "Proxmox SDN: single vnet subnet; no bootstrap state found",
-		"cidr": p.Config.VPCCIDRBlock,
-	})
+	}
+	// PVE has no VPC concept, so VPCCIDRBlock is often empty. Only record a
+	// parent cidr when one is actually known (prefer the configured subnet
+	// CIDR) -- writing an empty cidr leaves an un-entombable placeholder.
+	if c := pveFirstNonEmpty(p.Config.Network.CIDR, p.Config.VPCCIDRBlock); c != "" {
+		marker["cidr"] = c
+	}
+
+	err := p.Safe.SetMultiple(subnetsPath, marker)
 	if err != nil {
 		return fmt.Errorf("failed to set subnet configuration: %w", err)
 	}
@@ -997,12 +1004,11 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		"vmid_range_start": fmt.Sprintf("%d", pveVMIDRangeStart(p.Config)),
 	}
 
-	// password and api_token are mutually exclusive auth modes but the kit
-	// reads both via plain (( vault ... )) — the key MUST exist even when its
-	// auth mode is inactive, so write the unused one as an empty string.
-	// password and api_token are mutually exclusive auth modes but the kit
-	// reads both via plain (( vault ... )) — the key MUST exist even when its
-	// auth mode is inactive, so write the unused one as an empty string.
+	// password and api_token are mutually exclusive auth modes. The kit's PVE
+	// CPI wiring sources only the ACTIVE mode's key from vault, so write only
+	// that key — never an empty placeholder for the inactive mode. An empty
+	// vault value cannot be entombed into the director's CredHub, and an unused
+	// key is simply absent rather than present-and-empty.
 	//
 	// api_token is rendered in the bosh-pve-cpi-release format
 	// "user@realm!tokenid=secret" so the CPI's Proxmox client can authenticate
@@ -1012,11 +1018,9 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		cpiConfig["token_id"] = p.Config.AuthToken
 		cpiConfig["token_secret"] = p.Config.TokenSecret
 		cpiConfig["api_token"] = p.Config.AuthToken + "=" + p.Config.TokenSecret
-		cpiConfig["password"] = ""
 	case userPassMode:
 		cpiConfig["username"] = p.Config.Username
 		cpiConfig["password"] = p.Config.Password
-		cpiConfig["api_token"] = ""
 	}
 
 	if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {

@@ -60,9 +60,10 @@ func TestPVEVaultProvider_configureCPI_WritesPath_APITokenMode(t *testing.T) {
 
 	// API token mode must NOT write username (user/pass-only key).
 	assert.Nil(t, call.data["username"], "username key must be absent in API token mode")
-	// password key must be present but empty so the bosh kit's plain
-	// (( vault ... :password )) lookup resolves without requiring vault-try.
-	assert.Equal(t, "", call.data["password"], "password key must be empty string in API token mode")
+	// API token mode must NOT write a password placeholder: the kit's PVE auth
+	// wiring references only the active auth key, so the inactive password key
+	// is absent (an empty value cannot be entombed into the director's CredHub).
+	assert.Nil(t, call.data["password"], "password key must be absent in API token mode")
 	// api_token is rendered in bosh-pve-cpi-release format
 	// "user@realm!tokenid=secret" — the CPI's PVE client requires it joined.
 	assert.Equal(t, "root@pam!mytoken=supersecret", call.data["api_token"], "api_token must combine token_id and token_secret as user@realm!tokenid=secret")
@@ -101,9 +102,10 @@ func TestPVEVaultProvider_configureCPI_WritesPath_UserPassMode(t *testing.T) {
 	// User/pass mode must NOT write token_id or token_secret keys.
 	assert.Nil(t, call.data["token_id"], "token_id key must be absent in user/pass mode")
 	assert.Nil(t, call.data["token_secret"], "token_secret key must be absent in user/pass mode")
-	// api_token key must be present but empty so the kit's plain
-	// (( vault ... :api_token )) lookup resolves without requiring vault-try.
-	assert.Equal(t, "", call.data["api_token"], "api_token key must be empty string in user/pass mode")
+	// User/pass mode must NOT write an api_token placeholder: only the active
+	// auth key is written, so the inactive api_token key is absent (an empty
+	// value cannot be entombed into the director's CredHub).
+	assert.Nil(t, call.data["api_token"], "api_token key must be absent in user/pass mode")
 }
 
 // TestPVEVaultProvider_configureCPI_MissingHostAndAuth — empty APIEndpoint produces
