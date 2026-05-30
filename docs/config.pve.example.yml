@@ -226,7 +226,7 @@ blocs:
     # All fields are optional; unset fields inherit from the global cloudflare:.
     cloudflare:
       enabled: true
-      origin: "https://10.64.64.38"      # HAProxy .20 not yet listening; .38 works today
+      origin: "https://10.64.64.20"      # HAProxy — routes as soon as it comes up
       apps_domain: "apps.ocf.wayne.lab.fivetwenty.io"
       system_domain: "system.ocf.wayne.lab.fivetwenty.io"
       ssh_hostname: "ssh.system.ocf.wayne.lab.fivetwenty.io"
