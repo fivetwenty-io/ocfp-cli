@@ -257,12 +257,15 @@ func (atm *AdvancedToolManager) getCFEcosystemTools() []AdvancedBinaryTool {
 			Enabled:        true,
 			CheckCommand:   "uaa",
 			VersionURL:     "https://api.github.com/repos/cloudfoundry/uaa-cli/releases/latest",
-			VersionPattern: `"tag_name":\s*"([^"]+)"`,
-			URLTemplate:    "https://github.com/cloudfoundry/uaa-cli/releases/download/${VERSION}/uaa-linux-amd64-${VERSION}",
-			Dest:           "/usr/local/bin/uaa",
-			Mode:           fileModeExecutable,
-			Sudo:           true,
-			VerifyCommand:  "uaa version",
+			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
+			// Release tags carry a leading "v" (v0.20.0) but the asset filename
+			// drops it (uaa-linux-amd64-0.20.0). VERSION is v-stripped, so the
+			// path segment needs a literal "v" prefix while the filename does not.
+			URLTemplate:   "https://github.com/cloudfoundry/uaa-cli/releases/download/v${VERSION}/uaa-linux-amd64-${VERSION}",
+			Dest:          "/usr/local/bin/uaa",
+			Mode:          fileModeExecutable,
+			Sudo:          true,
+			VerifyCommand: "uaa version",
 		},
 	}
 }
@@ -628,20 +631,47 @@ func (atm *AdvancedToolManager) generateExtractionCommands(tool AdvancedBinaryTo
 	var lines []string
 
 	if tool.Extract {
+		// Extract tarballs into an owned scratch dir, then copy the contents
+		// into /tmp. Extracting directly with `-C /tmp` fails when an archive
+		// carries a `./` root entry: tar tries to chmod /tmp itself (sticky,
+		// root-owned) and exits non-zero with "Cannot change mode ...:
+		// Operation not permitted". `cp` into /tmp never touches /tmp's mode,
+		// so downstream `install /tmp/<name>` paths keep working. unzip already
+		// targets a subdir-safe path, so it is left as-is.
+		dl := fmt.Sprintf("/tmp/%s-download", tool.Name)
 		lines = append(lines, "            # Extract "+tool.Name)
-		lines = append(lines, fmt.Sprintf("            if file '/tmp/%s-download' | grep -q 'Zip archive'; then", tool.Name))
-		lines = append(lines, fmt.Sprintf("                unzip -o -q '/tmp/%s-download' -d /tmp/", tool.Name))
-		lines = append(lines, fmt.Sprintf("            elif file '/tmp/%s-download' | grep -q 'gzip'; then", tool.Name))
-		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xzf '/tmp/%s-download'", tool.Name))
-		lines = append(lines, fmt.Sprintf("            elif file '/tmp/%s-download' | grep -q 'bzip2'; then", tool.Name))
-		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xjf '/tmp/%s-download'", tool.Name))
+		lines = append(lines, fmt.Sprintf("            if file '%s' | grep -q 'Zip archive'; then", dl))
+		lines = append(lines, fmt.Sprintf("                unzip -o -q '%s' -d /tmp/", dl))
+		lines = append(lines, fmt.Sprintf("            elif file '%s' | grep -q 'gzip'; then", dl))
+		lines = append(lines, extractTarIntoTmp(dl, "-xzf")...)
+		lines = append(lines, fmt.Sprintf("            elif file '%s' | grep -q 'bzip2'; then", dl))
+		lines = append(lines, extractTarIntoTmp(dl, "-xjf")...)
 		lines = append(lines, "            else")
-		lines = append(lines, fmt.Sprintf("                tar --no-same-owner --no-same-permissions --no-overwrite-dir -C /tmp -xf '/tmp/%s-download'", tool.Name))
+		lines = append(lines, extractTarIntoTmp(dl, "-xf")...)
 		lines = append(lines, "            fi")
 		lines = append(lines, "")
 	}
 
 	return lines
+}
+
+// extractTarIntoTmp returns shell lines that extract a tar archive into an
+// owned scratch directory and then copy its contents into /tmp. Extracting
+// straight into /tmp fails when an archive carries a `./` root entry, because
+// tar then tries to chmod /tmp (sticky, root-owned) and exits non-zero. Copying
+// into /tmp never alters /tmp's mode, and the /tmp/<file> layout that downstream
+// install steps expect is preserved. tarFlag is the tar mode flag (-xzf/-xjf/-xf).
+func extractTarIntoTmp(downloadPath, tarFlag string) []string {
+	// cp -R (not -a/-p): a plain recursive copy that does not try to preserve
+	// timestamps/ownership on the destination, which would fail on /tmp ("cp:
+	// preserving times for '/tmp/.': Operation not permitted"). Regular-file
+	// mode bits (the binaries' +x) are carried over; install/chmod steps follow.
+	return []string{
+		"                _ocfp_xd=\"$(mktemp -d)\"",
+		fmt.Sprintf("                tar --no-same-owner --no-same-permissions -C \"$_ocfp_xd\" %s '%s'", tarFlag, downloadPath),
+		"                cp -R \"$_ocfp_xd\"/. /tmp/",
+		"                rm -rf \"$_ocfp_xd\"",
+	}
 }
 
 func (atm *AdvancedToolManager) generateInstallCommands(tool AdvancedBinaryTool) []string {
