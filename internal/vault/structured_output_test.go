@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/output"
-	"gopkg.in/yaml.v3"
 )
 
 func TestNewStructuredOutputWriter(t *testing.T) {

@@ -375,3 +375,88 @@ func TestFormatAvailabilityZone(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// IMP-10: VMStorage / DiskStorage Config field tests
+// ---------------------------------------------------------------------------
+
+// T29 TestConfig_VMStorage_FieldPresent verifies VMStorage field can be set and
+// round-trips through struct assignment without data loss.
+func TestConfig_VMStorage_FieldPresent(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{VMStorage: "data"}
+	if got, want := cfg.VMStorage, "data"; got != want {
+		t.Errorf("Config.VMStorage = %q, want %q", got, want)
+	}
+}
+
+// T29b TestConfig_DiskStorage_FieldPresent verifies DiskStorage field can be
+// set and round-trips through struct assignment without data loss.
+func TestConfig_DiskStorage_FieldPresent(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{DiskStorage: "zfs-1"}
+	if got, want := cfg.DiskStorage, "zfs-1"; got != want {
+		t.Errorf("Config.DiskStorage = %q, want %q", got, want)
+	}
+}
+
+// TestConfig_VMStorage_ZeroValueSafe verifies an empty VMStorage field does not
+// panic and returns empty string (zero value).
+func TestConfig_VMStorage_ZeroValueSafe(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	if cfg.VMStorage != "" {
+		t.Errorf("Config.VMStorage zero value = %q, want empty string", cfg.VMStorage)
+	}
+}
+
+// TestConfig_DiskStorage_ZeroValueSafe verifies an empty DiskStorage field does
+// not panic and returns empty string (zero value).
+func TestConfig_DiskStorage_ZeroValueSafe(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	if cfg.DiskStorage != "" {
+		t.Errorf("Config.DiskStorage zero value = %q, want empty string", cfg.DiskStorage)
+	}
+}
+
+// TestConfig_VMStorage_YAMLRoundTrip verifies VMStorage field round-trips
+// through YAML serialization via config file load.
+func TestConfig_VMStorage_YAMLRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte("" +
+		"blocs:\n" +
+		"  lab:\n" +
+		"    provider: pve\n" +
+		"    api_endpoint: https://pve.example.com:8006\n" +
+		"    auth_token: root@pam!tok\n" +
+		"    token_secret: secret\n" +
+		"    region: pve01\n" +
+		"    vm_storage: data\n" +
+		"    disk_storage: zfs-1\n")
+
+	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := config.LoadWithParams(cfgPath, "lab")
+	if err != nil {
+		t.Fatalf("LoadWithParams: %v", err)
+	}
+
+	if got, want := cfg.VMStorage, "data"; got != want {
+		t.Errorf("VMStorage after YAML load = %q, want %q", got, want)
+	}
+
+	if got, want := cfg.DiskStorage, "zfs-1"; got != want {
+		t.Errorf("DiskStorage after YAML load = %q, want %q", got, want)
+	}
+}

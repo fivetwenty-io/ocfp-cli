@@ -1,0 +1,11 @@
+---
+genesis:
+    env: ocfp-pve-dc1-mgmt
+    use_create_env: true
+    min_version: 3.2.0
+kit:
+    name: bosh
+    version: latest
+    iaas: pve
+ocfp:
+    bloc: ocfp-pve-dc1

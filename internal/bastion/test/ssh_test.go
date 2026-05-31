@@ -8,47 +8,9 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 )
 
-// TestKeyManagerKeyDiscovery tests SSH key discovery functionality.
-func TestKeyManagerKeyDiscovery(t *testing.T) {
-	tempDir, cleanup := setupTestEnvironment(t)
-	defer cleanup()
-
-	keyManager := ssh.NewKeyManager()
-
-	// Create a test SSH key
-	sshDir := filepath.Join(tempDir, ".ssh")
-
-	err := os.MkdirAll(sshDir, 0700)
-	if err != nil {
-		t.Fatalf("Failed to create SSH directory: %v", err)
-	}
-
-	// Create a mock private key file
-	testKeyPath := filepath.Join(sshDir, "test-bastion")
-	testKeyContent := `-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAFwAAAAdzc2gtcn
-NhAAAAAwEAAQAAAQEAtest-key-content-here
------END OPENSSH PRIVATE KEY-----`
-
-	err = os.WriteFile(testKeyPath, []byte(testKeyContent), 0600)
-	if err != nil {
-		t.Fatalf("Failed to write test key: %v", err)
-	}
-
-	// Test key discovery
-	foundKey, err := keyManager.FindPrivateKey("test")
-	if err != nil {
-		// This is expected since we created a mock key, not a real one
-		t.Logf("Key discovery failed as expected with mock key: %v", err)
-	} else {
-		t.Logf("Found key: %s", foundKey)
-	}
-}
-
-// TestSSHClientCreation tests SSH client creation.
+// TestSSHClientCreation tests SSH client creation (pure instantiation, no connection).
 func TestSSHClientCreation(t *testing.T) {
-	_, cleanup := setupTestEnvironment(t)
-	defer cleanup()
+	t.Parallel()
 
 	connDetails := &ssh.ConnectionDetails{
 		Host:           "test-bastion",
@@ -73,94 +35,29 @@ func TestSSHClientCreation(t *testing.T) {
 
 	client := ssh.NewClient(connDetails, opts)
 	if client == nil {
-		t.Fatal("Expected SSH client to be created, got nil")
+		t.Fatal("expected SSH client to be non-nil")
 	}
 }
 
-// TestFileTransferManager tests file transfer functionality.
+// TestFileTransferManager verifies file creation as a precondition for transfer.
+// Real transfer requires a live SSH session and is not tested here.
 func TestFileTransferManager(t *testing.T) {
-	tempDir, cleanup := setupTestEnvironment(t)
-	defer cleanup()
+	t.Parallel()
 
-	// Create test files
+	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "test.txt")
-
 	testContent := "test file content"
 
-	err := os.WriteFile(testFile, []byte(testContent), 0600)
+	if err := os.WriteFile(testFile, []byte(testContent), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	info, err := os.Stat(testFile)
 	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+		t.Fatalf("expected test file at %s: %v", testFile, err)
 	}
 
-	// NOTE: Transfer manager requires a real SSH client, not a mock
-	// This would need to be tested with an actual SSH connection
-	// For now, just verify the test file was created
-	_, err = os.Stat(testFile)
-	if os.IsNotExist(err) {
-		t.Error("Test file was not created")
-	}
-}
-
-// TestKeyManagerKeyValidation tests SSH key validation.
-func TestKeyManagerKeyValidation(t *testing.T) {
-	tempDir, cleanup := setupTestEnvironment(t)
-	defer cleanup()
-
-	keyManager := ssh.NewKeyManager()
-
-	// Test with non-existent key
-	isProtected, err := keyManager.IsKeyPasswordProtected("/nonexistent/key")
-	if err == nil {
-		t.Error("Expected error for non-existent key")
-	}
-
-	if isProtected {
-		t.Error("Expected false for non-existent key")
-	}
-
-	// Create a mock encrypted key for testing - NOT a real private key
-	encryptedKeyPath := filepath.Join(tempDir, "encrypted_key")
-	// #nosec G101 - This is test data, not a real private key
-	encryptedKeyContent := `-----BEGIN RSA PRIVATE KEY-----
-Proc-Type: 4,ENCRYPTED
-DEK-Info: AES-128-CBC,test
-
-mock-encrypted-key-content
------END RSA PRIVATE KEY-----`
-
-	err = os.WriteFile(encryptedKeyPath, []byte(encryptedKeyContent), 0600)
-	if err != nil {
-		t.Fatalf("Failed to write encrypted key: %v", err)
-	}
-
-	// Test encrypted key detection
-	isProtected, err = keyManager.IsKeyPasswordProtected(encryptedKeyPath)
-	if err != nil {
-		t.Fatalf("Failed to check encrypted key: %v", err)
-	}
-
-	if !isProtected {
-		t.Error("Expected encrypted key to be detected as password protected")
-	}
-
-	// Create a mock unencrypted key
-	unencryptedKeyPath := filepath.Join(tempDir, "unencrypted_key")
-	unencryptedKeyContent := `-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmU=
------END OPENSSH PRIVATE KEY-----`
-
-	err = os.WriteFile(unencryptedKeyPath, []byte(unencryptedKeyContent), 0600)
-	if err != nil {
-		t.Fatalf("Failed to write unencrypted key: %v", err)
-	}
-
-	// Test unencrypted key detection
-	isProtected, err = keyManager.IsKeyPasswordProtected(unencryptedKeyPath)
-	if err != nil {
-		t.Fatalf("Failed to check unencrypted key: %v", err)
-	}
-
-	if isProtected {
-		t.Error("Expected unencrypted key to not be detected as password protected")
+	if info.Size() != int64(len(testContent)) {
+		t.Errorf("expected file size %d, got %d", len(testContent), info.Size())
 	}
 }

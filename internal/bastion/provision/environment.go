@@ -304,8 +304,9 @@ func (em *EnvironmentManager) addToolConfigurations(content *strings.Builder) {
 // getSystemEnvironmentVars returns environment variables for system configuration.
 func (em *EnvironmentManager) getSystemEnvironmentVars() map[string]string {
 	vars := map[string]string{
-		"OCFP_BLOC":     em.config.Name,
-		"OCFP_PROVIDER": em.provider,
+		"OCFP_BLOC":           em.config.Name,
+		"OCFP_PROVIDER":       em.provider,
+		"GENESIS_ENVIRONMENT": em.config.Name,
 	}
 
 	// Add provider-specific variables from config

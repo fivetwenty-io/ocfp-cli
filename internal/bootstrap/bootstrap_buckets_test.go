@@ -224,13 +224,13 @@ func TestCreateBucketsEnsuresExpectedNames(t *testing.T) {
 		"prod-mgmt-artifacts": true,
 		"prod-mgmt-shield":    true,
 		// ocf environment buckets
-		"prod-ocf-bosh":         true,
-		"prod-ocf-artifacts":    true,
-		"prod-ocf-app-packages": true,
-		"prod-ocf-droplets":     true,
-		"prod-ocf-buildpacks":   true,
-		"prod-ocf-resources":    true,
-		"prod-ocf-shield":       true,
+		"prod-ocf-bosh":             true,
+		"prod-ocf-artifacts":        true,
+		"prod-ocf-cf-packages":      true,
+		"prod-ocf-cf-droplets":      true,
+		"prod-ocf-cf-buildpacks":    true,
+		"prod-ocf-cf-resource-pool": true,
+		"prod-ocf-shield":           true,
 	}
 	if len(fakeStore.created) != len(want) {
 		t.Fatalf("created %d buckets, want %d: %+v", len(fakeStore.created), len(want), fakeStore.created)
@@ -318,19 +318,19 @@ func createTestBootstrapManager(cfg *config.Config, provider cpi.Provider, state
 func verifyPolicyCallsWhenEnabled(t *testing.T, store *fakeStorage) {
 	t.Helper()
 
-	if !store.enabledCalls["prod-ocf-buildpacks"] || store.lifecycleCalls["prod-ocf-buildpacks"] != 11 {
+	if !store.enabledCalls["prod-ocf-cf-buildpacks"] || store.lifecycleCalls["prod-ocf-cf-buildpacks"] != 11 {
 		t.Fatalf("expected policies on ocf-buildpacks: %+v %+v", store.enabledCalls, store.lifecycleCalls)
 	}
 
-	if !store.enabledCalls["prod-ocf-droplets"] || store.lifecycleCalls["prod-ocf-droplets"] != 5 {
+	if !store.enabledCalls["prod-ocf-cf-droplets"] || store.lifecycleCalls["prod-ocf-cf-droplets"] != 5 {
 		t.Fatalf("expected policies on ocf-droplets")
 	}
 
-	if store.enabledCalls["prod-ocf-app-packages"] {
+	if store.enabledCalls["prod-ocf-cf-packages"] {
 		t.Fatalf("did not expect versioning on ocf-app-packages")
 	}
 
-	if store.lifecycleCalls["prod-ocf-app-packages"] != 3 {
+	if store.lifecycleCalls["prod-ocf-cf-packages"] != 3 {
 		t.Fatalf("expected noncurrent days on ocf-app-packages = 3")
 	}
 

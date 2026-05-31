@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/proxmox"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	stackit "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
@@ -27,7 +30,12 @@ type lockInfo struct {
 }
 
 // Execute constructs the root command, configures flags, and runs it.
+// A signal.NotifyContext wrapping os.Interrupt and SIGTERM ensures that
+// Ctrl-C propagates cancellation into every cmd.Context() call site.
 func Execute() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	flags := setupFlags()
 	rootCmd := createRootCommand()
 
@@ -61,7 +69,7 @@ func Execute() {
 		logger.Warnf("Failed to register AWS provider: %v", err)
 	}
 
-	err = proxmox.Register()
+	err = pve.Register()
 	if err != nil {
 		logger.Warnf("Failed to register Proxmox provider: %v", err)
 	}
@@ -74,7 +82,7 @@ func Execute() {
 	// Register all commands
 	RegisterCommands(rootCmd)
 
-	err = rootCmd.Execute()
+	err = rootCmd.ExecuteContext(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -235,7 +243,7 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 
 		// Initialize logger once flags and viper are available
 		// Use effectiveBlocName directly to ensure correct value
-		_ = logger.Initialize(logger.Config{
+		if initErr := logger.Initialize(logger.Config{
 			Level:      "",
 			Debug:      viper.GetBool("debug"),
 			Verbose:    viper.GetBool("verbose"),
@@ -247,7 +255,9 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			Subcommand: subcommandName,
 			RequestID:  "",
 			DirectorID: "",
-		})
+		}); initErr != nil {
+			fmt.Fprintln(os.Stderr, "logger init:", initErr)
+		}
 
 		// Create lock file for active command tracking
 		// Skip if no-log is enabled or if this is the logs command itself
@@ -268,7 +278,19 @@ func resolveBlocName() string {
 		return stateBloc
 	}
 
-	return viper.GetString("bloc")
+	if viperBloc := viper.GetString("bloc"); viperBloc != "" {
+		return viperBloc
+	}
+
+	// If exactly one bloc defined in config, use it
+	configFile := viper.GetString("config")
+
+	blocs, err := config.ListBlocNames(configFile)
+	if err == nil && len(blocs) == 1 {
+		return blocs[0]
+	}
+
+	return ""
 }
 
 // setupCommandTracking initializes command tracking and lock file creation.

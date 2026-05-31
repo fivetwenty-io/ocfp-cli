@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 
@@ -197,7 +198,9 @@ func (c *Client) NetworkManager() cpi.NetworkManager {
 	return c.network
 }
 
-// Network returns the network manager (legacy).
+// Network returns the network manager.
+//
+// Deprecated: Use NetworkManager() instead.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Network() cpi.NetworkManager {
@@ -211,7 +214,9 @@ func (c *Client) ComputeManager() cpi.ComputeManager {
 	return c.compute
 }
 
-// Compute returns the compute manager (legacy).
+// Compute returns the compute manager.
+//
+// Deprecated: Use ComputeManager() instead.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Compute() cpi.ComputeManager {
@@ -225,7 +230,9 @@ func (c *Client) StorageManager() cpi.StorageManager {
 	return c.storage
 }
 
-// Storage returns the storage manager (legacy).
+// Storage returns the storage manager.
+//
+// Deprecated: Use StorageManager() instead.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Storage() cpi.StorageManager {
@@ -239,7 +246,9 @@ func (c *Client) SecurityManager() cpi.SecurityManager {
 	return c.security
 }
 
-// Security returns the security manager (legacy).
+// Security returns the security manager.
+//
+// Deprecated: Use SecurityManager() instead.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) Security() cpi.SecurityManager {
@@ -253,7 +262,9 @@ func (c *Client) LoadBalancerManager() cpi.LoadBalancerManager {
 	return c.loadBalancer
 }
 
-// LoadBalancer returns the load balancer manager (legacy).
+// LoadBalancer returns the load balancer manager.
+//
+// Deprecated: Use LoadBalancerManager() instead.
 //
 //nolint:ireturn // Returns interface by design for manager abstraction
 func (c *Client) LoadBalancer() cpi.LoadBalancerManager {
@@ -624,72 +635,25 @@ func (c *Client) realEnsureClientsLoaded(ctx context.Context) error {
 	return nil
 }
 
-// validateRegion validates the configured AWS region.
-//
-//nolint:unparam // Helper method after client loading
+// awsRegionPattern matches the AWS region naming convention: <partition>-<area>-<n>.
+// Examples: us-east-1, eu-central-2, us-gov-west-1, us-isob-east-1, ap-southeast-4.
+// Lets new region launches pass without code changes; the SDK rejects truly invalid
+// values at the API call site.
+var awsRegionPattern = regexp.MustCompile(`^[a-z]{2,4}(-[a-z]+)+-\d+$`)
+
+// validateRegion validates the configured AWS region against the standard naming
+// pattern. Custom endpoints (LocalStack, testing) bypass validation.
 func (c *Client) validateRegion(_ context.Context) error {
-	// List of valid AWS regions (as of 2024)
-	validRegions := map[string]bool{
-		// US regions
-		"us-east-1":      true, // N. Virginia
-		"us-east-2":      true, // Ohio
-		"us-west-1":      true, // N. California
-		"us-west-2":      true, // Oregon
-		"us-gov-east-1":  true, // GovCloud East
-		"us-gov-west-1":  true, // GovCloud West
-		"us-isob-east-1": true, // ISO-B
-		"us-iso-east-1":  true, // ISO
-		"us-iso-west-1":  true, // ISO
+	if c.config.EndpointURL != "" || c.config.EC2Endpoint != "" {
+		logger.Debugw("Custom endpoint set; skipping region pattern check", "region", c.config.Region)
 
-		// Europe regions
-		"eu-west-1":      true, // Ireland
-		"eu-west-2":      true, // London
-		"eu-west-3":      true, // Paris
-		"eu-central-1":   true, // Frankfurt
-		"eu-central-2":   true, // Zurich
-		"eu-north-1":     true, // Stockholm
-		"eu-south-1":     true, // Milan
-		"eu-south-2":     true, // Spain
-		"eu-isoe-west-1": true, // ISO-E
-
-		// Asia Pacific regions
-		"ap-south-1":     true, // Mumbai
-		"ap-south-2":     true, // Hyderabad
-		"ap-northeast-1": true, // Tokyo
-		"ap-northeast-2": true, // Seoul
-		"ap-northeast-3": true, // Osaka
-		"ap-southeast-1": true, // Singapore
-		"ap-southeast-2": true, // Sydney
-		"ap-southeast-3": true, // Jakarta
-		"ap-southeast-4": true, // Melbourne
-		"ap-east-1":      true, // Hong Kong
-
-		// Middle East and Africa
-		"me-south-1":   true, // Bahrain
-		"me-central-1": true, // UAE
-		"af-south-1":   true, // Cape Town
-		"il-central-1": true, // Israel
-
-		// South America
-		"sa-east-1": true, // São Paulo
-
-		// Canada
-		"ca-central-1": true, // Canada (Central)
-		"ca-west-1":    true, // Canada (West)
+		return nil
 	}
 
-	if !validRegions[c.config.Region] {
-		// If custom endpoint is set, allow any region (for testing/LocalStack)
-		if c.config.EndpointURL != "" || c.config.EC2Endpoint != "" {
-			logger.Debugw("Using custom endpoint with non-standard region", "region", c.config.Region)
-
-			return nil
-		}
-
-		//nolint:perfsprint // Error message construction for better readability
+	if !awsRegionPattern.MatchString(c.config.Region) {
 		return &ConfigError{
 			Field:   "Region",
-			Message: fmt.Sprintf("invalid AWS region: %s", c.config.Region),
+			Message: "invalid AWS region format: " + c.config.Region,
 		}
 	}
 

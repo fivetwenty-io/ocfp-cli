@@ -133,7 +133,7 @@ func (m *Manager) createRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkM
 
 	return m.ensureAndRecordPublicIPs(
 		ctx, netMgr, "router", count,
-		"router-%d", map[string]string{
+		"ocf-cf-router-%d", map[string]string{
 			"job": "router",
 		},
 	)
@@ -144,7 +144,7 @@ func (m *Manager) createCFSSHPublicIPs(ctx context.Context, netMgr cpi.NetworkMa
 
 	return m.ensureAndRecordPublicIPs(
 		ctx, netMgr, "cf-ssh", count,
-		"cf-ssh-%d", map[string]string{
+		"ocf-cf-ssh-%d", map[string]string{
 			"job": "cf-ssh",
 		},
 	)
@@ -155,7 +155,7 @@ func (m *Manager) createTCPRouterPublicIPs(ctx context.Context, netMgr cpi.Netwo
 
 	return m.ensureAndRecordPublicIPs(
 		ctx, netMgr, "tcp-router", count,
-		"tcp-router-%d", map[string]string{
+		"ocf-cf-tcp-router-%d", map[string]string{
 			"job": "tcp-router",
 		},
 	)

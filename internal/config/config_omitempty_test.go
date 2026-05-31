@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 // TestConfigOmitEmpty verifies that empty/default values are omitted from YAML output.

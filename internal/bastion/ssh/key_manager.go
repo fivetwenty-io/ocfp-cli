@@ -52,6 +52,9 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 		filepath.Join(homeDir, ".ssh", "ocfp", blocName),
 		filepath.Join(homeDir, ".ssh", blocName),
 		filepath.Join(homeDir, ".ssh", blocName+"-bastion"),
+		// Shared OCFP fleet bastion key (the IdentityFile used by the ocfp
+		// bastions Host block in ~/.ssh/config).
+		filepath.Join(homeDir, ".ssh", "ocfp-bastions"),
 		// Common SSH keys - prefer ed25519
 		filepath.Join(homeDir, ".ssh", "id_ed25519"),
 		filepath.Join(homeDir, ".ssh", "id_rsa"),

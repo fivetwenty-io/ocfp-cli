@@ -3,18 +3,31 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
+
+// bastionTailscaleDefaultTag is the ACL tag bastions advertise when the
+// operator hasn't customised tailscale.tags. Kept here so ACL templates in
+// docs can refer to the same value the resolver emits.
+const bastionTailscaleDefaultTag = "tag:ocfp-bastion"
+
+// sleepFn is the sleep implementation used by this package. Tests override it
+// to eliminate the STACKIT eventual-consistency wait without changing prod behavior.
+var sleepFn = time.Sleep
 
 // Compute-specific constants.
 const (
@@ -110,7 +123,7 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 
 			_, _ = fmt.Fprintf(os.Stdout, "    • Waiting for network configuration to stabilize...\n")
 
-			time.Sleep(30 * time.Second) //nolint:mnd
+			sleepFn(30 * time.Second) //nolint:mnd
 			logger.Info("Network wait period completed")
 		}
 	}
@@ -239,30 +252,51 @@ func (m *Manager) resolveBastionNetworking() (string, *bastionSubnetInfo, error)
 }
 
 func (m *Manager) findBastionSubnet() (*bastionSubnetInfo, error) {
-	// Look for first OCFP subnet
+	// PVE blocs carve a dedicated infra subnet that owns the bastion,
+	// director, and shared service reservations. Prefer that subnet when
+	// running on PVE; fall through to the legacy ocfp-0 lookup if the
+	// infra subnet is absent (mixed-mode upgrades, partial state, etc.).
+	if m.useVirtualSubnetsForPVE() {
+		infraName := m.options.BlocName + pveInfraSubnetSuffix
+		if info, ok := m.lookupSubnetByName(infraName); ok {
+			return info, nil
+		}
+	}
+
 	bastionSubnet := m.options.BlocName + "-ocfp-0"
-
-	if subnet, _ := m.stateManager.GetResource("subnet", bastionSubnet); subnet != nil {
-		cidr, ok := subnet.Properties["cidr"].(string)
-		if !ok {
-			return nil, ErrInvalidCIDRTypeForSubnet(bastionSubnet)
-		}
-
-		// Extract availability zone from subnet properties, fallback to default if not set
-		availabilityZone, _ := subnet.Properties["availability_zone"].(string)
-		if availabilityZone == "" {
-			availabilityZone = m.getFirstAvailabilityZone()
-		}
-
-		return &bastionSubnetInfo{
-			ID:               subnet.ID,
-			CIDR:             cidr,
-			Name:             bastionSubnet,
-			AvailabilityZone: availabilityZone,
-		}, nil
+	if info, ok := m.lookupSubnetByName(bastionSubnet); ok {
+		return info, nil
 	}
 
 	return nil, ErrBastionSubnetNotFound(bastionSubnet)
+}
+
+// lookupSubnetByName resolves a subnet from state by name, returning a
+// populated bastionSubnetInfo when present. The availability zone falls
+// back to the first configured/default AZ when the stored value is empty,
+// which mirrors the original findBastionSubnet behavior.
+func (m *Manager) lookupSubnetByName(name string) (*bastionSubnetInfo, bool) {
+	subnet, _ := m.stateManager.GetResource("subnet", name)
+	if subnet == nil {
+		return nil, false
+	}
+
+	cidr, ok := subnet.Properties["cidr"].(string)
+	if !ok {
+		return nil, false
+	}
+
+	availabilityZone, _ := subnet.Properties["availability_zone"].(string)
+	if availabilityZone == "" {
+		availabilityZone = m.getFirstAvailabilityZone()
+	}
+
+	return &bastionSubnetInfo{
+		ID:               subnet.ID,
+		CIDR:             cidr,
+		Name:             name,
+		AvailabilityZone: availabilityZone,
+	}, true
 }
 
 func (m *Manager) findFallbackSubnet() (*bastionSubnetInfo, error) {
@@ -353,6 +387,29 @@ func (m *Manager) getBastionSecurityGroup() (string, error) {
 	return "", ErrBastionSecurityGroupNotFound(sgName)
 }
 
+// getArtifactsSecurityGroup resolves the dedicated artifacts security group
+// (<bloc>-artifacts) created by CreateSecurityGroups. It falls back to the
+// bastion security group for backward compatibility with blocs bootstrapped
+// before the artifacts group existed, so re-running artifacts on an older
+// state file still attaches the VM to a reachable group.
+func (m *Manager) getArtifactsSecurityGroup() (string, error) {
+	sgName := m.options.BlocName + "-artifacts"
+
+	if sg, _ := m.stateManager.GetResource("security_group", sgName); sg != nil {
+		return sg.ID, nil
+	}
+
+	//nolint:noinlineerr // Idiomatic error checking pattern for optional fallback
+	if val, err := m.stateManager.GetOutput("sg_artifacts_id"); err == nil {
+		if id, ok := val.(string); ok && id != "" {
+			return id, nil
+		}
+	}
+
+	// Fall back to the bastion SG for pre-artifacts-SG state files.
+	return m.getBastionSecurityGroup()
+}
+
 // ==============================================================================
 // Bastion Instance Creation
 // ==============================================================================
@@ -404,6 +461,11 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	// Create instance request with static IP
 	req := m.buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData, useBootVolume, bootVolumeSize)
 	req.StaticPrivateIP = bastionIP // Set static IP (empty string means use DHCP)
+	req.StaticPrivateIPPrefix = m.bastionStaticIPPrefix()
+	// Build the full tailscale spec from defaults + the now-known IP+prefix.
+	// PVE provider translates this into SMBIOS for the firstboot script.
+	req.Tailscale = m.bastionTailscaleSpec(bastionName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
+	req.Cloudflare = m.bastionCloudflareSpec()
 
 	// Tag instance with role for discovery by findBastionIP
 	if req.Tags == nil {
@@ -449,7 +511,16 @@ func (m *Manager) checkBootVolumeRequirements(ctx context.Context, computeMgr cp
 }
 
 func (m *Manager) adjustSubnetForProvider(subnetID string) string {
-	if strings.EqualFold(m.options.Provider, "stackit") && strings.HasPrefix(subnetID, "virtual:") {
+	// Providers using logical/virtual subnets pass a state-only ID
+	// ("virtual:<name>"). The compute API has nothing to attach to, so
+	// clear the field and let the provider's CreateInstance fall back to
+	// its default network (e.g. the PVE bridge configured at provider init).
+	if !strings.HasPrefix(subnetID, "virtual:") {
+		return subnetID
+	}
+
+	switch strings.ToLower(m.options.Provider) {
+	case "stackit", "pve":
 		return ""
 	}
 
@@ -487,7 +558,319 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		Tags:             m.baseTags(),
 		UseBootVolume:    useBootVolume,
 		BootVolumeSize:   bootVolumeSize,
+		PublicKey:        m.bastionPublicKey(),
+		DefaultUsername:  m.bastionDefaultUsername(),
+		GatewayIP:        m.bastionGatewayIP(),
+		DNSServers:       m.config.Network.DNSServers,
+		Hostname:         bastionName,
+		DomainSuffix:     m.bastionDomainSuffix(),
+		TailscaleAuthKey: m.resolveBastionTailscaleAuthKey(),
 	}
+}
+
+// resolveBastionTailscaleAuthKey returns the tailscale auth key from the
+// merged bloc/global tailscale config. Either a literal AuthKey or a
+// vault-path indirection ("path:key") is accepted; bloc>global precedence is
+// already applied by mergeTailscaleDefaults at load time. There is no
+// fallback to a legacy hard-coded vault path — operators who relied on the
+// old behaviour must migrate the value into tailscale.auth_key_vault_path.
+//
+// Errors are soft: vault unreachable, path missing, or value empty all yield
+// "" and a warn-log, so bootstrap completes and the bastion boots without
+// tailscale (the operator may join it manually).
+func (m *Manager) resolveBastionTailscaleAuthKey() string {
+	if m.config == nil || m.config.Tailscale == nil {
+		return ""
+	}
+
+	ts := m.config.Tailscale
+
+	if key := strings.TrimSpace(ts.AuthKey); key != "" {
+		return key
+	}
+
+	rawPath := strings.TrimSpace(ts.AuthKeyVaultPath)
+	if rawPath == "" {
+		return ""
+	}
+
+	path, key, ok := splitVaultPathKey(rawPath)
+	if !ok {
+		logger.Warnf("Tailscale auth key skipped: invalid auth_key_vault_path %q (expected \"path:key\")", rawPath)
+
+		return ""
+	}
+
+	safe := m.tailscaleSafe()
+	if safe == nil {
+		return ""
+	}
+
+	val, err := safe.GetString(path, key)
+	if err != nil {
+		logger.Warnf("Tailscale auth key skipped: %s:%s not readable: %v", path, key, err)
+
+		return ""
+	}
+
+	return strings.TrimSpace(val)
+}
+
+// tailscaleSafe returns the vault Safe the auth-key resolver should consult.
+// Prefers the manager-attached safe (test injection or the artifacts pipeline)
+// and falls back to a fresh env-based client. Returns nil with a warn-log when
+// no client is available.
+func (m *Manager) tailscaleSafe() vault.SafeInterface {
+	if m.safe != nil {
+		return m.safe
+	}
+
+	client, err := vault.NewClientFromEnv()
+	if err != nil {
+		logger.Warnf("Tailscale auth key skipped: cannot reach vault: %v", err)
+
+		return nil
+	}
+
+	return vault.NewSafe(client)
+}
+
+// splitVaultPathKey parses the operator-facing "path:key" form into its two
+// components. The last colon separates the key, allowing path values that
+// contain colons themselves (rare in practice but valid in vault).
+func splitVaultPathKey(s string) (path, key string, ok bool) {
+	idx := strings.LastIndex(s, ":")
+	if idx <= 0 || idx == len(s)-1 {
+		return "", "", false
+	}
+
+	return s[:idx], s[idx+1:], true
+}
+
+// bastionTailscaleSpec returns the full tailscale spec for the bastion,
+// resolved from the merged tailscale config plus sensible OCFP defaults
+// for fields the operator left unset. Returns nil when Tailscale is not
+// explicitly enabled (enabled: true required) or when no auth key is
+// configured, so the PVE provider skips SMBIOS injection entirely.
+func (m *Manager) bastionTailscaleSpec(hostname, staticIP string, prefix int) *cpi.TailscaleSpec {
+	var tsCfg *config.TailscaleConfig
+	if m.config != nil {
+		tsCfg = m.config.Tailscale
+	}
+
+	if !config.TailscaleEnabled(tsCfg) {
+		return nil
+	}
+
+	authKey := m.resolveBastionTailscaleAuthKey()
+	if authKey == "" {
+		return nil
+	}
+
+	cfg := tailscaleConfigOrEmpty(m.config)
+	spec := &cpi.TailscaleSpec{
+		AuthKey:         authKey,
+		Hostname:        firstNonEmpty(cfg.Hostname, hostname),
+		Tags:            tagsOrDefault(cfg.Tags),
+		AcceptDNS:       boolOrDefault(cfg.AcceptDNS, false),
+		AcceptRoutes:    boolOrDefault(cfg.AcceptRoutes, false),
+		SSH:             boolOrDefault(cfg.SSH, true),
+		ExitNode:        cfg.ExitNode,
+		AdvertiseRoutes: firstNonEmpty(cfg.AdvertiseRoutes, deriveBastionAdvertiseRoutes(staticIP, prefix)),
+	}
+
+	return spec
+}
+
+func tailscaleConfigOrEmpty(c *config.Config) *config.TailscaleConfig {
+	if c == nil || c.Tailscale == nil {
+		return &config.TailscaleConfig{}
+	}
+
+	return c.Tailscale
+}
+
+func tagsOrDefault(tags []string) []string {
+	if len(tags) == 0 {
+		return []string{bastionTailscaleDefaultTag}
+	}
+
+	out := make([]string, len(tags))
+	copy(out, tags)
+
+	return out
+}
+
+func boolOrDefault(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+
+	return *p
+}
+
+// resolveBastionCloudflareAPIToken returns the CF API token from the merged
+// cloudflare config (literal or "path:key" vault indirection). An empty result
+// means unavailable, so bootstrap can warn-and-skip.
+func (m *Manager) resolveBastionCloudflareAPIToken() string {
+	if m.config == nil || m.config.Cloudflare == nil {
+		return ""
+	}
+	cf := m.config.Cloudflare
+
+	return vault.ResolveSecretRef(m.tailscaleSafe(), cf.APIToken, cf.APITokenVaultPath)
+}
+
+// bastionCloudflareSpec returns the bastion cloudflared spec, or nil when the
+// feature is disabled or no connector token has been provisioned yet.
+func (m *Manager) bastionCloudflareSpec() *cpi.CloudflareSpec {
+	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
+		return nil
+	}
+	if strings.TrimSpace(m.cloudflareTunnelToken) == "" {
+		return nil
+	}
+	return &cpi.CloudflareSpec{TunnelToken: m.cloudflareTunnelToken}
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+
+	return b
+}
+
+// deriveBastionAdvertiseRoutes computes the bastion's parent vnet CIDR from
+// its static IP + prefix so tailscale can advertise the subnet to the tailnet.
+// Returns "" when either input is missing — the firstboot script skips
+// --advertise-routes in that case.
+func deriveBastionAdvertiseRoutes(staticIP string, prefix int) string {
+	addr := strings.TrimSpace(staticIP)
+	if addr == "" {
+		return ""
+	}
+
+	if idx := strings.Index(addr, "/"); idx != -1 {
+		addr = addr[:idx]
+	}
+
+	if prefix <= 0 || prefix > 32 {
+		return ""
+	}
+
+	ip := net.ParseIP(addr).To4()
+	if ip == nil {
+		return ""
+	}
+
+	mask := net.CIDRMask(prefix, 32)
+	network := ip.Mask(mask)
+
+	return fmt.Sprintf("%s/%d", network.String(), prefix)
+}
+
+// bastionDomainSuffix returns the domain suffix that should be appended to the
+// bastion hostname to form its FQDN. Sourced from FQDNs.Base when set; empty
+// otherwise (the VM then receives an unqualified hostname only).
+func (m *Manager) bastionDomainSuffix() string {
+	if m.config == nil || m.config.FQDNs == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(m.config.FQDNs.Base)
+}
+
+// bastionPublicKey returns the OpenSSH single-line public key the bastion VM
+// should accept for the default user. Providers without a server-side
+// keypair primitive (PVE, STACKIT) need the public half passed explicitly
+// because nothing else knows the locally-generated value.
+//
+// Order of preference:
+//
+//  1. keypair_public_key output written by createKeyPair (canonical source).
+//  2. <bloc>/ssh/id_ed25519.pub read from local disk (fallback if state was
+//     wiped but the operator kept the keys).
+func (m *Manager) bastionPublicKey() string {
+	if val, err := m.stateManager.GetOutput("keypair_public_key"); err == nil {
+		if pub, ok := val.(string); ok && strings.TrimSpace(pub) != "" {
+			return strings.TrimSpace(pub)
+		}
+	}
+
+	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
+	pubPath := filepath.Join(keyDir, "id_ed25519.pub")
+
+	data, err := os.ReadFile(pubPath) //nolint:gosec // path components are from trusted config
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
+}
+
+// bastionDefaultUsername returns the cloud-init default user the operator
+// expects on the bastion. Configurable via the bloc's bastion.user field so
+// each provider's image default ("ubuntu", "debian", "ec2-user", ...) can
+// be honoured without hardcoding.
+func (m *Manager) bastionDefaultUsername() string {
+	if m.config.Bastion.SSHUser != "" {
+		return m.config.Bastion.SSHUser
+	}
+
+	return ""
+}
+
+// bastionStaticIPPrefix returns the subnet prefix length the bastion VM
+// should advertise as "local" — the parent vnet/network CIDR's prefix, not
+// the per-AZ subnet ocfp carves out for accounting. PVE SDN simple zones
+// present a single L3 subnet per vnet (e.g. 10.64.64.0/18); the gateway lives
+// in that parent network. Pairing the bastion IP with a narrower mask (e.g.
+// /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
+// and breaks egress. Zero means "let the provider default decide."
+func (m *Manager) bastionStaticIPPrefix() int {
+	if m.config == nil {
+		return 0
+	}
+
+	for _, cidr := range []string{m.config.Network.CIDR, m.config.Network.NetworkCIDR} {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+
+		if _, ipnet, err := net.ParseCIDR(cidr); err == nil && ipnet != nil {
+			ones, _ := ipnet.Mask.Size()
+			if ones > 0 && ones <= 32 {
+				return ones
+			}
+		}
+	}
+
+	return 0
+}
+
+// bastionGatewayIP returns the explicit default-gateway IP for the bastion's
+// subnet when one was recorded by CreateSubnets — required for PVE static
+// addressing (cloud-init ipconfig0 needs the gw= component to set a default
+// route on the bastion's NIC).
+func (m *Manager) bastionGatewayIP() string {
+	subnetInfo, err := m.getBastionSubnetInfo()
+	if err != nil || subnetInfo == nil {
+		return ""
+	}
+
+	if gw, err := m.stateManager.GetOutput(fmt.Sprintf("subnet_%s_gateway", subnetInfo.Name)); err == nil {
+		if s, ok := gw.(string); ok && s != "" {
+			return s
+		}
+	}
+
+	if subnetInfo.CIDR != "" {
+		return CIDRGatewayIP(subnetInfo.CIDR)
+	}
+
+	return ""
 }
 
 func (m *Manager) attachBastionPublicIP(ctx context.Context, instanceID, bastionName string) error {
@@ -606,10 +989,55 @@ func (m *Manager) lookupImageByName(ctx context.Context, imageNameOrID string) (
 		return id, nil
 	}
 
+	// Auto-provision: if the missing name is a known PVE catalog template,
+	// build it on the cluster and return the new VMID. Operators get a
+	// recoverable lab instead of "image not found."
+	if id, ok := m.tryAutoProvisionPVETemplate(ctx, imageNameOrID); ok {
+		return id, nil
+	}
+
 	// Log debug info and return error
 	m.logImageSearchResults(images, imageNameOrID)
 
 	return "", errImageNotFoundWithName(imageNameOrID)
+}
+
+// tryAutoProvisionPVETemplate dispatches to the PVE provider's template
+// provisioner when (a) the bloc targets PVE and (b) the missing name is in
+// the OCFP-shipped template catalog. Returns the VMID as a decimal string
+// (the form resolveImageID's caller expects).
+func (m *Manager) tryAutoProvisionPVETemplate(ctx context.Context, name string) (string, bool) {
+	if !shouldAutoProvisionTemplate(m.options.Provider, name) {
+		return "", false
+	}
+
+	pveCompute, ok := m.provider.ComputeManager().(*pveclient.ComputeManager)
+	if !ok {
+		return "", false
+	}
+
+	logger.Infof("pve: template %q absent, auto-provisioning", name)
+
+	vmid, err := pveCompute.ProvisionTemplate(ctx, name)
+	if err != nil {
+		logger.Errorf("pve: template auto-provision failed for %q: %v", name, err)
+
+		return "", false
+	}
+
+	return strconv.Itoa(vmid), true
+}
+
+// shouldAutoProvisionTemplate decides whether the auto-provision path applies
+// for the given provider + image name. Pure function for testability.
+func shouldAutoProvisionTemplate(provider, name string) bool {
+	if !strings.EqualFold(provider, "pve") {
+		return false
+	}
+
+	_, known := pveclient.LookupCatalogSpec(name)
+
+	return known
 }
 
 func (m *Manager) tryPatternMatch(filters map[string]string, images []*cpi.Image, imageNameOrID string) (string, bool) {
@@ -681,8 +1109,6 @@ func (m *Manager) buildImageFilters(imageNameOrID string) map[string]string {
 			switch {
 			case strings.Contains(imageNameLower, "24.04"):
 				filters["name"] = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
-			case strings.Contains(imageNameLower, "22.04"):
-				filters["name"] = "ubuntu/images/hvm-ssd-gp3/ubuntu-jammy-22.04-amd64-server-*"
 			case strings.Contains(imageNameLower, "20.04"):
 				filters["name"] = "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
 			}
@@ -956,10 +1382,13 @@ func (m *Manager) handleStaleKeypairState(keypairName string) {
 	_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
 }
 
-// createStackitKeyPair handles STACKIT-specific keypair creation.
+// createLocalKeyPair handles keypair creation for providers that lack a
+// server-side keypair-mint primitive (STACKIT, PVE). The private half is
+// generated locally and only the public half is uploaded; for PVE the public
+// key is later injected at VM-create time via cloud-init.
 // Returns (keypair, shouldSavePrivateKey, error).
 // shouldSavePrivateKey is true when keys were newly generated, false when read from existing files.
-func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
+func (m *Manager) createLocalKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName string) (*cpi.KeyPair, bool, error) {
 	// Generate SSH key pair locally (or read from existing files)
 	privateKeyData, publicKeyData, wasReadFromFile, err := m.generateLocalSSHKeyPair()
 	if err != nil {
@@ -973,22 +1402,22 @@ func (m *Manager) createStackitKeyPair(ctx context.Context, computeMgr cpi.Compu
 	logger.Debugf("generateLocalSSHKeyPair returned publicKeyStr: %s", publicKeyStr)
 	logger.Debugf("Keys were read from existing file: %v", wasReadFromFile)
 
-	// Check if keypair already exists in STACKIT
-	existingKey, err := m.checkExistingStackitKeypair(ctx, computeMgr, keypairName, publicKeyStr, privateKeyData)
+	// Check if keypair already exists at the provider
+	existingKey, err := m.checkExistingLocalKeyPair(ctx, computeMgr, keypairName, publicKeyStr, privateKeyData)
 	if err == nil && existingKey != nil {
 		// Keypair exists and matches - don't save private key (already on disk)
 		return existingKey, false, nil
 	}
 
-	// Import the public key to STACKIT
-	err = m.importPublicKeyToStackit(ctx, computeMgr, keypairName, publicKeyStr)
+	// Import the public key to the provider
+	err = m.importLocalPublicKey(ctx, computeMgr, keypairName, publicKeyStr)
 	if err != nil {
 		return nil, false, err
 	}
 
 	// Create a KeyPair object for consistency
 	keypair := &cpi.KeyPair{
-		ID:         keypairName, // STACKIT uses name as ID
+		ID:         keypairName, // STACKIT/PVE use name as ID
 		Name:       keypairName,
 		PublicKey:  publicKeyStr,
 		PrivateKey: string(privateKeyData),
@@ -1073,10 +1502,13 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	return privateKeyData, publicKeyData, false, nil
 }
 
-// checkExistingStackitKeypair checks if a keypair already exists in STACKIT and returns it if found.
-// If the cloud keypair doesn't match the local public key, it deletes the cloud keypair and returns nil
-// to force regeneration and re-upload, ensuring bootstrap always works with synchronized keys.
-func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string, privateKeyData []byte) (*cpi.KeyPair, error) {
+// checkExistingLocalKeyPair checks if a keypair already exists at the provider
+// and returns it if found. If the remote keypair doesn't match the local public
+// key, it deletes the remote keypair and returns nil to force regeneration and
+// re-upload, ensuring bootstrap always works with synchronized keys.
+func (m *Manager) checkExistingLocalKeyPair(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string, privateKeyData []byte) (*cpi.KeyPair, error) {
+	providerLabel := m.providerDisplayName()
+
 	existingKey, getErr := computeMgr.GetKeyPair(ctx, keypairName)
 	if getErr == nil && existingKey != nil {
 		// Verify that the cloud public key matches our local public key
@@ -1085,31 +1517,31 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 
 		if localPubKey != cloudPubKey {
 			// Keys don't match - delete cloud keypair and force regeneration
-			logger.Warnf("Keypair %s exists in STACKIT but public key doesn't match local key", keypairName)
+			logger.Warnf("Keypair %s exists at %s but public key doesn't match local key", keypairName, providerLabel)
 
-			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair exists in STACKIT but doesn't match local key\n")
-			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Deleting cloud keypair and re-uploading local public key\n")
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair exists at %s but doesn't match local key\n", providerLabel)
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Deleting remote keypair and re-uploading local public key\n")
 
-			// Delete the mismatched keypair from STACKIT
+			// Delete the mismatched keypair from the provider
 			deleteErr := computeMgr.DeleteKeyPair(ctx, keypairName)
 			if deleteErr != nil {
-				return nil, fmt.Errorf("failed to delete mismatched keypair from STACKIT: %w", deleteErr)
+				return nil, fmt.Errorf("failed to delete mismatched keypair from %s: %w", providerLabel, deleteErr)
 			}
 
-			logger.Infof("Deleted mismatched keypair %s from STACKIT, will re-upload", keypairName)
+			logger.Infof("Deleted mismatched keypair %s from %s, will re-upload", keypairName, providerLabel)
 
 			// Return nil to trigger re-upload of the local public key
 			return nil, nil
 		}
 
 		// Keys match - reuse existing keypair
-		logger.Infof("Keypair %s already exists in STACKIT and matches local key, skipping import", keypairName)
+		logger.Infof("Keypair %s already exists at %s and matches local key, skipping import", keypairName, providerLabel)
 
-		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT and matches local key, skipping upload\n")
+		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists at %s and matches local key, skipping upload\n", providerLabel)
 
 		// Create a KeyPair object for consistency
 		return &cpi.KeyPair{
-			ID:         keypairName, // STACKIT uses name as ID
+			ID:         keypairName,
 			Name:       keypairName,
 			PublicKey:  publicKeyStr,
 			PrivateKey: string(privateKeyData),
@@ -1123,27 +1555,50 @@ func (m *Manager) checkExistingStackitKeypair(ctx context.Context, computeMgr cp
 	return nil, nil
 }
 
-// importPublicKeyToStackit imports a public key to STACKIT, handling conflicts gracefully.
-func (m *Manager) importPublicKeyToStackit(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string) error {
-	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Uploading public key to STACKIT...\n")
+// importLocalPublicKey imports a locally-generated public key to the provider,
+// handling conflicts gracefully.
+func (m *Manager) importLocalPublicKey(ctx context.Context, computeMgr cpi.ComputeManager, keypairName, publicKeyStr string) error {
+	providerLabel := m.providerDisplayName()
+
+	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Uploading public key to %s...\n", providerLabel)
 
 	err := computeMgr.ImportKeyPair(ctx, keypairName, publicKeyStr)
 	if err != nil {
 		// Check if it's a conflict error (already exists)
 		if strings.Contains(err.Error(), "409") || strings.Contains(err.Error(), "already exists") {
-			logger.Infof("Keypair %s already exists in STACKIT (conflict), continuing", keypairName)
+			logger.Infof("Keypair %s already exists at %s (conflict), continuing", keypairName, providerLabel)
 
-			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists in STACKIT (continuing)\n")
+			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Keypair already exists at %s (continuing)\n", providerLabel)
 
 			return nil
 		}
 
-		return fmt.Errorf("failed to import keypair to STACKIT: %w", err)
+		return fmt.Errorf("failed to import keypair to %s: %w", providerLabel, err)
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Public key imported to STACKIT successfully\n")
+	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Public key imported to %s successfully\n", providerLabel)
 
 	return nil
+}
+
+// providerDisplayName returns a human-readable label for the current provider,
+// used in operator-facing log/console output. Falls back to "provider" when no
+// provider is configured.
+func (m *Manager) providerDisplayName() string {
+	switch strings.ToLower(m.options.Provider) {
+	case "":
+		return "provider"
+	case "pve":
+		return "PVE"
+	case "aws":
+		return "AWS"
+	case "gcp":
+		return "GCP"
+	case "stackit":
+		return "STACKIT"
+	default:
+		return m.options.Provider
+	}
 }
 
 // saveKeyPairToState saves the keypair to state and sets outputs.
@@ -1269,11 +1724,27 @@ func (m *Manager) createNewKeyPair(ctx context.Context, keypairName string) erro
 func (m *Manager) createKeypairWithProvider(ctx context.Context, keypairName string) (*cpi.KeyPair, bool, error) {
 	computeMgr := m.provider.ComputeManager()
 
-	if strings.EqualFold(m.options.Provider, "stackit") {
-		return m.createStackitKeyPair(ctx, computeMgr, keypairName)
+	// STACKIT and PVE both lack a server-side keypair primitive — the
+	// provider has no CreateKeyPair API; keys are generated locally and the
+	// public half is injected at VM-create time (STACKIT via the keypair
+	// service, PVE via cloud-init). Route both through the local-gen path.
+	if m.providerUsesLocalKeypairs() {
+		return m.createLocalKeyPair(ctx, computeMgr, keypairName)
 	}
 
 	return m.createStandardKeyPair(ctx, computeMgr, keypairName)
+}
+
+// providerUsesLocalKeypairs reports whether the current provider expects
+// keypairs to be generated locally and have only the public half imported
+// (rather than calling the provider's CreateKeyPair to mint a new pair).
+func (m *Manager) providerUsesLocalKeypairs() bool {
+	switch strings.ToLower(m.options.Provider) {
+	case "stackit", "pve":
+		return true
+	}
+
+	return false
 }
 
 // createStandardKeyPair creates a keypair for non-STACKIT providers.
@@ -1408,6 +1879,16 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 		_ = m.stateManager.SetOutput("bastion_public_ip", instance.PublicIP)
 	}
 
+	// bastion_ssh_host is the address `ocfp ssh bastion` should connect to.
+	// Providers like PVE in bridge mode have no public IP — the bastion is
+	// reachable on its private LAN/Tailscale address, and that becomes the
+	// SSH target. For providers with public IPs (AWS, STACKIT), keep using
+	// the public address so external operators can connect.
+	sshHost := bastionSSHHost(instance)
+	if sshHost != "" {
+		_ = m.stateManager.SetOutput("bastion_ssh_host", sshHost)
+	}
+
 	_ = m.stateManager.SetOutput("bastion_flavor", instance.Flavor)
 	_ = m.stateManager.SetOutput("bastion_image", instance.Image)
 
@@ -1434,6 +1915,20 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 // ==============================================================================
 // Utility Functions
 // ==============================================================================
+
+// bastionSSHHost picks the right address for `ocfp ssh bastion` to dial.
+// Public/floating addresses win when available so external operators can
+// connect from anywhere; otherwise the private address is used (PVE bridge
+// mode, on-prem deployments reachable via VPN/Tailscale).
+func bastionSSHHost(instance *cpi.Instance) string {
+	for _, candidate := range []string{instance.PublicIP, instance.FloatingIP, instance.PrivateIP} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+
+	return ""
+}
 
 func generateBastionUserData(_cfg *config.Config) string {
 	return `#!/bin/bash

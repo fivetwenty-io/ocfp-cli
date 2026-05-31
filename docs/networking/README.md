@@ -93,6 +93,12 @@ When no network CIDR is specified, OCFP uses `10.4.0.0/20`. The parent CIDR is s
 - [DNS](dns.md)
   DNS configuration per provider
 
+- [SDN Subnet Model](sdn-subnet-model.md)
+  Generalized "single L3 subnet plus logical AZ carve" pattern for SDN-based providers (PVE today)
+
+- [Cloudflare DNS Sync](dns-cloudflare-sync.md)
+  Wildcard DNS sync per bloc pointing at the bastion's tailnet IP
+
 ### Per-Provider Guides
 
 - [AWS](providers/aws.md)
@@ -107,10 +113,11 @@ When no network CIDR is specified, OCFP uses `10.4.0.0/20`. The parent CIDR is s
 - [STACKIT](providers/stackit.md)
   Single network, virtual subnets, labeled public IPs, SDK LB
 
-- [Proxmox](providers/proxmox.md)
+- [Proxmox VE](providers/pve.md)
   Bridge mode, SDN mode, PVE firewall
 
 ## See Also
 
 - [LB Commands](../cmds/lb.md) for CLI load balancer operations
 - [Bastion Initialization](../init/bastion.md) for bastion host setup
+- [Bastion Tailscale](../init/bastion-tailscale.md) for joining the bastion to a tailnet at first boot

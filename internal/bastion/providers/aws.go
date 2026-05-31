@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -16,10 +22,17 @@ const (
 	defaultSSHPort = 22
 )
 
+// EC2DescribeInstancesAPI is the subset of the EC2 client used for bastion IP lookup.
+// Defined as an interface to allow injection of fakes in tests.
+type EC2DescribeInstancesAPI interface {
+	DescribeInstances(ctx context.Context, params *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
+}
+
 // AWSBastionInit implements bastion initialization for AWS.
 type AWSBastionInit struct {
-	config *config.Config
-	log    logger.Logger
+	config    *config.Config
+	log       logger.Logger
+	ec2Client EC2DescribeInstancesAPI // nil until first use; injectable for tests
 }
 
 // NewAWSBastionInit creates a new AWS bastion initializer.
@@ -90,40 +103,46 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the bastion.
-func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+//
+// SECURITY: The returned SSHOptions disable strict host-key checking. Bastion
+// IPs are dynamic and the operator-managed bastion is implicitly trusted. If
+// the threat model requires host-key pinning, override SSHOptions at the
+// caller.
+//
+// SECURITY: When the SSH key is passphrase-protected, the bloc name is used
+// as the passphrase. This is a known limitation; rotate to vault-sourced
+// passphrases before exposing the bloc name through CI logs.
+func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
 	a.log.Debug("Getting AWS bastion connection details")
 
-	bastionIP, err := a.getBastionIP()
+	bastionIP, err := a.getBastionIP(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	// Get SSH user (EC2 default is usually ec2-user or ubuntu)
 	sshUser := a.config.Bastion.SSHUser
 	if sshUser == "" {
-		sshUser = "ec2-user" // Default for AWS EC2
+		sshUser = defaultAWSSSHUser
 	}
 
-	// Find SSH private key
 	keyManager := ssh.NewKeyManager()
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
 	if err != nil {
 		restoredPath, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
 		if restoreErr != nil {
-			return nil, fmt.Errorf("failed to find SSH private key: %w", err)
+			return nil, fmt.Errorf("failed to find SSH private key (lookup: %w; restore: %w)", err, restoreErr)
 		}
 
 		privateKeyPath = restoredPath
 	}
 
-	// Check if key is password protected
 	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
 	if err != nil {
-		a.log.Warn("Failed to check if key is encrypted", "error", err.Error())
+		a.log.Warn("Failed to check if key is encrypted", "error", err)
 	}
 
-	// Prepare SSH options (just the option values, not the -o flag)
+	// SSH options — see SECURITY note above on host-key checking.
 	sshOptions := []string{
 		"StrictHostKeyChecking=no",
 		"UserKnownHostsFile=/dev/null",
@@ -142,7 +161,6 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 		UseSSHPass:     false,
 	}
 
-	// Set password if key is encrypted
 	if isEncrypted {
 		details.Password = a.config.Name
 		details.UseSSHPass = true
@@ -151,15 +169,11 @@ func (a *AWSBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 	return details, nil
 }
 
-// Initialize performs the actual bastion initialization.
-func (a *AWSBastionInit) Initialize(_ctx context.Context) error {
-	a.log.Info("Initializing AWS bastion")
-
-	return nil
-}
-
 // addGenesisEnv adds Genesis-specific environment variables to the provided map.
 func (a *AWSBastionInit) addGenesisEnv(env map[string]string) {
+	// GENESIS_ENVIRONMENT is required by Genesis v3.2+ kit hooks.
+	env["GENESIS_ENVIRONMENT"] = a.config.Name
+
 	if !a.config.Bastion.Genesis.Enabled {
 		env["GENESIS_SKIP_INSTALL"] = "1"
 
@@ -184,25 +198,110 @@ func (a *AWSBastionInit) addGenesisEnv(env map[string]string) {
 }
 
 // getBastionIP retrieves the bastion host IP address.
-func (a *AWSBastionInit) getBastionIP() (string, error) {
+// Resolution order:
+//  1. Explicit config field (BastionIP)
+//  2. Environment variable AWS_BASTION_IP — operator escape hatch for offline
+//     or air-gapped lookups; bypasses state and EC2 API calls
+//  3. State file (bastion_public_ip output or instance resource)
+//  4. EC2 DescribeInstances filtered by tag:Name={bloc}-bastion +
+//     instance-state-name=running
+//
+// ctx is propagated to the EC2 fallback so callers can apply cancellation
+// and deadlines to the discovery path.
+func (a *AWSBastionInit) getBastionIP(ctx context.Context) (string, error) {
 	if a.config.BastionIP != "" {
 		return a.config.BastionIP, nil
 	}
 
-	// Try environment variable
 	if ip := os.Getenv("AWS_BASTION_IP"); ip != "" {
+		a.log.Debugw("Using bastion IP from AWS_BASTION_IP env var", "ip", ip)
+
 		return ip, nil
 	}
 
-	// Try to get from state file
 	ip, err := a.getBastionIPFromState()
 	if err == nil {
 		return ip, nil
 	}
 
-	// Try to get from AWS API (would need AWS SDK integration)
-	// For now, return an error
-	return "", ErrCouldNotDetermineBastionIP
+	a.log.Infow("State lookup failed, falling back to EC2 API", "error", err.Error())
+
+	return a.getBastionIPFromEC2(ctx)
+}
+
+// getBastionIPFromEC2 queries EC2 for a running instance tagged Name={bloc}-bastion
+// and returns its public IP address.
+func (a *AWSBastionInit) getBastionIPFromEC2(ctx context.Context) (string, error) {
+	client, err := a.getOrBuildEC2Client(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to build EC2 client for bastion lookup: %w", err)
+	}
+
+	bastionName := a.config.Name + "-bastion"
+
+	input := &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("tag:Name"),
+				Values: []string{bastionName},
+			},
+			{
+				Name:   aws.String("instance-state-name"),
+				Values: []string{"running"},
+			},
+		},
+	}
+
+	result, err := client.DescribeInstances(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("EC2 DescribeInstances failed for %s: %w", bastionName, err)
+	}
+
+	for _, reservation := range result.Reservations {
+		for _, instance := range reservation.Instances {
+			if instance.PublicIpAddress != nil && *instance.PublicIpAddress != "" {
+				ip := *instance.PublicIpAddress
+
+				a.log.Debugw("Found bastion IP via EC2 API", "instance", aws.ToString(instance.InstanceId), "ip", ip)
+
+				return ip, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("%w: no running EC2 instance found with tag Name=%s", ErrCouldNotDetermineBastionIP, bastionName)
+}
+
+// getOrBuildEC2Client returns the injected EC2 client (tests) or builds one from config.
+func (a *AWSBastionInit) getOrBuildEC2Client(ctx context.Context) (EC2DescribeInstancesAPI, error) {
+	if a.ec2Client != nil {
+		return a.ec2Client, nil
+	}
+
+	var opts []func(*awsconfig.LoadOptions) error
+
+	if a.config.Region != "" {
+		opts = append(opts, awsconfig.WithRegion(a.config.Region))
+	}
+
+	if a.config.AccessKeyID != "" && a.config.SecretAccessKey != "" {
+		opts = append(opts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				a.config.AccessKeyID,
+				a.config.SecretAccessKey,
+				a.config.SessionToken,
+			),
+		))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	a.ec2Client = ec2.NewFromConfig(cfg)
+
+	return a.ec2Client, nil
 }
 
 // getBastionIPFromState retrieves the bastion IP from the state file.

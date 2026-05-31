@@ -1,0 +1,164 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "pyyaml>=6.0",
+#   "requests>=2.31",
+# ]
+# ///
+"""
+Idempotently upsert apex + wildcard A records (one pair per bloc) via the
+Cloudflare API. Records point at each bastion's tailscale IP.
+
+Required env:
+  CF_API_TOKEN     Cloudflare API token, Zone:DNS:Edit on the target zone
+
+Optional env:
+  CLOUDFLARE_ZONE  Default "fivetwenty.io"
+  OCFP_CONFIG      Default "$HOME/.ocfp/config.pve.yml"
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import requests
+import yaml
+
+CF_API_BASE = "https://api.cloudflare.com/client/v4"
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def load_config(path: Path) -> dict:
+    with path.open() as fh:
+        return yaml.safe_load(fh)
+
+
+def discover_blocs(cfg: dict) -> list[str]:
+    blocs = cfg.get("blocs") or {}
+    return sorted(name for name in blocs if name.startswith("ocfp-pve-"))
+
+
+def bloc_base_fqdn(cfg: dict, bloc: str) -> str | None:
+    return ((cfg.get("blocs") or {}).get(bloc) or {}).get("fqdns", {}).get("base")
+
+
+def tailnet_peers() -> dict[str, str]:
+    """Map bastion hostname → first TailscaleIP."""
+    out = subprocess.run(
+        ["tailscale", "status", "--json"], capture_output=True, text=True, check=True
+    )
+    data = json.loads(out.stdout)
+    peers = {}
+    for peer in (data.get("Peer") or {}).values():
+        hostname = peer.get("HostName") or ""
+        ips = peer.get("TailscaleIPs") or []
+        if hostname and ips:
+            peers[hostname] = ips[0]
+    return peers
+
+
+def cf_session(token: str) -> requests.Session:
+    s = requests.Session()
+    s.headers.update(
+        {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+    )
+    return s
+
+
+def get_zone_id(s: requests.Session, zone: str) -> str:
+    r = s.get(f"{CF_API_BASE}/zones", params={"name": zone}, timeout=15)
+    r.raise_for_status()
+    results = r.json().get("result") or []
+    if not results:
+        die(f"zone {zone!r} not found (token lacks access or wrong zone)")
+    return results[0]["id"]
+
+
+def upsert_a(s: requests.Session, zone_id: str, name: str, ip: str, ttl: int = 60) -> None:
+    """Create the record if absent; PUT to update if present. Idempotent."""
+    r = s.get(
+        f"{CF_API_BASE}/zones/{zone_id}/dns_records",
+        params={"type": "A", "name": name},
+        timeout=15,
+    )
+    r.raise_for_status()
+    existing = r.json().get("result") or []
+    payload = {"type": "A", "name": name, "content": ip, "ttl": ttl, "proxied": False}
+
+    if existing:
+        record_id = existing[0]["id"]
+        cur_ip = existing[0].get("content")
+        if cur_ip == ip:
+            print(f"ok   {name} -> {ip} (unchanged)")
+            return
+        r = s.put(
+            f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}",
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        print(f"upd  {name} -> {ip} (was {cur_ip})")
+    else:
+        r = s.post(
+            f"{CF_API_BASE}/zones/{zone_id}/dns_records",
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        print(f"new  {name} -> {ip}")
+
+
+def main() -> int:
+    token = os.environ.get("CF_API_TOKEN") or os.environ.get("CLOUDFLARE_API_TOKEN")
+    if not token:
+        die("set CF_API_TOKEN (Zone:DNS:Edit on the target zone)")
+
+    zone = os.environ.get("CLOUDFLARE_ZONE", "fivetwenty.io")
+    config_path = Path(os.environ.get("OCFP_CONFIG") or Path.home() / ".ocfp/config.pve.yml")
+
+    if not config_path.exists():
+        die(f"config not found: {config_path}")
+
+    cfg = load_config(config_path)
+    blocs = discover_blocs(cfg)
+    if not blocs:
+        die(f"no ocfp-pve-* blocs in {config_path}")
+
+    peers = tailnet_peers()
+
+    s = cf_session(token)
+    zone_id = get_zone_id(s, zone)
+    print(f"zone {zone} -> {zone_id}")
+
+    for bloc in blocs:
+        base = bloc_base_fqdn(cfg, bloc)
+        if not base:
+            print(f"skip {bloc} - no fqdns.base")
+            continue
+
+        bastion_host = f"{bloc}-bastion"
+        ts_ip = peers.get(bastion_host)
+        if not ts_ip:
+            print(f"skip {bloc} - no tailscale IP for {bastion_host}")
+            continue
+
+        upsert_a(s, zone_id, base, ts_ip)
+        upsert_a(s, zone_id, f"*.{base}", ts_ip)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

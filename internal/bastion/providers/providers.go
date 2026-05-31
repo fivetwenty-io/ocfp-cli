@@ -16,9 +16,6 @@ var (
 	ErrVMwareProviderNotImplemented    = errors.New("VMware provider not fully implemented")
 )
 
-// Placeholder implementations for other providers
-// These would be implemented in their respective files
-
 // AzureBastionInit implements bastion initialization for Azure.
 type AzureBastionInit struct {
 	config *config.Config
@@ -41,16 +38,9 @@ func (a *AzureBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the Azure bastion.
-func (a *AzureBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (a *AzureBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	return nil, ErrAzureProviderNotImplemented
 }
-
-// Initialize performs Azure bastion initialization.
-func (a *AzureBastionInit) Initialize(_ctx context.Context) error {
-	return ErrAzureProviderNotImplemented
-}
-
-// NOTE: GCPBastionInit is implemented in gcp.go
 
 // OpenStackBastionInit implements bastion initialization for OpenStack.
 type OpenStackBastionInit struct {
@@ -74,13 +64,8 @@ func (o *OpenStackBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the OpenStack bastion.
-func (o *OpenStackBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (o *OpenStackBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	return nil, ErrOpenStackProviderNotImplemented
-}
-
-// Initialize performs OpenStack bastion initialization.
-func (o *OpenStackBastionInit) Initialize(_ctx context.Context) error {
-	return ErrOpenStackProviderNotImplemented
 }
 
 // VMwareBastionInit implements bastion initialization for VMware.
@@ -105,11 +90,6 @@ func (v *VMwareBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns SSH connection details for the VMware bastion.
-func (v *VMwareBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (v *VMwareBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	return nil, ErrVMwareProviderNotImplemented
-}
-
-// Initialize performs VMware bastion initialization.
-func (v *VMwareBastionInit) Initialize(_ctx context.Context) error {
-	return ErrVMwareProviderNotImplemented
 }

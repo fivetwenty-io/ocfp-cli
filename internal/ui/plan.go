@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	yaml "github.com/goccy/go-yaml"
 	"github.com/olekukonko/tablewriter"
-	yaml "gopkg.in/yaml.v3"
 )
 
 // Table represents a CLI-friendly plan with titled sections.
@@ -260,11 +260,11 @@ func isBorderLine(line string) bool {
 		return false
 	}
 
-	hasNoColomnSeparators := !strings.Contains(line, "│")
+	hasNoColumnSeparators := !strings.Contains(line, "│")
 	hasHorizontalChars := strings.Contains(line, "─") || strings.Contains(line, "-")
 	hasIntersections := strings.Contains(line, "┼") || strings.Contains(line, "+")
 
-	return hasNoColomnSeparators && hasHorizontalChars && hasIntersections
+	return hasNoColumnSeparators && hasHorizontalChars && hasIntersections
 }
 
 // applyBorderStyles applies different border styles to top, middle, and bottom borders.

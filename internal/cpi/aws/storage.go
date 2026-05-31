@@ -18,14 +18,34 @@ import (
 )
 
 const (
-	volumeWaitTimeout    = 5 * time.Minute
-	volumeAttachTimeout  = 5 * time.Minute
-	snapshotWaitTimeout  = 30 * time.Minute
-	volumePollInterval   = 5 * time.Second
-	snapshotPollInterval = 10 * time.Second
-	tagKeyName           = "Name"
-	initialTagCapacity   = 2
+	volumeWaitTimeout   = 5 * time.Minute
+	volumeAttachTimeout = 5 * time.Minute
+	volumePollInterval  = 5 * time.Second
+	tagKeyName          = "Name"
+	initialTagCapacity  = 2
 )
+
+// getEC2 returns the EC2API to use for this manager.
+// In tests, m.ec2 is set directly. In production, m.ec2 is nil and
+// this falls back to the real client, preserving existing behaviour.
+func (m *StorageManager) getEC2(ctx context.Context) (EC2API, error) {
+	if m.ec2 != nil {
+		return m.ec2, nil
+	}
+
+	return m.client.getEC2Client(ctx)
+}
+
+// getS3 returns the S3API to use for this manager.
+// In tests, m.s3 is set directly. In production, m.s3 is nil and
+// this falls back to the real client, preserving existing behaviour.
+func (m *StorageManager) getS3(ctx context.Context) (S3API, error) {
+	if m.s3 != nil {
+		return m.s3, nil
+	}
+
+	return m.client.getS3Client(ctx)
+}
 
 // EBS Volume Operations
 
@@ -35,7 +55,7 @@ const (
 func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	logger.WithOperation("CreateVolume").Infof("Creating EBS volume: %s", req.Name)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +68,11 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 
 	if size == 0 {
 		size = 10 // Default 10GB
+	}
+
+	if size < ebsMinSizeGB || size > ebsMaxSizeGB {
+		return nil, fmt.Errorf("volume size %d GB out of range [%d, %d]",
+			size, ebsMinSizeGB, ebsMaxSizeGB)
 	}
 
 	// Determine volume type
@@ -70,7 +95,6 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	}
 
 	// Build create volume input
-	//nolint:gosec // Size validation handled above, max volume size is provider-enforced
 	input := &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(req.AvailabilityZone),
 		Size:             aws.Int32(int32(size)),
@@ -155,7 +179,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.Volume, error) {
 	logger.WithOperation("GetVolume").Debugf("Getting EBS volume: %s", volumeID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +217,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.V
 func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
 	logger.WithOperation("ListVolumes").Debug("Listing EBS volumes")
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +247,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
 	logger.WithOperation("AttachVolume").Infof("Attaching volume %s to instance %s", volumeID, instanceID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -259,7 +283,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID string) error {
 	logger.WithOperation("DetachVolume").Infof("Detaching volume %s from instance %s", volumeID, instanceID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -290,12 +314,16 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID 
 func (m *StorageManager) ResizeVolume(ctx context.Context, volumeID string, newSize int) error {
 	logger.WithOperation("ResizeVolume").Infof("Resizing volume %s to %d GB", volumeID, newSize)
 
-	cli, err := m.client.getEC2Client(ctx)
+	if newSize < ebsMinSizeGB || newSize > ebsMaxSizeGB {
+		return fmt.Errorf("volume size %d GB out of range [%d, %d]",
+			newSize, ebsMinSizeGB, ebsMaxSizeGB)
+	}
+
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
 
-	//nolint:gosec // Size validation handled by caller, max volume size is provider-enforced
 	input := &ec2.ModifyVolumeInput{
 		VolumeId: aws.String(volumeID),
 		Size:     aws.Int32(int32(newSize)),
@@ -315,7 +343,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, volumeID string, newS
 func (m *StorageManager) DeleteVolume(ctx context.Context, volumeID string) error {
 	logger.WithOperation("DeleteVolume").Infof("Deleting volume: %s", volumeID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -348,7 +376,7 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, volumeID string) erro
 func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID, name string) (*cpi.Snapshot, error) {
 	logger.WithOperation("CreateSnapshot").Infof("Creating snapshot of volume %s: %s", volumeID, name)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +452,7 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID, name stri
 func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*cpi.Snapshot, error) {
 	logger.WithOperation("GetSnapshot").Debugf("Getting snapshot: %s", snapshotID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +490,7 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*c
 func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, filters map[string]string) ([]*cpi.Snapshot, error) {
 	logger.WithOperation("ListSnapshots").Debug("Listing snapshots")
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +534,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 func (m *StorageManager) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 	logger.WithOperation("DeleteSnapshot").Infof("Deleting snapshot: %s", snapshotID)
 
-	cli, err := m.client.getEC2Client(ctx)
+	cli, err := m.getEC2(ctx)
 	if err != nil {
 		return err
 	}
@@ -537,7 +565,7 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, snapshotID string) 
 func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketRequest) (*cpi.Bucket, error) {
 	logger.WithOperation("CreateBucket").Infof("Creating S3 bucket: %s", req.Name)
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +620,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 
 		_, err = cli.PutBucketTagging(ctx, tagInput)
 		if err != nil {
-			logger.WithOperation("CreateBucket").Warnf("Failed to add tags to bucket %s: %v", req.Name, err)
+			return nil, wrapError(err, fmt.Sprintf("bucket %s created but tagging failed", req.Name))
 		}
 	}
 
@@ -607,7 +635,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucket, error) {
 	logger.WithOperation("GetBucket").Debugf("Getting S3 bucket: %s", name)
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +720,7 @@ func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucke
 func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error) {
 	logger.WithOperation("ListBuckets").Debug("Listing S3 buckets")
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -731,7 +759,7 @@ func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error)
 func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 	logger.WithOperation("DeleteBucket").Infof("Deleting S3 bucket: %s", name)
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return err
 	}
@@ -760,7 +788,7 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, error) {
 	logger.WithOperation("IsBucketEmpty").Debugf("Checking if S3 bucket is empty: %s", name)
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -817,67 +845,78 @@ func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, 
 func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 	logger.WithOperation("EmptyBucket").Infof("Emptying S3 bucket: %s", name)
 
-	cli, err := m.client.getS3Client(ctx)
+	cli, err := m.getS3(ctx)
 	if err != nil {
 		return err
 	}
 
-	// List all objects
-	listInput := &s3.ListObjectsV2Input{
-		Bucket: aws.String(name),
-	}
+	// Delete all current objects using manual pagination (no SDK paginator,
+	// so cli stays as S3API and is fully testable via interface mocks).
+	var contToken *string
 
-	paginator := s3.NewListObjectsV2Paginator(cli, listInput)
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return wrapError(err, "failed to list objects in bucket")
+	for {
+		listInput := &s3.ListObjectsV2Input{
+			Bucket:            aws.String(name),
+			ContinuationToken: contToken,
 		}
 
-		if len(page.Contents) == 0 {
+		page, listErr := cli.ListObjectsV2(ctx, listInput)
+		if listErr != nil {
+			return wrapError(listErr, "failed to list objects in bucket")
+		}
+
+		if len(page.Contents) > 0 {
+			objects := make([]s3types.ObjectIdentifier, 0, len(page.Contents))
+			for _, obj := range page.Contents {
+				objects = append(objects, s3types.ObjectIdentifier{Key: obj.Key})
+			}
+
+			deleteInput := &s3.DeleteObjectsInput{
+				Bucket: aws.String(name),
+				Delete: &s3types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+			}
+
+			if _, delErr := cli.DeleteObjects(ctx, deleteInput); delErr != nil {
+				return wrapError(delErr, "failed to delete objects from bucket")
+			}
+
+			logger.WithOperation("EmptyBucket").Debugf("Deleted %d objects from bucket %s", len(objects), name)
+		}
+
+		if page.NextContinuationToken == nil || *page.NextContinuationToken == "" {
 			break
 		}
 
-		// Delete objects in batches
-		objects := make([]s3types.ObjectIdentifier, 0, len(page.Contents))
-		for _, obj := range page.Contents {
-			objects = append(objects, s3types.ObjectIdentifier{
-				Key: obj.Key,
-			})
-		}
-
-		deleteInput := &s3.DeleteObjectsInput{
-			Bucket: aws.String(name),
-			Delete: &s3types.Delete{
-				Objects: objects,
-				Quiet:   aws.Bool(true),
-			},
-		}
-
-		_, err = cli.DeleteObjects(ctx, deleteInput)
-		if err != nil {
-			return wrapError(err, "failed to delete objects from bucket")
-		}
-
-		logger.WithOperation("EmptyBucket").Debugf("Deleted %d objects from bucket %s", len(objects), name)
+		contToken = page.NextContinuationToken
 	}
 
-	// List and delete all object versions if versioning is enabled
-	versionInput := &s3.ListObjectVersionsInput{
-		Bucket: aws.String(name),
-	}
+	// Delete all object versions using manual pagination (no SDK paginator).
+	var keyMarker, versionIDMarker *string
 
-	versionPaginator := s3.NewListObjectVersionsPaginator(cli, versionInput)
-	for versionPaginator.HasMorePages() {
-		page, pageErr := versionPaginator.NextPage(ctx)
+	for {
+		versionInput := &s3.ListObjectVersionsInput{
+			Bucket:          aws.String(name),
+			KeyMarker:       keyMarker,
+			VersionIdMarker: versionIDMarker,
+		}
+
+		page, pageErr := cli.ListObjectVersions(ctx, versionInput)
 		if pageErr != nil {
-			// Ignore error if bucket doesn't have versioning
-			break
+			// Treat NoSuchBucket / versioning-not-supported as "no versions to delete".
+			// Anything else means we cannot guarantee the bucket is empty.
+			var apiErr smithy.APIError
+			if errors.As(pageErr, &apiErr) {
+				switch apiErr.ErrorCode() {
+				case "NoSuchBucket", "MethodNotAllowed", "NotImplemented":
+					return nil
+				}
+			}
+
+			return wrapError(pageErr, "list object versions")
 		}
 
-		objects := make([]s3types.ObjectIdentifier, 0)
+		objects := make([]s3types.ObjectIdentifier, 0, len(page.Versions)+len(page.DeleteMarkers))
 
-		// Add versions
 		for _, version := range page.Versions {
 			objects = append(objects, s3types.ObjectIdentifier{
 				Key:       version.Key,
@@ -885,7 +924,6 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 			})
 		}
 
-		// Add delete markers
 		for _, marker := range page.DeleteMarkers {
 			objects = append(objects, s3types.ObjectIdentifier{
 				Key:       marker.Key,
@@ -899,18 +937,21 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 
 		deleteInput := &s3.DeleteObjectsInput{
 			Bucket: aws.String(name),
-			Delete: &s3types.Delete{
-				Objects: objects,
-				Quiet:   aws.Bool(true),
-			},
+			Delete: &s3types.Delete{Objects: objects, Quiet: aws.Bool(true)},
 		}
 
-		_, deleteErr := cli.DeleteObjects(ctx, deleteInput)
-		if deleteErr != nil {
-			return wrapError(deleteErr, "failed to delete object versions from bucket")
+		if _, delErr := cli.DeleteObjects(ctx, deleteInput); delErr != nil {
+			return wrapError(delErr, "failed to delete object versions from bucket")
 		}
 
 		logger.WithOperation("EmptyBucket").Debugf("Deleted %d object versions from bucket %s", len(objects), name)
+
+		if !aws.ToBool(page.IsTruncated) {
+			break
+		}
+
+		keyMarker = page.NextKeyMarker
+		versionIDMarker = page.NextVersionIdMarker
 	}
 
 	logger.WithOperation("EmptyBucket").Infof("Bucket emptied: %s", name)
@@ -1046,7 +1087,12 @@ func (m *StorageManager) waitForVolumeState(ctx context.Context, volumeID string
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(volumePollInterval)
+	interval := m.pollInterval
+	if interval == 0 {
+		interval = volumePollInterval
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

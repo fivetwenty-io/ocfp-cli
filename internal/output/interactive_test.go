@@ -116,6 +116,10 @@ func TestPhaseComplete(t *testing.T) {
 	buf := &bytes.Buffer{}
 	r := NewInteractiveRenderer(buf)
 
+	// Inject a clock: PhaseStart captures t=0, PhaseComplete reads t=50ms → duration=50ms exactly.
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	r.now = sequentialClockInteractive(base, 50*time.Millisecond)
+
 	// Start a phase first
 	info := PhaseInfo{
 		ID:     "test_phase",
@@ -124,9 +128,6 @@ func TestPhaseComplete(t *testing.T) {
 		Total:  5,
 	}
 	_ = r.PhaseStart(info)
-
-	// Wait a bit to have measurable duration
-	time.Sleep(10 * time.Millisecond)
 
 	// Clear buffer to test complete output
 	buf.Reset()
@@ -269,9 +270,6 @@ func TestFinalizeWithFailure(t *testing.T) {
 // The interactive renderer now uses a simpler progressive display without full-screen redraws
 
 func TestFormatDuration(t *testing.T) {
-	buf := &bytes.Buffer{}
-	r := NewInteractiveRenderer(buf)
-
 	tests := []struct {
 		duration time.Duration
 		want     string
@@ -284,7 +282,7 @@ func TestFormatDuration(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := r.formatDuration(tt.duration)
+		got := formatDuration(tt.duration)
 		if got != tt.want {
 			t.Errorf("formatDuration(%v) = %s, want %s", tt.duration, got, tt.want)
 		}
@@ -360,6 +358,17 @@ func TestThrottling(t *testing.T) {
 	thirdOutput := buf.String()
 	if thirdOutput == "" {
 		t.Error("Expected third update to produce output")
+	}
+}
+
+// sequentialClockInteractive returns a clock func that advances by step on each call.
+// First call returns base; each subsequent call adds step.
+func sequentialClockInteractive(base time.Time, step time.Duration) func() time.Time {
+	t := base
+	return func() time.Time {
+		current := t
+		t = t.Add(step)
+		return current
 	}
 }
 

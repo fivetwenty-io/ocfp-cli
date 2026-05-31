@@ -27,6 +27,8 @@ const (
 	tcpRouterMin           = 1024
 	tcpRouterMax           = 65535
 	maxPortsCompactDisplay = 3
+	artifactsS3Port        = 9000
+	artifactsConsolePort   = 9001
 )
 
 // securityGroupDef represents a default security group and its rules (pre-creation).
@@ -250,7 +252,44 @@ func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
 		m.cfRouterSecurityGroupDef(),
 		m.cfTCPRouterSecurityGroupDef(),
 		m.cfSSHSecurityGroupDef(),
+		m.artifactsSecurityGroupDef(),
 	}
+}
+
+// artifactsSecurityGroupDef defines the security group for the ocfp-artifacts
+// (RustFS S3) VM. RustFS S3 (9000) + console (9001) and SSH (22) are opened to
+// the bloc network CIDR only — the blobstore is an intra-SDN service reached by
+// the bastion, the BOSH directors, and CF VMs, plus the `ocfp artifacts
+// provision` step. It is never exposed to the operator's public ingress IPs.
+func (m *Manager) artifactsSecurityGroupDef() securityGroupDef {
+	cidr := m.blocNetworkCIDR()
+
+	return securityGroupDef{
+		name:        "artifacts",
+		description: "Security group for ocfp-artifacts RustFS blobstore",
+		rules: []*cpi.SecurityRule{
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: sshPort, PortRangeMax: sshPort, RemoteIPCIDR: cidr, Description: "SSH from bloc network"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: artifactsS3Port, PortRangeMax: artifactsS3Port, RemoteIPCIDR: cidr, Description: "RustFS S3 from bloc network"},
+			{Direction: "ingress", Protocol: "tcp", PortRangeMin: artifactsConsolePort, PortRangeMax: artifactsConsolePort, RemoteIPCIDR: cidr, Description: "RustFS console from bloc network"},
+			{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"},
+		},
+	}
+}
+
+// blocNetworkCIDR returns the bloc's primary network CIDR, preferring the
+// canonical `cidr` field and falling back to `networkCidr`/`network_cidr`.
+// When neither is set it returns the broad RFC1918 10/8 range so intra-SDN
+// services remain reachable rather than silently firewalled off.
+func (m *Manager) blocNetworkCIDR() string {
+	if c := strings.TrimSpace(m.config.Network.CIDR); c != "" {
+		return c
+	}
+
+	if c := strings.TrimSpace(m.config.Network.NetworkCIDR); c != "" {
+		return c
+	}
+
+	return "10.0.0.0/8"
 }
 
 func (m *Manager) bastionSecurityGroupDef() securityGroupDef {

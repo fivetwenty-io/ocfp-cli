@@ -7,14 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -39,6 +40,7 @@ func NewBootstrapCmd() *cobra.Command {
 		publicIPs bool
 		bastion   bool
 		keypairs  bool
+		artifacts bool
 		output    string
 	)
 
@@ -50,7 +52,7 @@ func NewBootstrapCmd() *cobra.Command {
 		RunE:    runBootstrap,
 	}
 
-	addBootstrapFlags(cmd, &blocs, &output, &force, &yes, &dryRun, &all, &servers, &volumes, &snapshots, &buckets, &secGroups, &network, &publicIPs, &bastion, &keypairs)
+	addBootstrapFlags(cmd, &blocs, &output, &force, &yes, &dryRun, &all, &servers, &volumes, &snapshots, &buckets, &secGroups, &network, &publicIPs, &bastion, &keypairs, &artifacts)
 	bindBootstrapViperFlags(cmd)
 
 	return cmd
@@ -121,7 +123,7 @@ func getBootstrapExamples() string {
 }
 
 // addBootstrapFlags adds all command flags to the bootstrap command.
-func addBootstrapFlags(cmd *cobra.Command, blocs, output *string, force, yes, dryRun, all, servers, volumes, snapshots, buckets, secGroups, network, publicIPs, bastion, keypairs *bool) {
+func addBootstrapFlags(cmd *cobra.Command, blocs, output *string, force, yes, dryRun, all, servers, volumes, snapshots, buckets, secGroups, network, publicIPs, bastion, keypairs, artifacts *bool) {
 	cmd.Flags().StringVarP(blocs, "blocs", "b", KeywordAll, "specific blocs to bootstrap (comma-separated)")
 	cmd.Flags().BoolVar(force, "force", false, "skip confirmation prompts")
 	cmd.Flags().BoolVarP(yes, "yes", "y", false, "skip confirmation prompt and proceed immediately")
@@ -137,6 +139,7 @@ func addBootstrapFlags(cmd *cobra.Command, blocs, output *string, force, yes, dr
 	cmd.Flags().BoolVar(bastion, "bastion", false, "create only bastion instance")
 	cmd.Flags().BoolVar(keypairs, "key-pairs", false, "create only SSH key pairs")
 	cmd.Flags().BoolVar(keypairs, "keys", false, "alias for --key-pairs")
+	cmd.Flags().BoolVar(artifacts, "artifacts", false, "create only the ocfp-artifacts (RustFS) VM; requires artifacts.enabled in config")
 	cmd.Flags().StringVar(output, "output", OutputTable, "output format: table|json|yaml (dry-run only)")
 }
 
@@ -156,6 +159,7 @@ func bindBootstrapViperFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("bootstrap.public_ips", cmd.Flags().Lookup("public-ips"))
 	_ = viper.BindPFlag("bootstrap.bastion", cmd.Flags().Lookup("bastion"))
 	_ = viper.BindPFlag("bootstrap.key_pairs", cmd.Flags().Lookup("key-pairs"))
+	_ = viper.BindPFlag("bootstrap.artifacts", cmd.Flags().Lookup("artifacts"))
 	_ = viper.BindPFlag("bootstrap.output", cmd.Flags().Lookup("output"))
 }
 
@@ -445,8 +449,37 @@ func buildProviderConfig(cfg *config.Config, region string) map[string]interface
 
 	addServiceAccountConfig(providerConfig, cfg)
 	addAPIEndpointConfig(providerConfig, cfg)
+	addPVEProviderConfig(providerConfig, cfg)
 
 	return providerConfig
+}
+
+// addPVEProviderConfig adds Proxmox VE-specific fields to the provider config map.
+// PVE auth uses token_id/token_secret or username/password; bloc fields map directly.
+func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Config) {
+	if cfg.TokenSecret != "" {
+		providerConfig["token_secret"] = cfg.TokenSecret
+	}
+
+	if cfg.Username != "" {
+		providerConfig["username"] = cfg.Username
+	}
+
+	if cfg.Password != "" {
+		providerConfig["password"] = cfg.Password
+	}
+
+	if cfg.Network.Name != "" {
+		providerConfig["default_bridge"] = cfg.Network.Name
+	}
+
+	if cfg.IsoStorage != "" {
+		providerConfig["iso_storage"] = cfg.IsoStorage
+	}
+
+	// VerifySSL is always passed so the provider sees an explicit value
+	// (defaults to false in the bloc Config zero value).
+	providerConfig["verify_ssl"] = cfg.VerifySSL
 }
 
 // addServiceAccountConfig adds service account configuration to provider config.
@@ -531,11 +564,22 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 		Network:        viper.GetBool("bootstrap.network"),
 		PublicIPs:      viper.GetBool("bootstrap.public_ips"),
 		KeyPairs:       viper.GetBool("bootstrap.key_pairs") || viper.GetBool("bootstrap.keys"),
+		Artifacts:      viper.GetBool("bootstrap.artifacts"),
 		Output:         viper.GetString("bootstrap.output"),
 		Timeout:        BootstrapTimeoutMinutes * time.Minute,
 	}
 
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
+
+	// Best-effort vault wiring: when vault is reachable, the bootstrap artifacts
+	// step writes blobstore endpoint + creds to vault. When unreachable, the
+	// step prints a warning and the operator follows up with `ocfp vault populate`.
+	if vaultMgr, vaultErr := vault.NewManagerFromEnv(cfg, blocName); vaultErr == nil {
+		bootstrapManager.SetSafe(vaultMgr.GetSafe())
+	} else {
+		logger.Debugf("vault unavailable for bootstrap auto-write: %v", vaultErr)
+	}
+
 	ctx := context.Background()
 
 	err = bootstrapManager.Execute(ctx)
