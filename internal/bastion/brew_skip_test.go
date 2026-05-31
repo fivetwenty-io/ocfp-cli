@@ -7,13 +7,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
-// brewSkipped must be true for PVE (tools come from the provision script and
-// the lab CPU cannot run Linuxbrew) and false for cloud providers that rely on
-// brew for tool delivery.
+// brewSkipped must be false for every provider: Linuxbrew is the primary tool
+// source everywhere, including PVE. The former PVE skip existed because the
+// default kvm64 VM CPU lacks the SSSE3 instructions Linuxbrew bottles need, but
+// OCFP now provisions PVE VMs with cpu=host so bottles run.
 func TestBrewSkippedByProvider(t *testing.T) {
 	cases := map[string]bool{
-		"pve":     true,
-		"PVE":     true,
+		"pve":     false,
+		"PVE":     false,
 		"aws":     false,
 		"stackit": false,
 		"":        false,

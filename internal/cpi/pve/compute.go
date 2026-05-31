@@ -975,6 +975,12 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 func buildPVEDirectCloudInitConfig(req *cpi.InstanceRequest, plan cloudInitSnippetPlan) map[string]interface{} {
 	out := make(map[string]interface{})
 
+	// Match createBlankVM: use the host CPU model so cloned VMs expose the
+	// host's full instruction set (SSSE3/SSE4.2/AVX). The PVE default kvm64
+	// ("Common KVM processor") lacks SSSE3, which Linuxbrew's x86_64 bottles
+	// require — without this, brew is unrunnable on cloned bastions.
+	out["cpu"] = "host"
+
 	if req.NetworkID != "" {
 		// Match the format createBlankVM writes so the two paths produce
 		// equivalent VMs. firewall=1 keeps the PVE-side rules wired in.
