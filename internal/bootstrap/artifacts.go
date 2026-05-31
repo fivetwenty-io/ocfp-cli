@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
@@ -136,7 +137,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: unsupported TLS mode %q", m.config.Artifacts.TLS.Mode)
 	}
 
-	userData, err := pveclient.RenderArtifactsCloudInit(pveclient.ArtifactsCloudInitInputs{
+	ciInputs := pveclient.ArtifactsCloudInitInputs{
 		AccessKey:   creds.AccessKey,
 		SecretKey:   creds.SecretKey,
 		DownloadURL: m.config.Artifacts.ResolvedDownloadURL(),
@@ -147,7 +148,12 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		TLSEnabled:  tlsMat != nil,
 		CertPEM:     pemOrEmpty(tlsMat, true),
 		KeyPEM:      pemOrEmpty(tlsMat, false),
-	})
+	}
+
+	// cloud-init user-data is retained for providers whose snippet/user-data
+	// delivery works. On PVE 9.x the snippet-upload API is blocked, so the
+	// identical provisioning is delivered over SSH after boot (see below).
+	userData, err := pveclient.RenderArtifactsCloudInit(ciInputs)
 	if err != nil {
 		return fmt.Errorf("artifacts: render cloud-init: %w", err)
 	}
@@ -194,6 +200,17 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	if attachErr != nil {
 		m.cleanupOrphanArtifactsVM(ctx, inst.ID, vmName)
 		return fmt.Errorf("artifacts: attach data volume: %w", attachErr)
+	}
+
+	// PVE 9.x drops cloud-init user-data (snippet upload is blocked), so deliver
+	// the identical RustFS provisioning over SSH, hopping through the bastion.
+	if strings.EqualFold(m.options.Provider, "pve") {
+		if err := m.provisionArtifactsViaSSH(ctx, ciInputs, ipStr); err != nil {
+			// Non-fatal: leave the VM for triage and let the readiness probe
+			// below surface the resulting unhealthy state. The script is
+			// idempotent, so a re-run (after clearing state) retries cleanly.
+			_, _ = fmt.Fprintf(os.Stderr, "warning: artifacts SSH provisioning: %v\n", err)
+		}
 	}
 
 	ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)

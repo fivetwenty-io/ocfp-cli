@@ -105,7 +105,6 @@ packages:
   - zfsutils-linux
   - unzip
   - jq
-  - awscli
 
 write_files:
   - path: /etc/default/rustfs
