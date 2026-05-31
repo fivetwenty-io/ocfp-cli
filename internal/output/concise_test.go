@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sequentialClock returns a clock func that advances by step on each call.
+// The first call returns base; subsequent calls add step per invocation.
+func sequentialClock(base time.Time, step time.Duration) func() time.Time {
+	t := base
+	return func() time.Time {
+		current := t
+		t = t.Add(step)
+		return current
+	}
+}
+
 func TestNewConciseRenderer(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewConciseRenderer(&buf)
@@ -31,7 +42,7 @@ func TestConciseRenderer_PhaseStart(t *testing.T) {
 		Name:      "Test Phase",
 		Number:    8,
 		Total:     25,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 
 	err := renderer.PhaseStart(info)
@@ -59,7 +70,7 @@ func TestConciseRenderer_PhaseProgress(t *testing.T) {
 		Name:      "Repositories",
 		Number:    8,
 		Total:     25,
-		StartTime: time.Now(),
+		StartTime: fixedTime,
 	}
 	err := renderer.PhaseStart(phaseInfo)
 	require.NoError(t, err)
@@ -160,6 +171,10 @@ func TestConciseRenderer_PhaseComplete(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewConciseRenderer(&buf)
 
+	// Inject a clock: PhaseStart captures t=0, PhaseComplete reads t=50ms → duration=50ms exactly.
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	renderer.now = sequentialClock(base, 50*time.Millisecond)
+
 	// Start phase
 	phaseInfo := PhaseInfo{
 		ID:     "test_phase",
@@ -170,12 +185,9 @@ func TestConciseRenderer_PhaseComplete(t *testing.T) {
 	err := renderer.PhaseStart(phaseInfo)
 	require.NoError(t, err)
 
-	// Simulate some time passing
-	time.Sleep(10 * time.Millisecond)
-
 	buf.Reset() // Clear previous output
 
-	// Complete phase
+	// Complete phase — clock now returns base+50ms, duration = 50ms
 	err = renderer.PhaseComplete(phaseInfo)
 	require.NoError(t, err)
 
@@ -185,7 +197,7 @@ func TestConciseRenderer_PhaseComplete(t *testing.T) {
 	assert.Contains(t, output, "[08/25]")
 	assert.Contains(t, output, "✓")
 	assert.Contains(t, output, "Phase completed: Test Phase")
-	assert.Contains(t, output, "s)") // Duration should be there
+	assert.Contains(t, output, "s)") // Duration string present
 
 	// Verify NO ANSI codes
 	assert.NotContains(t, output, "\033[")
@@ -405,9 +417,6 @@ func TestConciseRenderer_GrepFriendly(t *testing.T) {
 }
 
 func TestConciseRenderer_StatusIcons(t *testing.T) {
-	var buf bytes.Buffer
-	renderer := NewConciseRenderer(&buf)
-
 	tests := []struct {
 		status       Status
 		expectedIcon string
@@ -421,7 +430,7 @@ func TestConciseRenderer_StatusIcons(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.status.String(), func(t *testing.T) {
-			icon := renderer.statusIcon(tt.status)
+			icon := statusIcon(tt.status)
 			assert.Equal(t, tt.expectedIcon, icon)
 		})
 	}
@@ -499,9 +508,6 @@ func TestConciseRenderer_PhaseNumberFormatting(t *testing.T) {
 }
 
 func TestConciseRenderer_FormatDuration(t *testing.T) {
-	var buf bytes.Buffer
-	renderer := NewConciseRenderer(&buf)
-
 	tests := []struct {
 		duration time.Duration
 		expected string
@@ -513,7 +519,7 @@ func TestConciseRenderer_FormatDuration(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := renderer.formatDuration(tt.duration)
+		result := formatDuration(tt.duration)
 		assert.Equal(t, tt.expected, result)
 	}
 }

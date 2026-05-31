@@ -29,7 +29,8 @@ func TestMergeResources_NilInputs(t *testing.T) {
 }
 
 func TestMergeResources_AddOnlyStrategy(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	t.Cleanup(state.SetNowFn(func() time.Time { return now }))
 
 	currentState := &state.State{
 		Version: "1.0",
@@ -118,11 +119,12 @@ func TestMergeResources_AddOnlyStrategy(t *testing.T) {
 	assert.Equal(t, "test", existingResource.Tags["env"])      // Original tag
 
 	// Verify state metadata was updated
-	assert.True(t, currentState.UpdatedAt.After(now) || currentState.UpdatedAt.Equal(now))
+	assert.Equal(t, now, currentState.UpdatedAt)
 }
 
 func TestMergeResources_UpdateStrategy(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	t.Cleanup(state.SetNowFn(func() time.Time { return now }))
 
 	currentState := &state.State{
 		Version: "1.0",
@@ -221,7 +223,7 @@ func TestMergeResources_UpdateStrategy(t *testing.T) {
 	assert.Equal(t, "old-volume", deletedResource.Name)
 
 	// Verify state metadata
-	assert.True(t, currentState.UpdatedAt.After(now) || currentState.UpdatedAt.Equal(now))
+	assert.Equal(t, now, currentState.UpdatedAt)
 }
 
 func TestMergeResources_FullStrategy(t *testing.T) {
@@ -415,7 +417,7 @@ func TestMergeResources_InvalidStrategy(t *testing.T) {
 }
 
 func TestMergeResources_TimestampHandling(t *testing.T) {
-	beforeMerge := time.Now()
+	fixedNow := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	diffSet := &state.DiffSet{
 		Added: []*state.ResourceDiff{
@@ -437,6 +439,8 @@ func TestMergeResources_TimestampHandling(t *testing.T) {
 	}
 
 	t.Run("with timestamp updates", func(t *testing.T) {
+		t.Cleanup(state.SetNowFn(func() time.Time { return fixedNow }))
+
 		state1 := &state.State{
 			Version:   "1.0",
 			Resources: make(map[string]*state.Resource),
@@ -451,8 +455,8 @@ func TestMergeResources_TimestampHandling(t *testing.T) {
 		assert.Equal(t, 1, result.ResourcesAdded)
 
 		resource := state1.Resources["net-001"]
-		assert.True(t, resource.CreatedAt.After(beforeMerge) || resource.CreatedAt.Equal(beforeMerge))
-		assert.True(t, resource.UpdatedAt.After(beforeMerge) || resource.UpdatedAt.Equal(beforeMerge))
+		assert.Equal(t, fixedNow, resource.CreatedAt)
+		assert.Equal(t, fixedNow, resource.UpdatedAt)
 	})
 
 	t.Run("without timestamp updates", func(t *testing.T) {
@@ -470,9 +474,10 @@ func TestMergeResources_TimestampHandling(t *testing.T) {
 		assert.Equal(t, 1, result.ResourcesAdded)
 
 		resource := state2.Resources["net-001"]
-		// Timestamps should be zero since we didn't update them and discovered resource didn't have them
-		assert.True(t, resource.CreatedAt.IsZero() || !resource.CreatedAt.IsZero())
-		assert.True(t, resource.UpdatedAt.IsZero() || !resource.UpdatedAt.IsZero())
+		// UpdateTimestamps=false: copyResource preserves source timestamps.
+		// The discovered resource had zero timestamps, so both must be zero.
+		assert.True(t, resource.CreatedAt.IsZero(), "CreatedAt should be zero when UpdateTimestamps=false and source has no timestamp")
+		assert.True(t, resource.UpdatedAt.IsZero(), "UpdatedAt should be zero when UpdateTimestamps=false and source has no timestamp")
 	})
 }
 

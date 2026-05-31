@@ -367,10 +367,12 @@ func copyItemsToStagingDirectory(stagingDir string, cfg *config.Config, backup *
 
 // getBackupItems returns the list of items to backup.
 func getBackupItems(stagingDir string, cfg *config.Config) []backupItem {
+	home, _ := homeDir()
+
 	return []backupItem{
 		{"config", "config/", filepath.Join(stagingDir, "config")},
-		{"deployments", filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name), filepath.Join(stagingDir, "deployments")},
-		{"state", filepath.Join(os.Getenv("HOME"), ".bosh"), filepath.Join(stagingDir, "bosh-state")},
+		{"deployments", filepath.Join(home, "deployments", cfg.Name), filepath.Join(stagingDir, "deployments")},
+		{"state", filepath.Join(home, ".bosh"), filepath.Join(stagingDir, "bosh-state")},
 		{"manifests", "manifests/", filepath.Join(stagingDir, "manifests")},
 		{"operations", "operations/", filepath.Join(stagingDir, "operations")},
 		{"vars", "vars/", filepath.Join(stagingDir, "vars")},
@@ -545,11 +547,11 @@ func performDataBackup(ctx context.Context, cfg *config.Config, backup *BackupMe
 		}
 	}()
 
-	// Backup data directories
+	home, _ := homeDir()
 	dataPaths := []string{
-		filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name),
-		filepath.Join(os.Getenv("HOME"), ".bosh"),
-		filepath.Join(os.Getenv("HOME"), ".cf"),
+		filepath.Join(home, "deployments", cfg.Name),
+		filepath.Join(home, ".bosh"),
+		filepath.Join(home, ".cf"),
 	}
 
 	for _, path := range dataPaths {
@@ -791,14 +793,15 @@ func printBackupPlan(backup *BackupMetadata) error {
 
 // getBackupItemPaths returns the list of item paths to be backed up.
 func getBackupItemPaths(cfg *config.Config) []string {
+	home, _ := homeDir()
 	return []string{
 		"config/",
 		"manifests/",
 		"operations/",
 		"vars/",
-		filepath.Join(os.Getenv("HOME"), "deployments", cfg.Name),
-		filepath.Join(os.Getenv("HOME"), ".bosh"),
-		filepath.Join(os.Getenv("HOME"), ".cf"),
+		filepath.Join(home, "deployments", cfg.Name),
+		filepath.Join(home, ".bosh"),
+		filepath.Join(home, ".cf"),
 	}
 }
 

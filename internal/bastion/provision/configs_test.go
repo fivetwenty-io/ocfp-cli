@@ -112,9 +112,7 @@ func TestGenerateGenesisConfig_LogsConfiguration(t *testing.T) {
 func TestGetGenesisRepository_SourceBased(t *testing.T) {
 	cfg := &config.Config{
 		Genesis: config.Genesis{
-			Enabled:       true,
-			Branch:        "v3.1.x-dev",
-			VersionPrefix: "3.1.0",
+			Enabled: true,
 		},
 	}
 
@@ -133,8 +131,8 @@ func TestGetGenesisRepository_SourceBased(t *testing.T) {
 		t.Errorf("Expected default repo URL, got '%s'", repo.URL)
 	}
 
-	if repo.Branch != "v3.1.x-dev" {
-		t.Errorf("Expected branch 'v3.1.x-dev', got '%s'", repo.Branch)
+	if repo.Branch != "v3.2.x-dev" {
+		t.Errorf("Expected default branch 'v3.2.x-dev', got '%s'", repo.Branch)
 	}
 
 	if repo.Dest != "${HOME}/ocfp/genesis" {
@@ -167,9 +165,7 @@ func TestGetGenesisRepository_CustomRepo(t *testing.T) {
 func TestGetGenesisTool_SourceBased(t *testing.T) {
 	cfg := &config.Config{
 		Genesis: config.Genesis{
-			Enabled:       true,
-			Branch:        "v3.1.x-dev",
-			VersionPrefix: "3.1.0",
+			Enabled: true,
 		},
 		Bastion: config.Bastion{
 			ToolOverrides: map[string]config.ToolOverride{},
@@ -195,8 +191,8 @@ func TestGetGenesisTool_SourceBased(t *testing.T) {
 		t.Error("Expected InstallCommand to be set for source-based install")
 	}
 
-	if !strings.Contains(tool.InstallCommand, "./pack 3.1.0") {
-		t.Error("Expected InstallCommand to contain './pack 3.1.0'")
+	if !strings.Contains(tool.InstallCommand, "./pack 3.2.0") {
+		t.Error("Expected InstallCommand to contain './pack 3.2.0'")
 	}
 
 	if !strings.Contains(tool.InstallCommand, "~/ocfp/genesis") {

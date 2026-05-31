@@ -55,20 +55,10 @@ func TestDetectUnicodeSupport(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original env
-			origLang := os.Getenv("LANG")
-			origLcAll := os.Getenv("LC_ALL")
-			origTerm := os.Getenv("TERM")
-			defer func() {
-				os.Setenv("LANG", origLang)
-				os.Setenv("LC_ALL", origLcAll)
-				os.Setenv("TERM", origTerm)
-			}()
-
-			// Set test env
-			os.Setenv("LANG", tt.lang)
-			os.Setenv("LC_ALL", tt.lcAll)
-			os.Setenv("TERM", tt.term)
+			// Set test env (t.Setenv restores originals on cleanup)
+			t.Setenv("LANG", tt.lang)
+			t.Setenv("LC_ALL", tt.lcAll)
+			t.Setenv("TERM", tt.term)
 
 			result := detectUnicodeSupport()
 			if result != tt.expected {

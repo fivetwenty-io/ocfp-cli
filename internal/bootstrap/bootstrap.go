@@ -13,6 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
 const (
@@ -36,6 +37,7 @@ type Options struct {
 	DryRun         bool
 	All            bool
 	Bastion        bool
+	Artifacts      bool
 	Servers        bool
 	Volumes        bool
 	Snapshots      bool
@@ -55,6 +57,12 @@ type Manager struct {
 	stateManager *state.Manager
 	options      *Options
 	metadata     *MetadataManager
+	safe         vault.SafeInterface
+
+	// cloudflareTunnelToken is the connector token from the Create Cloudflare
+	// Tunnel step, consumed by bastionCloudflareSpec for the SMBIOS payload.
+	// Empty when the feature is disabled.
+	cloudflareTunnelToken string
 }
 
 // NewManager creates a new bootstrap manager.
@@ -66,6 +74,14 @@ func NewManager(cfg *config.Config, provider cpi.Provider, stateManager *state.M
 		options:      opts,
 		metadata:     NewMetadataManager(opts.BlocName),
 	}
+}
+
+// SetSafe wires a vault Safe client into the bootstrap manager. When set, the
+// artifacts step calls ArtifactsWriter.WriteArtifacts to populate blobstore
+// vault paths. When unset, bootstrap proceeds without writing vault (a warning
+// is printed) so bare-cluster bootstraps without vault still succeed.
+func (m *Manager) SetSafe(safe vault.SafeInterface) {
+	m.safe = safe
 }
 
 // StateManager returns the state manager.
@@ -94,8 +110,10 @@ func (m *Manager) Execute(ctx context.Context) error {
 		{"Create Security Groups", m.CreateSecurityGroups, "security", true},
 		{"Create Public IPs", m.CreatePublicIPs, "network", false},
 		{"Create Key Pair", m.createKeyPair, "servers", true},
+		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
 		// {"Create Volumes", m.createVolumes, "volumes", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
+		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
 		{"Create Buckets", m.CreateBuckets, "buckets", false},
 	}
 
@@ -189,7 +207,8 @@ func (m *Manager) getBootstrapMode() string {
 
 	// Check if any selective resource type flags are set
 	if m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs {
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Artifacts {
 		selectedTypes := m.collectSelectedResourceTypes()
 
 		return "SELECTIVE (create: " + strings.Join(selectedTypes, ", ") + ")"
@@ -232,6 +251,10 @@ func (m *Manager) collectSelectedResourceTypes() []string {
 
 	if m.options.KeyPairs {
 		selectedTypes = append(selectedTypes, "key-pairs")
+	}
+
+	if m.options.Artifacts {
+		selectedTypes = append(selectedTypes, "artifacts")
 	}
 
 	return selectedTypes
@@ -280,7 +303,8 @@ func (m *Manager) filterBastionSteps(allSteps []bootstrapStep) []bootstrapStep {
 // isSelectiveModeActive checks if any selective resource type flags are set.
 func (m *Manager) isSelectiveModeActive() bool {
 	return m.options.Servers || m.options.Volumes || m.options.Snapshots ||
-		m.options.Buckets || m.options.SecurityGroups || m.options.Network || m.options.PublicIPs || m.options.KeyPairs
+		m.options.Buckets || m.options.SecurityGroups || m.options.Network ||
+		m.options.PublicIPs || m.options.KeyPairs || m.options.Artifacts
 }
 
 // filterSelectiveSteps filters steps based on selective flags.
@@ -315,6 +339,8 @@ func (m *Manager) shouldIncludeStep(step bootstrapStep, needsNetwork bool) bool 
 		return m.options.Volumes
 	case "buckets":
 		return m.options.Buckets
+	case "artifacts":
+		return m.options.Artifacts
 	default:
 		return false
 	}

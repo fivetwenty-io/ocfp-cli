@@ -14,13 +14,14 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.39.2
 	github.com/aws/aws-sdk-go-v2/config v1.25.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.10
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.51.1
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.138.0
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.26.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.3
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.2
 	github.com/aws/smithy-go v1.23.0
-	github.com/fivetwenty-io/pve-apiclient-go/v3 v3.0.0
+	github.com/fivetwenty-io/pve-apiclient-go/v3 v3.1.1
+	github.com/goccy/go-yaml v1.19.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/vault/api v1.20.0
 	github.com/hashicorp/vault/api/auth/approle v0.10.0
 	github.com/hashicorp/vault/api/auth/userpass v0.10.0
@@ -39,7 +40,6 @@ require (
 	golang.org/x/term v0.36.0
 	golang.org/x/text v0.30.0
 	google.golang.org/api v0.256.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -132,4 +132,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251103181224-f26f9409b101 // indirect
 	google.golang.org/grpc v1.76.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

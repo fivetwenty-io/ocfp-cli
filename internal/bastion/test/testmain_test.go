@@ -11,9 +11,9 @@ func TestMain(m *testing.M) {
 	tmpDir, err := os.MkdirTemp("", "ocfp-bastion-test-*")
 	if err == nil {
 		os.Setenv("OCFP_HOME", tmpDir)
-
-		defer os.RemoveAll(tmpDir)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(tmpDir)
+	os.Exit(code)
 }

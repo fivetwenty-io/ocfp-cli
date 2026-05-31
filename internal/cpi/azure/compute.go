@@ -596,11 +596,11 @@ func (m *ComputeManager) parseImageReference(image string) *armcompute.ImageRefe
 		}
 	}
 
-	// Default to Ubuntu if no valid format
+	// Default to Ubuntu 24.04 (Noble) if no valid format
 	return &armcompute.ImageReference{
 		Publisher: to.Ptr("Canonical"),
-		Offer:     to.Ptr("0001-com-ubuntu-server-jammy"),
-		SKU:       to.Ptr("22_04-lts"),
+		Offer:     to.Ptr("ubuntu-24_04-lts"),
+		SKU:       to.Ptr("server"),
 		Version:   to.Ptr("latest"),
 	}
 }

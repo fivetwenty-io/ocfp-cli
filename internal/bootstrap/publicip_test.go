@@ -388,9 +388,9 @@ func TestCreatePublicIPs_NamingConvention(t *testing.T) {
 	expectedPatterns := map[string]string{
 		"ops":        "prod-ops-",
 		"jumpbox":    "prod-jumpbox-",
-		"router":     "prod-router-",
-		"cf-ssh":     "prod-cf-ssh-",
-		"tcp-router": "prod-tcp-router-",
+		"router":     "prod-ocf-cf-router-",
+		"cf-ssh":     "prod-ocf-cf-ssh-",
+		"tcp-router": "prod-ocf-cf-tcp-router-",
 		"bastion":    "prod-bastion", // No index for bastion
 	}
 
@@ -583,7 +583,7 @@ func TestCreatePublicIPs_FailureIndexNumbering(t *testing.T) {
 
 	// Simulate failure for router-0 on first attempt only
 	// (shouldFailNext only triggers once, then gets cleared)
-	fakeNet.shouldFailNext = "prod-router-0"
+	fakeNet.shouldFailNext = "prod-ocf-cf-router-0"
 
 	err := manager.CreatePublicIPs(ctx)
 	if err != nil {
@@ -605,7 +605,7 @@ func TestCreatePublicIPs_FailureIndexNumbering(t *testing.T) {
 
 	// Verify we have router-0 through router-(n-1) where n is the configured count
 	for i := 0; i < expectedRouterCount; i++ {
-		expectedName := fmt.Sprintf("prod-router-%d", i)
+		expectedName := fmt.Sprintf("prod-ocf-cf-router-%d", i)
 		if !routerNames[expectedName] {
 			t.Errorf("Expected router IP %s to be created (router-0 should have retried and succeeded)", expectedName)
 		}

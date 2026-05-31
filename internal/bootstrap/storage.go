@@ -95,10 +95,10 @@ func (m *Manager) getRequiredBucketNames() []string {
 	ocfBuckets := []string{
 		m.options.BlocName + "-ocf-bosh",
 		m.options.BlocName + "-ocf-artifacts",
-		m.options.BlocName + "-ocf-app-packages",
-		m.options.BlocName + "-ocf-droplets",
-		m.options.BlocName + "-ocf-buildpacks",
-		m.options.BlocName + "-ocf-resources",
+		m.options.BlocName + "-ocf-cf-packages",
+		m.options.BlocName + "-ocf-cf-droplets",
+		m.options.BlocName + "-ocf-cf-buildpacks",
+		m.options.BlocName + "-ocf-cf-resource-pool",
 		m.options.BlocName + "-ocf-shield",
 	}
 	buckets = append(buckets, ocfBuckets...)

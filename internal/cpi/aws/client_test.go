@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -254,22 +253,10 @@ func TestClientInitializeWithRoleARN(t *testing.T) {
 }
 
 func TestClientInitializeWithEnvironmentVariables(t *testing.T) {
-	// Save original environment variables
-	origAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	origSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	origRegion := os.Getenv("AWS_REGION")
-
-	// Set test environment variables
-	_ = os.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-	_ = os.Setenv("AWS_REGION", "us-east-1")
-
-	// Restore original environment variables after test
-	defer func() {
-		_ = os.Setenv("AWS_ACCESS_KEY_ID", origAccessKey)
-		_ = os.Setenv("AWS_SECRET_ACCESS_KEY", origSecretKey)
-		_ = os.Setenv("AWS_REGION", origRegion)
-	}()
+	// t.Setenv restores originals on cleanup
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	t.Setenv("AWS_REGION", "us-east-1")
 
 	config := &Config{
 		Region: "us-east-1",

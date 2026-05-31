@@ -31,6 +31,11 @@ const (
 
 	// rdsGlobalCAURL is the URL for the AWS RDS Global CA certificate bundle.
 	rdsGlobalCAURL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+
+	// PublicIPStatusPending is written to vault when no EIPs exist in state yet.
+	// Downstream consumers (Genesis CPI configs) must treat this value as "not yet provisioned"
+	// and must not use it as a real hostname or allocation ID.
+	PublicIPStatusPending = "pending"
 )
 
 // AWSVaultProvider implements vault operations for AWS.
@@ -41,6 +46,11 @@ type AWSVaultProvider struct {
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
 	logger      *zap.SugaredLogger
+
+	// KMSKeyARN is the AWS KMS key ARN for BOSH disk encryption.
+	// When non-empty, the ARN is written to vault. When empty, the KMS path is skipped
+	// so kits that require KMS receive a clear missing-path error rather than a broken empty value.
+	KMSKeyARN string
 }
 
 // NewAWSVaultProvider creates a new AWS vault provider.
@@ -94,13 +104,13 @@ func (a *AWSVaultProvider) ConfigurePublicIPs(_reporter providers.ProgressReport
 	// Try to get public IPs from state first
 	publicIPs := a.getPublicIPsFromState()
 
-	// If no IPs in state, create placeholder mapping
+	// If no EIPs in state, write a pending marker so downstream consumers know
+	// EIPs have not been provisioned yet. This prevents fake hostnames from
+	// reaching BOSH CPI configs.
 	if len(publicIPs) == 0 {
-		a.logger.Warn("No public IPs found in state, creating placeholder configuration")
+		a.logger.Warn("No public IPs found in state, writing pending marker")
 		publicIPs = map[string]interface{}{
-			"cf_router_0":     fmt.Sprintf("eip-router-0-%s.%s", a.BlocName, a.Config.Region),
-			"cf_router_1":     fmt.Sprintf("eip-router-1-%s.%s", a.BlocName, a.Config.Region),
-			"cf_tcp_router_0": fmt.Sprintf("eip-tcp-router-0-%s.%s", a.BlocName, a.Config.Region),
+			"status": PublicIPStatusPending,
 		}
 	}
 
@@ -630,7 +640,19 @@ func (a *AWSVaultProvider) configureVPC(envType string) error {
 
 // configureSubnets configures subnet settings in vault.
 func (a *AWSVaultProvider) configureSubnets(envType string) error {
-	a.logger.Infow("Configuring subnets", "env_type", envType)
+	a.logger.Infow("Configuring subnets",
+		"env_type", envType,
+		"subnet_count", len(a.Config.Subnets),
+		"network_subnet_count", len(a.Config.Network.Subnets),
+		"network_cidr", a.Config.Network.CIDR,
+	)
+
+	if len(a.Config.Subnets) == 0 {
+		a.logger.Warnw("No subnets configured - reserved IPs will not be written",
+			"env_type", envType,
+			"hint", "Ensure config has Network.Subnets from bootstrap state or a valid Network.CIDR for auto-generation",
+		)
+	}
 
 	subnetsPath := a.PathBuilder.GetSubnetsPath(envType)
 
@@ -652,13 +674,20 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 	}
 
 	for i, subnet := range subnets {
+		a.logger.Debugw("Processing subnet",
+			"index", i,
+			"name", subnet.Name,
+			"cidr", subnet.CIDR,
+			"type", subnet.Type,
+		)
+
 		err := a.configureSubnet(envType, i, subnet)
 		if err != nil {
 			return err
 		}
 	}
 
-	a.logger.Infow("Subnets configuration completed", "path", subnetsPath)
+	a.logger.Infow("Subnets configuration completed", "path", subnetsPath, "count", len(a.Config.Subnets))
 
 	return nil
 }
@@ -699,9 +728,18 @@ func (a *AWSVaultProvider) configureSubnet(envType string, subnetNum int, subnet
 		return err
 	}
 
-	availabilityZone := a.getAvailabilityZone(subnetNum)
+	// Get real subnet ID and AZ from bootstrap state
+	realSubnetID, stateAZ := a.getSubnetDataFromState(subnet.Name)
 
-	subnetData := a.buildSubnetData(subnetType, subnetNum, subnet.CIDR, networkInfo, availabilityZone)
+	availabilityZone := stateAZ
+	if availabilityZone == "" {
+		availabilityZone = subnet.AvailabilityZone
+	}
+	if availabilityZone == "" {
+		availabilityZone = a.getAvailabilityZone(subnetNum)
+	}
+
+	subnetData := a.buildSubnetData(subnetType, subnetNum, subnet.CIDR, networkInfo, availabilityZone, realSubnetID)
 
 	err = a.Safe.SetMultiple(subnetPath, subnetData)
 	if err != nil {
@@ -775,7 +813,7 @@ func (a *AWSVaultProvider) getAvailabilityZone(subnetNum int) string {
 }
 
 // buildSubnetData constructs subnet metadata.
-func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
+func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string, realSubnetID string) map[string]interface{} {
 	netCIDR := a.Config.Network.CIDR
 	if netCIDR == "" {
 		netCIDR = a.Config.VPCCIDRBlock
@@ -789,8 +827,13 @@ func (a *AWSVaultProvider) buildSubnetData(subnetType string, subnetNum int, cid
 		dnsString = a.Config.DNS[0]
 	}
 
+	subnetID := realSubnetID
+	if subnetID == "" {
+		subnetID = fmt.Sprintf("%s-%s-%d", a.BlocName, subnetType, subnetNum)
+	}
+
 	subnetData := map[string]interface{}{
-		"id":          fmt.Sprintf("%s-%s-%d", a.BlocName, subnetType, subnetNum),
+		"id":          subnetID,
 		"cidr_block":  cidr,
 		"cidr_prefix": networkInfo.cidrPrefix,
 		"ip_0":        networkInfo.network,
@@ -938,8 +981,10 @@ func (a *AWSVaultProvider) configureBOSH(envType string) error {
 		return fmt.Errorf("failed to configure keys: %w", err)
 	}
 
-	// Configure KMS
-	a.configureKMS(envType)
+	// Configure KMS — only written when operator supplies --kms-key-arn.
+	if err = a.configureKMS(envType); err != nil {
+		return fmt.Errorf("failed to configure KMS for %s: %w", envType, err)
+	}
 
 	return nil
 }
@@ -989,12 +1034,29 @@ func (a *AWSVaultProvider) configureIAM(envType string) error {
 	return nil
 }
 
-// configureKMS configures AWS KMS settings.
-func (a *AWSVaultProvider) configureKMS(envType string) {
-	// AWS KMS configuration
-	// For now, this is a placeholder
-	// In a full implementation, this would configure KMS keys for BOSH
-	a.logger.Infow("KMS configuration placeholder", "env_type", envType)
+// configureKMS writes the KMS key ARN to vault when one was provided by the operator.
+// If KMSKeyARN is empty, the path is intentionally skipped; kits that require KMS
+// will surface a clear missing-path error rather than reading an empty value.
+func (a *AWSVaultProvider) configureKMS(envType string) error {
+	if a.KMSKeyARN == "" {
+		a.logger.Infow("KMS key ARN not provided, skipping KMS vault path", "env_type", envType)
+
+		return nil
+	}
+
+	kmsPath := a.PathBuilder.GetKMSPath(envType)
+
+	kmsData := map[string]interface{}{
+		"key_arn": a.KMSKeyARN,
+	}
+
+	if err := a.Safe.SetMultiple(kmsPath, kmsData); err != nil {
+		return fmt.Errorf("failed to write KMS configuration: %w", err)
+	}
+
+	a.logger.Infow("KMS key ARN written to vault", "env_type", envType, "path", kmsPath)
+
+	return nil
 }
 
 // configureKeys configures SSH keys.
@@ -1127,7 +1189,7 @@ func (a *AWSVaultProvider) configureCPI(envType string) error {
 
 	diskType := a.Config.DefaultDiskType
 	if diskType == "" {
-		diskType = "gp2"
+		diskType = "gp3"
 	}
 
 	// Build CPI configuration
@@ -1334,6 +1396,25 @@ func (a *AWSVaultProvider) getVPCID() string {
 
 	// Fallback to using bloc name as VPC identifier
 	return a.BlocName + "-vpc"
+}
+
+// getSubnetDataFromState retrieves the real AWS subnet ID and availability zone from bootstrap state.
+func (a *AWSVaultProvider) getSubnetDataFromState(subnetName string) (subnetID string, availabilityZone string) {
+	stateManager := a.loadStateManager()
+	if stateManager == nil {
+		return "", ""
+	}
+
+	resource, err := stateManager.GetResource("subnet", subnetName)
+	if err != nil || resource == nil {
+		return "", ""
+	}
+
+	if az, ok := resource.Properties["availability_zone"].(string); ok {
+		availabilityZone = az
+	}
+
+	return resource.ID, availabilityZone
 }
 
 // getPublicIPsFromState retrieves public IPs from state.
@@ -1569,7 +1650,7 @@ func (b *awsLBServiceBuilder) addCFSSHService() {
 	targets := b.buildTargetsFromIPs(ips, "cf-ssh")
 
 	b.services["cf-ssh"] = map[string]interface{}{
-		"name":     b.blocName + "-cf-ssh",
+		"name":     b.blocName + "-ocf-cf-ssh",
 		"protocol": "tcp",
 		"port":     SSHAltPort,
 		"targets":  targets,

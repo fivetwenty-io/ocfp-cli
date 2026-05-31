@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -20,7 +21,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -124,9 +124,15 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 // newVaultPopulateCmd creates the vault populate subcommand.
 func newVaultPopulateCmd() *cobra.Command {
 	var (
-		vaultPath string
-		fromFile  string
-		force     bool
+		vaultPath          string
+		fromFile           string
+		force              bool
+		kmsKeyARN          string
+		blobstoreEndpoint  string
+		blobstoreMode      string
+		blobstoreRegion    string
+		blobstoreAccessKey string
+		blobstoreSecretKey string //nolint:gosec // descriptive flag var name
 	)
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
@@ -143,10 +149,22 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
   ocfp vault populate --from-file secrets.yml
 
   # Populate to specific vault path
-  ocfp vault populate --vault-path /concourse/main`,
+  ocfp vault populate --vault-path /concourse/main
+
+  # Populate with AWS KMS key for BOSH disk encryption (AWS only)
+  ocfp vault populate --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/mrk-abc123
+
+  # Populate with PVE blobstore endpoint (PVE only)
+  ocfp vault populate --blobstore-endpoint https://s3.dc1.example.com`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVaultPopulate(cmd, args, fromFile, force)
+			return runVaultPopulate(cmd, args, fromFile, force, kmsKeyARN, vaultPopulateBlobstoreFlags{
+				Endpoint:  blobstoreEndpoint,
+				Mode:      blobstoreMode,
+				Region:    blobstoreRegion,
+				AccessKey: blobstoreAccessKey,
+				SecretKey: blobstoreSecretKey,
+			})
 		},
 	}
 
@@ -154,12 +172,29 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "load secrets from file")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
 	cmd.Flags().Bool("dry-run", false, "preview actions without making changes")
+	cmd.Flags().StringVar(&kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for BOSH disk encryption (AWS only; omit to skip KMS configuration)")
+	cmd.Flags().StringVar(&blobstoreEndpoint, "blobstore-endpoint", "", "S3-compatible blobstore endpoint URL (PVE only; omit to skip blobstore endpoint configuration)")
+	cmd.Flags().StringVar(&blobstoreMode, "blobstore-mode", "", "PVE blobstore mode: 'local' (default; skip buckets) or 'external' (S3-compatible)")
+	cmd.Flags().StringVar(&blobstoreRegion, "blobstore-region", "", "S3 region for the PVE external blobstore (default 'us-east-1')")
+	cmd.Flags().StringVar(&blobstoreAccessKey, "blobstore-access-key", "", "S3 access key for the PVE external blobstore")
+	cmd.Flags().StringVar(&blobstoreSecretKey, "blobstore-secret-key", "", "S3 secret key for the PVE external blobstore") //nolint:gosec // CLI flag name, not a credential
 
 	return cmd
 }
 
+// vaultPopulateBlobstoreFlags bundles the five blobstore-related CLI flags so
+// the function signature for runVaultPopulate stays compact and downstream
+// callers don't have to reorder positional args every time we add one.
+type vaultPopulateBlobstoreFlags struct {
+	Endpoint  string
+	Mode      string
+	Region    string
+	AccessKey string
+	SecretKey string //nolint:gosec // field name is descriptive
+}
+
 // runVaultPopulate executes the vault populate command.
-func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool) error {
+func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool, kmsKeyARN string, blobstoreFlags vaultPopulateBlobstoreFlags) error {
 	log := logger.Get()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
@@ -192,10 +227,16 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 
 	// Create populate options
 	opts := &vault.PopulateOptions{
-		Subcommand:       subcommand,
-		DryRun:           dryRun,
-		Force:            force,
-		ProgressReporter: reporter,
+		Subcommand:         subcommand,
+		DryRun:             dryRun,
+		Force:              force,
+		ProgressReporter:   reporter,
+		KMSKeyARN:          kmsKeyARN,
+		BlobstoreEndpoint:  blobstoreFlags.Endpoint,
+		BlobstoreMode:      blobstoreFlags.Mode,
+		BlobstoreRegion:    blobstoreFlags.Region,
+		BlobstoreAccessKey: blobstoreFlags.AccessKey,
+		BlobstoreSecretKey: blobstoreFlags.SecretKey,
 	}
 
 	// Handle file input
@@ -217,8 +258,9 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 // newVaultInceptionCmd creates the vault inception subcommand.
 func newVaultInceptionCmd() *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
-		Use:   "inception",
-		Short: "Initialize inception vault for bootstrap",
+		Use:     "inception",
+		Aliases: []string{"init"},
+		Short:   "Initialize inception vault for bootstrap",
 		Long: `Initialize vault with inception secrets for a new deployment.
 
 This command creates a local inception vault using 'safe local' running in a tmux session
@@ -226,12 +268,16 @@ with file-backed storage. The inception vault is used temporarily during bootstr
 production vault is available.
 
 The vault runs on port 8234 by default and stores data in ~/.ocfp/{bloc}/vault/data.
-Root token and unseal keys are saved for later use.`,
+Root and unseal keys are saved to ~/.ocfp/{bloc}/vault/{root.key,unseal.keys}.
+
+The 'init' alias is available for operator convenience: 'ocfp vault init' is equivalent.`,
 		Example: `  # Initialize inception vault
   ocfp vault inception
+  ocfp vault init               # alias
 
   # Initialize with specific bloc
-  ocfp vault inception --bloc production`,
+  ocfp vault inception --bloc production
+  ocfp vault init --bloc production`,
 		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runVaultInception()
 		},
@@ -242,11 +288,12 @@ Root token and unseal keys are saved for later use.`,
 
 // getVaultInceptionPaths returns the paths for vault inception based on bloc name and test mode.
 func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
-	homeDir := os.Getenv("HOME")
+	home, _ := homeDir()
 
-	vaultDir := filepath.Join(homeDir, ".vault")
-	rootKeyFile := filepath.Join(homeDir, ".vault-token")
-	unsealKeysFile := filepath.Join(homeDir, ".vault-keys")
+	vaultDir := filepath.Join(home, ".vault")
+	vaultKeyFile := filepath.Join(home, "vault.key")
+	rootKeyFile := filepath.Join(home, "vault.key")
+	unsealKeysFile := filepath.Join(home, "vault.key")
 	tmuxSession := "inception-vault"
 	vaultName := "inception"
 	port := VaultInceptionPort
@@ -260,9 +307,10 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	}
 
 	if testMode {
-		vaultDir = filepath.Join(homeDir, ".test-vault")
-		rootKeyFile = filepath.Join(homeDir, "test-vault.key")
-		unsealKeysFile = filepath.Join(homeDir, "test-vault.key")
+		vaultDir = filepath.Join(home, ".test-vault")
+		vaultKeyFile = filepath.Join(home, "test-vault.key")
+		rootKeyFile = filepath.Join(home, "test-vault.key")
+		unsealKeysFile = filepath.Join(home, "test-vault.key")
 		tmuxSession = "test-inception-vault"
 		vaultName = "test-inception"
 		port = TestVaultInceptionPort
@@ -270,6 +318,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 
 	paths := map[string]string{
 		"vaultDir":       vaultDir,
+		"vaultKeyFile":   vaultKeyFile,
 		"rootKeyFile":    rootKeyFile,
 		"unsealKeysFile": unsealKeysFile,
 		"tmuxSession":    tmuxSession,
@@ -395,6 +444,13 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 		_ = os.Remove(paths["pidFile"])
 	}
 
+	// Also kill bare inception-vault session if using a prefixed name (migration from older systems)
+	if paths["tmuxSession"] != "inception-vault" {
+		bareKillCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", "inception-vault")
+		ensureTmuxEnv(bareKillCmd)
+		_ = bareKillCmd.Run()
+	}
+
 	// Kill any process listening on the vault port
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
 	cmd := exec.CommandContext(ctx, "sh", "-c", "lsof -ti :"+paths["port"]+" | xargs kill -9 2>/dev/null")
@@ -411,6 +467,12 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
 	cmd = exec.CommandContext(ctx, "safe", "target", "delete", paths["vaultName"])
 	_ = cmd.Run() // Ignore errors if target doesn't exist
+
+	// Also delete bare inception target if using a prefixed name (migration from older systems)
+	if paths["vaultName"] != "inception" {
+		cmd = exec.CommandContext(ctx, "safe", "target", "delete", "inception")
+		_ = cmd.Run()
+	}
 
 	// Remove vault data directory and all its contents
 	err := os.RemoveAll(paths["vaultDir"])

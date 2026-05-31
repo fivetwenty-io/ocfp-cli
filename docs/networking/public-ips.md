@@ -133,7 +133,7 @@ Source: `internal/cpi/stackit/network.go`
 
 Public IPs are not supported for Proxmox. All public IP and floating IP operations return `ErrFloatingIPsNotSupported`.
 
-Source: `internal/cpi/proxmox/network.go`
+Source: `internal/cpi/pve/network.go`
 
 ## Public IP Tokens
 

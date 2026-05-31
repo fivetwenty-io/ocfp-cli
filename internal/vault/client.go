@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/api/auth/approle"
 	"github.com/hashicorp/vault/api/auth/userpass"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 )
 
 // envValueTrue is the string representation of true for environment variable comparisons.

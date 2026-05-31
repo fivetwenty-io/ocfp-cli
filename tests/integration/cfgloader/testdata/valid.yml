@@ -1,0 +1,47 @@
+tiers:
+  lifecycle: true
+  bosh: true
+  cf: true
+  light: false
+
+bosh_vars: manifests/bosh/vars.yml
+bosh_creds: manifests/bosh/creds.yml
+cf_vars: manifests/cf/vars.yml
+
+tier1:
+  vmid_range_start: 900
+  vmid_range_end: 999
+  network_ip: 192.168.1.250
+  network_range: 192.168.1.0/24
+  network_gateway: 192.168.1.1
+  network_bridge: vmbr0
+  network_dns:
+    - 1.1.1.1
+  vm_cores: 1
+  vm_memory_mib: 1024
+  disk_size_mib: 1024
+  stemcell_path: /tmp/stemcell.tgz
+  snapshot_detach_bypass: false
+  network_test:
+    modes: auto
+    sdn:
+      zone: ""
+      zone_type: simple
+      vnet: itvnet
+      range: 10.250.0.0/24
+      gateway: 10.250.0.1
+      ip: 10.250.0.10
+    bridge:
+      iface: vmbr9
+
+tier2:
+  bosh_env_alias: pve
+  deployment_name: emptyvm
+  deploy_timeout_s: 1800
+
+tier3:
+  deployment_name: cf
+  smoke_org: integration-smoke
+  smoke_space: test
+  smoke_app: httpbin-smoke
+  smoke_timeout_s: 900

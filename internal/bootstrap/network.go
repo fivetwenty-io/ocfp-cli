@@ -35,19 +35,39 @@ const (
 	tripleSubnetSplitCount = 3
 	subnetStrategyTriple   = "ocfp-triple"
 
+	// PVE SDN simple-zone layout carves the parent vnet CIDR into one infra
+	// subnet plus three AZ workload subnets. pveSubnetTargetPrefix is the
+	// per-child mask (/22) and pveSubnetCount is the total number of children
+	// (1 infra + 3 AZs). The infra subnet hosts the bastion, director, and
+	// shared services; workload subnets back the BOSH AZs pvea/pveb/pvec.
+	pveSubnetTargetPrefix = 22
+	pveSubnetCount        = 4
+	pveInfraSubnetSuffix  = "-infra"
+	pveAZNamePrefix       = "pve"
+
+	// Subnet role hints control reserved-IP assignment in addReservedIPOutputs.
+	// "infra" routes bastion/director/shield/blacksmith reservations to the
+	// dedicated infra subnet (PVE layout). "ocfp" preserves the legacy
+	// STACKIT/AWS behavior of placing those reservations on the first
+	// workload subnet.
+	subnetRoleInfra = "infra"
+	subnetRoleOCFP  = "ocfp"
+
 	// Reserved IP slot constants for subnet IP assignment.
-	vaultIPSlot         = 5
-	jumpboxIPSlot       = 6
-	concourseIPSlot     = 7
-	prometheusIPSlot    = 8
-	bastionIPSlot       = 3
-	boshIPSlot          = 4
-	shieldIPSlot        = 9
-	blacksmithIPSlot    = 10
-	doomsdayIPSlot      = 9
-	shoutIPSlot         = 10
-	ocfpUIIPSlot        = 9
-	availableAIPSlot    = 11
+	vaultIPSlot      = 5
+	jumpboxIPSlot    = 6
+	concourseIPSlot  = 7
+	prometheusIPSlot = 8
+	bastionIPSlot    = 3
+	boshIPSlot       = 4
+	shieldIPSlot     = 9
+	blacksmithIPSlot = 10
+	doomsdayIPSlot   = 9
+	shoutIPSlot      = 10
+	ocfpUIIPSlot     = 9
+	// artifactsIPSlot is the RustFS blobstore VM. See plans/ocfp-artifacts-rustfs-vm.md.
+	artifactsIPSlot     = 11
+	availableAIPSlot    = 12
 	availableBIPSlot    = 29
 	reservedBIPSlot     = 10
 	reservedCIPSlot     = 30
@@ -109,13 +129,40 @@ func (m *Manager) CreateSubnets(ctx context.Context) error {
 	networkID := networkResource.ID
 	logger.Infof("Creating subnets for network: id=%s", networkID)
 
-	// Handle STACKIT virtual subnet strategy
-	// STACKIT doesn't support traditional subnets, use virtual subnets instead
-	if m.config.Network.SubnetStrategy == subnetStrategyTriple || strings.EqualFold(m.options.Provider, "stackit") {
+	// Providers without native subnets use logical/virtual subnets backed by
+	// state-only records. STACKIT has no subnet primitive; PVE bridge mode
+	// is flat L2 (no per-subnet API). Either case routes through the same
+	// state-population path that splits the parent CIDR into named children.
+	if m.useVirtualSubnets() {
 		return m.createStackitVirtualSubnets(networkID)
 	}
 
 	return m.createStandardSubnets(ctx, networkID)
+}
+
+// useVirtualSubnets reports whether the current bloc should populate
+// logical (state-only) subnets instead of calling the provider's
+// CreateSubnet API.
+func (m *Manager) useVirtualSubnets() bool {
+	if m.config.Network.SubnetStrategy == subnetStrategyTriple {
+		return true
+	}
+
+	switch strings.ToLower(m.options.Provider) {
+	case "stackit", "pve":
+		return true
+	}
+
+	return false
+}
+
+// useVirtualSubnetsForPVE reports whether the current bloc is the PVE
+// provider specifically. It exists alongside useVirtualSubnets so call sites
+// that branch on PVE semantics (e.g., carving multiple AZ subnets out of a
+// single SDN vnet) can be explicit about the provider they handle rather
+// than implicitly relying on the broader virtual-subnet predicate.
+func (m *Manager) useVirtualSubnetsForPVE() bool {
+	return strings.EqualFold(m.options.Provider, "pve")
 }
 
 func (m *Manager) findExistingNetwork(ctx context.Context, netMgr cpi.NetworkManager, networkName string) *cpi.Network {
@@ -327,6 +374,62 @@ func SplitIntoN(parentCIDR string, count int) []string {
 	return generateSubnets(parent, newPrefix, count)
 }
 
+// SplitToTargetPrefix splits a parent CIDR into `count` consecutive subnets of
+// the requested `targetPrefix` length, walking the address space in fixed-size
+// strides anchored at the parent's base address.
+//
+// Returns nil when the parent cannot accommodate count*2^(targetPrefix-parentPrefix)
+// addresses, when the target prefix is not strictly longer than the parent's,
+// or when any input is malformed. This is the semantic backbone of the PVE
+// /22 carve: parent 10.64.64.0/18 → /22 × 4 yields
+// [10.64.64.0/22, 10.64.68.0/22, 10.64.72.0/22, 10.64.76.0/22].
+func SplitToTargetPrefix(parentCIDR string, targetPrefix, count int) []string {
+	if !isValidCount(count) {
+		return nil
+	}
+
+	if targetPrefix <= 0 || targetPrefix > ipv4Bits {
+		return nil
+	}
+
+	parent, err := parseParentCIDR(parentCIDR)
+	if err != nil {
+		return nil
+	}
+
+	parentPrefix, _ := parent.Mask.Size()
+	if targetPrefix <= parentPrefix {
+		return nil
+	}
+
+	// Ensure the parent has enough address space for count children at the
+	// requested prefix. parentSize / childSize == 2^(targetPrefix-parentPrefix).
+	maxChildren := 1 << (targetPrefix - parentPrefix)
+	if count > maxChildren {
+		return nil
+	}
+
+	base := ipToUint32(parent.IP.Mask(parent.Mask))
+	stride := uint32(1) << (ipv4Bits - targetPrefix)
+	parentCIDRStr := parent.String()
+	subnets := make([]string, count)
+
+	for i := range count {
+		if !isValidIndex(i) {
+			return nil
+		}
+
+		subnetCIDR := createSubnetCIDR(base, uint32(i), stride, targetPrefix)
+		if !IsSubnetWithinParent(parentCIDRStr, subnetCIDR) {
+			return nil
+		}
+
+		subnets[i] = subnetCIDR
+	}
+
+	return subnets
+}
+
 func parseParentCIDR(parentCIDR string) (*net.IPNet, error) {
 	ip, ipnet, err := net.ParseCIDR(parentCIDR)
 	if err != nil {
@@ -525,6 +628,14 @@ func errCannotSplitNetworkInto(count int) error {
 func (m *Manager) createStackitVirtualSubnets(networkID interface{}) error {
 	cidr := m.resolveNetworkCIDRForSubnets()
 
+	// PVE SDN exposes one L3 subnet per vnet, so the bloc parent CIDR is
+	// carved into 1 infra + 3 AZ /22 children rather than the STACKIT
+	// "split into 4, skip first" pattern. Route the PVE provider through
+	// its dedicated carve before falling back to the legacy strategies.
+	if m.useVirtualSubnetsForPVE() {
+		return m.createPVEVirtualSubnets(cidr, networkID)
+	}
+
 	switch {
 	case strings.Contains(m.config.Network.SubnetStrategy, "triple"):
 		return m.createStackitTripleSubnets(cidr, networkID)
@@ -533,6 +644,46 @@ func (m *Manager) createStackitVirtualSubnets(networkID interface{}) error {
 	default:
 		return m.createStackitTripleSubnets(cidr, networkID)
 	}
+}
+
+// createPVEVirtualSubnets carves the PVE bloc's parent CIDR into the
+// infra+AZ layout described above. Subnet 0 is `{bloc}-infra` and hosts
+// bastion/director/shield/blacksmith reservations; subnets 1..3 are
+// `{bloc}-ocfp-{0,1,2}` aligned to AZs pvea/pveb/pvec.
+//
+// If the parent CIDR is narrower than the target /22 prefix (so a
+// SplitToTargetPrefix call would fail), the carve falls back to an even
+// 4-way split via SplitIntoN. This keeps small test/dev CIDRs functional
+// while preserving the canonical layout for production /18 parents.
+func (m *Manager) createPVEVirtualSubnets(cidr string, networkID interface{}) error {
+	subnets := SplitToTargetPrefix(cidr, pveSubnetTargetPrefix, pveSubnetCount)
+	if len(subnets) != pveSubnetCount {
+		subnets = SplitIntoN(cidr, pveSubnetCount)
+	}
+
+	if len(subnets) != pveSubnetCount {
+		return fmt.Errorf("%w: cannot carve %s into %d PVE subnets",
+			errCannotSplitNetwork, cidr, pveSubnetCount)
+	}
+
+	// Subnet 0 → infra (no AZ assignment, hosts bastion/director/shared svc).
+	infraName := m.options.BlocName + pveInfraSubnetSuffix
+	if err := m.addVirtualSubnetWithRole(infraName, subnets[0], cidr, networkID, subnetRoleInfra, ""); err != nil {
+		return err
+	}
+
+	// Subnets 1..3 → ocfp-{0,1,2} mapped to AZs pvea/pveb/pvec.
+	for i := 1; i < pveSubnetCount; i++ {
+		ocfpIdx := i - 1
+		name := fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, ocfpIdx)
+		az := pveAZNamePrefix + string(rune('a'+ocfpIdx))
+
+		if err := m.addVirtualSubnetWithRole(name, subnets[i], cidr, networkID, subnetRoleOCFP, az); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m *Manager) createStackitTripleSubnets(cidr string, networkID interface{}) error {
@@ -574,7 +725,17 @@ func (m *Manager) createStackitSingleSubnet(cidr string, networkID interface{}) 
 }
 
 func (m *Manager) addVirtualSubnetWithDependency(name, subnetCIDR, parentCIDR string, networkID interface{}) error {
-	err := m.addVirtualSubnetToState(name, subnetCIDR, parentCIDR, networkID)
+	// Preserve the existing STACKIT/AWS contract: triple-subnet workload
+	// children carry the "ocfp" role and an empty AZ (the caller did not
+	// pass one, so we let downstream state lookups resolve from config).
+	return m.addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR, networkID, subnetRoleOCFP, "")
+}
+
+// addVirtualSubnetWithRole records a virtual subnet with an explicit role hint
+// and AZ. The role drives reserved-IP placement (infra vs. ocfp); az populates
+// the subnet's availability_zone property and the matching state output.
+func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, networkID interface{}, role, az string) error {
+	err := m.addVirtualSubnetToState(name, subnetCIDR, parentCIDR, networkID, role, az)
 	if err != nil {
 		return err
 	}
@@ -663,7 +824,7 @@ func (m *Manager) validateNetworkID(networkID interface{}) (string, error) {
 // Subnet Management Functions
 // ==============================================================================
 
-func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID interface{}) error {
+func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID interface{}, role, az string) error {
 	// Skip if already present
 	if existingSubnet, _ := m.stateManager.GetResource("subnet", name); existingSubnet != nil {
 		logger.Infof("Virtual subnet %s already recorded, skipping", name)
@@ -671,12 +832,19 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		return nil
 	}
 
+	// Default unknown/empty role to "ocfp" so legacy callers retain their
+	// reserved-IP semantics unchanged.
+	if role == "" {
+		role = subnetRoleOCFP
+	}
+
 	props := map[string]interface{}{
 		"cidr":              subnetCIDR,
-		"availability_zone": "",
+		"availability_zone": az,
 		"network_id":        networkID,
 		"type":              "public",
 		"virtual":           true,
+		"role":              role,
 		// Reserved fields
 		"ip_0":        CIDRFirstIP(subnetCIDR),
 		"ip_n":        CIDRLastUsableIP(subnetCIDR),
@@ -694,7 +862,7 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		Tags: func() map[string]string {
 			t := m.baseTags()
 			t["subnet-kind"] = "virtual"
-			t["role"] = "ocfp"
+			t["role"] = role
 
 			return t
 		}(),
@@ -712,8 +880,13 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_ip_n", name), props["ip_n"])
 	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_gateway", name), props["gateway"])
 
-	// Reserved IP role assignments (STACKIT parity)
-	m.addReservedIPOutputs(name, subnetCIDR)
+	if az != "" {
+		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_az", name), az)
+	}
+
+	// Reserved IP role assignments (STACKIT parity for "ocfp"; PVE infra
+	// reservations when role == infra).
+	m.addReservedIPOutputs(name, subnetCIDR, role)
 
 	return nil
 }
@@ -829,7 +1002,7 @@ func CalculateIPFromCIDR(cidr string, offset int) (string, error) {
 	return resultIP, nil
 }
 
-func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
+func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, role string) {
 	// Determine ocfp subnet index from name suffix
 	idx := -1
 
@@ -866,6 +1039,30 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
 		return uint32ToIP(base + uint32(off)).String()
 	}
 
+	isInfra := role == subnetRoleInfra
+
+	// Infra subnets host bastion/director/shield/blacksmith reservations
+	// alongside the shared mgmt set. OCFP workload subnets keep the
+	// legacy STACKIT-style "idx==0 owns bastion" semantics so existing
+	// providers stay byte-identical.
+	if isInfra {
+		set("bastion_ip", ipAt(bastionIPSlot))
+		set("bosh_ip", ipAt(boshIPSlot))
+		set("shield_ip", ipAt(shieldIPSlot))
+		set("blacksmith_ip", ipAt(blacksmithIPSlot))
+
+		// Available range: 12-29
+		set("available_a", ipAt(availableAIPSlot))
+		set("available_b", ipAt(availableBIPSlot))
+		// Reserved ranges: 0-10, 30->
+		set("reserved_a", ipAt(0))
+		set("reserved_b", ipAt(reservedBIPSlot))
+		set("reserved_c", ipAt(reservedCIPSlot))
+		set("reserved_d", uint32ToIP(last).String())
+
+		return
+	}
+
 	// Single-IP assignments for mgmt
 	// All ocfp subnets
 	set("vault_ip", ipAt(vaultIPSlot))
@@ -890,7 +1087,10 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string) {
 		set("ocfp_ui_ip", ipAt(ocfpUIIPSlot))
 	}
 
-	// Available range: 11-29
+	// TODO: gate on Artifacts.Enabled once config wired
+	set("artifacts_ip", ipAt(artifactsIPSlot))
+
+	// Available range: 12-29
 	set("available_a", ipAt(availableAIPSlot))
 	set("available_b", ipAt(availableBIPSlot))
 	// Reserved ranges: 0-10, 30->

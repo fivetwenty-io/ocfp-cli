@@ -1322,3 +1322,38 @@ func TestCreateKeyPair_KeypairTags(t *testing.T) {
 	// Use manager to verify tags would be applied
 	_ = manager
 }
+
+// TestManager_BastionStaticIPPrefix locks in that the bastion's cloud-init
+// mask is derived from the parent network CIDR (so VM ipconfig0 stays
+// consistent with the actual SDN subnet) rather than the legacy /24 guess.
+func TestManager_BastionStaticIPPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cidr string
+		want int
+	}{
+		{name: "pve vnet /18", cidr: "10.64.64.0/18", want: 18},
+		{name: "classic /24", cidr: "10.0.1.0/24", want: 24},
+		{name: "large /16", cidr: "10.4.0.0/16", want: 16},
+		{name: "narrow /28", cidr: "192.168.1.0/28", want: 28},
+		{name: "no CIDR yields 0 (provider default)", cidr: "", want: 0},
+		{name: "garbage yields 0", cidr: "not-a-cidr", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := createComputeTestConfig()
+			cfg.Network = config.NetworkConfig{CIDR: tt.cidr}
+
+			mgr := bootstrap.NewManager(cfg, nil, nil, &bootstrap.Options{BlocName: "prod"})
+
+			if got := mgr.BastionStaticIPPrefix(); got != tt.want {
+				t.Errorf("BastionStaticIPPrefix() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
