@@ -44,7 +44,6 @@ func TestRenderArtifactsCloudInit_NoTLS(t *testing.T) {
 		"- zfsutils-linux",
 		"- unzip",
 		"- jq",
-		"- awscli",
 		// env file
 		"path: /etc/default/rustfs",
 		"permissions: '0640'",
