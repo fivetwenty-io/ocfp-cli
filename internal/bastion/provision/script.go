@@ -864,12 +864,12 @@ func (sg *ScriptGenerator) appendExtractionByType(lines []string, tool BinaryToo
 	case strings.HasSuffix(tool.URLTemplate, ".deb"):
 		return append(lines,
 			fmt.Sprintf("        cd \"${EXTRACT_DIR}\" && ar x '/tmp/%s' data.tar.gz", tool.Name),
-			"        tar --no-same-owner --no-same-permissions -C \"${EXTRACT_DIR}\" -xzf \"${EXTRACT_DIR}/data.tar.gz\" ./usr/bin/"+tool.Name,
+			"        tar --no-same-owner --no-same-permissions --no-overwrite-dir -C \"${EXTRACT_DIR}\" -xzf \"${EXTRACT_DIR}/data.tar.gz\" ./usr/bin/"+tool.Name,
 			fmt.Sprintf("        mv \"${EXTRACT_DIR}/usr/bin/%s\" \"${EXTRACT_DIR}/%s\"", tool.Name, tool.Name),
 			"        cd -",
 		)
 	default:
-		lines = append(lines, fmt.Sprintf("        tar --no-same-owner --no-same-permissions -C \"${EXTRACT_DIR}\" -xf '/tmp/%s'", tool.Name))
+		lines = append(lines, fmt.Sprintf("        tar --no-same-owner --no-same-permissions --no-overwrite-dir -C \"${EXTRACT_DIR}\" -xf '/tmp/%s'", tool.Name))
 		if tool.Name == "cf" {
 			lines = append(lines,
 				"        # CF CLI tarball contains cf8 binary and cf symlink - move the actual binary",
