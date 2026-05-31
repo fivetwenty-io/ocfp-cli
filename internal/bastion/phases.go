@@ -44,8 +44,45 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-directories")
 }
 
+// installSnapPackages installs snap packages.
+// Deprecated: Snap packages have been migrated to Linuxbrew.
+func (m *Manager) installSnapPackages(ctx context.Context) error {
+	m.log.Info("Installing snap packages")
+
+	// Report progress for snap packages
+	if m.reporter != nil {
+		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
+		snaps := snapMgr.GetSnapPackages()
+		enabledSnaps := filterEnabledSnaps(snaps)
+
+		for i, s := range enabledSnaps {
+			m.reporter.ReportSubtaskProgress("snap_packages", i+1, len(enabledSnaps), s.Name)
+		}
+	}
+
+	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
+	script := snapMgr.GenerateSnapInstallScript(ctx)
+
+	return m.executeScript(ctx, script, "snap-packages")
+}
+
+// brewSkipped reports whether Linuxbrew phases should be skipped for this
+// provider. On PVE the bastion's tools are delivered by the provision script
+// (scripts/provision/bastion) into /usr/local/bin, and the lab CPU types often
+// lack the SSSE3 instructions Linuxbrew's x86_64 bottles require, so brew is
+// both redundant and unrunnable there.
+func (m *Manager) brewSkipped() bool {
+	return strings.EqualFold(m.config.Provider, "pve")
+}
+
 // installBrew installs Linuxbrew itself.
 func (m *Manager) installBrew(ctx context.Context) error {
+	if m.brewSkipped() {
+		m.log.Infow("Skipping Linuxbrew install (tools provided via provision script)", "provider", m.config.Provider)
+
+		return nil
+	}
+
 	m.log.Info("Installing Linuxbrew")
 
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
@@ -56,6 +93,12 @@ func (m *Manager) installBrew(ctx context.Context) error {
 
 // installBrewPackages installs brew packages.
 func (m *Manager) installBrewPackages(ctx context.Context) error {
+	if m.brewSkipped() {
+		m.log.Infow("Skipping brew packages (tools provided via provision script)", "provider", m.config.Provider)
+
+		return nil
+	}
+
 	m.log.Info("Installing brew packages")
 
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
@@ -150,6 +193,46 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
 }
 
+// resolveLocalOCFPBinary locates a linux/amd64 ocfp binary on the operator
+// machine.  Search order:
+//  1. OCFP_BINARY_PATH env var (operator override)
+//  2. ./build/ocfp-linux-amd64 (when invoked from the ocfp CLI repo)
+//  3. <dir-of-running-ocfp>/../build/ocfp-linux-amd64 (installed sibling)
+//  4. ~/w/fivetwenty/studios/ocfp/src/clis/ocfp/build/ocfp-linux-amd64
+//     (common developer checkout layout)
+//
+// Returns the first existing path or an error listing every location tried so
+// the operator knows what to fix.
+func resolveLocalOCFPBinary() (string, error) {
+	if env := os.Getenv("OCFP_BINARY_PATH"); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env, nil
+		}
+	}
+
+	candidates := []string{"./build/ocfp-linux-amd64"}
+
+	exe, err := os.Executable()
+	if err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "build", "ocfp-linux-amd64"))
+	}
+
+	home, herr := os.UserHomeDir()
+	if herr == nil {
+		candidates = append(candidates,
+			filepath.Join(home, "w", "fivetwenty", "studios", "ocfp", "src", "clis", "ocfp", "build", "ocfp-linux-amd64"),
+		)
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("ocfp linux/amd64 binary not found; set OCFP_BINARY_PATH or build with 'make build-linux' (searched: %s)", strings.Join(candidates, ", "))
+}
+
 // uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
 //
 //nolint:funlen // sequential upload steps (checksum, transfer, install) must remain together
@@ -157,7 +240,11 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	// NOTE: Currently uploading from local build until official OCFP releases are published.
 	// Once official releases are available via GitHub releases or package repositories,
 	// this should be updated to download and install from the official source.
-	localBinaryPath := "./build/ocfp-linux-amd64"
+	localBinaryPath, err := resolveLocalOCFPBinary()
+	if err != nil {
+		return err
+	}
+
 	remoteTempPath := "/tmp/ocfp-upload"
 	remoteFinalPath := "/usr/local/bin/ocfp"
 
@@ -243,6 +330,105 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	m.log.Infow("OCFP binary uploaded and made executable", "checksum", localChecksum)
 
 	return nil
+}
+
+// helperScripts enumerates operator-facing bash tools shipped to the bastion's
+// ~/bin alongside the OCFP CLI. Each entry maps an operator-side source path
+// (relative to scripts/) to the basename installed on the bastion.
+//
+// Add entries here when a new self-contained helper is added to scripts/.
+var helperScripts = []struct {
+	source string // relative to scripts/
+	dest   string // basename installed to ~/bin
+}{
+	{"blobstores", "blobstores"},
+}
+
+// installHelperScripts uploads operator-facing helper tools (currently just
+// `blobstores`) from scripts/ to ~/bin on the bastion.  These are bash
+// programs that depend only on tools already present after binary_tools +
+// brew_packages (safe, aws, jq, curl), so the phase runs after
+// ocfp_cli_setup as the natural pairing with the CLI binary install.
+//
+// Missing source scripts are logged and skipped (not fatal) so an older
+// operator checkout that predates a given helper still completes init.
+func (m *Manager) installHelperScripts(ctx context.Context) error {
+	m.log.Info("Installing operator helper scripts to ~/bin/")
+
+	for _, h := range helperScripts {
+		localPath, err := resolveHelperScript(h.source)
+		if err != nil {
+			m.log.Warnw("Skipping helper script (source not found)",
+				"name", h.source, "error", err)
+			continue
+		}
+
+		remoteTemp := "/tmp/" + h.dest + "-upload"
+
+		opts := ssh.TransferOptions{Verify: true}
+
+		err = m.sshClient.TransferFile(ctx, localPath, remoteTemp, opts)
+		if err != nil {
+			return fmt.Errorf("transferring helper script %s: %w", h.source, err)
+		}
+
+		// ~/bin is created by the directories phase and owned by the SSH user;
+		// no sudo needed. mkdir -p is defensive in case install runs out of
+		// order or directories phase was skipped.
+		installCmd := fmt.Sprintf(
+			`bash -c 'mkdir -p "$HOME/bin" && install -m 0755 %q "$HOME/bin/%s" && rm -f %q'`,
+			remoteTemp, h.dest, remoteTemp,
+		)
+
+		_, err = m.sshClient.ExecuteCommand(ctx, installCmd)
+		if err != nil {
+			_, _ = m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("rm -f %q", remoteTemp))
+
+			return fmt.Errorf("installing helper script %s: %w", h.dest, err)
+		}
+
+		m.log.Infow("Installed helper script", "name", h.dest)
+	}
+
+	return nil
+}
+
+// resolveHelperScript locates a script under scripts/ on the operator host.
+// Search order mirrors resolveLocalOCFPBinary: env override, cwd, sibling of
+// the running ocfp binary, and the canonical developer-checkout path.
+func resolveHelperScript(name string) (string, error) {
+	if env := os.Getenv("OCFP_HELPER_SCRIPTS_DIR"); env != "" {
+		p := filepath.Join(env, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	candidates := []string{filepath.Join("scripts", name)}
+
+	exe, err := os.Executable()
+	if err == nil {
+		execDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(execDir, "..", "scripts", name),
+			filepath.Join(execDir, "scripts", name),
+		)
+	}
+
+	home, herr := os.UserHomeDir()
+	if herr == nil {
+		candidates = append(candidates,
+			filepath.Join(home, "w", "fivetwenty", "studios", "ocfp", "src", "clis", "ocfp", "scripts", name),
+		)
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("helper script %q not found (searched: %s)", name, strings.Join(candidates, ", "))
 }
 
 // setupVaultInception runs vault inception.

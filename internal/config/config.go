@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 // FQDN configuration errors.
@@ -73,13 +75,26 @@ func testSafetyGuard(operation string) {
 	}
 }
 
+// PVEDefaults holds global default PVE credentials that apply to any bloc
+// whose corresponding credential field is not set. Bloc-level values always
+// take precedence over these defaults.
+type PVEDefaults struct {
+	AuthToken   string `json:"auth_token"   mapstructure:"auth_token"   yaml:"auth_token,omitempty"`   //nolint:gosec // field name is descriptive, not a hardcoded secret
+	TokenSecret string `json:"token_secret" mapstructure:"token_secret" yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Username    string `json:"username"     mapstructure:"username"     yaml:"username,omitempty"`
+	Password    string `json:"password"     mapstructure:"password"     yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+}
+
 // ConfigFile represents the top-level configuration file structure.
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
-	Debug   bool               `mapstructure:"debug"   yaml:"debug"`
-	Verbose bool               `mapstructure:"verbose" yaml:"verbose"`
-	Blocs   map[string]*Config `mapstructure:"blocs"   yaml:"blocs"`
+	Debug      bool               `mapstructure:"debug"     yaml:"debug"`
+	Verbose    bool               `mapstructure:"verbose"   yaml:"verbose"`
+	PVE        *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
+	Tailscale  *TailscaleConfig   `mapstructure:"tailscale"  yaml:"tailscale,omitempty"`
+	Cloudflare *CloudflareConfig  `mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+	Blocs      map[string]*Config `mapstructure:"blocs"      yaml:"blocs"`
 }
 
 // Config represents a bloc configuration.
@@ -88,15 +103,45 @@ type Config struct {
 	Provider string `json:"provider" mapstructure:"provider" yaml:"provider,omitempty"`
 	IaaS     string `json:"iaas"     mapstructure:"iaas"     yaml:"iaas,omitempty"`
 	Region   string `json:"region"   mapstructure:"region"   yaml:"region,omitempty"`
+	// Nodes lists Proxmox VE cluster nodes for multi-node AZ configuration.
+	// Each entry is written as a separate vault AZ entry under net/azs/{node}.
+	// PVE-specific; ignored by other providers.
+	Nodes []string `json:"nodes" mapstructure:"nodes" yaml:"nodes,omitempty"`
 	// Prefer snake_case to match README and user configs
-	ProjectID             string `json:"project_id"               mapstructure:"project_id"               yaml:"project_id,omitempty"`
-	OrgID                 string `json:"org_id"                   mapstructure:"org_id"                   yaml:"org_id,omitempty"`
-	AuthToken             string `json:"auth_token"               mapstructure:"auth_token"               yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ProjectID string `json:"project_id" mapstructure:"project_id" yaml:"project_id,omitempty"`
+	OrgID     string `json:"org_id"     mapstructure:"org_id"     yaml:"org_id,omitempty"`
+	AuthToken string `json:"auth_token" mapstructure:"auth_token" yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	// TokenSecret holds the PVE API token secret for API token auth. Distinct from
+	// Password, which is used only for username/password auth. When AuthToken is set,
+	// TokenSecret must also be set; Password is ignored for auth purposes in that mode.
+	TokenSecret           string `json:"token_secret"             mapstructure:"token_secret"             yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token,omitempty"`
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
-	APIEndpoint      string                      `json:"api_endpoint"        mapstructure:"api_endpoint"        yaml:"api_endpoint,omitempty"`
+	APIEndpoint string `json:"api_endpoint" mapstructure:"api_endpoint" yaml:"api_endpoint,omitempty"`
+	// VerifySSL controls TLS certificate verification for provider API calls.
+	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
+	// certs work out of the box. Set true when targeting a PVE host with a
+	// CA-signed certificate to fail-closed on cert mismatches.
+	VerifySSL bool `json:"verify_ssl" mapstructure:"verify_ssl" yaml:"verify_ssl,omitempty"`
+	// IsoStorage is the PVE storage pool that hosts ISO content and
+	// cloud-init snippets. PVE-specific. Used by snippet upload and by
+	// template auto-provisioning to stage downloaded cloud images.
+	IsoStorage string `json:"iso_storage" mapstructure:"iso_storage" yaml:"iso_storage,omitempty"`
+	// VMStorage is the PVE storage pool used for ephemeral (root) VM disks.
+	// PVE-specific. Maps to pve.vm_storage in the bosh-pve-cpi-release job
+	// properties. When empty, configureCPI falls back to
+	// Artifacts.Data.StoragePool, then to the hardcoded default "local-lvm".
+	// Example: "data" (lvmthin pool), "local-lvm" (default thin LVM).
+	VMStorage string `json:"vm_storage" mapstructure:"vm_storage" yaml:"vm_storage,omitempty"`
+	// DiskStorage is the PVE storage pool used for persistent BOSH disks.
+	// PVE-specific. Maps to pve.disk_storage in the bosh-pve-cpi-release job
+	// properties. When empty, configureCPI falls back to
+	// Artifacts.Data.StoragePool, then to the hardcoded default "zfs-1".
+	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
+	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
+	DiskStorage      string                      `json:"disk_storage"        mapstructure:"disk_storage"        yaml:"disk_storage,omitempty"`
 	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
 	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
@@ -113,6 +158,7 @@ type Config struct {
 	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion,omitempty"`
+	Artifacts        ArtifactsConfig             `json:"artifacts"           mapstructure:"artifacts"           yaml:"artifacts,omitempty"`
 	Jumpbox          Jumpbox                     `json:"jumpbox"             mapstructure:"jumpbox"             yaml:"jumpbox,omitempty"`
 	Genesis          Genesis                     `json:"genesis"             mapstructure:"genesis"             yaml:"genesis,omitempty"`
 	DeploymentsData  map[string]interface{}      `json:"deployments"         mapstructure:"deployments"         yaml:"deployments,omitempty"`
@@ -153,9 +199,71 @@ type Config struct {
 
 	// SSH Keys storage for portability (bloc-name -> ed25519 private key)
 	Keys map[string]string `json:"keys" mapstructure:"keys" yaml:"keys,omitempty"`
+
+	// Tailscale carries per-bloc tailscale configuration. Per-bloc values
+	// take precedence over the global ConfigFile.Tailscale defaults via
+	// mergeTailscaleDefaults at load time.
+	Tailscale *TailscaleConfig `json:"tailscale,omitempty" mapstructure:"tailscale" yaml:"tailscale,omitempty"`
+
+	// Cloudflare carries per-bloc Cloudflare Tunnel configuration. Per-bloc
+	// values take precedence over the global ConfigFile.Cloudflare defaults
+	// via mergeCloudflareDefaults at load time.
+	Cloudflare *CloudflareConfig `json:"cloudflare,omitempty" mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+
+	// CFCloudConfigCIDR is the subnet CIDR written into the CF cloud-config
+	// network section. It must match the BOSH director network CIDR
+	// (Network.CIDR) to avoid the Tailscale LAN route hazard. PVE-specific.
+	// When empty, network pairing validation is skipped.
+	CFCloudConfigCIDR string `json:"cf_cloud_config_cidr,omitempty" mapstructure:"cf_cloud_config_cidr" yaml:"cf_cloud_config_cidr,omitempty"`
+
+	// VmidRangeStart is the lower bound (inclusive) of the PVE VMID range the
+	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
+	// the default value 100 so the CPI never clobbers operator-reserved IDs.
+	// Maps to vmid_range_start in the bosh-pve-cpi-release job properties.
+	VmidRangeStart int `json:"vmid_range_start,omitempty" mapstructure:"vmid_range_start" yaml:"vmid_range_start,omitempty"`
+
+	// VmidRangeEnd is the upper bound (inclusive) of the PVE VMID range the
+	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
+	// the default value 5999. Must be greater than VmidRangeStart when both are
+	// non-zero. Maps to vmid_range_end in the bosh-pve-cpi-release job properties.
+	VmidRangeEnd int `json:"vmid_range_end,omitempty" mapstructure:"vmid_range_end" yaml:"vmid_range_end,omitempty"`
+
+	// CfMaxInFlight is the maximum number of concurrent create_vm calls the
+	// BOSH director issues per instance group during a CF deploy. PVE-specific.
+	// Maps to cf_max_in_flight in the cloud-config update block and the
+	// ops-serialize-deploy.yml ops file. Resolution order (Decision D1):
+	//   1. This field when > 0 (explicit operator override).
+	//   2. Live PVE node CPU count clamped to [4, 16] (requires API connectivity).
+	//   3. Default 12 (sized to PVE's default storage worker thread count).
+	// Set to 0 (or omit) to let the CLI derive the value automatically.
+	CfMaxInFlight int `json:"cf_max_in_flight,omitempty" mapstructure:"cf_max_in_flight" yaml:"cf_max_in_flight,omitempty"`
 }
 
-// BlobstoreConfig controls versioning/lifecycle policies for expected buckets.
+// BlobstoreMode constants for PVE bloc-scoped blobstore configuration.
+const (
+	// BlobstoreModeLocal indicates no external object storage; bucket creation is skipped.
+	BlobstoreModeLocal = "local"
+	// BlobstoreModeExternal indicates an S3-compatible blobstore (Ceph RGW, RustFS, etc.).
+	BlobstoreModeExternal = "external"
+	// BlobstoreDefaultRegion is the default S3 region used when none is configured.
+	BlobstoreDefaultRegion = "us-east-1"
+)
+
+// ErrBlobstoreEndpointRequired is returned when mode=external without an endpoint.
+var ErrBlobstoreEndpointRequired = errors.New("blobstore.endpoint is required when mode is external")
+
+// ErrBlobstoreCredentialsRequired is returned when mode=external without credentials.
+var ErrBlobstoreCredentialsRequired = errors.New("blobstore.access_key and blobstore.secret_key are required when mode is external")
+
+// ErrBlobstoreInvalidMode is returned for an unrecognized blobstore mode value.
+var ErrBlobstoreInvalidMode = errors.New("blobstore.mode must be 'local' or 'external'")
+
+// BlobstoreConfig controls versioning/lifecycle policies for expected buckets
+// AND provides bloc-scoped blobstore mode/endpoint/credentials for providers
+// (PVE) that lack a native object-storage layer.
+//
+// Mode defaults to "local". External mode points at any S3-compatible service
+// (Ceph RGW, RustFS, etc.) and requires endpoint + access_key + secret_key.
 type BlobstoreConfig struct {
 	EnablePolicies bool `json:"enablePolicies,omitempty" mapstructure:"enablePolicies" yaml:"enablePolicies,omitempty"`
 
@@ -164,6 +272,134 @@ type BlobstoreConfig struct {
 	CFBuildpacks  BucketSettings `json:"cfBuildpacks,omitempty"  mapstructure:"cfBuildpacks"  yaml:"cfBuildpacks,omitempty"`
 	CFDroplets    BucketSettings `json:"cfDroplets,omitempty"    mapstructure:"cfDroplets"    yaml:"cfDroplets,omitempty"`
 	CFAppPackages BucketSettings `json:"cfAppPackages,omitempty" mapstructure:"cfAppPackages" yaml:"cfAppPackages,omitempty"`
+
+	// Bloc-scoped S3-compatible blobstore configuration (used primarily by
+	// the PVE provider, which has no native object store).
+	Mode      string `json:"mode,omitempty"       mapstructure:"mode"       yaml:"mode,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"   mapstructure:"endpoint"   yaml:"endpoint,omitempty"`
+	Region    string `json:"region,omitempty"     mapstructure:"region"     yaml:"region,omitempty"`
+	AccessKey string `json:"access_key,omitempty" mapstructure:"access_key" yaml:"access_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` //nolint:gosec // field name is descriptive
+	CACert    string `json:"ca_cert,omitempty"    mapstructure:"ca_cert"    yaml:"ca_cert,omitempty"`
+	PathStyle *bool  `json:"path_style,omitempty" mapstructure:"path_style" yaml:"path_style,omitempty"`
+}
+
+// UnmarshalYAML accepts both camelCase and snake_case keys for the new bloc-
+// scoped blobstore fields, while preserving the existing camelCase policy
+// fields. Aliases handled: access_key/accessKey, secret_key/secretKey,
+// path_style/pathStyle, ca_cert/caCert.
+//
+// Validation is intentionally NOT performed here; callers run Validate after
+// load so the error path matches the rest of the config package.
+func (b *BlobstoreConfig) UnmarshalYAML(data []byte) error {
+	type rawBlobstore struct {
+		EnablePolicies bool           `yaml:"enablePolicies,omitempty"`
+		BoshBlobstore  BucketSettings `yaml:"boshBlobstore,omitempty"`
+		CFBuildpacks   BucketSettings `yaml:"cfBuildpacks,omitempty"`
+		CFDroplets     BucketSettings `yaml:"cfDroplets,omitempty"`
+		CFAppPackages  BucketSettings `yaml:"cfAppPackages,omitempty"`
+
+		Mode        string `yaml:"mode,omitempty"`
+		Endpoint    string `yaml:"endpoint,omitempty"`
+		Region      string `yaml:"region,omitempty"`
+		AccessKey   string `yaml:"access_key,omitempty"`
+		AccessKeyCC string `yaml:"accessKey,omitempty"`
+		SecretKey   string `yaml:"secret_key,omitempty"`
+		SecretKeyCC string `yaml:"secretKey,omitempty"`
+		CACert      string `yaml:"ca_cert,omitempty"`
+		CACertCC    string `yaml:"caCert,omitempty"`
+		PathStyle   *bool  `yaml:"path_style,omitempty"`
+		PathStyleCC *bool  `yaml:"pathStyle,omitempty"`
+	}
+
+	var raw rawBlobstore
+
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		return fmt.Errorf("decoding blobstore config: %w", err)
+	}
+
+	b.EnablePolicies = raw.EnablePolicies
+	b.BoshBlobstore = raw.BoshBlobstore
+	b.CFBuildpacks = raw.CFBuildpacks
+	b.CFDroplets = raw.CFDroplets
+	b.CFAppPackages = raw.CFAppPackages
+
+	b.Mode = strings.ToLower(strings.TrimSpace(raw.Mode))
+	b.Endpoint = raw.Endpoint
+	b.Region = raw.Region
+	b.AccessKey = firstSetString(raw.AccessKey, raw.AccessKeyCC)
+	b.SecretKey = firstSetString(raw.SecretKey, raw.SecretKeyCC)
+	b.CACert = firstSetString(raw.CACert, raw.CACertCC)
+
+	switch {
+	case raw.PathStyle != nil:
+		b.PathStyle = raw.PathStyle
+	case raw.PathStyleCC != nil:
+		b.PathStyle = raw.PathStyleCC
+	}
+
+	return nil
+}
+
+// ResolvedMode returns the effective blobstore mode, defaulting to local when
+// unset.
+func (b *BlobstoreConfig) ResolvedMode() string {
+	if b == nil {
+		return BlobstoreModeLocal
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(b.Mode))
+	if mode == "" {
+		return BlobstoreModeLocal
+	}
+
+	return mode
+}
+
+// ResolvedPathStyle returns the effective path_style setting, defaulting to
+// true (Ceph/RustFS friendly) when not configured.
+func (b *BlobstoreConfig) ResolvedPathStyle() bool {
+	if b == nil || b.PathStyle == nil {
+		return true
+	}
+
+	return *b.PathStyle
+}
+
+// ResolvedRegion returns the configured region or the default region when
+// unset.
+func (b *BlobstoreConfig) ResolvedRegion() string {
+	if b == nil || strings.TrimSpace(b.Region) == "" {
+		return BlobstoreDefaultRegion
+	}
+
+	return b.Region
+}
+
+// Validate ensures external mode has required fields.
+func (b *BlobstoreConfig) Validate() error {
+	if b == nil {
+		return nil
+	}
+
+	mode := b.ResolvedMode()
+	switch mode {
+	case BlobstoreModeLocal, "":
+		return nil
+	case BlobstoreModeExternal:
+		if strings.TrimSpace(b.Endpoint) == "" {
+			return ErrBlobstoreEndpointRequired
+		}
+
+		if strings.TrimSpace(b.AccessKey) == "" || strings.TrimSpace(b.SecretKey) == "" {
+			return ErrBlobstoreCredentialsRequired
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrBlobstoreInvalidMode, b.Mode)
+	}
 }
 
 // Common default network CIDR for several providers.
@@ -181,6 +417,11 @@ const (
 	octetShift24        = 24
 	octetShift16        = 16
 	octetShift8         = 8
+
+	// providerStackIT is the canonical lower-case provider name for STACKIT.
+	providerStackIT = "stackit"
+	// dnsCloudflare is Cloudflare's primary resolver, used as the default DNS.
+	dnsCloudflare = "1.1.1.1"
 )
 
 // BucketSettings specify data-plane policies.
@@ -200,6 +441,82 @@ type NetworkConfig struct {
 	DNSServers     []string `json:"dnsServers,omitempty"     mapstructure:"dnsServers"     yaml:"dnsServers,omitempty"`
 	SubnetStrategy string   `json:"subnetStrategy,omitempty" mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"`
 	Subnets        []Subnet `json:"subnets,omitempty"        mapstructure:"subnets"        yaml:"subnets,omitempty"`
+}
+
+// UnmarshalYAML accepts the historical snake_case key network_cidr alongside
+// the documented cidr / networkCidr forms. goccy/go-yaml matches struct tags
+// case-sensitively, so without this hook a config that writes network_cidr
+// silently falls back to the package default and the bastion lands on the
+// wrong subnet — a trap that has bitten PVE bridge-mode deployments.
+//
+// Precedence when more than one key is set: cidr > networkCidr > network_cidr.
+// NetworkCIDR is populated for downstream consumers that look only at that
+// field.
+func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
+	type rawNetwork struct {
+		ID             string   `yaml:"id,omitempty"`
+		Name           string   `yaml:"name,omitempty"`
+		CIDR           string   `yaml:"cidr,omitempty"`
+		NetworkCIDR    string   `yaml:"networkCidr,omitempty"`
+		NetworkCIDRSC  string   `yaml:"network_cidr,omitempty"`
+		SubnetID       string   `yaml:"subnetId,omitempty"`
+		SubnetIDSC     string   `yaml:"subnet_id,omitempty"`
+		DNS            []string `yaml:"dns,omitempty"`
+		DNSServers     []string `yaml:"dnsServers,omitempty"`
+		DNSServersSC   []string `yaml:"dns_servers,omitempty"`
+		SubnetStrategy string   `yaml:"subnetStrategy,omitempty"`
+		Subnets        []Subnet `yaml:"subnets,omitempty"`
+	}
+
+	var raw rawNetwork
+
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		return fmt.Errorf("decoding network config: %w", err)
+	}
+
+	n.ID = raw.ID
+	n.Name = raw.Name
+	n.CIDR = firstSetString(raw.CIDR, raw.NetworkCIDR, raw.NetworkCIDRSC)
+	n.NetworkCIDR = firstSetString(raw.NetworkCIDR, raw.NetworkCIDRSC, raw.CIDR)
+	n.SubnetID = firstSetString(raw.SubnetID, raw.SubnetIDSC)
+	n.DNS = raw.DNS
+
+	if len(raw.DNSServers) > 0 {
+		n.DNSServers = raw.DNSServers
+	} else {
+		n.DNSServers = raw.DNSServersSC
+	}
+
+	n.SubnetStrategy = raw.SubnetStrategy
+	n.Subnets = raw.Subnets
+
+	return nil
+}
+
+func firstSetString(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+// mergePVEDefaults fills empty PVE credential fields on bloc from defaults.
+// Bloc values take precedence; defaults supply values only when the bloc
+// field is empty. Non-credential fields on bloc are never modified.
+// No-ops when either argument is nil.
+func mergePVEDefaults(bloc *Config, defaults *PVEDefaults) {
+	if bloc == nil || defaults == nil {
+		return
+	}
+
+	bloc.AuthToken = firstSetString(bloc.AuthToken, defaults.AuthToken)
+	bloc.TokenSecret = firstSetString(bloc.TokenSecret, defaults.TokenSecret)
+	bloc.Username = firstSetString(bloc.Username, defaults.Username)
+	bloc.Password = firstSetString(bloc.Password, defaults.Password)
 }
 
 // Subnet configuration.
@@ -525,7 +842,7 @@ type FQDNConfig struct {
 // UnmarshalYAML handles fqdns.base being either a string or a single-element
 // YAML sequence, coercing the latter into a plain string so callers always see
 // FQDNConfig.Base as a string.
-func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
+func (f *FQDNConfig) UnmarshalYAML(data []byte) error {
 	type aux struct {
 		Base interface{}       `yaml:"base"`
 		Mgmt map[string]string `yaml:"mgmt"`
@@ -534,7 +851,7 @@ func (f *FQDNConfig) UnmarshalYAML(value *yaml.Node) error {
 
 	var raw aux
 
-	decodeErr := value.Decode(&raw)
+	decodeErr := yaml.Unmarshal(data, &raw)
 	if decodeErr != nil {
 		return fmt.Errorf("decoding fqdns config: %w", decodeErr)
 	}
@@ -586,6 +903,16 @@ func Load() (*Config, error) {
 func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	// Determine config file path
 	configPath := determineConfigPath(configFile)
+
+	// If configPath is empty, return an error
+	if configPath == "" {
+		return nil, ErrNoConfigFile
+	}
+
+	// If blocName is empty, return an error
+	if blocName == "" {
+		return nil, ErrNoBlocName
+	}
 
 	// Try to get from cache first
 	if cachedCfg := getCachedConfig(configPath, blocName); cachedCfg != nil {
@@ -731,6 +1058,10 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 		blocConfig.Name = blocName
 	}
 
+	mergePVEDefaults(blocConfig, configFileData.PVE)
+	mergeTailscaleDefaults(blocConfig, configFileData.Tailscale)
+	mergeCloudflareDefaults(blocConfig, configFileData.Cloudflare)
+
 	return blocConfig, nil
 }
 
@@ -822,6 +1153,35 @@ func cacheConfiguration(configPath, blocName string, cfg *Config) {
 	}
 }
 
+// ListBlocNames returns the sorted names of all blocs defined in the config file.
+// Returns an empty slice (not an error) if the file doesn't exist or has no blocs.
+func ListBlocNames(configFile string) ([]string, error) {
+	path := determineConfigPath(configFile)
+	if path == "" {
+		return nil, nil
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	var cfgFile ConfigFile
+
+	err := loadFromFile(path, &cfgFile)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(cfgFile.Blocs))
+	for name := range cfgFile.Blocs {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names, nil
+}
+
 // determineConfigPath determines the configuration file path.
 func determineConfigPath(configFile string) string {
 	// Priority 1: Explicit config file
@@ -872,7 +1232,7 @@ func loadFromFile(path string, target interface{}) error {
 // applyDefaults applies provider-specific defaults.
 func applyDefaults(cfg *Config, provider string) error {
 	switch strings.ToLower(provider) {
-	case "stackit":
+	case providerStackIT:
 		applyStackitDefaults(cfg)
 	case "openstack":
 		applyOpenStackDefaults(cfg)
@@ -891,6 +1251,7 @@ func applyDefaults(cfg *Config, provider string) error {
 
 	applyGenesisDefaults(cfg)
 	applyBastionGenesisDefaults(cfg)
+	cfg.Artifacts.Defaults()
 
 	return nil
 }
@@ -907,11 +1268,13 @@ func applyGenesisDefaults(cfg *Config) {
 	}
 
 	if cfg.Genesis.Branch == "" {
-		cfg.Genesis.Branch = "v3.1.x-dev"
+		cfg.Genesis.Branch = "v3.2.x-dev"
 	}
 
 	if cfg.Genesis.VersionPrefix == "" {
-		cfg.Genesis.VersionPrefix = "3.1.0"
+		// Pack version must be semver-parseable (genesis `semver`/`new_enough`
+		// reject "x"/"-dev"); the dev line is identified by Branch, not version.
+		cfg.Genesis.VersionPrefix = "3.2.0"
 	}
 }
 
@@ -922,11 +1285,11 @@ func applyBastionGenesisDefaults(cfg *Config) {
 	}
 
 	if cfg.Bastion.Genesis.Branch == "" {
-		cfg.Bastion.Genesis.Branch = "v3.1.x-dev"
+		cfg.Bastion.Genesis.Branch = "v3.2.x-dev"
 	}
 
 	if cfg.Bastion.Genesis.VersionPrefix == "" {
-		cfg.Bastion.Genesis.VersionPrefix = "3.1.0"
+		cfg.Bastion.Genesis.VersionPrefix = "3.2.0"
 	}
 }
 
@@ -942,12 +1305,12 @@ func applyStackitDefaults(cfg *Config) {
 	}
 
 	if len(cfg.DNS) == 0 {
-		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.DNS = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
-		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
-		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNS = []string{dnsCloudflare, "8.8.8.8"}
+		cfg.Network.DNSServers = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if cfg.Bastion.Flavor == "" {
@@ -990,7 +1353,7 @@ func applyStackitDefaults(cfg *Config) {
 // AWS/GCP/Azure use letter suffixes (e.g., us-east-1a, us-east-1b).
 // STACKIT uses numeric suffixes with a dash (e.g., eu01-1, eu01-2).
 func FormatAvailabilityZone(provider, region string, index int) string {
-	if strings.EqualFold(provider, "stackit") {
+	if strings.EqualFold(provider, providerStackIT) {
 		return fmt.Sprintf("%s-%d", region, index+1)
 	}
 
@@ -1088,9 +1451,14 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 		if err != nil {
 			return nil
 		}
+
+		if octets[i] < 0 || octets[i] > octetBitmask {
+			return nil
+		}
 	}
 
-	// Convert to uint32
+	// Convert to uint32 — each octet is now bounded to [0, 255] so the
+	// cast cannot silently wrap.
 	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3])
 
 	// Calculate subnet size
@@ -1135,12 +1503,12 @@ func applyAWSDefaults(cfg *Config) {
 	}
 
 	if len(cfg.DNS) == 0 {
-		cfg.DNS = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.DNS = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	if len(cfg.Network.DNS) == 0 && len(cfg.Network.DNSServers) == 0 {
-		cfg.Network.DNS = []string{"1.1.1.1", "8.8.8.8"}
-		cfg.Network.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+		cfg.Network.DNS = []string{dnsCloudflare, "8.8.8.8"}
+		cfg.Network.DNSServers = []string{dnsCloudflare, "8.8.8.8"}
 	}
 
 	// Apply instanceType alias for AWS (prefer instanceType over flavor if both set)
@@ -1247,7 +1615,7 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate provider
-	validProviders := []string{"stackit", "openstack", "aws", "azure", "gcp", "vmware"}
+	validProviders := []string{providerStackIT, "openstack", "aws", "azure", "gcp", "vmware", "pve"}
 	providerValid := false
 
 	for _, p := range validProviders {
@@ -1260,6 +1628,144 @@ func validate(cfg *Config) error {
 
 	if !providerValid {
 		return ErrInvalidProvider(cfg.Provider)
+	}
+
+	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).
+	if err := cfg.Blobstore.Validate(); err != nil {
+		return fmt.Errorf("blobstore config: %w", err)
+	}
+
+	// Validate the merged tailscale config (mutual exclusion of literal
+	// auth_key vs auth_key_vault_path).
+	if err := cfg.Tailscale.Validate(); err != nil {
+		return err
+	}
+
+	if err := cfg.Cloudflare.Validate(); err != nil {
+		return err
+	}
+
+	// Validate opt-in ocfp-artifacts VM config.
+	// Bastion-enabled proxy: a configured Flavor implies bastion provisioning.
+	// internalCAConfigured is unconditionally true: the bloc CA is generated on
+	// demand by bootstrap (vault.LoadOrGenerateBlocCA), so the validator never
+	// has to refuse internal-ca mode for missing config.
+	bastionEnabled := cfg.Bastion.Flavor != ""
+	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true); err != nil {
+		return fmt.Errorf("artifacts config: %w", err)
+	}
+
+	// Validate PVE credential configuration (Decision D2):
+	// - Neither auth mode configured: error (cannot authenticate).
+	// - Both auth modes configured: warn; token wins by convention.
+	// - Exactly one auth mode configured: ok.
+	if strings.EqualFold(cfg.Provider, "pve") {
+		if err := validatePVE(cfg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validatePVE runs all PVE-specific validation steps: auth mode, VMID range,
+// and director/CF cloud-config CIDR pairing.
+func validatePVE(cfg *Config) error {
+	if err := validatePVEAuth(cfg, os.Stderr); err != nil {
+		return err
+	}
+
+	if err := validatePVEVMIDRange(cfg); err != nil {
+		return err
+	}
+
+	// Validate that the director network CIDR and CF cloud-config CIDR
+	// refer to the same network when both are present. A mismatch
+	// re-triggers the Tailscale LAN route hazard on PVE blocs.
+	// Either field absent means the operator has not applied both
+	// overrides yet — skip validation rather than fail.
+	directorCIDR := cfg.Network.CIDR
+	if directorCIDR == "" {
+		directorCIDR = cfg.Network.NetworkCIDR
+	}
+
+	if directorCIDR != "" && cfg.CFCloudConfigCIDR != "" {
+		if err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validatePVEAuth checks PVE-specific credential configuration.
+//
+// Auth modes:
+//   - API token auth: both auth_token and token_secret non-empty.
+//   - User/password auth: both username and password non-empty.
+//
+// Rules (Decision D2):
+//   - Neither mode configured → ErrPVEAuthRequired.
+//   - Both modes configured → write warning to warnW; token wins at runtime (not an error).
+//   - Exactly one mode configured → valid.
+//
+// warnW receives any diagnostic text; pass os.Stderr in production callers and
+// a *bytes.Buffer in tests to avoid global stderr mutation.
+func validatePVEAuth(cfg *Config, warnW io.Writer) error {
+	apiTokenMode := cfg.AuthToken != "" && cfg.TokenSecret != ""
+	userPassMode := cfg.Username != "" && cfg.Password != ""
+
+	switch {
+	case !apiTokenMode && !userPassMode:
+		return ErrPVEAuthRequired
+
+	case apiTokenMode && userPassMode:
+		// Both auth modes set; API token wins at runtime per CPI auth-selection
+		// logic. Log a warning so operators know the password credentials are
+		// ignored. This is not an error because the config is functional.
+		fmt.Fprintf(warnW, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
+	}
+
+	return nil
+}
+
+// pveVMIDRangeMax is the maximum VMID PVE supports.
+const pveVMIDRangeMax = 999999999
+
+// validatePVEVMIDRange validates the VMID range configuration for PVE blocs.
+//
+// Rules (both fields are optional; zero means "use default"):
+//   - Both zero: valid (defaults 100/5999 apply at CPI config time).
+//   - VmidRangeStart < 0 or VmidRangeEnd < 0: invalid.
+//   - Either field non-zero and start >= end: invalid.
+//   - Either field > pveVMIDRangeMax: invalid.
+//
+// Only one auth-unrelated error sentinel is used so callers can errors.Is-check
+// without parsing the message.
+func validatePVEVMIDRange(cfg *Config) error {
+	start := cfg.VmidRangeStart
+	end := cfg.VmidRangeEnd
+
+	// Both zero: defaults apply later; no error.
+	if start == 0 && end == 0 {
+		return nil
+	}
+
+	// Negative values are always invalid.
+	if start < 0 || end < 0 {
+		return ErrPVEVMIDRangeInvalid
+	}
+
+	// Upper-bound sanity: PVE rejects VMIDs above 999999999.
+	if start > pveVMIDRangeMax || end > pveVMIDRangeMax {
+		return ErrPVEVMIDRangeInvalid
+	}
+
+	// When either is non-zero, end must be strictly greater than start.
+	// This catches: start=200, end=0 (end would default to 5999 < start if
+	// start is intentionally high) — treated as invalid to force explicit config.
+	if end <= start {
+		return ErrPVEVMIDRangeInvalid
 	}
 
 	return nil

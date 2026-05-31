@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
@@ -515,9 +518,21 @@ func TestIntegration_EBSVolumeLifecycle(t *testing.T) {
 		}
 	}()
 
-	// Wait for volume to be available
+	// Wait for volume to be available using SDK waiter (polls DescribeVolumes until state=available).
+	const volWaitTimeout = 3 * time.Minute
+
 	t.Log("Waiting for volume to be available")
-	time.Sleep(5 * time.Second)
+
+	ec2CLI, err := client.getEC2Client(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get EC2 client: %v", err)
+	}
+
+	if waitErr := ec2.NewVolumeAvailableWaiter(ec2CLI).Wait(ctx, &ec2.DescribeVolumesInput{
+		VolumeIds: []string{volume.ID},
+	}, volWaitTimeout); waitErr != nil {
+		t.Fatalf("Volume did not become available: %v", waitErr)
+	}
 
 	// Get Volume
 	t.Logf("Getting volume: %s", volume.ID)
@@ -586,8 +601,19 @@ func TestIntegration_EBSSnapshotLifecycle(t *testing.T) {
 		_ = sm.DeleteVolume(ctx, volume.ID)
 	}()
 
-	// Wait for volume to be available
-	time.Sleep(5 * time.Second)
+	// Wait for volume to be available using SDK waiter before creating snapshot.
+	const volWaitTimeoutSnap = 3 * time.Minute
+
+	ec2CLISnap, err := client.getEC2Client(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get EC2 client: %v", err)
+	}
+
+	if waitErr := ec2.NewVolumeAvailableWaiter(ec2CLISnap).Wait(ctx, &ec2.DescribeVolumesInput{
+		VolumeIds: []string{volume.ID},
+	}, volWaitTimeoutSnap); waitErr != nil {
+		t.Fatalf("Volume did not become available before snapshot: %v", waitErr)
+	}
 
 	// Create Snapshot
 	snapshotName := generateTestName("snap")
@@ -810,9 +836,21 @@ func TestIntegration_LoadBalancerLifecycle(t *testing.T) {
 		}
 	}()
 
-	// Wait for LB to provision
+	// Wait for LB to provision using SDK waiter (polls DescribeLoadBalancers until state=active).
+	const lbWaitTimeout = 3 * time.Minute
+
 	t.Log("Waiting for load balancer to provision")
-	time.Sleep(10 * time.Second)
+
+	elbCLI, err := client.getELBClient(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get ELB client: %v", err)
+	}
+
+	if waitErr := elbv2.NewLoadBalancerAvailableWaiter(elbCLI).Wait(ctx, &elbv2.DescribeLoadBalancersInput{
+		LoadBalancerArns: []string{lb.ID},
+	}, lbWaitTimeout); waitErr != nil {
+		t.Fatalf("Load balancer did not become available: %v", waitErr)
+	}
 
 	// Get Load Balancer
 	t.Logf("Getting load balancer: %s", lb.ID)

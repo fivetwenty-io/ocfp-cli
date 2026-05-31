@@ -183,6 +183,15 @@ func TestNewBastionCmd(t *testing.T) {
 	assert.NoError(t, cmd.Args(cmd, []string{"init"}))
 }
 
+func TestNewBastionCmdDryRunFlag(t *testing.T) {
+	cmd := commands.NewBastionCmd()
+
+	flag := cmd.Flags().Lookup("dry-run")
+	require.NotNil(t, flag, "bastion command must register a --dry-run flag")
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Equal(t, "bool", flag.Value.Type())
+}
+
 func TestBastionCommand(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -246,7 +255,7 @@ func TestBuildEnvironmentVariables(t *testing.T) {
 	t.Setenv("OCFP_BLOC", "test-bloc")
 	t.Setenv("OCFP_PROVIDER", "stackit")
 
-	envString := commands.BuildEnvironmentVariables(nil)
+	envString := commands.BuildEnvironmentVariables(nil, nil)
 	assert.Contains(t, envString, "OCFP_BLOC='test-bloc'")
 	assert.Contains(t, envString, "OCFP_PROVIDER='stackit'")
 }

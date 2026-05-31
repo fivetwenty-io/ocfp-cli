@@ -2,11 +2,17 @@ package commands_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/commands"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -752,5 +758,173 @@ func TestFilterResourcesSelectiveMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ---------- T10–T13: StateIsEmpty ----------
+
+// TestStateIsEmpty_AbsentFile: absent file → true (nothing to delete).
+func TestStateIsEmpty_AbsentFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	// File not written; must not exist.
+	empty, err := commands.StateIsEmpty(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !empty {
+		t.Fatal("expected StateIsEmpty=true for absent file")
+	}
+}
+
+// TestStateIsEmpty_EmptyJSON: file containing "{}" → true.
+func TestStateIsEmpty_EmptyJSON(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	empty, err := commands.StateIsEmpty(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !empty {
+		t.Fatal("expected StateIsEmpty=true for empty JSON object")
+	}
+}
+
+// TestStateIsEmpty_ValidStateBoshKey: file with top-level "bosh" key → false.
+func TestStateIsEmpty_ValidStateBoshKey(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	content := `{"bosh":{"job_name":"bosh","vm_cid":"vm-abc123"}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	empty, err := commands.StateIsEmpty(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if empty {
+		t.Fatal("expected StateIsEmpty=false when state.json has 'bosh' key")
+	}
+}
+
+// TestStateIsEmpty_CorruptedJSON: malformed JSON → false (conservative).
+func TestStateIsEmpty_CorruptedJSON(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte("{not valid json!!"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	empty, err := commands.StateIsEmpty(path)
+	if err != nil {
+		t.Fatalf("unexpected error (conservative path returns nil error): %v", err)
+	}
+	if empty {
+		t.Fatal("expected StateIsEmpty=false for corrupted JSON (conservative: let bosh delete-env fail)")
+	}
+}
+
+// ---------- T50–T51: PVE VM existence probe ----------
+
+// pveQEMUListResponse builds a PVE API envelope for /nodes/{node}/qemu responses.
+func pveQEMUListResponse(t *testing.T, vms []map[string]interface{}) []byte {
+	t.Helper()
+	env := map[string]interface{}{"data": vms}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// newPVEConfigForTest builds a config.Config pointing at ts.URL for PVE API calls.
+func newPVEConfigForTest(ts *httptest.Server, blocName string) *config.Config {
+	return &config.Config{
+		Name:        blocName,
+		Provider:    "pve",
+		Region:      "pvenode1",
+		APIEndpoint: ts.URL,
+		AuthToken:   "root@pam!testtoken",
+		TokenSecret: "00000000-0000-0000-0000-000000000001",
+		VerifySSL:   false,
+	}
+}
+
+// initTestLogger initializes the logger for test contexts.
+func initTestLogger(t *testing.T) logger.Logger {
+	t.Helper()
+	logDir := t.TempDir()
+	err := logger.Initialize(logger.Config{
+		Level:      "info",
+		Debug:      false,
+		Verbose:    false,
+		Trace:      false,
+		NoLog:      true,
+		LogDir:     logDir,
+		BlocName:   "test",
+		Command:    "teardown",
+		Subcommand: "",
+		RequestID:  "",
+	})
+	if err != nil {
+		t.Fatalf("initialize logger: %v", err)
+	}
+	return logger.Get()
+}
+
+// TestTeardown_VMAlreadyGone_NoOp: VMExists returns false → done=true (no-op).
+func TestTeardown_VMAlreadyGone_NoOp(t *testing.T) {
+	t.Parallel()
+
+	body := pveQEMUListResponse(t, []map[string]interface{}{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(ts.Close)
+
+	cfg := newPVEConfigForTest(ts, "ocfp-mgmt")
+	log := initTestLogger(t)
+
+	done, err := commands.TestPVECheckAlreadyTornDown(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected done=true when VM list is empty (VM already gone)")
+	}
+}
+
+// TestTeardown_VMExists_RunsDeleteEnv: VMExists returns true → done=false (proceed with teardown).
+func TestTeardown_VMExists_RunsDeleteEnv(t *testing.T) {
+	t.Parallel()
+
+	body := pveQEMUListResponse(t, []map[string]interface{}{
+		{"vmid": 901, "name": "ocfp-mgmt", "status": "running"},
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(ts.Close)
+
+	cfg := newPVEConfigForTest(ts, "ocfp-mgmt")
+	log := initTestLogger(t)
+
+	done, err := commands.TestPVECheckAlreadyTornDown(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if done {
+		t.Fatal("expected done=false when VM is present (teardown should proceed)")
 	}
 }

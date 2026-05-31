@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
-	"gopkg.in/yaml.v3"
 )
 
 // Output format constants for logs display.

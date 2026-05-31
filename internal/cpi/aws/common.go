@@ -7,6 +7,40 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
+// buildResourceTags converts a tag map to AWS EC2 tags, automatically adding
+// a "managed-by=ocfp" tag unless the caller already supplied one.
+func buildResourceTags(tags map[string]string) []types.Tag {
+	awsTags := make([]types.Tag, 0, len(tags)+1)
+
+	if _, exists := tags["managed-by"]; !exists {
+		awsTags = append(awsTags, types.Tag{
+			Key:   aws.String("managed-by"),
+			Value: aws.String("ocfp"),
+		})
+	}
+
+	for k, v := range tags {
+		awsTags = append(awsTags, types.Tag{
+			Key:   aws.String(k),
+			Value: aws.String(v),
+		})
+	}
+
+	return awsTags
+}
+
+// buildNamedResourceTags is buildResourceTags with an explicit Name tag prepended.
+// Used for EC2 resources where the Name tag is conventionally set.
+func buildNamedResourceTags(name string, tags map[string]string) []types.Tag {
+	awsTags := make([]types.Tag, 0, len(tags)+2)
+	awsTags = append(awsTags, types.Tag{
+		Key:   aws.String("Name"),
+		Value: aws.String(name),
+	})
+
+	return append(awsTags, buildResourceTags(tags)...)
+}
+
 // buildAWSTagFilters converts a filter map to AWS EC2 filters.
 // For tag-based filters (like "bloc", "managed-by"), it automatically adds the "tag:" prefix.
 // For AWS-specific filters (like "vpc-id", "network-id", "name"), it passes them through as-is.

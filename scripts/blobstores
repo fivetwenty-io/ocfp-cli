@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# OCFP blobstores — validate the bloc's RustFS (ocfp-artifacts) endpoint.
+#
+# Usage:
+#   blobstores                       # validate (default), uses $OCFP_BLOC
+#   blobstores validate [--bloc B]   # full reachability + bucket round-trip sweep
+#   blobstores endpoint  [--bloc B]  # print endpoint URL
+#   blobstores creds     [--bloc B]  # print AK / SK (export-able)
+#   blobstores buckets   [--bloc B]  # print the canonical bucket list
+#   blobstores help
+#
+# Options:
+#   --bloc <name>     Bloc name (default: $OCFP_BLOC)
+#   --ca-bundle <p>   Verify TLS with this CA bundle (skip when omitted)
+#
+# Discovers endpoint/credentials from Vault via `safe`:
+#   secret/ocfp/<bloc>/artifacts            :endpoint, :host, :port, :tls_mode
+#   secret/config/<bloc>/mgmt/bosh/blobstores/bosh/creds  :access_key, :secret_key
+#
+# Exit codes:
+#   0   all checks passed
+#   1   usage / argument error
+#   2   one or more checks failed
+#   3   missing prerequisite (safe / aws / vault auth)
+
+set -euo pipefail
+
+BUCKETS_SUFFIXES=(
+  mgmt-bosh
+  ocf-bosh
+  ocf-cf-droplets
+  ocf-cf-packages
+  ocf-cf-buildpacks
+  ocf-cf-resource-pool
+)
+
+# ---------------------------------------------------------------------------
+# Output helpers (colorize when stdout is a TTY)
+# ---------------------------------------------------------------------------
+if [[ -t 1 ]]; then
+  C_RESET=$'\033[0m'
+  C_OK=$'\033[32m'
+  C_FAIL=$'\033[31m'
+  C_INFO=$'\033[36m'
+  C_DIM=$'\033[2m'
+else
+  C_RESET=''; C_OK=''; C_FAIL=''; C_INFO=''; C_DIM=''
+fi
+
+info() { printf '%s==>%s %s\n' "$C_INFO" "$C_RESET" "$*"; }
+ok()   { printf '%sOK%s   %s\n' "$C_OK"   "$C_RESET" "$*"; }
+fail() { printf '%sFAIL%s %s\n' "$C_FAIL" "$C_RESET" "$*" >&2; }
+dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+ACTION="${1:-validate}"
+case "$ACTION" in
+  validate|endpoint|creds|buckets|help|-h|--help) shift || true ;;
+  -*)  ACTION=validate ;;
+  *)
+    # First positional is not a known action; assume validate and put it back.
+    ACTION=validate
+    ;;
+esac
+
+BLOC="${OCFP_BLOC:-}"
+CA_BUNDLE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bloc)       BLOC="${2:?--bloc requires a value}"; shift 2 ;;
+    --bloc=*)     BLOC="${1#--bloc=}"; shift ;;
+    --ca-bundle)  CA_BUNDLE="${2:?--ca-bundle requires a value}"; shift 2 ;;
+    --ca-bundle=*) CA_BUNDLE="${1#--ca-bundle=}"; shift ;;
+    -h|--help)    ACTION=help; shift ;;
+    --) shift; break ;;
+    -*) fail "unknown flag: $1"; exit 1 ;;
+    *) fail "unexpected argument: $1"; exit 1 ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+if [[ "$ACTION" == "help" ]]; then
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+
+if [[ -z "$BLOC" ]]; then
+  fail "bloc not specified — pass --bloc or export OCFP_BLOC"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Prerequisite checks
+# ---------------------------------------------------------------------------
+for tool in safe aws curl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    fail "required tool not on PATH: $tool"
+    exit 3
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Vault lookups
+# ---------------------------------------------------------------------------
+safe_get() {
+  # safe get <path>:<key> — strip trailing newline from output.
+  local path="$1"
+  safe get "$path" 2>/dev/null | tr -d '\r' | head -c 1024
+}
+
+ARTIFACTS_META="secret/ocfp/${BLOC}/artifacts"
+BOSH_CREDS_PATH="secret/config/${BLOC}/mgmt/bosh/blobstores/bosh/creds"
+
+EP=$(safe_get "${ARTIFACTS_META}:endpoint")
+if [[ -z "$EP" ]]; then
+  fail "no endpoint at ${ARTIFACTS_META}:endpoint (is the artifacts VM created?)"
+  exit 3
+fi
+
+TLS_MODE=$(safe_get "${ARTIFACTS_META}:tls_mode" || echo "")
+
+AK=$(safe_get "${BOSH_CREDS_PATH}:access_key")
+SK=$(safe_get "${BOSH_CREDS_PATH}:secret_key")
+if [[ -z "$AK" || -z "$SK" ]]; then
+  fail "credentials not found at ${BOSH_CREDS_PATH} (access_key / secret_key)"
+  exit 3
+fi
+
+# ---------------------------------------------------------------------------
+# Sub-commands that print and exit
+# ---------------------------------------------------------------------------
+case "$ACTION" in
+  endpoint)
+    printf 'endpoint=%s\ntls_mode=%s\n' "$EP" "$TLS_MODE"
+    exit 0
+    ;;
+  creds)
+    printf 'export AWS_ACCESS_KEY_ID=%q\n'     "$AK"
+    printf 'export AWS_SECRET_ACCESS_KEY=%q\n' "$SK"
+    printf 'export AWS_DEFAULT_REGION=us-east-1\n'
+    exit 0
+    ;;
+  buckets)
+    for s in "${BUCKETS_SUFFIXES[@]}"; do
+      printf '%s-%s\n' "$BLOC" "$s"
+    done
+    exit 0
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Validate
+# ---------------------------------------------------------------------------
+export AWS_ACCESS_KEY_ID="$AK"
+export AWS_SECRET_ACCESS_KEY="$SK"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+AWS_TLS_ARGS=()
+if [[ "$EP" == https://* ]]; then
+  if [[ -n "$CA_BUNDLE" ]]; then
+    AWS_TLS_ARGS=(--ca-bundle "$CA_BUNDLE")
+    CURL_TLS_ARGS=(--cacert "$CA_BUNDLE")
+  else
+    AWS_TLS_ARGS=(--no-verify-ssl)
+    CURL_TLS_ARGS=(-k)
+  fi
+else
+  CURL_TLS_ARGS=()
+fi
+
+aws_s3() { aws --endpoint-url "$EP" "${AWS_TLS_ARGS[@]}" "$@"; }
+
+failures=0
+note_fail() { fail "$1"; failures=$((failures + 1)); }
+
+info "bloc=${BLOC}  endpoint=${EP}  tls_mode=${TLS_MODE:-unknown}"
+
+# 1. Reachability
+http_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "${CURL_TLS_ARGS[@]}" "${EP%/}/" 2>/dev/null || true)
+case "$http_code" in
+  200|403)  ok   "reachable (HTTP ${http_code})" ;;
+  "")       note_fail "no HTTP response from ${EP} (timeout or TLS handshake)" ;;
+  *)        note_fail "unexpected HTTP ${http_code} from ${EP}" ;;
+esac
+
+# 2. List buckets (auth round-trip)
+buckets_seen=$(aws_s3 s3 ls 2>&1 || true)
+if echo "$buckets_seen" | grep -q "InvalidAccessKeyId\|SignatureDoesNotMatch\|Could not connect"; then
+  note_fail "s3 ls failed: $(echo "$buckets_seen" | head -1)"
+else
+  ok   "s3 ls succeeded"
+  echo "$buckets_seen" | sed 's/^/        /'
+fi
+
+# 3. Per-bucket: head + round-trip
+probe_payload="ocfp-blobstores-validate $(date -u +%FT%TZ) $(hostname)"
+probe_key="_ocfp_validate/probe-$$.txt"
+
+for suffix in "${BUCKETS_SUFFIXES[@]}"; do
+  bucket="${BLOC}-${suffix}"
+
+  if ! aws_s3 s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+    note_fail "${bucket}: head-bucket failed"
+    continue
+  fi
+
+  tmp_in=$(mktemp)
+  tmp_out=$(mktemp)
+  trap 'rm -f "$tmp_in" "$tmp_out"' RETURN
+  printf '%s\n' "$probe_payload" > "$tmp_in"
+
+  if ! aws_s3 s3 cp "$tmp_in" "s3://${bucket}/${probe_key}" >/dev/null 2>&1; then
+    note_fail "${bucket}: upload failed"
+    rm -f "$tmp_in" "$tmp_out"
+    continue
+  fi
+
+  if ! aws_s3 s3 cp "s3://${bucket}/${probe_key}" "$tmp_out" >/dev/null 2>&1; then
+    note_fail "${bucket}: download failed"
+    aws_s3 s3 rm "s3://${bucket}/${probe_key}" >/dev/null 2>&1 || true
+    rm -f "$tmp_in" "$tmp_out"
+    continue
+  fi
+
+  if ! cmp -s "$tmp_in" "$tmp_out"; then
+    note_fail "${bucket}: round-trip payload mismatch"
+    aws_s3 s3 rm "s3://${bucket}/${probe_key}" >/dev/null 2>&1 || true
+    rm -f "$tmp_in" "$tmp_out"
+    continue
+  fi
+
+  aws_s3 s3 rm "s3://${bucket}/${probe_key}" >/dev/null 2>&1 || true
+  rm -f "$tmp_in" "$tmp_out"
+  ok "${bucket}: head + upload + download + delete"
+done
+
+echo
+if [[ $failures -eq 0 ]]; then
+  ok "all blobstore checks passed for ${BLOC}"
+  exit 0
+fi
+
+fail "${failures} check(s) failed for ${BLOC}"
+exit 2

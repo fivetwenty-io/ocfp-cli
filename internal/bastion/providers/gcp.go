@@ -106,7 +106,7 @@ func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
 }
 
 // GetConnectionDetails returns the SSH connection details for the bastion.
-func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
+func (g *GCPBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	bastionIP, err := g.getBastionIP()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
@@ -135,34 +135,6 @@ func (g *GCPBastionInit) GetConnectionDetails() (*ConnectionDetails, error) {
 		PrivateKeyPath: sshKey,
 		SSHOptions:     g.getSSHOptions(),
 	}, nil
-}
-
-// Initialize performs bastion initialization for GCP.
-func (g *GCPBastionInit) Initialize(_ctx context.Context) error {
-	g.log.Infow("Initializing GCP bastion", "bloc", g.config.Name)
-
-	// Validate configuration
-	err := g.Validate()
-	if err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
-	// Get connection details
-	details, err := g.GetConnectionDetails()
-	if err != nil {
-		return fmt.Errorf("failed to get connection details: %w", err)
-	}
-
-	g.log.Infow("Bastion connection details",
-		"host", details.Host,
-		"user", details.User,
-		"port", details.Port,
-		"key", details.PrivateKeyPath)
-
-	// Additional initialization steps would go here
-	// (e.g., testing connection, setting up remote environment)
-
-	return nil
 }
 
 // addGenesisEnv adds Genesis-specific environment variables.

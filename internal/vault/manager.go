@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/output"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 )
 
 // Vault operation timing constants.
@@ -129,6 +129,32 @@ type PopulateOptions struct {
 	DryRun           bool
 	Force            bool
 	ProgressReporter ProgressReporter
+
+	// KMSKeyARN is the AWS KMS key ARN supplied via --kms-key-arn.
+	// When non-empty, the ARN is written to vault. When empty, the KMS vault path
+	// is skipped so kits that require KMS surface a clear missing-path error.
+	KMSKeyARN string
+
+	// BlobstoreEndpoint is the S3-compatible endpoint URL supplied via
+	// --blobstore-endpoint (PVE only). When non-empty, the endpoint is written
+	// to vault so kits can resolve the blobstore URL. When empty, the blobstore
+	// endpoint vault write is skipped.
+	BlobstoreEndpoint string
+
+	// BlobstoreMode selects the PVE blobstore mode: "local" (default; bucket
+	// creation skipped) or "external" (S3-compatible endpoint). Empty falls
+	// back to "local" downstream.
+	BlobstoreMode string
+
+	// BlobstoreRegion is the S3 region for external mode. Empty falls back to
+	// "us-east-1" downstream.
+	BlobstoreRegion string
+
+	// BlobstoreAccessKey and BlobstoreSecretKey carry the S3 credentials when
+	// external mode is requested. Written to a dedicated vault path so the
+	// blobstore config path stays secret-free.
+	BlobstoreAccessKey string
+	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -171,7 +197,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
@@ -496,13 +522,31 @@ func (m *Manager) targetExistsInSaferc(targetName string) bool {
 }
 
 // populateFullConfiguration performs full vault configuration.
-func (m *Manager) populateFullConfiguration(reporter ProgressReporter) error {
+// kmsKeyARN is threaded from PopulateOptions and applied to AWS providers.
+// PVE blobstore fields are threaded via *PopulateOptions so all five
+// blobstore-related flags reach the PVEVaultProvider.
+func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN string, opts *PopulateOptions) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
 	// Create provider-specific vault implementation
 	provider, err := m.createVaultProvider()
 	if err != nil {
 		return fmt.Errorf("failed to create vault provider: %w", err)
+	}
+
+	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
+	if awsProvider, ok := provider.(*AWSVaultProvider); ok {
+		awsProvider.KMSKeyARN = kmsKeyARN
+	}
+
+	// For PVE providers, propagate every blobstore flag in one shot so
+	// external-mode bootstraps reach the S3 client with full credentials.
+	if pveProvider, ok := provider.(*PVEVaultProvider); ok {
+		pveProvider.BlobstoreEndpoint = opts.BlobstoreEndpoint
+		pveProvider.BlobstoreMode = opts.BlobstoreMode
+		pveProvider.BlobstoreRegion = opts.BlobstoreRegion
+		pveProvider.BlobstoreAccessKey = opts.BlobstoreAccessKey
+		pveProvider.BlobstoreSecretKey = opts.BlobstoreSecretKey
 	}
 
 	// Perform full configuration (provider reports all phases)
@@ -939,6 +983,8 @@ func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
 		return providers.NewPlaceholderProvider("openstack", m.config, m.safe, m.blocName), nil
 	case "aws":
 		return NewAWSVaultProvider(m.config, m.safe, m.blocName), nil
+	case "pve":
+		return NewPVEVaultProvider(m.config, m.safe, m.blocName), nil
 	case "azure":
 		// Placeholder - return a not-implemented provider
 		return providers.NewPlaceholderProvider("azure", m.config, m.safe, m.blocName), nil
@@ -1055,7 +1101,7 @@ func (m *Manager) killTmuxSession(ctx context.Context, session string) error {
 	}
 
 	// Wait for graceful shutdown
-	time.Sleep(gracefulShutdownWaitSeconds * time.Second)
+	sleepFn(gracefulShutdownWaitSeconds * time.Second)
 
 	// Kill the tmux session
 	// #nosec G204 - session name is validated above
@@ -1126,7 +1172,7 @@ func (m *Manager) killSafeProcesses(port int) error {
 	}
 
 	// Wait for graceful shutdown
-	time.Sleep(processTerminationWaitSeconds * time.Second)
+	sleepFn(processTerminationWaitSeconds * time.Second)
 
 	// Check if processes are still running
 	// #nosec G204 - findCmd is constructed from integer port constant, no user input

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
@@ -19,7 +20,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/pmezard/go-difflib/difflib"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -273,12 +273,12 @@ func (m *Manager) upgradeGenesisFromSource(ctx context.Context, genesisConfig co
 func (m *Manager) extractGenesisConfig(genesisConfig config.Genesis) (string, string, string) {
 	version := genesisConfig.VersionPrefix
 	if version == "" {
-		version = "3.1.0"
+		version = "3.2.0"
 	}
 
 	branch := genesisConfig.Branch
 	if branch == "" {
-		branch = "v3.1.x-dev"
+		branch = "v3.2.x-dev"
 	}
 
 	repo := genesisConfig.Repo
@@ -475,7 +475,7 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	}
 
 	// Get connection details
-	providerConnDetails, err := initializer.GetConnectionDetails()
+	providerConnDetails, err := initializer.GetConnectionDetails(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get connection details: %w", err)
 	}
@@ -636,6 +636,7 @@ func (m *Manager) getInitializationPhases() []struct {
 		// CRITICAL: ocfp_configure MUST run before genesis_secrets_providers
 		// as it clones the deployment repositories containing .genesis directories
 		{"ocfp_cli_setup", m.setupOCFPCLI},
+		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		{"ocfp_configure", m.runOCFPConfigure},
@@ -713,6 +714,7 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"shell_environment", m.setupShellEnvironment},
 		{"system_environment", m.setupSystemEnvironment},
 		{"ocfp_cli_setup", m.setupOCFPCLI},
+		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		{"ocfp_configure", m.runOCFPConfigure},
@@ -1390,6 +1392,8 @@ func (m *Manager) getProviderInitializer() (providers.BastionInitializer, error)
 		return providers.NewOpenStackBastionInit(m.config), nil
 	case "vmware", "vsphere":
 		return providers.NewVMwareBastionInit(m.config), nil
+	case "pve":
+		return providers.NewPVEBastionInit(m.config), nil
 	default:
 		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}
@@ -1701,6 +1705,19 @@ func (m *Manager) setupAPTRepositories(_ctx context.Context) error {
 	// APT repository setup is typically handled by the provisioning script
 	// or is already configured on the system
 	return nil
+}
+
+// filterEnabledSnaps returns only enabled snap packages.
+func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
+	var enabled []provision.SnapPackage
+
+	for _, s := range snaps {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+
+	return enabled
 }
 
 // filterEnabledBinaryTools returns only enabled binary tools.

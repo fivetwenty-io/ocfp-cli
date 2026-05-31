@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"gopkg.in/yaml.v3"
 )
 
 // YAMLRenderer implements the Renderer interface for YAML stream output.
@@ -18,6 +18,9 @@ type YAMLRenderer struct {
 	log      logger.Logger
 	mu       sync.Mutex
 	sequence int
+
+	// now returns the current time. Defaults to time.Now; injectable for tests.
+	now func() time.Time
 }
 
 // NewYAMLRenderer creates a new YAML renderer.
@@ -28,6 +31,7 @@ func NewYAMLRenderer(w io.Writer) *YAMLRenderer {
 		writer:   w,
 		log:      log,
 		sequence: 0,
+		now:      time.Now,
 	}
 
 	log.Infow("YAML renderer created",
@@ -40,15 +44,15 @@ func NewYAMLRenderer(w io.Writer) *YAMLRenderer {
 // PhaseStart signals the beginning of a new operation phase.
 func (r *YAMLRenderer) PhaseStart(info PhaseInfo) error {
 	r.log.Debugw("Phase started",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"phase_name", info.Name,
 	)
 
 	return r.emitEvent("phase_start", map[string]interface{}{
-		"phase_id":     info.ID,
-		"phase_name":   info.Name,
-		"phase_number": info.Number,
-		"total_phases": info.Total,
+		eventKeyPhaseID:     info.ID,
+		"phase_name":        info.Name,
+		"phase_number":      info.Number,
+		eventKeyTotalPhases: info.Total,
 	})
 }
 
@@ -73,45 +77,45 @@ func (r *YAMLRenderer) PhaseProgress(progress ProgressInfo) error {
 
 // PhaseComplete marks successful completion of the current phase.
 func (r *YAMLRenderer) PhaseComplete(info PhaseInfo) error {
-	duration := time.Since(info.StartTime)
+	duration := r.now().Sub(info.StartTime)
 
 	r.log.Infow("Phase completed",
-		"phase_id", info.ID,
-		"duration_ms", duration.Milliseconds(),
+		eventKeyPhaseID, info.ID,
+		eventKeyDurationMs, duration.Milliseconds(),
 	)
 
 	return r.emitEvent("phase_complete", map[string]interface{}{
-		"phase_id":    info.ID,
-		"duration_ms": duration.Milliseconds(),
+		eventKeyPhaseID:    info.ID,
+		eventKeyDurationMs: duration.Milliseconds(),
 	})
 }
 
 // PhaseFailed marks failure of the current phase with error details.
 func (r *YAMLRenderer) PhaseFailed(info PhaseInfo, err error) error {
-	duration := time.Since(info.StartTime)
+	duration := r.now().Sub(info.StartTime)
 
 	r.log.Errorw("Phase failed",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"error", err.Error(),
 	)
 
 	return r.emitEvent("phase_failed", map[string]interface{}{
-		"phase_id":    info.ID,
-		"error":       err.Error(),
-		"duration_ms": duration.Milliseconds(),
+		eventKeyPhaseID:    info.ID,
+		"error":            err.Error(),
+		eventKeyDurationMs: duration.Milliseconds(),
 	})
 }
 
 // PhaseSkipped marks the current phase as skipped with reason.
 func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 	r.log.Debugw("Phase skipped",
-		"phase_id", info.ID,
+		eventKeyPhaseID, info.ID,
 		"reason", reason,
 	)
 
 	return r.emitEvent("phase_skipped", map[string]interface{}{
-		"phase_id": info.ID,
-		"reason":   reason,
+		eventKeyPhaseID: info.ID,
+		"reason":        reason,
 	})
 }
 
@@ -119,16 +123,16 @@ func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 func (r *YAMLRenderer) Finalize(summary Summary) error {
 	r.log.Infow("Operation finalized",
 		"success", summary.Success,
-		"duration_ms", summary.Duration.Milliseconds(),
+		eventKeyDurationMs, summary.Duration.Milliseconds(),
 	)
 
 	data := map[string]interface{}{
-		"total_phases":     summary.TotalPhases,
-		"completed_phases": summary.CompletedPhases,
-		"failed_phases":    summary.FailedPhases,
-		"skipped_phases":   summary.SkippedPhases,
-		"duration_ms":      summary.Duration.Milliseconds(),
-		"success":          summary.Success,
+		eventKeyTotalPhases: summary.TotalPhases,
+		"completed_phases":  summary.CompletedPhases,
+		"failed_phases":     summary.FailedPhases,
+		"skipped_phases":    summary.SkippedPhases,
+		eventKeyDurationMs:  summary.Duration.Milliseconds(),
+		"success":           summary.Success,
 	}
 
 	// Add errors if present
@@ -160,7 +164,7 @@ func (r *YAMLRenderer) emitEvent(eventType string, data map[string]interface{}) 
 	evt := map[string]interface{}{
 		"event":     eventType,
 		"sequence":  r.sequence,
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp": r.now().Format(time.RFC3339),
 	}
 
 	// Merge data fields

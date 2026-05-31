@@ -11,6 +11,11 @@ var (
 	ErrEmptyPath = errors.New("empty path")
 )
 
+// ErrPathContainsNullByte returns an error for a path containing a null byte.
+func ErrPathContainsNullByte(path string) error {
+	return fmt.Errorf("path contains null byte: %s", path) //nolint:err113 // dynamic error with context
+}
+
 // ErrPathContainsDangerousPattern returns an error for a path containing dangerous traversal or injection patterns.
 func ErrPathContainsDangerousPattern(path string) error {
 	return fmt.Errorf("path contains dangerous pattern: %s", path) //nolint:err113 // dynamic error with context

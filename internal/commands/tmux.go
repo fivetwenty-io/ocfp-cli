@@ -80,12 +80,14 @@ func FindTmuxScript() (string, error) {
 
 	execDir := filepath.Dir(execPath)
 
+	home, _ := homeDir()
+
 	// Look for the tmux script in various locations
 	searchPaths := []string{
 		filepath.Join(execDir, "..", "scripts", "tmux", "ocfp"),
 		"scripts/tmux/ocfp",
 		"/opt/ocfp/scripts/tmux/ocfp",
-		filepath.Join(os.Getenv("HOME"), "ocfp", "ocfp-cli", "scripts", "tmux", "ocfp"),
+		filepath.Join(home, "ocfp", "ocfp-cli", "scripts", "tmux", "ocfp"),
 	}
 
 	for _, path := range searchPaths {

@@ -86,6 +86,8 @@ SSH keys are searched in the following order:
 
 	cmd.SilenceUsage = true
 
+	cmd.AddCommand(newSSHConfigCmd())
+
 	// Command-specific flags
 	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SSH login")
 	cmd.Flags().StringVar(&key, "key", "", "path to SSH private key")

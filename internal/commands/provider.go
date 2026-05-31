@@ -1,11 +1,9 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	ocfpexec "github.com/ocfp/ocfp-cli-go/internal/exec"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 )
 
@@ -264,8 +263,7 @@ func getSTACKITCredentialsFromConfig(blocName string, log *zap.Logger) (string, 
 
 func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, string, error) {
 	// Check if safe command is available
-	_, err := exec.LookPath("safe")
-	if err != nil {
+	if err := runner.LookPath("safe"); err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
 
 		return "", "", nil
@@ -278,14 +276,12 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	err = security.ValidateInput(tokenPath, validPathPattern)
+	err := security.ValidateInput(tokenPath, validPathPattern)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", tokenPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", tokenPath)
 	if err == nil {
 		token := strings.TrimSpace(string(output))
 		if token != "" {
@@ -304,9 +300,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "safe", "get", jsonPath) // #nosec G204 - input validated above
-
-	output, err = cmd.Output()
+	output, err = runner.Output(ctx, "safe", "get", jsonPath)
 	if err == nil {
 		jsonCreds := strings.TrimSpace(string(output))
 		if jsonCreds != "" {
@@ -351,55 +345,45 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("invalid temp file path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name()) //nolint:gosec // command args are validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "stackit", "auth", "activate-service-account", "--service-account-key-path", tempFile.Name())
 	if err != nil {
-		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(stdout) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(stdout))
 	}
 
 	return nil
 }
 
 func authenticateSTACKITToken(serviceAccountToken string, log *zap.Logger) error {
-	// Execute stackit auth command with token
+	// Pass the token via env var so it never appears in the process table (ps).
+	// The STACKIT CLI reads STACKIT_SERVICE_ACCOUNT_TOKEN when the flag is absent.
 	log.Info("Authenticating with STACKIT token...")
-	log.Debug("Executing stackit auth activate-service-account with token")
+	log.Debug("Executing stackit auth activate-service-account (token via env)")
 
 	ctx, cancel := context.WithTimeout(context.Background(), StackitTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "stackit", "auth", "activate-service-account", "--service-account-token", serviceAccountToken) //nolint:gosec // command args are from trusted config
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	out, err := ocfpexec.RunWithEnv(ctx,
+		map[string]string{"STACKIT_SERVICE_ACCOUNT_TOKEN": serviceAccountToken},
+		"stackit", "auth", "activate-service-account",
+	)
 	if err != nil {
-		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to login to STACKIT provider", zap.Error(err), zap.String("output", string(out)))
 
 		return fmt.Errorf("STACKIT authentication failed: %w", err)
 	}
 
 	log.Info("Successfully logged into STACKIT provider")
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(out) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(out))
 	}
 
 	return nil
@@ -416,24 +400,17 @@ func configureSTACKITProject(projectID string, log *zap.Logger) error {
 		return fmt.Errorf("invalid project ID: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "stackit", "config", "set", "--project-id", projectID) // #nosec G204 - input validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "stackit", "config", "set", "--project-id", projectID)
 	if err != nil {
-		log.Error("Failed to configure STACKIT project", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure STACKIT project", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("STACKIT project configuration failed: %w", err)
 	}
 
 	log.Info("Successfully configured STACKIT project", zap.String("projectID", projectID))
 
-	if stdout.Len() > 0 {
-		_, _ = fmt.Fprint(os.Stdout, stdout.String())
+	if len(stdout) > 0 {
+		_, _ = fmt.Fprint(os.Stdout, string(stdout))
 	}
 
 	return nil
@@ -508,8 +485,7 @@ func getAWSCredentialsFromConfig(blocName string, log *zap.Logger) *AWSCredentia
 
 func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentials, error) {
 	// Check if safe command is available
-	_, err := exec.LookPath("safe")
-	if err != nil {
+	if err := runner.LookPath("safe"); err != nil {
 		log.Debug("Safe command not available, skipping vault lookup")
 
 		return nil, nil
@@ -521,6 +497,8 @@ func getAWSCredentialsFromVault(blocName string, log *zap.Logger) (*AWSCredentia
 	defer cancel()
 
 	credentials := &AWSCredentials{}
+
+	var err error
 
 	err = retrieveAWSAccessKeyFromVault(ctx, blocName, credentials)
 	if err != nil {
@@ -562,9 +540,7 @@ func retrieveAWSAccessKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid access key path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", accessKeyPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", accessKeyPath)
 	if err == nil {
 		credentials.AccessKeyID = strings.TrimSpace(string(output))
 	}
@@ -581,9 +557,7 @@ func retrieveAWSSecretKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid secret key path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", secretKeyPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", secretKeyPath)
 	if err == nil {
 		credentials.SecretAccessKey = strings.TrimSpace(string(output))
 	}
@@ -600,9 +574,7 @@ func retrieveAWSSessionTokenFromVault(ctx context.Context, blocName string, cred
 		return fmt.Errorf("invalid session token path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", sessionTokenPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", sessionTokenPath)
 	if err == nil {
 		credentials.SessionToken = strings.TrimSpace(string(output))
 	}
@@ -619,9 +591,7 @@ func retrieveAWSRegionFromVault(ctx context.Context, blocName string, credential
 		return fmt.Errorf("invalid region path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "safe", "get", regionPath) // #nosec G204 - input validated above
-
-	output, err := cmd.Output()
+	output, err := runner.Output(ctx, "safe", "get", regionPath)
 	if err == nil {
 		credentials.Region = strings.TrimSpace(string(output))
 	}
@@ -675,15 +645,9 @@ func configureAWSProfile(profileName string, credentials *AWSCredentials, log *z
 func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log *zap.Logger) error {
 	log.Debug("Setting AWS access key ID")
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	_, stderr, err := runner.RunSplit(ctx, "aws", "configure", "set", "aws_access_key_id", accessKeyID, "--profile", profileName)
 	if err != nil {
-		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure AWS access key ID", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("failed to configure AWS access key ID: %w", err)
 	}
@@ -692,21 +656,20 @@ func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log
 }
 
 // setAWSSecretAccessKey configures the AWS secret access key for a profile.
+// The secret value is written directly to the credentials file rather than
+// passed via `aws configure set` argv, which would expose it in the process
+// table. writeAWSCredentialsKey handles the file operation.
 func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey string, log *zap.Logger) error {
 	log.Debug("Setting AWS secret access key")
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_secret_access_key", secretAccessKey, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Error("Failed to configure AWS secret access key", zap.Error(err), zap.String("stderr", stderr.String()))
+	if err := writeAWSCredentialsKey(profileName, "aws_secret_access_key", secretAccessKey); err != nil {
+		log.Error("Failed to configure AWS secret access key", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
 	}
+
+	// Suppress unused ctx warning: retained in signature for API consistency.
+	_ = ctx
 
 	return nil
 }
@@ -715,15 +678,9 @@ func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey str
 func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logger) error {
 	log.Debug("Setting AWS region", zap.String("region", region))
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "region", region, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	_, stderr, err := runner.RunSplit(ctx, "aws", "configure", "set", "region", region, "--profile", profileName)
 	if err != nil {
-		log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", stderr.String()))
+		log.Error("Failed to configure AWS region", zap.Error(err), zap.String("stderr", string(stderr)))
 
 		return fmt.Errorf("failed to configure AWS region: %w", err)
 	}
@@ -732,20 +689,111 @@ func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logg
 }
 
 // setAWSSessionToken configures the AWS session token for a profile.
+// The token value is written directly to the credentials file rather than
+// passed via `aws configure set` argv, which would expose it in the process
+// table. writeAWSCredentialsKey handles the file operation.
 func setAWSSessionToken(ctx context.Context, profileName, sessionToken string, log *zap.Logger) error {
 	log.Debug("Setting AWS session token")
 
-	cmd := exec.CommandContext(ctx, "aws", "configure", "set", "aws_session_token", sessionToken, "--profile", profileName) // #nosec G204 - input validated above
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Error("Failed to configure AWS session token", zap.Error(err), zap.String("stderr", stderr.String()))
+	if err := writeAWSCredentialsKey(profileName, "aws_session_token", sessionToken); err != nil {
+		log.Error("Failed to configure AWS session token", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS session token: %w", err)
+	}
+
+	// Suppress unused ctx warning: retained in signature for API consistency.
+	_ = ctx
+
+	return nil
+}
+
+// writeAWSCredentialsKey writes a single key=value into the AWS credentials
+// file (~/.aws/credentials) for the named profile. It reads the existing file,
+// updates or inserts the key under the matching [profile] section, and rewrites
+// the file. This avoids passing secret values as subprocess argv.
+//
+// File format follows the standard INI profile layout used by the AWS CLI.
+// Permissions on the file are preserved when the file already exists; new
+// files are created with mode 0600.
+func writeAWSCredentialsKey(profileName, key, value string) error {
+	const credentialsFileMode = 0600
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	credFile := home + "/.aws/credentials"
+
+	// Ensure .aws directory exists.
+	if mkErr := os.MkdirAll(home+"/.aws", 0700); mkErr != nil { //nolint:mnd // 0700 = owner rwx
+		return fmt.Errorf("cannot create .aws directory: %w", mkErr)
+	}
+
+	// Read existing content (empty slice if file absent).
+	existing, err := os.ReadFile(credFile) //nolint:gosec // path is user home directory
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot read credentials file: %w", err)
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	sectionHeader := "[" + profileName + "]"
+	prefix := key + " = "
+
+	inSection := false
+	keyFound := false
+	insertAfter := -1 // index of section header, used if key not found
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == sectionHeader {
+			inSection = true
+			insertAfter = i
+
+			continue
+		}
+
+		if inSection {
+			// New section starts — stop searching.
+			if strings.HasPrefix(trimmed, "[") {
+				break
+			}
+
+			if strings.HasPrefix(trimmed, key+" =") || strings.HasPrefix(trimmed, key+"=") {
+				lines[i] = prefix + value
+				keyFound = true
+
+				break
+			}
+
+			// Track last line in section for insertion.
+			if trimmed != "" {
+				insertAfter = i
+			}
+		}
+	}
+
+	if !inSection {
+		// Section not present — append it.
+		if len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+
+		lines = append(lines, sectionHeader, prefix+value)
+	} else if !keyFound {
+		// Section exists but key missing — insert after last populated line.
+		newLines := make([]string, 0, len(lines)+1)
+		newLines = append(newLines, lines[:insertAfter+1]...)
+		newLines = append(newLines, prefix+value)
+		newLines = append(newLines, lines[insertAfter+1:]...)
+		lines = newLines
+	}
+
+	content := strings.Join(lines, "\n")
+
+	if err := os.WriteFile(credFile, []byte(content), credentialsFileMode); err != nil { //nolint:gosec // path is user home directory
+		return fmt.Errorf("cannot write credentials file: %w", err)
 	}
 
 	return nil
@@ -761,16 +809,9 @@ func validateAWSCredentials(profileName string, log *zap.Logger) error {
 		return fmt.Errorf("invalid profile name: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName) // #nosec G204 - input validated above
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := runner.RunSplit(ctx, "aws", "sts", "get-caller-identity", "--profile", profileName)
 	if err != nil {
-		stderrStr := stderr.String()
+		stderrStr := string(stderr)
 
 		// Check if it's a network connectivity issue vs credential issue
 		if strings.Contains(stderrStr, "Could not connect to the endpoint") {
@@ -795,7 +836,7 @@ func validateAWSCredentials(profileName string, log *zap.Logger) error {
 	log.Info("Successfully logged into AWS provider", zap.String("profile", profileName))
 
 	_, _ = fmt.Fprintf(os.Stdout, "Successfully configured AWS profile: %s\n", profileName)
-	_, _ = fmt.Fprintf(os.Stdout, "\nCaller Identity:\n%s\n", stdout.String())
+	_, _ = fmt.Fprintf(os.Stdout, "\nCaller Identity:\n%s\n", string(stdout))
 	_, _ = fmt.Fprintf(os.Stdout, "\nTo use this profile, run commands with: --profile %s\n", profileName)
 	_, _ = fmt.Fprintf(os.Stdout, "Or set environment variable: export AWS_PROFILE=%s\n", profileName)
 
@@ -833,11 +874,8 @@ func loginGCP(log *zap.Logger) error {
 		log.Info("Using service account credentials", zap.String("path", credPath))
 
 		// Try to activate using gcloud if available
-		_, err := exec.LookPath("gcloud")
-		if err == nil {
-			cmd := exec.CommandContext(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath) //nolint:gosec // command args are from trusted config
-
-			output, err := cmd.CombinedOutput()
+		if err := runner.LookPath("gcloud"); err == nil {
+			output, err := runner.Run(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath)
 			if err != nil {
 				log.Warn("gcloud auth failed (may not be required)", zap.Error(err), zap.String("output", string(output)))
 			} else {
@@ -957,8 +995,7 @@ func loginAzureFromServicePrincipal(log *zap.Logger) bool {
 
 // loginAzureFromCLI checks for Azure CLI authentication.
 func loginAzureFromCLI(log *zap.Logger) bool {
-	_, err := exec.LookPath("az")
-	if err != nil {
+	if err := runner.LookPath("az"); err != nil {
 		return false
 	}
 
@@ -967,19 +1004,12 @@ func loginAzureFromCLI(log *zap.Logger) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), VaultTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "az", "account", "show", "--output", "json")
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, _, err := runner.RunSplit(ctx, "az", "account", "show", "--output", "json")
 	if err == nil {
 		log.Info("Already authenticated with Azure CLI")
 
 		_, _ = fmt.Fprintln(os.Stdout, "Azure CLI authentication active")
-		_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", stdout.String())
+		_, _ = fmt.Fprintf(os.Stdout, "\nAccount details:\n%s\n", string(stdout))
 
 		return true
 	}

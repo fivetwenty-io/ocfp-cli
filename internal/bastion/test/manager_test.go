@@ -33,11 +33,14 @@ func TestManagerInitialization(t *testing.T) {
 	manager := bastion.NewManager(context.Background(), cfg, opts)
 
 	if manager == nil {
-		t.Fatal("Expected manager to be created, got nil")
+		t.Fatal("expected manager to be non-nil")
 	}
 
-	// Manager successfully created with provided configuration
-	// (Can't test internal fields as they're unexported)
+	// GetExecutionInfo uses the same cfg — verify manager sees the correct config.
+	info := bastion.GetExecutionInfo(cfg)
+	if info == nil {
+		t.Fatal("expected non-nil execution info from manager's config")
+	}
 }
 
 // TestManagerDryRun tests dry run functionality.
@@ -76,7 +79,7 @@ func TestManagerDryRun(t *testing.T) {
 	}
 }
 
-// TestProgressTracking tests progress tracking functionality.
+// TestProgressTracking tests manager creation with progress options.
 func TestProgressTracking(t *testing.T) {
 	t.Parallel()
 
@@ -95,14 +98,12 @@ func TestProgressTracking(t *testing.T) {
 
 	manager := bastion.NewManager(context.Background(), cfg, opts)
 
-	// Manager successfully created with tracking options
-	// (Can't test internal progress fields as they're unexported)
 	if manager == nil {
-		t.Fatal("Expected manager to be created, got nil")
+		t.Fatal("expected manager to be non-nil after creation with progress options")
 	}
 }
 
-// TestModeDetection tests execution mode detection.
+// TestModeDetection tests execution mode detection in a non-bastion environment.
 func TestModeDetection(t *testing.T) {
 	t.Parallel()
 
@@ -113,23 +114,21 @@ func TestModeDetection(t *testing.T) {
 
 	mode, err := detector.DetectExecutionMode(ctx)
 	if err != nil {
-		t.Fatalf("Failed to detect execution mode: %v", err)
+		t.Fatalf("failed to detect execution mode: %v", err)
 	}
 
-	// In test environment, this should be RemoteMode
-	expectedMode := bastion.RemoteMode
-	if mode != expectedMode {
-		t.Errorf("Expected mode %v, got %v", expectedMode, mode)
+	// In test environment, mode must be RemoteMode.
+	if mode != bastion.RemoteMode {
+		t.Errorf("expected RemoteMode (%v), got %v", bastion.RemoteMode, mode)
 	}
 
-	// Test bastion detection
 	isBastion := bastion.IsBastion(cfg)
 	if isBastion {
-		t.Error("Expected non-bastion environment in test, got bastion")
+		t.Error("expected IsBastion=false in test environment")
 	}
 }
 
-// TestExecutionInfo tests execution environment information.
+// TestExecutionInfo tests execution environment information completeness.
 func TestExecutionInfo(t *testing.T) {
 	t.Parallel()
 
@@ -137,28 +136,41 @@ func TestExecutionInfo(t *testing.T) {
 
 	info := bastion.GetExecutionInfo(cfg)
 
-	// Check required fields
 	requiredFields := []string{"hostname", "user", "home", "os", "arch", "is_bastion", "ocfp_provisioned"}
 
 	for _, field := range requiredFields {
 		if _, exists := info[field]; !exists {
-			t.Errorf("Expected field %s in execution info", field)
+			t.Errorf("expected field %q in execution info", field)
 		}
 	}
 
-	// Check field types
+	// hostname must be a non-empty string.
 	if hostname, ok := info["hostname"].(string); !ok || hostname == "" {
-		t.Error("Expected non-empty hostname string")
+		t.Error("expected non-empty hostname string in execution info")
 	}
 
-	if isBastion, ok := info["is_bastion"].(bool); !ok {
-		t.Error("Expected is_bastion to be boolean")
+	// is_bastion must be bool and false in test environment.
+	isBastion, ok := info["is_bastion"].(bool)
+	if !ok {
+		t.Error("expected is_bastion to be bool")
 	} else if isBastion {
-		t.Error("Expected is_bastion to be false in test environment")
+		t.Error("expected is_bastion=false in test environment")
+	}
+
+	// user must be a non-empty string.
+	if user, ok := info["user"].(string); !ok || user == "" {
+		t.Error("expected non-empty user string in execution info")
+	}
+
+	// os and arch must be non-empty strings.
+	for _, field := range []string{"os", "arch"} {
+		if val, ok := info[field].(string); !ok || val == "" {
+			t.Errorf("expected non-empty string for field %q in execution info", field)
+		}
 	}
 }
 
-// Mock implementations for testing
+// Mock implementations for testing.
 
 // MockSSHClient implements SSHClient for testing.
 type MockSSHClient struct {
@@ -193,7 +205,6 @@ func (m *MockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.C
 		return result, nil
 	}
 
-	// Default successful result
 	return &ssh.CommandResult{
 		Command:  cmd,
 		ExitCode: 0,
@@ -211,7 +222,7 @@ func (m *MockSSHClient) TransferFile(_ctx context.Context, local, remote string,
 		return err
 	}
 
-	return nil // Success by default
+	return nil
 }
 
 // CreateTunnel simulates tunnel creation.
@@ -242,7 +253,7 @@ func (m *MockSSHClient) GetExecutedCommands() []string {
 	return m.commands
 }
 
-// Helper functions
+// Helper functions shared across unit and integration tests.
 
 func containsAny(text string, substrings []string) bool {
 	for _, substr := range substrings {
@@ -254,10 +265,9 @@ func containsAny(text string, substrings []string) bool {
 	return false
 }
 
-// setupTestEnvironment creates a test environment.
-// OCFP_HOME is set in TestMain for the whole package to support
-// tests that use t.Parallel(). This function returns the OCFP_HOME
-// directory for tests that need it.
+// setupTestEnvironment returns the OCFP_HOME dir set by TestMain.
+// OCFP_HOME is set once in TestMain for the whole package so parallel
+// tests share the same isolated root without re-creating it.
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	t.Helper()
 

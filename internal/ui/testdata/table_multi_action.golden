@@ -1,0 +1,19 @@
+Full Deployment Plan
+
+3 actions across 2 sections
+
++--------+---------------+---------+
+| Action | Target        | Status  |
++--------+---------------+---------+
+| create | bosh-director | pending |
++--------+---------------+---------+
+| update | cf            | pending |
++--------+---------------+---------+
+
+Cleanup
++--------------+------------+
+| Resource     | Reason     |
++--------------+------------+
+| old-stemcell | superseded |
++--------------+------------+
+

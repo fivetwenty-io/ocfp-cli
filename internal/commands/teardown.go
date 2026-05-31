@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,11 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/cloudflare"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/pve/verify"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -284,6 +288,18 @@ func runTeardown(cmd *cobra.Command, _args []string) error {
 	}
 
 	defer func() { _ = provider.Cleanup(ctx) }()
+
+	// PVE-specific idempotent teardown probe: check whether the BOSH director
+	// VM already absent before doing any work. When absent, teardown is a no-op.
+	// The director VMID/name is read from the bastion config (Bastion.VMID string);
+	// when unset we fall back to the bloc name as a heuristic VM name match.
+	if strings.EqualFold(cfg.Provider, "pve") {
+		if done, probeErr := pveCheckAlreadyTornDown(ctx, cfg, log); probeErr != nil {
+			log.Warnw("PVE teardown probe failed, proceeding with teardown", "error", probeErr)
+		} else if done {
+			return nil
+		}
+	}
 
 	stateManager, err := setupTeardownState(teardownConfig.BlocName, log)
 	if err != nil {
@@ -575,6 +591,10 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
+	if cerr := m.teardownCloudflare(ctx); cerr != nil {
+		log.Warnf("cloudflare teardown: %v", cerr)
+	}
+
 	sortedResources, err := m.prepareResourcesForDeletion(ctx)
 	if err != nil {
 		return err
@@ -608,6 +628,67 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 	log.Infow("Teardown completed", "deleted", deletedCount, "total", len(sortedResources))
 
 	return nil
+}
+
+// teardownCloudflare deletes the bloc's tunnel DNS records and the tunnel
+// itself, using identifiers persisted at bootstrap. All failures are
+// soft-warn: a stale Cloudflare record must never block lab teardown.
+func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
+	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
+		return nil
+	}
+	cf := m.config.Cloudflare
+
+	safe := cloudflareSafe()
+	if safe == nil {
+		return nil
+	}
+	token := vault.ResolveSecretRef(safe, cf.APIToken, cf.APITokenVaultPath)
+	if token == "" {
+		logger.Get().Warn("cloudflare teardown skipped: API token unavailable")
+		return nil
+	}
+	vp := "secret/config/" + m.options.BlocName + "/cloudflare"
+	tunnelID, _ := safe.GetString(vp, "tunnel_id")
+	accountID, _ := safe.GetString(vp, "account_id")
+	if tunnelID == "" || accountID == "" {
+		return nil
+	}
+
+	client := cloudflare.NewClient(token, nil)
+	if _, zoneID, zerr := client.ResolveAccountAndZone(ctx, cf.Zone); zerr == nil {
+		for _, name := range []string{"*." + cf.AppsDomain, "*." + cf.SystemDomain, cf.SSHHostname} {
+			if name == "" || name == "*." {
+				continue
+			}
+			if derr := client.DeleteCNAME(ctx, zoneID, name); derr != nil {
+				logger.Get().Warnf("cloudflare dns delete %s: %v", name, derr)
+			}
+		}
+	}
+	if derr := client.DeleteTunnel(ctx, accountID, tunnelID); derr != nil {
+		logger.Get().Warnf("cloudflare tunnel delete: %v", derr)
+	}
+	if err := safe.SetMultiple(vp, map[string]interface{}{
+		"tunnel_id":    "",
+		"tunnel_token": "",
+		"account_id":   "",
+	}); err != nil {
+		logger.Get().Warnf("cloudflare teardown: failed to clear vault keys: %v", err)
+	}
+	logger.Get().Infof("Cloudflare tunnel %s torn down", tunnelID)
+	return nil
+}
+
+// cloudflareSafe builds a vault Safe from env, mirroring bootstrap's
+// tailscaleSafe fallback. Returns nil (warn) when vault is unreachable.
+func cloudflareSafe() vault.SafeInterface {
+	client, err := vault.NewClientFromEnv()
+	if err != nil {
+		logger.Get().Warnf("cloudflare teardown: cannot reach vault: %v", err)
+		return nil
+	}
+	return vault.NewSafe(client)
 }
 
 // DeleteResource deletes a single resource.
@@ -669,6 +750,11 @@ func mergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelet
 // TestMergeResources exposes mergeResources for testing.
 func TestMergeResources(existing, discovered []*ResourceToDelete) []*ResourceToDelete {
 	return mergeResources(existing, discovered)
+}
+
+// TestPVECheckAlreadyTornDown exposes pveCheckAlreadyTornDown for testing.
+func TestPVECheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger.Logger) (bool, error) {
+	return pveCheckAlreadyTornDown(ctx, cfg, log)
 }
 
 // acquireLockWithForce attempts to acquire state lock, using force if enabled.
@@ -2160,6 +2246,112 @@ func (m *TeardownManager) deleteSecurityResource(ctx context.Context, resource *
 	}
 
 	return nil
+}
+
+// StateIsEmpty reports whether the BOSH state file at path is absent or
+// contains no meaningful BOSH state (no "bosh" or "deployments" top-level
+// key).
+//
+// Return semantics (conservative for teardown safety):
+//   - Absent file    → true  (nothing to delete)
+//   - Empty content  → true  (nothing to delete)
+//   - Bare "{}"      → true  (nothing to delete)
+//   - Valid JSON with "bosh" or "deployments" key → false (run delete-env)
+//   - Valid JSON without those keys → true (nothing to delete)
+//   - Malformed JSON → false (conservative: let bosh delete-env fail loudly)
+//   - OS read error  → false (conservative: let bosh delete-env fail loudly)
+func StateIsEmpty(path string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("teardown StateIsEmpty: read %s: %w", path, err)
+	}
+
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "{}" {
+		return true, nil
+	}
+
+	var data map[string]json.RawMessage
+	if jsonErr := json.Unmarshal(raw, &data); jsonErr != nil {
+		// Corrupted/truncated: conservative — treat as non-empty so delete-env runs.
+		return false, nil //nolint:nilerr // intentional: malformed → conservative false
+	}
+
+	_, hasBosh := data["bosh"]
+	_, hasDeployments := data["deployments"]
+
+	return !hasBosh && !hasDeployments, nil
+}
+
+// pveAPIToken builds the PVE API token string from bloc config fields.
+// Returns empty string when token auth is not configured.
+func pveAPIToken(cfg *config.Config) string {
+	if cfg.AuthToken != "" && cfg.TokenSecret != "" {
+		return cfg.AuthToken + "=" + cfg.TokenSecret
+	}
+	return ""
+}
+
+// pveVerifierFromConfig constructs a PVEVerifier from bloc config.
+// Returns an error when neither token auth nor username/password is present.
+func pveVerifierFromConfig(cfg *config.Config) (*verify.PVEVerifier, error) {
+	if cfg.APIEndpoint == "" {
+		return nil, fmt.Errorf("pve teardown probe: api_endpoint is required in bloc config")
+	}
+
+	node := cfg.Region
+	if node == "" && len(cfg.Nodes) > 0 {
+		node = cfg.Nodes[0]
+	}
+	if node == "" {
+		return nil, fmt.Errorf("pve teardown probe: node (region or nodes[0]) is required in bloc config")
+	}
+
+	apiToken := pveAPIToken(cfg)
+
+	v := verify.NewVerifier(cfg.APIEndpoint, node, apiToken, cfg.Username, cfg.Password)
+	v.VerifySSL = cfg.VerifySSL
+	return v, nil
+}
+
+// probePVEVMExists uses the out-of-band PVE verifier to check whether the
+// BOSH director VM identified by nameOrID is present on the PVE cluster.
+// nameOrID may be a numeric VMID string or a VM name.
+func probePVEVMExists(ctx context.Context, cfg *config.Config, nameOrID string) (bool, error) {
+	v, err := pveVerifierFromConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	return v.VMExists(ctx, nameOrID)
+}
+
+// pveCheckAlreadyTornDown probes whether the PVE BOSH director has already
+// been torn down. Returns (true, nil) when teardown is confirmed complete and
+// the caller should exit 0. Returns (false, nil) when the VM is present and
+// teardown should proceed. Returns (false, err) when the probe itself fails;
+// callers should log and proceed conservatively.
+//
+// Director VM identity: cfg.Name (bloc name) is used as the VM name to match
+// in the PVE qemu list. PVE BOSH directors are named after the bloc by default.
+func pveCheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger.Logger) (bool, error) {
+	nameOrID := cfg.Name
+
+	exists, err := probePVEVMExists(ctx, cfg, nameOrID)
+	if err != nil {
+		return false, fmt.Errorf("pve teardown probe VMExists(%q): %w", nameOrID, err)
+	}
+
+	if !exists {
+		log.Infow("teardown: VM already gone, nothing to delete", "nameOrID", nameOrID)
+		_, _ = fmt.Fprintf(os.Stdout, "teardown: VM already gone (nameOrID=%s), nothing to delete\n", nameOrID)
+		return true, nil
+	}
+
+	log.Infow("teardown: VM present, proceeding with teardown", "nameOrID", nameOrID)
+	return false, nil
 }
 
 func (m *TeardownManager) deleteKeyPairResource(ctx context.Context, resource *ResourceToDelete) error {

@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -9,10 +8,12 @@ import (
 )
 
 func TestRegister(t *testing.T) {
-	// Register should succeed
-	err := Register()
-	if err != nil {
-		t.Fatalf("Failed to register AWS provider: %v", err)
+	// Guard against -count>1 or parallel runs where "aws" is already registered.
+	if _, err := cpi.Get("aws"); err != nil {
+		// Not yet registered — register now.
+		if regErr := Register(); regErr != nil {
+			t.Fatalf("Failed to register AWS provider: %v", regErr)
+		}
 	}
 
 	// Verify provider is registered
@@ -84,17 +85,9 @@ func TestNewProvider_WithMapConfig(t *testing.T) {
 }
 
 func TestNewProvider_MissingRegion(t *testing.T) {
-	// Save original env vars
-	origRegion := os.Getenv("AWS_REGION")
-	origDefaultRegion := os.Getenv("AWS_DEFAULT_REGION")
-	defer func() {
-		os.Setenv("AWS_REGION", origRegion)
-		os.Setenv("AWS_DEFAULT_REGION", origDefaultRegion)
-	}()
-
-	// Clear env vars
-	os.Unsetenv("AWS_REGION")
-	os.Unsetenv("AWS_DEFAULT_REGION")
+	// t.Setenv restores originals on cleanup; set empty string to clear
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
 
 	config := map[string]interface{}{
 		"access_key_id":     "test-access-key",
@@ -324,17 +317,9 @@ func TestGetStringSlice(t *testing.T) {
 }
 
 func TestDiscoverProvider(t *testing.T) {
-	// Save original env vars
-	origRegion := os.Getenv("AWS_REGION")
-	origAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	defer func() {
-		os.Setenv("AWS_REGION", origRegion)
-		os.Setenv("AWS_ACCESS_KEY_ID", origAccessKey)
-	}()
-
-	// Test with environment variables
-	os.Setenv("AWS_REGION", "us-east-1")
-	os.Setenv("AWS_ACCESS_KEY_ID", "test-key")
+	// t.Setenv restores originals on cleanup
+	t.Setenv("AWS_REGION", "us-east-1")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key")
 
 	config, err := DiscoverProvider()
 	if err != nil {
@@ -351,35 +336,29 @@ func TestDiscoverProvider(t *testing.T) {
 }
 
 func TestIsAWSEnvironment(t *testing.T) {
-	// Save original env vars
-	origRegion := os.Getenv("AWS_REGION")
-	origAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	defer func() {
-		os.Setenv("AWS_REGION", origRegion)
-		os.Setenv("AWS_ACCESS_KEY_ID", origAccessKey)
-	}()
+	// t.Setenv restores originals on cleanup
 
 	// Test with AWS region set
-	os.Setenv("AWS_REGION", "us-west-2")
-	os.Unsetenv("AWS_ACCESS_KEY_ID")
+	t.Setenv("AWS_REGION", "us-west-2")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
 
 	if !IsAWSEnvironment() {
 		t.Error("Expected IsAWSEnvironment to return true with AWS_REGION set")
 	}
 
 	// Test with AWS access key set
-	os.Unsetenv("AWS_REGION")
-	os.Setenv("AWS_ACCESS_KEY_ID", "test-key")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key")
 
 	if !IsAWSEnvironment() {
 		t.Error("Expected IsAWSEnvironment to return true with AWS_ACCESS_KEY_ID set")
 	}
 
 	// Test with no AWS environment variables
-	os.Unsetenv("AWS_REGION")
-	os.Unsetenv("AWS_ACCESS_KEY_ID")
-	os.Unsetenv("AWS_DEFAULT_REGION")
-	os.Unsetenv("AWS_PROFILE")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	t.Setenv("AWS_PROFILE", "")
 
 	if IsAWSEnvironment() {
 		t.Error("Expected IsAWSEnvironment to return false with no AWS environment variables")

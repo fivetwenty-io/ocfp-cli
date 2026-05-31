@@ -310,7 +310,30 @@ aws --version
 stackit --version
 az --version
 gcloud --version
+
+# Operator helper scripts (~/bin)
+blobstores help
 ```
+
+### Operator helper scripts
+
+The `helper_scripts` phase installs self-contained bash tools from the OCFP
+CLI repo's `scripts/` tree into `~/bin` on the bastion. They are pure shell
+wrappers around already-installed CLIs (`safe`, `aws`, `curl`) — re-runs of
+`init bastion` overwrite them with the operator-host source.
+
+| Script | Purpose |
+|--------|---------|
+| `blobstores` | Validate the bloc's ocfp-artifacts RustFS endpoint (reachability + bucket round-trip sweep) |
+
+Operator host search order for each helper:
+
+1. `$OCFP_HELPER_SCRIPTS_DIR/<name>`
+2. `./scripts/<name>` (when running ocfp from the CLI repo)
+3. `<exe-dir>/../scripts/<name>` and `<exe-dir>/scripts/<name>`
+4. `~/w/fivetwenty/studios/ocfp/src/clis/ocfp/scripts/<name>`
+
+A missing source is logged and skipped — old operator checkouts still complete `init bastion`.
 
 ### Plugin Verification
 ```bash
@@ -558,6 +581,7 @@ genesis update
 
 ## See Also
 
+- [Bastion Tailscale](bastion-tailscale.md) for joining the bastion to a tailnet at first boot (PVE and other no-public-IP providers)
 - [Security Groups](../networking/security-groups.md) for the 7 default security groups created during bootstrap
 - [Networking Overview](../networking/README.md) for the full networking bootstrap flow
 - [CF App-Autoscaler Documentation](https://github.com/cloudfoundry/app-autoscaler-cli-plugin)
