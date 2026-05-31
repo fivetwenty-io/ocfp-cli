@@ -67,12 +67,14 @@ func (m *Manager) installSnapPackages(ctx context.Context) error {
 }
 
 // brewSkipped reports whether Linuxbrew phases should be skipped for this
-// provider. On PVE the bastion's tools are delivered by the provision script
-// (scripts/provision/bastion) into /usr/local/bin, and the lab CPU types often
-// lack the SSSE3 instructions Linuxbrew's x86_64 bottles require, so brew is
-// both redundant and unrunnable there.
+// provider. Linuxbrew is the primary tool source on every provider, including
+// PVE: the previous PVE skip existed because Linuxbrew's x86_64 bottles need
+// SSSE3, which the default kvm64 ("Common KVM processor") VM model lacks — but
+// OCFP now provisions PVE VMs with cpu=host (see buildPVEDirectCloudInitConfig),
+// exposing the host's SSSE3/AVX so bottles run. CF/Genesis ecosystem tools whose
+// brew bottles are macOS-only are still installed via binary_tools.
 func (m *Manager) brewSkipped() bool {
-	return strings.EqualFold(m.config.Provider, "pve")
+	return false
 }
 
 // installBrew installs Linuxbrew itself.
@@ -625,6 +627,12 @@ func (m *Manager) wrapScriptWithFunctions(script string) string {
 		fmt.Fprintf(&envExports, "export %s='%s'\n", key, value)
 	}
 
+	// Phases run via `bash -c` (not a login shell), so /etc/profile.d/ocfp.sh
+	// is not sourced. Put Linuxbrew on PATH here when it is installed, so tools
+	// installed via brew (vault, yq, openbao, …) are usable by every phase
+	// script and not just interactive logins.
+	envExports.WriteString("# Linuxbrew on PATH (phases run non-login)\n")
+	envExports.WriteString("if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"; fi\n")
 	envExports.WriteString("\n")
 
 	return bashScriptPreamble + envExports.String() + script
