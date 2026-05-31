@@ -177,6 +177,7 @@ func (vm *VerificationManager) getCoreToolVerifications() []ToolVerification {
 	return []ToolVerification{
 		vm.getEssentialToolsVerification(),
 		vm.getCloudFoundryToolsVerification(),
+		vm.getOptionalCFToolsVerification(),
 		vm.getDevelopmentToolsVerification(),
 		vm.getPerlEnvironmentVerification(),
 		vm.getGenesisToolsVerification(),
@@ -200,9 +201,27 @@ func (vm *VerificationManager) getEssentialToolsVerification() ToolVerification 
 func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerification {
 	return ToolVerification{
 		Name:            "cloudfoundry-tools",
-		Commands:        []string{"safe", "spruce", "vault", "bao", "jq", "bosh", "cf", "credhub", "uaa"},
-		VersionCommand:  "safe --version && spruce --version && vault --version && bao --version && bosh --version && cf --version",
+		Commands:        []string{"safe", "spruce", "vault", "jq", "bosh", "cf", "credhub"},
+		VersionCommand:  "safe --version && spruce --version && vault --version && bosh --version && cf --version",
 		Required:        true,
+		ConfigCheck:     "",
+		ServiceCheck:    "",
+		PostInstallTest: "",
+	}
+}
+
+// getOptionalCFToolsVerification covers tools that are part of the OCFP toolchain
+// but not required for the core BOSH/CF deploy path: bao (OpenBao — the inception
+// vault uses `vault`) and uaa (the UAA CLI). They are brew-provided upstream and
+// may be absent on bastions where brew is not bootstrapped, so they warn rather
+// than fail. Fully installing them needs a `bao` binary_tools entry and a working
+// uaa-cli release URL.
+func (vm *VerificationManager) getOptionalCFToolsVerification() ToolVerification {
+	return ToolVerification{
+		Name:            "optional-cf-tools",
+		Commands:        []string{"bao", "uaa"},
+		VersionCommand:  "",
+		Required:        false,
 		ConfigCheck:     "",
 		ServiceCheck:    "",
 		PostInstallTest: "",
