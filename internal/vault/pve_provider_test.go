@@ -161,6 +161,30 @@ func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 	expectedPath := provider.PathBuilder.GetAZPath(MgmtEnvType, "pve-node1")
 	assert.Equal(t, expectedPath, mock.setMultipleCalls[0].path)
 	assert.Equal(t, "pve-node1", mock.setMultipleCalls[0].data["node_name"])
+	// index drives Genesis' AZ naming (Director.pm _set_network_azs: name =
+	// "<env>-z" . index). The PVE node name ("pve") has no trailing digit, so
+	// without an explicit index Genesis emits a malformed AZ "<env>-z"; writing
+	// index=1 yields "<env>-z1", matching the kit's default_cf_az.
+	assert.Equal(t, 1, mock.setMultipleCalls[0].data["index"], "single-node AZ must carry index 1")
+}
+
+// TestPVEVaultProvider_ConfigureAZs_MultiNode — Nodes slice produces one AZ per
+// node, each with a 1-based index so Genesis derives <env>-z1, <env>-z2, ...
+func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Nodes: []string{"pve-a", "pve-b", "pve-c"}}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureAZs(MgmtEnvType))
+	require.Len(t, mock.setMultipleCalls, 3, "one AZ write per node")
+
+	for i, node := range cfg.Nodes {
+		path := provider.PathBuilder.GetAZPath(MgmtEnvType, node)
+		call := mock.findSetMultipleCall(path)
+		require.NotNil(t, call, "AZ entry for %s must be written", node)
+		assert.Equal(t, node, call.data["node_name"])
+		assert.Equal(t, i+1, call.data["index"], "node %s must carry 1-based index", node)
+	}
 }
 
 // TestPVEVaultProvider_ConfigureAZs_EmptyBoth — empty Region means no write,
@@ -544,6 +568,54 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 	emptyPath := filepath.Join(subnetPath, "reserved-ips", "empty")
 	assert.Nil(t, mock.findSetMultipleCall(emptyPath),
 		"empty-valued reserved IP output must not be written")
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults — the fallback
+// subnet write must emit available_0/available_1 reserved-ips keys so Genesis'
+// cloud-config IPAM (_get_subnet_ranges) confines kit-generated networks to a
+// band that clears the infra IPs (gateway, bastion, compilation, jumpbox,
+// director, artifacts at <= +13). With no explicit config the band defaults to
+// gateway+19 .. gateway+249.
+func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	reservedPath := provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0)
+	call := mock.findSetMultipleCall(reservedPath)
+	require.NotNil(t, call, "fallback reserved-ips must be written at %s", reservedPath)
+	assert.Equal(t, "10.64.64.20", call.data["available_0"], "default band start = gateway+19")
+	assert.Equal(t, "10.64.64.250", call.data["available_1"], "default band end = gateway+249")
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit — explicit
+// network.availableIpStart/End override the derived band.
+func TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		VPCCIDRBlock: "10.64.64.0/19",
+		Network: config.NetworkConfig{
+			AvailableIPStart: "10.64.64.20",
+			AvailableIPEnd:   "10.64.64.50",
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	reservedPath := provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0)
+	call := mock.findSetMultipleCall(reservedPath)
+	require.NotNil(t, call, "fallback reserved-ips must be written at %s", reservedPath)
+	assert.Equal(t, "10.64.64.20", call.data["available_0"])
+	assert.Equal(t, "10.64.64.50", call.data["available_1"])
 }
 
 // ---------------------------------------------------------------------------

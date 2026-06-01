@@ -329,13 +329,21 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 			continue
 		}
 
-		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
-		if err := p.Safe.SetMultiple(reservedPath, map[string]interface{}{
+		reserved := map[string]interface{}{
 			"bosh_ip":     boshIP,
 			"ip":          boshIP,
 			"director_ip": boshIP,
 			"jumpbox_ip":  jumpboxIP,
-		}); err != nil {
+		}
+		// available_0/available_1 bound the available allocation band Genesis'
+		// cloud-config IPAM reads; the complement is auto-reserved, keeping
+		// kit-generated networks off the infra IPs (<= gateway+13).
+		if start, end := pveAvailableBand(p.Config, gateway); start != "" && end != "" {
+			reserved["available_0"] = start
+			reserved["available_1"] = end
+		}
+		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
+		if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
 		}
 	}
@@ -399,6 +407,28 @@ func pveOffsetIP(base string, off int) string {
 		return ""
 	}
 	return fmt.Sprintf("%s%d", base[:last+1], result)
+}
+
+// pveAvailableBand returns the [start,end] IPs of the per-subnet available
+// allocation band, written to vault as available_0/available_1 reserved-ips
+// keys. Explicit config (network.availableIpStart/End) wins; otherwise the band
+// defaults to gateway+19 .. gateway+249, which clears the infra IPs the CLI and
+// bootstrap place (gateway, bastion, compilation, jumpbox, director, artifacts,
+// vault — all at <= gateway+13). Returns empty strings when the band cannot be
+// derived (e.g. unparseable gateway), in which case no band keys are written
+// and Genesis falls back to its own default reservation.
+func pveAvailableBand(cfg *config.Config, gateway string) (string, string) {
+	start := cfg.Network.AvailableIPStart
+	if start == "" {
+		start = pveOffsetIP(gateway, 19)
+	}
+
+	end := cfg.Network.AvailableIPEnd
+	if end == "" {
+		end = pveOffsetIP(gateway, 249)
+	}
+
+	return start, end
 }
 
 // pveFirstAZ returns the first Proxmox node name as the AZ identifier, or "z1"
@@ -1284,11 +1314,19 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 	// Multi-node: iterate Config.Nodes when set; single-node: fall back to Config.Region.
 	switch {
 	case len(p.Config.Nodes) > 0:
-		for _, node := range p.Config.Nodes {
+		for i, node := range p.Config.Nodes {
 			azPath := p.PathBuilder.GetAZPath(envType, node)
 
+			// index (1-based) drives Genesis' AZ naming: the director
+			// cloud-config hook (Director.pm _set_network_azs) computes the AZ
+			// name as "<env>-z" . index, falling back to the trailing digits of
+			// the AZ key name. PVE node names ("pve") have no trailing digit, so
+			// an explicit index is required to yield a valid "<env>-z1" AZ that
+			// matches the kit's default_cf_az; without it the AZ collapses to a
+			// malformed "<env>-z" and instance groups fail to place.
 			azData := map[string]interface{}{
 				"node_name": node,
+				"index":     i + 1,
 				"status":    "configured",
 			}
 
@@ -1303,8 +1341,10 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 		node := p.Config.Region
 		azPath := p.PathBuilder.GetAZPath(envType, node)
 
+		// Single-node: index 1 -> Genesis AZ "<env>-z1" (see multi-node note).
 		azData := map[string]interface{}{
 			"node_name": node,
+			"index":     1,
 			"status":    "configured",
 		}
 
