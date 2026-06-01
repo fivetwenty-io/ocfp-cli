@@ -14,6 +14,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/precompile"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
@@ -513,6 +514,28 @@ func initializePostgreSQL() error {
 	return nil
 }
 
+// appendCompiledPin layers a precompiled-release pin ops file onto a bosh
+// command when it exists, after verifying its stemcell marker matches the
+// standardized stemcell. A mismatched pin would silently deploy compiled
+// packages against the wrong stemcell, so that case is a hard error. A missing
+// pin is non-fatal: precompile is an optional optimization step.
+func appendCompiledPin(args []string, pinPath string) ([]string, error) {
+	data, err := os.ReadFile(pinPath) //nolint:gosec // path derived from trusted deployment dir
+	if err != nil {
+		if os.IsNotExist(err) {
+			return args, nil
+		}
+		return nil, fmt.Errorf("reading compiled-release pin %s: %w", pinPath, err)
+	}
+
+	if sc, ok := precompile.StemcellFromOps(data); ok && sc != precompile.DefaultStemcell {
+		return nil, fmt.Errorf("compiled-release pin %s targets stemcell %s but deploy expects %s; re-run `ocfp precompile`",
+			pinPath, sc, precompile.DefaultStemcell)
+	}
+
+	return append(args, "-o", pinPath), nil
+}
+
 // initializeBOSH sets up the BOSH Director.
 func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
@@ -562,10 +585,20 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid deployment directory: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bosh", "create-env", manifestPath, //nolint:gosec // command args are validated above
+	createEnvArgs := []string{"create-env", manifestPath,
 		"--state", filepath.Join(deploymentDir, "state.json"),
-		"--vars-store", filepath.Join(deploymentDir, "creds.yml"))
+		"--vars-store", filepath.Join(deploymentDir, "creds.yml")}
 
+	// Layer the precompiled-release pin (from `ocfp precompile bosh`) last so it
+	// wins over the director manifest's release stanzas. Guard the stemcell so a
+	// pin built for the wrong stemcell can't strand the director VM.
+	boshPin := filepath.Join(deploymentDir, "manifests", "bosh", "compiled-releases.yml")
+	createEnvArgs, err = appendCompiledPin(createEnvArgs, boshPin)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "bosh", createEnvArgs...) //nolint:gosec // command args are validated above
 	cmd.Dir = deploymentDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -624,10 +657,18 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid manifest path: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "bosh", "-d", "cf", "deploy", manifestPath, //nolint:gosec // command args are validated above
+	deployArgs := []string{"-d", "cf", "deploy", manifestPath,
 		"-o", filepath.Join(deploymentDir, "operations", "scale.yml"),
-		"-o", filepath.Join(deploymentDir, "operations", "use-postgres.yml"))
+		"-o", filepath.Join(deploymentDir, "operations", "use-postgres.yml")}
 
+	// Layer the precompiled-release pin (from `ocfp precompile cf`) last.
+	cfPin := filepath.Join(deploymentDir, "manifests", "cf", "compiled-releases.yml")
+	deployArgs, err = appendCompiledPin(deployArgs, cfPin)
+	if err != nil {
+		return err
+	}
+
+	cmd = exec.CommandContext(ctx, "bosh", deployArgs...) //nolint:gosec // command args are validated above
 	cmd.Dir = deploymentDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
