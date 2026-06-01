@@ -441,6 +441,14 @@ type NetworkConfig struct {
 	DNSServers     []string `json:"dnsServers,omitempty"     mapstructure:"dnsServers"     yaml:"dnsServers,omitempty"`
 	SubnetStrategy string   `json:"subnetStrategy,omitempty" mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"`
 	Subnets        []Subnet `json:"subnets,omitempty"        mapstructure:"subnets"        yaml:"subnets,omitempty"`
+
+	// AvailableIPStart / AvailableIPEnd bound the per-subnet available allocation
+	// band written to vault as available_0/available_1 reserved-ips keys. Genesis'
+	// cloud-config IPAM (_get_subnet_ranges) reads these to confine kit-generated
+	// networks (CF, etc.) to a range that clears the infra IPs the CLI/bootstrap
+	// place. Empty => derived defaults (gateway+19 .. gateway+249).
+	AvailableIPStart string `json:"availableIpStart,omitempty" mapstructure:"availableIpStart" yaml:"availableIpStart,omitempty"`
+	AvailableIPEnd   string `json:"availableIpEnd,omitempty"   mapstructure:"availableIpEnd"   yaml:"availableIpEnd,omitempty"`
 }
 
 // UnmarshalYAML accepts the historical snake_case key network_cidr alongside
@@ -466,6 +474,11 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		DNSServersSC   []string `yaml:"dns_servers,omitempty"`
 		SubnetStrategy string   `yaml:"subnetStrategy,omitempty"`
 		Subnets        []Subnet `yaml:"subnets,omitempty"`
+
+		AvailableIPStart   string `yaml:"availableIpStart,omitempty"`
+		AvailableIPStartSC string `yaml:"available_ip_start,omitempty"`
+		AvailableIPEnd     string `yaml:"availableIpEnd,omitempty"`
+		AvailableIPEndSC   string `yaml:"available_ip_end,omitempty"`
 	}
 
 	var raw rawNetwork
@@ -490,6 +503,8 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 
 	n.SubnetStrategy = raw.SubnetStrategy
 	n.Subnets = raw.Subnets
+	n.AvailableIPStart = firstSetString(raw.AvailableIPStart, raw.AvailableIPStartSC)
+	n.AvailableIPEnd = firstSetString(raw.AvailableIPEnd, raw.AvailableIPEndSC)
 
 	return nil
 }
