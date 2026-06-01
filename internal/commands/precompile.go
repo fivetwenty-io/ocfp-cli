@@ -1,0 +1,319 @@
+package commands
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/precompile"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+// Errors returned by the precompile subcommands.
+var (
+	ErrPrecompileBlocRequired = errors.New("--bloc is required for precompile commands")
+	ErrCFDeploymentNotFound   = errors.New("cf-deployment.yml not found; pass --cf-deployment")
+)
+
+// precompileFlags holds the shared, parsed flags for a precompile run.
+type precompileFlags struct {
+	bloc        string
+	force       bool
+	dryRun      bool
+	concurrency int
+	stemcell    precompile.Stemcell
+	boshEnv     string
+	outputDir   string
+	cfManifest  string
+}
+
+// NewPrecompileCmd builds the `ocfp precompile` command tree. It populates the
+// artifacts blobstore with compiled release tarballs and emits pin ops files so
+// create-env (bosh) and `genesis deploy` (cf) skip source compilation.
+func NewPrecompileCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "precompile <bosh|cf|all>",
+		Short: "Precompile BOSH/CF releases into the artifacts blobstore",
+		Long: `Resolve each release to a compiled tarball — reusing the blobstore copy,
+fetching an upstream compiled build, or compiling locally (no-VM deploy +
+export-release) — then emit a pin ops file the deploy consumes.
+
+Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
+'ocfp init' / 'genesis deploy'. Idempotent: a warm run is a HEAD-only no-op.`,
+		Example: `  ocfp precompile bosh --bloc dev
+  ocfp precompile cf --bloc dev --cf-deployment ~/deployments/dev/cf-deployment.yml
+  ocfp precompile cf --bloc dev --dry-run
+  ocfp precompile all --bloc dev`,
+	}
+
+	addPrecompileFlags := func(c *cobra.Command) {
+		c.Flags().String("bloc", "", "Bloc name (required)")
+		c.Flags().Bool("force", false, "Rebuild/re-upload even if a compiled tarball is already present")
+		c.Flags().Bool("dry-run", false, "Resolve and report the per-release plan without mutating the blobstore")
+		c.Flags().Int("concurrency", 1, "Parallel export+upload workers for the compile-local path")
+		c.Flags().String("stemcell", precompile.DefaultStemcell.String(), "Stemcell as os/version")
+		c.Flags().String("bosh-env", "", "BOSH environment alias (bosh -e); empty uses the ambient BOSH_* env")
+		c.Flags().String("output-dir", "", "Where to write pin ops files (default ~/deployments/<bloc>)")
+	}
+
+	boshCmd := &cobra.Command{
+		Use:   "bosh",
+		Short: "Pin director releases (bosh, bpm) to upstream compiled tarballs",
+		RunE:  func(c *cobra.Command, _ []string) error { return runPrecompileBOSH(c) },
+	}
+	addPrecompileFlags(boshCmd)
+
+	cfCmd := &cobra.Command{
+		Use:   "cf",
+		Short: "Compile cf-deployment releases into the blobstore and pin them",
+		RunE:  func(c *cobra.Command, _ []string) error { return runPrecompileCF(c) },
+	}
+	addPrecompileFlags(cfCmd)
+	cfCmd.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+
+	allCmd := &cobra.Command{
+		Use:   "all",
+		Short: "Run both 'precompile bosh' and 'precompile cf'",
+		RunE: func(c *cobra.Command, _ []string) error {
+			if err := runPrecompileBOSH(c); err != nil {
+				return err
+			}
+			return runPrecompileCF(c)
+		},
+	}
+	addPrecompileFlags(allCmd)
+	allCmd.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+
+	cmd.AddCommand(boshCmd, cfCmd, allCmd)
+	return cmd
+}
+
+func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
+	var f precompileFlags
+
+	f.bloc, _ = cmd.Flags().GetString("bloc")
+	if f.bloc == "" {
+		f.bloc = viper.GetString("bloc")
+	}
+	if f.bloc == "" {
+		return f, ErrPrecompileBlocRequired
+	}
+
+	f.force, _ = cmd.Flags().GetBool("force")
+	f.dryRun, _ = cmd.Flags().GetBool("dry-run")
+	f.concurrency, _ = cmd.Flags().GetInt("concurrency")
+	f.boshEnv, _ = cmd.Flags().GetString("bosh-env")
+
+	scStr, _ := cmd.Flags().GetString("stemcell")
+	sc, err := parseStemcell(scStr)
+	if err != nil {
+		return f, err
+	}
+	f.stemcell = sc
+
+	f.outputDir, _ = cmd.Flags().GetString("output-dir")
+	if f.outputDir == "" {
+		home, err := homeDir()
+		if err != nil {
+			return f, err
+		}
+		f.outputDir = filepath.Join(home, "deployments", f.bloc)
+	}
+
+	if cmd.Flags().Lookup("cf-deployment") != nil {
+		f.cfManifest, _ = cmd.Flags().GetString("cf-deployment")
+		if f.cfManifest == "" {
+			f.cfManifest = filepath.Join(f.outputDir, "cf-deployment.yml")
+		}
+	}
+
+	return f, nil
+}
+
+func parseStemcell(s string) (precompile.Stemcell, error) {
+	os, ver, ok := strings.Cut(s, "/")
+	if !ok || os == "" || ver == "" {
+		return precompile.Stemcell{}, fmt.Errorf("invalid --stemcell %q: want os/version", s)
+	}
+	return precompile.Stemcell{OS: os, Version: ver}, nil
+}
+
+func (f precompileFlags) options() precompile.Options {
+	return precompile.Options{
+		Force:       f.force,
+		DryRun:      f.dryRun,
+		Concurrency: f.concurrency,
+		Stemcell:    f.stemcell,
+	}
+}
+
+func runPrecompileBOSH(cmd *cobra.Command) error {
+	cmd.SilenceUsage = true
+	log := logger.WithOperation("precompile-bosh")
+
+	f, err := parsePrecompileFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	workDir, cleanup, err := makeWorkDir("ocfp-precompile-bosh")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	c := &precompile.Compiler{
+		Director: precompile.NewBOSHDirector(f.boshEnv),
+		HTTP:     &http.Client{Timeout: 30 * time.Minute},
+		WorkDir:  workDir,
+		Log:      func(format string, a ...any) { log.Infof(format, a...) },
+	}
+
+	rels := precompile.BOSHReleases(f.stemcell)
+	res, err := c.ResolveDirector(ctx, rels, f.stemcell, f.options())
+	if err != nil {
+		return fmt.Errorf("resolving director releases: %w", err)
+	}
+
+	return emitPinOps(res, f.stemcell, "ocfp precompile bosh",
+		filepath.Join(f.outputDir, "manifests", "bosh"), f.dryRun, log)
+}
+
+func runPrecompileCF(cmd *cobra.Command) error {
+	cmd.SilenceUsage = true
+	log := logger.WithOperation("precompile-cf")
+
+	f, err := parsePrecompileFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	manifestData, err := os.ReadFile(f.cfManifest) //nolint:gosec // path is operator-supplied config
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrCFDeploymentNotFound, f.cfManifest)
+		}
+		return fmt.Errorf("reading cf-deployment manifest: %w", err)
+	}
+
+	rels, err := precompile.ParseCFReleases(manifestData, precompile.CFMinReleases)
+	if err != nil {
+		return err
+	}
+	log.Infof("parsed %d cf-deployment releases from %s", len(rels), f.cfManifest)
+
+	actx, cleanup, err := buildArtifactsContext(ctx, f.bloc)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if actx.lookup == nil {
+		return fmt.Errorf("%w: %s", ErrArtifactsNotFound, f.bloc)
+	}
+
+	s3c, ep, err := precompileS3Client(actx.lookup)
+	if err != nil {
+		return err
+	}
+
+	workDir, wdCleanup, err := makeWorkDir("ocfp-precompile-cf")
+	if err != nil {
+		return err
+	}
+	defer wdCleanup()
+
+	c := &precompile.Compiler{
+		Director:   precompile.NewBOSHDirector(f.boshEnv),
+		S3:         s3c,
+		HTTP:       &http.Client{Timeout: 30 * time.Minute},
+		Bucket:     f.bloc + "-ocf-bosh",
+		Endpoint:   ep,
+		Deployment: f.bloc + "-precompile-cf",
+		WorkDir:    workDir,
+		Log:        func(format string, a ...any) { log.Infof(format, a...) },
+	}
+
+	res, err := c.ResolveBlobstore(ctx, rels, f.stemcell, f.options())
+	if err != nil {
+		return fmt.Errorf("resolving cf releases: %w", err)
+	}
+
+	return emitPinOps(res, f.stemcell, "ocfp precompile cf",
+		filepath.Join(f.outputDir, "manifests", "cf"), f.dryRun, log)
+}
+
+// precompileS3Client builds an artifacts S3 client + endpoint base URL from a
+// lookup result. RustFS uses path-style; a CA cert pins TLS, otherwise TLS
+// verification is skipped (self-signed RustFS). The returned *s3.Client
+// satisfies the precompile package's object API directly.
+func precompileS3Client(lr *artifacts.LookupResult) (*s3.Client, string, error) {
+	ep := artifacts.Endpoint{
+		URL:           lr.Endpoint,
+		Region:        "us-east-1",
+		PathStyle:     true,
+		CACert:        lr.CACert,
+		SkipTLSVerify: lr.CACert == "" && strings.HasPrefix(lr.Endpoint, "https://"),
+	}
+	cli, err := artifacts.NewS3Client(ep, artifacts.Credentials{AccessKey: lr.AccessKey, SecretKey: lr.SecretKey})
+	if err != nil {
+		return nil, "", fmt.Errorf("building artifacts S3 client: %w", err)
+	}
+	return cli, lr.Endpoint, nil
+}
+
+func makeWorkDir(prefix string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", prefix+"-")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating work dir: %w", err)
+	}
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
+}
+
+func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy, destDir string, dryRun bool, log logger.Logger) error {
+	fmt.Printf("Release resolution plan (%s):\n", sc)
+	for _, r := range res {
+		fmt.Printf("  %-28s %-10s %s\n", r.Name+"/"+r.Version, r.Source, r.URL)
+	}
+
+	// Dry-run resolutions carry no sha (nothing was downloaded/compiled), so the
+	// pin ops file cannot be rendered; report the plan and stop.
+	if dryRun {
+		log.Infof("dry-run: %d releases resolved; pin ops not written", len(res))
+		return nil
+	}
+
+	ops, err := precompile.RenderOpsFile(res, sc, generatedBy)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		return fmt.Errorf("creating ops dir %s: %w", destDir, err)
+	}
+	dest := filepath.Join(destDir, "compiled-releases.yml")
+	if err := os.WriteFile(dest, ops, 0o600); err != nil {
+		return fmt.Errorf("writing pin ops %s: %w", dest, err)
+	}
+
+	log.Infof("wrote pin ops for %d releases to %s", len(res), dest)
+	return nil
+}

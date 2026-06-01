@@ -37,6 +37,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewTmuxCmd())
 	root.AddCommand(commands.NewBastionCmd())
 	root.AddCommand(commands.NewArtifactsCmd())
+	root.AddCommand(commands.NewPrecompileCmd())
 
 	// PVE-specific operational commands
 	root.AddCommand(commands.NewPVECmd())
