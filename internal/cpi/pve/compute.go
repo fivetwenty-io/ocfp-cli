@@ -59,6 +59,13 @@ const (
 	// vmStopDelay is the time to wait after stopping a VM before deleting it.
 	vmStopDelay = 2 * time.Second
 
+	// flavorSizingMaxAttempts bounds the verify-and-retry loop in
+	// applyFlavorSizing. A freshly cloned VM can briefly ignore or revert a
+	// config write while the clone finalizes, so the first PUT may not stick.
+	flavorSizingMaxAttempts = 5
+	// flavorSizingRetryDelay is the settle wait between sizing PUT attempts.
+	flavorSizingRetryDelay = 2 * time.Second
+
 	// defaultPVECloudInitDNS is the nameserver string PVE applies to a VM's
 	// cloud-init when the request omits DNSServers. Without an explicit value,
 	// PVE falls back to the host's /etc/resolv.conf — which a host-side
@@ -724,8 +731,28 @@ func effectiveFlavor(preset *cpi.Flavor, req *cpi.InstanceRequest) *cpi.Flavor {
 	return &out
 }
 
+// flavorSizingSatisfied reports whether a VM config map already reflects the
+// flavor's memory and cores. A nil flavor means no sizing was requested (always
+// satisfied). Numeric fields are read via getIntFromMap, which normalizes the
+// int/float64/string encodings PVE may return; a missing or still-default value
+// reads as a mismatch so the caller retries.
+func flavorSizingSatisfied(config map[string]interface{}, flavor *cpi.Flavor) bool {
+	if flavor == nil {
+		return true
+	}
+
+	return getIntFromMap(config, pveKeyMemory) == flavor.RAM &&
+		getIntFromMap(config, pveKeyCores) == flavor.VCPUs
+}
+
 // applyFlavorSizing sets the VM's memory and cores to the flavor spec via a
-// config PUT. Cloned templates otherwise keep the template's sizing.
+// config PUT. Cloned templates otherwise keep the template's minimal sizing.
+//
+// The PUT is verified by reading the config back and retried when it has not
+// taken: a freshly cloned VM can briefly ignore or revert a config write while
+// the clone finalizes, which previously left bastions at the template's 2GB
+// default despite a successful-looking PUT. Without the readback the bug was
+// silent — the PUT returned 200 but the value did not stick.
 func (m *ComputeManager) applyFlavorSizing(ctx context.Context, node string, vmid int, flavor *cpi.Flavor) error {
 	if flavor == nil {
 		return nil
@@ -737,11 +764,36 @@ func (m *ComputeManager) applyFlavorSizing(ctx context.Context, node string, vmi
 		pveKeyCores:  flavor.VCPUs,
 	}
 
-	if _, err := m.client.pveClient.PutCtx(ctx, configPath, params); err != nil {
-		return fmt.Errorf("failed to set memory/cores: %w", err)
+	qemuSvc := m.client.getQemuService()
+
+	var gotMem, gotCores int
+
+	for attempt := 1; attempt <= flavorSizingMaxAttempts; attempt++ {
+		if _, err := m.client.pveClient.PutCtx(ctx, configPath, params); err != nil {
+			return fmt.Errorf("failed to set memory/cores: %w", err)
+		}
+
+		config, err := qemuSvc.Config(ctx, node, vmid)
+		if err != nil {
+			return fmt.Errorf("failed to read back VM config: %w", err)
+		}
+
+		if flavorSizingSatisfied(config, flavor) {
+			return nil
+		}
+
+		gotMem, gotCores = getIntFromMap(config, pveKeyMemory), getIntFromMap(config, pveKeyCores)
+		logger.Debugf("PVE: vmid=%d sizing not yet applied (got memory=%d cores=%d, want memory=%d cores=%d), attempt %d/%d",
+			vmid, gotMem, gotCores, flavor.RAM, flavor.VCPUs, attempt, flavorSizingMaxAttempts)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(flavorSizingRetryDelay):
+		}
 	}
 
-	return nil
+	return ErrFlavorSizingNotApplied(vmid, gotMem, gotCores, flavor.RAM, flavor.VCPUs)
 }
 
 // createBlankVM creates a VM with a blank disk.
