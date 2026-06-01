@@ -136,3 +136,43 @@ func TestWatchdogScript_RestartsCloudflared(t *testing.T) {
 		t.Error("watchdogScript should keep cloudflared running")
 	}
 }
+
+func TestFirstbootScript_PersistsIPForwarding(t *testing.T) {
+	t.Parallel()
+
+	// The bastion is a subnet router (--advertise-routes); the base cloud
+	// template ships IP forwarding OFF and tailscale only warns. Persist it so
+	// routed SDN traffic works and survives reboots.
+	for _, want := range []string{
+		"net.ipv4.ip_forward = 1",
+		"/etc/sysctl.d/", // persisted drop-in, not merely a runtime sysctl -w
+		"sysctl",
+	} {
+		if !strings.Contains(firstbootScript, want) {
+			t.Errorf("firstbootScript must persist IP forwarding for subnet routing; missing %q", want)
+		}
+	}
+}
+
+func TestWatchdogScript_ProbesDatapathNotJustOnline(t *testing.T) {
+	t.Parallel()
+
+	// Self.Online reflects only the control-plane/disco view: it can be true
+	// while tailscaled's tun datapath is wedged (disco answers, but inbound
+	// packets never reach the guest kernel — sshd/ICMP dead). The watchdog must
+	// verify the actual datapath with a kernel-level ICMP, not trust Online.
+	if !strings.Contains(watchdogScript, "tailscale ping --icmp") {
+		t.Errorf("watchdogScript must probe the datapath with a kernel-level ICMP (tailscale ping --icmp), not just Self.Online")
+	}
+}
+
+func TestWatchdogScript_RestartsDaemonOnWedge(t *testing.T) {
+	t.Parallel()
+
+	// Re-running `tailscale up` does NOT rebuild a wedged tun device; only a
+	// daemon restart recovers the datapath. The watchdog must escalate to a
+	// restart when the datapath probe fails.
+	if !strings.Contains(watchdogScript, "systemctl restart tailscaled") {
+		t.Errorf("watchdogScript must restart tailscaled when the datapath is wedged (tailscale up cannot fix a wedged tun device)")
+	}
+}
