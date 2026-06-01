@@ -116,6 +116,14 @@ func ErrFlavorNotFound(flavor string) error {
 	return fmt.Errorf("pve: flavor %q not found", flavor) //nolint:err113 // dynamic error with context
 }
 
+// ErrFlavorSizingNotApplied returns an error when a VM's memory/cores did not
+// reach the requested flavor sizing after the verify-and-retry attempts.
+func ErrFlavorSizingNotApplied(vmid, gotMem, gotCores, wantMem, wantCores int) error {
+	return fmt.Errorf( //nolint:err113 // dynamic error with context
+		"pve: vmid %d sizing not applied: got memory=%d cores=%d, want memory=%d cores=%d",
+		vmid, gotMem, gotCores, wantMem, wantCores)
+}
+
 // ErrTemplateVMIDNotFound returns an error when a template VM ID is not found.
 func ErrTemplateVMIDNotFound(vmid int) error {
 	return fmt.Errorf("pve: template with VMID %d not found", vmid) //nolint:err113 // dynamic error with context
