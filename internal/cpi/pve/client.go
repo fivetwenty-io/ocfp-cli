@@ -845,6 +845,13 @@ func getIntFromMap(m map[string]interface{}, key string) int {
 			return int(n)
 		case float64:
 			return int(n)
+		case string:
+			// PVE returns some numeric config fields (e.g. memory, cores) as
+			// strings depending on the API path. Parse them rather than fall
+			// through to 0, which would misreport a VM's sizing.
+			if i, err := strconv.Atoi(n); err == nil {
+				return i
+			}
 		}
 	}
 
