@@ -64,6 +64,16 @@ fi
 # Best-effort jq install (cloud images ship it; this is defensive only).
 command -v jq >/dev/null 2>&1 || apt-get install -y jq
 
+# Persist IP forwarding before bringing tailscale up. The bastion advertises
+# subnet routes (--advertise-routes), but the base cloud template ships
+# forwarding OFF; tailscale only emits a health warning and won't set it, so
+# routed SDN traffic silently fails. A sysctl drop-in survives reboots.
+cat >/etc/sysctl.d/99-ocfp-ip-forward.conf <<'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+SYSCTL
+sysctl -p /etc/sysctl.d/99-ocfp-ip-forward.conf >/dev/null 2>&1 || true
+
 # Assemble the up invocation; quoted authkey for safety.
 # shellcheck disable=SC2086
 tailscale up \
@@ -90,25 +100,56 @@ if [[ -n "$cf_token" ]]; then
 fi
 `
 
-// watchdogScript re-runs `tailscale up` whenever tailnet shows the node as
-// offline. Triggered by ocfp-tailscale-watchdog.timer. Reads SMBIOS each
-// invocation so PVE-side config edits propagate without bastion restart.
+// watchdogScript keeps the bastion's tailscale connectivity healthy. It
+// re-runs `tailscale up` when the node is offline, AND — because Self.Online
+// only reflects the control-plane/disco view — probes the actual tun datapath
+// with a kernel-level ICMP and restarts tailscaled when that datapath is
+// wedged (disco answers while inbound packets never reach the kernel).
+// Triggered by ocfp-tailscale-watchdog.timer. Reads SMBIOS each invocation so
+// PVE-side config edits propagate without bastion restart.
 const watchdogScript = `#!/bin/bash
-# ocfp-tailscale-watchdog v1 — re-up tailscale when Self.Online=false.
-# Coordinated drops (lab observed: all bastions offline within a 28s
-# window after a PVE storage-lock storm) leave tailscaled wedged; this
-# brings it back without operator intervention.
+# ocfp-tailscale-watchdog v2 — recover tailscale connectivity automatically.
+#
+# Two distinct failure modes, two distinct remedies:
+#   1. Offline (Self.Online=false): coordinated drops (lab observed: all
+#      bastions offline within a 28s window after a PVE storage-lock storm)
+#      leave tailscaled needing a re-up. Remedy: tailscale up.
+#   2. Datapath wedge (Self.Online=true but tun datapath dead): userspace
+#      answers disco pings so the node looks online, but inbound packets never
+#      reach the guest kernel — sshd/ICMP time out (not refused). Re-running
+#      tailscale up does NOT rebuild the tun device. Remedy: restart tailscaled.
 set -euo pipefail
 
 family=$(dmidecode -s system-family 2>/dev/null || true)
 [[ "$family" == "ocfp-bastion" ]] || exit 0
 
-# Self.Online absent or false → re-up. -e makes jq exit non-zero on false/null.
-if tailscale status --json 2>/dev/null | jq -e '.Self.Online == true' >/dev/null 2>&1; then
-  exit 0
-fi
+status=$(tailscale status --json 2>/dev/null || true)
 
-logger -t ocfp-tailscale-watchdog "tailscale offline; running tailscale up"
+# -e makes jq exit non-zero on false/null, so an absent/false Self.Online and a
+# blank status (daemon down) both count as offline.
+if jq -e '.Self.Online == true' <<<"$status" >/dev/null 2>&1; then
+  # Control plane says online — but verify the real datapath. Probe up to a few
+  # online peers with a kernel-level ICMP (exercises the tun -> kernel path that
+  # wedges independently of disco). If any peer answers, the datapath is healthy.
+  mapfile -t peers < <(jq -r '[.Peer[]? | select(.Online == true) | .TailscaleIPs[0] // empty] | .[0:3][]' <<<"$status")
+  if [[ ${#peers[@]} -eq 0 ]]; then
+    # No online peers to probe against — can't distinguish wedge from a quiet
+    # tailnet, so assume healthy and leave it alone.
+    exit 0
+  fi
+  for ip in "${peers[@]}"; do
+    if tailscale ping --icmp --timeout 5s -c 1 "$ip" >/dev/null 2>&1; then
+      exit 0  # datapath healthy
+    fi
+  done
+  # Online but every peer fails a kernel-level ICMP → tun datapath wedged.
+  logger -t ocfp-tailscale-watchdog "online but tun datapath wedged; restarting tailscaled"
+  systemctl restart tailscaled || true
+  sleep 5
+  # Fall through to re-up to re-establish advertised routes/flags post-restart.
+else
+  logger -t ocfp-tailscale-watchdog "tailscale offline; running tailscale up"
+fi
 
 authkey=$(dmidecode -s system-serial-number 2>/dev/null || true)
 sku=$(dmidecode -s system-sku-number 2>/dev/null || true)
