@@ -84,7 +84,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 | Mgmt BOSH | `bosh/ocfp-lab-wayne-mgmt.yml` | kit dev/latest, iaas pve, features `ocfp,internal-db,pve-external-blobstore`, director 8cpu/16G/128G @ 10.64.64.10, stemcell openstack-kvm noble v1.364 |
 | Env BOSH | `bosh/ocfp-lab-wayne-ocf.yml` | kit dev/latest, scale `dev`, `bosh_env: ocfp-lab-wayne-mgmt@/secret/exodus/`, @ 10.64.64.12 |
 | CF | `cf/ocfp-lab-wayne-ocf.yml` | kit dev/latest, scale dev, features `ocfp,haproxy,self-signed,pve-blobstore`, `bosh_env: ocfp-lab-wayne-ocf@http://127.0.0.1:8234/secret/exodus/` |
-| CF cloud-config | `bosh/configs/cloud/ocfp-lab-wayne-ocf.yml` | haproxy static .20, CF VMs dynamic .31–.50, 18 vm_types, 2 disk_types |
+| CF cloud-config | _kit-generated_ (`hooks/cloud-config.pm` → named config `ocfp-lab-wayne-ocf.cf`, uploaded by `genesis deploy`) | network `ocfp-lab-wayne-ocf.cf.net-ocf`, workload band .20–.50 from vault `net/subnets/*/reserved-ips`, 18 vm_types, 2 disk_types |
 
 ### Kits
 
@@ -379,7 +379,15 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 **Steps**
 
 1. Confirm env manifest `bosh/ocfp-lab-wayne-ocf.yml` is `scale: dev` and `bosh_env: ocfp-lab-wayne-mgmt@/secret/exodus/` (prevents the recursion hook issue).
-2. Upload the noble stemcell to the mgmt director if not already present (openstack-kvm noble v1.364, sha1 `d6cc58bda0120fe47787a46775ff5bafc5718257`).
+2. Upload the noble stemcell to the mgmt director if not already present. Pin **openstack-kvm ubuntu-noble `1.364`** (sha1 `d6cc58bda0120fe47787a46775ff5bafc5718257`) — this version is **not arbitrary**: the bosh kit's compiled releases (`bosh-deployment/{bosh,uaa,credhub}.yml`) are compiled against noble-`1.364`, so the director VM stemcell must match it or BOSH rejects the compiled packages (they ship no source to recompile). **Download from the stable GCS bucket, not bosh.io.** `bosh.io/d/stemcells/...?v=1.364` returns 404 because bosh.io delists old point-releases; the artifact lives permanently at GCS:
+
+   ```bash
+   # NOTE: name has NO -go_agent suffix; pull from GCS (bosh.io delists old versions)
+   bosh -n upload-stemcell \
+     https://storage.googleapis.com/bosh-core-stemcells/1.364/bosh-stemcell-1.364-openstack-kvm-ubuntu-noble.tgz \
+     --sha1 d6cc58bda0120fe47787a46775ff5bafc5718257
+   # If/when bumping noble: bump the kit's compiled-release URLs to the SAME new version in lockstep.
+   ```
 3. Deploy env BOSH via the mgmt director (now reading mgmt creds from the migrated Vault `@/secret/exodus/`):
 
    ```bash
@@ -388,15 +396,23 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
    g @ocfp-lab-wayne-ocf:bosh b deps
    ```
 
-4. Apply the env-BOSH cloud config used by CF (`bosh/configs/cloud/ocfp-lab-wayne-ocf.yml`) — note it is a **named BOSH config**, not a `genesis` cloud-config; upload with `bosh update-config` against the env director (kit only validates it).
+4. No manual cloud-config upload. Under Genesis 3.2 kit-populated cloud-config
+   (OCFP-only), the CF kit's `hooks/cloud-config.pm` **generates** the named
+   config `ocfp-lab-wayne-ocf.cf` and `genesis deploy` uploads it automatically
+   (`bosh update-config --type cloud --name ocfp-lab-wayne-ocf.cf`), diffing
+   against the director's current config and prompting on change. Operators do
+   **not** hand-author a `bosh/configs/cloud/*.yml`; tune only via the env file's
+   `bosh-configs.cloud.*` keys (e.g. `networks.ocf.allocation.size`). The network
+   name and IPAM come from vault topology written by the ocfp CLI
+   (`net/subnets/*`, including the `available_0/available_1` workload band).
 
 **Verify**
 
 - Env director VM `ocfp-lab-wayne-ocf` @ 10.64.64.12 running.
-- `bosh -e ocf env` returns director info; `bosh -e ocf cloud-config` shows the CF networks/vm_types/disk_types.
+- `bosh -e ocf env` returns director info. The CF cloud-config appears only after the first `genesis deploy` of CF (`bosh -e ocf configs --type cloud` lists `ocfp-lab-wayne-ocf.cf`).
 - noble stemcell present on the env director (`bosh -e ocf stemcells`).
 
-**Debug note**: if the cloud config is missing when CF deploys, CF VM placement fails — the cloud config is a separately uploaded named config on the env director, easy to forget.
+**Debug note**: the generated network name is `ocfp-lab-wayne-ocf.cf.net-ocf` (`<env.name>.<env.type>.net-ocf`) and the manifest's `cf_*_network` must match it — never hardcode `cf_*_network` in the env file. CF VMs land in the vault-defined available band (.20–.50); if they collide with infra, fix the band via the bloc config `network.available_ip_start/end` and re-run vault populate, not by editing a cloud-config file.
 
 ---
 
@@ -557,7 +573,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 | v56.5.0 compiled ops file still references jammy blobs | Medium | Compiled goal fails on noble | Verify/point at noble-compiled blobs; check bpm ≥ 1.4.31 (Phase 6) |
 | `kit_bug` bail at `blueprint.pm:366-384` still fires | Medium | Manifest render bails | Confirm the `cf-deployment-version-56.5.0` feature took effect (noble now default); the bail is gated on `use-noble-stemcell.yml` — re-render (Phase 6) |
 | Bootstrap-written vault paths don't match kit-read paths | Medium | Deploy can't resolve creds | Bootstrap writes `secret/config/<bloc>/rustfs`; kits read under the deployment's ocfp config base (e.g. `…/ocf/cpi/pve`, `…/ocf/cf/blobstores/main`). Verify alignment with `safe tree secret/config/ocfp-lab-wayne`; bridge via `ocfp vault populate` (Phases 2, 4) |
-| Env-BOSH cloud config not uploaded as named config | Medium | CF placement fails | `bosh update-config` on env director (Phase 5) |
+| CF network-name / IPAM mismatch (manifest vs kit-generated cloud-config) | Medium | CF placement fails ("unknown network") | Never hardcode `cf_*_network`; let ocfp.yml derive `ocfp-lab-wayne-ocf.cf.net-ocf`; set available band via bloc config `network.available_ip_start/end` → vault `available_*` (Phases 5, 7) |
 | `cf ssh` proxy lost in kit upgrade | Medium | Objective 9 fails | Retain `ssh-proxy.yml`; verify ssh proxy IG (Phases 6, 9) |
 | Vault unreachable during bootstrap | Low | Creds missing | `ocfp vault populate` fallback; manual writes (Phases 2, 4, 7) |
 | Accidental push to origin (genesis/kits/CPI) | Low | Rule violation | Never push; local-only throughout |
@@ -606,7 +622,8 @@ ocfp vault migrate ; safe targets
 # Env BOSH (deployed by mgmt)
 g @ocfp-lab-wayne-ocf:bosh deploy -F -y
 g @ocfp-lab-wayne-ocf:bosh info ; g @ocfp-lab-wayne-ocf:bosh b deps
-bosh -e ocf update-config --type cloud --name ocfp-lab-wayne-ocf-cf <cloud-config.yml>
+# CF cloud-config is kit-generated + auto-uploaded by `genesis deploy` (Phase 7);
+# no manual `bosh update-config` step.
 
 # CF (deployed by env BOSH)
 g @ocfp-lab-wayne-ocf:cf manifest
