@@ -65,6 +65,14 @@ func Probe(ctx context.Context, ep Endpoint, creds Credentials) error {
 	return nil
 }
 
+// NewS3Client builds an AWS SDK v2 S3 client for the artifacts RustFS endpoint,
+// applying the same path-style + CA/SkipTLSVerify TLS matrix used internally for
+// bucket creation. Exported so other packages (e.g. precompile) can reuse the
+// exact RustFS-compatible client without duplicating the TLS logic.
+func NewS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
+	return newS3Client(ep, creds)
+}
+
 func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
 	var httpClient *http.Client
 
