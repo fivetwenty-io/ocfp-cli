@@ -1,0 +1,632 @@
+#!/usr/bin/env bash
+# genesis-deploy-resilient — resilient genesis/bosh deploy wrapper.
+#
+# Renders the manifest via `genesis manifest` then drives `bosh deploy` under a
+# stall watchdog, concurrent agent-reset via PVE qm-reset, and a retry loop with
+# passive preflight waits between attempts.
+#
+# Usage:
+#   genesis-deploy-resilient --env <bosh-env-alias> --deployment <name> \
+#       [--pve-host <host>] [--manifest <path>] \
+#       [--attempts N] [--stall-seconds N] [--dry-run]
+#
+# Environment overrides (all optional):
+#   OCFP_PVE_HOST                  PVE host (overridden by --pve-host)
+#   SCRIPTS_CF_DEPLOY_ATTEMPTS     Max retry attempts (default: 8)
+#   SCRIPTS_CF_DEPLOY_STALL_S      Stall watchdog threshold in seconds (default: 900)
+#   SCRIPTS_CF_AGENT_WAIT          Preflight poll budget in seconds (default: 600)
+#   SCRIPTS_CF_AGENT_REBOOT        Set to 0 to disable qm-reset recovery (default: 1)
+#   SCRIPTS_CF_REBOOT_COOLDOWN     Per-instance reset cooldown in seconds (default: 180)
+#   SCRIPTS_CF_SSH_UNSAFE          Set to 1 to skip StrictHostKeyChecking (default: off)
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Globals — populated by parse_args
+# ---------------------------------------------------------------------------
+
+BOSH_ENV=""
+DEPLOYMENT=""
+PVE_HOST=""
+MANIFEST_PATH=""
+MAX_ATTEMPTS=""
+STALL_S=""
+DRY_RUN=0
+
+# Per-instance last-reset timestamps. bash associative array acts as the
+# shared cooldown table; the watchdog fires recovery in subshells so we
+# use a temp file for cross-process state instead (see recovery section).
+COOLDOWN_DIR=""
+
+# Background PID tracking for clean teardown.
+declare -a BG_PIDS=()
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+cleanup() {
+    local pid
+    for pid in "${BG_PIDS[@]+"${BG_PIDS[@]}"}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    if [[ -n "$COOLDOWN_DIR" && -d "$COOLDOWN_DIR" ]]; then
+        rm -rf "$COOLDOWN_DIR"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Logging helpers
+# ---------------------------------------------------------------------------
+
+log()  { printf '%s [info]  %s\n'  "$(date -u +%H:%M:%SZ)" "$*" >&2; }
+warn() { printf '%s [warn]  %s\n'  "$(date -u +%H:%M:%SZ)" "$*" >&2; }
+err()  { printf '%s [error] %s\n'  "$(date -u +%H:%M:%SZ)" "$*" >&2; }
+
+banner() {
+    printf '\n>>> %s\n\n' "$1" >&2
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: genesis-deploy-resilient --env <bosh-env> --deployment <name>
+           [--pve-host <host>] [--manifest <path>]
+           [--attempts N] [--stall-seconds N] [--dry-run]
+
+Options:
+  --env <alias>        BOSH environment alias (required)
+  --deployment <name>  BOSH deployment name (required)
+  --pve-host <host>    PVE host for qm-reset recovery (overrides OCFP_PVE_HOST)
+  --manifest <path>    Use pre-rendered manifest instead of genesis manifest
+  --attempts N         Max deploy attempts (default: SCRIPTS_CF_DEPLOY_ATTEMPTS or 8)
+  --stall-seconds N    Stall watchdog threshold seconds (default: SCRIPTS_CF_DEPLOY_STALL_S or 900)
+  --dry-run            Print resolved config and exit 0
+
+Environment overrides:
+  OCFP_PVE_HOST                PVE host
+  SCRIPTS_CF_DEPLOY_ATTEMPTS   Max attempts
+  SCRIPTS_CF_DEPLOY_STALL_S    Stall threshold
+  SCRIPTS_CF_AGENT_WAIT        Preflight budget seconds
+  SCRIPTS_CF_AGENT_REBOOT      0 = disable qm-reset
+  SCRIPTS_CF_REBOOT_COOLDOWN   Per-instance cooldown seconds
+  SCRIPTS_CF_SSH_UNSAFE        1 = skip SSH host key check
+EOF
+    exit 1
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)            BOSH_ENV="$2";       shift 2 ;;
+            --deployment)     DEPLOYMENT="$2";     shift 2 ;;
+            --pve-host)       PVE_HOST="$2";       shift 2 ;;
+            --manifest)       MANIFEST_PATH="$2";  shift 2 ;;
+            --attempts)       MAX_ATTEMPTS="$2";   shift 2 ;;
+            --stall-seconds)  STALL_S="$2";        shift 2 ;;
+            --dry-run)        DRY_RUN=1;           shift   ;;
+            --help|-h)        usage ;;
+            *)  err "Unknown argument: $1"; usage ;;
+        esac
+    done
+
+    [[ -n "$BOSH_ENV" ]]    || { err "--env is required";        usage; }
+    [[ -n "$DEPLOYMENT" ]]  || { err "--deployment is required"; usage; }
+
+    # Env-var fallbacks
+    [[ -z "$PVE_HOST" ]]      && PVE_HOST="${OCFP_PVE_HOST:-}"
+    [[ -z "$MAX_ATTEMPTS" ]]  && MAX_ATTEMPTS="${SCRIPTS_CF_DEPLOY_ATTEMPTS:-8}"
+    [[ -z "$STALL_S" ]]       && STALL_S="${SCRIPTS_CF_DEPLOY_STALL_S:-900}"
+
+    # Validate numeric fields
+    if ! [[ "$MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+        err "--attempts / SCRIPTS_CF_DEPLOY_ATTEMPTS must be a positive integer; got: $MAX_ATTEMPTS"
+        exit 1
+    fi
+    if ! [[ "$STALL_S" =~ ^[0-9]+$ ]]; then
+        err "--stall-seconds / SCRIPTS_CF_DEPLOY_STALL_S must be a non-negative integer; got: $STALL_S"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# bosh JSON helpers
+# ---------------------------------------------------------------------------
+
+# list_vms_json [bosh_env] [deployment]
+# Emit the Tables[0].Rows array from `bosh vms --json`, or empty if the
+# deployment is absent or director is unreachable. Uses `vms` (not `instances`)
+# because only `vms` includes vm_cid, which the reset path needs.
+list_vms_json() {
+    local bosh_env="$1" dep="$2"
+    local out
+    if ! out="$(bosh -e "$bosh_env" -d "$dep" vms --json 2>/dev/null)"; then
+        return 1
+    fi
+    printf '%s' "$out" | jq -r '.Tables[0].Rows // empty' 2>/dev/null
+}
+
+# vm_cid_for_instance <bosh_env> <deployment> <instance>
+# Return the vm_cid for the named instance, or empty string on failure.
+# Instance format: "job/uuid"  (as printed by bosh vms).
+vm_cid_for_instance() {
+    local bosh_env="$1" dep="$2" inst="$3"
+    local rows
+    if ! rows="$(list_vms_json "$bosh_env" "$dep")"; then
+        return 1
+    fi
+    printf '%s' "$rows" | jq -r --arg inst "$inst" \
+        '.[] | select(.instance == $inst) | .vm_cid // empty' 2>/dev/null | head -1
+}
+
+# unresponsive_instances <bosh_env> <deployment>
+# Emit newline-separated "instance vm_cid" pairs for every unresponsive agent.
+unresponsive_instances() {
+    local bosh_env="$1" dep="$2"
+    local rows
+    if ! rows="$(list_vms_json "$bosh_env" "$dep")"; then
+        return 1
+    fi
+    printf '%s' "$rows" | jq -r \
+        '.[] | select((.process_state // "") | ascii_downcase | contains("unresponsive"))
+         | "\(.instance // "?") \(.vm_cid // "")"' 2>/dev/null
+}
+
+# validate_vmid <raw>
+# Print the integer vmid if raw is a positive integer, else return 1 with a
+# message. Guards against injection of non-numeric strings into qm arguments.
+validate_vmid() {
+    local raw="$1"
+    if ! [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
+        err "PVE VMID must be a positive integer; got: ${raw@Q}. Check 'bosh vms --column=vm_cid'."
+        return 1
+    fi
+    printf '%s' "$raw"
+}
+
+# ---------------------------------------------------------------------------
+# PVE SSH helpers  (ref: _pve_ssh_opts / _pve_host  ~lines 641-660)
+# ---------------------------------------------------------------------------
+
+# pve_ssh_opts
+# Emit SSH flag tokens, one per line. Caller collects into array.
+pve_ssh_opts() {
+    printf '%s\n' -o BatchMode=yes -o ConnectTimeout=10
+    if [[ "${SCRIPTS_CF_SSH_UNSAFE:-0}" == "1" ]]; then
+        printf '%s\n' -o StrictHostKeyChecking=no
+    fi
+}
+
+# pve_ssh_alive <host>
+# Return 0 if a no-op ssh to root@host succeeds, 1 otherwise.
+pve_ssh_alive() {
+    local host="$1"
+    local -a opts
+    mapfile -t opts < <(pve_ssh_opts)
+    ssh "${opts[@]}" -o BatchMode=yes "root@${host}" true 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Cooldown state (file-based for cross-process sharing)
+# ---------------------------------------------------------------------------
+
+# cooldown_dir is set once in main before the retry loop.
+# Each instance gets a file: $COOLDOWN_DIR/<url-encoded-inst>
+# Content: epoch seconds of last reset.
+
+_cooldown_file() {
+    local inst="$1"
+    # Replace / with _ to make a safe filename; also strip any characters
+    # that are not alphanum, dash, underscore, or dot.
+    local safe
+    safe="$(printf '%s' "$inst" | tr '/' '_' | tr -cd '[:alnum:]_.-')"
+    printf '%s/%s' "$COOLDOWN_DIR" "$safe"
+}
+
+cooldown_elapsed() {
+    local inst="$1" cooldown_s="$2"
+    local f now last
+    f="$(_cooldown_file "$inst")"
+    now="$(date +%s)"
+    if [[ -f "$f" ]]; then
+        last="$(cat "$f" 2>/dev/null || printf '0')"
+        if (( now - last < cooldown_s )); then
+            return 1   # still cooling down
+        fi
+    fi
+    printf '%s' "$now" > "$f"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Agent reset  (ref: _make_agent_recovery / recover  ~lines 695-746)
+# ---------------------------------------------------------------------------
+
+# reset_agent_vm <bosh_env> <deployment> <instance> <pve_host> <cooldown_s>
+# Hard-reset the PVE VM backing <instance> via qm reset.  Runs in a subshell
+# spawned by the watchdog so it does not block stdout processing.
+reset_agent_vm() {
+    local bosh_env="$1" dep="$2" inst="$3" pve_host="$4" cooldown_s="$5"
+
+    # Per-instance cooldown: skip if we reset this instance within the window.
+    if ! cooldown_elapsed "$inst" "$cooldown_s"; then
+        log "[watcher] $inst: within cooldown window ($cooldown_s s); skipping reset"
+        return 0
+    fi
+
+    local raw_cid vmid
+    if ! raw_cid="$(vm_cid_for_instance "$bosh_env" "$dep" "$inst")"; then
+        warn "[watcher] $inst: cannot query vm_cid from director; skipping reset"
+        return 0
+    fi
+    if [[ -z "$raw_cid" ]]; then
+        warn "[watcher] $inst: no vm_cid in director state; skipping reset"
+        return 0
+    fi
+    if ! vmid="$(validate_vmid "$raw_cid")"; then
+        # validate_vmid already logged the message
+        return 0
+    fi
+
+    local -a ssh_opts
+    mapfile -t ssh_opts < <(pve_ssh_opts)
+
+    log "[watcher] $inst: agent RPC timed out — hard-resetting vmid $vmid on $pve_host"
+    local rc=0
+    local out
+    # SC2029: "qm reset $vmid" is intentionally expanded locally before SSH —
+    # vmid is an integer validated above, pve_host is a resolved hostname.
+    # shellcheck disable=SC2029
+    out="$(ssh "${ssh_opts[@]}" "root@${pve_host}" "qm reset $vmid" 2>&1)" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        log "[watcher] $inst: qm reset $vmid issued"
+    else
+        warn "[watcher] $inst: qm reset $vmid FAILED (rc=$rc): ${out:0:200}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Preflight: wait for all agents responsive  (ref: wait_agents_responsive ~lines 596-638)
+# ---------------------------------------------------------------------------
+
+# wait_agents_responsive <bosh_env> <deployment> <timeout_s> [settle_reads] [poll_s]
+# Block until every agent in the deployment is responsive for settle_reads
+# consecutive polls, or timeout_s seconds elapse.
+# Returns 0 (success) or 1 (timeout).
+# Passive: never resets agents.  Absence of the deployment is treated as success.
+wait_agents_responsive() {
+    local bosh_env="$1" dep="$2" timeout_s="$3"
+    local settle_reads="${4:-2}"
+    local poll_s="${5:-15}"
+
+    banner "agent-stable preflight"
+    local deadline clean_streak bad_output bad_count
+    deadline=$(( $(date +%s) + timeout_s ))
+    clean_streak=0
+
+    while (( $(date +%s) < deadline )); do
+        if ! bad_output="$(unresponsive_instances "$bosh_env" "$dep" 2>/dev/null)"; then
+            # director unreachable or deployment absent
+            log "deployment not present or director busy; skipping wait"
+            return 0
+        fi
+
+        if [[ -z "$bad_output" ]]; then
+            (( clean_streak++ )) || true
+            log "all agents responsive ($clean_streak/$settle_reads)"
+            if (( clean_streak >= settle_reads )); then
+                return 0
+            fi
+        else
+            clean_streak=0
+            bad_count="$(printf '%s\n' "$bad_output" | grep -c . || true)"
+            local names
+            names="$(printf '%s\n' "$bad_output" | awk '{print $1}' | paste -sd, - || true)"
+            log "unresponsive ($bad_count instance(s), waiting for self-heal): $names"
+        fi
+
+        sleep "$poll_s"
+    done
+
+    warn "timed out after ${timeout_s}s waiting for responsive agents"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Manifest rendering
+# ---------------------------------------------------------------------------
+
+# render_manifest <bosh_env> <deployment> <out_file>
+# Write the rendered manifest to out_file.
+# Uses `genesis -C <env> manifest` unless MANIFEST_PATH is set.
+render_manifest() {
+    local bosh_env="$1" dep="$2" out_file="$3"
+
+    if [[ -n "$MANIFEST_PATH" ]]; then
+        if [[ ! -f "$MANIFEST_PATH" ]]; then
+            err "Manifest file not found: $MANIFEST_PATH"
+            return 1
+        fi
+        cp "$MANIFEST_PATH" "$out_file"
+        log "Using provided manifest: $MANIFEST_PATH"
+        return 0
+    fi
+
+    log "Rendering manifest via: genesis -C $bosh_env manifest"
+    if ! genesis -C "$bosh_env" manifest --no-redact > "$out_file" 2>&1; then
+        err "genesis manifest rendering failed. Output:"
+        cat "$out_file" >&2
+        return 1
+    fi
+    log "Manifest rendered to: $out_file"
+}
+
+# ---------------------------------------------------------------------------
+# Watchdog deploy  (ref: _run_deploy_with_watchdog ~lines 749-829)
+# ---------------------------------------------------------------------------
+
+# run_deploy_with_watchdog <stall_s> <pve_host> <cooldown_s> <bosh_env> <deployment> <manifest>
+# Run `bosh deploy` under a stall watchdog.  Scans stdout for:
+#   - "Task (\d+)"                              → capture task id
+#   - "Timed out sending ... to instance: '...'" → trigger recovery
+# If stall_s seconds pass with no output, cancel the task and return 1.
+# Returns the bosh deploy exit code, forcing 1 on a stall-cancel race.
+run_deploy_with_watchdog() {
+    local stall_s="$1" pve_host="$2" cooldown_s="$3"
+    local bosh_env="$4" dep="$5" manifest="$6"
+
+    local state_dir
+    state_dir="$(mktemp -d)"
+    # Shared state files written by the pump subshell, read by the watcher.
+    local f_last_ts="${state_dir}/last_ts"
+    local f_task_id="${state_dir}/task_id"
+    local f_cancelled="${state_dir}/cancelled"
+    printf '%s' "$(date +%s)" > "$f_last_ts"
+    printf ''                 > "$f_task_id"
+    printf '0'                > "$f_cancelled"
+
+    local -a deploy_cmd=(
+        bosh -e "$bosh_env" -n -d "$dep" deploy "$manifest"
+    )
+    log "Deploy command: ${deploy_cmd[*]}"
+
+    # Launch deploy with stderr merged into stdout so all output is captured
+    # in one stream (bosh writes task progress to stdout, errors to stderr).
+    local fifo="${state_dir}/out.fifo"
+    mkfifo "$fifo"
+
+    "${deploy_cmd[@]}" > "$fifo" 2>&1 &
+    local deploy_pid=$!
+    BG_PIDS+=("$deploy_pid")
+
+    # recovery_pids_file: pump writes one pid-per-line for every recovery
+    # subshell it spawns so the parent cleanup trap can reap them even though
+    # the pump runs in a subshell (BG_PIDS mutations inside ( ) & are lost).
+    local f_recovery_pids="${state_dir}/recovery_pids"
+    touch "$f_recovery_pids"
+
+    # Pump subshell: read the fifo line by line, update shared state, and
+    # echo every line to our own stdout.  Runs as a background job so the
+    # watcher loop can poll in the foreground.
+    (
+        local line
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            printf '%s\n' "$line"
+            printf '%s' "$(date +%s)" > "$f_last_ts"
+
+            # Capture task id: "Task 1234"
+            if [[ "$line" =~ Task[[:space:]]+([0-9]+) ]]; then
+                printf '%s' "${BASH_REMATCH[1]}" > "$f_task_id"
+            fi
+
+            # Wedge signature: "Timed out sending '...' to instance: 'job/uuid'"
+            if [[ "$line" =~ "Timed out sending "[^\']*"to instance: '"([^\']+)"'" ]]; then
+                local wedge_inst="${BASH_REMATCH[1]}"
+                if [[ -n "$pve_host" ]]; then
+                    # Fire recovery in a background subshell so output keeps
+                    # flowing while qm reset runs over SSH.
+                    reset_agent_vm \
+                        "$bosh_env" "$dep" "$wedge_inst" \
+                        "$pve_host" "$cooldown_s" &
+                    printf '%s\n' "$!" >> "$f_recovery_pids"
+                fi
+            fi
+        done < "$fifo"
+    ) &
+    local pump_pid=$!
+    BG_PIDS+=("$pump_pid")
+
+    # Watcher loop: poll until deploy exits, watching for stall.
+    local cancelled=0
+    while kill -0 "$deploy_pid" 2>/dev/null; do
+        sleep 5
+        local now last_ts task_id already_cancelled
+        now="$(date +%s)"
+        last_ts="$(cat "$f_last_ts" 2>/dev/null || printf '%s' "$now")"
+        already_cancelled="$(cat "$f_cancelled" 2>/dev/null || printf '0')"
+
+        if [[ "$already_cancelled" == "1" ]]; then
+            continue
+        fi
+
+        local silence=$(( now - last_ts ))
+        if (( silence > stall_s )); then
+            printf '1' > "$f_cancelled"
+            cancelled=1
+            task_id="$(cat "$f_task_id" 2>/dev/null || true)"
+            warn "deploy stalled: no progress for ${silence}s (threshold ${stall_s}s); cancelling task ${task_id:-'(unknown)'} to release the lock and retry"
+            if [[ -n "$task_id" ]]; then
+                bosh -e "$bosh_env" -n cancel-task "$task_id" 2>/dev/null || true
+            else
+                # Task id not yet seen; kill the bosh client so the retry loop fires.
+                kill "$deploy_pid" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    wait "$deploy_pid" 2>/dev/null || true
+    local rc=$?
+
+    # Wait for the pump to drain so all output reaches the terminal.
+    wait "$pump_pid" 2>/dev/null || true
+
+    # Reap any recovery subshells the pump spawned (tracked via file since
+    # BG_PIDS mutations inside a subshell are not visible to the parent).
+    local rpid
+    if [[ -f "$f_recovery_pids" ]]; then
+        while IFS= read -r rpid; do
+            [[ -n "$rpid" ]] && wait "$rpid" 2>/dev/null || true
+        done < "$f_recovery_pids"
+    fi
+
+    rm -rf "$state_dir"
+
+    # Remove pump + deploy PIDs from BG_PIDS to prevent double-kill on cleanup.
+    local new_pids=()
+    local pid
+    for pid in "${BG_PIDS[@]+"${BG_PIDS[@]}"}"; do
+        [[ "$pid" == "$deploy_pid" || "$pid" == "$pump_pid" ]] && continue
+        new_pids+=("$pid")
+    done
+    BG_PIDS=("${new_pids[@]+"${new_pids[@]}"}")
+
+    # A stall-cancel can still let bosh exit 0 in a race; force non-zero so
+    # the caller retries rather than treating the attempt as successful.
+    if [[ "$cancelled" -eq 1 && "$rc" -eq 0 ]]; then
+        return 1
+    fi
+    return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Dry-run output
+# ---------------------------------------------------------------------------
+
+dry_run_report() {
+    local preflight_s="${SCRIPTS_CF_AGENT_WAIT:-600}"
+    local reboot_enabled="${SCRIPTS_CF_AGENT_REBOOT:-1}"
+    local cooldown_s="${SCRIPTS_CF_REBOOT_COOLDOWN:-180}"
+    local reset_enabled="no"
+
+    if [[ "$reboot_enabled" != "0" && -n "$PVE_HOST" ]]; then
+        reset_enabled="yes (pve_host=$PVE_HOST, cooldown=${cooldown_s}s)"
+    elif [[ "$reboot_enabled" == "0" ]]; then
+        reset_enabled="no (SCRIPTS_CF_AGENT_REBOOT=0)"
+    else
+        reset_enabled="no (OCFP_PVE_HOST/--pve-host not set)"
+    fi
+
+    local manifest_source
+    if [[ -n "$MANIFEST_PATH" ]]; then
+        manifest_source="$MANIFEST_PATH (--manifest override)"
+    else
+        manifest_source="genesis -C $BOSH_ENV manifest --no-redact"
+    fi
+
+    cat <<EOF
+--- genesis-deploy-resilient dry-run ---
+env:             $BOSH_ENV
+deployment:      $DEPLOYMENT
+manifest:        $manifest_source
+attempts:        $MAX_ATTEMPTS
+stall_seconds:   $STALL_S
+preflight_s:     $preflight_s
+agent_reset:     $reset_enabled
+-----------------------------------------
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Main retry loop  (ref: cmd_bosh_deploy retry loop ~lines 889-934)
+# ---------------------------------------------------------------------------
+
+main() {
+    parse_args "$@"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        dry_run_report
+        exit 0
+    fi
+
+    COOLDOWN_DIR="$(mktemp -d)"
+
+    local preflight_s cooldown_s reboot_enabled
+    preflight_s="${SCRIPTS_CF_AGENT_WAIT:-600}"
+    cooldown_s="${SCRIPTS_CF_REBOOT_COOLDOWN:-180}"
+    reboot_enabled="${SCRIPTS_CF_AGENT_REBOOT:-1}"
+
+    # Validate PVE host reachability once before the loop.  If unreachable,
+    # degrade gracefully: log and continue with cancel-task/retry only.
+    local effective_pve_host="$PVE_HOST"
+    if [[ "$reboot_enabled" == "0" ]]; then
+        warn "[watcher] SCRIPTS_CF_AGENT_REBOOT=0; agent-reset recovery disabled"
+        effective_pve_host=""
+    elif [[ -z "$effective_pve_host" ]]; then
+        warn "[watcher] PVE host not set (--pve-host / OCFP_PVE_HOST); agent-reset recovery disabled"
+    else
+        if ! pve_ssh_alive "$effective_pve_host"; then
+            warn "[watcher] SSH to PVE host $effective_pve_host failed; agent-reset recovery disabled (cancel-task/retry still active)"
+            effective_pve_host=""
+        else
+            log "[watcher] PVE host $effective_pve_host reachable; agent-reset recovery enabled (cooldown ${cooldown_s}s)"
+        fi
+    fi
+
+    # Render manifest once; reuse across all attempts.
+    local manifest_tmp
+    manifest_tmp="$(mktemp --suffix=.yml)"
+    # Ensure temp manifest is removed on exit even if render_manifest fails.
+    trap 'rm -f "$manifest_tmp"; cleanup' EXIT INT TERM
+    render_manifest "$BOSH_ENV" "$DEPLOYMENT" "$manifest_tmp"
+
+    # Preflight: converge agent baseline before the get_state-heavy
+    # "Preparing deployment" phase.  0 disables.
+    if (( preflight_s > 0 )); then
+        wait_agents_responsive "$BOSH_ENV" "$DEPLOYMENT" "$preflight_s" || true
+    fi
+
+    local attempt rc
+    for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
+        banner "Deploy attempt $attempt/$MAX_ATTEMPTS"
+
+        if (( STALL_S > 0 )); then
+            rc=0
+            run_deploy_with_watchdog \
+                "$STALL_S" "$effective_pve_host" "$cooldown_s" \
+                "$BOSH_ENV" "$DEPLOYMENT" "$manifest_tmp" || rc=$?
+        else
+            rc=0
+            bosh -e "$BOSH_ENV" -n -d "$DEPLOYMENT" deploy "$manifest_tmp" || rc=$?
+        fi
+
+        if [[ "$rc" -eq 0 ]]; then
+            log "Deploy succeeded on attempt $attempt"
+            rm -f "$manifest_tmp"
+            exit 0
+        fi
+
+        if (( attempt == MAX_ATTEMPTS )); then
+            err "Deploy failed after $MAX_ATTEMPTS attempt(s) (last rc=$rc)"
+            rm -f "$manifest_tmp"
+            exit "$rc"
+        fi
+
+        warn "Deploy attempt $attempt/$MAX_ATTEMPTS failed (rc=$rc); waiting for agents to settle before retry"
+
+        # Passive wait before retry — let self-healing NATS reconnects converge.
+        local between_s
+        (( between_s = preflight_s < 300 ? preflight_s : 300 ))
+        if (( preflight_s > 0 && between_s > 0 )); then
+            wait_agents_responsive "$BOSH_ENV" "$DEPLOYMENT" "$between_s" || true
+        fi
+
+        log "Sleeping 30s before retry"
+        sleep 30
+    done
+}
+
+main "$@"
