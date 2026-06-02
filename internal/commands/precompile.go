@@ -221,16 +221,12 @@ func runPrecompileCF(cmd *cobra.Command) error {
 	}
 	log.Infof("parsed %d cf-deployment releases from %s", len(rels), f.cfManifest)
 
-	actx, cleanup, err := buildArtifactsContext(ctx, f.bloc)
+	lr, err := lookupArtifactsFromState(ctx, f.bloc)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	if actx.lookup == nil {
-		return fmt.Errorf("%w: %s", ErrArtifactsNotFound, f.bloc)
-	}
 
-	s3c, ep, err := precompileS3Client(actx.lookup)
+	s3c, ep, err := precompileS3Client(lr)
 	if err != nil {
 		return err
 	}
@@ -259,6 +255,38 @@ func runPrecompileCF(cmd *cobra.Command) error {
 
 	return emitPinOps(res, f.stemcell, "ocfp precompile cf",
 		filepath.Join(f.outputDir, "manifests", "cf"), f.dryRun, log)
+}
+
+// lookupArtifactsFromState resolves the artifacts blobstore VM from local state
+// only (no cloud provider). precompile runs on the bastion, which does not hold
+// cloud-provider credentials, so constructing a provider there would hang. A
+// missing or un-provisioned blobstore is reported as a fast, clear error.
+func lookupArtifactsFromState(ctx context.Context, bloc string) (*artifacts.LookupResult, error) {
+	cfg, err := loadBlocConfiguration(viper.GetString("config"), bloc)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if !cfg.Artifacts.Enabled {
+		return nil, ErrArtifactsDisabled
+	}
+
+	sm, err := createStateManager(bloc)
+	if err != nil {
+		return nil, fmt.Errorf("creating state manager: %w", err)
+	}
+	if _, err := sm.Load(bloc); err != nil {
+		return nil, fmt.Errorf("loading state for %s: %w", bloc, err)
+	}
+
+	lr, err := artifacts.Lookup(ctx, sm, nil, bloc)
+	if err != nil {
+		return nil, err
+	}
+	if lr == nil || lr.Endpoint == "" {
+		return nil, fmt.Errorf("%w: %s — artifacts blobstore not provisioned; run `ocfp bootstrap --artifacts` and populate vault before `precompile cf`",
+			ErrArtifactsNotFound, bloc)
+	}
+	return lr, nil
 }
 
 // precompileS3Client builds an artifacts S3 client + endpoint base URL from a
