@@ -34,6 +34,13 @@ type precompileFlags struct {
 	boshEnv     string
 	outputDir   string
 	cfManifest  string
+	// Blobstore overrides. When blobEndpoint is set, the artifacts blobstore is
+	// taken from these flags instead of bootstrap state — required on the
+	// bastion, which holds no bootstrap state (only the operator machine does).
+	blobEndpoint   string
+	blobAccessKey  string
+	blobSecretKey  string
+	blobCACertFile string
 }
 
 // NewPrecompileCmd builds the `ocfp precompile` command tree. It populates the
@@ -72,13 +79,21 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 	}
 	addPrecompileFlags(boshCmd)
 
+	addCFFlags := func(c *cobra.Command) {
+		c.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+		c.Flags().String("blobstore-endpoint", "", "Blobstore base URL override (e.g. https://10.0.0.5:9000); bypasses bootstrap-state lookup")
+		c.Flags().String("blobstore-access-key", "", "Blobstore access key (or env OCFP_BLOBSTORE_ACCESS_KEY)")
+		c.Flags().String("blobstore-secret-key", "", "Blobstore secret key (or env OCFP_BLOBSTORE_SECRET_KEY; avoids argv exposure)")
+		c.Flags().String("blobstore-ca-cert-file", "", "Path to blobstore CA cert PEM (with --blobstore-endpoint)")
+	}
+
 	cfCmd := &cobra.Command{
 		Use:   "cf",
 		Short: "Compile cf-deployment releases into the blobstore and pin them",
 		RunE:  func(c *cobra.Command, _ []string) error { return runPrecompileCF(c) },
 	}
 	addPrecompileFlags(cfCmd)
-	cfCmd.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+	addCFFlags(cfCmd)
 
 	allCmd := &cobra.Command{
 		Use:   "all",
@@ -91,7 +106,7 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 		},
 	}
 	addPrecompileFlags(allCmd)
-	allCmd.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+	addCFFlags(allCmd)
 
 	cmd.AddCommand(boshCmd, cfCmd, allCmd)
 	return cmd
@@ -134,9 +149,47 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 		if f.cfManifest == "" {
 			f.cfManifest = filepath.Join(f.outputDir, "cf-deployment.yml")
 		}
+		f.blobEndpoint, _ = cmd.Flags().GetString("blobstore-endpoint")
+		f.blobAccessKey, _ = cmd.Flags().GetString("blobstore-access-key")
+		f.blobSecretKey, _ = cmd.Flags().GetString("blobstore-secret-key")
+		f.blobCACertFile, _ = cmd.Flags().GetString("blobstore-ca-cert-file")
+
+		// Allow secrets via env so they need not appear in argv (process list).
+		if f.blobAccessKey == "" {
+			f.blobAccessKey = os.Getenv("OCFP_BLOBSTORE_ACCESS_KEY")
+		}
+		if f.blobSecretKey == "" {
+			f.blobSecretKey = os.Getenv("OCFP_BLOBSTORE_SECRET_KEY")
+		}
 	}
 
 	return f, nil
+}
+
+// resolveBlobstore returns the artifacts blobstore lookup result, preferring
+// explicit override flags (needed on the bastion) over bootstrap-state lookup.
+func (f precompileFlags) resolveBlobstore(ctx context.Context) (*artifacts.LookupResult, error) {
+	if f.blobEndpoint == "" {
+		return lookupArtifactsFromState(ctx, f.bloc)
+	}
+
+	if f.blobAccessKey == "" || f.blobSecretKey == "" {
+		return nil, fmt.Errorf("--blobstore-endpoint requires --blobstore-access-key and --blobstore-secret-key")
+	}
+
+	lr := &artifacts.LookupResult{
+		Endpoint:  f.blobEndpoint,
+		AccessKey: f.blobAccessKey,
+		SecretKey: f.blobSecretKey,
+	}
+	if f.blobCACertFile != "" {
+		pem, err := os.ReadFile(f.blobCACertFile) //nolint:gosec // operator-supplied path
+		if err != nil {
+			return nil, fmt.Errorf("reading blobstore CA cert: %w", err)
+		}
+		lr.CACert = string(pem)
+	}
+	return lr, nil
 }
 
 func parseStemcell(s string) (precompile.Stemcell, error) {
@@ -221,7 +274,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 	}
 	log.Infof("parsed %d cf-deployment releases from %s", len(rels), f.cfManifest)
 
-	lr, err := lookupArtifactsFromState(ctx, f.bloc)
+	lr, err := f.resolveBlobstore(ctx)
 	if err != nil {
 		return err
 	}
