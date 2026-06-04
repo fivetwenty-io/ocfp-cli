@@ -26,14 +26,13 @@ var (
 
 // precompileFlags holds the shared, parsed flags for a precompile run.
 type precompileFlags struct {
-	bloc        string
-	force       bool
-	dryRun      bool
-	concurrency int
-	stemcell    precompile.Stemcell
-	boshEnv     string
-	outputDir   string
-	cfManifest  string
+	bloc       string
+	force      bool
+	dryRun     bool
+	stemcell   precompile.Stemcell
+	boshEnv    string
+	outputDir  string
+	cfManifest string
 	// Blobstore overrides. When blobEndpoint is set, the artifacts blobstore is
 	// taken from these flags instead of bootstrap state — required on the
 	// bastion, which holds no bootstrap state (only the operator machine does).
@@ -66,7 +65,6 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 		c.Flags().String("bloc", "", "Bloc name (required)")
 		c.Flags().Bool("force", false, "Rebuild/re-upload even if a compiled tarball is already present")
 		c.Flags().Bool("dry-run", false, "Resolve and report the per-release plan without mutating the blobstore")
-		c.Flags().Int("concurrency", 1, "Parallel export+upload workers for the compile-local path")
 		c.Flags().String("stemcell", precompile.DefaultStemcell.String(), "Stemcell as os/version")
 		c.Flags().String("bosh-env", "", "BOSH environment alias (bosh -e); empty uses the ambient BOSH_* env")
 		c.Flags().String("output-dir", "", "Where to write pin ops files (default ~/deployments/<bloc>)")
@@ -125,7 +123,6 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 
 	f.force, _ = cmd.Flags().GetBool("force")
 	f.dryRun, _ = cmd.Flags().GetBool("dry-run")
-	f.concurrency, _ = cmd.Flags().GetInt("concurrency")
 	f.boshEnv, _ = cmd.Flags().GetString("bosh-env")
 
 	scStr, _ := cmd.Flags().GetString("stemcell")
@@ -202,10 +199,9 @@ func parseStemcell(s string) (precompile.Stemcell, error) {
 
 func (f precompileFlags) options() precompile.Options {
 	return precompile.Options{
-		Force:       f.force,
-		DryRun:      f.dryRun,
-		Concurrency: f.concurrency,
-		Stemcell:    f.stemcell,
+		Force:    f.force,
+		DryRun:   f.dryRun,
+		Stemcell: f.stemcell,
 	}
 }
 
