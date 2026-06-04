@@ -40,12 +40,13 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 	}
 
 	ingress := cloudflare.BuildIngress(cloudflare.IngressParams{
-		AppsDomain:       cf.AppsDomain,
-		SystemDomain:     cf.SystemDomain,
-		SSHHostname:      cf.SSHHostname,
-		Origin:           cf.Origin,
-		SSHOrigin:        cf.SSHOrigin,
-		OriginServerName: firstNonEmpty(cf.OriginServerName, "api."+cf.SystemDomain),
+		AppsDomain:        cf.AppsDomain,
+		SystemDomain:      cf.SystemDomain,
+		SSHHostname:       cf.SSHHostname,
+		Origin:            cf.Origin,
+		SSHOrigin:         cf.SSHOrigin,
+		OriginServerName:  firstNonEmpty(cf.OriginServerName, "api."+cf.SystemDomain),
+		OriginNoTLSVerify: cf.OriginNoTLSVerify != nil && *cf.OriginNoTLSVerify,
 	})
 	if err := client.PutTunnelConfig(ctx, accountID, tun.ID, ingress); err != nil {
 		return fmt.Errorf("cloudflare put ingress: %w", err)
