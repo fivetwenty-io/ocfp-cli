@@ -19,6 +19,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/pmezard/go-difflib/difflib"
 )
 
@@ -1694,7 +1695,108 @@ func (m *Manager) copyConfigFiles(ctx context.Context) error {
 		m.log.Warn("Failed to copy SSH keys", "error", err.Error())
 	}
 
+	// Copy bootstrap state so vault populate (run on the bastion) can read the
+	// real subnet CIDRs and artifacts endpoint. Non-fatal: a missing local
+	// state file just means the populate falls back to its stateless path.
+	err = m.copyBootstrapState(ctx)
+	if err != nil {
+		m.log.Warn("Failed to copy bootstrap state to bastion", "error", err.Error())
+	}
+
 	return nil
+}
+
+// copyBootstrapState transfers the bloc's bootstrap state file
+// (~/.ocfp/<bloc>/state/<bloc>.json) to the identical path on the bastion.
+//
+// The bastion has no bootstrap state of its own, so `ocfp vault populate`
+// (which runs there) otherwise falls back to degenerate stateless defaults:
+// identical /18 subnets and mode/status-only blobstores. Propagating the
+// operator's state file lets the state-backed populate paths emit the correct
+// distinct /22 subnet CIDRs and the full artifacts-sourced blobstore secrets.
+//
+// The transfer is idempotent (it overwrites any prior copy) and skips
+// gracefully with a warning when the local state file is absent.
+func (m *Manager) copyBootstrapState(ctx context.Context) error {
+	blocName := m.config.Name
+	if blocName == "" {
+		return ErrBlocNameRequired
+	}
+
+	localStateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return fmt.Errorf("failed to resolve state directory: %w", err)
+	}
+
+	localStatePath := filepath.Join(localStateDir, blocName+".json")
+
+	_, err = os.Stat(localStatePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			m.log.Warn("Bootstrap state file not found; skipping state sync to bastion",
+				"path", localStatePath,
+				"bloc", blocName)
+
+			return nil
+		}
+
+		return fmt.Errorf("failed to stat bootstrap state file %s: %w", localStatePath, err)
+	}
+
+	remoteStatePath, err := m.getRemoteStatePath(ctx, blocName)
+	if err != nil {
+		return err
+	}
+
+	// Ensure the remote state directory exists before the transfer. The SFTP
+	// path creates parent dirs, but the SCP/cat fallbacks rely on it existing.
+	remoteStateDir := filepath.Dir(remoteStatePath)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("mkdir -p %q", remoteStateDir))
+	if err != nil {
+		m.log.Warn("Failed to pre-create remote state directory",
+			"dir", remoteStateDir,
+			"error", err.Error())
+	}
+
+	transferOpts := ssh.TransferOptions{
+		Recursive:    false,
+		Preserve:     false,
+		Compress:     false,
+		Progress:     nil,
+		MaxRetries:   0,
+		ChunkSize:    0,
+		Verify:       true,
+		BackupRemote: false,
+	}
+
+	err = m.sshClient.TransferFile(ctx, localStatePath, remoteStatePath, transferOpts)
+	if err != nil {
+		return fmt.Errorf("failed to transfer bootstrap state file: %w", err)
+	}
+
+	m.log.Info("Transferred bootstrap state to bastion",
+		"bloc", blocName,
+		"remote_path", remoteStatePath)
+
+	return nil
+}
+
+// getRemoteStatePath returns the bastion-side bootstrap state file path,
+// mirroring the local ~/.ocfp/<bloc>/state/<bloc>.json layout under the
+// remote HOME directory.
+func (m *Manager) getRemoteStatePath(ctx context.Context, blocName string) (string, error) {
+	homeResult, err := m.sshClient.ExecuteCommand(ctx, "echo $HOME")
+	if err != nil {
+		return "", fmt.Errorf("failed to get remote home directory: %w", err)
+	}
+
+	remoteHome := strings.TrimSpace(homeResult.Stdout)
+	if remoteHome == "" {
+		remoteHome = "/home/" + m.config.Bastion.SSHUser
+	}
+
+	return filepath.Join(remoteHome, ".ocfp", blocName, "state", blocName+".json"), nil
 }
 
 // setupAPTRepositories sets up APT repositories only.
