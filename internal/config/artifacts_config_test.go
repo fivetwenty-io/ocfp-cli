@@ -20,7 +20,7 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 	}{
 		{"Flavor", a.Flavor, "artifacts"},
 		{"Template", a.Template, "ubuntu-2204-cloudinit"},
-		{"Rustfs.Version", a.Rustfs.Version, "1.0.0-beta.3"},
+		{"Rustfs.Version", a.Rustfs.Version, "1.0.0-beta.7"},
 		{"Rustfs.S3Port", a.Rustfs.S3Port, 9000},
 		{"Rustfs.ConsolePort", a.Rustfs.ConsolePort, 9001},
 		{"Data.DiskSizeGiB", a.Data.DiskSizeGiB, 500},

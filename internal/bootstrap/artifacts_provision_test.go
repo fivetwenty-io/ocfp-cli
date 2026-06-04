@@ -20,8 +20,22 @@ func TestBuildArtifactsProvisionSSHArgs_ProxyJumpThroughBastion(t *testing.T) {
 	args := buildArtifactsProvisionSSHArgs(testProvisionConn())
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "ProxyJump=ubuntu@100.109.226.53") {
-		t.Errorf("args must ProxyJump through the bastion, got: %s", joined)
+	// The bastion hop is an explicit ProxyCommand (not -o ProxyJump) so the
+	// jump's inner ssh inherits the same relaxed host-key flags and a churned
+	// bastion key can't trip strict checking. It must still route to the
+	// bastion and netcat to the artifacts host (-W %h:%p).
+	if !strings.Contains(joined, "ProxyCommand=ssh ") {
+		t.Errorf("args must reach the bastion via an explicit ProxyCommand, got: %s", joined)
+	}
+
+	if !strings.Contains(joined, "-W %h:%p ubuntu@100.109.226.53") {
+		t.Errorf("ProxyCommand must netcat through the bastion, got: %s", joined)
+	}
+
+	// The jump hop must carry the same host-key relaxation as the outer hop so
+	// a rebuilt bastion's new host key never blocks provisioning.
+	if !strings.Contains(joined, "ProxyCommand=ssh -i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null") {
+		t.Errorf("ProxyCommand must re-pass relaxed host-key flags to the jump hop, got: %s", joined)
 	}
 
 	if !strings.Contains(joined, "ubuntu@10.64.64.11") {
