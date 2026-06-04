@@ -235,14 +235,51 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
    ocfp init bastion --bloc ocfp-lab-wayne --genesis
    ```
 
-3. Sync local deployment configs and **local kit sources** to the bastion. The CF and BOSH kits must reflect local working-tree changes (and the CF kit upgrade from Phase 6 once done):
+3. Sync local deployment configs to the bastion:
 
    ```bash
    ocfp init bastion --bloc ocfp-lab-wayne --config
    ```
 
-   - Confirm `~/deployments/ocfp-lab-wayne/` on the bastion contains the mgmt, ocf, and cf manifests plus ops/configs.
-   - Confirm the local cf and bosh kit sources are present on the bastion (Genesis dev/latest pulls from the synced local path, not origin).
+   - This syncs the deployment **config files** only. The manifests land under
+     `~/ocfp/deployments/{bosh,cf}/` on the bastion (e.g.
+     `~/ocfp/deployments/bosh/ocfp-lab-wayne-mgmt.yml`).
+
+   **`--config` does NOT sync the local kit sources** — `ocfp init bastion`
+   sources kits/Genesis/deployments from REMOTE git, so the bastion's CF kit is
+   the packaged tarball (e.g. `cf-2.5.3.tar.gz`), not your local working tree.
+   The env files use `kit: { name: dev }`, which resolves a `dev` symlink in
+   each deployment dir pointing at `~/kits/<kit>-genesis-kit/`. To put the local
+   working-tree kits (CF v56.5.0 + PVE fixes, BOSH PVE support) behind those
+   symlinks, `rsync` them yourself:
+
+   ```bash
+   # Parent dir must exist (rsync won't mkpath the intermediate).
+   ocfp --bloc ocfp-lab-wayne ssh -- mkdir -p '~/kits/cf-genesis-kit' '~/kits/bosh-genesis-kit'
+
+   ocfp rsync --bloc ocfp-lab-wayne --compress --exclude .git \
+     src/kits/cf/   bastion:kits/cf-genesis-kit/
+   ocfp rsync --bloc ocfp-lab-wayne --compress --exclude .git \
+     src/kits/bosh/ bastion:kits/bosh-genesis-kit/
+
+   # The CF deployment ships a committed `dev` symlink; BOSH does not — create it.
+   ocfp --bloc ocfp-lab-wayne ssh -- \
+     ln -sfn '~/kits/bosh-genesis-kit' '~/ocfp/deployments/bosh/dev'
+
+   # Overlay local working-tree env files, but NOT .genesis/ (the bastion's is
+   # init-wired to the inception vault; the local one is stale) or dev/.
+   ocfp rsync --bloc ocfp-lab-wayne --compress --exclude .genesis --exclude dev --exclude .git \
+     src/deployments/fivetwenty-ocfp/bosh/ bastion:ocfp/deployments/bosh/
+   ocfp rsync --bloc ocfp-lab-wayne --compress --exclude .genesis --exclude dev --exclude .git \
+     src/deployments/fivetwenty-ocfp/cf/   bastion:ocfp/deployments/cf/
+   ```
+
+   - Confirm `~/ocfp/deployments/{bosh,cf}/` on the bastion contain the mgmt/ocf
+     manifests plus ops/configs.
+   - Confirm `~/ocfp/deployments/cf/dev/kit.yml` and
+     `~/ocfp/deployments/bosh/dev/kit.yml` resolve (the dev symlinks point at the
+     synced local kits; Genesis `dev/latest` reads from there, not origin).
+   - Spot-check a known PVE change, e.g. `~/kits/bosh-genesis-kit/ocfp/pve/`.
 
 4. (Conditional) Initialize PostgreSQL. **Caveat**: `pg` is accepted as an `ocfp init` component argument, but no `pg` implementation was found in `executeInitialization` — treat it as possibly a no-op/unimplemented and verify before relying on it. The mgmt and env BOSH directors here use the `internal-db` feature, so a separate external PG may not be required for this run. Confirm what DBs the deployments actually expect before running:
 
