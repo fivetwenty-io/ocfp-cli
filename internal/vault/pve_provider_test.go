@@ -147,7 +147,9 @@ func TestPVEVaultProvider_configureCPI_NoAuth(t *testing.T) {
 }
 
 // TestPVEVaultProvider_ConfigureAZs_SingleNode — Region set, no Nodes slice:
-// expect exactly one SetMultiple at the AZ path for that region.
+// AZs are keyed by workload zone (pvea/pveb/pvec), all backed by the single
+// node. This matches the ocfp-{0,1,2} subnet az assignment so Genesis'
+// _set_network_azs can resolve each subnet's az.
 func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "pve-node1"}
@@ -156,34 +158,41 @@ func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 	err := provider.ConfigureAZs(MgmtEnvType)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 1, "single-node config must produce exactly one AZ write")
+	require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount,
+		"single-node config must write one AZ per workload zone")
 
-	expectedPath := provider.PathBuilder.GetAZPath(MgmtEnvType, "pve-node1")
-	assert.Equal(t, expectedPath, mock.setMultipleCalls[0].path)
-	assert.Equal(t, "pve-node1", mock.setMultipleCalls[0].data["node_name"])
-	// index drives Genesis' AZ naming (Director.pm _set_network_azs: name =
-	// "<env>-z" . index). The PVE node name ("pve") has no trailing digit, so
-	// without an explicit index Genesis emits a malformed AZ "<env>-z"; writing
-	// index=1 yields "<env>-z1", matching the kit's default_cf_az.
-	assert.Equal(t, 1, mock.setMultipleCalls[0].data["index"], "single-node AZ must carry index 1")
+	for z := 0; z < pveWorkloadAZCount; z++ {
+		zone := pveAZKeyPrefix + string(rune('a'+z))
+		path := provider.PathBuilder.GetAZPath(MgmtEnvType, zone)
+		call := mock.findSetMultipleCall(path)
+		require.NotNil(t, call, "AZ entry for zone %s must be written", zone)
+		// All zones are backed by the single node...
+		assert.Equal(t, "pve-node1", call.data["node_name"])
+		// ...but each carries a distinct 1-based index so Genesis derives
+		// pvea->"<env>-z1", pveb->z2, pvec->z3 (name = "<env>-z" . index).
+		assert.Equal(t, z+1, call.data["index"], "zone %s must carry 1-based index", zone)
+	}
 }
 
-// TestPVEVaultProvider_ConfigureAZs_MultiNode — Nodes slice produces one AZ per
-// node, each with a 1-based index so Genesis derives <env>-z1, <env>-z2, ...
+// TestPVEVaultProvider_ConfigureAZs_MultiNode — Nodes slice spreads the workload
+// zones across nodes round-robin; AZ keys remain the zone names (pvea/pveb/pvec)
+// with 1-based indices so Genesis derives <env>-z1, <env>-z2, <env>-z3.
 func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Nodes: []string{"pve-a", "pve-b", "pve-c"}}
 	provider := newTestPVEProvider(cfg, mock)
 
 	require.NoError(t, provider.ConfigureAZs(MgmtEnvType))
-	require.Len(t, mock.setMultipleCalls, 3, "one AZ write per node")
+	require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount, "one AZ write per workload zone")
 
-	for i, node := range cfg.Nodes {
-		path := provider.PathBuilder.GetAZPath(MgmtEnvType, node)
+	for z := 0; z < pveWorkloadAZCount; z++ {
+		zone := pveAZKeyPrefix + string(rune('a'+z))
+		path := provider.PathBuilder.GetAZPath(MgmtEnvType, zone)
 		call := mock.findSetMultipleCall(path)
-		require.NotNil(t, call, "AZ entry for %s must be written", node)
-		assert.Equal(t, node, call.data["node_name"])
-		assert.Equal(t, i+1, call.data["index"], "node %s must carry 1-based index", node)
+		require.NotNil(t, call, "AZ entry for zone %s must be written", zone)
+		// 3 zones across 3 nodes -> 1:1 mapping (pvea->pve-a, pveb->pve-b, ...).
+		assert.Equal(t, cfg.Nodes[z%len(cfg.Nodes)], call.data["node_name"])
+		assert.Equal(t, z+1, call.data["index"], "zone %s must carry 1-based index", zone)
 	}
 }
 
@@ -314,9 +323,13 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds(t *testing.T) {
 	assert.Equal(t, "secret-test", boshCreds.data["secret_key"])
 }
 
-// TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvSkipsBOSH — ocf env
-// must NOT write BOSH director blobstore paths (those belong to mgmt only).
-func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvSkipsBOSH(t *testing.T) {
+// TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvWritesBOSH — the
+// env-BOSH director (deployed for the ocf scope) needs its own ocf-scoped BOSH
+// blobstore so it can store compiled releases. ocf external mode therefore
+// writes cf config+creds AND the ocf-scoped bosh config+creds (4 calls).
+func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvWritesBOSH(t *testing.T) {
+	const blocName = "test-bloc"
+
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "pve-node1"}
 	provider := newTestPVEProvider(cfg, mock)
@@ -328,10 +341,17 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvSkipsBOSH(t *testing
 	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 2, "ocf external mode writes only cf config + creds")
+	require.Len(t, mock.setMultipleCalls, 4, "ocf external mode writes cf config+creds and ocf bosh config+creds")
 
 	boshPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh")
-	assert.Nil(t, mock.findSetMultipleCall(boshPath), "ocf env must not write BOSH blobstore")
+	boshCall := mock.findSetMultipleCall(boshPath)
+	require.NotNil(t, boshCall, "ocf env must write the ocf-scoped BOSH blobstore")
+	assert.Equal(t, "external", boshCall.data["mode"])
+	assert.Equal(t, blocName+"-ocf-bosh", boshCall.data["name"], "ocf bosh bucket follows <bloc>-ocf-bosh")
+
+	boshCreds := mock.findSetMultipleCall(boshPath + "/creds")
+	require.NotNil(t, boshCreds, "ocf bosh creds must be written")
+	assert.Equal(t, "AKIA-test", boshCreds.data["access_key"])
 }
 
 // TestPVEVaultProvider_ConfigurePublicIPs_StatusPending — with no state manager
@@ -414,7 +434,12 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 		Properties: map[string]interface{}{
 			"cidr":              "10.64.68.0/22",
 			"availability_zone": "pvea",
-			"gateway":           "10.64.68.1",
+			// Bootstrap records the PARENT /18 gateway here
+			// (network.go addVirtualSubnetToState -> CIDRGatewayIP(parentCIDR)).
+			// ConfigureSubnets must override it with the subnet's OWN /22 gateway
+			// so BOSH's "gateway must be inside range" check passes and the PVE
+			// SDN's per-/22 gateway (.68.1) is used.
+			"gateway": "10.64.64.1",
 		},
 	}))
 	require.NoError(t, sm.Save())
@@ -428,7 +453,8 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 
 	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
 
-	infraPath := filepath.Join(subnetsPath, blocName+"-infra")
+	// Genesis consumes bloc-relative names; the provider strips the bloc prefix.
+	infraPath := filepath.Join(subnetsPath, "infra")
 	infraCall := mock.findSetMultipleCall(infraPath)
 	require.NotNil(t, infraCall, "infra subnet must be written at %s", infraPath)
 	assert.Equal(t, "10.64.64.0/22", infraCall.data["cidr"])
@@ -438,11 +464,12 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	// builder does not emit dns: [null]. With config DNS set, every subnet uses it.
 	assert.Equal(t, "10.64.64.1", infraCall.data["dns"])
 
-	ocfp0Path := filepath.Join(subnetsPath, blocName+"-ocfp-0")
+	ocfp0Path := filepath.Join(subnetsPath, "ocfp-0")
 	ocfp0Call := mock.findSetMultipleCall(ocfp0Path)
 	require.NotNil(t, ocfp0Call, "ocfp-0 subnet must be written at %s", ocfp0Path)
 	assert.Equal(t, "10.64.68.0/22", ocfp0Call.data["cidr"])
 	assert.Equal(t, "pvea", ocfp0Call.data["az"])
+	// Overridden from the parent .64.1 in state to the subnet's own /22 gateway.
 	assert.Equal(t, "10.64.68.1", ocfp0Call.data["gateway"])
 	assert.Equal(t, "10.64.64.1", ocfp0Call.data["dns"])
 
@@ -511,7 +538,7 @@ func TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent(t *tes
 	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
 
 	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
-	ocfp0 := mock.findSetMultipleCall(filepath.Join(subnetsPath, blocName+"-ocfp-0"))
+	ocfp0 := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-0"))
 	require.NotNil(t, ocfp0, "ocfp-0 subnet must be written")
 	assert.Equal(t, "10.64.68.1", ocfp0.data["gateway"], "gateway derived from CIDR")
 	assert.Equal(t, "10.64.68.1", ocfp0.data["dns"], "dns derived from subnet gateway")
@@ -551,7 +578,7 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 
 	subnetPath := filepath.Join(
 		provider.PathBuilder.GetSubnetsPath(MgmtEnvType),
-		blocName+"-infra",
+		"infra",
 	)
 
 	bastionPath := filepath.Join(subnetPath, "reserved-ips", "bastion")
@@ -573,9 +600,9 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 // TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults — the fallback
 // subnet write must emit available_0/available_1 reserved-ips keys so Genesis'
 // cloud-config IPAM (_get_subnet_ranges) confines kit-generated networks to a
-// band that clears the infra IPs (gateway, bastion, compilation, jumpbox,
-// director, artifacts at <= +13). With no explicit config the band defaults to
-// gateway+19 .. gateway+249.
+// band that clears the infra IPs. With no explicit config the band defaults to
+// gateway+19 .. gateway+249 and is split into three DISJOINT per-subnet slices
+// so compilation (ocfp-2) never overlaps workload (ocfp-0/1).
 func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("OCFP_HOME", tmp)
@@ -586,15 +613,25 @@ func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
 
 	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
 
-	reservedPath := provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0)
-	call := mock.findSetMultipleCall(reservedPath)
-	require.NotNil(t, call, "fallback reserved-ips must be written at %s", reservedPath)
-	assert.Equal(t, "10.64.64.20", call.data["available_0"], "default band start = gateway+19")
-	assert.Equal(t, "10.64.64.250", call.data["available_1"], "default band end = gateway+249")
+	// Default band .20-.250 (231 IPs) splits into ~77-IP contiguous slices.
+	band0 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0))
+	band1 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 1))
+	band2 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 2))
+	require.NotNil(t, band0)
+	require.NotNil(t, band1)
+	require.NotNil(t, band2)
+
+	assert.Equal(t, "10.64.64.20", band0.data["available_0"], "first slice starts at band start")
+	assert.Equal(t, "10.64.64.96", band0.data["available_1"])
+	assert.Equal(t, "10.64.64.97", band1.data["available_0"], "second slice begins after the first")
+	assert.Equal(t, "10.64.64.173", band1.data["available_1"])
+	assert.Equal(t, "10.64.64.174", band2.data["available_0"], "compilation slice begins after the second")
+	assert.Equal(t, "10.64.64.250", band2.data["available_1"], "last slice absorbs the remainder to band end")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit — explicit
-// network.availableIpStart/End override the derived band.
+// network.availableIpStart/End override the derived band, still split into
+// disjoint per-subnet slices.
 func TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("OCFP_HOME", tmp)
@@ -604,18 +641,127 @@ func TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit(t *testing.T) {
 		VPCCIDRBlock: "10.64.64.0/19",
 		Network: config.NetworkConfig{
 			AvailableIPStart: "10.64.64.20",
-			AvailableIPEnd:   "10.64.64.50",
+			AvailableIPEnd:   "10.64.64.49",
 		},
 	}
 	provider := newTestPVEProvider(cfg, mock)
 
 	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
 
-	reservedPath := provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0)
-	call := mock.findSetMultipleCall(reservedPath)
-	require.NotNil(t, call, "fallback reserved-ips must be written at %s", reservedPath)
-	assert.Equal(t, "10.64.64.20", call.data["available_0"])
-	assert.Equal(t, "10.64.64.50", call.data["available_1"])
+	// Band .20-.49 (30 IPs) -> 10-IP slices: ocfp-0 .20-.29, ocfp-2 .40-.49.
+	band0 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0))
+	band2 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 2))
+	require.NotNil(t, band0)
+	require.NotNil(t, band2)
+	assert.Equal(t, "10.64.64.20", band0.data["available_0"])
+	assert.Equal(t, "10.64.64.29", band0.data["available_1"])
+	assert.Equal(t, "10.64.64.40", band2.data["available_0"])
+	assert.Equal(t, "10.64.64.49", band2.data["available_1"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs — a state-backed
+// ocfp-* subnet must write its genesis-consumed reserved-ips block at the
+// bloc-stripped path, sourcing available_0/available_1 and bosh_ip from the
+// per-subnet bootstrap outputs (each scoped to that subnet's own /22).
+func TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-2",
+		Type: "subnet",
+		Name: blocName + "-ocfp-2",
+		Properties: map[string]interface{}{
+			"cidr":              "10.64.76.0/22",
+			"availability_zone": "pvec",
+			"gateway":           "10.64.64.1",
+			"network_id":        "lvnet001",
+		},
+	}))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_available_a", "10.64.76.12"))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_available_b", "10.64.76.29"))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_bosh_ip", "10.64.76.4"))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_jumpbox_ip", "10.64.76.6"))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", "ocf", nil, 0, 1))
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath("ocf")
+
+	// Subnet entry written at the bloc-stripped genesis name with the distinct /22.
+	subnet := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-2"))
+	require.NotNil(t, subnet, "ocfp-2 subnet entry must be written at the stripped path")
+	assert.Equal(t, "10.64.76.0/22", subnet.data["cidr"])
+	assert.Equal(t, "10.64.76.0/22", subnet.data["cidr_block"])
+	assert.Equal(t, "lvnet001", subnet.data["id"])
+
+	// Reserved band sourced from per-subnet state outputs.
+	band := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-2", "reserved-ips"))
+	require.NotNil(t, band, "ocfp-2 reserved-ips band must be written")
+	assert.Equal(t, "10.64.76.12", band.data["available_0"], "band start from state available_a")
+	assert.Equal(t, "10.64.76.29", band.data["available_1"], "band end from state available_b")
+	assert.Equal(t, "10.64.76.4", band.data["bosh_ip"], "bosh_ip from per-subnet state output")
+	assert.Equal(t, "10.64.76.4", band.data["director_ip"])
+	assert.Equal(t, "10.64.76.6", band.data["jumpbox_ip"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState — with
+// no blobstore flags but an artifacts resource in bootstrap state,
+// ConfigureBlobstores promotes to external mode and writes the full CF + BOSH
+// blobstore secrets (endpoint, region, ca_cert, bucket, creds) sourced from
+// state. Secrets are written to vault but never logged.
+func TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "artifacts",
+		Type: "artifacts",
+		Name: blocName + "-artifacts",
+		Properties: map[string]interface{}{
+			"endpoint":   "https://10.64.68.11:9000",
+			"private_ip": "10.64.68.11",
+			"access_key": "AKIA-state",
+			"secret_key": "secret-state",
+			"ca_cert":    "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----",
+			"tls_mode":   "internal-ca",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	// No --blobstore-* flags set: must auto-source from artifacts state.
+	require.NoError(t, provider.ConfigureBlobstores("", "ocf", nil, 0, 1))
+
+	cfPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "cf", "main")
+	cfCall := mock.findSetMultipleCall(cfPath)
+	require.NotNil(t, cfCall, "CF blobstore config must be written from state")
+	assert.Equal(t, "external", cfCall.data["mode"])
+	assert.Equal(t, "https://10.64.68.11:9000", cfCall.data["endpoint"])
+	assert.Equal(t, "10.64.68.11", cfCall.data["host"])
+	assert.Equal(t, "us-east-1", cfCall.data["region"])
+	assert.Equal(t, blocName+"-ocf-cf", cfCall.data["bucket"])
+	assert.Contains(t, cfCall.data, "ca_cert", "ca_cert must be written from state")
+	assert.NotContains(t, cfCall.data, "access_key", "config path must stay secret-free")
+
+	cfCreds := mock.findSetMultipleCall(cfPath + "/creds")
+	require.NotNil(t, cfCreds, "CF blobstore creds must be written")
+	assert.Equal(t, "AKIA-state", cfCreds.data["access_key"])
+	assert.Equal(t, "secret-state", cfCreds.data["secret_key"])
+
+	// ocf scope must also write the ocf-scoped BOSH blobstore for env-BOSH.
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh")
+	boshCall := mock.findSetMultipleCall(boshPath)
+	require.NotNil(t, boshCall, "ocf BOSH blobstore must be written")
+	assert.Equal(t, blocName+"-ocf-bosh", boshCall.data["name"])
+	assert.Equal(t, "10.64.68.11", boshCall.data["host"])
 }
 
 // ---------------------------------------------------------------------------
