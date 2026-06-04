@@ -786,6 +786,40 @@ func TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs(t *testing.T) {
 	assert.Equal(t, "10.64.76.4", band.data["bosh_ip"], "bosh_ip from per-subnet state output")
 	assert.Equal(t, "10.64.76.4", band.data["director_ip"])
 	assert.Equal(t, "10.64.76.6", band.data["jumpbox_ip"])
+	assert.Equal(t, "10.64.76.13", band.data["haproxy_ip"], "haproxy_ip falls back to gateway+12 within the subnet /22")
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_HAProxyIPFromOutput — when bootstrap
+// records a per-subnet haproxy_ip output, the reserved band must use it verbatim
+// (state wins over the gateway+12 fallback), mirroring bosh_ip/jumpbox_ip. The
+// cf env grabs this vault key so haproxy's static IP tracks the bloc's net-ocf
+// plan instead of a hand-keyed literal that drifts out of subnet range.
+func TestPVEVaultProvider_ConfigureSubnets_HAProxyIPFromOutput(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-0",
+		Type: "subnet",
+		Name: blocName + "-ocfp-0",
+		Properties: map[string]interface{}{
+			"cidr":              "10.64.68.0/22",
+			"availability_zone": "pvea",
+			"network_id":        "lvnet001",
+		},
+	}))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-0_haproxy_ip", "10.64.68.14"))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", "ocf", nil, 0, 1))
+
+	band := mock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath("ocf"), "ocfp-0", "reserved-ips"))
+	require.NotNil(t, band, "ocfp-0 reserved-ips band must be written")
+	assert.Equal(t, "10.64.68.14", band.data["haproxy_ip"], "haproxy_ip from per-subnet state output wins over fallback")
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState — with
