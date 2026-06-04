@@ -83,13 +83,15 @@ func TestGenerateVaultInceptionScript_ContainsFallbackCheck(t *testing.T) {
 }
 
 // TestGenerateOCFPConfigureScript_RepoInitBeforeSecretsProvider verifies ordering:
-// genesis repo-init must appear before genesis secrets-provider inception in the
-// combined configure + secrets-provider output, reflecting the required bootstrap
-// sequence (repo must exist before vault provider is configured).
+// genesis repo-init must appear before the per-deployment secrets-provider
+// configuration (the `genesis embed` + .genesis/config rewrite) in the combined
+// configure + secrets-provider output, reflecting the required bootstrap
+// sequence (repo must exist before its secrets provider is configured).
 //
-// GenerateOCFPConfigureScript produces the repo-init section; the secrets-provider
-// call is in GenerateGenesisSecretsProvidersScript. Together they model the ordered
-// bastion provisioning sequence, so the repo-init index must be lower.
+// GenerateOCFPConfigureScript produces the repo-init section; the
+// secrets-provider configuration lives in GenerateGenesisSecretsProvidersScript.
+// Together they model the ordered bastion provisioning sequence, so the
+// repo-init index must be lower.
 func TestGenerateOCFPConfigureScript_RepoInitBeforeSecretsProvider(t *testing.T) {
 	t.Parallel()
 
@@ -104,18 +106,18 @@ func TestGenerateOCFPConfigureScript_RepoInitBeforeSecretsProvider(t *testing.T)
 	combined := configureScript + "\n" + secretsScript
 
 	repoInitIdx := strings.Index(combined, "genesis repo-init")
-	secretsProviderIdx := strings.Index(combined, "genesis secrets-provider inception")
+	secretsProviderIdx := strings.Index(combined, "genesis embed")
 
 	if repoInitIdx == -1 {
 		t.Fatal("combined script missing 'genesis repo-init'")
 	}
 
 	if secretsProviderIdx == -1 {
-		t.Fatal("combined script missing 'genesis secrets-provider inception'")
+		t.Fatal("combined script missing 'genesis embed'")
 	}
 
 	if repoInitIdx >= secretsProviderIdx {
-		t.Errorf("genesis repo-init (pos %d) must appear before genesis secrets-provider inception (pos %d)",
+		t.Errorf("genesis repo-init (pos %d) must appear before genesis embed (pos %d)",
 			repoInitIdx, secretsProviderIdx)
 	}
 }
@@ -195,7 +197,7 @@ func TestGenerateOCFPConfigureScript_RepoInitDirectoryFlags(t *testing.T) {
 // Required order:
 //  1. genesis repo-init --kit bosh  (mgmt repo, first)
 //  2. genesis repo-init --kit cf    (ocf repo, second)
-//  3. genesis secrets-provider inception (in secrets script, after all repo-inits)
+//  3. genesis embed (per-deployment secrets-provider config, after all repo-inits)
 //
 // Also asserts: no "genesis init" (old v3.1 command) appears anywhere.
 func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
@@ -273,22 +275,23 @@ func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
 			kitBoshLine, kitCFLine)
 	}
 
-	// 3. genesis secrets-provider inception must appear after both repo-init blocks.
-	// This call lives in GenerateGenesisSecretsProvidersScript; the repo-init calls
-	// live in GenerateOCFPConfigureScript. The combined script models the ordered
-	// bastion provisioning sequence.
-	secretsProviderLine := lineOfCommand("genesis secrets-provider inception")
+	// 3. The per-deployment secrets-provider config (genesis embed + .genesis/config
+	// rewrite) must appear after both repo-init blocks. This logic lives in
+	// GenerateGenesisSecretsProvidersScript; the repo-init calls live in
+	// GenerateOCFPConfigureScript. The combined script models the ordered bastion
+	// provisioning sequence.
+	secretsProviderLine := lineOfCommand("genesis embed")
 	if secretsProviderLine == -1 {
-		t.Fatal("combined script missing executable 'genesis secrets-provider inception'")
+		t.Fatal("combined script missing executable 'genesis embed'")
 	}
 
 	if kitBoshLine >= secretsProviderLine {
-		t.Errorf("genesis repo-init --kit bosh (line %d) must appear before genesis secrets-provider inception (line %d)",
+		t.Errorf("genesis repo-init --kit bosh (line %d) must appear before genesis embed (line %d)",
 			kitBoshLine, secretsProviderLine)
 	}
 
 	if kitCFLine >= secretsProviderLine {
-		t.Errorf("genesis repo-init --kit cf (line %d) must appear before genesis secrets-provider inception (line %d)",
+		t.Errorf("genesis repo-init --kit cf (line %d) must appear before genesis embed (line %d)",
 			kitCFLine, secretsProviderLine)
 	}
 
