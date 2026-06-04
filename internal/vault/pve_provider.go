@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
@@ -41,6 +42,12 @@ type PVEVaultProvider struct {
 	// Written to a separate vault path so the config path stays secret-free.
 	BlobstoreAccessKey string
 	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
+
+	// blobstoreCACert is the PEM CA cert sourced from artifacts state (internal-ca
+	// or self-signed TLS mode). Written to vault alongside endpoint/region so
+	// genesis kits can pin it. Populated by ConfigureBlobstores when auto-sourcing
+	// from bootstrap state; remains empty when the operator supplies flags.
+	blobstoreCACert string
 }
 
 // NewPVEVaultProvider creates a new Proxmox VE vault provider.
@@ -231,34 +238,65 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 		cidr, _ := sub.Properties["cidr"].(string)
 		az, _ := sub.Properties["availability_zone"].(string)
-		gateway, _ := sub.Properties["gateway"].(string)
 
 		if cidr == "" {
 			continue
 		}
 
-		// Derive gateway (first host) and dns from the subnet when state omits
-		// them; genesis's dynamic-subnet cloud-config builder reads per-subnet
-		// dns/gateway directly and emits dns: [null] / a bad gateway otherwise.
+		// Each PVE subnet's gateway is its OWN first host (per-/22), NOT the
+		// parent /18 SDN gateway. BOSH requires a subnet's gateway to be inside
+		// its range, and the PVE SDN provisions a real gateway per /22 subnet
+		// (infra .64.1, ocfp-0 .68.1, ocfp-1 .72.1, ocfp-2 .76.1). Bootstrap
+		// state records the parent /18 gateway (network.go addVirtualSubnetToState),
+		// so we recompute from the subnet's own CIDR here — mirroring the Stackit
+		// provider (parseSubnetCIDR), which likewise derives the subnet-local
+		// gateway rather than the network gateway. The cloud-config builder reads
+		// this per-subnet gateway/dns directly.
+		gateway := pveCIDRGateway(cidr)
 		if gateway == "" {
-			gateway = pveCIDRGateway(cidr)
+			// Defensive: malformed cidr (already guarded above) — fall back to
+			// whatever bootstrap state recorded.
+			gateway, _ = sub.Properties["gateway"].(string)
 		}
 
 		dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
 
-		subnetPath := filepath.Join(subnetsPath, sub.Name)
+		// Genesis consumes the bloc-relative subnet name ("ocfp-0", "infra"),
+		// not the bloc-prefixed state name ("<bloc>-ocfp-0"). The bosh kit and
+		// cf kit reference subnets by these short names (e.g. compilation pins
+		// 'ocfp-2'). Strip the bloc prefix so the vault path matches.
+		genesisName := strings.TrimPrefix(sub.Name, p.BlocName+"-")
+
+		// network_id is the SDN/bridge identifier the bosh kit reads as the
+		// subnet `id`/cloud-property. Fall back to the configured bridge name.
+		bridgeID, _ := sub.Properties["network_id"].(string)
+		bridgeID = pveFirstNonEmpty(bridgeID, p.Config.Network.Name, "vmbr0")
+
+		subnetPath := filepath.Join(subnetsPath, genesisName)
 		if err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
-			"cidr":    cidr,
-			"az":      az,
-			"gateway": gateway,
-			"dns":     dns,
+			"cidr":       cidr,
+			"cidr_block": cidr,
+			"az":         az,
+			"gateway":    gateway,
+			"dns":        dns,
+			"id":         bridgeID,
 		}); err != nil {
-			return fmt.Errorf("failed to write subnet %s: %w", sub.Name, err)
+			return fmt.Errorf("failed to write subnet %s: %w", genesisName, err)
 		}
 
-		// Reserved IPs — pull each `reserved_{name}_{role}_ip` output.
+		// Role-keyed reserved IPs (reserved_{name}_{role}_ip) for kits that
+		// resolve IPs by role name. Keyed on the state name (outputs use it).
 		if err := p.writeReservedIPs(sm, subnetPath, sub.Name); err != nil {
 			return err
+		}
+
+		// Genesis-consumed reserved-ips: available_0/available_1 band + bosh
+		// director / jumpbox statics. Only the ocfp-* subnets carry these; the
+		// infra subnet keeps cidr/gateway/dns only (no workload allocation).
+		if strings.HasPrefix(genesisName, "ocfp-") {
+			if err := p.writeStateReservedBand(sm, envType, genesisName, sub, gateway); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -267,6 +305,114 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 	}
 
 	return nil
+}
+
+// writeStateReservedBand writes the genesis-consumed reserved-ips block for a
+// state-backed ocfp-* subnet: the available_0/available_1 allocation band
+// (derived from the subnet's OWN cidr so compilation on ocfp-2 never overlaps
+// the workload on ocfp-0/1), the bosh director static, jumpbox static, and the
+// reserved_a..d ranges. Values are sourced from state outputs when present
+// (computed within each /22 by bootstrap) and otherwise derived from the
+// subnet's cidr. Never overwrites a non-empty state-provided value.
+func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, genesisName string, sub *state.Resource, gateway string) error {
+	subnetGateway := pveCIDRGateway(getStringProp(sub.Properties, "cidr"))
+	if subnetGateway == "" {
+		subnetGateway = gateway
+	}
+
+	outputs := stateOutputs(sm)
+	stateName := sub.Name
+
+	reserved := map[string]interface{}{}
+
+	// Available band: prefer bootstrap-computed available_a/available_b (already
+	// scoped to this subnet's /22); fall back to gateway+offset within the /22.
+	availStart := pveFirstNonEmpty(
+		outputs["reserved_"+stateName+"_available_a"],
+		pveOffsetIP(subnetGateway, 11),
+	)
+	availEnd := pveFirstNonEmpty(
+		outputs["reserved_"+stateName+"_available_b"],
+		pveOffsetIP(subnetGateway, 250),
+	)
+	if availStart != "" {
+		reserved["available_0"] = availStart
+	}
+	if availEnd != "" {
+		reserved["available_1"] = availEnd
+	}
+
+	// reserved_a..d explicit reserved ranges (genesis reads keys matching
+	// /^reserved/). Bootstrap computes these per /22; pass them through verbatim.
+	for _, k := range []string{"reserved_a", "reserved_b", "reserved_c", "reserved_d"} {
+		if v := outputs["reserved_"+stateName+"_"+k]; v != "" {
+			reserved[k] = v
+		}
+	}
+
+	// BOSH director / jumpbox statics. The env-BOSH director lives on this
+	// subnet's range; prefer the bootstrap-reserved bosh_ip, else derive a
+	// per-envType offset within this subnet so mgmt-BOSH and env-BOSH do not
+	// collide (mgmt=gateway+9, env=gateway+11).
+	boshIP := pveFirstNonEmpty(
+		outputs["reserved_"+stateName+"_bosh_ip"],
+		pveOffsetIP(subnetGateway, pveBoshIPOffset(envType)),
+	)
+	if boshIP != "" {
+		reserved["bosh_ip"] = boshIP
+		reserved["ip"] = boshIP
+		reserved["director_ip"] = boshIP
+	}
+
+	jumpboxIP := pveFirstNonEmpty(
+		outputs["reserved_"+stateName+"_jumpbox_ip"],
+		pveOffsetIP(subnetGateway, 6),
+	)
+	if jumpboxIP != "" {
+		reserved["jumpbox_ip"] = jumpboxIP
+	}
+
+	if len(reserved) == 0 {
+		return nil
+	}
+
+	reservedPath := filepath.Join(p.PathBuilder.GetSubnetsPath(envType), genesisName, "reserved-ips")
+	if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
+		return fmt.Errorf("failed to write reserved-ips band for %s: %w", genesisName, err)
+	}
+
+	return nil
+}
+
+// stateOutputs returns the bloc state's outputs as a string-keyed string map,
+// dropping non-string values. Returns an empty map when state is unavailable.
+func stateOutputs(sm *state.Manager) map[string]string {
+	out := map[string]string{}
+
+	current := sm.Current()
+	if current == nil {
+		return out
+	}
+
+	for k, v := range current.Outputs {
+		if s, ok := v.(string); ok && s != "" {
+			out[k] = s
+		}
+	}
+
+	return out
+}
+
+// getStringProp returns a string property from a resource property map.
+func getStringProp(props map[string]interface{}, key string) string {
+	if props == nil {
+		return ""
+	}
+	if v, ok := props[key].(string); ok {
+		return v
+	}
+
+	return ""
 }
 
 // writeFallbackSubnet preserves the legacy single-blob write so vault populate
@@ -304,7 +450,12 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
 	bridgeID := pveFirstNonEmpty(p.Config.Network.Name, "vmbr0")
 	az := pveFirstAZ(p.Config)
-	boshIP := pveOffsetIP(gateway, 9)
+	// The director static IP must differ per env-type: mgmt-BOSH owns gateway+9
+	// (e.g. .10) and the env-BOSH deployed atop it owns gateway+11 (e.g. .12),
+	// leaving gateway+10 for the artifacts VM. Writing the same offset for both
+	// puts the env-BOSH director on mgmt's IP, which BOSH rejects as an in-use
+	// (reserved) static when the deployment shares the mgmt subnet.
+	boshIP := pveOffsetIP(gateway, pveBoshIPOffset(envType))
 	jumpboxIP := pveOffsetIP(gateway, 8)
 
 	// PVE single-network mode: populate ocfp-0..ocfp-2 with identical data so
@@ -338,7 +489,13 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		// available_0/available_1 bound the available allocation band Genesis'
 		// cloud-config IPAM reads; the complement is auto-reserved, keeping
 		// kit-generated networks off the infra IPs (<= gateway+13).
-		if start, end := pveAvailableBand(p.Config, gateway); start != "" && end != "" {
+		//
+		// On PVE the three logical subnets share a single flat range, so a
+		// shared band would let net-compilation (pinned to ocfp-2) and net-ocf
+		// (spanning ocfp-0/1) both allocate from the same IPs and collide.
+		// Carve a DISJOINT contiguous slice per subnet index so the compilation
+		// band never overlaps the workload band even without bootstrap state.
+		if start, end := pveFallbackSubnetBand(p.Config, gateway, i); start != "" && end != "" {
 			reserved["available_0"] = start
 			reserved["available_1"] = end
 		}
@@ -349,6 +506,70 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	}
 
 	return nil
+}
+
+// pveFallbackSubnetBand returns the disjoint available [start,end] band for the
+// stateless-fallback subnet at index i (0,1,2). The configured/derived band
+// (pveAvailableBand) is split into three contiguous, non-overlapping slices so
+// each logical subnet on the shared flat range owns a distinct slice. This
+// keeps net-compilation (ocfp-2) clear of net-ocf (ocfp-0/1) when no bootstrap
+// state is present. Returns empty strings when the band cannot be derived.
+func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, string) {
+	start, end := pveAvailableBand(cfg, gateway)
+	if start == "" || end == "" {
+		return "", ""
+	}
+
+	startOctet := pveLastOctet(start)
+	endOctet := pveLastOctet(end)
+	if startOctet < 0 || endOctet < 0 || endOctet <= startOctet {
+		// Cannot reason about the band (multi-octet span or parse failure):
+		// fall back to the shared band so we still write something usable.
+		return start, end
+	}
+
+	const subnetCount = 3
+
+	span := endOctet - startOctet + 1
+	slice := span / subnetCount
+	if slice < 1 {
+		// Band too small to split; keep it shared rather than emit an empty slice.
+		return start, end
+	}
+
+	sliceStart := startOctet + i*slice
+	sliceEnd := sliceStart + slice - 1
+	if i == subnetCount-1 {
+		// Last slice absorbs any remainder so the full band is covered.
+		sliceEnd = endOctet
+	}
+
+	return pveOffsetIP(gateway, sliceStart-pveLastOctet(gateway)), pveOffsetIP(gateway, sliceEnd-pveLastOctet(gateway))
+}
+
+// pveLastOctet returns the integer value of an IPv4 address's last octet, or
+// -1 when the input cannot be parsed.
+func pveLastOctet(ip string) int {
+	last := -1
+	for i := len(ip) - 1; i >= 0; i-- {
+		if ip[i] == '.' {
+			last = i
+			break
+		}
+	}
+	if last < 0 || last == len(ip)-1 {
+		return -1
+	}
+
+	octet := 0
+	for _, c := range ip[last+1:] {
+		if c < '0' || c > '9' {
+			return -1
+		}
+		octet = octet*10 + int(c-'0')
+	}
+
+	return octet
 }
 
 // pveFirstDNS returns the first DNS entry from a slice, or "" if the slice is empty.
@@ -417,6 +638,20 @@ func pveOffsetIP(base string, off int) string {
 // vault — all at <= gateway+13). Returns empty strings when the band cannot be
 // derived (e.g. unparseable gateway), in which case no band keys are written
 // and Genesis falls back to its own default reservation.
+// pveBoshIPOffset returns the gateway-relative offset for a deployment's BOSH
+// director static IP, keyed by env-type. mgmt-BOSH (create-env) and the
+// env-BOSH it deploys must not collide: mgmt=gateway+9, env=gateway+11, with
+// gateway+10 reserved for the artifacts VM. Unknown env-types fall back to the
+// mgmt offset (legacy behaviour).
+func pveBoshIPOffset(envType string) int {
+	switch envType {
+	case "ocf":
+		return 11
+	default:
+		return 9
+	}
+}
+
 func pveAvailableBand(cfg *config.Config, gateway string) (string, string) {
 	start := cfg.Network.AvailableIPStart
 	if start == "" {
@@ -503,6 +738,26 @@ func (p *PVEVaultProvider) loadStateManager() *state.Manager {
 	return sm
 }
 
+// resolveArtifactsEndpoint looks up the artifacts VM from bootstrap state and
+// returns the endpoint, credentials, and CA PEM needed to write the blobstore
+// secrets. Returns nil (no error) when state is absent or the artifacts VM has
+// not been provisioned — callers then fall back to the CLI-flag-driven flow.
+func (p *PVEVaultProvider) resolveArtifactsEndpoint() (*artifacts.LookupResult, error) {
+	sm := p.loadStateManager()
+	if sm == nil {
+		return nil, nil
+	}
+
+	// provider is nil: a tag-based fallback query needs live PVE credentials,
+	// which are unavailable at vault-populate time. State is the only source here.
+	lr, err := artifacts.Lookup(context.Background(), sm, nil, p.BlocName)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts lookup: %w", err)
+	}
+
+	return lr, nil
+}
+
 // ConfigureSecurityGroups configures security group settings.
 func (p *PVEVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "security-groups-" + envType
@@ -556,6 +811,31 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 	}
 
 	mode := p.resolveBlobstoreMode()
+
+	// When the operator supplied no explicit blobstore flags, try to auto-source
+	// the endpoint + credentials + CA from bootstrap state's artifacts resource.
+	// This is the common case on a clean run: `ocfp vault populate` (on the
+	// bastion) promotes to external mode from state with no flags required.
+	if mode == "local" && p.BlobstoreEndpoint == "" {
+		lr, err := p.resolveArtifactsEndpoint()
+		if err != nil {
+			p.logger.Warnw("Could not load artifacts state for blobstore populate", "error", err)
+		}
+
+		if lr != nil && lr.Endpoint != "" {
+			p.BlobstoreEndpoint = lr.Endpoint
+			p.BlobstoreRegion = pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
+			p.BlobstoreAccessKey = lr.AccessKey
+			p.BlobstoreSecretKey = lr.SecretKey
+			p.blobstoreCACert = lr.CACert
+			mode = "external"
+
+			// Endpoint URL only — credentials and CA are never logged.
+			p.logger.Infow("Auto-sourced blobstore config from artifacts state",
+				"env_type", envType, "endpoint", p.BlobstoreEndpoint)
+		}
+	}
+
 	blobstorePath := p.PathBuilder.GetSystemBlobstorePath(envType, "cf", "main")
 
 	switch mode {
@@ -580,7 +860,7 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 	// resolve `:name` / `:region` placeholders (kits/bosh/ocfp/meta.yml).  These
 	// are non-functional defaults; a working blobstore still requires either
 	// external mode here or an env-yml override.  External mode already writes
-	// this path with real endpoint+creds via configureBOSHBlobstore.
+	// this path with real endpoint+creds via configureBOSHBlobstoreForScope.
 	if envType == "mgmt" && mode != "external" {
 		boshBlobPath := p.PathBuilder.GetSystemBlobstorePath(envType, "bosh", "bosh")
 		region := pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
@@ -632,14 +912,29 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		region = "us-east-1"
 	}
 
+	// host is the endpoint's bare host (the artifacts VM private_ip on PVE);
+	// the bosh director blobstore job template reads `host` rather than the
+	// full endpoint URL.
+	host := pveHostnameOnly(p.BlobstoreEndpoint)
+
+	// Bucket name follows the <bloc>-<scope>-cf convention shared with
+	// ArtifactsWriter and bootstrap.artifactsBucketList.
+	bucketName := fmt.Sprintf("%s-%s-cf", p.BlocName, envType)
+
 	p.logger.Infow("Configuring external blobstore", "env_type", envType, "endpoint", p.BlobstoreEndpoint, "region", region)
 
 	blobstoreConfig := map[string]interface{}{
 		"mode":       "external",
 		"endpoint":   p.BlobstoreEndpoint,
+		"host":       host,
 		"region":     region,
 		"path_style": true,
+		"bucket":     bucketName,
+		"name":       bucketName,
 		"status":     "configured",
+	}
+	if p.blobstoreCACert != "" {
+		blobstoreConfig["ca_cert"] = p.blobstoreCACert
 	}
 
 	err := p.Safe.SetMultiple(blobstorePath, blobstoreConfig)
@@ -661,30 +956,41 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		}
 	}
 
-	if envType == "mgmt" {
-		err = p.configureBOSHBlobstore(region)
-		if err != nil {
-			return err
-		}
+	// The BOSH director blobstore is scoped per env: mgmt-BOSH consumes the
+	// mgmt-scoped path, env-BOSH (deployed for ocf) consumes the ocf-scoped
+	// path. Write the scope matching this env so both directors get a working
+	// S3-compatible blobstore (RustFS/MinIO/Ceph) — previously only mgmt was.
+	if err := p.configureBOSHBlobstoreForScope(envType, region); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// configureBOSHBlobstore writes the BOSH director's external blobstore config
-// and credentials so the genesis BOSH kit can deploy with an S3-compatible
-// blobstore (RustFS/MinIO/Ceph). Path mirrors AWS naming convention.
-func (p *PVEVaultProvider) configureBOSHBlobstore(region string) error {
-	boshPath := p.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh")
+// configureBOSHBlobstoreForScope writes the BOSH director's external blobstore
+// config and credentials for the given scope (mgmt or ocf) so the genesis BOSH
+// kit can deploy with an S3-compatible blobstore. Bucket names follow the
+// <bloc>-<scope>-bosh convention. Path mirrors AWS naming convention.
+func (p *PVEVaultProvider) configureBOSHBlobstoreForScope(scope, region string) error {
+	boshPath := p.PathBuilder.GetSystemBlobstorePath(scope, "bosh", "bosh")
+	bucketName := fmt.Sprintf("%s-%s-bosh", p.BlocName, scope)
+	host := pveHostnameOnly(p.BlobstoreEndpoint)
 
-	p.logger.Infow("Configuring external BOSH director blobstore", "endpoint", p.BlobstoreEndpoint, "region", region, "path", boshPath)
+	p.logger.Infow("Configuring external BOSH director blobstore",
+		"scope", scope, "endpoint", p.BlobstoreEndpoint, "region", region, "path", boshPath)
 
 	boshConfig := map[string]interface{}{
 		"mode":       "external",
 		"endpoint":   p.BlobstoreEndpoint,
+		"host":       host,
 		"region":     region,
 		"path_style": true,
+		"name":       bucketName,
+		"bucket":     bucketName,
 		"status":     "configured",
+	}
+	if p.blobstoreCACert != "" {
+		boshConfig["ca_cert"] = p.blobstoreCACert
 	}
 
 	err := p.Safe.SetMultiple(boshPath, boshConfig)
@@ -1295,67 +1601,70 @@ func pveCFMaxInFlight(cfg *config.Config) int {
 	return resolved.MaxInFlight
 }
 
-// ConfigureAZs writes Proxmox node names as availability zone entries.
+// pveWorkloadAZCount is the number of workload availability zones a PVE bloc
+// exposes. It mirrors the ocfp-{0,1,2} workload subnets carved by
+// bootstrap.createPVEVirtualSubnets (pveSubnetCount-1). The subnet layer
+// assigns those subnets AZ keys "pve"+{a,b,c} (bootstrap.pveAZNamePrefix), and
+// the Genesis director cloud-config hook (Director.pm _set_network_azs)
+// resolves each ocfp-* subnet's az against the net/azs/<zone> entries written
+// here. Keep in sync with bootstrap.pveSubnetCount / pveAZNamePrefix.
+const (
+	pveWorkloadAZCount = 3
+	pveAZKeyPrefix     = "pve"
+)
+
+// ConfigureAZs writes the PVE workload availability zones as vault entries,
+// keyed by ZONE name (pvea/pveb/pvec) — the same keys the subnet layer assigns
+// to the ocfp-{0,1,2} subnets — NOT by node name.
 //
-// Path pattern: secret/config/{bloc}/{envType}/net/azs/{node}
+// Path pattern: secret/config/{bloc}/{envType}/net/azs/{zone}
 //
-// Proxmox does not have availability zones in the cloud-provider sense. Each
-// Proxmox node in the cluster acts as an independent failure domain. This method
-// writes one vault entry per node so that BOSH directors can reference them as
-// AZ cloud properties.
+// Proxmox has no cloud-provider availability zones; each PVE node is an
+// independent failure domain. BOSH still needs a stable set of AZ keys that the
+// workload subnets reference. Genesis' _set_network_azs resolves every ocfp-*
+// subnet's az ("pvea"...) against these keys; keying by node ("pve") instead
+// leaves them unresolvable ("AZ pvea not found in the available AZs for the
+// network"). Each zone records the node that physically backs it via node_name;
+// multi-node blocs spread zones across Config.Nodes round-robin, while a
+// single-node bloc backs every zone with the one node.
 //
 // Node list source (in priority order):
-//  1. Config.Nodes — iterated when len > 0; one vault write per node.
-//  2. Config.Region — fallback single-node when Nodes is empty.
+//  1. Config.Nodes — round-robin backing for the zones when len > 0.
+//  2. Config.Region — single backing node when Nodes is empty.
 //  3. Both empty — logs a warning and returns nil (no error).
 func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
-	p.logger.Infow("Configuring PVE AZs (nodes as AZ entries)", "env_type", envType)
+	p.logger.Infow("Configuring PVE AZs (workload zones)", "env_type", envType)
 
-	// Multi-node: iterate Config.Nodes when set; single-node: fall back to Config.Region.
-	switch {
-	case len(p.Config.Nodes) > 0:
-		for i, node := range p.Config.Nodes {
-			azPath := p.PathBuilder.GetAZPath(envType, node)
+	// Resolve the node(s) that physically back the zones.
+	nodes := p.Config.Nodes
+	if len(nodes) == 0 && p.Config.Region != "" {
+		nodes = []string{p.Config.Region}
+	}
+	if len(nodes) == 0 {
+		p.logger.Warnw("No nodes configured (Nodes slice and Region are both empty), skipping AZ configuration", "env_type", envType)
+		return nil
+	}
 
-			// index (1-based) drives Genesis' AZ naming: the director
-			// cloud-config hook (Director.pm _set_network_azs) computes the AZ
-			// name as "<env>-z" . index, falling back to the trailing digits of
-			// the AZ key name. PVE node names ("pve") have no trailing digit, so
-			// an explicit index is required to yield a valid "<env>-z1" AZ that
-			// matches the kit's default_cf_az; without it the AZ collapses to a
-			// malformed "<env>-z" and instance groups fail to place.
-			azData := map[string]interface{}{
-				"node_name": node,
-				"index":     i + 1,
-				"status":    "configured",
-			}
+	for z := 0; z < pveWorkloadAZCount; z++ {
+		zone := pveAZKeyPrefix + string(rune('a'+z))
+		node := nodes[z%len(nodes)]
+		azPath := p.PathBuilder.GetAZPath(envType, zone)
 
-			if err := p.Safe.SetMultiple(azPath, azData); err != nil {
-				return fmt.Errorf("failed to set AZ entry for node %s: %w", node, err)
-			}
-
-			p.logger.Infow("PVE AZ entry configured", "env_type", envType, "node", node, "path", azPath)
-		}
-
-	case p.Config.Region != "":
-		node := p.Config.Region
-		azPath := p.PathBuilder.GetAZPath(envType, node)
-
-		// Single-node: index 1 -> Genesis AZ "<env>-z1" (see multi-node note).
+		// index (1-based) drives Genesis' AZ naming: name = "<env>-z" . index.
+		// Zone letters carry no trailing digit, so the explicit index yields
+		// pvea->"<env>-z1", pveb->z2, pvec->z3, matching the kit's
+		// default_cf_az and the workload subnets' az assignment.
 		azData := map[string]interface{}{
 			"node_name": node,
-			"index":     1,
+			"index":     z + 1,
 			"status":    "configured",
 		}
 
 		if err := p.Safe.SetMultiple(azPath, azData); err != nil {
-			return fmt.Errorf("failed to set AZ entry for node %s: %w", node, err)
+			return fmt.Errorf("failed to set AZ entry for zone %s: %w", zone, err)
 		}
 
-		p.logger.Infow("PVE AZ entry configured", "env_type", envType, "node", node, "path", azPath)
-
-	default:
-		p.logger.Warnw("No nodes configured (Nodes slice and Region are both empty), skipping AZ configuration", "env_type", envType)
+		p.logger.Infow("PVE AZ entry configured", "env_type", envType, "zone", zone, "node", node, "path", azPath)
 	}
 
 	return nil
