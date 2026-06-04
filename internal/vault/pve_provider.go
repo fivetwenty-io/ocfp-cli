@@ -392,6 +392,20 @@ func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, ge
 		reserved["jumpbox_ip"] = jumpboxIP
 	}
 
+	// CF haproxy static. net-ocf maps to the ocfp-* subnets, and the cf kit's
+	// routing/haproxy.yml requires params.haproxy_ips -> static_ips, so the env
+	// grabs this from vault (same path as bosh_ip/jumpbox_ip) rather than
+	// carrying a hand-keyed literal that drifts out of the subnet's range. The
+	// static sits in the low static zone (below available_0 = gateway+19),
+	// clear of bosh_ip, jumpbox_ip (gateway+6), and the mgmt vault (gateway+11).
+	haproxyIP := pveFirstNonEmpty(
+		outputs["reserved_"+stateName+"_haproxy_ip"],
+		pveOffsetIP(subnetGateway, 12),
+	)
+	if haproxyIP != "" {
+		reserved["haproxy_ip"] = haproxyIP
+	}
+
 	if len(reserved) == 0 {
 		return nil
 	}
