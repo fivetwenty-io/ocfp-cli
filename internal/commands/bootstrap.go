@@ -539,6 +539,21 @@ func createStateManager(blocName string) (*state.Manager, error) {
 	return stateManager, nil
 }
 
+// artifactsStepInScope reports whether the bootstrap run will execute the
+// artifacts step, mirroring Manager.filterSteps: artifacts runs in full ("ALL")
+// mode and, in selective mode, only when --artifacts is set; bastion-only and
+// other selective modes skip it.
+func artifactsStepInScope(o *bootstrap.Options) bool {
+	if o.Bastion {
+		return false
+	}
+
+	selective := o.Servers || o.Volumes || o.Snapshots || o.Buckets ||
+		o.SecurityGroups || o.Network || o.PublicIPs || o.KeyPairs || o.Artifacts
+
+	return o.Artifacts || !selective
+}
+
 // executeBootstrap performs the actual bootstrap execution.
 func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, blocName, iaas, region string) error {
 	// Load state for the bloc
@@ -570,6 +585,21 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	}
 
 	bootstrapManager := bootstrap.NewManager(cfg, provider, stateManager, bootstrapOpts)
+
+	// The artifacts step's internal-ca TLS mode persists the bloc CA to the
+	// inception vault, and it HARD-FAILS without one. Without this guard the
+	// failure surfaces late — at step 8/9, after the bastion VM is already
+	// created — leaving a half-built bloc (bastion up, no artifacts) and a
+	// confusing "connection refused" against 127.0.0.1:8234. Ensure the
+	// inception vault is up BEFORE any VM is created so the run either fully
+	// succeeds or fails fast with an actionable message.
+	if artifactsStepInScope(bootstrapOpts) &&
+		cfg.Artifacts.Enabled && cfg.Artifacts.TLS.Mode == config.ArtifactsTLSModeInternalCA {
+		if err := ensureInceptionVault(blocName, viper.GetBool("test")); err != nil {
+			return fmt.Errorf("artifacts (internal-ca TLS) requires the inception vault, which could not be started "+
+				"(start it manually with `ocfp vault inception --bloc %s`): %w", blocName, err)
+		}
+	}
 
 	// Best-effort vault wiring: when vault is reachable, the bootstrap artifacts
 	// step writes blobstore endpoint + creds to vault. When unreachable, the

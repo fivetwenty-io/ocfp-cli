@@ -993,9 +993,16 @@ func prepareVaultDirectories(paths map[string]string, log *zap.SugaredLogger) er
 
 // runVaultInception executes the vault inception command.
 func runVaultInception() error {
+	return ensureInceptionVault(viper.GetString("bloc"), viper.GetBool("test"))
+}
+
+// ensureInceptionVault starts (or verifies) the file-backed inception vault for
+// the given bloc. It is idempotent — if the vault is already running and
+// accessible it returns nil without doing anything. Exported within the package
+// so bootstrap can guarantee the vault is up before the artifacts step, instead
+// of failing late (after the bastion is created) on a dead vault.
+func ensureInceptionVault(blocName string, testMode bool) error {
 	log := logger.Get()
-	blocName := viper.GetString("bloc")
-	testMode := viper.GetBool("test")
 
 	paths := getVaultInceptionPaths(blocName, testMode)
 
