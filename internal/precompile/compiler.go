@@ -6,9 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // Compiler orchestrates per-release resolution into pin Resolutions, populating
@@ -106,7 +103,7 @@ func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stem
 	}
 
 	if len(toCompile) > 0 {
-		compiled, err := c.compileBatch(ctx, toCompile, sc, opts)
+		compiled, err := c.compileBatch(ctx, toCompile, sc)
 		if err != nil {
 			return nil, err
 		}
@@ -142,8 +139,12 @@ func (c *Compiler) fetchUpstream(ctx context.Context, r Release, key, url string
 }
 
 // compileBatch uploads any missing source releases, runs one no-VM compile
-// deploy, then exports + uploads each compiled tarball with bounded concurrency.
-func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell, opts Options) (map[string]Resolution, error) {
+// deploy, then exports + uploads each compiled tarball serially. Exports must
+// be serial: bosh export-release takes a per-deployment lock, so concurrent
+// exports against the same compile deployment fail with "Failed to acquire
+// lock". Compilation parallelism comes from the director cloud-config
+// compilation.workers, not from this loop.
+func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell) (map[string]Resolution, error) {
 	for _, r := range rels {
 		present, err := c.Director.ReleasePresent(ctx, r.Name, r.Version)
 		if err != nil {
@@ -177,39 +178,27 @@ func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell
 	}
 
 	results := make(map[string]Resolution, len(rels))
-	var mu sync.Mutex
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(opts.concurrency())
 	for _, r := range rels {
-		g.Go(func() error {
-			key := CompiledKey(r, sc)
-			url := HTTPSURL(c.Endpoint, c.Bucket, key)
+		key := CompiledKey(r, sc)
+		url := HTTPSURL(c.Endpoint, c.Bucket, key)
 
-			dir, err := os.MkdirTemp(c.WorkDir, "export-")
-			if err != nil {
-				return fmt.Errorf("mktemp for %s: %w", r.Name, err)
-			}
-			defer func() { _ = os.RemoveAll(dir) }()
+		dir, err := os.MkdirTemp(c.WorkDir, "export-")
+		if err != nil {
+			return nil, fmt.Errorf("mktemp for %s: %w", r.Name, err)
+		}
+		tarball, err := c.Director.ExportRelease(ctx, c.Deployment, r.Name, r.Version, sc, dir)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, err
+		}
+		sha, err := UploadCompiledFile(ctx, c.S3, c.Bucket, key, tarball)
+		_ = os.RemoveAll(dir)
+		if err != nil {
+			return nil, err
+		}
 
-			tarball, err := c.Director.ExportRelease(gctx, c.Deployment, r.Name, r.Version, sc, dir)
-			if err != nil {
-				return err
-			}
-			sha, err := UploadCompiledFile(gctx, c.S3, c.Bucket, key, tarball)
-			if err != nil {
-				return err
-			}
-
-			mu.Lock()
-			results[r.Name] = Resolution{Release: r, Source: SourceCompiled, URL: url, SHA: sha}
-			mu.Unlock()
-			c.logf("compiled+uploaded: %s/%s", r.Name, r.Version)
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
+		results[r.Name] = Resolution{Release: r, Source: SourceCompiled, URL: url, SHA: sha}
+		c.logf("compiled+uploaded: %s/%s", r.Name, r.Version)
 	}
 	return results, nil
 }
