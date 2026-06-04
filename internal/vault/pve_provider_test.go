@@ -1,10 +1,12 @@
 package vault
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
@@ -24,7 +26,24 @@ func newTestPVEProvider(cfg *config.Config, mock *awsMockSafe) *PVEVaultProvider
 		Safe:              mock,
 		PathBuilder:       NewPathBuilder(cfg, blocName),
 		logger:            logger.Get(),
+		bucketEnsurer:     &recordingBucketEnsurer{},
 	}
+}
+
+// recordingBucketEnsurer captures the buckets ensureBlobstoreBucket asks for
+// without hitting a live S3 endpoint. Optionally returns a forced error to
+// exercise the fatal-on-failure path.
+type recordingBucketEnsurer struct {
+	buckets []string
+	err     error
+}
+
+func (r *recordingBucketEnsurer) EnsureBuckets(_ context.Context, _ artifacts.Endpoint, _ artifacts.Credentials, buckets []artifacts.BucketSpec) error {
+	for _, b := range buckets {
+		r.buckets = append(r.buckets, b.Name)
+	}
+
+	return r.err
 }
 
 // TestPVEVaultProvider_configureCPI_WritesPath_APITokenMode — API token auth happy
@@ -352,6 +371,66 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvWritesBOSH(t *testin
 	boshCreds := mock.findSetMultipleCall(boshPath + "/creds")
 	require.NotNil(t, boshCreds, "ocf bosh creds must be written")
 	assert.Equal(t, "AKIA-test", boshCreds.data["access_key"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_EnsuresBuckets — external mode must
+// CREATE the buckets it writes secrets for, not just write the secret. The ocf
+// env writes a CF blobstore secret (<bloc>-ocf-cf) and a BOSH director blobstore
+// secret (<bloc>-ocf-bosh); both buckets must be ensured. The missing
+// <bloc>-ocf-bosh bucket is what silently broke CF deploy (NoSuchUpload).
+func TestPVEVaultProvider_ConfigureBlobstores_EnsuresBuckets(t *testing.T) {
+	const blocName = "test-bloc"
+
+	mock := &awsMockSafe{}
+	ensurer := &recordingBucketEnsurer{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.bucketEnsurer = ensurer
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
+	require.NoError(t, err)
+
+	assert.Contains(t, ensurer.buckets, blocName+"-ocf-cf", "CF blobstore bucket must be created")
+	assert.Contains(t, ensurer.buckets, blocName+"-ocf-bosh", "BOSH director blobstore bucket must be created")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_BucketFailureIsFatal — a written
+// secret pointing at a bucket that could not be created is worse than a loud
+// failure, so bucket-creation errors abort ConfigureBlobstores.
+func TestPVEVaultProvider_ConfigureBlobstores_BucketFailureIsFatal(t *testing.T) {
+	mock := &awsMockSafe{}
+	ensurer := &recordingBucketEnsurer{err: assert.AnError}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.bucketEnsurer = ensurer
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
+	require.Error(t, err, "bucket-creation failure must abort blobstore configuration")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_NoCredsSkipsBucketCreation — without
+// credentials the ensurer cannot authenticate, so bucket creation is skipped
+// (endpoint-only mode still writes the config marker).
+func TestPVEVaultProvider_ConfigureBlobstores_NoCredsSkipsBucketCreation(t *testing.T) {
+	mock := &awsMockSafe{}
+	ensurer := &recordingBucketEnsurer{err: assert.AnError}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.bucketEnsurer = ensurer
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+
+	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
+	require.NoError(t, err, "no creds → skip bucket creation, do not surface the forced error")
+	assert.Empty(t, ensurer.buckets)
 }
 
 // TestPVEVaultProvider_ConfigurePublicIPs_StatusPending — with no state manager
