@@ -331,6 +331,13 @@ type SubnetRequest struct {
 	AvailabilityZone string
 	Type             string // public, private
 	Tags             map[string]string
+	// Gateway is the subnet's gateway IP. For providers whose subnets are real
+	// L3 segments (e.g. PVE SDN), this becomes the segment's routed gateway and
+	// must lie within CIDR. Empty leaves the provider default.
+	Gateway string
+	// SNAT enables source NAT on the subnet's gateway (PVE SDN). Ignored by
+	// providers that manage egress separately.
+	SNAT bool
 }
 
 // SecurityGroupRequest represents a request for creating security groups.

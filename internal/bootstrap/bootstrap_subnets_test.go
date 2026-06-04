@@ -19,6 +19,7 @@ import (
 type fakeNet struct {
 	createdNetworks        []*cpi.Network
 	createdSubnets         []*cpi.Subnet
+	createdSubnetReqs      []*cpi.SubnetRequest // Captures requests (gateway/SNAT not on Subnet)
 	createdSecurityGroups  []*cpi.SecurityGroup // Tracks NEW creations for test assertions
 	existingSecurityGroups []*cpi.SecurityGroup // Pre-existing SGs in "cloud" (for Get/List)
 }
@@ -47,6 +48,7 @@ func (f *fakeNet) ListNetworks(_ctx context.Context, _filters map[string]string)
 }
 func (f *fakeNet) DeleteNetwork(_ctx context.Context, _id string) error { return nil }
 func (f *fakeNet) CreateSubnet(_ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
+	f.createdSubnetReqs = append(f.createdSubnetReqs, req)
 	id := "subnet-" + req.Name
 	subnet := &cpi.Subnet{
 		ID:               id,
@@ -452,6 +454,68 @@ func TestCreateSubnets_Stackit_UsesVirtualOcfp0Only(t *testing.T) {
 
 	createNetworkAndSubnets(ctx, t, manager)
 	verifyVirtualOnlySubnetsCreated(t, fakeNetwork, manager.StateManager())
+}
+
+// TestCreateSubnets_PVE_CreatesRealPer22SDNSubnets — for PVE, bootstrap must
+// create one REAL SDN subnet per carved /22 (infra + ocfp-0/1/2), each with its
+// OWN in-range gateway (first host) and SNAT enabled. Without these real
+// subnets the per-/22 gateways written to vault would be unroutable and BOSH's
+// "gateway must be inside range" check could not be satisfied with a routable
+// gateway. (Contrast TestCreateSubnets_Stackit_UsesVirtualOcfp0Only, where no
+// real subnets are created.)
+func TestCreateSubnets_PVE_CreatesRealPer22SDNSubnets(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stateManager, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stateManager.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := createTestConfig()
+	cfg.Network.CIDR = "10.64.64.0/18"
+
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+	manager := bootstrap.NewManager(cfg, fakeProvider, stateManager, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "pve",
+		Region:   "pve",
+	})
+
+	ctx := context.Background()
+	if err = manager.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	if err = manager.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// One real SDN subnet per /22, each with its own .1 gateway + SNAT.
+	wantGW := map[string]string{
+		"10.64.64.0/22": "10.64.64.1",
+		"10.64.68.0/22": "10.64.68.1",
+		"10.64.72.0/22": "10.64.72.1",
+		"10.64.76.0/22": "10.64.76.1",
+	}
+	if got := len(fakeNetwork.createdSubnetReqs); got != len(wantGW) {
+		t.Fatalf("created %d real SDN subnets, want %d (one per /22)", got, len(wantGW))
+	}
+	for _, req := range fakeNetwork.createdSubnetReqs {
+		gw, ok := wantGW[req.CIDR]
+		if !ok {
+			t.Fatalf("unexpected SDN subnet CIDR %q", req.CIDR)
+		}
+		if req.Gateway != gw {
+			t.Errorf("subnet %s gateway = %q, want %q (per-/22 first host)", req.CIDR, req.Gateway, gw)
+		}
+		if !req.SNAT {
+			t.Errorf("subnet %s SNAT = false, want true", req.CIDR)
+		}
+	}
 }
 
 func setupStackitSubnetTest(t *testing.T) (*bootstrap.Manager, *fakeNet) {

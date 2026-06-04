@@ -110,6 +110,17 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 			"vnet":   req.NetworkID,
 			"type":   "subnet",
 		}
+		// Per-/22 SDN subnets carry their own routed gateway + SNAT so each
+		// availability-zone subnet is a real L3 segment with an in-range gateway
+		// (BOSH requires gateway ∈ subnet range; the OCFP per-/22 model relies on
+		// the PVE host answering .X.1 for each /22). Omitted fields fall back to
+		// PVE defaults.
+		if req.Gateway != "" {
+			params["gateway"] = req.Gateway
+		}
+		if req.SNAT {
+			params["snat"] = 1
+		}
 
 		subnetID := strings.ReplaceAll(req.CIDR, "/", "-")
 		path := fmt.Sprintf("/cluster/sdn/vnets/%s/subnets", req.NetworkID)
