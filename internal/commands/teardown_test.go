@@ -928,3 +928,105 @@ func TestTeardown_VMExists_RunsDeleteEnv(t *testing.T) {
 		t.Fatal("expected done=false when VM is present (teardown should proceed)")
 	}
 }
+
+// TestTeardownSkipArtifactsProtectsCloudInstance verifies that "--skip artifacts"
+// excludes the retained artifacts VM even when it is cloud-discovered as a
+// generic "instance" named "<bloc>-artifacts" (rather than its state type
+// "artifacts"). This is the regression guard for the bug where a --force
+// teardown deleted the kept artifacts/RustFS VM.
+func TestTeardownSkipArtifactsProtectsCloudInstance(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "ocfp-lab-wayne", Provider: "pve"}
+
+	sm, err := state.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("state manager: %v", err)
+	}
+	if _, err = sm.Load("ocfp-lab-wayne"); err != nil {
+		t.Fatalf("state load: %v", err)
+	}
+
+	opts := &commands.TeardownOptions{
+		BlocName: "ocfp-lab-wayne",
+		Provider: "pve",
+		Skip:     []string{"artifacts"},
+	}
+	manager := commands.NewTeardownManager(cfg, &fakeProviderCreds{}, sm, opts)
+
+	resources := []*commands.ResourceToDelete{
+		{Type: "instance", Name: "ocfp-lab-wayne-bastion", ID: "100"},
+		{Type: "instance", Name: "ocfp-lab-wayne-artifacts", ID: "101"},
+		{Type: "security_group", Name: "ocfp-lab-wayne-artifacts", ID: "g-art"},
+	}
+
+	filtered := manager.TestFilterResources(resources)
+
+	for _, r := range filtered {
+		if r.Name == "ocfp-lab-wayne-artifacts" {
+			t.Errorf("--skip artifacts must exclude %q (type %s, id %s) but it was kept", r.Name, r.Type, r.ID)
+		}
+	}
+
+	foundBastion := false
+	for _, r := range filtered {
+		if r.Name == "ocfp-lab-wayne-bastion" {
+			foundBastion = true
+		}
+	}
+	if !foundBastion {
+		t.Error("--skip artifacts must NOT exclude the bastion instance")
+	}
+}
+
+// TestTeardownBelongsToTargetBloc verifies the bloc-attribution gate that
+// prevents cloud network/security-group discovery from deleting other blocs'
+// resources or shared host infrastructure (the PVE lvnetNNN / vmbrN leak).
+func TestTeardownBelongsToTargetBloc(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "ocfp-lab-wayne", Provider: "pve"}
+
+	sm, err := state.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("state manager: %v", err)
+	}
+	if _, err = sm.Load("ocfp-lab-wayne"); err != nil {
+		t.Fatalf("state load: %v", err)
+	}
+
+	opts := &commands.TeardownOptions{BlocName: "ocfp-lab-wayne", Provider: "pve"}
+	manager := commands.NewTeardownManager(cfg, &fakeProviderCreds{}, sm, opts)
+
+	cases := []struct {
+		name string
+		r    *commands.ResourceToDelete
+		want bool
+	}{
+		{"from-state", &commands.ResourceToDelete{Name: "lvnet001", FromState: true}, true},
+		{"bloc-tag", &commands.ResourceToDelete{Name: "anything", Tags: map[string]string{"bloc": "ocfp-lab-wayne"}}, true},
+		{"bloc-name-prefix", &commands.ResourceToDelete{Name: "ocfp-lab-wayne-infra"}, true},
+		{"bloc-name-exact", &commands.ResourceToDelete{Name: "ocfp-lab-wayne"}, true},
+		{"other-bloc-vnet", &commands.ResourceToDelete{Name: "lvnet004"}, false},
+		{"host-bridge", &commands.ResourceToDelete{Name: "vmbr0"}, false},
+		{"other-bloc-tag", &commands.ResourceToDelete{Name: "x", Tags: map[string]string{"bloc": "ocfp-lab-kevin"}}, false},
+		{"stale-other-naming", &commands.ResourceToDelete{Name: "ocfp-pve-wayne-infra"}, false},
+		// Shared PVE template disks (VMID-named, untagged) must NOT be
+		// attributable to the bloc — these were swept by the --force volume
+		// discovery that lacked an ownership gate.
+		{"shared-base-template-disk", &commands.ResourceToDelete{Type: "volume", Name: "base-9001-disk-0"}, false},
+		{"shared-generic-template-disk", &commands.ResourceToDelete{Type: "volume", Name: "base-9000-disk-0"}, false},
+		{"other-vm-cloudinit", &commands.ResourceToDelete{Type: "volume", Name: "vm-9000-cloudinit"}, false},
+		{"other-vm-disk", &commands.ResourceToDelete{Type: "volume", Name: "vm-15944-disk-0"}, false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := manager.TestBelongsToTargetBloc(tc.r); got != tc.want {
+				t.Errorf("belongsToTargetBloc(%s)=%v, want %v", tc.r.Name, got, tc.want)
+			}
+		})
+	}
+}
