@@ -36,6 +36,11 @@ type CloudflareConfig struct {
 	// origin for *.system (its cert SAN is *.system). Empty disables verify
 	// (used for *.apps whose cert does not cover it).
 	OriginServerName string `json:"origin_server_name,omitempty" mapstructure:"origin_server_name" yaml:"origin_server_name,omitempty"`
+
+	// OriginNoTLSVerify disables TLS verification to the origin on the *.system
+	// rule. Set true when the origin presents a self-signed cert (e.g. the PVE
+	// lab haproxy), where the default OriginServerName verify path 502s.
+	OriginNoTLSVerify *bool `json:"origin_no_tls_verify,omitempty" mapstructure:"origin_no_tls_verify" yaml:"origin_no_tls_verify,omitempty"`
 }
 
 // CloudflareEnabled reports whether cloudflare tunnel provisioning is active.
@@ -85,6 +90,10 @@ func mergeCloudflareDefaults(bloc *Config, defaults *CloudflareConfig) {
 		v := *defaults.Enabled
 		merged.Enabled = &v
 	}
+	if merged.OriginNoTLSVerify == nil && defaults.OriginNoTLSVerify != nil {
+		v := *defaults.OriginNoTLSVerify
+		merged.OriginNoTLSVerify = &v
+	}
 }
 
 func cloneCloudflareConfig(src *CloudflareConfig) *CloudflareConfig {
@@ -95,6 +104,10 @@ func cloneCloudflareConfig(src *CloudflareConfig) *CloudflareConfig {
 	if src.Enabled != nil {
 		v := *src.Enabled
 		clone.Enabled = &v
+	}
+	if src.OriginNoTLSVerify != nil {
+		v := *src.OriginNoTLSVerify
+		clone.OriginNoTLSVerify = &v
 	}
 	return &clone
 }

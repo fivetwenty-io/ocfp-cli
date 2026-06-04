@@ -55,3 +55,24 @@ func TestBuildIngress(t *testing.T) {
 	assert.Equal(t, "http_status:404", ing[3].Service)
 	assert.Empty(t, ing[3].Hostname)
 }
+
+// TestBuildIngress_OriginNoTLSVerify — when the origin uses a self-signed cert
+// (e.g. the PVE lab haproxy), OriginNoTLSVerify must disable TLS verification on
+// the *.system rule too (the default verifies via OriginServerName, which 502s
+// against a self-signed origin). *.apps is always noTLSVerify.
+func TestBuildIngress_OriginNoTLSVerify(t *testing.T) {
+	t.Parallel()
+	ing := BuildIngress(IngressParams{
+		AppsDomain:        "apps.ocf.wayne.lab.fivetwenty.io",
+		SystemDomain:      "system.ocf.wayne.lab.fivetwenty.io",
+		Origin:            "https://10.64.68.13:443",
+		OriginServerName:  "api.system.ocf.wayne.lab.fivetwenty.io",
+		OriginNoTLSVerify: true,
+	})
+	// apps, system, catch-all (no ssh configured here)
+	require.Len(t, ing, 3)
+	assert.True(t, ing[0].OriginRequest.NoTLSVerify, "*.apps always noTLSVerify")
+	assert.Equal(t, "*.system.ocf.wayne.lab.fivetwenty.io", ing[1].Hostname)
+	assert.True(t, ing[1].OriginRequest.NoTLSVerify, "*.system noTLSVerify when OriginNoTLSVerify set")
+	assert.Empty(t, ing[1].OriginRequest.OriginServerName, "no cert verify name when skipping verify")
+}

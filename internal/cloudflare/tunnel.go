@@ -64,11 +64,23 @@ type IngressParams struct {
 	Origin           string
 	SSHOrigin        string
 	OriginServerName string
+
+	// OriginNoTLSVerify disables TLS verification to the origin on the *.system
+	// rule (which otherwise verifies via OriginServerName). Required when the
+	// origin presents a self-signed cert (e.g. the PVE lab haproxy); without it
+	// cloudflared 502s. *.apps is always noTLSVerify regardless.
+	OriginNoTLSVerify bool
 }
 
 // BuildIngress returns the ordered ingress rules: *.apps (noTLSVerify),
-// *.system (originServerName), ssh hostname (tcp), and the required catch-all.
+// *.system (originServerName, or noTLSVerify when OriginNoTLSVerify is set),
+// ssh hostname (tcp), and the required catch-all.
 func BuildIngress(p IngressParams) []IngressRule {
+	systemOrigin := &OriginRequest{OriginServerName: p.OriginServerName}
+	if p.OriginNoTLSVerify {
+		// Self-signed origin: skip verification (cert name is irrelevant then).
+		systemOrigin = &OriginRequest{NoTLSVerify: true}
+	}
 	rules := []IngressRule{
 		{
 			Hostname:      "*." + p.AppsDomain,
@@ -78,7 +90,7 @@ func BuildIngress(p IngressParams) []IngressRule {
 		{
 			Hostname:      "*." + p.SystemDomain,
 			Service:       p.Origin,
-			OriginRequest: &OriginRequest{OriginServerName: p.OriginServerName},
+			OriginRequest: systemOrigin,
 		},
 	}
 	if p.SSHHostname != "" && p.SSHOrigin != "" {
