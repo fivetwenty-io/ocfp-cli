@@ -246,3 +246,10 @@ for bucket in ${ARTIFACTS_BUCKETS}; do
 done
 
 log "OCFP artifacts provision complete"
+
+# Success is gated above by the RustFS readiness probe (which exits 1 on
+# failure) and bucket creation warnings are non-fatal by design. Exit 0
+# explicitly so a benign trailing non-zero ($? from the last idempotent aws
+# probe, etc.) can't propagate through the caller's `set -e`/`pipefail`
+# wrapper and falsely fail an otherwise-successful provision.
+exit 0

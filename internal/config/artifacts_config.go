@@ -135,7 +135,12 @@ func (a *ArtifactsConfig) Defaults() {
 	}
 
 	if a.Rustfs.Version == "" {
-		a.Rustfs.Version = "1.0.0-beta.3"
+		// beta.7+ required: beta.3 has a broken S3 multipart implementation
+		// (CreateMultipartUpload/UploadPart → NoSuchUpload 404) that fails large
+		// blob uploads — blocks BOSH from storing CF release blobs and breaks
+		// `cf push` (cloud_controller droplet/package multipart). beta.4-6
+		// hardened multipart; beta.7 is the validated baseline.
+		a.Rustfs.Version = "1.0.0-beta.7"
 	}
 
 	if a.Rustfs.S3Port == 0 {

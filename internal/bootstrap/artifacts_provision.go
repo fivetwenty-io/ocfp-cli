@@ -17,8 +17,13 @@ import (
 
 const (
 	// artifactsSSHReadyTimeout bounds how long we wait for the artifacts VM's
-	// sshd to accept connections (through the bastion) after boot.
-	artifactsSSHReadyTimeout = 4 * time.Minute
+	// sshd to accept connections (through the bastion) after boot. The artifacts
+	// VM clones the *unseeded* generic template, so its first boot runs a full
+	// cloud-init (datasource, growpart, package config) before sshd answers —
+	// noticeably slower than a pre-seeded image, and reached through a bastion
+	// that may itself have just booted. 4m was too short and left a
+	// half-provisioned VM; 10m gives the cold first boot real headroom.
+	artifactsSSHReadyTimeout = 10 * time.Minute
 
 	// artifactsSSHReadyPoll is the reachability poll interval.
 	artifactsSSHReadyPoll = 6 * time.Second
@@ -44,17 +49,32 @@ type artifactsProvisionConn struct {
 }
 
 // artifactsSSHArgs builds the ssh argument vector to run remoteCmd on the
-// artifacts VM via ProxyJump through the bastion. Host-key checking is disabled
-// against an ephemeral known-hosts file because bastions are recreated on each
-// bootstrap (their host keys churn), which would otherwise trip accept-new.
+// artifacts VM by hopping through the bastion. Host-key checking is disabled
+// against an ephemeral known-hosts file because both the bastion and the
+// artifacts VM are recreated on each bootstrap (their host keys churn), which
+// would otherwise trip accept-new.
+//
+// The bastion hop is expressed as an explicit ProxyCommand rather than
+// `-o ProxyJump=…` because OpenSSH's implicit ProxyJump spawns an inner ssh
+// that does NOT inherit the outer command-line `-o` options — so the jump hop
+// would fall back to default strict host-key checking against the operator's
+// real ~/.ssh/known_hosts and fail the moment a rebuilt bastion presents a new
+// host key. The ProxyCommand re-passes the same relaxed host-key flags to the
+// jump hop so a churned bastion key never blocks provisioning.
 func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
+	proxyCommand := fmt.Sprintf(
+		"ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o IdentitiesOnly=yes -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+		c.KeyPath, os.DevNull, artifactsSSHConnectTimeout, c.User, c.BastionHost,
+	)
+
 	return []string{
 		"-i", c.KeyPath,
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=" + os.DevNull,
+		"-o", "IdentitiesOnly=yes",
 		"-o", "ConnectTimeout=" + artifactsSSHConnectTimeout,
-		"-o", "ProxyJump=" + c.User + "@" + c.BastionHost,
+		"-o", "ProxyCommand=" + proxyCommand,
 		c.User + "@" + c.ArtifactsHost,
 		remoteCmd,
 	}
