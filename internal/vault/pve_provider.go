@@ -48,6 +48,25 @@ type PVEVaultProvider struct {
 	// genesis kits can pin it. Populated by ConfigureBlobstores when auto-sourcing
 	// from bootstrap state; remains empty when the operator supplies flags.
 	blobstoreCACert string
+
+	// bucketEnsurer creates the blobstore buckets a written secret points at, so
+	// the secret and its backing bucket are always provisioned together. nil
+	// defaults to the live S3 implementation; tests inject a recording stub.
+	bucketEnsurer blobstoreBucketEnsurer
+}
+
+// blobstoreBucketEnsurer creates blobstore buckets on the external S3 endpoint.
+// Seam for tests; the production implementation calls artifacts.EnsureBuckets.
+type blobstoreBucketEnsurer interface {
+	EnsureBuckets(ctx context.Context, ep artifacts.Endpoint, creds artifacts.Credentials, buckets []artifacts.BucketSpec) error
+}
+
+// s3BucketEnsurer is the live blobstoreBucketEnsurer backed by the artifacts
+// package's idempotent S3 bucket creation.
+type s3BucketEnsurer struct{}
+
+func (s3BucketEnsurer) EnsureBuckets(ctx context.Context, ep artifacts.Endpoint, creds artifacts.Credentials, buckets []artifacts.BucketSpec) error {
+	return artifacts.EnsureBuckets(ctx, ep, creds, buckets)
 }
 
 // NewPVEVaultProvider creates a new Proxmox VE vault provider.
@@ -57,6 +76,7 @@ func NewPVEVaultProvider(cfg *config.Config, safe SafeInterface, blocName string
 		Safe:              safe,
 		PathBuilder:       NewPathBuilder(cfg, blocName),
 		logger:            logger.Get(),
+		bucketEnsurer:     s3BucketEnsurer{},
 	}
 }
 
@@ -956,6 +976,12 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		}
 	}
 
+	// Create the CF blobstore bucket so the secret just written has a backing
+	// bucket (atomic secret+bucket; see ensureBlobstoreBucket).
+	if err := p.ensureBlobstoreBucket(bucketName); err != nil {
+		return err
+	}
+
 	// The BOSH director blobstore is scoped per env: mgmt-BOSH consumes the
 	// mgmt-scoped path, env-BOSH (deployed for ocf) consumes the ocf-scoped
 	// path. Write the scope matching this env so both directors get a working
@@ -963,6 +989,62 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 	if err := p.configureBOSHBlobstoreForScope(envType, region); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// blobstoreS3Target builds the S3 endpoint + credentials used to create
+// blobstore buckets from the provider's resolved external-mode fields. ok is
+// false when the endpoint or credentials are absent — bucket creation cannot
+// authenticate, so callers skip it rather than fail. CACert pins TLS when known;
+// otherwise SkipTLSVerify covers the RustFS self-signed case.
+func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Credentials, bool) {
+	if p.BlobstoreEndpoint == "" || p.BlobstoreAccessKey == "" || p.BlobstoreSecretKey == "" {
+		return artifacts.Endpoint{}, artifacts.Credentials{}, false
+	}
+
+	region := p.BlobstoreRegion
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	ep := artifacts.Endpoint{
+		URL:           p.BlobstoreEndpoint,
+		Host:          pveHostnameOnly(p.BlobstoreEndpoint),
+		Region:        region,
+		PathStyle:     true,
+		CACert:        p.blobstoreCACert,
+		SkipTLSVerify: p.blobstoreCACert == "",
+	}
+	creds := artifacts.Credentials{AccessKey: p.BlobstoreAccessKey, SecretKey: p.BlobstoreSecretKey}
+
+	return ep, creds, true
+}
+
+// ensureBlobstoreBucket creates the named bucket on the external blobstore so a
+// written blobstore secret always has a backing bucket. This closes the gap
+// where vault populate wrote a <bloc>-<scope>-bosh (or -cf) secret but never
+// created the bucket: RustFS then lets the director's CreateMultipartUpload
+// succeed against a missing bucket and fails every UploadPart with NoSuchUpload
+// during CF deploy. Idempotent (already-owned buckets are fine); a no-op when
+// credentials are absent. A creation failure is fatal — a secret pointing at a
+// bucket that does not exist is worse than a loud failure at populate time.
+func (p *PVEVaultProvider) ensureBlobstoreBucket(bucketName string) error {
+	ep, creds, ok := p.blobstoreS3Target()
+	if !ok {
+		return nil
+	}
+
+	ensurer := p.bucketEnsurer
+	if ensurer == nil {
+		ensurer = s3BucketEnsurer{}
+	}
+
+	if err := ensurer.EnsureBuckets(context.Background(), ep, creds, []artifacts.BucketSpec{{Name: bucketName}}); err != nil {
+		return fmt.Errorf("ensuring blobstore bucket %q exists: %w", bucketName, err)
+	}
+
+	p.logger.Infow("Ensured blobstore bucket exists", "bucket", bucketName, "endpoint", p.BlobstoreEndpoint)
 
 	return nil
 }
@@ -1006,6 +1088,12 @@ func (p *PVEVaultProvider) configureBOSHBlobstoreForScope(scope, region string) 
 		if err != nil {
 			return fmt.Errorf("failed to set BOSH blobstore credentials: %w", err)
 		}
+	}
+
+	// Create the BOSH director blobstore bucket. This is the bucket whose absence
+	// silently broke CF deploy (NoSuchUpload on every compiled-release UploadPart).
+	if err := p.ensureBlobstoreBucket(bucketName); err != nil {
+		return err
 	}
 
 	return nil
