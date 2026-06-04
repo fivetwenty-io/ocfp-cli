@@ -192,6 +192,26 @@ func seedWriteUnits(sess *TermproxySession) error {
 		return fmt.Errorf("boot-finished sentinel missing: %w", err)
 	}
 
+	// Noble cloud images enable the apt-daily + apt-daily-upgrade +
+	// unattended-upgrades timers, which fire within ~minutes of first boot.
+	// They download/unpack/configure security updates — INCLUDING a newer
+	// kernel — in the background. If one is mid-flight when our provisioning
+	// apt runs, dpkg is left half-configured and our `apt-get install`
+	// inherits the broken state (observed: `linux-image-*-generic` +
+	// `initramfs-tools` post-install failing, exit 10). Quiesce the
+	// background apt units, kill any in-flight run, wait for the dpkg/apt
+	// locks to release, then heal any interrupted state with
+	// `dpkg --configure -a` BEFORE we touch apt ourselves.
+	quiesce := strings.Join([]string{
+		"sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
+		"sudo systemctl kill --kill-who=all apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
+		"for _i in $(seq 1 90); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || break; sleep 2; done",
+		"sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+	}, " && ")
+	if err := runShell(sess, quiesce, templateSeedAptTimeout); err != nil {
+		return fmt.Errorf("apt quiesce/heal: %w", err)
+	}
+
 	// Refresh package metadata first: cloud-init's default
 	// `package_update_upgrade_install` only fetches if upgrades are
 	// requested, leaving the apt cache empty on noble cloud images.
@@ -203,7 +223,7 @@ func seedWriteUnits(sess *TermproxySession) error {
 	// apt non-interactive; jq required by firstboot/watchdog scripts; agent
 	// useful for future operator introspection (qm guest exec works after
 	// this is installed).
-	aptCmd := "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q jq qemu-guest-agent"
+	aptCmd := "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends jq qemu-guest-agent"
 	if err := runShell(sess, aptCmd, templateSeedAptTimeout); err != nil {
 		return fmt.Errorf("apt install: %w", err)
 	}
@@ -289,11 +309,45 @@ func runShell(sess *TermproxySession, cmd string, timeout time.Duration) error {
 // arbitrary script content.
 func writeRemoteFile(sess *TermproxySession, path, content, mode string) error {
 	b64 := base64.StdEncoding.EncodeToString([]byte(content))
-	// Single-quote the base64 — alphabet excludes single quote so it's safe.
-	cmd := fmt.Sprintf("echo '%s' | base64 -d | sudo tee %s >/dev/null && sudo chmod %s %s",
-		b64, path, mode, path)
 
-	return runShell(sess, cmd, templateSeedShellTimeout)
+	// We talk to the VM over a serial console, whose tty runs in canonical
+	// mode. The Linux line discipline caps a single input line at MAX_CANON
+	// (4096 bytes); a longer line blocks at the line discipline, never reaches
+	// the shell, and eventually tears down the termproxy websocket
+	// ("close 1006: unexpected EOF"). The firstboot + watchdog scripts
+	// base64-encode to ~5KB, so a one-shot `echo '<b64>'` deterministically
+	// exceeds the limit. Stream the encoded payload to a temp file in short
+	// chunks (one well-under-MAX_CANON line each), then decode it remotely.
+	const (
+		seedTmp   = "/tmp/ocfp-seed.b64"
+		chunkSize = 512
+	)
+
+	// Truncate the temp file (writable by the cloud-init user; no sudo needed
+	// in /tmp).
+	if err := runShell(sess, fmt.Sprintf(": > %s", seedTmp), templateSeedShellTimeout); err != nil {
+		return fmt.Errorf("init temp for %s: %w", path, err)
+	}
+
+	for start := 0; start < len(b64); start += chunkSize {
+		end := min(start+chunkSize, len(b64))
+
+		// printf '%s' keeps the chunk on one short line with no payload
+		// newline; the base64 alphabet excludes the single quote, so
+		// single-quoting is safe.
+		cmd := fmt.Sprintf("printf '%%s' '%s' >> %s", b64[start:end], seedTmp)
+		if err := runShell(sess, cmd, templateSeedShellTimeout); err != nil {
+			return fmt.Errorf("append chunk to %s: %w", path, err)
+		}
+	}
+
+	final := fmt.Sprintf("base64 -d %s | sudo tee %s >/dev/null && sudo chmod %s %s && rm -f %s",
+		seedTmp, path, mode, path, seedTmp)
+	if err := runShell(sess, final, templateSeedShellTimeout); err != nil {
+		return fmt.Errorf("decode/write %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // buildPVEAPITokenHeader assembles the "PVEAPIToken=<id>=<secret>" header
