@@ -84,8 +84,6 @@ type Options struct {
 	Force bool
 	// DryRun resolves and reports the per-release plan without mutating the blobstore.
 	DryRun bool
-	// Concurrency caps parallel export+upload work (compile-local path). <=0 means 1.
-	Concurrency int
 	// Stemcell overrides DefaultStemcell; zero value falls back to DefaultStemcell.
 	Stemcell Stemcell
 }
@@ -96,12 +94,4 @@ func (o Options) stemcell() Stemcell {
 		return o.Stemcell
 	}
 	return DefaultStemcell
-}
-
-// concurrency returns the effective worker count (>=1).
-func (o Options) concurrency() int {
-	if o.Concurrency < 1 {
-		return 1
-	}
-	return o.Concurrency
 }
