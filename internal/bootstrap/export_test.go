@@ -23,6 +23,12 @@ func (m *Manager) UseVirtualSubnetsForPVE() bool {
 	return m.useVirtualSubnetsForPVE()
 }
 
+// SelectVirtualSubnetStrategyName exposes the selected subnet strategy's name
+// for testing the factory mapping (provider/config -> strategy).
+func (m *Manager) SelectVirtualSubnetStrategyName() string {
+	return m.selectVirtualSubnetStrategy().name()
+}
+
 // ProviderUsesLocalKeypairs exposes providerUsesLocalKeypairs for testing.
 func (m *Manager) ProviderUsesLocalKeypairs() bool {
 	return m.providerUsesLocalKeypairs()
