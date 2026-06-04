@@ -376,20 +376,8 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "            continue")
 	lines = append(lines, "        fi")
 	lines = append(lines, "        ")
-	lines = append(lines, "        # Run genesis secrets-provider inception")
-	lines = append(lines, "        if genesis secrets-provider inception >/dev/null 2>&1; then")
-	lines = append(lines, "            log_success \"  Configured secrets provider for: $deployment_name\"")
-	lines = append(lines, "            CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))")
-	lines = append(lines, "        else")
-	lines = append(lines, "            # Check if it was already configured")
-	lines = append(lines, "            if grep -q 'vault_target: inception' .genesis/config 2>/dev/null; then")
-	lines = append(lines, "                log_success \"  Secrets provider already configured for: $deployment_name\"")
-	lines = append(lines, "                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))")
-	lines = append(lines, "            else")
-	lines = append(lines, "                log_warning \"  Failed to configure secrets provider for: $deployment_name\"")
-	lines = append(lines, "                FAILED_COUNT=$((FAILED_COUNT + 1))")
-	lines = append(lines, "            fi")
-	lines = append(lines, "        fi")
+	lines = append(lines, om.secretsProviderEmbedSnippet()...)
+	lines = append(lines, om.secretsProviderRewriteSnippet()...)
 	lines = append(lines, "    done")
 	lines = append(lines, "    ")
 	lines = append(lines, "    # Return to original directory")
@@ -416,6 +404,105 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "")
 
 	return strings.Join(lines, "\n")
+}
+
+// secretsProviderEmbedSnippet emits the per-deployment `genesis embed` step.
+// Embedding refreshes the deployment's vendored genesis binary so a stale
+// embedded version (e.g. 2.8.10) cannot re-exec and silently drop the
+// secrets-provider configuration. Non-fatal: a failure is logged and the
+// rewrite step still runs.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
+	return []string{
+		"        # Heal any stale embedded genesis before touching .genesis/config",
+		"        if genesis embed >/dev/null 2>&1; then",
+		"            log_info \"  Embedded genesis refreshed for: $deployment_name\"",
+		"        else",
+		"            log_warning \"  genesis embed failed for $deployment_name (continuing)\"",
+		"        fi",
+		"        ",
+	}
+}
+
+// secretsProviderRewriteSnippet emits an idempotent rewrite of the deployment's
+// .genesis/config secrets_provider block, pointing it at the bloc inception
+// vault (alias inception, http://127.0.0.1:8234, strongbox true). This replaces
+// the previous `genesis secrets-provider inception` call, which required a live,
+// reachable vault at provisioning time and silently failed when the embedded
+// genesis re-exec dropped to the wrong port. The rewrite is vault-independent
+// and converges regardless of the existing (possibly stale) block contents.
+//
+// yq is the preferred tool (it is in the bastion required-tools set); a POSIX
+// awk fallback handles environments where yq is unavailable.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
+	const (
+		alias = "inception"
+		url   = "http://127.0.0.1:8234"
+	)
+
+	return []string{
+		"        GENESIS_CONFIG=\".genesis/config\"",
+		"        if [ ! -f \"$GENESIS_CONFIG\" ]; then",
+		"            log_warning \"  No .genesis/config for $deployment_name; skipping\"",
+		"            SKIPPED_COUNT=$((SKIPPED_COUNT + 1))",
+		"            continue",
+		"        fi",
+		"        ",
+		"        if command -v yq >/dev/null 2>&1; then",
+		"            if yq -i '" +
+			".secrets_provider.alias = \"" + alias + "\" | " +
+			".secrets_provider.url = \"" + url + "\" | " +
+			".secrets_provider.strongbox = true | " +
+			".secrets_provider.insecure = false | " +
+			".secrets_provider.namespace = \"\"' \"$GENESIS_CONFIG\" 2>/dev/null; then",
+		"                log_success \"  Secrets provider set to " + alias + " for: $deployment_name\"",
+		"                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))",
+		"            else",
+		"                log_warning \"  yq rewrite failed for: $deployment_name\"",
+		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
+		"            fi",
+		"        else",
+		"            # awk fallback: replace the secrets_provider block in place.",
+		"            tmp_config=\"$(mktemp)\"",
+		"            awk '",
+		"                BEGIN { in_sp = 0; done_sp = 0 }",
+		"                /^secrets_provider:[[:space:]]*$/ {",
+		"                    print \"secrets_provider:\";",
+		"                    print \"  alias: " + alias + "\";",
+		"                    print \"  insecure: false\";",
+		"                    print \"  namespace: \\\"\\\"\";",
+		"                    print \"  strongbox: true\";",
+		"                    print \"  url: " + url + "\";",
+		"                    in_sp = 1; done_sp = 1; next",
+		"                }",
+		"                in_sp == 1 {",
+		"                    # Skip the old indented block body (two-space indent).",
+		"                    if ($0 ~ /^[[:space:]]+/) { next } else { in_sp = 0 }",
+		"                }",
+		"                { print }",
+		"                END {",
+		"                    if (done_sp == 0) {",
+		"                        print \"secrets_provider:\";",
+		"                        print \"  alias: " + alias + "\";",
+		"                        print \"  insecure: false\";",
+		"                        print \"  namespace: \\\"\\\"\";",
+		"                        print \"  strongbox: true\";",
+		"                        print \"  url: " + url + "\";",
+		"                    }",
+		"                }",
+		"            ' \"$GENESIS_CONFIG\" > \"$tmp_config\" && mv \"$tmp_config\" \"$GENESIS_CONFIG\"",
+		"            if grep -q 'alias: " + alias + "' \"$GENESIS_CONFIG\" 2>/dev/null; then",
+		"                log_success \"  Secrets provider set to " + alias + " (awk) for: $deployment_name\"",
+		"                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))",
+		"            else",
+		"                log_warning \"  Failed to configure secrets provider for: $deployment_name\"",
+		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
+		"            fi",
+		"        fi",
+	}
 }
 
 // GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
