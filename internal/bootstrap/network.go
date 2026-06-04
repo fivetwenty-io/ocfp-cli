@@ -11,6 +11,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
@@ -134,7 +135,7 @@ func (m *Manager) CreateSubnets(ctx context.Context) error {
 	// is flat L2 (no per-subnet API). Either case routes through the same
 	// state-population path that splits the parent CIDR into named children.
 	if m.useVirtualSubnets() {
-		return m.createStackitVirtualSubnets(networkID)
+		return m.createVirtualSubnets(ctx, networkID)
 	}
 
 	return m.createStandardSubnets(ctx, networkID)
@@ -625,25 +626,17 @@ func errCannotSplitNetworkInto(count int) error {
 
 // STACKIT Virtual Subnet Functions
 
-func (m *Manager) createStackitVirtualSubnets(networkID interface{}) error {
+// createVirtualSubnets carves the bloc parent CIDR into the named subnets the
+// provider needs, dispatching to the selected subnetStrategy (PVE / STACKIT
+// triple / STACKIT single). Each strategy owns its own carve and any real
+// provider subnets it requires; see subnet_strategy.go.
+func (m *Manager) createVirtualSubnets(ctx context.Context, networkID interface{}) error {
 	cidr := m.resolveNetworkCIDRForSubnets()
+	strategy := m.selectVirtualSubnetStrategy()
 
-	// PVE SDN exposes one L3 subnet per vnet, so the bloc parent CIDR is
-	// carved into 1 infra + 3 AZ /22 children rather than the STACKIT
-	// "split into 4, skip first" pattern. Route the PVE provider through
-	// its dedicated carve before falling back to the legacy strategies.
-	if m.useVirtualSubnetsForPVE() {
-		return m.createPVEVirtualSubnets(cidr, networkID)
-	}
+	logger.Infof("Creating virtual subnets via %s strategy (parent %s)", strategy.name(), cidr)
 
-	switch {
-	case strings.Contains(m.config.Network.SubnetStrategy, "triple"):
-		return m.createStackitTripleSubnets(cidr, networkID)
-	case strings.Contains(m.config.Network.SubnetStrategy, "single"):
-		return m.createStackitSingleSubnet(cidr, networkID)
-	default:
-		return m.createStackitTripleSubnets(cidr, networkID)
-	}
+	return strategy.createSubnets(ctx, m, cidr, networkID)
 }
 
 // createPVEVirtualSubnets carves the PVE bloc's parent CIDR into the
@@ -655,7 +648,7 @@ func (m *Manager) createStackitVirtualSubnets(networkID interface{}) error {
 // SplitToTargetPrefix call would fail), the carve falls back to an even
 // 4-way split via SplitIntoN. This keeps small test/dev CIDRs functional
 // while preserving the canonical layout for production /18 parents.
-func (m *Manager) createPVEVirtualSubnets(cidr string, networkID interface{}) error {
+func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, networkID interface{}) error {
 	subnets := SplitToTargetPrefix(cidr, pveSubnetTargetPrefix, pveSubnetCount)
 	if len(subnets) != pveSubnetCount {
 		subnets = SplitIntoN(cidr, pveSubnetCount)
@@ -681,6 +674,48 @@ func (m *Manager) createPVEVirtualSubnets(cidr string, networkID interface{}) er
 		if err := m.addVirtualSubnetWithRole(name, subnets[i], cidr, networkID, subnetRoleOCFP, az); err != nil {
 			return err
 		}
+	}
+
+	// Provision the matching REAL SDN subnets so each /22 has a routed gateway
+	// (.X.1) the PVE host answers. Without these, the per-/22 gateways written
+	// to vault would be unroutable and guest egress would break. No-op in PVE
+	// bridge mode (no native subnet API).
+	return m.ensurePVESDNSubnets(ctx, networkID, subnets)
+}
+
+// ensurePVESDNSubnets creates one real PVE SDN subnet per carved /22, each with
+// its own in-range gateway (first host) and SNAT enabled. Creation is
+// idempotent: the PVE CreateSubnet reuses an existing subnet that already
+// contains the requested CIDR. In bridge mode the provider has no subnet API
+// and returns ErrSubnetsNotSupported, which is treated as a benign skip (the
+// state-only virtual subnets are sufficient there).
+func (m *Manager) ensurePVESDNSubnets(ctx context.Context, networkID interface{}, subnetCIDRs []string) error {
+	netMgr := m.provider.NetworkManager()
+	vnet := fmt.Sprintf("%v", networkID)
+
+	for _, subnetCIDR := range subnetCIDRs {
+		gateway := CIDRGatewayIP(subnetCIDR)
+
+		_, err := netMgr.CreateSubnet(ctx, &cpi.SubnetRequest{
+			Name:      strings.ReplaceAll(subnetCIDR, "/", "-"),
+			NetworkID: vnet,
+			CIDR:      subnetCIDR,
+			Type:      "public",
+			Gateway:   gateway,
+			SNAT:      true,
+			Tags:      m.baseTags(),
+		})
+		if err != nil {
+			if errors.Is(err, pveclient.ErrSubnetsNotSupported) {
+				logger.Infof("PVE bridge mode: skipping real SDN subnet for %s (virtual subnet only)", subnetCIDR)
+
+				return nil
+			}
+
+			return fmt.Errorf("failed to create SDN subnet %s (gw %s): %w", subnetCIDR, gateway, err)
+		}
+
+		logger.Infof("Ensured PVE SDN subnet %s with gateway %s (SNAT)", subnetCIDR, gateway)
 	}
 
 	return nil
