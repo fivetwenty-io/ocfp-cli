@@ -719,11 +719,21 @@ type ResourceToDelete struct {
 	State        string
 	Properties   map[string]interface{}
 	Tags         map[string]string
+	// FromState marks a resource discovered from the bloc state file, where the
+	// bloc ownership has already been verified (getResourcesFromState). Resources
+	// discovered from the cloud (e.g. --force supplement) are NOT bloc-verified at
+	// discovery time and must pass belongsToTargetBloc before deletion.
+	FromState bool
 }
 
 // TestFilterResources exposes filterResources for testing.
 func (m *TeardownManager) TestFilterResources(resources []*ResourceToDelete) []*ResourceToDelete {
 	return m.filterResources(resources)
+}
+
+// TestBelongsToTargetBloc exposes belongsToTargetBloc for testing.
+func (m *TeardownManager) TestBelongsToTargetBloc(r *ResourceToDelete) bool {
+	return m.belongsToTargetBloc(r)
 }
 
 // mergeResources adds cloud-discovered resources that are not already present
@@ -1086,6 +1096,7 @@ func (m *TeardownManager) getResourcesFromState() ([]*ResourceToDelete, error) {
 			State:        resource.State,
 			Properties:   resource.Properties,
 			Tags:         resource.Tags,
+			FromState:    true,
 		})
 	}
 
@@ -1192,18 +1203,32 @@ func (m *TeardownManager) discoverComputeResources(ctx context.Context, tagFilte
 	// Discover instances
 	instances, err := compute.ListInstances(ctx, tagFilter)
 	if err == nil {
+		included := 0
+
 		for _, instance := range instances {
-			*resources = append(*resources, &ResourceToDelete{
-				Type:         "instance",
-				ID:           instance.ID,
-				Name:         instance.Name,
-				Dependencies: nil,
-				State:        "",
-				Properties:   nil,
-			})
+			// SAFETY: some providers (notably PVE) cannot tag instances, so
+			// ListInstances ignores the bloc tag filter and returns every VM in
+			// the cluster — including other blocs' VMs and shared templates.
+			// Only delete an instance we can positively attribute to the target
+			// bloc (bloc tag or the OCFP "<bloc>-" name convention).
+			candidate := &ResourceToDelete{
+				Type: "instance",
+				ID:   instance.ID,
+				Name: instance.Name,
+				Tags: instance.Tags,
+			}
+			if !m.belongsToTargetBloc(candidate) {
+				log.Warnw("Teardown safety: skipping cloud-discovered instance not attributable to target bloc",
+					"name", instance.Name, "id", instance.ID, "bloc", m.options.BlocName)
+
+				continue
+			}
+
+			*resources = append(*resources, candidate)
+			included++
 		}
 
-		log.Infow("Discovered instances", "count", len(instances))
+		log.Infow("Discovered instances", "count", included, "total_listed", len(instances))
 	}
 
 	// Discover keypairs
@@ -1241,35 +1266,59 @@ func (m *TeardownManager) discoverStorageResources(ctx context.Context, tagFilte
 	// Discover volumes
 	volumes, err := storage.ListVolumes(ctx, tagFilter)
 	if err == nil {
+		included := 0
+
 		for _, volume := range volumes {
-			*resources = append(*resources, &ResourceToDelete{
-				Type:         ResourceVolume,
-				ID:           volume.ID,
-				Name:         volume.Name,
-				Dependencies: nil,
-				State:        "",
-				Properties:   nil,
-			})
+			// SAFETY: PVE volumes are named by VMID (e.g. base-9001-disk-0,
+			// vm-100-disk-0) and carry no bloc tag, and ListVolumes ignores the
+			// tag filter — so the cluster's shared template disks would otherwise
+			// be swept. Only delete a volume positively attributable to the target
+			// bloc. The bloc's own VM disks are removed when their instance is
+			// destroyed (PVE cascades disk deletion), not here.
+			candidate := &ResourceToDelete{
+				Type: ResourceVolume,
+				ID:   volume.ID,
+				Name: volume.Name,
+				Tags: volume.Tags,
+			}
+			if !m.belongsToTargetBloc(candidate) {
+				log.Warnw("Teardown safety: skipping cloud-discovered volume not attributable to target bloc",
+					"name", volume.Name, "id", volume.ID, "bloc", m.options.BlocName)
+
+				continue
+			}
+
+			*resources = append(*resources, candidate)
+			included++
 		}
 
-		log.Infow("Discovered volumes", "count", len(volumes))
+		log.Infow("Discovered volumes", "count", included, "total_listed", len(volumes))
 	}
 
 	// Discover snapshots with tag filtering
 	snapshots, err := storage.ListSnapshots(ctx, "", tagFilter)
 	if err == nil {
+		included := 0
+
 		for _, snapshot := range snapshots {
-			*resources = append(*resources, &ResourceToDelete{
-				Type:         ResourceSnapshot,
-				ID:           snapshot.ID,
-				Name:         snapshot.Name,
-				Dependencies: nil,
-				State:        "",
-				Properties:   nil,
-			})
+			candidate := &ResourceToDelete{
+				Type: ResourceSnapshot,
+				ID:   snapshot.ID,
+				Name: snapshot.Name,
+				Tags: snapshot.Tags,
+			}
+			if !m.belongsToTargetBloc(candidate) {
+				log.Warnw("Teardown safety: skipping cloud-discovered snapshot not attributable to target bloc",
+					"name", snapshot.Name, "id", snapshot.ID, "bloc", m.options.BlocName)
+
+				continue
+			}
+
+			*resources = append(*resources, candidate)
+			included++
 		}
 
-		log.Infow("Discovered snapshots", "count", len(snapshots))
+		log.Infow("Discovered snapshots", "count", included, "total_listed", len(snapshots))
 	}
 
 	// Discover buckets
@@ -1316,20 +1365,37 @@ func (m *TeardownManager) discoverNetworks(ctx context.Context, network cpi.Netw
 		return
 	}
 
+	included := 0
+
 	for _, net := range networks {
-		*resources = append(*resources, &ResourceToDelete{
-			Type:         CategoryNetwork,
-			ID:           net.ID,
-			Name:         net.Name,
-			Dependencies: nil,
-			State:        "",
-			Properties:   nil,
-		})
+		// SAFETY: some providers (notably PVE) cannot tag networks, so
+		// ListNetworks ignores the bloc tag filter and returns every network in
+		// the cluster — including other blocs' SDN vnets and the host bridges
+		// (vmbrN). Deleting those is catastrophic on shared infrastructure.
+		// Only delete a cloud-discovered network we can positively attribute to
+		// the target bloc (matching bloc tag, or the OCFP "<bloc>-" name
+		// convention). The bloc's own untagged network, if any, is recovered
+		// from state (getResourcesFromState), not here.
+		candidate := &ResourceToDelete{
+			Type: CategoryNetwork,
+			ID:   net.ID,
+			Name: net.Name,
+			Tags: net.Tags,
+		}
+		if !m.belongsToTargetBloc(candidate) {
+			log.Warnw("Teardown safety: skipping cloud-discovered network not attributable to target bloc",
+				"name", net.Name, "id", net.ID, "bloc", m.options.BlocName)
+
+			continue
+		}
+
+		*resources = append(*resources, candidate)
 
 		m.discoverSubnetsForNetwork(ctx, network, net, resources, log)
+		included++
 	}
 
-	log.Infow("Discovered networks", "count", len(networks))
+	log.Infow("Discovered networks", "count", included, "total_listed", len(networks))
 }
 
 func (m *TeardownManager) discoverSubnetsForNetwork(ctx context.Context, network cpi.NetworkManager, net *cpi.Network, resources *[]*ResourceToDelete, log logger.Logger) {
@@ -1645,14 +1711,25 @@ func (m *TeardownManager) discoverSecurityResources(ctx context.Context, tagFilt
 			continue
 		}
 
-		*resources = append(*resources, &ResourceToDelete{
-			Type:         ResourceSecurityGroup,
-			ID:           secGroup.ID,
-			Name:         secGroup.Name,
-			Dependencies: nil,
-			State:        "",
-			Properties:   nil,
-		})
+		candidate := &ResourceToDelete{
+			Type: ResourceSecurityGroup,
+			ID:   secGroup.ID,
+			Name: secGroup.Name,
+			Tags: secGroup.Tags,
+		}
+
+		// SAFETY: like networks, security groups can be returned cluster-wide by
+		// providers that don't honor the tag filter. Only delete one positively
+		// attributable to the target bloc (bloc tag or "<bloc>-" name), so a
+		// --force teardown never removes another bloc's security groups.
+		if !m.belongsToTargetBloc(candidate) {
+			log.Warnw("Teardown safety: skipping cloud-discovered security group not attributable to target bloc",
+				"name", secGroup.Name, "id", secGroup.ID, "bloc", m.options.BlocName)
+
+			continue
+		}
+
+		*resources = append(*resources, candidate)
 		filteredCount++
 	}
 
@@ -1747,7 +1824,10 @@ func (m *TeardownManager) shouldIncludeResource(resource *ResourceToDelete, bast
 		}
 	}
 
-	if m.shouldSkipResourceType(resource.Type) {
+	// Skip resources matching a --skip directive, by resource type/category OR
+	// by name role (e.g. "--skip artifacts" must protect the artifacts VM even
+	// when cloud discovery types it as a generic "instance").
+	if m.shouldSkipResource(resource) {
 		return false
 	}
 
@@ -1827,6 +1907,83 @@ func (m *TeardownManager) shouldSkipResourceType(resourceType string) bool {
 	}
 
 	return false
+}
+
+// shouldSkipResource reports whether a resource matches any --skip directive,
+// either by resource type/category (shouldSkipResourceType) or by a name role
+// token. The name-role form lets "--skip artifacts" protect the artifacts VM
+// (named "<bloc>-artifacts") even when cloud discovery classifies it as a
+// generic "instance" rather than its state type "artifacts" — the exact gap
+// that previously let --force teardown delete the retained artifacts VM.
+func (m *TeardownManager) shouldSkipResource(r *ResourceToDelete) bool {
+	if m.shouldSkipResourceType(r.Type) {
+		return true
+	}
+
+	for _, skip := range m.options.Skip {
+		// Type/category skips are handled above; do not also treat them as name
+		// tokens (which could match unrelated resource names).
+		if skip == "" || isKnownResourceTypeOrCategory(skip) {
+			continue
+		}
+
+		// Role/name-token skip: protect "<bloc>-<token>" and any "*-<token>*"
+		// resource (covers the VM, its security group, volumes, etc.).
+		if r.Name == m.options.BlocName+"-"+skip || strings.Contains(r.Name, "-"+skip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isKnownResourceTypeOrCategory reports whether a --skip value names a resource
+// type or category handled by shouldSkipResourceType, rather than a name role.
+func isKnownResourceTypeOrCategory(skip string) bool {
+	switch skip {
+	case ResourceInstance, ResourceInstances, ResourceVolume, ResourceSnapshot,
+		ResourceBucket, ResourceSecurityGroup, ResourceSubnet,
+		ResourceNetworkInterface, ResourceFloatingIP, ResourcePublicIP,
+		ResourceLoadBalancer, ResourceRouter, ResourceRouters, CategoryNetwork,
+		"storage", "security", "keypair", "keys":
+		return true
+	default:
+		return false
+	}
+}
+
+// belongsToTargetBloc reports whether a resource can be positively attributed to
+// the teardown's target bloc. It is the last line of defense against deleting
+// resources that belong to another bloc or to shared host infrastructure.
+//
+// A resource qualifies when ANY of the following hold:
+//   - it was discovered from the bloc state file (already bloc-verified), or
+//   - it carries a bloc tag equal to the target bloc, or
+//   - its name equals the bloc name or is prefixed with "<bloc>-" (the OCFP
+//     naming convention for bloc-owned resources, e.g. "<bloc>-bastion").
+//
+// Resources without tags and without the bloc-name prefix (e.g. PVE SDN vnets
+// "lvnetNNN" belonging to other blocs, or host bridges "vmbrN") do NOT qualify
+// and are excluded. Nuke mode bypasses this gate (it does not call
+// filterResources) — that is the explicit, --force-gated "delete everything"
+// escape hatch.
+func (m *TeardownManager) belongsToTargetBloc(r *ResourceToDelete) bool {
+	if r.FromState {
+		return true
+	}
+
+	bloc := m.options.BlocName
+	if bloc == "" {
+		return false
+	}
+
+	if r.Tags != nil {
+		if b, ok := r.Tags["bloc"]; ok {
+			return b == bloc
+		}
+	}
+
+	return r.Name == bloc || strings.HasPrefix(r.Name, bloc+"-")
 }
 
 // sortResourcesForDeletion sorts resources in the correct order for deletion.
