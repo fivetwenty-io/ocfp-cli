@@ -674,6 +674,22 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 	emptyPath := filepath.Join(subnetPath, "reserved-ips", "empty")
 	assert.Nil(t, mock.findSetMultipleCall(emptyPath),
 		"empty-valued reserved IP output must not be written")
+
+	// In addition to the per-role sub-paths, the role IPs must also be written
+	// as `{role}_ip` KEYS in the reserved-ips secret itself — this is the
+	// convention the genesis kits read (e.g. doomsday reads
+	// reserved-ips:doomsday_ip, vault reads reserved-ips:vault_ip). Without the
+	// key form, only AWS/STACKIT (which write keys via network.go) work, and the
+	// kits break on PVE.
+	reservedKeysPath := filepath.Join(subnetPath, "reserved-ips")
+	reservedKeysCall := mock.findSetMultipleCall(reservedKeysPath)
+	require.NotNil(t, reservedKeysCall,
+		"role IPs must also be written as keys at %s", reservedKeysPath)
+	assert.Equal(t, "10.64.64.10", reservedKeysCall.data["bastion_ip"])
+	assert.Equal(t, "10.64.64.11", reservedKeysCall.data["jumpbox_ip"])
+	// Empty-valued outputs must not surface as keys.
+	_, hasEmpty := reservedKeysCall.data["empty_ip"]
+	assert.False(t, hasEmpty, "empty-valued reserved IP must not produce a key")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults — the fallback
