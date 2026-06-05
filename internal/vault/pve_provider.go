@@ -305,17 +305,26 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 		}
 
 		// Role-keyed reserved IPs (reserved_{name}_{role}_ip) for kits that
-		// resolve IPs by role name. Keyed on the state name (outputs use it).
-		if err := p.writeReservedIPs(sm, subnetPath, sub.Name); err != nil {
+		// resolve IPs by role name. Writes per-role sub-paths and returns the
+		// `{role}_ip` KEY map so it can be merged into the reserved-ips secret
+		// (the form the genesis kits actually read).
+		roleKeys, err := p.writeReservedIPs(sm, subnetPath, sub.Name)
+		if err != nil {
 			return err
 		}
 
 		// Genesis-consumed reserved-ips: available_0/available_1 band + bosh
-		// director / jumpbox statics. Only the ocfp-* subnets carry these; the
-		// infra subnet keeps cidr/gateway/dns only (no workload allocation).
+		// director / jumpbox statics, merged with the role `{role}_ip` keys. Only
+		// the ocfp-* subnets carry the band; the infra subnet keeps cidr/gateway/
+		// dns plus its role keys (bastion_ip/shield_ip/...) but no workload band.
 		if strings.HasPrefix(genesisName, "ocfp-") {
-			if err := p.writeStateReservedBand(sm, envType, genesisName, sub, gateway); err != nil {
+			if err := p.writeStateReservedBand(sm, envType, genesisName, sub, gateway, roleKeys); err != nil {
 				return err
+			}
+		} else if len(roleKeys) > 0 {
+			reservedPath := filepath.Join(subnetPath, "reserved-ips")
+			if err := p.Safe.SetMultiple(reservedPath, roleKeys); err != nil {
+				return fmt.Errorf("failed to write reserved-ip keys for %s: %w", genesisName, err)
 			}
 		}
 	}
@@ -334,7 +343,7 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 // reserved_a..d ranges. Values are sourced from state outputs when present
 // (computed within each /22 by bootstrap) and otherwise derived from the
 // subnet's cidr. Never overwrites a non-empty state-provided value.
-func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, genesisName string, sub *state.Resource, gateway string) error {
+func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, genesisName string, sub *state.Resource, gateway string, roleKeys map[string]interface{}) error {
 	subnetGateway := pveCIDRGateway(getStringProp(sub.Properties, "cidr"))
 	if subnetGateway == "" {
 		subnetGateway = gateway
@@ -344,6 +353,14 @@ func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, ge
 	stateName := sub.Name
 
 	reserved := map[string]interface{}{}
+
+	// Seed with the `{role}_ip` keys (doomsday_ip, concourse_ip, ...) so the
+	// genesis kits resolve their statics from this one reserved-ips secret. The
+	// band keys below take precedence on any name collision (bosh_ip/jumpbox_ip),
+	// matching the canonical slot model.
+	for k, v := range roleKeys {
+		reserved[k] = v
+	}
 
 	// Available band: prefer bootstrap-computed available_a/available_b (already
 	// scoped to this subnet's /22); fall back to gateway+offset within the /22.
@@ -717,10 +734,18 @@ func pveFirstAZ(cfg *config.Config) string {
 // `{subnetPath}/reserved-ips/{role}` so genesis kits can resolve reserved IPs
 // by role name. State outputs are the canonical source — they are populated
 // by bootstrap.compute when subnets are reserved.
-func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subnetName string) error {
+// writeReservedIPs writes each `reserved_{subnet}_{role}_ip` state output to its
+// per-role sub-path (reserved-ips/{role}:ip) for role-lookup consumers, and
+// returns the `{role}_ip` KEY map for the caller to merge into the reserved-ips
+// secret — the key form (reserved-ips:doomsday_ip, reserved-ips:vault_ip, ...)
+// is what the genesis kits actually read. Returns an empty map when state has no
+// matching outputs.
+func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subnetName string) (map[string]interface{}, error) {
+	roleKeys := map[string]interface{}{}
+
 	current := sm.Current()
 	if current == nil || len(current.Outputs) == 0 {
-		return nil
+		return roleKeys, nil
 	}
 
 	prefix := "reserved_" + subnetName + "_"
@@ -741,15 +766,17 @@ func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subne
 			continue
 		}
 
+		roleKeys[role+"_ip"] = ip
+
 		rolePath := filepath.Join(subnetPath, "reserved-ips", role)
 		if err := p.Safe.SetMultiple(rolePath, map[string]interface{}{
 			"ip": ip,
 		}); err != nil {
-			return fmt.Errorf("failed to write reserved IP for %s/%s: %w", subnetName, role, err)
+			return nil, fmt.Errorf("failed to write reserved IP for %s/%s: %w", subnetName, role, err)
 		}
 	}
 
-	return nil
+	return roleKeys, nil
 }
 
 // loadStateManager loads the bloc's bootstrap state, returning nil on any
