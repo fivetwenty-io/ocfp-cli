@@ -1298,6 +1298,40 @@ func TestConfigureCPI_WritesCfMaxInFlight_DefaultWhenUnset(t *testing.T) {
 		"cf_max_in_flight must be the default 12 when Config.CfMaxInFlight is zero")
 }
 
+// TestConfigureCPIWritesInfraKeys is a regression guard: the cpi/pve vault map
+// must always contain disk_format, network_bridge, and vm_storage as non-empty
+// strings. Missing or empty values cause the BOSH PVE CPI to reject the config
+// at director deploy time (e.g. network_bridge="" fails the CPI's validation).
+func TestConfigureCPIWritesInfraKeys(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		// No VMStorage, DiskStorage, or Network.Name set: must still produce
+		// non-empty values via defaults so the CPI config is always valid.
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+
+	infraKeys := []string{"disk_format", "network_bridge", "vm_storage"}
+	for _, k := range infraKeys {
+		v, ok := data[k]
+		assert.True(t, ok, "cpi/pve vault map must contain key %q", k)
+		s, isStr := v.(string)
+		assert.True(t, isStr, "cpi/pve key %q must be a string, got %T", k, v)
+		assert.NotEmpty(t, s, "cpi/pve key %q must be non-empty; empty value causes CPI validation failure at deploy time", k)
+	}
+}
+
 // TestConfigureCPI_CfMaxInFlight_KeyAlwaysPresent verifies cf_max_in_flight is
 // always present in the vault payload regardless of other config values.
 func TestConfigureCPI_CfMaxInFlight_KeyAlwaysPresent(t *testing.T) {
