@@ -752,3 +752,61 @@ All PVE service kits render clean — externalized `env->lookup` defaults fall t
 ### Incident + recovery (recorded for ops)
 
 The first mgmt `create-env` was interrupted by an operator-side 20-min timeout mid "Updating instance bosh/0" (compile ran first). Genesis never persisted state → orphan VM 6031 (new director, software not started) held the director IP + the 128G persistent disk; the new CPI's IP-conflict check then blocked a naive retry. **Hazard:** the pve CPI `delete_vm` uses `DestroyUnreferencedDisks=true`; its `guardUnusedVolumes` only protects `unusedN` slots, not an active `scsi` slot — so deleting an orphan with the disk still attached would destroy the director DB. **Safe recovery:** set `current_vm_cid` to the orphan VMID in `~/ocfp/deployments/bosh/.genesis/manifests/<env>-state.json` (genesis loads state from `exodus/deployments` first, so force it with `genesis <env> deploy --STATE-FILE-PATH=<file>`), keep `current_disk_id` pointing at the real disk. create-env then adopts the orphan: drain → **unmount disk first** → delete VM (IP freed) → create new VM → reattach disk → configure. Verified the "Unmounting disk … Finished" → "Deleting VM" ordering in the live log; disk preserved. **Lesson:** never set a deploy timeout shorter than compile+update on a director create-env.
+
+## 8.3 cf HAProxy default-on + mgmt noble migration (2026-06-06)
+
+### cf HAProxy default-on with opt-out
+
+HAProxy is now **default-on** in the cf kit: deployments get an HAProxy edge LB
+without listing the `haproxy` feature. Operators opt out with `no-haproxy`
+(alias `external-lb`; deprecated `omit-haproxy`) to expose the routers directly
+for an external LB. Resolution is mirrored across `features.pm` (keeps the
+opt-out marker in the resolved list so every hook can detect it), `blueprint.pm`,
+and `cloud-config.pm` (each calls `_resolve_haproxy_default()`).
+
+**Bug found + fixed during lab verification:** the opt-out marker survived into
+the blueprint feature-dispatch chain (the resolved list is re-applied across
+Genesis' multi-pass merge), which `bail`ed with `Unknown feature: no-haproxy`.
+Fix: a no-op dispatch branch for `/^(no-haproxy|external-lb|omit-haproxy)$/` in
+`blueprint.pm` (mirrors the `cf-deployment-version-` no-op).
+
+**Render-proof — `genesis ocfp-lab-wayne-ocf manifest`, count of the `haproxy`
+instance group:**
+
+| Mode | env features | haproxy IG | Result |
+|------|--------------|-----------|--------|
+| Explicit | `haproxy` listed | 1 | ✅ baseline |
+| Default-on | `haproxy` removed | 1 | ✅ resolve re-adds |
+| Opt-out | `no-haproxy` | 0 (clean render) | ✅ after dispatch fix |
+
+**Live e2e (default-on, no explicit `haproxy` feature):** redeploy `Succeeded`
+(zero packages to compile — render no-op; rolling restart only). `haproxy/0`
+running at `10.64.68.13`; `cf push` of a staticfile app reached `started`; a
+`curl` forced through the HAProxy IP (`--resolve …:10.64.68.13`) returned
+**HTTP 200** with the app body. HAProxy ingress proven; smoke app/org removed.
+
+### mgmt deployments → ubuntu-noble
+
+Migrated the jammy mgmt deployments to `ubuntu-noble/1.383` by setting
+`params.stemcell_os: ubuntu-noble` + `params.stemcell_version: "1.383"` in each
+env file (the kits read `(( grab params.stemcell_os || "ubuntu-jammy" ))` in
+`manifests/*.yml` + `ocfp/ocfp.yml` — not in hooks). Render-verified each
+manifest's `stemcells:` block before deploying, then deployed sequentially.
+
+| Deployment | Stemcell | Processes |
+|------------|----------|-----------|
+| doomsday | ubuntu-noble/1.383 | ✅ running |
+| shield | ubuntu-noble/1.383 | ✅ running |
+| prometheus | ubuntu-noble/1.383 | ✅ all bpm jobs running |
+| concourse | ubuntu-noble/1.383 | ✅ 22 processes running |
+| vault | ubuntu-jammy/1.1218 | held (live secrets store — separate pass) |
+
+**bpm on noble cgroup v2:** prometheus + concourse run `bpm/1.4.20` and came up
+clean on noble — the cgroup-v2 blocker was `bpm/1.2.19`, not the 1.4.x line.
+
+**Infra note:** rapid back-to-back SSH/rsync to the bastion wedged its
+tailscaled tun datapath (node visible, disco pongs, but kernel TCP-22 times
+out). Fix: `ssh root@sm-0` → `qm guest exec 100 -- systemctl restart
+tailscaled`. The `ocfp rsync` wrapper resolves a separate hostname that was also
+unreachable during the wedge; pushing files via `tar | ocfp ssh … 'tar x'`
+over the working ssh path is the reliable fallback.
