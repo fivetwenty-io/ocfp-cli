@@ -460,3 +460,63 @@ func TestConfig_VMStorage_YAMLRoundTrip(t *testing.T) {
 		t.Errorf("DiskStorage after YAML load = %q, want %q", got, want)
 	}
 }
+
+// TestSecretsBackendName verifies SecretsBackendName resolution rules.
+func TestSecretsBackendName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		backend string
+		want    string
+	}{
+		{"empty defaults to openbao", "", "openbao"},
+		{"explicit openbao", "openbao", "openbao"},
+		{"vault opt-in", "vault", "vault"},
+		{"unknown value defaults to openbao", "hashicorp", "openbao"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{SecretsBackend: tc.backend}
+			if got := cfg.SecretsBackendName(); got != tc.want {
+				t.Errorf("SecretsBackendName() = %q, want %q (backend=%q)", got, tc.want, tc.backend)
+			}
+		})
+	}
+}
+
+// TestSecretsBackendYAMLRoundTrip verifies the field survives YAML serialization.
+func TestSecretsBackendYAMLRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte("" +
+		"blocs:\n" +
+		"  mybloc:\n" +
+		"    name: mybloc\n" +
+		"    provider: stackit\n" +
+		"    secrets_backend: vault\n")
+
+	err := os.WriteFile(cfgPath, yml, 0o600)
+	if err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	cfg, err := config.LoadWithParams(cfgPath, "mybloc")
+	if err != nil {
+		t.Fatalf("LoadWithParams failed: %v", err)
+	}
+
+	if got, want := cfg.SecretsBackend, "vault"; got != want {
+		t.Errorf("SecretsBackend after YAML load = %q, want %q", got, want)
+	}
+
+	if got, want := cfg.SecretsBackendName(), "vault"; got != want {
+		t.Errorf("SecretsBackendName() after YAML load = %q, want %q", got, want)
+	}
+}
