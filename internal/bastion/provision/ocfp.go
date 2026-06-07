@@ -50,7 +50,8 @@ func (om *OCFPManager) GenerateVaultInceptionScript(_ctx context.Context) string
 //nolint:funlen // Script generation requires many statements
 func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string {
 	resolver := om.resolver()
-	names := om.mergeDeploymentNames(defaultDeploymentNames, resolver.Configured())
+	defaults := defaultDeploymentNamesFor(om.config.SecretsBackendName())
+	names := om.mergeDeploymentNames(defaults, resolver.Configured())
 	devDeployments, releaseDeployments := om.partitionDeployments(names)
 
 	lines := make([]string, 0, scriptBufferOCFPBase)
@@ -159,19 +160,27 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	return strings.Join(lines, "\n")
 }
 
-//nolint:gochecknoglobals // Default deployment list is package-level constant
-var defaultDeploymentNames = []string{
-	"bosh",
-	"vault",
-	"concourse",
-	"cf",
-	"blacksmith",
-	"shield",
-	"prometheus",
-	"doomsday",
-	"scheduler",
-	"autoscaler",
-	"jumpbox",
+// defaultDeploymentNamesFor returns the ordered default deployment list for the given
+// secrets backend. "openbao" (default) replaces "vault" in the list; "vault" restores it.
+func defaultDeploymentNamesFor(secretsBackend string) []string {
+	secretsName := "openbao"
+	if secretsBackend == "vault" {
+		secretsName = "vault"
+	}
+
+	return []string{
+		"bosh",
+		secretsName,
+		"concourse",
+		"cf",
+		"blacksmith",
+		"shield",
+		"prometheus",
+		"doomsday",
+		"scheduler",
+		"autoscaler",
+		"jumpbox",
+	}
 }
 
 func formatShellArray(values []string) string {
@@ -506,8 +515,12 @@ func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
 }
 
 // GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
+// vault is only required when secrets_backend=vault; otherwise bao covers the secrets path.
 func (om *OCFPManager) GenerateOCFPToolVerificationScript(_ctx context.Context) string {
-	requiredTools := []string{"safe", "vault", "bao", "bosh", "cf", "credhub", "uaa", "spruce", "yq", "go", "genesis"}
+	requiredTools := []string{"safe", "bao", "bosh", "cf", "credhub", "uaa", "spruce", "yq", "go", "genesis"}
+	if om.config.SecretsBackendName() == "vault" {
+		requiredTools = append(requiredTools, "vault")
+	}
 	lines := make([]string, 0, scriptBufferOCFPBase+scriptBufferOCFPPerTool*len(requiredTools))
 
 	lines = append(lines, "# Verify bastion-init prerequisites")

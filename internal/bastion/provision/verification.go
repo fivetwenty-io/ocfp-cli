@@ -199,10 +199,20 @@ func (vm *VerificationManager) getEssentialToolsVerification() ToolVerification 
 }
 
 func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerification {
+	// vault is only required when secrets_backend=vault; otherwise bao handles the
+	// secrets path and vault lives in the optional group.
+	commands := []string{"safe", "spruce", "jq", "bosh", "cf", "credhub"}
+	versionCommand := "safe --version && spruce --version && bosh --version && cf --version"
+
+	if vm.config != nil && vm.config.SecretsBackendName() == "vault" {
+		commands = append(commands, "vault")
+		versionCommand += " && vault --version"
+	}
+
 	return ToolVerification{
 		Name:            "cloudfoundry-tools",
-		Commands:        []string{"safe", "spruce", "vault", "jq", "bosh", "cf", "credhub"},
-		VersionCommand:  "safe --version && spruce --version && vault --version && bosh --version && cf --version",
+		Commands:        commands,
+		VersionCommand:  versionCommand,
 		Required:        true,
 		ConfigCheck:     "",
 		ServiceCheck:    "",
@@ -211,15 +221,20 @@ func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerificati
 }
 
 // getOptionalCFToolsVerification covers tools that are part of the OCFP toolchain
-// but not required for the core BOSH/CF deploy path: bao (OpenBao — the inception
-// vault uses `vault`) and uaa (the UAA CLI). They are brew-provided upstream and
-// may be absent on bastions where brew is not bootstrapped, so they warn rather
-// than fail. Fully installing them needs a `bao` binary_tools entry and a working
-// uaa-cli release URL.
+// but not required for the core BOSH/CF deploy path. bao is always optional (installed
+// via brew); vault is optional when secrets_backend=openbao (the default). uaa is
+// optional in all cases.
 func (vm *VerificationManager) getOptionalCFToolsVerification() ToolVerification {
+	commands := []string{"bao", "uaa"}
+
+	// When using the default openbao backend, vault is also optional (not required).
+	if vm.config == nil || vm.config.SecretsBackendName() != "vault" {
+		commands = append(commands, "vault")
+	}
+
 	return ToolVerification{
 		Name:            "optional-cf-tools",
-		Commands:        []string{"bao", "uaa"},
+		Commands:        commands,
 		VersionCommand:  "",
 		Required:        false,
 		ConfigCheck:     "",

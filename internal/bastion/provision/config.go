@@ -67,10 +67,20 @@ func (c *Config) GetPackages() map[string]PackageGroup {
 }
 
 // GetGenesisDeployments returns Genesis deployments to initialize.
+// The secrets deployment is openbao by default; pass secrets_backend=vault to opt in to HCV.
 func (c *Config) GetGenesisDeployments() []GenesisDeployment {
+	secretsDeployment := GenesisDeployment{
+		Name: "openbao", Kit: "openbao", Repo: "openbao-genesis-kit", Branch: "", Enabled: true, Condition: "",
+	}
+	if c.config.SecretsBackendName() == "vault" {
+		secretsDeployment = GenesisDeployment{
+			Name: "vault", Kit: "vault", Repo: "vault-genesis-kit", Branch: "", Enabled: true, Condition: "",
+		}
+	}
+
 	items := []GenesisDeployment{
 		{Name: "bosh", Kit: "bosh", Repo: "bosh-genesis-kit", Branch: "develop", Enabled: true, Condition: ""},
-		{Name: "vault", Kit: "vault", Repo: "vault-genesis-kit", Branch: "", Enabled: true, Condition: ""},
+		secretsDeployment,
 		{Name: "concourse", Kit: "concourse", Repo: "concourse-genesis-kit", Branch: "", Enabled: true, Condition: ""},
 		{Name: "cf", Kit: "cf", Repo: "cf-genesis-kit", Branch: "", Enabled: true, Condition: ""},
 		{Name: "blacksmith", Kit: "blacksmith", Repo: "blacksmith-genesis-kit", Branch: "", Enabled: true, Condition: ""},
