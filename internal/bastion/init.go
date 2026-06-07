@@ -2192,7 +2192,11 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	m.log.Info("Verifying installation")
 
 	// Check if provisioning completed successfully
-	tools := []string{"genesis", "safe", "spruce", "vault", "bao", "bosh", "cf", "credhub", "uaa"}
+	// vault only verified when secrets_backend=vault; bao covers the default openbao path.
+	tools := []string{"genesis", "safe", "spruce", "bao", "bosh", "cf", "credhub", "uaa"}
+	if m.config.SecretsBackendName() == "vault" {
+		tools = append(tools, "vault")
+	}
 	totalSteps := 1 + len(tools)
 
 	if m.reporter != nil {

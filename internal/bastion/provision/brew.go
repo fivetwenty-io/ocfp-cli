@@ -143,8 +143,8 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "kubectl", Enabled: true, CheckCommand: "kubectl"},
 		{Name: "node", Enabled: false, CheckCommand: "node"}, // Disabled by default, use nvm
 
-		// From advanced tools
-		{Name: "vault", Enabled: true, CheckCommand: "vault", Tap: "hashicorp/tap"},
+		// From advanced tools — vault only when secrets_backend=vault; openbao is the default
+		{Name: "vault", Enabled: bm.config != nil && bm.config.SecretsBackendName() == "vault", CheckCommand: "vault", Tap: "hashicorp/tap"},
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
 		{Name: "hl", Enabled: true, CheckCommand: "hl"},
 
