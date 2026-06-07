@@ -71,16 +71,17 @@ func NewInitCmd() *cobra.Command {
 
 // initFlags holds all command flags for init.
 type initFlags struct {
-	force       bool
-	skipChecks  bool
-	parallel    bool
-	dryRun      bool
-	resume      bool
-	verbose     bool
-	ocfpOnly    bool
-	configOnly  bool
-	genesisOnly bool
-	reboot      bool
+	force          bool
+	skipChecks     bool
+	parallel       bool
+	dryRun         bool
+	resume         bool
+	verbose        bool
+	ocfpOnly       bool
+	configOnly     bool
+	genesisOnly    bool
+	reboot         bool
+	secretsBackend string
 }
 
 // addFlags adds all flags to the command.
@@ -95,6 +96,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only sync configuration files to bastion (for bastion init)")
 	cmd.Flags().BoolVar(&f.genesisOnly, "genesis", false, "only install/update Genesis and related components (for bastion init)")
 	cmd.Flags().BoolVar(&f.reboot, "reboot", false, "reboot bastion after successful initialization (applies updates)")
+	cmd.Flags().StringVar(&f.secretsBackend, "secrets-backend", "", "genesis secrets deployment backend: openbao (default) or vault")
 }
 
 // bindViperFlags binds flags to viper.
@@ -110,7 +112,9 @@ func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 		"init.config_only":  "config",
 		"init.genesis_only": "genesis",
 		"init.reboot":       "reboot",
+		"secrets_backend":   "secrets-backend",
 	})
+	_ = viper.BindEnv("secrets_backend", "OCFP_SECRETS_BACKEND")
 }
 
 // runInit executes the init command.
@@ -178,7 +182,7 @@ func (f *initFlags) validateModeFlags() error {
 	return nil
 }
 
-// loadConfig loads the configuration.
+// loadConfig loads the configuration and applies flag overrides.
 func (f *initFlags) loadConfig() (*config.Config, error) {
 	configFile := viper.GetString("config")
 	blocName := viper.GetString("bloc")
@@ -186,6 +190,14 @@ func (f *initFlags) loadConfig() (*config.Config, error) {
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Apply secrets-backend precedence: flag > env > config file > default (openbao).
+	// Viper already merges env (OCFP_SECRETS_BACKEND) and flag via BindPFlag/BindEnv.
+	// Overwrite cfg.SecretsBackend only when viper resolved a non-empty value so that
+	// an explicit config-file value is not silently cleared.
+	if v := viper.GetString("secrets_backend"); v != "" {
+		cfg.SecretsBackend = v
 	}
 
 	return cfg, nil

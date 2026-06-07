@@ -237,6 +237,22 @@ type Config struct {
 	//   3. Default 12 (sized to PVE's default storage worker thread count).
 	// Set to 0 (or omit) to let the CLI derive the value automatically.
 	CfMaxInFlight int `json:"cf_max_in_flight,omitempty" mapstructure:"cf_max_in_flight" yaml:"cf_max_in_flight,omitempty"`
+
+	// SecretsBackend selects the genesis secrets deployment: "openbao" (default)
+	// or "vault" (opt-in). Empty string resolves to "openbao". The inception
+	// bootstrap vault is unaffected and always uses HCV.
+	SecretsBackend string `json:"secrets_backend,omitempty" mapstructure:"secrets_backend" yaml:"secrets_backend,omitempty"`
+}
+
+// SecretsBackendName returns the resolved secrets backend name.
+// Empty string and "openbao" both resolve to "openbao" (the default).
+// Only an explicit "vault" value returns "vault".
+func (c *Config) SecretsBackendName() string {
+	if c.SecretsBackend == "vault" {
+		return "vault"
+	}
+
+	return "openbao"
 }
 
 // BlobstoreMode constants for PVE bloc-scoped blobstore configuration.
