@@ -363,3 +363,119 @@ func TestGenerateOCFPConfigureScript_RepoInitBeforeOCFPConfigure(t *testing.T) {
 			repoInitIdx, ocfpConfigureIdx)
 	}
 }
+
+// --- A4: defaultDeploymentNames conditionalization ---
+
+func TestDefaultDeploymentNamesFor_OpenbaoDefault(t *testing.T) {
+	t.Parallel()
+
+	names := defaultDeploymentNamesFor("openbao")
+
+	for _, n := range names {
+		if n == "vault" {
+			t.Error("defaultDeploymentNamesFor(openbao) must not contain 'vault'")
+		}
+	}
+
+	found := false
+
+	for _, n := range names {
+		if n == "openbao" {
+			found = true
+
+			break
+		}
+	}
+
+	if !found {
+		t.Error("defaultDeploymentNamesFor(openbao) must contain 'openbao'")
+	}
+}
+
+func TestDefaultDeploymentNamesFor_VaultOptIn(t *testing.T) {
+	t.Parallel()
+
+	names := defaultDeploymentNamesFor("vault")
+
+	for _, n := range names {
+		if n == "openbao" {
+			t.Error("defaultDeploymentNamesFor(vault) must not contain 'openbao'")
+		}
+	}
+
+	found := false
+
+	for _, n := range names {
+		if n == "vault" {
+			found = true
+
+			break
+		}
+	}
+
+	if !found {
+		t.Error("defaultDeploymentNamesFor(vault) must contain 'vault'")
+	}
+}
+
+func TestGenerateOCFPConfigureScript_OpenbaoDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc"}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	if strings.Contains(script, `"vault"`) {
+		t.Error("configure script with default backend must not contain deployment name 'vault'")
+	}
+
+	if !strings.Contains(script, `"openbao"`) {
+		t.Error("configure script with default backend must contain deployment name 'openbao'")
+	}
+}
+
+func TestGenerateOCFPConfigureScript_VaultOptIn(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc", SecretsBackend: "vault"}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	if !strings.Contains(script, `"vault"`) {
+		t.Error("configure script with vault backend must contain deployment name 'vault'")
+	}
+
+	if strings.Contains(script, `"openbao"`) {
+		t.Error("configure script with vault backend must not contain deployment name 'openbao'")
+	}
+}
+
+// --- A6: tool verification script conditionalization ---
+
+func TestGenerateOCFPToolVerificationScript_OpenbaoExcludesVault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc"}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPToolVerificationScript(context.Background())
+
+	if strings.Contains(script, "command -v vault") {
+		t.Error("tool verification with default backend must not check for 'vault'")
+	}
+
+	if !strings.Contains(script, "command -v bao") {
+		t.Error("tool verification must always check for 'bao'")
+	}
+}
+
+func TestGenerateOCFPToolVerificationScript_VaultIncluded(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc", SecretsBackend: "vault"}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPToolVerificationScript(context.Background())
+
+	if !strings.Contains(script, "command -v vault") {
+		t.Error("tool verification with vault backend must check for 'vault'")
+	}
+}

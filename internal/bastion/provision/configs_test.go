@@ -438,3 +438,75 @@ func TestGetEssentialPackages_BrewPrerequisitesOnly(t *testing.T) {
 		}
 	}
 }
+
+// --- A3: GetGenesisDeployments conditionalization ---
+
+func TestGetGenesisDeployments_OpenbaoDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc"}
+	c := NewConfig("aws", cfg, nil)
+	deployments := c.GetGenesisDeployments()
+
+	if len(deployments) == 0 {
+		t.Fatal("GetGenesisDeployments returned empty slice")
+	}
+
+	// Position 1 (after bosh) must be openbao, not vault.
+	if deployments[1].Name != "openbao" {
+		t.Errorf("deployments[1].Name = %q, want 'openbao'", deployments[1].Name)
+	}
+
+	if deployments[1].Repo != "openbao-genesis-kit" {
+		t.Errorf("deployments[1].Repo = %q, want 'openbao-genesis-kit'", deployments[1].Repo)
+	}
+
+	for _, d := range deployments {
+		if d.Name == "vault" {
+			t.Error("GetGenesisDeployments with default backend must not contain 'vault'")
+		}
+	}
+}
+
+func TestGetGenesisDeployments_VaultOptIn(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "test-bloc", SecretsBackend: "vault"}
+	c := NewConfig("aws", cfg, nil)
+	deployments := c.GetGenesisDeployments()
+
+	if len(deployments) == 0 {
+		t.Fatal("GetGenesisDeployments returned empty slice")
+	}
+
+	if deployments[1].Name != "vault" {
+		t.Errorf("deployments[1].Name = %q, want 'vault'", deployments[1].Name)
+	}
+
+	if deployments[1].Repo != "vault-genesis-kit" {
+		t.Errorf("deployments[1].Repo = %q, want 'vault-genesis-kit'", deployments[1].Repo)
+	}
+
+	for _, d := range deployments {
+		if d.Name == "openbao" {
+			t.Error("GetGenesisDeployments with vault backend must not contain 'openbao'")
+		}
+	}
+}
+
+func TestGetGenesisDeployments_LengthUnchanged(t *testing.T) {
+	t.Parallel()
+
+	cfgOpenbao := &config.Config{Name: "test-bloc"}
+	cfgVault := &config.Config{Name: "test-bloc", SecretsBackend: "vault"}
+
+	cOpenbao := NewConfig("aws", cfgOpenbao, nil)
+	cVault := NewConfig("aws", cfgVault, nil)
+
+	dOpenbao := cOpenbao.GetGenesisDeployments()
+	dVault := cVault.GetGenesisDeployments()
+
+	if len(dOpenbao) != len(dVault) {
+		t.Errorf("GetGenesisDeployments length mismatch: openbao=%d vault=%d", len(dOpenbao), len(dVault))
+	}
+}

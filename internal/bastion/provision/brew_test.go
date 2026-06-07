@@ -213,13 +213,26 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Error("Expected brew shellenv in brew package script for PATH propagation")
 	}
 
-	// Verify vault tap handling
-	if !strings.Contains(script, "hashicorp/tap") {
-		t.Error("Expected hashicorp/tap in brew package script for vault")
-	}
-
 	// CF ecosystem tools (bosh, cf, credhub, uaa, spruce) are installed via binary_tools
 	// because the cloudfoundry brew taps ship macOS-only binaries
+}
+
+// TestGenerateBrewPackageScript_VaultTap verifies hashicorp/tap appears when vault backend is selected.
+func TestGenerateBrewPackageScript_VaultTap(t *testing.T) {
+	cfg := &config.Config{
+		SecretsBackend: "vault",
+		Bastion: config.Bastion{
+			Brews:         config.OverrideSets{},
+			BrewOverrides: nil,
+		},
+	}
+
+	bm := NewBrewManager("aws", cfg)
+	script := bm.GenerateBrewPackageScript(context.Background())
+
+	if !strings.Contains(script, "hashicorp/tap") {
+		t.Error("Expected hashicorp/tap in brew package script when secrets_backend=vault")
+	}
 }
 
 func TestGenerateBrewPackageScript_CaskSupport(t *testing.T) {
@@ -373,4 +386,73 @@ func TestGetBrewPackages_NodeDisabledByDefault(t *testing.T) {
 	}
 
 	t.Error("Expected 'node' package in brew packages (even if disabled)")
+}
+
+// --- A5: vault brew package enabled state ---
+
+func TestGetBrewPackages_VaultDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	bm := NewBrewManager("aws", cfg)
+	pkgs := bm.GetBrewPackages()
+
+	for _, p := range pkgs {
+		if p.Name == "vault" {
+			if p.Enabled {
+				t.Error("vault brew package must be Enabled=false when secrets_backend is default (openbao)")
+			}
+
+			return
+		}
+	}
+
+	t.Error("vault package not found in brew packages")
+}
+
+func TestGetBrewPackages_VaultEnabledWhenVaultBackend(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{SecretsBackend: "vault"}
+	bm := NewBrewManager("aws", cfg)
+	pkgs := bm.GetBrewPackages()
+
+	for _, p := range pkgs {
+		if p.Name == "vault" {
+			if !p.Enabled {
+				t.Error("vault brew package must be Enabled=true when secrets_backend=vault")
+			}
+
+			return
+		}
+	}
+
+	t.Error("vault package not found in brew packages")
+}
+
+func TestGetBrewPackages_OpenBaoAlwaysEnabled(t *testing.T) {
+	t.Parallel()
+
+	for _, backend := range []string{"", "openbao", "vault"} {
+		backend := backend
+		t.Run("backend="+backend, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{SecretsBackend: backend}
+			bm := NewBrewManager("aws", cfg)
+			pkgs := bm.GetBrewPackages()
+
+			for _, p := range pkgs {
+				if p.Name == "openbao" {
+					if !p.Enabled {
+						t.Errorf("openbao brew package must always be Enabled=true (backend=%q)", backend)
+					}
+
+					return
+				}
+			}
+
+			t.Errorf("openbao package not found in brew packages (backend=%q)", backend)
+		})
+	}
 }
