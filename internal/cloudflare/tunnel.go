@@ -70,33 +70,43 @@ type IngressParams struct {
 	// origin presents a self-signed cert (e.g. the PVE lab haproxy); without it
 	// cloudflared 502s. *.apps is always noTLSVerify regardless.
 	OriginNoTLSVerify bool
+
+	// Services are extra per-hostname ingress rules for infra-service UIs not
+	// fronted by the gorouter/haproxy. They are emitted first so they precede
+	// the *.system wildcard (cloudflared first-match).
+	Services []IngressRule
 }
 
-// BuildIngress returns the ordered ingress rules: *.apps (noTLSVerify),
-// *.system (originServerName, or noTLSVerify when OriginNoTLSVerify is set),
-// ssh hostname (tcp), and the required catch-all.
+// BuildIngress returns the ordered ingress rules. Order matters: cloudflared
+// matches a request to the FIRST rule whose hostname matches, so every specific
+// hostname (the configured services, then the ssh hostname) must precede the
+// *.system wildcard — otherwise *.system would swallow e.g. shield.system.<d>
+// and route it to the gorouter/haproxy. Final order: services…, ssh, *.apps,
+// *.system, catch-all.
 func BuildIngress(p IngressParams) []IngressRule {
 	systemOrigin := &OriginRequest{OriginServerName: p.OriginServerName}
 	if p.OriginNoTLSVerify {
 		// Self-signed origin: skip verification (cert name is irrelevant then).
 		systemOrigin = &OriginRequest{NoTLSVerify: true}
 	}
-	rules := []IngressRule{
-		{
+	rules := make([]IngressRule, 0, len(p.Services)+4)
+	rules = append(rules, p.Services...)
+	if p.SSHHostname != "" && p.SSHOrigin != "" {
+		rules = append(rules, IngressRule{Hostname: p.SSHHostname, Service: p.SSHOrigin})
+	}
+	rules = append(rules,
+		IngressRule{
 			Hostname:      "*." + p.AppsDomain,
 			Service:       p.Origin,
 			OriginRequest: &OriginRequest{NoTLSVerify: true},
 		},
-		{
+		IngressRule{
 			Hostname:      "*." + p.SystemDomain,
 			Service:       p.Origin,
 			OriginRequest: systemOrigin,
 		},
-	}
-	if p.SSHHostname != "" && p.SSHOrigin != "" {
-		rules = append(rules, IngressRule{Hostname: p.SSHHostname, Service: p.SSHOrigin})
-	}
-	rules = append(rules, IngressRule{Service: "http_status:404"})
+		IngressRule{Service: "http_status:404"},
+	)
 	return rules
 }
 
