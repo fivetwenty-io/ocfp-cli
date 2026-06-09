@@ -7,6 +7,23 @@ import "errors"
 // source per scope; the loader merges scopes after validation.
 var ErrCloudflareAPITokenConflict = errors.New("cloudflare: api_token and api_token_vault_path are mutually exclusive")
 
+// ErrCloudflareServiceIncomplete is returned when a services[] entry is missing
+// its hostname or origin service. Both are required to build an ingress rule.
+var ErrCloudflareServiceIncomplete = errors.New("cloudflare: service ingress entry requires both hostname and service")
+
+// ServiceIngress is one extra per-hostname ingress rule for an infra-service web
+// UI (shield, grafana, blacksmith, doomsday, concourse, ...) that is NOT fronted
+// by the CF gorouter/haproxy. Each becomes an explicit ingress rule ordered
+// BEFORE the *.apps/*.system wildcards (cloudflared first-match) plus a proxied
+// CNAME. Hostnames under an existing edge-cert-covered wildcard (e.g.
+// *.system.<domain>) reuse that cert; others require an ACM/Total-TLS cert.
+type ServiceIngress struct {
+	Hostname string `json:"hostname"      mapstructure:"hostname"      yaml:"hostname"`
+	Service  string `json:"service"       mapstructure:"service"       yaml:"service"`
+	// NoTLSVerify disables origin TLS verification (self-signed origin).
+	NoTLSVerify *bool `json:"no_tls_verify,omitempty" mapstructure:"no_tls_verify" yaml:"no_tls_verify,omitempty"`
+}
+
 // CloudflareConfig is the YAML-facing cloudflare section, carried optionally
 // by both ConfigFile (global defaults) and Config (per-bloc). Per-bloc values
 // override global field-by-field via mergeCloudflareDefaults.
@@ -41,6 +58,10 @@ type CloudflareConfig struct {
 	// rule. Set true when the origin presents a self-signed cert (e.g. the PVE
 	// lab haproxy), where the default OriginServerName verify path 502s.
 	OriginNoTLSVerify *bool `json:"origin_no_tls_verify,omitempty" mapstructure:"origin_no_tls_verify" yaml:"origin_no_tls_verify,omitempty"`
+
+	// Services are extra per-hostname ingress rules re-applied on every bootstrap
+	// so manually-routed infra-service UIs survive re-provisioning.
+	Services []ServiceIngress `json:"services,omitempty" mapstructure:"services" yaml:"services,omitempty"`
 }
 
 // CloudflareEnabled reports whether cloudflare tunnel provisioning is active.
@@ -56,6 +77,11 @@ func (c *CloudflareConfig) Validate() error {
 	}
 	if c.APIToken != "" && c.APITokenVaultPath != "" {
 		return ErrCloudflareAPITokenConflict
+	}
+	for _, s := range c.Services {
+		if s.Hostname == "" || s.Service == "" {
+			return ErrCloudflareServiceIncomplete
+		}
 	}
 	return nil
 }
@@ -94,6 +120,26 @@ func mergeCloudflareDefaults(bloc *Config, defaults *CloudflareConfig) {
 		v := *defaults.OriginNoTLSVerify
 		merged.OriginNoTLSVerify = &v
 	}
+	if len(merged.Services) == 0 && len(defaults.Services) > 0 {
+		merged.Services = cloneServiceIngress(defaults.Services)
+	}
+}
+
+// cloneServiceIngress deep-copies a services slice so callers cannot mutate the
+// source (and vice versa) through the shared backing array or *bool fields.
+func cloneServiceIngress(src []ServiceIngress) []ServiceIngress {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]ServiceIngress, len(src))
+	for i, s := range src {
+		out[i] = s
+		if s.NoTLSVerify != nil {
+			v := *s.NoTLSVerify
+			out[i].NoTLSVerify = &v
+		}
+	}
+	return out
 }
 
 func cloneCloudflareConfig(src *CloudflareConfig) *CloudflareConfig {
@@ -109,5 +155,6 @@ func cloneCloudflareConfig(src *CloudflareConfig) *CloudflareConfig {
 		v := *src.OriginNoTLSVerify
 		clone.OriginNoTLSVerify = &v
 	}
+	clone.Services = cloneServiceIngress(src.Services)
 	return &clone
 }

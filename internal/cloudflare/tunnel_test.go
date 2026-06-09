@@ -45,15 +45,44 @@ func TestBuildIngress(t *testing.T) {
 		SSHOrigin:        "ssh://10.64.64.37:2222",
 		OriginServerName: "api.system.ocf.wayne.lab.fivetwenty.io",
 	})
-	// 4 rules: apps, system, ssh, catch-all
+	// 4 rules, ssh-first (specific before the *.system wilddcard): ssh, apps, system, catch-all
 	require.Len(t, ing, 4)
-	assert.Equal(t, "*.apps.ocf.wayne.lab.fivetwenty.io", ing[0].Hostname)
-	assert.True(t, ing[0].OriginRequest.NoTLSVerify)
-	assert.Equal(t, "*.system.ocf.wayne.lab.fivetwenty.io", ing[1].Hostname)
-	assert.Equal(t, "api.system.ocf.wayne.lab.fivetwenty.io", ing[1].OriginRequest.OriginServerName)
-	assert.Equal(t, "ssh://10.64.64.37:2222", ing[2].Service)
+	assert.Equal(t, "ssh.system.ocf.wayne.lab.fivetwenty.io", ing[0].Hostname)
+	assert.Equal(t, "ssh://10.64.64.37:2222", ing[0].Service)
+	assert.Equal(t, "*.apps.ocf.wayne.lab.fivetwenty.io", ing[1].Hostname)
+	assert.True(t, ing[1].OriginRequest.NoTLSVerify)
+	assert.Equal(t, "*.system.ocf.wayne.lab.fivetwenty.io", ing[2].Hostname)
+	assert.Equal(t, "api.system.ocf.wayne.lab.fivetwenty.io", ing[2].OriginRequest.OriginServerName)
 	assert.Equal(t, "http_status:404", ing[3].Service)
 	assert.Empty(t, ing[3].Hostname)
+}
+
+// TestBuildIngress_Services — explicit service rules must precede the *.system
+// wildcard (cloudflared first-match) so a hostname like shield.system.<domain>
+// routes to its own origin, not the gorouter/haproxy.
+func TestBuildIngress_Services(t *testing.T) {
+	t.Parallel()
+	ing := BuildIngress(IngressParams{
+		AppsDomain:        "apps.ocf.wayne.lab.fivetwenty.io",
+		SystemDomain:      "system.ocf.wayne.lab.fivetwenty.io",
+		SSHHostname:       "ssh.system.ocf.wayne.lab.fivetwenty.io",
+		Origin:            "https://10.64.68.13:443",
+		SSHOrigin:         "ssh://10.64.68.13:2222",
+		OriginNoTLSVerify: true,
+		Services: []IngressRule{
+			{Hostname: "shield.system.ocf.wayne.lab.fivetwenty.io", Service: "https://10.64.68.9", OriginRequest: &OriginRequest{NoTLSVerify: true}},
+			{Hostname: "grafana.system.ocf.wayne.lab.fivetwenty.io", Service: "http://10.64.68.8:3000"},
+		},
+	})
+	// services(2), ssh, apps, system, catch-all
+	require.Len(t, ing, 6)
+	assert.Equal(t, "shield.system.ocf.wayne.lab.fivetwenty.io", ing[0].Hostname)
+	assert.True(t, ing[0].OriginRequest.NoTLSVerify)
+	assert.Equal(t, "grafana.system.ocf.wayne.lab.fivetwenty.io", ing[1].Hostname)
+	assert.Equal(t, "ssh.system.ocf.wayne.lab.fivetwenty.io", ing[2].Hostname)
+	assert.Equal(t, "*.apps.ocf.wayne.lab.fivetwenty.io", ing[3].Hostname)
+	assert.Equal(t, "*.system.ocf.wayne.lab.fivetwenty.io", ing[4].Hostname)
+	assert.Equal(t, "http_status:404", ing[5].Service)
 }
 
 // TestBuildIngress_OriginNoTLSVerify — when the origin uses a self-signed cert
