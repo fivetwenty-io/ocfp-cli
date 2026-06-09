@@ -39,6 +39,7 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 		return fmt.Errorf("cloudflare ensure tunnel: %w", err)
 	}
 
+	serviceRules := buildServiceIngress(cf.Services)
 	ingress := cloudflare.BuildIngress(cloudflare.IngressParams{
 		AppsDomain:        cf.AppsDomain,
 		SystemDomain:      cf.SystemDomain,
@@ -47,6 +48,7 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 		SSHOrigin:         cf.SSHOrigin,
 		OriginServerName:  firstNonEmpty(cf.OriginServerName, "api."+cf.SystemDomain),
 		OriginNoTLSVerify: cf.OriginNoTLSVerify != nil && *cf.OriginNoTLSVerify,
+		Services:          serviceRules,
 	})
 	if err := client.PutTunnelConfig(ctx, accountID, tun.ID, ingress); err != nil {
 		return fmt.Errorf("cloudflare put ingress: %w", err)
@@ -56,6 +58,11 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 	names := []string{"*." + cf.AppsDomain, "*." + cf.SystemDomain}
 	if cf.SSHHostname != "" {
 		names = append(names, cf.SSHHostname)
+	}
+	// A proxied CNAME per service hostname (idempotent; a specific record under
+	// an existing wildcard simply shadows it with the same tunnel target).
+	for _, s := range cf.Services {
+		names = append(names, s.Hostname)
 	}
 	for _, dnsName := range names {
 		if err := client.UpsertCNAME(ctx, zoneID, dnsName, target); err != nil {
@@ -78,4 +85,22 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 	m.cloudflareTunnelToken = strings.TrimSpace(tun.Token)
 	logger.Infof("Cloudflare tunnel %q ready (id %s)", name, tun.ID)
 	return nil
+}
+
+// buildServiceIngress converts the configured extra services into cloudflared
+// ingress rules. An originRequest is attached only when TLS verification is
+// disabled (self-signed origin); nil otherwise. Returns nil for an empty list.
+func buildServiceIngress(services []config.ServiceIngress) []cloudflare.IngressRule {
+	if len(services) == 0 {
+		return nil
+	}
+	rules := make([]cloudflare.IngressRule, 0, len(services))
+	for _, s := range services {
+		rule := cloudflare.IngressRule{Hostname: s.Hostname, Service: s.Service}
+		if s.NoTLSVerify != nil && *s.NoTLSVerify {
+			rule.OriginRequest = &cloudflare.OriginRequest{NoTLSVerify: true}
+		}
+		rules = append(rules, rule)
+	}
+	return rules
 }
