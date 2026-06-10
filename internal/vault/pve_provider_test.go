@@ -228,6 +228,66 @@ func TestPVEVaultProvider_ConfigureAZs_EmptyBoth(t *testing.T) {
 	assert.Empty(t, mock.setMultipleCalls, "empty Region must produce no vault writes")
 }
 
+// TestPVEVaultProvider_ConfigureFQDNs_CloudflareScopesSystemServices — with the
+// Cloudflare tunnel fronting the bloc, infra-UI services (concourse/shield/...)
+// derive under the *.system wildcard cert as {svc}.system.{base}, while
+// non-UI services (bosh) stay flat. Prevents the login-redirect SSL mismatch
+// where atc's external_url pointed at a hostname with no edge cert.
+func TestPVEVaultProvider_ConfigureFQDNs_CloudflareScopesSystemServices(t *testing.T) {
+	enabled := true
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		FQDNs:      &config.FQDNConfig{Base: "ocf.example.io"},
+		Cloudflare: &config.CloudflareConfig{Enabled: &enabled},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	call := mock.findSetMultipleCall(provider.PathBuilder.GetFQDNsPath(MgmtEnvType))
+	require.NotNil(t, call, "per-service FQDNs must be written for the env")
+
+	assert.Equal(t, "concourse.system.ocf.example.io", call.data["concourse"],
+		"concourse must derive under *.system (the only edge-cert host)")
+	assert.Equal(t, "shield.system.ocf.example.io", call.data["shield"])
+	assert.Equal(t, "prometheus.system.ocf.example.io", call.data["prometheus"])
+	assert.Equal(t, "bosh.ocf.example.io", call.data["bosh"],
+		"non-UI services stay flat (not behind the *.system wildcard)")
+	assert.Equal(t, "ocf.example.io", call.data["base"])
+	assert.Equal(t, MgmtEnvType, call.data["env_type"])
+
+	// Base FQDN is also stored at the shared path (mgmt pass).
+	basePath := provider.PathBuilder.GetBaseFQDNPath()
+	var baseStored bool
+	for _, s := range mock.setSingleCalls {
+		if s.path == basePath && s.key == "value" && s.value == "ocf.example.io" {
+			baseStored = true
+		}
+	}
+	assert.True(t, baseStored, "base FQDN must be stored at the shared path")
+}
+
+// TestPVEVaultProvider_ConfigureFQDNs_FlatWhenCloudflareDisabled — without the
+// Cloudflare edge wildcard, infra UIs keep the flat {svc}.{base} form (e.g. an
+// external LB terminating per-host certs).
+func TestPVEVaultProvider_ConfigureFQDNs_FlatWhenCloudflareDisabled(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		FQDNs: &config.FQDNConfig{Base: "ocf.example.io"},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	call := mock.findSetMultipleCall(provider.PathBuilder.GetFQDNsPath(MgmtEnvType))
+	require.NotNil(t, call)
+
+	assert.Equal(t, "concourse.ocf.example.io", call.data["concourse"],
+		"no Cloudflare edge: infra UIs stay flat")
+}
+
 // TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker — no
 // BlobstoreMode and no BlobstoreEndpoint defaults to local mode.  Two writes
 // land on mgmt env: a cf/blobstores/main marker (mode=local) plus a

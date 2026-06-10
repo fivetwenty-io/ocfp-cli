@@ -1213,20 +1213,46 @@ func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter pro
 
 	p.logger.Infow("Configuring FQDNs", "env_type", envType)
 
-	fqdnPath := p.PathBuilder.GetFQDNsPath(envType)
+	fqdnCfg := p.Config.FQDNs
+	if fqdnCfg == nil {
+		if reporter != nil {
+			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		}
 
-	fqdnConfig := map[string]interface{}{
-		"env_type": envType,
+		return nil
 	}
 
-	// Add configured FQDNs if available
-	if p.Config.FQDNs != nil {
-		if p.Config.FQDNs.Base != "" {
-			fqdnConfig["base"] = p.Config.FQDNs.Base
+	// Store the base FQDN at the shared path (mgmt pass only), mirroring the
+	// other IaaS providers.
+	if fqdnCfg.Base != "" && envType == MgmtEnvType {
+		if err := p.Safe.Set(p.PathBuilder.GetBaseFQDNPath(), "value", fqdnCfg.Base); err != nil {
+			return fmt.Errorf("failed to set base FQDN: %w", err)
 		}
 	}
 
-	err := p.Safe.SetMultiple(fqdnPath, fqdnConfig)
+	explicit := ExplicitFQDNsForEnv(fqdnCfg, envType)
+
+	base := fqdnCfg.Base
+	if base == "" {
+		base = p.Config.DomainName
+	}
+
+	// Infra-service UIs sit behind the *.system wildcard edge cert when the
+	// Cloudflare tunnel fronts the bloc; derive them as {svc}.system.{base}.
+	systemScoped := config.CloudflareEnabled(p.Config.Cloudflare)
+
+	fqdnConfig := PopulateFQDNsForEnv(envType, explicit, base, systemScoped)
+	if fqdnConfig == nil {
+		fqdnConfig = map[string]interface{}{}
+	}
+
+	// Preserve the descriptive keys the PVE path has always written.
+	fqdnConfig["env_type"] = envType
+	if base != "" {
+		fqdnConfig["base"] = base
+	}
+
+	err := p.Safe.SetMultiple(p.PathBuilder.GetFQDNsPath(envType), fqdnConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set FQDN configuration: %w", err)
 	}
