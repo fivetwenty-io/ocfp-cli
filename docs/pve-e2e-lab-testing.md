@@ -704,6 +704,7 @@ Beyond the CF-focused phases, the CF-coupled and operator platform services were
 | Scheduler | ocf | 2026-06-04 | ✅ PASS | 10.64.68.40/z1 | PVE-ported (kit.yml + cloud-config.pm pve branches for scheduler/smoke-test vm + db disk). Env needs **`internal-postgres`** in features explicitly (ocfp alone falls through to external-postgres). Colocated postgres + route_registrar + pg_janitor all running; smoke-tests is an errand. |
 | Autoscaler | ocf | 2026-06-04 | ✅ PASS | z2 (ocfp-1) 10.64.72.41–47 | PVE-ported (kit.yml + 9 pve branches in cloud-config.pm: network + 7 vm_types + as-postgres disk; blueprint loads new `ocfp/pve.yml` when iaas==pve). `ocfp/pve.yml` does two things: `use_dns_addresses:false` (dotted OCFP network names break bosh-dns long-form links across the 7 interlinked jobs) and pins every instance group to z2 (so dynamic IPs don't spill into ocfp-0/CF or ocfp-2/compilation on the shared bridge). All 7 components + colocated postgres running. |
 | Jumpbox | mgmt | 2026-06-05 | ✅ PASS | 10.64.72.6/z2 (ocfp-1) static | PVE-ported (kit.yml + 3 pve branches in cloud-config.pm modern-helper style: network bridge, vm cpu/ram/disk, disk storage/raw). Single VM on **noble**; bosh-dns + watcher running. Runs upstream-**main** jumpbox-boshrelease + 2 noble fixes (dev release `jumpbox/5.1.2+dev.1780659498`). Several blockers hit and fixed (see below). |
+| Stratos (console) | ocf | 2026-06-10 | ✅ PASS | CF app in `system`/`stratos` space; route `console.apps.ocf` | Stratos **`develop`** (native CC **v3**, `v5.0.0-dev.102`) deployed as a CF app via the cf kit `stratos-integration` feature + `genesis <env> do stratos deploy`, built **in-platform** (`stratos-buildpack#v6`) — the tagged `5.0.0-dev.10` rendered empty (removed CC v2). Needs a 16G diego cell (`pve_diego_cell_ram`), `maximum_app_disk_in_mb` on api+cc-worker+scheduler, build-info.ts gen, and `UI_PATH: ./ui/frontend/browser`. Colocated `stratos` DB on CF postgres; egress ASG; DB-from-vault + `ENCRYPTION_KEY` in the hook. `https://console.apps.ocf.wayne.lab.fivetwenty.io` HTTP 200. See §8.4. |
 
 ### 8.1 cross-cutting findings & fixes
 
@@ -810,3 +811,169 @@ out). Fix: `ssh root@sm-0` → `qm guest exec 100 -- systemctl restart
 tailscaled`. The `ocfp rsync` wrapper resolves a separate hostname that was also
 unreachable during the wedge; pushing files via `tar | ocfp ssh … 'tar x'`
 over the working ssh path is the reliable fallback.
+
+## 8.4 Stratos console at the canonical URL (2026-06-09; v3 update 2026-06-10)
+
+> **Update 2026-06-10:** the `5.0.0-dev.10` binary rendered an **empty** console
+> (removed CC v2 API). The working approach is now the `develop` branch (native
+> CC v3) built **in-platform** — see "Empty console → `develop`" below. The
+> `5.0.0-dev.10` sections that follow remain for history.
+
+Goal: bring the Stratos UI up at its canonical `console.apps.ocf` URL, deploying
+the **latest 5.x** line. Stratos is a CF **app** (not a BOSH deployment): the cf
+kit ships the `stratos-integration` feature (registers a `stratos_client` UAA
+OAuth client for SSO) plus a `do stratos` addon (`hooks/addon-stratos~st.pm`)
+that downloads the release, creates the `system`/`stratos` space, wires the DB,
+and `cf push`es the app. End state: **HTTP 200** at
+`https://console.apps.ocf.wayne.lab.fivetwenty.io` (and jetstream's
+`/pp/v1/version`) through the existing cloudflared `*.apps.ocf` ingress — no new
+tunnel/DNS/cert work, since `console.apps.ocf` is already under the `*.apps.ocf`
+edge cert + wildcard CNAME.
+
+### Version reality
+
+There is **no stable 5.x** release — the 5.x line is all `-dev` prereleases;
+latest is **`v5.0.0-dev.10`** (stable tops out at `v4.9.4`). 5.x also **renamed
+the CF asset** from `stratos-ui-v<ver>.zip` to `stratos-cf-v<ver>.zip`. The
+bundle is still `cf push`-able (jetstream binary + `ui/` + `templates/` +
+`Procfile web: ./jetstream`), but it defaults to `DATABASE_PROVIDER=sqlite` and
+**requires an explicit `ENCRYPTION_KEY`** for binary-buildpack deploys (the old
+source buildpack defaulted it).
+
+### cf kit addon hook patches (`addon-stratos~st.pm`, bastion copy; local-only)
+
+The bastion's hook (a newer, locally-modified v3.1.0 variant — diverged from the
+`genesis-community/cf-genesis-kit` `develop` checkout, which is older) had a
+deploy path that had never actually run on this env shape. Patched (all
+`perl -c` clean; **not** pushed to the kit remote):
+
+- **Asset naming** — derive `stratos-cf-v<ver>.zip` for major ≥ 5, else
+  `stratos-ui-v<ver>.zip`; download to a fixed `stratos.zip` and unzip.
+- **`ENCRYPTION_KEY`** — generate once and persist in vault
+  (`<secrets_base>stratos:encryption_key`) so redeploys reuse it (else stored
+  tokens become undecryptable); inject into the pushed manifest. Added
+  `command: ./jetstream` and `DATABASE_PROVIDER: pgsql`.
+- **DB from vault** — read `<secrets_base>stratos/db/stratos:{scheme,hostname,
+  username,password,port,database,sslmode}` (falls back to exodus/defaults), and
+  emit a full `uri:` in the CUPS service so jetstream parses host/creds from
+  `VCAP_SERVICES`.
+- **`cf.*` → `params.*` fallbacks** — the hook looked up `cf.api_url` /
+  `cf.apps_domain` / `cf.system_domain`, none of which are populated under the
+  ocfp env layout (this env uses `params.*`). Without the fallback the deploy
+  `bail`ed "No CF API URL configured" and would have built a `console.` route
+  with an empty domain.
+- **`run()` calling convention** — the bastion genesis `run()` takes a **single
+  combined options hashref** (`run({interactive=>0, onfailure=>…}, 'cmd', …)`).
+  The deploy path used the two-hashref form (`run({…}, {onfailure=>…}, …)`),
+  which stringified the second hashref as the command → `bash: HASH(0x…)`
+  syntax errors on every shell-out. Merged all of them.
+- **Explicit route** — replaced the deprecated `host: console` manifest key
+  (CF v3 ignores it and routes `<appname>.<domain>` → `apps.apps.ocf`) with a
+  `routes: [route: console.<apps_domain>]` block.
+- **Egress ASG** — create+bind a `stratos-db` Application Security Group
+  (`tcp <db-host>:5524`, running+staging) before push. App containers have **no
+  egress to the BOSH network** by default, so jetstream's DB ping was refused
+  (`dial tcp 10.64.68.16:5524: connect: connection refused`) until the ASG was
+  bound.
+
+### Colocated database on the CF postgres
+
+Per operator decision, Stratos gets its own `stratos` database + `stratos` role
+on the **CF internal postgres** (instance group `database`, `10.64.68.16`, port
+**5524**, pg v17) rather than a separate DB. Created live via `bosh ssh
+database/0` → `psql` as the local-trust `vcap` superuser (`CREATE ROLE … LOGIN`,
+`CREATE DATABASE stratos OWNER stratos`, `GRANT`). This is durable: `pg_hba.conf`
+ends with `host all all 0.0.0.0/0 md5` (a fixed permissive rule, not per-role),
+and postgres-release does **not** prune unlisted databases/roles on redeploy.
+Credentials stored in vault at `<secrets_base>stratos/db/stratos`. md5 TCP login
+from the cell network verified.
+
+### Enable + deploy steps (this env)
+
+1. `safe set <secrets_base>stratos/db/stratos …` (DB creds) and create the
+   `stratos`/`stratos` role+db on `database/0`.
+2. Add `stratos-integration` to `kit.features` and `stratos.version:
+   5.0.0-dev.10` in `ocfp-lab-wayne-ocf.yml`.
+3. Set the config-vault fqdn the `ocfp/stratos.yml` overlay reads:
+   `safe set secret/config/ocfp-lab-wayne/ocf/fqdns
+   stratos=console.apps.ocf.wayne.lab.fivetwenty.io` (else the manifest render
+   fails `$.meta.stratos_domain … not found`).
+4. `genesis ocfp-lab-wayne-ocf add-secrets` (generates `stratos_client_secret`),
+   then `genesis ocfp-lab-wayne-ocf deploy` (registers the UAA client — a small
+   uaa-only delta, 53 s).
+5. `cf login` as admin, then `genesis ocfp-lab-wayne-ocf do stratos deploy`
+   (downloads `stratos-cf-v5.0.0-dev.10.zip`, creates space, binds ASG, CUPS
+   service, `cf push`).
+
+### Verification
+
+Clean-slate proof (deleted the app **and** the ASG, then re-ran
+`do stratos deploy`): the addon recreated the ASG, pushed with the correct
+`console.apps.ocf` route, jetstream connected to the colocated postgres, and the
+app reached `1/1 running`. Through the tunnel: `GET /` → **200**
+(`<title>Stratos</title>`), `GET /pp/v1/version` → **200**. UAA SSO login uses
+the `stratos_client` registered by the overlay.
+
+**Durability note:** the DB role/secret, the `stratos-integration` feature, the
+config-vault fqdn, and the UAA client all survive re-bootstrap; the **kit hook
+patches are bastion-local only** (the bastion's cf kit carries the local v56 PVE
+fixes and is not synced from the diverged `develop` checkout), so they must be
+re-applied (or upstreamed) if the bastion kit is re-seeded.
+
+### Empty console → `develop` (native CC v3), in-platform build (2026-06-10)
+
+The `5.0.0-dev.10` binary deployed and served, but the console rendered **empty**
+— no orgs, spaces, or apps. Root cause: that tag enumerates resources via the CF
+Cloud Controller **v2** API, which **cf-deployment v56 / CAPI 3.220 removed**.
+Only the `cloudfoundry/stratos` **`develop`** branch (native CC **v3**,
+`v5.0.0-dev.102`) speaks v3. `develop` ships no release zip, so it is built
+**in-platform**: the addon's `develop`/`source` branch `git clone`s the source
+tree and `cf push`es it with the **`stratos-buildpack#v6`** (node 22.14 / Angular
+21 / jetstream Go), which compiles the frontend (esbuild) and backend during
+staging. Set `stratos.version: develop` in the cf env.
+
+Three in-platform requirements, all solved durably:
+
+- **Large diego cell** — the esbuild + Go staging build OOMs a 4 GB cell. Size it
+  via the cf env: `bosh-configs.cpi.pve_diego_cell_ram: 16384` and
+  `pve_diego_cell_disk: 65536` (the cf kit `cloud-config.pm` reads
+  `pve_<vmk>_ram`/`_disk`, where `vmk` is the vm_type lowercased with non-alnum →
+  `_`, so `diego-cell` → `diego_cell`). Requires a `genesis deploy` to recreate
+  the cell; verify on the PVE host (`ssh root@sm-0`, `qm config <VMID>`).
+
+- **Per-app disk cap** — `maximum_app_disk_in_mb` (CAPI default **2048**) rejects
+  the staging container's `disk_quota: 6G` with `too much disk requested … must be
+  less than 2048 MB`. **The manifest-apply disk validation runs on the
+  `cc-worker` instance group** (an async delayed-job), not just `api` — overriding
+  `api` alone has no effect. Override on **`api` + `cc-worker` + `scheduler`**
+  (jobs `cloud_controller_ng` / `cloud_controller_worker` / `cloud_controller_clock`)
+  via a top-level `instance_groups:` block in `ocfp-lab-wayne-ocf.yml`, then a
+  second `genesis deploy`. Do **not** add `cloud_controller_deployment_updater` —
+  it is not a real job in the scheduler IG, so spruce appends an orphan job with no
+  `release` and the deploy bails `Required property 'release' was not specified`.
+
+- **build-info.ts + UI path nesting** — two staging failures fixed in the hook:
+  1. The buildpack's `npm run build-cf` (`ng build stratos --configuration
+     production`) does **not** run `make stamp frontend`, so the gitignored,
+     generated `src/frontend/packages/core/src/environments/build-info.ts` is
+     absent → compile fails `Could not resolve "../../../environments/build-info"`.
+     The hook writes a minimal valid `BUILD_INFO` export after the clone
+     (`.cfignore` does not exclude it, so it uploads with the source).
+  2. Angular 21's application builder outputs to `dist/frontend/browser/`, and the
+     stratos `build.sh` does `mv dist ui`, so `index.html` lands at
+     `ui/frontend/browser/index.html` — but jetstream serves `UI_PATH` (default
+     `./ui`) → **HTTP 404** at `/`. The hook sets the manifest env
+     `UI_PATH: ./ui/frontend/browser` (default `./ui` preserved for binary
+     deploys via `$options{ui_path}`).
+
+**Hook changes (bastion-local only, `addon-stratos~st.pm`):** the `develop`/
+`source` `elsif` now clones the source, writes `.npmrc`
+(`legacy-peer-deps=true`), `.cfignore`, and `build-info.ts`, and sets
+`buildpack = stratos-buildpack#v6`, `memory = 4G`, `disk = 6G`,
+`ui_path = ./ui/frontend/browser`; the generated manifest gains a
+`UI_PATH: $options{ui_path}` env line.
+
+**Verification:** `genesis ocfp-lab-wayne-ocf do stratos deploy` rebuilds
+in-platform and `cf push`es; app `apps` reaches `1/1 running` (droplet ~580 MB),
+`GET /` → **HTTP 200** serving the native-v3 UI, reproducibly from the manifest
+(`cf env apps` shows `UI_PATH: ./ui/frontend/browser`). 2026-06-10.
