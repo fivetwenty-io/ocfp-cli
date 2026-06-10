@@ -113,6 +113,12 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 
+	// Co-locate a prometheus monitoring stack on the ocf director with
+	// monitor-cf enabled so Cloud Foundry metrics flow into Grafana.
+	if err := writeMonitoringEnvFile(params.bloc, "pve"); err != nil {
+		return err
+	}
+
 	ocfpHome := config.OcfpHome()
 	if ocfpHome == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
