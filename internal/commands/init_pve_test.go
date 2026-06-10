@@ -302,6 +302,51 @@ func TestInitPVE_WritesBothEnvFiles(t *testing.T) {
 	require.NoError(t, err, "ocf env file must exist at %s", ocfPath)
 }
 
+// TestInitPVE_WritesMonitoringEnvFileWithMonitorCF verifies that initializePVE
+// writes the ocf-targeted prometheus monitoring env file with the monitor-cf
+// feature enabled by default, at deployments/prometheus/<bloc>-ocf.yml, and that
+// its genesis.env equals <bloc>-ocf so monitor-cf's CF defaults resolve natively.
+func TestInitPVE_WritesMonitoringEnvFileWithMonitorCF(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	tmpDir := setupPVEInitEnv(t)
+
+	const bloc = "ocfp-pve-dc1"
+	viper.Set("bloc", bloc)
+
+	require.NoError(t, initializePVE(makeBlocCmd(t, bloc), nil))
+
+	monPath := filepath.Join(tmpDir, bloc, "deployments", "prometheus", bloc+"-ocf.yml")
+	data, err := os.ReadFile(monPath)
+	require.NoError(t, err, "monitoring env file must exist at %s", monPath)
+
+	var parsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	genesisBlock, ok := parsed["genesis"].(map[string]interface{})
+	require.True(t, ok, "genesis: block must be present; content:\n%s", string(data))
+	assert.Equal(t, bloc+"-ocf", genesisBlock["env"],
+		"monitoring env.genesis.env must be <bloc>-ocf so monitor-cf defaults resolve; content:\n%s", string(data))
+
+	kitBlock, ok := parsed["kit"].(map[string]interface{})
+	require.True(t, ok, "kit: block must be present; content:\n%s", string(data))
+	assert.Equal(t, "prometheus", kitBlock["name"], "kit.name must be prometheus")
+	assert.Equal(t, "pve", kitBlock["iaas"], "kit.iaas must be pve")
+	assert.Equal(t, "dev", kitBlock["scale"], "kit.scale must be dev to guard the scale() recursion")
+
+	features, ok := kitBlock["features"].([]interface{})
+	require.True(t, ok, "kit.features must be present; content:\n%s", string(data))
+	assert.Contains(t, features, "monitor-cf", "kit.features must include monitor-cf")
+	assert.Contains(t, features, "ocfp", "kit.features must include ocfp")
+	assert.Contains(t, features, "self-signed-cert", "kit.features must include self-signed-cert")
+
+	paramsBlock, ok := parsed["params"].(map[string]interface{})
+	require.True(t, ok, "params: block must be present; content:\n%s", string(data))
+	assert.Equal(t, bloc+"/ocf", paramsBlock["ocfp_vault_config_slug"])
+	assert.Equal(t, true, paramsBlock["skip_ssl_validation"])
+}
+
 // TestInitPVE_MgmtFileHasCreateEnvAndBoshKit verifies that the mgmt env file
 // has use_create_env: true and kit.name: bosh.
 func TestInitPVE_MgmtFileHasCreateEnvAndBoshKit(t *testing.T) {
