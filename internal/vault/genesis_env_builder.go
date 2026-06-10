@@ -138,6 +138,10 @@ type WriteEnvFileV32Opts struct {
 	KitVersion string
 	// Features is an optional list of kit features written to kit.features.
 	Features []string
+	// Scale is an optional sizing hint written to kit.scale (e.g. "dev").
+	// Some kits (prometheus, doomsday) read kit.scale to short-circuit the
+	// Genesis::Env::scale() director_exodus_lookup recursion.
+	Scale string
 	// Params is written as the top-level params: block when non-nil and non-empty.
 	Params map[string]any
 	// BOSHConfigs is written as the top-level bosh-configs: block when non-nil.
@@ -206,6 +210,7 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 		Version:  kitVersion,
 		IAAS:     opts.IAAS,
 		Features: opts.Features,
+		Scale:    opts.Scale,
 	}
 
 	env := GenesisEnvV32{

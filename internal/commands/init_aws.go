@@ -145,7 +145,66 @@ func initializeAWS(cmd *cobra.Command) error {
 		return err
 	}
 
+	// Co-locate a prometheus monitoring stack on the ocf director with
+	// monitor-cf enabled so Cloud Foundry metrics flow into Grafana.
+	if err := writeMonitoringEnvFile(params.bloc, "aws"); err != nil {
+		return err
+	}
+
 	log.Infow("AWS environment initialized", "bloc", params.bloc)
+
+	return nil
+}
+
+// monitorCFFeature is the prometheus-kit feature that deploys the cf_exporter
+// and firehose_exporter jobs so Cloud Foundry metrics flow into Grafana.
+const monitorCFFeature = "monitor-cf"
+
+// writeMonitoringEnvFile writes the ocf-targeted prometheus monitoring env file
+// for a bloc, with the monitor-cf feature enabled by default.
+//
+// This is a SECOND prometheus stack, co-located on the env-BOSH "ocf" director
+// (genesis.env = <bloc>-ocf) so monitor-cf's firehose_exporter can consume CF's
+// reverse_log_proxy bosh link — cross-deployment links only resolve within a
+// single director. A mgmt-director prometheus (if present) monitors the mgmt
+// director/infra; this one monitors Cloud Foundry.
+//
+// Because the env name equals the CF env name (<bloc>-ocf), the prometheus
+// kit's monitor-cf defaults resolve natively: cf exodus path <bloc>-ocf/cf and
+// CF deployment <bloc>-ocf-cf, both on the same director.
+//
+// Path: $OCFP_HOME/<bloc>/deployments/prometheus/<bloc>-ocf.yml
+//
+// The reserved IP (net/subnets/.../reserved-ips:prometheus_ip) and the distinct
+// cf-grafana/cf-prometheus/cf-alertmanager FQDNs are populated separately in
+// vault, matching how operators tune a mgmt-director prometheus.
+func writeMonitoringEnvFile(bloc, iaas string) error {
+	ocfpHome := config.OcfpHome()
+	if ocfpHome == "" {
+		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
+	}
+
+	envFileName := bloc + "-ocf.yml"
+	envFilePath := filepath.Join(ocfpHome, bloc, "deployments", "prometheus", envFileName)
+
+	opts := vault.WriteEnvFileV32Opts{
+		Path:     envFilePath,
+		EnvName:  "ocf",
+		Bloc:     bloc,
+		IAAS:     iaas,
+		Kit:      "prometheus",
+		Scale:    "dev",
+		Features: []string{"ocfp", "self-signed-cert", monitorCFFeature},
+		Params: map[string]any{
+			"ocfp_vault_config_slug": bloc + "/ocf",
+			"ocfp_env_scale":         "dev",
+			"skip_ssl_validation":    true,
+		},
+	}
+
+	if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
+		return fmt.Errorf("failed to write monitoring env file %s: %w", envFilePath, err)
+	}
 
 	return nil
 }
