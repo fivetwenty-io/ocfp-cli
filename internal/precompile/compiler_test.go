@@ -43,7 +43,6 @@ type fakeDirector struct {
 	present  map[string]bool // "name/version" -> present
 	uploaded []string
 	deployed bool
-	exportTo string // dir where it writes fake tarballs
 }
 
 func (d *fakeDirector) ReleasePresent(_ context.Context, name, version string) (bool, error) {

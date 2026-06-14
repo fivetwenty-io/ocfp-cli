@@ -57,17 +57,6 @@ func (m *gcpMockSafe) findCall(path string) *gcpSetCall {
 	return nil
 }
 
-// findCallsWithPrefix returns all calls whose path starts with prefix.
-func (m *gcpMockSafe) findCallsWithPrefix(prefix string) []gcpSetCall {
-	var out []gcpSetCall
-	for _, c := range m.setMultipleCalls {
-		if len(c.path) >= len(prefix) && c.path[:len(prefix)] == prefix {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // mockSafeError is a sentinel error for injected failures.
 type mockSafeError struct{ path string }
 
@@ -131,7 +120,7 @@ func TestGCP_NewGCPVaultProvider_FieldsSet(t *testing.T) {
 	p := newTestGCPProvider(cfg, mock, "my-bloc")
 
 	require.NotNil(t, p)
-	assert.Same(t, mock, p.Safe.(SafeInterface))
+	assert.Same(t, mock, p.Safe)
 	assert.NotNil(t, p.PathBuilder)
 	assert.Equal(t, "my-bloc", p.BlocName)
 	assert.Same(t, cfg, p.Config)
