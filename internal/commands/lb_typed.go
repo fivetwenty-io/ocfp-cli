@@ -55,14 +55,14 @@ func setupProviderAndManagers(ctx context.Context, configFile, blocName string) 
 
 	cleanup := func() { _ = provider.Cleanup(ctx) }
 
-	lbMgr := provider.LoadBalancer()
+	lbMgr := provider.LoadBalancerManager()
 	if lbMgr == nil {
 		cleanup()
 
 		return nil, nil, nil, nil, ErrProviderLacksLoadBalancerManager
 	}
 
-	netMgr := provider.Network()
+	netMgr := provider.NetworkManager()
 	if netMgr == nil {
 		cleanup()
 
@@ -424,12 +424,12 @@ func executeLBOpsCommand(ctx context.Context, config *opsLBConfig) error {
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	lbMgr := provider.LoadBalancer()
+	lbMgr := provider.LoadBalancerManager()
 	if lbMgr == nil {
 		return ErrProviderLacksLoadBalancerManager
 	}
 
-	netMgr := provider.Network()
+	netMgr := provider.NetworkManager()
 	if netMgr == nil {
 		return ErrProviderLacksNetworkManager
 	}
@@ -743,12 +743,12 @@ func executeLBRoutersCommand(ctx context.Context, config *routersLBConfig) error
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	lbMgr := provider.LoadBalancer()
+	lbMgr := provider.LoadBalancerManager()
 	if lbMgr == nil {
 		return ErrProviderLacksLoadBalancerManager
 	}
 
-	netMgr := provider.Network()
+	netMgr := provider.NetworkManager()
 	if netMgr == nil {
 		return ErrProviderLacksNetworkManager
 	}

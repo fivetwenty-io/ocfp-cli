@@ -66,7 +66,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	}
 
 	// Check floating IPs associated by instance ID
-	fips, err := provider.Network().ListFloatingIPs(ctx, nil)
+	fips, err := provider.NetworkManager().ListFloatingIPs(ctx, nil)
 	if err == nil {
 		for _, fip := range fips {
 			if fip.InstanceID == inst.ID && fip.Address != "" {
@@ -83,7 +83,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	// its private address. The instance returned by findBastionInstance is
 	// the lightweight ListInstances form which won't carry IPs; fetch the
 	// detailed record so we can read whatever the provider knows.
-	detailed, getErr := provider.Compute().GetInstance(ctx, inst.ID)
+	detailed, getErr := provider.ComputeManager().GetInstance(ctx, inst.ID)
 	if getErr != nil {
 		log.Debugf("GetInstance(%s) failed during bastion lookup: %v", inst.ID, getErr)
 	} else if detailed != nil {
@@ -156,7 +156,7 @@ func tryLabelBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, 
 
 		log.Debugf("Label instance discovery: trying key=%s filters=%v", key, filters)
 
-		instances, err := provider.Compute().ListInstances(ctx, filters)
+		instances, err := provider.ComputeManager().ListInstances(ctx, filters)
 		if err != nil {
 			log.Debugf("Label instance discovery: key=%s failed: %v", key, err)
 
@@ -193,7 +193,7 @@ func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, b
 	for _, filters := range listAttempts {
 		log.Debugf("Name instance discovery: listing instances filters=%v", filters)
 
-		instances, err := provider.Compute().ListInstances(ctx, filters)
+		instances, err := provider.ComputeManager().ListInstances(ctx, filters)
 		if err != nil {
 			log.Debugf("Name instance discovery: list with filters=%v failed: %v", filters, err)
 
