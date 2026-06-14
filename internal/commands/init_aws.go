@@ -18,7 +18,7 @@ import (
 // Single-character names are rejected because the pattern requires at least one
 // interior character (so the first and last chars cannot overlap).
 // Examples accepted: "ocfp-aws-us-east-1", "my-bloc", "prod"
-// Examples rejected: "Foo", "-bar", "bar-", "a", "bad name!"
+// Examples rejected: "Foo", "-bar", "bar-", "a", "bad name!".
 var validBlocPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
 
 // ErrBlocFormatInvalid is returned when the resolved bloc value does not match
@@ -202,7 +202,8 @@ func writeMonitoringEnvFile(bloc, iaas string) error {
 		},
 	}
 
-	if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
+	err := vault.WriteEnvFileV32Opts_Write(opts)
+	if err != nil {
 		return fmt.Errorf("failed to write monitoring env file %s: %w", envFilePath, err)
 	}
 
@@ -215,7 +216,8 @@ func writeMonitoringEnvFile(bloc, iaas string) error {
 func persistBlocToState(bloc string) error {
 	configFile := viper.GetString("config")
 
-	if err := config.SetCurrentBloc(bloc, configFile); err != nil {
+	err := config.SetCurrentBloc(bloc, configFile)
+	if err != nil {
 		return fmt.Errorf("failed to persist bloc to state: %w", err)
 	}
 
@@ -227,7 +229,7 @@ func persistBlocToState(bloc string) error {
 //
 // Parameters:
 //   - bloc         OCFP bloc identifier (e.g. "ocfp-aws-us-east-1")
-//   - deployment   deployment slot name: "mgmt" or "ocf"
+//   - deployment   slot name: "mgmt" or "ocf"
 //   - kit          Genesis kit name: "bosh" for mgmt, "cf" for ocf
 //   - useCreateEnv true for BOSH proto-director (create-env) deployments
 //
@@ -244,7 +246,8 @@ func writeAWSDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) 
 
 	const iaas = "aws"
 
-	if err := vault.WriteEnvFileV32(envFilePath, deployment, useCreateEnv, bloc, iaas, kit); err != nil {
+	err := vault.WriteEnvFileV32(envFilePath, deployment, useCreateEnv, bloc, iaas, kit)
+	if err != nil {
 		return fmt.Errorf("failed to write genesis env file %s: %w", envFilePath, err)
 	}
 

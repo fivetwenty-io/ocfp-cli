@@ -501,7 +501,8 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 
 	// Stop the VM first if running; log but do not abort if stop fails —
 	// the delete API handles powered-on VMs on most PVE versions.
-	if stopErr := m.StopInstance(ctx, id); stopErr != nil {
+	stopErr := m.StopInstance(ctx, id)
+	if stopErr != nil {
 		logger.WithOperation("DeleteInstance").Debugf("stop before delete vmid=%s: %v", id, stopErr)
 	}
 
@@ -855,7 +856,8 @@ func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vm
 	// are logged-and-continued because the VM is still useful even with no
 	// SGs attached, but the operator will need to fix the firewall manually.
 	if len(req.SecurityGroupIDs) > 0 {
-		if err := m.applyVMSecurityGroups(ctx, node, vmid, req.SecurityGroupIDs); err != nil {
+		err := m.applyVMSecurityGroups(ctx, node, vmid, req.SecurityGroupIDs)
+		if err != nil {
 			logger.Warnf("Failed to attach security groups to VM %d: %v", vmid, err)
 		}
 	}
@@ -1111,7 +1113,7 @@ func pveEncodeSSHKeys(keys string) string {
 // pair we hand it. If the mask excludes the gateway (e.g. ip=10.64.80.3/24
 // with gw=10.64.64.1), the guest has no on-link route to the gateway and
 // drops all egress on the floor. PVE SDN simple zones present one L3 subnet
-// per vnet — that vnet CIDR is what the bastion must see as "local."
+// per vnet — that vnet CIDR is what the bastion must see as "local.".
 func buildPVEIPConfig(req *cpi.InstanceRequest) string {
 	if req.StaticPrivateIP == "" {
 		return "ip=dhcp"
@@ -1173,6 +1175,7 @@ func (m *ComputeManager) applyVMSecurityGroups(ctx context.Context, node string,
 		if _, postErr := m.client.pveClient.PostCtx(ctx, rulesPath, params); postErr != nil {
 			if strings.Contains(postErr.Error(), "already exists") || strings.Contains(postErr.Error(), "duplicate") {
 				logger.Debugf("Security group %s already bound to VM %d", pveGroup, vmid)
+
 				continue
 			}
 

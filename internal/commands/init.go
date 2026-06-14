@@ -114,6 +114,7 @@ func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 		"init.reboot":       "reboot",
 		"secrets_backend":   "secrets-backend",
 	})
+
 	_ = viper.BindEnv("secrets_backend", "OCFP_SECRETS_BACKEND")
 }
 
@@ -537,6 +538,7 @@ func appendCompiledPin(args []string, pinPath string) ([]string, error) {
 		if os.IsNotExist(err) {
 			return args, nil
 		}
+
 		return nil, fmt.Errorf("reading compiled-release pin %s: %w", pinPath, err)
 	}
 
@@ -605,6 +607,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	// wins over the director manifest's release stanzas. Guard the stemcell so a
 	// pin built for the wrong stemcell can't strand the director VM.
 	boshPin := filepath.Join(deploymentDir, "manifests", "bosh", "compiled-releases.yml")
+
 	createEnvArgs, err = appendCompiledPin(createEnvArgs, boshPin)
 	if err != nil {
 		return err
@@ -675,6 +678,7 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 
 	// Layer the precompiled-release pin (from `ocfp precompile cf`) last.
 	cfPin := filepath.Join(deploymentDir, "manifests", "cf", "compiled-releases.yml")
+
 	deployArgs, err = appendCompiledPin(deployArgs, cfPin)
 	if err != nil {
 		return err
@@ -718,7 +722,7 @@ func createBOSHManifest(cfg *config.Config, path string, stateMgr *state.Manager
 
 	subnetIDRaw, err := stateMgr.GetOutput(subnetIDKey)
 	if err != nil {
-		return fmt.Errorf("%w: subnet ID output %q missing — %v", ErrBootstrapStateRequired, subnetIDKey, err)
+		return fmt.Errorf("%w: subnet ID output %q missing — %w", ErrBootstrapStateRequired, subnetIDKey, err)
 	}
 
 	subnetID, ok := subnetIDRaw.(string)
@@ -728,7 +732,7 @@ func createBOSHManifest(cfg *config.Config, path string, stateMgr *state.Manager
 
 	boshIPRaw, err := stateMgr.GetOutput(boshIPKey)
 	if err != nil {
-		return fmt.Errorf("%w: BOSH IP output %q missing — %v", ErrBootstrapStateRequired, boshIPKey, err)
+		return fmt.Errorf("%w: BOSH IP output %q missing — %w", ErrBootstrapStateRequired, boshIPKey, err)
 	}
 
 	boshIP, ok := boshIPRaw.(string)

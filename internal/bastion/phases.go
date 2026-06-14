@@ -340,6 +340,7 @@ func (m *Manager) installHelperScripts(ctx context.Context) error {
 		if err != nil {
 			m.log.Warnw("Skipping helper script (source not found)",
 				"name", h.source, "error", err)
+
 			continue
 		}
 

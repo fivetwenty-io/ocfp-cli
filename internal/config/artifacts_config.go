@@ -326,7 +326,8 @@ func mapRawData(r rawArtifactsData) ArtifactsDataConfig {
 func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
 	var raw rawArtifacts
 
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
 		return fmt.Errorf("decoding artifacts config: %w", err)
 	}
 

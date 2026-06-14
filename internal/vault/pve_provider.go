@@ -2,8 +2,10 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,7 +227,8 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 	sm := p.loadStateManager()
 	if sm == nil {
 		// No state? Fall back to old behavior so populate still writes something.
-		if err := p.writeFallbackSubnet(envType); err != nil {
+		err := p.writeFallbackSubnet(envType)
+		if err != nil {
 			return err
 		}
 
@@ -238,7 +241,8 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 	subnets, err := sm.GetResourcesByType("subnet")
 	if err != nil || len(subnets) == 0 {
-		if err := p.writeFallbackSubnet(envType); err != nil {
+		err := p.writeFallbackSubnet(envType)
+		if err != nil {
 			return err
 		}
 
@@ -318,12 +322,14 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 		// the ocfp-* subnets carry the band; the infra subnet keeps cidr/gateway/
 		// dns plus its role keys (bastion_ip/shield_ip/...) but no workload band.
 		if strings.HasPrefix(genesisName, "ocfp-") {
-			if err := p.writeStateReservedBand(sm, envType, genesisName, sub, gateway, roleKeys); err != nil {
+			err := p.writeStateReservedBand(sm, envType, genesisName, sub, gateway, roleKeys)
+			if err != nil {
 				return err
 			}
 		} else if len(roleKeys) > 0 {
 			reservedPath := filepath.Join(subnetPath, "reserved-ips")
-			if err := p.Safe.SetMultiple(reservedPath, roleKeys); err != nil {
+			err := p.Safe.SetMultiple(reservedPath, roleKeys)
+			if err != nil {
 				return fmt.Errorf("failed to write reserved-ip keys for %s: %w", genesisName, err)
 			}
 		}
@@ -372,9 +378,11 @@ func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, ge
 		outputs["reserved_"+stateName+"_available_b"],
 		pveOffsetIP(subnetGateway, 250),
 	)
+
 	if availStart != "" {
 		reserved["available_0"] = availStart
 	}
+
 	if availEnd != "" {
 		reserved["available_1"] = availEnd
 	}
@@ -428,7 +436,8 @@ func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, ge
 	}
 
 	reservedPath := filepath.Join(p.PathBuilder.GetSubnetsPath(envType), genesisName, "reserved-ips")
-	if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
+	err := p.Safe.SetMultiple(reservedPath, reserved)
+	if err != nil {
 		return fmt.Errorf("failed to write reserved-ips band for %s: %w", genesisName, err)
 	}
 
@@ -459,6 +468,7 @@ func getStringProp(props map[string]interface{}, key string) string {
 	if props == nil {
 		return ""
 	}
+
 	if v, ok := props[key].(string); ok {
 		return v
 	}
@@ -514,16 +524,17 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	// subnet refs like 'ocfp-2' for the compilation network) resolves without
 	// special-casing.  All three logical subnets share the same underlying
 	// lvnet bridge — this is conventional for single-vnet PVE deployments.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		subnetPath := p.PathBuilder.GetSubnetPath(envType, "ocfp", i)
-		if err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
+		err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
 			"cidr":       cidr,
 			"cidr_block": cidr,
 			"gateway":    gateway,
 			"dns":        dns,
 			"az":         az,
 			"id":         bridgeID,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("failed to set ocfp-%d subnet entry: %w", i, err)
 		}
 
@@ -550,8 +561,10 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 			reserved["available_0"] = start
 			reserved["available_1"] = end
 		}
+
 		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
-		if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
+		err = p.Safe.SetMultiple(reservedPath, reserved)
+		if err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
 		}
 	}
@@ -572,6 +585,7 @@ func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, s
 	}
 
 	startOctet := pveLastOctet(start)
+
 	endOctet := pveLastOctet(end)
 	if startOctet < 0 || endOctet < 0 || endOctet <= startOctet {
 		// Cannot reason about the band (multi-octet span or parse failure):
@@ -582,6 +596,7 @@ func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, s
 	const subnetCount = 3
 
 	span := endOctet - startOctet + 1
+
 	slice := span / subnetCount
 	if slice < 1 {
 		// Band too small to split; keep it shared rather than emit an empty slice.
@@ -589,6 +604,7 @@ func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, s
 	}
 
 	sliceStart := startOctet + i*slice
+
 	sliceEnd := sliceStart + slice - 1
 	if i == subnetCount-1 {
 		// Last slice absorbs any remainder so the full band is covered.
@@ -602,21 +618,26 @@ func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, s
 // -1 when the input cannot be parsed.
 func pveLastOctet(ip string) int {
 	last := -1
+
 	for i := len(ip) - 1; i >= 0; i-- {
 		if ip[i] == '.' {
 			last = i
+
 			break
 		}
 	}
+
 	if last < 0 || last == len(ip)-1 {
 		return -1
 	}
 
 	octet := 0
+
 	for _, c := range ip[last+1:] {
 		if c < '0' || c > '9' {
 			return -1
 		}
+
 		octet = octet*10 + int(c-'0')
 	}
 
@@ -628,6 +649,7 @@ func pveFirstDNS(dns []string) string {
 	if len(dns) == 0 {
 		return ""
 	}
+
 	return dns[0]
 }
 
@@ -637,20 +659,25 @@ func pveCIDRGateway(cidr string) string {
 	for i := 0; i < len(cidr); i++ {
 		if cidr[i] == '/' {
 			cidr = cidr[:i]
+
 			break
 		}
 	}
 	// Replace last octet with .1.
 	last := -1
+
 	for i := len(cidr) - 1; i >= 0; i-- {
 		if cidr[i] == '.' {
 			last = i
+
 			break
 		}
 	}
+
 	if last <= 0 {
 		return ""
 	}
+
 	return cidr[:last+1] + "1"
 }
 
@@ -658,26 +685,34 @@ func pveCIDRGateway(cidr string) string {
 // Caps at 254 to stay below broadcast.  Returns "" on parse failure.
 func pveOffsetIP(base string, off int) string {
 	last := -1
+
 	for i := len(base) - 1; i >= 0; i-- {
 		if base[i] == '.' {
 			last = i
+
 			break
 		}
 	}
+
 	if last <= 0 || last == len(base)-1 {
 		return ""
 	}
+
 	octet := 0
+
 	for _, c := range base[last+1:] {
 		if c < '0' || c > '9' {
 			return ""
 		}
+
 		octet = octet*10 + int(c-'0')
 	}
+
 	result := octet + off
 	if result < 0 || result > 254 {
 		return ""
 	}
+
 	return fmt.Sprintf("%s%d", base[:last+1], result)
 }
 
@@ -723,9 +758,11 @@ func pveFirstAZ(cfg *config.Config) string {
 	if len(cfg.Nodes) > 0 {
 		return cfg.Nodes[0]
 	}
+
 	if cfg.Region != "" {
 		return cfg.Region
 	}
+
 	return "z1"
 }
 
@@ -769,9 +806,10 @@ func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subne
 		roleKeys[role+"_ip"] = ip
 
 		rolePath := filepath.Join(subnetPath, "reserved-ips", role)
-		if err := p.Safe.SetMultiple(rolePath, map[string]interface{}{
+		err := p.Safe.SetMultiple(rolePath, map[string]interface{}{
 			"ip": ip,
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, fmt.Errorf("failed to write reserved IP for %s/%s: %w", subnetName, role, err)
 		}
 	}
@@ -925,12 +963,14 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 	if envType == "mgmt" && mode != "external" {
 		boshBlobPath := p.PathBuilder.GetSystemBlobstorePath(envType, "bosh", "bosh")
 		region := pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
+
 		bucket := pveFirstNonEmpty(p.BlocName+"-bosh", "bosh-blobs")
-		if err := p.Safe.SetMultiple(boshBlobPath, map[string]interface{}{
+		err := p.Safe.SetMultiple(boshBlobPath, map[string]interface{}{
 			"name":   bucket,
 			"region": region,
 			"mode":   mode,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("failed to set bosh blobstore meta: %w", err)
 		}
 	}
@@ -965,7 +1005,7 @@ func (p *PVEVaultProvider) resolveBlobstoreMode() string {
 // was written, leaving the BOSH director blobstore unconfigured for PVE.
 func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath string) error {
 	if p.BlobstoreEndpoint == "" {
-		return fmt.Errorf("pve blobstore external mode requires --blobstore-endpoint")
+		return errors.New("pve blobstore external mode requires --blobstore-endpoint")
 	}
 
 	region := p.BlobstoreRegion
@@ -1081,7 +1121,8 @@ func (p *PVEVaultProvider) ensureBlobstoreBucket(bucketName string) error {
 		ensurer = s3BucketEnsurer{}
 	}
 
-	if err := ensurer.EnsureBuckets(context.Background(), ep, creds, []artifacts.BucketSpec{{Name: bucketName}}); err != nil {
+	err := ensurer.EnsureBuckets(context.Background(), ep, creds, []artifacts.BucketSpec{{Name: bucketName}})
+	if err != nil {
 		return fmt.Errorf("ensuring blobstore bucket %q exists: %w", bucketName, err)
 	}
 
@@ -1225,7 +1266,8 @@ func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter pro
 	// Store the base FQDN at the shared path (mgmt pass only), mirroring the
 	// other IaaS providers.
 	if fqdnCfg.Base != "" && envType == MgmtEnvType {
-		if err := p.Safe.Set(p.PathBuilder.GetBaseFQDNPath(), "value", fqdnCfg.Base); err != nil {
+		err := p.Safe.Set(p.PathBuilder.GetBaseFQDNPath(), "value", fqdnCfg.Base)
+		if err != nil {
 			return fmt.Errorf("failed to set base FQDN: %w", err)
 		}
 	}
@@ -1436,7 +1478,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 
 	host := p.Config.APIEndpoint
 	if host == "" {
-		return fmt.Errorf("pve configureCPI: api_endpoint (host) is required but not set in config")
+		return errors.New("pve configureCPI: api_endpoint (host) is required but not set in config")
 	}
 
 	node := p.Config.Region
@@ -1446,7 +1488,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	userPassMode := p.Config.Username != "" && p.Config.Password != "" && p.Config.AuthToken == ""
 
 	if !apiTokenMode && !userPassMode {
-		return fmt.Errorf("pve configureCPI: no complete auth configuration found; set (auth_token + token_secret) for API token auth or (username + password) for user/password auth")
+		return errors.New("pve configureCPI: no complete auth configuration found; set (auth_token + token_secret) for API token auth or (username + password) for user/password auth")
 	}
 
 	// All PVE CPI keys read by ~/src/kits/bosh/ocfp/pve/base.yml under
@@ -1477,22 +1519,22 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	// live-derived value should set cf_max_in_flight in the bloc config explicitly.
 	cfMaxInFlight := pveCFMaxInFlight(p.Config)
 	cpiConfig := map[string]interface{}{
-		"cf_max_in_flight": fmt.Sprintf("%d", cfMaxInFlight),
+		"cf_max_in_flight": strconv.Itoa(cfMaxInFlight),
 		"disk_format":      pveDiskFormat(diskStorage),
 		"disk_storage":     diskStorage,
 		"host":             pveHostnameOnly(host),
 		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
 		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "lvnet001"),
 		"node":             node,
-		"port":             fmt.Sprintf("%d", pveCPIPort(host)),
+		"port":             strconv.Itoa(pveCPIPort(host)),
 		"status":           "configured",
 		"stemcell_storage": pveStorageOrDefault(p.Config, "stemcell", "local"),
 		"storage_backend":  pveStorageBackend(diskStorage),
 		"user":             pveCPIUser(p.Config.AuthToken, p.Config.Username),
-		"verify_ssl":       fmt.Sprintf("%t", p.Config.VerifySSL),
+		"verify_ssl":       strconv.FormatBool(p.Config.VerifySSL),
 		"vm_storage":       vmStorage,
-		"vmid_range_end":   fmt.Sprintf("%d", pveVMIDRangeEnd(p.Config)),
-		"vmid_range_start": fmt.Sprintf("%d", pveVMIDRangeStart(p.Config)),
+		"vmid_range_end":   strconv.Itoa(pveVMIDRangeEnd(p.Config)),
+		"vmid_range_start": strconv.Itoa(pveVMIDRangeStart(p.Config)),
 	}
 
 	// password and api_token are mutually exclusive auth modes. The kit's PVE
@@ -1514,7 +1556,8 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		cpiConfig["password"] = p.Config.Password
 	}
 
-	if err := p.Safe.SetMultiple(cpiPath, cpiConfig); err != nil {
+	err := p.Safe.SetMultiple(cpiPath, cpiConfig)
+	if err != nil {
 		return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
 	}
 
@@ -1534,18 +1577,23 @@ func pveHostnameOnly(host string) string {
 	for i := len(host) - 1; i >= 0; i-- {
 		if host[i] == ':' {
 			port := host[i+1:]
+
 			allDigits := port != ""
 			for _, c := range port {
 				if c < '0' || c > '9' {
 					allDigits = false
+
 					break
 				}
 			}
+
 			if allDigits {
 				host = host[:i]
 			}
+
 			break
 		}
+
 		if host[i] == '/' {
 			break
 		}
@@ -1554,6 +1602,7 @@ func pveHostnameOnly(host string) string {
 	if idx := indexOf(host, "/"); idx >= 0 {
 		host = host[:idx]
 	}
+
 	return host
 }
 
@@ -1561,11 +1610,13 @@ func indexOf(s, sub string) int {
 	if len(sub) == 0 || len(sub) > len(s) {
 		return -1
 	}
+
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
 			return i
 		}
 	}
+
 	return -1
 }
 
@@ -1577,21 +1628,27 @@ func pveCPIPort(host string) int {
 	for i := len(host) - 1; i >= 0; i-- {
 		if host[i] == ':' {
 			port := 0
+
 			for _, c := range host[i+1:] {
 				if c < '0' || c > '9' {
 					return defaultPort
 				}
+
 				port = port*10 + int(c-'0')
 			}
+
 			if port > 0 {
 				return port
 			}
+
 			break
 		}
+
 		if host[i] == '/' {
 			break
 		}
 	}
+
 	return defaultPort
 }
 
@@ -1606,11 +1663,14 @@ func pveCPIUser(authToken, username string) string {
 				return authToken[:i]
 			}
 		}
+
 		return authToken
 	}
+
 	if username != "" {
 		return username
 	}
+
 	return "root@pam"
 }
 
@@ -1621,6 +1681,7 @@ func pveFirstNonEmpty(vals ...string) string {
 			return v
 		}
 	}
+
 	return ""
 }
 
@@ -1634,9 +1695,11 @@ func pveCPIVMStorage(cfg *config.Config) string {
 	if cfg.VMStorage != "" {
 		return cfg.VMStorage
 	}
+
 	if cfg.Artifacts.Data.StoragePool != "" {
 		return cfg.Artifacts.Data.StoragePool
 	}
+
 	return "local-lvm"
 }
 
@@ -1652,9 +1715,11 @@ func pveCPIDiskStorage(cfg *config.Config) string {
 	if cfg.DiskStorage != "" {
 		return cfg.DiskStorage
 	}
+
 	if cfg.Artifacts.Data.StoragePool != "" {
 		return cfg.Artifacts.Data.StoragePool
 	}
+
 	return "zfs-1"
 }
 
@@ -1667,6 +1732,7 @@ func pveStorageOrDefault(cfg *config.Config, role, def string) string {
 	if cfg.Artifacts.Data.StoragePool != "" && role == "stemcell" {
 		return cfg.Artifacts.Data.StoragePool
 	}
+
 	return def
 }
 
@@ -1720,6 +1786,7 @@ func pveVMIDRangeStart(cfg *config.Config) int {
 	if cfg == nil || cfg.VmidRangeStart <= 0 {
 		return defaultStart
 	}
+
 	return cfg.VmidRangeStart
 }
 
@@ -1732,6 +1799,7 @@ func pveVMIDRangeEnd(cfg *config.Config) int {
 	if cfg == nil || cfg.VmidRangeEnd <= 0 {
 		return defaultEnd
 	}
+
 	return cfg.VmidRangeEnd
 }
 
@@ -1753,6 +1821,7 @@ func pveCFMaxInFlight(cfg *config.Config) int {
 	// No live query during vault populate (no PVE credentials available).
 	// Resolve with nil querier; falls straight to the default.
 	resolved := capacity.Resolve(context.Background(), nil, "", 0, 0)
+
 	return resolved.MaxInFlight
 }
 
@@ -1795,12 +1864,14 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 	if len(nodes) == 0 && p.Config.Region != "" {
 		nodes = []string{p.Config.Region}
 	}
+
 	if len(nodes) == 0 {
 		p.logger.Warnw("No nodes configured (Nodes slice and Region are both empty), skipping AZ configuration", "env_type", envType)
+
 		return nil
 	}
 
-	for z := 0; z < pveWorkloadAZCount; z++ {
+	for z := range pveWorkloadAZCount {
 		zone := pveAZKeyPrefix + string(rune('a'+z))
 		node := nodes[z%len(nodes)]
 		azPath := p.PathBuilder.GetAZPath(envType, zone)
@@ -1815,7 +1886,8 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 			"status":    "configured",
 		}
 
-		if err := p.Safe.SetMultiple(azPath, azData); err != nil {
+		err := p.Safe.SetMultiple(azPath, azData)
+		if err != nil {
 			return fmt.Errorf("failed to set AZ entry for zone %s: %w", zone, err)
 		}
 

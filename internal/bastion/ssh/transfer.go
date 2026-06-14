@@ -593,6 +593,7 @@ func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []stri
 	}
 
 	cmd := exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
+
 	cmd.Env = append(os.Environ(), "SSHPASS="+tm.client.config.Password)
 
 	return cmd, nil

@@ -42,13 +42,15 @@ func WithResurrectionGate(ctx context.Context, runBosh func(args ...string) erro
 	log := logger.Get()
 
 	// Toggle resurrection off; warn on failure but proceed — deployFn is load-bearing.
-	if err := runBosh("update-resurrection", "off"); err != nil {
+	err := runBosh("update-resurrection", "off")
+	if err != nil {
 		log.Warnw("update-resurrection off failed; continuing with deploy", "error", err)
 	}
 
 	// Restore resurrection on regardless of deployFn outcome.
 	defer func() {
-		if err := runBosh("update-resurrection", "on"); err != nil {
+		err := runBosh("update-resurrection", "on")
+		if err != nil {
 			log.Warnw("update-resurrection on failed; check 'bosh resurrection' before next deploy", "error", err)
 		}
 	}()
@@ -58,7 +60,8 @@ func WithResurrectionGate(ctx context.Context, runBosh func(args ...string) erro
 	// are synchronous and context cancellation is the caller's concern.
 	_ = ctx
 
-	if err := deployFn(); err != nil {
+	err = deployFn()
+	if err != nil {
 		return fmt.Errorf("deploy failed: %w", err)
 	}
 

@@ -88,6 +88,7 @@ func New() *Tracker {
 func (t *Tracker) Track(r Resource) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	t.resources = append(t.resources, r)
 }
 
@@ -107,7 +108,7 @@ func (t *Tracker) Track(r Resource) {
 // deadline. Cleanup itself does not impose a timeout.
 func (t *Tracker) Cleanup(ctx context.Context, callbacks map[ResourceKind]func(ctx context.Context, r Resource) error) error {
 	if ctx == nil {
-		return fmt.Errorf("cleanup: nil context")
+		return errors.New("cleanup: nil context")
 	}
 
 	t.mu.Lock()
@@ -124,16 +125,19 @@ func (t *Tracker) Cleanup(ctx context.Context, callbacks map[ResourceKind]func(c
 
 		if r.CID == "" {
 			log.Printf("cleanup: skip %s with empty CID", kindName(r.Kind))
+
 			continue
 		}
 
 		cb, ok := callbacks[r.Kind]
 		if !ok {
 			log.Printf("cleanup: no callback for kind %s (cid=%q) — skipping", kindName(r.Kind), r.CID)
+
 			continue
 		}
 
-		if err := cb(ctx, r); err != nil {
+		err := cb(ctx, r)
+		if err != nil {
 			log.Printf("cleanup: %s cid=%q: %v", kindName(r.Kind), r.CID, err)
 			errs = append(errs, fmt.Errorf("%s cid=%q: %w", kindName(r.Kind), r.CID, err))
 		} else {

@@ -72,11 +72,13 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 	conn, resp, err := dialer.DialContext(ctx, wsURL, hdr)
 	if resp != nil {
 		defer func() {
-			if cerr := resp.Body.Close(); cerr != nil {
+			cerr := resp.Body.Close()
+			if cerr != nil {
 				logger.Debugf("close websocket upgrade response body: %v", cerr)
 			}
 		}()
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("websocket dial: %w", err)
 	}
@@ -85,6 +87,7 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 
 	if err := sess.authenticate(tokenUser(tokenHeader), ticket); err != nil {
 		_ = conn.Close()
+
 		return nil, fmt.Errorf("termproxy auth: %w", err)
 	}
 
@@ -107,9 +110,11 @@ func (s *TermproxySession) Send(b []byte) error {
 		fmt.Fprintf(os.Stderr, "[termproxy ws->pve %d bytes] %q\n", len(framed), framed)
 	}
 
-	if err := s.conn.WriteMessage(websocket.BinaryMessage, framed); err != nil {
+	err := s.conn.WriteMessage(websocket.BinaryMessage, framed)
+	if err != nil {
 		return fmt.Errorf("termproxy write: %w", err)
 	}
+
 	return nil
 }
 
@@ -186,6 +191,7 @@ func (s *TermproxySession) Drain(window time.Duration) string {
 
 done:
 	out := s.buf.String()
+
 	s.buf.Reset()
 
 	return out
@@ -226,9 +232,11 @@ func (s *TermproxySession) Close() error {
 	s.closed = true
 	_ = s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 
-	if err := s.conn.Close(); err != nil {
+	err := s.conn.Close()
+	if err != nil {
 		return fmt.Errorf("termproxy websocket close: %w", err)
 	}
+
 	return nil
 }
 
@@ -286,13 +294,15 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 		return "", "", fmt.Errorf("termproxy ticket request: %w", err)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			logger.Debugf("close ticket response body: %v", err)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
+
 		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b)) //nolint:err113 // descriptive error, not caller-testable
 	}
 

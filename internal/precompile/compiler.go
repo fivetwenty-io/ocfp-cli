@@ -42,18 +42,24 @@ func (c *Compiler) ResolveDirector(ctx context.Context, rels []Release, sc Stemc
 		res := Resolution{Release: r, Source: SourceUpstream, URL: r.UpstreamCompiledURL, SHA: r.UpstreamCompiledSHA}
 		if opts.DryRun {
 			out = append(out, res)
+
 			continue
 		}
+
 		if res.SHA == "" {
 			sha, err := RemoteSHA256(ctx, c.HTTP, r.UpstreamCompiledURL)
 			if err != nil {
 				return nil, err
 			}
+
 			res.SHA = sha
 		}
+
 		c.logf("upstream: %s/%s", r.Name, r.Version)
+
 		out = append(out, res)
 	}
+
 	return out, nil
 }
 
@@ -63,6 +69,7 @@ func (c *Compiler) ResolveDirector(ctx context.Context, rels []Release, sc Stemc
 // over all releases that need it, then exports each tarball concurrently.
 func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stemcell, opts Options) ([]Resolution, error) {
 	resolved := make(map[string]Resolution, len(rels))
+
 	var toCompile []Release
 
 	for _, r := range rels {
@@ -74,9 +81,11 @@ func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stem
 			if err != nil {
 				return nil, err
 			}
+
 			if ok && sha != "" {
 				c.logf("present: %s/%s", r.Name, r.Version)
 				resolved[r.Name] = Resolution{Release: r, Source: SourcePresent, URL: url, SHA: sha}
+
 				continue
 			}
 		}
@@ -84,21 +93,27 @@ func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stem
 		if r.UpstreamCompiledURL != "" {
 			if opts.DryRun {
 				resolved[r.Name] = Resolution{Release: r, Source: SourceUpstream, URL: url}
+
 				continue
 			}
+
 			res, err := c.fetchUpstream(ctx, r, key, url)
 			if err != nil {
 				return nil, err
 			}
+
 			c.logf("fetched upstream: %s/%s", r.Name, r.Version)
 			resolved[r.Name] = res
+
 			continue
 		}
 
 		if opts.DryRun {
 			resolved[r.Name] = Resolution{Release: r, Source: SourceCompiled, URL: url}
+
 			continue
 		}
+
 		toCompile = append(toCompile, r)
 	}
 
@@ -107,6 +122,7 @@ func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stem
 		if err != nil {
 			return nil, err
 		}
+
 		for name, res := range compiled {
 			resolved[name] = res
 		}
@@ -119,8 +135,10 @@ func (c *Compiler) ResolveBlobstore(ctx context.Context, rels []Release, sc Stem
 		if !ok {
 			return nil, fmt.Errorf("internal: release %s/%s left unresolved", r.Name, r.Version)
 		}
+
 		out = append(out, res)
 	}
+
 	return out, nil
 }
 
@@ -135,6 +153,7 @@ func (c *Compiler) fetchUpstream(ctx context.Context, r Release, key, url string
 	if err != nil {
 		return Resolution{}, err
 	}
+
 	return Resolution{Release: r, Source: SourceUpstream, URL: url, SHA: sha}, nil
 }
 
@@ -150,14 +169,19 @@ func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell
 		if err != nil {
 			return nil, err
 		}
+
 		if present {
 			c.logf("source present: %s/%s", r.Name, r.Version)
+
 			continue
 		}
+
 		if r.UpstreamSourceURL == "" {
 			return nil, fmt.Errorf("release %s/%s: no source url to upload for compilation", r.Name, r.Version)
 		}
+
 		c.logf("uploading source: %s/%s", r.Name, r.Version)
+
 		if err := c.Director.UploadRelease(ctx, r.UpstreamSourceURL, r.UpstreamSourceSHA); err != nil {
 			return nil, err
 		}
@@ -167,12 +191,14 @@ func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell
 	if err != nil {
 		return nil, err
 	}
+
 	manPath := filepath.Join(c.WorkDir, c.Deployment+".yml")
 	if err := os.WriteFile(manPath, man, 0o600); err != nil {
 		return nil, fmt.Errorf("writing compile manifest: %w", err)
 	}
 
 	c.logf("compiling %d release(s) against %s (no-VM deploy)", len(rels), sc)
+
 	if err := c.Director.Deploy(ctx, c.Deployment, manPath); err != nil {
 		return nil, err
 	}
@@ -186,13 +212,17 @@ func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell
 		if err != nil {
 			return nil, fmt.Errorf("mktemp for %s: %w", r.Name, err)
 		}
+
 		tarball, err := c.Director.ExportRelease(ctx, c.Deployment, r.Name, r.Version, sc, dir)
 		if err != nil {
 			_ = os.RemoveAll(dir)
+
 			return nil, err
 		}
+
 		sha, err := UploadCompiledFile(ctx, c.S3, c.Bucket, key, tarball)
 		_ = os.RemoveAll(dir)
+
 		if err != nil {
 			return nil, err
 		}
@@ -200,5 +230,6 @@ func (c *Compiler) compileBatch(ctx context.Context, rels []Release, sc Stemcell
 		results[r.Name] = Resolution{Release: r, Source: SourceCompiled, URL: url, SHA: sha}
 		c.logf("compiled+uploaded: %s/%s", r.Name, r.Version)
 	}
+
 	return results, nil
 }

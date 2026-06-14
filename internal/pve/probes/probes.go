@@ -64,5 +64,6 @@ func RunAll(ctx context.Context, probes ...Probe) Result {
 			return r
 		}
 	}
+
 	return Result{OK: true}
 }

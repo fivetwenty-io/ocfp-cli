@@ -7,6 +7,7 @@ package cfgloader
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -163,6 +164,7 @@ func Load(yamlPath string, _ BoshInt) (*Config, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %s: %w", yamlPath, err)
 	}
+
 	if raw == nil {
 		return nil, fmt.Errorf("config file does not contain a YAML mapping: %s", yamlPath)
 	}
@@ -180,6 +182,7 @@ func Load(yamlPath string, _ BoshInt) (*Config, error) {
 		// tier1 key is present but null/wrong type — every required key is missing.
 		tier1Raw = map[string]interface{}{}
 	}
+
 	for _, key := range RequiredTier1Keys() {
 		if _, ok := tier1Raw[key]; !ok {
 			return nil, fmt.Errorf("missing required config key: tier1.%s  (file: %s)", key, yamlPath)
@@ -191,6 +194,7 @@ func Load(yamlPath string, _ BoshInt) (*Config, error) {
 	if tier2Raw == nil {
 		tier2Raw = map[string]interface{}{}
 	}
+
 	for _, key := range RequiredTier2Keys() {
 		if _, ok := tier2Raw[key]; !ok {
 			return nil, fmt.Errorf("missing required config key: tier2.%s  (file: %s)", key, yamlPath)
@@ -238,6 +242,7 @@ func SynthesizeCPIConfig(cfg *Config, boshInt BoshInt) (map[string]any, error) {
 	if cfg == nil {
 		panic("cfgloader.SynthesizeCPIConfig: cfg must not be nil")
 	}
+
 	if boshInt == nil {
 		panic("cfgloader.SynthesizeCPIConfig: boshInt must not be nil")
 	}
@@ -249,6 +254,7 @@ func SynthesizeCPIConfig(cfg *Config, boshInt BoshInt) (map[string]any, error) {
 		if err != nil {
 			return "", fmt.Errorf("bosh int failed for path %q in %s: %w", path, varsFile, err)
 		}
+
 		return val, nil
 	}
 
@@ -256,34 +262,42 @@ func SynthesizeCPIConfig(cfg *Config, boshInt BoshInt) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	portRaw, err := fetch("/pve_port")
 	if err != nil {
 		return nil, err
 	}
+
 	user, err := fetch("/pve_user")
 	if err != nil {
 		return nil, err
 	}
+
 	node, err := fetch("/pve_node")
 	if err != nil {
 		return nil, err
 	}
+
 	vmStorage, err := fetch("/pve_vm_storage")
 	if err != nil {
 		return nil, err
 	}
+
 	diskStorage, err := fetch("/pve_disk_storage")
 	if err != nil {
 		return nil, err
 	}
+
 	stemcellStorage, err := fetch("/pve_stemcell_storage")
 	if err != nil {
 		return nil, err
 	}
+
 	isoStorage, err := fetch("/pve_iso_storage")
 	if err != nil {
 		return nil, err
 	}
+
 	networkBridgePVE, err := fetch("/pve_network_bridge")
 	if err != nil {
 		return nil, err
@@ -292,10 +306,12 @@ func SynthesizeCPIConfig(cfg *Config, boshInt BoshInt) (map[string]any, error) {
 	if _, err := fetch("/pve_verify_ssl"); err != nil {
 		return nil, err
 	}
+
 	apiToken, err := fetch("/pve_api_token")
 	if err != nil {
 		return nil, err
 	}
+
 	password, err := fetch("/pve_password")
 	if err != nil {
 		return nil, err
@@ -309,15 +325,17 @@ func SynthesizeCPIConfig(cfg *Config, boshInt BoshInt) (map[string]any, error) {
 
 	// Port coercion: absent/empty → 8006; present non-integer → error.
 	port := 8006
+
 	trimmedPort := strings.TrimSpace(portRaw)
 	if trimmedPort != "" && !strings.HasPrefix(trimmedPort, "<dry-run:") {
 		n := 0
-		if _, scanErr := fmt.Sscan(trimmedPort, &n); scanErr != nil || fmt.Sprint(n) != trimmedPort {
+		if _, scanErr := fmt.Sscan(trimmedPort, &n); scanErr != nil || strconv.Itoa(n) != trimmedPort {
 			return nil, fmt.Errorf(
 				"pve_port value %q in %s is not a valid integer",
 				portRaw, varsFile,
 			)
 		}
+
 		port = n
 	}
 

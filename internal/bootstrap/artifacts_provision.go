@@ -117,7 +117,8 @@ func (m *Manager) provisionArtifactsViaSSH(ctx context.Context, in pveclient.Art
 // the PVE-9.x-compatible replacement for cloud-init user-data delivery, which
 // the snippet-upload block makes impossible.
 func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsProvisionConn, script string) error {
-	if err := m.waitArtifactsSSHReady(ctx, conn); err != nil {
+	err := m.waitArtifactsSSHReady(ctx, conn)
+	if err != nil {
 		return fmt.Errorf("artifacts ssh not reachable: %w", err)
 	}
 
@@ -128,12 +129,14 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 	cmd.Stdin = strings.NewReader(script)
 
 	var stdout, stderr bytes.Buffer
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	logger.Infof("Provisioning artifacts RustFS over SSH via bastion %s -> %s", conn.BastionHost, conn.ArtifactsHost)
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	if err != nil {
 		return fmt.Errorf("provision script failed: %w (stderr tail: %s)", err, tailString(stderr.String(), 800))
 	}
 

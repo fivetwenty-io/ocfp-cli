@@ -250,6 +250,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 	dest := fmt.Sprintf("%s@%s:%s", user, host, artifactsRemoteScript)
 
 	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, false, proxyOpt)
+
 	log.Infof("Copying artifacts provision script to %s", host)
 
 	err := executeSCP(context.Background(), scpCmd)

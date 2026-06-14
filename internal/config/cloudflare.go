@@ -18,8 +18,8 @@ var ErrCloudflareServiceIncomplete = errors.New("cloudflare: service ingress ent
 // CNAME. Hostnames under an existing edge-cert-covered wildcard (e.g.
 // *.system.<domain>) reuse that cert; others require an ACM/Total-TLS cert.
 type ServiceIngress struct {
-	Hostname string `json:"hostname"      mapstructure:"hostname"      yaml:"hostname"`
-	Service  string `json:"service"       mapstructure:"service"       yaml:"service"`
+	Hostname string `json:"hostname" mapstructure:"hostname" yaml:"hostname"`
+	Service  string `json:"service"  mapstructure:"service"  yaml:"service"`
 	// NoTLSVerify disables origin TLS verification (self-signed origin).
 	NoTLSVerify *bool `json:"no_tls_verify,omitempty" mapstructure:"no_tls_verify" yaml:"no_tls_verify,omitempty"`
 }
@@ -75,14 +75,17 @@ func (c *CloudflareConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
+
 	if c.APIToken != "" && c.APITokenVaultPath != "" {
 		return ErrCloudflareAPITokenConflict
 	}
+
 	for _, s := range c.Services {
 		if s.Hostname == "" || s.Service == "" {
 			return ErrCloudflareServiceIncomplete
 		}
 	}
+
 	return nil
 }
 
@@ -95,15 +98,19 @@ func mergeCloudflareDefaults(bloc *Config, defaults *CloudflareConfig) {
 	if bloc == nil || defaults == nil {
 		return
 	}
+
 	if bloc.Cloudflare == nil {
 		bloc.Cloudflare = cloneCloudflareConfig(defaults)
+
 		return
 	}
+
 	merged := bloc.Cloudflare
 	if merged.APIToken == "" && merged.APITokenVaultPath == "" {
 		merged.APIToken = defaults.APIToken
 		merged.APITokenVaultPath = defaults.APITokenVaultPath
 	}
+
 	merged.Zone = firstSetString(merged.Zone, defaults.Zone)
 	merged.TunnelName = firstSetString(merged.TunnelName, defaults.TunnelName)
 	merged.Origin = firstSetString(merged.Origin, defaults.Origin)
@@ -111,15 +118,18 @@ func mergeCloudflareDefaults(bloc *Config, defaults *CloudflareConfig) {
 	merged.SystemDomain = firstSetString(merged.SystemDomain, defaults.SystemDomain)
 	merged.SSHHostname = firstSetString(merged.SSHHostname, defaults.SSHHostname)
 	merged.SSHOrigin = firstSetString(merged.SSHOrigin, defaults.SSHOrigin)
+
 	merged.OriginServerName = firstSetString(merged.OriginServerName, defaults.OriginServerName)
 	if merged.Enabled == nil && defaults.Enabled != nil {
 		v := *defaults.Enabled
 		merged.Enabled = &v
 	}
+
 	if merged.OriginNoTLSVerify == nil && defaults.OriginNoTLSVerify != nil {
 		v := *defaults.OriginNoTLSVerify
 		merged.OriginNoTLSVerify = &v
 	}
+
 	if len(merged.Services) == 0 && len(defaults.Services) > 0 {
 		merged.Services = cloneServiceIngress(defaults.Services)
 	}
@@ -131,6 +141,7 @@ func cloneServiceIngress(src []ServiceIngress) []ServiceIngress {
 	if len(src) == 0 {
 		return nil
 	}
+
 	out := make([]ServiceIngress, len(src))
 	for i, s := range src {
 		out[i] = s
@@ -139,6 +150,7 @@ func cloneServiceIngress(src []ServiceIngress) []ServiceIngress {
 			out[i].NoTLSVerify = &v
 		}
 	}
+
 	return out
 }
 
@@ -146,15 +158,19 @@ func cloneCloudflareConfig(src *CloudflareConfig) *CloudflareConfig {
 	if src == nil {
 		return nil
 	}
+
 	clone := *src
 	if src.Enabled != nil {
 		v := *src.Enabled
 		clone.Enabled = &v
 	}
+
 	if src.OriginNoTLSVerify != nil {
 		v := *src.OriginNoTLSVerify
 		clone.OriginNoTLSVerify = &v
 	}
+
 	clone.Services = cloneServiceIngress(src.Services)
+
 	return &clone
 }

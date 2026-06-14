@@ -1,6 +1,7 @@
 package precompile
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -13,20 +14,23 @@ import (
 // releases to register (their source must already be uploaded to the director).
 func RenderCompileManifest(name string, rels []Release, sc Stemcell) ([]byte, error) {
 	if name == "" {
-		return nil, fmt.Errorf("compile manifest: empty deployment name")
+		return nil, errors.New("compile manifest: empty deployment name")
 	}
+
 	if len(rels) == 0 {
-		return nil, fmt.Errorf("compile manifest: no releases")
+		return nil, errors.New("compile manifest: no releases")
 	}
 
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", name)
 	b.WriteString("releases:\n")
+
 	for _, r := range rels {
 		fmt.Fprintf(&b, "- name: %s\n", r.Name)
 		fmt.Fprintf(&b, "  version: %q\n", r.Version)
 	}
+
 	b.WriteString("stemcells:\n")
 	b.WriteString("- alias: default\n")
 	fmt.Fprintf(&b, "  os: %s\n", sc.OS)

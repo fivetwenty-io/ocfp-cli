@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,7 +126,8 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 	}
 
 	for _, deployment := range []string{"mgmt", "ocf"} {
-		if err := writePVEOpsFiles(ocfpHome, params.bloc, deployment); err != nil {
+		err := writePVEOpsFiles(ocfpHome, params.bloc, deployment)
+		if err != nil {
 			return err
 		}
 	}
@@ -160,6 +162,7 @@ func resolvePVEDatacenter(bloc string, cfg *config.Config) string {
 // which guarantees the prefix is present and the remainder is non-empty.
 func pveDatacenterFromBloc(bloc string) string {
 	const prefix = "ocfp-pve-"
+
 	return strings.TrimPrefix(bloc, prefix)
 }
 
@@ -208,7 +211,8 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 		}
 	}
 
-	if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
+	err := vault.WriteEnvFileV32Opts_Write(opts)
+	if err != nil {
 		return fmt.Errorf("failed to write genesis env file %s: %w", envFilePath, err)
 	}
 
@@ -228,32 +232,38 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 // strings (enforced by resolveInitPVEParams before this is called).
 func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
 	if ocfpHome == "" {
-		return fmt.Errorf("writePVEOpsFiles: ocfpHome must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("writePVEOpsFiles: ocfpHome must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if bloc == "" {
-		return fmt.Errorf("writePVEOpsFiles: bloc must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("writePVEOpsFiles: bloc must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if deployment == "" {
-		return fmt.Errorf("writePVEOpsFiles: deployment must not be empty") //nolint:err113 // descriptive error, not caller-testable
+		return errors.New("writePVEOpsFiles: deployment must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	base := filepath.Join(ocfpHome, bloc, "deployments", deployment)
 
 	opsDir := filepath.Join(base, "ops")
-	if err := os.MkdirAll(opsDir, 0o750); err != nil {
+	err := os.MkdirAll(opsDir, 0o750)
+	if err != nil {
 		return fmt.Errorf("writePVEOpsFiles: create ops dir %q: %w", opsDir, err)
 	}
 
-	if err := opsfiles.WriteToDeploymentsDir(opsDir); err != nil {
+	err = opsfiles.WriteToDeploymentsDir(opsDir)
+	if err != nil {
 		return fmt.Errorf("writePVEOpsFiles: write ops files for %s/%s: %w", bloc, deployment, err)
 	}
 
 	rcDir := filepath.Join(base, "runtime-configs")
-	if err := os.MkdirAll(rcDir, 0o750); err != nil {
+	err = os.MkdirAll(rcDir, 0o750)
+	if err != nil {
 		return fmt.Errorf("writePVEOpsFiles: create runtime-configs dir %q: %w", rcDir, err)
 	}
 
-	if err := opsfiles.WriteRuntimeConfigToDir(rcDir); err != nil {
+	err = opsfiles.WriteRuntimeConfigToDir(rcDir)
+	if err != nil {
 		return fmt.Errorf("writePVEOpsFiles: write runtime-config for %s/%s: %w", bloc, deployment, err)
 	}
 

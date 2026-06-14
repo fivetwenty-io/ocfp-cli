@@ -68,6 +68,7 @@ func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) S
 	if cf != nil && cf.TunnelToken != "" {
 		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
 	}
+
 	sku, err := json.Marshal(skuMap)
 	if err != nil {
 		// Marshalling fixed-shape data shouldn't realistically fail; if it

@@ -15,7 +15,7 @@ type Endpoint struct {
 	Region        string
 	PathStyle     bool
 	CACert        string // empty when TLS is disabled
-	SkipTLSVerify bool   `yaml:"skip_tls_verify" json:"skip_tls_verify"` // operators using self-signed certs must set this explicitly
+	SkipTLSVerify bool   `json:"skip_tls_verify" yaml:"skip_tls_verify"` // operators using self-signed certs must set this explicitly
 }
 
 // VaultWriter persists artifacts blobstore credentials and metadata to vault.

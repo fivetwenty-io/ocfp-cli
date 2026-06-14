@@ -41,13 +41,15 @@ func WriteToDeploymentsDir(dir string) error {
 		return errors.New("opsfiles: WriteToDeploymentsDir: dir must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	err := os.MkdirAll(dir, 0o750)
+	if err != nil {
 		return fmt.Errorf("opsfiles: create directory %q: %w", dir, err)
 	}
 
 	for name, content := range All() {
 		dest := filepath.Join(dir, name)
-		if err := os.WriteFile(dest, []byte(content), 0o600); err != nil {
+		err := os.WriteFile(dest, []byte(content), 0o600)
+		if err != nil {
 			return fmt.Errorf("opsfiles: write %q: %w", dest, err)
 		}
 	}
@@ -63,12 +65,14 @@ func WriteRuntimeConfigToDir(dir string) error {
 		return errors.New("opsfiles: WriteRuntimeConfigToDir: dir must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	err := os.MkdirAll(dir, 0o750)
+	if err != nil {
 		return fmt.Errorf("opsfiles: create directory %q: %w", dir, err)
 	}
 
 	dest := filepath.Join(dir, "pve-guest-agent.yml")
-	if err := os.WriteFile(dest, []byte(PVEGuestAgentRuntimeConfig), 0o600); err != nil {
+	err = os.WriteFile(dest, []byte(PVEGuestAgentRuntimeConfig), 0o600)
+	if err != nil {
 		return fmt.Errorf("opsfiles: write %q: %w", dest, err)
 	}
 

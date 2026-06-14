@@ -26,6 +26,7 @@ func CompiledKey(r Release, sc Stemcell) string {
 // lack wildcard TLS for virtual-hosted-style (bucket.host) addressing.
 func HTTPSURL(endpoint, bucket, key string) string {
 	base := strings.TrimRight(endpoint, "/")
+
 	return fmt.Sprintf("%s/%s/%s", base, bucket, key)
 }
 
@@ -34,6 +35,7 @@ func HTTPSURL(endpoint, bucket, key string) string {
 func slug(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
+
 	for _, r := range s {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
@@ -43,5 +45,6 @@ func slug(s string) string {
 			b.WriteRune('-')
 		}
 	}
+
 	return b.String()
 }
