@@ -1809,19 +1809,6 @@ func (m *Manager) setupAPTRepositories(_ctx context.Context) error {
 	return nil
 }
 
-// filterEnabledSnaps returns only enabled snap packages.
-func filterEnabledSnaps(snaps []provision.SnapPackage) []provision.SnapPackage {
-	var enabled []provision.SnapPackage
-
-	for _, s := range snaps {
-		if s.Enabled {
-			enabled = append(enabled, s)
-		}
-	}
-
-	return enabled
-}
-
 // filterEnabledBinaryTools returns only enabled binary tools.
 func filterEnabledBinaryTools(tools []provision.BinaryTool) []provision.BinaryTool {
 	var enabled []provision.BinaryTool

@@ -87,11 +87,3 @@ type Options struct {
 	// Stemcell overrides DefaultStemcell; zero value falls back to DefaultStemcell.
 	Stemcell Stemcell
 }
-
-// stemcell returns the effective stemcell for the options.
-func (o Options) stemcell() Stemcell {
-	if o.Stemcell.OS != "" && o.Stemcell.Version != "" {
-		return o.Stemcell
-	}
-	return DefaultStemcell
-}
