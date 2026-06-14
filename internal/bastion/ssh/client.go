@@ -235,29 +235,31 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		return fmt.Errorf("failed to listen on local port %d: %w", localPort, err)
 	}
 
+	// Close the listener when the context is cancelled so the blocking
+	// Accept below unblocks and the accept goroutine can exit promptly.
+	go func() {
+		<-ctx.Done()
+		if err := listener.Close(); err != nil {
+			c.log.Debugw("Closing tunnel listener on context cancel", "error", err)
+		}
+	}()
+
 	// Handle tunnel connections
 	go func() {
-		defer func() {
-			err := listener.Close()
-			if err != nil {
-				c.log.Warnw("Failed to close listener", "error", err)
-			}
-		}()
-
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				conn, err := listener.Accept()
-				if err != nil {
-					c.log.Errorw("Failed to accept connection", "error", err)
-
-					continue
+			conn, err := listener.Accept()
+			if err != nil {
+				// A failed Accept means the listener is closed (context
+				// cancelled) or otherwise unusable. Exit instead of
+				// busy-spinning on a permanent error.
+				if ctx.Err() == nil {
+					c.log.Errorw("Stopping tunnel: accept failed", "error", err)
 				}
 
-				go c.handleTunnelConnection(ctx, conn, remotePort)
+				return
 			}
+
+			go c.handleTunnelConnection(ctx, conn, remotePort)
 		}
 	}()
 
