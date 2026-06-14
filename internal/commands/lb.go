@@ -228,7 +228,7 @@ func createLoadBalancer(ctx context.Context, cfg *config.Config, opts *lbCreateO
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -386,7 +386,7 @@ func setupLBProvider(ctx context.Context) (cpi.NetworkManager, error) {
 		return nil, fmt.Errorf("failed to initialize provider: %w", err)
 	}
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return nil, ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -769,7 +769,7 @@ func runLBAddServiceCmd(lbName, serviceIP string, port, targetPort, weight int, 
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}

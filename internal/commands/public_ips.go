@@ -119,7 +119,7 @@ func setupStackitPublicIPLister(ctx context.Context, cfg *config.Config) (*publi
 		return nil, fmt.Errorf("failed to initialize provider: %w", err)
 	}
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return nil, ErrNetworkManagerNotAvailableForProvider(cfg.Provider)
 	}

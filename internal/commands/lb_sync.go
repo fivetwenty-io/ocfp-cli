@@ -400,12 +400,12 @@ func executeLBSyncCommand(ctx context.Context, config *syncLBConfig) error {
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	lbMgr := provider.LoadBalancer()
+	lbMgr := provider.LoadBalancerManager()
 	if lbMgr == nil {
 		return ErrProviderLacksLoadBalancerManager
 	}
 
-	netMgr := provider.Network()
+	netMgr := provider.NetworkManager()
 	if netMgr == nil {
 		return ErrProviderLacksNetworkManager
 	}

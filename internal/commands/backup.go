@@ -967,7 +967,7 @@ func uploadToS3(ctx context.Context, cfg *config.Config, localPath, destination 
 
 	defer func() { _ = provider.Cleanup(ctx) }()
 
-	storage := provider.Storage()
+	storage := provider.StorageManager()
 	if storage == nil {
 		return ErrProviderDoesNotSupportStorageOperations
 	}
