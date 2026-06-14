@@ -178,7 +178,7 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, dryRun 
 	log := logger.Get()
 	log.Info("Configuring security groups")
 
-	security := provider.Security()
+	security := provider.SecurityManager()
 	if security == nil {
 		return ErrProviderDoesNotSupportSecurityMgmt
 	}
@@ -250,7 +250,7 @@ func configureRoutes(ctx context.Context, provider cpi.Provider, dryRun bool) er
 	log := logger.Get()
 	log.Info("Configuring network routes")
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -281,7 +281,7 @@ func configureFloatingIPs(ctx context.Context, provider cpi.Provider, blocName s
 	log := logger.Get()
 	log.Info("Configuring floating IPs")
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -352,7 +352,7 @@ func configureBastion(ctx context.Context, cfg *config.Config, provider cpi.Prov
 	log := logger.Get()
 	log.Info("Configuring bastion host")
 
-	if provider.Compute() == nil {
+	if provider.ComputeManager() == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
 
@@ -407,7 +407,7 @@ func resolveBastionPublicIP(ctx context.Context, provider cpi.Provider, inst *cp
 	}
 
 	// Check floating IPs associated by instance ID
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ""
 	}

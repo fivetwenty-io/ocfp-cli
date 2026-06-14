@@ -1195,7 +1195,7 @@ func formatMetadataForDisplay(tags map[string]string) string {
 }
 
 func (m *TeardownManager) discoverComputeResources(ctx context.Context, tagFilter map[string]string, resources *[]*ResourceToDelete, log logger.Logger) {
-	compute := m.provider.Compute()
+	compute := m.provider.ComputeManager()
 	if compute == nil {
 		return
 	}
@@ -1258,7 +1258,7 @@ func (m *TeardownManager) discoverComputeResources(ctx context.Context, tagFilte
 }
 
 func (m *TeardownManager) discoverStorageResources(ctx context.Context, tagFilter map[string]string, resources *[]*ResourceToDelete, log logger.Logger) {
-	storage := m.provider.Storage()
+	storage := m.provider.StorageManager()
 	if storage == nil {
 		return
 	}
@@ -1343,7 +1343,7 @@ func (m *TeardownManager) discoverStorageResources(ctx context.Context, tagFilte
 }
 
 func (m *TeardownManager) discoverNetworkResources(ctx context.Context, tagFilter map[string]string, resources *[]*ResourceToDelete, log logger.Logger) {
-	network := m.provider.Network()
+	network := m.provider.NetworkManager()
 	if network == nil {
 		return
 	}
@@ -1541,7 +1541,7 @@ func (m *TeardownManager) discoverNetworkInterfaces(ctx context.Context, network
 }
 
 func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateResources []*ResourceToDelete, allResources *[]*ResourceToDelete, log logger.Logger) {
-	network := m.provider.Network()
+	network := m.provider.NetworkManager()
 	if network == nil {
 		return
 	}
@@ -1606,7 +1606,7 @@ func (m *TeardownManager) discoverSubnetsForNetworks(ctx context.Context, stateR
 //
 //nolint:funlen // NIC discovery with deduplication and property mapping is inherently detailed
 func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Context, stateResources []*ResourceToDelete, allResources *[]*ResourceToDelete, log logger.Logger) {
-	network := m.provider.Network()
+	network := m.provider.NetworkManager()
 	if network == nil {
 		return
 	}
@@ -1683,7 +1683,7 @@ func (m *TeardownManager) discoverNetworkInterfacesForNetworks(ctx context.Conte
 }
 
 func (m *TeardownManager) discoverSecurityResources(ctx context.Context, tagFilter map[string]string, resources *[]*ResourceToDelete, log logger.Logger) {
-	security := m.provider.Security()
+	security := m.provider.SecurityManager()
 	if security == nil {
 		return
 	}
@@ -1745,7 +1745,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 	resources := make([]*ResourceToDelete, 0, NukeModeResourcesBufferSize)
 
 	// List ALL instances
-	if compute := m.provider.Compute(); compute != nil {
+	if compute := m.provider.ComputeManager(); compute != nil {
 		instances, err := compute.ListInstances(ctx, nil)
 		if err == nil {
 			for _, instance := range instances {
@@ -1762,7 +1762,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 	}
 
 	// List ALL volumes
-	if storage := m.provider.Storage(); storage != nil {
+	if storage := m.provider.StorageManager(); storage != nil {
 		volumes, err := storage.ListVolumes(ctx, nil)
 		if err == nil {
 			for _, volume := range volumes {
@@ -1779,7 +1779,7 @@ func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*Resource
 	}
 
 	// List ALL networks
-	if network := m.provider.Network(); network != nil {
+	if network := m.provider.NetworkManager(); network != nil {
 		networks, err := network.ListNetworks(ctx, nil)
 		if err == nil {
 			for _, net := range networks {
@@ -2133,7 +2133,7 @@ func (m *TeardownManager) confirmDeletion(resourceCount int) bool {
 }
 
 func (m *TeardownManager) deleteComputeResource(ctx context.Context, resource *ResourceToDelete) error {
-	compute := m.provider.Compute()
+	compute := m.provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
@@ -2152,7 +2152,7 @@ func (m *TeardownManager) deleteComputeResource(ctx context.Context, resource *R
 }
 
 func (m *TeardownManager) deleteStorageResource(ctx context.Context, resource *ResourceToDelete) error {
-	storage := m.provider.Storage()
+	storage := m.provider.StorageManager()
 	if storage == nil {
 		return ErrProviderDoesNotSupportStorageMgmt
 	}
@@ -2263,7 +2263,7 @@ func (m *TeardownManager) deleteCredentialsGroup(ctx context.Context, storage cp
 }
 
 func (m *TeardownManager) deleteNetworkResource(ctx context.Context, resource *ResourceToDelete) error {
-	network := m.provider.Network()
+	network := m.provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -2387,7 +2387,7 @@ func (m *TeardownManager) deleteSubnet(ctx context.Context, network cpi.NetworkM
 }
 
 func (m *TeardownManager) deleteSecurityResource(ctx context.Context, resource *ResourceToDelete) error {
-	security := m.provider.Security()
+	security := m.provider.SecurityManager()
 	if security == nil {
 		return ErrProviderDoesNotSupportSecurityMgmt
 	}
@@ -2512,7 +2512,7 @@ func pveCheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger
 }
 
 func (m *TeardownManager) deleteKeyPairResource(ctx context.Context, resource *ResourceToDelete) error {
-	compute := m.provider.Compute()
+	compute := m.provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}

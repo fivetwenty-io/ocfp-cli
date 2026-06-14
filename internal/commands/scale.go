@@ -259,7 +259,7 @@ func scaleRouters(ctx context.Context, provider cpi.Provider, cfg *config.Config
 		return nil
 	}
 
-	compute := provider.Compute()
+	compute := provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
@@ -363,7 +363,7 @@ func scaleCells(ctx context.Context, provider cpi.Provider, cfg *config.Config, 
 		return nil
 	}
 
-	compute := provider.Compute()
+	compute := provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
@@ -485,7 +485,7 @@ func scaleLoadBalancer(ctx context.Context, provider cpi.Provider, count int, dr
 		return nil
 	}
 
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
@@ -661,7 +661,7 @@ func renderScalePlan(ctx context.Context, resource string, target int, format st
 }
 
 func buildRouterScalePlan(ctx context.Context, planTable *ui.Table, provider cpi.Provider, cfg *config.Config, target int) error {
-	compute := provider.Compute()
+	compute := provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
@@ -685,7 +685,7 @@ func buildRouterScalePlan(ctx context.Context, planTable *ui.Table, provider cpi
 }
 
 func buildCellScalePlan(ctx context.Context, planTable *ui.Table, provider cpi.Provider, cfg *config.Config, target int) error {
-	compute := provider.Compute()
+	compute := provider.ComputeManager()
 	if compute == nil {
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
@@ -709,7 +709,7 @@ func buildCellScalePlan(ctx context.Context, planTable *ui.Table, provider cpi.P
 }
 
 func buildLBScalePlan(ctx context.Context, planTable *ui.Table, provider cpi.Provider, target int) error {
-	network := provider.Network()
+	network := provider.NetworkManager()
 	if network == nil {
 		return ErrProviderDoesNotSupportNetworkMgmt
 	}
