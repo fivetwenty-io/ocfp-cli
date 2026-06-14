@@ -132,20 +132,11 @@ func (v *Validator) PreMigrationHealthCheck(inceptionPath, targetPath string) (*
 		return result, fmt.Errorf("inception vault validation failed: %w", err)
 	}
 
-	// Check target vault accessibility
+	// Check target vault accessibility. Failures are recorded on result.
 	v.validateTargetVault(targetPath, result)
 
-	if err != nil {
-		return result, fmt.Errorf("target vault validation failed: %w", err)
-	}
-
-	// Check for active BOSH deployments
+	// Check for active BOSH deployments. Failures are recorded on result.
 	v.checkActiveBOSHDeployments(result)
-
-	if err != nil {
-		v.logger.Warnw("BOSH deployment check failed", "error", err)
-		result.AddWarning("Could not verify BOSH deployment status")
-	}
 
 	// Check for conflicting secrets
 	err = v.checkSecretConflicts(inceptionPath, targetPath, result)
