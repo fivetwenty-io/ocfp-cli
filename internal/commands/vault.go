@@ -874,7 +874,7 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 	// Parse seal key: "Your Vault Seal Key is <key>" or "Vault Seal Key is <key>"
 	sealKey := extractSealKey(outputStr)
 	if sealKey != "" {
-		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode)
+		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) //nolint:gosec // G703: path is the OCFP-managed vault output dir
 		if err != nil {
 			return fmt.Errorf("failed to write unseal key: %w", err)
 		}

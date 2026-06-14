@@ -164,6 +164,8 @@ func NewCircuitBreaker(threshold int, resetTimeout time.Duration) *CircuitBreake
 
 // setClock replaces the clock used by this CircuitBreaker.
 // Intended for use in tests only.
+//
+//nolint:unused // injected by common_test.go to drive deterministic time
 func (cb *CircuitBreaker) setClock(c clock) {
 	cb.clk = c
 }

@@ -1286,12 +1286,12 @@ func (m *Manager) removeBlocSpecificVaultFiles() int {
 
 // removeFileIfExists removes a file if it exists and returns true if removed.
 func (m *Manager) removeFileIfExists(path, description string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Stat(path) //nolint:gosec // G703: path is a config-derived OCFP-managed file
 	if err != nil {
 		return false
 	}
 
-	err = os.Remove(path)
+	err = os.Remove(path) //nolint:gosec // G703: path is a config-derived OCFP-managed file
 	if err != nil {
 		m.logger.Warnw("Failed to remove "+description, "file", path, "error", err)
 
@@ -1305,12 +1305,12 @@ func (m *Manager) removeFileIfExists(path, description string) bool {
 
 // removeDirIfExists removes a directory if it exists and returns true if removed.
 func (m *Manager) removeDirIfExists(path, description string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Stat(path) //nolint:gosec // G703: path is a config-derived OCFP-managed dir
 	if err != nil {
 		return false
 	}
 
-	err = os.RemoveAll(path)
+	err = os.RemoveAll(path) //nolint:gosec // G703: path is a config-derived OCFP-managed dir
 	if err != nil {
 		m.logger.Warnw("Failed to remove "+description, "dir", path, "error", err)
 

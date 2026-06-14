@@ -254,6 +254,7 @@ func asList(raw json.RawMessage) ([]map[string]interface{}, error) {
 	}
 
 	var items []map[string]interface{}
+
 	err := json.Unmarshal(raw, &items)
 	if err != nil {
 		return nil, fmt.Errorf("parse response list: %w", err)

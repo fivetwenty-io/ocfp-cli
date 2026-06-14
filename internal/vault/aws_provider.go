@@ -136,7 +136,7 @@ func (a *AWSVaultProvider) SaveConfigToVault(_reporter providers.ProgressReporte
 	a.logger.Info("Saving OCFP configuration to vault")
 
 	// Convert config to JSON
-	jsonConfig, err := json.Marshal(a.Config) //nolint:musttag // Config struct has json tags
+	jsonConfig, err := json.Marshal(a.Config) //nolint:musttag,gosec // Config has json tags; G117: intentional secret serialization to vault
 	if err != nil {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}

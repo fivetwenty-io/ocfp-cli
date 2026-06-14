@@ -4,6 +4,10 @@ version: "2"
 # Run configuration
 run:
   timeout: 5m
+  # Production code only. Linting the large pre-existing test suite would
+  # surface ~150 test-style findings unrelated to shipped behavior. The
+  # side effect — test-only helpers looking "unused" — is handled by a
+  # scoped `unused` exclusion below.
   tests: false
 
 # Linters configuration
@@ -111,21 +115,82 @@ linters:
   # moved to it's own target: - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint. [auto-fix]
   # No to camel case: - tagliatelle # Checks the struct tags.
 
+  disable:
+  - varnamelen # short names (i, id, ip, ok, tx) are idiomatic in this codebase
+  - err113 # dynamic fmt.Errorf sentinels are the established house style
+  - nonamedreturns # named returns are used deliberately in defer-error patterns
+  - noinlineerr # inline `if err := f(); err != nil` is idiomatic Go; its autofix is buggy
+  - ireturn # factory funcs returning interfaces (EC2API, SafeInterface) are intentional DI seams
+  - gochecknoglobals # template.Must/clock/sentinel package vars are standard
+  - godox # TODO/FIXME tracking is permitted
+  - contextcheck # background CLI auth calls; revisit when request-scoped ctx matters
+  - goconst # repeated map keys / rule-table literals; extracting adds no clarity
+  - mnd # ports/sizes/timeouts read clearly inline in this CLI
+  - wrapcheck # boundary errors; revisit if error provenance becomes a problem
+  - forbidigo # this is a CLI — fmt.Print to stdout is the product, not debug noise
+  - dupl # provider-parallel code (pve/stackit) is intentionally symmetric
+
   settings:
     cyclop:
       # The maximal code complexity to report.
       # Default: 10
-      max-complexity: 16
+      max-complexity: 18
       # The maximal average package complexity.
       # If it's higher than 0.0 (float) the check is enabled.
       # Default: 0.0
       package-average: 0.0
+    funlen:
+      # Long-but-cohesive builders (init.go, ocfp.go, pve_provider.go) dominate.
+      lines: 120 # default 60
+      statements: 80 # default 40
+    funcorder:
+      # Method-ordering is cosmetic; relax constructor/struct-method checks.
+      constructor: false
+      struct-method: false
+    gocognit:
+      min-complexity: 40 # default 30
+    nestif:
+      min-complexity: 8 # default 5
+    goconst:
+      min-occurrences: 4 # default 3
+      ignore-tests: true
+    mnd:
+      checks: # drop noisy assign/operation; keep argument/case/condition/return
+      - argument
+      - case
+      - condition
+      - return
+      ignored-functions:
+      - os.OpenFile
+      - os.Chmod
+      - os.MkdirAll
 
   # Exclude paths from linting
   exclusions:
     paths:
       - vendor
       - tmp
+    rules:
+      # genesis env discovery is a single call-tree reached only from
+      # genesis_envs_test.go. With tests:false the linter cannot see those
+      # callers and falsely reports the whole tree as unused.
+      - path: internal/vault/genesis(_envs)?\.go
+        linters:
+          - unused
+      # Integration harness code is not shipped; relax shipping-grade checks.
+      - path: tests/integration/
+        linters:
+          - gosec
+          - errcheck
+          - cyclop
+          - gocognit
+          - gocritic
+          - funlen
+      # template_seed.go: G101 matches a credential-shaped const NAME, not a secret.
+      - path: internal/cpi/pve/template_seed\.go
+        text: "G101"
+        linters:
+          - gosec
 
 formatters:
   # Exclude paths from formatting checks

@@ -137,7 +137,7 @@ func (q *RESTQuerier) NodeStatus(ctx context.Context, node string) (*NodeStatus,
 		return nil, fmt.Errorf("pve/capacity: HTTP GET %s: %w", url, err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("pve/capacity: HTTP GET %s: unexpected status %d", url, resp.StatusCode) //nolint:err113 // descriptive error, not caller-testable

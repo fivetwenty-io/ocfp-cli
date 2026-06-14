@@ -214,6 +214,8 @@ func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter 
 //
 // When no bootstrap state is present the method falls back to the legacy
 // single-blob write so `populate` does not fail in stateless contexts.
+//
+//nolint:cyclop // state-driven vs legacy-fallback subnet writer; branches map to distinct vault layouts
 func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "subnets-" + envType
 	phaseStart := time.Now()
@@ -328,6 +330,7 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 			}
 		} else if len(roleKeys) > 0 {
 			reservedPath := filepath.Join(subnetPath, "reserved-ips")
+
 			err := p.Safe.SetMultiple(reservedPath, roleKeys)
 			if err != nil {
 				return fmt.Errorf("failed to write reserved-ip keys for %s: %w", genesisName, err)
@@ -436,6 +439,7 @@ func (p *PVEVaultProvider) writeStateReservedBand(sm *state.Manager, envType, ge
 	}
 
 	reservedPath := filepath.Join(p.PathBuilder.GetSubnetsPath(envType), genesisName, "reserved-ips")
+
 	err := p.Safe.SetMultiple(reservedPath, reserved)
 	if err != nil {
 		return fmt.Errorf("failed to write reserved-ips band for %s: %w", genesisName, err)
@@ -526,6 +530,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	// lvnet bridge — this is conventional for single-vnet PVE deployments.
 	for i := range 3 {
 		subnetPath := p.PathBuilder.GetSubnetPath(envType, "ocfp", i)
+
 		err := p.Safe.SetMultiple(subnetPath, map[string]interface{}{
 			"cidr":       cidr,
 			"cidr_block": cidr,
@@ -563,6 +568,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		}
 
 		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
+
 		err = p.Safe.SetMultiple(reservedPath, reserved)
 		if err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
@@ -806,6 +812,7 @@ func (p *PVEVaultProvider) writeReservedIPs(sm *state.Manager, subnetPath, subne
 		roleKeys[role+"_ip"] = ip
 
 		rolePath := filepath.Join(subnetPath, "reserved-ips", role)
+
 		err := p.Safe.SetMultiple(rolePath, map[string]interface{}{
 			"ip": ip,
 		})
@@ -965,6 +972,7 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 		region := pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
 
 		bucket := pveFirstNonEmpty(p.BlocName+"-bosh", "bosh-blobs")
+
 		err := p.Safe.SetMultiple(boshBlobPath, map[string]interface{}{
 			"name":   bucket,
 			"region": region,

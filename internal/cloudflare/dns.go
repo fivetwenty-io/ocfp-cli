@@ -23,6 +23,7 @@ func (c *Client) UpsertCNAME(ctx context.Context, zoneID, name, target string) e
 	list := "/zones/" + zoneID + "/dns_records?" + q.Encode()
 
 	var existing []dnsRecord
+
 	err := c.do(ctx, http.MethodGet, list, nil, &existing)
 	if err != nil {
 		return fmt.Errorf("list dns %q: %w", name, err)
@@ -38,6 +39,7 @@ func (c *Client) UpsertCNAME(ctx context.Context, zoneID, name, target string) e
 		}
 
 		path := "/zones/" + zoneID + "/dns_records/" + existing[0].ID
+
 		err := c.do(ctx, http.MethodPut, path, payload, nil)
 		if err != nil {
 			return fmt.Errorf("update dns %q: %w", name, err)
@@ -62,6 +64,7 @@ func (c *Client) DeleteCNAME(ctx context.Context, zoneID, name string) error {
 	list := "/zones/" + zoneID + "/dns_records?" + q.Encode()
 
 	var existing []dnsRecord
+
 	err := c.do(ctx, http.MethodGet, list, nil, &existing)
 	if err != nil {
 		return fmt.Errorf("list dns %q: %w", name, err)
@@ -72,6 +75,7 @@ func (c *Client) DeleteCNAME(ctx context.Context, zoneID, name string) error {
 	}
 
 	path := "/zones/" + zoneID + "/dns_records/" + existing[0].ID
+
 	err = c.do(ctx, http.MethodDelete, path, nil, nil)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("delete dns %q: %w", name, err)
