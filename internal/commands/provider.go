@@ -662,7 +662,8 @@ func setAWSAccessKeyID(ctx context.Context, profileName, accessKeyID string, log
 func setAWSSecretAccessKey(ctx context.Context, profileName, secretAccessKey string, log *zap.Logger) error {
 	log.Debug("Setting AWS secret access key")
 
-	if err := writeAWSCredentialsKey(profileName, "aws_secret_access_key", secretAccessKey); err != nil {
+	err := writeAWSCredentialsKey(profileName, "aws_secret_access_key", secretAccessKey)
+	if err != nil {
 		log.Error("Failed to configure AWS secret access key", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS secret access key: %w", err)
@@ -695,7 +696,8 @@ func setAWSRegion(ctx context.Context, profileName, region string, log *zap.Logg
 func setAWSSessionToken(ctx context.Context, profileName, sessionToken string, log *zap.Logger) error {
 	log.Debug("Setting AWS session token")
 
-	if err := writeAWSCredentialsKey(profileName, "aws_session_token", sessionToken); err != nil {
+	err := writeAWSCredentialsKey(profileName, "aws_session_token", sessionToken)
+	if err != nil {
 		log.Error("Failed to configure AWS session token", zap.Error(err))
 
 		return fmt.Errorf("failed to configure AWS session token: %w", err)
@@ -726,7 +728,8 @@ func writeAWSCredentialsKey(profileName, key, value string) error {
 	credFile := home + "/.aws/credentials"
 
 	// Ensure .aws directory exists.
-	if mkErr := os.MkdirAll(home+"/.aws", 0700); mkErr != nil { //nolint:mnd // 0700 = owner rwx
+	mkErr := os.MkdirAll(home+"/.aws", 0700)
+	if mkErr != nil { //nolint:mnd // 0700 = owner rwx
 		return fmt.Errorf("cannot create .aws directory: %w", mkErr)
 	}
 
@@ -874,7 +877,8 @@ func loginGCP(log *zap.Logger) error {
 		log.Info("Using service account credentials", zap.String("path", credPath))
 
 		// Try to activate using gcloud if available
-		if err := runner.LookPath("gcloud"); err == nil {
+		err := runner.LookPath("gcloud")
+		if err == nil {
 			output, err := runner.Run(context.Background(), "gcloud", "auth", "activate-service-account", "--key-file", credPath)
 			if err != nil {
 				log.Warn("gcloud auth failed (may not be required)", zap.Error(err), zap.String("output", string(output)))

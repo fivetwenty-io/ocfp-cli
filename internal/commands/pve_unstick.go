@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,7 +64,9 @@ func qgaPingOnce(ctx context.Context, sshArgs []string, pveHost string, vmid int
 	args = append(args, target, "qm", "guest", "cmd", vmidStr, "ping")
 
 	cmd := exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // vmid is a validated integer; sshArgs and pveHost are operator-provided
+
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
@@ -96,7 +99,8 @@ func qgaPingUntil(
 	last := ""
 
 	for {
-		if err := ctx.Err(); err != nil {
+		err := ctx.Err()
+		if err != nil {
 			return false, last
 		}
 
@@ -172,10 +176,10 @@ type boshVMRow struct {
 }
 
 // ErrVMIDNonInteger is returned when the VMID string is not a valid integer.
-var ErrVMIDNonInteger = fmt.Errorf("PVE VMID must be an integer (check that 'bosh vms' returned a numeric vm_cid)")
+var ErrVMIDNonInteger = errors.New("PVE VMID must be an integer (check that 'bosh vms' returned a numeric vm_cid)")
 
 // ErrVMIDNonPositive is returned when the VMID is zero or negative.
-var ErrVMIDNonPositive = fmt.Errorf("PVE VMID must be a positive integer (got zero or negative value)")
+var ErrVMIDNonPositive = errors.New("PVE VMID must be a positive integer (got zero or negative value)")
 
 // coerceVMID parses raw into a positive integer VMID.
 //
@@ -215,24 +219,30 @@ func coerceVMID(raw string) (int, error) {
 func resolveVMIDForInstance(ctx context.Context, boshEnv, boshDeployment, instanceRef string) (int, error) {
 	args := []string{"-e", boshEnv, "-d", boshDeployment, "vms", "--json"}
 	cmd := exec.CommandContext(ctx, "bosh", args...) //nolint:gosec // args are from trusted config/flags
+
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		return 0, fmt.Errorf("bosh vms failed: %w", err)
 	}
 
 	var result boshVMsOutput
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	err = json.Unmarshal(out.Bytes(), &result)
+	if err != nil {
 		return 0, fmt.Errorf("failed to parse bosh vms output: %w", err)
 	}
 
 	rawCID := ""
+
 	for _, table := range result.Tables {
 		for _, row := range table.Rows {
 			if matchesInstanceRef(row.Instance, instanceRef) {
 				rawCID = row.VMCID
+
 				break
 			}
 		}
@@ -289,11 +299,14 @@ func matchesInstanceRef(boshInstance, ref string) bool {
 // Failure mode: exec error or empty result → descriptive error.
 func resolvePVEHostFromVars(ctx context.Context, varsFile string) (string, error) {
 	cmd := exec.CommandContext(ctx, "bosh", "int", varsFile, "--path=/pve_host") //nolint:gosec // varsFile is operator-provided path
+
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		return "", fmt.Errorf("failed to resolve pve_host from %q: %w", varsFile, err)
 	}
 
@@ -346,7 +359,9 @@ func unstickAgent(ctx context.Context, pveHost string, vmid int, sshUnsafe bool)
 	log.Infow("restarting bosh-agent via qemu-guest-agent", "pve_host", pveHost, "vmid", vmid)
 
 	cmd := exec.CommandContext(ctx, "ssh", allArgs...) //nolint:gosec // args constructed from validated integer + trusted config
+
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
 
@@ -356,7 +371,7 @@ func unstickAgent(ctx context.Context, pveHost string, vmid int, sshUnsafe bool)
 	// qm guest exec returns JSON; PVE signals success via "exitcode" : 0 in the output.
 	// Check both the ssh exit code and the PVE-level exit code.
 	if err != nil || !strings.Contains(combined, `"exitcode" : 0`) {
-		return fmt.Errorf("qm guest exec failed (ssh rc: %v):\n%s", err, combined) //nolint:err113 // descriptive error, not caller-testable
+		return fmt.Errorf("qm guest exec failed (ssh rc: %w):\n%s", err, combined) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if !strings.Contains(combined, "active") {

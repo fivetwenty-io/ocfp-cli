@@ -26,7 +26,7 @@ type LookupResult struct {
 // Lookup resolves the artifacts VM by checking state first, then falling back
 // to a provider tag query. Returns nil + nil error when no artifacts VM exists.
 func Lookup(ctx context.Context, sm *state.Manager, provider cpi.Provider, blocName string) (*LookupResult, error) {
-	vmName := fmt.Sprintf("%s-artifacts", blocName)
+	vmName := blocName + "-artifacts"
 
 	if r, err := sm.GetResource(ResourceType, vmName); err == nil && r != nil {
 		return resultFromResource(r), nil
@@ -63,6 +63,7 @@ func resultFromResource(r *state.Resource) *LookupResult {
 		if !ok {
 			return ""
 		}
+
 		return v
 	}
 

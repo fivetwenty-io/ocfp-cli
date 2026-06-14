@@ -521,6 +521,7 @@ func (om *OCFPManager) GenerateOCFPToolVerificationScript(_ctx context.Context) 
 	if om.config.SecretsBackendName() == "vault" {
 		requiredTools = append(requiredTools, "vault")
 	}
+
 	lines := make([]string, 0, scriptBufferOCFPBase+scriptBufferOCFPPerTool*len(requiredTools))
 
 	lines = append(lines, "# Verify bastion-init prerequisites")

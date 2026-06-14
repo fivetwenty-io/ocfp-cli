@@ -461,6 +461,7 @@ func splitPVEEndpoint(endpoint string) (host string, port int, protocol string) 
 		h, p, err := splitHostPort(endpoint)
 		if err == nil {
 			host = h
+
 			if n, err := strconv.Atoi(p); err == nil {
 				port = n
 			}

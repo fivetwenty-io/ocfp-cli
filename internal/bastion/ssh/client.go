@@ -239,7 +239,9 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 	// Accept below unblocks and the accept goroutine can exit promptly.
 	go func() {
 		<-ctx.Done()
-		if err := listener.Close(); err != nil {
+
+		err := listener.Close()
+		if err != nil {
 			c.log.Debugw("Closing tunnel listener on context cancel", "error", err)
 		}
 	}()
@@ -628,6 +630,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 			}
 
 			cmd = exec.CommandContext(ctx, "sshpass", sshpassArgs...) // #nosec G204 - command is validated above
+
 			cmd.Env = append(os.Environ(), "SSHPASS="+c.config.Password)
 		} else {
 			c.log.Warn("sshpass not available for password authentication")

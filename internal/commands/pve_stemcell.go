@@ -23,6 +23,7 @@ func defaultStemcellUploadBuilder(boshEnv, sha1Override string) (stemcell.RunBos
 	runBosh := func(ctx context.Context, args ...string) ([]byte, error) {
 		full := append([]string{"-e", boshEnv}, args...)
 		cmd := exec.CommandContext(ctx, "bosh", full...) //nolint:gosec // args come from validated flag + positional inputs
+
 		return cmd.Output()
 	}
 
@@ -113,6 +114,7 @@ Pass --sha1 to supply a known checksum and skip the bosh.io HTTP call.`,
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+
 			return runPVEStemcellUpload(cmd, f, args[0], args[1], args[2], builder)
 		},
 	}
@@ -163,6 +165,7 @@ func runPVEStemcellUpload(
 
 	if uploaded {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already uploaded; skipping  name=%s version=%s\n", name, version)
+
 		return nil
 	}
 

@@ -76,6 +76,7 @@ func (in ArtifactsCloudInitInputs) validate() error {
 // match the nesting depth.
 func indentPEM(n int, pem string) string {
 	prefix := strings.Repeat(" ", n)
+
 	var b strings.Builder
 
 	for _, line := range strings.Split(strings.TrimRight(pem, "\n"), "\n") {
@@ -175,13 +176,15 @@ runcmd:
 // KeyPEM, which are only required when TLSEnabled is true. An error is
 // returned when any required field is empty or zero.
 func RenderArtifactsCloudInit(in ArtifactsCloudInitInputs) (string, error) {
-	if err := in.validate(); err != nil {
+	err := in.validate()
+	if err != nil {
 		return "", err
 	}
 
 	var buf bytes.Buffer
 
-	if err := artifactsCloudInitTmpl.Execute(&buf, in); err != nil {
+	err = artifactsCloudInitTmpl.Execute(&buf, in)
+	if err != nil {
 		return "", fmt.Errorf("render artifacts cloud-init: %w", err)
 	}
 

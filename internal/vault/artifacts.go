@@ -60,15 +60,15 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 	}{
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh"),
-			body: blobstoreEntry(ep, caPEM, fmt.Sprintf("%s-mgmt-bosh", w.BlocName)),
+			body: blobstoreEntry(ep, caPEM, w.BlocName+"-mgmt-bosh"),
 		},
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh"),
-			body: blobstoreEntry(ep, caPEM, fmt.Sprintf("%s-ocf-bosh", w.BlocName)),
+			body: blobstoreEntry(ep, caPEM, w.BlocName+"-ocf-bosh"),
 		},
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "cf", "main"),
-			body: blobstoreEntry(ep, caPEM, fmt.Sprintf("%s-ocf-cf", w.BlocName)),
+			body: blobstoreEntry(ep, caPEM, w.BlocName+"-ocf-cf"),
 		},
 	}
 

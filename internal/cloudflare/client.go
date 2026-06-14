@@ -31,6 +31,7 @@ func NewClient(token string, doer httpDoer) *Client {
 	if doer == nil {
 		doer = &http.Client{Timeout: 30 * time.Second}
 	}
+
 	return &Client{token: token, http: doer}
 }
 
@@ -44,17 +45,21 @@ type apiEnvelope struct {
 // success:false is an error. A 404 returns ErrNotFound so deletes are idempotent.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var rdr io.Reader
+
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal %s %s: %w", method, path, err)
 		}
+
 		rdr = bytes.NewReader(b)
 	}
+
 	req, err := http.NewRequestWithContext(ctx, method, apiBase+path, rdr)
 	if err != nil {
 		return fmt.Errorf("build request %s %s: %w", method, path, err)
 	}
+
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -68,20 +73,26 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound
 	}
+
 	var env apiEnvelope
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &env); err != nil {
+		err := json.Unmarshal(raw, &env)
+		if err != nil {
 			return fmt.Errorf("%s %s: decode: %w (status %d)", method, path, err, resp.StatusCode)
 		}
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !env.Success {
 		return fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, string(raw))
 	}
+
 	if out != nil && len(env.Result) > 0 {
-		if err := json.Unmarshal(env.Result, out); err != nil {
+		err := json.Unmarshal(env.Result, out)
+		if err != nil {
 			return fmt.Errorf("%s %s: decode result: %w", method, path, err)
 		}
 	}
+
 	return nil
 }
 
@@ -109,11 +120,14 @@ func (c *Client) ResolveAccountAndZone(ctx context.Context, zone string) (accoun
 	if err = c.do(ctx, http.MethodGet, "/zones?name="+url.QueryEscape(zone), nil, &zones); err != nil {
 		return "", "", fmt.Errorf("resolve zone %q: %w", zone, err)
 	}
+
 	if len(zones) == 0 {
 		return "", "", fmt.Errorf("cloudflare: zone %q not found (token access?)", zone)
 	}
+
 	if zones[0].Account.ID == "" {
 		return "", "", fmt.Errorf("cloudflare: zone %q response has no account id", zone)
 	}
+
 	return zones[0].Account.ID, zones[0].ID, nil
 }

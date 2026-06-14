@@ -80,6 +80,7 @@ func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
 	case ep.CACert != "":
 		// Operator supplied a CA bundle — pin to that pool.
 		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
 		pool, _ := x509.SystemCertPool()
 		if pool == nil {
 			pool = x509.NewCertPool()

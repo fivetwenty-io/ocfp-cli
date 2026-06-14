@@ -591,7 +591,8 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
-	if cerr := m.teardownCloudflare(ctx); cerr != nil {
+	cerr := m.teardownCloudflare(ctx)
+	if cerr != nil {
 		log.Warnf("cloudflare teardown: %v", cerr)
 	}
 
@@ -637,19 +638,24 @@ func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
 		return nil
 	}
+
 	cf := m.config.Cloudflare
 
 	safe := cloudflareSafe()
 	if safe == nil {
 		return nil
 	}
+
 	token := vault.ResolveSecretRef(safe, cf.APIToken, cf.APITokenVaultPath)
 	if token == "" {
 		logger.Get().Warn("cloudflare teardown skipped: API token unavailable")
+
 		return nil
 	}
+
 	vp := "secret/config/" + m.options.BlocName + "/cloudflare"
 	tunnelID, _ := safe.GetString(vp, "tunnel_id")
+
 	accountID, _ := safe.GetString(vp, "account_id")
 	if tunnelID == "" || accountID == "" {
 		return nil
@@ -661,22 +667,30 @@ func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 			if name == "" || name == "*." {
 				continue
 			}
-			if derr := client.DeleteCNAME(ctx, zoneID, name); derr != nil {
+
+			derr := client.DeleteCNAME(ctx, zoneID, name)
+			if derr != nil {
 				logger.Get().Warnf("cloudflare dns delete %s: %v", name, derr)
 			}
 		}
 	}
-	if derr := client.DeleteTunnel(ctx, accountID, tunnelID); derr != nil {
+
+	derr := client.DeleteTunnel(ctx, accountID, tunnelID)
+	if derr != nil {
 		logger.Get().Warnf("cloudflare tunnel delete: %v", derr)
 	}
-	if err := safe.SetMultiple(vp, map[string]interface{}{
+
+	err := safe.SetMultiple(vp, map[string]interface{}{
 		"tunnel_id":    "",
 		"tunnel_token": "",
 		"account_id":   "",
-	}); err != nil {
+	})
+	if err != nil {
 		logger.Get().Warnf("cloudflare teardown: failed to clear vault keys: %v", err)
 	}
+
 	logger.Get().Infof("Cloudflare tunnel %s torn down", tunnelID)
+
 	return nil
 }
 
@@ -686,8 +700,10 @@ func cloudflareSafe() vault.SafeInterface {
 	client, err := vault.NewClientFromEnv()
 	if err != nil {
 		logger.Get().Warnf("cloudflare teardown: cannot reach vault: %v", err)
+
 		return nil
 	}
+
 	return vault.NewSafe(client)
 }
 
@@ -1392,6 +1408,7 @@ func (m *TeardownManager) discoverNetworks(ctx context.Context, network cpi.Netw
 		*resources = append(*resources, candidate)
 
 		m.discoverSubnetsForNetwork(ctx, network, net, resources, log)
+
 		included++
 	}
 
@@ -2423,6 +2440,7 @@ func StateIsEmpty(path string) (bool, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
 		}
+
 		return false, fmt.Errorf("teardown StateIsEmpty: read %s: %w", path, err)
 	}
 
@@ -2432,7 +2450,8 @@ func StateIsEmpty(path string) (bool, error) {
 	}
 
 	var data map[string]json.RawMessage
-	if jsonErr := json.Unmarshal(raw, &data); jsonErr != nil {
+	jsonErr := json.Unmarshal(raw, &data)
+	if jsonErr != nil {
 		// Corrupted/truncated: conservative — treat as non-empty so delete-env runs.
 		return false, nil //nolint:nilerr // intentional: malformed → conservative false
 	}
@@ -2449,6 +2468,7 @@ func pveAPIToken(cfg *config.Config) string {
 	if cfg.AuthToken != "" && cfg.TokenSecret != "" {
 		return cfg.AuthToken + "=" + cfg.TokenSecret
 	}
+
 	return ""
 }
 
@@ -2456,21 +2476,23 @@ func pveAPIToken(cfg *config.Config) string {
 // Returns an error when neither token auth nor username/password is present.
 func pveVerifierFromConfig(cfg *config.Config) (*verify.PVEVerifier, error) {
 	if cfg.APIEndpoint == "" {
-		return nil, fmt.Errorf("pve teardown probe: api_endpoint is required in bloc config")
+		return nil, errors.New("pve teardown probe: api_endpoint is required in bloc config")
 	}
 
 	node := cfg.Region
 	if node == "" && len(cfg.Nodes) > 0 {
 		node = cfg.Nodes[0]
 	}
+
 	if node == "" {
-		return nil, fmt.Errorf("pve teardown probe: node (region or nodes[0]) is required in bloc config")
+		return nil, errors.New("pve teardown probe: node (region or nodes[0]) is required in bloc config")
 	}
 
 	apiToken := pveAPIToken(cfg)
 
 	v := verify.NewVerifier(cfg.APIEndpoint, node, apiToken, cfg.Username, cfg.Password)
 	v.VerifySSL = cfg.VerifySSL
+
 	return v, nil
 }
 
@@ -2482,6 +2504,7 @@ func probePVEVMExists(ctx context.Context, cfg *config.Config, nameOrID string) 
 	if err != nil {
 		return false, err
 	}
+
 	return v.VMExists(ctx, nameOrID)
 }
 
@@ -2504,10 +2527,12 @@ func pveCheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger
 	if !exists {
 		log.Infow("teardown: VM already gone, nothing to delete", "nameOrID", nameOrID)
 		_, _ = fmt.Fprintf(os.Stdout, "teardown: VM already gone (nameOrID=%s), nothing to delete\n", nameOrID)
+
 		return true, nil
 	}
 
 	log.Infow("teardown: VM present, proceeding with teardown", "nameOrID", nameOrID)
+
 	return false, nil
 }
 

@@ -122,6 +122,7 @@ func (v *PVEVerifier) realm() string {
 	if v.Realm != "" {
 		return v.Realm
 	}
+
 	return "pam"
 }
 
@@ -131,6 +132,7 @@ func (v *PVEVerifier) usernameWithRealm() string {
 	if strings.Contains(v.Username, "@") {
 		return v.Username
 	}
+
 	return fmt.Sprintf("%s@%s", v.Username, v.realm())
 }
 
@@ -159,6 +161,7 @@ func (v *PVEVerifier) ensureTicket(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("pve verify: build ticket request: %w", err)
 	}
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := v.httpClient().Do(req)
@@ -184,11 +187,13 @@ func (v *PVEVerifier) ensureTicket(ctx context.Context) error {
 	if err = json.Unmarshal(raw, &envelope); err != nil {
 		return fmt.Errorf("pve verify: parse ticket response: %w", err)
 	}
+
 	if envelope.Data.Ticket == "" {
 		return errors.New("pve verify: ticket auth returned empty ticket") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	v.ticket = envelope.Data.Ticket
+
 	return nil
 }
 
@@ -249,7 +254,8 @@ func asList(raw json.RawMessage) ([]map[string]interface{}, error) {
 	}
 
 	var items []map[string]interface{}
-	if err := json.Unmarshal(raw, &items); err != nil {
+	err := json.Unmarshal(raw, &items)
+	if err != nil {
 		return nil, fmt.Errorf("parse response list: %w", err)
 	}
 
@@ -261,6 +267,7 @@ func (v *PVEVerifier) requireNode() (string, error) {
 	if v.Node == "" {
 		return "", errors.New("pve verify: Node is required for this check but was not set") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	return v.Node, nil
 }
 
@@ -275,6 +282,7 @@ func (v *PVEVerifier) VMExists(ctx context.Context, nameOrID string) (bool, erro
 	if err != nil {
 		return false, err
 	}
+
 	if strings.TrimSpace(nameOrID) == "" {
 		return false, errors.New("pve verify VMExists: nameOrID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -299,6 +307,7 @@ func (v *PVEVerifier) VMExists(ctx context.Context, nameOrID string) (bool, erro
 				return true, nil
 			}
 		}
+
 		if name, ok := item["name"]; ok {
 			if strings.TrimSpace(fmt.Sprintf("%v", name)) == want {
 				return true, nil
@@ -373,6 +382,7 @@ func (v *PVEVerifier) SubnetPresent(ctx context.Context, vnetID, subnetCIDR stri
 	if strings.TrimSpace(vnetID) == "" {
 		return false, errors.New("pve verify SubnetPresent: vnetID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if strings.TrimSpace(subnetCIDR) == "" {
 		return false, errors.New("pve verify SubnetPresent: subnetCIDR must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -399,6 +409,7 @@ func (v *PVEVerifier) SubnetPresent(ctx context.Context, vnetID, subnetCIDR stri
 		if storedCIDR == want {
 			return true, nil
 		}
+
 		if strings.Contains(storedID, want) || strings.Contains(storedID, wantDashed) {
 			return true, nil
 		}
@@ -414,6 +425,7 @@ func (v *PVEVerifier) BridgeExists(ctx context.Context, bridge string) (bool, er
 	if err != nil {
 		return false, err
 	}
+
 	if strings.TrimSpace(bridge) == "" {
 		return false, errors.New("pve verify BridgeExists: bridge must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -451,6 +463,7 @@ func (v *PVEVerifier) VolumeExists(ctx context.Context, diskCID string) (bool, e
 	if err != nil {
 		return false, err
 	}
+
 	if strings.TrimSpace(diskCID) == "" {
 		return false, errors.New("pve verify VolumeExists: diskCID must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -459,6 +472,7 @@ func (v *PVEVerifier) VolumeExists(ctx context.Context, diskCID string) (bool, e
 	if idx <= 0 {
 		return false, fmt.Errorf("pve verify VolumeExists: diskCID %q is not '<storage>:<volid>'", diskCID) //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	storage := diskCID[:idx]
 
 	path := fmt.Sprintf(pveAPIPathContent, url.PathEscape(node), url.PathEscape(storage))

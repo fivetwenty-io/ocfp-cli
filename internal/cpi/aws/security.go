@@ -67,7 +67,8 @@ func (m *SecurityManager) CreateSecurityGroup(ctx context.Context, req *cpi.Crea
 
 	groupID := aws.ToString(createResp.GroupId)
 
-	if ruleErr := m.configureSecurityGroupRules(ctx, ec2Client, groupID, req.Rules); ruleErr != nil {
+	ruleErr := m.configureSecurityGroupRules(ctx, ec2Client, groupID, req.Rules)
+	if ruleErr != nil {
 		return nil, fmt.Errorf("security group %s created but rule configuration failed: %w", groupID, ruleErr)
 	}
 
@@ -383,7 +384,8 @@ func (m *SecurityManager) handleCreateSecurityGroupError(ctx context.Context, er
 		// Ensure rules match (add any missing rules); idempotent on duplicates.
 		if len(req.Rules) > 0 {
 			for _, rule := range req.Rules {
-				if addErr := m.AddSecurityRule(ctx, existingGroup.ID, rule); addErr != nil && !IsAlreadyExists(addErr) {
+				addErr := m.AddSecurityRule(ctx, existingGroup.ID, rule)
+				if addErr != nil && !IsAlreadyExists(addErr) {
 					return nil, fmt.Errorf("reconcile rule %s:%s on existing group %s: %w",
 						rule.Direction, rule.Protocol, existingGroup.ID, addErr)
 				}
@@ -576,7 +578,8 @@ func (m *SecurityManager) configureSecurityGroupRules(ctx context.Context, ec2Cl
 	var errs []error
 
 	for _, rule := range rules {
-		if addErr := m.AddSecurityRule(ctx, groupID, rule); addErr != nil {
+		addErr := m.AddSecurityRule(ctx, groupID, rule)
+		if addErr != nil {
 			errs = append(errs, fmt.Errorf("add rule %s:%s: %w", rule.Direction, rule.Protocol, addErr))
 		}
 	}

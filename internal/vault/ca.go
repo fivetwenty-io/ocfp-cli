@@ -18,11 +18,11 @@ var ErrBlocCAMalformed = errors.New("bloc CA material is malformed")
 // preserve the original fingerprint.
 func LoadOrGenerateBlocCA(safe SafeInterface, blocName string) (artifacts.CAMaterial, error) {
 	if safe == nil {
-		return artifacts.CAMaterial{}, fmt.Errorf("safe interface required")
+		return artifacts.CAMaterial{}, errors.New("safe interface required")
 	}
 
 	if blocName == "" {
-		return artifacts.CAMaterial{}, fmt.Errorf("bloc name required")
+		return artifacts.CAMaterial{}, errors.New("bloc name required")
 	}
 
 	path := blocCAPath(blocName)
@@ -37,7 +37,7 @@ func LoadOrGenerateBlocCA(safe SafeInterface, blocName string) (artifacts.CAMate
 		// Path exists but is missing fields → treat as corrupted, fail loud so
 		// the operator can investigate rather than overwrite secret material.
 		if perr != nil {
-			return artifacts.CAMaterial{}, fmt.Errorf("%w: %v", ErrBlocCAMalformed, perr)
+			return artifacts.CAMaterial{}, fmt.Errorf("%w: %w", ErrBlocCAMalformed, perr)
 		}
 	}
 
@@ -71,7 +71,7 @@ func caMaterialFromMap(data map[string]interface{}) (artifacts.CAMaterial, error
 	fp, _ := data["fingerprint"].(string)
 
 	if cert == "" || key == "" {
-		return artifacts.CAMaterial{}, fmt.Errorf("cert or key missing")
+		return artifacts.CAMaterial{}, errors.New("cert or key missing")
 	}
 
 	return artifacts.CAMaterial{

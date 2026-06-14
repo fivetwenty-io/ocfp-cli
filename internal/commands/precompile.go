@@ -97,9 +97,11 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 		Use:   "all",
 		Short: "Run both 'precompile bosh' and 'precompile cf'",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := runPrecompileBOSH(c); err != nil {
+			err := runPrecompileBOSH(c)
+			if err != nil {
 				return err
 			}
+
 			return runPrecompileCF(c)
 		},
 	}
@@ -107,6 +109,7 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 	addCFFlags(allCmd)
 
 	cmd.AddCommand(boshCmd, cfCmd, allCmd)
+
 	return cmd
 }
 
@@ -117,6 +120,7 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 	if f.bloc == "" {
 		f.bloc = viper.GetString("bloc")
 	}
+
 	if f.bloc == "" {
 		return f, ErrPrecompileBlocRequired
 	}
@@ -126,10 +130,12 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 	f.boshEnv, _ = cmd.Flags().GetString("bosh-env")
 
 	scStr, _ := cmd.Flags().GetString("stemcell")
+
 	sc, err := parseStemcell(scStr)
 	if err != nil {
 		return f, err
 	}
+
 	f.stemcell = sc
 
 	f.outputDir, _ = cmd.Flags().GetString("output-dir")
@@ -138,6 +144,7 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 		if err != nil {
 			return f, err
 		}
+
 		f.outputDir = filepath.Join(home, "deployments", f.bloc)
 	}
 
@@ -146,6 +153,7 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 		if f.cfManifest == "" {
 			f.cfManifest = filepath.Join(f.outputDir, "cf-deployment.yml")
 		}
+
 		f.blobEndpoint, _ = cmd.Flags().GetString("blobstore-endpoint")
 		f.blobAccessKey, _ = cmd.Flags().GetString("blobstore-access-key")
 		f.blobSecretKey, _ = cmd.Flags().GetString("blobstore-secret-key")
@@ -155,6 +163,7 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 		if f.blobAccessKey == "" {
 			f.blobAccessKey = os.Getenv("OCFP_BLOBSTORE_ACCESS_KEY")
 		}
+
 		if f.blobSecretKey == "" {
 			f.blobSecretKey = os.Getenv("OCFP_BLOBSTORE_SECRET_KEY")
 		}
@@ -171,7 +180,7 @@ func (f precompileFlags) resolveBlobstore(ctx context.Context) (*artifacts.Looku
 	}
 
 	if f.blobAccessKey == "" || f.blobSecretKey == "" {
-		return nil, fmt.Errorf("--blobstore-endpoint requires --blobstore-access-key and --blobstore-secret-key")
+		return nil, errors.New("--blobstore-endpoint requires --blobstore-access-key and --blobstore-secret-key")
 	}
 
 	lr := &artifacts.LookupResult{
@@ -184,8 +193,10 @@ func (f precompileFlags) resolveBlobstore(ctx context.Context) (*artifacts.Looku
 		if err != nil {
 			return nil, fmt.Errorf("reading blobstore CA cert: %w", err)
 		}
+
 		lr.CACert = string(pem)
 	}
+
 	return lr, nil
 }
 
@@ -194,6 +205,7 @@ func parseStemcell(s string) (precompile.Stemcell, error) {
 	if !ok || os == "" || ver == "" {
 		return precompile.Stemcell{}, fmt.Errorf("invalid --stemcell %q: want os/version", s)
 	}
+
 	return precompile.Stemcell{OS: os, Version: ver}, nil
 }
 
@@ -233,6 +245,7 @@ func runPrecompileBOSH(cmd *cobra.Command) error {
 	}
 
 	rels := precompile.BOSHReleases(f.stemcell)
+
 	res, err := c.ResolveDirector(ctx, rels, f.stemcell, f.options())
 	if err != nil {
 		return fmt.Errorf("resolving director releases: %w", err)
@@ -261,6 +274,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: %s", ErrCFDeploymentNotFound, f.cfManifest)
 		}
+
 		return fmt.Errorf("reading cf-deployment manifest: %w", err)
 	}
 
@@ -268,6 +282,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+
 	log.Infof("parsed %d cf-deployment releases from %s", len(rels), f.cfManifest)
 
 	lr, err := f.resolveBlobstore(ctx)
@@ -315,6 +330,7 @@ func lookupArtifactsFromState(ctx context.Context, bloc string) (*artifacts.Look
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
+
 	if !cfg.Artifacts.Enabled {
 		return nil, ErrArtifactsDisabled
 	}
@@ -323,6 +339,7 @@ func lookupArtifactsFromState(ctx context.Context, bloc string) (*artifacts.Look
 	if err != nil {
 		return nil, fmt.Errorf("creating state manager: %w", err)
 	}
+
 	if _, err := sm.Load(bloc); err != nil {
 		return nil, fmt.Errorf("loading state for %s: %w", bloc, err)
 	}
@@ -331,10 +348,12 @@ func lookupArtifactsFromState(ctx context.Context, bloc string) (*artifacts.Look
 	if err != nil {
 		return nil, err
 	}
+
 	if lr == nil || lr.Endpoint == "" {
 		return nil, fmt.Errorf("%w: %s — artifacts blobstore not provisioned; run `ocfp bootstrap --artifacts` and populate vault before `precompile cf`",
 			ErrArtifactsNotFound, bloc)
 	}
+
 	return lr, nil
 }
 
@@ -350,10 +369,12 @@ func precompileS3Client(lr *artifacts.LookupResult) (*s3.Client, string, error) 
 		CACert:        lr.CACert,
 		SkipTLSVerify: lr.CACert == "" && strings.HasPrefix(lr.Endpoint, "https://"),
 	}
+
 	cli, err := artifacts.NewS3Client(ep, artifacts.Credentials{AccessKey: lr.AccessKey, SecretKey: lr.SecretKey})
 	if err != nil {
 		return nil, "", fmt.Errorf("building artifacts S3 client: %w", err)
 	}
+
 	return cli, lr.Endpoint, nil
 }
 
@@ -362,11 +383,13 @@ func makeWorkDir(prefix string) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("creating work dir: %w", err)
 	}
+
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
 func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy, destDir string, dryRun bool, log logger.Logger) error {
 	fmt.Printf("Release resolution plan (%s):\n", sc)
+
 	for _, r := range res {
 		fmt.Printf("  %-28s %-10s %s\n", r.Name+"/"+r.Version, r.Source, r.URL)
 	}
@@ -375,6 +398,7 @@ func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy
 	// pin ops file cannot be rendered; report the plan and stop.
 	if dryRun {
 		log.Infof("dry-run: %d releases resolved; pin ops not written", len(res))
+
 		return nil
 	}
 
@@ -386,11 +410,13 @@ func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return fmt.Errorf("creating ops dir %s: %w", destDir, err)
 	}
+
 	dest := filepath.Join(destDir, "compiled-releases.yml")
 	if err := os.WriteFile(dest, ops, 0o600); err != nil {
 		return fmt.Errorf("writing pin ops %s: %w", dest, err)
 	}
 
 	log.Infof("wrote pin ops for %d releases to %s", len(res), dest)
+
 	return nil
 }

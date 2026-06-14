@@ -165,15 +165,19 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 	if opts.Path == "" {
 		return errors.New("path is required for genesis env file")
 	}
+
 	if opts.EnvName == "" {
 		return errors.New("envName is required for genesis env file")
 	}
+
 	if opts.Bloc == "" {
 		return errors.New("bloc is required for genesis env file")
 	}
+
 	if opts.Kit == "" {
 		return errors.New("kit name is required for genesis env file")
 	}
+
 	if opts.UseCreateEnv && opts.IAAS == "" {
 		return errors.New("kit.iaas required when use_create_env=true")
 	}
@@ -183,6 +187,7 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 	if minVersion == "" {
 		minVersion = "3.2.0"
 	}
+
 	kitVersion := opts.KitVersion
 	if kitVersion == "" {
 		kitVersion = "latest"
@@ -190,6 +195,7 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 
 	// Derive full env name: bloc-envName unless already prefixed.
 	prefix := opts.Bloc + "-"
+
 	fullEnvName := opts.EnvName
 	if !strings.HasPrefix(opts.EnvName, prefix) {
 		fullEnvName = prefix + opts.EnvName
@@ -253,7 +259,7 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 //   - useCreateEnv  when true, sets genesis.use_create_env; requires non-empty iaas
 //   - bloc        OCFP bloc identifier (required, e.g. "ocfp-aws-us-east-1")
 //   - iaas        IaaS name (e.g. "aws"); required when useCreateEnv is true
-//   - kit         kit name (e.g. "bosh", "cf")
+//   - kit         name (e.g. "bosh", "cf")
 //
 // Errors: same as WriteEnvFileV32Opts_Write.
 func WriteEnvFileV32(path, envName string, useCreateEnv bool, bloc, iaas, kit string) error {

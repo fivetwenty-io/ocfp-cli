@@ -794,6 +794,7 @@ func printBackupPlan(backup *BackupMetadata) error {
 // getBackupItemPaths returns the list of item paths to be backed up.
 func getBackupItemPaths(cfg *config.Config) []string {
 	home, _ := homeDir()
+
 	return []string{
 		"config/",
 		"manifests/",

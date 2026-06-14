@@ -99,6 +99,7 @@ func (p *UAAFlywayProbe) instance() string {
 	if p.Instance != "" {
 		return p.Instance
 	}
+
 	return "database/0"
 }
 
@@ -125,9 +126,11 @@ func (p *UAAFlywayProbe) Run(ctx context.Context) Result {
 	if p.RunBosh == nil {
 		return Result{OK: false, Detail: "UAAFlywayProbe: RunBosh must not be nil"}
 	}
+
 	if p.Deployment == "" {
 		return Result{OK: false, Detail: "UAAFlywayProbe: Deployment must not be empty"}
 	}
+
 	if p.Env == "" {
 		return Result{OK: false, Detail: "UAAFlywayProbe: Env must not be empty"}
 	}
@@ -167,6 +170,7 @@ func (p *UAAFlywayProbe) Run(ctx context.Context) Result {
 	// Non-fatal remote script error.
 	if strings.Contains(combined, SentinelProbeError) {
 		line := lastLineContaining(combined, SentinelProbeError)
+
 		return Result{OK: true, Detail: line}
 	}
 
@@ -186,6 +190,7 @@ func (p *UAAFlywayProbe) Run(ctx context.Context) Result {
 	}
 
 	remediation := fmt.Sprintf(uaaRemediationFmt, count, p.Env, p.Deployment, p.Env, p.Deployment)
+
 	return Result{
 		OK:          false,
 		Detail:      fmt.Sprintf("FAILED_ROWS=%d", count),
@@ -198,6 +203,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
+
 	return s[len(s)-n:]
 }
 
@@ -210,5 +216,6 @@ func lastLineContaining(s, substr string) string {
 			return strings.TrimSpace(lines[i])
 		}
 	}
+
 	return substr
 }

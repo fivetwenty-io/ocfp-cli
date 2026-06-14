@@ -41,6 +41,7 @@ func HeadCompiled(ctx context.Context, cli objectAPI, bucket, key string) (sha s
 		if isNotFound(err) {
 			return "", false, nil
 		}
+
 		return "", false, fmt.Errorf("head %s/%s: %w", bucket, key, err)
 	}
 
@@ -167,14 +168,18 @@ func isNotFound(err error) bool {
 	if errors.As(err, &nsk) {
 		return true
 	}
+
 	var nf *s3types.NotFound
 	if errors.As(err, &nf) {
 		return true
 	}
+
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		code := apiErr.ErrorCode()
+
 		return code == "NotFound" || code == "NoSuchKey" || code == "404"
 	}
+
 	return false
 }

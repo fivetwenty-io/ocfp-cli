@@ -37,6 +37,7 @@ func (d *boshDirector) args(rest ...string) []string {
 	if d.envAlias != "" {
 		out = append(out, "-e", d.envAlias)
 	}
+
 	return append(out, rest...)
 }
 
@@ -52,6 +53,7 @@ type boshReleasesJSON struct {
 
 func (d *boshDirector) ReleasePresent(ctx context.Context, name, version string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "bosh", d.args("releases", "--json")...) //nolint:gosec // fixed subcommand, no user shell
+
 	out, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("bosh releases: %w", err)
@@ -64,6 +66,7 @@ func (d *boshDirector) ReleasePresent(ctx context.Context, name, version string)
 
 	// bosh reports versions with a trailing '*' for currently-deployed; trim it.
 	want := version
+
 	for _, t := range parsed.Tables {
 		for _, row := range t.Rows {
 			if row.Name == name && trimVersionMark(row.Version) == want {
@@ -71,6 +74,7 @@ func (d *boshDirector) ReleasePresent(ctx context.Context, name, version string)
 			}
 		}
 	}
+
 	return false, nil
 }
 
@@ -79,24 +83,31 @@ func (d *boshDirector) UploadRelease(ctx context.Context, url, sha string) error
 	if sha != "" {
 		rest = append(rest, "--sha1", sha)
 	}
+
 	rest = append(rest, url)
 
 	cmd := exec.CommandContext(ctx, "bosh", d.args(rest...)...) //nolint:gosec // args validated by caller; no shell
 	cmd.Stdout = d.stdout
+
 	cmd.Stderr = d.stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		return fmt.Errorf("bosh upload-release %s: %w", url, err)
 	}
+
 	return nil
 }
 
 func (d *boshDirector) Deploy(ctx context.Context, deployment, manifestPath string) error {
 	cmd := exec.CommandContext(ctx, "bosh", d.args("-n", "-d", deployment, "deploy", manifestPath)...) //nolint:gosec // fixed args; no shell
 	cmd.Stdout = d.stdout
+
 	cmd.Stderr = d.stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		return fmt.Errorf("bosh deploy %s: %w", deployment, err)
 	}
+
 	return nil
 }
 
@@ -107,6 +118,7 @@ func (d *boshDirector) ExportRelease(ctx context.Context, deployment, name, vers
 	cmd := exec.CommandContext(ctx, "bosh", //nolint:gosec // fixed args; no shell
 		d.args("-d", deployment, "export-release", relRef, scRef, "--dir", destDir)...)
 	cmd.Stdout = d.stdout
+
 	cmd.Stderr = d.stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("bosh export-release %s: %w", relRef, err)
@@ -118,6 +130,7 @@ func (d *boshDirector) ExportRelease(ctx context.Context, deployment, name, vers
 	if err != nil {
 		return "", err
 	}
+
 	return path, nil
 }
 
@@ -126,16 +139,20 @@ func findExportedTarball(dir, name, version string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading export dir %s: %w", dir, err)
 	}
+
 	prefix := fmt.Sprintf("%s-%s-", name, version)
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+
 		n := e.Name()
 		if len(n) >= len(prefix) && n[:len(prefix)] == prefix && filepath.Ext(n) == ".tgz" {
 			return filepath.Join(dir, n), nil
 		}
 	}
+
 	return "", fmt.Errorf("no exported tarball for %s/%s in %s", name, version, dir)
 }
 
@@ -143,5 +160,6 @@ func trimVersionMark(v string) string {
 	if n := len(v); n > 0 && v[n-1] == '*' {
 		return v[:n-1]
 	}
+
 	return v
 }

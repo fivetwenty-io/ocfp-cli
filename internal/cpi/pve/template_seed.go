@@ -131,6 +131,7 @@ func seedLogin(sess *TermproxySession, password string) error {
 	// Wake the serial; cloud-init may be writing boot messages.
 	for range 3 {
 		_ = sess.SendLine("")
+
 		time.Sleep(500 * time.Millisecond)
 	}
 
@@ -270,6 +271,7 @@ func seedFinalize(sess *TermproxySession) error {
 	// Fire-and-forget shutdown. ExpectRegex will see connection close and
 	// return; ignoring its result is fine.
 	_ = sess.SendLine("sudo shutdown -h now")
+
 	time.Sleep(2 * time.Second)
 
 	return nil
@@ -325,7 +327,7 @@ func writeRemoteFile(sess *TermproxySession, path, content, mode string) error {
 
 	// Truncate the temp file (writable by the cloud-init user; no sudo needed
 	// in /tmp).
-	if err := runShell(sess, fmt.Sprintf(": > %s", seedTmp), templateSeedShellTimeout); err != nil {
+	if err := runShell(sess, ": > "+seedTmp, templateSeedShellTimeout); err != nil {
 		return fmt.Errorf("init temp for %s: %w", path, err)
 	}
 

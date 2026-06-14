@@ -451,7 +451,8 @@ func (m *Manager) Lock(blocName string) error {
 		return fmt.Errorf("failed to write lock file: %w", writeErr)
 	}
 
-	if closeErr := f.Close(); closeErr != nil {
+	closeErr := f.Close()
+	if closeErr != nil {
 		_ = os.Remove(lockPath)
 
 		return fmt.Errorf("failed to close lock file: %w", closeErr)

@@ -89,18 +89,21 @@ func discoverInternalHosts(blocName string, log logger.Logger) map[string]string
 	stateDir, err := state.GetStateDir(blocName)
 	if err != nil {
 		log.Debugf("Could not get state dir: %v", err)
+
 		return map[string]string{}
 	}
 
 	stateManager, err := state.NewManager(stateDir)
 	if err != nil {
 		log.Debugf("Could not create state manager: %v", err)
+
 		return map[string]string{}
 	}
 
 	st, err := stateManager.Load(blocName)
 	if err != nil {
 		log.Debugf("Could not load state: %v", err)
+
 		return map[string]string{}
 	}
 

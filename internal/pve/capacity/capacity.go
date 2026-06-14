@@ -210,6 +210,7 @@ func Resolve(ctx context.Context, q Querier, node string, cfgWorkers, cfgMaxInFl
 		if workers <= 0 {
 			workers = DefaultWorkers
 		}
+
 		return Resolved{
 			Workers:     workers,
 			MaxInFlight: cfgMaxInFlight,
