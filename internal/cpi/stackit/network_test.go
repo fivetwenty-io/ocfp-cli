@@ -42,15 +42,9 @@ func TestNetworkManager_CreateNetwork(t *testing.T) {
 		State: cpi.ResourceStateActive,
 	}
 
-	callCount := 0
 	manager, server := setupTestNetworkManager(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-
-		switch callCount {
-		case 1: // Create network call
-			assert.Equal(t, "/v1/projects/test-project/networks", r.URL.Path)
-			assert.Equal(t, "POST", r.Method)
-
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/projects/test-project/networks":
 			var reqBody map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-network", reqBody["name"])
@@ -59,12 +53,12 @@ func TestNetworkManager_CreateNetwork(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(expectedNetwork)
 
-		case 2: // Get network status call
-			assert.Equal(t, "/v1/projects/test-project/networks/net-123", r.URL.Path)
-			assert.Equal(t, "GET", r.Method)
-
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/projects/test-project/networks/net-123":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(expectedNetwork)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 	})
 	defer server.Close()
@@ -91,15 +85,9 @@ func TestNetworkManager_CreateSubnet(t *testing.T) {
 		State:     cpi.ResourceStateActive,
 	}
 
-	callCount := 0
 	manager, server := setupTestNetworkManager(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-
-		switch callCount {
-		case 1: // Create subnet call
-			assert.Equal(t, "/v1/projects/test-project/subnets", r.URL.Path)
-			assert.Equal(t, "POST", r.Method)
-
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/projects/test-project/subnets":
 			var reqBody map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-subnet", reqBody["name"])
@@ -109,12 +97,12 @@ func TestNetworkManager_CreateSubnet(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(expectedSubnet)
 
-		case 2: // Get subnet status call
-			assert.Equal(t, "/v1/projects/test-project/subnets/subnet-123", r.URL.Path)
-			assert.Equal(t, "GET", r.Method)
-
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/projects/test-project/subnets/subnet-123":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(expectedSubnet)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 	})
 	defer server.Close()
@@ -202,15 +190,9 @@ func TestNetworkManager_CreateRouter(t *testing.T) {
 		State: cpi.ResourceStateActive,
 	}
 
-	callCount := 0
 	manager, server := setupTestNetworkManager(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-
-		switch callCount {
-		case 1: // Create router call
-			assert.Equal(t, "/v1/projects/test-project/routers", r.URL.Path)
-			assert.Equal(t, "POST", r.Method)
-
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/projects/test-project/routers":
 			var reqBody map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&reqBody)
 			assert.Equal(t, "test-router", reqBody["name"])
@@ -218,12 +200,12 @@ func TestNetworkManager_CreateRouter(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(expectedRouter)
 
-		case 2: // Get router status call
-			assert.Equal(t, "/v1/projects/test-project/routers/router-123", r.URL.Path)
-			assert.Equal(t, "GET", r.Method)
-
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/projects/test-project/routers/router-123":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(expectedRouter)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 	})
 	defer server.Close()
