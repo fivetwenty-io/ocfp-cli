@@ -136,7 +136,7 @@ func FetchSHA1(ctx context.Context, httpClient *http.Client, name, version strin
 	if err != nil {
 		return "", fmt.Errorf("stemcell: GET %s: %w", apiURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("stemcell: GET %s returned HTTP %d", apiURL, resp.StatusCode) //nolint:err113 // descriptive error, not caller-testable

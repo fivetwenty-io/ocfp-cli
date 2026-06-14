@@ -268,6 +268,8 @@ func NewCircuitBreaker(config *CircuitBreakerConfig) *CircuitBreaker {
 
 // setClock replaces the clock used by this CircuitBreaker.
 // Intended for use in tests only.
+//
+//nolint:unused // injected by retry_test.go to drive deterministic time
 func (cb *CircuitBreaker) setClock(c clock) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

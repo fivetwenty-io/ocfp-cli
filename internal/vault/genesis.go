@@ -56,7 +56,7 @@ func (gi *GenesisIntegration) BackupEnvironmentFile(filePath string) error {
 	}
 
 	// Write backup
-	err = os.WriteFile(backupPath, data, GenesisFileMode)
+	err = os.WriteFile(backupPath, data, GenesisFileMode) //nolint:gosec // G703: backupPath derives from the operator-controlled genesis env dir
 	if err != nil {
 		return fmt.Errorf("failed to write backup file: %w", err)
 	}

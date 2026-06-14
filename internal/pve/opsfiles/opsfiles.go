@@ -48,6 +48,7 @@ func WriteToDeploymentsDir(dir string) error {
 
 	for name, content := range All() {
 		dest := filepath.Join(dir, name)
+
 		err := os.WriteFile(dest, []byte(content), 0o600)
 		if err != nil {
 			return fmt.Errorf("opsfiles: write %q: %w", dest, err)
@@ -71,6 +72,7 @@ func WriteRuntimeConfigToDir(dir string) error {
 	}
 
 	dest := filepath.Join(dir, "pve-guest-agent.yml")
+
 	err = os.WriteFile(dest, []byte(PVEGuestAgentRuntimeConfig), 0o600)
 	if err != nil {
 		return fmt.Errorf("opsfiles: write %q: %w", dest, err)

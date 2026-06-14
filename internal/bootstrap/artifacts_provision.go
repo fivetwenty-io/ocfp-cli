@@ -125,7 +125,7 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 	runCtx, cancel := context.WithTimeout(ctx, artifactsProvisionRunTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, "ssh", buildArtifactsProvisionSSHArgs(conn)...)
+	cmd := exec.CommandContext(runCtx, "ssh", buildArtifactsProvisionSSHArgs(conn)...) //nolint:gosec // G204: args are CLI/config-constructed, not user-tainted
 	cmd.Stdin = strings.NewReader(script)
 
 	var stdout, stderr bytes.Buffer
@@ -150,7 +150,7 @@ func (m *Manager) waitArtifactsSSHReady(ctx context.Context, conn artifactsProvi
 
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		err := exec.CommandContext(probeCtx, "ssh", artifactsSSHArgs(conn, "true")...).Run()
+		err := exec.CommandContext(probeCtx, "ssh", artifactsSSHArgs(conn, "true")...).Run() //nolint:gosec // G204: args are CLI/config-constructed, not user-tainted
 
 		cancel()
 

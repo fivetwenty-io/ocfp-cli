@@ -185,7 +185,7 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 // the operator knows what to fix.
 func resolveLocalOCFPBinary() (string, error) {
 	if env := os.Getenv("OCFP_BINARY_PATH"); env != "" {
-		if _, err := os.Stat(env); err == nil {
+		if _, err := os.Stat(env); err == nil { //nolint:gosec // G703: path is operator-supplied OCFP_BINARY_PATH
 			return env, nil
 		}
 	}
@@ -380,7 +380,7 @@ func (m *Manager) installHelperScripts(ctx context.Context) error {
 func resolveHelperScript(name string) (string, error) {
 	if env := os.Getenv("OCFP_HELPER_SCRIPTS_DIR"); env != "" {
 		p := filepath.Join(env, name)
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Stat(p); err == nil { //nolint:gosec // G703: path is operator-supplied OCFP_HELPER_SCRIPTS_DIR
 			return p, nil
 		}
 	}

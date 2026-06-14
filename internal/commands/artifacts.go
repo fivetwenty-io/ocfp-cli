@@ -117,7 +117,7 @@ func runArtifactsCmd(cmd *cobra.Command, args []string) error {
 // artifactsContext holds the resolved per-command dependencies. Built once
 // per command invocation to avoid threading them through every action.
 type artifactsContext struct {
-	parent   context.Context
+	parent   context.Context //nolint:containedctx // per-invocation request scope, torn down by the returned cancel
 	blocName string
 	cfg      *config.Config
 	provider cpi.Provider
@@ -190,7 +190,10 @@ func artifactsLookup(ac *artifactsContext, asJSON bool) error {
 	}
 
 	if asJSON {
-		out, err := json.MarshalIndent(ac.lookup, "", "  ")
+		// G117: --json is an explicit operator opt-in to dump the full lookup
+		// (including blobstore creds) to their own terminal; the text path
+		// deliberately omits secrets.
+		out, err := json.MarshalIndent(ac.lookup, "", "  ") //nolint:gosec,musttag // G117: explicit operator --json of own creds; lookup has no json tags by design
 		if err != nil {
 			return err
 		}

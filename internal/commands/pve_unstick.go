@@ -231,6 +231,7 @@ func resolveVMIDForInstance(ctx context.Context, boshEnv, boshDeployment, instan
 	}
 
 	var result boshVMsOutput
+
 	err = json.Unmarshal(out.Bytes(), &result)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse bosh vms output: %w", err)

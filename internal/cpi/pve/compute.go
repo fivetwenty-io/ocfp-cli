@@ -220,10 +220,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 		return nil, fmt.Errorf("failed to get VM config: %w", err)
 	}
 
-	instance, err := m.vmToInstance(vmid, node, status, config)
-	if err != nil {
-		return nil, err
-	}
+	instance := m.vmToInstance(vmid, node, status, config)
 
 	// Prefer the guest agent's runtime view of the NIC over whatever
 	// ipconfig0 promised at create time. PVE templates with predictable
@@ -1359,7 +1356,7 @@ func matchesLabelFilters(vmTags []string, filters map[string]string) bool {
 }
 
 // vmToInstance converts Proxmox VM data to CPI Instance.
-func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[string]interface{}) (*cpi.Instance, error) {
+func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[string]interface{}) *cpi.Instance {
 	instance := &cpi.Instance{
 		ID:               strconv.Itoa(vmid),
 		Name:             getStringFromMap(config, "name"),
@@ -1401,7 +1398,7 @@ func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[
 		}
 	}
 
-	return instance, nil
+	return instance
 }
 
 // extractIPConfigAddress pulls just the IPv4 address out of a Proxmox

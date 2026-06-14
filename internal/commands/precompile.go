@@ -412,7 +412,7 @@ func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy
 	}
 
 	dest := filepath.Join(destDir, "compiled-releases.yml")
-	if err := os.WriteFile(dest, ops, 0o600); err != nil {
+	if err := os.WriteFile(dest, ops, 0o600); err != nil { //nolint:gosec // G703: dest derives from the config-controlled deployments dir
 		return fmt.Errorf("writing pin ops %s: %w", dest, err)
 	}
 

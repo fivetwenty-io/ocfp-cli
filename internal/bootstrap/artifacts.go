@@ -47,6 +47,8 @@ const (
 //
 // The step is idempotent: if state already records an artifacts VM and the
 // readiness probe succeeds, it returns nil without touching anything.
+//
+//nolint:cyclop,funlen,maintidx // linear 8-step idempotent provisioning sequence; splitting would obscure the flow
 func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	if !m.config.Artifacts.Enabled {
 		_, _ = fmt.Fprintf(os.Stdout, "    • artifacts feature disabled in config; skipping\n")

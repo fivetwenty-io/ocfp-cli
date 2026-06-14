@@ -634,6 +634,8 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 // teardownCloudflare deletes the bloc's tunnel DNS records and the tunnel
 // itself, using identifiers persisted at bootstrap. All failures are
 // soft-warn: a stale Cloudflare record must never block lab teardown.
+//
+//nolint:unparam // error return is the teardown-step contract (asserted by teardown_cloudflare_test.go); failures here are best-effort warnings
 func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
 		return nil
@@ -2435,7 +2437,7 @@ func (m *TeardownManager) deleteSecurityResource(ctx context.Context, resource *
 //   - Malformed JSON → false (conservative: let bosh delete-env fail loudly)
 //   - OS read error  → false (conservative: let bosh delete-env fail loudly)
 func StateIsEmpty(path string) (bool, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is operator-supplied create-env state file
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
@@ -2450,6 +2452,7 @@ func StateIsEmpty(path string) (bool, error) {
 	}
 
 	var data map[string]json.RawMessage
+
 	jsonErr := json.Unmarshal(raw, &data)
 	if jsonErr != nil {
 		// Corrupted/truncated: conservative — treat as non-empty so delete-env runs.

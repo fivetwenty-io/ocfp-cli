@@ -414,7 +414,7 @@ func (g *GCPVaultProvider) SaveConfigToVault(reporter providers.ProgressReporter
 	}
 
 	// Convert config to JSON
-	configJSON, err := json.Marshal(g.Config)
+	configJSON, err := json.Marshal(g.Config) //nolint:gosec // G117: intentional secret serialization to vault
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
