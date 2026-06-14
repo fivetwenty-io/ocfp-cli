@@ -44,28 +44,6 @@ func (m *Manager) setupOCFPDirectories(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-directories")
 }
 
-// installSnapPackages installs snap packages.
-// Deprecated: Snap packages have been migrated to Linuxbrew.
-func (m *Manager) installSnapPackages(ctx context.Context) error {
-	m.log.Info("Installing snap packages")
-
-	// Report progress for snap packages
-	if m.reporter != nil {
-		snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-		snaps := snapMgr.GetSnapPackages()
-		enabledSnaps := filterEnabledSnaps(snaps)
-
-		for i, s := range enabledSnaps {
-			m.reporter.ReportSubtaskProgress("snap_packages", i+1, len(enabledSnaps), s.Name)
-		}
-	}
-
-	snapMgr := provision.NewSnapManager(m.config.Provider, m.config)
-	script := snapMgr.GenerateSnapInstallScript(ctx)
-
-	return m.executeScript(ctx, script, "snap-packages")
-}
-
 // brewSkipped reports whether Linuxbrew phases should be skipped for this
 // provider. Linuxbrew is the primary tool source on every provider, including
 // PVE: the previous PVE skip existed because Linuxbrew's x86_64 bottles need
