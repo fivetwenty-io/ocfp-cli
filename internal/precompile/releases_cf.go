@@ -26,7 +26,8 @@ type cfReleaseDoc struct {
 // manifest silently yielding a short release list.
 func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 	var doc cfReleaseDoc
-	if err := yaml.Unmarshal(manifestYAML, &doc); err != nil {
+	err := yaml.Unmarshal(manifestYAML, &doc)
+	if err != nil {
 		return nil, fmt.Errorf("parsing cf-deployment manifest: %w", err)
 	}
 
@@ -40,6 +41,7 @@ func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 		if r.Name == "" || r.Version == "" {
 			return nil, fmt.Errorf("cf-deployment release entry missing name or version: %+v", r)
 		}
+
 		out = append(out, Release{
 			Name:              r.Name,
 			Version:           r.Version,
@@ -49,6 +51,7 @@ func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 			UpstreamCompiledURL: "",
 		})
 	}
+
 	return out, nil
 }
 

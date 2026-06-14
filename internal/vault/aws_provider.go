@@ -109,6 +109,7 @@ func (a *AWSVaultProvider) ConfigurePublicIPs(_reporter providers.ProgressReport
 	// reaching BOSH CPI configs.
 	if len(publicIPs) == 0 {
 		a.logger.Warn("No public IPs found in state, writing pending marker")
+
 		publicIPs = map[string]interface{}{
 			"status": PublicIPStatusPending,
 		}
@@ -737,6 +738,7 @@ func (a *AWSVaultProvider) configureSubnet(envType string, subnetNum int, subnet
 	if availabilityZone == "" {
 		availabilityZone = subnet.AvailabilityZone
 	}
+
 	if availabilityZone == "" {
 		availabilityZone = a.getAvailabilityZone(subnetNum)
 	}
@@ -1052,7 +1054,8 @@ func (a *AWSVaultProvider) configureKMS(envType string) error {
 		"key_arn": a.KMSKeyARN,
 	}
 
-	if err := a.Safe.SetMultiple(kmsPath, kmsData); err != nil {
+	err := a.Safe.SetMultiple(kmsPath, kmsData)
+	if err != nil {
 		return fmt.Errorf("failed to write KMS configuration: %w", err)
 	}
 

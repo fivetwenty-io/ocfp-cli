@@ -89,9 +89,9 @@ type PVEDefaults struct {
 //
 //revive:disable-next-line:exported stutters as config.ConfigFile but renaming would break external references
 type ConfigFile struct {
-	Debug      bool               `mapstructure:"debug"     yaml:"debug"`
-	Verbose    bool               `mapstructure:"verbose"   yaml:"verbose"`
-	PVE        *PVEDefaults       `mapstructure:"pve"       yaml:"pve,omitempty"`
+	Debug      bool               `mapstructure:"debug"      yaml:"debug"`
+	Verbose    bool               `mapstructure:"verbose"    yaml:"verbose"`
+	PVE        *PVEDefaults       `mapstructure:"pve"        yaml:"pve,omitempty"`
 	Tailscale  *TailscaleConfig   `mapstructure:"tailscale"  yaml:"tailscale,omitempty"`
 	Cloudflare *CloudflareConfig  `mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
 	Blocs      map[string]*Config `mapstructure:"blocs"      yaml:"blocs"`
@@ -1662,17 +1662,20 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).
-	if err := cfg.Blobstore.Validate(); err != nil {
+	err := cfg.Blobstore.Validate()
+	if err != nil {
 		return fmt.Errorf("blobstore config: %w", err)
 	}
 
 	// Validate the merged tailscale config (mutual exclusion of literal
 	// auth_key vs auth_key_vault_path).
-	if err := cfg.Tailscale.Validate(); err != nil {
+	err = cfg.Tailscale.Validate()
+	if err != nil {
 		return err
 	}
 
-	if err := cfg.Cloudflare.Validate(); err != nil {
+	err = cfg.Cloudflare.Validate()
+	if err != nil {
 		return err
 	}
 
@@ -1682,7 +1685,8 @@ func validate(cfg *Config) error {
 	// demand by bootstrap (vault.LoadOrGenerateBlocCA), so the validator never
 	// has to refuse internal-ca mode for missing config.
 	bastionEnabled := cfg.Bastion.Flavor != ""
-	if err := cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true); err != nil {
+	err = cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true)
+	if err != nil {
 		return fmt.Errorf("artifacts config: %w", err)
 	}
 
@@ -1691,7 +1695,8 @@ func validate(cfg *Config) error {
 	// - Both auth modes configured: warn; token wins by convention.
 	// - Exactly one auth mode configured: ok.
 	if strings.EqualFold(cfg.Provider, "pve") {
-		if err := validatePVE(cfg); err != nil {
+		err := validatePVE(cfg)
+		if err != nil {
 			return err
 		}
 	}
@@ -1702,11 +1707,13 @@ func validate(cfg *Config) error {
 // validatePVE runs all PVE-specific validation steps: auth mode, VMID range,
 // and director/CF cloud-config CIDR pairing.
 func validatePVE(cfg *Config) error {
-	if err := validatePVEAuth(cfg, os.Stderr); err != nil {
+	err := validatePVEAuth(cfg, os.Stderr)
+	if err != nil {
 		return err
 	}
 
-	if err := validatePVEVMIDRange(cfg); err != nil {
+	err = validatePVEVMIDRange(cfg)
+	if err != nil {
 		return err
 	}
 
@@ -1721,7 +1728,8 @@ func validatePVE(cfg *Config) error {
 	}
 
 	if directorCIDR != "" && cfg.CFCloudConfigCIDR != "" {
-		if err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR); err != nil {
+		err := netvalidate.ValidateNetworkPairing(directorCIDR, cfg.CFCloudConfigCIDR)
+		if err != nil {
 			return fmt.Errorf("invalid configuration: %w", err)
 		}
 	}

@@ -38,6 +38,7 @@ func defaultProbeBuilder(boshEnv, deployment, directorIP string) []probes.Probe 
 		RunBosh: func(ctx context.Context, args ...string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, "bosh", args...) //nolint:gosec // args come from validated config
 			cmd.Stderr = os.Stderr
+
 			return cmd.Output()
 		},
 	}
@@ -116,6 +117,7 @@ reported issue, then re-run to confirm all probes pass before deploying.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+
 			return runPVEProbe(cmd, f, args[0], builder)
 		},
 	}
@@ -154,6 +156,7 @@ func runPVEProbe(cmd *cobra.Command, f *probeFlags, bloc string, builder probeBu
 
 	if result.OK {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "OK  bloc=%s detail=%q\n", bloc, result.Detail)
+
 		return nil
 	}
 

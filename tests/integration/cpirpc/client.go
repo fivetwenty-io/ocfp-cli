@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,31 +70,43 @@ func New(binaryPath string, config map[string]any) *Client {
 // Returns the path on success, or an error.
 func (c *Client) initConfigFile() (string, error) {
 	var initErr error
+
 	c.once.Do(func() {
 		f, err := os.CreateTemp("", "cpirpc-config-*.json")
 		if err != nil {
 			initErr = fmt.Errorf("cpirpc: create temp config: %w", err)
+
 			return
 		}
+
 		enc := json.NewEncoder(f)
 		if err := enc.Encode(c.Config); err != nil {
 			f.Close()
 			os.Remove(f.Name())
+
 			initErr = fmt.Errorf("cpirpc: encode config: %w", err)
+
 			return
 		}
+
 		if err := f.Close(); err != nil {
 			os.Remove(f.Name())
+
 			initErr = fmt.Errorf("cpirpc: close temp config: %w", err)
+
 			return
 		}
+
 		c.configPath = f.Name()
 	})
+
 	if initErr != nil {
 		// Reset once so a retry after a transient failure can re-attempt.
 		c.once = sync.Once{}
+
 		return "", initErr
 	}
+
 	return c.configPath, nil
 }
 
@@ -120,7 +133,7 @@ func (c *Client) initConfigFile() (string, error) {
 //   - Response.Error non-nil: returned in Response; Call itself returns nil error.
 func (c *Client) Call(ctx context.Context, req Request) (*Response, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("cpirpc: nil context")
+		return nil, errors.New("cpirpc: nil context")
 	}
 
 	cfgPath, err := c.initConfigFile()
@@ -147,6 +160,7 @@ func (c *Client) Call(ctx context.Context, req Request) (*Response, error) {
 	if wire.Arguments == nil {
 		wire.Arguments = []any{}
 	}
+
 	if wire.Context == nil {
 		wire.Context = map[string]any{}
 	}
@@ -155,6 +169,7 @@ func (c *Client) Call(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cpirpc: marshal request: %w", err)
 	}
+
 	body = append(body, '\n')
 
 	// Build args: --config <path> [ExtraArgs...]
@@ -164,20 +179,25 @@ func (c *Client) Call(ctx context.Context, req Request) (*Response, error) {
 
 	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
 	cmd.Stdin = bytes.NewReader(body)
+
 	var stdout, stderr bytes.Buffer
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		stderrSnip := stderr.String()
+
 		const maxSnip = 2048
 		if len(stderrSnip) > maxSnip {
 			stderrSnip = "..." + stderrSnip[len(stderrSnip)-maxSnip:]
 		}
+
 		if stderrSnip != "" {
 			return nil, fmt.Errorf("cpirpc: cpi binary exited with error for method %q: %w\nstderr: %s",
 				req.Method, err, stderrSnip)
 		}
+
 		return nil, fmt.Errorf("cpirpc: cpi binary exited with error for method %q: %w",
 			req.Method, err)
 	}
@@ -201,10 +221,14 @@ func (c *Client) Close() error {
 	if c.configPath == "" {
 		return nil
 	}
+
 	path := c.configPath
 	c.configPath = ""
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cpirpc: remove temp config %q: %w", path, err)
 	}
+
 	return nil
 }

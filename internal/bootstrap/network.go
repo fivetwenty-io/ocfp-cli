@@ -661,7 +661,8 @@ func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, netw
 
 	// Subnet 0 → infra (no AZ assignment, hosts bastion/director/shared svc).
 	infraName := m.options.BlocName + pveInfraSubnetSuffix
-	if err := m.addVirtualSubnetWithRole(infraName, subnets[0], cidr, networkID, subnetRoleInfra, ""); err != nil {
+	err := m.addVirtualSubnetWithRole(infraName, subnets[0], cidr, networkID, subnetRoleInfra, "")
+	if err != nil {
 		return err
 	}
 
@@ -671,7 +672,8 @@ func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, netw
 		name := fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, ocfpIdx)
 		az := pveAZNamePrefix + string(rune('a'+ocfpIdx))
 
-		if err := m.addVirtualSubnetWithRole(name, subnets[i], cidr, networkID, subnetRoleOCFP, az); err != nil {
+		err := m.addVirtualSubnetWithRole(name, subnets[i], cidr, networkID, subnetRoleOCFP, az)
+		if err != nil {
 			return err
 		}
 	}

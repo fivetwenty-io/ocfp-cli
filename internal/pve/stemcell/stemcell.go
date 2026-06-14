@@ -62,6 +62,7 @@ func IsStemcellUploaded(ctx context.Context, runBosh RunBosh, name, version stri
 	if name == "" {
 		return false, errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if version == "" {
 		return false, errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -81,12 +82,14 @@ func IsStemcellUploaded(ctx context.Context, runBosh RunBosh, name, version stri
 			// BOSH JSON output uses column keys "Name" and "Version".
 			// Version may include a trailing "*" on the active stemcell; strip it.
 			rowName := strings.TrimSpace(row["Name"])
+
 			rowVersion := strings.TrimSpace(strings.TrimSuffix(row["Version"], "*"))
 			if rowName == name && rowVersion == version {
 				return true, nil
 			}
 		}
 	}
+
 	return false, nil
 }
 
@@ -113,14 +116,17 @@ func FetchSHA1(ctx context.Context, httpClient *http.Client, name, version strin
 	if name == "" {
 		return "", errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if version == "" {
 		return "", errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if httpClient == nil {
 		return "", errors.New("stemcell: httpClient must not be nil") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	apiURL := "https://bosh.io/api/v1/stemcells/" + name
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("stemcell: build request for %s: %w", apiURL, err)
@@ -151,6 +157,7 @@ func FetchSHA1(ctx context.Context, httpClient *http.Client, name, version strin
 			if entry.Regular.SHA1 == "" {
 				return "", fmt.Errorf("stemcell: version %s of %s has no regular.sha1 in bosh.io response", version, name) //nolint:err113 // descriptive error, not caller-testable
 			}
+
 			return entry.Regular.SHA1, nil
 		}
 	}
@@ -180,9 +187,11 @@ func EnsureStemcell(ctx context.Context, runBosh RunBosh, fetchSHA1 SHA1Fetcher,
 	if name == "" {
 		return errors.New("stemcell: name must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if version == "" {
 		return errors.New("stemcell: version must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
+
 	if url == "" {
 		return errors.New("stemcell: url must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
@@ -191,6 +200,7 @@ func EnsureStemcell(ctx context.Context, runBosh RunBosh, fetchSHA1 SHA1Fetcher,
 	if err != nil {
 		return fmt.Errorf("stemcell: check existing stemcells: %w", err)
 	}
+
 	if uploaded {
 		return nil
 	}

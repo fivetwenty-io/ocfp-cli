@@ -32,6 +32,7 @@ func (p *TCPDialProbe) Name() string {
 	if p.Label != "" {
 		return fmt.Sprintf("tcp-dial(%s)", p.Label)
 	}
+
 	return fmt.Sprintf("tcp-dial(%s:%d)", p.Host, p.Port)
 }
 
@@ -56,6 +57,7 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	if p.Host == "" {
 		return Result{OK: false, Detail: "TCPDialProbe: Host must not be empty"}
 	}
+
 	if p.Port < 1 || p.Port > 65535 {
 		return Result{
 			OK:     false,
@@ -85,6 +87,7 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	// via signal.NotifyContext), so the leading ctx.Done() fast-path above is kept
 	// only as a lightweight check before the syscall.
 	d := net.Dialer{Timeout: timeout}
+
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return Result{
@@ -104,6 +107,7 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	}
 
 	_ = conn.Close() // best-effort; error is harmless after successful dial
+
 	return Result{OK: true, Detail: label + ": open"}
 }
 
@@ -112,6 +116,7 @@ func (p *TCPDialProbe) label(addr string) string {
 	if p.Label != "" {
 		return fmt.Sprintf("%s (%s)", p.Label, addr)
 	}
+
 	return addr
 }
 

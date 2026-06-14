@@ -716,6 +716,7 @@ func (m *Manager) resolveBastionCloudflareAPIToken() string {
 	if m.config == nil || m.config.Cloudflare == nil {
 		return ""
 	}
+
 	cf := m.config.Cloudflare
 
 	return vault.ResolveSecretRef(m.tailscaleSafe(), cf.APIToken, cf.APITokenVaultPath)
@@ -727,9 +728,11 @@ func (m *Manager) bastionCloudflareSpec() *cpi.CloudflareSpec {
 	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
 		return nil
 	}
+
 	if strings.TrimSpace(m.cloudflareTunnelToken) == "" {
 		return nil
 	}
+
 	return &cpi.CloudflareSpec{TunnelToken: m.cloudflareTunnelToken}
 }
 
@@ -827,7 +830,7 @@ func (m *Manager) bastionDefaultUsername() string {
 // present a single L3 subnet per vnet (e.g. 10.64.64.0/18); the gateway lives
 // in that parent network. Pairing the bastion IP with a narrower mask (e.g.
 // /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
-// and breaks egress. Zero means "let the provider default decide."
+// and breaks egress. Zero means "let the provider default decide.".
 func (m *Manager) bastionStaticIPPrefix() int {
 	if m.config == nil {
 		return 0

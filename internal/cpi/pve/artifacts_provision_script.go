@@ -110,13 +110,15 @@ systemctl enable --now rustfs
 // Validation matches RenderArtifactsCloudInit: all fields are required except
 // CertPEM/KeyPEM, which are only required when TLSEnabled is true.
 func RenderArtifactsProvisionScript(in ArtifactsCloudInitInputs) (string, error) {
-	if err := in.validate(); err != nil {
+	err := in.validate()
+	if err != nil {
 		return "", err
 	}
 
 	var buf bytes.Buffer
 
-	if err := artifactsProvisionScriptTmpl.Execute(&buf, in); err != nil {
+	err = artifactsProvisionScriptTmpl.Execute(&buf, in)
+	if err != nil {
 		return "", fmt.Errorf("render artifacts provision script: %w", err)
 	}
 

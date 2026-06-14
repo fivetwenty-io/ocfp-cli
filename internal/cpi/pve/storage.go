@@ -49,6 +49,7 @@ func pveVolumeName(reqName string, vmid int) string {
 	}
 
 	suffix := "disk"
+
 	if reqName != "" {
 		parts := strings.Split(reqName, "-")
 		suffix = parts[len(parts)-1]

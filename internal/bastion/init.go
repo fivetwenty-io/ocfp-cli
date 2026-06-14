@@ -2184,6 +2184,7 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 	if m.config.SecretsBackendName() == "vault" {
 		tools = append(tools, "vault")
 	}
+
 	totalSteps := 1 + len(tools)
 
 	if m.reporter != nil {

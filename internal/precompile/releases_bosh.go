@@ -30,6 +30,7 @@ func BOSHReleases(sc Stemcell) []Release {
 		r.UpstreamCompiledURL = boshCompiledURL(r, sc)
 		out[i] = r
 	}
+
 	return out
 }
 
@@ -40,6 +41,7 @@ func boshCompiledURL(r Release, sc Stemcell) string {
 	if sc.OS != "ubuntu-noble" {
 		return ""
 	}
+
 	return fmt.Sprintf("%s/%s-%s-%s-%s.tgz",
 		boshCompiledHost, r.Name, r.Version, sc.OS, sc.Version)
 }

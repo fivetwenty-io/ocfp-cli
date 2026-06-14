@@ -118,6 +118,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		if req.Gateway != "" {
 			params["gateway"] = req.Gateway
 		}
+
 		if req.SNAT {
 			params["snat"] = 1
 		}

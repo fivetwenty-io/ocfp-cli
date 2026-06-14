@@ -2,6 +2,7 @@ package precompile
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -20,7 +21,7 @@ const stemcellMarkerPrefix = "# stemcell: "
 // the artifact is traceable to the command that produced it.
 func RenderOpsFile(rels []Resolution, sc Stemcell, generatedBy string) ([]byte, error) {
 	if len(rels) == 0 {
-		return nil, fmt.Errorf("no resolutions to render")
+		return nil, errors.New("no resolutions to render")
 	}
 
 	var b strings.Builder
@@ -32,6 +33,7 @@ func RenderOpsFile(rels []Resolution, sc Stemcell, generatedBy string) ([]byte, 
 		if r.URL == "" || r.SHA == "" {
 			return nil, fmt.Errorf("release %s/%s: missing url or sha", r.Name, r.Version)
 		}
+
 		fmt.Fprintf(&b, "- type: replace\n")
 		fmt.Fprintf(&b, "  path: /releases/name=%s?\n", r.Name)
 		fmt.Fprintf(&b, "  value:\n")
@@ -55,6 +57,7 @@ func StemcellFromOps(opsYAML []byte) (sc Stemcell, ok bool) {
 	if sc2 == nil {
 		return Stemcell{}, false
 	}
+
 	return *sc2, true
 }
 
@@ -65,12 +68,16 @@ func scanStemcellMarker(s string) *Stemcell {
 		if !strings.HasPrefix(line, stemcellMarkerPrefix) {
 			continue
 		}
+
 		val := strings.TrimSpace(strings.TrimPrefix(line, stemcellMarkerPrefix))
+
 		os, ver, found := strings.Cut(val, "/")
 		if !found || os == "" || ver == "" {
 			return nil
 		}
+
 		return &Stemcell{OS: os, Version: ver}
 	}
+
 	return nil
 }

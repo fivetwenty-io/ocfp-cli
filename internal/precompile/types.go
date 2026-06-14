@@ -69,6 +69,7 @@ const (
 // lives (URL the director will fetch from) and its sha for the pin ops file.
 type Resolution struct {
 	Release
+
 	Source Source
 	// URL the deploying director fetches the compiled tarball from. For CF this
 	// is the RustFS path-style https URL; for the director it is the upstream

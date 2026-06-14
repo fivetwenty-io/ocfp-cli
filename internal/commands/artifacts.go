@@ -105,8 +105,9 @@ func runArtifactsCmd(cmd *cobra.Command, args []string) error {
 		return artifactsLifecycle(ctx, "restart")
 	case "destroy":
 		if !confirmYes {
-			return fmt.Errorf("destroy is destructive; pass --yes to confirm")
+			return errors.New("destroy is destructive; pass --yes to confirm")
 		}
+
 		return artifactsDestroy(ctx, log)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnknownArtifactsAct, action)
@@ -155,6 +156,7 @@ func buildArtifactsContext(parent context.Context, blocName string) (*artifactsC
 	sm, err := createStateManager(blocName)
 	if err != nil {
 		cleanup()
+
 		return nil, nil, fmt.Errorf("creating state manager: %w", err)
 	}
 
@@ -168,6 +170,7 @@ func buildArtifactsContext(parent context.Context, blocName string) (*artifactsC
 	lr, err := artifacts.Lookup(parent, sm, provider, blocName)
 	if err != nil {
 		cleanup()
+
 		return nil, nil, err
 	}
 
@@ -191,7 +194,9 @@ func artifactsLookup(ac *artifactsContext, asJSON bool) error {
 		if err != nil {
 			return err
 		}
+
 		fmt.Println(string(out))
+
 		return nil
 	}
 
@@ -230,7 +235,9 @@ func artifactsStatus(ac *artifactsContext, asJSON bool) error {
 		if err != nil {
 			return err
 		}
+
 		fmt.Println(string(out))
+
 		return nil
 	}
 
@@ -254,18 +261,21 @@ func artifactsLifecycle(ac *artifactsContext, op string) error {
 		if err != nil {
 			return fmt.Errorf("starting %s: %w", ac.lookup.VMID, err)
 		}
+
 		fmt.Printf("✓ start requested on %s (%s)\n", ac.lookup.Name, ac.lookup.VMID)
 	case "stop":
 		err := cm.StopInstance(ac.parent, ac.lookup.VMID)
 		if err != nil {
 			return fmt.Errorf("stopping %s: %w", ac.lookup.VMID, err)
 		}
+
 		fmt.Printf("✓ stop requested on %s (%s)\n", ac.lookup.Name, ac.lookup.VMID)
 	case "restart":
 		err := cm.RebootInstance(ac.parent, ac.lookup.VMID)
 		if err != nil {
 			return fmt.Errorf("rebooting %s: %w", ac.lookup.VMID, err)
 		}
+
 		fmt.Printf("✓ restart requested on %s (%s)\n", ac.lookup.Name, ac.lookup.VMID)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnknownArtifactsAct, op)

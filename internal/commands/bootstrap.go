@@ -595,7 +595,8 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	// succeeds or fails fast with an actionable message.
 	if artifactsStepInScope(bootstrapOpts) &&
 		cfg.Artifacts.Enabled && cfg.Artifacts.TLS.Mode == config.ArtifactsTLSModeInternalCA {
-		if err := ensureInceptionVault(blocName, viper.GetBool("test")); err != nil {
+		err := ensureInceptionVault(blocName, viper.GetBool("test"))
+		if err != nil {
 			return fmt.Errorf("artifacts (internal-ca TLS) requires the inception vault, which could not be started "+
 				"(start it manually with `ocfp vault inception --bloc %s`): %w", blocName, err)
 		}

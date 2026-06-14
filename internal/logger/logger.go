@@ -362,7 +362,8 @@ func Sync() error {
 		return nil
 	}
 
-	if err := log.Sync(); err != nil {
+	err := log.Sync()
+	if err != nil {
 		return fmt.Errorf("failed to sync logger: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -49,6 +50,7 @@ const (
 func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	if !m.config.Artifacts.Enabled {
 		_, _ = fmt.Fprintf(os.Stdout, "    • artifacts feature disabled in config; skipping\n")
+
 		return nil
 	}
 
@@ -110,7 +112,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		caPEM = mat.CertPEM
 	case config.ArtifactsTLSModeInternalCA:
 		if m.safe == nil {
-			return fmt.Errorf("artifacts: internal-ca TLS mode requires vault access; set OCFP_VAULT_ADDR/TOKEN or switch artifacts.tls.mode to self-signed/disabled")
+			return errors.New("artifacts: internal-ca TLS mode requires vault access; set OCFP_VAULT_ADDR/TOKEN or switch artifacts.tls.mode to self-signed/disabled")
 		}
 
 		ca, caErr := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
@@ -199,13 +201,15 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	vol, attachErr := m.attachArtifactsDataVolume(ctx, inst.ID, vmName)
 	if attachErr != nil {
 		m.cleanupOrphanArtifactsVM(ctx, inst.ID, vmName)
+
 		return fmt.Errorf("artifacts: attach data volume: %w", attachErr)
 	}
 
 	// PVE 9.x drops cloud-init user-data (snippet upload is blocked), so deliver
 	// the identical RustFS provisioning over SSH, hopping through the bastion.
 	if strings.EqualFold(m.options.Provider, "pve") {
-		if err := m.provisionArtifactsViaSSH(ctx, ciInputs, ipStr); err != nil {
+		err := m.provisionArtifactsViaSSH(ctx, ciInputs, ipStr)
+		if err != nil {
 			// Non-fatal: leave the VM for triage and let the readiness probe
 			// below surface the resulting unhealthy state. The script is
 			// idempotent, so a re-run (after clearing state) retries cleanly.
@@ -291,6 +295,7 @@ func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmN
 	if err != nil {
 		// Volume created but not attached — clean it up to avoid orphans.
 		_ = m.provider.StorageManager().DeleteVolume(ctx, vol.ID)
+
 		return nil, fmt.Errorf("attach data volume: %w", err)
 	}
 
@@ -322,7 +327,7 @@ func (m *Manager) waitArtifactsReady(ctx context.Context, ep artifacts.Endpoint,
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: %v", artifacts.ErrReadinessTimeout, err)
+			return fmt.Errorf("%w: %w", artifacts.ErrReadinessTimeout, err)
 		}
 
 		select {

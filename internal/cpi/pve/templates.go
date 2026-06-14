@@ -98,6 +98,7 @@ var templateCatalog = map[string]TemplateSpec{
 // decide whether to attempt auto-provisioning.
 func LookupCatalogSpec(name string) (TemplateSpec, bool) {
 	spec, ok := templateCatalog[name]
+
 	return spec, ok
 }
 
@@ -159,12 +160,12 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 
 	targetStorage := m.client.config.DefaultStorage
 	if targetStorage == "" {
-		return 0, fmt.Errorf("PVE config DefaultStorage required for template provisioning") //nolint:err113 // descriptive error, not caller-testable
+		return 0, errors.New("PVE config DefaultStorage required for template provisioning") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	isoStorage := m.client.config.ISOStorage
 	if isoStorage == "" {
-		return 0, fmt.Errorf("PVE config ISOStorage required for template provisioning (set provider.iso_storage)") //nolint:err113 // descriptive error, not caller-testable
+		return 0, errors.New("PVE config ISOStorage required for template provisioning (set provider.iso_storage)") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	node, err := m.client.getNode(ctx)
@@ -192,7 +193,8 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 	}
 
 	if spec.RequireBastionUnits {
-		if err := m.seedBastionTemplate(ctx, node, vmid); err != nil {
+		err := m.seedBastionTemplate(ctx, node, vmid)
+		if err != nil {
 			return 0, fmt.Errorf("seed bastion template: %w", err)
 		}
 	}
@@ -253,7 +255,8 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	}
 
 	if startUPID != "" {
-		if err := m.client.waitForTask(ctx, node, startUPID, 60); err != nil {
+		err := m.client.waitForTask(ctx, node, startUPID, 60)
+		if err != nil {
 			return fmt.Errorf("await seed start: %w", err)
 		}
 	}
@@ -429,6 +432,7 @@ func (c *Client) downloadTemplateImage(ctx context.Context, node, storage string
 
 	if exists {
 		logger.Debugf("image %s already on %s; skipping download", spec.SourceFilename, storage)
+
 		return nil
 	}
 
@@ -482,6 +486,7 @@ func (c *Client) importVolumeExists(ctx context.Context, node, storage, filename
 	}
 
 	want := fmt.Sprintf("%s:import/%s", storage, filename)
+
 	for _, item := range raw {
 		entry, ok := item.(map[string]interface{})
 		if !ok {
@@ -507,12 +512,14 @@ func parseUPID(resp *nodes.CreateStorageDownloadUrlResponse) (string, error) {
 	raw := *resp
 
 	var asString string
-	if err := json.Unmarshal(raw, &asString); err == nil {
+	err := json.Unmarshal(raw, &asString)
+	if err == nil {
 		return asString, nil
 	}
 
 	var asObject map[string]interface{}
-	if err := json.Unmarshal(raw, &asObject); err == nil {
+	err = json.Unmarshal(raw, &asObject)
+	if err == nil {
 		if v, ok := asObject["upid"].(string); ok {
 			return v, nil
 		}
