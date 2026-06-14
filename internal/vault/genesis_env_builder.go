@@ -247,6 +247,7 @@ func WriteEnvFileV32Opts_Write(opts WriteEnvFileV32Opts) error {
 }
 
 // WriteEnvFileV32 writes a Genesis v3.2 environment file to path.
+//
 // Deprecated: use WriteEnvFileV32Opts_Write with WriteEnvFileV32Opts to pass
 // Features, Params, BOSHConfigs, or a custom MinVersion/KitVersion.
 //

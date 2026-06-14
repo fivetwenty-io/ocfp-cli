@@ -68,7 +68,7 @@ func (m *Manager) createBackup(blocName string) (string, error) {
 		return "", fmt.Errorf("failed to read state file: %w", err)
 	}
 
-	err = os.WriteFile(backupPath, data, stateFileMode)
+	err = os.WriteFile(backupPath, data, stateFileMode) //nolint:gosec // G703: backupPath derives from config-controlled state dir
 	if err != nil {
 		return "", fmt.Errorf("failed to write backup file: %w", err)
 	}
@@ -220,7 +220,7 @@ func (m *Manager) restoreFromBackupLocked(blocName string) (*State, error) {
 		return nil, fmt.Errorf("failed to read backup file: %w", err)
 	}
 
-	err = os.WriteFile(statePath, data, stateFileMode)
+	err = os.WriteFile(statePath, data, stateFileMode) //nolint:gosec // G703: statePath derives from config-controlled state dir
 	if err != nil {
 		return nil, fmt.Errorf("failed to restore state file: %w", err)
 	}

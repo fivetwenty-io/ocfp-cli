@@ -32,6 +32,7 @@ func (c *Client) EnsureTunnel(ctx context.Context, accountID, name string) (Tunn
 	base := "/accounts/" + accountID + "/cfd_tunnel"
 
 	var existing []idName
+
 	err := c.do(ctx, http.MethodGet, base+"?name="+url.QueryEscape(name)+"&is_deleted=false", nil, &existing)
 	if err != nil {
 		return Tunnel{}, fmt.Errorf("list tunnels: %w", err)
@@ -51,6 +52,7 @@ func (c *Client) EnsureTunnel(ctx context.Context, accountID, name string) (Tunn
 		var created idName
 
 		body := map[string]any{"name": name, "config_src": "cloudflare"}
+
 		err := c.do(ctx, http.MethodPost, base, body, &created)
 		if err != nil {
 			return Tunnel{}, fmt.Errorf("create tunnel %q: %w", name, err)
@@ -60,6 +62,7 @@ func (c *Client) EnsureTunnel(ctx context.Context, accountID, name string) (Tunn
 	}
 
 	var token string
+
 	err = c.do(ctx, http.MethodGet, base+"/"+id+"/token", nil, &token)
 	if err != nil {
 		return Tunnel{}, fmt.Errorf("get tunnel token: %w", err)
@@ -131,6 +134,7 @@ func (c *Client) PutTunnelConfig(ctx context.Context, accountID, tunnelID string
 	path := "/accounts/" + accountID + "/cfd_tunnel/" + tunnelID + "/configurations"
 
 	body := map[string]any{"config": map[string]any{"ingress": ingress}}
+
 	err := c.do(ctx, http.MethodPut, path, body, nil)
 	if err != nil {
 		return fmt.Errorf("put tunnel config: %w", err)
@@ -145,6 +149,7 @@ func (c *Client) DeleteTunnel(ctx context.Context, accountID, tunnelID string) e
 	base := "/accounts/" + accountID + "/cfd_tunnel/" + tunnelID
 	// Best-effort: clean stale connections so delete is not blocked.
 	_ = c.do(ctx, http.MethodDelete, base+"/connections", nil, nil)
+
 	err := c.do(ctx, http.MethodDelete, base, nil, nil)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("delete tunnel: %w", err)

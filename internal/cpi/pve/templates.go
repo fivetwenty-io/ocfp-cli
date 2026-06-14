@@ -512,12 +512,14 @@ func parseUPID(resp *nodes.CreateStorageDownloadUrlResponse) (string, error) {
 	raw := *resp
 
 	var asString string
+
 	err := json.Unmarshal(raw, &asString)
 	if err == nil {
 		return asString, nil
 	}
 
 	var asObject map[string]interface{}
+
 	err = json.Unmarshal(raw, &asObject)
 	if err == nil {
 		if v, ok := asObject["upid"].(string); ok {

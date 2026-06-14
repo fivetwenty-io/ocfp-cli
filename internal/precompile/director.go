@@ -90,6 +90,7 @@ func (d *boshDirector) UploadRelease(ctx context.Context, url, sha string) error
 	cmd.Stdout = d.stdout
 
 	cmd.Stderr = d.stderr
+
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("bosh upload-release %s: %w", url, err)
@@ -103,6 +104,7 @@ func (d *boshDirector) Deploy(ctx context.Context, deployment, manifestPath stri
 	cmd.Stdout = d.stdout
 
 	cmd.Stderr = d.stderr
+
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("bosh deploy %s: %w", deployment, err)

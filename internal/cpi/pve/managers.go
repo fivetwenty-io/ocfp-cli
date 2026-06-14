@@ -37,6 +37,7 @@ var pveOCFPCommentRegex = regexp.MustCompile(`ocfp:([A-Za-z0-9._-]+)`)
 // a firewall-groups page — the words add no information.
 var pveRedundantDescPrefix = regexp.MustCompile(`(?i)^security group(?:\s+for)?\s+`)
 
+//nolint:unused // referenced by managers_test.go boundary checks
 const pveGroupNameMaxLen = 18
 
 // extractOCFPNameFromComment returns the original OCFP-side name if the PVE
@@ -242,8 +243,8 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 	for {
 		resp, err := m.client.pveClient.GetCtx(ctx, groupPath, nil)
 		if err != nil {
-			// Group already gone — treat as success.
-			return nil
+			// Group already gone — treat as success (idempotent delete).
+			return nil //nolint:nilerr // 404/absent group == already deleted
 		}
 
 		rules, ok := resp.([]interface{})

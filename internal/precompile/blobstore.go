@@ -26,8 +26,8 @@ const shaPrefix = "sha256:"
 
 // objectAPI is the subset of the S3 client used here, narrowed for testing.
 type objectAPI interface {
-	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
-	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
 // HeadCompiled returns the stored sha (with "sha256:" prefix) for an object,

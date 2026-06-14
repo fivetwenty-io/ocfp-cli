@@ -246,7 +246,14 @@ func writeAWSDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) 
 
 	const iaas = "aws"
 
-	err := vault.WriteEnvFileV32(envFilePath, deployment, useCreateEnv, bloc, iaas, kit)
+	err := vault.WriteEnvFileV32Opts_Write(vault.WriteEnvFileV32Opts{
+		Path:         envFilePath,
+		EnvName:      deployment,
+		UseCreateEnv: useCreateEnv,
+		Bloc:         bloc,
+		IAAS:         iaas,
+		Kit:          kit,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to write genesis env file %s: %w", envFilePath, err)
 	}

@@ -44,7 +44,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	// through to provider-side discovery (QGA / reserved IP) which sees
 	// the bastion's real address.
 	if ip, found := tryStateCache(blocName, log); found {
-		if isBastionReachable(ip) {
+		if isBastionReachable(ctx, ip) {
 			return ip, nil
 		}
 
@@ -237,12 +237,14 @@ func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, b
 // guard against the bootstrap-time IP drifting from the running guest's
 // actual address (PVE template + predictable interface names → DHCP
 // fallback inside the VM).
-func isBastionReachable(ipAddr string) bool {
+func isBastionReachable(ctx context.Context, ipAddr string) bool {
 	if ipAddr == "" {
 		return false
 	}
 
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddr, "22"), bastionReachabilityProbeTimeout)
+	dialer := net.Dialer{Timeout: bastionReachabilityProbeTimeout}
+
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ipAddr, "22"))
 	if err != nil {
 		return false
 	}

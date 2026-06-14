@@ -175,7 +175,7 @@ func runPVEStemcellUpload(
 		return fmt.Errorf("pve stemcell upload: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "upload complete  name=%s version=%s\n", name, version)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "upload complete  name=%s version=%s\n", name, version)
 
 	return nil
 }

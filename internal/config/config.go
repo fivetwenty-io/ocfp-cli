@@ -1490,7 +1490,7 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 
 	// Convert to uint32 — each octet is now bounded to [0, 255] so the
 	// cast cannot silently wrap.
-	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3])
+	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3]) //nolint:gosec // G115: octets bounded to [0,255] above, cast cannot wrap
 
 	// Calculate subnet size
 	subnetSize := uint32(1) << (maxPrefixLen - newPrefixLen)
@@ -1685,6 +1685,7 @@ func validate(cfg *Config) error {
 	// demand by bootstrap (vault.LoadOrGenerateBlocCA), so the validator never
 	// has to refuse internal-ca mode for missing config.
 	bastionEnabled := cfg.Bastion.Flavor != ""
+
 	err = cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true)
 	if err != nil {
 		return fmt.Errorf("artifacts config: %w", err)
@@ -1762,7 +1763,7 @@ func validatePVEAuth(cfg *Config, warnW io.Writer) error {
 		// Both auth modes set; API token wins at runtime per CPI auth-selection
 		// logic. Log a warning so operators know the password credentials are
 		// ignored. This is not an error because the config is functional.
-		fmt.Fprintf(warnW, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
+		_, _ = fmt.Fprintf(warnW, "WARNING: pve config: both api token auth (auth_token+token_secret) and password auth (username+password) are configured; api token takes precedence — password credentials will be ignored\n")
 	}
 
 	return nil

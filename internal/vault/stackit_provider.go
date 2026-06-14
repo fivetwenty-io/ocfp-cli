@@ -514,7 +514,7 @@ func (s *StackitVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 		reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing OCFP configuration")
 	}
 
-	jsonConfig, err := json.Marshal(s.Config) //nolint:musttag // Config struct has json tags
+	jsonConfig, err := json.Marshal(s.Config) //nolint:musttag,gosec // Config has json tags; G117: intentional secret serialization to vault
 	if err != nil {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}

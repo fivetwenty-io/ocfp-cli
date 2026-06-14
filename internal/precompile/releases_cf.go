@@ -26,6 +26,7 @@ type cfReleaseDoc struct {
 // manifest silently yielding a short release list.
 func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 	var doc cfReleaseDoc
+
 	err := yaml.Unmarshal(manifestYAML, &doc)
 	if err != nil {
 		return nil, fmt.Errorf("parsing cf-deployment manifest: %w", err)

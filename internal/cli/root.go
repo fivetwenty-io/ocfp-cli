@@ -85,7 +85,9 @@ func Execute() {
 	err = rootCmd.ExecuteContext(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		// os.Exit skips deferred calls; release the signal handler explicitly.
+		stop()
+		os.Exit(1) //nolint:gocritic // stop() invoked above before exit
 	}
 }
 
