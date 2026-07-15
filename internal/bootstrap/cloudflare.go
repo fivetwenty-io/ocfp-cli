@@ -31,7 +31,7 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 		return nil
 	}
 
-	name := firstNonEmpty(cf.TunnelName, "ocfp-lab-"+m.options.BlocName)
+	name := firstNonEmpty(cf.TunnelName, defaultTunnelName(m.options.BlocName))
 	client := cloudflare.NewClient(token, nil)
 
 	accountID, zoneID, err := client.ResolveAccountAndZone(ctx, cf.Zone)
@@ -97,6 +97,17 @@ func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
 	logger.Infof("Cloudflare tunnel %q ready (id %s)", name, tun.ID)
 
 	return nil
+}
+
+// defaultTunnelName derives the tunnel name from the bloc name, adding the
+// "ocfp-lab-" prefix only when the bloc name doesn't already carry it —
+// blocs named ocfp-lab-* would otherwise get a doubled prefix.
+func defaultTunnelName(blocName string) string {
+	if strings.HasPrefix(blocName, "ocfp-lab-") {
+		return blocName
+	}
+
+	return "ocfp-lab-" + blocName
 }
 
 // buildServiceIngress converts the configured extra services into cloudflared
