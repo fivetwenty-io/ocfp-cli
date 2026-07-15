@@ -13,6 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/scripts"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -365,7 +366,34 @@ func FindProvisionScript(scriptName string) (string, error) {
 		}
 	}
 
-	return "", ErrScriptNotFound(scriptName)
+	// No on-disk copy (installed binary running outside a source checkout):
+	// fall back to the copy embedded at build time, materialized to a temp
+	// file because callers scp the path to remote hosts.
+	return materializeEmbeddedScript(scriptName)
+}
+
+// materializeEmbeddedScript writes an embedded provision script to a private
+// temp file and returns its path. Returns ErrScriptNotFound when the name is
+// not embedded either.
+func materializeEmbeddedScript(scriptName string) (string, error) {
+	data, err := scripts.Provision.ReadFile("provision/" + scriptName)
+	if err != nil {
+		return "", ErrScriptNotFound(scriptName)
+	}
+
+	dir, err := os.MkdirTemp("", "ocfp-provision-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir for embedded script: %w", err)
+	}
+
+	path := filepath.Join(dir, scriptName)
+
+	err = os.WriteFile(path, data, 0o700) //nolint:gosec // script must be executable
+	if err != nil {
+		return "", fmt.Errorf("failed to write embedded script: %w", err)
+	}
+
+	return path, nil
 }
 
 func copyAndExecuteScript(ctx *BastionContext, scriptPath, remoteScript, operationName, logPath string, configEnv map[string]string, log logger.Logger) error {

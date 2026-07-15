@@ -214,9 +214,11 @@ func TestBastionCommand(t *testing.T) {
 			expectedErr: "provider validation failed",
 		},
 		{
-			name:        "provision action",
-			args:        []string{"provision"},
-			expectedErr: "cannot find bastion provision script",
+			name: "provision action",
+			args: []string{"provision"},
+			// The bastion script is embedded in the binary, so lookup always
+			// succeeds; without a real bastion the placeholder scp fails next.
+			expectedErr: "scp command failed",
 		},
 	}
 
@@ -281,4 +283,20 @@ func TestFindProvisionScript(t *testing.T) {
 	foundPath, err := commands.FindProvisionScript("test-script")
 	require.NoError(t, err)
 	assert.Contains(t, foundPath, "test-script")
+}
+
+// TestFindProvisionScript_EmbeddedFallback proves the shipped scripts resolve
+// with no source checkout on disk (installed-binary scenario).
+func TestFindProvisionScript_EmbeddedFallback(t *testing.T) {
+	t.Chdir(t.TempDir()) // no scripts/provision below cwd
+
+	for _, name := range []string{"artifacts", "bastion"} {
+		path, err := commands.FindProvisionScript(name)
+		require.NoError(t, err, "embedded script %s must resolve", name)
+
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Positive(t, info.Size(), "materialized script %s must not be empty", name)
+		assert.NotZero(t, info.Mode()&0o100, "materialized script %s must be executable", name)
+	}
 }
