@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	cryptossh "golang.org/x/crypto/ssh"
+
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -1334,6 +1336,26 @@ func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string)
 		localKeyExists = true
 	}
 
+	// Providers without a server-side keypair store (STACKIT, PVE) can never
+	// answer GetKeyPair, so "in cloud" is meaningless for them: the local
+	// private key is the source of truth. Treating the always-failing cloud
+	// lookup as staleness would rotate the key every run and lock bootstrap
+	// out of every VM created with the old public half.
+	if m.providerUsesLocalKeypairs() {
+		if localKeyExists {
+			_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists, skipping\n", keypairName)
+			logger.Infof("Keypair %s exists in state and local file (provider has no keypair store) - skipping creation", keypairName)
+
+			return true, nil
+		}
+
+		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s in state but private key missing locally, recreating\n", keypairName)
+		logger.Warnf("Keypair %s in state but %s missing - removing state entry and recreating", keypairName, keyFile)
+		_ = m.stateManager.RemoveResource(state.ResourceTypeKeyPair, keypairName)
+
+		return false, nil
+	}
+
 	// Verify keypair exists in cloud provider
 	computeMgr := m.provider.ComputeManager()
 	cloudKeypair, err := computeMgr.GetKeyPair(ctx, keypairName)
@@ -1447,26 +1469,36 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	existingKeyPath := filepath.Join(keyDir, "id_ed25519")
 	existingPubPath := filepath.Join(keyDir, "id_ed25519.pub")
 
-	// If local keypair exists, reuse it
+	// If local keypair exists, reuse it. Regenerating here would rotate the
+	// key and lock bootstrap out of every VM created with the old public
+	// half, so the private key on disk is always authoritative.
 	_, keyStatErr := os.Stat(existingKeyPath) //nolint:gosec // path components are from trusted config
 	if keyStatErr == nil {                    //nolint:nestif // SSH key validation requires nested checks
-		_, pubStatErr := os.Stat(existingPubPath) //nolint:gosec // path components are from trusted config
-		if pubStatErr == nil {
-			_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
+		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
 
-			privateKeyData, readErr := os.ReadFile(existingKeyPath) //nolint:gosec // path is controlled
-			if readErr != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", readErr)
-			}
-
-			publicKeyData, readErr := os.ReadFile(existingPubPath) //nolint:gosec // path is controlled
-			if readErr != nil {
-				return nil, nil, false, fmt.Errorf("failed to read existing public key: %w", readErr)
-			}
-
-			// Return true to indicate keys were read from existing files - DON'T save them again!
-			return privateKeyData, publicKeyData, true, nil
+		privateKeyData, readErr := os.ReadFile(existingKeyPath) //nolint:gosec // path is controlled
+		if readErr != nil {
+			return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", readErr)
 		}
+
+		publicKeyData, readErr := os.ReadFile(existingPubPath) //nolint:gosec // path is controlled
+		if readErr != nil {
+			// The .pub sidecar is missing (older releases only persisted the
+			// private half). Derive it rather than rotating the pair, and
+			// write it back so later runs read both files directly.
+			publicKeyData, readErr = derivePublicKey(privateKeyData)
+			if readErr != nil {
+				return nil, nil, false, fmt.Errorf("existing private key %s is unusable (refusing to rotate it): %w", existingKeyPath, readErr)
+			}
+
+			writeErr := os.WriteFile(existingPubPath, publicKeyData, sshKeyFileMode) //nolint:gosec // path components are from trusted config
+			if writeErr != nil {
+				logger.Warnf("Could not persist derived public key to %s: %v", existingPubPath, writeErr)
+			}
+		}
+
+		// Return true to indicate keys were read from existing files - DON'T save them again!
+		return privateKeyData, publicKeyData, true, nil
 	}
 
 	// No existing keypair - generate a new one
@@ -1707,7 +1739,7 @@ func (m *Manager) createNewKeyPair(ctx context.Context, keypairName string) erro
 	}
 
 	if shouldSavePrivKey {
-		err = m.savePrivateKeyAndConfig(keypair.PrivateKey, keypairName)
+		err = m.savePrivateKeyAndConfig(keypair.PrivateKey, keypair.PublicKey, keypairName)
 		if err != nil {
 			return err
 		}
@@ -1773,9 +1805,9 @@ func (m *Manager) createStandardKeyPair(ctx context.Context, computeMgr cpi.Comp
 	return keypair, shouldSavePrivKey, nil
 }
 
-// savePrivateKeyAndConfig saves the private key to file and config.
-func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error {
-	err := m.savePrivateKey(privateKey)
+// savePrivateKeyAndConfig saves the key pair to files and the private key to config.
+func (m *Manager) savePrivateKeyAndConfig(privateKey, publicKey, keypairName string) error {
+	err := m.savePrivateKey(privateKey, publicKey)
 	if err != nil {
 		return fmt.Errorf("failed to save private key: %w", err)
 	}
@@ -1796,7 +1828,7 @@ func (m *Manager) savePrivateKeyAndConfig(privateKey, keypairName string) error 
 	return nil
 }
 
-func (m *Manager) savePrivateKey(privateKey string) error {
+func (m *Manager) savePrivateKey(privateKey, publicKey string) error {
 	if strings.TrimSpace(privateKey) == "" {
 		return errEmptyPrivateKey
 	}
@@ -1819,11 +1851,34 @@ func (m *Manager) savePrivateKey(privateKey string) error {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
 
+	// Write the .pub sidecar too — generateLocalSSHKeyPair keys reuse off the
+	// pair on disk, so a missing public half must not force a rotation on the
+	// next bootstrap run.
+	if pub := strings.TrimSpace(publicKey); pub != "" {
+		pubFile := keyFile + ".pub"
+
+		err = os.WriteFile(pubFile, []byte(pub+"\n"), sshKeyFileMode) //nolint:gosec // path components are from trusted config
+		if err != nil {
+			return fmt.Errorf("failed to write public key: %w", err)
+		}
+	}
+
 	logger.Infof("Private key saved to: %s", keyFile)
 
 	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Private key saved to: ~/.ocfp/%s/ssh/id_ed25519\n", m.options.BlocName)
 
 	return nil
+}
+
+// derivePublicKey recovers the authorized_keys form of the public half from
+// an unencrypted OpenSSH private key.
+func derivePublicKey(privateKeyData []byte) ([]byte, error) {
+	signer, err := cryptossh.ParsePrivateKey(privateKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("parsing private key: %w", err)
+	}
+
+	return cryptossh.MarshalAuthorizedKey(signer.PublicKey()), nil
 }
 
 // ==============================================================================
