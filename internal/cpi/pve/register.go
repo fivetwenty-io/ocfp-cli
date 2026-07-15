@@ -48,6 +48,7 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 			Realm:          getString(cfg, "realm"),
 			NetworkMode:    getString(cfg, "network_mode"),
 			DefaultBridge:  getString(cfg, "default_bridge"),
+			TemplateBridge: getString(cfg, "template_bridge"),
 			SDNZone:        getString(cfg, "sdn_zone"),
 			DefaultStorage: getString(cfg, "default_storage"),
 			ISOStorage:     getString(cfg, "iso_storage"),

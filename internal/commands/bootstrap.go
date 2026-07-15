@@ -473,6 +473,18 @@ func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Con
 		providerConfig["default_bridge"] = cfg.Network.Name
 	}
 
+	if cfg.TemplateBridge != "" {
+		providerConfig["template_bridge"] = cfg.TemplateBridge
+	}
+
+	// default_storage drives where template auto-provisioning places VM
+	// disks; resolve it the same way configureCPI resolves vm_storage.
+	if cfg.VMStorage != "" {
+		providerConfig["default_storage"] = cfg.VMStorage
+	} else if cfg.Artifacts.Data.StoragePool != "" {
+		providerConfig["default_storage"] = cfg.Artifacts.Data.StoragePool
+	}
+
 	if cfg.IsoStorage != "" {
 		providerConfig["iso_storage"] = cfg.IsoStorage
 	}
