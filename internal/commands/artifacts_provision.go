@@ -264,7 +264,10 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 	envB64 := base64.StdEncoding.EncodeToString([]byte(envString))
 
 	remote := fmt.Sprintf(
-		"bash -lc 'set -euo pipefail; _e=$(mktemp); chmod 600 \"$_e\"; echo %s | base64 -d > \"$_e\"; sudo bash %s \"$_e\" 2>&1 | tee %s; rc=${PIPESTATUS[0]}; rm -f \"$_e\"; exit $rc'",
+		// Non-login shell on purpose: under `set -e` a login shell runs
+		// ~/.bash_logout on exit, where Ubuntu's clear_console fails without a
+		// tty and overrides the script's exit 0 with 1.
+		"bash -c 'set -euo pipefail; _e=$(mktemp); chmod 600 \"$_e\"; echo %s | base64 -d > \"$_e\"; sudo bash %s \"$_e\" 2>&1 | tee %s; rc=${PIPESTATUS[0]}; rm -f \"$_e\"; exit $rc'",
 		envB64, artifactsRemoteScript, artifactsRemoteLog,
 	)
 
