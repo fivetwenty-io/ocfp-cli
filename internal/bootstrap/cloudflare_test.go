@@ -48,3 +48,8 @@ func TestBuildServiceIngress(t *testing.T) {
 func TestBuildServiceIngress_Empty(t *testing.T) {
 	assert.Nil(t, buildServiceIngress(nil))
 }
+
+func TestDefaultTunnelName(t *testing.T) {
+	assert.Equal(t, "ocfp-lab-wayne", defaultTunnelName("wayne"))
+	assert.Equal(t, "ocfp-lab-wayne", defaultTunnelName("ocfp-lab-wayne"), "already-prefixed bloc names must not double the prefix")
+}
