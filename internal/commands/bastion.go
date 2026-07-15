@@ -450,8 +450,11 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 	// run the Perl script.  Using a temp file for the env avoids `eval` on
 	// arbitrary shell text and keeps PVE_TOKEN_SECRET off the ps command line
 	// of the Perl process itself.
+	// Non-login shell on purpose: under `set -e` a login shell runs
+	// ~/.bash_logout on exit, where Ubuntu's clear_console fails without a
+	// tty and turns a successful run into exit status 1.
 	remote := fmt.Sprintf(
-		"bash -lc 'set -euo pipefail; _e=$(mktemp); echo %s | base64 -d > \"$_e\"; . \"$_e\"; rm -f \"$_e\"; perl %s | tee %s'",
+		"bash -c 'set -euo pipefail; _e=$(mktemp); echo %s | base64 -d > \"$_e\"; . \"$_e\"; rm -f \"$_e\"; perl %s | tee %s'",
 		envB64, remoteScript, logPath,
 	)
 
