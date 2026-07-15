@@ -19,6 +19,17 @@ const (
 	ArtifactsTLSModeDisabled = "disabled"
 )
 
+// Filesystem constants for the artifacts data disk.
+const (
+	// ArtifactsFilesystemExt4 formats the data disk as ext4 (the default).
+	ArtifactsFilesystemExt4 = "ext4"
+	// ArtifactsFilesystemXFS formats the data disk as XFS.
+	ArtifactsFilesystemXFS = "xfs"
+	// ArtifactsFilesystemZFS creates a ZFS pool + dataset on the data disk.
+	// Avoid when the PVE storage pool is itself ZFS-backed (ZFS-on-ZFS).
+	ArtifactsFilesystemZFS = "zfs"
+)
+
 // Sentinel errors for ArtifactsConfig validation.
 var (
 	// ErrArtifactsRequiresPVE is returned when artifacts is enabled on a non-PVE provider.
@@ -35,6 +46,9 @@ var (
 
 	// ErrArtifactsInvalidTLSMode is returned for an unrecognized tls.mode value.
 	ErrArtifactsInvalidTLSMode = errors.New("artifacts tls.mode must be 'internal-ca', 'self-signed', or 'disabled'")
+
+	// ErrArtifactsInvalidFilesystem is returned for an unrecognized data.filesystem value.
+	ErrArtifactsInvalidFilesystem = errors.New("artifacts data.filesystem must be 'ext4', 'xfs', or 'zfs'")
 )
 
 // rustfsDefaultDownloadURLTemplate is the template for the RustFS binary download URL.
@@ -63,15 +77,22 @@ type RustfsConfig struct {
 	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
 }
 
-// ArtifactsDataConfig controls the ZFS data disk attached to the artifacts VM.
+// ArtifactsDataConfig controls the data disk attached to the artifacts VM.
 type ArtifactsDataConfig struct {
-	// DiskSizeGiB is the size in gibibytes of the ZFS data disk. Defaults to 500.
+	// DiskSizeGiB is the size in gibibytes of the data disk. Defaults to 500.
 	DiskSizeGiB int `json:"disk_size_gib,omitempty" mapstructure:"disk_size_gib" yaml:"disk_size_gib,omitempty"`
 
 	// StoragePool is the Proxmox storage pool used for the data disk. Defaults to "local-zfs".
 	StoragePool string `json:"storage_pool,omitempty" mapstructure:"storage_pool" yaml:"storage_pool,omitempty"`
 
-	// ZFSDataset overrides the ZFS dataset path. When empty, ResolvedDataset returns "rpool/<bloc-name>".
+	// Filesystem selects how the data disk is formatted inside the VM:
+	// "ext4" (default), "xfs", or "zfs". Prefer ext4/xfs when the PVE storage
+	// pool is already ZFS-backed — nesting ZFS inside a ZFS zvol wastes memory
+	// (two ARCs) and write amplification for no benefit.
+	Filesystem string `json:"filesystem,omitempty" mapstructure:"filesystem" yaml:"filesystem,omitempty"`
+
+	// ZFSDataset overrides the ZFS dataset path (filesystem=zfs only). When
+	// empty, ResolvedDataset returns "rpool/<bloc-name>".
 	ZFSDataset string `json:"zfs_dataset,omitempty" mapstructure:"zfs_dataset" yaml:"zfs_dataset,omitempty"`
 
 	// Mountpoint is the filesystem path where the ZFS dataset is mounted. Defaults to "/data".
@@ -159,6 +180,10 @@ func (a *ArtifactsConfig) Defaults() {
 		a.Data.StoragePool = "local-zfs"
 	}
 
+	if a.Data.Filesystem == "" {
+		a.Data.Filesystem = ArtifactsFilesystemExt4
+	}
+
 	if a.Data.Mountpoint == "" {
 		a.Data.Mountpoint = "/data"
 	}
@@ -171,8 +196,21 @@ func (a *ArtifactsConfig) Defaults() {
 	}
 }
 
-// ResolvedDataset returns the ZFS dataset path to use. When Data.ZFSDataset is
-// set it is returned as-is; otherwise "rpool/<blocName>" is returned.
+// ResolvedFilesystem returns the normalized data-disk filesystem, defaulting
+// to ext4 when unset. Callers should use this instead of Data.Filesystem so
+// configs built without Defaults() still resolve consistently.
+func (a *ArtifactsConfig) ResolvedFilesystem() string {
+	fs := strings.ToLower(strings.TrimSpace(a.Data.Filesystem))
+	if fs == "" {
+		return ArtifactsFilesystemExt4
+	}
+
+	return fs
+}
+
+// ResolvedDataset returns the ZFS dataset path to use (filesystem=zfs only).
+// When Data.ZFSDataset is set it is returned as-is; otherwise
+// "rpool/<blocName>" is returned.
 func (a *ArtifactsConfig) ResolvedDataset(blocName string) string {
 	if a.Data.ZFSDataset != "" {
 		return a.Data.ZFSDataset
@@ -216,6 +254,13 @@ func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, interna
 		return fmt.Errorf("%w: got %d", ErrArtifactsInvalidDiskSize, a.Data.DiskSizeGiB)
 	}
 
+	switch a.ResolvedFilesystem() {
+	case ArtifactsFilesystemExt4, ArtifactsFilesystemXFS, ArtifactsFilesystemZFS:
+		// valid
+	default:
+		return fmt.Errorf("%w: got %q", ErrArtifactsInvalidFilesystem, a.Data.Filesystem)
+	}
+
 	mode := strings.ToLower(strings.TrimSpace(a.TLS.Mode))
 	switch mode {
 	case ArtifactsTLSModeInternalCA:
@@ -252,6 +297,7 @@ type rawArtifactsData struct {
 	DiskSizeGiBCC int    `yaml:"diskSizeGiB,omitempty"`
 	StoragePool   string `yaml:"storage_pool,omitempty"`
 	StoragePoolCC string `yaml:"storagePool,omitempty"`
+	Filesystem    string `yaml:"filesystem,omitempty"`
 	ZFSDataset    string `yaml:"zfs_dataset,omitempty"`
 	ZFSDatasetCC  string `yaml:"zfsDataset,omitempty"`
 	Mountpoint    string `yaml:"mountpoint,omitempty"`
@@ -305,6 +351,7 @@ func mapRawRustfs(r rawArtifactsRustfs) RustfsConfig {
 func mapRawData(r rawArtifactsData) ArtifactsDataConfig {
 	out := ArtifactsDataConfig{
 		StoragePool: firstSetString(r.StoragePool, r.StoragePoolCC),
+		Filesystem:  r.Filesystem,
 		ZFSDataset:  firstSetString(r.ZFSDataset, r.ZFSDatasetCC),
 		Mountpoint:  r.Mountpoint,
 	}
