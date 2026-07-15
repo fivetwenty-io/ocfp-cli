@@ -2,17 +2,18 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
@@ -31,7 +32,21 @@ const (
 
 	// artifactsResourceType is the state resource Type for the artifacts VM.
 	artifactsResourceType = "artifacts"
+
+	// artifactsSkipPathProbeTimeout bounds the re-probe run on the bootstrap
+	// skip path (state already records the VM). Short and warning-only: this
+	// is a re-run convergence check, not the initial-boot readiness gate
+	// (artifactsReadinessTimeout), so a slow RustFS restart must not fail an
+	// otherwise no-op bootstrap re-run.
+	artifactsSkipPathProbeTimeout = 30 * time.Second
 )
+
+// ErrArtifactsVaultUnavailable is the cause wrapped into the actionable
+// internal-ca vault error when this bootstrap run never obtained vault
+// access at all (SetSafe was never called — see executeBootstrap in
+// internal/commands/bootstrap.go), as opposed to a specific dial/auth
+// failure from vault.NewManagerFromEnv.
+var ErrArtifactsVaultUnavailable = errors.New("vault access unavailable for this bootstrap run")
 
 // CreateArtifacts provisions the ocfp-artifacts VM when the bloc opts into
 // Artifacts.Enabled. The step performs:
@@ -59,10 +74,10 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	vmName := m.options.BlocName + "-artifacts"
 
 	if existing, _ := m.stateManager.GetResource(artifactsResourceType, vmName); existing != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; skipping\n", vmName)
-		logger.Infof("Artifacts VM %s already recorded; skipping", vmName)
+		_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; converging\n", vmName)
+		logger.Infof("Artifacts VM %s already recorded; converging", vmName)
 
-		m.refreshArtifactsCACert(existing)
+		m.convergeExistingArtifacts(ctx, existing)
 
 		return nil
 	}
@@ -107,7 +122,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 			cn = vmName
 		}
 
-		mat, err := artifacts.GenerateSelfSignedTLS(cn, []string{cn, vmName}, []net.IP{ip})
+		mat, err := artifacts.GenerateSelfSignedTLS(cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
 		if err != nil {
 			return fmt.Errorf("artifacts: generate self-signed TLS: %w", err)
 		}
@@ -116,7 +131,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		caPEM = mat.CertPEM
 	case config.ArtifactsTLSModeInternalCA:
 		if m.safe == nil {
-			return errors.New("artifacts: internal-ca TLS mode requires vault access; set OCFP_VAULT_ADDR/TOKEN or switch artifacts.tls.mode to self-signed/disabled")
+			return artifacts.InternalCAVaultError(m.options.BlocName, ErrArtifactsVaultUnavailable)
 		}
 
 		ca, caErr := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
@@ -129,7 +144,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 			cn = vmName
 		}
 
-		leaf, leafErr := artifacts.IssueLeafCert(ca, cn, []string{cn, vmName}, []net.IP{ip})
+		leaf, leafErr := artifacts.IssueLeafCert(ca, cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
 		if leafErr != nil {
 			return fmt.Errorf("artifacts: issue leaf cert: %w", leafErr)
 		}
@@ -143,7 +158,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: unsupported TLS mode %q", m.config.Artifacts.TLS.Mode)
 	}
 
-	ciInputs := pveclient.ArtifactsCloudInitInputs{
+	ciInputs := provision.ArtifactsCloudInitInputs{
 		AccessKey:   creds.AccessKey,
 		SecretKey:   creds.SecretKey,
 		DownloadURL: m.config.Artifacts.ResolvedDownloadURL(),
@@ -155,12 +170,18 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		TLSEnabled:  tlsMat != nil,
 		CertPEM:     pemOrEmpty(tlsMat, true),
 		KeyPEM:      pemOrEmpty(tlsMat, false),
+		// CAPEM is the VM's own on-box trust anchor (installed into the OS
+		// trust store by the provisioning script/cloud-init) — the bloc CA
+		// for internal-ca, or the leaf itself for self-signed (it is its own
+		// trust anchor). Empty when TLS is disabled. See VM self-trust
+		// (scripts/provision/artifacts, RUSTFS_TLS_CA).
+		CAPEM: caPEM,
 	}
 
 	// cloud-init user-data is retained for providers whose snippet/user-data
 	// delivery works. On PVE 9.x the snippet-upload API is blocked, so the
 	// identical provisioning is delivered over SSH after boot (see below).
-	userData, err := pveclient.RenderArtifactsCloudInit(ciInputs)
+	userData, err := provision.RenderArtifactsCloudInit(ciInputs)
 	if err != nil {
 		return fmt.Errorf("artifacts: render cloud-init: %w", err)
 	}
@@ -210,16 +231,18 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: attach data volume: %w", attachErr)
 	}
 
-	// PVE 9.x drops cloud-init user-data (snippet upload is blocked), so deliver
-	// the identical RustFS provisioning over SSH, hopping through the bastion.
-	if strings.EqualFold(m.options.Provider, "pve") {
-		err := m.provisionArtifactsViaSSH(ctx, ciInputs, ipStr)
-		if err != nil {
-			// Non-fatal: leave the VM for triage and let the readiness probe
-			// below surface the resulting unhealthy state. The script is
-			// idempotent, so a re-run (after clearing state) retries cleanly.
-			_, _ = fmt.Fprintf(os.Stderr, "warning: artifacts SSH provisioning: %v\n", err)
-		}
+	// Cloud-init user-data (rendered above, attached to req.UserData) is the
+	// default delivery path. Providers whose compute backend needs an extra
+	// out-of-band step (PVE 9.x blocks cloud-init snippet upload) implement
+	// artifactsDeliverer instead of branching here — see
+	// resolveArtifactsDeliverer (artifacts_deliverer.go).
+	err = resolveArtifactsDeliverer(m.options.Provider).deliverArtifacts(ctx, m, ciInputs, ipStr)
+	if err != nil {
+		// Non-fatal: leave the VM for triage and let the readiness probe
+		// below surface the resulting unhealthy state. The pve delivery
+		// script is idempotent, so a re-run (after clearing state) retries
+		// cleanly.
+		_, _ = fmt.Fprintf(os.Stderr, "warning: artifacts provisioning delivery: %v\n", err)
 	}
 
 	ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
@@ -231,7 +254,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: %v — VM left running for triage\n", err)
 	}
 
-	err = m.recordArtifactsState(vmName, inst, vol, ip, creds, ep, tlsMat)
+	err = m.recordArtifactsState(vmName, inst, vol, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat))
 	if err != nil {
 		return fmt.Errorf("artifacts: record state: %w", err)
 	}
@@ -253,6 +276,45 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// leafNotAfterRFC3339 extracts the issued leaf certificate's NotAfter (task
+// 6.2, leaf-expiry visibility) for recording alongside the artifacts state
+// resource. Both artifacts.GenerateSelfSignedTLS and artifacts.IssueLeafCert
+// already populate TLSMaterial.NotAfter at issuance, so the common case is a
+// direct read; the PEM-parse fallback covers TLSMaterial values built by
+// older code paths or tests that only set CertPEM. Best-effort throughout: a
+// parse failure logs a warning and returns "" rather than failing VM
+// creation over expiry-metadata extraction — the leaf is already issued and
+// serving by the time this runs.
+func leafNotAfterRFC3339(tlsMat *artifacts.TLSMaterial) string {
+	if tlsMat == nil {
+		return ""
+	}
+
+	if tlsMat.NotAfter != "" {
+		return tlsMat.NotAfter
+	}
+
+	if tlsMat.CertPEM == "" {
+		return ""
+	}
+
+	block, _ := pem.Decode([]byte(tlsMat.CertPEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		logger.Warnf("artifacts: leaf cert PEM has no CERTIFICATE block; tls_leaf_not_after will not be recorded")
+
+		return ""
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		logger.Warnf("artifacts: parsing leaf certificate for expiry recording: %v", err)
+
+		return ""
+	}
+
+	return cert.NotAfter.UTC().Format(time.RFC3339)
 }
 
 // pemOrEmpty returns the cert or key PEM, defaulting to empty when TLS is off.
@@ -344,12 +406,40 @@ func (m *Manager) waitArtifactsReady(ctx context.Context, ep artifacts.Endpoint,
 }
 
 // refreshArtifactsCACert re-syncs the recorded ca_cert with the bloc CA
-// currently in vault. The artifacts leaf cert is issued from vault's bloc CA
-// at provision time, so after a vault rebuild the CA captured in state goes
-// stale and `ocfp vault populate` — which pins the blobstore CA from this
-// state entry — writes a CA that no longer verifies the endpoint.
+// currently in vault, but ONLY for a VM actually provisioned with
+// internal-ca. It gates on the STATE resource's recorded tls_mode — the same
+// pattern internal/bastion/phases.go's blocCACertFromState uses — never on
+// the current config mode: Phase 6 flipped the config default to
+// internal-ca, so an existing bloc that was provisioned self-signed under
+// the old default now loads config.Artifacts.TLS.Mode == internal-ca on
+// every run even though its VM's ca_cert is the self-signed leaf itself
+// (its actual working trust anchor). Gating on config here would mint a
+// brand-new bloc CA and silently overwrite that leaf, breaking a working
+// deployment the next time vault populate/WriteArtifacts runs. A tls.mode
+// migration must be an explicit `ocfp artifacts provision` re-provision,
+// never an implicit converge side effect — see the warning below.
+//
+// The artifacts leaf cert is issued from vault's bloc CA at provision time,
+// so after a vault rebuild the CA captured in state goes stale and
+// `ocfp vault populate` — which pins the blobstore CA from this state
+// entry — writes a CA that no longer verifies the endpoint. That is the
+// staleness this refresh actually fixes, for internal-ca VMs only.
 func (m *Manager) refreshArtifactsCACert(existing *state.Resource) {
-	if m.config.Artifacts.TLS.Mode != config.ArtifactsTLSModeInternalCA || m.safe == nil {
+	stateMode, _ := existing.Properties["tls_mode"].(string)
+
+	if stateMode != config.ArtifactsTLSModeInternalCA {
+		if m.config.Artifacts.TLS.Mode == config.ArtifactsTLSModeInternalCA {
+			logger.Warnf(
+				"artifacts: config tls.mode=internal-ca but VM %s was provisioned tls_mode=%q; "+
+					"leaving its ca_cert untouched. A mode migration must be an explicit "+
+					"`ocfp artifacts provision --bloc %s`, not an implicit bootstrap re-run.",
+				existing.Name, stateMode, m.options.BlocName)
+		}
+
+		return
+	}
+
+	if m.safe == nil {
 		return
 	}
 
@@ -380,6 +470,124 @@ func (m *Manager) refreshArtifactsCACert(existing *state.Resource) {
 	logger.Infof("Artifacts ca_cert in state refreshed from bloc CA")
 }
 
+// convergeExistingArtifacts re-syncs a previously recorded artifacts VM on
+// every bootstrap re-run instead of a bare skip, so re-running bootstrap
+// heals drift instead of silently trusting stale state:
+//
+//  1. refreshArtifactsCACert — re-sync ca_cert with vault's bloc CA.
+//  2. A short, capped readiness probe — warn (don't fail) if the endpoint is
+//     unreachable, since state says the VM should already be live.
+//  3. Re-run WriteArtifacts when vault is reachable — idempotent, heals a
+//     wiped/re-initialized vault without requiring a separate populate run.
+//  4. Re-run EnsureBuckets — idempotent, heals a bucket deleted out of band.
+//
+// All three steps after the CA refresh are warning-only, matching the
+// create-path posture: a transient RustFS restart or unreachable vault must
+// never fail an otherwise no-op bootstrap re-run.
+func (m *Manager) convergeExistingArtifacts(ctx context.Context, existing *state.Resource) {
+	m.refreshArtifactsCACert(existing)
+
+	ep, creds, ok := artifactsEndpointCredsFromState(existing, m.config)
+	if !ok {
+		logger.Warnf("artifacts: state resource %s missing endpoint/credential properties; skipping skip-path convergence", existing.Name)
+
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, artifactsSkipPathProbeTimeout)
+	defer cancel()
+
+	err := artifacts.Probe(probeCtx, ep, creds)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"warning: artifacts VM %s: state says deployed but endpoint unreachable (%v); "+
+				"run `ocfp artifacts status` or `ocfp artifacts provision --bloc %s` to investigate\n",
+			existing.Name, err, m.options.BlocName)
+	}
+
+	if m.safe != nil {
+		writer := vault.NewArtifactsWriter(m.config, m.safe, m.options.BlocName)
+
+		tlsMat := artifactsTLSMaterialFromState(existing)
+
+		err = writer.WriteArtifacts(ctx, m.options.BlocName, ep, creds, tlsMat)
+		if err != nil {
+			logger.Warnf("artifacts: re-sync vault on skip path: %v", err)
+		}
+	} else {
+		logger.Debugf("artifacts: vault unavailable on skip path; skipping WriteArtifacts re-sync")
+	}
+
+	err = artifacts.EnsureBuckets(ctx, ep, creds, artifactsBucketList(m.options.BlocName, m.config))
+	if err != nil {
+		logger.Warnf("artifacts: ensure buckets on skip path: %v", err)
+	}
+}
+
+// artifactsEndpointCredsFromState rebuilds the Endpoint + Credentials the
+// skip path needs to probe/re-sync from a state.Resource's recorded
+// properties (the same keys recordArtifactsState writes). Port/region/
+// path-style are resolved from config rather than the properties map because
+// numeric values round-trip through JSON as float64, and the config already
+// holds the authoritative port. Returns ok=false when the minimum required
+// properties (endpoint, private_ip, access_key, secret_key) are absent —
+// e.g. a hand-edited or partially-written state entry.
+func artifactsEndpointCredsFromState(existing *state.Resource, cfg *config.Config) (artifacts.Endpoint, artifacts.Credentials, bool) {
+	get := func(key string) string {
+		v, _ := existing.Properties[key].(string)
+
+		return v
+	}
+
+	endpointURL := get("endpoint")
+	host := get("private_ip")
+	accessKey := get("access_key")
+	secretKey := get("secret_key")
+
+	if endpointURL == "" || host == "" || accessKey == "" || secretKey == "" {
+		return artifacts.Endpoint{}, artifacts.Credentials{}, false
+	}
+
+	port := cfg.Artifacts.Rustfs.S3Port
+	if port == 0 {
+		port = artifactsS3Port
+	}
+
+	ep := artifacts.Endpoint{
+		URL:       endpointURL,
+		Host:      host,
+		Port:      port,
+		Region:    config.BlobstoreDefaultRegion,
+		PathStyle: true,
+		CACert:    get("ca_cert"),
+	}
+
+	creds := artifacts.Credentials{AccessKey: accessKey, SecretKey: secretKey}
+
+	return ep, creds, true
+}
+
+// artifactsTLSMaterialFromState recovers the recorded leaf fingerprint and
+// expiry (when present) so WriteArtifacts' operational metadata write
+// (tls_fingerprint_sha256, tls_leaf_not_after) stays populated on the skip
+// path. The leaf's cert/key PEMs are never persisted to state (see
+// resolveArtifactsProvisionTLS / CreateArtifacts's tlsMat handling), so only
+// Fingerprint and NotAfter can be recovered here — WriteArtifacts only reads
+// those two fields from this struct.
+func artifactsTLSMaterialFromState(existing *state.Resource) *artifacts.TLSMaterial {
+	// tls_fingerprint_sha256 read here is operator/status metadata only (see
+	// the vault.ArtifactsWriter doc comment); never used to make a trust
+	// decision.
+	fp, _ := existing.Properties["tls_fingerprint_sha256"].(string)
+	notAfter, _ := existing.Properties["tls_leaf_not_after"].(string)
+
+	if fp == "" && notAfter == "" {
+		return nil
+	}
+
+	return &artifacts.TLSMaterial{Fingerprint: fp, NotAfter: notAfter}
+}
+
 func (m *Manager) recordArtifactsState(
 	vmName string,
 	inst *cpi.Instance,
@@ -388,6 +596,7 @@ func (m *Manager) recordArtifactsState(
 	creds artifacts.Credentials,
 	ep artifacts.Endpoint,
 	tlsMat *artifacts.TLSMaterial,
+	tlsLeafNotAfter string,
 ) error {
 	props := map[string]interface{}{
 		"vm_id":                inst.ID,
@@ -409,7 +618,16 @@ func (m *Manager) recordArtifactsState(
 	}
 
 	if tlsMat != nil {
+		// tls_fingerprint_sha256 is operator/status metadata only (see the
+		// vault.ArtifactsWriter doc comment); never used to make a trust
+		// decision — TLS clients verify against ca_cert, not this value.
 		props["tls_fingerprint_sha256"] = tlsMat.Fingerprint
+	}
+
+	if tlsLeafNotAfter != "" {
+		// tls_leaf_not_after (RFC3339, task 6.2) lets `ocfp artifacts status`
+		// warn on upcoming/passed leaf expiry without a live TLS dial.
+		props["tls_leaf_not_after"] = tlsLeafNotAfter
 	}
 
 	err := m.stateManager.AddResource(&state.Resource{
@@ -454,17 +672,11 @@ func buildArtifactsEndpoint(ip net.IP, cfg config.ArtifactsConfig, caPEM string)
 }
 
 // artifactsBucketList enumerates the BOSH + CF buckets to create on the
-// artifacts endpoint. Names follow the existing {bloc}-{env}-{type} convention.
-//
-// One bucket per BOSH director (mgmt and ocf/env), and four buckets for the
-// CF cloud-controller blobstore (droplets, packages, buildpacks, resource-pool).
+// artifacts endpoint. Delegates to the canonical list shared with the
+// `artifacts provision` command (internal/artifacts.CanonicalBuckets) so the
+// two provisioning paths can never drift apart on the bucket roster again.
+// _cfg is unused but kept so existing callers/tests do not need to change
+// their call shape.
 func artifactsBucketList(blocName string, _cfg *config.Config) []artifacts.BucketSpec {
-	return []artifacts.BucketSpec{
-		{Name: blocName + "-mgmt-bosh"},
-		{Name: blocName + "-ocf-bosh"},
-		{Name: blocName + "-ocf-cf-droplets"},
-		{Name: blocName + "-ocf-cf-packages"},
-		{Name: blocName + "-ocf-cf-buildpacks"},
-		{Name: blocName + "-ocf-cf-resource-pool"},
-	}
+	return artifacts.CanonicalBuckets(blocName)
 }

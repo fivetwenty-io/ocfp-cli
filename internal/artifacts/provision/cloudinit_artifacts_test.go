@@ -1,4 +1,4 @@
-package pve
+package provision
 
 import (
 	"strings"
@@ -306,6 +306,57 @@ func TestRenderArtifactsCloudInit_TLSEnabled_MissingKeyError(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "KeyPEM") {
 		t.Errorf("error %q does not mention KeyPEM", err.Error())
+	}
+}
+
+// TestRenderArtifactsCloudInit_CAPEM_InstallsVMTrustStore asserts that
+// setting CAPEM (task 4.4, VM self-trust) writes the trust anchor into the
+// VM's OS trust store location and refreshes it via update-ca-certificates,
+// and that the ca-certificates package is requested.
+func TestRenderArtifactsCloudInit_CAPEM_InstallsVMTrustStore(t *testing.T) {
+	t.Parallel()
+
+	in := fixedArtifactsInputs(true)
+	in.CAPEM = "-----BEGIN CERTIFICATE-----\nMIICAtest\n-----END CERTIFICATE-----"
+
+	out, err := RenderArtifactsCloudInit(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, want := range []string{
+		"- ca-certificates",
+		"path: /usr/local/share/ca-certificates/ocfp-ca.crt",
+		"      -----BEGIN CERTIFICATE-----",
+		"      MIICAtest",
+		"update-ca-certificates",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n----\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderArtifactsCloudInit_NoCAPEM_OmitsVMTrustStore asserts CAPEM is a
+// clean no-op when empty: no trust-store file, no update-ca-certificates
+// call, no extra ca-certificates package — matches disabled/self-signed
+// callers that never resolved a CA (or providers not yet on task 4.4).
+func TestRenderArtifactsCloudInit_NoCAPEM_OmitsVMTrustStore(t *testing.T) {
+	t.Parallel()
+
+	out, err := RenderArtifactsCloudInit(fixedArtifactsInputs(true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, unwanted := range []string{
+		"ocfp-ca.crt",
+		"update-ca-certificates",
+		"- ca-certificates",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("output should not contain %q when CAPEM is empty\n----\n%s", unwanted, out)
+		}
 	}
 }
 

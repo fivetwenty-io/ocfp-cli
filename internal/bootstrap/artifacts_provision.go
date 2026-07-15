@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
-	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
@@ -91,13 +91,13 @@ func buildArtifactsProvisionSSHArgs(c artifactsProvisionConn) []string {
 // connection from the bloc config: the bastion's operator-reachable address
 // (bastion_ip) and the bootstrap keypair, with the artifacts VM addressed by
 // its SDN IP (reachable from the bastion).
-func (m *Manager) provisionArtifactsViaSSH(ctx context.Context, in pveclient.ArtifactsCloudInitInputs, artifactsIP string) error {
+func (m *Manager) provisionArtifactsViaSSH(ctx context.Context, in provision.ArtifactsCloudInitInputs, artifactsIP string) error {
 	bastionHost := strings.TrimSpace(m.config.BastionIP)
 	if bastionHost == "" {
 		return fmt.Errorf("bastion_ip not set in config; cannot reach artifacts %s over SSH", artifactsIP) //nolint:err113 // descriptive, not caller-testable
 	}
 
-	script, err := pveclient.RenderArtifactsProvisionScript(in)
+	script, err := provision.RenderArtifactsProvisionScript(in)
 	if err != nil {
 		return fmt.Errorf("render provision script: %w", err)
 	}
