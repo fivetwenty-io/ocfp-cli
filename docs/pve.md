@@ -310,6 +310,8 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 The artifacts VM listens on the bloc SDN (e.g. `10.64.64.11:9000`) and the bastion is the closest host with route to it.
 
+For the full TLS trust contract (modes, CA/leaf rotation, and how each consumer resolves trust), see [`artifacts-tls.md`](artifacts-tls.md).
+
 ### Quick check (recommended)
 
 From the bastion:
@@ -318,9 +320,9 @@ From the bastion:
 blobstores validate --bloc ocfp-lab-wayne
 ```
 
-Expected: reachability OK, `s3 ls` succeeds, each of five buckets prints `head + upload + download + delete`, ending with `all blobstore checks passed`. Exit 0 on success, 2 on any failure, 3 on missing prerequisites.
+Expected: reachability OK, `s3 ls` succeeds, each of six buckets prints `head + upload + download + delete`, ending with `all blobstore checks passed`. Exit 0 on success, 2 on any failure, 3 on missing prerequisites.
 
-Subcommands: `validate` (default), `endpoint`, `creds`, `buckets`, `help`. Pass `--bloc <name>` or export `OCFP_BLOC`. For verified TLS, use `--ca-bundle <path>`.
+Subcommands: `validate` (default), `endpoint`, `creds`, `buckets`, `help`. Pass `--bloc <name>` or export `OCFP_BLOC`. TLS is verified by default (see [TLS trust contract](artifacts-tls.md) for the full CA resolution order); pass `--ca-bundle <path>` to override, or `--insecure` as a last resort when no CA is resolvable. `tls.mode: self-signed` blocs have no shared CA to resolve at all, so `validate` fails closed against them unless `--insecure` is passed — see [Upgrading existing blocs](artifacts-tls.md#upgrading-existing-blocs-self-signed-now-fails-closed-in-scriptsblobstores).
 
 ### Manual recipes
 
@@ -349,7 +351,7 @@ jq -r '.resources["artifacts.'"$BLOC"'-artifacts"] |
 
 ```bash
 # Service answering?
-curl -k -sS -o /dev/null -w "%{http_code}\n" $EP/      # 403 or 200 = up
+curl -sS -o /dev/null -w "%{http_code}\n" --cacert /usr/local/share/ca-certificates/ocfp-$BLOC-internal-ca.crt $EP/   # 403 or 200 = up
 
 # Inspect cert (bloc CA + SANs)
 openssl s_client -connect 10.64.64.11:9000 \
@@ -357,45 +359,55 @@ openssl s_client -connect 10.64.64.11:9000 \
   | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
 ```
 
-For `tls.mode: internal-ca` the cert is signed by the bloc CA in Vault. Fetch it once and skip `--no-verify-ssl`:
+For `tls.mode: internal-ca` the cert is signed by the bloc CA in Vault. `ocfp bastion init` already installs it into the bastion's system trust store (`/usr/local/share/ca-certificates/ocfp-$BLOC-internal-ca.crt`, folded into `/etc/ssl/certs/ca-certificates.crt`), so AWS CLI v2 needs it named explicitly via `AWS_CA_BUNDLE` (AWS CLI v2 ships its own bundle and ignores the OS trust store):
 
 ```bash
-safe get secret/ocfp/$BLOC/ca:certificate > /tmp/$BLOC-ca.pem
+export AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+aws --endpoint-url $EP s3 ls
+```
+
+To fetch the CA on a host that hasn't run `bastion init`, use `ocfp artifacts ca` rather than reading Vault directly:
+
+```bash
+ocfp artifacts ca --bloc $BLOC --out /tmp/$BLOC-ca.pem
 AWS_CA_BUNDLE=/tmp/$BLOC-ca.pem aws --endpoint-url $EP s3 ls
 ```
 
-SANs cover `<bloc>-artifacts` and the SDN IP only — `127.0.0.1` and external hostnames will mismatch.
+Leaf SANs cover `<bloc>-artifacts`, the SDN IP, and the loopback addresses `127.0.0.1`/`::1` (so verification also passes for tools running on the artifacts VM itself); external hostnames will still mismatch.
 
 ### 3. List buckets
 
 ```bash
-aws --endpoint-url $EP --no-verify-ssl s3 ls
+export AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+aws --endpoint-url $EP s3 ls
 ```
 
-Expect five buckets named `<bloc>-mgmt-bosh`, `<bloc>-ocf-cf-droplets`, `<bloc>-ocf-cf-packages`, `<bloc>-ocf-cf-buildpacks`, and `<bloc>-ocf-cf-resource-pool`.
+Expect six buckets named `<bloc>-mgmt-bosh`, `<bloc>-ocf-bosh`, `<bloc>-ocf-cf-droplets`, `<bloc>-ocf-cf-packages`, `<bloc>-ocf-cf-buildpacks`, and `<bloc>-ocf-cf-resource-pool`.
 
 ### 4. Round-trip a probe object
 
 ```bash
 echo "ping $(date -u +%FT%TZ)" > /tmp/probe.txt
-aws --endpoint-url $EP --no-verify-ssl s3 cp /tmp/probe.txt s3://$BLOC-mgmt-bosh/probe.txt
-aws --endpoint-url $EP --no-verify-ssl s3 ls   s3://$BLOC-mgmt-bosh/
-aws --endpoint-url $EP --no-verify-ssl s3 cp   s3://$BLOC-mgmt-bosh/probe.txt - && echo OK
-aws --endpoint-url $EP --no-verify-ssl s3 rm   s3://$BLOC-mgmt-bosh/probe.txt
+aws --endpoint-url $EP s3 cp /tmp/probe.txt s3://$BLOC-mgmt-bosh/probe.txt
+aws --endpoint-url $EP s3 ls   s3://$BLOC-mgmt-bosh/
+aws --endpoint-url $EP s3 cp   s3://$BLOC-mgmt-bosh/probe.txt - && echo OK
+aws --endpoint-url $EP s3 rm   s3://$BLOC-mgmt-bosh/probe.txt
 ```
 
 ### 5. Sweep every bucket
 
 ```bash
-for b in mgmt-bosh ocf-cf-droplets ocf-cf-packages ocf-cf-buildpacks ocf-cf-resource-pool; do
+for b in mgmt-bosh ocf-bosh ocf-cf-droplets ocf-cf-packages ocf-cf-buildpacks ocf-cf-resource-pool; do
   bucket=$BLOC-$b
-  if aws --endpoint-url $EP --no-verify-ssl s3api head-bucket --bucket $bucket 2>/dev/null; then
+  if aws --endpoint-url $EP s3api head-bucket --bucket $bucket 2>/dev/null; then
     echo "OK   $bucket"
   else
     echo "FAIL $bucket"
   fi
 done
 ```
+
+If a host has no CA installed and you need to bypass verification as a last resort, add `--no-verify-ssl` to any `aws` command above — see [TLS trust contract: troubleshooting](artifacts-tls.md#troubleshooting) before reaching for it.
 
 ### 6. CLI-side checks
 

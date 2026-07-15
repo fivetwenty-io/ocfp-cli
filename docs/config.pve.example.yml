@@ -192,6 +192,48 @@ blocs:
       # ca_cert: "/path/to/ca.crt"    # optional — for self-signed endpoints
       # path_style: true              # true for Ceph/RustFS (default true)
 
+    # ── Artifacts (RustFS S3-compatible blobstore VM) ──────────────────────
+    # Opt-in. Provisions a dedicated VM running RustFS on a ZFS/ext4/xfs data
+    # disk, giving BOSH and Cloud Foundry an S3-compatible blobstore without
+    # depending on an external object store. Requires provider: pve and
+    # bastion to be enabled (the artifacts VM is only reachable from the
+    # bastion's SDN).
+    artifacts:
+      enabled: true
+      flavor: "artifacts"
+      template: "ubuntu-2204-cloudinit"
+
+      rustfs:
+        version: "1.0.0-beta.7"   # beta.7+ required — earlier betas break S3 multipart uploads
+        s3_port: 9000
+        console_port: 9001
+
+      data:
+        disk_size_gib: 500
+        storage_pool: "local-zfs"
+        # filesystem: ext4 (default), xfs, or zfs. Avoid zfs when
+        # storage_pool is itself ZFS-backed (nested ZFS wastes memory/IO).
+        filesystem: "ext4"
+        mountpoint: "/data"
+
+      tls:
+        # mode selects how the RustFS TLS certificate is sourced:
+        #   internal-ca (default) — leaf issued from the bloc's own CA,
+        #     minted on demand at secret/ocfp/{bloc}/ca and reused across
+        #     runs. Verified TLS everywhere with zero extra config: the
+        #     bastion trust store, aws-cli (via AWS_CA_BUNDLE), and BOSH/CF
+        #     kits (via the CA pinned in vault) all pick it up automatically.
+        #     Requires a reachable vault at bootstrap (the inception vault is
+        #     started automatically if one isn't already running).
+        #   self-signed — RustFS generates its own leaf on first boot with no
+        #     shared CA; use --insecure/--no-verify-ssl or a manually
+        #     distributed cert to talk to it. No vault dependency.
+        #   disabled — plain HTTP, no TLS at all. Lab/throwaway use only.
+        mode: "internal-ca"
+        # common_name overrides the certificate CN; defaults to a name
+        # derived from the bloc and VM hostname when unset.
+        # common_name: "artifacts.example.com"
+
     # ── FQDNs ──────────────────────────────────────────────────────────────
     # Scheme: <base> is ocf.<user>.lab.fivetwenty.io; mgmt utilities sit under
     # .util.<base>, CF system endpoints under .system.<base>, and apps under

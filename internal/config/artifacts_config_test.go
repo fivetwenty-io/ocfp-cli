@@ -27,7 +27,7 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 		{"Data.StoragePool", a.Data.StoragePool, "local-zfs"},
 		{"Data.Filesystem", a.Data.Filesystem, ArtifactsFilesystemExt4},
 		{"Data.Mountpoint", a.Data.Mountpoint, "/data"},
-		{"TLS.Mode", a.TLS.Mode, ArtifactsTLSModeSelfSigned},
+		{"TLS.Mode", a.TLS.Mode, ArtifactsTLSModeInternalCA},
 		// CPU and MemoryMiB are left at zero by Defaults; zero means "use the
 		// flavor preset". Setting them in config overrides the preset.
 		{"CPU", a.CPU, 0},
