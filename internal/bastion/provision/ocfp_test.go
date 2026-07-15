@@ -450,32 +450,28 @@ func TestGenerateOCFPConfigureScript_VaultOptIn(t *testing.T) {
 	}
 }
 
-// --- A6: tool verification script conditionalization ---
+// --- A6: tool verification script required tools ---
 
-func TestGenerateOCFPToolVerificationScript_OpenbaoExcludesVault(t *testing.T) {
+// vault and ruby are required regardless of the secrets backend: the
+// inception vault runs on the vault binary, and `bosh create-env` renders
+// CPI job ERB templates with ruby.
+func TestGenerateOCFPToolVerificationScript_AlwaysChecksVaultBaoRuby(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Name: "test-bloc"}
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateOCFPToolVerificationScript(context.Background())
+	for _, backend := range []string{"", "openbao", "vault"} {
+		backend := backend
+		t.Run("backend="+backend, func(t *testing.T) {
+			t.Parallel()
 
-	if strings.Contains(script, "command -v vault") {
-		t.Error("tool verification with default backend must not check for 'vault'")
-	}
+			cfg := &config.Config{Name: "test-bloc", SecretsBackend: backend}
+			om := NewOCFPManager("aws", cfg, nil)
+			script := om.GenerateOCFPToolVerificationScript(context.Background())
 
-	if !strings.Contains(script, "command -v bao") {
-		t.Error("tool verification must always check for 'bao'")
-	}
-}
-
-func TestGenerateOCFPToolVerificationScript_VaultIncluded(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{Name: "test-bloc", SecretsBackend: "vault"}
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateOCFPToolVerificationScript(context.Background())
-
-	if !strings.Contains(script, "command -v vault") {
-		t.Error("tool verification with vault backend must check for 'vault'")
+			for _, tool := range []string{"vault", "bao", "ruby"} {
+				if !strings.Contains(script, "command -v "+tool) {
+					t.Errorf("tool verification must always check for %q", tool)
+				}
+			}
+		})
 	}
 }

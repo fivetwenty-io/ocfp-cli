@@ -324,13 +324,16 @@ func (c *Config) getCloudFoundryPackages() PackageGroup {
 }
 
 // getPostBrewPackages returns packages that have no brew formula and must be
-// installed via APT after Linuxbrew is available.
+// installed via APT after Linuxbrew is available. ruby is deliberately APT
+// (system path) even though brew ships it: `bosh create-env` renders CPI job
+// ERB templates by exec'ing `ruby`, and it runs in non-login shells where
+// Linuxbrew is not on PATH.
 func (c *Config) getPostBrewPackages() PackageGroup {
 	return PackageGroup{
 		Enabled:     true,
 		Condition:   "",
 		DependsOn:   []string{},
-		Packages:    []string{"libperl-dev", "libfuse2", "apt-rdepends", "lsb-release", "perl-doc"},
+		Packages:    []string{"libperl-dev", "libfuse2", "apt-rdepends", "lsb-release", "perl-doc", "ruby"},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",

@@ -390,7 +390,10 @@ func TestGetBrewPackages_NodeDisabledByDefault(t *testing.T) {
 
 // --- A5: vault brew package enabled state ---
 
-func TestGetBrewPackages_VaultDisabledByDefault(t *testing.T) {
+// The inception vault (`safe local` + `vault status`) runs on the vault
+// binary regardless of the bloc's secrets backend, so vault must be
+// installed even with the openbao default.
+func TestGetBrewPackages_VaultEnabledByDefault(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{}
@@ -399,8 +402,8 @@ func TestGetBrewPackages_VaultDisabledByDefault(t *testing.T) {
 
 	for _, p := range pkgs {
 		if p.Name == "vault" {
-			if p.Enabled {
-				t.Error("vault brew package must be Enabled=false when secrets_backend is default (openbao)")
+			if !p.Enabled {
+				t.Error("vault brew package must be Enabled=true even when secrets_backend is default (openbao); the inception vault requires it")
 			}
 
 			return
