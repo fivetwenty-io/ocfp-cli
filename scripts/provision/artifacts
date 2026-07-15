@@ -18,7 +18,8 @@
 #   RUSTFS_S3_PORT       S3 API port (e.g. 9000)
 #   RUSTFS_CONSOLE_PORT  web console port (e.g. 9001)
 #   RUSTFS_VOLUMES       data mountpoint (e.g. /data)
-#   RUSTFS_ZFS_DATASET   ZFS dataset (e.g. rpool/<bloc>)
+#   ARTIFACTS_DATA_FILESYSTEM  data disk filesystem: ext4 (default) | xfs | zfs
+#   RUSTFS_ZFS_DATASET   ZFS dataset (e.g. rpool/<bloc>); required only for zfs
 #   RUSTFS_DOWNLOAD_URL  RustFS release zip URL
 #   RUSTFS_TLS_ENABLED   "true" | "false"
 #   RUSTFS_TLS_CERT      cert PEM (when TLS enabled)
@@ -48,14 +49,28 @@ set +a
 : "${RUSTFS_S3_PORT:=9000}"
 : "${RUSTFS_CONSOLE_PORT:=9001}"
 : "${RUSTFS_VOLUMES:=/data}"
-: "${RUSTFS_ZFS_DATASET:?RUSTFS_ZFS_DATASET required}"
+: "${ARTIFACTS_DATA_FILESYSTEM:=ext4}"
+: "${RUSTFS_ZFS_DATASET:=}"
 : "${RUSTFS_DOWNLOAD_URL:?RUSTFS_DOWNLOAD_URL required}"
 : "${RUSTFS_TLS_ENABLED:=false}"
 : "${ARTIFACTS_ENDPOINT:=http://127.0.0.1:${RUSTFS_S3_PORT}}"
 : "${ARTIFACTS_BUCKETS:=}"
 
+case "${ARTIFACTS_DATA_FILESYSTEM}" in
+  ext4|xfs) ;;
+  zfs)
+    if [[ -z "${RUSTFS_ZFS_DATASET}" ]]; then
+      echo "FATAL: RUSTFS_ZFS_DATASET required when ARTIFACTS_DATA_FILESYSTEM=zfs" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "FATAL: unsupported ARTIFACTS_DATA_FILESYSTEM '${ARTIFACTS_DATA_FILESYSTEM}' (ext4|xfs|zfs)" >&2
+    exit 1
+    ;;
+esac
+
 DATA_DEVICE="/dev/sdb"
-ZPOOL="${RUSTFS_ZFS_DATASET%%/*}"
 TLS_DIR="/opt/rustfs/tls"
 
 log() { echo "==> $*"; }
@@ -68,8 +83,13 @@ log "OCFP artifacts provision starting (bloc=${OCFP_BLOC:-unknown})"
 # awscli v1 was removed from Ubuntu Noble's repos in favor of AWS CLI v2,
 # which ships only via the official zip installer. Install AWS CLI v2 to
 # /usr/local/bin/aws independently of apt.
+fs_pkgs=()
+case "${ARTIFACTS_DATA_FILESYSTEM}" in
+  zfs) fs_pkgs=(zfsutils-linux) ;;
+  xfs) fs_pkgs=(xfsprogs) ;;
+esac
 needed_pkgs=()
-for pkg in zfsutils-linux unzip jq curl ca-certificates; do
+for pkg in "${fs_pkgs[@]}" unzip jq curl ca-certificates; do
   dpkg -s "${pkg}" >/dev/null 2>&1 || needed_pkgs+=("${pkg}")
 done
 if [[ ${#needed_pkgs[@]} -gt 0 ]]; then
@@ -102,26 +122,54 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 3. ZFS pool + dataset on the attached data disk
+# 3. Data disk filesystem (ext4/xfs, or ZFS pool + dataset)
 # ----------------------------------------------------------------------------
-zpool import -a 2>/dev/null || true
-if ! zpool list "${ZPOOL}" >/dev/null 2>&1; then
-  if [[ ! -b "${DATA_DEVICE}" ]]; then
-    echo "FATAL: data device ${DATA_DEVICE} not present; is the data volume attached?" >&2
-    exit 1
-  fi
-  log "Creating ZFS pool ${ZPOOL} on ${DATA_DEVICE}"
-  zpool create -f -o ashift=12 "${ZPOOL}" "${DATA_DEVICE}"
-else
-  log "ZFS pool ${ZPOOL} already present"
+if [[ ! -b "${DATA_DEVICE}" ]]; then
+  echo "FATAL: data device ${DATA_DEVICE} not present; is the data volume attached?" >&2
+  exit 1
 fi
 
-if ! zfs list "${RUSTFS_ZFS_DATASET}" >/dev/null 2>&1; then
-  log "Creating ZFS dataset ${RUSTFS_ZFS_DATASET} at ${RUSTFS_VOLUMES}"
-  zfs create -o "mountpoint=${RUSTFS_VOLUMES}" -o compression=lz4 "${RUSTFS_ZFS_DATASET}"
-else
-  log "ZFS dataset ${RUSTFS_ZFS_DATASET} already present"
-fi
+case "${ARTIFACTS_DATA_FILESYSTEM}" in
+  ext4|xfs)
+    existing_fs="$(blkid -o value -s TYPE "${DATA_DEVICE}" 2>/dev/null || true)"
+    if [[ -z "${existing_fs}" ]]; then
+      log "Creating ${ARTIFACTS_DATA_FILESYSTEM} filesystem on ${DATA_DEVICE}"
+      "mkfs.${ARTIFACTS_DATA_FILESYSTEM}" "${DATA_DEVICE}"
+    elif [[ "${existing_fs}" == "${ARTIFACTS_DATA_FILESYSTEM}" ]]; then
+      log "${DATA_DEVICE} already formatted as ${existing_fs}"
+    else
+      echo "FATAL: ${DATA_DEVICE} already carries '${existing_fs}', expected '${ARTIFACTS_DATA_FILESYSTEM}'." >&2
+      echo "       Wipe it first (wipefs -a ${DATA_DEVICE}; zpool destroy if zfs_member) to reprovision." >&2
+      exit 1
+    fi
+
+    disk_uuid="$(blkid -o value -s UUID "${DATA_DEVICE}")"
+    mkdir -p "${RUSTFS_VOLUMES}"
+    if ! grep -q "UUID=${disk_uuid} " /etc/fstab; then
+      log "Adding ${DATA_DEVICE} (UUID=${disk_uuid}) to /etc/fstab at ${RUSTFS_VOLUMES}"
+      echo "UUID=${disk_uuid} ${RUSTFS_VOLUMES} ${ARTIFACTS_DATA_FILESYSTEM} defaults,nofail 0 2" >> /etc/fstab
+      systemctl daemon-reload
+    fi
+    mountpoint -q "${RUSTFS_VOLUMES}" || mount "${RUSTFS_VOLUMES}"
+    ;;
+  zfs)
+    ZPOOL="${RUSTFS_ZFS_DATASET%%/*}"
+    zpool import -a 2>/dev/null || true
+    if ! zpool list "${ZPOOL}" >/dev/null 2>&1; then
+      log "Creating ZFS pool ${ZPOOL} on ${DATA_DEVICE}"
+      zpool create -f -o ashift=12 "${ZPOOL}" "${DATA_DEVICE}"
+    else
+      log "ZFS pool ${ZPOOL} already present"
+    fi
+
+    if ! zfs list "${RUSTFS_ZFS_DATASET}" >/dev/null 2>&1; then
+      log "Creating ZFS dataset ${RUSTFS_ZFS_DATASET} at ${RUSTFS_VOLUMES}"
+      zfs create -o "mountpoint=${RUSTFS_VOLUMES}" -o compression=lz4 "${RUSTFS_ZFS_DATASET}"
+    else
+      log "ZFS dataset ${RUSTFS_ZFS_DATASET} already present"
+    fi
+    ;;
+esac
 
 mkdir -p "${RUSTFS_VOLUMES}" "${TLS_DIR}" /var/log/rustfs
 chown -R rustfs:rustfs "${RUSTFS_VOLUMES}" /opt/rustfs /var/log/rustfs
@@ -161,10 +209,19 @@ chmod 0640 /etc/default/rustfs
 # 6. systemd unit
 # ----------------------------------------------------------------------------
 log "Writing rustfs systemd unit"
-cat > /etc/systemd/system/rustfs.service <<'UNIT'
+# ZFS datasets mount via zfs-mount.service (no .mount unit exists for them),
+# so order on that; fstab-mounted ext4/xfs get a real mount unit we can
+# require via RequiresMountsFor.
+if [[ "${ARTIFACTS_DATA_FILESYSTEM}" == "zfs" ]]; then
+  UNIT_MOUNT_DEP="After=network-online.target zfs-mount.service"
+else
+  UNIT_MOUNT_DEP="After=network-online.target
+RequiresMountsFor=${RUSTFS_VOLUMES}"
+fi
+cat > /etc/systemd/system/rustfs.service <<UNIT
 [Unit]
 Description=RustFS S3 server
-After=network-online.target zfs-mount.service
+${UNIT_MOUNT_DEP}
 Wants=network-online.target
 
 [Service]

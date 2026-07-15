@@ -16,6 +16,7 @@ func fixedArtifactsInputs(tlsEnabled bool) ArtifactsCloudInitInputs {
 		S3Port:      9000,
 		ConsolePort: 9001,
 		Mountpoint:  "/data",
+		Filesystem:  "zfs",
 		ZFSDataset:  "rpool/myblock",
 		TLSEnabled:  tlsEnabled,
 	}
@@ -176,11 +177,99 @@ func TestRenderArtifactsCloudInit_EmptyInputsError(t *testing.T) {
 		t.Errorf("expected empty output on error, got %d bytes", len(out))
 	}
 
-	// Error message must name the missing fields so callers can diagnose quickly.
-	for _, field := range []string{"AccessKey", "SecretKey", "DownloadURL", "S3Port", "ConsolePort", "Mountpoint", "ZFSDataset"} {
+	// Error message must name the missing fields so callers can diagnose
+	// quickly. ZFSDataset is absent: the filesystem defaults to ext4, which
+	// does not need a dataset.
+	for _, field := range []string{"AccessKey", "SecretKey", "DownloadURL", "S3Port", "ConsolePort", "Mountpoint"} {
 		if !strings.Contains(err.Error(), field) {
 			t.Errorf("error %q does not mention missing field %q", err.Error(), field)
 		}
+	}
+
+	if strings.Contains(err.Error(), "ZFSDataset") {
+		t.Errorf("error %q should not require ZFSDataset for the default (ext4) filesystem", err.Error())
+	}
+}
+
+// TestRenderArtifactsCloudInit_DefaultExt4 verifies that leaving Filesystem
+// empty renders the ext4 path: mkfs + fstab mount, no ZFS tooling, and no
+// zfs-mount.service ordering.
+func TestRenderArtifactsCloudInit_DefaultExt4(t *testing.T) {
+	t.Parallel()
+
+	in := fixedArtifactsInputs(false)
+	in.Filesystem = ""
+	in.ZFSDataset = ""
+
+	out, err := RenderArtifactsCloudInit(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, want := range []string{
+		"mkfs.ext4 /dev/sdb",
+		"blkid -o value -s UUID /dev/sdb",
+		"/data ext4 defaults,nofail 0 2",
+		"After=network-online.target\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ext4 output missing %q\n----\n%s", want, out)
+		}
+	}
+
+	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service", "xfsprogs"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("ext4 output should not contain %q\n----\n%s", unwanted, out)
+		}
+	}
+}
+
+// TestRenderArtifactsCloudInit_XFS verifies the xfs branch installs xfsprogs
+// and formats with mkfs.xfs.
+func TestRenderArtifactsCloudInit_XFS(t *testing.T) {
+	t.Parallel()
+
+	in := fixedArtifactsInputs(false)
+	in.Filesystem = "xfs"
+	in.ZFSDataset = ""
+
+	out, err := RenderArtifactsCloudInit(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, want := range []string{"- xfsprogs", "mkfs.xfs /dev/sdb", "/data xfs defaults,nofail 0 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("xfs output missing %q\n----\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderArtifactsCloudInit_ZFSRequiresDataset asserts that Filesystem=zfs
+// without a dataset fails validation.
+func TestRenderArtifactsCloudInit_ZFSRequiresDataset(t *testing.T) {
+	t.Parallel()
+
+	in := fixedArtifactsInputs(false)
+	in.ZFSDataset = ""
+
+	_, err := RenderArtifactsCloudInit(in)
+	if err == nil || !strings.Contains(err.Error(), "ZFSDataset") {
+		t.Errorf("expected ZFSDataset error for zfs without dataset, got %v", err)
+	}
+}
+
+// TestRenderArtifactsCloudInit_InvalidFilesystemError asserts unsupported
+// filesystem values are rejected.
+func TestRenderArtifactsCloudInit_InvalidFilesystemError(t *testing.T) {
+	t.Parallel()
+
+	in := fixedArtifactsInputs(false)
+	in.Filesystem = "btrfs"
+
+	_, err := RenderArtifactsCloudInit(in)
+	if err == nil || !strings.Contains(err.Error(), "btrfs") {
+		t.Errorf("expected unsupported-filesystem error, got %v", err)
 	}
 }
 

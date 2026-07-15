@@ -15,6 +15,7 @@ func validArtifactsInputs() ArtifactsCloudInitInputs {
 		S3Port:      9000,
 		ConsolePort: 9001,
 		Mountpoint:  "/data/rustfs",
+		Filesystem:  "zfs",
 		ZFSDataset:  "rpool/rustfs",
 		TLSEnabled:  true,
 		CertPEM:     "-----BEGIN CERTIFICATE-----\nMIIBcert\n-----END CERTIFICATE-----",
@@ -168,6 +169,54 @@ func TestRenderArtifactsProvisionScript_IdempotentZpoolAndBinary(t *testing.T) {
 	} {
 		if !strings.Contains(got, w) {
 			t.Errorf("script missing install/enable step %q", w)
+		}
+	}
+}
+
+func TestRenderArtifactsProvisionScript_DefaultExt4(t *testing.T) {
+	t.Parallel()
+
+	in := validArtifactsInputs()
+	in.Filesystem = ""
+	in.ZFSDataset = ""
+
+	got, err := RenderArtifactsProvisionScript(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, w := range []string{
+		"mkfs.ext4 /dev/sdb",
+		"/data/rustfs ext4 defaults,nofail 0 2",
+		"After=network-online.target\n",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("ext4 script missing %q", w)
+		}
+	}
+
+	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("ext4 script should not contain %q", unwanted)
+		}
+	}
+}
+
+func TestRenderArtifactsProvisionScript_XFSInstallsXfsprogs(t *testing.T) {
+	t.Parallel()
+
+	in := validArtifactsInputs()
+	in.Filesystem = "xfs"
+	in.ZFSDataset = ""
+
+	got, err := RenderArtifactsProvisionScript(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, w := range []string{"xfsprogs", "mkfs.xfs /dev/sdb"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("xfs script missing %q", w)
 		}
 	}
 }

@@ -26,7 +26,7 @@ export DEBIAN_FRONTEND=noninteractive
 cloud-init status --wait >/dev/null 2>&1 || true
 
 apt-get update -q
-apt-get install -y -q zfsutils-linux unzip jq
+apt-get install -y -q{{ if eq .FS "zfs" }} zfsutils-linux{{ else if eq .FS "xfs" }} xfsprogs{{ end }} unzip jq
 
 # Dedicated service account (idempotent).
 id -u rustfs >/dev/null 2>&1 || useradd --system --home /var/lib/rustfs --shell /usr/sbin/nologin rustfs
@@ -49,7 +49,7 @@ chmod 0640 /etc/default/rustfs
 cat > /etc/systemd/system/rustfs.service <<'OCFP_RUSTFS_SVC'
 [Unit]
 Description=RustFS S3 server
-After=network-online.target zfs-mount.service
+After=network-online.target{{ if eq .FS "zfs" }} zfs-mount.service{{ end }}
 Wants=network-online.target
 
 [Service]
@@ -79,6 +79,7 @@ chmod 0640 /opt/rustfs/tls/rustfs_cert.pem
 chmod 0600 /opt/rustfs/tls/rustfs_key.pem
 {{- end }}
 
+{{- if eq .FS "zfs" }}
 # ZFS pool on the attached data disk (idempotent).
 zpool import -a >/dev/null 2>&1 || true
 if ! zpool list rpool >/dev/null 2>&1; then
@@ -87,6 +88,19 @@ fi
 if ! zfs list {{ .ZFSDataset }} >/dev/null 2>&1; then
   zfs create -o mountpoint={{ .Mountpoint }} -o compression=lz4 {{ .ZFSDataset }}
 fi
+{{- else }}
+# {{ .FS }} filesystem on the attached data disk (idempotent).
+if ! blkid /dev/sdb >/dev/null 2>&1; then
+  mkfs.{{ .FS }} /dev/sdb
+fi
+mkdir -p {{ .Mountpoint }}
+disk_uuid="$(blkid -o value -s UUID /dev/sdb)"
+if ! grep -q "UUID=${disk_uuid} " /etc/fstab; then
+  echo "UUID=${disk_uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail 0 2" >> /etc/fstab
+  systemctl daemon-reload
+fi
+mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
+{{- end }}
 chown -R rustfs:rustfs {{ .Mountpoint }}
 
 # RustFS binary (idempotent: only fetch when missing).
@@ -103,9 +117,10 @@ systemctl enable --now rustfs
 // RenderArtifactsProvisionScript produces the bash provisioning script for the
 // ocfp-artifacts VM, delivered over SSH (through the bastion) instead of via
 // cloud-init because PVE 9.x blocks the snippet-upload path. It performs the
-// same work as RenderArtifactsCloudInit — install RustFS, create the ZFS
-// pool/dataset on /dev/sdb, write TLS material, and enable the rustfs service —
-// but as an idempotent, re-runnable script.
+// same work as RenderArtifactsCloudInit — install RustFS, format + mount the
+// /dev/sdb data disk per Filesystem (ext4 default, xfs, or a ZFS
+// pool/dataset), write TLS material, and enable the rustfs service — but as an
+// idempotent, re-runnable script.
 //
 // Validation matches RenderArtifactsCloudInit: all fields are required except
 // CertPEM/KeyPEM, which are only required when TLSEnabled is true.
