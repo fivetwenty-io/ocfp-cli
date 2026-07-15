@@ -640,6 +640,11 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		// CRITICAL: bloc_ca_trust MUST run after vault_populate (which may need
+		// the bloc CA already minted) and before ocfp_configure / any later
+		// phase that talks to the artifacts endpoint over TLS, so the bastion's
+		// system trust store is converged before it is relied upon.
+		{"bloc_ca_trust", m.installBlocCATrust},
 		{"ocfp_configure", m.runOCFPConfigure},
 		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 
@@ -662,11 +667,16 @@ func (m *Manager) executePhases(ctx context.Context, phases []struct {
 	return m.executeSequentialPhases(ctx, phases, reporter)
 }
 
-// executeParallelPhases handles parallel execution of initialization phases.
-func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter) error {
-	// Sequential pre-parallel phases
+// parallelPrePhaseList returns the sequential pre-parallel phases run by
+// executeParallelPhases before the parallel-safe batch. Extracted to a
+// standalone method (rather than an inline literal) so tests can enumerate
+// phase names without executing anything — see TestPhaseLists_Parity.
+func (m *Manager) parallelPrePhaseList() []struct {
+	name string
+	fn   func(context.Context) error
+} {
 	// CRITICAL: ssh_agent_forwarding MUST be first before anything else
-	pre := []struct {
+	return []struct {
 		name string
 		fn   func(context.Context) error
 	}{
@@ -685,14 +695,17 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"post_brew_apt", m.installPostBrewPackages}, // APT pkgs requiring brew tools (e.g. libperl-dev)
 		{"git_repos", m.cloneGitRepositories},        // must run before binary_tools that depend on git repos
 	}
+}
 
-	err := m.runPhasesSequential(ctx, pre)
-	if err != nil {
-		return err
-	}
-
-	// Parallel-safe phases (no apt/dpkg, no git dependencies)
-	par := []struct {
+// parallelParPhaseList returns the parallel-safe phase batch (no apt/dpkg,
+// no git dependencies) run by executeParallelPhases between the pre and post
+// sequential batches. See parallelPrePhaseList for why this is a method
+// rather than an inline literal.
+func (m *Manager) parallelParPhaseList() []struct {
+	name string
+	fn   func(context.Context) error
+} {
+	return []struct {
 		name string
 		fn   func(context.Context) error
 	}{
@@ -700,14 +713,17 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"cpan_modules", m.installCPANModules},
 		{"cf_plugins", m.installCFPlugins},
 	}
+}
 
-	err = m.runPhasesParallel(ctx, par)
-	if err != nil {
-		return err
-	}
-
-	// Post-parallel sequential phases
-	post := []struct {
+// parallelPostPhaseList returns the sequential post-parallel phases run by
+// executeParallelPhases after the parallel-safe batch. See
+// parallelPrePhaseList for why this is a method rather than an inline
+// literal.
+func (m *Manager) parallelPostPhaseList() []struct {
+	name string
+	fn   func(context.Context) error
+} {
+	return []struct {
 		name string
 		fn   func(context.Context) error
 	}{
@@ -718,14 +734,32 @@ func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter
 		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		// CRITICAL: bloc_ca_trust MUST run after vault_populate and before
+		// ocfp_configure / any later phase that talks to the artifacts endpoint
+		// over TLS — mirrors the sequential phase list ordering above; keep
+		// both lists' phase-name sets identical (see TestPhaseLists_Parity).
+		{"bloc_ca_trust", m.installBlocCATrust},
 		{"ocfp_configure", m.runOCFPConfigure},
 		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
 	}
+}
 
-	return m.runPhasesSequential(ctx, post)
+// executeParallelPhases handles parallel execution of initialization phases.
+func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter) error {
+	err := m.runPhasesSequential(ctx, m.parallelPrePhaseList())
+	if err != nil {
+		return err
+	}
+
+	err = m.runPhasesParallel(ctx, m.parallelParPhaseList())
+	if err != nil {
+		return err
+	}
+
+	return m.runPhasesSequential(ctx, m.parallelPostPhaseList())
 }
 
 // executeSequentialPhases handles sequential execution of all phases.
