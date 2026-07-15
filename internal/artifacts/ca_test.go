@@ -123,6 +123,22 @@ func TestIssueLeafCert_SignedByCAVerifies(t *testing.T) {
 	if validityYears < 0.9 || validityYears > 1.1 {
 		t.Errorf("leaf validity = %.2f years, want ~1", validityYears)
 	}
+
+	// task 6.2 gap 1: TLSMaterial.NotAfter must be populated at issuance and
+	// match the leaf's own NotAfter, so callers (vault.WriteArtifacts,
+	// recordArtifactsState) can persist it without a separate PEM-parse step.
+	if leaf.NotAfter == "" {
+		t.Fatal("expected non-empty leaf.NotAfter")
+	}
+
+	parsedNotAfter, err := time.Parse(time.RFC3339, leaf.NotAfter)
+	if err != nil {
+		t.Fatalf("leaf.NotAfter %q did not parse as RFC3339: %v", leaf.NotAfter, err)
+	}
+
+	if !parsedNotAfter.Equal(leafCert.NotAfter) {
+		t.Errorf("leaf.NotAfter %v does not match the certificate's own NotAfter %v", parsedNotAfter, leafCert.NotAfter)
+	}
 }
 
 func TestIssueLeafCert_RejectsEmptyCA(t *testing.T) {

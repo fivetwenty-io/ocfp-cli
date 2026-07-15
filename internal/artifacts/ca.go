@@ -160,6 +160,7 @@ func IssueLeafCert(ca CAMaterial, leafCN string, dnsNames []string, ips []net.IP
 		CertPEM:     certPEM,
 		KeyPEM:      keyPEM,
 		Fingerprint: hex.EncodeToString(sum[:]),
+		NotAfter:    notAfter.UTC().Format(time.RFC3339),
 	}, nil
 }
 
