@@ -1771,18 +1771,22 @@ func pveStorageBackend(poolName string) string {
 
 // pveDiskFormat returns the disk_format required by the given storage pool.
 //
-// zfspool block devices do NOT support qcow2; they require raw format.
-// lvm and lvmthin also require raw for the same reason (block devices).
-// All other pool types default to qcow2 (dir, rbd, nfs, cifs, glusterfs, pbs).
+// zfspool, lvm, lvmthin, and btrfs block devices do NOT support qcow2; they
+// require raw format. Pool names are site-specific aliases rather than type
+// keywords (e.g. "zfs-1", "local-lvm-data"), so match by substring: any name
+// containing lvm, zfs, or btrfs is treated as a block backend needing raw.
+// All other pools default to qcow2 (dir, rbd, nfs, cifs, glusterfs, pbs).
 //
 // Source: R3-10; Wayne-lab storage-pools.yml; bosh-pve-cpi docs.
 func pveDiskFormat(poolName string) string {
-	switch strings.ToLower(strings.TrimSpace(poolName)) {
-	case "zfspool", "lvm", "lvmthin":
-		return "raw"
-	default:
-		return "qcow2"
+	name := strings.ToLower(strings.TrimSpace(poolName))
+	for _, marker := range []string{"lvm", "zfs", "btrfs"} {
+		if strings.Contains(name, marker) {
+			return "raw"
+		}
 	}
+
+	return "qcow2"
 }
 
 // pveVMIDRangeStart returns the configured VMID range start, or the default

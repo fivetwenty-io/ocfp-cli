@@ -1115,9 +1115,9 @@ func TestConfigureCPI_DiskStorageField_WritesStorageBackendAndFormat(t *testing.
 	// zfs-1 is an alias for zfspool storage; storage_backend defaults to "block"
 	// for unknown pool names (conservative safe default).
 	assert.Equal(t, "block", data["storage_backend"], "unknown pool name zfs-1 must default storage_backend to block")
-	// zfs-1 is not a recognized raw-requiring type by pool name; format is qcow2
-	// unless the user set DiskStorage to the exact PVE storage type keyword.
-	assert.Equal(t, "qcow2", data["disk_format"])
+	// zfs-1 contains the "zfs" marker, so the substring heuristic classifies
+	// it as a block backend requiring raw format (zfspool rejects qcow2).
+	assert.Equal(t, "raw", data["disk_format"], "pool names containing zfs must map to disk_format: raw")
 }
 
 // TestConfigureCPI_DiskStorageZfspool_WritesRawFormat verifies that when
