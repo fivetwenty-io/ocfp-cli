@@ -62,6 +62,8 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; skipping\n", vmName)
 		logger.Infof("Artifacts VM %s already recorded; skipping", vmName)
 
+		m.refreshArtifactsCACert(existing)
+
 		return nil
 	}
 
@@ -339,6 +341,43 @@ func (m *Manager) waitArtifactsReady(ctx context.Context, ep artifacts.Endpoint,
 		case <-time.After(artifactsReadinessPoll):
 		}
 	}
+}
+
+// refreshArtifactsCACert re-syncs the recorded ca_cert with the bloc CA
+// currently in vault. The artifacts leaf cert is issued from vault's bloc CA
+// at provision time, so after a vault rebuild the CA captured in state goes
+// stale and `ocfp vault populate` — which pins the blobstore CA from this
+// state entry — writes a CA that no longer verifies the endpoint.
+func (m *Manager) refreshArtifactsCACert(existing *state.Resource) {
+	if m.config.Artifacts.TLS.Mode != config.ArtifactsTLSModeInternalCA || m.safe == nil {
+		return
+	}
+
+	ca, err := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
+	if err != nil {
+		logger.Warnf("artifacts: refresh bloc CA from vault: %v", err)
+
+		return
+	}
+
+	if existing.Properties == nil {
+		existing.Properties = map[string]interface{}{}
+	}
+
+	if existing.Properties["ca_cert"] == ca.CertPEM {
+		return
+	}
+
+	existing.Properties["ca_cert"] = ca.CertPEM
+
+	err = m.stateManager.UpdateResource(existing)
+	if err != nil {
+		logger.Warnf("artifacts: update ca_cert in state: %v", err)
+
+		return
+	}
+
+	logger.Infof("Artifacts ca_cert in state refreshed from bloc CA")
 }
 
 func (m *Manager) recordArtifactsState(
