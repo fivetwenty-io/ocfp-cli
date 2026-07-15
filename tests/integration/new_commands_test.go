@@ -174,7 +174,10 @@ func testBastionProvisionWithoutScript(t *testing.T, configFile string) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot find bastion provision script")
+	// The bastion script is embedded in the binary, so lookup always succeeds
+	// even without a source checkout; without a reachable bastion the
+	// placeholder scp fails next.
+	assert.Contains(t, err.Error(), "scp command failed")
 }
 
 func testBastionWithProvisionScript(t *testing.T, tmpDir, configFile string) {
