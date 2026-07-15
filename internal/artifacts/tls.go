@@ -32,6 +32,7 @@ type TLSMaterial struct {
 	CertPEM     string
 	KeyPEM      string
 	Fingerprint string // sha256, lowercase hex, colon-free
+	NotAfter    string // RFC3339; the leaf's expiry (task 6.2, leaf-expiry visibility)
 }
 
 // GenerateSelfSignedTLS issues an ECDSA P-256 self-signed certificate suitable
@@ -84,5 +85,6 @@ func GenerateSelfSignedTLS(commonName string, dnsNames []string, ipAddrs []net.I
 		CertPEM:     certPEM,
 		KeyPEM:      keyPEM,
 		Fingerprint: hex.EncodeToString(sum[:]),
+		NotAfter:    notAfter.UTC().Format(time.RFC3339),
 	}, nil
 }
