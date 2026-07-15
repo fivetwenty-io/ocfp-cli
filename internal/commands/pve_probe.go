@@ -123,7 +123,7 @@ reported issue, then re-run to confirm all probes pass before deploying.`,
 	}
 
 	cmd.Flags().StringVarP(&f.boshEnv, "bosh-env", "e", "", "BOSH environment alias (required)")
-	cmd.Flags().StringVarP(&f.deployment, "deployment", "d", "cf", "BOSH deployment name")
+	cmd.Flags().StringVar(&f.deployment, "deployment", "cf", "BOSH deployment name")
 	cmd.Flags().StringVar(&f.directorIP, "director-ip", "", "BOSH director IP address (required)")
 
 	_ = cmd.MarkFlagRequired("bosh-env")
