@@ -924,12 +924,21 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 
 	mode := p.resolveBlobstoreMode()
 
+	// src is non-nil only on the auto-sourced-from-state path (below); it
+	// gates the writeArtifactsMeta call after configureExternalBlobstore
+	// succeeds. Flag-driven external mode (operator passed --blobstore-endpoint
+	// directly) has no backing artifacts state to source metadata from, so it
+	// intentionally does not write secret/ocfp/{bloc}/artifacts.
+	var src *ArtifactsBlobstoreSource
+
 	// When the operator supplied no explicit blobstore flags, try to auto-source
 	// the endpoint + credentials + CA from bootstrap state's artifacts resource.
 	// This is the common case on a clean run: `ocfp vault populate` (on the
 	// bastion) promotes to external mode from state with no flags required.
 	if mode == "local" && p.BlobstoreEndpoint == "" {
-		src, err := ConfigureBlobstoresFromArtifactsState(p.loadStateManager(), p.BlocName)
+		var err error
+
+		src, err = ConfigureBlobstoresFromArtifactsState(p.loadStateManager(), p.BlocName)
 		if err != nil {
 			p.logger.Warnw("Could not load artifacts state for blobstore populate", "error", err)
 		}
@@ -953,9 +962,19 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 
 	switch mode {
 	case "external":
-		err := p.configureExternalBlobstore(envType, blobstorePath)
-		if err != nil {
+		if err := p.configureExternalBlobstore(envType, blobstorePath); err != nil {
 			return err
+		}
+
+		if src != nil {
+			// ocfp vault populate runs ON the bastion against the bastion's own
+			// inception vault, which otherwise never receives this path —
+			// WriteArtifacts (the other writer of secret/ocfp/{bloc}/artifacts)
+			// only runs on the workstation during bootstrap/provision. Without
+			// this, scripts/blobstores' `safe get
+			// secret/ocfp/<bloc>/artifacts:endpoint` finds nothing on the
+			// bastion and the script exits silently.
+			p.writeArtifactsMeta(src)
 		}
 	default:
 		p.logger.Infow("Configuring local-mode blobstore (no external endpoint)", "env_type", envType)
@@ -1098,6 +1117,55 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 	}
 
 	return nil
+}
+
+// writeArtifactsMeta re-syncs the operator/status metadata at
+// secret/ocfp/{bloc}/artifacts (see artifactsMetaPath, and
+// vault.ArtifactsWriter.WriteArtifacts — the workstation-side writer of the
+// same path during bootstrap/provision) from state auto-sourced blobstore
+// config. `ocfp vault populate` runs ON the bastion against the bastion's own
+// inception vault, a vault instance WriteArtifacts never writes to — without
+// this, that path stays empty there and scripts/blobstores' `safe get
+// secret/ocfp/<bloc>/artifacts:endpoint` finds nothing, so the script exits
+// silently on the bastion even though the blobstore itself is fully
+// configured.
+//
+// Only called from the auto-sourced-from-state path (src != nil in
+// ConfigureBlobstores); flag-driven external mode has no backing artifacts
+// state to source this metadata from, so it is skipped there rather than
+// written with guessed/partial values.
+//
+// Deliberately does NOT touch secret/ocfp/{bloc}/ca: artifacts state only
+// ever carries the leaf/CA *certificate* (never the private key — see
+// resolveArtifactsProvisionTLS), and a cert-only entry at the ca path risks
+// being mistaken by LoadOrGenerateBlocCA's found-but-incomplete handling for
+// a corrupted CA. Bastion trust in the CA instead comes from the
+// bloc_ca_trust init phase installing it into the OS trust store
+// (scripts/blobstores' tier-2 CA resolution).
+//
+// Warn-only on failure: this is status metadata, not required for the
+// blobstore config itself to function, so a write failure here must not fail
+// `ocfp vault populate`.
+func (p *PVEVaultProvider) writeArtifactsMeta(src *ArtifactsBlobstoreSource) {
+	meta := map[string]interface{}{
+		"endpoint": src.Endpoint,
+		"host":     src.Host,
+		"port":     src.Port,
+		"tls_mode": src.TLSMode,
+	}
+
+	if src.FingerprintSHA256 != "" {
+		meta["tls_fingerprint_sha256"] = src.FingerprintSHA256
+	}
+
+	if src.LeafNotAfter != "" {
+		meta["tls_leaf_not_after"] = src.LeafNotAfter
+	}
+
+	if err := p.Safe.SetMultiple(artifactsMetaPath(p.BlocName), meta); err != nil {
+		p.logger.Warnw("Could not write artifacts operational metadata; bastion-side tooling (scripts/blobstores) may not find the endpoint",
+			"bloc", p.BlocName, "error", err)
+	}
 }
 
 // resolveBlobstoreTLSTrust resolves the CA cert / skip-verify decision for

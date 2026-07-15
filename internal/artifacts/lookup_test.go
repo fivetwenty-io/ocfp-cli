@@ -18,15 +18,17 @@ func TestResultFromResource_AllFieldsPresent(t *testing.T) {
 	r := &state.Resource{
 		Name: "mybloc-artifacts",
 		Properties: map[string]interface{}{
-			"vm_id":          "vm-001",
-			"private_ip":     "10.0.0.42",
-			"endpoint":       "https://10.0.0.42:9000",
-			"access_key":     "deadbeef",
-			"secret_key":     "cafebabe",
-			"tls_mode":       "self-signed",
-			"zfs_dataset":    "tank/rustfs",
-			"data_volume_id": "vol-99",
-			"ca_cert":        "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+			"vm_id":                  "vm-001",
+			"private_ip":             "10.0.0.42",
+			"endpoint":               "https://10.0.0.42:9000",
+			"access_key":             "deadbeef",
+			"secret_key":             "cafebabe",
+			"tls_mode":               "self-signed",
+			"zfs_dataset":            "tank/rustfs",
+			"data_volume_id":         "vol-99",
+			"ca_cert":                "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+			"tls_fingerprint_sha256": "deadbeef",
+			"tls_leaf_not_after":     "2027-01-01T00:00:00Z",
 		},
 	}
 
@@ -71,6 +73,14 @@ func TestResultFromResource_AllFieldsPresent(t *testing.T) {
 	if got.CACert == "" {
 		t.Error("CACert empty, want non-empty")
 	}
+
+	if got.TLSFingerprintSHA256 != "deadbeef" {
+		t.Errorf("TLSFingerprintSHA256 = %q, want deadbeef", got.TLSFingerprintSHA256)
+	}
+
+	if got.TLSLeafNotAfter != "2027-01-01T00:00:00Z" {
+		t.Errorf("TLSLeafNotAfter = %q, want 2027-01-01T00:00:00Z", got.TLSLeafNotAfter)
+	}
 }
 
 func TestResultFromResource_EmptyProperties(t *testing.T) {
@@ -89,15 +99,17 @@ func TestResultFromResource_EmptyProperties(t *testing.T) {
 
 	// All property-derived fields default to empty string.
 	for field, val := range map[string]string{
-		"VMID":         got.VMID,
-		"PrivateIP":    got.PrivateIP,
-		"Endpoint":     got.Endpoint,
-		"AccessKey":    got.AccessKey,
-		"SecretKey":    got.SecretKey,
-		"TLSMode":      got.TLSMode,
-		"ZFSDataset":   got.ZFSDataset,
-		"DataVolumeID": got.DataVolumeID,
-		"CACert":       got.CACert,
+		"VMID":                 got.VMID,
+		"PrivateIP":            got.PrivateIP,
+		"Endpoint":             got.Endpoint,
+		"AccessKey":            got.AccessKey,
+		"SecretKey":            got.SecretKey,
+		"TLSMode":              got.TLSMode,
+		"ZFSDataset":           got.ZFSDataset,
+		"DataVolumeID":         got.DataVolumeID,
+		"CACert":               got.CACert,
+		"TLSFingerprintSHA256": got.TLSFingerprintSHA256,
+		"TLSLeafNotAfter":      got.TLSLeafNotAfter,
 	} {
 		if val != "" {
 			t.Errorf("%s = %q, want empty string", field, val)
@@ -132,30 +144,34 @@ func TestResultFromResource_WrongPropertyTypes(t *testing.T) {
 	r := &state.Resource{
 		Name: "typed-wrong",
 		Properties: map[string]interface{}{
-			"vm_id":          42,
-			"private_ip":     true,
-			"endpoint":       []string{"not-a-string"},
-			"access_key":     nil,
-			"secret_key":     3.14,
-			"tls_mode":       struct{}{},
-			"zfs_dataset":    map[string]string{},
-			"data_volume_id": 0,
-			"ca_cert":        false,
+			"vm_id":                  42,
+			"private_ip":             true,
+			"endpoint":               []string{"not-a-string"},
+			"access_key":             nil,
+			"secret_key":             3.14,
+			"tls_mode":               struct{}{},
+			"zfs_dataset":            map[string]string{},
+			"data_volume_id":         0,
+			"ca_cert":                false,
+			"tls_fingerprint_sha256": 12345,
+			"tls_leaf_not_after":     []byte("not-a-string"),
 		},
 	}
 
 	got := resultFromResource(r)
 
 	for field, val := range map[string]string{
-		"VMID":         got.VMID,
-		"PrivateIP":    got.PrivateIP,
-		"Endpoint":     got.Endpoint,
-		"AccessKey":    got.AccessKey,
-		"SecretKey":    got.SecretKey,
-		"TLSMode":      got.TLSMode,
-		"ZFSDataset":   got.ZFSDataset,
-		"DataVolumeID": got.DataVolumeID,
-		"CACert":       got.CACert,
+		"VMID":                 got.VMID,
+		"PrivateIP":            got.PrivateIP,
+		"Endpoint":             got.Endpoint,
+		"AccessKey":            got.AccessKey,
+		"SecretKey":            got.SecretKey,
+		"TLSMode":              got.TLSMode,
+		"ZFSDataset":           got.ZFSDataset,
+		"DataVolumeID":         got.DataVolumeID,
+		"CACert":               got.CACert,
+		"TLSFingerprintSHA256": got.TLSFingerprintSHA256,
+		"TLSLeafNotAfter":      got.TLSLeafNotAfter,
 	} {
 		if val != "" {
 			t.Errorf("%s = %q, want empty string for wrong type", field, val)

@@ -144,7 +144,7 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 		}
 	}
 
-	metaPath := filepath.Join("secret/ocfp", w.BlocName, "artifacts")
+	metaPath := artifactsMetaPath(w.BlocName)
 
 	err := w.Safe.SetMultiple(metaPath, meta)
 	if err != nil {
@@ -152,6 +152,18 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 	}
 
 	return nil
+}
+
+// artifactsMetaPath returns the vault path for a bloc's artifacts
+// operational metadata (secret/ocfp/{bloc}/artifacts). Must exactly match
+// scripts/blobstores' ARTIFACTS_META. Two writers share this path:
+// WriteArtifacts (workstation bootstrap/provision) and
+// PVEVaultProvider.writeArtifactsMeta (the `ocfp vault populate` auto-source
+// path, which runs on the bastion against the bastion's own inception vault
+// — the only place bastion-side tooling like scripts/blobstores can read
+// this metadata from).
+func artifactsMetaPath(blocName string) string {
+	return filepath.Join("secret/ocfp", blocName, "artifacts")
 }
 
 func blobstoreEntry(ep artifacts.Endpoint, caPEM, bucketName string) map[string]interface{} {

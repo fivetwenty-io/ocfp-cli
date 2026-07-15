@@ -108,6 +108,13 @@ in `self-signed` mode, a self-signed leaf with no shared CA):
   endpoint degrades to the recorded values with no live comparison, and
   drift is never treated as a trust failure or reflected in the command's
   exit code.
+- **Bastion re-sync**: `ocfp vault populate` (run on the bastion, against
+  the bastion's own inception vault — a vault instance the workstation-side
+  writer above never touches) also re-writes `secret/ocfp/{bloc}/artifacts`
+  whenever it auto-sources blobstore config from bootstrap state, so
+  bastion-side tooling (`scripts/blobstores`) can discover the endpoint
+  even when this bastion vault has never seen a workstation
+  `ocfp artifacts provision` write.
 
 ## How each consumer gets trust
 

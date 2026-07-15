@@ -1182,6 +1182,130 @@ func TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState(t *t
 	assert.Equal(t, "10.64.68.11", boshCall.data["host"])
 }
 
+// TestPVEVaultProvider_ConfigureBlobstores_AutoSourceWritesArtifactsMeta is a
+// regression test: `ocfp vault populate` runs ON the bastion against the
+// bastion's own inception vault, which WriteArtifacts (the workstation-side
+// writer of secret/ocfp/{bloc}/artifacts) never touches. Without this write,
+// scripts/blobstores' `safe get secret/ocfp/<bloc>/artifacts:endpoint` finds
+// nothing on the bastion and the script exits silently even though the
+// blobstore config itself is fully populated.
+func TestPVEVaultProvider_ConfigureBlobstores_AutoSourceWritesArtifactsMeta(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "artifacts",
+		Type: "artifacts",
+		Name: blocName + "-artifacts",
+		Properties: map[string]interface{}{
+			"endpoint":               "https://10.64.68.11:9000",
+			"private_ip":             "10.64.68.11",
+			"access_key":             "AKIA-state",
+			"secret_key":             "secret-state",
+			"ca_cert":                "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----",
+			"tls_mode":               "internal-ca",
+			"tls_fingerprint_sha256": "deadbeefcafe",
+			"tls_leaf_not_after":     "2027-06-01T00:00:00Z",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureBlobstores("", "ocf", nil, 0, 1))
+
+	metaCall := mock.findSetMultipleCall(artifactsMetaPath(blocName))
+	require.NotNil(t, metaCall, "artifacts meta must be written at %s on the auto-source path", artifactsMetaPath(blocName))
+	assert.Equal(t, "https://10.64.68.11:9000", metaCall.data["endpoint"])
+	assert.Equal(t, "10.64.68.11", metaCall.data["host"])
+	assert.Equal(t, 9000, metaCall.data["port"])
+	assert.Equal(t, "internal-ca", metaCall.data["tls_mode"])
+	assert.Equal(t, "deadbeefcafe", metaCall.data["tls_fingerprint_sha256"])
+	assert.Equal(t, "2027-06-01T00:00:00Z", metaCall.data["tls_leaf_not_after"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_AutoSourceOmitsEmptyFingerprintAndNotAfter
+// mirrors WriteArtifacts' omit-when-empty contract for the two operator/status
+// fields: a state resource that predates leaf-expiry tracking (no
+// tls_fingerprint_sha256/tls_leaf_not_after properties) must not get those
+// keys written as empty strings.
+func TestPVEVaultProvider_ConfigureBlobstores_AutoSourceOmitsEmptyFingerprintAndNotAfter(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "artifacts",
+		Type: "artifacts",
+		Name: blocName + "-artifacts",
+		Properties: map[string]interface{}{
+			"endpoint":   "https://10.64.68.11:9000",
+			"private_ip": "10.64.68.11",
+			"access_key": "AKIA-state",
+			"secret_key": "secret-state",
+			"ca_cert":    "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----",
+			"tls_mode":   "internal-ca",
+			// No tls_fingerprint_sha256 / tls_leaf_not_after.
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureBlobstores("", "ocf", nil, 0, 1))
+
+	metaCall := mock.findSetMultipleCall(artifactsMetaPath(blocName))
+	require.NotNil(t, metaCall, "artifacts meta must still be written")
+	assert.Equal(t, "https://10.64.68.11:9000", metaCall.data["endpoint"])
+	assert.NotContains(t, metaCall.data, "tls_fingerprint_sha256", "empty fingerprint must be omitted, not written as \"\"")
+	assert.NotContains(t, metaCall.data, "tls_leaf_not_after", "empty leaf-expiry must be omitted, not written as \"\"")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_FlagDrivenExternalMode_NoMetaWrite
+// — an operator-supplied --blobstore-endpoint has no backing artifacts state
+// to source metadata from, so the auto-source path (and its meta write) must
+// not run; writing guessed/partial metadata would be worse than writing none.
+func TestPVEVaultProvider_ConfigureBlobstores_FlagDrivenExternalMode_NoMetaWrite(t *testing.T) {
+	const blocName = "test-bloc"
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://s3.example.com"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	require.NoError(t, provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1))
+
+	metaCall := mock.findSetMultipleCall(artifactsMetaPath(blocName))
+	assert.Nil(t, metaCall, "flag-driven external mode must not write artifacts meta")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_LocalMode_NoMetaWrite — local mode
+// (no endpoint, no state to auto-source from) writes only the local-mode
+// marker; it must not write artifacts meta either.
+func TestPVEVaultProvider_ConfigureBlobstores_LocalMode_NoMetaWrite(t *testing.T) {
+	const blocName = "test-bloc"
+
+	// Empty OCFP_HOME: no bootstrap state, so the auto-source lookup finds
+	// nothing and ConfigureBlobstores stays in local mode.
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1))
+
+	metaCall := mock.findSetMultipleCall(artifactsMetaPath(blocName))
+	assert.Nil(t, metaCall, "local mode must not write artifacts meta")
+}
+
 // ---------------------------------------------------------------------------
 // IMP-10: Storage backend classification + VMStorage/DiskStorage Config fields
 // ---------------------------------------------------------------------------
