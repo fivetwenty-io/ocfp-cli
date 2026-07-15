@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateSelfSignedTLS_ParseableCert(t *testing.T) {
@@ -52,5 +53,37 @@ func TestGenerateSelfSignedTLS_ParseableCert(t *testing.T) {
 
 	if len(cert.IPAddresses) != 1 || !cert.IPAddresses[0].Equal(ips[0]) {
 		t.Errorf("IPAddresses = %v, want %v", cert.IPAddresses, ips)
+	}
+}
+
+// TestGenerateSelfSignedTLS_NotAfterMatchesCert (task 6.2 gap 1) asserts
+// TLSMaterial.NotAfter is populated at issuance and matches the certificate's
+// own NotAfter, in RFC3339, so vault.WriteArtifacts can persist it without a
+// separate PEM-parse step.
+func TestGenerateSelfSignedTLS_NotAfterMatchesCert(t *testing.T) {
+	t.Parallel()
+
+	mat, err := GenerateSelfSignedTLS("artifacts.lab.example", []string{"artifacts.lab.example"}, nil)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedTLS: %v", err)
+	}
+
+	if mat.NotAfter == "" {
+		t.Fatal("expected non-empty NotAfter")
+	}
+
+	parsed, err := time.Parse(time.RFC3339, mat.NotAfter)
+	if err != nil {
+		t.Fatalf("NotAfter %q did not parse as RFC3339: %v", mat.NotAfter, err)
+	}
+
+	block, _ := pem.Decode([]byte(mat.CertPEM))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	if !parsed.Equal(cert.NotAfter) {
+		t.Errorf("NotAfter %v does not match the certificate's own NotAfter %v", parsed, cert.NotAfter)
 	}
 }

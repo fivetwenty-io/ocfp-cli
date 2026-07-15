@@ -1,8 +1,11 @@
 package artifacts
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -203,5 +206,183 @@ func TestResultFromResource_NameFromResource(t *testing.T) {
 
 	if got.Name != "resource-name" {
 		t.Errorf("Name = %q, want resource-name (from r.Name, not Properties)", got.Name)
+	}
+}
+
+func TestEndpointForLookup(t *testing.T) {
+	t.Parallel()
+
+	const bloc = "mybloc"
+	const httpsURL = "https://10.0.0.42:9000"
+	const httpURL = "http://10.0.0.42:9000"
+	const fakeCACert = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+
+	tests := []struct {
+		name          string
+		endpointURL   string
+		tlsMode       string
+		caCert        string
+		allowInsecure bool
+
+		wantErr     error
+		wantURL     string
+		wantCACert  string
+		wantSkipTLS bool
+	}{
+		{
+			name:        "https internal-ca with CA cert pins to CA",
+			endpointURL: httpsURL,
+			tlsMode:     config.ArtifactsTLSModeInternalCA,
+			caCert:      fakeCACert,
+			wantURL:     httpsURL,
+			wantCACert:  fakeCACert,
+		},
+		{
+			name:        "https internal-ca no CA cert errors, never skip-verifies",
+			endpointURL: httpsURL,
+			tlsMode:     config.ArtifactsTLSModeInternalCA,
+			caCert:      "",
+			wantErr:     ErrArtifactsCAMissing,
+		},
+		{
+			name:          "https self-signed no CA cert without opt-in errors",
+			endpointURL:   httpsURL,
+			tlsMode:       config.ArtifactsTLSModeSelfSigned,
+			caCert:        "",
+			allowInsecure: false,
+			wantErr:       ErrArtifactsInsecureOptInRequired,
+		},
+		{
+			name:          "https self-signed no CA cert with explicit opt-in skips verify",
+			endpointURL:   httpsURL,
+			tlsMode:       config.ArtifactsTLSModeSelfSigned,
+			caCert:        "",
+			allowInsecure: true,
+			wantURL:       httpsURL,
+			wantSkipTLS:   true,
+		},
+		{
+			name:        "https self-signed with CA cert pins to CA regardless of allowInsecure",
+			endpointURL: httpsURL,
+			tlsMode:     config.ArtifactsTLSModeSelfSigned,
+			caCert:      fakeCACert,
+			wantURL:     httpsURL,
+			wantCACert:  fakeCACert,
+		},
+		{
+			name:        "https disabled mode with no CA cert is a state inconsistency error",
+			endpointURL: httpsURL,
+			tlsMode:     config.ArtifactsTLSModeDisabled,
+			caCert:      "",
+			wantErr:     ErrArtifactsCAMissing,
+		},
+		{
+			name:        "https empty mode with no CA cert is a state inconsistency error",
+			endpointURL: httpsURL,
+			tlsMode:     "",
+			caCert:      "",
+			wantErr:     ErrArtifactsCAMissing,
+		},
+		{
+			name:        "https unknown mode with no CA cert is a state inconsistency error",
+			endpointURL: httpsURL,
+			tlsMode:     "bogus-mode",
+			caCert:      "",
+			wantErr:     ErrArtifactsCAMissing,
+		},
+		{
+			name:        "http disabled mode needs no TLS material",
+			endpointURL: httpURL,
+			tlsMode:     config.ArtifactsTLSModeDisabled,
+			caCert:      "",
+			wantURL:     httpURL,
+		},
+		{
+			name:        "http internal-ca mode still needs no TLS material (scheme wins)",
+			endpointURL: httpURL,
+			tlsMode:     config.ArtifactsTLSModeInternalCA,
+			caCert:      "",
+			wantURL:     httpURL,
+		},
+		{
+			name:        "http endpoint with CA cert still pins (caller-supplied trust honored)",
+			endpointURL: httpURL,
+			tlsMode:     config.ArtifactsTLSModeDisabled,
+			caCert:      fakeCACert,
+			wantURL:     httpURL,
+			wantCACert:  fakeCACert,
+		},
+		{
+			name:        "empty endpoint URL is invalid",
+			endpointURL: "",
+			tlsMode:     config.ArtifactsTLSModeInternalCA,
+			wantErr:     ErrArtifactsEndpointInvalid,
+		},
+		{
+			name:        "endpoint URL without http(s) scheme is invalid",
+			endpointURL: "ftp://10.0.0.42:9000",
+			tlsMode:     config.ArtifactsTLSModeInternalCA,
+			wantErr:     ErrArtifactsEndpointInvalid,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := EndpointForLookup(bloc, tt.endpointURL, tt.tlsMode, tt.caCert, tt.allowInsecure)
+
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("err = %v, want wrapping %v", err, tt.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got.URL != tt.wantURL {
+				t.Errorf("URL = %q, want %q", got.URL, tt.wantURL)
+			}
+
+			if got.CACert != tt.wantCACert {
+				t.Errorf("CACert = %q, want %q", got.CACert, tt.wantCACert)
+			}
+
+			if got.SkipTLSVerify != tt.wantSkipTLS {
+				t.Errorf("SkipTLSVerify = %v, want %v", got.SkipTLSVerify, tt.wantSkipTLS)
+			}
+
+			if !got.PathStyle {
+				t.Error("PathStyle = false, want true")
+			}
+
+			if got.Region == "" {
+				t.Error("Region empty, want default region set")
+			}
+		})
+	}
+}
+
+func TestEndpointForLookup_ErrorMessagesNameBloc(t *testing.T) {
+	t.Parallel()
+
+	// Actionable errors must name the bloc so operators running against
+	// multiple blocs can tell which one needs attention.
+	_, err := EndpointForLookup("ocfp-lab-wayne", "https://10.0.0.1:9000", config.ArtifactsTLSModeInternalCA, "", false)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	got := err.Error()
+	for _, want := range []string{"ocfp-lab-wayne", "artifacts ca", "artifacts provision"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error message %q missing expected substring %q", got, want)
+		}
 	}
 }

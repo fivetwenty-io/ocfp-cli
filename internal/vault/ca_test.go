@@ -153,6 +153,141 @@ func TestLoadOrGenerateBlocCA_CorruptedPathErrors(t *testing.T) {
 	}
 }
 
+func TestLoadBlocCA_TableDriven(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		setup      func() *fakeSafe
+		blocName   string
+		wantErrIs  error
+		wantCert   string
+		wantKey    string
+		wantFPrint string
+	}{
+		{
+			name: "found returns persisted material",
+			setup: func() *fakeSafe {
+				safe := newFakeSafe()
+				safe.data["secret/ocfp/pve-wayne/ca"] = map[string]interface{}{
+					"cert":        "CERT-PEM",
+					"key":         "KEY-PEM",
+					"fingerprint": "abc123",
+					"created_at":  "2026-01-01T00:00:00Z",
+				}
+
+				return safe
+			},
+			blocName:   "pve-wayne",
+			wantCert:   "CERT-PEM",
+			wantKey:    "KEY-PEM",
+			wantFPrint: "abc123",
+		},
+		{
+			name:      "not found when path absent",
+			setup:     newFakeSafe,
+			blocName:  "pve-wayne",
+			wantErrIs: ErrBlocCANotFound,
+		},
+		{
+			name: "not found when backing safe read errors",
+			setup: func() *fakeSafe {
+				safe := newFakeSafe()
+				safe.failOnRead = errors.New("vault sealed")
+
+				return safe
+			},
+			blocName:  "pve-wayne",
+			wantErrIs: ErrBlocCANotFound,
+		},
+		{
+			name: "malformed cert missing cert field",
+			setup: func() *fakeSafe {
+				safe := newFakeSafe()
+				safe.data["secret/ocfp/pve-wayne/ca"] = map[string]interface{}{
+					"cert": "",
+					"key":  "KEY-PEM",
+				}
+
+				return safe
+			},
+			blocName:  "pve-wayne",
+			wantErrIs: ErrBlocCAMalformed,
+		},
+		{
+			name: "malformed cert missing key field",
+			setup: func() *fakeSafe {
+				safe := newFakeSafe()
+				safe.data["secret/ocfp/pve-wayne/ca"] = map[string]interface{}{
+					"cert": "CERT-PEM",
+					"key":  "",
+				}
+
+				return safe
+			},
+			blocName:  "pve-wayne",
+			wantErrIs: ErrBlocCAMalformed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mat, err := LoadBlocCA(tt.setup(), tt.blocName)
+
+			if tt.wantErrIs != nil {
+				if !errors.Is(err, tt.wantErrIs) {
+					t.Fatalf("expected error wrapping %v, got %v", tt.wantErrIs, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("LoadBlocCA: unexpected error: %v", err)
+			}
+
+			if mat.CertPEM != tt.wantCert || mat.KeyPEM != tt.wantKey || mat.Fingerprint != tt.wantFPrint {
+				t.Errorf("LoadBlocCA returned %+v, want cert=%q key=%q fingerprint=%q",
+					mat, tt.wantCert, tt.wantKey, tt.wantFPrint)
+			}
+		})
+	}
+}
+
+func TestLoadBlocCA_RequiresInputs(t *testing.T) {
+	t.Parallel()
+
+	_, err := LoadBlocCA(nil, "pve-wayne")
+	if err == nil {
+		t.Errorf("expected error for nil safe")
+	}
+
+	_, err = LoadBlocCA(newFakeSafe(), "")
+	if err == nil {
+		t.Errorf("expected error for empty bloc")
+	}
+}
+
+// LoadBlocCA never mints — this is the defining contract difference from
+// LoadOrGenerateBlocCA. Assert the safe is never written to on the
+// not-found path.
+func TestLoadBlocCA_NeverMints(t *testing.T) {
+	t.Parallel()
+
+	safe := newFakeSafe()
+
+	_, err := LoadBlocCA(safe, "pve-wayne")
+	if !errors.Is(err, ErrBlocCANotFound) {
+		t.Fatalf("expected ErrBlocCANotFound, got %v", err)
+	}
+
+	if _, ok := safe.data["secret/ocfp/pve-wayne/ca"]; ok {
+		t.Errorf("LoadBlocCA must never write to the safe, but a secret was persisted")
+	}
+}
+
 func TestLoadOrGenerateBlocCA_RequiresInputs(t *testing.T) {
 	t.Parallel()
 

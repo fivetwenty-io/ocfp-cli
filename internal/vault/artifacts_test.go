@@ -48,6 +48,10 @@ func TestArtifactsWriter_InternalCALabelAndCACertFromEndpoint(t *testing.T) {
 		t.Errorf("tls_fingerprint_sha256 = %v, want fp", meta["tls_fingerprint_sha256"])
 	}
 
+	if _, present := meta["tls_leaf_not_after"]; present {
+		t.Errorf("tls_leaf_not_after should be absent when TLSMaterial.NotAfter is empty, got %v", meta["tls_leaf_not_after"])
+	}
+
 	bosh := safe.data[w.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh")]
 	if bosh["ca_cert"] != "CA-CERT-PEM" {
 		t.Errorf("ca_cert = %v, want CA-CERT-PEM (from ep.CACert, NOT leaf cert)", bosh["ca_cert"])
@@ -60,6 +64,56 @@ func TestArtifactsWriter_InternalCALabelAndCACertFromEndpoint(t *testing.T) {
 	cfBucket := safe.data[w.PathBuilder.GetSystemBlobstorePath("ocf", "cf", "main")]
 	if cfBucket["ca_cert"] != "CA-CERT-PEM" {
 		t.Errorf("cf ca_cert = %v, want CA-CERT-PEM", cfBucket["ca_cert"])
+	}
+}
+
+// TestArtifactsWriter_TLSLeafNotAfterIncludedWhenSet (task 6.2 gap 1) asserts
+// WriteArtifacts persists tls_leaf_not_after into the artifacts vault meta
+// when TLSMaterial.NotAfter is populated — closing the gap where
+// docs/artifacts-tls.md claimed this field existed before it actually did.
+func TestArtifactsWriter_TLSLeafNotAfterIncludedWhenSet(t *testing.T) {
+	t.Parallel()
+
+	safe := newFakeSafe()
+	cfg := newTestCfg(config.ArtifactsTLSModeInternalCA)
+	w := NewArtifactsWriter(cfg, safe, "pve-wayne")
+
+	ep := artifacts.Endpoint{URL: "https://10.0.0.11:9000", CACert: "CA-CERT-PEM"}
+	tls := &artifacts.TLSMaterial{CertPEM: "LEAF-CERT-PEM", Fingerprint: "fp", NotAfter: "2027-01-02T03:04:05Z"}
+
+	err := w.WriteArtifacts(context.Background(), "pve-wayne", ep, artifacts.Credentials{}, tls)
+	if err != nil {
+		t.Fatalf("WriteArtifacts: %v", err)
+	}
+
+	meta := safe.data["secret/ocfp/pve-wayne/artifacts"]
+	if meta["tls_leaf_not_after"] != "2027-01-02T03:04:05Z" {
+		t.Errorf("tls_leaf_not_after = %v, want 2027-01-02T03:04:05Z", meta["tls_leaf_not_after"])
+	}
+}
+
+// TestArtifactsWriter_TLSLeafNotAfterOmittedWhenEmpty asserts the key is
+// never written with an empty value — e.g. a TLSMaterial recovered from a
+// skip-path state resource that never recorded tls_leaf_not_after (state
+// predates task 6.2, or the leaf issuance path failed to parse expiry).
+func TestArtifactsWriter_TLSLeafNotAfterOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	safe := newFakeSafe()
+	cfg := newTestCfg(config.ArtifactsTLSModeInternalCA)
+	w := NewArtifactsWriter(cfg, safe, "pve-wayne")
+
+	ep := artifacts.Endpoint{URL: "https://10.0.0.11:9000", CACert: "CA-CERT-PEM"}
+	tls := &artifacts.TLSMaterial{Fingerprint: "fp"} // NotAfter deliberately empty
+
+	err := w.WriteArtifacts(context.Background(), "pve-wayne", ep, artifacts.Credentials{}, tls)
+	if err != nil {
+		t.Fatalf("WriteArtifacts: %v", err)
+	}
+
+	meta := safe.data["secret/ocfp/pve-wayne/artifacts"]
+	if _, present := meta["tls_leaf_not_after"]; present {
+		t.Errorf("tls_leaf_not_after should be absent when NotAfter is empty, got %v", meta["tls_leaf_not_after"])
 	}
 }
 
