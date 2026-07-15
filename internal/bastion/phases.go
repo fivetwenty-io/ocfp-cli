@@ -3,7 +3,10 @@ package bastion
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -12,14 +15,20 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
 // Phase execution errors.
 var (
 	ErrLocalScriptExecutionNotImplemented = errors.New("local script execution not implemented")
 	ErrKeyFetchFailed                     = errors.New("failed to fetch keys")
+	ErrInvalidCACertPEM                   = errors.New("resolved bloc CA certificate is not a valid PEM certificate")
+	ErrNoCACertAvailable                  = errors.New("no bloc internal CA certificate available")
 )
 
 // Additional phase implementations for comprehensive bastion initialization
@@ -440,6 +449,259 @@ func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	script := ocfpMgr.GenerateVaultPopulateScript(ctx)
 
 	return m.executeScript(ctx, script, "vault-populate")
+}
+
+// blocCATrustDir is the Debian/Ubuntu location update-ca-certificates scans
+// for locally-trusted certificates to fold into /etc/ssl/certs/ca-certificates.crt.
+const blocCATrustDir = "/usr/local/share/ca-certificates"
+
+// blocCATrustPath returns the bastion-side path where the bloc's internal CA
+// certificate is installed for the system trust store.
+func (m *Manager) blocCATrustPath() string {
+	return fmt.Sprintf("%s/ocfp-%s-internal-ca.crt", blocCATrustDir, m.config.Name)
+}
+
+// installBlocCATrust installs the bloc's internal CA certificate into the
+// bastion's system trust store (via update-ca-certificates), so tools that
+// consult the OS trust store — curl, safe, vault CLI, the blobstores helper,
+// genesis, etc. — can verify TLS connections to the artifacts endpoint (and
+// any other internal-ca-issued service) without --insecure/-k flags.
+//
+// This phase is a deliberate no-op — logged, not an error — whenever the
+// bloc has no internal CA to distribute: artifacts disabled, tls.mode is
+// self-signed/disabled (those roots are per-instance/ephemeral and not meant
+// for a shared OS trust store), or the CA material cannot be resolved from
+// local state or vault. A bloc that intends to run internal-ca mode but has
+// a genuinely missing CA is a configuration problem already surfaced with
+// actionable errors by other phases (vault populate, `artifacts provision`);
+// this phase does not duplicate that hard gate, so a bastion re-init never
+// fails outright over trust-store convergence alone.
+//
+// The install itself is idempotent: it hashes the resolved CA PEM and
+// compares against the checksum of any file already installed at
+// blocCATrustPath, skipping the write and the update-ca-certificates run
+// entirely when they already match.
+func (m *Manager) installBlocCATrust(ctx context.Context) error {
+	if !m.config.Artifacts.Enabled {
+		m.log.Infow("Skipping bloc CA trust install: artifacts feature disabled",
+			"bloc", m.config.Name)
+
+		return nil
+	}
+
+	if m.config.Artifacts.TLS.Mode != config.ArtifactsTLSModeInternalCA {
+		m.log.Infow("Skipping bloc CA trust install: artifacts TLS mode is not internal-ca",
+			"bloc", m.config.Name, "tls_mode", m.config.Artifacts.TLS.Mode)
+
+		return nil
+	}
+
+	caPEM, source, err := m.resolveBlocCACert()
+	if err != nil {
+		m.log.Warnw("Skipping bloc CA trust install: no internal CA available",
+			"bloc", m.config.Name, "error", err)
+
+		return nil
+	}
+
+	if err := validateCACertPEM(caPEM); err != nil {
+		m.log.Warnw("Skipping bloc CA trust install: resolved CA material is invalid",
+			"bloc", m.config.Name, "source", source, "error", err)
+
+		return nil
+	}
+
+	m.log.Infow("Installing bloc internal CA into bastion trust store",
+		"bloc", m.config.Name, "source", source, "path", m.blocCATrustPath())
+
+	return m.pushCATrustToBastion(ctx, caPEM)
+}
+
+// resolveBlocCACert resolves the bloc internal CA certificate PEM operator-
+// side (i.e. on the machine running `ocfp bastion init`, before anything is
+// pushed over SSH). It tries the local bootstrap state first — the artifacts
+// VM resource already carries the CA cert once provisioned, and reading it
+// needs no vault connectivity — then falls back to vault directly. Returns
+// ErrNoCACertAvailable when neither source has usable material.
+func (m *Manager) resolveBlocCACert() (pemText, source string, err error) {
+	blocName := m.config.Name
+	if blocName == "" {
+		return "", "", ErrBlocNameRequired
+	}
+
+	if certPEM, ok := m.blocCACertFromState(blocName); ok {
+		return certPEM, "state", nil
+	}
+
+	certPEM, vaultErr := m.blocCACertFromVault(blocName)
+	if vaultErr == nil && certPEM != "" {
+		return certPEM, "vault", nil
+	}
+
+	if vaultErr != nil {
+		return "", "", fmt.Errorf("%w: state has no ca_cert and vault lookup failed: %w", ErrNoCACertAvailable, vaultErr)
+	}
+
+	return "", "", fmt.Errorf("%w: state has no ca_cert and vault returned empty material", ErrNoCACertAvailable)
+}
+
+// blocCACertFromState reads the operator's local bootstrap state
+// (~/.ocfp/<bloc>/state/<bloc>.json) for the artifacts VM resource and
+// returns its ca_cert property when the resource is recorded in
+// internal-ca mode. Any failure to resolve or load local state is treated
+// as "not found here" (ok=false) — resolveBlocCACert falls back to vault.
+func (m *Manager) blocCACertFromState(blocName string) (certPEM string, ok bool) {
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		m.log.Debugw("Could not resolve local state directory for bloc CA lookup",
+			"bloc", blocName, "error", err)
+
+		return "", false
+	}
+
+	sm, err := state.NewManager(stateDir)
+	if err != nil {
+		m.log.Debugw("Could not open local state manager for bloc CA lookup",
+			"bloc", blocName, "error", err)
+
+		return "", false
+	}
+
+	_, err = sm.Load(blocName)
+	if err != nil {
+		m.log.Debugw("Could not load local bootstrap state for bloc CA lookup",
+			"bloc", blocName, "error", err)
+
+		return "", false
+	}
+
+	resource, err := sm.GetResource(artifacts.ResourceType, blocName+"-artifacts")
+	if err != nil || resource == nil {
+		return "", false
+	}
+
+	mode, _ := resource.Properties["tls_mode"].(string)
+	if mode != config.ArtifactsTLSModeInternalCA {
+		return "", false
+	}
+
+	cert, _ := resource.Properties["ca_cert"].(string)
+	if strings.TrimSpace(cert) == "" {
+		return "", false
+	}
+
+	return cert, true
+}
+
+// blocCACertFromVault reads secret/ocfp/{bloc}/ca directly via a fresh
+// environment-derived vault client (VAULT_ADDR/VAULT_TOKEN or ~/.saferc —
+// see vault.NewClientFromEnv). This is the fallback used when local
+// bootstrap state has no artifacts resource (e.g. the operator running
+// `bastion init` isn't the one who ran bootstrap) or the resource predates
+// ca_cert being recorded in state.
+func (m *Manager) blocCACertFromVault(blocName string) (string, error) {
+	client, err := vault.NewClientFromEnv()
+	if err != nil {
+		return "", fmt.Errorf("creating vault client from environment: %w", err)
+	}
+
+	safe := vault.NewSafe(client)
+
+	mat, err := vault.LoadBlocCA(safe, blocName)
+	if err != nil {
+		return "", fmt.Errorf("loading bloc CA from vault: %w", err)
+	}
+
+	return mat.CertPEM, nil
+}
+
+// validateCACertPEM parses caPEM as a single PEM-encoded X.509 certificate,
+// rejecting empty input, non-PEM content, non-CERTIFICATE PEM blocks, and
+// PEM blocks whose DER payload does not parse as a certificate. This is a
+// real parse (not a substring sniff) so corrupted or truncated state/vault
+// material is caught before it is pushed to the bastion trust store.
+func validateCACertPEM(caPEM string) error {
+	if strings.TrimSpace(caPEM) == "" {
+		return fmt.Errorf("%w: empty", ErrInvalidCACertPEM)
+	}
+
+	block, _ := pem.Decode([]byte(caPEM))
+	if block == nil {
+		return fmt.Errorf("%w: no PEM block found", ErrInvalidCACertPEM)
+	}
+
+	if block.Type != "CERTIFICATE" {
+		return fmt.Errorf("%w: PEM block type %q, want CERTIFICATE", ErrInvalidCACertPEM, block.Type)
+	}
+
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidCACertPEM, err)
+	}
+
+	return nil
+}
+
+// pushCATrustToBastion installs caPEM at blocCATrustPath and refreshes the
+// merged system bundle. It is idempotent: it first checks the SHA-256 of any
+// file already at that path and skips the write plus the
+// update-ca-certificates run when the content already matches, so repeated
+// `ocfp bastion init` runs converge without redundant work or unnecessary
+// bundle rebuilds.
+//
+// The PEM is transferred base64-encoded to sidestep shell quoting entirely —
+// certificate PEM contains newlines and the encoded form has no characters
+// that need escaping inside the single-quoted remote command.
+func (m *Manager) pushCATrustToBastion(ctx context.Context, caPEM string) error {
+	remotePath := m.blocCATrustPath()
+
+	localSum := sha256.Sum256([]byte(caPEM))
+	localChecksum := hex.EncodeToString(localSum[:])
+
+	checkCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remotePath)
+
+	checkResult, err := m.sshClient.ExecuteCommand(ctx, checkCmd)
+	if err != nil {
+		m.log.Debugw("Could not check existing bastion CA trust file checksum",
+			"path", remotePath, "error", err)
+	}
+
+	var remoteChecksum string
+	if checkResult != nil {
+		remoteChecksum = strings.TrimSpace(checkResult.Stdout)
+	}
+
+	if remoteChecksum != "" && remoteChecksum == localChecksum {
+		m.log.Infow("Bloc CA already installed in bastion trust store, skipping",
+			"path", remotePath, "checksum", localChecksum)
+
+		return nil
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(caPEM))
+
+	installCmd := fmt.Sprintf(
+		`bash -c 'echo %s | base64 -d | sudo tee %q > /dev/null && sudo chmod 0644 %q && sudo update-ca-certificates'`,
+		encoded, remotePath, remotePath,
+	)
+
+	result, err := m.sshClient.ExecuteCommand(ctx, installCmd)
+	if err != nil {
+		stderr := ""
+		if result != nil {
+			stderr = extractTail(result.Stderr, 20) //nolint:mnd
+		}
+
+		if stderr != "" {
+			return fmt.Errorf("installing bloc CA trust at %s: %w\n--- output ---\n%s", remotePath, err, stderr)
+		}
+
+		return fmt.Errorf("installing bloc CA trust at %s: %w", remotePath, err)
+	}
+
+	m.log.Infow("Bloc CA installed and system trust store refreshed",
+		"path", remotePath, "checksum", localChecksum)
+
+	return nil
 }
 
 // setupGenesisSecretsProviders configures genesis deployments to use inception vault.
