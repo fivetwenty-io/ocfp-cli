@@ -18,6 +18,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+// SupportedConfigSchema is the highest config_schema version this build
+// understands. A config file may declare config_schema to require a
+// minimum binary version; validate() rejects configs whose config_schema
+// exceeds this value. Absent or zero always passes (older configs and
+// configs that don't opt in are unaffected). Bump this constant whenever
+// a config_schema-gated breaking change lands.
+const SupportedConfigSchema = 1
+
 // FQDN configuration errors.
 var (
 	ErrFQDNBaseInvalidType   = errors.New("fqdns.base must be a string or list of strings")
@@ -99,10 +107,20 @@ type ConfigFile struct {
 
 // Config represents a bloc configuration.
 type Config struct {
-	Name     string `json:"name"     mapstructure:"name"     yaml:"name,omitempty"`
-	Provider string `json:"provider" mapstructure:"provider" yaml:"provider,omitempty"`
-	IaaS     string `json:"iaas"     mapstructure:"iaas"     yaml:"iaas,omitempty"`
-	Region   string `json:"region"   mapstructure:"region"   yaml:"region,omitempty"`
+	// ConfigSchema is an optional forward-compatibility guard. When set, it
+	// declares the minimum config_schema version this file requires; validate()
+	// fails closed if the running binary's SupportedConfigSchema is lower, so
+	// operators get an actionable "upgrade ocfp" error instead of the binary
+	// silently ignoring fields it doesn't understand yet. Absent/zero (the
+	// default for every config written before this field existed) always
+	// passes. Older, pre-guard binaries have no knowledge of this field and
+	// silently ignore it (they'd still misbehave on truly new syntax) — this
+	// guard only protects future binaries loading future configs.
+	ConfigSchema int    `json:"config_schema,omitempty" mapstructure:"config_schema" yaml:"config_schema,omitempty"`
+	Name         string `json:"name"                    mapstructure:"name"          yaml:"name,omitempty"`
+	Provider     string `json:"provider"                mapstructure:"provider"      yaml:"provider,omitempty"`
+	IaaS         string `json:"iaas"                    mapstructure:"iaas"          yaml:"iaas,omitempty"`
+	Region       string `json:"region"                  mapstructure:"region"        yaml:"region,omitempty"`
 	// Nodes lists Proxmox VE cluster nodes for multi-node AZ configuration.
 	// Each entry is written as a separate vault AZ entry under net/azs/{node}.
 	// PVE-specific; ignored by other providers.
@@ -1636,6 +1654,15 @@ func (cfg *Config) GetConfiguredDeployments() []string {
 
 // validate validates the configuration.
 func validate(cfg *Config) error {
+	// Config-schema guard: reject configs declaring a schema newer than this
+	// binary supports before any other validation runs, so the error names
+	// the real cause (stale binary) rather than a confusing downstream
+	// failure caused by fields this build doesn't understand yet. 0/absent
+	// always passes.
+	if cfg.ConfigSchema > SupportedConfigSchema {
+		return ErrConfigSchemaTooNew(cfg.ConfigSchema, SupportedConfigSchema)
+	}
+
 	// Required fields
 	if cfg.Provider == "" && cfg.IaaS == "" {
 		return ErrProviderOrIaasRequired

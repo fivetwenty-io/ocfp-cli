@@ -218,6 +218,16 @@ func bindFlagsToViper(cmd *cobra.Command) {
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, _args []string) {
+		// Warn on unstamped builds: cobra's --version flag path returns before
+		// PersistentPreRun ever runs (see (*cobra.Command).execute), so this
+		// never touches --version or any stdout output; it always goes to
+		// stderr and never blocks command execution. GitCommit=="unknown" is
+		// the ldflags default (internal/version/version.go), so this fires
+		// for any binary built without `go build $(LDFLAGS)` — e.g. a bare
+		// `go build ./...` or `go run` — which is exactly the failure class
+		// that produced the stale `bin/ocfp` binary in this repo.
+		warnUnstampedBuild()
+
 		// Determine bloc name: flag > env var > state file > viper config.
 		// Check the invoked command's own flag set first: subcommands that
 		// declare a local --bloc (artifacts, bastion, …) shadow the root
@@ -277,6 +287,23 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			setupCommandTracking(lock, commandName, subcommandName)
 		}
 	}
+}
+
+// warnUnstampedBuild prints a one-line stderr warning when the running
+// binary was built without ldflags version stamping (version.GitCommit still
+// at its zero-value default of "unknown"). Unstamped builds run silently
+// otherwise, which is exactly how the stale-binary incident this guards
+// against went undetected: a `go build ./...` or `go run` invocation
+// produces a working binary with no way to tell it apart from a properly
+// stamped one except by inspecting `ocfp --version`. Always writes to
+// stderr so it never contaminates stdout (JSON/table output, --version).
+func warnUnstampedBuild() {
+	if version.GitCommit != "unknown" {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr,
+		"warning: unstamped build (git commit unknown) — run `make build` or `make install-local` to embed version info")
 }
 
 // resolveBlocName determines the bloc name from env var, state file, or viper config.
