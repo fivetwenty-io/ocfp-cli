@@ -10,18 +10,34 @@
 #   blobstores help
 #
 # Options:
-#   --bloc <name>     Bloc name (default: $OCFP_BLOC)
-#   --ca-bundle <p>   Verify TLS with this CA bundle (skip when omitted)
+#   --bloc <name>       Bloc name (default: $OCFP_BLOC)
+#   --ca-bundle <path>  Verify TLS with this CA bundle (highest priority; see below)
+#   --insecure          Skip TLS verification (aws --no-verify-ssl / curl -k).
+#                       Only used when no CA can be resolved. Last resort.
+#
+# TLS is verified by default. CA bundle resolution order (first match wins):
+#   1. --ca-bundle <path>                              (explicit override)
+#   2. /usr/local/share/ca-certificates/ocfp-<bloc>-internal-ca.crt
+#      when present, use the merged system bundle
+#      /etc/ssl/certs/ca-certificates.crt instead (bastion init installs the
+#      bloc CA there; the merged bundle keeps public CAs working too)
+#   3. secret/ocfp/<bloc>/ca:cert via `safe`, cached at ~/.ocfp/<bloc>/ca.pem
+#      (fetched once, re-fetched only when the cache is missing/empty)
+#   If none resolve and --insecure is not given, the script fails with a
+#   message pointing at `ocfp artifacts ca --bloc <bloc>`.
 #
 # Discovers endpoint/credentials from Vault via `safe`:
 #   secret/ocfp/<bloc>/artifacts            :endpoint, :host, :port, :tls_mode
 #   secret/config/<bloc>/mgmt/bosh/blobstores/bosh/creds  :access_key, :secret_key
 #
+# Note: AWS CLI v2 ships its own bundle and ignores the OS trust store, so
+# --ca-bundle must be passed explicitly for verification to work at all.
+#
 # Exit codes:
 #   0   all checks passed
 #   1   usage / argument error
 #   2   one or more checks failed
-#   3   missing prerequisite (safe / aws / vault auth)
+#   3   missing prerequisite (safe / aws / vault auth / no CA resolvable)
 
 set -euo pipefail
 
@@ -67,6 +83,7 @@ esac
 
 BLOC="${OCFP_BLOC:-}"
 CA_BUNDLE=""
+INSECURE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,6 +91,7 @@ while [[ $# -gt 0 ]]; do
     --bloc=*)     BLOC="${1#--bloc=}"; shift ;;
     --ca-bundle)  CA_BUNDLE="${2:?--ca-bundle requires a value}"; shift 2 ;;
     --ca-bundle=*) CA_BUNDLE="${1#--ca-bundle=}"; shift ;;
+    --insecure)   INSECURE=1; shift ;;
     -h|--help)    ACTION=help; shift ;;
     --) shift; break ;;
     -*) fail "unknown flag: $1"; exit 1 ;;
@@ -85,7 +103,7 @@ done
 # Help
 # ---------------------------------------------------------------------------
 if [[ "$ACTION" == "help" ]]; then
-  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -160,17 +178,67 @@ export AWS_ACCESS_KEY_ID="$AK"
 export AWS_SECRET_ACCESS_KEY="$SK"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
-AWS_TLS_ARGS=()
-if [[ "$EP" == https://* ]]; then
+# resolve_ca_bundle — fill CA_BUNDLE with the file to trust, in priority order:
+#   1. --ca-bundle flag (already in CA_BUNDLE if the user passed one)
+#   2. bastion-installed bloc CA -> prefer the merged system bundle so public
+#      CAs (real AWS, etc.) keep working alongside the bloc CA
+#   3. safe-fetched bloc CA, cached under ~/.ocfp/<bloc>/ca.pem
+# Returns 1 (no mutation of CA_BUNDLE beyond attempts) when nothing resolves.
+resolve_ca_bundle() {
   if [[ -n "$CA_BUNDLE" ]]; then
+    if [[ ! -s "$CA_BUNDLE" ]]; then
+      fail "--ca-bundle file not found or empty: $CA_BUNDLE"
+      exit 1
+    fi
+    dim "TLS CA: --ca-bundle ${CA_BUNDLE}"
+    return 0
+  fi
+
+  local trust_store_crt="/usr/local/share/ca-certificates/ocfp-${BLOC}-internal-ca.crt"
+  local system_bundle="/etc/ssl/certs/ca-certificates.crt"
+  if [[ -s "$trust_store_crt" && -s "$system_bundle" ]]; then
+    CA_BUNDLE="$system_bundle"
+    dim "TLS CA: merged system bundle ${system_bundle} (bloc CA installed at ${trust_store_crt})"
+    return 0
+  fi
+
+  local cache_dir="${HOME}/.ocfp/${BLOC}"
+  local cache_file="${cache_dir}/ca.pem"
+  if [[ -s "$cache_file" ]]; then
+    CA_BUNDLE="$cache_file"
+    dim "TLS CA: cached ${cache_file}"
+    return 0
+  fi
+
+  local fetched
+  fetched=$(safe_get "secret/ocfp/${BLOC}/ca:cert")
+  if [[ -n "$fetched" ]]; then
+    mkdir -p "$cache_dir"
+    printf '%s\n' "$fetched" > "$cache_file"
+    chmod 600 "$cache_file"
+    CA_BUNDLE="$cache_file"
+    dim "TLS CA: fetched from vault, cached at ${cache_file}"
+    return 0
+  fi
+
+  return 1
+}
+
+AWS_TLS_ARGS=()
+CURL_TLS_ARGS=()
+if [[ "$EP" == https://* ]]; then
+  if resolve_ca_bundle; then
     AWS_TLS_ARGS=(--ca-bundle "$CA_BUNDLE")
     CURL_TLS_ARGS=(--cacert "$CA_BUNDLE")
-  else
+  elif [[ "$INSECURE" -eq 1 ]]; then
     AWS_TLS_ARGS=(--no-verify-ssl)
     CURL_TLS_ARGS=(-k)
+    info "TLS verification disabled (--insecure) — not recommended"
+  else
+    fail "no CA available to verify ${EP}"
+    fail "run \`ocfp artifacts ca --bloc ${BLOC}\` to fetch/cache the bloc CA, or pass --insecure as a last resort"
+    exit 3
   fi
-else
-  CURL_TLS_ARGS=()
 fi
 
 aws_s3() { aws --endpoint-url "$EP" "${AWS_TLS_ARGS[@]}" "$@"; }

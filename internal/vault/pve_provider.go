@@ -48,8 +48,34 @@ type PVEVaultProvider struct {
 	// blobstoreCACert is the PEM CA cert sourced from artifacts state (internal-ca
 	// or self-signed TLS mode). Written to vault alongside endpoint/region so
 	// genesis kits can pin it. Populated by ConfigureBlobstores when auto-sourcing
-	// from bootstrap state; remains empty when the operator supplies flags.
+	// from bootstrap state; remains empty when the operator supplies flags. May
+	// also be populated later, by blobstoreS3Target recovering the bloc CA from
+	// vault when state's copy is missing — see blobstoreTLSMode.
 	blobstoreCACert string
+
+	// blobstoreTLSMode is the artifacts tls.mode ("internal-ca", "self-signed",
+	// "disabled", or "" when unknown — e.g. a manual --blobstore-endpoint
+	// override with no corresponding artifacts state) sourced alongside
+	// blobstoreCACert by ConfigureBlobstores. resolveBlobstoreTLSTrust uses it
+	// to decide whether a missing CA cert is recoverable from vault
+	// (internal-ca) or must fall back to a logged skip-verify (everything
+	// else) — it is never silently treated as internal-ca-safe.
+	blobstoreTLSMode string
+
+	// blobstoreTLSResolved marks that resolveBlobstoreTLSTrust has already run
+	// for this provider instance (single blobstore-populate invocation).
+	// Idempotency guard: without it, calling resolveBlobstoreTLSTrust from
+	// both configureExternalBlobstore (before the CF config write) and
+	// blobstoreS3Target (bucket creation) would re-attempt vault CA recovery
+	// and, on the self-signed/legacy fallback path, double-log the
+	// skip-verify warning.
+	blobstoreTLSResolved bool
+
+	// blobstoreAllowInsecure caches whether resolveBlobstoreTLSTrust fell back
+	// to the skip-verify-with-warning path (self-signed/disabled-but-https/
+	// unknown tls_mode with no CA available). Read by blobstoreS3Target when
+	// building the Endpoint for bucket creation.
+	blobstoreAllowInsecure bool
 
 	// bucketEnsurer creates the blobstore buckets a written secret points at, so
 	// the secret and its backing bucket are always provisioned together. nil
@@ -844,26 +870,6 @@ func (p *PVEVaultProvider) loadStateManager() *state.Manager {
 	return sm
 }
 
-// resolveArtifactsEndpoint looks up the artifacts VM from bootstrap state and
-// returns the endpoint, credentials, and CA PEM needed to write the blobstore
-// secrets. Returns nil (no error) when state is absent or the artifacts VM has
-// not been provisioned — callers then fall back to the CLI-flag-driven flow.
-func (p *PVEVaultProvider) resolveArtifactsEndpoint() (*artifacts.LookupResult, error) {
-	sm := p.loadStateManager()
-	if sm == nil {
-		return nil, nil
-	}
-
-	// provider is nil: a tag-based fallback query needs live PVE credentials,
-	// which are unavailable at vault-populate time. State is the only source here.
-	lr, err := artifacts.Lookup(context.Background(), sm, nil, p.BlocName)
-	if err != nil {
-		return nil, fmt.Errorf("artifacts lookup: %w", err)
-	}
-
-	return lr, nil
-}
-
 // ConfigureSecurityGroups configures security group settings.
 func (p *PVEVaultProvider) ConfigureSecurityGroups(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "security-groups-" + envType
@@ -923,17 +929,18 @@ func (p *PVEVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 	// This is the common case on a clean run: `ocfp vault populate` (on the
 	// bastion) promotes to external mode from state with no flags required.
 	if mode == "local" && p.BlobstoreEndpoint == "" {
-		lr, err := p.resolveArtifactsEndpoint()
+		src, err := ConfigureBlobstoresFromArtifactsState(p.loadStateManager(), p.BlocName)
 		if err != nil {
 			p.logger.Warnw("Could not load artifacts state for blobstore populate", "error", err)
 		}
 
-		if lr != nil && lr.Endpoint != "" {
-			p.BlobstoreEndpoint = lr.Endpoint
+		if src != nil {
+			p.BlobstoreEndpoint = src.Endpoint
 			p.BlobstoreRegion = pveFirstNonEmpty(p.BlobstoreRegion, "us-east-1")
-			p.BlobstoreAccessKey = lr.AccessKey
-			p.BlobstoreSecretKey = lr.SecretKey
-			p.blobstoreCACert = lr.CACert
+			p.BlobstoreAccessKey = src.AccessKey
+			p.BlobstoreSecretKey = src.SecretKey
+			p.blobstoreCACert = src.CACert
+			p.blobstoreTLSMode = src.TLSMode
 			mode = "external"
 
 			// Endpoint URL only — credentials and CA are never logged.
@@ -1016,6 +1023,17 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		return errors.New("pve blobstore external mode requires --blobstore-endpoint")
 	}
 
+	// Resolve (and, for internal-ca, recover from vault) the CA cert BEFORE
+	// writing any blobstore config. This must happen before the CF write
+	// below, not lazily inside bucket creation: bucket creation for the CF
+	// path runs after the CF config's ca_cert field is already written, so a
+	// recovery that happened there instead would repair p.blobstoreCACert too
+	// late for the CF entry — the CF blobstore would get no ca_cert while the
+	// BOSH entry, written afterward, would get the recovered one.
+	if err := p.resolveBlobstoreTLSTrust(); err != nil {
+		return err
+	}
+
 	region := p.BlobstoreRegion
 	if region == "" {
 		region = "us-east-1"
@@ -1082,14 +1100,80 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 	return nil
 }
 
+// resolveBlobstoreTLSTrust resolves the CA cert / skip-verify decision for
+// the external blobstore endpoint exactly once per provider instance (see
+// blobstoreTLSResolved), mutating p.blobstoreCACert in place when a CA is
+// recovered from vault. Every reader of p.blobstoreCACert — the CF config
+// write in configureExternalBlobstore, the BOSH config write in
+// configureBOSHBlobstoreForScope, and the bucket-creation Endpoint built by
+// blobstoreS3Target — must run after this has been called at least once, so
+// they all observe the same (possibly-recovered) CA. configureExternalBlobstore
+// calls it first, before any vault write, which is what makes that guarantee
+// hold: without that early call, a CA recovered lazily during bucket creation
+// would arrive too late for whichever config entry gets written first.
+//
+// Only https endpoints need TLS trust material at all; http is left
+// unresolved (no CA recovery attempted, no skip-verify decision made) since
+// EndpointForLookup treats http as needing no TLS material regardless of
+// mode.
+//
+// Returns an error only for the fatal case: tls.mode=internal-ca with no CA
+// cert recoverable from state or vault — run `ocfp artifacts ca` / `ocfp
+// artifacts provision`. Every other mode (self-signed, disabled-but-https, or
+// unknown/legacy state with no tls_mode recorded) with a missing CA cert
+// falls back to blobstoreAllowInsecure=true (skip-verify) with a loud warning
+// log — this provider has no operator-facing --insecure flag to gate an
+// explicit opt-in on, so the log line is the acknowledgment. It is never
+// silently treated as internal-ca-safe.
+func (p *PVEVaultProvider) resolveBlobstoreTLSTrust() error {
+	if p.blobstoreTLSResolved {
+		return nil
+	}
+
+	if p.blobstoreCACert == "" && strings.HasPrefix(p.BlobstoreEndpoint, "https://") {
+		switch p.blobstoreTLSMode {
+		case config.ArtifactsTLSModeInternalCA:
+			recovered, err := LoadBlocCA(p.Safe, p.BlocName)
+			if err != nil {
+				return fmt.Errorf(
+					"blobstore %s: tls.mode=internal-ca but no CA cert in state or vault: %w; run `ocfp artifacts ca --bloc %s` to inspect, or `ocfp artifacts provision --bloc %s` to recover/re-mint it",
+					p.BlobstoreEndpoint, err, p.BlocName, p.BlocName)
+			}
+
+			p.blobstoreCACert = recovered.CertPEM
+		default:
+			p.blobstoreAllowInsecure = true
+
+			p.logger.Warnw("blobstore endpoint has no CA cert to pin; skipping TLS verification",
+				"endpoint", p.BlobstoreEndpoint, "tls_mode", p.blobstoreTLSMode)
+		}
+	}
+
+	p.blobstoreTLSResolved = true
+
+	return nil
+}
+
 // blobstoreS3Target builds the S3 endpoint + credentials used to create
-// blobstore buckets from the provider's resolved external-mode fields. ok is
-// false when the endpoint or credentials are absent — bucket creation cannot
-// authenticate, so callers skip it rather than fail. CACert pins TLS when known;
-// otherwise SkipTLSVerify covers the RustFS self-signed case.
-func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Credentials, bool) {
+// blobstore buckets from the provider's resolved external-mode fields.
+//
+// ok is false when the endpoint or credentials are absent — bucket creation
+// cannot authenticate, so callers skip it rather than fail. This is the
+// normal "external mode not configured" case, not an error.
+//
+// When ok is true, err distinguishes two further outcomes: err == nil means
+// the endpoint + TLS trust material are ready to use; err != nil means the
+// endpoint/credentials ARE present but TLS trust could not be safely
+// resolved (tls.mode=internal-ca with no CA cert recoverable from state or
+// vault, see resolveBlobstoreTLSTrust) — callers must treat this as fatal and
+// never fall back to skipping verification for internal-ca.
+func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Credentials, bool, error) {
 	if p.BlobstoreEndpoint == "" || p.BlobstoreAccessKey == "" || p.BlobstoreSecretKey == "" {
-		return artifacts.Endpoint{}, artifacts.Credentials{}, false
+		return artifacts.Endpoint{}, artifacts.Credentials{}, false, nil
+	}
+
+	if err := p.resolveBlobstoreTLSTrust(); err != nil {
+		return artifacts.Endpoint{}, artifacts.Credentials{}, true, err
 	}
 
 	region := p.BlobstoreRegion
@@ -1097,17 +1181,22 @@ func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Cr
 		region = "us-east-1"
 	}
 
-	ep := artifacts.Endpoint{
-		URL:           p.BlobstoreEndpoint,
-		Host:          pveHostnameOnly(p.BlobstoreEndpoint),
-		Region:        region,
-		PathStyle:     true,
-		CACert:        p.blobstoreCACert,
-		SkipTLSVerify: p.blobstoreCACert == "",
+	effectiveMode := p.blobstoreTLSMode
+	if p.blobstoreAllowInsecure {
+		effectiveMode = config.ArtifactsTLSModeSelfSigned
 	}
+
+	ep, err := artifacts.EndpointForLookup(p.BlocName, p.BlobstoreEndpoint, effectiveMode, p.blobstoreCACert, p.blobstoreAllowInsecure)
+	if err != nil {
+		return artifacts.Endpoint{}, artifacts.Credentials{}, true, err
+	}
+
+	ep.Host = pveHostnameOnly(p.BlobstoreEndpoint)
+	ep.Region = region
+
 	creds := artifacts.Credentials{AccessKey: p.BlobstoreAccessKey, SecretKey: p.BlobstoreSecretKey}
 
-	return ep, creds, true
+	return ep, creds, true, nil
 }
 
 // ensureBlobstoreBucket creates the named bucket on the external blobstore so a
@@ -1119,7 +1208,11 @@ func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Cr
 // credentials are absent. A creation failure is fatal — a secret pointing at a
 // bucket that does not exist is worse than a loud failure at populate time.
 func (p *PVEVaultProvider) ensureBlobstoreBucket(bucketName string) error {
-	ep, creds, ok := p.blobstoreS3Target()
+	ep, creds, ok, err := p.blobstoreS3Target()
+	if err != nil {
+		return fmt.Errorf("ensuring blobstore bucket %q: %w", bucketName, err)
+	}
+
 	if !ok {
 		return nil
 	}
@@ -1129,8 +1222,7 @@ func (p *PVEVaultProvider) ensureBlobstoreBucket(bucketName string) error {
 		ensurer = s3BucketEnsurer{}
 	}
 
-	err := ensurer.EnsureBuckets(context.Background(), ep, creds, []artifacts.BucketSpec{{Name: bucketName}})
-	if err != nil {
+	if err := ensurer.EnsureBuckets(context.Background(), ep, creds, []artifacts.BucketSpec{{Name: bucketName}}); err != nil {
 		return fmt.Errorf("ensuring blobstore bucket %q exists: %w", bucketName, err)
 	}
 
