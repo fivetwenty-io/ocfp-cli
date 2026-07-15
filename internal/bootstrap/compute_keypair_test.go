@@ -41,6 +41,9 @@ func seedPrivateKey(t *testing.T, blocName string, withPub bool) (privateKey, pu
 	require.NoError(t, err)
 
 	keyDir := config.OcfpSSHKeyDir(blocName)
+	// OCFP_HOME is shared package-wide (TestMain), so wipe any halves left by
+	// a previous -count repeat — a stale .pub would mask the freshly seeded key.
+	require.NoError(t, os.RemoveAll(keyDir))
 	require.NoError(t, os.MkdirAll(keyDir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(keyDir, "id_ed25519"), privateKey, 0o600))
 
