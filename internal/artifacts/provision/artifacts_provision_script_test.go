@@ -1,4 +1,4 @@
-package pve
+package provision
 
 import (
 	"strings"
@@ -217,6 +217,56 @@ func TestRenderArtifactsProvisionScript_XFSInstallsXfsprogs(t *testing.T) {
 	for _, w := range []string{"xfsprogs", "mkfs.xfs /dev/sdb"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("xfs script missing %q", w)
+		}
+	}
+}
+
+// TestRenderArtifactsProvisionScript_CAPEM_InstallsVMTrustStore asserts that
+// setting CAPEM (task 4.4, VM self-trust) writes the trust anchor into the
+// VM's OS trust store and refreshes it via update-ca-certificates, and that
+// the ca-certificates package is requested — this is the SSH-delivered path
+// actually exercised on PVE 9.x (see provisionArtifactsViaSSH), so parity
+// with RenderArtifactsCloudInit matters for real deployments, not just
+// future cloud-init-capable providers.
+func TestRenderArtifactsProvisionScript_CAPEM_InstallsVMTrustStore(t *testing.T) {
+	t.Parallel()
+
+	in := validArtifactsInputs()
+	in.CAPEM = "-----BEGIN CERTIFICATE-----\nMIICAtest\n-----END CERTIFICATE-----"
+
+	got, err := RenderArtifactsProvisionScript(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, want := range []string{
+		"ca-certificates",
+		"/usr/local/share/ca-certificates/ocfp-ca.crt",
+		"-----BEGIN CERTIFICATE-----\nMIICAtest",
+		"update-ca-certificates",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("CA-enabled script missing %q\n----\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderArtifactsProvisionScript_NoCAPEM_OmitsVMTrustStore asserts CAPEM
+// is a clean no-op when empty (self-signed/internal-ca resolution failure
+// never happens per resolveArtifactsProvisionTLS, but disabled TLS mode and
+// any future caller passing no CA must still render a valid script that
+// falls back to the existing --no-verify-ssl behavior).
+func TestRenderArtifactsProvisionScript_NoCAPEM_OmitsVMTrustStore(t *testing.T) {
+	t.Parallel()
+
+	got, err := RenderArtifactsProvisionScript(validArtifactsInputs())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, unwanted := range []string{"ocfp-ca.crt", "update-ca-certificates"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("script should not contain %q when CAPEM is empty", unwanted)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-package pve
+package provision
 
 import (
 	"bytes"
@@ -20,6 +20,13 @@ type ArtifactsCloudInitInputs struct {
 	TLSEnabled  bool
 	CertPEM     string
 	KeyPEM      string
+	// CAPEM is the trust anchor to install into the VM's own OS trust store
+	// (task 4.4, VM self-trust): the bloc CA cert for internal-ca mode, or
+	// the leaf itself for self-signed (which is its own trust anchor). Empty
+	// when TLS is disabled. Optional — never validated by validate() — so
+	// older callers that don't set it still render a valid (CA-less)
+	// artifact VM, falling back to unverified on-VM clients.
+	CAPEM string
 }
 
 // FS returns the normalized data-disk filesystem, defaulting to ext4 when
@@ -129,6 +136,9 @@ packages:
 {{- end }}
   - unzip
   - jq
+{{- if .CAPEM }}
+  - ca-certificates
+{{- end }}
 
 write_files:
   - path: /etc/default/rustfs
@@ -173,6 +183,12 @@ write_files:
     content: |
 {{ indentpem 6 .KeyPEM }}
 {{ end }}
+{{ if .CAPEM }}
+  - path: /usr/local/share/ca-certificates/ocfp-ca.crt
+    permissions: '0644'
+    content: |
+{{ indentpem 6 .CAPEM }}
+{{ end }}
 runcmd:
   - useradd --system --home /var/lib/rustfs --shell /usr/sbin/nologin rustfs
 {{- if eq .FS "zfs" }}
@@ -198,6 +214,9 @@ runcmd:
   - chown -R rustfs:rustfs {{ .Mountpoint }}
   - mkdir -p /opt/rustfs/tls /var/log/rustfs
   - chown -R rustfs:rustfs /opt/rustfs /var/log/rustfs
+{{- if .CAPEM }}
+  - update-ca-certificates
+{{- end }}
   - curl -fsSL {{ .DownloadURL }} -o /tmp/rustfs.zip
   - unzip -d /usr/local/bin /tmp/rustfs.zip
   - chmod +x /usr/local/bin/rustfs
@@ -208,12 +227,17 @@ runcmd:
 // RenderArtifactsCloudInit produces the cloud-init user-data YAML for the
 // ocfp-artifacts VM. The output installs RustFS, formats + mounts the attached
 // data disk (/dev/sdb) per Filesystem (ext4 default, xfs, or a ZFS
-// pool/dataset), and enables the rustfs systemd service.
+// pool/dataset), and enables the rustfs systemd service. When CAPEM is set,
+// it is also installed into the VM's own OS trust store
+// (/usr/local/share/ca-certificates/ocfp-ca.crt + update-ca-certificates) so
+// on-VM clients (loopback health checks, mc/aws run locally) verify the
+// served cert instead of needing skip-verify.
 //
 // All fields in ArtifactsCloudInitInputs are required except Filesystem
 // (defaults to ext4), ZFSDataset (required only when Filesystem is zfs), and
-// CertPEM/KeyPEM, which are only required when TLSEnabled is true. An error is
-// returned when any required field is empty or zero.
+// CertPEM/KeyPEM (required only when TLSEnabled is true) and CAPEM (always
+// optional — a clean no-op when empty). An error is returned when any
+// required field is empty or zero.
 func RenderArtifactsCloudInit(in ArtifactsCloudInitInputs) (string, error) {
 	err := in.validate()
 	if err != nil {

@@ -24,6 +24,12 @@
 #   RUSTFS_TLS_ENABLED   "true" | "false"
 #   RUSTFS_TLS_CERT      cert PEM (when TLS enabled)
 #   RUSTFS_TLS_KEY       key PEM  (when TLS enabled)
+#   RUSTFS_TLS_CA        CA/trust-anchor PEM (optional; bloc CA for
+#                        internal-ca, the leaf itself for self-signed). When
+#                        set, installed into this VM's own OS trust store so
+#                        on-VM clients (this script's readiness probe, the
+#                        bucket-creation aws calls below) verify the served
+#                        cert instead of falling back to --no-verify-ssl.
 #   ARTIFACTS_ENDPOINT   local endpoint for bucket creation (http(s)://127.0.0.1:<port>)
 #   ARTIFACTS_BUCKETS    space-separated bucket names
 #   OCFP_BLOC            bloc name (informational)
@@ -53,6 +59,7 @@ set +a
 : "${RUSTFS_ZFS_DATASET:=}"
 : "${RUSTFS_DOWNLOAD_URL:?RUSTFS_DOWNLOAD_URL required}"
 : "${RUSTFS_TLS_ENABLED:=false}"
+: "${RUSTFS_TLS_CA:=}"
 : "${ARTIFACTS_ENDPOINT:=http://127.0.0.1:${RUSTFS_S3_PORT}}"
 : "${ARTIFACTS_BUCKETS:=}"
 
@@ -189,6 +196,33 @@ if [[ "${RUSTFS_TLS_ENABLED}" == "true" ]]; then
 fi
 
 # ----------------------------------------------------------------------------
+# 4.5. VM self-trust: install the CA/trust-anchor into this VM's own OS trust
+#      store (task 4.4), so on-VM clients (the readiness probe below, the
+#      bucket-creation aws calls) verify the served cert instead of needing
+#      --no-verify-ssl. Idempotent: only rewritten + refreshed when the
+#      content actually changed. Clean no-op when RUSTFS_TLS_CA is unset
+#      (self-signed/disabled modes on an older CLI that predates this
+#      contract, or TLS disabled entirely).
+# ----------------------------------------------------------------------------
+CA_TRUST_FILE="/usr/local/share/ca-certificates/ocfp-ca.crt"
+ca_verified=false
+if [[ -n "${RUSTFS_TLS_CA}" ]]; then
+  ca_tmp="$(mktemp)"
+  printf '%s\n' "${RUSTFS_TLS_CA}" > "${ca_tmp}"
+  if [[ ! -f "${CA_TRUST_FILE}" ]] || ! cmp -s "${ca_tmp}" "${CA_TRUST_FILE}"; then
+    log "Installing artifacts CA into VM trust store (${CA_TRUST_FILE})"
+    install -m 0644 "${ca_tmp}" "${CA_TRUST_FILE}"
+    update-ca-certificates
+  else
+    log "Artifacts CA already installed in VM trust store"
+  fi
+  rm -f "${ca_tmp}"
+  ca_verified=true
+else
+  log "No RUSTFS_TLS_CA supplied; on-VM clients will use --no-verify-ssl"
+fi
+
+# ----------------------------------------------------------------------------
 # 5. /etc/default/rustfs
 # ----------------------------------------------------------------------------
 log "Writing /etc/default/rustfs"
@@ -261,11 +295,20 @@ systemctl restart rustfs
 # ----------------------------------------------------------------------------
 # 9. Wait for readiness
 # ----------------------------------------------------------------------------
+# curl_flags verifies against the just-installed VM trust store when a CA was
+# delivered (ca_verified=true, section 4.5); falls back to -k (skip-verify)
+# only when no CA is available, matching the pre-4.4 behavior for
+# self-signed/disabled deployments on an older CLI.
+curl_flags=(--max-time 3 -o /dev/null)
+if [[ "${ca_verified}" != "true" ]]; then
+  curl_flags+=(-k)
+fi
+
 log "Waiting for RustFS to listen on ${ARTIFACTS_ENDPOINT}"
 ready=false
 for _ in $(seq 1 30); do
-  if curl -fsS -k -o /dev/null --max-time 3 "${ARTIFACTS_ENDPOINT}/" 2>/dev/null \
-     || curl -s -k -o /dev/null --max-time 3 "${ARTIFACTS_ENDPOINT}/" 2>/dev/null; then
+  if curl -fsS "${curl_flags[@]}" "${ARTIFACTS_ENDPOINT}/" 2>/dev/null \
+     || curl -s "${curl_flags[@]}" "${ARTIFACTS_ENDPOINT}/" 2>/dev/null; then
     ready=true
     break
   fi
@@ -288,7 +331,15 @@ export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
 aws_args=(--endpoint-url "${ARTIFACTS_ENDPOINT}")
 if [[ "${RUSTFS_TLS_ENABLED}" == "true" ]]; then
-  aws_args+=(--no-verify-ssl)
+  if [[ "${ca_verified}" == "true" ]]; then
+    # Verify against the merged system bundle (VM trust store + public CAs),
+    # which now includes the artifacts CA installed in section 4.5.
+    aws_args+=(--ca-bundle /etc/ssl/certs/ca-certificates.crt)
+  else
+    # No CA delivered (self-signed/disabled on an older CLI): fall back to
+    # the pre-4.4 skip-verify behavior rather than failing provisioning.
+    aws_args+=(--no-verify-ssl)
+  fi
 fi
 
 for bucket in ${ARTIFACTS_BUCKETS}; do
