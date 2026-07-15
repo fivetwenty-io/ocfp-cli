@@ -450,7 +450,7 @@ Environment variables:
 	}
 
 	cmd.Flags().StringVarP(&f.boshEnv, "bosh-env", "e", "", "BOSH environment alias (required)")
-	cmd.Flags().StringVarP(&f.boshDeployment, "bosh-deployment", "d", "", "BOSH deployment name (required)")
+	cmd.Flags().StringVar(&f.boshDeployment, "bosh-deployment", "", "BOSH deployment name (required)")
 	cmd.Flags().StringVar(&f.varsFile, "vars-file", "", "path to BOSH vars file containing pve_host (required)")
 
 	_ = cmd.MarkFlagRequired("bosh-env")
