@@ -230,18 +230,19 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	// bloc config.
 	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
-	// Override net0 to use vmbr1 (PVE host's default WAN bridge) for the
-	// template build phase. The bloc's own SDN bridge (lvnet001 etc.)
+	// Override net0 to use the template bridge (default vmbr1, the classic
+	// PVE host WAN bridge; configurable via template_bridge for hosts
+	// without one) for the template build phase. The bloc's own bridge
 	// typically doesn't run DHCP — VMs there use static IPs from state —
 	// so the template VM can't reach apt without an internet-capable
-	// bridge during seed. vmbr1 is wiped from the template config below
-	// before convert-to-template via cloud-init clean so cloned VMs get
-	// the per-bloc bridge from their own InstanceRequest.
+	// bridge during seed. The seed bridge is wiped from the template
+	// config below before convert-to-template via cloud-init clean so
+	// cloned VMs get the per-bloc bridge from their own InstanceRequest.
 	_, err = m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
 		"ciuser":     templateSeedCIUser,
 		"cipassword": password,
 		"ipconfig0":  "ip=dhcp",
-		"net0":       "virtio,bridge=vmbr1",
+		"net0":       "virtio,bridge=" + m.client.config.TemplateBridge,
 	})
 	if err != nil {
 		return fmt.Errorf("seed config PUT: %w", err)

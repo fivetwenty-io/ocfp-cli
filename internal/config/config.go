@@ -141,7 +141,12 @@ type Config struct {
 	// Artifacts.Data.StoragePool, then to the hardcoded default "zfs-1".
 	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
 	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
-	DiskStorage      string                      `json:"disk_storage"        mapstructure:"disk_storage"        yaml:"disk_storage,omitempty"`
+	DiskStorage string `json:"disk_storage" mapstructure:"disk_storage" yaml:"disk_storage,omitempty"`
+	// TemplateBridge is the PVE bridge attached to template VMs during the
+	// auto-provision seed phase, which needs DHCP and internet egress for
+	// apt/cloud-init. PVE-specific. Defaults to "vmbr1"; hosts without a
+	// vmbr1 WAN bridge (e.g. nested labs) set this to their SDN vnet bridge.
+	TemplateBridge   string                      `json:"template_bridge"     mapstructure:"template_bridge"     yaml:"template_bridge,omitempty"`
 	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
 	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
 	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`

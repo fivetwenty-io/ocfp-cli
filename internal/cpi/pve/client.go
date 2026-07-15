@@ -22,12 +22,15 @@ import (
 )
 
 const (
-	defaultHTTPTimeout  = 30 * time.Second
-	defaultMaxRetries   = 3
-	defaultNetworkMode  = "bridge"
-	defaultBridge       = "vmbr0"
-	defaultStorage      = "local-lvm"
-	nodeRefreshInterval = 5 * time.Minute
+	defaultHTTPTimeout = 30 * time.Second
+	defaultMaxRetries  = 3
+	defaultNetworkMode = "bridge"
+	defaultBridge      = "vmbr0"
+	// defaultTemplateBridge is the bridge attached to template VMs during
+	// the seed phase; vmbr1 matches the classic PVE host WAN bridge layout.
+	defaultTemplateBridge = "vmbr1"
+	defaultStorage        = "local-lvm"
+	nodeRefreshInterval   = 5 * time.Minute
 
 	// bytesPerKB is the number of bytes in a kilobyte for memory calculations.
 	bytesPerKB = 1024
@@ -51,9 +54,10 @@ type Config struct {
 	Realm       string // Auth realm (default: "pam")
 
 	// Network settings
-	NetworkMode   string // "bridge" (default) or "sdn"
-	DefaultBridge string // Default bridge (e.g., "vmbr0")
-	SDNZone       string // SDN zone for SDN mode
+	NetworkMode    string // "bridge" (default) or "sdn"
+	DefaultBridge  string // Default bridge (e.g., "vmbr0")
+	TemplateBridge string // Bridge for template seed VMs (needs DHCP + internet; default "vmbr1")
+	SDNZone        string // SDN zone for SDN mode
 
 	// Storage settings
 	DefaultStorage string // Default storage pool (e.g., "local-lvm")
@@ -154,6 +158,10 @@ func NewClient(config *Config) (*Client, error) {
 
 	if config.DefaultBridge == "" {
 		config.DefaultBridge = defaultBridge
+	}
+
+	if config.TemplateBridge == "" {
+		config.TemplateBridge = defaultTemplateBridge
 	}
 
 	if config.DefaultStorage == "" {
@@ -502,6 +510,10 @@ func applyPVEDefaults(cfg *Config) {
 		cfg.DefaultBridge = defaultBridge
 	}
 
+	if cfg.TemplateBridge == "" {
+		cfg.TemplateBridge = defaultTemplateBridge
+	}
+
 	if cfg.DefaultStorage == "" {
 		cfg.DefaultStorage = defaultStorage
 	}
@@ -559,8 +571,11 @@ func (c *Client) parsePVEConfig(config interface{}) (*Config, error) {
 			Host:           configValue.APIEndpoint,
 			Node:           configValue.Region,
 			NetworkMode:    defaultNetworkMode,
-			DefaultBridge:  defaultBridge,
-			DefaultStorage: defaultStorage,
+			DefaultBridge:  firstNonEmpty(configValue.Network.Name, defaultBridge),
+			TemplateBridge: firstNonEmpty(configValue.TemplateBridge, defaultTemplateBridge),
+			DefaultStorage: firstNonEmpty(configValue.VMStorage, configValue.Artifacts.Data.StoragePool, defaultStorage),
+			ISOStorage:     configValue.IsoStorage,
+			VerifySSL:      configValue.VerifySSL,
 			Timeout:        0,
 			MaxRetries:     0,
 		}
