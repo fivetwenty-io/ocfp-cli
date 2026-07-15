@@ -189,10 +189,13 @@ func (a *ArtifactsConfig) Defaults() {
 	}
 
 	if a.TLS.Mode == "" {
-		// Default to self-signed so opting into artifacts works without an
-		// internal CA wired up. Operators with a CA can override to
-		// internal-ca explicitly. (RustFS terminates TLS natively.)
-		a.TLS.Mode = ArtifactsTLSModeSelfSigned
+		// Default to internal-ca: the bloc CA is minted on demand at bootstrap
+		// (LoadOrGenerateBlocCA), so opting into artifacts just works without
+		// any operator setup. The inception-vault preflight auto-starts vault
+		// when it isn't already reachable. Operators without vault access can
+		// still opt out explicitly with tls.mode: self-signed. (RustFS
+		// terminates TLS natively.)
+		a.TLS.Mode = ArtifactsTLSModeInternalCA
 	}
 }
 
