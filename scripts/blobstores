@@ -134,7 +134,10 @@ safe_get() {
 ARTIFACTS_META="secret/ocfp/${BLOC}/artifacts"
 BOSH_CREDS_PATH="secret/config/${BLOC}/mgmt/bosh/blobstores/bosh/creds"
 
-EP=$(safe_get "${ARTIFACTS_META}:endpoint")
+# `|| true` on lookups whose absence has a dedicated error path below —
+# without it, set -e aborts on the failed command substitution before the
+# empty-value check can print its actionable message.
+EP=$(safe_get "${ARTIFACTS_META}:endpoint" || true)
 if [[ -z "$EP" ]]; then
   fail "no endpoint at ${ARTIFACTS_META}:endpoint (is the artifacts VM created?)"
   exit 3
@@ -142,8 +145,8 @@ fi
 
 TLS_MODE=$(safe_get "${ARTIFACTS_META}:tls_mode" || echo "")
 
-AK=$(safe_get "${BOSH_CREDS_PATH}:access_key")
-SK=$(safe_get "${BOSH_CREDS_PATH}:secret_key")
+AK=$(safe_get "${BOSH_CREDS_PATH}:access_key" || true)
+SK=$(safe_get "${BOSH_CREDS_PATH}:secret_key" || true)
 if [[ -z "$AK" || -z "$SK" ]]; then
   fail "credentials not found at ${BOSH_CREDS_PATH} (access_key / secret_key)"
   exit 3
@@ -211,7 +214,7 @@ resolve_ca_bundle() {
   fi
 
   local fetched
-  fetched=$(safe_get "secret/ocfp/${BLOC}/ca:cert")
+  fetched=$(safe_get "secret/ocfp/${BLOC}/ca:cert" || true)
   if [[ -n "$fetched" ]]; then
     mkdir -p "$cache_dir"
     printf '%s\n' "$fetched" > "$cache_file"
