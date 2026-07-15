@@ -493,6 +493,235 @@ func TestPVEVaultProvider_ConfigureBlobstores_NoCredsSkipsBucketCreation(t *test
 	assert.Empty(t, ensurer.buckets)
 }
 
+// newTestPVEProviderWithFakeSafe builds a PVEVaultProvider wired to fakeSafe
+// (defined in ca_test.go), which — unlike awsMockSafe — supports seeded
+// GetAll reads. Needed to exercise blobstoreS3Target's vault CA recovery.
+func newTestPVEProviderWithFakeSafe(cfg *config.Config, safe *fakeSafe) *PVEVaultProvider {
+	const blocName = "test-bloc"
+
+	return &PVEVaultProvider{
+		BaseVaultProvider: providers.NewBaseVaultProvider(cfg, blocName),
+		Safe:              safe,
+		PathBuilder:       NewPathBuilder(cfg, blocName),
+		logger:            logger.Get(),
+		bucketEnsurer:     &recordingBucketEnsurer{},
+	}
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_NoEndpoint_NotOK — endpoint/creds
+// absent is the "external mode not configured" case: ok=false, err=nil, no
+// vault access attempted.
+func TestPVEVaultProvider_blobstoreS3Target_NoEndpoint_NotOK(t *testing.T) {
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, newFakeSafe())
+
+	_, _, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_CACertAlreadySet_PinsWithoutVaultCall
+// — when state already carried a CA cert, blobstoreS3Target must pin to it
+// and never touch vault at all (proven by a Safe configured to error on any
+// GetAll).
+func TestPVEVaultProvider_blobstoreS3Target_CACertAlreadySet_PinsWithoutVaultCall(t *testing.T) {
+	safe := newFakeSafe()
+	safe.failOnRead = assert.AnError
+
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, safe)
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+	provider.blobstoreCACert = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+
+	ep, creds, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, provider.blobstoreCACert, ep.CACert)
+	assert.False(t, ep.SkipTLSVerify)
+	assert.Equal(t, "ak", creds.AccessKey)
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_InternalCA_RecoversFromVault — CA
+// missing from state but present in vault: blobstoreS3Target recovers it via
+// LoadBlocCA, uses it for the endpoint, and repairs p.blobstoreCACert so
+// subsequent config writes (configureExternalBlobstore, ...ForScope) also
+// pick it up.
+func TestPVEVaultProvider_blobstoreS3Target_InternalCA_RecoversFromVault(t *testing.T) {
+	const bloc = "test-bloc"
+
+	safe := newFakeSafe()
+
+	caCert := "-----BEGIN CERTIFICATE-----\nrecovered\n-----END CERTIFICATE-----\n"
+	require.NoError(t, safe.SetMultiple(blocCAPath(bloc), map[string]interface{}{
+		"cert":        caCert,
+		"key":         "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n",
+		"fingerprint": "deadbeef",
+	}))
+
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, safe)
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+
+	ep, _, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, caCert, ep.CACert)
+	assert.False(t, ep.SkipTLSVerify)
+	assert.Equal(t, caCert, provider.blobstoreCACert, "recovered CA must be cached for later config writes")
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_InternalCA_UnrecoverableCA_Errors —
+// tls.mode=internal-ca, no CA in state, no CA in vault either: this must be a
+// loud error, never a silent SkipTLSVerify fallback.
+func TestPVEVaultProvider_blobstoreS3Target_InternalCA_UnrecoverableCA_Errors(t *testing.T) {
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, newFakeSafe())
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+
+	_, _, ok, err := provider.blobstoreS3Target()
+	require.Error(t, err)
+	assert.True(t, ok, "endpoint/creds ARE configured; ok distinguishes that from the TLS-trust error")
+	assert.ErrorIs(t, err, ErrBlocCANotFound)
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_SelfSigned_NoCACert_SkipVerifyWithWarning
+// — self-signed with no CA is the one case allowed to fall back to
+// SkipTLSVerify (this provider has no operator-facing --insecure flag to gate
+// an explicit opt-in on; the warning log is the acknowledgment).
+func TestPVEVaultProvider_blobstoreS3Target_SelfSigned_NoCACert_SkipVerifyWithWarning(t *testing.T) {
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, newFakeSafe())
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeSelfSigned
+
+	ep, _, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.True(t, ep.SkipTLSVerify)
+	assert.Empty(t, ep.CACert)
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_UnknownMode_NoCACert_SkipVerifyWithWarning
+// — a manual --blobstore-endpoint override with no corresponding artifacts
+// state carries no tls.mode at all ("") ; treated the same as self-signed
+// rather than erroring as an internal-ca state inconsistency, since there is
+// no state to be inconsistent with.
+func TestPVEVaultProvider_blobstoreS3Target_UnknownMode_NoCACert_SkipVerifyWithWarning(t *testing.T) {
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, newFakeSafe())
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	// provider.blobstoreTLSMode left at its zero value "".
+
+	ep, _, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.True(t, ep.SkipTLSVerify)
+}
+
+// TestPVEVaultProvider_blobstoreS3Target_HTTPEndpoint_NeverTouchesVault — an
+// http:// endpoint needs no TLS trust material at all, even when tls.mode is
+// internal-ca (inconsistent state); blobstoreS3Target must not attempt vault
+// CA recovery in that case, proven by a Safe configured to error on any read.
+func TestPVEVaultProvider_blobstoreS3Target_HTTPEndpoint_NeverTouchesVault(t *testing.T) {
+	safe := newFakeSafe()
+	safe.failOnRead = assert.AnError
+
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, safe)
+	provider.BlobstoreEndpoint = "http://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+
+	ep, _, ok, err := provider.blobstoreS3Target()
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.False(t, ep.SkipTLSVerify)
+	assert.Empty(t, ep.CACert)
+}
+
+// TestPVEVaultProvider_ensureBlobstoreBucket_PropagatesTLSTrustError —
+// ensureBlobstoreBucket must surface blobstoreS3Target's TLS-trust error
+// (internal-ca, unrecoverable CA) as a fatal error, not skip bucket creation
+// silently the way the "no creds" case does.
+func TestPVEVaultProvider_ensureBlobstoreBucket_PropagatesTLSTrustError(t *testing.T) {
+	ensurer := &recordingBucketEnsurer{}
+
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, newFakeSafe())
+	provider.bucketEnsurer = ensurer
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+
+	err := provider.ensureBlobstoreBucket("test-bloc-ocf-cf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBlocCANotFound)
+	assert.Empty(t, ensurer.buckets, "bucket creation must not be attempted when TLS trust is unresolved")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_InternalCARecoveryReachesCFAndBOSH
+// is a regression test for an ordering bug: configureExternalBlobstore used
+// to write the CF blobstore's ca_cert field BEFORE ensureBlobstoreBucket (via
+// blobstoreS3Target) ever ran the internal-ca vault recovery that populates
+// p.blobstoreCACert, so on exactly the scenario the recovery exists for
+// (internal-ca, state ca_cert empty, CA recoverable from vault) the CF entry
+// was written with no ca_cert while the BOSH entry — written after bucket
+// creation had already triggered recovery — got it. resolveBlobstoreTLSTrust
+// must now run (once) before either config write, so both entries agree.
+func TestPVEVaultProvider_ConfigureBlobstores_InternalCARecoveryReachesCFAndBOSH(t *testing.T) {
+	const blocName = "test-bloc"
+
+	safe := newFakeSafe()
+
+	caCert := "-----BEGIN CERTIFICATE-----\nrecovered-for-cf-and-bosh\n-----END CERTIFICATE-----\n"
+	require.NoError(t, safe.SetMultiple(blocCAPath(blocName), map[string]interface{}{
+		"cert":        caCert,
+		"key":         "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n",
+		"fingerprint": "deadbeef",
+	}))
+
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProviderWithFakeSafe(cfg, safe)
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "ak"
+	provider.BlobstoreSecretKey = "sk"
+	provider.blobstoreTLSMode = config.ArtifactsTLSModeInternalCA
+	// blobstoreCACert deliberately left empty: state's copy is missing, vault
+	// has it — the exact scenario the recovery heal targets.
+
+	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
+	require.NoError(t, err)
+
+	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
+	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
+
+	cfCACert, err := safe.Get(cfPath, "ca_cert")
+	require.NoError(t, err)
+	assert.Equal(t, caCert, cfCACert, "CF blobstore entry must carry the vault-recovered CA")
+
+	boshCACert, err := safe.Get(boshPath, "ca_cert")
+	require.NoError(t, err)
+	assert.Equal(t, caCert, boshCACert, "BOSH blobstore entry must carry the vault-recovered CA")
+
+	assert.Equal(t, caCert, provider.blobstoreCACert, "recovered CA must be cached on the provider")
+}
+
 // TestPVEVaultProvider_ConfigurePublicIPs_StatusPending — with no state manager
 // (nil reporter, empty config) ConfigurePublicIPs must write status: "pending".
 // PVE has no IaaS floating IPs; the pending marker mirrors the AWS shape so

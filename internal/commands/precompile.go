@@ -12,8 +12,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/precompile"
+	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -40,6 +42,11 @@ type precompileFlags struct {
 	blobAccessKey  string
 	blobSecretKey  string
 	blobCACertFile string
+	// insecureBlobstore is the explicit --insecure-blobstore opt-in. Required
+	// whenever the blobstore is https with no CA cert available (state,
+	// vault-recovered, or --blobstore-ca-cert-file); TLS verification is
+	// otherwise never silently skipped.
+	insecureBlobstore bool
 }
 
 // NewPrecompileCmd builds the `ocfp precompile` command tree. It populates the
@@ -83,6 +90,7 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 		c.Flags().String("blobstore-access-key", "", "Blobstore access key (or env OCFP_BLOBSTORE_ACCESS_KEY)")
 		c.Flags().String("blobstore-secret-key", "", "Blobstore secret key (or env OCFP_BLOBSTORE_SECRET_KEY; avoids argv exposure)")
 		c.Flags().String("blobstore-ca-cert-file", "", "Path to blobstore CA cert PEM (with --blobstore-endpoint)")
+		c.Flags().Bool("insecure-blobstore", false, "Skip TLS verification for the blobstore when no CA cert is available (self-signed only; never silently applied)")
 	}
 
 	cfCmd := &cobra.Command{
@@ -158,6 +166,7 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 		f.blobAccessKey, _ = cmd.Flags().GetString("blobstore-access-key")
 		f.blobSecretKey, _ = cmd.Flags().GetString("blobstore-secret-key")
 		f.blobCACertFile, _ = cmd.Flags().GetString("blobstore-ca-cert-file")
+		f.insecureBlobstore, _ = cmd.Flags().GetBool("insecure-blobstore")
 
 		// Allow secrets via env so they need not appear in argv (process list).
 		if f.blobAccessKey == "" {
@@ -187,6 +196,11 @@ func (f precompileFlags) resolveBlobstore(ctx context.Context) (*artifacts.Looku
 		Endpoint:  f.blobEndpoint,
 		AccessKey: f.blobAccessKey,
 		SecretKey: f.blobSecretKey,
+		// Manual --blobstore-endpoint overrides carry no tls.mode from state;
+		// tag as self-signed so precompileS3Client's EndpointForLookup call
+		// treats a missing CA cert as "needs the explicit --insecure-blobstore
+		// opt-in", not as an internal-ca state inconsistency.
+		TLSMode: config.ArtifactsTLSModeSelfSigned,
 	}
 	if f.blobCACertFile != "" {
 		pem, err := os.ReadFile(f.blobCACertFile) //nolint:gosec // operator-supplied path
@@ -290,7 +304,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 		return err
 	}
 
-	s3c, ep, err := precompileS3Client(lr)
+	s3c, ep, err := precompileS3Client(f.bloc, lr, f.insecureBlobstore)
 	if err != nil {
 		return err
 	}
@@ -358,16 +372,45 @@ func lookupArtifactsFromState(ctx context.Context, bloc string) (*artifacts.Look
 }
 
 // precompileS3Client builds an artifacts S3 client + endpoint base URL from a
-// lookup result. RustFS uses path-style; a CA cert pins TLS, otherwise TLS
-// verification is skipped (self-signed RustFS). The returned *s3.Client
-// satisfies the precompile package's object API directly.
-func precompileS3Client(lr *artifacts.LookupResult) (*s3.Client, string, error) {
-	ep := artifacts.Endpoint{
-		URL:           lr.Endpoint,
-		Region:        "us-east-1",
-		PathStyle:     true,
-		CACert:        lr.CACert,
-		SkipTLSVerify: lr.CACert == "" && strings.HasPrefix(lr.Endpoint, "https://"),
+// lookup result. RustFS uses path-style. TLS trust is resolved by
+// artifacts.EndpointForLookup, the single place that decision lives:
+//
+//   - a CA cert already on lr (from state, or --blobstore-ca-cert-file) pins
+//     verification.
+//   - otherwise, when lr.TLSMode is internal-ca, the bloc CA is recovered
+//     from vault — precompile runs on the bastion, colocated with the
+//     inception vault — before falling through to EndpointForLookup's error.
+//   - self-signed (including manual --blobstore-endpoint overrides, which
+//     resolveBlobstore tags as self-signed) requires the explicit
+//     insecureBlobstore opt-in to skip verification; it is never silently
+//     skipped.
+//
+// The returned *s3.Client satisfies the precompile package's object API
+// directly.
+func precompileS3Client(bloc string, lr *artifacts.LookupResult, insecureBlobstore bool) (*s3.Client, string, error) {
+	caCert := lr.CACert
+
+	if caCert == "" && lr.TLSMode == config.ArtifactsTLSModeInternalCA {
+		mgr, mgrErr := vault.NewManagerFromEnv(nil, bloc)
+		if mgrErr != nil {
+			return nil, "", fmt.Errorf(
+				"artifacts: tls.mode=internal-ca requires vault access to recover the bloc CA; set VAULT_ADDR/VAULT_TOKEN or `safe target`, or pass --blobstore-ca-cert-file: %w",
+				mgrErr)
+		}
+
+		ca, caErr := vault.LoadBlocCA(mgr.GetSafe(), bloc)
+		if caErr != nil {
+			return nil, "", fmt.Errorf(
+				"artifacts: recovering bloc %q CA from vault: %w (pass --blobstore-ca-cert-file, or run `ocfp artifacts ca --bloc %s` / `ocfp artifacts provision --bloc %s` to inspect/re-mint it)",
+				bloc, caErr, bloc, bloc)
+		}
+
+		caCert = ca.CertPEM
+	}
+
+	ep, err := artifacts.EndpointForLookup(bloc, lr.Endpoint, lr.TLSMode, caCert, insecureBlobstore)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolving artifacts blobstore TLS trust: %w", err)
 	}
 
 	cli, err := artifacts.NewS3Client(ep, artifacts.Credentials{AccessKey: lr.AccessKey, SecretKey: lr.SecretKey})
