@@ -40,6 +40,15 @@ type LookupResult struct {
 	ZFSDataset   string
 	DataVolumeID string
 	CACert       string
+
+	// TLSFingerprintSHA256 and TLSLeafNotAfter mirror the state resource's
+	// tls_fingerprint_sha256 / tls_leaf_not_after properties (see
+	// internal/bootstrap.recordArtifactsState) — operator/status metadata
+	// only, per vault.ArtifactsWriter's doc comment; never a trust decision
+	// input. Empty when state never recorded them (pre-6.2 state, or no
+	// TLSMaterial was ever resolved for this VM).
+	TLSFingerprintSHA256 string
+	TLSLeafNotAfter      string
 }
 
 // Lookup resolves the artifacts VM by checking state first, then falling back
@@ -87,16 +96,18 @@ func resultFromResource(r *state.Resource) *LookupResult {
 	}
 
 	return &LookupResult{
-		VMID:         get("vm_id"),
-		Name:         r.Name,
-		PrivateIP:    get("private_ip"),
-		Endpoint:     get("endpoint"),
-		AccessKey:    get("access_key"),
-		SecretKey:    get("secret_key"),
-		TLSMode:      get("tls_mode"),
-		ZFSDataset:   get("zfs_dataset"),
-		DataVolumeID: get("data_volume_id"),
-		CACert:       get("ca_cert"),
+		VMID:                 get("vm_id"),
+		Name:                 r.Name,
+		PrivateIP:            get("private_ip"),
+		Endpoint:             get("endpoint"),
+		AccessKey:            get("access_key"),
+		SecretKey:            get("secret_key"),
+		TLSMode:              get("tls_mode"),
+		ZFSDataset:           get("zfs_dataset"),
+		DataVolumeID:         get("data_volume_id"),
+		CACert:               get("ca_cert"),
+		TLSFingerprintSHA256: get("tls_fingerprint_sha256"),
+		TLSLeafNotAfter:      get("tls_leaf_not_after"),
 	}
 }
 
