@@ -301,12 +301,34 @@ func (em *EnvironmentManager) addToolConfigurations(content *strings.Builder) {
 	content.WriteString("\n")
 }
 
+// awsCABundlePath is the merged system CA bundle update-ca-certificates
+// (re)generates on Debian/Ubuntu whenever a certificate is added under
+// /usr/local/share/ca-certificates (see the bloc_ca_trust bastion phase in
+// ../phases.go). It contains the distro's public CAs plus the bloc's
+// internal CA once that phase has run.
+const awsCABundlePath = "/etc/ssl/certs/ca-certificates.crt"
+
 // getSystemEnvironmentVars returns environment variables for system configuration.
 func (em *EnvironmentManager) getSystemEnvironmentVars() map[string]string {
 	vars := map[string]string{
 		"OCFP_BLOC":           em.config.Name,
 		"OCFP_PROVIDER":       em.provider,
 		"GENESIS_ENVIRONMENT": em.config.Name,
+	}
+
+	// AWS CLI v2 bundles its own CA trust store and ignores the OS trust
+	// store entirely, so `aws s3` calls against the artifacts endpoint fail
+	// TLS verification even after the bloc_ca_trust phase updates
+	// update-ca-certificates. Point it at the merged system bundle instead.
+	//
+	// Gated on artifacts internal-ca mode specifically (not emitted
+	// unconditionally): self-signed/disabled blocs have no CA installed into
+	// the system trust store by bloc_ca_trust, so there is nothing for this
+	// bundle to add over AWS CLI's own bundled CAs, and scoping the override
+	// to the mode that actually needs it keeps the blast radius of changing
+	// AWS CLI's default trust behavior on the bastion as small as possible.
+	if em.config.Artifacts.Enabled && em.config.Artifacts.TLS.Mode == config.ArtifactsTLSModeInternalCA {
+		vars["AWS_CA_BUNDLE"] = awsCABundlePath
 	}
 
 	// Add provider-specific variables from config
