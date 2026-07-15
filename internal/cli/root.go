@@ -218,8 +218,17 @@ func bindFlagsToViper(cmd *cobra.Command) {
 // createPreRunHandler creates the persistent pre-run handler.
 func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, _args []string) {
-		// Determine bloc name: flag > env var > state file > viper config
+		// Determine bloc name: flag > env var > state file > viper config.
+		// Check the invoked command's own flag set first: subcommands that
+		// declare a local --bloc (artifacts, bastion, …) shadow the root
+		// persistent flag, so *blocName stays empty and the state-file
+		// fallback would silently override the user's explicit --bloc —
+		// sending the command at whichever bloc was used last.
 		effectiveBlocName := *blocName
+		if f := cmd.Flags().Lookup("bloc"); f != nil && f.Changed {
+			effectiveBlocName = f.Value.String()
+		}
+
 		if effectiveBlocName == "" {
 			effectiveBlocName = resolveBlocName()
 		}
