@@ -29,6 +29,11 @@ BUILD_DIR := build
 DIST_DIR := dist
 COVERAGE_DIR := coverage
 
+# GOPATH: honor an inherited environment value; fall back to `go env GOPATH`
+# so install-local's stray-binary check works even in shells that never
+# exported GOPATH explicitly (the common case with modern Go toolchains).
+GOPATH ?= $(shell go env GOPATH)
+
 # Docker variables
 DOCKER_IMAGE := ocfp-cli
 DOCKER_TAG := latest
@@ -102,6 +107,36 @@ install: build ## Install binary to GOPATH
 	@echo "$(GREEN)Installing $(BINARY_NAME)...$(RESET)"
 	@go install $(LDFLAGS) $(MAIN_PATH)
 	@echo "$(GREEN)✓ Installed to $(GOPATH)/bin/$(BINARY_NAME)$(RESET)"
+
+# install-local is the only supported local dev install path. It builds a
+# single, fully version-stamped darwin-arm64 binary and points exactly one
+# symlink ($(HOME)/bin/$(BINARY_NAME)) at it, so `ocfp --version` always
+# reflects what you just built and there is never more than one binary a
+# developer could accidentally be running. This directly fixes the failure
+# class recorded in the artifacts-tls-internal-ca incident: a stale
+# `~/bin/ocfp-darwin-arm64` (built weeks earlier) shadowed the current build
+# and produced a confusing runtime error instead of the expected behavior.
+.PHONY: install-local
+install-local: ## Build darwin-arm64 (stamped) and symlink to $(HOME)/bin/ocfp — the only supported local dev install path
+	@echo "$(GREEN)Installing $(BINARY_NAME) to $(HOME)/bin (local dev)...$(RESET)"
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	@mkdir -p "$(HOME)/bin"
+	@target="$(CURDIR)/$(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64"; \
+	linkname="$(HOME)/bin/$(BINARY_NAME)"; \
+	tmplink=$$(mktemp -u "$$linkname.XXXXXX") || exit 1; \
+	ln -sfn "$$target" "$$tmplink" && mv -f "$$tmplink" "$$linkname"; \
+	echo "$(GREEN)✓ $$linkname -> $$target$(RESET)"
+	@printf '%s\n%s\n' "$(HOME)/bin" "$(GOPATH)/bin" | sort -u | while IFS= read -r dir; do \
+		[ -n "$$dir" ] || continue; \
+		[ -d "$$dir" ] || continue; \
+		stray=$$(find "$$dir" -maxdepth 1 -name '$(BINARY_NAME)*' -not -name '$(BINARY_NAME)' 2>/dev/null); \
+		if [ -n "$$stray" ]; then \
+			echo "$(YELLOW)⚠ other $(BINARY_NAME)* executables found in $$dir besides the $(BINARY_NAME) symlink — remove them to avoid running a stale binary:$(RESET)"; \
+			echo "$$stray" | sed 's/^/    /'; \
+		fi; \
+	done
+	@echo "$(WHITE)  install-local is the only supported local install path; avoid 'make install' or a bare 'go build' for day-to-day dev use$(RESET)"
 
 .PHONY: run
 run: build ## Build and run the application
