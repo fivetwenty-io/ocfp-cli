@@ -15,10 +15,22 @@ type ArtifactsCloudInitInputs struct {
 	S3Port      int
 	ConsolePort int
 	Mountpoint  string
-	ZFSDataset  string // e.g., rpool/myblock
+	Filesystem  string // "ext4" (default), "xfs", or "zfs"
+	ZFSDataset  string // e.g., rpool/myblock (zfs only)
 	TLSEnabled  bool
 	CertPEM     string
 	KeyPEM      string
+}
+
+// FS returns the normalized data-disk filesystem, defaulting to ext4 when
+// unset. Templates branch on this instead of the raw Filesystem field.
+func (in ArtifactsCloudInitInputs) FS() string {
+	fs := strings.ToLower(strings.TrimSpace(in.Filesystem))
+	if fs == "" {
+		return "ext4"
+	}
+
+	return fs
 }
 
 // validate returns an error when required fields are missing.
@@ -49,8 +61,15 @@ func (in ArtifactsCloudInitInputs) validate() error {
 		missing = append(missing, "Mountpoint")
 	}
 
-	if strings.TrimSpace(in.ZFSDataset) == "" {
-		missing = append(missing, "ZFSDataset")
+	switch in.FS() {
+	case "ext4", "xfs":
+		// no extra inputs required
+	case "zfs":
+		if strings.TrimSpace(in.ZFSDataset) == "" {
+			missing = append(missing, "ZFSDataset")
+		}
+	default:
+		return fmt.Errorf("ArtifactsCloudInitInputs: unsupported Filesystem %q (ext4|xfs|zfs)", in.Filesystem) //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if in.TLSEnabled {
@@ -90,8 +109,8 @@ func indentPEM(n int, pem string) string {
 
 // artifactsCloudInitTmpl is the cloud-init user-data template for the
 // ocfp-artifacts VM. It installs RustFS on an Ubuntu 22.04 base image,
-// creates a ZFS pool on the attached /dev/sdb data disk, mounts the dataset,
-// and starts the rustfs systemd service.
+// formats the attached /dev/sdb data disk (ext4/xfs, or a ZFS pool + dataset
+// when Filesystem=zfs), mounts it, and starts the rustfs systemd service.
 //
 // Template function "indentpem" indents a multiline PEM string by N spaces so
 // YAML block-scalar "content: |" output stays valid.
@@ -103,7 +122,11 @@ var artifactsCloudInitTmpl = template.Must(
 		Parse(`#cloud-config
 package_update: true
 packages:
+{{- if eq .FS "zfs" }}
   - zfsutils-linux
+{{- else if eq .FS "xfs" }}
+  - xfsprogs
+{{- end }}
   - unzip
   - jq
 
@@ -124,7 +147,7 @@ write_files:
     content: |
       [Unit]
       Description=RustFS S3 server
-      After=network-online.target zfs-mount.service
+      After=network-online.target{{ if eq .FS "zfs" }} zfs-mount.service{{ end }}
       Wants=network-online.target
 
       [Service]
@@ -152,12 +175,26 @@ write_files:
 {{ end }}
 runcmd:
   - useradd --system --home /var/lib/rustfs --shell /usr/sbin/nologin rustfs
+{{- if eq .FS "zfs" }}
   - zpool import -a || true
   - |
     if ! zpool list rpool > /dev/null 2>&1; then
       zpool create -f -o ashift=12 rpool /dev/sdb
     fi
   - zfs create -o mountpoint={{ .Mountpoint }} -o compression=lz4 {{ .ZFSDataset }}
+{{- else }}
+  - |
+    if ! blkid /dev/sdb > /dev/null 2>&1; then
+      mkfs.{{ .FS }} /dev/sdb
+    fi
+  - mkdir -p {{ .Mountpoint }}
+  - |
+    uuid="$(blkid -o value -s UUID /dev/sdb)"
+    if ! grep -q "UUID=${uuid} " /etc/fstab; then
+      echo "UUID=${uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail 0 2" >> /etc/fstab
+    fi
+  - mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
+{{- end }}
   - chown -R rustfs:rustfs {{ .Mountpoint }}
   - mkdir -p /opt/rustfs/tls /var/log/rustfs
   - chown -R rustfs:rustfs /opt/rustfs /var/log/rustfs
@@ -169,11 +206,13 @@ runcmd:
 `))
 
 // RenderArtifactsCloudInit produces the cloud-init user-data YAML for the
-// ocfp-artifacts VM. The output installs RustFS, creates the ZFS pool/dataset
-// on the attached disk (/dev/sdb), and enables the rustfs systemd service.
+// ocfp-artifacts VM. The output installs RustFS, formats + mounts the attached
+// data disk (/dev/sdb) per Filesystem (ext4 default, xfs, or a ZFS
+// pool/dataset), and enables the rustfs systemd service.
 //
-// All fields in ArtifactsCloudInitInputs are required except CertPEM and
-// KeyPEM, which are only required when TLSEnabled is true. An error is
+// All fields in ArtifactsCloudInitInputs are required except Filesystem
+// (defaults to ext4), ZFSDataset (required only when Filesystem is zfs), and
+// CertPEM/KeyPEM, which are only required when TLSEnabled is true. An error is
 // returned when any required field is empty or zero.
 func RenderArtifactsCloudInit(in ArtifactsCloudInitInputs) (string, error) {
 	err := in.validate()

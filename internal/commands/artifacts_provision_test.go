@@ -66,6 +66,9 @@ func TestBuildArtifactsProvisionEnv_TLSEnabled(t *testing.T) {
 		"RUSTFS_TLS_ENABLED":  "true",
 		"RUSTFS_TLS_CERT":     "CERTPEM",
 		"RUSTFS_TLS_KEY":      "KEYPEM",
+
+		// filesystem is unset in testArtifactsCfg, so the ext4 default applies
+		"ARTIFACTS_DATA_FILESYSTEM": "ext4",
 	}
 
 	for k, want := range checks {
@@ -106,6 +109,20 @@ func TestBuildArtifactsProvisionEnv_TLSDisabledOmitsCertKey(t *testing.T) {
 
 	if _, ok := env["RUSTFS_TLS_KEY"]; ok {
 		t.Errorf("RUSTFS_TLS_KEY should be absent when TLS disabled")
+	}
+}
+
+func TestBuildArtifactsProvisionEnv_FilesystemOverride(t *testing.T) {
+	t.Parallel()
+
+	cfg := testArtifactsCfg()
+	cfg.Artifacts.Data.Filesystem = "ZFS" // case-insensitive
+	lr := &artifacts.LookupResult{AccessKey: "AK", SecretKey: "SK", PrivateIP: "10.64.64.11"}
+
+	env := buildArtifactsProvisionEnv(cfg, lr, "", "")
+
+	if env["ARTIFACTS_DATA_FILESYSTEM"] != "zfs" {
+		t.Errorf("ARTIFACTS_DATA_FILESYSTEM = %q, want zfs", env["ARTIFACTS_DATA_FILESYSTEM"])
 	}
 }
 

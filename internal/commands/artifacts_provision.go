@@ -193,11 +193,14 @@ func buildArtifactsProvisionEnv(cfg *config.Config, lr *artifacts.LookupResult, 
 		"RUSTFS_S3_PORT":      strconv.Itoa(s3Port),
 		"RUSTFS_CONSOLE_PORT": strconv.Itoa(consolePort),
 		"RUSTFS_VOLUMES":      mountpoint,
-		"RUSTFS_ZFS_DATASET":  dataset,
-		"RUSTFS_DOWNLOAD_URL": cfg.Artifacts.ResolvedDownloadURL(),
-		"RUSTFS_TLS_ENABLED":  strconv.FormatBool(tlsEnabled),
-		"ARTIFACTS_BUCKETS":   strings.Join(artifactsProvisionBuckets(cfg.Name), " "),
-		"ARTIFACTS_ENDPOINT":  fmt.Sprintf("%s://127.0.0.1:%d", scheme, s3Port),
+
+		// The installer only consults the dataset when the filesystem is zfs.
+		"ARTIFACTS_DATA_FILESYSTEM": cfg.Artifacts.ResolvedFilesystem(),
+		"RUSTFS_ZFS_DATASET":        dataset,
+		"RUSTFS_DOWNLOAD_URL":       cfg.Artifacts.ResolvedDownloadURL(),
+		"RUSTFS_TLS_ENABLED":        strconv.FormatBool(tlsEnabled),
+		"ARTIFACTS_BUCKETS":         strings.Join(artifactsProvisionBuckets(cfg.Name), " "),
+		"ARTIFACTS_ENDPOINT":        fmt.Sprintf("%s://127.0.0.1:%d", scheme, s3Port),
 	}
 
 	if tlsEnabled {

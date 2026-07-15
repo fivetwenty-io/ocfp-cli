@@ -25,6 +25,7 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 		{"Rustfs.ConsolePort", a.Rustfs.ConsolePort, 9001},
 		{"Data.DiskSizeGiB", a.Data.DiskSizeGiB, 500},
 		{"Data.StoragePool", a.Data.StoragePool, "local-zfs"},
+		{"Data.Filesystem", a.Data.Filesystem, ArtifactsFilesystemExt4},
 		{"Data.Mountpoint", a.Data.Mountpoint, "/data"},
 		{"TLS.Mode", a.TLS.Mode, ArtifactsTLSModeSelfSigned},
 		// CPU and MemoryMiB are left at zero by Defaults; zero means "use the
@@ -99,6 +100,72 @@ func TestArtifactsConfigDefaultsIdempotent(t *testing.T) {
 
 	if a.TLS.Mode != ArtifactsTLSModeSelfSigned {
 		t.Errorf("Defaults overwrote TLS.Mode: got %q", a.TLS.Mode)
+	}
+}
+
+// TestArtifactsConfigResolvedFilesystem verifies default, normalization, and
+// passthrough behavior of the data-disk filesystem setting.
+func TestArtifactsConfigResolvedFilesystem(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty defaults to ext4", "", ArtifactsFilesystemExt4},
+		{"ext4 passthrough", "ext4", ArtifactsFilesystemExt4},
+		{"xfs passthrough", "xfs", ArtifactsFilesystemXFS},
+		{"zfs passthrough", "zfs", ArtifactsFilesystemZFS},
+		{"case + whitespace normalized", "  ZFS ", ArtifactsFilesystemZFS},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			a := ArtifactsConfig{Data: ArtifactsDataConfig{Filesystem: tc.in}}
+			if got := a.ResolvedFilesystem(); got != tc.want {
+				t.Errorf("ResolvedFilesystem(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestArtifactsConfigValidateFilesystem verifies that Validate rejects
+// unsupported data.filesystem values and accepts the supported set.
+func TestArtifactsConfigValidateFilesystem(t *testing.T) {
+	base := func(fs string) ArtifactsConfig {
+		a := ArtifactsConfig{Enabled: true}
+		a.Defaults()
+		a.Data.Filesystem = fs
+
+		return a
+	}
+
+	for _, fs := range []string{"", "ext4", "xfs", "zfs", "XFS"} {
+		a := base(fs)
+		if err := a.Validate("pve", true, true); err != nil {
+			t.Errorf("Validate with filesystem %q: unexpected error %v", fs, err)
+		}
+	}
+
+	a := base("btrfs")
+
+	err := a.Validate("pve", true, true)
+	if !errors.Is(err, ErrArtifactsInvalidFilesystem) {
+		t.Errorf("Validate with filesystem btrfs: got %v, want ErrArtifactsInvalidFilesystem", err)
+	}
+}
+
+// TestArtifactsConfigYAMLFilesystemKey verifies the data.filesystem key parses.
+func TestArtifactsConfigYAMLFilesystemKey(t *testing.T) {
+	var a ArtifactsConfig
+
+	input := "enabled: true\ndata:\n  filesystem: xfs\n"
+	if err := yaml.Unmarshal([]byte(input), &a); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if a.Data.Filesystem != "xfs" {
+		t.Errorf("Data.Filesystem = %q, want xfs", a.Data.Filesystem)
 	}
 }
 
