@@ -1,13 +1,46 @@
 package cli
 
 import (
+	"io"
+	"os"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/version"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it. Restores the original os.Stderr afterward
+// (even if fn panics), so it's safe to use alongside t.Parallel siblings
+// that don't touch stderr — but tests using it must NOT run in parallel
+// with each other, since os.Stderr is process-global.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stderr
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	os.Stderr = w
+
+	defer func() {
+		os.Stderr = original
+	}()
+
+	fn()
+
+	require.NoError(t, w.Close())
+
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+
+	return string(out)
+}
 
 func TestCreatePreRunHandler_BlocFromEnvVar(t *testing.T) {
 	t.Run("uses flag when provided", func(t *testing.T) {
@@ -176,4 +209,66 @@ func TestCreatePreRunHandler_BlocResolutionPriority(t *testing.T) {
 
 		assert.Equal(t, "flag-bloc", viper.GetString("bloc"))
 	})
+}
+
+// TestWarnUnstampedBuild covers both branches warnUnstampedBuild decides
+// on: version.GitCommit == "unknown" (the ldflags zero-value, meaning the
+// binary was built without `make build`/`make install-local`) and any other
+// value (a stamped build, whether a real commit hash or a test-injected
+// sentinel). No parallel subtests: os.Stderr and version.GitCommit are both
+// process-global mutable state.
+func TestWarnUnstampedBuild(t *testing.T) {
+	t.Run("unknown commit prints warning to stderr", func(t *testing.T) {
+		original := version.GitCommit
+		version.GitCommit = "unknown"
+
+		t.Cleanup(func() { version.GitCommit = original })
+
+		output := captureStderr(t, warnUnstampedBuild)
+
+		assert.Contains(t, output, "unstamped build")
+		assert.Contains(t, output, "make build")
+	})
+
+	t.Run("stamped commit prints nothing", func(t *testing.T) {
+		original := version.GitCommit
+		version.GitCommit = "abc1234"
+
+		t.Cleanup(func() { version.GitCommit = original })
+
+		output := captureStderr(t, warnUnstampedBuild)
+
+		assert.Empty(t, output)
+	})
+}
+
+// TestCreatePreRunHandler_UnstampedBuildWarningDoesNotBlockExecution asserts
+// the PersistentPreRun handler itself still completes and sets viper state
+// normally when the warning fires — the warning must never short-circuit
+// command execution, only annotate stderr.
+func TestCreatePreRunHandler_UnstampedBuildWarningDoesNotBlockExecution(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	original := version.GitCommit
+	version.GitCommit = "unknown"
+	t.Cleanup(func() { version.GitCommit = original })
+
+	t.Setenv("OCFP_BLOC", "env-bloc-name")
+
+	flagValue := ""
+	blocName := &flagValue
+
+	lock := &lockInfo{}
+	handler := createPreRunHandler(blocName, lock)
+
+	rootCmd := createRootCommand()
+
+	output := captureStderr(t, func() {
+		handler(rootCmd, []string{})
+	})
+
+	assert.Contains(t, output, "unstamped build")
+	// The rest of PersistentPreRun still ran: bloc resolution completed.
+	assert.Equal(t, "env-bloc-name", viper.GetString("bloc"))
 }

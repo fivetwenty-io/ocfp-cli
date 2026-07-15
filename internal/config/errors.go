@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ocfp/ocfp-cli-go/internal/version"
 )
 
 // Config errors.
@@ -36,4 +38,19 @@ func ErrBlocNotFound(blocName, configPath string) error {
 // ErrInvalidProvider returns an error for an unrecognized or unsupported cloud provider.
 func ErrInvalidProvider(provider string) error {
 	return fmt.Errorf("invalid provider: %s", provider) //nolint:err113 // dynamic error with context
+}
+
+// ErrConfigSchemaTooNew returns an error when a config file declares a
+// config_schema version higher than the running binary's SupportedConfigSchema.
+// The message names the running binary's version and build time so the
+// operator immediately knows which binary is stale, and points at the fix
+// (upgrade ocfp) rather than reporting a confusing downstream failure.
+func ErrConfigSchemaTooNew(configSchema, supported int) error {
+	info := version.Get()
+
+	return fmt.Errorf( //nolint:err113 // dynamic error with context
+		"config_schema %d is newer than this build supports (%d): this config requires a newer ocfp build "+
+			"(running v%s, commit %s, built %s) — upgrade ocfp and try again",
+		configSchema, supported, info.Version, info.GitCommit, info.BuildTime,
+	)
 }
