@@ -38,11 +38,6 @@ func ErrUnsupportedAuthType(authType string) error {
 	return fmt.Errorf("unsupported auth type: %s", authType) //nolint:err113 // dynamic error with context
 }
 
-// ErrGenesisDirectoryNotFound returns an error when the Genesis directory for a bloc cannot be located.
-func ErrGenesisDirectoryNotFound(blocName string) error {
-	return fmt.Errorf("genesis directory not found for bloc %s", blocName) //nolint:err113 // dynamic error with context
-}
-
 // ErrUnsupportedSecretsProviderType returns an error for an unrecognized secrets provider type.
 func ErrUnsupportedSecretsProviderType(providerType string) error {
 	return fmt.Errorf("unsupported secrets provider type: %s", providerType) //nolint:err113 // dynamic error with context
