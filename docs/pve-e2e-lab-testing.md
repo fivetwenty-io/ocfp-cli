@@ -977,3 +977,60 @@ Three in-platform requirements, all solved durably:
 in-platform and `cf push`es; app `apps` reaches `1/1 running` (droplet ~580 MB),
 `GET /` → **HTTP 200** serving the native-v3 UI, reproducibly from the manifest
 (`cf env apps` shows `UI_PATH: ./ui/frontend/browser`). 2026-06-10.
+
+---
+
+## 8.5 Full re-run on rebuilt lab (2026-07-14 → 2026-07-15)
+
+Fresh execution of the e2e flow after the lab rebuild (bloc `ocfp-lab-wayne`, per-/22 SDN model: infra 10.108.16.0/22, ocfp-0/1/2 = 10.108.20/24/28.0/22; bastion 10.108.16.3, mgmt director 10.108.16.4, mgmt vault 10.108.20.5/.24.5/.28.5, ocf director 10.108.20.4, RustFS 10.108.16.11:9000).
+
+| Phase | Result | Notes |
+|-------|--------|-------|
+| 4 Mgmt BOSH | ✅ PASS | Redeployed clean via create-env; noble 1.364 + jammy 1.1296 stemcells uploaded. |
+| 4.5 Mgmt Vault + migrate | ✅ PASS | 3-node vault deployed/unsealed; 814/814 secrets migrated inception→mgmt with checksums; inception decommissioned; repos re-pointed at https://10.108.24.5. |
+| 5 Env BOSH (ocf) | ✅ PASS | Director @ 10.108.20.4 (v282.0.9, noble 1.460 for workloads, pve_cpi, credhub). Five deploy attempts; blockers below. |
+| 6 CF kit v56.5.0 | ✅ PASS | Manifest verified: all release URLs = GCS noble-1.333 compiled blobs, bpm 1.4.31, stemcell `ubuntu-noble/latest` (→1.460), `ssh_proxy` job present, RustFS blobstore via entombed creds, 204 secrets entombed, kit_bug bail did not fire. |
+| 7 CF deploy | ✅ PASS | Attempt 2 succeeded (attempt 1: `lvnet001` bridge fallback, below). 17 instances, all VMs running; API v3.220.0; admin auth + `cf orgs`/`cf create-org` verified via haproxy 10.108.20.13. |
+| 8 cf push | ✅ PASS | Attempt 2 succeeded after 64G cell redeploy (attempt 1: `InsufficientResources` at 32G, below — cell now advertises 33879 MB). Staticfile app staged/started 1/1; route `e2e-test-turbulent-bongo-el.apps.ocf.wayne.lab.fivetwenty.io` returns HTTP 200 "ocfp e2e ok" via haproxy 10.108.20.13. |
+| 9 cf ssh | ✅ PASS | `cf ssh e2e-test -c "echo ok && hostname"` returned `ok` + container hostname. Needed a bastion `/etc/hosts` entry for `ssh.system.<domain>` → 10.108.20.13 (same no-wildcard-DNS workaround as the API hostnames). |
+| 10 Sign-off | ✅ PASS | Full e2e flow green: mgmt BOSH → mgmt Vault + migrate → ocf BOSH → CF v56.5.0 deploy → push → route → ssh. Open kit rectifications listed below remain. |
+
+### Findings & fixes (genesis runtime, mirrored to local fork unless noted)
+
+- **`/:ca_cert` entombment ghost (root-caused).** `ManifestProvider::vault_paths` sanitized ALL non-vault spruce operators to `""` before `spruce vaultinfo`, destroying grab/concat chains that feed vault operator arguments (`(( vault meta.ocfp.bosh.vault.blobstore ":ca_cert" ))` where the base is `(( grab genesis.ocfp_config_base ))` + `(( concat ... ))`) → bogus path `/:ca_cert`, entombment FATAL "no value in vault". Fix: run vaultinfo on the original unevaluated file first; only fall back to the sanitized copy if spruce cannot walk the original. (`Genesis/Env/ManifestProvider.pm`)
+
+- **Entombment diagnostic bail.** Missing-value entombment now bails naming the exact `path:key` instead of dying opaquely. (`Genesis/Env/Manifest/_entombment_mixin.pm`)
+
+- **Params-corruption chain (Phase 5 attempts 1–3).** Bosh kit `hooks/cpi-config.pm` `_property_map_for_pve` grammar corrected; `Genesis/Hook/CpiConfig.pm` bails on unparseable property specs instead of silently corrupting; `Genesis.pm` `unflatten` made non-destructive. Note: the PVE CPI ignores cpi-config properties (context.Extra dropped) — cloud config is the load-bearing config.
+
+- **Vault-env AZ literals.** `Genesis/Env.pm` `instance_group_azs` now filters spruce-operator strings (`(( replace ))` leaked as a literal AZ name).
+
+- **Director config-cache invalidation.** `Service/BOSH/Director.pm` `upload_config_from_file` invalidates the fetched-config memo so a same-process re-read sees the new config.
+
+- **Env-file requirements (hand-crafted envs).** `genesis.bosh_exodus_base` must be set explicitly in the bosh env; the vault env's exodus `bosh_env` must be RELATIVE (`<env>@/secret/exodus/`) so it follows the current secrets provider post-migrate.
+
+- **ocfp CLI bug (open).** `ocfp vault migrate --force` runs `genesis ... secrets-provider` from the wrong cwd.
+
+### Phase 6 findings & fixes (cf kit + env)
+
+- **`vendored-compiled-releases` dispatch.** The feature validated (`validate_ocfp_features`) and gated the ops-file include, but was missing from `@handled_features`, so the trailing dispatch chain bailed "Unknown feature". Added it to `@handled_features` in `hooks/blueprint.pm`.
+
+- **Stemcell version pin dropped.** `ocfp/pve/stemcell.yml` hard-pinned `stemcell_version: "1.383"`, desynchronised from whatever noble the deploying director actually has (1.460 here). Pin removed; base default `latest` flows through. GCS compiled blobs (noble/1.333) pair with any same-OS stemcell ≥ compile version.
+
+- **Env YAML flow-seq parse bug.** `haproxy_ips: [ (( vault ... ":haproxy_ip" )) ]` breaks YAML flow-sequence parsing (`:` inside the flow scalar) — genesis reported it as "Spruce returned empty output". Rewrote as a block sequence.
+
+- **haproxy_ip vault base.** The reserved-ips path lives under the ocfp config base (`secret/config/ocfp-lab-wayne/ocf/net/subnets/ocfp-0/reserved-ips`), so the ref must use `meta.ocfp.vault.config`, NOT `meta.vault` (the env-name-derived secrets base `/secret/ocfp/lab/wayne/ocf/cf`).
+
+- **Compiled-releases route.** `cf-deployment-version-56.5.0` (render-time fetch + tree swap) + `vendored-compiled-releases` (includes the post-swap, noble-compiled v56.5.0 `use-compiled-releases.yml`). `compiled-releases` itself is a deprecated no-op under ocfp. `source-releases` dropped.
+
+- **Cosmetics noted.** Exodus/info metadata still reports the BUNDLED kit version (v52.0.0) after the tree swap — the info hook reads kit metadata, not the swapped tree. Five `ubuntu-jammy` refs in the manifest are addon include-filters, harmless. v56.5.0's five `operations/experimental/*` symlinks are skipped by Archive::Tar SECURE_EXTRACT_MODE (traversal) — none are used.
+
+- **Secrets.** `g @ocfp-lab-wayne-ocf:cf add-secrets` generated 132 definitions (1 rsa/42 random/1 ssh/88 x509); entombment then copied 204 path:keys to the ocf director credhub.
+
+### Phase 7 findings & fixes (cf deploy)
+
+- **cf kit cloud-config hardcoded PVE fallbacks (attempt 1 FATAL).** `cf/hooks/cloud-config.pm` defaults `bridge`/`network_bridge` to the author-lab literal `lvnet001` and `disk_types` storage to `zfs-1` when `bosh-configs.cpi.pve_network_bridge`/`pve_disk_storage` are unset in the env. All 14 CF VMs were created but every `qmstart` failed: `bridge 'lvnet001' does not exist` (Task 35). The bosh kit envs set these explicitly; the CF env must too. Fix: added `pve_network_bridge: ocfp` and `pve_disk_storage: local-lvm-data` under `bosh-configs.cpi` in the CF env. Kit-side rectification (open): the fallbacks should come from vault (`net:bridge` — `ocfp vault populate` writes it) or `(( param ))`, never a lab-specific literal.
+
+- **Bastion has no wildcard DNS for the system domain.** Added `/etc/hosts` entries on the bastion pointing `api|uaa|login|doppler|log-cache.system.ocf.wayne.lab.fivetwenty.io` at haproxy 10.108.20.13 for CLI verification. App routes verified with `curl --resolve <route>:443:10.108.20.13`.
+
+- **Diego cell disk too small for staging (Phase 8 attempt 1).** PVE VMs get NO separate ephemeral disk, so the BOSH agent partitions the ROOT disk: ~5G root/home + swap (≈RAM, capped at half the remainder) + the rest as `/var/vcap/data`. At the vm_matrix default 32G that left a 13.5G data partition; after the grootfs store reserve the rep advertised `DiskMB: 3966` — below the default staging disk request — and `cf push` failed with `InsufficientResources` (memory was fine: 15993 MB). Fix: `bosh-configs.cpi.pve_diego_cell_disk: 65536` in the CF env; diego-cell redeployed (rep then advertised `DiskMB: 33879` and the push succeeded). Kit-side rectification (open): the PVE vm_matrix disk columns must account for the root-disk-carve overhead (swap ≈ RAM), i.e. a 16G-RAM cell needs ≥64G disk, or the CPI should attach a real ephemeral disk.
