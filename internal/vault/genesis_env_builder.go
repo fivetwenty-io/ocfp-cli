@@ -10,6 +10,13 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+const (
+	// GenesisDirMode is the file permission mode for Genesis environment directories.
+	GenesisDirMode = 0750
+	// GenesisFileMode is the file permission mode for Genesis environment files.
+	GenesisFileMode = 0600
+)
+
 // GenesisEnvV32 represents a Genesis v3.2 environment file.
 // Top-level keys follow the schema validated by Genesis::Env::load().
 type GenesisEnvV32 struct {
