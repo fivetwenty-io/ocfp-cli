@@ -917,6 +917,30 @@ func (m *Manager) updateAllEnvironments(environments []parsedGenesisEnv) ([]envi
 	return updatedEnvs, failedEnvs
 }
 
+// genesisWorkDir returns the directory genesis commands must run from.
+// Genesis resolves @env:type addressing from the deployments repository it
+// is invoked in, so an arbitrary caller cwd breaks it. Prefer an explicit
+// DEPLOYMENTS_DIR, then the standard ~/ocfp/deployments layout; return ""
+// (inherit the caller cwd) when neither exists so an operator running from
+// inside a differently-located repository keeps working.
+func genesisWorkDir() string {
+	if dir := os.Getenv("DEPLOYMENTS_DIR"); dir != "" {
+		return dir
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	dir := filepath.Join(home, "ocfp", "deployments")
+	if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+		return dir
+	}
+
+	return ""
+}
+
 // updateEnvironmentTarget updates secrets provider for a single environment target.
 func (m *Manager) updateEnvironmentTarget(kit, target, vaultName string) (*environmentUpdate, *environmentFailure) {
 	genesisEnv := fmt.Sprintf("@%s-%s:%s", m.blocName, target, kit)
@@ -927,6 +951,7 @@ func (m *Manager) updateEnvironmentTarget(kit, target, vaultName string) (*envir
 	ctx := context.Background()
 	// #nosec G204 - genesis, genesisEnv and vaultName are constructed from validated internal state
 	cmd := exec.CommandContext(ctx, "genesis", genesisEnv, "secrets-provider", vaultName)
+	cmd.Dir = genesisWorkDir()
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1386,9 +1411,11 @@ func (m *Manager) getGenesisEnvironments() ([]parsedGenesisEnv, error) {
 // executeGenesisEnvsCommand runs genesis envs with fallback strategies.
 func (m *Manager) executeGenesisEnvsCommand() ([]byte, error) {
 	ctx := context.Background()
+	workDir := genesisWorkDir()
 
 	// Run genesis envs command
 	cmd := exec.CommandContext(ctx, "genesis", "envs")
+	cmd.Dir = workDir
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1405,6 +1432,7 @@ func (m *Manager) executeGenesisEnvsCommand() ([]byte, error) {
 
 				// #nosec G204 - genesisPath is from system 'which' command for genesis binary
 				cmd = exec.CommandContext(ctx, genesisPath, "envs")
+				cmd.Dir = workDir
 
 				output, err = cmd.CombinedOutput()
 			}
@@ -1415,6 +1443,7 @@ func (m *Manager) executeGenesisEnvsCommand() ([]byte, error) {
 			m.logger.Debug("Attempting shell fallback: sh -c 'genesis envs 2>&1'")
 
 			cmd = exec.CommandContext(ctx, "sh", "-c", "genesis envs 2>&1")
+			cmd.Dir = workDir
 
 			output, err = cmd.CombinedOutput()
 		}
