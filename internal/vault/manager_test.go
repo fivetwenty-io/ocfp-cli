@@ -178,9 +178,10 @@ func TestFilterInceptionSessions_ExactMatch(t *testing.T) {
 func TestFilterInceptionSessions_LegacyFallback(t *testing.T) {
 	t.Parallel()
 	m := &Manager{}
-	// legacy: contains "inception" AND "vault"
-	got := m.filterInceptionSessions([]string{"some-inception-vault-session"}, "other-inception")
-	assert.Equal(t, []string{"some-inception-vault-session"}, got)
+	// legacy fallback is the bare pre-bloc-prefix session name, exact only —
+	// substring matches would sweep up other blocs' sessions on a shared host
+	got := m.filterInceptionSessions([]string{"inception-vault", "some-inception-vault-session"}, "other-inception")
+	assert.Equal(t, []string{"inception-vault"}, got)
 }
 
 func TestFilterInceptionSessions_NoMatch(t *testing.T) {
@@ -287,3 +288,22 @@ func TestManagerSleepFnSeam(t *testing.T) {
 	sleepFn(5 * time.Second)
 	assert.Equal(t, []time.Duration{5 * time.Second}, recorded)
 }
+
+func TestFilterInceptionSessions_MatchesOwnBlocOnly(t *testing.T) {
+	t.Parallel()
+
+	m := &Manager{} //nolint:exhaustruct // filterInceptionSessions touches no fields
+
+	sessions := []string{
+		"ocfp-lab-drgao-inception-vault",
+		"ocfp-lab-wayne-inception-vault",
+		"ocfp-lab-norm-inception-vault",
+		"unrelated",
+	}
+
+	matched := m.filterInceptionSessions(sessions, "ocfp-lab-drgao-inception")
+
+	assert.Equal(t, []string{"ocfp-lab-drgao-inception-vault"}, matched,
+		"must not match other blocs' inception vault sessions")
+}
+
