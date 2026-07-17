@@ -71,12 +71,25 @@ story in full.
 cf, shield, and the rest) is a Genesis kit. The PVE ports live in each kit's
 `ocfp/pve/` overlays and hooks.
 
+**pmx** is our Proxmox API client. Everything we once did as root on the
+hypervisor — SDN zones, service accounts, storage checks, listing VMs — we
+now drive from the workstation with `pmx pve <resource> <verb>`, against a
+named context that stores the endpoint and credentials. The old on-host
+commands (`pveum`, `pvesh`, `pvesm`, `qm`) still work, and every step shows
+them as the native fallback, but pmx is the path we walk.
+
 ## Conventions
 
 Every step in these runbooks follows the same shape: a sentence or two of
 intent, the command, and a **Verify** that proves it landed. Steps that change
 something hard to undo also carry a **Rollback**. We never move past a red
 verification.
+
+Proxmox steps come in pairs: the `pmx` command first, then the same
+operation as an **On the host (native):** block for anyone working directly
+on the hypervisor. Run one or the other, never both — they are the same API
+call wearing different clothes. Destructive pmx verbs require `--yes`; that
+is deliberate, and we keep it.
 
 The variables below appear throughout, standing in for our own values. The
 third column shows the worked example we validated against.
@@ -91,6 +104,7 @@ third column shows the worked example we validated against.
 | `<base-domain>` | The bloc's DNS base | `ocf.wayne.lab.fivetwenty.io` |
 | `<system-domain>` | The CF system domain | `system.ocf.wayne.lab.fivetwenty.io` |
 | `<apps-domain>` | The CF apps domain | `apps.ocf.wayne.lab.fivetwenty.io` |
+| `<context>` | The pmx context for the bloc's PVE host | `lab-wayne` |
 
 ## The chapters
 
