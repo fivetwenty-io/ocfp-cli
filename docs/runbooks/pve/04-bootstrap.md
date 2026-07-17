@@ -55,8 +55,16 @@ joins the tailnet with the auth key from our config.
 
 ```bash
 # The VM exists and runs (on the PVE host, or via the UI).
-qm list | grep ocfp-lab-wayne
+pmx pve qemu list -o plain | grep ocfp-lab-wayne
+```
 
+**On the host (native):**
+
+```bash
+qm list | grep ocfp-lab-wayne
+```
+
+```bash
 # It joined the tailnet under its MagicDNS name.
 tailscale status | grep ocfp-lab-wayne-bastion
 

@@ -87,8 +87,9 @@ g @ocfp-lab-wayne-mgmt:bosh b env     # 'b' = raw bosh passthrough
 `b env` returning the director's name, UUID, and version is the platform's
 first heartbeat: it proves the VM runs at `10.108.16.4`, the director stack
 inside it is healthy, and the admin credentials Genesis wrote to Vault
-actually work. In PVE, `qm list` shows the director VM with a VMID from 200
-up (the CPI's range, above the hand-managed band).
+actually work. In PVE, `pmx pve qemu list` (natively `qm list` on the
+host) shows the director VM with a VMID from 200 up (the CPI's range,
+above the hand-managed band).
 
 **Rollback**: `bosh create-env` is convergent. A failed run is diagnosed
 (the trace at `~/.genesis/mylogs/last-trace`, or the create-env output
