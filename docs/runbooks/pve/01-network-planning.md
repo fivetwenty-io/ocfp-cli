@@ -61,13 +61,26 @@ bridge, no POSTROUTING rule. Every VM loses egress, and the failure looks like
 a DNS problem. Simple zones (and EVPN, when a second
 node arrives) are the ones that actually materialize L3 on the host.
 
-We create the zone and vnet in the PVE UI or via `pvesh`. The vnet ID must be
-a bare name of eight alphanumerics or fewer — ours is simply `ocfp` — and the
-subnet on it is the full supernet with the gateway and SNAT enabled:
+We create the zone and vnet with `pmx`, or natively via `pvesh` or the PVE
+UI. The vnet ID must be a bare name of eight alphanumerics or fewer — ours
+is simply `ocfp` — and the subnet on it is the full supernet with the
+gateway and SNAT enabled:
+
+From the workstation, against our context — pmx stages SDN changes and
+nothing lands until we apply, exactly as the raw API does:
 
 ```bash
-# On the PVE host, as root — or the equivalent clicks under
-# Datacenter → SDN → Zones / VNets.
+pmx pve sdn zone create ocfpz --type simple --ipam pve
+pmx pve sdn vnet create ocfp --zone ocfpz
+pmx pve sdn subnet create ocfp 10.108.16.0/20 \
+  --gateway 10.108.16.1 --snat
+pmx pve sdn apply
+```
+
+**On the host (native):** the same four calls through `pvesh`, as root — or
+the equivalent clicks under Datacenter → SDN → Zones / VNets:
+
+```bash
 pvesh create /cluster/sdn/zones --type simple --zone ocfpz --ipam pve
 pvesh create /cluster/sdn/vnets --vnet ocfp --zone ocfpz
 pvesh create /cluster/sdn/vnets/ocfp/subnets \
@@ -76,14 +89,19 @@ pvesh create /cluster/sdn/vnets/ocfp/subnets \
 pvesh set /cluster/sdn
 ```
 
-**Verify**: `ip addr show ocfp` on the PVE host shows `10.108.16.1/20` on the
-vnet bridge, and `iptables -t nat -L POSTROUTING -n | grep 10.108.16` shows
-the SNAT rule. A test VM attached to `ocfp` can `ping 1.1.1.1` and resolve
-names through `10.108.16.1`.
+**Verify**: `pmx pve sdn status zones --node <node>` reports the zone
+available. On the host (or via `pmx ssh <node> --`), `ip addr show ocfp`
+shows `10.108.16.1/20` on the vnet bridge, and
+`iptables -t nat -L POSTROUTING -n | grep 10.108.16` shows the SNAT rule.
+A test VM attached to `ocfp` can `ping 1.1.1.1` and resolve names through
+`10.108.16.1`.
 
-**Rollback**: delete the subnet, vnet, and zone in reverse order and re-apply
-with `pvesh set /cluster/sdn`. Nothing depends on them yet — that is the
-point of doing this first.
+**Rollback**: delete in reverse order and re-apply —
+`pmx pve sdn subnet delete ocfp 10.108.16.0/20 --yes`, then
+`pmx pve sdn vnet delete ocfp --yes`, `pmx pve sdn zone delete ocfpz --yes`,
+and `pmx pve sdn apply`. Natively: delete the subnet, vnet, and zone in
+reverse order and re-apply with `pvesh set /cluster/sdn`. Nothing depends
+on them yet — that is the point of doing this first.
 
 Keep the MTU at 1500. A Simple zone adds no encapsulation, so there is no
 overhead to budget for, and mismatched MTUs are another failure that
