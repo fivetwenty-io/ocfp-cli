@@ -1095,8 +1095,10 @@ func (m *Manager) filterInceptionSessions(sessions []string, inceptionName strin
 			continue
 		}
 
-		// Then, legacy pattern as fallback
-		if strings.Contains(session, "inception") && strings.Contains(session, "vault") {
+		// Then, the bare legacy session name (pre-bloc-prefix CLIs) as
+		// fallback. Exact match only: a substring match would sweep up
+		// other blocs' <bloc>-inception-vault sessions on a shared host.
+		if session == "inception-vault" {
 			matchedSessions = append(matchedSessions, session)
 		}
 	}
