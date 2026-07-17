@@ -54,7 +54,7 @@ joins the tailnet with the auth key from our config.
 **Verify**: three probes, from the outside in.
 
 ```bash
-# The VM exists and runs (on the PVE host, or via the UI).
+# The VM exists and runs.
 pmx pve qemu list -o plain | grep ocfp-lab-wayne
 ```
 
