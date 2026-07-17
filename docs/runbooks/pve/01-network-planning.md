@@ -61,13 +61,11 @@ bridge, no POSTROUTING rule. Every VM loses egress, and the failure looks like
 a DNS problem. Simple zones (and EVPN, when a second
 node arrives) are the ones that actually materialize L3 on the host.
 
-We create the zone and vnet with `pmx`, or natively via `pvesh` or the PVE
-UI. The vnet ID must be a bare name of eight alphanumerics or fewer — ours
-is simply `ocfp` — and the subnet on it is the full supernet with the
-gateway and SNAT enabled:
-
-From the workstation, against our context — pmx stages SDN changes and
-nothing lands until we apply, exactly as the raw API does:
+Now we create the zone, the vnet, and the subnet — from the workstation,
+against our context; pmx stages SDN changes and nothing lands until we
+apply, exactly as the raw API does. The vnet ID must be a bare name of
+eight alphanumerics or fewer — ours is simply `ocfp` — and the subnet is
+the full supernet with the gateway and SNAT enabled:
 
 ```bash
 pmx pve sdn zone create ocfpz --type simple --ipam pve
