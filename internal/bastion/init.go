@@ -652,6 +652,13 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
+
+		// Phase 10: Decommission the workstation-local inception vault.
+		// MUST run last: reaching this phase implies vault_inception,
+		// vault_populate, verification, and health_check all succeeded, so
+		// the bastion-side vault is authoritative and the local one (started
+		// by `ocfp bootstrap`) is safe to stop.
+		{"local_vault_teardown", m.teardownLocalInceptionVault},
 	}
 }
 
@@ -744,6 +751,8 @@ func (m *Manager) parallelPostPhaseList() []struct {
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
+		// MUST run last — see the sequential list's phase 10 comment.
+		{"local_vault_teardown", m.teardownLocalInceptionVault},
 	}
 }
 
