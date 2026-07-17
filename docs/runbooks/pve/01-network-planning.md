@@ -62,8 +62,10 @@ a DNS problem. Simple zones (and EVPN, when a second
 node arrives) are the ones that actually materialize L3 on the host.
 
 Now we create the zone, the vnet, and the subnet — from the workstation,
-against our context; pmx stages SDN changes and nothing lands until we
-apply, exactly as the raw API does. The vnet ID must be a bare name of
+against our context — the root context we bootstrap at the top of
+[chapter 2](02-pve-foundation.md); flip ahead if pmx knows no context
+yet — pmx stages SDN changes and nothing lands until we apply, exactly
+as the raw API does. The vnet ID must be a bare name of
 eight alphanumerics or fewer — ours is simply `ocfp` — and the subnet is
 the full supernet with the gateway and SNAT enabled:
 
