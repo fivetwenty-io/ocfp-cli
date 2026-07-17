@@ -70,9 +70,11 @@ Vault exists in chapter 7.
 These four lines aim the CPI at the pools we validated in chapter 2: VM
 disks and persistent disks on the LVM-thin pool, images on `local`. The
 `iso_storage` pool must advertise the right content types
-(`pvesm set local --content vztmpl,iso,import,backup,snippets`). The failure
-mode for forgetting is nastily quiet: OCFP falls back to PVE's default
-cloud-init, and the bastion's Tailscale setup is silently skipped.
+(`pmx pve storage set local --content vztmpl,iso,import,backup,snippets` —
+natively `pvesm set local --content vztmpl,iso,import,backup,snippets`).
+The failure mode for forgetting is nastily quiet: OCFP falls back to
+PVE's default cloud-init, and the bastion's Tailscale setup is silently
+skipped.
 `template_bridge` tells template auto-provisioning where seed VMs get DHCP
 and internet — our SDN's infra subnet provides both, so the `ocfp` vnet
 serves double duty.
