@@ -21,14 +21,15 @@ token exists, root retires from daily use.
 ## Creating the CPI service account
 
 First we point pmx at the host and authenticate as root — a session ticket,
-held only for the minutes this chapter takes. The `${PVE_ROOT_PASSWORD}`
-reference is resolved from our environment at login time, so the password
-never sits in the config file:
+held only for the minutes this chapter takes. We export the root password
+into our shell first, as `PVE_ROOT_PASSWORD`; the `${PVE_ROOT_PASSWORD}`
+reference below is then resolved from our environment at login time, so
+the password never sits in the config file:
 
 ```bash
 pmx context add <context> --host <node> --product pve \
   --auth-type password --username root --realm pam \
-  --secret '${PVE_ROOT_PASSWORD}'
+  --secret '${PVE_ROOT_PASSWORD}' --select --default-node <node>
 pmx auth login --context <context>
 ```
 
@@ -122,8 +123,9 @@ token grants. The output prints the token exactly once:
 - The token ID, `ocfp-cpi@pve!<bloc-token-name>` — this becomes `auth_token`
   in the bloc config.
 
-- The secret UUID — this becomes `token_secret`. Copy it now; PVE will never
-  show it again.
+- The secret UUID — this becomes `token_secret`. Copy it now, and export
+  it into our shell as `OCFP_TOKEN_SECRET`, so the next fence can resolve
+  it — PVE will never show the secret again.
 
 Now we prove the token works from the workstation — the vantage point the
 CPI will actually use. We rewire our context from the root session to the
