@@ -232,7 +232,9 @@ failure is purely about credentials:
 pmx pve node list --context <context>
 ```
 
-**On the host (native):**
+**On the host (native):** the same list with curl — though this one names
+`<node>` rather than `localhost`, so it proves the path from anywhere the
+API is reachable:
 
 ```bash
 curl -sk \
