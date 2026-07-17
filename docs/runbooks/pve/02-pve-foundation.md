@@ -3,22 +3,37 @@
 Every cloud provider asks us to establish an identity before it will take our
 API calls, and Proxmox is no different. In this chapter we create the service
 account that all OCFP automation will act as, mint its API token, and confirm
-the host's storage and template arrangements. It is the only chapter where we
-work as root on the hypervisor itself — everything after this flows through
-the API.
+the host's storage and template arrangements. It is the only chapter that
+requires root's credentials — though no longer a root shell on the hypervisor
+itself — and everything after this flows through the token we mint here.
 
 ## Why this one step stays manual
 
 The PVE user database lives on the host, behind a root login, and the account
 we need does not exist yet — there is nothing for automation to authenticate
 *as*. That circularity is a security feature, not an oversight: only a human
-with root access can bootstrap the initial credential. We do it once per
-host, and the token we mint here carries every future action.
+holding root credentials can bootstrap the initial credential. We do it once
+per host, and the token we mint here carries every future action. With pmx we
+can even do it without leaving the workstation: a temporary context
+authenticated as `root@pam` performs the bootstrap, and the moment the CPI
+token exists, root retires from daily use.
 
 ## Creating the CPI service account
 
-We open a root session on the PVE host — over Tailscale in our lab — and
-stay there for the next three steps:
+First we point pmx at the host and authenticate as root — a session ticket,
+held only for the minutes this chapter takes. The `${PVE_ROOT_PASSWORD}`
+reference is resolved from our environment at login time, so the password
+never sits in the config file:
+
+```bash
+pmx context add <context> --host <node> --product pve \
+  --auth-type password --username root --realm pam \
+  --secret '${PVE_ROOT_PASSWORD}'
+pmx auth login --context <context>
+```
+
+**On the host (native):** or we open a root session — over Tailscale in our
+lab — and stay there for the next three steps:
 
 ```bash
 ssh root@<node>
@@ -28,11 +43,28 @@ First the user. The `@pve` realm is PVE's built-in authentication; no LDAP or
 PAM wiring required:
 
 ```bash
+pmx pve access user create ocfp-cpi@pve --comment "OCFP CPI service account"
+```
+
+**On the host (native):**
+
+```bash
 pveum user add ocfp-cpi@pve --comment "OCFP CPI service account"
 ```
 
 Next the role. The CPI needs to clone, configure, start, stop, and destroy
 VMs; allocate disks; and attach to the SDN. We grant exactly that:
+
+```bash
+pmx pve access role create OCFPCpi --privs \
+"Datastore.AllocateSpace,Datastore.Audit,Pool.Allocate,SDN.Use,\
+Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Clone,\
+VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.CPU,VM.Config.Disk,\
+VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,\
+VM.Migrate,VM.Monitor,VM.PowerMgmt"
+```
+
+**On the host (native):**
 
 ```bash
 pveum role add OCFPCpi --privs \
@@ -50,14 +82,22 @@ that will hold disks and images: in our lab, the LVM-thin pool
 stemcell images:
 
 ```bash
+pmx pve access acl set --path / --users ocfp-cpi@pve --roles OCFPCpi
+pmx pve access acl set --path /storage/local-lvm-data --users ocfp-cpi@pve --roles OCFPCpi
+pmx pve access acl set --path /storage/local --users ocfp-cpi@pve --roles OCFPCpi
+```
+
+**On the host (native):**
+
+```bash
 pveum acl modify / --users ocfp-cpi@pve --roles OCFPCpi
 pveum acl modify /storage/local-lvm-data --users ocfp-cpi@pve --roles OCFPCpi
 pveum acl modify /storage/local --users ocfp-cpi@pve --roles OCFPCpi
 ```
 
-**Verify**: `pveum user list | grep ocfp-cpi` shows the user, and
-`pveum acl list | grep ocfp-cpi` shows entries for `/` and both storage
-paths.
+**Verify**: `pmx pve access user list` shows the user and
+`pmx pve access acl list --path /` shows the grants (natively:
+`pveum user list | grep ocfp-cpi` and `pveum acl list | grep ocfp-cpi`).
 
 ## Minting the token
 
@@ -65,12 +105,19 @@ The token name scopes the credential to our bloc, which makes rotation and
 revocation surgical when we run several blocs against one host:
 
 ```bash
+pmx pve access user token create ocfp-cpi@pve <bloc-token-name> --privsep=false
+```
+
+**On the host (native):**
+
+```bash
 pveum user token add ocfp-cpi@pve <bloc-token-name> --privsep 0
 ```
 
-`--privsep 0` lets the token inherit the user's full privileges — required,
-since the CPI operates without per-privilege token grants. The output prints
-the token exactly once:
+Note the flag inversion: pmx spells it `--privsep=false` where pveum spells
+it `--privsep 0` — the same switch. Either way the token inherits the user's
+full privileges — required, since the CPI operates without per-privilege
+token grants. The output prints the token exactly once:
 
 - The token ID, `ocfp-cpi@pve!<bloc-token-name>` — this becomes `auth_token`
   in the bloc config.
@@ -78,7 +125,23 @@ the token exactly once:
 - The secret UUID — this becomes `token_secret`. Copy it now; PVE will never
   show it again.
 
-Still on the host, we prove the token authenticates before we leave:
+Now we prove the token works from the workstation — the vantage point the
+CPI will actually use. We rewire our context from the root session to the
+new token and ask the API who we are:
+
+```bash
+pmx auth set-token --context <context> \
+  --token-id 'ocfp-cpi@pve!<bloc-token-name>' \
+  --secret '${OCFP_TOKEN_SECRET}'
+pmx auth whoami --context <context>
+pmx version --context <context>
+```
+
+The `${OCFP_TOKEN_SECRET}` reference is deliberate: pmx resolves it from the
+environment on every call, so the secret never lands in the config file in
+cleartext.
+
+**On the host (native):** the same proof with nothing but curl:
 
 ```bash
 curl -sk \
@@ -86,12 +149,14 @@ curl -sk \
   https://localhost:8006/api2/json/version | python3 -m json.tool
 ```
 
-**Verify**: a JSON payload with the PVE version. Then the same `curl` from
-our workstation against `https://<node>:8006` proves end-to-end reachability
-over the network we will actually use.
+**Verify**: `pmx auth whoami` reports the identity
+`ocfp-cpi@pve!<bloc-token-name>` and `pmx version` reports the server's PVE
+version — end-to-end, over the network we will actually use. Natively, the
+`curl` returns a JSON payload with the PVE version.
 
-**Rollback**: `pveum user delete ocfp-cpi@pve` removes the user, all tokens,
-and every ACL entry in one stroke.
+**Rollback**: `pmx pve access user delete ocfp-cpi@pve --yes` (natively
+`pveum user delete ocfp-cpi@pve`) removes the user, all tokens, and every
+ACL entry in one stroke.
 
 Two halves, two fields — worth engraving now because it is the most common
 first-run stumble: `auth_token` is the ID only, `token_secret` is the UUID
@@ -111,7 +176,8 @@ amplification for no benefit. So the pools we point OCFP at are:
 | `local` | ISO images, snippets, stemcell images | Template and stemcell staging |
 
 Two mechanical checks save us grief later. The stemcell and ISO pool must
-actually advertise the content types we will push at it (`pvesm status` and
+actually advertise the content types we will push at it
+(`pmx pve storage node-list --node <node>` — natively `pvesm status` — and
 the Datacenter → Storage panel confirm). Thin provisioning must be real,
 too — a pool of thick-provisioned volumes fills by *reservation* long before
 it fills with data.
@@ -153,12 +219,20 @@ idempotent.
 ## What we carry forward
 
 Three facts leave this chapter with us, destined for the bloc config: the API
-endpoint `https://<node>:8006`, the token ID, and the token secret. The
-secret is a password — it travels through a password manager or Vault, never
-through a repo.
+endpoint `https://<node>:8006`, the token ID, and the token secret. They now
+live in two places — the bloc config that OCFP reads, and the pmx context we
+rewired above — the same credential wearing two coats. The secret is a
+password — it travels through a password manager or Vault, never through a
+repo.
 
 **Verify**, once more from the workstation, because this is the last moment a
 failure is purely about credentials:
+
+```bash
+pmx pve node list --context <context>
+```
+
+**On the host (native):**
 
 ```bash
 curl -sk \
