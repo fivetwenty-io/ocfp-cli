@@ -441,6 +441,29 @@ func (m *Manager) runOCFPConfigure(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-configure")
 }
 
+// teardownLocalInceptionVault decommissions the inception vault running on
+// the operator workstation (started by `ocfp bootstrap`) once the
+// bastion-side inception vault has taken over. This phase runs in the init
+// process itself — which executes on the workstation in remote (SSH) mode —
+// so it is the one place in the flow that can reach the workstation's tmux
+// server; `ocfp vault migrate` runs on the bastion and cannot.
+//
+// Registered only in the remote-mode phase lists: in LocalExecutor mode the
+// process runs on the bastion, where the "local" vault is the live one.
+//
+// Teardown failures are warnings, never init failures — the bastion is
+// already fully provisioned by the time this phase runs.
+func (m *Manager) teardownLocalInceptionVault(ctx context.Context) error {
+	m.log.Info("Decommissioning local inception vault (bastion vault is authoritative)")
+
+	err := vault.TeardownLocalInception(ctx, m.config.Name)
+	if err != nil {
+		m.log.Warn("Local inception vault teardown incomplete", "error", err.Error())
+	}
+
+	return nil
+}
+
 // runVaultPopulate runs OCFP vault populate.
 func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	m.log.Info("Running vault populate")
