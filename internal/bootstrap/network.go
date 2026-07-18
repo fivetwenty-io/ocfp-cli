@@ -213,13 +213,15 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 	_, _ = fmt.Fprintf(os.Stdout, "    • Network %s found in cloud (ID: %s), importing to state\n", networkName, network.ID)
 	logger.Infof("Found existing network %s with ID %s, importing to state", networkName, network.ID)
 
+	cidr := m.resolveImportedNetworkCIDR(network)
+
 	err := m.stateManager.AddResource(&state.Resource{
 		ID:         network.ID,
 		Type:       "network",
 		Name:       networkName,
 		Provider:   m.options.Provider,
 		State:      string(cpi.ResourceStateActive),
-		Properties: map[string]interface{}{"cidr": network.CIDR, "dns_servers": m.config.Network.DNSServers},
+		Properties: map[string]interface{}{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
 		Tags:       network.Tags,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -233,7 +235,7 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 		logger.Warnf("Failed to set network_id output: %v", setErr)
 	}
 
-	setErr = m.stateManager.SetOutput("network_cidr", network.CIDR)
+	setErr = m.stateManager.SetOutput("network_cidr", cidr)
 	if setErr != nil {
 		logger.Warnf("Failed to set network_cidr output: %v", setErr)
 	}
@@ -244,6 +246,34 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 	}
 
 	return nil
+}
+
+// resolveImportedNetworkCIDR picks the CIDR to record for a discovered
+// (already-existing) network resource.
+//
+// For PVE bridge mode, ListNetworks/GetNetwork report the physical bridge
+// device's host-level address (e.g. a cluster node's own mgmt IP/24, such as
+// 10.254.0.10/24) — there is no real "network" API resource to discover on
+// PVE, only the shared vnet/bridge device the bloc's default_bridge/
+// network.name point at. Trusting that host address as the bloc's network
+// range corrupts every downstream computation that reads the network_cidr
+// state output (subnet carve, bastion/static IP placement), landing VMs in
+// the cluster's shared management range instead of the bloc's configured
+// workload CIDR. So for PVE, the bloc config's network_cidr is authoritative
+// once it's actually configured (not just the package default) — the
+// discovery match only confirms the bridge exists, it is not a source of
+// truth for addressing. Non-PVE providers (including the AWS vpc_id import
+// path in importConfiguredNetwork, which never reports
+// useVirtualSubnetsForPVE()==true) are unaffected and keep using the
+// discovered network's own CIDR, as before.
+func (m *Manager) resolveImportedNetworkCIDR(network *cpi.Network) string {
+	if m.useVirtualSubnetsForPVE() {
+		if configured := m.resolveNetworkCIDR(); configured != "" && configured != defaultNetworkCIDR {
+			return configured
+		}
+	}
+
+	return network.CIDR
 }
 
 func (m *Manager) createNewNetwork(ctx context.Context, netMgr cpi.NetworkManager, networkName, cidr string) error {
