@@ -210,13 +210,15 @@ bloc on every invocation, so the cheapest proof is a read-only command:
 
 ```bash
 ocfp --version
-ocfp pve probe --bloc ocfp-lab-wayne
+ocfp bootstrap --bloc ocfp-lab-wayne --dry-run
 ```
 
-**Verify**: `pve probe` reaches the API with our token and reports the node,
-its storage pools, and the SDN vnet. It flags anything our bloc references
-that the cluster lacks. Every complaint it prints now is a bootstrap failure
-we just avoided.
+**Verify**: the dry run parses the bloc, reaches the API with our token,
+and prints the full plan — network figures, subnets, security groups,
+bastion — without creating anything. Every complaint it prints now is a
+bootstrap failure we just avoided. (`ocfp pve probe <bloc>` exists too, but
+it is a *pre-deploy* health probe that expects a bastion and a director;
+it earns its keep from chapter 6 onward, not here.)
 
 **Rollback**: it is a text file. Edit it.
 

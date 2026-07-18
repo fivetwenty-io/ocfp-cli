@@ -145,8 +145,10 @@ Teardown, when we need it, is a single idempotent command — we preview it
 first, always:
 
 ```bash
-ocfp teardown --bloc <bloc> --nuke --dry-run --output json
+ocfp teardown --bloc <bloc> --nuke --force --dry-run --output json
 ocfp teardown --bloc <bloc> --nuke --force --empty
 ```
+
+(`--nuke` refuses to run without `--force`, even for the dry run.)
 
 With the map in hand, let us go plan a network.
