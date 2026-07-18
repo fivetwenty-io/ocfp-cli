@@ -58,23 +58,33 @@ VMs; allocate disks; and attach to the SDN. We grant exactly that:
 
 ```bash
 pmx pve access role create OCFPCpi --privs \
-"Datastore.AllocateSpace,Datastore.Audit,Pool.Allocate,SDN.Use,\
-Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Clone,\
-VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.CPU,VM.Config.Disk,\
-VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,\
-VM.Migrate,VM.Monitor,VM.PowerMgmt"
+"Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,\
+Datastore.Audit,\
+Pool.Allocate,SDN.Use,Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,\
+VM.Audit,VM.Clone,VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.CPU,\
+VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,\
+VM.Config.Options,VM.Console,VM.GuestAgent.Audit,\
+VM.GuestAgent.Unrestricted,VM.Migrate,VM.PowerMgmt"
 ```
 
 **On the host (native):**
 
 ```bash
 pveum role add OCFPCpi --privs \
-"Datastore.AllocateSpace,Datastore.Audit,Pool.Allocate,SDN.Use,\
-Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Clone,\
-VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.CPU,VM.Config.Disk,\
-VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,\
-VM.Migrate,VM.Monitor,VM.PowerMgmt"
+"Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,\
+Datastore.Audit,\
+Pool.Allocate,SDN.Use,Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,\
+VM.Audit,VM.Clone,VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.CPU,\
+VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,\
+VM.Config.Options,VM.Console,VM.GuestAgent.Audit,\
+VM.GuestAgent.Unrestricted,VM.Migrate,VM.PowerMgmt"
 ```
+
+A note for anyone porting an older runbook: PVE 9 removed the `VM.Monitor`
+privilege (its ground is now covered by `VM.Console` and the
+`VM.GuestAgent.*` family), and the role gains `Datastore.AllocateTemplate`
+so the lazy template build in chapter 3 can upload images and convert the
+seed VM. On PVE 8 the old list still works; the one above works on both.
 
 Then the grants. We bind the role at the root path so the account reaches
 VMs, pools, and the SDN. We also add explicit grants on the storage pools
@@ -186,9 +196,38 @@ it fills with data.
 
 One more switch while we are here: the datacenter firewall. OCFP's bootstrap
 creates PVE security groups for the VMs it manages, which requires
-**Datacenter → Firewall → Options → Firewall: Yes**. Enabling the datacenter
-firewall does not, by itself, filter anything — rules attach per-VM — so this
-is safe to flip now.
+**Datacenter → Firewall → Options → Firewall: Yes**. Enabling it does not
+filter *VM* traffic by itself — those rules attach per-VM — but it does arm
+the **host** firewall, whose default input policy drops traffic arriving
+from the SDN. The gateway address serves DNS, DHCP, and (in our labs) the
+PVE API to every VM, so the host needs explicit rules for its SDN-facing
+duties. Write them now, alongside the flip
+(`/etc/pve/nodes/<node>/host.fw`):
+
+```
+[OPTIONS]
+
+enable: 1
+
+[RULES]
+
+IN ACCEPT -source <supernet> -p udp -dport 53   # SDN DNS via gateway
+IN ACCEPT -source <supernet> -p tcp -dport 53   # SDN DNS via gateway
+IN ACCEPT -p udp -sport 68 -dport 67            # SDN DHCP — no -source!
+IN ACCEPT -source <supernet> -p icmp            # gateway reachability
+IN ACCEPT -source <supernet> -p tcp -dport 8006 # PVE API for the CPI
+```
+
+The DHCP rule deliberately carries no `-source`: a client asking for its
+first lease sends the DISCOVER from `0.0.0.0`, which no supernet-scoped
+rule will ever match. Scope it and every fresh VM boots addressless while
+renewals keep working — drift that only bites new machines.
+
+The failure mode for skipping this is memorably misleading: DHCP still
+works (dnsmasq answers broadcasts), external ping and TCP still work
+(FORWARD is a different chain), but every DNS query to the gateway times
+out and the CPI can never reach the API through it. It looks exactly like
+a dnsmasq problem, and it is not.
 
 ## Templates — the part we no longer do by hand
 

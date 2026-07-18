@@ -49,7 +49,34 @@ decisions we make now:
 
 That one address is also our DNS. The SDN host service runs dnsmasq as a
 forwarder, so every VM we create uses `10.108.16.1` for both its default
-route and its resolver. The bastion is never in the data path — it is an
+route and its resolver. One packaging wrinkle: PVE does not ship dnsmasq.
+Before the zone can serve DHCP or DNS we install it once on the host and
+disable the distribution's default instance — the SDN spawns its own
+per-zone unit (`dnsmasq@<zone>`):
+
+```bash
+apt install dnsmasq && systemctl disable --now dnsmasq
+```
+
+Skipping this fails quietly: the SDN applies cleanly, but nothing listens
+on `10.108.16.1:53`, and every VM boots with a dead resolver.
+
+Its sibling wrinkle is IP forwarding. The SNAT rule the subnet asks for
+only *translates* packets; the kernel must also be willing to *forward*
+them, and a stock PVE host ships with `net.ipv4.ip_forward = 0`. Enable it
+now and persist it:
+
+```bash
+sysctl -w net.ipv4.ip_forward=1
+echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-ocfp-sdn-forward.conf
+```
+
+This failure is even quieter than the dnsmasq one: DHCP works (dnsmasq is
+host-local), DNS works, and every packet bound for the internet dies at
+the host. The first symptom is an `apt-get update` inside a template seed
+VM fetching nothing — and `apt-get update` exits zero even when all its
+mirrors are unreachable, so the error surfaces one step later as
+`Unable to locate package`. The bastion is never in the data path — it is an
 operator jumpbox we can rebuild at will, and nothing routes through it.
 
 ## The SDN zone — Simple, not VXLAN
@@ -70,22 +97,32 @@ eight alphanumerics or fewer — ours is simply `ocfp` — and the subnet is
 the full supernet with the gateway and SNAT enabled:
 
 ```bash
-pmx pve sdn zone create ocfpz --type simple --ipam pve
+pmx pve sdn zone create ocfpz --type simple --ipam pve --dhcp dnsmasq
 pmx pve sdn vnet create ocfp --zone ocfpz
 pmx pve sdn subnet create ocfp 10.108.16.0/20 \
-  --gateway 10.108.16.1 --snat
+  --gateway 10.108.16.1 --snat \
+  --dhcp-range start-address=10.108.16.200,end-address=10.108.16.250 \
+  --dhcp-dns-server 10.108.16.1
 pmx pve sdn apply
 ```
 
-**On the host (native):** the same four calls through `pvesh`, as root — or
+The `--dhcp dnsmasq` backend is what actually starts the per-zone dnsmasq
+unit — without it there is no DHCP for template seed VMs and no DNS
+answering on the gateway. The seed range `.200`–`.250` sits deliberately
+above every static and available band from the plan below.
+
+**On the host (native):** the same calls through `pvesh`, as root — or
 the equivalent clicks under Datacenter → SDN → Zones / VNets:
 
 ```bash
-pvesh create /cluster/sdn/zones --type simple --zone ocfpz --ipam pve
+pvesh create /cluster/sdn/zones --type simple --zone ocfpz --ipam pve \
+  --dhcp dnsmasq
 pvesh create /cluster/sdn/vnets --vnet ocfp --zone ocfpz
 pvesh create /cluster/sdn/vnets/ocfp/subnets \
   --type subnet --subnet 10.108.16.0/20 \
-  --gateway 10.108.16.1 --snat 1
+  --gateway 10.108.16.1 --snat 1 \
+  --dhcp-range start-address=10.108.16.200,end-address=10.108.16.250 \
+  --dhcp-dns-server 10.108.16.1
 pvesh set /cluster/sdn
 ```
 

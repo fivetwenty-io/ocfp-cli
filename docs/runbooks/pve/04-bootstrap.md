@@ -82,9 +82,16 @@ or ACL-rejected auth key.
 duplicates. For a true restart:
 
 ```bash
-ocfp teardown --bloc ocfp-lab-wayne --nuke --dry-run --output json   # preview first, always
+ocfp teardown --bloc ocfp-lab-wayne --nuke --force --dry-run --output json   # preview first, always
 ocfp teardown --bloc ocfp-lab-wayne --nuke --force --empty
 ```
+
+One rebuilt-host trap deserves a callout: if the PVE host was reinstalled
+out from under an existing bloc, the state file under
+`~/.ocfp/<bloc>/state/` still records every old resource, and bootstrap
+will politely skip "existing" bastions and subnets that no longer exist
+anywhere. When host reality and state disagree, back up and prune the
+phantom entries (or empty the state) before re-running bootstrap.
 
 ## The artifacts store
 
@@ -105,8 +112,11 @@ When it finishes we have RustFS answering S3 on port 9000 with a
 certificate from the bloc's own CA, the standard buckets created
 (`ocfp-lab-wayne-mgmt-bosh`, `ocfp-lab-wayne-ocf-bosh`,
 `ocfp-lab-wayne-artifacts-blobstore`, `ocfp-lab-wayne-shield`, and the CF
-buckets we will want later), and the endpoint plus credentials written to
-Vault at `secret/config/ocfp-lab-wayne/rustfs`.
+buckets we will want later), and the store's coordinates written to Vault:
+the endpoint and TLS facts at `secret/ocfp/ocfp-lab-wayne/artifacts`, and
+per-consumer S3 credentials under
+`secret/config/ocfp-lab-wayne/<zone>/bosh/blobstores/` and
+`.../<zone>/cf/blobstores/`.
 
 **Verify**: the CLI carries its own health checks, so we use them:
 
@@ -116,8 +126,8 @@ ocfp artifacts lookup --bloc ocfp-lab-wayne
 ```
 
 Status should report the VM up and RustFS serving; lookup should print the
-endpoint and bucket list. If Vault is missing the `rustfs` entry (the write
-is best-effort), `ocfp vault populate` backfills it.
+endpoint and bucket list. If Vault is missing the artifacts entry (the
+write is best-effort), `ocfp vault populate` backfills it.
 
 **Rollback**: the artifacts phase re-runs cleanly on its own
 (`--artifacts --yes` again), without disturbing the bastion.
