@@ -170,6 +170,40 @@ func TestBastionSMBIOSPayload_IncludesCloudflareToken(t *testing.T) {
 	}
 }
 
+func TestBastionSMBIOSPayload_IncludesIngress(t *testing.T) {
+	ts := &cpi.TailscaleSpec{AuthKey: "tskey-abc", Hostname: "b1"}
+	ing := &cpi.IngressSpec{OriginIP: "10.108.20.13", Ports: []int{80, 443}}
+
+	p := BastionSMBIOSPayload(ts, nil, ing)
+
+	var sku map[string]any
+	if err := json.Unmarshal([]byte(p.SKU), &sku); err != nil {
+		t.Fatalf("sku not json: %v", err)
+	}
+
+	ingress, ok := sku["ingress"].(map[string]any)
+	if !ok {
+		t.Fatalf("sku missing ingress object: %s", p.SKU)
+	}
+	if ingress["origin_ip"] != "10.108.20.13" {
+		t.Errorf("origin_ip = %v", ingress["origin_ip"])
+	}
+}
+
+func TestBastionSMBIOSPayload_NilIngressOmitsKey(t *testing.T) {
+	ts := &cpi.TailscaleSpec{AuthKey: "tskey-abc"}
+
+	p := BastionSMBIOSPayload(ts, nil, nil)
+
+	var sku map[string]any
+	if err := json.Unmarshal([]byte(p.SKU), &sku); err != nil {
+		t.Fatalf("sku not json: %v", err)
+	}
+	if _, present := sku["ingress"]; present {
+		t.Errorf("ingress key must be absent when spec nil")
+	}
+}
+
 func TestBuildSMBIOSConfigValue_RealisticPayloadFitsSlot(t *testing.T) {
 	t.Parallel()
 

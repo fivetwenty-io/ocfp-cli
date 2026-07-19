@@ -43,11 +43,10 @@ func (p SMBIOSPayload) IsEmpty() bool {
 	return p.Serial == "" && p.SKU == "" && p.Family == ""
 }
 
-// BastionSpecToSMBIOSPayload builds the SMBIOS payload from the bastion's
-// tailscale + cloudflare specs. Serial carries the tailscale auth key; SKU is
-// a JSON blob the firstboot script jq-parses, now including a "cloudflare"
-// object with the connector token.
-func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) SMBIOSPayload {
+// BastionSMBIOSPayload builds the SMBIOS payload from the bastion's
+// tailscale + cloudflare + ingress specs. Serial carries the tailscale auth
+// key; SKU is a JSON blob the firstboot script jq-parses.
+func BastionSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec, ing *cpi.IngressSpec) SMBIOSPayload {
 	if ts == nil || ts.AuthKey == "" {
 		return SMBIOSPayload{}
 	}
@@ -69,6 +68,13 @@ func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) S
 		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
 	}
 
+	if ing != nil && ing.OriginIP != "" {
+		skuMap["ingress"] = map[string]interface{}{
+			"origin_ip": ing.OriginIP,
+			"ports":     ing.Ports,
+		}
+	}
+
 	sku, err := json.Marshal(skuMap)
 	if err != nil {
 		// Marshalling fixed-shape data shouldn't realistically fail; if it
@@ -82,6 +88,14 @@ func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) S
 		SKU:    string(sku),
 		Family: smbiosFamilyBastion,
 	}
+}
+
+// BastionSpecToSMBIOSPayload builds the SMBIOS payload from the bastion's
+// tailscale + cloudflare specs. Serial carries the tailscale auth key; SKU is
+// a JSON blob the firstboot script jq-parses, now including a "cloudflare"
+// object with the connector token.
+func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) SMBIOSPayload {
+	return BastionSMBIOSPayload(ts, cf, nil)
 }
 
 // TailscaleSpecToSMBIOSPayload is retained for callers with no cloudflare spec.

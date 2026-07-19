@@ -394,7 +394,10 @@ type InstanceRequest struct {
 	Tailscale             *TailscaleSpec // Optional: full tailscale config. When non-nil + AuthKey set, the PVE provider injects via SMBIOS for the bastion firstboot/watchdog to read.
 	// Cloudflare, when non-nil, provisions a cloudflared connector on the
 	// bastion via SMBIOS alongside tailscale.
-	Cloudflare      *CloudflareSpec
+	Cloudflare *CloudflareSpec
+	// Ingress, when non-nil, configures bastion-side nftables forwarding
+	// for tailscale ingress via SMBIOS alongside tailscale.
+	Ingress         *IngressSpec
 	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
@@ -465,6 +468,15 @@ type CloudflareSpec struct {
 	// TunnelToken is the connector token from EnsureTunnel. Empty disables
 	// cloudflared provisioning on the bastion.
 	TunnelToken string
+}
+
+// IngressSpec is the bastion-side tailscale-ingress forwarding config
+// delivered via SMBIOS. The firstboot/watchdog scripts install nftables
+// DNAT + masquerade rules from it so tailnet clients hitting the bastion
+// on the listed ports reach the origin (the CF haproxy).
+type IngressSpec struct {
+	OriginIP string
+	Ports    []int
 }
 
 // BucketRequest represents a request for creating buckets.
