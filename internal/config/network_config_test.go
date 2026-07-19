@@ -106,3 +106,64 @@ dns_servers: [1.1.1.1, 8.8.8.8]
 		t.Errorf("DNSServers = %v, want [1.1.1.1 8.8.8.8]", nc.DNSServers)
 	}
 }
+
+// TestNetworkConfigUnmarshalAvailableBandAliases proves the reserved-IP
+// available-band override fields parse from both the documented camelCase
+// keys and the snake_case aliases, with camelCase taking precedence when both
+// are present (matching every other aliased field on NetworkConfig).
+func TestNetworkConfigUnmarshalAvailableBandAliases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		yaml      string
+		wantStart int
+		wantEnd   int
+	}{
+		{
+			name:      "camelCase keys",
+			yaml:      "availableBandStart: 12\navailableBandEnd: 509",
+			wantStart: 12,
+			wantEnd:   509,
+		},
+		{
+			name:      "snake_case keys",
+			yaml:      "available_band_start: 12\navailable_band_end: 509",
+			wantStart: 12,
+			wantEnd:   509,
+		},
+		{
+			name:      "camelCase wins over snake_case",
+			yaml:      "availableBandStart: 20\navailableBandEnd: 400\navailable_band_start: 99\navailable_band_end: 999",
+			wantStart: 20,
+			wantEnd:   400,
+		},
+		{
+			name:      "unset fields default to zero (no override)",
+			yaml:      "cidr: 10.0.0.0/16",
+			wantStart: 0,
+			wantEnd:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var nc config.NetworkConfig
+
+			err := yaml.Unmarshal([]byte(tt.yaml), &nc)
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			if nc.AvailableBandStart != tt.wantStart {
+				t.Errorf("AvailableBandStart = %d, want %d", nc.AvailableBandStart, tt.wantStart)
+			}
+
+			if nc.AvailableBandEnd != tt.wantEnd {
+				t.Errorf("AvailableBandEnd = %d, want %d", nc.AvailableBandEnd, tt.wantEnd)
+			}
+		})
+	}
+}

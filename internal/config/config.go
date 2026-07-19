@@ -494,6 +494,18 @@ type NetworkConfig struct {
 	// place. Empty => derived defaults (gateway+19 .. gateway+249).
 	AvailableIPStart string `json:"availableIpStart,omitempty" mapstructure:"availableIpStart" yaml:"availableIpStart,omitempty"`
 	AvailableIPEnd   string `json:"availableIpEnd,omitempty"   mapstructure:"availableIpEnd"   yaml:"availableIpEnd,omitempty"`
+
+	// AvailableBandStart / AvailableBandEnd override the bootstrap subnetStrategy's
+	// reserved-IP layout available band (available_a/available_b offsets, subnet-
+	// base-relative). Zero on both means "no override, use the strategy's default
+	// layout" (see internal/bootstrap reservedIPLayout). When set, both are
+	// required together and bootstrap validates start >= 12 (must clear the fixed
+	// named-IP slots 0-11), end > start, and end within the target subnet's usable
+	// range before applying them. Unlike AvailableIPStart/AvailableIPEnd (absolute
+	// IP strings consumed directly by the PVE vault-populate fallback path), these
+	// are integer offsets consumed by bootstrap's per-subnet layout resolution.
+	AvailableBandStart int `json:"availableBandStart,omitempty" mapstructure:"availableBandStart" yaml:"availableBandStart,omitempty"`
+	AvailableBandEnd   int `json:"availableBandEnd,omitempty"   mapstructure:"availableBandEnd"   yaml:"availableBandEnd,omitempty"`
 }
 
 // UnmarshalYAML accepts the historical snake_case key network_cidr alongside
@@ -524,6 +536,11 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		AvailableIPStartSC string `yaml:"available_ip_start,omitempty"`
 		AvailableIPEnd     string `yaml:"availableIpEnd,omitempty"`
 		AvailableIPEndSC   string `yaml:"available_ip_end,omitempty"`
+
+		AvailableBandStart   int `yaml:"availableBandStart,omitempty"`
+		AvailableBandStartSC int `yaml:"available_band_start,omitempty"`
+		AvailableBandEnd     int `yaml:"availableBandEnd,omitempty"`
+		AvailableBandEndSC   int `yaml:"available_band_end,omitempty"`
 	}
 
 	var raw rawNetwork
@@ -550,6 +567,8 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	n.Subnets = raw.Subnets
 	n.AvailableIPStart = firstSetString(raw.AvailableIPStart, raw.AvailableIPStartSC)
 	n.AvailableIPEnd = firstSetString(raw.AvailableIPEnd, raw.AvailableIPEndSC)
+	n.AvailableBandStart = firstSetInt(raw.AvailableBandStart, raw.AvailableBandStartSC)
+	n.AvailableBandEnd = firstSetInt(raw.AvailableBandEnd, raw.AvailableBandEndSC)
 
 	return nil
 }
@@ -562,6 +581,20 @@ func firstSetString(values ...string) string {
 	}
 
 	return ""
+}
+
+// firstSetInt mirrors firstSetString for integer fields: it returns the first
+// non-zero value in precedence order (camelCase before snake_case), or 0 if
+// none are set. 0 is treated as "unset" for these fields since a band offset
+// of 0 would collide with the subnet's own network address anyway.
+func firstSetInt(values ...int) int {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+
+	return 0
 }
 
 // mergePVEDefaults fills empty PVE credential fields on bloc from defaults.
