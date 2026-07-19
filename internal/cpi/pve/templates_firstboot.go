@@ -144,6 +144,29 @@ set -euo pipefail
 family=$(dmidecode -s system-family 2>/dev/null || true)
 [[ "$family" == "ocfp-bastion" ]] || exit 0
 
+# --- keep ingress forwarding rules present (lost on reboot; nft is not persisted).
+# This runs BEFORE the connectivity health checks: after a clean reboot
+# tailscale comes back healthy on its own, and the healthy-path exit-0s below
+# would otherwise skip the reinstall on every invocation.
+ing_sku=$(dmidecode -s system-sku-number 2>/dev/null || true)
+ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$ing_sku" 2>/dev/null || true)
+ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$ing_sku" 2>/dev/null || true)
+if [[ -n "$ing_origin" ]] && ! nft list table ip ocfp_ingress >/dev/null 2>&1; then
+  logger -t ocfp-tailscale-watchdog "ingress nft table missing; reinstalling"
+  nft -f - <<NFT
+table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
+  }
+}
+NFT
+fi
+
 status=$(tailscale status --json 2>/dev/null || true)
 
 # -e makes jq exit non-zero on false/null, so an absent/false Self.Online and a
@@ -196,25 +219,6 @@ cf_token=$(jq -r '.cloudflare.token // ""' <<<"$sku")
 if [[ -n "$cf_token" ]] && ! systemctl is-active --quiet cloudflared; then
   logger -t ocfp-tailscale-watchdog "cloudflared inactive; restarting"
   systemctl restart cloudflared || cloudflared service install "$cf_token"
-fi
-
-# --- keep ingress forwarding rules present (lost on reboot; nft is not persisted) ---
-ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$sku")
-ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$sku")
-if [[ -n "$ing_origin" ]] && ! nft list table ip ocfp_ingress >/dev/null 2>&1; then
-  logger -t ocfp-tailscale-watchdog "ingress nft table missing; reinstalling"
-  nft -f - <<NFT
-table ip ocfp_ingress {
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
-  }
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
-  }
-}
-NFT
 fi
 `
 
