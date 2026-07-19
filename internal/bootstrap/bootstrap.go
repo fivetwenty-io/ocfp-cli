@@ -63,6 +63,11 @@ type Manager struct {
 	// Tunnel step, consumed by bastionCloudflareSpec for the SMBIOS payload.
 	// Empty when the feature is disabled.
 	cloudflareTunnelToken string
+
+	// cloudflareDoer is the HTTP seam ConfigureIngressDNS passes to
+	// cloudflare.NewClient. Nil in production (real client); tests inject a
+	// fake to exercise DNS-API success and error paths without a network call.
+	cloudflareDoer cloudflareDoer
 }
 
 // NewManager creates a new bootstrap manager.
