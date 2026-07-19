@@ -462,6 +462,103 @@ func TestCreateBastion_StackitVirtualSubnet(t *testing.T) {
 }
 
 // ==============================================================================
+// Test: Bastion DNS resolver fallback
+// ==============================================================================
+
+func TestCreateBastion_DNSServers_ExplicitConfigPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeComp, _, cfg := setupComputeTest(t, "pve")
+	cfg.Network.DNSServers = []string{"10.20.0.53", "10.20.0.54"}
+
+	ctx := context.Background()
+
+	err := manager.CreateBastion(ctx)
+	if err != nil {
+		t.Fatalf("CreateBastion failed: %v", err)
+	}
+
+	want := []string{"10.20.0.53", "10.20.0.54"}
+	if !slicesEqual(fakeComp.lastReq.DNSServers, want) {
+		t.Errorf("DNSServers = %v, want %v (explicit config must win unchanged)", fakeComp.lastReq.DNSServers, want)
+	}
+}
+
+func TestCreateBastion_DNSServers_EmptyFallsBackToGatewayThenPublic(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeComp, _, cfg := setupComputeTest(t, "pve")
+	cfg.Network.DNSServers = nil
+
+	ctx := context.Background()
+
+	err := manager.CreateBastion(ctx)
+	if err != nil {
+		t.Fatalf("CreateBastion failed: %v", err)
+	}
+
+	// The test subnet's CIDR (10.4.0.0/22) has no recorded gateway output, so
+	// bastionGatewayIP derives it from the CIDR: 10.4.0.1.
+	want := []string{"10.4.0.1", "1.1.1.1"}
+	if !slicesEqual(fakeComp.lastReq.DNSServers, want) {
+		t.Errorf("DNSServers = %v, want %v (gateway first, public resolver second)", fakeComp.lastReq.DNSServers, want)
+	}
+}
+
+func TestCreateBastion_DNSServers_EmptyNoGatewayFallsBackToPublicOnly(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeComp, _, cfg := setupComputeTest(t, "pve")
+	cfg.Network.DNSServers = nil
+
+	// Remove the subnet's CIDR so bastionGatewayIP has nothing to derive a
+	// gateway from, exercising the no-gateway-available branch.
+	err := manager.StateManager().RemoveResource("subnet", "prod-ocfp-0")
+	if err != nil {
+		t.Fatalf("Failed to remove subnet: %v", err)
+	}
+
+	err = manager.StateManager().AddResource(&state.Resource{
+		ID:   "subnet-prod-ocfp-0",
+		Type: "subnet",
+		Name: "prod-ocfp-0",
+		Properties: map[string]interface{}{
+			"cidr":              "",
+			"availability_zone": "eu01-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to re-add subnet without CIDR: %v", err)
+	}
+
+	ctx := context.Background()
+
+	err = manager.CreateBastion(ctx)
+	if err != nil {
+		t.Fatalf("CreateBastion failed: %v", err)
+	}
+
+	want := []string{"1.1.1.1"}
+	if !slicesEqual(fakeComp.lastReq.DNSServers, want) {
+		t.Errorf("DNSServers = %v, want %v (public resolver only, no empty leading entry)", fakeComp.lastReq.DNSServers, want)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ==============================================================================
 // Test: Image Resolution
 // ==============================================================================
 
