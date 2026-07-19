@@ -291,3 +291,45 @@ func TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault(t *testing
 		t.Errorf("vault base = %v, want example.com", safe.body["base"])
 	}
 }
+
+// TestFilterBastionSteps_IncludesConfigureIngressDNS is the regression test
+// for finding 2: `ocfp bootstrap --bastion` is the documented bastion-recovery
+// flow, and a recreated bastion joins the tailnet with a new IP, so the DNS
+// step must run alongside it. Before the fix, filterBastionSteps kept only
+// required||servers steps and silently dropped this {"network", false} step.
+func TestFilterBastionSteps_IncludesConfigureIngressDNS(t *testing.T) {
+	t.Parallel()
+
+	m := &Manager{options: &Options{Bastion: true}}
+	allSteps := []bootstrapStep{
+		{"Create Network", nil, "network", true},
+		{"Create Security Groups", nil, "security", true},
+		{"Create Cloudflare Tunnel", nil, "network", false},
+		{"Create Bastion", nil, "servers", false},
+		{"Configure Ingress DNS", nil, "network", false},
+		{"Create Buckets", nil, "buckets", false},
+	}
+
+	filtered := m.filterBastionSteps(allSteps)
+
+	names := make(map[string]bool, len(filtered))
+	for _, s := range filtered {
+		names[s.name] = true
+	}
+
+	if !names["Configure Ingress DNS"] {
+		t.Error("expected \"Configure Ingress DNS\" to run in --bastion mode")
+	}
+
+	if !names["Create Network"] || !names["Create Bastion"] {
+		t.Error("expected required and servers-category steps to still be included")
+	}
+
+	if names["Create Cloudflare Tunnel"] {
+		t.Error("expected \"Create Cloudflare Tunnel\" to remain excluded in --bastion mode")
+	}
+
+	if names["Create Buckets"] {
+		t.Error("expected unrelated non-required, non-servers steps to remain excluded")
+	}
+}
