@@ -76,6 +76,25 @@ func TestWatchdogScript_GatedOnSelfOnline(t *testing.T) {
 	}
 }
 
+func TestWatchdogScript_IngressReinstallBeforeHealthChecks(t *testing.T) {
+	t.Parallel()
+
+	ingress := strings.Index(watchdogScript, "ocfp_ingress")
+	health := strings.Index(watchdogScript, ".Self.Online")
+
+	if ingress == -1 {
+		t.Fatal("watchdogScript must reinstall the ocfp_ingress nft table (lost on reboot)")
+	}
+
+	// After a clean reboot tailscale comes back healthy on its own, and the
+	// healthy-path exit-0s in the connectivity check skip everything after
+	// them — the ingress reinstall must run before that check or a rebooted
+	// bastion never gets its DNAT table back.
+	if health != -1 && ingress > health {
+		t.Error("ocfp_ingress reinstall must come BEFORE the Self.Online health check and its early exits")
+	}
+}
+
 func TestSystemdUnits_OrderingCorrect(t *testing.T) {
 	t.Parallel()
 
