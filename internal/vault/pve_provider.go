@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -609,25 +610,41 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 // (pveAvailableBand) is split into three contiguous, non-overlapping slices so
 // each logical subnet on the shared flat range owns a distinct slice. This
 // keeps net-compilation (ocfp-2) clear of net-ocf (ocfp-0/1) when no bootstrap
-// state is present. Returns empty strings when the band cannot be derived.
+// state is present.
+//
+// Slicing uses full 32-bit IP arithmetic (see vaultIPToUint32/vaultUint32ToIP),
+// so a band spanning an octet boundary (e.g. .64.240 to .65.30) still slices
+// into three correct, disjoint, non-overlapping parts rather than silently
+// collapsing to a shared band. Only a genuinely unsliceable band (parse
+// failure, or an inverted/empty range where end <= start) falls back to
+// returning the whole band to every subnet, per the documented graceful-
+// degradation contract. Returns empty strings when the band cannot be derived
+// at all (pveAvailableBand itself failed).
 func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, string) {
+	const subnetCount = 3
+
+	// i is always 0/1/2 from writeFallbackSubnet's `for i := range 3`, but
+	// guard explicitly since this is a package-level function: a negative or
+	// out-of-range i must not reach the uint32(i) conversion below.
+	if i < 0 || i >= subnetCount {
+		return "", ""
+	}
+
 	start, end := pveAvailableBand(cfg, gateway)
 	if start == "" || end == "" {
 		return "", ""
 	}
 
-	startOctet := pveLastOctet(start)
+	startVal, startOK := vaultIPToUint32(start)
+	endVal, endOK := vaultIPToUint32(end)
 
-	endOctet := pveLastOctet(end)
-	if startOctet < 0 || endOctet < 0 || endOctet <= startOctet {
-		// Cannot reason about the band (multi-octet span or parse failure):
-		// fall back to the shared band so we still write something usable.
+	if !startOK || !endOK || endVal <= startVal {
+		// Cannot reason about the band (parse failure, or an inverted/empty
+		// range): fall back to the shared band so we still write something usable.
 		return start, end
 	}
 
-	const subnetCount = 3
-
-	span := endOctet - startOctet + 1
+	span := endVal - startVal + 1
 
 	slice := span / subnetCount
 	if slice < 1 {
@@ -635,45 +652,56 @@ func pveFallbackSubnetBand(cfg *config.Config, gateway string, i int) (string, s
 		return start, end
 	}
 
-	sliceStart := startOctet + i*slice
+	// Safe conversion: i was validated above to be in [0, subnetCount), well
+	// within uint32 range.
+	sliceStart := startVal + uint32(i)*slice
 
 	sliceEnd := sliceStart + slice - 1
 	if i == subnetCount-1 {
 		// Last slice absorbs any remainder so the full band is covered.
-		sliceEnd = endOctet
+		sliceEnd = endVal
 	}
 
-	return pveOffsetIP(gateway, sliceStart-pveLastOctet(gateway)), pveOffsetIP(gateway, sliceEnd-pveLastOctet(gateway))
+	return vaultUint32ToIP(sliceStart), vaultUint32ToIP(sliceEnd)
 }
 
-// pveLastOctet returns the integer value of an IPv4 address's last octet, or
-// -1 when the input cannot be parsed.
-func pveLastOctet(ip string) int {
-	last := -1
-
-	for i := len(ip) - 1; i >= 0; i-- {
-		if ip[i] == '.' {
-			last = i
-
-			break
-		}
+// vaultIPToUint32 parses an IPv4 dotted-quad string into its big-endian
+// uint32 representation, returning ok=false for anything that isn't a valid
+// IPv4 address. This is a small local copy of internal/bootstrap's
+// ipToUint32: internal/bootstrap already imports internal/vault (for
+// artifacts/state helpers), so importing bootstrap here would create an
+// import cycle.
+func vaultIPToUint32(ip string) (uint32, bool) {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return 0, false
 	}
 
-	if last < 0 || last == len(ip)-1 {
-		return -1
+	v4 := parsed.To4()
+	if v4 == nil {
+		return 0, false
 	}
 
-	octet := 0
+	const (
+		octetShift24 = 24
+		octetShift16 = 16
+		octetShift8  = 8
+	)
 
-	for _, c := range ip[last+1:] {
-		if c < '0' || c > '9' {
-			return -1
-		}
+	return uint32(v4[0])<<octetShift24 | uint32(v4[1])<<octetShift16 | uint32(v4[2])<<octetShift8 | uint32(v4[3]), true
+}
 
-		octet = octet*10 + int(c-'0')
-	}
+// vaultUint32ToIP is the inverse of vaultIPToUint32: it renders a big-endian
+// uint32 as a dotted-quad IPv4 string.
+func vaultUint32ToIP(n uint32) string {
+	const (
+		octetShift24 = 24
+		octetShift16 = 16
+		octetShift8  = 8
+		octetMask    = 0xFF
+	)
 
-	return octet
+	return net.IPv4(byte(n>>octetShift24&octetMask), byte(n>>octetShift16&octetMask), byte(n>>octetShift8&octetMask), byte(n&octetMask)).String()
 }
 
 // pveFirstDNS returns the first DNS entry from a slice, or "" if the slice is empty.
@@ -713,39 +741,25 @@ func pveCIDRGateway(cidr string) string {
 	return cidr[:last+1] + "1"
 }
 
-// pveOffsetIP returns base IP with its last octet incremented by `off`.
-// Caps at 254 to stay below broadcast.  Returns "" on parse failure.
+// pveOffsetIP returns base IP shifted by `off` (which may be negative), using
+// full 32-bit IP arithmetic (vaultIPToUint32/vaultUint32ToIP) rather than
+// last-octet-only math, so an offset that crosses an octet boundary (e.g.
+// base=10.64.64.250, off=10 => 10.64.65.4) is handled correctly instead of
+// being capped/rejected. Returns "" on parse failure or when the shifted
+// result would fall outside the representable unsigned 32-bit IPv4 address
+// space (result < 0 or > 4294967295).
 func pveOffsetIP(base string, off int) string {
-	last := -1
-
-	for i := len(base) - 1; i >= 0; i-- {
-		if base[i] == '.' {
-			last = i
-
-			break
-		}
-	}
-
-	if last <= 0 || last == len(base)-1 {
+	baseVal, ok := vaultIPToUint32(base)
+	if !ok {
 		return ""
 	}
 
-	octet := 0
-
-	for _, c := range base[last+1:] {
-		if c < '0' || c > '9' {
-			return ""
-		}
-
-		octet = octet*10 + int(c-'0')
-	}
-
-	result := octet + off
-	if result < 0 || result > 254 {
+	result := int64(baseVal) + int64(off)
+	if result < 0 || result > int64(^uint32(0)) {
 		return ""
 	}
 
-	return fmt.Sprintf("%s%d", base[:last+1], result)
+	return vaultUint32ToIP(uint32(result))
 }
 
 // pveAvailableBand returns the [start,end] IPs of the per-subnet available
