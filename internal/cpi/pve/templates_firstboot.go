@@ -20,7 +20,7 @@ const smbiosFamilyBastion = "ocfp-bastion"
 // (idempotent), and runs `tailscale up`. Invoked once by
 // ocfp-firstboot.service after cloud-init + network-online.
 const firstbootScript = `#!/bin/bash
-# ocfp-firstboot v1 — runs once at first boot of a VM cloned from an
+# ocfp-firstboot v2 — runs once at first boot of a VM cloned from an
 # OCFP-provisioned template. Reads its config from SMBIOS so the cloning
 # step needs no file delivery to the PVE host (PVE 9.x API doesn't permit
 # snippet uploads).
@@ -98,6 +98,27 @@ if [[ -n "$cf_token" ]]; then
   cloudflared service install "$cf_token" || { cloudflared service uninstall >/dev/null 2>&1 || true; cloudflared service install "$cf_token"; }
   systemctl enable --now cloudflared >/dev/null 2>&1 || true
 fi
+
+# --- tailscale ingress forwarding (nftables DNAT to the CF haproxy) ---
+ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$sku")
+ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$sku")
+if [[ -n "$ing_origin" ]]; then
+  command -v nft >/dev/null 2>&1 || apt-get install -y nftables
+  # Idempotent: drop and recreate our own table only.
+  nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
+  nft -f - <<NFT
+table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
+  }
+}
+NFT
+fi
 `
 
 // watchdogScript keeps the bastion's tailscale connectivity healthy. It
@@ -108,7 +129,7 @@ fi
 // Triggered by ocfp-tailscale-watchdog.timer. Reads SMBIOS each invocation so
 // PVE-side config edits propagate without bastion restart.
 const watchdogScript = `#!/bin/bash
-# ocfp-tailscale-watchdog v2 — recover tailscale connectivity automatically.
+# ocfp-tailscale-watchdog v3 — recover tailscale connectivity automatically.
 #
 # Two distinct failure modes, two distinct remedies:
 #   1. Offline (Self.Online=false): coordinated drops (lab observed: all
@@ -175,6 +196,25 @@ cf_token=$(jq -r '.cloudflare.token // ""' <<<"$sku")
 if [[ -n "$cf_token" ]] && ! systemctl is-active --quiet cloudflared; then
   logger -t ocfp-tailscale-watchdog "cloudflared inactive; restarting"
   systemctl restart cloudflared || cloudflared service install "$cf_token"
+fi
+
+# --- keep ingress forwarding rules present (lost on reboot; nft is not persisted) ---
+ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$sku")
+ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$sku")
+if [[ -n "$ing_origin" ]] && ! nft list table ip ocfp_ingress >/dev/null 2>&1; then
+  logger -t ocfp-tailscale-watchdog "ingress nft table missing; reinstalling"
+  nft -f - <<NFT
+table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
+  }
+}
+NFT
 fi
 `
 

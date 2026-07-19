@@ -176,3 +176,27 @@ func TestWatchdogScript_RestartsDaemonOnWedge(t *testing.T) {
 		t.Errorf("watchdogScript must restart tailscaled when the datapath is wedged (tailscale up cannot fix a wedged tun device)")
 	}
 }
+
+func TestFirstbootScript_InstallsIngressDNAT(t *testing.T) {
+	for _, want := range []string{
+		`.ingress.origin_ip // ""`,
+		"table ip ocfp_ingress",
+		"dnat to $ing_origin",
+		"masquerade",
+	} {
+		if !strings.Contains(firstbootScript, want) {
+			t.Errorf("firstbootScript missing %q", want)
+		}
+	}
+}
+
+func TestWatchdogScript_ReassertsIngressDNAT(t *testing.T) {
+	for _, want := range []string{
+		`.ingress.origin_ip // ""`,
+		"nft list table ip ocfp_ingress",
+	} {
+		if !strings.Contains(watchdogScript, want) {
+			t.Errorf("watchdogScript missing %q", want)
+		}
+	}
+}
