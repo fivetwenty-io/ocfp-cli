@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -12,6 +13,14 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
+
+// cloudflareDoer is the HTTP seam ConfigureIngressDNS hands to
+// cloudflare.NewClient. Manager.cloudflareDoer is nil in production, which
+// makes NewClient fall back to its default timeout client; tests inject a
+// fake to script API responses and errors without a network call.
+type cloudflareDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 // tailnetStatusJSON returns `tailscale status --json` output from the machine
 // running bootstrap (which must be joined to the tailnet). Package var so
@@ -64,17 +73,21 @@ func (m *Manager) ConfigureIngressDNS(ctx context.Context) error {
 		return nil
 	}
 
-	client := cloudflare.NewClient(token, nil)
+	client := cloudflare.NewClient(token, m.cloudflareDoer)
 
 	_, zoneID, err := client.ResolveAccountAndZone(ctx, cf.Zone)
 	if err != nil {
-		return fmt.Errorf("ingress dns resolve zone: %w", err)
+		logger.Warnf("Tailscale ingress: resolve zone: %v; skipping DNS records", err)
+
+		return nil
 	}
 
 	for _, name := range ingressRecordNames(base) {
 		err := client.UpsertA(ctx, zoneID, name, ip)
 		if err != nil {
-			return fmt.Errorf("ingress dns %s: %w", name, err)
+			logger.Warnf("Tailscale ingress: upsert %s: %v; skipping DNS records", name, err)
+
+			return nil
 		}
 	}
 
