@@ -596,6 +596,11 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 		log.Warnf("cloudflare teardown: %v", cerr)
 	}
 
+	ierr := m.teardownIngressDNS(ctx)
+	if ierr != nil {
+		log.Warnf("ingress teardown: %v", ierr)
+	}
+
 	sortedResources, err := m.prepareResourcesForDeletion(ctx)
 	if err != nil {
 		return err
@@ -692,6 +697,53 @@ func (m *TeardownManager) teardownCloudflare(ctx context.Context) error {
 	}
 
 	logger.Get().Infof("Cloudflare tunnel %s torn down", tunnelID)
+
+	return nil
+}
+
+// teardownIngressDNS deletes the tailscale-ingress A records (apex +
+// wildcard). Best-effort soft-warn: stale DNS must never block teardown.
+//
+//nolint:unparam // error return matches the teardown-step contract; failures are warnings
+func (m *TeardownManager) teardownIngressDNS(ctx context.Context) error {
+	if m.config == nil || config.ResolveIngressProvider(m.config) != config.IngressProviderTailscale {
+		return nil
+	}
+
+	cf := m.config.Cloudflare
+	if cf == nil || cf.Zone == "" || m.config.FQDNs == nil || m.config.FQDNs.Base == "" {
+		logger.Get().Warn("ingress teardown skipped: zone or fqdns.base unset")
+
+		return nil
+	}
+
+	safe := cloudflareSafe()
+
+	token := vault.ResolveSecretRef(safe, cf.APIToken, cf.APITokenVaultPath)
+	if token == "" {
+		logger.Get().Warn("ingress teardown skipped: API token unavailable")
+
+		return nil
+	}
+
+	client := cloudflare.NewClient(token, nil)
+
+	_, zoneID, err := client.ResolveAccountAndZone(ctx, cf.Zone)
+	if err != nil {
+		logger.Get().Warnf("ingress teardown: resolve zone: %v", err)
+
+		return nil
+	}
+
+	base := m.config.FQDNs.Base
+	for _, name := range []string{base, "*." + base} {
+		derr := client.DeleteA(ctx, zoneID, name)
+		if derr != nil {
+			logger.Get().Warnf("ingress dns delete %s: %v", name, derr)
+		}
+	}
+
+	logger.Get().Infof("Tailscale ingress DNS for %s removed", base)
 
 	return nil
 }
