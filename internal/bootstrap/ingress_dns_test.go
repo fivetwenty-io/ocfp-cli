@@ -233,3 +233,61 @@ func TestConfigureIngressDNS_UpsertErrorSoftSkips(t *testing.T) {
 		t.Fatalf("expected soft skip on upsert error, got %v", err)
 	}
 }
+
+// TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault is the
+// plan-mandated happy-path test (finding 3): with provider=tailscale, a
+// resolvable token, and a discoverable tailnet IP, the step must upsert A
+// records for both the base and wildcard names and persist
+// provider/bastion_tailnet_ip/base to the vault ingress path.
+func TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault(t *testing.T) {
+	stubTailnetStatus(t, "b-bastion", "100.64.0.5")
+
+	doer := &fakeCloudflareDoer{
+		responses: map[string]string{
+			"GET /client/v4/zones":                       `{"success":true,"result":[{"id":"zone-abc","name":"example.com","account":{"id":"acct-1","name":"acct"}}]}`,
+			"GET /client/v4/zones/zone-abc/dns_records":  `{"success":true,"result":[]}`,
+			"POST /client/v4/zones/zone-abc/dns_records": `{"success":true,"result":{"id":"rec-1"}}`,
+		},
+	}
+
+	safe := &fakeIngressSafe{}
+	m := &Manager{
+		config:         ingressTestConfig(),
+		options:        &Options{BlocName: "b"},
+		safe:           safe,
+		cloudflareDoer: doer,
+	}
+
+	if err := m.ConfigureIngressDNS(context.Background()); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	posted := 0
+
+	for _, r := range doer.seenRequests() {
+		if r == "POST /client/v4/zones/zone-abc/dns_records" {
+			posted++
+		}
+	}
+
+	if posted != 2 {
+		t.Errorf("expected 2 A-record upserts (base + wildcard), got %d", posted)
+	}
+
+	wantPath := "secret/config/b/ingress"
+	if safe.path != wantPath {
+		t.Fatalf("vault path = %q, want %q", safe.path, wantPath)
+	}
+
+	if safe.body["provider"] != config.IngressProviderTailscale {
+		t.Errorf("vault provider = %v, want %q", safe.body["provider"], config.IngressProviderTailscale)
+	}
+
+	if safe.body["bastion_tailnet_ip"] != "100.64.0.5" {
+		t.Errorf("vault bastion_tailnet_ip = %v, want 100.64.0.5", safe.body["bastion_tailnet_ip"])
+	}
+
+	if safe.body["base"] != "example.com" {
+		t.Errorf("vault base = %v, want example.com", safe.body["base"])
+	}
+}
