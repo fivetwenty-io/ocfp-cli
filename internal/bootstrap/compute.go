@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -468,6 +469,7 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	// PVE provider translates this into SMBIOS for the firstboot script.
 	req.Tailscale = m.bastionTailscaleSpec(bastionName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
 	req.Cloudflare = m.bastionCloudflareSpec()
+	req.Ingress = m.bastionIngressSpec()
 
 	// Tag instance with role for discovery by findBastionIP
 	if req.Tags == nil {
@@ -736,6 +738,46 @@ func (m *Manager) bastionCloudflareSpec() *cpi.CloudflareSpec {
 	}
 
 	return &cpi.CloudflareSpec{TunnelToken: m.cloudflareTunnelToken}
+}
+
+// bastionIngressSpec returns the tailscale-ingress forwarding spec for the
+// bastion, or nil when the resolved ingress provider is not tailscale or no
+// origin host can be derived from cloudflare.origin.
+func (m *Manager) bastionIngressSpec() *cpi.IngressSpec {
+	if m.config == nil || config.ResolveIngressProvider(m.config) != config.IngressProviderTailscale {
+		return nil
+	}
+
+	if m.config.Cloudflare == nil {
+		return nil
+	}
+
+	host := originHost(m.config.Cloudflare.Origin)
+	if host == "" {
+		return nil
+	}
+
+	return &cpi.IngressSpec{OriginIP: host, Ports: []int{80, 443}}
+}
+
+// originHost extracts the bare host from an origin given as a URL
+// (https://ip:port), host:port, or bare host.
+func originHost(origin string) string {
+	s := strings.TrimSpace(origin)
+	if s == "" {
+		return ""
+	}
+
+	if !strings.Contains(s, "://") {
+		s = "https://" + s
+	}
+
+	u, err := url.Parse(s)
+	if err != nil {
+		return ""
+	}
+
+	return u.Hostname()
 }
 
 func firstNonEmpty(a, b string) string {

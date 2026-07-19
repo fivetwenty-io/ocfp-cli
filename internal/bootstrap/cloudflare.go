@@ -16,8 +16,8 @@ import (
 // stashes the connector token on the Manager for the bastion SMBIOS payload.
 // No-op (soft) when cloudflare is disabled or the API token is unavailable.
 func (m *Manager) CreateCloudflareTunnel(ctx context.Context) error {
-	if m.config == nil || !config.CloudflareEnabled(m.config.Cloudflare) {
-		logger.Infof("Cloudflare tunnel disabled; skipping")
+	if m.config == nil || config.ResolveIngressProvider(m.config) != config.IngressProviderCloudflared {
+		logger.Infof("Cloudflare tunnel not the active ingress provider; skipping")
 
 		return nil
 	}
