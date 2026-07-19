@@ -549,6 +549,8 @@ func (m *Manager) getBastionSubnetInfo() (*bastionSubnetInfo, error) {
 }
 
 func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID, subnetID, availabilityZone, sgID, userData string, useBootVolume bool, bootVolumeSize int) *cpi.InstanceRequest {
+	gatewayIP := m.bastionGatewayIP()
+
 	return &cpi.InstanceRequest{
 		Name:             bastionName,
 		Flavor:           flavorID,
@@ -564,12 +566,43 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		BootVolumeSize:   bootVolumeSize,
 		PublicKey:        m.bastionPublicKey(),
 		DefaultUsername:  m.bastionDefaultUsername(),
-		GatewayIP:        m.bastionGatewayIP(),
-		DNSServers:       m.config.Network.DNSServers,
+		GatewayIP:        gatewayIP,
+		DNSServers:       m.resolveBastionDNSServers(gatewayIP),
 		Hostname:         bastionName,
 		DomainSuffix:     m.bastionDomainSuffix(),
 		TailscaleAuthKey: m.resolveBastionTailscaleAuthKey(),
 	}
+}
+
+// resolveBastionDNSServers returns the DNS resolver list to push into the
+// bastion's cloud-init. Explicit operator config (Network.DNSServers) always
+// wins unchanged. When unset — the common case for PVE, which has no
+// applyPVEDefaults populating it the way applyStackitDefaults/applyAWSDefaults
+// do — fall back to the subnet's own gateway IP as the primary resolver, with
+// a public resolver as secondary. This mirrors the same "config -> gateway ->
+// public" chain already established for the Genesis/BOSH network config in
+// internal/vault/pve_provider.go (pveFirstDNS/pveFirstNonEmpty), and avoids
+// the pure-public default: a host-side tailscaled running with
+// accept-dns=true rewrites /etc/resolv.conf with MagicDNS
+// (100.100.100.100), and PVE only falls back to that host resolv.conf when
+// the cloud-init request carries no nameserver at all — the gateway is
+// reachable regardless of the host's tailscale state, so preferring it keeps
+// first boot resolvable even when the public resolver is filtered by a
+// restrictive egress policy.
+func (m *Manager) resolveBastionDNSServers(gatewayIP string) []string {
+	if len(m.config.Network.DNSServers) > 0 {
+		return m.config.Network.DNSServers
+	}
+
+	servers := make([]string, 0, 2)
+
+	if gw := strings.TrimSpace(gatewayIP); gw != "" {
+		servers = append(servers, gw)
+	}
+
+	servers = append(servers, "1.1.1.1")
+
+	return servers
 }
 
 // resolveBastionTailscaleAuthKey returns the tailscale auth key from the
