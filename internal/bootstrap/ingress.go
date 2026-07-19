@@ -151,6 +151,13 @@ func (m *Manager) bastionTailnetHostname() string {
 
 // tailnetIPForHost extracts the first IPv4 tailnet address for hostname from
 // `tailscale status --json` output. Empty when absent.
+//
+// Offline peers are skipped: HostName is the machine's OS hostname, and a
+// stale peer left behind by a destroyed VM can share that hostname with the
+// live replacement. Since map iteration order is nondeterministic, matching
+// on HostName alone can nondeterministically return a dead machine's IP.
+// Only peers with Online true are considered a match; the Self entry is
+// always the local machine and is therefore always online.
 func tailnetIPForHost(statusJSON []byte, hostname string) string {
 	var status struct {
 		Self struct {
@@ -160,6 +167,7 @@ func tailnetIPForHost(statusJSON []byte, hostname string) string {
 		Peer map[string]struct {
 			HostName     string   `json:"HostName"`
 			TailscaleIPs []string `json:"TailscaleIPs"`
+			Online       bool     `json:"Online"`
 		} `json:"Peer"`
 	}
 
@@ -182,7 +190,7 @@ func tailnetIPForHost(statusJSON []byte, hostname string) string {
 	}
 
 	for _, p := range status.Peer {
-		if p.HostName == hostname {
+		if p.HostName == hostname && p.Online {
 			return firstV4(p.TailscaleIPs)
 		}
 	}
