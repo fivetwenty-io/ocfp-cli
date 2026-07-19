@@ -340,7 +340,7 @@ func (lce *LocalCommandExecutor) Connect(_ctx context.Context) error {
 
 // ExecuteCommand executes a command locally.
 func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string) (*ssh.CommandResult, error) {
-	lce.log.Debugw("Executing local command", "command", cmd)
+	lce.log.Debugw("Executing local command", "command", logger.RedactSecrets(cmd))
 
 	start := time.Now()
 
@@ -373,7 +373,7 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 			res.ExitCode = 1
 		}
 
-		lce.log.Debugw("Local command failed", "exit_code", res.ExitCode, "stderr", res.Stderr)
+		lce.log.Debugw("Local command failed", "exit_code", res.ExitCode, "stderr", logger.RedactSecrets(res.Stderr))
 
 		return res, fmt.Errorf("command failed with exit code %d: %w", res.ExitCode, err)
 	}

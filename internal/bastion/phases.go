@@ -19,6 +19,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
@@ -777,8 +778,8 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 			m.log.Errorw("Script execution failed",
 				"script", scriptName,
 				"exit_code", result.ExitCode,
-				"stdout", result.Stdout,
-				"stderr", result.Stderr)
+				"stdout", logger.RedactSecrets(result.Stdout),
+				"stderr", logger.RedactSecrets(result.Stderr))
 
 			// Include meaningful script output in the error so users can diagnose failures
 			output := extractTail(result.Stderr, 20) //nolint:mnd
@@ -793,7 +794,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 			return fmt.Errorf("script %s failed: %w", scriptName, err)
 		}
 
-		m.log.Debugw("Script executed successfully", "script", scriptName, "stdout", result.Stdout)
+		m.log.Debugw("Script executed successfully", "script", scriptName, "stdout", logger.RedactSecrets(result.Stdout))
 
 		return nil
 	}
