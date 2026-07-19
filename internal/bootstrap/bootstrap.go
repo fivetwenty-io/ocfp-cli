@@ -298,7 +298,11 @@ func (m *Manager) filterSteps(allSteps []bootstrapStep) []bootstrapStep {
 func (m *Manager) filterBastionSteps(allSteps []bootstrapStep) []bootstrapStep {
 	filtered := make([]bootstrapStep, 0, len(allSteps))
 	for _, step := range allSteps {
-		if step.required || step.category == "servers" {
+		// "Configure Ingress DNS" is special-cased in: a recreated bastion
+		// joins the tailnet with a new IP, so the DNS-repair step must run
+		// alongside the documented `--bastion` recovery flow. Its own
+		// soft-skip guards make it a no-op when ingress isn't tailscale.
+		if step.required || step.category == "servers" || step.name == "Configure Ingress DNS" {
 			filtered = append(filtered, step)
 		}
 	}
