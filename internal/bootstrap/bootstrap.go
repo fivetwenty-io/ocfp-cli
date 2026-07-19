@@ -113,6 +113,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
 		// {"Create Volumes", m.createVolumes, "volumes", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
+		{"Configure Ingress DNS", m.ConfigureIngressDNS, "network", false},
 		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
 		{"Create Buckets", m.CreateBuckets, "buckets", false},
 	}
