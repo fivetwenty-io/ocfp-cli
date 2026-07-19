@@ -102,6 +102,7 @@ type ConfigFile struct {
 	PVE        *PVEDefaults       `mapstructure:"pve"        yaml:"pve,omitempty"`
 	Tailscale  *TailscaleConfig   `mapstructure:"tailscale"  yaml:"tailscale,omitempty"`
 	Cloudflare *CloudflareConfig  `mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+	Ingress    *IngressConfig     `mapstructure:"ingress"    yaml:"ingress,omitempty"`
 	Blocs      map[string]*Config `mapstructure:"blocs"      yaml:"blocs"`
 }
 
@@ -232,6 +233,11 @@ type Config struct {
 	// values take precedence over the global ConfigFile.Cloudflare defaults
 	// via mergeCloudflareDefaults at load time.
 	Cloudflare *CloudflareConfig `json:"cloudflare,omitempty" mapstructure:"cloudflare" yaml:"cloudflare,omitempty"`
+
+	// Ingress selects which provider fronts the bloc (cloudflared tunnel or
+	// tailscale + DNS + bastion DNAT). Per-bloc values take precedence over
+	// the global ConfigFile.Ingress defaults via mergeIngressDefaults.
+	Ingress *IngressConfig `json:"ingress,omitempty" mapstructure:"ingress" yaml:"ingress,omitempty"`
 
 	// CFCloudConfigCIDR is the subnet CIDR written into the CF cloud-config
 	// network section. It must match the BOSH director network CIDR
@@ -1115,6 +1121,7 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 	mergePVEDefaults(blocConfig, configFileData.PVE)
 	mergeTailscaleDefaults(blocConfig, configFileData.Tailscale)
 	mergeCloudflareDefaults(blocConfig, configFileData.Cloudflare)
+	mergeIngressDefaults(blocConfig, configFileData.Ingress)
 
 	return blocConfig, nil
 }
@@ -1707,6 +1714,11 @@ func validate(cfg *Config) error {
 	}
 
 	err = cfg.Cloudflare.Validate()
+	if err != nil {
+		return err
+	}
+
+	err = ValidateIngress(cfg)
 	if err != nil {
 		return err
 	}
