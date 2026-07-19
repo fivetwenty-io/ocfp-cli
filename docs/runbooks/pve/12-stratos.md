@@ -60,6 +60,58 @@ both from the config.
 bootstrap re-run. The tunnel and CNAMEs are removed, and the platform
 returns to tailnet-only reachability, fully functional for operators.
 
+## The tailscale alternative
+
+The tunnel above is what we get by leaving `ingress.provider` unset with
+`cloudflare.enabled: true` — the config we wrote in chapter 3 resolves to
+`cloudflared` by default. An operator who already lives on a tailnet and
+would rather skip a tunnel connector entirely can write one more line
+instead:
+
+```yaml
+    ingress:
+      provider: tailscale
+```
+
+Everything else in the chapter-3 `cloudflare:` block stays: the zone, the
+API token, and `origin` are still needed, because Cloudflare is doing DNS
+management here, not tunneling. Bootstrap's reconciliation shape does not
+change — same `ocfp bootstrap --bloc ocfp-lab-wayne --yes` — but what it
+*does* changes underneath: no `cloudflared` connector gets installed on the
+bastion, and instead a late "Configure Ingress DNS" step waits for the
+bastion to appear on the tailnet, then points `ocf.wayne.lab.fivetwenty.io`
+and `*.ocf.wayne.lab.fivetwenty.io` at its `100.x` tailnet IP (A records,
+TTL 60, unproxied — Cloudflare's edge cannot route to a tailnet address).
+On the bastion itself, an nftables table DNATs inbound 80/443 from
+`tailscale0` to the HAProxy origin and masquerades the reply so it routes
+back through the bastion rather than blackholing at the SDN gateway.
+
+**Verify**, the same shape as the tunnel path, just with the tailnet in the
+loop instead of `cloudflared`:
+
+```bash
+# The DNS record now resolves off-tailnet too — Cloudflare answers it even
+# though only tailnet clients can actually route to the address.
+dig +short api.system.ocf.wayne.lab.fivetwenty.io
+
+# From a machine joined to the tailnet, the whole path answers.
+curl https://api.system.ocf.wayne.lab.fivetwenty.io/v3/info
+
+# On the bastion: confirm the forwarding table is present.
+nft list table ip ocfp_ingress
+```
+
+**Rollback** mirrors the tunnel path: flip `ingress.provider` back to
+`cloudflared` (or remove the block) and re-bootstrap; `ocfp teardown`
+removes the two A records it created. A bastion that was already running
+before this config existed needs its template rebuilt or its watchdog
+script hand-patched — the nftables rule only gets installed by firstboot
+or the watchdog, and only takes effect at the bastion's next restart. Full
+detail, including the DNS-to-DNAT sequence diagram and the masquerade
+rationale, lives in [Ingress Providers](../../networking/ingress-providers.md);
+the tailnet join mechanics are in
+[Bastion Tailscale](../../init/bastion-tailscale.md).
+
 ## The console
 
 Stratos is the piece that makes the bloc feel finished — a web console for
