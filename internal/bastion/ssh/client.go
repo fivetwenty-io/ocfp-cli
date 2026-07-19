@@ -174,7 +174,7 @@ func (c *Client) ExecuteCommand(ctx context.Context, cmd string) (*CommandResult
 
 	startTime := time.Now()
 
-	c.log.Debugw("Executing remote command", "command", cmd)
+	c.log.Debugw("Executing remote command", "command", logger.RedactSecrets(cmd))
 
 	session, err := c.createSession()
 	if err != nil {
@@ -850,9 +850,9 @@ func (c *Client) buildCommandResult(cmd string, err error, startTime time.Time, 
 		}
 
 		c.log.Debugw("Command failed",
-			"command", cmd,
+			"command", logger.RedactSecrets(cmd),
 			"exit_code", result.ExitCode,
-			"stderr", result.Stderr)
+			"stderr", logger.RedactSecrets(result.Stderr))
 
 		return result, fmt.Errorf("command failed with exit code %d: %w",
 			result.ExitCode, err)
@@ -861,7 +861,7 @@ func (c *Client) buildCommandResult(cmd string, err error, startTime time.Time, 
 	result.ExitCode = 0
 
 	c.log.Debugw("Command completed successfully",
-		"command", cmd,
+		"command", logger.RedactSecrets(cmd),
 		"duration", duration.String())
 
 	return result, nil
