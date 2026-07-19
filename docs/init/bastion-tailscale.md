@@ -87,6 +87,43 @@ Routes do not auto-activate. After the bastion joins the tailnet, the tailnet ad
 
 When the auth key is empty, `req.Tailscale` is nil, `smbios1` is not touched, and the firstboot script exits 0 — the bastion boots without Tailscale.
 
+### Ingress forwarding
+
+Blocs configured with `ingress.provider: tailscale` (see
+[Ingress Providers](../networking/ingress-providers.md)) add one more piece
+to the SMBIOS `sku` blob: an `ingress` field of `{origin_ip, ports}`, where
+`origin_ip` is the CF haproxy origin (`cloudflare.origin`) and `ports`
+defaults to `[80, 443]`. Firstboot and the watchdog both read this field
+and, when present, install an nftables table named `ocfp_ingress`:
+
+```
+table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" tcp dport { 80, 443 } dnat to <origin_ip>
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip daddr <origin_ip> tcp dport { 80, 443 } masquerade
+  }
+}
+```
+
+The prerouting rule DNATs inbound tailnet traffic on ports 80/443 to the
+haproxy origin. The postrouting masquerade rule exists because the origin's
+default route points at the SDN gateway, not the bastion — without it, the
+origin's reply to a tailnet client would be sent straight to the SDN
+gateway carrying the client's real 100.x source address, which the SDN
+cannot route back to, and the connection would blackhole. Masquerading
+rewrites the source to the bastion's own address so the reply naturally
+routes back through it.
+
+nftables state does not survive a reboot. `ocfp-tailscale-watchdog`
+reinstalls the `ocfp_ingress` table only when `nft list table ip
+ocfp_ingress` comes back empty, so a reboot self-heals within one watchdog
+cycle (≤ 5 minutes) without needless churn on a table that's already
+present.
+
 ## Operator prerequisites
 
 Complete these once per tailnet, before any bastion is provisioned.
@@ -294,6 +331,7 @@ The watchdog handles transient tailnet drops automatically: it re-runs `tailscal
 - [Bastion Initialization](bastion.md) for the rest of the bastion provisioning workflow
 - [Proxmox Networking](../networking/providers/pve.md) for the PVE-specific context
 - [SDN Subnet Model](../networking/sdn-subnet-model.md) for why PVE bastions need this
+- [Ingress Providers](../networking/ingress-providers.md) for the `ingress.provider` config and the full tailscale ingress data path
 - [Cloudflare DNS Sync](../networking/dns-cloudflare-sync.md) for pointing wildcard DNS at the tailnet IP
 - [Tailscale ACL reference](https://tailscale.com/kb/1018/acls)
 - [Tailscale auth keys](https://tailscale.com/kb/1085/auth-keys)

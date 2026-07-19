@@ -2,6 +2,8 @@
 
 This document covers `scripts/cloudflare-dns-sync`, which keeps wildcard DNS for each bloc pointed at the bastion's tailnet IP. The workflow targets PVE today but generalizes to any deployment where the bastion sits on a Tailscale tailnet and you want public DNS to resolve internal hostnames.
 
+For a bloc configured with `ingress.provider: tailscale`, `ocfp bootstrap` now automates exactly these two records via `ConfigureIngressDNS` (see [Ingress Providers](ingress-providers.md)) — no separate script run is required, and `ocfp teardown` removes them again. This script remains useful for manual runs, other DNS providers, blocs not managed through `ingress.provider`, or repairing records outside the normal bootstrap/teardown lifecycle.
+
 ## Use case
 
 For each bloc, you want two records in a single zone:
@@ -127,6 +129,7 @@ When porting to a non-Cloudflare zone, keep the iteration shape (read blocs from
 ## See Also
 
 - [Bastion Tailscale](../init/bastion-tailscale.md) for the bastion's tailnet join workflow
+- [Ingress Providers](ingress-providers.md) for the automated bootstrap/teardown path this script mirrors
 - [Proxmox Networking](providers/pve.md) for the PVE-specific provider notes
 - [SDN Subnet Model](sdn-subnet-model.md) for why PVE bastions live behind Tailscale
 - [Cloudflare DNS API reference](https://developers.cloudflare.com/api/operations/dns-records-for-a-zone-list-dns-records)
