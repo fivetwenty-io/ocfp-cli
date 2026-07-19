@@ -179,11 +179,9 @@ func TestConfigureIngressDNS_SkipsWhenProviderNotTailscale(t *testing.T) {
 	}
 }
 
-// TestConfigureIngressDNS_ZoneResolveErrorSoftSkips is the regression test for
-// finding 1: a Cloudflare API error resolving the account/zone (e.g. a
-// transient 5xx) must not fail bootstrap. Before the fix this returned a
-// wrapped error, which Execute treats as fatal and offers to roll back an
-// otherwise healthy bootstrap.
+// A Cloudflare API error resolving the account/zone (e.g. a transient 5xx)
+// must soft-skip, not fail bootstrap: Execute treats a returned error as
+// fatal and offers to roll back an otherwise healthy bootstrap.
 func TestConfigureIngressDNS_ZoneResolveErrorSoftSkips(t *testing.T) {
 	stubTailnetStatus(t, "b-bastion", "100.64.0.5")
 
@@ -206,9 +204,8 @@ func TestConfigureIngressDNS_ZoneResolveErrorSoftSkips(t *testing.T) {
 	}
 }
 
-// TestConfigureIngressDNS_UpsertErrorSoftSkips is the regression test for
-// finding 1's second error path: a Cloudflare API error upserting an A record
-// must also soft-skip rather than fail bootstrap.
+// A Cloudflare API error upserting an A record must also soft-skip rather
+// than fail bootstrap.
 func TestConfigureIngressDNS_UpsertErrorSoftSkips(t *testing.T) {
 	stubTailnetStatus(t, "b-bastion", "100.64.0.5")
 
@@ -234,11 +231,9 @@ func TestConfigureIngressDNS_UpsertErrorSoftSkips(t *testing.T) {
 	}
 }
 
-// TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault is the
-// plan-mandated happy-path test (finding 3): with provider=tailscale, a
-// resolvable token, and a discoverable tailnet IP, the step must upsert A
-// records for both the base and wildcard names and persist
-// provider/bastion_tailnet_ip/base to the vault ingress path.
+// With provider=tailscale, a resolvable token, and a discoverable tailnet
+// IP, the step must upsert A records for both the base and wildcard names
+// and persist provider/bastion_tailnet_ip/base to the vault ingress path.
 func TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault(t *testing.T) {
 	stubTailnetStatus(t, "b-bastion", "100.64.0.5")
 
@@ -292,11 +287,10 @@ func TestConfigureIngressDNS_HappyPath_UpsertsRecordsAndPersistsVault(t *testing
 	}
 }
 
-// TestFilterBastionSteps_IncludesConfigureIngressDNS is the regression test
-// for finding 2: `ocfp bootstrap --bastion` is the documented bastion-recovery
-// flow, and a recreated bastion joins the tailnet with a new IP, so the DNS
-// step must run alongside it. Before the fix, filterBastionSteps kept only
-// required||servers steps and silently dropped this {"network", false} step.
+// `ocfp bootstrap --bastion` is the documented bastion-recovery flow, and a
+// recreated bastion joins the tailnet with a new IP, so the DNS step must
+// run alongside it rather than being dropped as a non-required,
+// non-servers step.
 func TestFilterBastionSteps_IncludesConfigureIngressDNS(t *testing.T) {
 	t.Parallel()
 
