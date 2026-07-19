@@ -11,15 +11,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// capturedRequest is a recorded call, including its raw JSON body, so tests
+// can assert on what was actually sent rather than just the response status.
+type capturedRequest struct {
+	Method string
+	Path   string
+	Body   []byte
+}
+
 // fakeDoer records requests and returns scripted responses keyed by "METHOD path".
 type fakeDoer struct {
 	responses map[string]string // body JSON
 	status    map[string]int
 	seen      []*http.Request
+	requests  []capturedRequest
 }
 
 func (f *fakeDoer) Do(req *http.Request) (*http.Response, error) {
 	f.seen = append(f.seen, req)
+
+	var body []byte
+	if req.Body != nil {
+		body, _ = io.ReadAll(req.Body)
+	}
+
+	f.requests = append(f.requests, capturedRequest{
+		Method: req.Method,
+		Path:   req.URL.Path,
+		Body:   body,
+	})
+
 	key := req.Method + " " + req.URL.Path
 	code := 200
 	if f.status != nil {
@@ -27,10 +48,10 @@ func (f *fakeDoer) Do(req *http.Request) (*http.Response, error) {
 			code = c
 		}
 	}
-	body := f.responses[key]
+	respBody := f.responses[key]
 	return &http.Response{
 		StatusCode: code,
-		Body:       io.NopCloser(strings.NewReader(body)),
+		Body:       io.NopCloser(strings.NewReader(respBody)),
 		Header:     make(http.Header),
 	}, nil
 }

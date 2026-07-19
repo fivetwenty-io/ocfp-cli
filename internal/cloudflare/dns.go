@@ -83,3 +83,73 @@ func (c *Client) DeleteCNAME(ctx context.Context, zoneID, name string) error {
 
 	return nil
 }
+
+// UpsertA creates or updates an unproxied A record name -> ip (TTL 60, so a
+// bastion rebuild propagates within a minute). Idempotent.
+func (c *Client) UpsertA(ctx context.Context, zoneID, name, ip string) error {
+	q := url.Values{}
+	q.Set("type", "A")
+	q.Set("name", name)
+	list := "/zones/" + zoneID + "/dns_records?" + q.Encode()
+
+	var existing []dnsRecord
+
+	err := c.do(ctx, http.MethodGet, list, nil, &existing)
+	if err != nil {
+		return fmt.Errorf("list dns %q: %w", name, err)
+	}
+
+	payload := map[string]any{
+		"type": "A", "name": name, "content": ip,
+		"ttl": 60, "proxied": false,
+	}
+	if len(existing) > 0 {
+		if existing[0].Content == ip {
+			return nil
+		}
+
+		path := "/zones/" + zoneID + "/dns_records/" + existing[0].ID
+
+		err := c.do(ctx, http.MethodPut, path, payload, nil)
+		if err != nil {
+			return fmt.Errorf("update dns %q: %w", name, err)
+		}
+
+		return nil
+	}
+
+	err = c.do(ctx, http.MethodPost, "/zones/"+zoneID+"/dns_records", payload, nil)
+	if err != nil {
+		return fmt.Errorf("create dns %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// DeleteA removes the A record named name if present. Absent = success.
+func (c *Client) DeleteA(ctx context.Context, zoneID, name string) error {
+	q := url.Values{}
+	q.Set("type", "A")
+	q.Set("name", name)
+	list := "/zones/" + zoneID + "/dns_records?" + q.Encode()
+
+	var existing []dnsRecord
+
+	err := c.do(ctx, http.MethodGet, list, nil, &existing)
+	if err != nil {
+		return fmt.Errorf("list dns %q: %w", name, err)
+	}
+
+	if len(existing) == 0 {
+		return nil
+	}
+
+	path := "/zones/" + zoneID + "/dns_records/" + existing[0].ID
+
+	err = c.do(ctx, http.MethodDelete, path, nil, nil)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("delete dns %q: %w", name, err)
+	}
+
+	return nil
+}
