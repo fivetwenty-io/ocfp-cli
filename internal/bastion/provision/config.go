@@ -780,13 +780,14 @@ func (c *Config) generateEnvironmentScript() string {
 	// Add OCFP environment variables
 	lines = append(lines, fmt.Sprintf("export OCFP_BLOC='%s'", c.config.Name))
 	lines = append(lines, fmt.Sprintf("export OCFP_PROVIDER='%s'", c.provider))
-	// A bastion hosts exactly one bloc, so its inception vault keeps the legacy
-	// port. Genesis env files and .genesis/config on the bastion reference
-	// http://127.0.0.1:8234 literally; pinning the override here keeps every
-	// ocfp command run on the bastion agreeing with them. Only the shared
-	// operator workstation derives a per-bloc port.
+	// Interactive ocfp use on the bastion reads this export, and the env var
+	// outranks every other port source — so it must carry the port the bloc
+	// actually resolves to. It is not what the vault-start path depends on:
+	// that runs over non-interactive SSH, which never sources this file, and
+	// resolves the port itself. Exporting a fixed port here is what previously
+	// made the two disagree.
 	lines = append(lines, fmt.Sprintf("export %s='%d'",
-		config.InceptionVaultPortEnvVar, config.LegacyInceptionVaultPort))
+		config.InceptionVaultPortEnvVar, config.BlocInceptionVaultPort(c.config)))
 
 	// Add provider-specific environment variables
 	for key, value := range envVars {

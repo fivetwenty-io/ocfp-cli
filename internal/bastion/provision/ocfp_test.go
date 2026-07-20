@@ -2,10 +2,14 @@ package provision
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateVaultInceptionScript_ContainsIdempotencyCheck(t *testing.T) {
@@ -474,4 +478,95 @@ func TestGenerateOCFPToolVerificationScript_AlwaysChecksVaultBaoRuby(t *testing.
 			}
 		})
 	}
+}
+
+// TestBastionInceptionPort_StartAndConsumersAgree pins the coupling that broke:
+// for a given bloc, the port the bastion vault is started on and the port baked
+// into the .genesis/config secrets_provider rewrite must be the same value.
+// Independent literals let them drift silently, and the drift only surfaces
+// several phases later as a Genesis secrets failure, far from its cause.
+func TestBastionInceptionPort_StartAndConsumersAgree(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		blocName     string
+		configPort   int
+		expectedPort int
+	}{
+		{
+			// Derived: no config pin, so both sides must land on the port the
+			// bastion's own ocfp will derive from the bloc name.
+			name:         "derived port",
+			blocName:     "ocfp-lab-drhu",
+			configPort:   0,
+			expectedPort: config.DeterministicInceptionVaultPort("ocfp-lab-drhu"),
+		},
+		{
+			// Pinned: the live reference bloc pins 8234 in config, and both
+			// sides must honour the pin rather than the derived port.
+			name:         "config-pinned port",
+			blocName:     "ocfp-lab-nabramovitz",
+			configPort:   8234,
+			expectedPort: 8234,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{Name: tc.blocName, VaultInceptionPort: tc.configPort}
+			om := NewOCFPManager("pve", cfg, nil)
+
+			startScript := om.GenerateVaultInceptionScript(context.Background())
+			rewrite := strings.Join(om.secretsProviderRewriteSnippet(), "\n")
+
+			assert.Contains(t, startScript, fmt.Sprintf("VAULT_PORT=%d", tc.expectedPort),
+				"vault start must use the bloc's resolved inception port")
+			assert.Contains(t, rewrite, fmt.Sprintf("http://127.0.0.1:%d", tc.expectedPort),
+				"secrets_provider rewrite must target the port the vault actually binds")
+		})
+	}
+}
+
+// TestBastionInceptionPort_NoHardcodedLegacyPort guards the regression
+// directly: a derived bloc must produce scripts free of the legacy port, which
+// is what the bastion consumers previously assumed while the vault bound
+// something else entirely.
+func TestBastionInceptionPort_NoHardcodedLegacyPort(t *testing.T) {
+	t.Parallel()
+
+	blocName := "ocfp-lab-drhu"
+	require.NotEqual(t, config.LegacyInceptionVaultPort,
+		config.DeterministicInceptionVaultPort(blocName),
+		"test bloc must derive a port different from the legacy one")
+
+	om := NewOCFPManager("pve", &config.Config{Name: blocName}, nil)
+	legacy := strconv.Itoa(config.LegacyInceptionVaultPort)
+
+	assert.NotContains(t, om.GenerateVaultInceptionScript(context.Background()), legacy,
+		"vault inception script must not hardcode the legacy port")
+	assert.NotContains(t, strings.Join(om.secretsProviderRewriteSnippet(), "\n"), legacy,
+		"secrets_provider rewrite must not hardcode the legacy port")
+}
+
+// TestEnvironmentScript_ExportsResolvedInceptionPort covers the third place the
+// port appears. The profile export is not what the vault-start path relies on
+// any more, but an interactive `ocfp` on the bastion does read it, and the env
+// var outranks every other source — so a stale legacy value there would send
+// interactive commands to a port the vault never bound.
+func TestEnvironmentScript_ExportsResolvedInceptionPort(t *testing.T) {
+	t.Parallel()
+
+	blocName := "ocfp-lab-drhu"
+	derived := config.DeterministicInceptionVaultPort(blocName)
+	require.NotEqual(t, config.LegacyInceptionVaultPort, derived,
+		"test bloc must derive a port different from the legacy one")
+
+	provCfg := NewConfig("pve", &config.Config{Name: blocName}, nil)
+	script := provCfg.generateEnvironmentScript()
+
+	assert.Contains(t, script, fmt.Sprintf("export %s='%d'", config.InceptionVaultPortEnvVar, derived),
+		"profile must export the port the bloc actually resolves to")
 }

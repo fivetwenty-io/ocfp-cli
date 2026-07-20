@@ -436,7 +436,8 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 
 // secretsProviderRewriteSnippet emits an idempotent rewrite of the deployment's
 // .genesis/config secrets_provider block, pointing it at the bloc inception
-// vault (alias inception, http://127.0.0.1:8234, strongbox true). This replaces
+// vault (alias inception, 127.0.0.1 on the bloc's resolved inception port,
+// strongbox true). This replaces
 // the previous `genesis secrets-provider inception` call, which required a live,
 // reachable vault at provisioning time and silently failed when the embedded
 // genesis re-exec dropped to the wrong port. The rewrite is vault-independent
@@ -447,10 +448,12 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
-	const (
-		alias = "inception"
-		url   = "http://127.0.0.1:8234"
-	)
+	const alias = "inception"
+
+	// Resolved the same way the bastion's own ocfp resolves it when starting
+	// the vault, so the rewritten .genesis/config cannot point at a port
+	// nothing is listening on. A literal here is what let the two diverge.
+	url := fmt.Sprintf("http://127.0.0.1:%d", config.BlocInceptionVaultPort(om.config))
 
 	return []string{
 		"        GENESIS_CONFIG=\".genesis/config\"",
@@ -657,7 +660,7 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 		"        done",
 		"    fi",
 		"    ",
-		"    VAULT_PORT=8234",
+		fmt.Sprintf("    VAULT_PORT=%d", config.BlocInceptionVaultPort(om.config)),
 		"    VAULT_ADDR=\"http://127.0.0.1:${VAULT_PORT}\"",
 		"    if [ -n \"$OCFP_BLOC\" ]; then",
 		"        INCEPTION_SESSION=\"${OCFP_BLOC}-inception-vault\"",
