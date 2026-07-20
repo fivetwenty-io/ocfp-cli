@@ -34,14 +34,18 @@ type reservedIPLayout struct {
 	prometheus int
 	shield     int
 	blacksmith int
-	doomsday   int
-	shout      int
-	ocfpUI     int
-	artifacts  int
-	availableA int
-	availableB int
-	reservedB  int
-	reservedC  int
+	// blacksmithOCFP is the broker's slot on workload subnet 1 (the kit
+	// resolves blacksmith_ip from ocfp-1); blacksmith above is the infra /
+	// legacy workload-0 slot.
+	blacksmithOCFP int
+	doomsday       int
+	shout          int
+	ocfpUI         int
+	artifacts      int
+	availableA     int
+	availableB     int
+	reservedB      int
+	reservedC      int
 }
 
 // defaultReservedIPLayout returns the layout matching today's package-level
@@ -49,22 +53,23 @@ type reservedIPLayout struct {
 // a role/subnet-size-specific reason to diverge (see pveSubnetStrategy).
 func defaultReservedIPLayout() reservedIPLayout {
 	return reservedIPLayout{
-		bastion:    bastionIPSlot,
-		bosh:       boshIPSlot,
-		vault:      vaultIPSlot,
-		jumpbox:    jumpboxIPSlot,
-		concourse:  concourseIPSlot,
-		prometheus: prometheusIPSlot,
-		shield:     shieldIPSlot,
-		blacksmith: blacksmithIPSlot,
-		doomsday:   doomsdayIPSlot,
-		shout:      shoutIPSlot,
-		ocfpUI:     ocfpUIIPSlot,
-		artifacts:  artifactsIPSlot,
-		availableA: availableAIPSlot,
-		availableB: availableBIPSlot,
-		reservedB:  reservedBIPSlot,
-		reservedC:  reservedCIPSlot,
+		bastion:        bastionIPSlot,
+		bosh:           boshIPSlot,
+		vault:          vaultIPSlot,
+		jumpbox:        jumpboxIPSlot,
+		concourse:      concourseIPSlot,
+		prometheus:     prometheusIPSlot,
+		shield:         shieldIPSlot,
+		blacksmith:     blacksmithIPSlot,
+		blacksmithOCFP: blacksmithOCFPIPSlot,
+		doomsday:       doomsdayIPSlot,
+		shout:          shoutIPSlot,
+		ocfpUI:         ocfpUIIPSlot,
+		artifacts:      artifactsIPSlot,
+		availableA:     availableAIPSlot,
+		availableB:     availableBIPSlot,
+		reservedB:      reservedBIPSlot,
+		reservedC:      reservedCIPSlot,
 	}
 }
 
