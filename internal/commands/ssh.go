@@ -468,10 +468,20 @@ func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command 
 
 	// Add remote command if specified
 	if len(command) > 0 {
-		cmd = append(cmd, command...)
+		cmd = append(cmd, wrapRemoteCommand(command)...)
 	}
 
 	return cmd
+}
+
+// wrapRemoteCommand wraps a remote command in a login shell so that
+// /etc/profile.d/ocfp.sh (Linuxbrew PATH, OCFP env vars) applies to
+// non-interactive command execution, matching interactive sessions.
+func wrapRemoteCommand(command []string) []string {
+	joined := strings.Join(command, " ")
+	quoted := "'" + strings.ReplaceAll(joined, "'", `'\''`) + "'"
+
+	return []string{"bash", "-lc", quoted}
 }
 
 // executeSSH executes the SSH command and attaches to stdin/stdout/stderr.
