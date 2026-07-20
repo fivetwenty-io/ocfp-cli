@@ -516,6 +516,10 @@ func TestCreateSubnets_PVE_CreatesRealPer22SDNSubnets(t *testing.T) {
 			t.Errorf("subnet %s SNAT = false, want true", req.CIDR)
 		}
 	}
+
+	// The blacksmith broker is pinned to z2 (workload subnet 1) by the kit's
+	// ocfp blueprint, which resolves reserved-ips:blacksmith_ip from ocfp-1.
+	verifyBlacksmithIPOutput(t, stateManager, "prod-ocfp-1", "10.64.72.3")
 }
 
 func setupStackitSubnetTest(t *testing.T) (*bootstrap.Manager, *fakeNet) {
@@ -878,6 +882,7 @@ func verifyOcfpSubnet(t *testing.T, stateManager *state.Manager, index int, expe
 
 	if index == 1 {
 		verifyDoomsdayIPOutput(t, stateManager, name)
+		verifyBlacksmithIPOutput(t, stateManager, name, "10.4.8.3")
 	}
 }
 
@@ -887,5 +892,23 @@ func verifyDoomsdayIPOutput(t *testing.T, stateManager *state.Manager, subnetNam
 	_, err := stateManager.GetOutput("reserved_" + subnetName + "_doomsday_ip")
 	if err != nil {
 		t.Fatalf("missing doomsday ip for %s", subnetName)
+	}
+}
+
+func verifyBlacksmithIPOutput(t *testing.T, stateManager *state.Manager, subnetName, want string) {
+	t.Helper()
+
+	got, err := stateManager.GetOutput("reserved_" + subnetName + "_blacksmith_ip")
+	if err != nil {
+		t.Fatalf("missing blacksmith ip for %s", subnetName)
+	}
+
+	if got != want {
+		t.Fatalf("blacksmith ip for %s = %q, want %q", subnetName, got, want)
+	}
+
+	shout, err := stateManager.GetOutput("reserved_" + subnetName + "_shout_ip")
+	if err == nil && shout == got {
+		t.Fatalf("blacksmith ip for %s collides with shout ip %q", subnetName, shout)
 	}
 }
