@@ -13,9 +13,12 @@ const (
 	InceptionVaultPortEnvVar = "OCFP_VAULT_INCEPTION_PORT"
 
 	// LegacyInceptionVaultPort is the historical fixed inception port. It is
-	// still used when no bloc is named (single-bloc workstations) and by the
-	// bastion-side inception vault, where only one bloc ever runs and Genesis
-	// env files reference http://127.0.0.1:8234 directly.
+	// used only when no bloc is named (single-bloc workstations), and as the
+	// value a bloc sets in vault_inception_port when it wants the old port.
+	// The bastion-side inception vault does NOT keep it: the bastion resolves
+	// the same per-bloc port as everything else (see BlocInceptionVaultPort),
+	// because the profile export that once pinned it is not sourced by the
+	// non-interactive SSH commands that start the vault.
 	LegacyInceptionVaultPort = 8234
 
 	// InceptionVaultPortRangeStart is the first port of the per-bloc range.
@@ -59,6 +62,27 @@ func InceptionVaultPort(blocName string) int {
 	}
 
 	return DeterministicInceptionVaultPort(blocName)
+}
+
+// BlocInceptionVaultPort resolves the inception vault port for an already
+// loaded bloc: its explicit vault_inception_port, else the port derived from
+// the bloc name.
+//
+// It deliberately ignores OCFP_VAULT_INCEPTION_PORT, unlike InceptionVaultPort.
+// Bastion scripts are generated on the workstation but run on the bastion, so
+// an override present in the generating shell would bake a port into the
+// bastion's .genesis/config that its vault never binds — the same divergence
+// this function exists to close.
+func BlocInceptionVaultPort(cfg *Config) int {
+	if cfg == nil {
+		return LegacyInceptionVaultPort
+	}
+
+	if cfg.VaultInceptionPort > 0 && cfg.VaultInceptionPort <= maxTCPPort {
+		return cfg.VaultInceptionPort
+	}
+
+	return DeterministicInceptionVaultPort(cfg.Name)
 }
 
 // DeterministicInceptionVaultPort derives a bloc's inception port from its name
