@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 // mockSSHClient implements the SSH client interface for testing.
 type mockSSHClient struct {
 	transferredFiles map[string]string // remote path -> local content
+	executedCommands []string
 	transferError    error
 }
 
@@ -46,6 +48,8 @@ func (m *mockSSHClient) TransferFile(_ctx context.Context, local, remote string,
 }
 
 func (m *mockSSHClient) ExecuteCommand(_ctx context.Context, cmd string) (*ssh.CommandResult, error) {
+	m.executedCommands = append(m.executedCommands, cmd)
+
 	// Return realistic values for common commands
 	if cmd == "echo $HOME" {
 		return &ssh.CommandResult{ExitCode: 0, Stdout: "/home/testuser\n", Stderr: ""}, nil
@@ -167,6 +171,47 @@ func TestManager_copyOCFPConfig_FiltersSingleBloc(t *testing.T) {
 	assert.Equal(t, "test-bloc", testBlocConfig.Name)
 	assert.Equal(t, "aws", testBlocConfig.Provider)
 	assert.Equal(t, "us-east-1", testBlocConfig.Region)
+}
+
+// TestManager_copyOCFPConfig_RestrictsRemotePermissions asserts the synced
+// config is tightened to owner-only on the bastion. The file carries the
+// tailnet auth key in cleartext, and bastions are shared by every team member,
+// so the transfer default (world-readable) exposes a credential that joins the
+// tailnet to anyone with an account on the host.
+func TestManager_copyOCFPConfig_RestrictsRemotePermissions(t *testing.T) {
+	testConfig := &config.ConfigFile{
+		Blocs: map[string]*config.Config{
+			"test-bloc": {Name: "test-bloc", Provider: "pve"},
+		},
+	}
+
+	configPath := setupTestConfig(t, testConfig)
+
+	ocfpDir := filepath.Join(filepath.Dir(configPath), ".ocfp")
+	err := os.MkdirAll(ocfpDir, 0755)
+	require.NoError(t, err)
+
+	t.Setenv("OCFP_HOME", ocfpDir)
+
+	err = os.Rename(configPath, filepath.Join(ocfpDir, "config.yml"))
+	require.NoError(t, err)
+
+	mockSSH := &mockSSHClient{}
+
+	manager := &Manager{
+		config:    &config.Config{Name: "test-bloc"},
+		sshClient: mockSSH,
+		log:       newTestLogger(),
+	}
+
+	err = manager.copyOCFPConfig(context.Background())
+	require.NoError(t, err, "copyOCFPConfig should succeed")
+
+	remotePath := "/home/testuser/.ocfp/config.yml"
+	require.Contains(t, mockSSH.transferredFiles, remotePath, "config should be transferred")
+
+	assert.Contains(t, mockSSH.executedCommands, fmt.Sprintf("chmod 600 %q", remotePath),
+		"synced config must be restricted to owner-only; it holds the tailnet auth key")
 }
 
 func TestManager_copyOCFPConfig_ErrorsOnMissingBloc(t *testing.T) {
