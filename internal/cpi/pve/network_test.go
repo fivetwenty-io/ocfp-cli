@@ -45,20 +45,74 @@ func TestDeleteNetwork_BridgeModeIsNoOp(t *testing.T) {
 	}
 }
 
-// TestCreateSubnet_SDNReusesExistingVnetSubnet verifies that when CreateSubnet
-// is called in SDN mode and the requested CIDR is fully contained within an
-// existing SDN subnet on the parent vnet, the call short-circuits to a
-// synthesized success without issuing a POST. PVE SDN simple zones present
-// exactly one L3 subnet per vnet; bootstrap logically carves AZ-sized
-// children out of that single CIDR. Without this guard, any caller that
-// bypasses bootstrap's virtual-subnet path would attempt a duplicate create
-// and the PVE API would reject it.
-func TestCreateSubnet_SDNReusesExistingVnetSubnet(t *testing.T) {
+// TestCreateSubnet_SDNReusesExactMatchSubnet verifies the idempotency guard:
+// when an SDN subnet with the exact requested CIDR already exists on the
+// vnet, CreateSubnet short-circuits to a synthesized success without a POST
+// (PVE rejects a duplicate create). Only an exact CIDR match may short-
+// circuit — a merely-containing parent must not (see the test below).
+func TestCreateSubnet_SDNReusesExactMatchSubnet(t *testing.T) {
 	t.Parallel()
 
-	parentCIDR := "10.4.0.0/22"
-	childCIDR := "10.4.0.0/24"
+	cidr := "10.4.0.0/24"
 	vnet := "vnet-test"
+
+	fake := &fakePVEClient{
+		getResponses: map[string]interface{}{
+			"/cluster/sdn/vnets/" + vnet + "/subnets": []interface{}{
+				map[string]interface{}{"subnet": cidr},
+			},
+		},
+	}
+
+	client := &Client{
+		config: &Config{
+			NetworkMode: networkModeSDN,
+		},
+		pveClient: fake,
+	}
+
+	netMgr := &NetworkManager{client: client}
+
+	subnet, err := netMgr.CreateSubnet(context.Background(), &cpi.SubnetRequest{
+		Name:      "child",
+		NetworkID: vnet,
+		CIDR:      cidr,
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet returned error: %v", err)
+	}
+
+	if subnet == nil {
+		t.Fatalf("CreateSubnet returned nil subnet")
+	}
+
+	if subnet.CIDR != cidr {
+		t.Errorf("subnet CIDR = %q, want %q", subnet.CIDR, cidr)
+	}
+
+	if fake.postCalls != 0 {
+		t.Errorf("expected 0 POST calls, got %d (CreateSubnet must not POST when the exact subnet exists)", fake.postCalls)
+	}
+
+	if fake.putCalls != 0 {
+		t.Errorf("expected 0 PUT calls, got %d", fake.putCalls)
+	}
+}
+
+// TestCreateSubnet_SDNCreatesChildDespiteContainingParent guards the lab
+// incident where BOSH compilation VMs on the ocfp-* /22 bands timed out:
+// the vault provider records a per-/22 gateway (.1 of each band) that only
+// exists if the /22 is a real SDN subnet, but CreateSubnet treated the
+// pre-existing /20 vnet subnet as already covering the /22 and skipped the
+// POST — so the /22's own gateway was never provisioned. A containing
+// parent is not the requested subnet; the /22 must be created alongside it
+// with its own gateway and SNAT.
+func TestCreateSubnet_SDNCreatesChildDespiteContainingParent(t *testing.T) {
+	t.Parallel()
+
+	parentCIDR := "10.253.16.0/20"
+	childCIDR := "10.253.20.0/22"
+	vnet := "ocfp"
 
 	fake := &fakePVEClient{
 		getResponses: map[string]interface{}{
@@ -78,28 +132,39 @@ func TestCreateSubnet_SDNReusesExistingVnetSubnet(t *testing.T) {
 	netMgr := &NetworkManager{client: client}
 
 	subnet, err := netMgr.CreateSubnet(context.Background(), &cpi.SubnetRequest{
-		Name:      "child",
+		Name:      "ocfp-0",
 		NetworkID: vnet,
 		CIDR:      childCIDR,
+		Gateway:   "10.253.20.1",
+		SNAT:      true,
 	})
 	if err != nil {
 		t.Fatalf("CreateSubnet returned error: %v", err)
 	}
 
-	if subnet == nil {
-		t.Fatalf("CreateSubnet returned nil subnet")
+	if subnet == nil || subnet.CIDR != childCIDR {
+		t.Fatalf("CreateSubnet result = %+v, want CIDR=%s", subnet, childCIDR)
 	}
 
-	if subnet.CIDR != parentCIDR {
-		t.Errorf("subnet CIDR = %q, want parent %q", subnet.CIDR, parentCIDR)
+	if fake.postCalls != 1 {
+		t.Fatalf("expected 1 POST call (child must be created despite containing parent), got %d", fake.postCalls)
 	}
 
-	if fake.postCalls != 0 {
-		t.Errorf("expected 0 POST calls, got %d (CreateSubnet must not POST when parent exists)", fake.postCalls)
+	params := fake.postParams[0]
+	if params["subnet"] != childCIDR {
+		t.Errorf("POST subnet = %v, want %s", params["subnet"], childCIDR)
 	}
 
-	if fake.putCalls != 0 {
-		t.Errorf("expected 0 PUT calls, got %d", fake.putCalls)
+	if params["gateway"] != "10.253.20.1" {
+		t.Errorf("POST gateway = %v, want 10.253.20.1", params["gateway"])
+	}
+
+	if params["snat"] != 1 {
+		t.Errorf("POST snat = %v, want 1", params["snat"])
+	}
+
+	if fake.putCalls != 1 {
+		t.Errorf("expected 1 PUT call (SDN apply), got %d", fake.putCalls)
 	}
 }
 

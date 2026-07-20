@@ -83,31 +83,27 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error {
 
 // CreateSubnet creates a subnet (limited support).
 //
-// PVE SDN simple zones expose exactly one L3 subnet per vnet (created
-// manually or as part of zone provisioning). Bootstrap logically carves
-// multiple AZ subnets out of that single vnet CIDR and routes through the
-// virtual-subnet path so this method is normally never invoked for PVE.
-// As a belt-and-suspenders safeguard, when CreateSubnet IS called in SDN
-// mode and the requested CIDR is fully contained within the parent vnet's
-// existing SDN subnet CIDR, we synthesize a success response pointing at
-// the parent and skip the API POST — the underlying SDN subnet already
-// exists and PVE will reject a duplicate create. The original POST path
-// remains as the cold-start fallback when the parent SDN subnet has not
-// yet been provisioned for the vnet.
+// Each carved AZ subnet must exist as its own SDN subnet so the PVE host
+// answers its in-range gateway (.1 of the band) — BOSH requires a subnet's
+// gateway inside its range, so a wider pre-existing subnet's gateway cannot
+// stand in for it. PVE accepts overlapping subnets on one vnet, so the /22s
+// are created even when a /20 covering them already exists. Only an exact
+// CIDR match short-circuits to a synthesized success: the subnet is already
+// provisioned and PVE would reject the duplicate create.
 func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetRequest) (*cpi.Subnet, error) {
 	// In SDN mode, we can create subnets
 	if m.client.config.NetworkMode == networkModeSDN {
-		if parent := m.findContainingSDNSubnet(ctx, req.NetworkID, req.CIDR); parent != nil {
+		if existing := m.findExistingSDNSubnet(ctx, req.NetworkID, req.CIDR); existing != nil {
 			logger.WithOperation("CreateSubnet").Infof(
-				"PVE SDN: requested CIDR %s is within existing vnet subnet %s; reusing parent",
-				req.CIDR, parent.CIDR,
+				"PVE SDN: subnet %s already exists on vnet %s; reusing it",
+				req.CIDR, req.NetworkID,
 			)
 
 			return &cpi.Subnet{
-				ID:        parent.ID,
+				ID:        existing.ID,
 				Name:      req.Name,
 				NetworkID: req.NetworkID,
-				CIDR:      parent.CIDR,
+				CIDR:      existing.CIDR,
 				State:     cpi.ResourceStateActive,
 				Tags:      req.Tags,
 				CreatedAt: time.Now(),
@@ -731,12 +727,13 @@ func (m *NetworkManager) deleteSDNNetwork(ctx context.Context, id string) error 
 	return nil
 }
 
-// findContainingSDNSubnet returns the existing SDN subnet on the given vnet
-// whose CIDR fully contains childCIDR, or nil if the parent subnet does not
-// yet exist or the lookup fails. A nil return signals the caller should fall
-// back to creating the subnet via the API.
-func (m *NetworkManager) findContainingSDNSubnet(ctx context.Context, vnet, childCIDR string) *cpi.Subnet {
-	if vnet == "" || childCIDR == "" {
+// findExistingSDNSubnet returns the SDN subnet on the given vnet whose CIDR
+// exactly matches wantCIDR, or nil if it does not yet exist or the lookup
+// fails. A nil return signals the caller should create the subnet via the
+// API. Containment is deliberately not enough: a wider subnet covering
+// wantCIDR does not carry wantCIDR's own gateway.
+func (m *NetworkManager) findExistingSDNSubnet(ctx context.Context, vnet, wantCIDR string) *cpi.Subnet {
+	if vnet == "" || wantCIDR == "" {
 		return nil
 	}
 
@@ -744,8 +741,8 @@ func (m *NetworkManager) findContainingSDNSubnet(ctx context.Context, vnet, chil
 		return nil
 	}
 
-	_, childNet, err := net.ParseCIDR(childCIDR)
-	if err != nil || childNet == nil {
+	_, wantNet, err := net.ParseCIDR(wantCIDR)
+	if err != nil || wantNet == nil {
 		return nil
 	}
 
@@ -759,22 +756,15 @@ func (m *NetworkManager) findContainingSDNSubnet(ctx context.Context, vnet, chil
 			continue
 		}
 
-		_, parentNet, parseErr := net.ParseCIDR(candidate.CIDR)
-		if parseErr != nil || parentNet == nil {
+		_, candidateNet, parseErr := net.ParseCIDR(candidate.CIDR)
+		if parseErr != nil || candidateNet == nil {
 			continue
 		}
 
-		// Child must be contained in parent: parent's network must include
-		// the child's network address and the child's prefix must be at
-		// least as specific as the parent's.
-		parentOnes, _ := parentNet.Mask.Size()
-		childOnes, _ := childNet.Mask.Size()
+		candidateOnes, _ := candidateNet.Mask.Size()
+		wantOnes, _ := wantNet.Mask.Size()
 
-		if childOnes < parentOnes {
-			continue
-		}
-
-		if parentNet.Contains(childNet.IP) {
+		if candidateOnes == wantOnes && candidateNet.IP.Equal(wantNet.IP) {
 			return candidate
 		}
 	}
