@@ -2451,6 +2451,18 @@ func (m *Manager) transferConfigToBastion(ctx context.Context, yamlBytes []byte)
 		return fmt.Errorf("failed to transfer filtered config file: %w", err)
 	}
 
+	// Restrict the synced config to its owner. It carries the tailnet auth key
+	// in cleartext, and bastions are shared by the whole team, so the transfer
+	// default leaves a tailnet-joining credential readable by every account on
+	// the host. Fatal on failure: succeeding here while the file stays
+	// world-readable would report a secret as protected when it is not.
+	chmodCmd := fmt.Sprintf("chmod 600 %q", remoteConfigPath)
+
+	_, err = m.sshClient.ExecuteCommand(ctx, chmodCmd)
+	if err != nil {
+		return fmt.Errorf("failed to restrict permissions on %s: %w", remoteConfigPath, err)
+	}
+
 	m.log.Info("Transferred filtered config to bastion",
 		"bloc", m.config.Name,
 		"remote_path", remoteConfigPath)
