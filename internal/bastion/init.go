@@ -2387,13 +2387,17 @@ func (m *Manager) createFilteredConfig(configFileData *config.ConfigFile, config
 		return nil, fmt.Errorf("%w: bloc '%s' in file %s", ErrBlocNotFoundInConfig, blocName, configPath)
 	}
 
-	filteredConfig := &config.ConfigFile{
-		Debug:   configFileData.Debug,
-		Verbose: configFileData.Verbose,
-		Blocs: map[string]*config.Config{
-			blocName: blocConfig,
-		},
+	// Copy the whole file and narrow only Blocs. Copying section-by-section
+	// silently dropped every global the bastion needs — a missing global
+	// tailscale section made the bastion's own config load fail
+	// ValidateIngress for blocs with ingress.provider: tailscale. Starting
+	// from the loaded file means new top-level sections are synced by
+	// default rather than by remembering to add them here.
+	filtered := *configFileData
+	filtered.Blocs = map[string]*config.Config{
+		blocName: blocConfig,
 	}
+	filteredConfig := &filtered
 
 	m.log.Info("Created filtered config",
 		"bloc", blocName,
