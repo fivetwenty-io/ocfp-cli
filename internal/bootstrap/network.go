@@ -64,7 +64,14 @@ const (
 	blacksmithIPSlot = 10
 	doomsdayIPSlot   = 9
 	shoutIPSlot      = 10
-	ocfpUIIPSlot     = 9
+	// blacksmithOCFPIPSlot is the broker's static on workload subnet 1: the
+	// blacksmith kit's ocfp blueprint resolves reserved-ips:blacksmith_ip from
+	// ocfp-1 (broker pinned to z2). Slot 10 there is shout, and anything at or
+	// above availableAIPSlot sits inside the PVE widened band, so the broker
+	// reuses slot 3 — bastion's slot, which is only assigned on the infra
+	// subnet (and on workload subnet 0 in the legacy STACKIT layout).
+	blacksmithOCFPIPSlot = 3
+	ocfpUIIPSlot         = 9
 	// artifactsIPSlot is the RustFS blobstore VM. See plans/ocfp-artifacts-rustfs-vm.md.
 	artifactsIPSlot     = 11
 	availableAIPSlot    = 12
@@ -1218,6 +1225,7 @@ func (m *Manager) writeReservedIPNamedSlots(set func(key, val string), ipAt func
 	if idx == 1 {
 		set("doomsday_ip", ipAt(layout.doomsday))
 		set("shout_ip", ipAt(layout.shout))
+		set("blacksmith_ip", ipAt(layout.blacksmithOCFP))
 	}
 
 	if idx == ocfpUIProviderIndex {
