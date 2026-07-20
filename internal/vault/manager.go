@@ -86,8 +86,16 @@ type Tree struct {
 }
 
 // NewManager creates a new vault manager instance.
+//
+// As with NewManagerFromEnv, a named bloc is bound to its own vault target
+// rather than the global current target.
 func NewManager(cfg *config.Config, blocName string) (*Manager, error) {
-	client, err := NewClientFromConfig(cfg)
+	newClient := func() (*Client, error) { return NewClientFromConfig(cfg) }
+	if blocName != "" {
+		newClient = func() (*Client, error) { return NewClientForBloc(blocName) }
+	}
+
+	client, err := newClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vault client: %w", err)
 	}
@@ -105,8 +113,17 @@ func NewManager(cfg *config.Config, blocName string) (*Manager, error) {
 }
 
 // NewManagerFromEnv creates a manager using environment variables.
+//
+// When a bloc is named the client is bound to that bloc's own vault target
+// rather than the `safe` global current target, so concurrent bootstraps for
+// different blocs cannot write into each other's vaults.
 func NewManagerFromEnv(cfg *config.Config, blocName string) (*Manager, error) {
-	client, err := NewClientFromEnv()
+	newClient := NewClientFromEnv
+	if blocName != "" {
+		newClient = func() (*Client, error) { return NewClientForBloc(blocName) }
+	}
+
+	client, err := newClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vault client: %w", err)
 	}
@@ -439,24 +456,32 @@ func (m *Manager) migrateStepUpdateSecrets(dryRun bool) error {
 	return nil
 }
 
-// getInceptionVaultName returns the inception vault name with fallback logic.
-// Tries bloc-specific name first, then falls back to simple "inception".
+// getInceptionVaultName returns the inception vault name for this bloc.
+//
+// When a bloc is named the bloc-scoped target is the only correct answer: the
+// bare "inception" target is shared by every bloc on the workstation, so
+// falling back to it would let one bloc's migration read a sibling's secrets.
+// Only a manager with no bloc uses the bare name.
 func (m *Manager) getInceptionVaultName() string {
-	// Try bloc-specific name first if we have a bloc
 	if m.blocName != "" {
-		blocInception := m.blocName + "-inception"
-		// Check if this target exists in .saferc
-		if m.targetExistsInSaferc(blocInception) {
-			return blocInception
-		}
+		return m.blocName + InceptionTargetSuffix
 	}
 
-	// Fall back to simple "inception" name
 	return "inception"
 }
 
-// getProductionVaultName returns the production vault name by reading current target from .saferc.
+// getProductionVaultName returns the vault that migration writes into.
+//
+// For a named bloc this is always that bloc's own mgmt vault. The previous
+// behaviour — read the .saferc current target — made the migration
+// destination depend on whichever bloc most recently ran `safe target`, so a
+// concurrent bootstrap could redirect one bloc's secrets into another bloc's
+// production vault. Only a manager with no bloc consults the global pointer.
 func (m *Manager) getProductionVaultName() (string, error) {
+	if m.blocName != "" {
+		return m.blocName + MgmtTargetSuffix, nil
+	}
+
 	// Read current target from .saferc
 	homeDir := os.Getenv("HOME")
 	if homeDir == "" {
@@ -490,35 +515,6 @@ func (m *Manager) getProductionVaultName() (string, error) {
 	}
 
 	return config.Current, nil
-}
-
-// targetExistsInSaferc checks if a vault target exists in .saferc.
-func (m *Manager) targetExistsInSaferc(targetName string) bool {
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		return false
-	}
-
-	saferc := filepath.Join(homeDir, ".saferc")
-
-	data, err := os.ReadFile(saferc) //nolint:gosec // path is from trusted HOME env
-	if err != nil {
-		return false
-	}
-
-	// Parse .saferc YAML
-	var config struct {
-		Vaults map[string]interface{} `yaml:"vaults"`
-	}
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return false
-	}
-
-	_, exists := config.Vaults[targetName]
-
-	return exists
 }
 
 // populateFullConfiguration performs full vault configuration.
@@ -804,8 +800,11 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 		// Continue anyway - this is a cleanup operation
 	}
 
-	// Step 2: Kill safe local processes on port 8234 (matching Perl Manager.pm:465-489)
-	inceptionVaultPort := 8234
+	// Step 2: Kill safe local processes on this bloc's inception port (matching
+	// Perl Manager.pm:465-489). The port is resolved per bloc so decommission
+	// never reaches into a sibling bloc's inception vault when several blocs
+	// are being bootstrapped on one workstation.
+	inceptionVaultPort := config.InceptionVaultPort(m.blocName)
 
 	err = m.killSafeProcesses(inceptionVaultPort)
 	if err != nil {
@@ -1152,7 +1151,7 @@ func (m *Manager) killSafeProcesses(port int) error {
 	// Find processes using ps and grep
 	findCmd := fmt.Sprintf("ps aux | grep -E 'safe local.*--port %d' | grep -v grep", port)
 
-	// #nosec G204 - port is an integer constant (8234), findCmd contains no user input
+	// #nosec G204 - port is an int formatted with %d, findCmd contains no user input
 	cmd := exec.CommandContext(ctx, "sh", "-c", findCmd)
 
 	output, cmdErr := cmd.Output()
