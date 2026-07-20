@@ -497,15 +497,17 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 
 	runCleanupCommands(ctx, vaultCleanupTargetCommands(paths))
 
-	// Remove vault data directory and all its contents
-	err := os.RemoveAll(paths["vaultDir"])
-	if err != nil && !os.IsNotExist(err) {
-		log.Warnw("Failed to remove vault data directory", "error", err)
+	// Clear the vault data, preserving it when it holds key material. This runs
+	// on a liveness probe returning false, and a probe can be wrong; keeping the
+	// keys makes that mistake survivable instead of terminal.
+	archived, err := archiveVaultState(paths, time.Now().Format("20060102-150405"), log)
+	if err != nil {
+		log.Warnw("Failed to clear vault data directory", "error", err)
 	}
 
-	// Also remove the parent vault directory if empty
-	vaultParent := filepath.Dir(paths["vaultDir"])
-	_ = os.Remove(vaultParent) // Ignore error - will fail if not empty, which is fine
+	if archived != "" {
+		log.Infow("Previous vault state kept", "archive", archived)
+	}
 
 	// Remove safe's vault metadata (safe local stores metadata in ~/.vault/)
 	homeDir, err := os.UserHomeDir()
