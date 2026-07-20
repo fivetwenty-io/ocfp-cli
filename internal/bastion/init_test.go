@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -394,4 +395,106 @@ func TestManager_copyOCFPConfig_AlternativeConfigPath(t *testing.T) {
 
 	assert.Len(t, transferredConfig.Blocs, 1)
 	assert.Contains(t, transferredConfig.Blocs, "test-bloc")
+}
+
+// boolPtr returns a pointer to b, for the *bool config fields that use nil
+// to mean "unset" (tailscale.enabled, cloudflare.enabled).
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// TestManager_createFilteredConfig_CarriesGlobalTailscale pins the exact
+// failure that broke `ocfp init bastion` at the vault_populate phase: the
+// synced config dropped the global tailscale section, so the bastion's own
+// load of that file failed ValidateIngress with "provider tailscale requires
+// tailscale.enabled: true". The assertion is the full load chain, not just
+// field equality, because that chain is what runs on the bastion.
+func TestManager_createFilteredConfig_CarriesGlobalTailscale(t *testing.T) {
+	sourceConfig := &config.ConfigFile{
+		PVE: &config.PVEDefaults{Username: "root@pam", Password: "pve-password"},
+		Tailscale: &config.TailscaleConfig{
+			Enabled: boolPtr(true),
+			AuthKey: "tskey-auth-test",
+		},
+		Cloudflare: &config.CloudflareConfig{
+			Zone:     "example.com",
+			APIToken: "cf-test-token",
+		},
+		Blocs: map[string]*config.Config{
+			"test-bloc": {
+				Name:     "test-bloc",
+				Provider: "pve",
+				Ingress:  &config.IngressConfig{Provider: config.IngressProviderTailscale},
+			},
+		},
+	}
+
+	manager := &Manager{
+		config: &config.Config{Name: "test-bloc"},
+		log:    newTestLogger(),
+	}
+
+	filteredConfig, err := manager.createFilteredConfig(sourceConfig, "test-config.yml")
+	require.NoError(t, err)
+
+	require.NotNil(t, filteredConfig.Tailscale, "global tailscale section must reach the bastion")
+	assert.True(t, config.TailscaleEnabled(filteredConfig.Tailscale), "tailscale.enabled must survive filtering")
+
+	// Round-trip through YAML and the real loader, exactly as the bastion does.
+	syncedPath := filepath.Join(t.TempDir(), "config.yml")
+	yamlBytes, err := yaml.Marshal(filteredConfig)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(syncedPath, yamlBytes, 0600))
+
+	syncedBloc, err := config.LoadWithParams(syncedPath, "test-bloc")
+	require.NoError(t, err, "synced config must load on the bastion")
+	require.NoError(t, config.ValidateIngress(syncedBloc), "synced config must pass ingress validation")
+}
+
+// TestManager_createFilteredConfig_CarriesAllTopLevelSections pins the
+// property that broke here in the first place: every top-level ConfigFile
+// section except Blocs must survive filtering. Adding a field to ConfigFile
+// without populating it here fails this test, which is the point — a new
+// field must not be able to silently vanish from the synced config.
+func TestManager_createFilteredConfig_CarriesAllTopLevelSections(t *testing.T) {
+	sourceConfig := &config.ConfigFile{
+		Debug:      true,
+		Verbose:    true,
+		PVE:        &config.PVEDefaults{Username: "root@pam", TokenSecret: "pve-secret"},
+		Tailscale:  &config.TailscaleConfig{Enabled: boolPtr(true), AuthKey: "tskey-auth-test"},
+		Cloudflare: &config.CloudflareConfig{Enabled: boolPtr(true), Zone: "example.com"},
+		Ingress:    &config.IngressConfig{Provider: config.IngressProviderTailscale},
+		Blocs: map[string]*config.Config{
+			"test-bloc":  {Name: "test-bloc", Provider: "pve"},
+			"other-bloc": {Name: "other-bloc", Provider: "aws"},
+		},
+	}
+
+	manager := &Manager{
+		config: &config.Config{Name: "test-bloc"},
+		log:    newTestLogger(),
+	}
+
+	filteredConfig, err := manager.createFilteredConfig(sourceConfig, "test-config.yml")
+	require.NoError(t, err)
+
+	sourceValue := reflect.ValueOf(*sourceConfig)
+	filteredValue := reflect.ValueOf(*filteredConfig)
+
+	for i := range sourceValue.NumField() {
+		fieldName := sourceValue.Type().Field(i).Name
+		if fieldName == "Blocs" {
+			continue
+		}
+
+		require.False(t, sourceValue.Field(i).IsZero(),
+			"field %s must be populated by this test so its carry-through is actually asserted", fieldName)
+		assert.Equal(t, sourceValue.Field(i).Interface(), filteredValue.Field(i).Interface(),
+			"field %s must be carried through to the synced config", fieldName)
+	}
+
+	// Blocs remains the one narrowed section.
+	assert.Len(t, filteredConfig.Blocs, 1)
+	assert.Contains(t, filteredConfig.Blocs, "test-bloc")
+	assert.NotContains(t, filteredConfig.Blocs, "other-bloc")
 }
