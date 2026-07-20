@@ -662,7 +662,9 @@ func (m *Manager) tailscaleSafe() vault.SafeInterface {
 		return m.safe
 	}
 
-	client, err := vault.NewClientFromEnv()
+	// Bind to this bloc's own vault target rather than the `safe` global
+	// current target, which a concurrently bootstrapping bloc can repoint.
+	client, err := vault.NewClientForBloc(m.config.Name)
 	if err != nil {
 		logger.Warnf("Tailscale auth key skipped: cannot reach vault: %v", err)
 

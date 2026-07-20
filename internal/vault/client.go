@@ -356,10 +356,54 @@ type safeConfig struct {
 
 // readSafeConfig reads the ~/.saferc file and returns the vault address, token, and skip_verify.
 // Returns the URL, token, and skip_verify for the current vault target.
+//
+// The current target is a single global pointer shared by every bloc on the
+// workstation. Bloc-scoped callers must use readSafeConfigTarget (via
+// NewClientForBloc) instead, or they will follow whichever bloc most recently
+// ran `safe target`.
 func readSafeConfig() (string, string, bool, error) {
+	cfg, err := loadSafeConfig()
+	if err != nil {
+		return "", "", false, err
+	}
+
+	if cfg.Current == "" {
+		return "", "", false, ErrNoCurrentVaultSet()
+	}
+
+	return safeTargetFields(cfg, cfg.Current)
+}
+
+// readSafeConfigTarget reads one named target from ~/.saferc, ignoring the
+// global current target entirely.
+func readSafeConfigTarget(targetName string) (string, string, bool, error) {
+	cfg, err := loadSafeConfig()
+	if err != nil {
+		return "", "", false, err
+	}
+
+	return safeTargetFields(cfg, targetName)
+}
+
+// safeTargetFields extracts the address, token, and skip_verify for one target.
+func safeTargetFields(cfg *safeConfig, targetName string) (string, string, bool, error) {
+	vault, ok := cfg.Vaults[targetName]
+	if !ok {
+		return "", "", false, ErrVaultNotFoundInSaferc(targetName)
+	}
+
+	if vault.Token == "" {
+		return "", "", false, ErrNoTokenFoundForVault(targetName)
+	}
+
+	return vault.URL, vault.Token, vault.SkipVerify, nil
+}
+
+// loadSafeConfig reads and parses ~/.saferc.
+func loadSafeConfig() (*safeConfig, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", false, fmt.Errorf("failed to get home directory: %w", err)
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	// Sanitize and validate the path to prevent directory traversal
@@ -368,34 +412,20 @@ func readSafeConfig() (string, string, bool, error) {
 	// Ensure the resolved path is still within the user's home directory
 	cleanHomeDir := filepath.Clean(homeDir)
 	if !strings.HasPrefix(safeRcPath, cleanHomeDir) {
-		return "", "", false, ErrSafercMustBeInHomeDirectory
+		return nil, ErrSafercMustBeInHomeDirectory
 	}
 
 	data, err := os.ReadFile(safeRcPath)
 	if err != nil {
-		return "", "", false, fmt.Errorf("failed to read ~/.saferc: %w", err)
+		return nil, fmt.Errorf("failed to read ~/.saferc: %w", err)
 	}
 
-	var cfg safeConfig
+	cfg := &safeConfig{} //nolint:exhaustruct // fields are populated by the unmarshal below
 
-	err = yaml.Unmarshal(data, &cfg)
+	err = yaml.Unmarshal(data, cfg)
 	if err != nil {
-		return "", "", false, fmt.Errorf("failed to parse ~/.saferc: %w", err)
+		return nil, fmt.Errorf("failed to parse ~/.saferc: %w", err)
 	}
 
-	// Get the current vault
-	if cfg.Current == "" {
-		return "", "", false, ErrNoCurrentVaultSet()
-	}
-
-	vault, ok := cfg.Vaults[cfg.Current]
-	if !ok {
-		return "", "", false, ErrVaultNotFoundInSaferc(cfg.Current)
-	}
-
-	if vault.Token == "" {
-		return "", "", false, ErrNoTokenFoundForVault(cfg.Current)
-	}
-
-	return vault.URL, vault.Token, vault.SkipVerify, nil
+	return cfg, nil
 }

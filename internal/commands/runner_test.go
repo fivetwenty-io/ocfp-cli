@@ -309,8 +309,10 @@ func TestGetSTACKITCredentialsFromVaultSafeNotAvailable(t *testing.T) {
 func TestGetSTACKITCredentialsFromVaultTokenSuccess(t *testing.T) {
 	fake := newFakeRunner()
 	// safe is present; token path returns a non-empty value
+	// The lookup is pinned to the bloc's own safe target, never the global
+	// current target (see safeGetForBloc).
 	tokenPath := "secret/config/test-bloc/mgmt/cpi/stackit:service_account_token"
-	fake.outputs["safe get "+tokenPath] = []byte("mytoken\n")
+	fake.outputs["safe -T test-bloc-inception get "+tokenPath] = []byte("mytoken\n")
 	restore := installFakeRunner(fake)
 	defer restore()
 
@@ -327,8 +329,8 @@ func TestGetSTACKITCredentialsFromVaultJSONFallback(t *testing.T) {
 	// token path returns empty; JSON path returns data
 	tokenPath := "secret/config/test-bloc/mgmt/cpi/stackit:service_account_token"
 	jsonPath := "secret/config/test-bloc/mgmt/cpi/stackit:service_account_json"
-	fake.outputs["safe get "+tokenPath] = []byte("")
-	fake.outputs["safe get "+jsonPath] = []byte(`{"type":"service_account"}`)
+	fake.outputs["safe -T test-bloc-inception get "+tokenPath] = []byte("")
+	fake.outputs["safe -T test-bloc-inception get "+jsonPath] = []byte(`{"type":"service_account"}`)
 	restore := installFakeRunner(fake)
 	defer restore()
 
@@ -361,10 +363,10 @@ func TestGetAWSCredentialsFromVaultSuccess(t *testing.T) {
 	sessionPath := "secret/config/test-bloc/aws:session_token"
 	regionPath := "secret/config/test-bloc/aws:region"
 
-	fake.outputs["safe get "+accessPath] = []byte("AKIAIOSFODNN7EXAMPLE\n")
-	fake.outputs["safe get "+secretPath] = []byte("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n")
-	fake.outputs["safe get "+sessionPath] = []byte("")
-	fake.outputs["safe get "+regionPath] = []byte("us-east-1\n")
+	fake.outputs["safe -T test-bloc-inception get "+accessPath] = []byte("AKIAIOSFODNN7EXAMPLE\n")
+	fake.outputs["safe -T test-bloc-inception get "+secretPath] = []byte("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n")
+	fake.outputs["safe -T test-bloc-inception get "+sessionPath] = []byte("")
+	fake.outputs["safe -T test-bloc-inception get "+regionPath] = []byte("us-east-1\n")
 	restore := installFakeRunner(fake)
 	defer restore()
 
