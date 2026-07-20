@@ -117,38 +117,49 @@ func GetCurrentBloc() (string, error) {
 }
 
 // SetCurrentBloc updates the current bloc and config file path in state.
+//
+// The load-modify-save runs under the state lock so a bloc's entry is not lost
+// to a concurrently bootstrapping sibling.
 func SetCurrentBloc(blocName, configFile string) error {
-	state, err := LoadState()
-	if err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
-	}
+	return withStateLock(func() error {
+		state, err := LoadState()
+		if err != nil {
+			return fmt.Errorf("failed to load state: %w", err)
+		}
 
-	state.CurrentBloc = blocName
-	state.ConfigFile = configFile
+		state.CurrentBloc = blocName
+		state.ConfigFile = configFile
 
-	return SaveState(state)
+		return SaveState(state)
+	})
 }
 
 // SaveBlocKeys persists SSH keys for a bloc in the state file.
+//
+// state.yml is shared by every bloc, so the load-modify-save runs under the
+// state lock. Without it, two blocs generating SSH keys at the same moment
+// interleave and one bloc's keys are silently dropped.
 func SaveBlocKeys(blocName string, keys map[string]string) error {
-	state, err := LoadState()
-	if err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
-	}
+	return withStateLock(func() error {
+		state, err := LoadState()
+		if err != nil {
+			return fmt.Errorf("failed to load state: %w", err)
+		}
 
-	if state.Blocs == nil {
-		state.Blocs = make(map[string]*BlocState)
-	}
+		if state.Blocs == nil {
+			state.Blocs = make(map[string]*BlocState)
+		}
 
-	blocState, ok := state.Blocs[blocName]
-	if !ok {
-		blocState = &BlocState{}
-		state.Blocs[blocName] = blocState
-	}
+		blocState, ok := state.Blocs[blocName]
+		if !ok {
+			blocState = &BlocState{} //nolint:exhaustruct // Keys is assigned immediately below
+			state.Blocs[blocName] = blocState
+		}
 
-	blocState.Keys = keys
+		blocState.Keys = keys
 
-	return SaveState(state)
+		return SaveState(state)
+	})
 }
 
 // GetBlocKeys returns the SSH keys for a bloc from the state file.
