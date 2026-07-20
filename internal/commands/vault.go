@@ -30,8 +30,9 @@ const (
 	// VaultDirMode is the file permission mode for vault directories.
 	VaultDirMode = 0750
 
-	// VaultInceptionPort is the default port for the inception vault server.
-	VaultInceptionPort = 8234
+	// VaultInceptionPort is the inception vault port used when no bloc is named.
+	// Bloc-scoped runs resolve their own port via config.InceptionVaultPort.
+	VaultInceptionPort = config.LegacyInceptionVaultPort
 	// TestVaultInceptionPort is the port for testing the inception vault server.
 	TestVaultInceptionPort = 8235
 	// VaultInceptionLogDir is the directory for vault inception logs (relative to OcfpHome).
@@ -297,6 +298,8 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	tmuxSession := "inception-vault"
 	vaultName := "inception"
 	port := VaultInceptionPort
+	logDir := filepath.Join(config.OcfpHome(), VaultInceptionLogDir)
+	logFile := filepath.Join(logDir, VaultInceptionLogFile)
 
 	if blocName != "" {
 		vaultDir = filepath.Join(config.OcfpBlocDir(blocName), "vault", "data")
@@ -304,6 +307,15 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		unsealKeysFile = filepath.Join(config.OcfpBlocDir(blocName), "vault", "unseal.keys")
 		tmuxSession = blocName + "-inception-vault"
 		vaultName = blocName + "-inception"
+		// Every other resource here is already bloc-scoped; the port must be
+		// too, or concurrent bootstraps for different blocs fight over one
+		// listener and the loser's secrets land in the winner's data dir.
+		port = config.InceptionVaultPort(blocName)
+		// `safe local` tees its startup output here and waitForVaultReady reads
+		// it back, so a shared file lets one bloc decide readiness from another
+		// bloc's output.
+		logDir = filepath.Join(config.OcfpBlocDir(blocName), VaultInceptionLogDir)
+		logFile = filepath.Join(logDir, VaultInceptionLogFile)
 	}
 
 	if testMode {
@@ -324,8 +336,8 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		"tmuxSession":    tmuxSession,
 		"vaultName":      vaultName,
 		"port":           strconv.Itoa(port),
-		"logDir":         filepath.Join(config.OcfpHome(), VaultInceptionLogDir),
-		"logFile":        filepath.Join(config.OcfpHome(), VaultInceptionLogDir, VaultInceptionLogFile),
+		"logDir":         logDir,
+		"logFile":        logFile,
 	}
 
 	paths["pidFile"] = filepath.Join(paths["vaultDir"], "vault.pid")
@@ -420,15 +432,57 @@ func isVaultAlreadyRunning(ctx context.Context, paths map[string]string, log *za
 	return true
 }
 
-// cleanupExistingVault removes any existing vault processes and files.
-func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
-	log.Info("Cleaning up existing vault processes...")
+// cleanupCommand is one step of the inception vault cleanup plan. Keeping the
+// plan as data lets tests assert that a bloc's cleanup reaches only that
+// bloc's own session, target, and port.
+type cleanupCommand struct {
+	name string
+	args []string
+	tmux bool
+}
 
-	// Kill tmux session first (primary mechanism)
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
-	ensureTmuxEnv(killCmd)
-	_ = killCmd.Run()
+// vaultCleanupCommands builds the cleanup plan for one bloc's inception vault.
+//
+// Every entry must be derived from paths, never from a shared constant: these
+// commands kill processes and delete targets, so an unscoped entry tears down
+// a concurrently bootstrapping sibling. The bare "inception-vault" session and
+// "inception" safe target are deliberately not touched — they belong to a
+// no-bloc run, which may be another operation happening at the same time.
+func vaultCleanupCommands(paths map[string]string) []cleanupCommand {
+	return []cleanupCommand{
+		{name: "tmux", args: []string{"kill-session", "-t", paths["tmuxSession"]}, tmux: true},
+		{name: "sh", args: []string{"-c", "lsof -ti :" + paths["port"] + " | xargs kill -9 2>/dev/null"}, tmux: false},
+		{name: "pkill", args: []string{"-f", "safe local.*--port " + paths["port"]}, tmux: false},
+	}
+}
+
+// vaultCleanupTargetCommands builds the plan run after processes have stopped.
+func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
+	return []cleanupCommand{
+		{name: "safe", args: []string{"target", "delete", paths["vaultName"]}, tmux: false},
+	}
+}
+
+// runCleanupCommands executes a cleanup plan, ignoring failures: a session or
+// target that is already gone is the desired end state.
+func runCleanupCommands(ctx context.Context, cmds []cleanupCommand) {
+	for _, spec := range cmds {
+		//nolint:gosec // args come from the controlled getVaultInceptionPaths() function
+		cmd := exec.CommandContext(ctx, spec.name, spec.args...)
+		if spec.tmux {
+			ensureTmuxEnv(cmd)
+		}
+
+		_ = cmd.Run()
+	}
+}
+
+// cleanupExistingVault removes this bloc's existing vault processes and files.
+func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
+	log.Infow("Cleaning up existing vault processes...",
+		"session", paths["tmuxSession"], "port", paths["port"])
+
+	runCleanupCommands(ctx, vaultCleanupCommands(paths))
 
 	// Kill by PID file if present (backward compat with old background process approach)
 	pidData, readErr := os.ReadFile(paths["pidFile"])
@@ -444,35 +498,9 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 		_ = os.Remove(paths["pidFile"])
 	}
 
-	// Also kill bare inception-vault session if using a prefixed name (migration from older systems)
-	if paths["tmuxSession"] != "inception-vault" {
-		bareKillCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", "inception-vault")
-		ensureTmuxEnv(bareKillCmd)
-		_ = bareKillCmd.Run()
-	}
-
-	// Kill any process listening on the vault port
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd := exec.CommandContext(ctx, "sh", "-c", "lsof -ti :"+paths["port"]+" | xargs kill -9 2>/dev/null")
-	_ = cmd.Run()
-
-	// Also try to kill safe local processes by pattern
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd = exec.CommandContext(ctx, "pkill", "-f", "safe local.*--port "+paths["port"])
-	_ = cmd.Run()
-
 	time.Sleep(VaultCleanupWait)
 
-	// Remove safe target if it exists
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd = exec.CommandContext(ctx, "safe", "target", "delete", paths["vaultName"])
-	_ = cmd.Run() // Ignore errors if target doesn't exist
-
-	// Also delete bare inception target if using a prefixed name (migration from older systems)
-	if paths["vaultName"] != "inception" {
-		cmd = exec.CommandContext(ctx, "safe", "target", "delete", "inception")
-		_ = cmd.Run()
-	}
+	runCleanupCommands(ctx, vaultCleanupTargetCommands(paths))
 
 	// Remove vault data directory and all its contents
 	err := os.RemoveAll(paths["vaultDir"])
@@ -921,15 +949,25 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 		return nil //nolint:nilerr // Non-fatal
 	}
 
-	if v, ok := safeCfg.Vaults[safeCfg.Current]; ok && v.Token != "" {
+	// Look the token up by this bloc's own target name. The `current` pointer
+	// is global to the workstation, so a sibling bloc reaching `safe target`
+	// first would otherwise have its root token written into this bloc's
+	// root.key — after which every later command authenticates against the
+	// wrong vault.
+	targetName := safeCfg.Current
+	if paths["vaultName"] != "" {
+		targetName = paths["vaultName"]
+	}
+
+	if v, ok := safeCfg.Vaults[targetName]; ok && v.Token != "" {
 		err = os.WriteFile(paths["rootKeyFile"], []byte(v.Token+"\n"), VaultOutputFileMode)
 		if err != nil {
 			return fmt.Errorf("failed to write root token: %w", err)
 		}
 
-		log.Infow("Saved root token", "path", paths["rootKeyFile"])
+		log.Infow("Saved root token", "path", paths["rootKeyFile"], "target", targetName)
 	} else {
-		log.Warn("Root token not found in .saferc")
+		log.Warnw("Root token not found in .saferc", "target", targetName)
 	}
 
 	return nil

@@ -2,9 +2,11 @@ package vault
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +41,34 @@ func TestTeardownLocalInception_BlocScoped(t *testing.T) {
 
 	joined := strings.Join(*recorded, "\n")
 	assert.Contains(t, joined, "pkill", "must stop local safe processes")
-	assert.Contains(t, joined, "8234", "safe process kill must be port-scoped")
+	assert.Contains(t, joined, strconv.Itoa(config.InceptionVaultPort("ocfp-lab-drgao")),
+		"safe process kill must be scoped to this bloc's port")
+}
+
+// TestTeardownLocalInception_DoesNotKillForeignBlocPort is the regression guard
+// for the cross-bloc eviction bug: concurrent bootstraps for different blocs on
+// one workstation must never tear down each other's inception vault.
+func TestTeardownLocalInception_DoesNotKillForeignBlocPort(t *testing.T) {
+	recorded := captureLocalCommands(t)
+
+	err := TeardownLocalInception(context.Background(), "ocfp-lab-drgao")
+	require.NoError(t, err)
+
+	foreignPort := strconv.Itoa(config.InceptionVaultPort("ocfp-lab-drhu"))
+	joined := strings.Join(*recorded, "\n")
+
+	assert.NotContains(t, joined, foreignPort, "must not target a sibling bloc's port")
+	assert.NotContains(t, joined, "8234", "must not target the shared legacy port")
+}
+
+func TestTeardownLocalInception_BareNamesUseLegacyPort(t *testing.T) {
+	recorded := captureLocalCommands(t)
+
+	err := TeardownLocalInception(context.Background(), "")
+	require.NoError(t, err)
+
+	joined := strings.Join(*recorded, "\n")
+	assert.Contains(t, joined, strconv.Itoa(config.LegacyInceptionVaultPort))
 }
 
 func TestTeardownLocalInception_BareNamesWithoutBloc(t *testing.T) {
