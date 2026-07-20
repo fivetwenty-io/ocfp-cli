@@ -624,9 +624,9 @@ func (m *Manager) blocCACertFromState(blocName string) (certPEM string, ok bool)
 // `bastion init` isn't the one who ran bootstrap) or the resource predates
 // ca_cert being recorded in state.
 func (m *Manager) blocCACertFromVault(blocName string) (string, error) {
-	client, err := vault.NewClientFromEnv()
+	client, err := vault.NewClientForBloc(blocName)
 	if err != nil {
-		return "", fmt.Errorf("creating vault client from environment: %w", err)
+		return "", fmt.Errorf("creating vault client for bloc %s: %w", blocName, err)
 	}
 
 	safe := vault.NewSafe(client)

@@ -31,6 +31,7 @@ var (
 	ErrNotAString                             = errors.New("not a string")
 	ErrNotImplementedInMock                   = errors.New("not implemented in mock")
 	ErrSafercMustBeInHomeDirectory            = errors.New("invalid path: .saferc must be in home directory")
+	ErrNoBlocForVaultTarget                   = errors.New("a bloc name is required to resolve a vault target")
 )
 
 // ErrUnsupportedAuthType returns an error for an unrecognized vault authentication type.

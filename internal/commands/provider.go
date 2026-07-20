@@ -281,7 +281,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		return "", "", fmt.Errorf("invalid token path: %w", err)
 	}
 
-	output, err := runner.Output(ctx, "safe", "get", tokenPath)
+	output, err := safeGetForBloc(ctx, blocName, tokenPath)
 	if err == nil {
 		token := strings.TrimSpace(string(output))
 		if token != "" {
@@ -300,7 +300,7 @@ func getSTACKITCredentialsFromVault(blocName string, log *zap.Logger) (string, s
 		return "", "", fmt.Errorf("invalid JSON path: %w", err)
 	}
 
-	output, err = runner.Output(ctx, "safe", "get", jsonPath)
+	output, err = safeGetForBloc(ctx, blocName, jsonPath)
 	if err == nil {
 		jsonCreds := strings.TrimSpace(string(output))
 		if jsonCreds != "" {
@@ -540,7 +540,7 @@ func retrieveAWSAccessKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid access key path: %w", err)
 	}
 
-	output, err := runner.Output(ctx, "safe", "get", accessKeyPath)
+	output, err := safeGetForBloc(ctx, blocName, accessKeyPath)
 	if err == nil {
 		credentials.AccessKeyID = strings.TrimSpace(string(output))
 	}
@@ -557,7 +557,7 @@ func retrieveAWSSecretKeyFromVault(ctx context.Context, blocName string, credent
 		return fmt.Errorf("invalid secret key path: %w", err)
 	}
 
-	output, err := runner.Output(ctx, "safe", "get", secretKeyPath)
+	output, err := safeGetForBloc(ctx, blocName, secretKeyPath)
 	if err == nil {
 		credentials.SecretAccessKey = strings.TrimSpace(string(output))
 	}
@@ -574,7 +574,7 @@ func retrieveAWSSessionTokenFromVault(ctx context.Context, blocName string, cred
 		return fmt.Errorf("invalid session token path: %w", err)
 	}
 
-	output, err := runner.Output(ctx, "safe", "get", sessionTokenPath)
+	output, err := safeGetForBloc(ctx, blocName, sessionTokenPath)
 	if err == nil {
 		credentials.SessionToken = strings.TrimSpace(string(output))
 	}
@@ -591,7 +591,7 @@ func retrieveAWSRegionFromVault(ctx context.Context, blocName string, credential
 		return fmt.Errorf("invalid region path: %w", err)
 	}
 
-	output, err := runner.Output(ctx, "safe", "get", regionPath)
+	output, err := safeGetForBloc(ctx, blocName, regionPath)
 	if err == nil {
 		credentials.Region = strings.TrimSpace(string(output))
 	}
