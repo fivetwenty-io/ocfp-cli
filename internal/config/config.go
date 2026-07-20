@@ -190,8 +190,13 @@ type Config struct {
 	DNS              []string                    `json:"dns"                 mapstructure:"dns"                 yaml:"dns,omitempty"`
 	AZs              map[string]AvailabilityZone `json:"azs"                 mapstructure:"azs"                 yaml:"azs,omitempty"`
 	SSHKeyStorageDir string                      `json:"ssh_key_storage_dir" mapstructure:"ssh_key_storage_dir" yaml:"ssh_key_storage_dir,omitempty"`
-	Routers          ComponentConfig             `json:"routers"             mapstructure:"routers"             yaml:"routers,omitempty"`
-	Cells            ComponentConfig             `json:"cells"               mapstructure:"cells"               yaml:"cells,omitempty"`
+	// VaultInceptionPort pins the workstation-local inception vault listener
+	// port for this bloc. Leave unset to use the port derived from the bloc
+	// name (see InceptionVaultPort); set it only when a derived port clashes
+	// with another service on the workstation.
+	VaultInceptionPort int             `json:"vault_inception_port" mapstructure:"vault_inception_port" yaml:"vault_inception_port,omitempty"`
+	Routers            ComponentConfig `json:"routers"              mapstructure:"routers"              yaml:"routers,omitempty"`
+	Cells              ComponentConfig `json:"cells"                mapstructure:"cells"                yaml:"cells,omitempty"`
 	// Additional fields from the example config
 	FQDNs             *FQDNConfig          `json:"fqdns"               mapstructure:"fqdns"               yaml:"fqdns,omitempty"`
 	S3                map[string]string    `json:"s3"                  mapstructure:"s3"                  yaml:"s3,omitempty"`
