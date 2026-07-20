@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// localInceptionVaultPort is the fixed port the workstation-local inception
-// vault listens on (see getVaultInceptionPaths in internal/commands).
-const localInceptionVaultPort = "8234"
+// localInceptionVaultPort returns the port the named bloc's workstation-local
+// inception vault listens on (see getVaultInceptionPaths in internal/commands).
+// It is bloc-scoped so teardown never evicts a sibling bloc's vault.
+func localInceptionVaultPort(blocName string) string {
+	return strconv.Itoa(config.InceptionVaultPort(blocName))
+}
 
 // runLocalCommand is the subprocess seam for local teardown operations.
 // Tests override it to record invocations without spawning processes.
@@ -49,8 +54,10 @@ func TeardownLocalInception(ctx context.Context, blocName string) error {
 		return fmt.Errorf("%w: %s", ErrInvalidTmuxSession, session)
 	}
 
+	port := localInceptionVaultPort(blocName)
+
 	log := logger.Get()
-	log.Infow("Decommissioning local inception vault", "session", session, "target", target)
+	log.Infow("Decommissioning local inception vault", "session", session, "target", target, "port", port)
 
 	//nolint:noinlineerr // errors are passed to the logger for context
 	if err := runLocalCommand(ctx, "tmux", "kill-session", "-t", session); err != nil {
@@ -58,8 +65,8 @@ func TeardownLocalInception(ctx context.Context, blocName string) error {
 	}
 
 	//nolint:noinlineerr // errors are passed to the logger for context
-	if err := runLocalCommand(ctx, "pkill", "-f", "safe local.*--port "+localInceptionVaultPort); err != nil {
-		log.Debugw("No local safe processes to kill", "port", localInceptionVaultPort, "error", err)
+	if err := runLocalCommand(ctx, "pkill", "-f", "safe local.*--port "+port); err != nil {
+		log.Debugw("No local safe processes to kill", "port", port, "error", err)
 	}
 
 	//nolint:noinlineerr // errors are passed to the logger for context
