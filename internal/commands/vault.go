@@ -403,22 +403,17 @@ func isVaultAlreadyRunning(ctx context.Context, paths map[string]string, log *za
 		return false
 	}
 
-	// Check 2: vault status responds on port
+	// Check 2: vault responds on port
 	vaultAddr := "http://127.0.0.1:" + paths["port"]
 
-	//nolint:gosec // controlled vault address from getVaultInceptionPaths()
-	cmd := exec.CommandContext(ctx, "vault", "status")
-
-	cmd.Env = append(os.Environ(), "VAULT_ADDR="+vaultAddr)
-
-	if cmd.Run() != nil {
+	if !vaultRespondsOnAddr(ctx, vaultAddr) {
 		log.Debugw("Vault not responding", "addr", vaultAddr)
 
 		return false
 	}
 
 	// Check 3: safe target contains the vault name
-	cmd = exec.CommandContext(ctx, "safe", "target")
+	cmd := exec.CommandContext(ctx, "safe", "target")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), paths["vaultName"]) {
