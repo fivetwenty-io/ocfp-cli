@@ -257,7 +257,7 @@ func TestBuildSSHCommandWithArguments(t *testing.T) {
 			extraOpts:      "",
 			sshArgs:        []string{},
 			command:        []string{"hostname"},
-			expectContains: []string{"ssh", "ubuntu@10.0.0.1", "hostname"},
+			expectContains: []string{"ssh", "ubuntu@10.0.0.1", "bash", "-lc", "'hostname'"},
 		},
 		{
 			name:           "WithMultipleCommands",
@@ -267,7 +267,17 @@ func TestBuildSSHCommandWithArguments(t *testing.T) {
 			extraOpts:      "",
 			sshArgs:        []string{},
 			command:        []string{"ls", ";", "hostname"},
-			expectContains: []string{"ssh", "ubuntu@10.0.0.1", "ls", ";", "hostname"},
+			expectContains: []string{"ssh", "ubuntu@10.0.0.1", "bash", "-lc", "'ls ; hostname'"},
+		},
+		{
+			name:           "CommandWithEmbeddedSingleQuotes",
+			host:           "10.0.0.1",
+			user:           "ubuntu",
+			keyPath:        "/path/to/key",
+			extraOpts:      "",
+			sshArgs:        []string{},
+			command:        []string{"echo 'hi there'"},
+			expectContains: []string{"ssh", "ubuntu@10.0.0.1", "bash", "-lc", `'echo '\''hi there'\'''`},
 		},
 		{
 			name:           "WithLocalPortForwarding",
@@ -317,7 +327,7 @@ func TestBuildSSHCommandWithArguments(t *testing.T) {
 			extraOpts:      "",
 			sshArgs:        []string{"-L", "8080:localhost:80", "-v"},
 			command:        []string{"uptime"},
-			expectContains: []string{"ssh", "-L", "8080:localhost:80", "-v", "ubuntu@10.0.0.1", "uptime"},
+			expectContains: []string{"ssh", "-L", "8080:localhost:80", "-v", "ubuntu@10.0.0.1", "bash", "-lc", "'uptime'"},
 		},
 		{
 			name:              "UnsafeFlagFiltered",
