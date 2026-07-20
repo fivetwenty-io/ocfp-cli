@@ -14,6 +14,15 @@ import (
 // networkModeSDN is the network mode value for Proxmox SDN networking.
 const networkModeSDN = "sdn"
 
+// anyBridgeFilter is the /nodes/{node}/network type filter that reports SDN
+// vnets alongside plain Linux bridges. The unfiltered listing omits a vnet
+// until SDN has rendered it, which is why every bridge lookup here sends this
+// filter. It is the same endpoint under the same permission, so it costs no
+// privilege the OCFPCpi role does not already hold — unlike /cluster/sdn,
+// which needs SDN.Audit and would drag SDN.Allocate along with it, letting
+// the token delete the vnet at teardown.
+const anyBridgeFilter = "any_bridge"
+
 // NetworkManager handles Proxmox network operations.
 type NetworkManager struct {
 	client *Client
@@ -376,26 +385,60 @@ func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID strin
 }
 
 // createBridgeNetwork creates a Linux bridge network.
+//
+// A bridge somebody else supplies is adopted, never written. Two signals say
+// so, and either is sufficient:
+//
+// The bridge is reported by the any_bridge listing. SDN vnets live in
+// /etc/network/interfaces.d/sdn and are absent from the unfiltered listing
+// that EnsureBridge consults, so EnsureBridge concludes the device is missing
+// and POSTs a duplicate definition into /etc/network/interfaces.new, which
+// then merges on the next reload and overrides the SDN one.
+//
+// Or the bloc named the bridge as its default_bridge. That covers the window
+// the first signal cannot: a vnet SDN has not rendered yet is invisible to
+// every listing, which is the state a fresh host bootstraps in — precisely
+// when the defect fires. A bridge the bloc was configured to attach to is by
+// definition a device it expects to find, not one to define.
 func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
-	logger.WithOperation("CreateNetwork").Infof("Creating bridge network: %s", req.Name)
-
 	node, err := m.client.getNode(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	netSvc := m.client.getNetworkService()
-
-	params := map[string]interface{}{
-		"autostart": 1,
+	adopt, reason, err := m.hostSuppliesBridge(ctx, node, req.Name)
+	if err != nil {
+		return nil, err
 	}
 
-	if req.CIDR != "" {
-		// Extract IP and netmask from CIDR
-		parts := strings.Split(req.CIDR, "/")
-		if len(parts) == 2 { //nolint:mnd // CIDR format "ip/prefix" always has 2 parts
-			params["cidr"] = req.CIDR
-		}
+	if adopt {
+		logger.WithOperation("CreateNetwork").Infof(
+			"PVE bridge mode: adopting host bridge %s (%s); not creating",
+			req.Name, reason,
+		)
+
+		return &cpi.Network{
+			ID:        req.Name,
+			Name:      req.Name,
+			CIDR:      req.CIDR,
+			Region:    node,
+			State:     cpi.ResourceStateActive,
+			Tags:      req.Tags,
+			CreatedAt: time.Now(),
+		}, nil
+	}
+
+	logger.WithOperation("CreateNetwork").Infof("Creating bridge network: %s", req.Name)
+
+	netSvc := m.client.getNetworkService()
+
+	// No address is set on the bridge. req.CIDR names the bloc's network
+	// (10.111.16.0/20); what an interface needs is a host address within it
+	// (the gateway, 10.111.16.1/20), and NetworkRequest carries no gateway to
+	// derive it from. Sending the network address made it primary on the
+	// bridge and host-originated traffic sourced from it, which peers drop.
+	params := map[string]interface{}{
+		"autostart": 1,
 	}
 
 	err = netSvc.EnsureBridge(ctx, node, req.Name, params)
@@ -403,8 +446,12 @@ func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.Netwo
 		return nil, fmt.Errorf("failed to create bridge: %w", err)
 	}
 
-	// Reload network configuration
-	_ = netSvc.Reload(ctx, node)
+	// A bridge that was written but not reloaded exists only in
+	// /etc/network/interfaces.new, so a reload failure is a real failure:
+	// reporting success would record an active network the host cannot use.
+	if reloadErr := netSvc.Reload(ctx, node); reloadErr != nil {
+		return nil, fmt.Errorf("failed to reload network after creating bridge %s: %w", req.Name, reloadErr)
+	}
 
 	return &cpi.Network{
 		ID:        req.Name,
@@ -415,6 +462,60 @@ func (m *NetworkManager) createBridgeNetwork(ctx context.Context, req *cpi.Netwo
 		Tags:      req.Tags,
 		CreatedAt: time.Now(),
 	}, nil
+}
+
+// hostSuppliesBridge reports whether the named bridge is a device the host
+// already provides, along with the reason for the log line. An error means
+// the question could not be answered, and callers must not write host network
+// config on that basis.
+func (m *NetworkManager) hostSuppliesBridge(ctx context.Context, node, bridge string) (bool, string, error) {
+	existing, err := m.listNodeBridges(ctx, node)
+	if err != nil {
+		return false, "", err
+	}
+
+	for _, iface := range existing {
+		if iface == bridge {
+			return true, "present on node " + node, nil
+		}
+	}
+
+	if bridge == m.client.config.DefaultBridge {
+		return true, "configured as the bloc's default_bridge", nil
+	}
+
+	return false, "", nil
+}
+
+// listNodeBridges returns the names of every bridge device on the node,
+// including SDN vnets. See anyBridgeFilter for why the filter is required.
+func (m *NetworkManager) listNodeBridges(ctx context.Context, node string) ([]string, error) {
+	path := buildPVEPath(node, "network")
+
+	resp, err := m.client.pveClient.GetCtx(ctx, path, map[string]interface{}{"type": anyBridgeFilter})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list bridges on node %s: %w", node, err)
+	}
+
+	data, ok := resp.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResponseType, resp)
+	}
+
+	bridges := make([]string, 0, len(data))
+
+	for _, item := range data {
+		netData, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if iface := getStringFromMap(netData, "iface"); iface != "" {
+			bridges = append(bridges, iface)
+		}
+	}
+
+	return bridges, nil
 }
 
 // createSDNNetwork creates an SDN VNet.
@@ -532,7 +633,11 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 
 	path := buildPVEPath(node, "network")
 
-	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
+	// The filter does the bridge selection server-side, so there is no
+	// client-side type check: an SDN vnet need not report type "bridge" to be
+	// one, and dropping it here would put us back to reporting the bloc's own
+	// bridge as missing.
+	resp, err := m.client.pveClient.GetCtx(ctx, path, map[string]interface{}{"type": anyBridgeFilter})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
@@ -547,12 +652,6 @@ func (m *NetworkManager) listBridgeNetworks(ctx context.Context, filters map[str
 	for _, item := range data {
 		netData, ok := item.(map[string]interface{})
 		if !ok {
-			continue
-		}
-
-		// Only include bridges
-		netType := getStringFromMap(netData, "type")
-		if netType != "bridge" {
 			continue
 		}
 
