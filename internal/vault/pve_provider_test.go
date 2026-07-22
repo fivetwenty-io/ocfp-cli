@@ -180,7 +180,7 @@ func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 	require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount,
 		"single-node config must write one AZ per workload zone")
 
-	for z := 0; z < pveWorkloadAZCount; z++ {
+	for z := range pveWorkloadAZCount {
 		zone := pveAZKeyPrefix + string(rune('a'+z))
 		path := provider.PathBuilder.GetAZPath(MgmtEnvType, zone)
 		call := mock.findSetMultipleCall(path)
@@ -204,7 +204,7 @@ func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
 	require.NoError(t, provider.ConfigureAZs(MgmtEnvType))
 	require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount, "one AZ write per workload zone")
 
-	for z := 0; z < pveWorkloadAZCount; z++ {
+	for z := range pveWorkloadAZCount {
 		zone := pveAZKeyPrefix + string(rune('a'+z))
 		path := provider.PathBuilder.GetAZPath(MgmtEnvType, zone)
 		call := mock.findSetMultipleCall(path)
@@ -555,7 +555,7 @@ func TestPVEVaultProvider_blobstoreS3Target_InternalCA_RecoversFromVault(t *test
 	safe := newFakeSafe()
 
 	caCert := "-----BEGIN CERTIFICATE-----\nrecovered\n-----END CERTIFICATE-----\n"
-	require.NoError(t, safe.SetMultiple(blocCAPath(bloc), map[string]interface{}{
+	require.NoError(t, safe.SetMultiple(blocCAPath(bloc), map[string]any{
 		"cert":        caCert,
 		"key":         "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n",
 		"fingerprint": "deadbeef",
@@ -689,7 +689,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_InternalCARecoveryReachesCFAndBOSH
 	safe := newFakeSafe()
 
 	caCert := "-----BEGIN CERTIFICATE-----\nrecovered-for-cf-and-bosh\n-----END CERTIFICATE-----\n"
-	require.NoError(t, safe.SetMultiple(blocCAPath(blocName), map[string]interface{}{
+	require.NoError(t, safe.SetMultiple(blocCAPath(blocName), map[string]any{
 		"cert":        caCert,
 		"key":         "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----\n",
 		"fingerprint": "deadbeef",
@@ -789,7 +789,7 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 		ID:   "subnet-infra",
 		Type: "subnet",
 		Name: blocName + "-infra",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              "10.64.64.0/22",
 			"availability_zone": "",
 			"gateway":           "10.64.64.1",
@@ -799,7 +799,7 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 		ID:   "subnet-ocfp-0",
 		Type: "subnet",
 		Name: blocName + "-ocfp-0",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              "10.64.68.0/22",
 			"availability_zone": "pvea",
 			// Bootstrap records the PARENT /18 gateway here
@@ -891,7 +891,7 @@ func TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent(t *tes
 		ID:   "subnet-ocfp-0",
 		Type: "subnet",
 		Name: blocName + "-ocfp-0",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              "10.64.68.0/22",
 			"availability_zone": "pvea",
 			"gateway":           "",
@@ -925,7 +925,7 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 		ID:   "subnet-infra",
 		Type: "subnet",
 		Name: blocName + "-infra",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":    "10.64.64.0/22",
 			"gateway": "10.64.64.1",
 		},
@@ -1178,7 +1178,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState(t *t
 		ID:   "artifacts",
 		Type: "artifacts",
 		Name: blocName + "-artifacts",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"endpoint":   "https://10.64.68.11:9000",
 			"private_ip": "10.64.68.11",
 			"access_key": "AKIA-state",
@@ -1235,7 +1235,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_AutoSourceWritesArtifactsMeta(t *t
 		ID:   "artifacts",
 		Type: "artifacts",
 		Name: blocName + "-artifacts",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"endpoint":               "https://10.64.68.11:9000",
 			"private_ip":             "10.64.68.11",
 			"access_key":             "AKIA-state",
@@ -1277,7 +1277,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_AutoSourceOmitsEmptyFingerprintAnd
 		ID:   "artifacts",
 		Type: "artifacts",
 		Name: blocName + "-artifacts",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"endpoint":   "https://10.64.68.11:9000",
 			"private_ip": "10.64.68.11",
 			"access_key": "AKIA-state",

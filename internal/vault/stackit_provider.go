@@ -220,7 +220,7 @@ func (s *StackitVaultProvider) ConfigureCertificates(_envPath, _envType string, 
 	// This is typically handled by Let's Encrypt or other certificate providers
 	certsPath := s.PathBuilder.GetCertsPath()
 
-	certConfig := map[string]interface{}{
+	certConfig := map[string]any{
 		"provider": "letsencrypt",
 		"region":   s.Config.Region,
 		"domains":  s.Config.FQDNs,
@@ -599,7 +599,7 @@ func (s *StackitVaultProvider) resolveEffectiveBase(fqdnConfig *config.FQDNConfi
 }
 
 // filterCFFQDNsForMgmt removes CF-related FQDNs from the map for the mgmt environment.
-func (s *StackitVaultProvider) filterCFFQDNsForMgmt(envType string, fqdns map[string]interface{}) {
+func (s *StackitVaultProvider) filterCFFQDNsForMgmt(envType string, fqdns map[string]any) {
 	if envType != MgmtEnvType {
 		return
 	}
@@ -799,9 +799,9 @@ func (s *StackitVaultProvider) groupIPsByJob(blocIPs []*cpi.PublicIP) map[string
 
 // preparePublicIPVaultData prepares vault data for mgmt and ocf environments.
 // This matches the Perl implementation in _prepare_vault_data (lines 597-626).
-func (s *StackitVaultProvider) preparePublicIPVaultData(ipsByJob map[string][]*cpi.PublicIP) (map[string]interface{}, map[string]interface{}) {
-	mgmtVaultData := make(map[string]interface{})
-	ocfVaultData := make(map[string]interface{})
+func (s *StackitVaultProvider) preparePublicIPVaultData(ipsByJob map[string][]*cpi.PublicIP) (map[string]any, map[string]any) {
+	mgmtVaultData := make(map[string]any)
+	ocfVaultData := make(map[string]any)
 
 	// Process each job type
 	for job, ips := range ipsByJob {
@@ -888,7 +888,7 @@ func (s *StackitVaultProvider) determineVaultKeyAndEnvironment(job, index string
 
 // storePublicIPsInVault stores public IPs in vault at appropriate paths.
 // This matches the Perl implementation in _store_ips_in_vault (lines 661-687).
-func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData map[string]interface{}) error {
+func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData map[string]any) error {
 	// Store management IPs in vault
 	if len(mgmtVaultData) > 0 {
 		mgmtPath := fmt.Sprintf("secret/config/%s/mgmt/public-ips", s.BlocName)
@@ -924,7 +924,7 @@ func (s *StackitVaultProvider) storePublicIPsInVault(mgmtVaultData, ocfVaultData
 
 // displayPublicIPSummary displays a summary of configured public IPs.
 // This matches the Perl implementation in _display_ip_summary (lines 689-703).
-func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultData map[string]interface{}) {
+func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultData map[string]any) {
 	if len(mgmtVaultData) == 0 && len(ocfVaultData) == 0 {
 		s.logger.Warnw("No public IPs configured for bloc", "bloc", s.BlocName)
 
@@ -948,7 +948,7 @@ func (s *StackitVaultProvider) displayPublicIPSummary(mgmtVaultData, ocfVaultDat
 }
 
 // countKeysWithPrefix counts keys in a map that start with a given prefix.
-func (s *StackitVaultProvider) countKeysWithPrefix(data map[string]interface{}, prefix string) int {
+func (s *StackitVaultProvider) countKeysWithPrefix(data map[string]any, prefix string) int {
 	count := 0
 
 	for key := range data {
@@ -1089,7 +1089,7 @@ func (s *StackitVaultProvider) configureSharedComponents(reporter providers.Prog
 }
 
 // getDatabasesForEnv returns database configuration for an environment.
-func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map[string]interface{} {
+func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map[string]any {
 	// StackIT-specific hostname formatter
 	hostnameFormatter := func(env string) string {
 		switch env {
@@ -1106,10 +1106,10 @@ func (s *StackitVaultProvider) getDatabasesForEnv(envType string) map[string]map
 }
 
 // buildTargetsFromIPs builds targets from a list of IPs.
-func (b *lbServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []map[string]interface{} {
-	targets := make([]map[string]interface{}, 0, len(ips))
+func (b *lbServiceBuilder) buildTargetsFromIPs(ips []string, prefix string) []map[string]any {
+	targets := make([]map[string]any, 0, len(ips))
 	for i, ip := range ips {
-		targets = append(targets, map[string]interface{}{
+		targets = append(targets, map[string]any{
 			"ip":   ip,
 			"name": fmt.Sprintf("%s-%d", prefix, i),
 		})
@@ -1158,7 +1158,7 @@ func (s *StackitVaultProvider) configureIAM(envType string) error {
 		return nil
 	} // Write S3 credentials with all required fields to match Perl output
 
-	s3Data := map[string]interface{}{
+	s3Data := map[string]any{
 		"access_key_id":     accessKeyID,
 		"secret_access_key": secretAccessKey,
 		"region":            s.Config.Region,
@@ -1186,7 +1186,7 @@ func (s *StackitVaultProvider) configureKeys(envType string) error {
 	boshKeyPath := s.PathBuilder.GetBOSHKeyPath(envType)
 	keypairName := s.BlocName + "-bastion"
 
-	keyData := map[string]interface{}{
+	keyData := map[string]any{
 		"keypair_name": keypairName,
 	}
 
@@ -1203,7 +1203,7 @@ func (s *StackitVaultProvider) configureKeys(envType string) error {
 }
 
 // loadKeyDataFromState populates key data fields from the state manager if available.
-func (s *StackitVaultProvider) loadKeyDataFromState(keyData map[string]interface{}) {
+func (s *StackitVaultProvider) loadKeyDataFromState(keyData map[string]any) {
 	stateManager := s.loadStateManager()
 	if stateManager == nil {
 		return
@@ -1232,7 +1232,7 @@ func (s *StackitVaultProvider) loadKeyDataFromState(keyData map[string]interface
 }
 
 // applyKeyDefaults sets default values for key data fields not already populated from state.
-func (s *StackitVaultProvider) applyKeyDefaults(keyData map[string]interface{}) {
+func (s *StackitVaultProvider) applyKeyDefaults(keyData map[string]any) {
 	if _, exists := keyData["id"]; !exists {
 		keyData["id"] = s.BlocName + "-bosh-key"
 	}
@@ -1247,7 +1247,7 @@ func (s *StackitVaultProvider) applyKeyDefaults(keyData map[string]interface{}) 
 }
 
 // resolvePrivateKey finds the private key file and stores its path and content in key data.
-func (s *StackitVaultProvider) resolvePrivateKey(keyData map[string]interface{}, keypairName string) {
+func (s *StackitVaultProvider) resolvePrivateKey(keyData map[string]any, keypairName string) {
 	privateKeyPath := s.getPrivateKeyPath(keypairName)
 	if privateKeyPath == "" {
 		keyData["private"] = keypairName
@@ -1320,7 +1320,7 @@ func (s *StackitVaultProvider) readPrivateKeyContent(path string) (string, error
 // configureRegion configures region settings.
 func (s *StackitVaultProvider) configureRegion(envType string) error {
 	netPath := s.PathBuilder.GetNetPath(envType)
-	regionData := map[string]interface{}{
+	regionData := map[string]any{
 		"region": s.Config.Region,
 	}
 
@@ -1434,7 +1434,7 @@ func (s *StackitVaultProvider) buildSecurityGroupMapping() map[string]string {
 // findSecurityGroup attempts to find a security group from state manager or provider data.
 // This matches the Perl implementation in _find_security_group (lines 1614-1645).
 // Falls back to API query if not found in state (matching Perl's robustness).
-func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sgType, sgFullName string) map[string]interface{} {
+func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sgType, sgFullName string) map[string]any {
 	if stateManager != nil {
 		if sg := s.findSGInStateResources(stateManager, sgType, sgFullName); sg != nil {
 			return sg
@@ -1456,7 +1456,7 @@ func (s *StackitVaultProvider) findSecurityGroup(stateManager *state.Manager, sg
 }
 
 // findSGInStateResources looks up a security group by name in state resource records.
-func (s *StackitVaultProvider) findSGInStateResources(stateManager *state.Manager, sgType, sgFullName string) map[string]interface{} {
+func (s *StackitVaultProvider) findSGInStateResources(stateManager *state.Manager, sgType, sgFullName string) map[string]any {
 	resources, err := stateManager.ListResources("security_group")
 	if err != nil || len(resources) == 0 {
 		return nil
@@ -1468,7 +1468,7 @@ func (s *StackitVaultProvider) findSGInStateResources(stateManager *state.Manage
 			continue
 		}
 
-		sg := map[string]interface{}{ //nolint:varnamelen // sg is clear in context
+		sg := map[string]any{ //nolint:varnamelen // sg is clear in context
 			"id":   resource.ID,
 			"name": name,
 		}
@@ -1489,7 +1489,7 @@ func (s *StackitVaultProvider) findSGInStateResources(stateManager *state.Manage
 }
 
 // findSGInStateOutputs looks up a security group ID in state outputs.
-func (s *StackitVaultProvider) findSGInStateOutputs(stateManager *state.Manager, sgType, sgFullName string) map[string]interface{} {
+func (s *StackitVaultProvider) findSGInStateOutputs(stateManager *state.Manager, sgType, sgFullName string) map[string]any {
 	sgKey := fmt.Sprintf("security_group_%s_id", sgType)
 
 	sgID, err := stateManager.GetOutput(sgKey)
@@ -1505,7 +1505,7 @@ func (s *StackitVaultProvider) findSGInStateOutputs(stateManager *state.Manager,
 	s.logger.Debugw("Found security group in state outputs",
 		"type", sgType, "name", sgFullName, "id", id)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"id":          id,
 		"name":        sgFullName,
 		"description": "Security group for " + sgType,
@@ -1513,7 +1513,7 @@ func (s *StackitVaultProvider) findSGInStateOutputs(stateManager *state.Manager,
 }
 
 // findSGViaAPI queries the STACKIT API to find a security group by name.
-func (s *StackitVaultProvider) findSGViaAPI(sgType, sgFullName string) map[string]interface{} {
+func (s *StackitVaultProvider) findSGViaAPI(sgType, sgFullName string) map[string]any {
 	s.logger.Debugw("Security group not in state, querying API",
 		"type", sgType, "name", sgFullName)
 
@@ -1546,7 +1546,7 @@ func (s *StackitVaultProvider) findSGViaAPI(sgType, sgFullName string) map[strin
 		s.logger.Infow("Found security group via API fallback",
 			"type", sgType, "name", sgFullName, "id", apiSg.ID)
 
-		return map[string]interface{}{
+		return map[string]any{
 			"id":          apiSg.ID,
 			"name":        apiSg.Name,
 			"description": desc,
@@ -1561,7 +1561,7 @@ func (s *StackitVaultProvider) findSGViaAPI(sgType, sgFullName string) map[strin
 //
 // CRITICAL: CF-specific security groups are stored directly under net/ path,
 // NOT under net/sgs/, for deployment compatibility (Perl: lines 1676-1685).
-func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]interface{}, sgType, sgFullName, netPath string) error { //nolint:varnamelen // sg is clear in context
+func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]any, sgType, sgFullName, netPath string) error { //nolint:varnamelen // sg is clear in context
 	// Get security group ID
 	sgID, ok := sg["id"].(string)
 	if !ok || sgID == "" {
@@ -1569,7 +1569,7 @@ func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]interface
 	}
 
 	// Build security group data
-	sgData := map[string]interface{}{
+	sgData := map[string]any{
 		"id":   sgID,
 		"name": sgFullName,
 	}
@@ -1973,7 +1973,7 @@ func (s *StackitVaultProvider) getAvailabilityZone(subnetNum int) string {
 
 	return ""
 }
-func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]interface{} {
+func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int, cidr string, networkInfo *subnetNetworkInfo, availabilityZone string) map[string]any {
 	// Get master network CIDR
 	netCIDR := s.Config.Network.CIDR
 
@@ -2002,7 +2002,7 @@ func (s *StackitVaultProvider) buildSubnetData(subnetType string, subnetNum int,
 	}
 
 	// Build base subnet data
-	subnetData := map[string]interface{}{
+	subnetData := map[string]any{
 		"id":          fmt.Sprintf("%s-%s-%d", s.BlocName, subnetType, subnetNum),
 		"cidr_block":  cidr,
 		"cidr_prefix": networkInfo.cidrPrefix,
@@ -2274,8 +2274,8 @@ func (s *StackitVaultProvider) resolveNetworkCIDR() string {
 }
 
 // buildNetworkData constructs the base network data map for vault storage.
-func (s *StackitVaultProvider) buildNetworkData(networkID, networkCIDR, dnsString string) map[string]interface{} {
-	return map[string]interface{}{
+func (s *StackitVaultProvider) buildNetworkData(networkID, networkCIDR, dnsString string) map[string]any {
+	return map[string]any{
 		"id":          networkID,
 		"cidr_block":  networkCIDR,
 		"dns":         dnsString,
@@ -2290,7 +2290,7 @@ func (s *StackitVaultProvider) buildNetworkData(networkID, networkCIDR, dnsStrin
 
 // enrichNetworkDataFromAPI fetches additional network fields (CIDR, status, created_at) from the
 // STACKIT API and merges them into the network data map. Failures are logged but do not cause errors.
-func (s *StackitVaultProvider) enrichNetworkDataFromAPI(networkID string, networkData map[string]interface{}) {
+func (s *StackitVaultProvider) enrichNetworkDataFromAPI(networkID string, networkData map[string]any) {
 	if networkID == "" || networkID == s.Config.ProjectID {
 		return
 	}
@@ -2337,7 +2337,7 @@ func (s *StackitVaultProvider) enrichNetworkDataFromAPI(networkID string, networ
 }
 
 // applyDefaultCIDR sets a default CIDR if the network data map still has an empty cidr_block.
-func (s *StackitVaultProvider) applyDefaultCIDR(networkData map[string]interface{}) {
+func (s *StackitVaultProvider) applyDefaultCIDR(networkData map[string]any) {
 	cidr, ok := networkData["cidr_block"].(string)
 	if ok && cidr != "" {
 		return
@@ -2355,7 +2355,7 @@ func (s *StackitVaultProvider) configureAvailabilityZones(envType string) error 
 		azPath := s.PathBuilder.GetAZPath(envType, azName)
 
 		// Format cloud_properties as JSON string matching Perl format
-		azInfo := map[string]interface{}{
+		azInfo := map[string]any{
 			"cloud_properties": fmt.Sprintf(`{"availability_zone": "%s"}`, azData.Zone),
 		}
 
@@ -2411,8 +2411,8 @@ func (s *StackitVaultProvider) configureBlobstores(envType string) error {
 }
 
 // getBlobstoresForSystem returns blobstore configuration for a system.
-func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]interface{} {
-	blobstores := make(map[string]map[string]interface{})
+func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) map[string]map[string]any {
+	blobstores := make(map[string]map[string]any)
 
 	// Get S3 credentials from config s3 map
 	var accessKeyID, secretAccessKey string
@@ -2452,13 +2452,13 @@ func (s *StackitVaultProvider) getBlobstoresForSystem(system, envType string) ma
 // createBlobstoreConfig creates a complete blobstore configuration with all required fields.
 // This matches the Perl implementation which generates all 11 fields for S3-compatible storage.
 func (s *StackitVaultProvider) createBlobstoreConfig(
-	bucketName, region, host, accessKeyID, secretAccessKey string) map[string]interface{} {
+	bucketName, region, host, accessKeyID, secretAccessKey string) map[string]any {
 	// Generate all URL variants for STACKIT S3-compatible storage
 	baseURL := fmt.Sprintf("https://%s/%s", host, bucketName)
 	pathStyleURL := fmt.Sprintf("https://object.storage.%s.onstackit.cloud/%s", region, bucketName)
 	virtualHostedURL := fmt.Sprintf("https://%s.object.storage.%s.onstackit.cloud", bucketName, region)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"name":                     bucketName,
 		"provider":                 "stackit",
 		"region":                   region,
@@ -2477,16 +2477,16 @@ func (s *StackitVaultProvider) createBlobstoreConfig(
 
 // buildLBServiceTargetsFromState assembles a small set of LB service definitions
 // using reserved IPs persisted by bootstrap for STACKIT. Mirrors Perl service mapping.
-func (s *StackitVaultProvider) buildLBServiceTargetsFromState() map[string]map[string]interface{} {
+func (s *StackitVaultProvider) buildLBServiceTargetsFromState() map[string]map[string]any {
 	stateManager := s.loadStateManager()
 	if stateManager == nil {
-		return map[string]map[string]interface{}{}
+		return map[string]map[string]any{}
 	}
 
 	builder := &lbServiceBuilder{
 		stateManager: stateManager,
 		blocName:     s.BlocName,
-		services:     make(map[string]map[string]interface{}),
+		services:     make(map[string]map[string]any),
 	}
 
 	builder.addOpsHTTPSService()
@@ -2527,7 +2527,7 @@ func (s *StackitVaultProvider) configureShield(envType string) error {
 
 	// Set default Shield admin credentials
 	// In production, these would be generated/retrieved from a secure source
-	shieldAdminCreds := map[string]interface{}{
+	shieldAdminCreds := map[string]any{
 		"username": "shieldadmin",
 		"password": fmt.Sprintf("shield-password-%s-%s", envType, s.BlocName),
 	}
@@ -2550,7 +2550,7 @@ func (s *StackitVaultProvider) configureCPI(envType string) error {
 	cpiPath := s.PathBuilder.GetEnvironmentPath(envType) + "/cpi/stackit"
 
 	// Build CPI configuration
-	cpiConfig := map[string]interface{}{
+	cpiConfig := map[string]any{
 		"project_id":              s.Config.ProjectID,
 		"org_id":                  s.Config.OrgID,
 		"region":                  s.Config.Region,
@@ -2621,7 +2621,7 @@ func (s *StackitVaultProvider) configurePolicies(envType string) error {
 	userProvidedBoshCreds := "allow" // ignore, allow, require
 	deploymentChangeReasonSize := 0
 
-	policies := map[string]interface{}{
+	policies := map[string]any{
 		"user_provided_bosh_creds":               userProvidedBoshCreds,
 		"deployment_change_reason_required_size": deploymentChangeReasonSize,
 	}
@@ -2733,7 +2733,7 @@ func (s *StackitVaultProvider) configureUsers(envType string) error {
 
 		// Store user SSH key(s) in vault
 		if sshKeys != "" {
-			userData := map[string]interface{}{
+			userData := map[string]any{
 				username: sshKeys,
 			}
 
@@ -2874,7 +2874,7 @@ func (s *StackitVaultProvider) configureBOSHMeta(envType string) error {
 	dnsNS := DefaultDNSServer
 	dnsServers := strings.Split(dnsNS, ",")
 
-	boshMeta := make(map[string]interface{})
+	boshMeta := make(map[string]any)
 
 	// Store DNS servers as dns.0, dns.1, etc.
 	for i, dns := range dnsServers {
@@ -2917,7 +2917,7 @@ func (s *StackitVaultProvider) configureBOSHMeta(envType string) error {
 type lbServiceBuilder struct {
 	stateManager *state.Manager
 	blocName     string
-	services     map[string]map[string]interface{}
+	services     map[string]map[string]any
 }
 
 func (b *lbServiceBuilder) getReservedIP(idx int, key string) string {
@@ -2935,20 +2935,20 @@ func (b *lbServiceBuilder) getReservedIP(idx int, key string) string {
 	return ""
 }
 func (b *lbServiceBuilder) addOpsHTTPSService() {
-	opsTargets := []map[string]interface{}{}
+	opsTargets := []map[string]any{}
 
 	for _, key := range []string{"vault_ip", "prometheus_ip", "shield_ip"} {
 		if ip := b.getReservedIP(0, key); ip != "" {
-			opsTargets = append(opsTargets, map[string]interface{}{"ip": ip, "name": key})
+			opsTargets = append(opsTargets, map[string]any{"ip": ip, "name": key})
 		}
 	}
 
 	if ip := b.getReservedIP(1, "doomsday_ip"); ip != "" {
-		opsTargets = append(opsTargets, map[string]interface{}{"ip": ip, "name": "doomsday_ip"})
+		opsTargets = append(opsTargets, map[string]any{"ip": ip, "name": "doomsday_ip"})
 	}
 
 	if len(opsTargets) > 0 {
-		b.services["ops-https"] = map[string]interface{}{
+		b.services["ops-https"] = map[string]any{
 			"name":     b.blocName + "-ops-https",
 			"protocol": "tcp",
 			"port":     HTTPSPort,
@@ -2971,11 +2971,11 @@ func (b *lbServiceBuilder) addManagementServices() {
 
 	for _, svc := range services {
 		if ip := b.getReservedIP(svc.idx, svc.key); ip != "" {
-			b.services[svc.name] = map[string]interface{}{
+			b.services[svc.name] = map[string]any{
 				"name":     fmt.Sprintf("%s-%s", b.blocName, svc.name),
 				"protocol": "tcp",
 				"port":     svc.port,
-				"targets":  []map[string]interface{}{{"ip": ip, "name": svc.key}},
+				"targets":  []map[string]any{{"ip": ip, "name": svc.key}},
 			}
 		}
 	}
@@ -2995,11 +2995,11 @@ func (b *lbServiceBuilder) addPrometheusSharedServices() {
 	}
 
 	for _, svc := range sharedServices {
-		b.services[svc.name] = map[string]interface{}{
+		b.services[svc.name] = map[string]any{
 			"name":     fmt.Sprintf("%s-%s", b.blocName, svc.name),
 			"protocol": "tcp",
 			"port":     svc.port,
-			"targets":  []map[string]interface{}{{"ip": prometheusIP, "name": "prometheus_ip"}},
+			"targets":  []map[string]any{{"ip": prometheusIP, "name": "prometheus_ip"}},
 		}
 	}
 }
@@ -3036,13 +3036,13 @@ func (b *lbServiceBuilder) addRouterServices() {
 
 	targets := b.buildTargetsFromIPs(ips, "router")
 
-	b.services["router-80"] = map[string]interface{}{
+	b.services["router-80"] = map[string]any{
 		"name":     b.blocName + "-router-80",
 		"protocol": "http",
 		"port":     HTTPPort,
 		"targets":  targets,
 	}
-	b.services["router-443"] = map[string]interface{}{
+	b.services["router-443"] = map[string]any{
 		"name":     b.blocName + "-router-443",
 		"protocol": "https",
 		"port":     HTTPSPort,
@@ -3057,7 +3057,7 @@ func (b *lbServiceBuilder) addTCPRouterService() {
 
 	targets := b.buildTargetsFromIPs(ips, "tcp-router")
 
-	b.services["tcp-router"] = map[string]interface{}{
+	b.services["tcp-router"] = map[string]any{
 		"name":     b.blocName + "-tcp-router",
 		"protocol": "tcp",
 		"port":     HighPort,
@@ -3072,7 +3072,7 @@ func (b *lbServiceBuilder) addCFSSHService() {
 
 	targets := b.buildTargetsFromIPs(ips, "cf-ssh")
 
-	b.services["cf-ssh"] = map[string]interface{}{
+	b.services["cf-ssh"] = map[string]any{
 		"name":     b.blocName + "-ocf-cf-ssh",
 		"protocol": "tcp",
 		"port":     SSHAltPort,
