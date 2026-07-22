@@ -36,7 +36,10 @@ func TestPVEReservedIPs_MgmtOcfDisjoint(t *testing.T) {
 	assert.Equal(t, "10.64.64.10", mgmt["blacksmith_ip"])
 	assert.Equal(t, "10.64.64.67", ocf["blacksmith_ip"])
 
-	assert.Equal(t, "10.64.64.68", ocf["haproxy_ip"], "ocf-only static: cf haproxy")
+	// haproxy sits INSIDE the ocf available band (start+1): the cf kit derives
+	// its subnet statics from the top of its band claim, and the manifest's
+	// haproxy_ip must land inside that claim-derived static window.
+	assert.Equal(t, "10.64.64.97", ocf["haproxy_ip"], "ocf haproxy: available band start + 1")
 	assert.NotContains(t, mgmt, "haproxy_ip", "mgmt has no CF, no haproxy static")
 
 	// mgmt-only named statics must never appear in ocf's tree.

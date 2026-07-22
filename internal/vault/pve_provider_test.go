@@ -1118,7 +1118,7 @@ func TestPVEVaultProvider_ConfigureSubnets_OCFTierComputedFromCIDR(t *testing.T)
 	assert.Equal(t, "10.64.76.64", band.data["bosh_ip"], "bosh_ip at the ocf-tier offset, not the stale state value")
 	assert.Equal(t, "10.64.76.64", band.data["director_ip"])
 	assert.Equal(t, "10.64.76.66", band.data["jumpbox_ip"], "jumpbox_ip at the ocf-tier offset (66), not mgmt's offset (6)")
-	assert.Equal(t, "10.64.76.68", band.data["haproxy_ip"], "haproxy_ip at the fixed ocf-tier offset")
+	assert.Equal(t, "10.64.76.97", band.data["haproxy_ip"], "haproxy_ip one past the ocf band start (cf kit statics are claim-derived)")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_MgmtOcfDisjointOnSharedSubnet is the
