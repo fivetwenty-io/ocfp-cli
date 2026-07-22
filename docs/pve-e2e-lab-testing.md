@@ -457,7 +457,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 
 **Applicability**: this phase applies only when a *second, independently managed* PVE cluster is available to a workload director as a second hardware failure domain (two BOSH AZs backed by two clusters, one director). It is optional and separate from the single-cluster `ocfp-lab-wayne` flow documented above. The commands below are the exact sequence validated live on 2026-07-21/22 against bloc `ocfp-lab-pve-cpi` (workload/env director `ocfp-lab-pve-cpi-ocf`, mgmt director `ocfp-lab-pve-cpi-mgmt`); substitute your own bloc/env/host values.
 
-**Entry**: env BOSH director live and reachable (Phase 5 complete for the target bloc); a second PVE cluster reachable with its own SDN zone, NFS export, and (if the operator is off-tailnet-native) an approved Tailscale route to its management subnet.
+**Entry**: env BOSH director live and reachable (Phase 5 complete for the target bloc); a second PVE cluster reachable with its own SDN zone, an NFS export (its own, or — as validated 2026-07-22 in the `pve-cpi` lab, matching the client environment — one export tree shared by both clusters, each mounting it through its own gateway; see the lab repo's ADR-0014 Shared NFS Export Amendment), and (if the operator is off-tailnet-native) an approved Tailscale route to its management subnet. With a shared export, the CPI release must be ≥ `0+dev.1784736893` (storage-aware VMID allocation) on **both** AZs' entries — older allocators are cross-cluster-blind and can mint colliding disk files.
 
 ### 0. Prerequisites
 
@@ -599,7 +599,7 @@ pmx -c <az1-context> pve node vm list   # template VM present, sha-tagged, own v
 pmx -c <az2-context> pve node vm list   # template VM present, sha-tagged, a DIFFERENT vmid, on az2's own storage
 ```
 
-Confirm the az2 template's base disk lives under az2's own `nfs-images` export, not az1's.
+Confirm the az2 template's base disk lives under az2's `nfs-images` storage with its own distinct vmid. When each cluster has its own export, that also means a different backing path from az1's; with a shared export, both clusters' `nfs-images` back onto the same tree, so the distinct-vmid check is the meaningful one (and the same `base-<vmid>-disk-N` files are visible from both clusters).
 
 ### 6. Multi-AZ smoke deployment + placement evidence
 
