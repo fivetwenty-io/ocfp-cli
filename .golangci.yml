@@ -177,6 +177,14 @@ linters:
       - path: internal/vault/genesis(_envs)?\.go
         linters:
           - unused
+      # Thin delegating wrappers kept only so stackit_reserved_ips_test.go's
+      # pre-extraction tests keep calling parseCIDR/parseIPRangeSpec/etc.
+      # unqualified, unchanged, after the shared assignment engine moved to
+      # internal/reservedip. With tests:false the linter cannot see those
+      # test-only callers and falsely reports the whole file as unused.
+      - path: internal/vault/stackit_reservedip_compat\.go
+        linters:
+          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:
