@@ -453,6 +453,203 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 
 ---
 
+## Phase 5.5 — Multi-AZ CPI / Cloud-Config (Two PVE Clusters as Two BOSH AZs)
+
+**Applicability**: this phase applies only when a *second, independently managed* PVE cluster is available to a workload director as a second hardware failure domain (two BOSH AZs backed by two clusters, one director). It is optional and separate from the single-cluster `ocfp-lab-wayne` flow documented above. The commands below are the exact sequence validated live on 2026-07-21/22 against bloc `ocfp-lab-pve-cpi` (workload/env director `ocfp-lab-pve-cpi-ocf`, mgmt director `ocfp-lab-pve-cpi-mgmt`); substitute your own bloc/env/host values.
+
+**Entry**: env BOSH director live and reachable (Phase 5 complete for the target bloc); a second PVE cluster reachable with its own SDN zone, NFS export, and (if the operator is off-tailnet-native) an approved Tailscale route to its management subnet.
+
+### 0. Prerequisites
+
+- **Director version ≥ 261** (cpi-config feature floor):
+
+  ```bash
+  genesis <ocf-env> bosh --self -- env
+  ```
+
+  `--self` is required — the ocf director is itself a BOSH-managed deployment of the mgmt director; a plain `bosh env` without `--self` fails outright. Confirm the `Version` field.
+- **CPI release floor**: `bosh-pve-cpi-release` must support per-request `context` property overrides (feature floor `0+dev.1784424172`; deploy `0+dev.1784424173` or later — it adds effective-config validation and a stemcell-replication crash fix found in review). Below this floor the CPI silently ignores per-entry `context` and runs every cpi-config entry against the job-level (first) cluster — stemcell uploads and VM creates for the second AZ "succeed" while landing on the wrong cluster with no error. Confirm the CPI release version before proceeding past step 3.
+- Both clusters have a live pmx context (`pmx -c <context> pve node list` returns 200).
+- Both clusters' `nfs-images` storage carries content type `images,import,snippets,iso` — a storage entry created with `images` only rejects the CPI's stemcell/disk uploads (`storage 'nfs-images' does not support 'import' content'`):
+
+  ```bash
+  pmx -c <az2-context> pve storage set nfs-images --content images,import,snippets,iso
+  ```
+- If the operator host is off-tailnet-native for the second cluster's management subnet, its route is advertised and **approved** in the Tailscale admin console before any API-based `pmx` verb (SDN, NFS, context sync) against that cluster — ssh-based verbs work without it.
+
+### 1. az2 CPI identity via pmx
+
+Mirror az1's CPI service account on the second cluster: role, user, ACL, and API token.
+
+```bash
+pmx -c <az2-context> pve access role add OCFPCpi --privs "<az1's exact priv list>"
+pmx -c <az2-context> pve access user add ocfp-cpi@pve
+pmx -c <az2-context> pve access acl update / --roles OCFPCpi --users ocfp-cpi@pve --propagate 1
+pmx -c <az2-context> pve access user token add ocfp-cpi@pve cpi --privsep 0
+```
+
+Seed the token into vault under the bloc's cpi config base, **stderr suppressed**:
+
+```bash
+safe set secret/config/<bloc>/ocf/cpi/pve-az2 \
+  host=<az2-api-host> node=<az2-first-node> storages=nfs-images \
+  api_token='<user>!<id>=<secret>' >/dev/null 2>&1
+```
+
+`safe set` echoes what it sets on stdout/stderr by design — without redirection the token appears in the terminal/session log. If a token is ever exposed this way, treat it as compromised: regenerate (`pmx -c <az2-context> pve access user token set ocfp-cpi@pve cpi --regenerate`) and reseed under suppression before continuing.
+
+### 2. Extend AZ topology, in order
+
+Four steps; each depends on the previous one landing first.
+
+1. **Vault AZ keys**, both the `ocf` and `mgmt` scopes, following the existing per-node convention (`index`, `node_name`, `status=configured`):
+
+   ```bash
+   safe set secret/config/<bloc>/ocf/net/azs/<key1> index=<n1> node_name=<az2-node-0> status=configured
+   safe set secret/config/<bloc>/ocf/net/azs/<key2> index=<n2> node_name=<az2-node-1> status=configured
+   safe set secret/config/<bloc>/ocf/net/azs/<key3> index=<n3> node_name=<az2-node-2> status=configured
+   # repeat the same three keys under secret/config/<bloc>/mgmt/net/azs/
+   ```
+
+   AZ names render as `<env>-z<index>`. The `az_map` the bosh kit's cloud-config hook (`cloud-config-director.pm`) consumes is keyed by these **vault key names**, not by the `-zN` names — check the hook before assuming otherwise.
+
+2. **mgmt exodus network registry.** The director's cloud-config build validates AZs against the mgmt director's own exodus data (`secret/exodus/<mgmt-env>/bosh/network`, flattened `azs.<key>.{index,name,cloud_properties,for_cpi...}`) — this only carries whatever the mgmt env's director hook wrote at its own last deploy. Vault AZ keys alone do **not** propagate here; skip this step and the ocf deploy fails cloud-config build with `Availability zone <key> not found in the available AZs for the network`. Two ways to close the gap:
+   - Clean path: seed the same three vault AZ keys under the `mgmt` scope (step 1 above already does this) and redeploy the mgmt director — its own hook regenerates the exodus registry with the new AZ entries.
+   - Emergency in-place patch (used live when a mgmt redeploy was not desirable mid-window): back up the exodus JSON, hand-extend `azs.<key>.{...}` to match what the mgmt hook would have written, write it back. Reconcile with a real mgmt redeploy at the next opportunity so the two stay in sync.
+3. **Outer SDN /22 subnets** on the az2 cluster via pmx, matching az1's set (gateway per subnet; carry `--snat` only if az1's corresponding subnet has it — check per subnet, it is not uniform):
+
+   ```bash
+   pmx -c <az2-context> pve sdn subnet add <zone> <az2-subnet-cidr> --gateway <gw> [--snat]
+   pmx -c <az2-context> pve sdn apply
+   ```
+4. **Vault subnet records** for the new AZs (`net/subnets/<name>`, az key, bridge id) so BOSH network IPAM extends across the az2 bloc.
+
+### 3. Workload-director env file — `director-cpi` block
+
+One `bosh-configs.director-cpi.cpis[]` entry per cluster. Property names are the CPI **job-spec `pve_`-prefixed names** — genesis uploads `cpis[]` verbatim; unprefixed names upload without error and are silently ignored.
+
+**Minimal-override rule**: set only the properties that genuinely differ per cluster (host, node, storages, api_token). Do **not** set `pve_agent_mbus` or `pve_password` in an entry unless it truly differs from the job-level value — an explicit empty string in an override **clears** the job-level value rather than inheriting it, and a cleared mbus breaks agent bootstrap (`registry-less agent requires non-empty mbus`) on every VM the entry touches. Also drop `pve_host_operator` from entries — it has no per-request override field, so the CPI logs a `Warn` on every request that carries it.
+
+```yaml
+bosh-configs:
+  director-cpi:
+    name: <bloc>-<env>.pve.bosh.director        # keep the live slot/cpi name for entry 1 — renaming orphans existing VMs' recorded cpi association
+    cpis:
+    - name: <bloc>-<env>.pve.bosh                # entry 1 — az1, mirrors the live payload's effective values
+      type: pve
+      properties:
+        pve_host: <az1-host>
+        pve_node: <az1-node>
+        pve_storages: [ nfs-images ]
+        pve_api_token: ((/cpi-config/properties/pve-api-token-az1))
+    - name: <bloc>-<env>.pve-az2.bosh             # entry 2 — az2
+      type: pve
+      properties:
+        pve_host: <az2-host>
+        pve_node: <az2-node-0>
+        pve_storages: [ nfs-images ]
+        pve_api_token: ((/cpi-config/properties/pve-api-token-az2))
+    az_map:
+      <vault-az-key-1>: <bloc>-<env>.pve.bosh     # z1/z2/z3-style keys already on az1
+      <vault-az-key-4>: <bloc>-<env>.pve-az2.bosh # new az2 keys from §2 step 1
+      # az keys omitted from az_map fall back to the default (job-level) cpi
+```
+
+Credentials: pre-set the two token values directly at `/cpi-config/properties/pve-api-token-az{1,2}` in the director's own credhub (vault → credhub, output suppressed), then reference them by absolute credhub path in the env file as above. **Genesis's inline `director-cpi` upload path does not resolve `(( vault ... ))` inside `cpis[].properties`**, regardless of kit documentation claiming otherwise: a literal `(( vault ))` string uploads without error and only fails at first interpolation, which poisons every later cpi-config-consuming operation (stemcell upload, cloud-check, resurrection) until a corrective redeploy. Use credhub refs from the start; do not put `(( vault ))` in this block.
+
+**Director rebuild note.** The two token values above live only in the director's own credhub — they are not part of the deployment manifest and are not restored by a normal redeploy. Rebuilding or recreating the workload director (new VM, `bosh create-env`, disaster recovery, etc.) wipes that credhub and leaves both refs unresolvable. Before the first deploy against a rebuilt director, re-set both values with the same command pattern used above:
+
+```bash
+genesis <ocf-env> credhub --self -- set -n /cpi-config/properties/pve-api-token-az1 -t value -v "$(safe get secret/config/<bloc>/ocf/cpi/pve:api_token)"
+genesis <ocf-env> credhub --self -- set -n /cpi-config/properties/pve-api-token-az2 -t value -v "$(safe get secret/config/<bloc>/ocf/cpi/pve-az2:api_token)"
+```
+
+Skipping this step does not fail cleanly: the cpi-config upload succeeds (credhub refs are opaque strings to `bosh update-cpi-config`), and the failure only surfaces at first interpolation on the next cpi-config-consuming call — the same poisoned-ref failure mode step 3 describes for a literal `(( vault ))`, just re-triggered by the rebuild instead of a doc error.
+
+### 4. Deploy + evidence
+
+```bash
+genesis <ocf-env> deploy -y
+```
+
+If the mgmt director cannot resolve an external host during this deploy (e.g. `s3.amazonaws.com` for a remote release fetch), check whether lab-zone DNS is down fleet-wide before assuming a director-specific fault — the bastion may be masking the same breakage via a secondary resolver. Workaround without touching shared infra: download the release tarball on the bastion and `bosh upload-release <local-tarball>` it directly; the deploy's own upload step then no-ops.
+
+Verify:
+
+```bash
+genesis <ocf-env> bosh --self -- configs
+bosh -e <ocf-env> configs --type cpi
+bosh -e <ocf-env> configs --type cloud
+```
+
+Confirm the cpi config lists **both** entries (`<bloc>-<env>.pve.bosh` and `<bloc>-<env>.pve-az2.bosh`, each `type: pve`), and the cloud config's `azs` block maps the existing AZ keys to the az1 cpi name and the new AZ keys to the az2 cpi name. This is the load-bearing proof the `az_map` change is live, not just rendered.
+
+### 5. Stemcell — both CPIs, verified with ground truth
+
+```bash
+genesis <ocf-env> bosh --self -- upload-stemcell --fix <local-stemcell-tarball>
+```
+
+Resolve the stemcell URL via the bosh.io **API**, not a `bosh.io/d/...` hyperlink — bosh.io delists old point releases (404 on direct links). If the director itself cannot resolve the storage host, download to the bastion first and point `upload-stemcell --fix` at the local file.
+
+`bosh stemcells` listing both CPI rows is **not** sufficient proof of correct placement (see the CPI release floor warning in §0) — verify ground truth independently per cluster:
+
+```bash
+pmx -c <az1-context> pve node vm list   # template VM present, sha-tagged, own vmid, own storage
+pmx -c <az2-context> pve node vm list   # template VM present, sha-tagged, a DIFFERENT vmid, on az2's own storage
+```
+
+Confirm the az2 template's base disk lives under az2's own `nfs-images` export, not az1's.
+
+### 6. Multi-AZ smoke deployment + placement evidence
+
+Deploy a manifest with (at minimum) two single-instance groups pinned to explicit AZs, one per cluster (e.g. `azs: [z1]` and `azs: [<az2-key>]`), each carrying a small persistent disk.
+
+```bash
+bosh -d <smoke-deployment> deploy <fixture>.yml
+bosh -d <smoke-deployment> instances --details
+```
+
+Placement proof needs three independent checks — the director's own view is not enough on its own:
+
+```bash
+bosh -d <smoke-deployment> instances --details   # az + ip per instance
+pmx -c <az1-context> pve node vm list             # az1 instance's vmid present here, running
+pmx -c <az2-context> pve node vm list             # az2 instance's vmid present here, running — the actual cross-cluster proof
+```
+
+Confirm each instance's persistent disk lives on its own cluster's storage (check the qcow2 path per cluster, not just the director's disk list).
+
+### 7. Failure modes — read before running any drill against a live workload
+
+- **An AZ-scoped API outage takes `cloud-check` down for the whole deployment, not just that AZ.** Stopping one cluster's API (ssh to the node; `pmx pve node services stop` is refused by PVE as an essential service — ssh is the only mechanism for this drill) leaves running instances and `bosh instances` fully healthy (agents ride NATS, independent of the cluster API), but `cloud-check`'s persistent-disk scan hard-errors the entire task once the unreachable cluster's disk-status call exhausts CPI retries. Do not run `cloud-check --auto` fleet-wide while one cluster's API is down.
+- **Moving an instance's AZ across clusters silently orphans its disk.** Changing an instance's `azs:` from one cluster's AZ to the other's and redeploying **succeeds without error**: BOSH recreates the instance in the new AZ with a fresh empty disk and orphans the old one on the original cluster (visible only via `bosh disks --orphaned`). Treat any cross-cluster AZ move as blue/green plus an explicit, out-of-band data migration step — never as an in-place `azs:` edit on a disk-bearing instance.
+- **`bosh attach-disk` does not work against this CPI's disk CIDs**, cross-AZ or not. The CPI's CIDs embed `/` and `|` characters; the director's `/disks/<cid>/attachments` REST path 404s on them and the CLI's own argument passthrough mangles the pipe. Treat orphaned disks as director-GC candidates, not in-band recovery targets.
+
+### 8. Live migration (intra-cluster continuity check)
+
+```bash
+pmx -c <az-context> pve qemu migrate --node <source-node> --target-node <target-node> --online
+```
+
+Confirms guest continuity when moving a VM between nodes **within one cluster**. This is not a way to move an instance between the two AZ clusters — that is the disk-orphaning scenario in §7; there is no supported live-migration path across clusters.
+
+**Run log**
+
+| Step | Started | Result | Notes |
+|------|---------|--------|-------|
+| 0 Prerequisites | 2026-07-21 | ✅ PASS | Director preflight required `--self`; version 283.1.1 cleared the ≥261 floor. Storage content-type gap on az2's `nfs-images` (`images` only) found and fixed before it blocked stemcell upload. |
+| 1 az2 CPI identity | 2026-07-21 | ✅ PASS | Role/user/ACL/token mirrored az1. `safe set` echoed the freshly minted token once (stderr not yet suppressed) — token regenerated and reseeded under suppression as a precaution. |
+| 2 AZ topology extension | 2026-07-21 | ✅ PASS (2nd attempt) | 1st ocf deploy attempt failed cloud-config build (`Availability zone <key> not found`) — vault AZ keys alone did not reach the mgmt exodus network registry; registry extended in place (backed up first), mgmt vault AZ keys seeded for future redeploy convergence. |
+| 3 director-cpi env block | 2026-07-21 | ✅ PASS (after 1 fix) | First deploy attempt used literal `(( vault ))` inside `cpis[].properties` — uploaded silently, then poisoned every cpi-config-consuming call at first interpolation. Fixed by switching to credhub refs; redeploy succeeded. |
+| 4 Deploy + evidence | 2026-07-21–22 | ✅ PASS (3rd attempt) | 2nd attempt blocked on lab-wide DNS outage (mgmt director could not resolve a remote release host); unblocked via bastion-local release download + local upload. 3rd attempt succeeded; cpi-config and cloud-config both verified live with both CPI entries and the full az_map. |
+| 5 Stemcell, both CPIs | 2026-07-21–22 | ✅ PASS (after CPI release upgrade) | First pass "succeeded" on both CPI rows but az2's row was bookkeeping fiction — below the context-override floor, its upload silently landed on az1. Fixed by deploying the context-override CPI release, then re-running `upload-stemcell --fix`; az2 ground truth (own template VM, own storage) confirmed. |
+| 6 Multi-AZ smoke deploy | 2026-07-22 | ✅ PASS (after 1 fix) | First attempt failed both instance groups (`registry-less agent requires non-empty mbus`) — inherited empty-string `pve_agent_mbus`/`pve_password` overrides were clearing job-level values. Fixed by dropping non-differing properties from both cpi entries (minimal-override rule). Redeploy placed one instance per cluster, independently verified on each cluster's own listing. |
+| 7 Failure-mode drills | 2026-07-22 | ✅ EXECUTED | All three predictions tested against disposable smoke instances; two behaved differently than predicted (AZ-scoped outage was NOT scoped at the cloud-check level; cross-AZ move failed silently rather than loudly) — see §7 above. |
+| 8 Live migration | — | not run this pass | Command verified against kit/CLI surface; not exercised live in this validation window. Run it before relying on intra-cluster migration operationally. |
+
+---
+
 ## Phase 6 — CF Kit Upgrade to v56.5.0 (noble + compiled)
 
 **Entry**: env BOSH ready. This is the highest-risk phase — do it as a focused, validated change. **Local source only, do not push.**
