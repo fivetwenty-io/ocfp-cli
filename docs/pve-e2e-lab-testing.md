@@ -572,7 +572,7 @@ Skipping this step does not fail cleanly: the cpi-config upload succeeds (credhu
 genesis <ocf-env> deploy -y
 ```
 
-If the mgmt director cannot resolve an external host during this deploy (e.g. `s3.amazonaws.com` for a remote release fetch), check whether lab-zone DNS is down fleet-wide before assuming a director-specific fault — the bastion may be masking the same breakage via a secondary resolver. Workaround without touching shared infra: download the release tarball on the bastion and `bosh upload-release <local-tarball>` it directly; the deploy's own upload step then no-ops.
+If the mgmt director cannot resolve an external host during this deploy (e.g. `s3.amazonaws.com` for a remote release fetch), check whether lab-zone DNS is down fleet-wide before assuming a director-specific fault — the bastion may be masking the same breakage via a secondary resolver. The lab-zone resolver is the outer host's `dnsmasq@labs` instance (PVE SDN `labs` zone with `dhcp: dnsmasq`; provisioned by the lab repo's `scripts/31-lab-dns`) — verify it is active and re-run before reaching for workarounds. Workaround without touching shared infra: download the release tarball on the bastion and `bosh upload-release <local-tarball>` it directly; the deploy's own upload step then no-ops. After any gateway-DNS outage, note that systemd-resolved clients (the bastion) stay pinned to their fallback resolver until `systemd-resolved` is restarted.
 
 Verify:
 
