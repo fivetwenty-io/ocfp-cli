@@ -315,8 +315,12 @@ func (cfm *ConfigFileManager) writeGenesisBasicSettings(config *strings.Builder)
 	config.WriteString("show_duration: true\n\n")
 
 	// Deployment behavior
+	// fix_on_deploy MUST be 'never' (genesis's own default). Any other value
+	// makes 'genesis deploy' take the secret-fixing path, which FATALs on
+	// entombed vaultified environments with manifest-source secrets
+	// (blacksmith kit >=1.3.0) and blocks every redeploy.
 	config.WriteString("# Deployment behavior\n")
-	config.WriteString("fix_on_deploy: ask\n")
+	config.WriteString("fix_on_deploy: never\n")
 	config.WriteString("confirm_release_overrides: outdated\n\n")
 
 	// Cache and storage
