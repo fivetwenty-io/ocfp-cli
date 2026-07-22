@@ -985,8 +985,9 @@ func TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated(t *testing.T) {
 // subnet write must emit available_0/available_1 reserved-ips keys so Genesis'
 // cloud-config IPAM (_get_subnet_ranges) confines kit-generated networks to a
 // band that clears the infra IPs. With no explicit config the band defaults to
-// gateway+19 .. gateway+249 and is split into three DISJOINT per-subnet slices
-// so compilation (ocfp-2) never overlaps workload (ocfp-0/1).
+// the mgmt tier's map offsets (32-63, see pve_reserved_ips.go) and is split
+// into three DISJOINT per-subnet slices so compilation (ocfp-2) never
+// overlaps workload (ocfp-0/1).
 func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("OCFP_HOME", tmp)
@@ -997,7 +998,7 @@ func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
 
 	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
 
-	// Default band .20-.250 (231 IPs) splits into ~77-IP contiguous slices.
+	// Default mgmt band .32-.63 (32 IPs) splits into 10-IP contiguous slices.
 	band0 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 0))
 	band1 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 1))
 	band2 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath(MgmtEnvType, "ocfp", 2))
@@ -1005,12 +1006,30 @@ func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults(t *testing.T) {
 	require.NotNil(t, band1)
 	require.NotNil(t, band2)
 
-	assert.Equal(t, "10.64.64.20", band0.data["available_0"], "first slice starts at band start")
-	assert.Equal(t, "10.64.64.96", band0.data["available_1"])
-	assert.Equal(t, "10.64.64.97", band1.data["available_0"], "second slice begins after the first")
-	assert.Equal(t, "10.64.64.173", band1.data["available_1"])
-	assert.Equal(t, "10.64.64.174", band2.data["available_0"], "compilation slice begins after the second")
-	assert.Equal(t, "10.64.64.250", band2.data["available_1"], "last slice absorbs the remainder to band end")
+	assert.Equal(t, "10.64.64.32", band0.data["available_0"], "first slice starts at band start")
+	assert.Equal(t, "10.64.64.41", band0.data["available_1"])
+	assert.Equal(t, "10.64.64.42", band1.data["available_0"], "second slice begins after the first")
+	assert.Equal(t, "10.64.64.51", band1.data["available_1"])
+	assert.Equal(t, "10.64.64.52", band2.data["available_0"], "compilation slice begins after the second")
+	assert.Equal(t, "10.64.64.63", band2.data["available_1"], "last slice absorbs the remainder to band end")
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults_OCFTier — the
+// same fallback write for the ocf tier must use ocf's disjoint default band
+// (96-> the /19's last usable host), never mgmt's 32-63.
+func TestPVEVaultProvider_ConfigureSubnets_AvailableBandDefaults_OCFTier(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("OCFP_HOME", tmp)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", "ocf", nil, 0, 1))
+
+	band0 := mock.findSetMultipleCall(provider.PathBuilder.GetReservedIPsPath("ocf", "ocfp", 0))
+	require.NotNil(t, band0)
+	assert.Equal(t, "10.64.64.96", band0.data["available_0"], "ocf band starts at offset 96, disjoint from mgmt's 32-63")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit — explicit
@@ -1043,11 +1062,16 @@ func TestPVEVaultProvider_ConfigureSubnets_AvailableBandExplicit(t *testing.T) {
 	assert.Equal(t, "10.64.64.49", band2.data["available_1"])
 }
 
-// TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs — a state-backed
-// ocfp-* subnet must write its genesis-consumed reserved-ips block at the
-// bloc-stripped path, sourcing available_0/available_1 and bosh_ip from the
-// per-subnet bootstrap outputs (each scoped to that subnet's own /22).
-func TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs(t *testing.T) {
+// TestPVEVaultProvider_ConfigureSubnets_OCFTierComputedFromCIDR — a
+// state-backed ocfp-* subnet must write its genesis-consumed reserved-ips
+// block at the bloc-stripped path, with available_0/available_1 and every
+// named static computed from the subnet's OWN /22 CIDR plus the ocf-tier
+// assignment table (pve_reserved_ips.go), NOT from bootstrap's tier-blind
+// reserved_<name>_* state outputs — those are left in state here specifically
+// to prove they are now ignored (the whole point of the tiered-map change:
+// mgmt and ocf must never again derive the same physical IP from one shared
+// bootstrap computation).
+func TestPVEVaultProvider_ConfigureSubnets_OCFTierComputedFromCIDR(t *testing.T) {
 	const blocName = "test-bloc"
 
 	sm := seedPVEState(t, blocName)
@@ -1055,13 +1079,15 @@ func TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs(t *testing.T) {
 		ID:   "subnet-ocfp-2",
 		Type: "subnet",
 		Name: blocName + "-ocfp-2",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              "10.64.76.0/22",
 			"availability_zone": "pvec",
 			"gateway":           "10.64.64.1",
 			"network_id":        "lvnet001",
 		},
 	}))
+	// Stale tier-blind state outputs from the pre-tiered-map layout: must be
+	// ignored by the new architecture, not echoed into vault.
 	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_available_a", "10.64.76.12"))
 	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_available_b", "10.64.76.29"))
 	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-2_bosh_ip", "10.64.76.4"))
@@ -1083,23 +1109,25 @@ func TestPVEVaultProvider_ConfigureSubnets_StateBandFromOutputs(t *testing.T) {
 	assert.Equal(t, "10.64.76.0/22", subnet.data["cidr_block"])
 	assert.Equal(t, "lvnet001", subnet.data["id"])
 
-	// Reserved band sourced from per-subnet state outputs.
+	// Reserved band computed from the subnet's own CIDR + the ocf-tier table,
+	// NOT from the stale state outputs seeded above.
 	band := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-2", "reserved-ips"))
 	require.NotNil(t, band, "ocfp-2 reserved-ips band must be written")
-	assert.Equal(t, "10.64.76.12", band.data["available_0"], "band start from state available_a")
-	assert.Equal(t, "10.64.76.29", band.data["available_1"], "band end from state available_b")
-	assert.Equal(t, "10.64.76.4", band.data["bosh_ip"], "bosh_ip from per-subnet state output")
-	assert.Equal(t, "10.64.76.4", band.data["director_ip"])
-	assert.Equal(t, "10.64.76.6", band.data["jumpbox_ip"])
-	assert.Equal(t, "10.64.76.13", band.data["haproxy_ip"], "haproxy_ip falls back to gateway+12 within the subnet /22")
+	assert.Equal(t, "10.64.76.96", band.data["available_0"], "ocf available band starts at offset 96, not the stale state value")
+	assert.Equal(t, "10.64.79.254", band.data["available_1"], "ocf available band runs open-ended to the /22's last usable host")
+	assert.Equal(t, "10.64.76.64", band.data["bosh_ip"], "bosh_ip at the ocf-tier offset, not the stale state value")
+	assert.Equal(t, "10.64.76.64", band.data["director_ip"])
+	assert.Equal(t, "10.64.76.66", band.data["jumpbox_ip"], "jumpbox_ip at the ocf-tier offset (66), not mgmt's offset (6)")
+	assert.Equal(t, "10.64.76.68", band.data["haproxy_ip"], "haproxy_ip at the fixed ocf-tier offset")
 }
 
-// TestPVEVaultProvider_ConfigureSubnets_HAProxyIPFromOutput — when bootstrap
-// records a per-subnet haproxy_ip output, the reserved band must use it verbatim
-// (state wins over the gateway+12 fallback), mirroring bosh_ip/jumpbox_ip. The
-// cf env grabs this vault key so haproxy's static IP tracks the bloc's net-ocf
-// plan instead of a hand-keyed literal that drifts out of subnet range.
-func TestPVEVaultProvider_ConfigureSubnets_HAProxyIPFromOutput(t *testing.T) {
+// TestPVEVaultProvider_ConfigureSubnets_MgmtOcfDisjointOnSharedSubnet is the
+// integration-level acceptance test for the plan's root-cause fix: given the
+// SAME physical subnet CIDR, ConfigureSubnets must write DIFFERENT,
+// non-overlapping reserved-ips into the mgmt and ocf vault trees, so Genesis'
+// per-director cloud-config claims ledgers can never collide on a shared
+// subnet (plans/pve-tiered-reserved-ip-map.md).
+func TestPVEVaultProvider_ConfigureSubnets_MgmtOcfDisjointOnSharedSubnet(t *testing.T) {
 	const blocName = "test-bloc"
 
 	sm := seedPVEState(t, blocName)
@@ -1107,24 +1135,34 @@ func TestPVEVaultProvider_ConfigureSubnets_HAProxyIPFromOutput(t *testing.T) {
 		ID:   "subnet-ocfp-0",
 		Type: "subnet",
 		Name: blocName + "-ocfp-0",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              "10.64.68.0/22",
 			"availability_zone": "pvea",
 			"network_id":        "lvnet001",
 		},
 	}))
-	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-ocfp-0_haproxy_ip", "10.64.68.14"))
 	require.NoError(t, sm.Save())
 
-	mock := &awsMockSafe{}
-	cfg := &config.Config{VPCCIDRBlock: "10.64.64.0/19"}
-	provider := newTestPVEProvider(cfg, mock)
+	mgmtMock := &awsMockSafe{}
+	provider := newTestPVEProvider(&config.Config{VPCCIDRBlock: "10.64.64.0/19"}, mgmtMock)
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
 
+	ocfMock := &awsMockSafe{}
+	provider = newTestPVEProvider(&config.Config{VPCCIDRBlock: "10.64.64.0/19"}, ocfMock)
 	require.NoError(t, provider.ConfigureSubnets("", "ocf", nil, 0, 1))
 
-	band := mock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath("ocf"), "ocfp-0", "reserved-ips"))
-	require.NotNil(t, band, "ocfp-0 reserved-ips band must be written")
-	assert.Equal(t, "10.64.68.14", band.data["haproxy_ip"], "haproxy_ip from per-subnet state output wins over fallback")
+	mgmtBand := mgmtMock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath(MgmtEnvType), "ocfp-0", "reserved-ips"))
+	ocfBand := ocfMock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath("ocf"), "ocfp-0", "reserved-ips"))
+	require.NotNil(t, mgmtBand)
+	require.NotNil(t, ocfBand)
+
+	assert.NotEqual(t, mgmtBand.data["bosh_ip"], ocfBand.data["bosh_ip"])
+	assert.Equal(t, "10.64.68.4", mgmtBand.data["bosh_ip"])
+	assert.Equal(t, "10.64.68.64", ocfBand.data["bosh_ip"])
+
+	assert.NotEqual(t, mgmtBand.data["available_0"], ocfBand.data["available_0"])
+	assert.Equal(t, "10.64.68.32", mgmtBand.data["available_0"])
+	assert.Equal(t, "10.64.68.96", ocfBand.data["available_0"])
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState — with

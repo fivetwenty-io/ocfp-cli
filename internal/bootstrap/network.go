@@ -1174,6 +1174,22 @@ func CalculateIPFromCIDR(cidr string, offset int) (string, error) {
 // supplied by the caller (addVirtualSubnetWithRole) rather than derived from
 // name, so a config-level band override or a strategy-specific layout never
 // has to be threaded back through a string re-parse.
+//
+// These outputs are tier-blind by construction (role/idx/layout carry no
+// envType): the STACKIT and PVE vault providers therefore no longer read them
+// to compute a tier's reserved-ips (both now compute independently from the
+// subnet's own CIDR plus a per-envType assignment table — see
+// internal/vault/stackit_provider.go's getDefaultReservedIPAssignments and
+// internal/vault/pve_reserved_ips.go's pveDefaultReservedIPAssignments).
+// Deleting this writer outright would still regress two unrelated,
+// non-Genesis consumers that read specific keys from these SAME outputs
+// before vault is ever populated: internal/commands/bastion_lookup.go's
+// last-resort bastion-IP fallback (reserved_<bloc>-ocfp-0_bastion_ip) and
+// internal/commands/init.go's createBOSHManifest (reserved_<bloc>-ocfp-0_bosh_ip,
+// a legacy non-Genesis manifest path). Those keys stay live; only the
+// PVE/STACKIT vault-write path was made independent of them (see
+// plans/pve-tiered-reserved-ip-map.md, "Retire tier-blind bootstrap
+// reserved-IP outputs").
 func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, role string, idx int, layout reservedIPLayout) {
 	base := ipToUint32(net.ParseIP(CIDRFirstIP(subnetCIDR)))
 	last := ipToUint32(net.ParseIP(CIDRLastUsableIP(subnetCIDR)))
