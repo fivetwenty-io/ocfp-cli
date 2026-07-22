@@ -65,14 +65,22 @@ const (
 	pveOCFVaultOffset      = 65
 	pveOCFJumpboxOffset    = 66
 	pveOCFBlacksmithOffset = 67
-	// pveOCFHaproxyOffset is the CF haproxy static the cf kit's
-	// routing/haproxy.yml reads (params.haproxy_ips -> static_ips). Only
-	// meaningful on the ocf tier, which is the only tier that deploys CF.
-	pveOCFHaproxyOffset = 68
-
 	pveMgmtAvailableStart = 32
 	pveMgmtAvailableEnd   = 63
 	pveOCFAvailableStart  = 96
+
+	// pveOCFHaproxyOffset is the CF haproxy static the cf kit's
+	// routing/haproxy.yml reads (params.haproxy_ips -> static_ips). Only
+	// meaningful on the ocf tier, which is the only tier that deploys CF.
+	//
+	// It MUST sit INSIDE the ocf available band, one past its start: the cf
+	// kit's cloud-config hook does not read haproxy_ip — it claims a window
+	// from the available band and marks the first three claimed IPs as the
+	// subnet's static range. Only the env manifest reads haproxy_ip
+	// (static_ips), so the seed has to land inside that claim-derived static
+	// window or BOSH rejects it as "belongs to no subnet". The historical
+	// layout encoded the same coupling (band start 12, haproxy 13).
+	pveOCFHaproxyOffset = pveOCFAvailableStart + 1
 
 	// pveMgmtBandOverrideFloor/Ceiling bound an operator-supplied
 	// Network.AvailableBandStart/End override (see applyPVEMgmtBandOverride):
