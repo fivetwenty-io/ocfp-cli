@@ -247,7 +247,7 @@ func (m *Manager) importExistingNetwork(networkName string, network *cpi.Network
 		Name:       networkName,
 		Provider:   m.options.Provider,
 		State:      string(cpi.ResourceStateActive),
-		Properties: map[string]interface{}{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
+		Properties: map[string]any{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
 		Tags:       network.Tags,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -325,7 +325,7 @@ func (m *Manager) createNewNetwork(ctx context.Context, netMgr cpi.NetworkManage
 		Name:       networkName,
 		Provider:   m.options.Provider,
 		State:      string(cpi.ResourceStateActive),
-		Properties: map[string]interface{}{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
+		Properties: map[string]any{"cidr": cidr, "dns_servers": m.config.Network.DNSServers},
 		Tags:       m.baseTags(),
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -686,7 +686,7 @@ func errCannotSplitNetworkInto(count int) error {
 // provider needs, dispatching to the selected subnetStrategy (PVE / STACKIT
 // triple / STACKIT single). Each strategy owns its own carve and any real
 // provider subnets it requires; see subnet_strategy.go.
-func (m *Manager) createVirtualSubnets(ctx context.Context, networkID interface{}) error {
+func (m *Manager) createVirtualSubnets(ctx context.Context, networkID any) error {
 	cidr := m.resolveNetworkCIDRForSubnets()
 	strategy := m.selectVirtualSubnetStrategy()
 
@@ -704,7 +704,7 @@ func (m *Manager) createVirtualSubnets(ctx context.Context, networkID interface{
 // SplitToTargetPrefix call would fail), the carve falls back to an even
 // 4-way split via SplitIntoN. This keeps small test/dev CIDRs functional
 // while preserving the canonical layout for production /18 parents.
-func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, networkID interface{}) error {
+func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, networkID any) error {
 	subnets := SplitToTargetPrefix(cidr, pveSubnetTargetPrefix, pveSubnetCount)
 	if len(subnets) != pveSubnetCount {
 		subnets = SplitIntoN(cidr, pveSubnetCount)
@@ -751,7 +751,7 @@ func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, netw
 // contains the requested CIDR. In bridge mode the provider has no subnet API
 // and returns ErrSubnetsNotSupported, which is treated as a benign skip (the
 // state-only virtual subnets are sufficient there).
-func (m *Manager) ensurePVESDNSubnets(ctx context.Context, networkID interface{}, subnetCIDRs []string) error {
+func (m *Manager) ensurePVESDNSubnets(ctx context.Context, networkID any, subnetCIDRs []string) error {
 	netMgr := m.provider.NetworkManager()
 	vnet := fmt.Sprintf("%v", networkID)
 
@@ -783,7 +783,7 @@ func (m *Manager) ensurePVESDNSubnets(ctx context.Context, networkID interface{}
 	return nil
 }
 
-func (m *Manager) createStackitTripleSubnets(cidr string, networkID interface{}) error {
+func (m *Manager) createStackitTripleSubnets(cidr string, networkID any) error {
 	// Split into 4, skip first (reserved for infrastructure)
 	allSubnets := SplitIntoN(cidr, tripleSubnetSplitCount+1)
 	if len(allSubnets) < tripleSubnetSplitCount+1 {
@@ -815,7 +815,7 @@ func (m *Manager) generateFallbackChildren(cidr string) []string {
 	return []string{child0, child1, child2, child3}
 }
 
-func (m *Manager) createStackitSingleSubnet(cidr string, networkID interface{}) error {
+func (m *Manager) createStackitSingleSubnet(cidr string, networkID any) error {
 	name := m.options.BlocName + "-subnet"
 
 	// The single-subnet layout has no per-AZ index; -1 marks it as such and
@@ -825,7 +825,7 @@ func (m *Manager) createStackitSingleSubnet(cidr string, networkID interface{}) 
 	return m.addVirtualSubnetWithDependency(name, cidr, cidr, networkID, -1)
 }
 
-func (m *Manager) addVirtualSubnetWithDependency(name, subnetCIDR, parentCIDR string, networkID interface{}, idx int) error {
+func (m *Manager) addVirtualSubnetWithDependency(name, subnetCIDR, parentCIDR string, networkID any, idx int) error {
 	// Preserve the existing STACKIT/AWS contract: triple-subnet workload
 	// children carry the "ocfp" role and an empty AZ (the caller did not
 	// pass one, so we let downstream state lookups resolve from config).
@@ -838,7 +838,7 @@ func (m *Manager) addVirtualSubnetWithDependency(name, subnetCIDR, parentCIDR st
 // is the caller's own workload-subnet position (0/1/2 for PVE ocfp-N / STACKIT
 // triple, -1 for infra/single-subnet layouts) and is forwarded verbatim to
 // addReservedIPOutputs rather than re-derived from name.
-func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, networkID interface{}, role, az string, idx int) error {
+func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, networkID any, role, az string, idx int) error {
 	layout, err := m.resolveReservedIPLayout(role, subnetCIDR)
 	if err != nil {
 		return err
@@ -912,7 +912,7 @@ func applyAvailableBandOverride(layout reservedIPLayout, netCfg config.NetworkCo
 
 // Standard Subnet Functions
 
-func (m *Manager) createStandardSubnets(ctx context.Context, networkID interface{}) error {
+func (m *Manager) createStandardSubnets(ctx context.Context, networkID any) error {
 	netID, err := m.validateNetworkID(networkID)
 	if err != nil {
 		return err
@@ -976,7 +976,7 @@ func (m *Manager) saveDefaultSubnetOutputs(parent string, subnetCIDRs []string) 
 	}
 }
 
-func (m *Manager) validateNetworkID(networkID interface{}) (string, error) {
+func (m *Manager) validateNetworkID(networkID any) (string, error) {
 	netID, ok := networkID.(string)
 	if !ok || netID == "" {
 		return "", ErrInvalidNetworkID(networkID)
@@ -989,7 +989,7 @@ func (m *Manager) validateNetworkID(networkID interface{}) (string, error) {
 // Subnet Management Functions
 // ==============================================================================
 
-func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID interface{}, role, az string, idx int, layout reservedIPLayout) error {
+func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID any, role, az string, idx int, layout reservedIPLayout) error {
 	// Skip if already present
 	if existingSubnet, _ := m.stateManager.GetResource("subnet", name); existingSubnet != nil {
 		logger.Infof("Virtual subnet %s already recorded, skipping", name)
@@ -1003,7 +1003,7 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		role = subnetRoleOCFP
 	}
 
-	props := map[string]interface{}{
+	props := map[string]any{
 		"cidr":              subnetCIDR,
 		"availability_zone": az,
 		"network_id":        networkID,
@@ -1061,7 +1061,7 @@ func (m *Manager) addSubnetDependency(subnetName string) {
 	_ = m.stateManager.AddDependency("subnet."+subnetName, "network."+networkName)
 }
 
-func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, netID string, networkID interface{}) error {
+func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, netID string, networkID any) error {
 	subnetName := subnet.Name
 
 	if m.subnetAlreadyExists(subnetName) {
@@ -1104,7 +1104,7 @@ func (m *Manager) createSubnetWithProvider(ctx context.Context, subnet config.Su
 	return createdSubnet, nil
 }
 
-func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string, networkID interface{}) error {
+func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string, networkID any) error {
 	// Save subnet to state
 	err := m.stateManager.AddResource(&state.Resource{
 		ID:       createdSubnet.ID,
@@ -1112,7 +1112,7 @@ func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string
 		Name:     subnetName,
 		Provider: m.options.Provider,
 		State:    string(cpi.ResourceStateActive),
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"cidr":              createdSubnet.CIDR,
 			"availability_zone": createdSubnet.AvailabilityZone,
 			"network_id":        networkID,
