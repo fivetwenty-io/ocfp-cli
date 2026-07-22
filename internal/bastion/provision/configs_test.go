@@ -53,6 +53,17 @@ func TestGenerateGenesisConfig(t *testing.T) {
 				section, result)
 		}
 	}
+
+	// fix_on_deploy MUST be 'never'. Any other value makes genesis deploy take
+	// the secret-fixing path, which FATALs on entombed vaultified environments
+	// with manifest-source secrets (blacksmith kit >=1.3.0).
+	if !strings.Contains(result, "fix_on_deploy: never") {
+		t.Errorf("Expected genesis config to contain 'fix_on_deploy: never'.\nGenerated config:\n%s", result)
+	}
+
+	if strings.Contains(result, "fix_on_deploy: ask") {
+		t.Errorf("Genesis config must not set 'fix_on_deploy: ask'; it must be 'never'.\nGenerated config:\n%s", result)
+	}
 }
 
 func TestGenerateGenesisConfig_LogsConfiguration(t *testing.T) {
