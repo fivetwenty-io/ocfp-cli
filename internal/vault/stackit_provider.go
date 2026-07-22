@@ -22,6 +22,7 @@ import (
 	stackitcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"go.uber.org/zap"
 )
@@ -74,7 +75,6 @@ const (
 // STACKIT vault provider errors.
 var (
 	ErrSecurityGroupMissingID = errors.New("security group missing ID")
-	ErrInvalidIPAddressFormat = errors.New("invalid IP address format")
 	ErrNetworkNotFound        = errors.New("network not found in STACKIT project")
 	ErrHTTPErrorFetchingKeys  = errors.New("HTTP error fetching keys")
 	ErrNoKeysReturned         = errors.New("no keys returned from provider")
@@ -1652,19 +1652,29 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 	return nil
 }
 
-// reservedIPAssignment represents an IP allocation configuration.
-type reservedIPAssignment struct {
-	// Simple offset for single IP
-	Offset int
+// reservedIPAssignment is an alias for reservedip.Assignment: the shared
+// range-spec/offset/subnet-mapping model used by both the STACKIT and PVE
+// vault providers (see internal/reservedip). Kept as a package-level alias
+// (rather than renaming every reference) so this file's existing tests and
+// call sites are unaffected by the extraction.
+type reservedIPAssignment = reservedip.Assignment
 
-	// Environment-specific subnet assignments: offset -> [subnet_nums]
-	SubnetMapping map[int][]int
-
-	// Range specification (e.g., "11-29" or "0-10,30->")
-	RangeSpec string
-
-	// Environment-specific range specs
-	SubnetRanges map[string][]int // "range-spec" -> [subnet_nums]
+// stackitAssignmentPriority orders assignment types for deterministic
+// output. Matches the historical Perl implementation's processing order.
+var stackitAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static ordering table, read-only
+	"bosh":       1,
+	"vault":      2,  //nolint:mnd
+	"jumpbox":    3,  //nolint:mnd
+	"concourse":  4,  //nolint:mnd
+	"prometheus": 5,  //nolint:mnd
+	"shield":     6,  //nolint:mnd
+	"doomsday":   7,  //nolint:mnd
+	"ocfp_ui":    8,  //nolint:mnd
+	"bastion":    9,  //nolint:mnd
+	"blacksmith": 10, //nolint:mnd
+	"shout":      11, //nolint:mnd
+	"available":  12, //nolint:mnd
+	"reserved":   13, //nolint:mnd
 }
 
 // getDefaultReservedIPAssignments returns the default IP assignment map.
@@ -1776,351 +1786,25 @@ func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignme
 	}
 }
 
-// calculateReservedIPs calculates all reserved IPs for a subnet based on assignments.
+// calculateReservedIPs calculates all reserved IPs for a subnet based on
+// assignments. Delegates to the shared reservedip engine (internal/reservedip)
+// so STACKIT and PVE compute reserved IPs identically; only the assignment
+// table and priority order differ per provider.
 func (s *StackitVaultProvider) calculateReservedIPs(
 	cidr string,
 	assignments map[string]map[string]*reservedIPAssignment,
 	envType string,
 	subnetNum int,
-) (map[string]interface{}, error) {
-	baseIP, networkBits, err := parseCIDR(cidr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CIDR %s: %w", cidr, err)
-	}
-
-	vaultIPs := make(map[string]interface{})
-	usedIPs := make(map[string]bool)
-
-	assignmentTypes := make([]string, 0, len(assignments))
-	for assignmentType := range assignments {
-		assignmentTypes = append(assignmentTypes, assignmentType)
-	}
-
-	sortAssignmentTypes(assignmentTypes)
-
-	for _, assignmentType := range assignmentTypes {
-		envMap := assignments[assignmentType]
-
-		assignment := envMap[envType]
-		if assignment == nil {
-			assignment = envMap["other"]
-		}
-
-		if assignment == nil {
-			continue
-		}
-
-		s.processAssignment(assignmentType, assignment, baseIP, networkBits, subnetNum, vaultIPs, usedIPs)
-	}
-
-	return vaultIPs, nil
+) (map[string]any, error) {
+	return reservedip.Calculate(cidr, assignments, envType, subnetNum, stackitAssignmentPriority, s.logger)
 }
 
-// processAssignment dispatches a single reserved IP assignment to the appropriate processor.
-func (s *StackitVaultProvider) processAssignment(
-	assignmentType string,
-	assignment *reservedIPAssignment,
-	baseIP string,
-	networkBits, subnetNum int,
-	vaultIPs map[string]interface{},
-	usedIPs map[string]bool,
-) {
-	switch {
-	case assignment.Offset > 0:
-		s.processOffsetAssignment(assignmentType, assignment.Offset, baseIP, vaultIPs, usedIPs)
-	case len(assignment.SubnetMapping) > 0:
-		s.processSubnetMappingAssignment(assignmentType, assignment.SubnetMapping, baseIP, subnetNum, vaultIPs, usedIPs)
-	case assignment.RangeSpec != "":
-		s.processRangeSpecAssignment(assignmentType, assignment.RangeSpec, baseIP, networkBits, vaultIPs)
-	case len(assignment.SubnetRanges) > 0:
-		s.processSubnetRangesAssignment(assignmentType, assignment.SubnetRanges, baseIP, networkBits, subnetNum, vaultIPs)
-	}
-}
-
-// processOffsetAssignment handles a simple offset-based single IP reservation.
-func (s *StackitVaultProvider) processOffsetAssignment(
-	assignmentType string, offset int, baseIP string,
-	vaultIPs map[string]interface{}, usedIPs map[string]bool,
-) {
-	ip := addOffsetToIP(baseIP, offset) //nolint:varnamelen // ip is clear in context
-	if usedIPs[ip] {
-		return
-	}
-
-	vaultIPs[assignmentType+"_ip"] = ip
-	usedIPs[ip] = true
-
-	// Add IP bounds (_a and _b) for Genesis compatibility (Perl: lines 1343-1346)
-	vaultIPs[assignmentType+"_a"] = addOffsetToIP(baseIP, offset-1)
-	vaultIPs[assignmentType+"_b"] = addOffsetToIP(baseIP, offset+1)
-
-	s.logger.Debugw("Reserved IP", "type", assignmentType, "ip", ip, "offset", offset)
-}
-
-// processSubnetMappingAssignment handles offset-to-subnet-number mapping reservations.
-func (s *StackitVaultProvider) processSubnetMappingAssignment(
-	assignmentType string, subnetMapping map[int][]int, baseIP string,
-	subnetNum int, vaultIPs map[string]interface{}, usedIPs map[string]bool,
-) {
-	for offset, subnets := range subnetMapping {
-		if !containsInt(subnets, subnetNum) {
-			continue
-		}
-
-		ip := addOffsetToIP(baseIP, offset) //nolint:varnamelen // ip is clear in context
-		if usedIPs[ip] {
-			break
-		}
-
-		vaultIPs[assignmentType+"_ip"] = ip
-		usedIPs[ip] = true
-		vaultIPs[assignmentType+"_a"] = addOffsetToIP(baseIP, offset-1)
-		vaultIPs[assignmentType+"_b"] = addOffsetToIP(baseIP, offset+1)
-
-		s.logger.Debugw("Reserved IP from subnet mapping",
-			"type", assignmentType, "ip", ip, "offset", offset, "subnet_num", subnetNum)
-
-		break
-	}
-}
-
-// processRangeSpecAssignment handles range-specification-based IP reservations.
-func (s *StackitVaultProvider) processRangeSpecAssignment(
-	assignmentType, rangeSpec, baseIP string, networkBits int,
-	vaultIPs map[string]interface{},
-) {
-	ranges, err := parseIPRangeSpec(rangeSpec, baseIP, networkBits)
-	if err != nil {
-		s.logger.Warnw("Failed to parse range spec",
-			"type", assignmentType, "spec", rangeSpec, "error", err)
-
-		return
-	}
-
-	s.storeIPRanges(assignmentType, ranges, vaultIPs, "Reserved IP range", 0)
-}
-
-// processSubnetRangesAssignment handles subnet-specific range-based IP reservations.
-func (s *StackitVaultProvider) processSubnetRangesAssignment(
-	assignmentType string, subnetRanges map[string][]int, baseIP string,
-	networkBits, subnetNum int, vaultIPs map[string]interface{},
-) {
-	for rangeSpec, subnets := range subnetRanges {
-		if !containsInt(subnets, subnetNum) {
-			continue
-		}
-
-		ranges, err := parseIPRangeSpec(rangeSpec, baseIP, networkBits)
-		if err != nil {
-			s.logger.Warnw("Failed to parse subnet range spec",
-				"type", assignmentType, "spec", rangeSpec, "error", err)
-
-			continue
-		}
-
-		s.storeIPRanges(assignmentType, ranges, vaultIPs, "Reserved IP range from subnet mapping", subnetNum)
-
-		break
-	}
-}
-
-// storeIPRanges writes IP range boundaries into the vault data map and logs them.
-func (s *StackitVaultProvider) storeIPRanges(
-	assignmentType string, ranges []ipRange,
-	vaultIPs map[string]interface{}, logMessage string, subnetNum int,
-) {
-	idx := 0
-	for _, rng := range ranges {
-		vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = rng.Start
-		idx++
-		vaultIPs[fmt.Sprintf("%s_%d", assignmentType, idx)] = rng.End
-		idx++
-
-		logFields := []interface{}{"type", assignmentType, "start", rng.Start, "end", rng.End}
-		if subnetNum > 0 {
-			logFields = append(logFields, "subnet_num", subnetNum)
-		}
-
-		s.logger.Debugw(logMessage, logFields...)
-	}
-}
-
-// ipRange represents an IP address range.
-type ipRange struct {
-	Start string
-	End   string
-}
-
-// parseCIDR parses a CIDR notation and returns base IP and network bits.
-func parseCIDR(cidr string) (string, int, error) {
-	parts := strings.Split(cidr, "/")
-	if len(parts) != 2 { //nolint:mnd
-		return "", 0, ErrInvalidCIDRFormat(cidr)
-	}
-
-	baseIP := parts[0]
-	networkBits := 0
-
-	_, err := fmt.Sscanf(parts[1], "%d", &networkBits)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid network bits: %w", err)
-	}
-
-	// Validate IP address format
-	octets := strings.Split(baseIP, ".")
-	if len(octets) != 4 { //nolint:mnd
-		return "", 0, ErrInvalidIPAddressFormat
-	}
-
-	return baseIP, networkBits, nil
-}
-
-// addOffsetToIP adds an offset to an IP address.
+// addOffsetToIP adds an offset to an IP address. Delegates to
+// reservedip.AddOffsetToIP (see internal/reservedip). Used in production by
+// aws_provider.go's calculateSystemIPs in addition to calculateReservedIPs
+// above.
 func addOffsetToIP(baseIP string, offset int) string {
-	octets := strings.Split(baseIP, ".")
-	if len(octets) != 4 { //nolint:mnd
-		return baseIP
-	}
-
-	// Convert last octet to int
-	lastOctet, err := strconv.Atoi(octets[3])
-	if err != nil {
-		return baseIP
-	}
-
-	// Add offset
-	newOctet := lastOctet + offset
-
-	// Handle overflow into third octet if needed
-	if newOctet > 255 { //nolint:mnd
-		thirdOctet, err := strconv.Atoi(octets[2])
-		if err != nil {
-			return baseIP
-		}
-
-		thirdOctet += newOctet / 256 //nolint:mnd
-		newOctet %= 256
-		octets[2] = strconv.Itoa(thirdOctet)
-	}
-
-	octets[3] = strconv.Itoa(newOctet)
-
-	return strings.Join(octets, ".")
-}
-
-// parseIPRangeSpec parses a range specification like "11-29" or "0-10,30->".
-// This matches the Perl implementation in _parse_ip_range_string (lines 1476-1497).
-//
-//nolint:unparam // error return kept for future validation of malformed range specs
-func parseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]ipRange, error) {
-	// Split by comma for multiple ranges
-	subranges := strings.Split(rangeSpec, ",")
-	ranges := make([]ipRange, 0, len(subranges))
-
-	for _, subrange := range subranges {
-		subrange = strings.TrimSpace(subrange)
-
-		// Parse range like "11-29" or "30->" or "10"
-		var lower, upper int
-
-		switch {
-		case strings.Contains(subrange, "->"):
-			// Open-ended range like "30->"
-			parts := strings.Split(subrange, "->")
-			lower, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
-			upper = calculateLastHostOffset(networkBits)
-		case strings.Contains(subrange, "-"):
-			// Closed range like "11-29"
-			parts := strings.Split(subrange, "-")
-			lower, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
-			upper, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
-		default:
-			// Single value like "10"
-			lower, _ = strconv.Atoi(strings.TrimSpace(subrange))
-			upper = lower
-		}
-
-		startIP := addOffsetToIP(baseIP, lower)
-		endIP := addOffsetToIP(baseIP, upper)
-
-		ranges = append(ranges, ipRange{
-			Start: startIP,
-			End:   endIP,
-		})
-	}
-
-	return ranges, nil
-}
-
-// calculateLastHostOffset calculates the last usable host offset for a network.
-func calculateLastHostOffset(networkBits int) int {
-	// Calculate number of hosts: 2^(32-networkBits) - 1
-	hostBits := 32 - networkBits //nolint:mnd
-	if hostBits <= 0 {
-		return 0
-	}
-
-	// For typical /24 network: 2^8 - 1 = 255
-	// But we want last usable host (254)
-	maxHosts := (1 << uint(hostBits)) - 2 //nolint:mnd
-
-	return maxHosts
-}
-
-// containsInt checks if a slice contains an integer.
-func containsInt(slice []int, value int) bool {
-	for _, v := range slice {
-		if v == value {
-			return true
-		}
-	}
-
-	return false
-}
-
-// sortAssignmentTypes sorts assignment types for deterministic output.
-// Order matches the Perl implementation's processing order.
-func sortAssignmentTypes(types []string) {
-	// Define priority order matching Perl implementation
-	priority := map[string]int{
-		"bosh":       1,
-		"vault":      2,  //nolint:mnd
-		"jumpbox":    3,  //nolint:mnd
-		"concourse":  4,  //nolint:mnd
-		"prometheus": 5,  //nolint:mnd
-		"shield":     6,  //nolint:mnd
-		"doomsday":   7,  //nolint:mnd
-		"ocfp_ui":    8,  //nolint:mnd
-		"bastion":    9,  //nolint:mnd
-		"blacksmith": 10, //nolint:mnd
-		"shout":      11, //nolint:mnd
-		"available":  12, //nolint:mnd
-		"reserved":   13, //nolint:mnd
-	}
-
-	// Sort by priority
-	for i := range len(types) - 1 { //nolint:varnamelen // i is clear in context
-		for j := i + 1; j < len(types); j++ { //nolint:varnamelen // j is clear in context
-			pri1 := priority[types[i]]
-			pri2 := priority[types[j]]
-
-			// If not in priority map, sort alphabetically
-			if pri1 == 0 {
-				pri1 = 1000
-			}
-
-			if pri2 == 0 {
-				pri2 = 1000
-			}
-
-			if pri1 > pri2 {
-				types[i], types[j] = types[j], types[i]
-			} else if pri1 == pri2 && types[i] > types[j] {
-				// Alphabetical for same priority
-				types[i], types[j] = types[j], types[i]
-			}
-		}
-	}
+	return reservedip.AddOffsetToIP(baseIP, offset)
 }
 
 // configureSubnets configures subnet settings in vault.
