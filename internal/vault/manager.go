@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,22 +189,15 @@ type ProgressReporter interface {
 func (m *Manager) Populate(opts *PopulateOptions) error {
 	m.logger.Infow("Starting vault populate", "provider", m.config.Provider)
 
-	if opts.DryRun {
-		m.logger.Info("[DRY RUN] Would populate vault configuration")
-		// For dry-run, still report basic progress
-		if opts.ProgressReporter != nil {
-			opts.ProgressReporter.ReportPhaseStart("dry-run", 0, 1)
-			opts.ProgressReporter.ReportPhaseComplete("dry-run", 0)
-			opts.ProgressReporter.ReportFinalSummary(true, 0, 1, 0)
-		}
-
-		return nil
-	}
-
-	// Validate vault connection
+	// Validate vault connection (dry-run needs it too: the plan is computed
+	// from reads of the live vault).
 	err := m.client.ValidateConnection()
 	if err != nil {
 		return fmt.Errorf("vault connection validation failed: %w", err)
+	}
+
+	if opts.DryRun {
+		return m.populateDryRun(opts, m.safe, m.client.GetClient().Address(), os.Stdout)
 	}
 
 	// Handle subcommands
@@ -530,6 +524,21 @@ func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
+	applyPopulateProviderOptions(provider, kmsKeyARN, opts)
+
+	// Perform full configuration (provider reports all phases)
+	err = provider.Configure(reporter)
+	if err != nil {
+		return fmt.Errorf("provider configuration failed: %w", err)
+	}
+
+	m.logger.Info("Full vault configuration completed")
+
+	return nil
+}
+
+// applyPopulateProviderOptions threads populate CLI flags into the provider.
+func applyPopulateProviderOptions(provider providers.VaultProvider, kmsKeyARN string, opts *PopulateOptions) {
 	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
 	if awsProvider, ok := provider.(*AWSVaultProvider); ok {
 		awsProvider.KMSKeyARN = kmsKeyARN
@@ -544,14 +553,41 @@ func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN
 		pveProvider.BlobstoreAccessKey = opts.BlobstoreAccessKey
 		pveProvider.BlobstoreSecretKey = opts.BlobstoreSecretKey
 	}
+}
 
-	// Perform full configuration (provider reports all phases)
-	err = provider.Configure(reporter)
+// populateDryRun runs the provider's populate flow against a recording safe:
+// reads hit the live vault, writes are captured, and the resulting plan —
+// target vault plus path/key names, never values — is printed to w. PVE
+// bucket creation is stubbed out so a dry-run cannot touch the blobstore
+// either.
+func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, target string, w io.Writer) error {
+	recorder := newRecordingSafe(base)
+
+	provider, err := m.createVaultProviderWith(recorder)
 	if err != nil {
-		return fmt.Errorf("provider configuration failed: %w", err)
+		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
-	m.logger.Info("Full vault configuration completed")
+	applyPopulateProviderOptions(provider, opts.KMSKeyARN, opts)
+
+	if pveProvider, ok := provider.(*PVEVaultProvider); ok {
+		pveProvider.bucketEnsurer = noopBucketEnsurer{}
+	}
+
+	switch opts.Subcommand {
+	case PhasePublicIPs:
+		err = provider.ConfigurePublicIPs(opts.ProgressReporter, 1, 1)
+	case "":
+		err = provider.Configure(opts.ProgressReporter)
+	default:
+		return ErrUnknownSubcommand(opts.Subcommand)
+	}
+
+	if err != nil {
+		return fmt.Errorf("dry-run provider configuration failed: %w", err)
+	}
+
+	writePopulatePlan(w, target, recorder.Plan())
 
 	return nil
 }
@@ -999,24 +1035,32 @@ func (m *Manager) reportEnvironmentUpdateResults(updatedEnvs []environmentUpdate
 //
 //nolint:ireturn // returning VaultProvider interface is intentional for provider pluggability
 func (m *Manager) createVaultProvider() (providers.VaultProvider, error) {
+	return m.createVaultProviderWith(m.safe)
+}
+
+// createVaultProviderWith builds the provider around an explicit safe, so
+// dry-run can substitute a recording decorator for the live one.
+//
+//nolint:ireturn // returning VaultProvider interface is intentional for provider pluggability
+func (m *Manager) createVaultProviderWith(safe SafeInterface) (providers.VaultProvider, error) {
 	switch strings.ToLower(m.config.Provider) {
 	case "stackit":
-		return NewStackitVaultProvider(m.config, m.safe, m.blocName), nil
+		return NewStackitVaultProvider(m.config, safe, m.blocName), nil
 	case "openstack":
 		// Placeholder - return a not-implemented provider
-		return providers.NewPlaceholderProvider("openstack", m.config, m.safe, m.blocName), nil
+		return providers.NewPlaceholderProvider("openstack", m.config, safe, m.blocName), nil
 	case "aws":
-		return NewAWSVaultProvider(m.config, m.safe, m.blocName), nil
+		return NewAWSVaultProvider(m.config, safe, m.blocName), nil
 	case "pve":
-		return NewPVEVaultProvider(m.config, m.safe, m.blocName), nil
+		return NewPVEVaultProvider(m.config, safe, m.blocName), nil
 	case "azure":
 		// Placeholder - return a not-implemented provider
-		return providers.NewPlaceholderProvider("azure", m.config, m.safe, m.blocName), nil
+		return providers.NewPlaceholderProvider("azure", m.config, safe, m.blocName), nil
 	case "gcp":
-		return NewGCPVaultProvider(m.config, m.safe, m.blocName), nil
+		return NewGCPVaultProvider(m.config, safe, m.blocName), nil
 	case "vmware":
 		// Placeholder - return a not-implemented provider
-		return providers.NewPlaceholderProvider("vmware", m.config, m.safe, m.blocName), nil
+		return providers.NewPlaceholderProvider("vmware", m.config, safe, m.blocName), nil
 	default:
 		return nil, ErrUnsupportedProvider(m.config.Provider)
 	}
