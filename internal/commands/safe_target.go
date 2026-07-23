@@ -17,10 +17,11 @@ import (
 // target per invocation removes the ordering dependency without mutating the
 // operator's current target.
 //
-// Targets are tried in the same order as the API client: the inception vault
-// owns the bloc's secrets until `ocfp vault migrate` runs, the mgmt vault
-// after. With no bloc name there is nothing to pin to and the call keeps its
-// historic unpinned form.
+// Targets are tried in the same order as the API client: the mgmt vault owns
+// the bloc's secrets from `ocfp vault migrate` on, and the inception vault is
+// the pre-migration fallback (a frozen inception target may linger in
+// ~/.saferc after migration and must not win). With no bloc name there is
+// nothing to pin to and the call keeps its historic unpinned form.
 func safeGetForBloc(ctx context.Context, blocName, path string) ([]byte, error) {
 	targets := vault.BlocSafeTargetNames(blocName)
 	if len(targets) == 0 {
