@@ -98,6 +98,14 @@ func (s3BucketEnsurer) EnsureBuckets(ctx context.Context, ep artifacts.Endpoint,
 	return artifacts.EnsureBuckets(ctx, ep, creds, buckets)
 }
 
+// noopBucketEnsurer skips bucket creation entirely. Dry-run populate injects
+// it so previewing a plan can never touch the blobstore.
+type noopBucketEnsurer struct{}
+
+func (noopBucketEnsurer) EnsureBuckets(_ context.Context, _ artifacts.Endpoint, _ artifacts.Credentials, _ []artifacts.BucketSpec) error {
+	return nil
+}
+
 // NewPVEVaultProvider creates a new Proxmox VE vault provider.
 func NewPVEVaultProvider(cfg *config.Config, safe SafeInterface, blocName string) *PVEVaultProvider {
 	return &PVEVaultProvider{
