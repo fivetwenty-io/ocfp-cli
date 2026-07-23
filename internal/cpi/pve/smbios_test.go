@@ -172,7 +172,7 @@ func TestBastionSMBIOSPayload_IncludesCloudflareToken(t *testing.T) {
 
 func TestBastionSMBIOSPayload_IncludesIngress(t *testing.T) {
 	ts := &cpi.TailscaleSpec{AuthKey: "tskey-abc", Hostname: "b1"}
-	ing := &cpi.IngressSpec{OriginIP: "10.108.20.13", Ports: []int{80, 443}}
+	ing := &cpi.IngressSpec{OriginIP: "10.108.20.97", Ports: []int{80, 443}}
 
 	p := BastionSMBIOSPayload(ts, nil, ing)
 
@@ -185,7 +185,7 @@ func TestBastionSMBIOSPayload_IncludesIngress(t *testing.T) {
 	if !ok {
 		t.Fatalf("sku missing ingress object: %s", p.SKU)
 	}
-	if ingress["origin_ip"] != "10.108.20.13" {
+	if ingress["origin_ip"] != "10.108.20.97" {
 		t.Errorf("origin_ip = %v", ingress["origin_ip"])
 	}
 }
