@@ -10,7 +10,7 @@ func tailscaleIngressConfig() *config.Config {
 	return &config.Config{
 		Ingress:    &config.IngressConfig{Provider: config.IngressProviderTailscale},
 		Tailscale:  &config.TailscaleConfig{Enabled: boolPtr(true), AuthKey: "k"},
-		Cloudflare: &config.CloudflareConfig{Zone: "fivetwenty.io", APIToken: "tok", Origin: "https://10.108.20.13:443"},
+		Cloudflare: &config.CloudflareConfig{Zone: "fivetwenty.io", APIToken: "tok", Origin: "https://10.108.20.97:443"},
 	}
 }
 
@@ -22,7 +22,7 @@ func TestBastionIngressSpec_TailscaleProvider(t *testing.T) {
 	if spec == nil {
 		t.Fatal("expected spec, got nil")
 	}
-	if spec.OriginIP != "10.108.20.13" {
+	if spec.OriginIP != "10.108.20.97" {
 		t.Errorf("OriginIP = %q", spec.OriginIP)
 	}
 	if len(spec.Ports) != 2 || spec.Ports[0] != 80 || spec.Ports[1] != 443 {
@@ -45,9 +45,9 @@ func TestBastionIngressSpec_NilForCloudflared(t *testing.T) {
 func TestOriginHost(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"https://10.108.20.13:443": "10.108.20.13",
-		"10.108.20.13:443":         "10.108.20.13",
-		"10.108.20.13":             "10.108.20.13",
+		"https://10.108.20.97:443": "10.108.20.97",
+		"10.108.20.97:443":         "10.108.20.97",
+		"10.108.20.97":             "10.108.20.97",
 		"":                         "",
 	}
 	for in, want := range cases {
