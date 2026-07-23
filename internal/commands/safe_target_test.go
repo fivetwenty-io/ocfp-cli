@@ -20,7 +20,7 @@ var errSafeTargetMissing = errors.New("exit status 1: target not found")
 // credential lookup to the sibling's vault.
 func TestSafeGetForBloc_PinsTargetPerInvocation(t *testing.T) {
 	fake := newFakeRunner()
-	fake.outputs["safe -T ocfp-lab-drgao-inception get secret/config/ocfp-lab-drgao/aws:region"] = []byte("us-east-1\n")
+	fake.outputs["safe -T ocfp-lab-drgao-mgmt get secret/config/ocfp-lab-drgao/aws:region"] = []byte("us-east-1\n")
 	fake.outputs["safe get secret/config/ocfp-lab-drgao/aws:region"] = []byte("WRONG-BLOC-VALUE\n")
 
 	restore := installFakeRunner(fake)
@@ -33,12 +33,12 @@ func TestSafeGetForBloc_PinsTargetPerInvocation(t *testing.T) {
 	assert.NotContains(t, string(out), "WRONG-BLOC-VALUE", "must not read the global current target")
 }
 
-// Once migration has run the inception target is gone and the bloc's secrets
-// live in <bloc>-mgmt, so that target is tried next — still explicitly.
-func TestSafeGetForBloc_FallsBackToMgmtTarget(t *testing.T) {
+// Pre-migration blocs have no mgmt target, so the bloc's inception vault is
+// tried next — still explicitly, never the global current target.
+func TestSafeGetForBloc_FallsBackToInceptionTarget(t *testing.T) {
 	fake := newFakeRunner()
-	fake.errs["safe -T ocfp-lab-drgao-inception get secret/config/ocfp-lab-drgao/aws:region"] = errSafeTargetMissing
-	fake.outputs["safe -T ocfp-lab-drgao-mgmt get secret/config/ocfp-lab-drgao/aws:region"] = []byte("eu-central-1\n")
+	fake.errs["safe -T ocfp-lab-drgao-mgmt get secret/config/ocfp-lab-drgao/aws:region"] = errSafeTargetMissing
+	fake.outputs["safe -T ocfp-lab-drgao-inception get secret/config/ocfp-lab-drgao/aws:region"] = []byte("eu-central-1\n")
 
 	restore := installFakeRunner(fake)
 	defer restore()
@@ -66,7 +66,7 @@ func TestSafeGetForBloc_NoBlocUsesUnpinnedGet(t *testing.T) {
 
 func TestRetrieveAWSRegionFromVault_UsesBlocTarget(t *testing.T) {
 	fake := newFakeRunner()
-	fake.outputs["safe -T ocfp-lab-drgao-inception get secret/config/ocfp-lab-drgao/aws:region"] = []byte("us-west-2\n")
+	fake.outputs["safe -T ocfp-lab-drgao-mgmt get secret/config/ocfp-lab-drgao/aws:region"] = []byte("us-west-2\n")
 	fake.outputs["safe get secret/config/ocfp-lab-drgao/aws:region"] = []byte("WRONG-BLOC-VALUE\n")
 
 	restore := installFakeRunner(fake)

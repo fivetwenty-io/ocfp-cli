@@ -9,9 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// twoBlocSaferc writes a ~/.saferc holding two blocs' inception targets plus a
-// mgmt target, with the global current pointer aimed at the *other* bloc — the
-// exact shape produced when several bootstraps run concurrently.
+// twoBlocSaferc writes a ~/.saferc holding two blocs' inception targets plus
+// mgmt targets, with the global current pointer aimed at the *other* bloc —
+// the exact shape produced when several bootstraps run concurrently. drhu has
+// BOTH its inception and mgmt targets, the post-migration shape in which the
+// frozen inception vault is still listed in ~/.saferc.
 func twoBlocSaferc(t *testing.T) {
 	t.Helper()
 
@@ -29,6 +31,9 @@ vaults:
     url: http://127.0.0.1:18889
     token: drhu-token
     skip_verify: true
+  ocfp-lab-drhu-mgmt:
+    url: https://10.64.60.12:8200
+    token: drhu-mgmt-token
   ocfp-lab-krutten-mgmt:
     url: https://10.64.70.12:8200
     token: krutten-mgmt-token
@@ -106,6 +111,23 @@ func TestResolveBlocVaultConfig_FallsBackToMgmtTarget(t *testing.T) {
 
 	assert.Equal(t, "https://10.64.70.12:8200", cfg.Address)
 	assert.Equal(t, "krutten-mgmt-token", cfg.Token)
+}
+
+// TestResolveBlocVaultConfig_MgmtWinsOverInception guards the post-migration
+// shape: migration is supposed to delete the inception target but a frozen
+// inception vault often stays listed in ~/.saferc. The bloc's secrets live in
+// the mgmt vault, so with both targets present mgmt must win — resolving
+// inception first writes every unpinned populate into the dead vault.
+func TestResolveBlocVaultConfig_MgmtWinsOverInception(t *testing.T) {
+	twoBlocSaferc(t)
+	clearVaultEnv(t)
+
+	cfg, err := resolveBlocVaultConfig("ocfp-lab-drhu")
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://10.64.60.12:8200", cfg.Address, "mgmt target must win over the frozen inception target")
+	assert.Equal(t, "drhu-mgmt-token", cfg.Token)
+	assert.NotEqual(t, "drhu-token", cfg.Token, "must not resolve the frozen inception vault")
 }
 
 // A bloc with no target of its own must end up token-less — so the client

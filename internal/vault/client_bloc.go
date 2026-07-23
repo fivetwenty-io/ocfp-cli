@@ -17,14 +17,18 @@ const InceptionTargetSuffix = "-inception"
 const MgmtTargetSuffix = "-mgmt"
 
 // BlocSafeTargetNames returns the safe target names that may hold a bloc's
-// secrets, in resolution order: the inception vault first (it is authoritative
-// until migration deletes it), then the management vault.
+// secrets, in resolution order: the management vault first (it owns the
+// bloc's secrets from migration on), then the inception vault. Inception is
+// only the fallback because migration does not reliably delete its target: a
+// frozen inception vault left in ~/.saferc must never outrank the mgmt vault,
+// or every unpinned write lands in the dead vault. Pre-migration blocs have
+// no mgmt target yet, so they still resolve inception through the fallback.
 func BlocSafeTargetNames(blocName string) []string {
 	if blocName == "" {
 		return nil
 	}
 
-	return []string{blocName + InceptionTargetSuffix, blocName + MgmtTargetSuffix}
+	return []string{blocName + MgmtTargetSuffix, blocName + InceptionTargetSuffix}
 }
 
 // NewClientForBloc creates a vault client bound to one bloc's own vault.
