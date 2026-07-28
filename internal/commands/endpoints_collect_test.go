@@ -3,6 +3,7 @@ package commands
 import (
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/stretchr/testify/assert"
@@ -265,6 +266,112 @@ func TestExpectedIPForService_ReservedStateOrBastion(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP))
+		})
+	}
+}
+
+// TestOriginForService_ExactMatchOnly covers originForService's D-05
+// exact-match-only precedence: rung O1 (cfExact) always wins when present;
+// rung O2 (the OCF-tier-only wildcard-suffix fallthrough against cf.Origin)
+// only fires for unmatched OCF-tier services; mgmt-tier never reaches O2;
+// and no heuristic or service-name-based matching bridges a naming-scheme
+// mismatch — a blank return is the common, correct outcome, not a gap.
+func TestOriginForService_ExactMatchOnly(t *testing.T) {
+	t.Parallel()
+
+	base := "ocf.example.lab.internal"
+	systemFQDN := "shield.system." + base
+
+	cf := &config.CloudflareConfig{
+		Origin:       "https://10.64.64.20",
+		AppsDomain:   "apps." + base,
+		SystemDomain: "system." + base,
+	}
+
+	tests := []struct {
+		name    string
+		envType string
+		fqdn    string
+		cfExact map[string]string
+		cf      *config.CloudflareConfig
+		want    string
+	}{
+		{
+			// "Naming kept consistent" case: fqdn also suffix-matches
+			// SystemDomain, but the exact cfExact entry (rung O1) wins over
+			// the wildcard fallthrough (rung O2) unconditionally.
+			name:    "TestOriginForService_ExactRouteWinsOverWildcard",
+			envType: vault.OCFEnvType,
+			fqdn:    systemFQDN,
+			cfExact: map[string]string{systemFQDN: "10.0.0.9"},
+			cf:      cf,
+			want:    "10.0.0.9",
+		},
+		{
+			// "Naming has drifted" case, shield: an explicit .util. override
+			// FQDN disjoint from both the cfExact key (a different, .system.
+			// hostname for the same service) and the wildcard-suffix rung
+			// (the override string does not end in .system.<base>) — a pure
+			// D-05 naming-independence example, unrelated to systemScoped.
+			name:    "TestOriginForService_DisjointNamingSchemesAllBlank",
+			envType: vault.MgmtEnvType,
+			fqdn:    "shield.util." + base,
+			cfExact: map[string]string{"shield.system." + base: "10.0.0.9"},
+			cf:      cf,
+			want:    "",
+		},
+		{
+			// "Naming has drifted" case, gate-affected services: no explicit
+			// override on the real bloc, so concourse's derived FQDN is
+			// subject to the (now-fixed) systemScoped gate and carries the
+			// .system. infix, exactly matching its cfExact entry.
+			name:    "TestOriginForService_GateAffectedServicesPopulateOriginPostFix",
+			envType: vault.MgmtEnvType,
+			fqdn:    "concourse.system." + base,
+			cfExact: map[string]string{"concourse.system." + base: "10.0.0.11"},
+			cf:      cf,
+			want:    "10.0.0.11",
+		},
+		{
+			name:    "TestOriginForService_MgmtTierNeverGetsWildcardFallthrough",
+			envType: vault.MgmtEnvType,
+			fqdn:    "shield.system." + base,
+			cfExact: map[string]string{},
+			cf:      cf,
+			want:    "",
+		},
+		{
+			name:    "OCF-tier wildcard fallthrough fires when unmatched",
+			envType: vault.OCFEnvType,
+			fqdn:    "cf.apps." + base,
+			cfExact: map[string]string{},
+			cf:      cf,
+			want:    "10.64.64.20",
+		},
+		{
+			name:    "empty fqdn returns blank immediately",
+			envType: vault.OCFEnvType,
+			fqdn:    "",
+			cfExact: map[string]string{"anything": "10.0.0.1"},
+			cf:      cf,
+			want:    "",
+		},
+		{
+			name:    "nil cloudflare config, no exact match",
+			envType: vault.OCFEnvType,
+			fqdn:    "cf.apps." + base,
+			cfExact: map[string]string{},
+			cf:      nil,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := originForService(tt.envType, tt.fqdn, tt.cfExact, tt.cf)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
