@@ -3,8 +3,10 @@ package commands
 import (
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestOrderedServiceFQDNs_MgmtDerivesInOrder verifies the mgmt env type's
@@ -105,4 +107,112 @@ func TestDashIfEmpty_RendersEmDashForBlankOtherwisePassesThrough(t *testing.T) {
 			assert.Equal(t, tt.want, dashIfEmpty(tt.in))
 		})
 	}
+}
+
+// TestFindReservedIP_MatchesInfraAndOcfpSubnets verifies findReservedIP
+// matches reserved_<any-subnet-shape>_<role>_ip regardless of the middle
+// subnet-name segment (the "-ocfp-" vs "-infra-" shapes ResolveReservedIP's
+// own hardcoded key format misses), sorted, first match wins.
+func TestFindReservedIP_MatchesInfraAndOcfpSubnets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		outputs map[string]interface{}
+		role    string
+		want    string
+	}{
+		{
+			name:    "ocfp subnet shape",
+			outputs: map[string]interface{}{"reserved_myblc-ocfp-0_bastion_ip": "10.1.1.5"},
+			role:    "bastion",
+			want:    "10.1.1.5",
+		},
+		{
+			name:    "infra subnet shape",
+			outputs: map[string]interface{}{"reserved_myblc-infra-0_haproxy_ip": "10.2.2.9"},
+			role:    "haproxy",
+			want:    "10.2.2.9",
+		},
+		{
+			name: "multiple matches picks first sorted key",
+			outputs: map[string]interface{}{
+				"reserved_myblc-ocfp-1_bosh_ip": "10.3.3.2",
+				"reserved_myblc-ocfp-0_bosh_ip": "10.3.3.1",
+			},
+			role: "bosh",
+			want: "10.3.3.1",
+		},
+		{
+			name:    "no matching role",
+			outputs: map[string]interface{}{"reserved_myblc-ocfp-0_bastion_ip": "10.1.1.5"},
+			role:    "haproxy",
+			want:    "",
+		},
+		{
+			name:    "nil outputs",
+			outputs: nil,
+			role:    "bastion",
+			want:    "",
+		},
+		{
+			name:    "non-string value ignored",
+			outputs: map[string]interface{}{"reserved_myblc-ocfp-0_bastion_ip": 42},
+			role:    "bastion",
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, findReservedIP(tt.outputs, tt.role))
+		})
+	}
+}
+
+// TestLoadReservedOutputs_ReturnsNilOnEmptyBlocName verifies loadReservedOutputs
+// never surfaces an error to its caller: an empty bloc name (state.GetStateDir's
+// own hard-error case) degrades to a nil map instead.
+func TestLoadReservedOutputs_ReturnsNilOnEmptyBlocName(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, loadReservedOutputs(""))
+}
+
+// TestLoadReservedOutputs_ReturnsEmptyMapForNewBloc verifies a bloc with no
+// existing state file yields a non-nil, empty map rather than nil — state's
+// own Load() seeds a fresh, empty Outputs map in that case, and
+// loadReservedOutputs passes it through unchanged.
+func TestLoadReservedOutputs_ReturnsEmptyMapForNewBloc(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	got := loadReservedOutputs("brand-new-bloc-endpoints-test")
+	assert.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
+// TestLoadReservedOutputs_ReturnsPersistedOutputs verifies loadReservedOutputs
+// returns exactly the outputs map persisted by a real state.Manager save,
+// under an isolated OCFP_HOME so this test never touches a real bloc's state.
+func TestLoadReservedOutputs_ReturnsPersistedOutputs(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	blocName := "reserved-outputs-fixture-bloc"
+
+	stateDir, err := state.GetStateDir(blocName)
+	require.NoError(t, err)
+
+	mgr, err := state.NewManager(stateDir)
+	require.NoError(t, err)
+
+	_, err = mgr.Load(blocName)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.SetOutput("reserved_"+blocName+"-ocfp-0_bastion_ip", "10.9.9.9"))
+	require.NoError(t, mgr.Save())
+
+	got := loadReservedOutputs(blocName)
+	assert.Equal(t, "10.9.9.9", got["reserved_"+blocName+"-ocfp-0_bastion_ip"])
 }
