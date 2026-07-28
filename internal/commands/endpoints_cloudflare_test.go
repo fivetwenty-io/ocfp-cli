@@ -80,3 +80,65 @@ func TestCfExactHostnameOrigins_SkipsBlankSSHHostname(t *testing.T) {
 	got := cfExactHostnameOrigins(cf)
 	assert.Empty(t, got)
 }
+
+// TestCollectCloudflareSection_FullConfig verifies Section 2 renders one row
+// per configured route (apps wildcard, system wildcard, ssh, one service),
+// with SERVICE URL carrying the raw configured string and ORIGIN carrying
+// its extracted bare host.
+func TestCollectCloudflareSection_FullConfig(t *testing.T) {
+	t.Parallel()
+
+	cf := &config.CloudflareConfig{
+		Origin:       "https://10.64.64.20",
+		AppsDomain:   "apps.ocf.example.lab.internal",
+		SystemDomain: "system.ocf.example.lab.internal",
+		SSHHostname:  "ssh.ocf.example.lab.internal",
+		SSHOrigin:    "ssh://10.64.64.37:2222",
+		Services: []config.ServiceIngress{
+			{Hostname: "shield.system.ocf.example.lab.internal", Service: "https://10.0.0.9"},
+		},
+	}
+
+	section, resolveKeys := collectCloudflareSection(cf)
+
+	assert.Equal(t, "Cloudflare Service Routes", section.Title)
+	assert.Equal(t, []string{"KIND", "HOSTNAME", "SERVICE URL", "ORIGIN", "RESOLVED IP"}, section.Headers)
+	assert.Len(t, section.Rows, 4)
+	assert.Len(t, resolveKeys, 4)
+
+	appsRow := section.Rows[0]
+	assert.Equal(t, "apps wildcard", appsRow[0])
+	assert.Equal(t, "*.apps.ocf.example.lab.internal", appsRow[1])
+	assert.Equal(t, cf.Origin, appsRow[2])
+	assert.Equal(t, originHost(cf.Origin), appsRow[3])
+
+	systemRow := section.Rows[1]
+	assert.Equal(t, "system wildcard", systemRow[0])
+	assert.Equal(t, "*.system.ocf.example.lab.internal", systemRow[1])
+	assert.Equal(t, cf.Origin, systemRow[2])
+	assert.Equal(t, originHost(cf.Origin), systemRow[3])
+
+	sshRow := section.Rows[2]
+	assert.Equal(t, "ssh", sshRow[0])
+	assert.Equal(t, cf.SSHHostname, sshRow[1])
+	assert.Equal(t, cf.SSHOrigin, sshRow[2])
+	assert.Equal(t, originHost(cf.SSHOrigin), sshRow[3])
+
+	serviceRow := section.Rows[3]
+	assert.Equal(t, "service", serviceRow[0])
+	assert.Equal(t, "shield.system.ocf.example.lab.internal", serviceRow[1])
+	assert.Equal(t, "https://10.0.0.9", serviceRow[2])
+	assert.Equal(t, "10.0.0.9", serviceRow[3])
+}
+
+// TestCollectCloudflareSection_NilCloudflareReturnsZeroRows verifies a bloc
+// with no Cloudflare config produces a 0-row section and no error.
+func TestCollectCloudflareSection_NilCloudflareReturnsZeroRows(t *testing.T) {
+	t.Parallel()
+
+	section, resolveKeys := collectCloudflareSection(nil)
+
+	assert.Equal(t, "Cloudflare Service Routes", section.Title)
+	assert.Empty(t, section.Rows)
+	assert.Empty(t, resolveKeys)
+}
