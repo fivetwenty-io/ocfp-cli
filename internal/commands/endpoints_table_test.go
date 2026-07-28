@@ -164,3 +164,46 @@ func TestBuildEndpointsTable_NoResolveLeavesResolvedBlank(t *testing.T) {
 
 	assert.Equal(t, 0, fake.callCount())
 }
+
+// TestBuildEndpointsTable_NilConfigDegrades verifies the nil-*config.Config
+// contract every section builder's doc comment promises: no panic anywhere,
+// all four sections still present in order, Sections 1-3 header-only, the
+// Bastion section's always-present IP row dashed, a bloc-less title, the
+// no-base-domain summary, and no DNS lookup attempted for an empty host set.
+func TestBuildEndpointsTable_NilConfigDegrades(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	fake := newFakeHostResolver()
+	restore := installFakeHostResolver(fake)
+
+	defer restore()
+
+	table := buildEndpointsTable(t.Context(), nil, false)
+
+	require.NotNil(t, table)
+	require.Len(t, table.Sections, 4)
+
+	assert.Equal(t, "Endpoints — bloc ", table.Title)
+	assert.Equal(t, noBaseDomainSummary, table.Summary)
+
+	assert.Empty(t, table.Sections[0].Rows)
+	assert.Empty(t, table.Sections[1].Rows)
+	assert.Empty(t, table.Sections[2].Rows)
+
+	require.Len(t, table.Sections[3].Rows, 1)
+	assert.Equal(t, []string{"Bastion IP", "—"}, table.Sections[3].Rows[0])
+
+	assert.Equal(t, 0, fake.callCount())
+}
+
+// TestCollectBastionSection_NilConfig verifies the Bastion builder is
+// independently nil-safe: reading cfg.BastionIP and resolving the ingress
+// provider both have to tolerate a nil config, since buildEndpointsTable
+// calls this builder on the nil path without a guard of its own.
+func TestCollectBastionSection_NilConfig(t *testing.T) {
+	section := collectBastionSection(nil)
+
+	assert.Equal(t, "Bastion", section.Title)
+	require.Len(t, section.Rows, 1)
+	assert.Equal(t, []string{"Bastion IP", "—"}, section.Rows[0])
+}
