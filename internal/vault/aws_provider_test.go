@@ -926,3 +926,33 @@ func TestAWS_ConfigurePublicIPs_WithRealEIPs_WritesActualIDs(t *testing.T) {
 	_, hasPending := call.data["status"]
 	assert.False(t, hasPending, "should not write pending marker when real EIPs are present")
 }
+
+// TestAWS_ConfigureFQDNs_TailscaleIngressScopesSystemServices — the
+// tailscale-ingress fix: an explicit tailscale ingress provider with the
+// Cloudflare tunnel disabled must still derive infra-UI FQDNs under the
+// *.system wildcard, since .system. routing is provider-independent. Against
+// the pre-fix gate (config.CloudflareEnabled(a.Config.Cloudflare)), Enabled:
+// false makes that gate false and "concourse" would derive flat
+// (concourse.ocf.example.io) instead of scoped — this test fails against
+// that expression and only passes once the call site reads
+// config.SystemScoped(a.Config).
+func TestAWS_ConfigureFQDNs_TailscaleIngressScopesSystemServices(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		FQDNs:      &config.FQDNConfig{Base: "ocf.example.io"},
+		Ingress:    &config.IngressConfig{Provider: config.IngressProviderTailscale},
+		Cloudflare: &config.CloudflareConfig{Enabled: boolPtr(false)},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	call := mock.findSetMultipleCall(provider.PathBuilder.GetFQDNsPath(MgmtEnvType))
+	require.NotNil(t, call, "per-service FQDNs must be written for the env")
+
+	assert.Equal(t, "concourse.system.ocf.example.io", call.data["concourse"],
+		"tailscale ingress must scope infra UIs under *.system regardless of the cloudflare tunnel")
+	assert.Equal(t, "bosh.ocf.example.io", call.data["bosh"],
+		"non-UI services stay flat")
+}

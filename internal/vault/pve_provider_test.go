@@ -288,6 +288,63 @@ func TestPVEVaultProvider_ConfigureFQDNs_FlatWhenCloudflareDisabled(t *testing.T
 		"no Cloudflare edge: infra UIs stay flat")
 }
 
+// TestPVEVaultProvider_ConfigureFQDNs_TailscaleIngressScopesSystemServices —
+// the tailscale-ingress fix: an explicit tailscale ingress provider with the
+// Cloudflare tunnel disabled must still derive infra-UI FQDNs under the
+// *.system wildcard, since .system. routing is provider-independent. Before
+// the fix this bloc shape (11 live blocs) wrote bare {svc}.{base} FQDNs into
+// the deployed manifest fields.
+func TestPVEVaultProvider_ConfigureFQDNs_TailscaleIngressScopesSystemServices(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		FQDNs:      &config.FQDNConfig{Base: "ocf.example.io"},
+		Ingress:    &config.IngressConfig{Provider: config.IngressProviderTailscale},
+		Cloudflare: &config.CloudflareConfig{Enabled: boolPtr(false)},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	call := mock.findSetMultipleCall(provider.PathBuilder.GetFQDNsPath(MgmtEnvType))
+	require.NotNil(t, call, "per-service FQDNs must be written for the env")
+
+	assert.Equal(t, "concourse.system.ocf.example.io", call.data["concourse"],
+		"tailscale ingress must scope infra UIs under *.system regardless of the cloudflare tunnel")
+	assert.Equal(t, "shield.system.ocf.example.io", call.data["shield"])
+	assert.Equal(t, "bosh.ocf.example.io", call.data["bosh"],
+		"non-UI services stay flat")
+}
+
+// TestPVEVaultProvider_ConfigureFQDNs_ExplicitOverrideWinsOverIngressScope —
+// an explicit per-service FQDN override always wins, even when the ingress
+// provider would otherwise scope that service under *.system.
+func TestPVEVaultProvider_ConfigureFQDNs_ExplicitOverrideWinsOverIngressScope(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		FQDNs: &config.FQDNConfig{
+			Base: "ocf.example.io",
+			Mgmt: map[string]string{"shield": "backups.custom.example.io"},
+		},
+		Ingress: &config.IngressConfig{Provider: config.IngressProviderTailscale},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureFQDNs("", MgmtEnvType, nil, 1, 1)
+	require.NoError(t, err)
+
+	call := mock.findSetMultipleCall(provider.PathBuilder.GetFQDNsPath(MgmtEnvType))
+	require.NotNil(t, call)
+
+	assert.Equal(t, "backups.custom.example.io", call.data["shield"],
+		"explicit override must win over ingress-derived *.system scoping")
+	assert.Equal(t, "concourse.system.ocf.example.io", call.data["concourse"],
+		"non-overridden infra UI still scopes under tailscale ingress")
+}
+
+// boolPtr is defined in config package tests; local helper for vault package tests.
+func boolPtr(b bool) *bool { return &b }
+
 // TestPVEVaultProvider_ConfigureBlobstores_LocalModeWritesMarker — no
 // BlobstoreMode and no BlobstoreEndpoint defaults to local mode.  Two writes
 // land on mgmt env: a cf/blobstores/main marker (mode=local) plus a

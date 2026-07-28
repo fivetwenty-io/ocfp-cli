@@ -317,9 +317,9 @@ func (a *AWSVaultProvider) ConfigureFQDNs(_envPath, envType string, _reporter pr
 	}
 
 	// Pre-populate all known services for this environment. Infra-UI services
-	// derive under the *.system wildcard only when the Cloudflare edge fronts
-	// the bloc (its cert SAN is *.system).
-	fqdns := PopulateFQDNsForEnv(envType, explicit, base, config.CloudflareEnabled(a.Config.Cloudflare))
+	// derive under the *.system wildcard whenever an ingress provider fronts
+	// the bloc (cloudflared tunnel or tailscale) — its cert SAN is *.system.
+	fqdns := PopulateFQDNsForEnv(envType, explicit, base, config.SystemScoped(a.Config))
 
 	// For mgmt environment, skip CF-related FQDNs (same as STACKIT)
 	if envType == MgmtEnvType {
