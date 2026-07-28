@@ -45,6 +45,17 @@ func ResolveIngressProvider(cfg *Config) string {
 	return ""
 }
 
+// SystemScoped reports whether system-scoped service FQDNs should carry the
+// .system. infix for this bloc. True whenever an ingress provider is in
+// effect (explicit ingress.provider, or the legacy cloudflared-tunnel-only
+// default) — .system. routing is provider-independent, not tied to
+// cloudflare specifically. False when no ingress fronts the bloc (e.g. the
+// stackit real-LB shape with per-host certs and no ingress/cloudflare
+// section at all).
+func SystemScoped(cfg *Config) bool {
+	return ResolveIngressProvider(cfg) != ""
+}
+
 // ValidateIngress checks cross-section consistency of an explicit provider
 // choice. Called from the bloc validate chain after tailscale/cloudflare
 // merging, so it sees final values.

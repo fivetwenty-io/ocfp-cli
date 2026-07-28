@@ -314,7 +314,7 @@ func (s *StackitVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter
 		return nil
 	}
 
-	fqdns := PopulateFQDNsForEnv(envType, explicit, base, config.CloudflareEnabled(s.Config.Cloudflare))
+	fqdns := PopulateFQDNsForEnv(envType, explicit, base, config.SystemScoped(s.Config))
 	s.filterCFFQDNsForMgmt(envType, fqdns)
 
 	if len(fqdns) > 0 {
