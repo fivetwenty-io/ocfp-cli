@@ -63,7 +63,7 @@ func TestCfExactHostnameOrigins_BuildsFromServicesAndSSH(t *testing.T) {
 
 	assert.Equal(t, map[string]string{
 		"shield.system.ocf.example.lab.internal": "10.0.0.9",
-		"ssh.ocf.example.lab.internal":            "10.64.64.37",
+		"ssh.ocf.example.lab.internal":           "10.64.64.37",
 	}, got)
 }
 
