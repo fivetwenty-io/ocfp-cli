@@ -142,6 +142,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `init` | Initialize OCFP components (PostgreSQL, CF, BOSH) |
 | `test` | Run platform tests |
 | `vault` | Manage secrets in Vault |
+| `endpoints` | List DNS/endpoint facts for a bloc (see docs/networking/endpoints.md) |
 | `lb` | Load balancer management (see go/docs/cmds/lb.md) |
 | `scale` | Scale resources |
 | `backup` | Backup configurations |
