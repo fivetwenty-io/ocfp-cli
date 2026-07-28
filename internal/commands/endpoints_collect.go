@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
@@ -149,4 +150,48 @@ func expectedIPForService(service string, reservedOutputs map[string]interface{}
 	}
 
 	return findReservedIP(reservedOutputs, service)
+}
+
+// originForService returns where traffic for a service's FQDN terminates
+// today, by exact string equality only (D-05 — no heuristic, fuzzy, or
+// service-name-based matching, even though this leaves ORIGIN blank on most
+// blocs, since a service can carry three independent, unreconciled names at
+// once: the plain derived name, an explicit fqdns.* override, and a
+// cloudflare.services[] hostname).
+//
+// Rung O1: cfExact[fqdn], if present, wins unconditionally, tier-agnostic —
+// an explicit Cloudflare service route is an explicit fact, not an
+// inference. Rung O2, OCF-tier only: when cf.Origin is set and fqdn
+// suffix-matches "."+cf.AppsDomain or "."+cf.SystemDomain, the CF haproxy
+// static behind the wildcard is the answer. Mgmt-tier never reaches O2 —
+// haproxy is allocated only under the "ocf" key in pve_reserved_ips.go's
+// assignment table, so attributing the wildcard origin to a mgmt-tier
+// service would assert a fact that isn't true for that tier.
+//
+// A blank fqdn (no base domain configured) returns "" immediately, no error.
+func originForService(envType, fqdn string, cfExact map[string]string, cf *config.CloudflareConfig) string {
+	if fqdn == "" {
+		return ""
+	}
+
+	if origin, ok := cfExact[fqdn]; ok {
+		return origin
+	}
+
+	if envType != vault.OCFEnvType {
+		return ""
+	}
+
+	if cf == nil || cf.Origin == "" {
+		return ""
+	}
+
+	suffixMatchesApps := cf.AppsDomain != "" && strings.HasSuffix(fqdn, "."+cf.AppsDomain)
+	suffixMatchesSystem := cf.SystemDomain != "" && strings.HasSuffix(fqdn, "."+cf.SystemDomain)
+
+	if suffixMatchesApps || suffixMatchesSystem {
+		return originHost(cf.Origin)
+	}
+
+	return ""
 }
