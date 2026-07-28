@@ -171,7 +171,10 @@ output to investigate, not an error the command raises itself.
 - **RESOLVED IP**
   what a live DNS lookup returns right now, or blank under
   `--no-resolve`, or blank for a wildcard or empty hostname that cannot
-  be looked up at all.
+  be looked up at all. Only the first address the resolver returns is
+  shown. For a dual-stack name that can be the IPv6 answer, while
+  EXPECTED IP is always IPv4 — so those two columns can disagree for a
+  purely cosmetic reason, with nothing actually misconfigured.
 
 ## Why ORIGIN is usually blank
 
