@@ -142,3 +142,29 @@ func TestCollectCloudflareSection_NilCloudflareReturnsZeroRows(t *testing.T) {
 	assert.Empty(t, section.Rows)
 	assert.Empty(t, resolveKeys)
 }
+
+// TestCFExactHostnameOrigins_FirstMatchWins verifies the map mirrors the
+// order cloudflared actually evaluates ingress rules in. BuildIngress
+// (internal/cloudflare/tunnel.go:110-113) emits services[] first, then the
+// SSH route, and cloudflared takes the first matching rule — so a duplicate
+// services[] hostname resolves to the earlier entry, and a services[] entry
+// colliding with ssh_hostname beats the SSH route rather than losing to it.
+// Nothing validates either collision away, so both are reachable configs.
+func TestCFExactHostnameOrigins_FirstMatchWins(t *testing.T) {
+	t.Parallel()
+
+	cf := &config.CloudflareConfig{
+		SSHHostname: "collide.example.lab.internal",
+		SSHOrigin:   "ssh://10.0.0.99:22",
+		Services: []config.ServiceIngress{
+			{Hostname: "dup.example.lab.internal", Service: "https://10.0.0.1"},
+			{Hostname: "dup.example.lab.internal", Service: "https://10.0.0.2"},
+			{Hostname: "collide.example.lab.internal", Service: "https://10.0.0.3"},
+		},
+	}
+
+	got := cfExactHostnameOrigins(cf)
+
+	assert.Equal(t, "10.0.0.1", got["dup.example.lab.internal"])
+	assert.Equal(t, "10.0.0.3", got["collide.example.lab.internal"])
+}
