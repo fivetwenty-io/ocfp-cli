@@ -485,9 +485,8 @@ func TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated(t *testing
 }
 
 // TestCollectServiceFQDNSection_NoBaseDomain verifies a bloc with no
-// fqdns.base configured still produces the full, structured row set —
-// every FQDN blank, every EXPECTED/ORIGIN cell dashed — rather than an
-// empty or partial section.
+// fqdns.base configured still produces the full, structured row set — every
+// cell dashed — rather than an empty or partial section.
 func TestCollectServiceFQDNSection_NoBaseDomain(t *testing.T) {
 	t.Setenv("OCFP_HOME", t.TempDir())
 
@@ -499,9 +498,29 @@ func TestCollectServiceFQDNSection_NoBaseDomain(t *testing.T) {
 	assert.Empty(t, resolveKeys)
 
 	for _, row := range section.Rows {
-		assert.Empty(t, row[2], "FQDN should be blank")
+		assert.Equal(t, "—", row[2], "FQDN should be dashed")
 		assert.Equal(t, "—", row[3], "EXPECTED should be dashed")
 		assert.Equal(t, "—", row[4], "ORIGIN should be dashed")
 		assert.Equal(t, "—", row[5], "RESOLVED placeholder should be dashed")
+	}
+}
+
+// TestCollectServiceFQDNSection_BlankFQDNRendersDash verifies a bloc with no
+// fqdns.base renders its FQDN cells as an em dash, the same convention the
+// EXPECTED IP and ORIGIN cells in the very same row already follow. Without
+// it every Section 1 row shows an empty gap in one column and a dash in the
+// next two, which reads as a rendering bug rather than as "nothing to show".
+func TestCollectServiceFQDNSection_BlankFQDNRendersDash(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	cfg := &config.Config{Name: "no-base-bloc"}
+
+	section, resolveKeys := collectServiceFQDNSection(cfg)
+
+	require.NotEmpty(t, section.Rows)
+	assert.Empty(t, resolveKeys, "a blank FQDN is never a resolvable host")
+
+	for _, row := range section.Rows {
+		assert.Equal(t, "—", row[2], "service %q", row[1])
 	}
 }

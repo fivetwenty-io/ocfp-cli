@@ -245,7 +245,7 @@ func collectServiceFQDNSection(cfg *config.Config) (ui.Section, []string) {
 			section.Rows = append(section.Rows, []string{
 				envType,
 				pair.Service,
-				pair.FQDN,
+				dashIfEmpty(pair.FQDN),
 				dashIfEmpty(expected),
 				dashIfEmpty(origin),
 				"—",
