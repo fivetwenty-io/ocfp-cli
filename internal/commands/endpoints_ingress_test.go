@@ -148,3 +148,66 @@ func TestCollectIngressSection_Headers(t *testing.T) {
 	assert.Equal(t, "Ingress Records", section.Title)
 	assert.Equal(t, []string{"RECORD", "TYPE", "EXPECTED TARGET", "ORIGIN", "RESOLVED IP"}, section.Headers)
 }
+
+// TestCollectBastionSection_TailscaleShowsHostname verifies the bastion
+// tailnet hostname row appears (explicit tailscale.hostname when set) only
+// when the resolved ingress provider is tailscale, alongside the always-
+// present Bastion IP row.
+func TestCollectBastionSection_TailscaleShowsHostname(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Name:      "test-bloc",
+		BastionIP: "10.64.64.5",
+		Ingress:   &config.IngressConfig{Provider: config.IngressProviderTailscale},
+		Tailscale: &config.TailscaleConfig{Hostname: "custom-bastion-host"},
+	}
+
+	section := collectBastionSection(cfg)
+
+	assert.Equal(t, "Bastion", section.Title)
+	assert.Equal(t, []string{"NAME", "VALUE"}, section.Headers)
+	assert.Equal(t, [][]string{
+		{"Bastion IP", "10.64.64.5"},
+		{"Bastion Tailnet Hostname", "custom-bastion-host"},
+	}, section.Rows)
+}
+
+// TestCollectBastionSection_TailscaleDefaultsHostnameToBlocNameSuffix
+// verifies the fallback hostname (<bloc>-bastion) when tailscale.hostname is
+// unset, mirroring bootstrap's bastionTailnetHostname.
+func TestCollectBastionSection_TailscaleDefaultsHostnameToBlocNameSuffix(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Name:    "acme-mgmt",
+		Ingress: &config.IngressConfig{Provider: config.IngressProviderTailscale},
+	}
+
+	section := collectBastionSection(cfg)
+
+	assert.Equal(t, [][]string{
+		{"Bastion IP", "—"},
+		{"Bastion Tailnet Hostname", "acme-mgmt-bastion"},
+	}, section.Rows)
+}
+
+// TestCollectBastionSection_NonTailscaleOmitsHostnameRow verifies the
+// hostname row is entirely absent (not blank) for any non-tailscale ingress
+// provider, including no provider at all.
+func TestCollectBastionSection_NonTailscaleOmitsHostnameRow(t *testing.T) {
+	t.Parallel()
+
+	tunnelEnabled := true
+	cfg := &config.Config{
+		Name:       "test-bloc",
+		BastionIP:  "10.64.64.5",
+		Cloudflare: &config.CloudflareConfig{Enabled: &tunnelEnabled},
+	}
+
+	section := collectBastionSection(cfg)
+
+	assert.Equal(t, [][]string{
+		{"Bastion IP", "10.64.64.5"},
+	}, section.Rows)
+}

@@ -113,6 +113,44 @@ func collectCloudflaredIngressRows(cfg *config.Config, section ui.Section) (ui.S
 	return section, resolveKeys
 }
 
+// collectBastionSection builds Section 4 (Bastion): the bastion's allocated
+// IP (always present, dashed when blank) and, only when the resolved
+// ingress provider is tailscale, its tailnet hostname. No ORIGIN/RESOLVED
+// column here and no network activity ever — the bastion is the entry
+// point itself, not a backend behind a wildcard, and its tailnet hostname
+// is a local config-derived value, never looked up.
+//
+//nolint:unused // wired into buildEndpointsTable in a follow-up commit (Task 11)
+func collectBastionSection(cfg *config.Config) ui.Section {
+	section := ui.Section{
+		Title:   "Bastion",
+		Headers: []string{"NAME", "VALUE"},
+		Rows: [][]string{
+			{"Bastion IP", dashIfEmpty(cfg.BastionIP)},
+		},
+	}
+
+	if config.ResolveIngressProvider(cfg) == config.IngressProviderTailscale {
+		section.Rows = append(section.Rows, []string{"Bastion Tailnet Hostname", bastionTailnetHostname(cfg)})
+	}
+
+	return section
+}
+
+// bastionTailnetHostname mirrors bootstrap.Manager.bastionTailnetHostname:
+// explicit tailscale.hostname when set, else "<bloc>-bastion". Inlined here
+// rather than exported from internal/bootstrap, since this command has no
+// other reason to depend on that package.
+//
+//nolint:unused // called from collectBastionSection, wired in a follow-up commit (Task 11)
+func bastionTailnetHostname(cfg *config.Config) string {
+	if cfg.Tailscale != nil && strings.TrimSpace(cfg.Tailscale.Hostname) != "" {
+		return strings.TrimSpace(cfg.Tailscale.Hostname)
+	}
+
+	return cfg.Name + "-bastion"
+}
+
 // resolveKeyForRecord returns the hostname resolveAll should look up for a
 // record name, or "" for a wildcard name (containing "*"), which can never
 // be looked up directly.
