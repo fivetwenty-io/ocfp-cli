@@ -1,0 +1,82 @@
+package commands
+
+import (
+	"testing"
+
+	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
+)
+
+// TestOriginHost_StripsSchemeAndPort verifies originHost extracts the bare
+// host from a scheme://host[:port] config string, returning blank on any
+// parse failure or empty input.
+func TestOriginHost_StripsSchemeAndPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "https no port", in: "https://10.64.64.20", want: "10.64.64.20"},
+		{name: "ssh with port", in: "ssh://10.64.64.37:2222", want: "10.64.64.37"},
+		{name: "empty", in: "", want: ""},
+		{name: "not a url", in: "not a url", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := originHost(tt.in)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestCfExactHostnameOrigins_NilCloudflareReturnsEmptyMap verifies a nil
+// CloudflareConfig yields an empty, non-nil map rather than an error or a
+// nil map.
+func TestCfExactHostnameOrigins_NilCloudflareReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+
+	got := cfExactHostnameOrigins(nil)
+	assert.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
+// TestCfExactHostnameOrigins_BuildsFromServicesAndSSH verifies the map
+// contains one entry per cf.Services[] hostname plus, when set, the SSH
+// route — each mapped to its origin's bare host.
+func TestCfExactHostnameOrigins_BuildsFromServicesAndSSH(t *testing.T) {
+	t.Parallel()
+
+	cf := &config.CloudflareConfig{
+		SSHHostname: "ssh.ocf.example.lab.internal",
+		SSHOrigin:   "ssh://10.64.64.37:2222",
+		Services: []config.ServiceIngress{
+			{Hostname: "shield.system.ocf.example.lab.internal", Service: "https://10.0.0.9"},
+		},
+	}
+
+	got := cfExactHostnameOrigins(cf)
+
+	assert.Equal(t, map[string]string{
+		"shield.system.ocf.example.lab.internal": "10.0.0.9",
+		"ssh.ocf.example.lab.internal":            "10.64.64.37",
+	}, got)
+}
+
+// TestCfExactHostnameOrigins_SkipsBlankSSHHostname verifies the SSH route is
+// omitted from the map entirely when cf.SSHHostname is blank, even if
+// cf.SSHOrigin is set.
+func TestCfExactHostnameOrigins_SkipsBlankSSHHostname(t *testing.T) {
+	t.Parallel()
+
+	cf := &config.CloudflareConfig{
+		SSHOrigin: "ssh://10.64.64.37:2222",
+	}
+
+	got := cfExactHostnameOrigins(cf)
+	assert.Empty(t, got)
+}
