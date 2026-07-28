@@ -31,6 +31,14 @@ func originHost(serviceURL string) string {
 // configured), the bare origin host it terminates at. Always returns a
 // non-nil, possibly empty map — cf == nil is not an error, it means no
 // Cloudflare config at all, i.e. no exact routes.
+//
+// First match wins, deliberately, mirroring the order cloudflare.BuildIngress
+// emits rules in (tunnel.go:110-113: services[] first, then the SSH route,
+// then the wildcards) and the first-match-wins order cloudflared itself
+// evaluates them in. Nothing validates cloudflare.services[] for duplicate
+// hostnames, or for an entry colliding with cloudflare.ssh_hostname, so both
+// are reachable in a hand-written config; a last-write-wins map would report
+// an ORIGIN that is not where traffic actually terminates.
 func cfExactHostnameOrigins(cf *config.CloudflareConfig) map[string]string {
 	origins := make(map[string]string)
 
@@ -43,10 +51,14 @@ func cfExactHostnameOrigins(cf *config.CloudflareConfig) map[string]string {
 			continue
 		}
 
+		if _, seen := origins[svc.Hostname]; seen {
+			continue
+		}
+
 		origins[svc.Hostname] = originHost(svc.Service)
 	}
 
-	if cf.SSHHostname != "" {
+	if _, seen := origins[cf.SSHHostname]; !seen && cf.SSHHostname != "" {
 		origins[cf.SSHHostname] = originHost(cf.SSHOrigin)
 	}
 
