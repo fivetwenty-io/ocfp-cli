@@ -105,10 +105,19 @@ later:
   Vault read, which this command never performs (see "Vault is never
   consulted" below).
 
-`ORIGIN` in this section is populated from the same local config field
-regardless of provider: the bloc's configured Cloudflare origin address
-is the true destination once traffic reaches the CF haproxy, whether it
-got there through a tunnel or through the bastion's own DNAT rule.
+`ORIGIN` is not uniform across this section's rows:
+
+- The apex and wildcard rows, under either provider, take ORIGIN from
+  the bloc's configured Cloudflare origin address. That address is the
+  true destination once traffic reaches the CF haproxy, whether it got
+  there through a tunnel or through the bastion's own DNAT rule.
+
+- Under `cloudflared`, the SSH row and each `cloudflare.services` row
+  instead carry their own per-route origin, read from that route's
+  configured service URL — the same exact-hostname source Section 2
+  reports. A per-route origin can be an entirely different address than
+  the bloc's Cloudflare origin, so do not read every cell in this
+  column as the tunnel or DNAT address.
 
 ### 4. Bastion
 
