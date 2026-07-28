@@ -17,8 +17,6 @@ import (
 // performed here), and the cloudflared tunnel ID would need a vault read
 // (R-10/D-01, out of scope). An unresolved/empty provider returns a 0-row
 // section, never an error.
-//
-//nolint:unused // wired into buildEndpointsTable in a follow-up commit (Task 11)
 func collectIngressSection(cfg *config.Config) (ui.Section, []string) {
 	section := ui.Section{
 		Title:   "Ingress Records",
@@ -46,8 +44,6 @@ func collectIngressSection(cfg *config.Config) (ui.Section, []string) {
 // tunnel can be disabled while the field still carries the true DNAT target
 // (a bastion kernel DNAT to the CF haproxy static), so gating on
 // config.CloudflareEnabled would hide a real, locally-known fact.
-//
-//nolint:unused // called from collectIngressSection, wired in a follow-up commit (Task 11)
 func collectTailscaleIngressRows(cfg *config.Config, section ui.Section) (ui.Section, []string) {
 	if cfg.FQDNs == nil || cfg.FQDNs.Base == "" {
 		return section, nil
@@ -77,8 +73,6 @@ func collectTailscaleIngressRows(cfg *config.Config, section ui.Section) (ui.Sec
 // route when configured, and every services[] entry. ORIGIN for the
 // wildcard rows is cf.Origin unconditionally; ORIGIN for the SSH/service
 // rows reuses the same exact-hostname map Section 2 builds from (Task 3).
-//
-//nolint:unused // called from collectIngressSection, wired in a follow-up commit (Task 11)
 func collectCloudflaredIngressRows(cfg *config.Config, section ui.Section) (ui.Section, []string) {
 	cf := cfg.Cloudflare
 	if cf == nil {
@@ -118,15 +112,20 @@ func collectCloudflaredIngressRows(cfg *config.Config, section ui.Section) (ui.S
 // ingress provider is tailscale, its tailnet hostname. No ORIGIN/RESOLVED
 // column here and no network activity ever — the bastion is the entry
 // point itself, not a backend behind a wildcard, and its tailnet hostname
-// is a local config-derived value, never looked up.
-//
-//nolint:unused // wired into buildEndpointsTable in a follow-up commit (Task 11)
+// is a local config-derived value, never looked up. A nil cfg degrades to a
+// section with a blank Bastion IP row and no hostname row, matching every
+// other section builder's own nil-safety contract.
 func collectBastionSection(cfg *config.Config) ui.Section {
+	var bastionIP string
+	if cfg != nil {
+		bastionIP = cfg.BastionIP
+	}
+
 	section := ui.Section{
 		Title:   "Bastion",
 		Headers: []string{"NAME", "VALUE"},
 		Rows: [][]string{
-			{"Bastion IP", dashIfEmpty(cfg.BastionIP)},
+			{"Bastion IP", dashIfEmpty(bastionIP)},
 		},
 	}
 
@@ -141,8 +140,6 @@ func collectBastionSection(cfg *config.Config) ui.Section {
 // explicit tailscale.hostname when set, else "<bloc>-bastion". Inlined here
 // rather than exported from internal/bootstrap, since this command has no
 // other reason to depend on that package.
-//
-//nolint:unused // called from collectBastionSection, wired in a follow-up commit (Task 11)
 func bastionTailnetHostname(cfg *config.Config) string {
 	if cfg.Tailscale != nil && strings.TrimSpace(cfg.Tailscale.Hostname) != "" {
 		return strings.TrimSpace(cfg.Tailscale.Hostname)
@@ -154,8 +151,6 @@ func bastionTailnetHostname(cfg *config.Config) string {
 // resolveKeyForRecord returns the hostname resolveAll should look up for a
 // record name, or "" for a wildcard name (containing "*"), which can never
 // be looked up directly.
-//
-//nolint:unused // called from both provider branches, wired in a follow-up commit (Task 11)
 func resolveKeyForRecord(name string) string {
 	if strings.Contains(name, "*") {
 		return ""
