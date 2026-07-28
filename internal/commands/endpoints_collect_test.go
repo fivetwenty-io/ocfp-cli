@@ -57,7 +57,7 @@ func TestOrderedServiceFQDNs_AlphabeticalExtrasAppendedAfterKnownServices(t *tes
 	t.Parallel()
 
 	explicit := map[string]string{
-		"zeta-extra": "zeta.example.lab.internal",
+		"zeta-extra":  "zeta.example.lab.internal",
 		"alpha-extra": "alpha.example.lab.internal",
 	}
 
