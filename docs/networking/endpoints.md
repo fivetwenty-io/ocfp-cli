@@ -105,19 +105,24 @@ later:
   Vault read, which this command never performs (see "Vault is never
   consulted" below).
 
-`ORIGIN` is not uniform across this section's rows:
+Both the row set and the `ORIGIN` value differ by provider:
 
-- The apex and wildcard rows, under either provider, take ORIGIN from
-  the bloc's configured Cloudflare origin address. That address is the
-  true destination once traffic reaches the CF haproxy, whether it got
-  there through a tunnel or through the bastion's own DNAT rule.
+- Under `tailscale`, the rows are the apex `fqdns.base` and its `*.`
+  wildcard. Both take ORIGIN from the bloc's configured Cloudflare
+  origin address, which remains the true destination once traffic
+  reaches the CF haproxy even when the tunnel is disabled — the
+  bastion's own DNAT rule delivers it there instead.
 
-- Under `cloudflared`, the SSH row and each `cloudflare.services` row
-  instead carry their own per-route origin, read from that route's
-  configured service URL — the same exact-hostname source Section 2
-  reports. A per-route origin can be an entirely different address than
-  the bloc's Cloudflare origin, so do not read every cell in this
-  column as the tunnel or DNAT address.
+- Under `cloudflared`, there is no apex row. The `*.apps` and
+  `*.system` wildcard rows take ORIGIN from that same configured
+  Cloudflare origin address.
+
+- Also under `cloudflared`, the SSH row and each `cloudflare.services`
+  row instead carry their own per-route origin, read from that route's
+  configured service URL — the same value Section 2 reports for the
+  same hostname. A per-route origin can be an entirely different
+  address than the bloc's Cloudflare origin, so do not read every cell
+  in this column as the tunnel or DNAT address.
 
 ### 4. Bastion
 
@@ -146,11 +151,22 @@ output to investigate, not an error the command raises itself.
 
 - **ORIGIN**
   where traffic for this hostname terminates today, given the bloc's
-  actual ingress wiring: an exact match against a configured Cloudflare
-  service or SSH route, or, for OCF-tier hostnames only, the CF haproxy
-  address behind the `*.apps`/`*.system` wildcard. Matched by exact
-  string equality only, deliberately, with no heuristic, fuzzy, or
-  service-name-based matching. See "Why ORIGIN is usually blank" below.
+  actual ingress wiring. It is always the bare host of some configured
+  origin URL; what differs between sections is how that URL gets
+  selected.
+
+  Section 1 is the only section that matches anything. A derived FQDN
+  takes the origin of a Cloudflare service or SSH route whose hostname
+  equals it exactly; failing that, an OCF-tier hostname — and only an
+  OCF-tier one — may fall through to the CF haproxy address behind the
+  `*.apps`/`*.system` wildcard. Matching is exact string equality,
+  deliberately, with no heuristic, fuzzy, or service-name-based
+  matching. See "Why ORIGIN is usually blank" below.
+
+  Sections 2 and 3 match nothing. Each row there already corresponds to
+  one configured route or record, so it shows that route's own origin
+  directly, and its ORIGIN cell is blank only when the underlying
+  config field is unset.
 
 - **RESOLVED IP**
   what a live DNS lookup returns right now, or blank under
