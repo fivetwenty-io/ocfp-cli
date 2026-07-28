@@ -84,6 +84,51 @@ func TestValidateIngress_CloudflaredRequiresEnabled(t *testing.T) {
 	}
 }
 
+// TestSystemScoped_TailscaleIngressCloudflareDisabled — the tailscale-ingress
+// bug: an explicit tailscale provider with cloudflare.enabled: false must
+// still gate system-scoped FQDNs on, since .system. routing is provider-
+// independent. Against the old `CloudflareEnabled` gate this case returns
+// false (the bug); SystemScoped must return true.
+func TestSystemScoped_TailscaleIngressCloudflareDisabled(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		Ingress:    &IngressConfig{Provider: IngressProviderTailscale},
+		Cloudflare: &CloudflareConfig{Enabled: boolPtr(false)},
+	}
+	if got := SystemScoped(cfg); !got {
+		t.Fatalf("expected true for tailscale ingress + cloudflare disabled, got %v", got)
+	}
+}
+
+// TestSystemScoped_CloudflaredEnabled — the pre-existing cloudflared-tunnel
+// case must keep working: cloudflare.enabled: true (no explicit ingress
+// section) still scopes.
+func TestSystemScoped_CloudflaredEnabled(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Cloudflare: &CloudflareConfig{Enabled: boolPtr(true)}}
+	if got := SystemScoped(cfg); !got {
+		t.Fatalf("expected true for cloudflare enabled, got %v", got)
+	}
+}
+
+// TestSystemScoped_NoIngressNoCloudflare — regression guard for the stackit
+// real-LB shape: no ingress section, no cloudflare section at all. Must stay
+// flat (false), matching ResolveIngressProvider returning "".
+func TestSystemScoped_NoIngressNoCloudflare(t *testing.T) {
+	t.Parallel()
+	if got := SystemScoped(&Config{}); got {
+		t.Fatalf("expected false with no ingress/cloudflare section, got %v", got)
+	}
+}
+
+// TestSystemScoped_NilConfig — nil-safe.
+func TestSystemScoped_NilConfig(t *testing.T) {
+	t.Parallel()
+	if got := SystemScoped(nil); got {
+		t.Fatalf("expected false for nil config, got %v", got)
+	}
+}
+
 func TestMergeIngressDefaults(t *testing.T) {
 	t.Parallel()
 	bloc := &Config{}

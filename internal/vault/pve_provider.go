@@ -1349,9 +1349,10 @@ func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter pro
 		base = p.Config.DomainName
 	}
 
-	// Infra-service UIs sit behind the *.system wildcard edge cert when the
-	// Cloudflare tunnel fronts the bloc; derive them as {svc}.system.{base}.
-	systemScoped := config.CloudflareEnabled(p.Config.Cloudflare)
+	// Infra-service UIs sit behind the *.system wildcard edge when an ingress
+	// provider fronts the bloc (cloudflared tunnel or tailscale); derive them
+	// as {svc}.system.{base}.
+	systemScoped := config.SystemScoped(p.Config)
 
 	fqdnConfig := PopulateFQDNsForEnv(envType, explicit, base, systemScoped)
 	if fqdnConfig == nil {
