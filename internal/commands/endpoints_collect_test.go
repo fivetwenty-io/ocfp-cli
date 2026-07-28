@@ -375,3 +375,133 @@ func TestOriginForService_ExactMatchOnly(t *testing.T) {
 		})
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+// findFQDNRow locates the one row for a given (env, service) pair in
+// collectServiceFQDNSection's output, failing the test immediately if none
+// matches — every assertion below needs a specific row, not the whole set.
+func findFQDNRow(t *testing.T, rows [][]string, envType, service string) []string {
+	t.Helper()
+
+	for _, row := range rows {
+		if row[0] == envType && row[1] == service {
+			return row
+		}
+	}
+
+	t.Fatalf("no row found for envType=%s service=%s", envType, service)
+
+	return nil
+}
+
+// TestCollectServiceFQDNSection_MgmtAndOCF exercises the full Section 1
+// builder against a fixture with a base domain, one exact Cloudflare
+// service route, and a full apps/system wildcard configuration, with no
+// reserved-IP state.
+func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	base := "ocf.example.lab.internal"
+	exactRouteHostname := "api." + base
+
+	cfg := &config.Config{
+		Name:  "collect-fqdn-section-fixture-bloc",
+		FQDNs: &config.FQDNConfig{Base: base},
+		Cloudflare: &config.CloudflareConfig{
+			Enabled:      boolPtr(true),
+			Origin:       "https://10.64.64.20",
+			AppsDomain:   "apps." + base,
+			SystemDomain: "system." + base,
+			Services: []config.ServiceIngress{
+				{Hostname: exactRouteHostname, Service: "https://10.20.30.40"},
+			},
+		},
+	}
+
+	section, resolveKeys := collectServiceFQDNSection(cfg)
+
+	assert.Equal(t, "Derived Service FQDNs", section.Title)
+	assert.Equal(t, []string{"ENV", "SERVICE", "FQDN", "EXPECTED IP", "ORIGIN", "RESOLVED IP"}, section.Headers)
+	// 9 mgmt (vault.MgmtServices) + 20 ocf (vault.OCFServices), counted directly.
+	assert.Len(t, section.Rows, len(vault.MgmtServices)+len(vault.OCFServices))
+	assert.NotEmpty(t, resolveKeys)
+
+	apiRow := findFQDNRow(t, section.Rows, vault.OCFEnvType, "api")
+	assert.Equal(t, exactRouteHostname, apiRow[2])
+	assert.Equal(t, "10.20.30.40", apiRow[4], "exact route wins over cf.Origin")
+
+	concourseOCFRow := findFQDNRow(t, section.Rows, vault.OCFEnvType, "concourse")
+	assert.Equal(t, "10.64.64.20", concourseOCFRow[4], "no exact route, falls through to wildcard origin")
+
+	var doomsdayCount, grafanaCount int
+
+	for _, row := range section.Rows {
+		switch row[1] {
+		case "doomsday":
+			doomsdayCount++
+			assert.Equal(t, vault.MgmtEnvType, row[0])
+		case "grafana":
+			grafanaCount++
+		}
+
+		if row[0] == vault.MgmtEnvType {
+			assert.Equal(t, "—", row[4], "mgmt-tier service %s never gets wildcard fallthrough", row[1])
+		}
+	}
+
+	assert.Equal(t, 1, doomsdayCount, "doomsday is mgmt-only")
+	assert.Equal(t, 0, grafanaCount, "grafana is in neither MgmtServices nor OCFServices")
+}
+
+// TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated is the
+// builder-level counterpart to originForService's gate-affected case: no
+// explicit override for concourse, a cf.Services[] entry carrying its
+// .system.-infixed derived hostname, and ingress.provider set (D-09's
+// systemScoped signal) rather than cloudflare.enabled — confirming the
+// wire-up, not re-testing originForService's own logic.
+func TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	base := "ocf.example.lab.internal"
+	concourseHostname := "concourse.system." + base
+
+	cfg := &config.Config{
+		Name:    "gate-affected-fixture-bloc",
+		FQDNs:   &config.FQDNConfig{Base: base},
+		Ingress: &config.IngressConfig{Provider: config.IngressProviderTailscale},
+		Cloudflare: &config.CloudflareConfig{
+			Services: []config.ServiceIngress{
+				{Hostname: concourseHostname, Service: "https://10.0.0.11"},
+			},
+		},
+	}
+
+	section, _ := collectServiceFQDNSection(cfg)
+
+	row := findFQDNRow(t, section.Rows, vault.MgmtEnvType, "concourse")
+	assert.Equal(t, concourseHostname, row[2])
+	assert.Equal(t, "10.0.0.11", row[4])
+}
+
+// TestCollectServiceFQDNSection_NoBaseDomain verifies a bloc with no
+// fqdns.base configured still produces the full, structured row set —
+// every FQDN blank, every EXPECTED/ORIGIN cell dashed — rather than an
+// empty or partial section.
+func TestCollectServiceFQDNSection_NoBaseDomain(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	cfg := &config.Config{Name: "no-base-domain-fixture-bloc"}
+
+	section, resolveKeys := collectServiceFQDNSection(cfg)
+
+	assert.Len(t, section.Rows, len(vault.MgmtServices)+len(vault.OCFServices))
+	assert.Empty(t, resolveKeys)
+
+	for _, row := range section.Rows {
+		assert.Empty(t, row[2], "FQDN should be blank")
+		assert.Equal(t, "—", row[3], "EXPECTED should be dashed")
+		assert.Equal(t, "—", row[4], "ORIGIN should be dashed")
+		assert.Equal(t, "—", row[5], "RESOLVED placeholder should be dashed")
+	}
+}

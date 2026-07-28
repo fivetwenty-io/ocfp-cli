@@ -6,6 +6,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/ocfp/ocfp-cli-go/internal/ui"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
@@ -194,4 +195,70 @@ func originForService(envType, fqdn string, cfExact map[string]string, cf *confi
 	}
 
 	return ""
+}
+
+// collectServiceFQDNSection builds Section 1 (Derived Service FQDNs): one
+// row per known service in both the mgmt and ocf environment types, mgmt
+// first, plus any explicit-override extras, showing each service's derived
+// or explicit FQDN alongside its EXPECTED and ORIGIN facts. A nil cfg
+// degrades to an empty, header-only section rather than a panic — every
+// other guard (no base domain, no Cloudflare config, no reserved state)
+// degrades per orderedServiceFQDNs/expectedIPForService/originForService's
+// own contracts, never an error here either.
+//
+// systemScoped is computed via config.SystemScoped(cfg) — the ingress-
+// provider-backed signal (D-09), not the legacy, Cloudflare-only gate —
+// so a tailscale bloc's system-scoped services derive the same .system.
+// infix a cloudflared bloc's do.
+func collectServiceFQDNSection(cfg *config.Config) (ui.Section, []string) {
+	section := ui.Section{
+		Title:   "Derived Service FQDNs",
+		Headers: []string{"ENV", "SERVICE", "FQDN", "EXPECTED IP", "ORIGIN", "RESOLVED IP"},
+		Rows:    [][]string{},
+	}
+
+	if cfg == nil {
+		return section, nil
+	}
+
+	var base string
+
+	var explicitMgmt, explicitOCF map[string]string
+
+	if cfg.FQDNs != nil {
+		base = cfg.FQDNs.Base
+		explicitMgmt = cfg.FQDNs.Mgmt
+		explicitOCF = cfg.FQDNs.OCF
+	}
+
+	systemScoped := config.SystemScoped(cfg)
+	reservedOutputs := loadReservedOutputs(cfg.Name)
+	cfExact := cfExactHostnameOrigins(cfg.Cloudflare)
+
+	var resolveKeys []string
+
+	appendEnvRows := func(envType string, explicit map[string]string) {
+		for _, pair := range orderedServiceFQDNs(envType, explicit, base, systemScoped) {
+			expected := expectedIPForService(pair.Service, reservedOutputs, cfg.BastionIP)
+			origin := originForService(envType, pair.FQDN, cfExact, cfg.Cloudflare)
+
+			section.Rows = append(section.Rows, []string{
+				envType,
+				pair.Service,
+				pair.FQDN,
+				dashIfEmpty(expected),
+				dashIfEmpty(origin),
+				"—",
+			})
+
+			if pair.FQDN != "" {
+				resolveKeys = append(resolveKeys, pair.FQDN)
+			}
+		}
+	}
+
+	appendEnvRows(vault.MgmtEnvType, explicitMgmt)
+	appendEnvRows(vault.OCFEnvType, explicitOCF)
+
+	return section, resolveKeys
 }
