@@ -56,7 +56,7 @@ func buildEndpointsTable(ctx context.Context, cfg *config.Config, noResolve bool
 	fillResolvedColumn(ingressSection.Rows, recordColumnIndex, resolved)
 
 	table := &ui.Table{
-		Title: "Endpoints — bloc " + blocName(cfg),
+		Title: "Endpoints — bloc " + endpointsBlocName(cfg),
 		Sections: []ui.Section{
 			fqdnSection,
 			cloudflareSection,
@@ -100,10 +100,13 @@ func fillResolvedColumn(rows [][]string, keyColumn int, resolved map[string]stri
 	}
 }
 
-// blocName returns cfg.Name, or "" for a nil cfg — buildEndpointsTable never
-// panics on a nil config, matching every other section builder's own
-// nil-safety contract.
-func blocName(cfg *config.Config) string {
+// endpointsBlocName returns cfg.Name, or "" for a nil cfg —
+// buildEndpointsTable never panics on a nil config, matching every other
+// section builder's own nil-safety contract. Named with the command's prefix
+// because plain blocName is this package's established local-variable name
+// (provider.go, endpoints.go:83), and a package-level function sharing it
+// would be shadowed in most of the places a reader would expect to call it.
+func endpointsBlocName(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
