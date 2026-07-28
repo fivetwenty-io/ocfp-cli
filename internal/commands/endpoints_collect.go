@@ -132,3 +132,21 @@ func loadReservedOutputs(blocName string) map[string]interface{} {
 
 	return st.Outputs
 }
+
+// expectedIPForService returns a role's reserved/allocation-fact IP: a plain
+// fact about what was reserved for this role, independent of how traffic
+// currently reaches it (that is ORIGIN's job — originForService). "bastion"
+// always uses cfg.BastionIP when set, taking precedence over any
+// reserved-state entry for "bastion", matching every provider's own
+// precedence (pve.go, aws.go, stackit.go, gcp.go all check config.BastionIP
+// before falling back to any reserved-IP lookup). Every other role, and
+// bastion when cfg.BastionIP is blank, falls back to reserved-IP state.
+// Never errors, never reads Cloudflare config (a Cloudflare service route is
+// a routing decision, not an allocation fact).
+func expectedIPForService(service string, reservedOutputs map[string]interface{}, bastionIP string) string {
+	if service == "bastion" && bastionIP != "" {
+		return bastionIP
+	}
+
+	return findReservedIP(reservedOutputs, service)
+}
