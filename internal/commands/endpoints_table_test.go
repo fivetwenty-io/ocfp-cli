@@ -166,10 +166,18 @@ func TestBuildEndpointsTable_NoResolveLeavesResolvedBlank(t *testing.T) {
 }
 
 // TestBuildEndpointsTable_NilConfigDegrades verifies the nil-*config.Config
-// contract every section builder's doc comment promises: no panic anywhere,
-// all four sections still present in order, Sections 1-3 header-only, the
-// Bastion section's always-present IP row dashed, a bloc-less title, the
-// no-base-domain summary, and no DNS lookup attempted for an empty host set.
+// contract: no panic anywhere, all four sections still present in order,
+// Sections 1-3 header-only, the Bastion section's always-present IP row
+// dashed, a bloc-less title, the no-base-domain summary, and no DNS lookup
+// attempted for an empty host set.
+//
+// This exercises the explicit nil guards in collectServiceFQDNSection,
+// collectCloudflareSection, collectBastionSection, blocName, and
+// buildEndpointsTable itself — removing any one of them fails this test.
+// collectIngressSection's own cfg == nil guard is deliberately not claimed:
+// it is defensive but redundant, since config.ResolveIngressProvider already
+// returns "" for a nil config and the switch falls through to its empty
+// default, so removing that guard changes no observable behavior.
 func TestBuildEndpointsTable_NilConfigDegrades(t *testing.T) {
 	t.Setenv("OCFP_HOME", t.TempDir())
 
@@ -185,6 +193,11 @@ func TestBuildEndpointsTable_NilConfigDegrades(t *testing.T) {
 
 	assert.Equal(t, "Endpoints — bloc ", table.Title)
 	assert.Equal(t, noBaseDomainSummary, table.Summary)
+
+	assert.Equal(t, "Derived Service FQDNs", table.Sections[0].Title)
+	assert.Equal(t, "Cloudflare Service Routes", table.Sections[1].Title)
+	assert.Equal(t, "Ingress Records", table.Sections[2].Title)
+	assert.Equal(t, "Bastion", table.Sections[3].Title)
 
 	assert.Empty(t, table.Sections[0].Rows)
 	assert.Empty(t, table.Sections[1].Rows)
