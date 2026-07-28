@@ -216,3 +216,55 @@ func TestLoadReservedOutputs_ReturnsPersistedOutputs(t *testing.T) {
 	got := loadReservedOutputs(blocName)
 	assert.Equal(t, "10.9.9.9", got["reserved_"+blocName+"-ocfp-0_bastion_ip"])
 }
+
+// TestExpectedIPForService_ReservedStateOrBastion covers the three cases in
+// expectedIPForService's precedence: reserved-state present wins for a
+// non-bastion role, absent yields blank, and bastion always uses
+// cfg.BastionIP over any reserved-state entry for "bastion" (config wins,
+// matching every provider's own precedence: pve.go, aws.go, stackit.go,
+// gcp.go all check config.BastionIP before any reserved-IP fallback).
+func TestExpectedIPForService_ReservedStateOrBastion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		service   string
+		reserved  map[string]interface{}
+		bastionIP string
+		want      string
+	}{
+		{
+			name:     "service present in reserved outputs",
+			service:  "haproxy",
+			reserved: map[string]interface{}{"reserved_bloc-ocfp-0_haproxy_ip": "10.5.5.5"},
+			want:     "10.5.5.5",
+		},
+		{
+			name:     "service absent from reserved outputs",
+			service:  "haproxy",
+			reserved: map[string]interface{}{},
+			want:     "",
+		},
+		{
+			name:      "bastion prefers cfg.BastionIP over reserved-state entry",
+			service:   "bastion",
+			reserved:  map[string]interface{}{"reserved_bloc-ocfp-0_bastion_ip": "10.6.6.6"},
+			bastionIP: "10.7.7.7",
+			want:      "10.7.7.7",
+		},
+		{
+			name:     "bastion with no cfg.BastionIP falls back to reserved-state",
+			service:  "bastion",
+			reserved: map[string]interface{}{"reserved_bloc-ocfp-0_bastion_ip": "10.6.6.6"},
+			want:     "10.6.6.6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP))
+		})
+	}
+}
