@@ -93,6 +93,9 @@ When no network CIDR is specified, OCFP uses `10.4.0.0/20`. The parent CIDR is s
 - [DNS](dns.md)
   DNS configuration per provider
 
+- [Endpoints](endpoints.md)
+  `ocfp endpoints` command: derived FQDNs, Cloudflare routes, ingress records, and the bastion, with live DNS resolution
+
 - [SDN Subnet Model](sdn-subnet-model.md)
   Generalized "single L3 subnet plus logical AZ carve" pattern for SDN-based providers (PVE today)
 
