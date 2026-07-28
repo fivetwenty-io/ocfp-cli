@@ -12,8 +12,6 @@ import (
 // dropping any scheme and port. Returns "" on empty input or any parse
 // failure — never an error, since every caller only wants a best-effort
 // display value for the ORIGIN column.
-//
-//nolint:unused // wired into buildEndpointsTable in a follow-up commit (Task 11)
 func originHost(serviceURL string) string {
 	if serviceURL == "" {
 		return ""
@@ -33,8 +31,6 @@ func originHost(serviceURL string) string {
 // configured), the bare origin host it terminates at. Always returns a
 // non-nil, possibly empty map — cf == nil is not an error, it means no
 // Cloudflare config at all, i.e. no exact routes.
-//
-//nolint:unused // consumed by Section 1/2/3 ORIGIN builders, landing in follow-up commits
 func cfExactHostnameOrigins(cf *config.CloudflareConfig) map[string]string {
 	origins := make(map[string]string)
 
@@ -68,8 +64,6 @@ func cfExactHostnameOrigins(cf *config.CloudflareConfig) map[string]string {
 // never directly returns the origin IP (cloudflared: CNAME to the tunnel;
 // tailscale: no per-service record is ever created for these hostnames at
 // all), so asserting that fact as a column would always be misleading.
-//
-//nolint:unused // wired into buildEndpointsTable in a follow-up commit (Task 11)
 func collectCloudflareSection(cf *config.CloudflareConfig) (ui.Section, []string) {
 	section := ui.Section{
 		Title:   "Cloudflare Service Routes",
