@@ -3,11 +3,19 @@ package vault
 // MgmtServices defines the known services for the mgmt environment.
 // FQDNs will be pre-populated for all these services.
 //
+// grafana and alertmanager sit alongside prometheus because the prometheus
+// kit's ocfp/meta.yml reads all three through the graft vault operator; a key
+// this list omits is never written, and the operator fails the deploy rather
+// than defaulting. Their absence also made a stale value uncorrectable, since
+// SetMultiple merges rather than replaces.
+//
 //nolint:gochecknoglobals // package-level constant list of management services
 var MgmtServices = []string{
 	"vault",
 	"concourse",
 	"prometheus",
+	"grafana",
+	"alertmanager",
 	"shield",
 	"bosh",
 	"blacksmith",

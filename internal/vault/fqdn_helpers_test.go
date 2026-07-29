@@ -85,6 +85,43 @@ func TestPopulateFQDNsForEnvSystemScoped(t *testing.T) {
 	}
 }
 
+// TestPopulateFQDNsForEnvEmitsPrometheusKitServices covers the three FQDN keys
+// the prometheus kit hard-requires — ocfp/meta.yml reads "/fqdns:prometheus",
+// "/fqdns:grafana", and "/fqdns:alertmanager" through the graft vault operator,
+// which fails the deploy outright when a key is absent. grafana is system
+// scoped, so it must gain the .system infix; alertmanager is not, so it stays
+// flat.
+//
+// Emitting them also lets a re-populate correct a stale bare grafana value
+// left behind by an earlier build: SetMultiple merges, so a key this function
+// never emits can never be overwritten.
+func TestPopulateFQDNsForEnvEmitsPrometheusKitServices(t *testing.T) {
+	t.Parallel()
+
+	fqdns := PopulateFQDNsForEnv(MgmtEnvType, nil, "ocf.example.io", true)
+
+	if got, want := fqdns["grafana"], "grafana.system.ocf.example.io"; got != want {
+		t.Errorf("grafana fqdn = %v, want %q", got, want)
+	}
+
+	if got, want := fqdns["alertmanager"], "alertmanager.ocf.example.io"; got != want {
+		t.Errorf("alertmanager fqdn = %v, want %q", got, want)
+	}
+}
+
+// TestPopulateFQDNsForEnvGrafanaFlatWhenNotScoped pins the other half of
+// grafana's contract: on a bloc with no ingress provider it derives flat, the
+// same as every other system-scoped service.
+func TestPopulateFQDNsForEnvGrafanaFlatWhenNotScoped(t *testing.T) {
+	t.Parallel()
+
+	fqdns := PopulateFQDNsForEnv(MgmtEnvType, nil, "ocf.example.io", false)
+
+	if got, want := fqdns["grafana"], "grafana.ocf.example.io"; got != want {
+		t.Errorf("grafana fqdn (unscoped) = %v, want %q", got, want)
+	}
+}
+
 func TestPopulateFQDNsForEnvFlatWhenNotScoped(t *testing.T) {
 	t.Parallel()
 
