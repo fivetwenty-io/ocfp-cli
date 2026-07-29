@@ -128,6 +128,7 @@ func newVaultPopulateCmd() *cobra.Command {
 		vaultPath          string
 		fromFile           string
 		force              bool
+		forceReallocate    bool
 		kmsKeyARN          string
 		blobstoreEndpoint  string
 		blobstoreMode      string
@@ -159,7 +160,12 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
   ocfp vault populate --blobstore-endpoint https://s3.dc1.example.com`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVaultPopulate(cmd, args, fromFile, force, kmsKeyARN, vaultPopulateBlobstoreFlags{
+			return runVaultPopulate(cmd, args, vaultPopulateFlags{
+				FromFile:        fromFile,
+				Force:           force,
+				ForceReallocate: forceReallocate,
+				KMSKeyARN:       kmsKeyARN,
+			}, vaultPopulateBlobstoreFlags{
 				Endpoint:  blobstoreEndpoint,
 				Mode:      blobstoreMode,
 				Region:    blobstoreRegion,
@@ -172,6 +178,9 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	cmd.Flags().StringVar(&vaultPath, "vault-path", "", "vault path prefix")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "load secrets from file")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
+	cmd.Flags().BoolVar(&forceReallocate, "force-reallocate", false,
+		"move reserved IPs onto this build's derived addresses (recreates the VMs holding them; "+
+			"omit to keep the addresses vault records and report the divergence)")
 	cmd.Flags().Bool("dry-run", false, "preview actions without making changes")
 	cmd.Flags().StringVar(&kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for BOSH disk encryption (AWS only; omit to skip KMS configuration)")
 	cmd.Flags().StringVar(&blobstoreEndpoint, "blobstore-endpoint", "", "S3-compatible blobstore endpoint URL (PVE only; omit to skip blobstore endpoint configuration)")
@@ -194,8 +203,19 @@ type vaultPopulateBlobstoreFlags struct {
 	SecretKey string //nolint:gosec // field name is descriptive
 }
 
+// vaultPopulateFlags bundles the non-blobstore populate flags for the same
+// reason.
+type vaultPopulateFlags struct {
+	FromFile        string
+	Force           bool
+	ForceReallocate bool
+	KMSKeyARN       string
+}
+
 // runVaultPopulate executes the vault populate command.
-func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force bool, kmsKeyARN string, blobstoreFlags vaultPopulateBlobstoreFlags) error {
+func runVaultPopulate(
+	cmd *cobra.Command, args []string, flags vaultPopulateFlags, blobstoreFlags vaultPopulateBlobstoreFlags,
+) error {
 	log := logger.Get()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
@@ -230,18 +250,19 @@ func runVaultPopulate(cmd *cobra.Command, args []string, fromFile string, force 
 	opts := &vault.PopulateOptions{
 		Subcommand:         subcommand,
 		DryRun:             dryRun,
-		Force:              force,
+		Force:              flags.Force,
 		ProgressReporter:   reporter,
-		KMSKeyARN:          kmsKeyARN,
+		KMSKeyARN:          flags.KMSKeyARN,
 		BlobstoreEndpoint:  blobstoreFlags.Endpoint,
 		BlobstoreMode:      blobstoreFlags.Mode,
 		BlobstoreRegion:    blobstoreFlags.Region,
 		BlobstoreAccessKey: blobstoreFlags.AccessKey,
 		BlobstoreSecretKey: blobstoreFlags.SecretKey,
+		ForceReallocate:    flags.ForceReallocate,
 	}
 
 	// Handle file input
-	if fromFile != "" {
+	if flags.FromFile != "" {
 		return ErrPopulateFromFileNotImplemented
 	}
 
