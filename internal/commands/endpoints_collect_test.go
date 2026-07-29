@@ -423,7 +423,8 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 
 	assert.Equal(t, "Derived Service FQDNs", section.Title)
 	assert.Equal(t, []string{"ENV", "SERVICE", "FQDN", "EXPECTED IP", "ORIGIN", "RESOLVED IP"}, section.Headers)
-	// 9 mgmt (vault.MgmtServices) + 20 ocf (vault.OCFServices), counted directly.
+	// One row per vault.MgmtServices entry plus one per vault.OCFServices
+	// entry, counted from the lists themselves rather than pinned to a literal.
 	assert.Len(t, section.Rows, len(vault.MgmtServices)+len(vault.OCFServices))
 	assert.NotEmpty(t, resolveKeys)
 
@@ -443,6 +444,7 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 			assert.Equal(t, vault.MgmtEnvType, row[0])
 		case "grafana":
 			grafanaCount++
+			assert.Equal(t, vault.MgmtEnvType, row[0])
 		}
 
 		if row[0] == vault.MgmtEnvType {
@@ -451,7 +453,13 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, doomsdayCount, "doomsday is mgmt-only")
-	assert.Equal(t, 0, grafanaCount, "grafana is in neither MgmtServices nor OCFServices")
+	assert.Equal(t, 1, grafanaCount, "grafana is mgmt-only, alongside the prometheus kit's other FQDN keys")
+
+	grafanaRow := findFQDNRow(t, section.Rows, vault.MgmtEnvType, "grafana")
+	assert.Equal(t, "grafana.system."+base, grafanaRow[2], "grafana is system-scoped")
+
+	alertmanagerRow := findFQDNRow(t, section.Rows, vault.MgmtEnvType, "alertmanager")
+	assert.Equal(t, "alertmanager."+base, alertmanagerRow[2], "alertmanager is not system-scoped")
 }
 
 // TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated is the
