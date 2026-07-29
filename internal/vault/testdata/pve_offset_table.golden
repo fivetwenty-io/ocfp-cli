@@ -1,0 +1,123 @@
+# PVE reserved-IP offset table
+# scheme_version: 2
+# reference subnet: 10.0.0.0/22
+
+[assignments]
+artifacts      mgmt  offset=11
+available      mgmt  range=32-63
+available      ocf   range=96->
+bastion        mgmt  offset=3
+blacksmith     mgmt  offset=10
+blacksmith     ocf   offset=67
+bosh           mgmt  offset=4
+bosh           ocf   offset=64
+concourse      mgmt  offset=7
+doomsday       mgmt  offset=18
+garage         mgmt  offset=20
+garage_smoke   mgmt  offset=22 key=garage_ip_smoke
+haproxy        ocf   offset=97
+jumpbox        mgmt  offset=6
+jumpbox        ocf   offset=66
+nfs            mgmt  offset=16
+ocfp_ui        mgmt  offset=17
+ovpn           mgmt  offset=13
+prometheus     mgmt  offset=8
+proxycache     mgmt  offset=15
+reserved       mgmt  range=0-31,64->
+reserved       ocf   range=0-95
+rustfs         mgmt  offset=14
+rustfs_smoke   mgmt  offset=21 key=rustfs_ip_smoke
+shield         mgmt  offset=9
+shout          mgmt  offset=19
+vault          mgmt  offset=5
+vault          ocf   offset=65
+wireguard      mgmt  offset=12
+
+[mgmt 10.0.0.0/22]
+artifacts_ip           10.0.0.11
+artifacts_ip_a         10.0.0.10
+artifacts_ip_b         10.0.0.12
+available_0            10.0.0.32
+available_1            10.0.0.63
+bastion_ip             10.0.0.3
+bastion_ip_a           10.0.0.2
+bastion_ip_b           10.0.0.4
+blacksmith_ip          10.0.0.10
+blacksmith_ip_a        10.0.0.9
+blacksmith_ip_b        10.0.0.11
+bosh_ip                10.0.0.4
+bosh_ip_a              10.0.0.3
+bosh_ip_b              10.0.0.5
+concourse_ip           10.0.0.7
+concourse_ip_a         10.0.0.6
+concourse_ip_b         10.0.0.8
+doomsday_ip            10.0.0.18
+doomsday_ip_a          10.0.0.17
+doomsday_ip_b          10.0.0.19
+garage_ip              10.0.0.20
+garage_ip_a            10.0.0.19
+garage_ip_b            10.0.0.21
+garage_ip_smoke        10.0.0.22
+garage_ip_smoke_a      10.0.0.21
+garage_ip_smoke_b      10.0.0.23
+jumpbox_ip             10.0.0.6
+jumpbox_ip_a           10.0.0.5
+jumpbox_ip_b           10.0.0.7
+nfs_ip                 10.0.0.16
+nfs_ip_a               10.0.0.15
+nfs_ip_b               10.0.0.17
+ocfp_ui_ip             10.0.0.17
+ocfp_ui_ip_a           10.0.0.16
+ocfp_ui_ip_b           10.0.0.18
+ovpn_ip                10.0.0.13
+ovpn_ip_a              10.0.0.12
+ovpn_ip_b              10.0.0.14
+prometheus_ip          10.0.0.8
+prometheus_ip_a        10.0.0.7
+prometheus_ip_b        10.0.0.9
+proxycache_ip          10.0.0.15
+proxycache_ip_a        10.0.0.14
+proxycache_ip_b        10.0.0.16
+reserved_0             10.0.0.0
+reserved_1             10.0.0.31
+reserved_2             10.0.0.64
+reserved_3             10.0.3.254
+rustfs_ip              10.0.0.14
+rustfs_ip_a            10.0.0.13
+rustfs_ip_b            10.0.0.15
+rustfs_ip_smoke        10.0.0.21
+rustfs_ip_smoke_a      10.0.0.20
+rustfs_ip_smoke_b      10.0.0.22
+shield_ip              10.0.0.9
+shield_ip_a            10.0.0.8
+shield_ip_b            10.0.0.10
+shout_ip               10.0.0.19
+shout_ip_a             10.0.0.18
+shout_ip_b             10.0.0.20
+vault_ip               10.0.0.5
+vault_ip_a             10.0.0.4
+vault_ip_b             10.0.0.6
+wireguard_ip           10.0.0.12
+wireguard_ip_a         10.0.0.11
+wireguard_ip_b         10.0.0.13
+
+[ocf 10.0.0.0/22]
+available_0            10.0.0.96
+available_1            10.0.3.254
+blacksmith_ip          10.0.0.67
+blacksmith_ip_a        10.0.0.66
+blacksmith_ip_b        10.0.0.68
+bosh_ip                10.0.0.64
+bosh_ip_a              10.0.0.63
+bosh_ip_b              10.0.0.65
+haproxy_ip             10.0.0.97
+haproxy_ip_a           10.0.0.96
+haproxy_ip_b           10.0.0.98
+jumpbox_ip             10.0.0.66
+jumpbox_ip_a           10.0.0.65
+jumpbox_ip_b           10.0.0.67
+reserved_0             10.0.0.0
+reserved_1             10.0.0.95
+vault_ip               10.0.0.65
+vault_ip_a             10.0.0.64
+vault_ip_b             10.0.0.66
