@@ -113,6 +113,7 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 
 	// Add subcommands
 	cmd.AddCommand(newVaultPopulateCmd())
+	cmd.AddCommand(newVaultReservedIPsCmd())
 	cmd.AddCommand(newVaultInceptionCmd())
 	cmd.AddCommand(newVaultTeardownCmd())
 	cmd.AddCommand(newVaultMigrateCmd())
