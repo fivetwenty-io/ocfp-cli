@@ -32,6 +32,11 @@ var (
 	ErrNotImplementedInMock                   = errors.New("not implemented in mock")
 	ErrSafercMustBeInHomeDirectory            = errors.New("invalid path: .saferc must be in home directory")
 	ErrNoBlocForVaultTarget                   = errors.New("a bloc name is required to resolve a vault target")
+
+	// ErrSecretNotFound distinguishes "this path holds nothing yet" from a
+	// read that failed. Callers that must not mistake an unreachable vault
+	// for an empty one — the reserved-IP guard, for one — match on this.
+	ErrSecretNotFound = errors.New("no secret found")
 )
 
 // ErrUnsupportedAuthType returns an error for an unrecognized vault authentication type.
@@ -66,7 +71,7 @@ func ErrTokenMissingRequiredPolicies(missing []string) error {
 
 // ErrNoSecretFoundAtPath returns an error when no secret exists at the specified vault path.
 func ErrNoSecretFoundAtPath(path string) error {
-	return fmt.Errorf("no secret found at path %s", path) //nolint:err113 // dynamic error with context
+	return fmt.Errorf("%w at path %s", ErrSecretNotFound, path)
 }
 
 // ErrKeyNotFoundAtPath returns an error when the requested key is missing at a vault path.
