@@ -173,6 +173,12 @@ type PopulateOptions struct {
 	// blobstore config path stays secret-free.
 	BlobstoreAccessKey string
 	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
+
+	// ForceReallocate applies the derived reserved IPs over the addresses
+	// vault already records, instead of keeping the recorded ones and
+	// reporting the divergence. Moving a reserved address means recreating
+	// the VM that holds it, so this is never the default.
+	ForceReallocate bool
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -208,7 +214,7 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		populateErr = m.populatePublicIPs(opts.ProgressReporter)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts)
+		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts, os.Stdout)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
@@ -515,11 +521,18 @@ func (m *Manager) getProductionVaultName() (string, error) {
 // kmsKeyARN is threaded from PopulateOptions and applied to AWS providers.
 // PVE blobstore fields are threaded via *PopulateOptions so all five
 // blobstore-related flags reach the PVEVaultProvider.
-func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN string, opts *PopulateOptions) error {
+func (m *Manager) populateFullConfiguration(
+	reporter ProgressReporter, kmsKeyARN string, opts *PopulateOptions, w io.Writer,
+) error {
 	m.logger.Infow("Populating full vault configuration", "provider", m.config.Provider)
 
-	// Create provider-specific vault implementation
-	provider, err := m.createVaultProvider()
+	// Reserved IPs are derived from a compile-time offset table, but for an
+	// already-provisioned bloc vault records where those services actually
+	// live. The guard keeps the recorded addresses and reports the
+	// divergence rather than moving anything (see reserved_ip_guard.go).
+	guard := newReservedIPGuard(m.safe, opts.ForceReallocate, m.logger)
+
+	provider, err := m.createVaultProviderWith(guard)
 	if err != nil {
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
@@ -531,6 +544,8 @@ func (m *Manager) populateFullConfiguration(reporter ProgressReporter, kmsKeyARN
 	if err != nil {
 		return fmt.Errorf("provider configuration failed: %w", err)
 	}
+
+	WriteReservedIPReport(w, guard.Report())
 
 	m.logger.Info("Full vault configuration completed")
 
@@ -563,7 +578,12 @@ func applyPopulateProviderOptions(provider providers.VaultProvider, kmsKeyARN st
 func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, target string, w io.Writer) error {
 	recorder := newRecordingSafe(base)
 
-	provider, err := m.createVaultProviderWith(recorder)
+	// Guard above the recorder, so the plan shows what would actually be
+	// written rather than the raw derivation — a dry-run that listed
+	// reserved IPs the real run would withhold would be misleading.
+	guard := newReservedIPGuard(recorder, opts.ForceReallocate, m.logger)
+
+	provider, err := m.createVaultProviderWith(guard)
 	if err != nil {
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
@@ -588,8 +608,60 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	}
 
 	writePopulatePlan(w, target, recorder.Plan())
+	WriteReservedIPReport(w, guard.Report())
 
 	return nil
+}
+
+// ReservedIPOptions holds options for the reserved-ips operations.
+type ReservedIPOptions struct {
+	// Apply moves the recorded addresses onto the derived ones. When false
+	// the derivation runs against a recording safe and nothing is written,
+	// so the divergence can be reviewed before any VM is recreated.
+	Apply bool
+
+	ProgressReporter ProgressReporter
+}
+
+// ReservedIPs runs the provider's derivation against the addresses vault
+// already records and returns the divergence.
+//
+// Reallocation lives here rather than in populate because moving a reserved
+// address recreates the VM holding it: a director, a jumpbox, or a haproxy
+// changing address is a deliberate migration, never a side effect of
+// refreshing configuration. With Apply set this is populate's write path
+// with the guard opened — the same derivation, applied on purpose.
+func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error) {
+	empty := ReservedIPReport{Drifts: nil, Schemes: nil}
+
+	err := m.client.ValidateConnection()
+	if err != nil {
+		return empty, fmt.Errorf("vault connection validation failed: %w", err)
+	}
+
+	var base SafeInterface = m.safe
+	if !opts.Apply {
+		base = newRecordingSafe(m.safe)
+	}
+
+	guard := newReservedIPGuard(base, opts.Apply, m.logger)
+
+	provider, err := m.createVaultProviderWith(guard)
+	if err != nil {
+		return empty, fmt.Errorf("failed to create vault provider: %w", err)
+	}
+
+	// A status pass must not reach the blobstore any more than a dry-run does.
+	if pveProvider, ok := provider.(*PVEVaultProvider); ok && !opts.Apply {
+		pveProvider.bucketEnsurer = noopBucketEnsurer{}
+	}
+
+	err = provider.Configure(opts.ProgressReporter)
+	if err != nil {
+		return empty, fmt.Errorf("provider configuration failed: %w", err)
+	}
+
+	return guard.Report(), nil
 }
 
 // populatePublicIPs populates public IP information to vault.
