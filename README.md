@@ -303,7 +303,7 @@ Subnet strategies (STACKIT) (see go/docs/networking/subnets.md)
   - `reserved_<bloc>-ocfp-0_bastion_ip`, `reserved_<bloc>-ocfp-0_bosh_ip`, `reserved_<bloc>-ocfp-0_vault_ip`
   - `reserved_<bloc>-ocfp-1_doomsday_ip`, `reserved_<bloc>-ocfp-2_ocfp_ui_ip`
   - Ranges: `reserved_<subnet>_available_a/b` and `reserved_<subnet>_reserved_a/b[/c/d]`
-  - Offsets mirror the Perl defaults (bastion .3, bosh .4, vault .5, jumpbox .6, concourse .7, prometheus .8, shield .9 on ocfp-0, doomsday .9 on ocfp-1, ocfp_ui .9 on ocfp-2; ranges reserved 0-10,30-> and available 11-29).
+  - Named-slot offsets mirror the Perl defaults (bastion .3, bosh .4, vault .5, jumpbox .6, concourse .7, prometheus .8, shield .9 on ocfp-0, doomsday .9 on ocfp-1, ocfp_ui .9 on ocfp-2). The available/reserved ranges come from the selected network strategy's mgmt band: under the default `wide` strategy, available 32-63 and reserved 0-10 plus 64 onward (see go/docs/networking/reserved-ip-strategies.md).
 
 ### Load balancer management (see go/docs/cmds/lb.md)
 

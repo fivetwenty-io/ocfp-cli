@@ -66,7 +66,7 @@ The infra subnet hosts well-known service IPs at fixed offsets from the subnet b
 | shield | 9 | `10.64.64.9` |
 | blacksmith | 10 | `10.64.64.10` |
 
-Offsets are defined in `internal/bootstrap/network.go:61`. Reserved-IP emission is handled by `addReservedIPOutputs` in the same file.
+Offsets are defined in `internal/netlayout` (the shared registry both the bootstrap and vault layers resolve from). Reserved-IP emission is handled by `addReservedIPOutputs` in `internal/bootstrap/network.go`. The full per-strategy offset tables, available bands, and override keys are documented in [Reserved-IP Strategies](reserved-ip-strategies.md).
 
 ## State and Vault outputs
 
@@ -110,5 +110,6 @@ To plug a new provider into this pattern:
 
 - [Proxmox Networking](providers/pve.md) for the concrete PVE implementation
 - [Subnets](subnets.md) for the standard real-subnet model used by AWS, Azure, GCP
+- [Reserved-IP Strategies](reserved-ip-strategies.md) for the selectable `wide` and `compact` reserved-IP layouts
 - [Bastion Tailscale](../init/bastion-tailscale.md) for tailnet-based bastion reachability
 - [Cloudflare DNS Sync](dns-cloudflare-sync.md) for wildcard DNS pointing at the bastion
