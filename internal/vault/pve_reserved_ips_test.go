@@ -195,6 +195,47 @@ func TestPVEReservedIPs_WideRejectsSubnetSmallerThan25(t *testing.T) {
 	assert.ErrorIs(t, err, netlayout.ErrSubnetTooSmall)
 }
 
+// TestResolveLayout proves resolveLayout is a thin, testable wrapper over
+// netlayout.Lookup(netCfg.Strategy): empty Strategy resolves to the "wide"
+// default, "compact" resolves by name (Name() only — WorkloadTable and every
+// other value-bearing method on compact are still stubs, see
+// TestPVEReservedIPs_CompactStrategyFailsLoudly below), and an unrecognized
+// name surfaces netlayout.ErrUnknownStrategy for errors.Is callers.
+func TestResolveLayout(t *testing.T) {
+	t.Run("EmptyStrategyResolvesToWide", func(t *testing.T) {
+		layout, err := resolveLayout(config.NetworkConfig{})
+		require.NoError(t, err)
+		assert.Equal(t, "wide", layout.Name())
+	})
+
+	t.Run("CompactStrategyResolvesByName", func(t *testing.T) {
+		layout, err := resolveLayout(config.NetworkConfig{Strategy: "compact"})
+		require.NoError(t, err)
+		assert.Equal(t, "compact", layout.Name())
+	})
+
+	t.Run("UnknownStrategyWrapsErrUnknownStrategy", func(t *testing.T) {
+		_, err := resolveLayout(config.NetworkConfig{Strategy: "bogus"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, netlayout.ErrUnknownStrategy)
+	})
+}
+
+// TestPVEReservedIPs_CompactStrategyFailsLoudly proves the PVE reserved-ips
+// path propagates a not-yet-implemented layout's error rather than writing a
+// partial/empty table or reaching applyPVEMgmtBandOverride with a nil table
+// (which would panic on the "available"/"reserved" map lookups). This test
+// asserts only the error — compact's still-stubbed WorkloadTable carries no
+// value to assert on.
+func TestPVEReservedIPs_CompactStrategyFailsLoudly(t *testing.T) {
+	netCfg := config.NetworkConfig{Strategy: "compact"}
+
+	table, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrNotImplemented)
+	assert.Nil(t, table, "must not return a partial/empty table alongside the error")
+}
+
 func ipToUint32Test(t *testing.T, ip string) uint32 {
 	t.Helper()
 

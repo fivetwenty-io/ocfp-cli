@@ -56,21 +56,42 @@ var pveAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static 
 	"reserved":     23, //nolint:mnd
 }
 
-// pveDefaultReservedIPAssignments returns the PVE per-tier assignment table.
-// Every named-static entry uses a plain Offset (not SubnetMapping): unlike
-// STACKIT's shared address space, each PVE workload subnet (ocfp-0/1/2) is
-// its own physical /22, so every workload subnet independently gets the same
-// role set computed from its own base address (mirrors the current PVE
-// per-subnet computation in writeStateReservedBand/writeFallbackSubnet,
-// which likewise derives bosh_ip/jumpbox_ip from whichever subnet's own
-// gateway is passed in, regardless of subnet index). The table itself is
-// owned by netlayout's "wide" strategy (internal/netlayout/wide.go); this
-// wrapper preserves the pre-netlayout call signature for this file's other
-// callers.
+// pveDefaultReservedIPAssignments returns the PVE per-tier assignment table
+// for netlayout's default ("wide") strategy, regardless of any bloc-
+// configured Network.Strategy. Every named-static entry uses a plain Offset
+// (not SubnetMapping): unlike STACKIT's shared address space, each PVE
+// workload subnet (ocfp-0/1/2) is its own physical /22, so every workload
+// subnet independently gets the same role set computed from its own base
+// address (mirrors the current PVE per-subnet computation in
+// writeStateReservedBand/writeFallbackSubnet, which likewise derives
+// bosh_ip/jumpbox_ip from whichever subnet's own gateway is passed in,
+// regardless of subnet index).
+//
+// This wrapper is intentionally strategy-blind: it exists solely for the
+// pinned offset-table golden fixture (pve_reserved_ips_golden_test.go),
+// which renders the default table as a reference independent of any bloc's
+// configured strategy. The strategy-aware, error-propagating path bloc
+// deploys actually run lives in resolveLayout and pveReservedIPsForSubnet
+// below — do not route new callers through this function.
 func pveDefaultReservedIPAssignments() reservedip.AssignmentTable {
 	table, _ := netlayout.Default().WorkloadTable("")
 
 	return table
+}
+
+// resolveLayout resolves netCfg.Strategy to a registered netlayout.Layout.
+// It is a thin wrapper over netlayout.Lookup so strategy routing is
+// testable in isolation from WorkloadTable's body: an empty Strategy
+// resolves to netlayout.Default() ("wide"), and an unrecognized name
+// returns an error wrapping netlayout.ErrUnknownStrategy for errors.Is
+// callers.
+func resolveLayout(netCfg config.NetworkConfig) (netlayout.Layout, error) {
+	layout, err := netlayout.Lookup(netCfg.Strategy)
+	if err != nil {
+		return nil, fmt.Errorf("resolve reserved-ip layout strategy %q: %w", netCfg.Strategy, err)
+	}
+
+	return layout, nil
 }
 
 // PVE mgmt-band override errors. Network.AvailableBandStart/End (see
@@ -133,16 +154,35 @@ func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg con
 // CIDR reused across all three in the stateless-fallback path), envType is
 // "mgmt" or "ocf", and subnetNum is the workload subnet's index (0/1/2),
 // forwarded to the shared engine for parity even though the current PVE
-// table does not vary by index. netCfg carries the optional mgmt-only
-// AvailableBandStart/End override.
+// table does not vary by index. netCfg carries the selected reserved-ip
+// layout Strategy (resolved via resolveLayout; empty means the netlayout
+// default) and the optional mgmt-only AvailableBandStart/End override.
+//
+// Every step below that can fail — strategy resolution, subnet validation,
+// and table construction — returns its error immediately rather than
+// falling through: a not-yet-implemented strategy (e.g. "compact", whose
+// WorkloadTable still returns netlayout.ErrNotImplemented) must fail loudly
+// here, never reach applyPVEMgmtBandOverride with a nil/partial table (which
+// indexes "available"/"reserved" unconditionally and would panic on a nil
+// map), and never report success having written nothing.
 func pveReservedIPsForSubnet(
 	subnetCIDR string, envType string, subnetNum int, netCfg config.NetworkConfig, log *zap.SugaredLogger,
 ) (map[string]any, error) {
-	if err := netlayout.Default().ValidateSubnet(subnetCIDR); err != nil {
+	layout, err := resolveLayout(netCfg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
 	}
 
-	assignments, err := applyPVEMgmtBandOverride(pveDefaultReservedIPAssignments(), netCfg)
+	if err := layout.ValidateSubnet(subnetCIDR); err != nil {
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
+	}
+
+	table, err := layout.WorkloadTable(subnetCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
+	}
+
+	assignments, err := applyPVEMgmtBandOverride(table, netCfg)
 	if err != nil {
 		return nil, err
 	}
