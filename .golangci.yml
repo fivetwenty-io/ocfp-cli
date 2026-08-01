@@ -185,6 +185,16 @@ linters:
       - path: internal/vault/stackit_reservedip_compat\.go
         linters:
           - unused
+      # newReservedIPGuard (and the reservedIPSchemeVersion default it
+      # passes) is now a thin delegating wrapper kept only so
+      # reserved_ip_guard_providers_test.go and reserved_ip_legacy_test.go's
+      # ~21 pre-existing call sites keep compiling unchanged, after
+      # production code moved to newReservedIPGuardWithScheme. With
+      # tests:false the linter cannot see those test-only callers and
+      # falsely reports both as unused.
+      - path: internal/vault/reserved_ip_guard\.go
+        linters:
+          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:

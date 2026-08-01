@@ -530,7 +530,14 @@ func (m *Manager) populateFullConfiguration(
 	// already-provisioned bloc vault records where those services actually
 	// live. The guard keeps the recorded addresses and reports the
 	// divergence rather than moving anything (see reserved_ip_guard.go).
-	guard := newReservedIPGuard(m.safe, opts.ForceReallocate, m.logger)
+	// The stamped scheme comes from the bloc's own resolved layout, so a
+	// compact-strategy bloc is stamped "3-compact" rather than wide's "2".
+	layout, err := resolveLayout(m.config.Network)
+	if err != nil {
+		return fmt.Errorf("resolve reserved-ip layout: %w", err)
+	}
+
+	guard := newReservedIPGuardWithScheme(m.safe, opts.ForceReallocate, layout.SchemeVersion(), m.logger)
 
 	provider, err := m.createVaultProviderWith(guard)
 	if err != nil {
@@ -580,8 +587,14 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 
 	// Guard above the recorder, so the plan shows what would actually be
 	// written rather than the raw derivation — a dry-run that listed
-	// reserved IPs the real run would withhold would be misleading.
-	guard := newReservedIPGuard(recorder, opts.ForceReallocate, m.logger)
+	// reserved IPs the real run would withhold would be misleading. Stamped
+	// with the bloc's own resolved layout scheme, matching the real run.
+	layout, err := resolveLayout(m.config.Network)
+	if err != nil {
+		return fmt.Errorf("resolve reserved-ip layout: %w", err)
+	}
+
+	guard := newReservedIPGuardWithScheme(recorder, opts.ForceReallocate, layout.SchemeVersion(), m.logger)
 
 	provider, err := m.createVaultProviderWith(guard)
 	if err != nil {
@@ -644,7 +657,12 @@ func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 		base = newRecordingSafe(m.safe)
 	}
 
-	guard := newReservedIPGuard(base, opts.Apply, m.logger)
+	layout, err := resolveLayout(m.config.Network)
+	if err != nil {
+		return empty, fmt.Errorf("resolve reserved-ip layout: %w", err)
+	}
+
+	guard := newReservedIPGuardWithScheme(base, opts.Apply, layout.SchemeVersion(), m.logger)
 
 	provider, err := m.createVaultProviderWith(guard)
 	if err != nil {
