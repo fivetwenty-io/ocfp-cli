@@ -132,8 +132,7 @@ bands:
 }
 
 // TestNetworkBandsUnmarshalAbsent proves that omitting network.bands
-// entirely leaves every band offset at zero, i.e. "no override" — the same
-// convention used by AvailableBandStart/AvailableBandEnd.
+// entirely leaves every band offset at zero, i.e. "no override".
 func TestNetworkBandsUnmarshalAbsent(t *testing.T) {
 	t.Parallel()
 

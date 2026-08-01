@@ -36,6 +36,17 @@ var (
 // ErrOcfpHomeNotFound is returned when the OCFP home directory cannot be determined.
 var ErrOcfpHomeNotFound = errors.New("failed to determine OCFP home directory")
 
+// ErrAvailableBandRemoved is returned when a config sets the removed
+// network.availableBandStart/availableBandEnd keys (or their snake_case
+// aliases). The single band was split into two per-layer keys so bootstrap's
+// subnet layout and PVE's mgmt reserved-IP tier can be overridden independently.
+var ErrAvailableBandRemoved = errors.New(
+	"network.availableBandStart/End was replaced by two per-layer keys: " +
+		"network.bands.infra (bootstrap subnet layout) and network.bands.mgmt " +
+		"(PVE reserved-IP mgmt tier). The old single key drove both; set both " +
+		"new keys to preserve previous behavior",
+)
+
 // OcfpHome returns the OCFP home directory path.
 // It checks OCFP_HOME env var first, then falls back to $HOME/.ocfp.
 func OcfpHome() string {
@@ -500,18 +511,6 @@ type NetworkConfig struct {
 	AvailableIPStart string `json:"availableIpStart,omitempty" mapstructure:"availableIpStart" yaml:"availableIpStart,omitempty"`
 	AvailableIPEnd   string `json:"availableIpEnd,omitempty"   mapstructure:"availableIpEnd"   yaml:"availableIpEnd,omitempty"`
 
-	// AvailableBandStart / AvailableBandEnd override the bootstrap subnetStrategy's
-	// reserved-IP layout available band (available_a/available_b offsets, subnet-
-	// base-relative). Zero on both means "no override, use the strategy's default
-	// layout" (see internal/bootstrap reservedIPLayout). When set, both are
-	// required together and bootstrap validates start >= 12 (must clear the fixed
-	// named-IP slots 0-11), end > start, and end within the target subnet's usable
-	// range before applying them. Unlike AvailableIPStart/AvailableIPEnd (absolute
-	// IP strings consumed directly by the PVE vault-populate fallback path), these
-	// are integer offsets consumed by bootstrap's per-subnet layout resolution.
-	AvailableBandStart int `json:"availableBandStart,omitempty" mapstructure:"availableBandStart" yaml:"availableBandStart,omitempty"`
-	AvailableBandEnd   int `json:"availableBandEnd,omitempty"   mapstructure:"availableBandEnd"   yaml:"availableBandEnd,omitempty"`
-
 	// Strategy selects the reserved-IP layout strategy (see internal/netlayout)
 	// used to number infra/mgmt/ocf tier addresses within this bloc's subnets.
 	// Empty resolves to netlayout.Default() ("wide"). An unrecognized value is
@@ -522,15 +521,14 @@ type NetworkConfig struct {
 
 	// Bands carries per-tier reserved-IP band overrides for the selected
 	// Strategy. Zero-value Band entries mean "no override, use the strategy's
-	// default layout for that tier" — the same convention as
-	// AvailableBandStart/AvailableBandEnd above, extended to name the tier
-	// explicitly instead of assuming a single implicit tier.
+	// default layout for that tier" — offsets are relative to a subnet's
+	// base address, and each tier is named explicitly rather than assuming
+	// a single implicit tier.
 	Bands NetworkBands `json:"bands,omitempty" mapstructure:"bands" yaml:"bands,omitempty"`
 }
 
 // Band is a start/end offset pair for a reserved-IP band override, relative
-// to a subnet's base address (matching the convention documented on
-// NetworkConfig.AvailableBandStart/AvailableBandEnd). Zero value means unset.
+// to a subnet's base address. Zero value means unset.
 type Band struct {
 	Start int `json:"start,omitempty" mapstructure:"start" yaml:"start,omitempty"`
 	End   int `json:"end,omitempty"   mapstructure:"end"   yaml:"end,omitempty"`
@@ -573,10 +571,14 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		AvailableIPEnd     string `yaml:"availableIpEnd,omitempty"`
 		AvailableIPEndSC   string `yaml:"available_ip_end,omitempty"`
 
-		AvailableBandStart   int `yaml:"availableBandStart,omitempty"`
-		AvailableBandStartSC int `yaml:"available_band_start,omitempty"`
-		AvailableBandEnd     int `yaml:"availableBandEnd,omitempty"`
-		AvailableBandEndSC   int `yaml:"available_band_end,omitempty"`
+		// LegacyBandStart/End and their snake_case aliases mirror the removed
+		// single-band keys. They are decoded only so UnmarshalYAML can detect
+		// their presence and fail loudly with ErrAvailableBandRemoved instead
+		// of silently ignoring them.
+		LegacyBandStart   int `yaml:"availableBandStart,omitempty"`
+		LegacyBandStartSC int `yaml:"available_band_start,omitempty"`
+		LegacyBandEnd     int `yaml:"availableBandEnd,omitempty"`
+		LegacyBandEndSC   int `yaml:"available_band_end,omitempty"`
 
 		Strategy   string       `yaml:"strategy,omitempty"`
 		StrategySC string       `yaml:"network_strategy,omitempty"`
@@ -607,8 +609,11 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	n.Subnets = raw.Subnets
 	n.AvailableIPStart = firstSetString(raw.AvailableIPStart, raw.AvailableIPStartSC)
 	n.AvailableIPEnd = firstSetString(raw.AvailableIPEnd, raw.AvailableIPEndSC)
-	n.AvailableBandStart = firstSetInt(raw.AvailableBandStart, raw.AvailableBandStartSC)
-	n.AvailableBandEnd = firstSetInt(raw.AvailableBandEnd, raw.AvailableBandEndSC)
+
+	if raw.LegacyBandStart != 0 || raw.LegacyBandStartSC != 0 ||
+		raw.LegacyBandEnd != 0 || raw.LegacyBandEndSC != 0 {
+		return ErrAvailableBandRemoved
+	}
 
 	strategy := firstSetString(raw.Strategy, raw.StrategySC)
 	if strategy != "" {
@@ -631,20 +636,6 @@ func firstSetString(values ...string) string {
 	}
 
 	return ""
-}
-
-// firstSetInt mirrors firstSetString for integer fields: it returns the first
-// non-zero value in precedence order (camelCase before snake_case), or 0 if
-// none are set. 0 is treated as "unset" for these fields since a band offset
-// of 0 would collide with the subnet's own network address anyway.
-func firstSetInt(values ...int) int {
-	for _, v := range values {
-		if v != 0 {
-			return v
-		}
-	}
-
-	return 0
 }
 
 // mergePVEDefaults fills empty PVE credential fields on bloc from defaults.
