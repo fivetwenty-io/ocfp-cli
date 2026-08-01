@@ -183,7 +183,6 @@ func createTestConfigForCredentials() *config.Config {
 		Type:                  "",
 		Environment:           "",
 		Subnets:               []config.Subnet{},
-		SubnetStrategy:        "",
 		LBs:                   map[string]config.LBService{},
 		Users:                 map[string]string{},
 		RouterPublicIPs:       0,

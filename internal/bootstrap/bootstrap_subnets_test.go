@@ -786,7 +786,6 @@ func createOcfpTripleConfig() *config.Config {
 	cfg := &config.Config{
 		Name:              "prod",
 		Region:            "eu01",
-		SubnetStrategy:    "ocfp-triple",
 		Network:           createEmptyNetworkConfig(),
 		Bastion:           createEmptyBastionConfig(),
 		Genesis:           createEmptyGenesisConfig(),

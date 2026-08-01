@@ -204,7 +204,6 @@ type Config struct {
 	Type              string               `json:"type"                mapstructure:"type"                yaml:"type,omitempty"`
 	Environment       string               `json:"environment"         mapstructure:"environment"         yaml:"environment,omitempty"`
 	Subnets           []Subnet             `json:"subnets"             mapstructure:"subnets"             yaml:"subnets,omitempty"`
-	SubnetStrategy    string               `json:"subnet_strategy"     mapstructure:"subnet_strategy"     yaml:"subnet_strategy,omitempty"`
 	LBs               map[string]LBService `json:"lbs"                 mapstructure:"lbs"                 yaml:"lbs,omitempty"`
 	Users             map[string]string    `json:"users"               mapstructure:"users"               yaml:"users,omitempty"`
 	// Public IP configurations
