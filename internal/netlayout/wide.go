@@ -149,7 +149,7 @@ func (wideLayout) Slots(_, _ string) (InfraSlots, error) {
 	return InfraSlots{}, ErrNotImplemented
 }
 
-// MinPrefix is a stub: returns 0 until IMP-03 makes it real (25).
+// MinPrefix is a stub: returns 0 until the real implementation lands (25).
 func (wideLayout) MinPrefix() int { return 0 }
 
 func (wideLayout) ValidateSubnet(_ string) error {

@@ -66,12 +66,9 @@ type Layout interface {
 	// Slots returns the Layer A named-slot set for role ("infra" or
 	// "ocfp") on cidr.
 	//
-	// Signature note: P1 §2's design sketch listed this method as
-	// `Slots(role, cidr string) InfraSlots`, with no error return. This
-	// package adds the error return so Slots can participate in the same
-	// ErrNotImplemented stub-safety contract as WorkloadTable and
-	// ValidateSubnet; no other Layout method's signature deviates from
-	// P1 §2.
+	// The error return lets not-yet-implemented strategies participate
+	// in the same ErrNotImplemented stub-safety contract as
+	// WorkloadTable and ValidateSubnet.
 	Slots(role, cidr string) (InfraSlots, error)
 
 	// MinPrefix returns the minimum CIDR prefix length (e.g. 25, 26) this
