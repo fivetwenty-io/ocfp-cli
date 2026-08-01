@@ -25,9 +25,18 @@ import (
 // couples these literals to wide's actual emitted mgmt available band, so a
 // wide retune fails loudly here instead of silently admitting a
 // now-collision-prone override.
+//
+// These bounds are wide-specific: applyPVEMgmtBandOverride hard-errors an
+// explicit override for any other strategy (see
+// ErrPVEBandOverrideUnsupportedStrategy) rather than checking it against
+// the wrong tier layout.
 const (
 	pveMgmtBandOverrideFloor   = 32
 	pveMgmtBandOverrideCeiling = 63
+
+	// pveMgmtBandOverrideStrategy is the only strategy name
+	// applyPVEMgmtBandOverride accepts an explicit Bands.Mgmt override for.
+	pveMgmtBandOverrideStrategy = "wide"
 )
 
 // pveAssignmentPriority orders assignment types for deterministic reserved-
@@ -60,29 +69,6 @@ var pveAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static 
 	"reserved":     23, //nolint:mnd
 }
 
-// pveDefaultReservedIPAssignments returns the PVE per-tier assignment table
-// for netlayout's default ("wide") strategy, regardless of any bloc-
-// configured Network.Strategy. Every named-static entry uses a plain Offset
-// (not SubnetMapping): unlike STACKIT's shared address space, each PVE
-// workload subnet (ocfp-0/1/2) is its own physical /22, so every workload
-// subnet independently gets the same role set computed from its own base
-// address (mirrors the current PVE per-subnet computation in
-// writeStateReservedBand/writeFallbackSubnet, which likewise derives
-// bosh_ip/jumpbox_ip from whichever subnet's own gateway is passed in,
-// regardless of subnet index).
-//
-// This wrapper is intentionally strategy-blind: it exists solely for the
-// pinned offset-table golden fixture (pve_reserved_ips_golden_test.go),
-// which renders the default table as a reference independent of any bloc's
-// configured strategy. The strategy-aware, error-propagating path bloc
-// deploys actually run lives in resolveLayout and pveReservedIPsForSubnet
-// below — do not route new callers through this function.
-func pveDefaultReservedIPAssignments() reservedip.AssignmentTable {
-	table, _ := netlayout.Default().WorkloadTable("")
-
-	return table
-}
-
 // resolveLayout resolves netCfg.Strategy to a registered netlayout.Layout.
 // It is a thin wrapper over netlayout.Lookup so strategy routing is
 // testable in isolation from WorkloadTable's body: an empty Strategy
@@ -112,20 +98,36 @@ var (
 	ErrPVEBandOverrideOutOfRange = fmt.Errorf(
 		"network.bands.mgmt.start/end must satisfy %d <= start < end <= %d (the mgmt tier's static/available zone)",
 		pveMgmtBandOverrideFloor, pveMgmtBandOverrideCeiling)
+	// ErrPVEBandOverrideUnsupportedStrategy is returned when an explicit
+	// Bands.Mgmt override is set for a strategy other than "wide": the
+	// override's floor/ceiling are wide-specific literals (32/63) and would
+	// silently mis-validate a differently-shaped strategy's mgmt zone (e.g.
+	// compact's 28-35), so a non-wide override is rejected outright rather
+	// than checked against the wrong bounds.
+	ErrPVEBandOverrideUnsupportedStrategy = errors.New("mgmt band override not supported for strategy")
 )
 
 // applyPVEMgmtBandOverride returns a copy of assignments with the mgmt
 // tier's "available"/"reserved" entries replaced by
 // cfg.Network.Bands.Mgmt.Start/End when both are set (non-zero). Returns
 // the input unchanged (not a copy) when no override is configured. Returns
-// an error if only one of the pair is set, or if the pair falls outside the
-// mgmt static/available zone (pveMgmtBandOverrideFloor..Ceiling).
-func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg config.NetworkConfig) (reservedip.AssignmentTable, error) {
+// an error if only one of the pair is set, if the pair falls outside the
+// mgmt static/available zone (pveMgmtBandOverrideFloor..Ceiling), or if an
+// override is set for any strategy other than strategyName ==
+// pveMgmtBandOverrideStrategy ("wide") — see
+// ErrPVEBandOverrideUnsupportedStrategy.
+func applyPVEMgmtBandOverride(
+	assignments reservedip.AssignmentTable, netCfg config.NetworkConfig, strategyName string,
+) (reservedip.AssignmentTable, error) {
 	start := netCfg.Bands.Mgmt.Start
 	end := netCfg.Bands.Mgmt.End
 
 	if start == 0 && end == 0 {
 		return assignments, nil
+	}
+
+	if strategyName != pveMgmtBandOverrideStrategy {
+		return nil, fmt.Errorf("%w %q", ErrPVEBandOverrideUnsupportedStrategy, strategyName)
 	}
 
 	if start == 0 || end == 0 {
@@ -164,9 +166,9 @@ func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg con
 //
 // Every step below that can fail — strategy resolution, subnet validation,
 // and table construction — returns its error immediately rather than
-// falling through: a not-yet-implemented strategy (e.g. "compact", whose
-// ValidateSubnet fails first with netlayout.ErrNotImplemented, and whose
-// WorkloadTable would fail the same way if reached) must fail loudly here,
+// falling through: a not-yet-implemented strategy's Slots/ValidateBand
+// (neither reached on this path) or a future registered strategy whose
+// ValidateSubnet or WorkloadTable is still stubbed must fail loudly here,
 // never reach applyPVEMgmtBandOverride with a nil/partial table (which
 // indexes "available"/"reserved" unconditionally and would panic on a nil
 // map), and never report success having written nothing. Each wrap names
@@ -201,7 +203,7 @@ func pveReservedIPsForSubnetWithLayout(
 			envType, subnetNum, layout.Name(), err)
 	}
 
-	assignments, err := applyPVEMgmtBandOverride(table, netCfg)
+	assignments, err := applyPVEMgmtBandOverride(table, netCfg, layout.Name())
 	if err != nil {
 		return nil, err
 	}

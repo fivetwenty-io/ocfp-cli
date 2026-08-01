@@ -63,10 +63,12 @@ func TestRegistry(t *testing.T) {
 	})
 }
 
-// TestCompactStub proves the stub-safety claim in the package doc: an
-// accidental early call into compact's not-yet-implemented methods fails
-// loudly with netlayout.ErrNotImplemented rather than panicking or
-// returning a silently-wrong zero value.
+// TestCompactStub proves the stub-safety claim in the package doc for the
+// compact methods that have not yet been given a real implementation
+// (Slots): an accidental early call fails loudly with
+// netlayout.ErrNotImplemented rather than panicking or returning a
+// silently-wrong zero value. WorkloadTable and ValidateSubnet are real (see
+// TestCompactWorkloadTable and TestCompactValidateSubnet in compact_test.go).
 func TestCompactStub(t *testing.T) {
 	t.Parallel()
 
@@ -74,19 +76,6 @@ func TestCompactStub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup(\"compact\") returned unexpected error: %v", err)
 	}
-
-	t.Run("WorkloadTableReturnsErrNotImplemented", func(t *testing.T) {
-		t.Parallel()
-
-		table, err := compact.WorkloadTable("10.0.0.0/26")
-		if !errors.Is(err, netlayout.ErrNotImplemented) {
-			t.Fatalf("WorkloadTable() error = %v, want ErrNotImplemented", err)
-		}
-
-		if table != nil {
-			t.Fatalf("WorkloadTable() table = %v, want nil on stub error", table)
-		}
-	})
 
 	t.Run("SlotsReturnsErrNotImplemented", func(t *testing.T) {
 		t.Parallel()
@@ -98,14 +87,6 @@ func TestCompactStub(t *testing.T) {
 
 		if slots != (netlayout.InfraSlots{}) {
 			t.Fatalf("Slots() slots = %+v, want zero value on stub error", slots)
-		}
-	})
-
-	t.Run("ValidateSubnetReturnsErrNotImplemented", func(t *testing.T) {
-		t.Parallel()
-
-		if err := compact.ValidateSubnet("10.0.0.0/26"); !errors.Is(err, netlayout.ErrNotImplemented) {
-			t.Fatalf("ValidateSubnet() error = %v, want ErrNotImplemented", err)
 		}
 	})
 }
