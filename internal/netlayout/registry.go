@@ -12,8 +12,9 @@ const defaultStrategyName = "wide"
 
 // registry holds every Layout implementation available for selection. Both
 // entries are stub-safe (see Layout's doc comment): compact has only Name
-// real, wide additionally has WorkloadTable and SchemeVersion real (its
-// ValidateSubnet and Slots remain stubs until their owning tasks land).
+// real, wide additionally has WorkloadTable, SchemeVersion, MinPrefix, and
+// ValidateSubnet real (its Slots remains a stub until its owning task
+// lands).
 var registry = map[string]Layout{
 	"wide":    wideLayout{},
 	"compact": compactLayout{},
@@ -51,9 +52,9 @@ func Names() []string {
 	return names
 }
 
-// wideLayout is declared in wide.go — its WorkloadTable and
-// SchemeVersion are real; ValidateSubnet and Slots remain stubs pending
-// their implementations.
+// wideLayout is declared in wide.go — its WorkloadTable, SchemeVersion,
+// MinPrefix, and ValidateSubnet are real; Slots remains a stub pending its
+// implementation.
 //
 // compactLayout is declared here rather than in a dedicated compact.go
 // file until its real implementation lands. Every method but Name is a

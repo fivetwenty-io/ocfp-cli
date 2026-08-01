@@ -85,10 +85,24 @@ const (
 // which independently pins the same value for the vault-layer guard).
 const wideSchemeVersion = "2"
 
+// wideMinPrefix is the minimum CIDR prefix length the wide strategy fits:
+// its highest fixed offset is wideHighestOffset (97, ocf haproxy), and a
+// /25 (128 addresses, host offsets 0-127) is the widest (shortest) prefix
+// that still clears it. ValidateSubnet rejects any narrower subnet (prefix
+// > wideMinPrefix) rather than letting it silently emit an IP outside the
+// subnet.
+const wideMinPrefix = 25
+
+// wideHighestOffset is the wide strategy's highest fixed offset (ocf
+// haproxy, pveOCFHaproxyOffset). ValidateSubnet's error names it so a
+// rejected CIDR's message explains exactly which offset it fails to fit,
+// without the caller needing to cross-reference wide's offset table.
+const wideHighestOffset = pveOCFHaproxyOffset
+
 // wideLayout is the "wide" Layout: the PVE per-tier reserved-IP scheme
 // carried over from the pre-netlayout internal/vault implementation. Its
-// WorkloadTable and SchemeVersion are real; ValidateSubnet and Slots remain
-// stubs (see registry.go) until their owning tasks land.
+// WorkloadTable, SchemeVersion, MinPrefix, and ValidateSubnet are real;
+// Slots remains a stub (see registry.go) until its owning task lands.
 type wideLayout struct{}
 
 func (wideLayout) Name() string { return "wide" }
@@ -149,11 +163,26 @@ func (wideLayout) Slots(_, _ string) (InfraSlots, error) {
 	return InfraSlots{}, ErrNotImplemented
 }
 
-// MinPrefix is a stub: returns 0 until the real implementation lands (25).
-func (wideLayout) MinPrefix() int { return 0 }
+// MinPrefix returns 25: the shortest (widest) CIDR prefix that still fits
+// wide's highest fixed offset (wideHighestOffset, 97).
+func (wideLayout) MinPrefix() int { return wideMinPrefix }
 
-func (wideLayout) ValidateSubnet(_ string) error {
-	return ErrNotImplemented
+// ValidateSubnet rejects cidr if its prefix is longer (fewer host
+// addresses) than wideMinPrefix, wrapping ErrSubnetTooSmall with the
+// strategy name, the offending cidr, its prefix, wideMinPrefix, and
+// wideHighestOffset. A malformed cidr returns reservedip.ParseCIDR's error
+// unchanged.
+func (wideLayout) ValidateSubnet(cidr string) error {
+	_, prefix, err := reservedip.ParseCIDR(cidr)
+	if err != nil {
+		return err
+	}
+
+	if prefix > wideMinPrefix {
+		return subnetTooSmallError("wide", cidr, prefix, wideMinPrefix, wideHighestOffset)
+	}
+
+	return nil
 }
 
 func (wideLayout) ValidateBand(_ Tier, _ string, _, _ int) error {

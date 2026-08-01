@@ -1,6 +1,8 @@
 package netlayout_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
@@ -96,6 +98,69 @@ func TestWideWorkloadTable(t *testing.T) {
 		if first["bastion"]["mgmt"].Offset != second["bastion"]["mgmt"].Offset {
 			t.Fatalf("WorkloadTable() varied with cidr: %d != %d",
 				first["bastion"]["mgmt"].Offset, second["bastion"]["mgmt"].Offset)
+		}
+	})
+}
+
+// TestWideValidateSubnet_RejectsSubnetSmallerThan25 proves wide's
+// ValidateSubnet/MinPrefix are real (not stub-safe placeholders): a subnet
+// too small to hold the strategy's highest fixed offset (97, ocf haproxy)
+// is rejected with a wrapped ErrSubnetTooSmall naming the strategy, the
+// offending CIDR, its prefix, the minimum prefix, and the highest offset.
+func TestWideValidateSubnet_RejectsSubnetSmallerThan25(t *testing.T) {
+	t.Parallel()
+
+	wide, err := netlayout.Lookup("wide")
+	if err != nil {
+		t.Fatalf("Lookup(\"wide\") returned unexpected error: %v", err)
+	}
+
+	t.Run("MinPrefixIs25", func(t *testing.T) {
+		t.Parallel()
+
+		if got, want := wide.MinPrefix(), 25; got != want {
+			t.Fatalf("MinPrefix() = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("RejectsSlash26", func(t *testing.T) {
+		t.Parallel()
+
+		const cidr = "10.64.64.0/26"
+
+		err := wide.ValidateSubnet(cidr)
+		if !errors.Is(err, netlayout.ErrSubnetTooSmall) {
+			t.Fatalf("ValidateSubnet(%q) error = %v, want wrapping ErrSubnetTooSmall", cidr, err)
+		}
+
+		for _, want := range []string{"wide", cidr, "/26", "/25", "97"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("ValidateSubnet(%q) error %q does not mention %q", cidr, err.Error(), want)
+			}
+		}
+	})
+
+	t.Run("AcceptsSlash25", func(t *testing.T) {
+		t.Parallel()
+
+		if err := wide.ValidateSubnet("10.64.64.0/25"); err != nil {
+			t.Fatalf("ValidateSubnet(/25) returned unexpected error: %v", err)
+		}
+	})
+
+	t.Run("AcceptsSlash22", func(t *testing.T) {
+		t.Parallel()
+
+		if err := wide.ValidateSubnet("10.64.64.0/22"); err != nil {
+			t.Fatalf("ValidateSubnet(/22) returned unexpected error: %v", err)
+		}
+	})
+
+	t.Run("MalformedCIDRErrors", func(t *testing.T) {
+		t.Parallel()
+
+		if err := wide.ValidateSubnet("not-a-cidr"); err == nil {
+			t.Fatal("ValidateSubnet(\"not-a-cidr\") = nil error, want error")
 		}
 	})
 }
