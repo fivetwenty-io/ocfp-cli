@@ -64,9 +64,9 @@ const compactHighestOffset = pveCompactOCFHaproxyOffset
 
 // compactLayout is the "compact" Layout: a /26-capable PVE per-tier
 // reserved-IP scheme derived from wide by compressing its ocf statics and
-// available bands. Its WorkloadTable, SchemeVersion, MinPrefix, and
-// ValidateSubnet are real; Slots and ValidateBand remain stubs (see
-// registry.go's Layout doc comment) until their owning tasks land.
+// available bands. WorkloadTable, SchemeVersion, MinPrefix, ValidateSubnet,
+// and Slots are real; ValidateBand remains a stub (see registry.go's
+// Layout doc comment) until its owning task lands.
 type compactLayout struct{}
 
 func (compactLayout) Name() string { return "compact" }
@@ -122,8 +122,23 @@ func (compactLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error)
 	}, nil
 }
 
-func (compactLayout) Slots(_, _ string) (InfraSlots, error) {
-	return InfraSlots{}, ErrNotImplemented
+// Slots returns compact's Layer A named-slot set for role. cidr is
+// accepted for interface conformance but ignored: neither role's layout
+// varies by subnet size. The infra role's 12-29 band is identical to
+// wide's — a /26 (compact's narrowest supported subnet, host offsets
+// 0-63) clears offset 29 with room to spare, so no divergence from wide's
+// historical infra layout is needed. The infra role applies to the fixed
+// infra subnet, not a workload subnet whose size varies by strategy, so
+// this holds regardless of how compact's own workload layout is shaped.
+func (compactLayout) Slots(role, _ string) (InfraSlots, error) {
+	switch role {
+	case slotRoleInfra:
+		return infraSlots(), nil
+	case slotRoleOCFP:
+		return ocfpSlots(pveCompactMgmtAvailableStart, pveCompactMgmtAvailableEnd), nil
+	default:
+		return InfraSlots{}, unknownRoleError(role)
+	}
 }
 
 // MinPrefix returns 26: the shortest (widest) CIDR prefix that still fits
