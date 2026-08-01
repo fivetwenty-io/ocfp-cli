@@ -98,7 +98,8 @@ func Initialize(cfg Config) error {
 	}
 
 	// Create the logger
-	var core zapcore.Core = zapcore.NewTee(cores...)
+	core := zapcore.NewTee(cores...)
+
 	core = newRedactingCore(core) // scrub secret-bearing fields before they reach the file core
 	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 
