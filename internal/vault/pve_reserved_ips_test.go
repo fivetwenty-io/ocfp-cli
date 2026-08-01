@@ -5,6 +5,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -180,6 +181,18 @@ func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, first["available_0"], second["available_0"], "default table must not be mutated by a prior override call")
+}
+
+// TestPVEReservedIPs_WideRejectsSubnetSmallerThan25 proves the vault-layer
+// PVE reserved-ips path enforces the wide strategy's minimum subnet size
+// (see TestWideValidateSubnet_RejectsSubnetSmallerThan25 for the netlayout-
+// layer proof): a /26 workload subnet cannot fit the strategy's highest
+// fixed offset, so it must hard-error here rather than silently emitting an
+// IP outside the subnet.
+func TestPVEReservedIPs_WideRejectsSubnetSmallerThan25(t *testing.T) {
+	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrSubnetTooSmall)
 }
 
 func ipToUint32Test(t *testing.T, ip string) uint32 {

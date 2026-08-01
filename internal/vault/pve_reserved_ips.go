@@ -138,6 +138,10 @@ func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg con
 func pveReservedIPsForSubnet(
 	subnetCIDR string, envType string, subnetNum int, netCfg config.NetworkConfig, log *zap.SugaredLogger,
 ) (map[string]any, error) {
+	if err := netlayout.Default().ValidateSubnet(subnetCIDR); err != nil {
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
+	}
+
 	assignments, err := applyPVEMgmtBandOverride(pveDefaultReservedIPAssignments(), netCfg)
 	if err != nil {
 		return nil, err
