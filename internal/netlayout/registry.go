@@ -1,20 +1,15 @@
 package netlayout
 
-import (
-	"sort"
-
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
-)
+import "sort"
 
 // defaultStrategyName is the registry key Default resolves to, and the key
 // Lookup falls back to for an empty name.
 const defaultStrategyName = "wide"
 
 // registry holds every Layout implementation available for selection. Both
-// entries are stub-safe (see Layout's doc comment): compact has only Name
-// real, wide additionally has WorkloadTable, SchemeVersion, MinPrefix, and
-// ValidateSubnet real (its Slots remains a stub until its owning task
-// lands).
+// entries have WorkloadTable, SchemeVersion, MinPrefix, and ValidateSubnet
+// real (see wide.go and compact.go); each entry's Slots and ValidateBand
+// remain stubs (see Layout's doc comment) until their owning tasks land.
 var registry = map[string]Layout{
 	"wide":    wideLayout{},
 	"compact": compactLayout{},
@@ -52,40 +47,7 @@ func Names() []string {
 	return names
 }
 
-// wideLayout is declared in wide.go — its WorkloadTable, SchemeVersion,
-// MinPrefix, and ValidateSubnet are real; Slots remains a stub pending its
-// implementation.
-//
-// compactLayout is declared here rather than in a dedicated compact.go
-// file until its real implementation lands. Every method but Name is a
-// stub: stubs that can return an
-// error return ErrNotImplemented; SchemeVersion and MinPrefix cannot
-// (Layout declares them without an error return) and instead return their
-// type's documented zero value below — never a panic.
-
-type compactLayout struct{}
-
-func (compactLayout) Name() string { return "compact" }
-
-// SchemeVersion is a stub: returns "" until the real implementation
-// lands ("3-compact").
-func (compactLayout) SchemeVersion() string { return "" }
-
-func (compactLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
-	return nil, ErrNotImplemented
-}
-
-func (compactLayout) Slots(_, _ string) (InfraSlots, error) {
-	return InfraSlots{}, ErrNotImplemented
-}
-
-// MinPrefix is a stub: returns 0 until the real implementation lands (26).
-func (compactLayout) MinPrefix() int { return 0 }
-
-func (compactLayout) ValidateSubnet(_ string) error {
-	return ErrNotImplemented
-}
-
-func (compactLayout) ValidateBand(_ Tier, _ string, _, _ int) error {
-	return ErrNotImplemented
-}
+// wideLayout is declared in wide.go; compactLayout is declared in
+// compact.go. Both have WorkloadTable, SchemeVersion, MinPrefix, and
+// ValidateSubnet real; each has Slots and ValidateBand still stubbed
+// pending their owning implementations.
