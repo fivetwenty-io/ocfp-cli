@@ -37,15 +37,14 @@ const (
 	stackitMinSupportedNetworkBits = 24
 )
 
-// TestAudit_ProviderTables_NoExistingOutOfBoundsEntries is a one-shot audit
-// probe (IMP-11 in the PVE network strategy alignment plan): it proves
-// whether the AWS and STACKIT default reserved-IP tables, AS THEY EXIST
-// TODAY, already contain any offset or range endpoint past
+// TestAudit_ProviderTables_NoExistingOutOfBoundsEntries is an audit probe:
+// it proves whether the AWS and STACKIT default reserved-IP tables, AS THEY
+// EXIST TODAY, already contain any offset or range endpoint past
 // reservedip.CalculateLastHostOffset for that provider's minimum supported
-// CIDR — gating IMP-12, which adds an enforced ErrOffsetBeyondSubnet check to
-// the shared reservedip.Calculate engine. If this test ever fails, IMP-12
-// cannot simply enable that check: the violating entries reported here must
-// be fixed first.
+// CIDR — a precondition for the enforced ErrOffsetBeyondSubnet check in the
+// shared reservedip.Calculate engine. If this test ever fails, the
+// violating entries reported here must be fixed before that check can stay
+// enforced.
 //
 // Test-only: this file adds no bounds-checking to internal/reservedip or
 // internal/vault, and changes no production code.
