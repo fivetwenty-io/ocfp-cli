@@ -81,16 +81,35 @@ type reservedIPGuard struct {
 	// force applies the derivation over the recorded addresses instead of
 	// withholding it. Reallocation is a VM-recreating operation, so this is
 	// only ever set by an explicit operator opt-in.
-	force  bool
+	force bool
+
+	// scheme is the generation stamped onto a record this guard writes or
+	// confirms. It comes from the netlayout.Layout resolved for the config
+	// under guard, so a compact-strategy bloc is stamped "3-compact" rather
+	// than the wide default.
+	scheme string
+
 	report ReservedIPReport
 	logger *zap.SugaredLogger
 }
 
-// newReservedIPGuard wraps under with the reserved-IP drift policy.
+// newReservedIPGuard wraps under with the reserved-IP drift policy, stamping
+// records with the wide/default scheme. Callers that know which
+// netlayout.Layout a config resolved to should use
+// newReservedIPGuardWithScheme instead, so a compact-strategy bloc is
+// stamped with its own scheme rather than wide's.
 func newReservedIPGuard(under SafeInterface, force bool, log *zap.SugaredLogger) *reservedIPGuard {
+	return newReservedIPGuardWithScheme(under, force, reservedIPSchemeVersion, log)
+}
+
+// newReservedIPGuardWithScheme wraps under with the reserved-IP drift
+// policy, stamping records with scheme (see netlayout.Layout.SchemeVersion)
+// instead of the wide default.
+func newReservedIPGuardWithScheme(under SafeInterface, force bool, scheme string, log *zap.SugaredLogger) *reservedIPGuard {
 	return &reservedIPGuard{
 		SafeInterface: under,
 		force:         force,
+		scheme:        scheme,
 		report:        ReservedIPReport{Drifts: nil, Schemes: nil},
 		logger:        log,
 	}
@@ -210,8 +229,8 @@ func (g *reservedIPGuard) stampScheme(
 	recorded := valueString(existing[reservedIPSchemeKey])
 
 	if !drifted || g.force {
-		if recorded != reservedIPSchemeVersion {
-			writes[reservedIPSchemeKey] = reservedIPSchemeVersion
+		if recorded != g.scheme {
+			writes[reservedIPSchemeKey] = g.scheme
 		}
 
 		return
@@ -220,11 +239,11 @@ func (g *reservedIPGuard) stampScheme(
 	// A record that predates stamping and disagrees with the current table
 	// was provisioned under an earlier scheme; so was one carrying an older
 	// stamp. Both need a migration decision, not a rewrite.
-	if len(existing) > 0 && recorded != reservedIPSchemeVersion {
+	if len(existing) > 0 && recorded != g.scheme {
 		g.report.Schemes = append(g.report.Schemes, ReservedIPScheme{
 			Path:     path,
 			Existing: recorded,
-			Current:  reservedIPSchemeVersion,
+			Current:  g.scheme,
 		})
 	}
 }

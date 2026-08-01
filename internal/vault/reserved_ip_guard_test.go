@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -271,6 +272,43 @@ func TestReservedIPGuardForceRestampsAfterMigration(t *testing.T) {
 	}))
 
 	assert.Equal(t, reservedIPSchemeVersion, under.data[testReservedPath][reservedIPSchemeKey])
+}
+
+// TestReservedIPGuardWithSchemeStampsWideVersion covers a guard constructed
+// with the wide layout's own scheme, matching how manager.go resolves it
+// from the bloc's network config rather than assuming the package default.
+func TestReservedIPGuardWithSchemeStampsWideVersion(t *testing.T) {
+	wide, err := netlayout.Lookup("wide")
+	require.NoError(t, err)
+
+	under := newCountingSafe()
+	guard := newReservedIPGuardWithScheme(under, false, wide.SchemeVersion(), logger.Get())
+
+	require.NoError(t, guard.SetMultiple(testReservedPath, map[string]interface{}{
+		"bosh_ip": "10.0.0.64",
+	}))
+
+	assert.Equal(t, "2", under.data[testReservedPath][reservedIPSchemeKey])
+	assert.Empty(t, guard.Report().Schemes)
+}
+
+// TestReservedIPGuardWithSchemeStampsCompactVersion is the compact-strategy
+// counterpart: a compact bloc's records must carry "3-compact", not wide's
+// "2", so a later scheme comparison never mistakes one strategy's table for
+// the other's.
+func TestReservedIPGuardWithSchemeStampsCompactVersion(t *testing.T) {
+	compact, err := netlayout.Lookup("compact")
+	require.NoError(t, err)
+
+	under := newCountingSafe()
+	guard := newReservedIPGuardWithScheme(under, false, compact.SchemeVersion(), logger.Get())
+
+	require.NoError(t, guard.SetMultiple(testReservedPath, map[string]interface{}{
+		"bosh_ip": "10.0.0.64",
+	}))
+
+	assert.Equal(t, "3-compact", under.data[testReservedPath][reservedIPSchemeKey])
+	assert.Empty(t, guard.Report().Schemes)
 }
 
 // A read failure must not be mistaken for "the path is empty" — that is the
