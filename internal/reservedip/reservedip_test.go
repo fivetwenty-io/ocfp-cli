@@ -1,6 +1,7 @@
 package reservedip_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
@@ -167,6 +168,89 @@ func TestCalculate_OffsetAssignmentWithIPKeyOverride(t *testing.T) {
 	assert.NotContains(t, got, "rustfs_smoke_ip", "the default-shaped key must not also be written when IPKey is set")
 	assert.Equal(t, "10.64.64.20", got["rustfs_ip_smoke_a"], "bound keys key off IPKey, not assignmentType, when IPKey is set")
 	assert.Equal(t, "10.64.64.22", got["rustfs_ip_smoke_b"])
+}
+
+func TestCalculate_ErrOffsetBeyondSubnet(t *testing.T) {
+	t.Run("out-of-range offset", func(t *testing.T) {
+		// /24 -> last usable host offset 254; a bare Offset assignment of 300
+		// is past the subnet.
+		assignments := reservedip.AssignmentTable{
+			"bosh": {"mgmt": {Offset: 300}}, //nolint:mnd
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 0, nil, nil)
+		require.Error(t, err)
+		assert.Truef(t, errors.Is(err, reservedip.ErrOffsetBeyondSubnet), "error %v must be errors.Is-able to ErrOffsetBeyondSubnet", err)
+		assert.Contains(t, err.Error(), "300", "message must include the offending offset")
+		assert.Contains(t, err.Error(), "254", "message must include the subnet's last usable host offset")
+		assert.Nil(t, got)
+	})
+
+	t.Run("out-of-range range end", func(t *testing.T) {
+		// /24 -> last usable host offset 254; a RangeSpec ending at 300 is
+		// past the subnet even though its start (10) is in bounds.
+		assignments := reservedip.AssignmentTable{
+			"available": {"mgmt": {RangeSpec: "10-300"}},
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 0, nil, nil)
+		require.Error(t, err)
+		assert.Truef(t, errors.Is(err, reservedip.ErrOffsetBeyondSubnet), "error %v must be errors.Is-able to ErrOffsetBeyondSubnet", err)
+		assert.Contains(t, err.Error(), "300", "message must include the offending range endpoint")
+		assert.Contains(t, err.Error(), "254", "message must include the subnet's last usable host offset")
+		assert.Nil(t, got)
+	})
+
+	t.Run("inverted range end before start", func(t *testing.T) {
+		// Both endpoints are within the /24's bounds, but end (10) precedes
+		// start (30) — invalid regardless of the subnet's size.
+		assignments := reservedip.AssignmentTable{
+			"available": {"mgmt": {RangeSpec: "30-10"}},
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 0, nil, nil)
+		require.Error(t, err)
+		assert.Truef(t, errors.Is(err, reservedip.ErrOffsetBeyondSubnet), "error %v must be errors.Is-able to ErrOffsetBeyondSubnet", err)
+		assert.Contains(t, err.Error(), "30", "message must include the range's start offset")
+		assert.Contains(t, err.Error(), "10", "message must include the range's end offset")
+		assert.Nil(t, got)
+	})
+
+	t.Run("out-of-range SubnetMapping offset", func(t *testing.T) {
+		// SubnetMapping resolves an offset just like a bare Offset does; the
+		// bounds check must apply to the entry matching subnetNum.
+		assignments := reservedip.AssignmentTable{
+			"doomsday": {"mgmt": {SubnetMapping: map[int][]int{300: {1}}}}, //nolint:mnd
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 1, nil, nil)
+		require.Error(t, err)
+		assert.Truef(t, errors.Is(err, reservedip.ErrOffsetBeyondSubnet), "error %v must be errors.Is-able to ErrOffsetBeyondSubnet", err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("out-of-range SubnetRanges endpoint", func(t *testing.T) {
+		assignments := reservedip.AssignmentTable{
+			"reserved": {"mgmt": {SubnetRanges: map[string][]int{"10-300": {1}}}},
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 1, nil, nil)
+		require.Error(t, err)
+		assert.Truef(t, errors.Is(err, reservedip.ErrOffsetBeyondSubnet), "error %v must be errors.Is-able to ErrOffsetBeyondSubnet", err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("malformed range spec still non-fatal, not confused with bounds error", func(t *testing.T) {
+		// A non-numeric spec must keep the pre-existing skip-and-warn
+		// behavior — it must not be reported as ErrOffsetBeyondSubnet.
+		assignments := reservedip.AssignmentTable{
+			"available": {"mgmt": {RangeSpec: "not-numeric"}},
+		}
+
+		got, err := reservedip.Calculate("10.10.1.0/24", assignments, "mgmt", 0, nil, nil)
+		require.NoError(t, err)
+		assert.NotContains(t, got, "available_0")
+	})
 }
 
 func TestCalculate_MalformedRangeSpecSkippedNotFatal(t *testing.T) {

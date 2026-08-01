@@ -27,6 +27,14 @@ var (
 	ErrInvalidIPAddressFormat = errors.New("invalid IP address format")
 )
 
+// ErrOffsetBeyondSubnet is the sentinel a caller can errors.Is-check for
+// when an assignment table entry resolves to an offset (or range endpoint)
+// past a subnet's last usable host offset (see CalculateLastHostOffset), or
+// to a range whose end precedes its start. Calculate wraps this sentinel
+// with the offending offset/range and the subnet's limit; use
+// errors.Is(err, ErrOffsetBeyondSubnet) rather than matching the message.
+var ErrOffsetBeyondSubnet = errors.New("offset beyond subnet bounds")
+
 // ErrInvalidCIDRFormat returns an error for a malformed CIDR notation string.
 func ErrInvalidCIDRFormat(cidr string) error {
 	return fmt.Errorf("invalid CIDR format: %s", cidr) //nolint:err113 // dynamic error with context
@@ -94,10 +102,13 @@ type AssignmentTable map[string]map[string]*Assignment
 // deterministic across runs. A nil log is accepted and treated as a no-op
 // sink.
 //
-// Returns an error only when cidr itself fails to parse; a malformed
-// individual RangeSpec is logged as a warning and skipped rather than
-// aborting the whole subnet, matching the reference (Perl) implementation's
-// best-effort behavior.
+// Returns an error when cidr itself fails to parse, or when a resolved
+// offset or range endpoint exceeds the subnet's last usable host offset, or
+// a range's end precedes its start (wrapping ErrOffsetBeyondSubnet in the
+// latter two cases). A malformed individual RangeSpec (non-numeric, not an
+// out-of-bounds question) is instead logged as a warning and skipped rather
+// than aborting the whole subnet, matching the reference (Perl)
+// implementation's best-effort behavior for that specific failure mode.
 func Calculate(
 	cidr string,
 	assignments AssignmentTable,
@@ -137,7 +148,9 @@ func Calculate(
 			continue
 		}
 
-		processAssignment(assignmentType, assignment, baseIP, networkBits, subnetNum, vaultIPs, usedIPs, log)
+		if err := processAssignment(assignmentType, assignment, baseIP, networkBits, subnetNum, vaultIPs, usedIPs, log); err != nil {
+			return nil, err
+		}
 	}
 
 	return vaultIPs, nil
@@ -145,6 +158,11 @@ func Calculate(
 
 // processAssignment dispatches a single reserved IP assignment to the
 // appropriate processor based on which field of Assignment is populated.
+// Returns a non-nil error (wrapping ErrOffsetBeyondSubnet) only when the
+// assignment resolves to an offset or range endpoint past the subnet's
+// bounds, or an inverted range; a nil return means the assignment (or a
+// malformed RangeSpec within it, which is logged and skipped instead) was
+// handled.
 func processAssignment(
 	assignmentType string,
 	assignment *Assignment,
@@ -153,7 +171,7 @@ func processAssignment(
 	vaultIPs map[string]any,
 	usedIPs map[string]bool,
 	log Logger,
-) {
+) error {
 	switch {
 	// Offset == 0 is deliberately excluded (not just "unset"): offset 0 is
 	// always the subnet's network address, which is never a valid host
@@ -161,28 +179,37 @@ func processAssignment(
 	// network address" via Offset. A role that genuinely needs the network
 	// address (there is none today) would have to use RangeSpec "0" instead.
 	case assignment.Offset > 0:
-		processOffsetAssignment(assignmentType, assignment.Offset, assignment.IPKey, baseIP, vaultIPs, usedIPs, log)
+		return processOffsetAssignment(assignmentType, assignment.Offset, assignment.IPKey, baseIP, networkBits, vaultIPs, usedIPs, log)
 	case len(assignment.SubnetMapping) > 0:
-		processSubnetMappingAssignment(assignmentType, assignment.SubnetMapping, baseIP, subnetNum, vaultIPs, usedIPs, log)
+		return processSubnetMappingAssignment(assignmentType, assignment.SubnetMapping, baseIP, networkBits, subnetNum, vaultIPs, usedIPs, log)
 	case assignment.RangeSpec != "":
-		processRangeSpecAssignment(assignmentType, assignment.RangeSpec, baseIP, networkBits, vaultIPs, log)
+		return processRangeSpecAssignment(assignmentType, assignment.RangeSpec, baseIP, networkBits, vaultIPs, log)
 	case len(assignment.SubnetRanges) > 0:
-		processSubnetRangesAssignment(assignmentType, assignment.SubnetRanges, baseIP, networkBits, subnetNum, vaultIPs, log)
+		return processSubnetRangesAssignment(assignmentType, assignment.SubnetRanges, baseIP, networkBits, subnetNum, vaultIPs, log)
 	}
+
+	return nil
 }
 
 // processOffsetAssignment handles a simple offset-based single IP
 // reservation. ipKey, when non-empty, overrides the default
 // "{assignmentType}_ip" output key (see Assignment.IPKey); the "_a"/"_b"
 // bound keys always key off ipKey too when it is set, so a custom-keyed
-// role gets the same bound-key convention as the default case.
+// role gets the same bound-key convention as the default case. Returns
+// ErrOffsetBeyondSubnet (wrapped with the offending offset and the subnet's
+// last usable host offset) if offset exceeds the subnet's bounds.
 func processOffsetAssignment(
-	assignmentType string, offset int, ipKey string, baseIP string,
+	assignmentType string, offset int, ipKey string, baseIP string, networkBits int,
 	vaultIPs map[string]any, usedIPs map[string]bool, log Logger,
-) {
+) error {
+	if limit := CalculateLastHostOffset(networkBits); offset > limit {
+		return fmt.Errorf("%s: offset %d exceeds last usable host offset %d: %w",
+			assignmentType, offset, limit, ErrOffsetBeyondSubnet)
+	}
+
 	ip := AddOffsetToIP(baseIP, offset) //nolint:varnamelen // ip is clear in context
 	if usedIPs[ip] {
-		return
+		return nil
 	}
 
 	key := assignmentType + "_ip"
@@ -198,16 +225,28 @@ func processOffsetAssignment(
 	vaultIPs[key+"_b"] = AddOffsetToIP(baseIP, offset+1)
 
 	log.Debugw("Reserved IP", "type", assignmentType, "key", key, "ip", ip, "offset", offset)
+
+	return nil
 }
 
-// processSubnetMappingAssignment handles offset-to-subnet-number mapping reservations.
+// processSubnetMappingAssignment handles offset-to-subnet-number mapping
+// reservations. Returns ErrOffsetBeyondSubnet (wrapped with the offending
+// offset and the subnet's last usable host offset) if the offset matching
+// subnetNum exceeds the subnet's bounds.
 func processSubnetMappingAssignment(
-	assignmentType string, subnetMapping map[int][]int, baseIP string,
+	assignmentType string, subnetMapping map[int][]int, baseIP string, networkBits int,
 	subnetNum int, vaultIPs map[string]any, usedIPs map[string]bool, log Logger,
-) {
+) error {
+	limit := CalculateLastHostOffset(networkBits)
+
 	for offset, subnets := range subnetMapping {
 		if !ContainsInt(subnets, subnetNum) {
 			continue
+		}
+
+		if offset > limit {
+			return fmt.Errorf("%s: offset %d exceeds last usable host offset %d: %w",
+				assignmentType, offset, limit, ErrOffsetBeyondSubnet)
 		}
 
 		ip := AddOffsetToIP(baseIP, offset) //nolint:varnamelen // ip is clear in context
@@ -225,29 +264,45 @@ func processSubnetMappingAssignment(
 
 		break
 	}
+
+	return nil
 }
 
-// processRangeSpecAssignment handles range-specification-based IP reservations.
+// processRangeSpecAssignment handles range-specification-based IP
+// reservations. A range endpoint past the subnet's bounds, or an inverted
+// range, is fatal: it propagates as ErrOffsetBeyondSubnet rather than being
+// skipped, since (unlike a malformed spec string) it is well-formed but
+// semantically invalid for this subnet. A malformed (non-numeric) spec is
+// still logged and skipped, matching the pre-existing best-effort behavior.
 func processRangeSpecAssignment(
 	assignmentType, rangeSpec, baseIP string, networkBits int,
 	vaultIPs map[string]any, log Logger,
-) {
+) error {
 	ranges, err := ParseIPRangeSpec(rangeSpec, baseIP, networkBits)
 	if err != nil {
+		if errors.Is(err, ErrOffsetBeyondSubnet) {
+			return fmt.Errorf("%s: %w", assignmentType, err)
+		}
+
 		log.Warnw("Failed to parse range spec",
 			"type", assignmentType, "spec", rangeSpec, "error", err)
 
-		return
+		return nil
 	}
 
 	storeIPRanges(assignmentType, ranges, vaultIPs, "Reserved IP range", 0, log)
+
+	return nil
 }
 
-// processSubnetRangesAssignment handles subnet-specific range-based IP reservations.
+// processSubnetRangesAssignment handles subnet-specific range-based IP
+// reservations. Bounds/inversion errors on the subnetNum-matching spec are
+// fatal (see processRangeSpecAssignment); a malformed spec is logged and
+// skipped, and the loop continues to the next spec in the map.
 func processSubnetRangesAssignment(
 	assignmentType string, subnetRanges map[string][]int, baseIP string,
 	networkBits, subnetNum int, vaultIPs map[string]any, log Logger,
-) {
+) error {
 	for rangeSpec, subnets := range subnetRanges {
 		if !ContainsInt(subnets, subnetNum) {
 			continue
@@ -255,6 +310,10 @@ func processSubnetRangesAssignment(
 
 		ranges, err := ParseIPRangeSpec(rangeSpec, baseIP, networkBits)
 		if err != nil {
+			if errors.Is(err, ErrOffsetBeyondSubnet) {
+				return fmt.Errorf("%s: %w", assignmentType, err)
+			}
+
 			log.Warnw("Failed to parse subnet range spec",
 				"type", assignmentType, "spec", rangeSpec, "error", err)
 
@@ -265,6 +324,8 @@ func processSubnetRangesAssignment(
 
 		break
 	}
+
+	return nil
 }
 
 // storeIPRanges writes IP range boundaries into the vault data map and logs them.
@@ -357,10 +418,18 @@ func AddOffsetToIP(baseIP string, offset int) string {
 
 // ParseIPRangeSpec parses a range specification like "11-29" or "0-10,30->"
 // into concrete IP ranges relative to baseIP. networkBits is used to resolve
-// the open-ended "N->" form to the subnet's last usable host offset.
+// the open-ended "N->" form to the subnet's last usable host offset, and to
+// bounds-check every resolved offset against that same limit.
+//
+// Returns an error for a malformed (non-numeric, wrong shape) subrange
+// string. Returns an error wrapping ErrOffsetBeyondSubnet, distinguishable
+// via errors.Is, when a resolved offset exceeds the subnet's last usable
+// host offset, or when a resolved range's end precedes its start — both are
+// well-formed but semantically invalid for the given subnet.
 func ParseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]IPRange, error) {
 	subranges := strings.Split(rangeSpec, ",")
 	ranges := make([]IPRange, 0, len(subranges))
+	limit := CalculateLastHostOffset(networkBits)
 
 	for _, subrange := range subranges {
 		subrange = strings.TrimSpace(subrange)
@@ -380,7 +449,7 @@ func ParseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]IPRan
 			}
 
 			lower = lowerVal
-			upper = CalculateLastHostOffset(networkBits)
+			upper = limit
 		case strings.Contains(subrange, "-"):
 			parts := strings.Split(subrange, "-")
 			if len(parts) != CIDRPartsCount {
@@ -405,6 +474,21 @@ func ParseIPRangeSpec(rangeSpec string, baseIP string, networkBits int) ([]IPRan
 			}
 
 			lower, upper = val, val
+		}
+
+		if lower > limit {
+			return nil, fmt.Errorf("range spec %q: start offset %d exceeds last usable host offset %d: %w",
+				subrange, lower, limit, ErrOffsetBeyondSubnet)
+		}
+
+		if upper > limit {
+			return nil, fmt.Errorf("range spec %q: end offset %d exceeds last usable host offset %d: %w",
+				subrange, upper, limit, ErrOffsetBeyondSubnet)
+		}
+
+		if upper < lower {
+			return nil, fmt.Errorf("range spec %q: end offset %d is before start offset %d: %w",
+				subrange, upper, lower, ErrOffsetBeyondSubnet)
 		}
 
 		startIP := AddOffsetToIP(baseIP, lower)
