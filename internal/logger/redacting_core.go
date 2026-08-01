@@ -53,7 +53,7 @@ func (c *redactingCore) With(fields []zapcore.Field) zapcore.Core {
 // arranges for THIS core's Write to be the one zap calls, so field
 // redaction always runs before the entry is serialized.
 func (c *redactingCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if c.Core.Enabled(entry.Level) {
+	if c.Enabled(entry.Level) {
 		return checked.AddCore(entry, c)
 	}
 
