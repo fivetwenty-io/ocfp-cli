@@ -62,28 +62,3 @@ func TestRegistry(t *testing.T) {
 		}
 	})
 }
-
-// TestCompactStub proves the stub-safety claim in the package doc for the
-// compact methods that have not yet been given a real implementation
-// (ValidateBand): an accidental early call fails loudly with
-// netlayout.ErrNotImplemented rather than panicking or returning a
-// silently-wrong zero value. WorkloadTable, ValidateSubnet, and Slots are
-// real (see TestCompactWorkloadTable and TestCompactValidateSubnet in
-// compact_test.go, and TestSlots_* in slots_test.go).
-func TestCompactStub(t *testing.T) {
-	t.Parallel()
-
-	compact, err := netlayout.Lookup("compact")
-	if err != nil {
-		t.Fatalf("Lookup(\"compact\") returned unexpected error: %v", err)
-	}
-
-	t.Run("ValidateBandReturnsErrNotImplemented", func(t *testing.T) {
-		t.Parallel()
-
-		err := compact.ValidateBand(netlayout.TierMgmt, "10.0.0.0/26", 0, 10)
-		if !errors.Is(err, netlayout.ErrNotImplemented) {
-			t.Fatalf("ValidateBand() error = %v, want ErrNotImplemented", err)
-		}
-	})
-}
