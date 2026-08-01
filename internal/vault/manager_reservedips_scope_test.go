@@ -3,9 +3,11 @@ package vault
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -69,6 +71,66 @@ func TestPopulate_PhaseReservedIPs_WritesOnlyReservedIPsPaths(t *testing.T) {
 	}
 
 	assertOnlyReservedIPPaths(t, written)
+}
+
+// TestPopulate_PhaseReservedIPs_StateDriven_WritesOnlyReservedIPsPaths seeds
+// bootstrap state with one workload subnet and one infra subnet, so the
+// state-driven writers (writeTieredReservedIPs and writeReservedIPs) run
+// instead of the stateless fallback the other tests in this file exercise,
+// and asserts they are scoped identically: every written path is a
+// reserved-ips path.
+func TestPopulate_PhaseReservedIPs_StateDriven_WritesOnlyReservedIPsPaths(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{ //nolint:exhaustruct // only the fields configureReservedIPsForEnv reads are needed
+		ID:         "subnet-infra",
+		Type:       "subnet",
+		Name:       blocName + "-infra",
+		Properties: map[string]any{"cidr": "10.64.64.0/22"},
+	}))
+	require.NoError(t, sm.AddResource(&state.Resource{ //nolint:exhaustruct
+		ID:         "subnet-ocfp-0",
+		Type:       "subnet",
+		Name:       blocName + "-ocfp-0",
+		Properties: map[string]any{"cidr": "10.64.68.0/22"},
+	}))
+	require.NoError(t, sm.SetOutput("reserved_"+blocName+"-infra_bastion_ip", "10.64.64.3"))
+	require.NoError(t, sm.Save())
+
+	safe := newFakeSafe()
+	mgr := newReservedIPsScopeTestManager(pveScopeTestConfig(), safe)
+
+	opts := &PopulateOptions{Subcommand: PhaseReservedIPs} //nolint:exhaustruct
+	require.NoError(t, mgr.populate(opts))
+
+	written := make([]string, 0, len(safe.data))
+	for path := range safe.data {
+		written = append(written, path)
+	}
+
+	assertOnlyReservedIPPaths(t, written)
+
+	// Prove the state-driven writers actually ran rather than the fallback:
+	// the infra subnet's per-role sub-path is only ever written from state
+	// outputs, and the workload record's bosh_ip derives from the seeded
+	// subnet's own /22 (base + 4 on the mgmt tier), not the fallback carve
+	// of the config CIDR.
+	var sawInfraBastion, sawSeededWorkload bool
+
+	for path, keys := range safe.data {
+		if strings.HasSuffix(path, "/subnets/infra/reserved-ips/bastion") {
+			sawInfraBastion = true
+		}
+
+		if strings.HasSuffix(path, "/subnets/ocfp-0/reserved-ips") && keys["bosh_ip"] == "10.64.68.4" {
+			sawSeededWorkload = true
+		}
+	}
+
+	assert.True(t, sawInfraBastion, "state-driven infra role writer did not run")
+	assert.True(t, sawSeededWorkload, "state-driven tiered workload writer did not run")
 }
 
 // TestPopulate_PhaseReservedIPs_NonPVEProvider_ReturnsNamedError proves a
