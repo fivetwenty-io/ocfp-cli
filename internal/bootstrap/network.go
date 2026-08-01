@@ -13,6 +13,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -53,31 +54,14 @@ const (
 	subnetRoleInfra = "infra"
 	subnetRoleOCFP  = "ocfp"
 
-	// Reserved IP slot constants for subnet IP assignment.
-	vaultIPSlot      = 5
-	jumpboxIPSlot    = 6
-	concourseIPSlot  = 7
-	prometheusIPSlot = 8
-	bastionIPSlot    = 3
-	boshIPSlot       = 4
-	shieldIPSlot     = 9
-	blacksmithIPSlot = 10
-	doomsdayIPSlot   = 9
-	shoutIPSlot      = 10
-	// blacksmithOCFPIPSlot is the broker's static on workload subnet 1: the
-	// blacksmith kit's ocfp blueprint resolves reserved-ips:blacksmith_ip from
-	// ocfp-1 (broker pinned to z2). Slot 10 there is shout, and anything at or
-	// above availableAIPSlot sits inside the PVE widened band, so the broker
-	// reuses slot 3 — bastion's slot, which is only assigned on the infra
-	// subnet (and on workload subnet 0 in the legacy STACKIT layout).
-	blacksmithOCFPIPSlot = 3
-	ocfpUIIPSlot         = 9
-	// artifactsIPSlot is the RustFS blobstore VM. See plans/ocfp-artifacts-rustfs-vm.md.
+	// bastionIPSlot is the bastion VM's static offset, shared by
+	// internal/bootstrap/compute.go's bastion placement and the historical
+	// named-slot layout now owned by internal/netlayout (infraBastionOffset/
+	// pveBastionOffset).
+	bastionIPSlot = 3
+	// artifactsIPSlot is the RustFS blobstore VM's static offset. See
+	// plans/ocfp-artifacts-rustfs-vm.md.
 	artifactsIPSlot     = 11
-	availableAIPSlot    = 12
-	availableBIPSlot    = 29
-	reservedBIPSlot     = 10
-	reservedCIPSlot     = 30
 	ocfpUIProviderIndex = 2
 )
 
@@ -90,27 +74,7 @@ var (
 	ErrInvalidCIDROffsetNegative = errors.New("CIDR offset must be non-negative")
 	ErrInvalidCIDR               = errors.New("invalid CIDR")
 	ErrOffsetOutOfRange          = errors.New("offset out of range for uint32")
-
-	// ErrBandOverridePartial is returned when only one of
-	// network.availableBandStart/availableBandEnd is configured. Both must be
-	// set together, or neither (to use the strategy's default layout).
-	ErrBandOverridePartial = errors.New("network.availableBandStart and availableBandEnd must both be set, or neither")
-	// ErrBandOverrideStartTooLow is returned when availableBandStart would
-	// collide with the fixed named-slot offsets (0-11).
-	ErrBandOverrideStartTooLow = errors.New("network.availableBandStart must be >= 12 to avoid colliding with reserved named-IP slots 0-11")
-	// ErrBandOverrideEndNotAfterStart is returned when availableBandEnd does
-	// not fall strictly after availableBandStart.
-	ErrBandOverrideEndNotAfterStart = errors.New("network.availableBandEnd must be greater than availableBandStart")
-	// ErrBandOverrideEndBeyondSubnet is returned when availableBandEnd falls
-	// outside the target subnet's usable address range.
-	ErrBandOverrideEndBeyondSubnet = errors.New("network.availableBandEnd is beyond the subnet's usable address range")
 )
-
-// reservedIPLayoutMinBandStart is the lowest offset an available-band
-// override may start at: offsets 0-11 are the fixed named IP slots
-// (bastion/bosh/vault/.../artifacts), so any override must start at or after
-// the first free offset to avoid colliding with them.
-const reservedIPLayoutMinBandStart = availableAIPSlot
 
 // CreateNetwork creates the network/VPC.
 func (m *Manager) CreateNetwork(ctx context.Context) error {
@@ -854,60 +818,59 @@ func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, 
 	return nil
 }
 
-// resolveReservedIPLayout asks the bloc's selected subnetStrategy for its
-// named-slot/available-band layout, then applies any config-level available-
-// band override (m.config.Network.AvailableBandStart/End) on top of it.
-// Returns an error if an override is configured but invalid for subnetCIDR.
-func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string) (reservedIPLayout, error) {
-	strategy := m.selectVirtualSubnetStrategy()
-	layout := strategy.reservedIPLayout(role, subnetCIDR)
+// resolveReservedIPLayout resolves the bloc's configured netlayout.Layout
+// strategy (m.config.Network.Strategy; empty resolves to the "wide"
+// default) and asks it for its named-slot/available-band offsets for role
+// on subnetCIDR, then applies any config-level available-band override
+// (m.config.Network.Bands.Infra) on top of it. Every subnetStrategy shares
+// this one resolution path — unlike the pre-netlayout scheme, where
+// pveSubnetStrategy alone widened the ocfp role's band from its own CIDR,
+// every strategy here reads the identical table internal/vault's reserved-
+// ips population reads, so Layer A and Layer B can never disagree about
+// where a role's band sits. Returns an error if the strategy name is
+// unrecognized, role is neither "infra" nor "ocfp", or a configured
+// override is invalid for subnetCIDR.
+func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string) (netlayout.InfraSlots, error) {
+	layout, err := netlayout.Lookup(m.config.Network.Strategy)
+	if err != nil {
+		return netlayout.InfraSlots{}, fmt.Errorf("resolve reserved-ip layout strategy %q: %w", m.config.Network.Strategy, err)
+	}
 
-	return applyAvailableBandOverride(layout, m.config.Network, subnetCIDR)
+	slots, err := layout.Slots(role, subnetCIDR)
+	if err != nil {
+		return netlayout.InfraSlots{}, fmt.Errorf("resolve reserved-ip slots for role %q: %w", role, err)
+	}
+
+	return applyAvailableBandOverride(layout, slots, m.config.Network, subnetCIDR)
 }
 
-// applyAvailableBandOverride overrides layout.availableA/availableB (and
-// forces reservedC to end+1) from netCfg.AvailableBandStart/End when both are
-// configured. Zero values on both fields mean "no override" and layout is
-// returned unchanged. The override applies uniformly to both infra and ocfp
-// roles: it replaces whatever the strategy computed, it does not add to it.
-func applyAvailableBandOverride(layout reservedIPLayout, netCfg config.NetworkConfig, subnetCIDR string) (reservedIPLayout, error) {
-	start := netCfg.AvailableBandStart
-	end := netCfg.AvailableBandEnd
+// applyAvailableBandOverride overrides slots.AvailableA/AvailableB (and
+// forces ReservedC to end+1) from netCfg.Bands.Infra.Start/End when both are
+// configured. Zero values on both fields mean "no override": slots is
+// returned unchanged and layout.ValidateBand is never called. Otherwise
+// layout.ValidateBand validates the pair (partial pair, ordering, floor,
+// subnet fit — see internal/netlayout's ValidateBand) before it is applied.
+// The override applies uniformly to both infra and ocfp roles: it replaces
+// whatever the strategy computed, it does not add to it.
+func applyAvailableBandOverride(
+	layout netlayout.Layout, slots netlayout.InfraSlots, netCfg config.NetworkConfig, subnetCIDR string,
+) (netlayout.InfraSlots, error) {
+	start := netCfg.Bands.Infra.Start
+	end := netCfg.Bands.Infra.End
 
 	if start == 0 && end == 0 {
-		return layout, nil
+		return slots, nil
 	}
 
-	if start == 0 || end == 0 {
-		return reservedIPLayout{}, ErrBandOverridePartial
+	if err := layout.ValidateBand(netlayout.TierInfra, subnetCIDR, start, end); err != nil {
+		return netlayout.InfraSlots{}, err
 	}
 
-	if start < reservedIPLayoutMinBandStart {
-		return reservedIPLayout{}, fmt.Errorf("%w: got %d", ErrBandOverrideStartTooLow, start)
-	}
+	slots.AvailableA = start
+	slots.AvailableB = end
+	slots.ReservedC = end + 1
 
-	if end <= start {
-		return reservedIPLayout{}, fmt.Errorf("%w: start=%d end=%d", ErrBandOverrideEndNotAfterStart, start, end)
-	}
-
-	total, ok := subnetTotalSize(subnetCIDR)
-	if !ok {
-		return reservedIPLayout{}, fmt.Errorf("%w: %s", ErrInvalidCIDR, subnetCIDR)
-	}
-
-	// Last usable offset within the subnet, relative to its base address
-	// (excludes the network and broadcast addresses).
-	lastUsableOffset := int(total) - broadcastOffset
-	if end > lastUsableOffset {
-		return reservedIPLayout{}, fmt.Errorf("%w: end=%d last-usable-offset=%d subnet=%s",
-			ErrBandOverrideEndBeyondSubnet, end, lastUsableOffset, subnetCIDR)
-	}
-
-	layout.availableA = start
-	layout.availableB = end
-	layout.reservedC = end + 1
-
-	return layout, nil
+	return slots, nil
 }
 
 // Standard Subnet Functions
@@ -989,7 +952,7 @@ func (m *Manager) validateNetworkID(networkID any) (string, error) {
 // Subnet Management Functions
 // ==============================================================================
 
-func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID any, role, az string, idx int, layout reservedIPLayout) error {
+func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID any, role, az string, idx int, layout netlayout.InfraSlots) error {
 	// Skip if already present
 	if existingSubnet, _ := m.stateManager.GetResource("subnet", name); existingSubnet != nil {
 		logger.Infof("Virtual subnet %s already recorded, skipping", name)
@@ -1190,7 +1153,7 @@ func CalculateIPFromCIDR(cidr string, offset int) (string, error) {
 // PVE/STACKIT vault-write path was made independent of them (see
 // plans/pve-tiered-reserved-ip-map.md, "Retire tier-blind bootstrap
 // reserved-IP outputs").
-func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, role string, idx int, layout reservedIPLayout) {
+func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, role string, idx int, layout netlayout.InfraSlots) {
 	base := ipToUint32(net.ParseIP(CIDRFirstIP(subnetCIDR)))
 	last := ipToUint32(net.ParseIP(CIDRLastUsableIP(subnetCIDR)))
 
@@ -1214,42 +1177,42 @@ func (m *Manager) addReservedIPOutputs(name string, subnetCIDR string, role stri
 // bastion/director/shield/blacksmith reservations alongside the shared mgmt
 // set. OCFP workload subnets keep the legacy STACKIT-style "idx==0 owns
 // bastion" semantics so existing providers stay byte-identical.
-func (m *Manager) writeReservedIPNamedSlots(set func(key, val string), ipAt func(off int) string, layout reservedIPLayout, isInfra bool, idx int) {
+func (m *Manager) writeReservedIPNamedSlots(set func(key, val string), ipAt func(off int) string, layout netlayout.InfraSlots, isInfra bool, idx int) {
 	if isInfra {
-		set("bastion_ip", ipAt(layout.bastion))
-		set("bosh_ip", ipAt(layout.bosh))
-		set("shield_ip", ipAt(layout.shield))
-		set("blacksmith_ip", ipAt(layout.blacksmith))
+		set("bastion_ip", ipAt(layout.Bastion))
+		set("bosh_ip", ipAt(layout.Bosh))
+		set("shield_ip", ipAt(layout.Shield))
+		set("blacksmith_ip", ipAt(layout.Blacksmith))
 
 		return
 	}
 
 	// Single-IP assignments for mgmt. All ocfp subnets get these.
-	set("vault_ip", ipAt(layout.vault))
-	set("jumpbox_ip", ipAt(layout.jumpbox))
-	set("concourse_ip", ipAt(layout.concourse))
-	set("prometheus_ip", ipAt(layout.prometheus))
+	set("vault_ip", ipAt(layout.Vault))
+	set("jumpbox_ip", ipAt(layout.Jumpbox))
+	set("concourse_ip", ipAt(layout.Concourse))
+	set("prometheus_ip", ipAt(layout.Prometheus))
 
 	// Conditional per-subnet.
 	if idx == 0 {
-		set("bastion_ip", ipAt(layout.bastion))
-		set("bosh_ip", ipAt(layout.bosh))
-		set("shield_ip", ipAt(layout.shield))
-		set("blacksmith_ip", ipAt(layout.blacksmith))
+		set("bastion_ip", ipAt(layout.Bastion))
+		set("bosh_ip", ipAt(layout.Bosh))
+		set("shield_ip", ipAt(layout.Shield))
+		set("blacksmith_ip", ipAt(layout.Blacksmith))
 	}
 
 	if idx == 1 {
-		set("doomsday_ip", ipAt(layout.doomsday))
-		set("shout_ip", ipAt(layout.shout))
-		set("blacksmith_ip", ipAt(layout.blacksmithOCFP))
+		set("doomsday_ip", ipAt(layout.Doomsday))
+		set("shout_ip", ipAt(layout.Shout))
+		set("blacksmith_ip", ipAt(layout.BlacksmithOCFP))
 	}
 
 	if idx == ocfpUIProviderIndex {
-		set("ocfp_ui_ip", ipAt(layout.ocfpUI))
+		set("ocfp_ui_ip", ipAt(layout.OCFPUI))
 	}
 
 	// TODO: gate on Artifacts.Enabled once config wired
-	set("artifacts_ip", ipAt(layout.artifacts))
+	set("artifacts_ip", ipAt(layout.Artifacts))
 }
 
 // writeReservedIPBandOutputs writes the available/reserved band outputs
@@ -1257,12 +1220,12 @@ func (m *Manager) writeReservedIPNamedSlots(set func(key, val string), ipAt func
 // band Genesis' cloud-config IPAM reads; reserved_a/b/c/d bound the
 // complement (reserved_a is always the subnet base, reserved_d is always its
 // last usable IP; those two are structural, not part of layout).
-func (m *Manager) writeReservedIPBandOutputs(set func(key, val string), ipAt func(off int) string, layout reservedIPLayout, last uint32) {
-	set("available_a", ipAt(layout.availableA))
-	set("available_b", ipAt(layout.availableB))
+func (m *Manager) writeReservedIPBandOutputs(set func(key, val string), ipAt func(off int) string, layout netlayout.InfraSlots, last uint32) {
+	set("available_a", ipAt(layout.AvailableA))
+	set("available_b", ipAt(layout.AvailableB))
 	set("reserved_a", ipAt(0))
-	set("reserved_b", ipAt(layout.reservedB))
-	set("reserved_c", ipAt(layout.reservedC))
+	set("reserved_b", ipAt(layout.ReservedB))
+	set("reserved_c", ipAt(layout.ReservedC))
 	set("reserved_d", uint32ToIP(last).String())
 }
 

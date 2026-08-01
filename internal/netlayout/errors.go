@@ -48,3 +48,47 @@ func subnetTooSmallError(strategy, cidr string, prefix, minPrefix, highestOffset
 	return fmt.Errorf("%w: strategy %q cidr %q is /%d, requires minimum /%d (highest fixed offset %d)",
 		ErrSubnetTooSmall, strategy, cidr, prefix, minPrefix, highestOffset)
 }
+
+// Sentinel errors for ValidateBand's available-band override checks. Callers
+// match with errors.Is. These port the historical
+// internal/bootstrap.applyAvailableBandOverride sentinels of the same shape
+// (ErrBandOverridePartial/StartTooLow/EndNotAfterStart/EndBeyondSubnet) into
+// this package, since ValidateBand now owns that validation.
+var (
+	// ErrBandOverridePartial is returned when only one of a band override's
+	// start/end is set (0). Both must be set together, or neither (the
+	// caller skips ValidateBand entirely and uses the strategy's default
+	// layout).
+	ErrBandOverridePartial = errors.New("netlayout: band override start and end must both be set, or neither")
+	// ErrBandOverrideStartTooLow is returned when start would collide with
+	// the fixed named-IP slots below the historical available-band floor.
+	ErrBandOverrideStartTooLow = errors.New("netlayout: band override start collides with reserved named-IP slots")
+	// ErrBandOverrideEndNotAfterStart is returned when end does not fall
+	// strictly after start.
+	ErrBandOverrideEndNotAfterStart = errors.New("netlayout: band override end must be greater than start")
+	// ErrBandOverrideEndBeyondSubnet is returned when end falls outside
+	// cidr's usable address range.
+	ErrBandOverrideEndBeyondSubnet = errors.New("netlayout: band override end is beyond the subnet's usable address range")
+	// ErrInvalidCIDR is returned when ValidateBand cannot parse cidr as an
+	// IPv4 CIDR.
+	ErrInvalidCIDR = errors.New("netlayout: invalid CIDR")
+)
+
+// bandOverrideStartTooLowError wraps ErrBandOverrideStartTooLow with the
+// offending start and the floor it fell below.
+func bandOverrideStartTooLowError(start int) error {
+	return fmt.Errorf("%w: got %d, must be >= %d", ErrBandOverrideStartTooLow, start, bandOverrideFloor)
+}
+
+// bandOverrideEndNotAfterStartError wraps ErrBandOverrideEndNotAfterStart
+// with the offending start/end pair.
+func bandOverrideEndNotAfterStartError(start, end int) error {
+	return fmt.Errorf("%w: start=%d end=%d", ErrBandOverrideEndNotAfterStart, start, end)
+}
+
+// bandOverrideEndBeyondSubnetError wraps ErrBandOverrideEndBeyondSubnet with
+// the offending end, the subnet's last usable offset, and cidr.
+func bandOverrideEndBeyondSubnetError(end, lastUsableOffset int, cidr string) error {
+	return fmt.Errorf("%w: end=%d last-usable-offset=%d subnet=%s",
+		ErrBandOverrideEndBeyondSubnet, end, lastUsableOffset, cidr)
+}

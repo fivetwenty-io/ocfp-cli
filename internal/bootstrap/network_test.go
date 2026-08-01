@@ -548,9 +548,13 @@ func TestArtifactsIPSlot_ResolvesToDotEleven(t *testing.T) {
 	}
 }
 
-// TestAvailableAIPSlot_ResolvesToDotTwelve verifies available_a is subnet base + 12
-// after the artifacts slot takes .11.
-func TestAvailableAIPSlot_ResolvesToDotTwelve(t *testing.T) {
+// TestAvailableAIPSlot_ResolvesToStrategyBandStart verifies available_a on
+// an ocfp-role subnet comes from the bloc's netlayout strategy's own mgmt
+// available band (wide's default: offset 32) rather than the fixed
+// artifacts-slot-plus-one offset (12) the pre-netlayout layout used: Layer A
+// (this bootstrap resolution) and Layer B (internal/vault's reserved-ips
+// population) now read the identical table for every subnetStrategy alike.
+func TestAvailableAIPSlot_ResolvesToStrategyBandStart(t *testing.T) {
 	t.Parallel()
 
 	mgr, sm := setupArtifactsIPTest(t, "10.4.0.0/20")
@@ -569,7 +573,7 @@ func TestAvailableAIPSlot_ResolvesToDotTwelve(t *testing.T) {
 		t.Fatalf("missing available_a output: %v", err)
 	}
 
-	const want = "10.4.4.12"
+	const want = "10.4.4.32"
 	if got != want {
 		t.Errorf("available_a = %q, want %q", got, want)
 	}
