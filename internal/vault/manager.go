@@ -46,13 +46,17 @@ var (
 	ErrVaultTargetNotFound        = errors.New("vault target not found in .saferc")
 	ErrVaultTargetNoURL           = errors.New("vault target has no URL configured")
 	ErrNonInteractiveConfirmation = errors.New("interactive confirmation required but terminal is non-interactive")
+	// ErrReservedIPsRequiresPVE is returned when a reserved-ips populate
+	// phase or migrate/status operation is attempted against a non-PVE
+	// provider: the scoped writers it drives exist only on *PVEVaultProvider.
+	ErrReservedIPsRequiresPVE = errors.New("reserved-ips is only supported on the PVE provider")
 )
 
 // Manager provides core vault management operations
 // This is the Go equivalent of OCFP::Vault::Manager from Perl.
 type Manager struct {
 	client    *Client
-	safe      *Safe
+	safe      SafeInterface
 	config    *config.Config
 	blocName  string
 	startTime time.Time
@@ -206,24 +210,25 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 		return m.populateDryRun(opts, m.safe, m.client.GetClient().Address(), os.Stdout)
 	}
 
-	// Handle subcommands
-	var populateErr error
+	return m.populate(opts)
+}
 
+// populate dispatches to the phase-specific writer for opts.Subcommand. Kept
+// separate from the public Populate wrapper so the dispatch itself needs no
+// live vault connection — Populate has already validated one by the time
+// this runs.
+func (m *Manager) populate(opts *PopulateOptions) error {
 	switch opts.Subcommand {
 	case PhasePublicIPs:
-		populateErr = m.populatePublicIPs(opts.ProgressReporter)
+		return m.populatePublicIPs(opts.ProgressReporter)
+	case PhaseReservedIPs:
+		return m.populateReservedIPsPhase(opts.ProgressReporter, opts, os.Stdout)
 	case "":
 		// Full configuration populate (provider reports all phases)
-		populateErr = m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts, os.Stdout)
+		return m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts, os.Stdout)
 	default:
 		return ErrUnknownSubcommand(opts.Subcommand)
 	}
-
-	if populateErr != nil {
-		return populateErr
-	}
-
-	return nil
 }
 
 // MigrateOptions holds options for the migrate operation.
@@ -300,7 +305,9 @@ func (m *Manager) Close() error {
 }
 
 // GetSafe returns the safe wrapper for direct operations.
-func (m *Manager) GetSafe() *Safe {
+//
+//nolint:ireturn // returning SafeInterface is intentional; callers already consume it polymorphically
+func (m *Manager) GetSafe() SafeInterface {
 	return m.safe
 }
 
@@ -559,6 +566,47 @@ func (m *Manager) populateFullConfiguration(
 	return nil
 }
 
+// populateReservedIPsPhase writes only the reserved-ips vault paths across
+// both mgmt and ocf, leaving the rest of the configuration tree untouched.
+// Reserved IPs stay under the same guard a full populate uses: the address
+// vault already records wins unless opts.ForceReallocate is set, because
+// moving one recreates the VM that holds it.
+//
+// PVE-only, via the same *PVEVaultProvider type assertion used at the other
+// reserved-IP write sites in this file: the tiered/role-keyed writers this
+// phase drives exist only on the PVE provider.
+func (m *Manager) populateReservedIPsPhase(reporter ProgressReporter, opts *PopulateOptions, w io.Writer) error {
+	m.logger.Infow("Populating reserved IPs to vault", "provider", m.config.Provider)
+
+	layout, err := resolveLayout(m.config.Network)
+	if err != nil {
+		return fmt.Errorf("resolve reserved-ip layout: %w", err)
+	}
+
+	guard := newReservedIPGuardWithScheme(m.safe, opts.ForceReallocate, layout.SchemeVersion(), m.logger)
+
+	provider, err := m.createVaultProviderWith(guard)
+	if err != nil {
+		return fmt.Errorf("failed to create vault provider: %w", err)
+	}
+
+	pveProvider, ok := provider.(*PVEVaultProvider)
+	if !ok {
+		return fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
+	}
+
+	err = pveProvider.ConfigureReservedIPs(reporter, 1, 1)
+	if err != nil {
+		return fmt.Errorf("reserved IPs configuration failed: %w", err)
+	}
+
+	WriteReservedIPReport(w, guard.Report())
+
+	m.logger.Info("Reserved IPs population completed")
+
+	return nil
+}
+
 // applyPopulateProviderOptions threads populate CLI flags into the provider.
 func applyPopulateProviderOptions(provider providers.VaultProvider, kmsKeyARN string, opts *PopulateOptions) {
 	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
@@ -610,6 +658,13 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	switch opts.Subcommand {
 	case PhasePublicIPs:
 		err = provider.ConfigurePublicIPs(opts.ProgressReporter, 1, 1)
+	case PhaseReservedIPs:
+		pveProvider, ok := provider.(*PVEVaultProvider)
+		if !ok {
+			return fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
+		}
+
+		err = pveProvider.ConfigureReservedIPs(opts.ProgressReporter, 1, 1)
 	case "":
 		err = provider.Configure(opts.ProgressReporter)
 	default:
@@ -652,7 +707,16 @@ func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 		return empty, fmt.Errorf("vault connection validation failed: %w", err)
 	}
 
-	var base SafeInterface = m.safe
+	return m.reservedIPs(opts)
+}
+
+// reservedIPs is ReservedIPs' body, split out so its write-scoping can run
+// without the live-connection precondition ReservedIPs already checked —
+// letting it run in tests against a fake safe.
+func (m *Manager) reservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error) {
+	empty := ReservedIPReport{Drifts: nil, Schemes: nil}
+
+	base := m.safe
 	if !opts.Apply {
 		base = newRecordingSafe(m.safe)
 	}
@@ -669,12 +733,21 @@ func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 		return empty, fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
+	// PVE-only: the tiered/role-keyed reserved-ips writers driven below exist
+	// only on *PVEVaultProvider, so any other provider is a clear error
+	// rather than a silent no-op or (as Configure would have been) a
+	// full-tree write of every other path this operation must leave alone.
+	pveProvider, ok := provider.(*PVEVaultProvider)
+	if !ok {
+		return empty, fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
+	}
+
 	// A status pass must not reach the blobstore any more than a dry-run does.
-	if pveProvider, ok := provider.(*PVEVaultProvider); ok && !opts.Apply {
+	if !opts.Apply {
 		pveProvider.bucketEnsurer = noopBucketEnsurer{}
 	}
 
-	err = provider.Configure(opts.ProgressReporter)
+	err = pveProvider.ConfigureReservedIPs(opts.ProgressReporter, 1, 1)
 	if err != nil {
 		return empty, fmt.Errorf("provider configuration failed: %w", err)
 	}
