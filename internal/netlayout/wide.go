@@ -80,6 +80,90 @@ const (
 	pveOCFHaproxyOffset = pveOCFAvailableStart + 1
 )
 
+// slotRoleInfra and slotRoleOCFP are the two role values Slots accepts,
+// shared by wideLayout and compactLayout — any other role is rejected with
+// unknownRoleError.
+const (
+	slotRoleInfra = "infra"
+	slotRoleOCFP  = "ocfp"
+)
+
+// infra role's historical named-slot offsets and available band, carried
+// over unchanged from internal/bootstrap.defaultReservedIPLayout /
+// pveSubnetStrategy.reservedIPLayout (role != "ocfp" branch, which ignores
+// subnetCIDR entirely). They are declared separately from wide's own
+// pveXxxOffset constants above even where the numeric values coincide
+// (offsets 3-11): the infra role's layout must stay pinned to this
+// historical scheme regardless of any future retune of wide's or compact's
+// own mgmt-tier offsets, and reusing the same constants would silently
+// couple the two.
+const (
+	infraBastionOffset        = 3
+	infraBoshOffset           = 4
+	infraVaultOffset          = 5
+	infraJumpboxOffset        = 6
+	infraConcourseOffset      = 7
+	infraPrometheusOffset     = 8
+	infraShieldOffset         = 9
+	infraBlacksmithOffset     = 10
+	infraBlacksmithOCFPOffset = 3
+	infraDoomsdayOffset       = 9
+	infraShoutOffset          = 10
+	infraOCFPUIOffset         = 9
+	infraArtifactsOffset      = 11
+	infraAvailableStart       = 12
+	infraAvailableEnd         = 29
+	infraReservedBOffset      = 10
+	infraReservedCOffset      = 30
+)
+
+// infraSlots returns the infra role's InfraSlots, identical for every
+// strategy and every subnet size — the infra role applies to the fixed
+// infra subnet carved once per bloc, not a workload subnet whose layout
+// varies by strategy.
+func infraSlots() InfraSlots {
+	return InfraSlots{
+		Bastion:        infraBastionOffset,
+		Bosh:           infraBoshOffset,
+		Vault:          infraVaultOffset,
+		Jumpbox:        infraJumpboxOffset,
+		Concourse:      infraConcourseOffset,
+		Prometheus:     infraPrometheusOffset,
+		Shield:         infraShieldOffset,
+		Blacksmith:     infraBlacksmithOffset,
+		BlacksmithOCFP: infraBlacksmithOCFPOffset,
+		Doomsday:       infraDoomsdayOffset,
+		Shout:          infraShoutOffset,
+		OCFPUI:         infraOCFPUIOffset,
+		Artifacts:      infraArtifactsOffset,
+		AvailableA:     infraAvailableStart,
+		AvailableB:     infraAvailableEnd,
+		ReservedB:      infraReservedBOffset,
+		ReservedC:      infraReservedCOffset,
+	}
+}
+
+// ocfpSlots returns the ocfp role's InfraSlots for a strategy whose own
+// mgmt-tier available band is [mgmtAvailableStart, mgmtAvailableEnd] (the
+// same bounds that strategy's WorkloadTable emits under available/mgmt).
+// Every other field keeps its infra-role value: historically
+// pveSubnetStrategy.reservedIPLayout started from defaultReservedIPLayout()
+// for the ocfp role too and only ever overrode the available band (and the
+// reservedC offset that immediately follows it) — the named per-role
+// statics (bastion, bosh, ...) were never role-specific. What changes here
+// is that the band is now the strategy's OWN mgmt band unconditionally,
+// replacing the old CIDR-size-derived "total/2 - 3" widening: Layer A and
+// Layer B must never disagree about where that band sits again (see
+// TestSlots_LayerAgreement).
+func ocfpSlots(mgmtAvailableStart, mgmtAvailableEnd int) InfraSlots {
+	slots := infraSlots()
+	slots.AvailableA = mgmtAvailableStart
+	slots.AvailableB = mgmtAvailableEnd
+	slots.ReservedC = mgmtAvailableEnd + 1
+
+	return slots
+}
+
 // wideSchemeVersion is the guard-stamped scheme identity this strategy's
 // tables were introduced under (see internal/vault reservedIPSchemeVersion,
 // which independently pins the same value for the vault-layer guard).
@@ -100,9 +184,10 @@ const wideMinPrefix = 25
 const wideHighestOffset = pveOCFHaproxyOffset
 
 // wideLayout is the "wide" Layout: the PVE per-tier reserved-IP scheme
-// carried over from the pre-netlayout internal/vault implementation. Its
-// WorkloadTable, SchemeVersion, MinPrefix, and ValidateSubnet are real;
-// Slots remains a stub (see registry.go) until its owning task lands.
+// carried over from the pre-netlayout internal/vault implementation.
+// WorkloadTable, SchemeVersion, MinPrefix, ValidateSubnet, and Slots are
+// real; ValidateBand remains a stub (see registry.go) until its owning
+// task lands.
 type wideLayout struct{}
 
 func (wideLayout) Name() string { return "wide" }
@@ -159,8 +244,18 @@ func (wideLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
 	}, nil
 }
 
-func (wideLayout) Slots(_, _ string) (InfraSlots, error) {
-	return InfraSlots{}, ErrNotImplemented
+// Slots returns wide's Layer A named-slot set for role. cidr is accepted
+// for interface conformance but ignored: neither role's layout varies by
+// subnet size (see infraSlots and ocfpSlots).
+func (wideLayout) Slots(role, _ string) (InfraSlots, error) {
+	switch role {
+	case slotRoleInfra:
+		return infraSlots(), nil
+	case slotRoleOCFP:
+		return ocfpSlots(pveMgmtAvailableStart, pveMgmtAvailableEnd), nil
+	default:
+		return InfraSlots{}, unknownRoleError(role)
+	}
 }
 
 // MinPrefix returns 25: the shortest (widest) CIDR prefix that still fits
