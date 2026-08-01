@@ -23,3 +23,17 @@ var ErrUnknownStrategy = errors.New("unknown network strategy")
 func unknownStrategyError(name string) error {
 	return fmt.Errorf("%w %q: known strategies are %s", ErrUnknownStrategy, name, strings.Join(Names(), ", "))
 }
+
+// ErrSubnetTooSmall is the sentinel ValidateSubnet wraps when cidr's prefix
+// is longer (fewer host addresses) than a strategy's MinPrefix requires.
+// Callers match it with errors.Is.
+var ErrSubnetTooSmall = errors.New("subnet too small for strategy")
+
+// subnetTooSmallError wraps ErrSubnetTooSmall with the offending strategy
+// name, cidr, its prefix, the strategy's minimum prefix, and its highest
+// fixed offset, so the message is enough on its own to explain the
+// rejection without cross-referencing the strategy's source.
+func subnetTooSmallError(strategy, cidr string, prefix, minPrefix, highestOffset int) error {
+	return fmt.Errorf("%w: strategy %q cidr %q is /%d, requires minimum /%d (highest fixed offset %d)",
+		ErrSubnetTooSmall, strategy, cidr, prefix, minPrefix, highestOffset)
+}
