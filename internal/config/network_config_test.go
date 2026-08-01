@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -107,46 +108,85 @@ dns_servers: [1.1.1.1, 8.8.8.8]
 	}
 }
 
-// TestNetworkConfigUnmarshalAvailableBandAliases proves the reserved-IP
-// available-band override fields parse from both the documented camelCase
-// keys and the snake_case aliases, with camelCase taking precedence when both
-// are present (matching every other aliased field on NetworkConfig).
-func TestNetworkConfigUnmarshalAvailableBandAliases(t *testing.T) {
+// TestNetworkConfigAvailableBandStart_HardError proves the removed
+// single-band override keys (network.availableBandStart/End, in every
+// supported alias form) fail config load with a hard error naming both
+// replacement keys, rather than being silently ignored. A config that sets
+// neither the old keys nor the new network.bands keys, and one that sets
+// only the new network.bands keys, must still load cleanly.
+func TestNetworkConfigAvailableBandStart_HardError(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		yaml      string
-		wantStart int
-		wantEnd   int
+	errorCases := []struct {
+		name string
+		yaml string
 	}{
 		{
-			name:      "camelCase keys",
-			yaml:      "availableBandStart: 12\navailableBandEnd: 509",
-			wantStart: 12,
-			wantEnd:   509,
+			name: "camelCase keys",
+			yaml: "availableBandStart: 12\navailableBandEnd: 509",
 		},
 		{
-			name:      "snake_case keys",
-			yaml:      "available_band_start: 12\navailable_band_end: 509",
-			wantStart: 12,
-			wantEnd:   509,
+			name: "snake_case keys",
+			yaml: "available_band_start: 12\navailable_band_end: 509",
 		},
 		{
-			name:      "camelCase wins over snake_case",
-			yaml:      "availableBandStart: 20\navailableBandEnd: 400\navailable_band_start: 99\navailable_band_end: 999",
-			wantStart: 20,
-			wantEnd:   400,
+			name: "camelCase and snake_case both set",
+			yaml: "availableBandStart: 20\navailableBandEnd: 400\navailable_band_start: 99\navailable_band_end: 999",
 		},
 		{
-			name:      "unset fields default to zero (no override)",
-			yaml:      "cidr: 10.0.0.0/16",
-			wantStart: 0,
-			wantEnd:   0,
+			name: "only start key set",
+			yaml: "availableBandStart: 12",
+		},
+		{
+			name: "only end key set",
+			yaml: "availableBandEnd: 509",
+		},
+		{
+			name: "only snake_case start key set",
+			yaml: "available_band_start: 12",
+		},
+		{
+			name: "only snake_case end key set",
+			yaml: "available_band_end: 509",
 		},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var nc config.NetworkConfig
+
+			err := yaml.Unmarshal([]byte(tt.yaml), &nc)
+			if err == nil {
+				t.Fatalf("unmarshal: want error, got nil")
+			}
+
+			if !strings.Contains(err.Error(), "network.bands.infra") {
+				t.Errorf("error %q missing network.bands.infra", err.Error())
+			}
+
+			if !strings.Contains(err.Error(), "network.bands.mgmt") {
+				t.Errorf("error %q missing network.bands.mgmt", err.Error())
+			}
+		})
+	}
+
+	okCases := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "neither old nor new keys set",
+			yaml: "cidr: 10.0.0.0/16",
+		},
+		{
+			name: "new bands keys set",
+			yaml: "cidr: 10.0.0.0/16\nbands:\n  infra:\n    start: 12\n    end: 199\n  mgmt:\n    start: 200\n    end: 249",
+		},
+	}
+
+	for _, tt := range okCases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -155,14 +195,6 @@ func TestNetworkConfigUnmarshalAvailableBandAliases(t *testing.T) {
 			err := yaml.Unmarshal([]byte(tt.yaml), &nc)
 			if err != nil {
 				t.Fatalf("unmarshal: %v", err)
-			}
-
-			if nc.AvailableBandStart != tt.wantStart {
-				t.Errorf("AvailableBandStart = %d, want %d", nc.AvailableBandStart, tt.wantStart)
-			}
-
-			if nc.AvailableBandEnd != tt.wantEnd {
-				t.Errorf("AvailableBandEnd = %d, want %d", nc.AvailableBandEnd, tt.wantEnd)
 			}
 		})
 	}
