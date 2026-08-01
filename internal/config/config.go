@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
@@ -510,6 +511,37 @@ type NetworkConfig struct {
 	// are integer offsets consumed by bootstrap's per-subnet layout resolution.
 	AvailableBandStart int `json:"availableBandStart,omitempty" mapstructure:"availableBandStart" yaml:"availableBandStart,omitempty"`
 	AvailableBandEnd   int `json:"availableBandEnd,omitempty"   mapstructure:"availableBandEnd"   yaml:"availableBandEnd,omitempty"`
+
+	// Strategy selects the reserved-IP layout strategy (see internal/netlayout)
+	// used to number infra/mgmt/ocf tier addresses within this bloc's subnets.
+	// Empty resolves to netlayout.Default() ("wide"). An unrecognized value is
+	// rejected at UnmarshalYAML time with an error wrapping
+	// netlayout.ErrUnknownStrategy — netlayout's registry is the single source
+	// of truth for valid names; this package never hardcodes the name list.
+	Strategy string `json:"strategy,omitempty" mapstructure:"strategy" yaml:"strategy,omitempty"`
+
+	// Bands carries per-tier reserved-IP band overrides for the selected
+	// Strategy. Zero-value Band entries mean "no override, use the strategy's
+	// default layout for that tier" — the same convention as
+	// AvailableBandStart/AvailableBandEnd above, extended to name the tier
+	// explicitly instead of assuming a single implicit tier.
+	Bands NetworkBands `json:"bands,omitempty" mapstructure:"bands" yaml:"bands,omitempty"`
+}
+
+// Band is a start/end offset pair for a reserved-IP band override, relative
+// to a subnet's base address (matching the convention documented on
+// NetworkConfig.AvailableBandStart/AvailableBandEnd). Zero value means unset.
+type Band struct {
+	Start int `json:"start,omitempty" mapstructure:"start" yaml:"start,omitempty"`
+	End   int `json:"end,omitempty"   mapstructure:"end"   yaml:"end,omitempty"`
+}
+
+// NetworkBands groups per-tier reserved-IP band overrides addressed by
+// netlayout.Tier name. Only Infra and Mgmt are exposed today; an Ocf band is
+// deliberately not shipped by this field yet.
+type NetworkBands struct {
+	Infra Band `json:"infra,omitempty" mapstructure:"infra" yaml:"infra,omitempty"`
+	Mgmt  Band `json:"mgmt,omitempty"  mapstructure:"mgmt"  yaml:"mgmt,omitempty"`
 }
 
 // UnmarshalYAML accepts the historical snake_case key network_cidr alongside
@@ -545,6 +577,10 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		AvailableBandStartSC int `yaml:"available_band_start,omitempty"`
 		AvailableBandEnd     int `yaml:"availableBandEnd,omitempty"`
 		AvailableBandEndSC   int `yaml:"available_band_end,omitempty"`
+
+		Strategy   string       `yaml:"strategy,omitempty"`
+		StrategySC string       `yaml:"network_strategy,omitempty"`
+		Bands      NetworkBands `yaml:"bands,omitempty"`
 	}
 
 	var raw rawNetwork
@@ -573,6 +609,16 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	n.AvailableIPEnd = firstSetString(raw.AvailableIPEnd, raw.AvailableIPEndSC)
 	n.AvailableBandStart = firstSetInt(raw.AvailableBandStart, raw.AvailableBandStartSC)
 	n.AvailableBandEnd = firstSetInt(raw.AvailableBandEnd, raw.AvailableBandEndSC)
+
+	strategy := firstSetString(raw.Strategy, raw.StrategySC)
+	if strategy != "" {
+		if _, lookupErr := netlayout.Lookup(strategy); lookupErr != nil {
+			return fmt.Errorf("network.strategy: %w", lookupErr)
+		}
+	}
+
+	n.Strategy = strategy
+	n.Bands = raw.Bands
 
 	return nil
 }
