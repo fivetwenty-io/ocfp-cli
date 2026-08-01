@@ -11,8 +11,9 @@ import (
 const defaultStrategyName = "wide"
 
 // registry holds every Layout implementation available for selection. Both
-// entries are stub-safe (see Layout's doc comment) — only Name is real for
-// either strategy until its owning implementation task lands.
+// entries are stub-safe (see Layout's doc comment): compact has only Name
+// real, wide additionally has WorkloadTable and SchemeVersion real (its
+// ValidateSubnet and Slots remain stubs until their owning tasks land).
 var registry = map[string]Layout{
 	"wide":    wideLayout{},
 	"compact": compactLayout{},
@@ -50,39 +51,16 @@ func Names() []string {
 	return names
 }
 
-// wideLayout and compactLayout are declared here rather than in dedicated
-// wide.go/compact.go files, because those files are first created by IMP-02
-// and IMP-07 respectively (plan Q-01). Every method but Name is a stub
-// until its owning task lands: stubs that can return an error return
-// ErrNotImplemented; SchemeVersion and MinPrefix cannot (Layout declares
-// them without an error return) and instead return their type's documented
-// zero value below — never a panic.
-
-type wideLayout struct{}
-
-func (wideLayout) Name() string { return "wide" }
-
-// SchemeVersion is a stub: returns "" until IMP-02 makes it real ("2").
-func (wideLayout) SchemeVersion() string { return "" }
-
-func (wideLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
-	return nil, ErrNotImplemented
-}
-
-func (wideLayout) Slots(_, _ string) (InfraSlots, error) {
-	return InfraSlots{}, ErrNotImplemented
-}
-
-// MinPrefix is a stub: returns 0 until IMP-03 makes it real (25).
-func (wideLayout) MinPrefix() int { return 0 }
-
-func (wideLayout) ValidateSubnet(_ string) error {
-	return ErrNotImplemented
-}
-
-func (wideLayout) ValidateBand(_ Tier, _ string, _, _ int) error {
-	return ErrNotImplemented
-}
+// wideLayout is declared in wide.go (IMP-02) — its WorkloadTable and
+// SchemeVersion are real; ValidateSubnet and Slots remain stubs pending
+// later tasks.
+//
+// compactLayout is declared here rather than in a dedicated compact.go
+// file, because that file is first created by IMP-07 (plan Q-01). Every
+// method but Name is a stub until IMP-07 lands: stubs that can return an
+// error return ErrNotImplemented; SchemeVersion and MinPrefix cannot
+// (Layout declares them without an error return) and instead return their
+// type's documented zero value below — never a panic.
 
 type compactLayout struct{}
 
