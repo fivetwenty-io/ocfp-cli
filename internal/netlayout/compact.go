@@ -64,9 +64,7 @@ const compactHighestOffset = pveCompactOCFHaproxyOffset
 
 // compactLayout is the "compact" Layout: a /26-capable PVE per-tier
 // reserved-IP scheme derived from wide by compressing its ocf statics and
-// available bands. WorkloadTable, SchemeVersion, MinPrefix, ValidateSubnet,
-// and Slots are real; ValidateBand remains a stub (see registry.go's
-// Layout doc comment) until its owning task lands.
+// available bands. Every Layout method is real.
 type compactLayout struct{}
 
 func (compactLayout) Name() string { return "compact" }
@@ -163,6 +161,9 @@ func (compactLayout) ValidateSubnet(cidr string) error {
 	return nil
 }
 
-func (compactLayout) ValidateBand(_ Tier, _ string, _, _ int) error {
-	return ErrNotImplemented
+// ValidateBand validates [start,end] as a reserved-IP available-band
+// override for tier on cidr. See validateBand (band.go) for the shared
+// implementation both wide and compact delegate to.
+func (compactLayout) ValidateBand(tier Tier, cidr string, start, end int) error {
+	return validateBand(tier, cidr, start, end)
 }

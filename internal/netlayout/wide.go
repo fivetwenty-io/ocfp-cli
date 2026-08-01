@@ -184,10 +184,8 @@ const wideMinPrefix = 25
 const wideHighestOffset = pveOCFHaproxyOffset
 
 // wideLayout is the "wide" Layout: the PVE per-tier reserved-IP scheme
-// carried over from the pre-netlayout internal/vault implementation.
-// WorkloadTable, SchemeVersion, MinPrefix, ValidateSubnet, and Slots are
-// real; ValidateBand remains a stub (see registry.go) until its owning
-// task lands.
+// carried over from the pre-netlayout internal/vault implementation. Every
+// Layout method is real.
 type wideLayout struct{}
 
 func (wideLayout) Name() string { return "wide" }
@@ -280,6 +278,9 @@ func (wideLayout) ValidateSubnet(cidr string) error {
 	return nil
 }
 
-func (wideLayout) ValidateBand(_ Tier, _ string, _, _ int) error {
-	return ErrNotImplemented
+// ValidateBand validates [start,end] as a reserved-IP available-band
+// override for tier on cidr. See validateBand (band.go) for the shared
+// implementation both wide and compact delegate to.
+func (wideLayout) ValidateBand(tier Tier, cidr string, start, end int) error {
+	return validateBand(tier, cidr, start, end)
 }

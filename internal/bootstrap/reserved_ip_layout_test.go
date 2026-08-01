@@ -8,6 +8,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -63,12 +64,16 @@ func getOutputString(t *testing.T, sm *state.Manager, key string) string {
 	return s
 }
 
-// TestPVEWorkloadBand_WidensOnWide22_InfraKeepsDefault verifies that
-// pveSubnetStrategy widens the available band on a /22 workload subnet to
-// roughly half the subnet (offsets 12..509, reservedC=510) while the infra
-// subnet — which hosts bastion/director/shield/blacksmith and has no room to
-// widen — keeps the constant 12..29 layout.
-func TestPVEWorkloadBand_WidensOnWide22_InfraKeepsDefault(t *testing.T) {
+// TestPVEWorkloadBand_OCFPUnifiesToStrategyBand_InfraKeepsDefault verifies
+// that the ocfp role's available band now comes unconditionally from the
+// bloc's netlayout strategy ("wide" by default: mgmt available band
+// 32-63, reservedC 64) rather than a CIDR-size-derived widening computed by
+// pveSubnetStrategy — Layer A (this bootstrap resolution) and Layer B
+// (internal/vault's reserved-ips population) read the identical table, so
+// they can never disagree about where the ocfp band sits. The infra
+// subnet — which hosts bastion/director/shield/blacksmith and has no room
+// to widen — keeps the constant 12..29 layout, unaffected by strategy.
+func TestPVEWorkloadBand_OCFPUnifiesToStrategyBand_InfraKeepsDefault(t *testing.T) {
 	t.Parallel()
 
 	mgr, sm, _ := newPVEBandTestManager(t)
@@ -91,32 +96,29 @@ func TestPVEWorkloadBand_WidensOnWide22_InfraKeepsDefault(t *testing.T) {
 		t.Errorf("infra available_b = %q, want 10.64.64.29", got)
 	}
 
-	// ocfp-0 workload subnet is 10.64.68.0/22: widened band. Offset 509 from
-	// 10.64.68.0 crosses into the next octet (509 = 256 + 253): 10.64.69.253.
-	// reservedC = availableB + 1 = 10.64.69.254.
-	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_available_a"); got != "10.64.68.12" {
-		t.Errorf("ocfp-0 available_a = %q, want 10.64.68.12", got)
+	// ocfp-0 workload subnet is 10.64.68.0/22: the wide strategy's own
+	// mgmt-tier band (32-63), unified regardless of subnet size.
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_available_a"); got != "10.64.68.32" {
+		t.Errorf("ocfp-0 available_a = %q, want 10.64.68.32", got)
 	}
 
-	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_available_b"); got != "10.64.69.253" {
-		t.Errorf("ocfp-0 available_b = %q, want 10.64.69.253 (offset 509)", got)
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_available_b"); got != "10.64.68.63" {
+		t.Errorf("ocfp-0 available_b = %q, want 10.64.68.63", got)
 	}
 
-	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_c"); got != "10.64.69.254" {
-		t.Errorf("ocfp-0 reserved_c = %q, want 10.64.69.254 (offset 510)", got)
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_c"); got != "10.64.68.64" {
+		t.Errorf("ocfp-0 reserved_c = %q, want 10.64.68.64", got)
 	}
 }
 
 // TestReservedBandOverride_AppliesToBothRoles verifies that a config-level
-// network.availableBandStart/availableBandEnd override replaces the strategy
-// layout's available band on BOTH the infra and ocfp roles, forcing
-// reservedC to end+1.
+// network.bands.infra override replaces the strategy layout's available
+// band on BOTH the infra and ocfp roles, forcing reservedC to end+1.
 func TestReservedBandOverride_AppliesToBothRoles(t *testing.T) {
 	t.Parallel()
 
 	mgr, sm, cfg := newPVEBandTestManager(t)
-	cfg.Network.AvailableBandStart = 100
-	cfg.Network.AvailableBandEnd = 200
+	cfg.Network.Bands.Infra = config.Band{Start: 100, End: 200}
 
 	ctx := context.Background()
 
@@ -153,6 +155,46 @@ func TestReservedBandOverride_AppliesToBothRoles(t *testing.T) {
 	}
 }
 
+// TestReservedBandOverride_Unset verifies that leaving network.bands.infra
+// at its zero value applies no override at all: resolveReservedIPLayout
+// returns the strategy's layout unchanged, and layout.ValidateBand is never
+// invoked (a malformed subnetCIDR would otherwise surface as a
+// ValidateBand error, so this also proves the short-circuit happens before
+// any CIDR parsing tied to the override path).
+func TestReservedBandOverride_Unset(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, cfg := newPVEBandTestManager(t)
+
+	if cfg.Network.Bands.Infra != (config.Band{}) {
+		t.Fatalf("test precondition: Bands.Infra = %+v, want zero value", cfg.Network.Bands.Infra)
+	}
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// Strategy default layout applied, unchanged: infra keeps 12..29, ocfp-0
+	// keeps wide's own mgmt band (32-63, reservedC 64).
+	if got := getOutputString(t, sm, "reserved_prod-infra_available_a"); got != "10.64.64.12" {
+		t.Errorf("infra available_a = %q, want 10.64.64.12 (no override)", got)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_available_a"); got != "10.64.68.32" {
+		t.Errorf("ocfp-0 available_a = %q, want 10.64.68.32 (no override)", got)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_c"); got != "10.64.68.64" {
+		t.Errorf("ocfp-0 reserved_c = %q, want 10.64.68.64 (no override)", got)
+	}
+}
+
 // TestReservedBandOverride_AppliesToStackitStrategyToo verifies the override
 // is honored by the STACKIT triple strategy as well as PVE, since it is
 // applied uniformly in resolveReservedIPLayout regardless of which strategy
@@ -177,8 +219,7 @@ func TestReservedBandOverride_AppliesToStackitStrategyToo(t *testing.T) {
 	fakeNetwork := &fakeNet{}
 	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
 
-	cfg.Network.AvailableBandStart = 100
-	cfg.Network.AvailableBandEnd = 200
+	cfg.Network.Bands.Infra = config.Band{Start: 100, End: 200}
 
 	mgr := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
 		BlocName: "prod",
@@ -214,7 +255,10 @@ func TestReservedBandOverride_AppliesToStackitStrategyToo(t *testing.T) {
 // override shapes: a start that would collide with the fixed named-IP slots
 // (0-11), an end that doesn't fall strictly after start, and an end beyond
 // the target subnet's usable range. Each must surface its documented
-// sentinel error via errors.Is so callers can distinguish failure reasons.
+// netlayout sentinel error via errors.Is so callers can distinguish failure
+// reasons. Validation itself now lives in netlayout.Layout.ValidateBand
+// (see internal/netlayout/band.go); bootstrap only wires the config values
+// through.
 func TestReservedBandOverride_ValidationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -224,10 +268,10 @@ func TestReservedBandOverride_ValidationErrors(t *testing.T) {
 		end     int
 		wantErr error
 	}{
-		{name: "start below 12 collides with named slots", start: 5, end: 50, wantErr: bootstrap.ErrBandOverrideStartTooLow},
-		{name: "end equal to start", start: 100, end: 100, wantErr: bootstrap.ErrBandOverrideEndNotAfterStart},
-		{name: "end before start", start: 100, end: 50, wantErr: bootstrap.ErrBandOverrideEndNotAfterStart},
-		{name: "end beyond /22 usable range", start: 12, end: 2000, wantErr: bootstrap.ErrBandOverrideEndBeyondSubnet},
+		{name: "start below 12 collides with named slots", start: 5, end: 50, wantErr: netlayout.ErrBandOverrideStartTooLow},
+		{name: "end equal to start", start: 100, end: 100, wantErr: netlayout.ErrBandOverrideEndNotAfterStart},
+		{name: "end before start", start: 100, end: 50, wantErr: netlayout.ErrBandOverrideEndNotAfterStart},
+		{name: "end beyond /22 usable range", start: 12, end: 2000, wantErr: netlayout.ErrBandOverrideEndBeyondSubnet},
 	}
 
 	for _, tt := range tests {
@@ -235,8 +279,7 @@ func TestReservedBandOverride_ValidationErrors(t *testing.T) {
 			t.Parallel()
 
 			mgr, _, cfg := newPVEBandTestManager(t)
-			cfg.Network.AvailableBandStart = tt.start
-			cfg.Network.AvailableBandEnd = tt.end
+			cfg.Network.Bands.Infra = config.Band{Start: tt.start, End: tt.end}
 
 			ctx := context.Background()
 
@@ -257,14 +300,13 @@ func TestReservedBandOverride_ValidationErrors(t *testing.T) {
 }
 
 // TestReservedBandOverride_PartialConfigRejected verifies that setting only
-// one of AvailableBandStart/AvailableBandEnd (rather than both, or neither)
-// is treated as a misconfiguration rather than silently defaulting one side.
+// one of Bands.Infra.Start/End (rather than both, or neither) is treated as
+// a misconfiguration rather than silently defaulting one side.
 func TestReservedBandOverride_PartialConfigRejected(t *testing.T) {
 	t.Parallel()
 
 	mgr, _, cfg := newPVEBandTestManager(t)
-	cfg.Network.AvailableBandStart = 100
-	cfg.Network.AvailableBandEnd = 0
+	cfg.Network.Bands.Infra = config.Band{Start: 100, End: 0}
 
 	ctx := context.Background()
 
@@ -277,7 +319,7 @@ func TestReservedBandOverride_PartialConfigRejected(t *testing.T) {
 		t.Fatal("CreateSubnets: want error for partial band override, got nil")
 	}
 
-	if !errors.Is(err, bootstrap.ErrBandOverridePartial) {
+	if !errors.Is(err, netlayout.ErrBandOverridePartial) {
 		t.Errorf("CreateSubnets error = %v, want wrapping ErrBandOverridePartial", err)
 	}
 }
