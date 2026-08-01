@@ -51,13 +51,13 @@ func Names() []string {
 	return names
 }
 
-// wideLayout is declared in wide.go (IMP-02) — its WorkloadTable and
+// wideLayout is declared in wide.go — its WorkloadTable and
 // SchemeVersion are real; ValidateSubnet and Slots remain stubs pending
-// later tasks.
+// their implementations.
 //
 // compactLayout is declared here rather than in a dedicated compact.go
-// file, because that file is first created by IMP-07 (plan Q-01). Every
-// method but Name is a stub until IMP-07 lands: stubs that can return an
+// file until its real implementation lands. Every method but Name is a
+// stub: stubs that can return an
 // error return ErrNotImplemented; SchemeVersion and MinPrefix cannot
 // (Layout declares them without an error return) and instead return their
 // type's documented zero value below — never a panic.
@@ -66,8 +66,8 @@ type compactLayout struct{}
 
 func (compactLayout) Name() string { return "compact" }
 
-// SchemeVersion is a stub: returns "" until IMP-07 makes it real
-// ("3-compact").
+// SchemeVersion is a stub: returns "" until the real implementation
+// lands ("3-compact").
 func (compactLayout) SchemeVersion() string { return "" }
 
 func (compactLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
@@ -78,7 +78,7 @@ func (compactLayout) Slots(_, _ string) (InfraSlots, error) {
 	return InfraSlots{}, ErrNotImplemented
 }
 
-// MinPrefix is a stub: returns 0 until IMP-07 makes it real (26).
+// MinPrefix is a stub: returns 0 until the real implementation lands (26).
 func (compactLayout) MinPrefix() int { return 0 }
 
 func (compactLayout) ValidateSubnet(_ string) error {

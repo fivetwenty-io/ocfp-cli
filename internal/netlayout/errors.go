@@ -18,9 +18,8 @@ var ErrNotImplemented = errors.New("netlayout: not implemented")
 var ErrUnknownStrategy = errors.New("unknown network strategy")
 
 // unknownStrategyError wraps ErrUnknownStrategy with the offending name and
-// the sorted list of registered strategy names, matching the error text
-// convention set by P1 §3.2 ("unknown network strategy %q: known
-// strategies are ...").
+// the sorted list of registered strategy names ("unknown network strategy
+// %q: known strategies are ...").
 func unknownStrategyError(name string) error {
 	return fmt.Errorf("%w %q: known strategies are %s", ErrUnknownStrategy, name, strings.Join(Names(), ", "))
 }
