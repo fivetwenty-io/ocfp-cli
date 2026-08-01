@@ -387,6 +387,94 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 	return nil
 }
 
+// ConfigureReservedIPs writes ONLY the reserved-ips vault paths for both
+// mgmt and ocf -- never the subnet skeleton (cidr/az/gateway/dns/id), the
+// subnets marker, or any other part of the configuration tree. Reached
+// PVE-only, through a *PVEVaultProvider type assertion at the call sites
+// (populate's reserved-ips phase, and the reserved-ips migrate/status
+// commands) rather than the shared VaultProvider interface, because the
+// tiered/role-keyed writers it drives (writeTieredReservedIPs,
+// writeReservedIPs, writeFallbackReservedIPs) exist only on this provider.
+func (p *PVEVaultProvider) ConfigureReservedIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	phaseName := PhaseReservedIPs
+	phaseStart := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(phaseName, phaseNum, totalPhases)
+	}
+
+	p.logger.Infow("Configuring reserved IPs", "bloc", p.BlocName)
+
+	for _, envType := range []string{"mgmt", "ocf"} {
+		if err := p.configureReservedIPsForEnv(envType); err != nil {
+			return err
+		}
+	}
+
+	if reporter != nil {
+		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	}
+
+	return nil
+}
+
+// configureReservedIPsForEnv writes the reserved-ips paths for one
+// environment (mgmt or ocf). Mirrors ConfigureSubnets' per-subnet dispatch
+// (state-driven tiered/role-keyed writers, or the stateless fallback) but
+// omits every write ConfigureSubnets makes outside reserved-ips.
+func (p *PVEVaultProvider) configureReservedIPsForEnv(envType string) error {
+	sm := p.loadStateManager()
+	if sm == nil {
+		return p.writeFallbackReservedIPs(envType)
+	}
+
+	subnets, err := sm.GetResourcesByType("subnet")
+	if err != nil || len(subnets) == 0 {
+		return p.writeFallbackReservedIPs(envType)
+	}
+
+	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
+
+	for _, sub := range subnets {
+		if !strings.HasPrefix(sub.Name, p.BlocName+"-") {
+			continue
+		}
+
+		cidr, _ := sub.Properties["cidr"].(string)
+		if cidr == "" {
+			continue
+		}
+
+		genesisName := strings.TrimPrefix(sub.Name, p.BlocName+"-")
+		subnetPath := filepath.Join(subnetsPath, genesisName)
+
+		if subnetNum, ok := pveWorkloadSubnetIndex(genesisName); ok {
+			if err := p.writeTieredReservedIPs(cidr, envType, subnetNum, genesisName, subnetPath); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		roleKeys, err := p.writeReservedIPs(sm, subnetPath, sub.Name)
+		if err != nil {
+			return err
+		}
+
+		if len(roleKeys) == 0 {
+			continue
+		}
+
+		reservedPath := filepath.Join(subnetPath, "reserved-ips")
+
+		if err := p.Safe.SetMultiple(reservedPath, roleKeys); err != nil {
+			return fmt.Errorf("failed to write reserved-ip keys for %s: %w", genesisName, err)
+		}
+	}
+
+	return nil
+}
+
 // pveWorkloadSubnetPrefix is the genesis-name prefix identifying a PVE
 // workload subnet ("ocfp-0", "ocfp-1", "ocfp-2"), as opposed to the infra
 // subnet (bare "infra").
@@ -469,10 +557,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		return fmt.Errorf("failed to set subnet configuration: %w", err)
 	}
 
-	cidr := p.Config.Network.CIDR
-	if cidr == "" {
-		cidr = p.Config.VPCCIDRBlock
-	}
+	cidr := p.pveFallbackCIDR()
 
 	gateway := pveCIDRGateway(cidr)
 	dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
@@ -504,38 +589,85 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		// per-tier assignment table — the same engine the state-driven path
 		// uses (pveReservedIPsForSubnet), so mgmt/ocf disjointness holds even
 		// in this degraded, no-bootstrap-state mode.
-		reserved, err := pveReservedIPsForSubnet(cidr, envType, i, p.Config.Network, p.logger)
+		reserved, err := p.finalizeFallbackReserved(cidr, envType, i)
 		if err != nil {
-			return fmt.Errorf("failed to compute fallback reserved IPs for ocfp-%d: %w", i, err)
-		}
-
-		if boshIP, ok := reserved["bosh_ip"]; ok {
-			reserved["ip"] = boshIP
-			reserved["director_ip"] = boshIP
-		}
-
-		// On PVE the three logical subnets share a single flat range in this
-		// stateless-fallback mode, so the tier's shared available band would
-		// let net-compilation (pinned to ocfp-2) and net-ocf (spanning
-		// ocfp-0/1) both allocate from the same IPs and collide. Carve a
-		// DISJOINT contiguous slice per subnet index so compilation never
-		// overlaps the workload band even without bootstrap state.
-		// Network.AvailableIPStart/End (absolute, config-driven) overrides
-		// the tier default here, applied identically regardless of envType —
-		// unlike network.bands.mgmt (see pve_reserved_ips.go), this knob
-		// predates the tiered layout and stays tier-blind by design.
-		defaultStart, _ := reserved["available_0"].(string)
-		defaultEnd, _ := reserved["available_1"].(string)
-
-		if start, end := pveFallbackSubnetBand(p.Config, i, defaultStart, defaultEnd); start != "" && end != "" {
-			reserved["available_0"] = start
-			reserved["available_1"] = end
+			return err
 		}
 
 		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
 
 		err = p.Safe.SetMultiple(reservedPath, reserved)
 		if err != nil {
+			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// pveFallbackCIDR resolves the CIDR the stateless-fallback subnet writers
+// use: Network.CIDR when set, else the legacy VPCCIDRBlock knob.
+func (p *PVEVaultProvider) pveFallbackCIDR() string {
+	if p.Config.Network.CIDR != "" {
+		return p.Config.Network.CIDR
+	}
+
+	return p.Config.VPCCIDRBlock
+}
+
+// finalizeFallbackReserved computes one stateless-fallback subnet's (index
+// i, 0/1/2) full reserved-ips block: the tier's derived assignments, the
+// director-IP compatibility aliases, and this subnet's disjoint slice of
+// the available band.
+//
+// On PVE the three logical subnets share a single flat range in this
+// stateless-fallback mode, so the tier's shared available band would let
+// net-compilation (pinned to ocfp-2) and net-ocf (spanning ocfp-0/1) both
+// allocate from the same IPs and collide. Carving a DISJOINT contiguous
+// slice per subnet index keeps compilation clear of the workload band even
+// without bootstrap state. Network.AvailableIPStart/End (absolute,
+// config-driven) overrides the tier default here, applied identically
+// regardless of envType — unlike network.bands.mgmt (see
+// pve_reserved_ips.go), this knob predates the tiered layout and stays
+// tier-blind by design.
+func (p *PVEVaultProvider) finalizeFallbackReserved(cidr, envType string, i int) (map[string]any, error) {
+	reserved, err := pveReservedIPsForSubnet(cidr, envType, i, p.Config.Network, p.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute fallback reserved IPs for ocfp-%d: %w", i, err)
+	}
+
+	if boshIP, ok := reserved["bosh_ip"]; ok {
+		reserved["ip"] = boshIP
+		reserved["director_ip"] = boshIP
+	}
+
+	defaultStart, _ := reserved["available_0"].(string)
+	defaultEnd, _ := reserved["available_1"].(string)
+
+	if start, end := pveFallbackSubnetBand(p.Config, i, defaultStart, defaultEnd); start != "" && end != "" {
+		reserved["available_0"] = start
+		reserved["available_1"] = end
+	}
+
+	return reserved, nil
+}
+
+// writeFallbackReservedIPs writes only the reserved-ips portion of the
+// stateless-fallback subnet layout (see writeFallbackSubnet), for callers
+// that must not also write the subnet skeleton (cidr/gateway/dns/az/id) or
+// the subnets marker.
+func (p *PVEVaultProvider) writeFallbackReservedIPs(envType string) error {
+	cidr := p.pveFallbackCIDR()
+
+	for i := range 3 {
+		reserved, err := p.finalizeFallbackReserved(cidr, envType, i)
+		if err != nil {
+			return err
+		}
+
+		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
+
+		if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
 		}
 	}

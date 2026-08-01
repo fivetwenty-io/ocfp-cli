@@ -56,6 +56,7 @@ const inceptionComponent = "inception"
 const (
 	PhaseCertificates = "certificates"
 	PhasePublicIPs    = "public-ips"
+	PhaseReservedIPs  = "reserved-ips"
 	PhaseConfig       = "config"
 )
 
