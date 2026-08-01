@@ -7,9 +7,9 @@ import "sort"
 const defaultStrategyName = "wide"
 
 // registry holds every Layout implementation available for selection. Both
-// entries have WorkloadTable, SchemeVersion, MinPrefix, and ValidateSubnet
-// real (see wide.go and compact.go); each entry's Slots and ValidateBand
-// remain stubs (see Layout's doc comment) until their owning tasks land.
+// entries have WorkloadTable, SchemeVersion, MinPrefix, ValidateSubnet, and
+// Slots real (see wide.go and compact.go); each entry's ValidateBand
+// remains a stub (see Layout's doc comment) until its owning task lands.
 var registry = map[string]Layout{
 	"wide":    wideLayout{},
 	"compact": compactLayout{},
@@ -48,6 +48,6 @@ func Names() []string {
 }
 
 // wideLayout is declared in wide.go; compactLayout is declared in
-// compact.go. Both have WorkloadTable, SchemeVersion, MinPrefix, and
-// ValidateSubnet real; each has Slots and ValidateBand still stubbed
-// pending their owning implementations.
+// compact.go. Both have WorkloadTable, SchemeVersion, MinPrefix,
+// ValidateSubnet, and Slots real; each has ValidateBand still stubbed
+// pending its owning implementation.

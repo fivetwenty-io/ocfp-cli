@@ -29,6 +29,17 @@ func unknownStrategyError(name string) error {
 // Callers match it with errors.Is.
 var ErrSubnetTooSmall = errors.New("subnet too small for strategy")
 
+// ErrUnknownRole is the sentinel Slots wraps when asked for a role that is
+// neither "infra" nor "ocfp". Callers match it with errors.Is.
+var ErrUnknownRole = errors.New("unknown netlayout role")
+
+// unknownRoleError wraps ErrUnknownRole with the offending role name and
+// the two roles Slots recognizes, so the message is enough on its own to
+// explain the rejection.
+func unknownRoleError(role string) error {
+	return fmt.Errorf("%w %q: known roles are %q, %q", ErrUnknownRole, role, slotRoleInfra, slotRoleOCFP)
+}
+
 // subnetTooSmallError wraps ErrSubnetTooSmall with the offending strategy
 // name, cidr, its prefix, the strategy's minimum prefix, and its highest
 // fixed offset, so the message is enough on its own to explain the
