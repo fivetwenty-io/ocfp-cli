@@ -165,10 +165,13 @@ func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg con
 // Every step below that can fail — strategy resolution, subnet validation,
 // and table construction — returns its error immediately rather than
 // falling through: a not-yet-implemented strategy (e.g. "compact", whose
-// WorkloadTable still returns netlayout.ErrNotImplemented) must fail loudly
-// here, never reach applyPVEMgmtBandOverride with a nil/partial table (which
+// ValidateSubnet fails first with netlayout.ErrNotImplemented, and whose
+// WorkloadTable would fail the same way if reached) must fail loudly here,
+// never reach applyPVEMgmtBandOverride with a nil/partial table (which
 // indexes "available"/"reserved" unconditionally and would panic on a nil
-// map), and never report success having written nothing.
+// map), and never report success having written nothing. Each wrap names
+// the strategy and the failing step so an operator can tell a too-small
+// subnet from an unimplemented strategy without reading source.
 func pveReservedIPsForSubnet(
 	subnetCIDR string, envType string, subnetNum int, netCfg config.NetworkConfig, log *zap.SugaredLogger,
 ) (map[string]any, error) {
@@ -177,13 +180,25 @@ func pveReservedIPsForSubnet(
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
 	}
 
+	return pveReservedIPsForSubnetWithLayout(layout, subnetCIDR, envType, subnetNum, netCfg, log)
+}
+
+// pveReservedIPsForSubnetWithLayout is pveReservedIPsForSubnet after
+// strategy resolution, split out so the per-step failure handling can be
+// exercised with any Layout implementation, not only the registered ones.
+func pveReservedIPsForSubnetWithLayout(
+	layout netlayout.Layout, subnetCIDR string, envType string, subnetNum int,
+	netCfg config.NetworkConfig, log *zap.SugaredLogger,
+) (map[string]any, error) {
 	if err := layout.ValidateSubnet(subnetCIDR); err != nil {
-		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: strategy %q: validate subnet: %w",
+			envType, subnetNum, layout.Name(), err)
 	}
 
 	table, err := layout.WorkloadTable(subnetCIDR)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: strategy %q: workload table: %w",
+			envType, subnetNum, layout.Name(), err)
 	}
 
 	assignments, err := applyPVEMgmtBandOverride(table, netCfg)
