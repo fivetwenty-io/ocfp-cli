@@ -78,6 +78,9 @@ When no network CIDR is specified, OCFP uses `10.4.0.0/20`. The parent CIDR is s
 - [Subnets](subnets.md)
   Subnet strategies, CIDR splitting, virtual subnets, reserved IPs
 
+- [Reserved-IP Strategies](reserved-ip-strategies.md)
+  Selectable `wide` and `compact` reserved-IP layouts: offset tables, available bands, band overrides, scheme stamping, and the diagram-update checklist
+
 - [Security Groups](security-groups.md)
   7 default groups, port definitions, per-provider implementations
 
