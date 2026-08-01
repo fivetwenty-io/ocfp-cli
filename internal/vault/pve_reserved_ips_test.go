@@ -7,6 +7,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -251,15 +252,58 @@ func TestResolveLayout(t *testing.T) {
 // TestPVEReservedIPs_CompactStrategyFailsLoudly proves the PVE reserved-ips
 // path propagates a not-yet-implemented layout's error rather than writing a
 // partial/empty table or reaching applyPVEMgmtBandOverride with a nil table
-// (which would panic on the "available"/"reserved" map lookups). This test
-// asserts only the error — compact's still-stubbed WorkloadTable carries no
-// value to assert on.
+// (which would panic on the "available"/"reserved" map lookups). For compact
+// the failure fires at ValidateSubnet, the first per-step guard; the
+// WorkloadTable guard behind it is exercised separately with a fake layout
+// below. This test asserts only the error — compact's still-stubbed table
+// carries no value to assert on.
 func TestPVEReservedIPs_CompactStrategyFailsLoudly(t *testing.T) {
 	netCfg := config.NetworkConfig{Strategy: "compact"}
 
 	table, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, netlayout.ErrNotImplemented)
+	assert.Contains(t, err.Error(), `strategy "compact"`)
+	assert.Contains(t, err.Error(), "validate subnet")
+	assert.Nil(t, table, "must not return a partial/empty table alongside the error")
+}
+
+// workloadTableErrLayout is a fake Layout whose ValidateSubnet passes but
+// whose WorkloadTable fails, so the table-construction guard in
+// pveReservedIPsForSubnetWithLayout can be exercised in isolation —
+// compact's registered stub can never reach it (its ValidateSubnet fails
+// first).
+type workloadTableErrLayout struct{}
+
+func (workloadTableErrLayout) Name() string          { return "fake-table-err" }
+func (workloadTableErrLayout) SchemeVersion() string { return "0-test" }
+func (workloadTableErrLayout) MinPrefix() int        { return 25 }
+
+func (workloadTableErrLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
+	return nil, netlayout.ErrNotImplemented
+}
+
+func (workloadTableErrLayout) Slots(_, _ string) (netlayout.InfraSlots, error) {
+	return netlayout.InfraSlots{}, netlayout.ErrNotImplemented
+}
+
+func (workloadTableErrLayout) ValidateSubnet(_ string) error { return nil }
+
+func (workloadTableErrLayout) ValidateBand(_ netlayout.Tier, _ string, _, _ int) error {
+	return netlayout.ErrNotImplemented
+}
+
+// TestPVEReservedIPs_WorkloadTableErrorFailsLoudly locks the guard on the
+// WorkloadTable step itself: a layout that validates the subnet but cannot
+// produce a table must error out with the strategy and step named, never
+// continue into applyPVEMgmtBandOverride with a nil table.
+func TestPVEReservedIPs_WorkloadTableErrorFailsLoudly(t *testing.T) {
+	table, err := pveReservedIPsForSubnetWithLayout(
+		workloadTableErrLayout{}, "10.64.64.0/22", "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrNotImplemented)
+	assert.Contains(t, err.Error(), `strategy "fake-table-err"`)
+	assert.Contains(t, err.Error(), "workload table")
 	assert.Nil(t, table, "must not return a partial/empty table alongside the error")
 }
 
