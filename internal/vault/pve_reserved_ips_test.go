@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -126,7 +127,7 @@ func TestPVEReservedIPs_SubnetIndexDoesNotAffectRoleOffsets(t *testing.T) {
 
 func TestPVEReservedIPs_MgmtBandOverride(t *testing.T) {
 	cidr := "10.64.64.0/22"
-	netCfg := config.NetworkConfig{AvailableBandStart: 40, AvailableBandEnd: 50}
+	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}
 
 	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, netCfg, logger.Get())
 	require.NoError(t, err)
@@ -141,7 +142,7 @@ func TestPVEReservedIPs_MgmtBandOverride(t *testing.T) {
 }
 
 func TestPVEReservedIPs_MgmtBandOverridePartialErrors(t *testing.T) {
-	netCfg := config.NetworkConfig{AvailableBandStart: 40}
+	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40}}}
 
 	_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
 	assert.ErrorIs(t, err, ErrPVEBandOverridePartial)
@@ -160,7 +161,7 @@ func TestPVEReservedIPs_MgmtBandOverrideOutOfRangeErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			netCfg := config.NetworkConfig{AvailableBandStart: tt.start, AvailableBandEnd: tt.end}
+			netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: tt.start, End: tt.end}}}
 			_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
 			assert.ErrorIs(t, err, ErrPVEBandOverrideOutOfRange)
 		})
@@ -173,7 +174,7 @@ func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
 	first, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, config.NetworkConfig{}, logger.Get())
 	require.NoError(t, err)
 
-	netCfg := config.NetworkConfig{AvailableBandStart: 40, AvailableBandEnd: 50}
+	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}
 	_, err = pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
 	require.NoError(t, err)
 
@@ -181,6 +182,32 @@ func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, first["available_0"], second["available_0"], "default table must not be mutated by a prior override call")
+}
+
+// TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable couples
+// pveMgmtBandOverrideFloor/Ceiling to the wide strategy's own emitted mgmt
+// available band, rather than trusting the two to stay in sync by
+// convention alone: the floor/ceiling are declared as literals (see their
+// doc comment in pve_reserved_ips.go) because they cannot be imported from
+// netlayout directly, so without this test a future wide retune would
+// silently admit an override that reaches into ocf's territory instead of
+// failing loudly here.
+func TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable(t *testing.T) {
+	table, err := netlayout.Default().WorkloadTable("")
+	require.NoError(t, err)
+
+	spec := table["available"]["mgmt"].RangeSpec
+
+	var start, end int
+
+	n, err := fmt.Sscanf(spec, "%d-%d", &start, &end)
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "wide's mgmt available RangeSpec %q must be a plain start-end range", spec)
+
+	assert.Equal(t, start, pveMgmtBandOverrideFloor,
+		"wide's mgmt available band start drifted from the override floor")
+	assert.Equal(t, end, pveMgmtBandOverrideCeiling,
+		"wide's mgmt available band end drifted from the override ceiling")
 }
 
 // TestPVEReservedIPs_WideRejectsSubnetSmallerThan25 proves the vault-layer

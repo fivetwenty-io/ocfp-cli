@@ -522,7 +522,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		// overlaps the workload band even without bootstrap state.
 		// Network.AvailableIPStart/End (absolute, config-driven) overrides
 		// the tier default here, applied identically regardless of envType —
-		// unlike AvailableBandStart/End (see pve_reserved_ips.go), this knob
+		// unlike network.bands.mgmt (see pve_reserved_ips.go), this knob
 		// predates the tiered layout and stays tier-blind by design.
 		defaultStart, _ := reserved["available_0"].(string)
 		defaultEnd, _ := reserved["available_1"].(string)

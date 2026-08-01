@@ -12,7 +12,7 @@ import (
 )
 
 // pveMgmtBandOverrideFloor/Ceiling bound an operator-supplied
-// Network.AvailableBandStart/End override (see applyPVEMgmtBandOverride):
+// Network.Bands.Mgmt override (see applyPVEMgmtBandOverride):
 // the override must stay inside the mgmt static zone's ceiling (>=32,
 // clearing the named/spare statics at 0-31) and the ocf zone's floor
 // (<=63, so a widened mgmt band can never reach into ocf's 64+
@@ -21,6 +21,10 @@ import (
 // mgmt available band (internal/netlayout/wide.go); they are declared as
 // literals here, rather than imported, because this override-bounds check
 // is a vault-layer policy independent of the Layout's table construction.
+// TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable (pve_reserved_ips_test.go)
+// couples these literals to wide's actual emitted mgmt available band, so a
+// wide retune fails loudly here instead of silently admitting a
+// now-collision-prone override.
 const (
 	pveMgmtBandOverrideFloor   = 32
 	pveMgmtBandOverrideCeiling = 63
@@ -94,31 +98,31 @@ func resolveLayout(netCfg config.NetworkConfig) (netlayout.Layout, error) {
 	return layout, nil
 }
 
-// PVE mgmt-band override errors. Network.AvailableBandStart/End (see
-// config.NetworkConfig) is honored only for the mgmt tier: it is a single
-// (non-per-tier) config knob inherited from the pre-tiered layout, and
-// widening it into ocf's 64+ territory would reintroduce the cross-tier
-// collision this table exists to prevent. Operators who need a wider ocf
-// band should raise it in a follow-up change to the config shape rather
-// than overloading this knob (see plans/pve-tiered-reserved-ip-map.md,
-// "Keep Network.AvailableBandStart/End... now applied per-tier").
+// PVE mgmt-band override errors. Network.Bands.Mgmt (see
+// config.NetworkConfig) is honored only for the mgmt tier: it is the only
+// per-tier band override this package exposes, and widening it into ocf's
+// 64+ territory would reintroduce the cross-tier collision this table
+// exists to prevent. Operators who need a wider ocf band should raise it in
+// a follow-up change to the config shape rather than overloading this knob
+// (see plans/pve-tiered-reserved-ip-map.md, "Keep the mgmt band override...
+// now applied per-tier").
 var (
 	ErrPVEBandOverridePartial = errors.New(
-		"network.availableBandStart and network.availableBandEnd must both be set, or neither")
+		"network.bands.mgmt.start and network.bands.mgmt.end must both be set, or neither")
 	ErrPVEBandOverrideOutOfRange = fmt.Errorf(
-		"network.availableBandStart/End must satisfy %d <= start < end <= %d (the mgmt tier's static/available zone)",
+		"network.bands.mgmt.start/end must satisfy %d <= start < end <= %d (the mgmt tier's static/available zone)",
 		pveMgmtBandOverrideFloor, pveMgmtBandOverrideCeiling)
 )
 
 // applyPVEMgmtBandOverride returns a copy of assignments with the mgmt
 // tier's "available"/"reserved" entries replaced by
-// cfg.Network.AvailableBandStart/End when both are set (non-zero). Returns
+// cfg.Network.Bands.Mgmt.Start/End when both are set (non-zero). Returns
 // the input unchanged (not a copy) when no override is configured. Returns
 // an error if only one of the pair is set, or if the pair falls outside the
 // mgmt static/available zone (pveMgmtBandOverrideFloor..Ceiling).
 func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg config.NetworkConfig) (reservedip.AssignmentTable, error) {
-	start := netCfg.AvailableBandStart
-	end := netCfg.AvailableBandEnd
+	start := netCfg.Bands.Mgmt.Start
+	end := netCfg.Bands.Mgmt.End
 
 	if start == 0 && end == 0 {
 		return assignments, nil
@@ -156,7 +160,7 @@ func applyPVEMgmtBandOverride(assignments reservedip.AssignmentTable, netCfg con
 // forwarded to the shared engine for parity even though the current PVE
 // table does not vary by index. netCfg carries the selected reserved-ip
 // layout Strategy (resolved via resolveLayout; empty means the netlayout
-// default) and the optional mgmt-only AvailableBandStart/End override.
+// default) and the optional mgmt-only Bands.Mgmt override.
 //
 // Every step below that can fail — strategy resolution, subnet validation,
 // and table construction — returns its error immediately rather than
