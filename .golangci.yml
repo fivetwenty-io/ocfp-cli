@@ -185,13 +185,6 @@ linters:
       - path: internal/vault/stackit_reservedip_compat\.go
         linters:
           - unused
-      # pveDefaultReservedIPAssignments renders the strategy-blind default
-      # table solely for pve_reserved_ips_golden_test.go's pinned fixture.
-      # With tests:false the linter cannot see that caller and falsely
-      # reports the function as unused.
-      - path: internal/vault/pve_reserved_ips\.go
-        linters:
-          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:
