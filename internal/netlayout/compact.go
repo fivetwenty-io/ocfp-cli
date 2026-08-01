@@ -14,12 +14,12 @@ import (
 //
 //	 0-  2  reserved   network + gateway (.1)
 //	 3- 22  mgmt statics (named below)
-//	   23   spare/gap
-//	 23- 26  ocf statics (named below)
+//	23- 26  ocf statics (named below)
 //	   27   spare/gap
 //	28- 35  mgmt available band (dynamic allocations)
-//	36- 36  ocf haproxy static (see pveCompactOCFHaproxyOffset)
-//	36-...  ocf available band (dynamic allocations)
+//	36-...  ocf available band (dynamic allocations); haproxy static
+//	        at 37, one past the band start (see
+//	        pveCompactOCFHaproxyOffset)
 //
 // mgmt's named statics (pveBastionOffset, pveMgmtBoshOffset, ...) are
 // declared in wide.go and reused here unchanged — compact's mgmt tier is
