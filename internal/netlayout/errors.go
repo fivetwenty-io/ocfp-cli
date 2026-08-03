@@ -74,6 +74,18 @@ var (
 	ErrInvalidCIDR = errors.New("netlayout: invalid CIDR")
 )
 
+// Sentinel errors for validateDefinition's semantic checks (offset/pinning,
+// collisions, band coverage and overlap, the haproxy/CF-kit coupling, and
+// min_prefix fit). Callers match with errors.Is; the wrapped message names
+// def.Source, def.Name, and the offending values.
+var (
+	ErrOffsetCollision = errors.New("netlayout: static offset collision")
+	ErrBandOverlap     = errors.New("netlayout: band overlap or coverage error")
+	ErrHaproxyCoupling = errors.New("netlayout: haproxy must sit at ocf band start + 1 (the cf kit claims its static window from inside the available band)")
+	ErrPrefixTooNarrow = errors.New("netlayout: min_prefix does not fit the definition's highest offset")
+	ErrBadPinning      = errors.New("netlayout: invalid subnet pinning")
+)
+
 // bandOverrideStartTooLowError wraps ErrBandOverrideStartTooLow with the
 // offending start and the floor it fell below.
 func bandOverrideStartTooLowError(start int) error {
