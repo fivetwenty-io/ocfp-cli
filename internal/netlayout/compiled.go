@@ -2,6 +2,7 @@ package netlayout
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 )
@@ -15,11 +16,11 @@ var tierEnvType = map[Tier]string{
 }
 
 // compiledLayout is a validated Definition plus its precomputed Layer B
-// assignment table. Later tasks add more methods (Slots, ValidateSubnet,
-// ValidateBand, ...).
+// assignment table and highest static offset.
 type compiledLayout struct {
-	def   Definition
-	table reservedip.AssignmentTable
+	def           Definition
+	table         reservedip.AssignmentTable
+	highestOffset int
 }
 
 // Compile validates def and builds its workload table once. The returned
@@ -30,7 +31,298 @@ func Compile(def Definition) (*compiledLayout, error) {
 		return nil, err
 	}
 
-	return &compiledLayout{def: def, table: buildWorkloadTable(def)}, nil
+	return &compiledLayout{
+		def:           def,
+		table:         buildWorkloadTable(def),
+		highestOffset: highestStaticOffset(def),
+	}, nil
+}
+
+// highestStaticOffset returns the highest static offset across both tiers
+// of def, used by ValidateSubnet to name the offset a too-small cidr fails
+// to fit.
+func highestStaticOffset(def Definition) int {
+	highest := 0
+
+	for _, t := range tierOrder {
+		tier, ok := def.Tiers[t]
+		if !ok {
+			continue
+		}
+
+		for _, s := range tier.Statics {
+			if s.Offset > highest {
+				highest = s.Offset
+			}
+		}
+	}
+
+	return highest
+}
+
+// Name returns the compiled definition's strategy name.
+func (c *compiledLayout) Name() string { return c.def.Name }
+
+// SchemeVersion returns the compiled definition's guard-stamped scheme
+// identity.
+func (c *compiledLayout) SchemeVersion() string { return c.def.SchemeVersion }
+
+// Placement returns the compiled definition's role-distribution mode.
+func (c *compiledLayout) Placement() Placement { return c.def.Placement }
+
+// MinPrefix returns the compiled definition's minimum CIDR prefix length.
+func (c *compiledLayout) MinPrefix() int { return c.def.MinPrefix }
+
+// MinSubnets returns the compiled definition's minimum workload subnet
+// count.
+func (c *compiledLayout) MinSubnets() int { return c.def.MinSubnets }
+
+// LayerASlots returns the Layer A named-slot set for role on cidr at subnet
+// index idx. The infra role's table is fixed regardless of strategy, cidr,
+// or idx (see infraLayerASlots); the ocfp role's table is derived from this
+// definition's mgmt tier (see ocfpLayerASlots). Any other role is rejected
+// with unknownRoleError.
+func (c *compiledLayout) LayerASlots(role, cidr string, idx int) (LayerASlots, error) {
+	switch role {
+	case slotRoleInfra:
+		return infraLayerASlots(), nil
+	case slotRoleOCFP:
+		return c.ocfpLayerASlots(cidr, idx)
+	default:
+		return LayerASlots{}, unknownRoleError(role)
+	}
+}
+
+// infraLayerASlots returns the infra role's fixed LayerASlots: the four
+// named statics the Layer A bootstrap subnet reads before BOSH exists
+// (bastion, bosh, shield, blacksmith), plus the infra role's available band
+// and its derived reserved offsets. These reuse the infraXxxOffset
+// constants (wide.go) — the same historical infra-subnet layout every
+// strategy shares, since Layer A's bootstrap subnet is not a workload
+// subnet whose layout varies by strategy.
+func infraLayerASlots() LayerASlots {
+	return LayerASlots{
+		Named: []NamedSlot{
+			{Key: "bastion_ip", Offset: infraBastionOffset},
+			{Key: "bosh_ip", Offset: infraBoshOffset},
+			{Key: "shield_ip", Offset: infraShieldOffset},
+			{Key: "blacksmith_ip", Offset: infraBlacksmithOffset},
+		},
+		AvailableA: infraAvailableStart,
+		AvailableB: infraAvailableEnd,
+		ReservedB:  infraReservedBOffset,
+		ReservedC:  infraReservedCOffset,
+	}
+}
+
+// ocfpLayerASlots returns the ocfp role's LayerASlots for idx: every
+// mgmt-tier static whose pinning includes idx, keyed by its ip_key (or
+// role+"_ip" when unset) and sorted by offset then key for determinism,
+// plus the mgmt band covering idx. AvailableB closes an open-ended band at
+// cidr's last usable offset so Layer A and Layer B never disagree about
+// where the band ends.
+func (c *compiledLayout) ocfpLayerASlots(cidr string, idx int) (LayerASlots, error) {
+	tier := c.def.Tiers[TierMgmt]
+
+	band, err := bandFor(tier.Available, idx)
+	if err != nil {
+		return LayerASlots{}, err
+	}
+
+	named := make([]NamedSlot, 0, len(tier.Statics))
+
+	for role, s := range tier.Statics {
+		if !placedOn(s.Subnets, idx) {
+			continue
+		}
+
+		key := s.IPKey
+		if key == "" {
+			key = role + "_ip"
+		}
+
+		named = append(named, NamedSlot{Key: key, Offset: s.Offset})
+	}
+
+	sort.Slice(named, func(i, j int) bool {
+		if named[i].Offset != named[j].Offset {
+			return named[i].Offset < named[j].Offset
+		}
+
+		return named[i].Key < named[j].Key
+	})
+
+	availableB := band.End
+	if availableB == 0 {
+		lastUsable, ok := subnetLastUsableOffset(cidr)
+		if !ok {
+			return LayerASlots{}, ErrInvalidCIDR
+		}
+
+		availableB = lastUsable
+	}
+
+	return LayerASlots{
+		Named:      named,
+		AvailableA: band.Start,
+		AvailableB: availableB,
+		ReservedB:  band.Start - 1,
+		ReservedC:  availableB + 1,
+	}, nil
+}
+
+// ValidateSubnet rejects cidr if its prefix is longer (fewer host
+// addresses) than the compiled definition's MinPrefix, wrapping
+// ErrSubnetTooSmall with the strategy name, the offending cidr, its prefix,
+// MinPrefix, and the definition's highest static offset (precomputed at
+// Compile time).
+func (c *compiledLayout) ValidateSubnet(cidr string) error {
+	_, prefix, err := reservedip.ParseCIDR(cidr)
+	if err != nil {
+		return err
+	}
+
+	if prefix > c.def.MinPrefix {
+		return subnetTooSmallError(c.def.Name, cidr, prefix, c.def.MinPrefix, c.highestOffset)
+	}
+
+	return nil
+}
+
+// ValidateSubnetSet rejects cidrs if it has fewer entries than the compiled
+// definition's MinSubnets, wrapping ErrTooFewSubnets; otherwise it validates
+// every cidr with ValidateSubnet, returning the first failure.
+func (c *compiledLayout) ValidateSubnetSet(cidrs []string) error {
+	if len(cidrs) < c.def.MinSubnets {
+		return tooFewSubnetsError(c.def.Name, c.def.MinSubnets, len(cidrs))
+	}
+
+	for _, cidr := range cidrs {
+		if err := c.ValidateSubnet(cidr); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// otherTier returns the mgmt/ocf tier that isn't t — ValidateBand's
+// cross-tier check for a mgmt override looks at the ocf tier's band, and
+// vice versa.
+func otherTier(t Tier) Tier {
+	if t == TierOCF {
+		return TierMgmt
+	}
+
+	return TierOCF
+}
+
+// ValidateBand validates [start,end] as a reserved-IP available-band
+// override for tier on cidr. TierInfra delegates to the shared validateBand
+// (band.go), unchanged. TierMgmt/TierOCF share this generic path: after the
+// shape checks (both start/end set, start < end, end within cidr's usable
+// range), [start,end] must not collide with a named static of EITHER tier
+// on any subnet index (ErrBandOverrideCollidesStatic — checked first, since
+// a specific named-IP collision is the more actionable diagnostic), and
+// must not intersect the OTHER tier's own available band on any subnet
+// index (ErrBandOverrideCrossTier — an open band closed at cidr's last
+// usable offset), so the two directors' cloud-config allocators never claim
+// the same dynamic IP.
+func (c *compiledLayout) ValidateBand(tier Tier, cidr string, start, end int) error {
+	if tier == TierInfra {
+		return validateBand(tier, cidr, start, end)
+	}
+
+	if start == 0 || end == 0 {
+		return ErrBandOverridePartial
+	}
+
+	if end <= start {
+		return bandOverrideEndNotAfterStartError(start, end)
+	}
+
+	lastUsable, ok := subnetLastUsableOffset(cidr)
+	if !ok {
+		return ErrInvalidCIDR
+	}
+
+	if end > lastUsable {
+		return bandOverrideEndBeyondSubnetError(end, lastUsable, cidr)
+	}
+
+	if err := c.validateBandCollidesStatic(start, end); err != nil {
+		return err
+	}
+
+	return c.validateBandCrossTier(tier, start, end, lastUsable)
+}
+
+// validateBandCollidesStatic rejects [start,end] if it contains a static
+// offset of either tier, on any subnet index. When more than one static
+// collides, it reports the lowest offending offset (tied-broken by role
+// name) so the error is deterministic regardless of map iteration order.
+func (c *compiledLayout) validateBandCollidesStatic(start, end int) error {
+	var (
+		found     bool
+		hitTier   Tier
+		hitRole   string
+		hitOffset int
+	)
+
+	for idx := range c.def.MinSubnets {
+		for _, t := range tierOrder {
+			tier, ok := c.def.Tiers[t]
+			if !ok {
+				continue
+			}
+
+			for role, s := range tier.Statics {
+				if !placedOn(s.Subnets, idx) || s.Offset < start || s.Offset > end {
+					continue
+				}
+
+				if !found || s.Offset < hitOffset || (s.Offset == hitOffset && role < hitRole) {
+					found, hitTier, hitRole, hitOffset = true, t, role, s.Offset
+				}
+			}
+		}
+	}
+
+	if found {
+		return bandOverrideCollidesStaticError(start, end, hitTier, hitRole, hitOffset)
+	}
+
+	return nil
+}
+
+// validateBandCrossTier rejects [start,end] (an override for tier) if it
+// intersects the other tier's own available band on any subnet index, that
+// band's open end closed at lastUsable.
+func (c *compiledLayout) validateBandCrossTier(tier Tier, start, end, lastUsable int) error {
+	other := otherTier(tier)
+
+	otherDef, ok := c.def.Tiers[other]
+	if !ok {
+		return nil
+	}
+
+	for idx := range c.def.MinSubnets {
+		band, err := bandFor(otherDef.Available, idx)
+		if err != nil {
+			return err
+		}
+
+		otherEnd := band.End
+		if otherEnd == 0 {
+			otherEnd = lastUsable
+		}
+
+		if start <= otherEnd && band.Start <= end {
+			return bandOverrideCrossTierError(start, end, tier, other, band.Start, otherEnd)
+		}
+	}
+
+	return nil
 }
 
 // WorkloadTable returns the compiled Layer B assignment table. cidr is
