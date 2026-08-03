@@ -104,6 +104,12 @@ func TestSlots_LayerAgreement(t *testing.T) {
 // the guarantee the pre-netlayout scheme lacked — bootstrap's hand-written
 // idx branches placed doomsday/shout/ocfp_ui at offsets 9/10/9, while
 // vault's table put them at 18/19/17.
+//
+// Checked at idx 0: a static PINNED to a subnet (spanning's bastion, e.g.)
+// compiles to a SubnetMapping assignment rather than a plain Offset (see
+// buildStatics), so its wantOffsets entry is drawn from whichever mapped
+// offset includes index 0 — omitted entirely if no such offset exists,
+// matching LayerASlots dropping it from idx 0's Named set too.
 func TestSlots_StaticAgreement(t *testing.T) {
 	t.Parallel()
 
@@ -130,6 +136,16 @@ func TestSlots_StaticAgreement(t *testing.T) {
 			for role, byEnvType := range table {
 				assignment, ok := byEnvType["mgmt"]
 				if !ok || assignment.RangeSpec != "" {
+					continue
+				}
+
+				if len(assignment.SubnetMapping) > 0 {
+					for offset, subnets := range assignment.SubnetMapping {
+						if staticAgreementContainsIdx(subnets, 0) {
+							wantOffsets[role+"_ip"] = offset
+						}
+					}
+
 					continue
 				}
 
@@ -168,12 +184,29 @@ func TestSlots_StaticAgreement(t *testing.T) {
 	}
 }
 
-// TestSlots_ColocatedSameOnEveryIndex proves both built-in strategies place
-// their full mgmt static set on EVERY workload subnet: they declare
-// colocated placement, so no static is pinned to one index, and a bloc's
-// ocfp-0/1/2 subnets get identical layouts relative to their own bases. This
-// replaces the pre-netlayout behavior where bootstrap wrote bastion/bosh only
-// on index 0, doomsday/shout only on index 1, and ocfp_ui only on index 2.
+// staticAgreementContainsIdx reports whether subnets contains idx —
+// TestSlots_StaticAgreement's own membership check over a SubnetMapping's
+// pinned indices, kept local so the test doesn't need to import
+// internal/reservedip only for reservedip.ContainsInt.
+func staticAgreementContainsIdx(subnets []int, idx int) bool {
+	for _, s := range subnets {
+		if s == idx {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestSlots_ColocatedSameOnEveryIndex proves every COLOCATED strategy places
+// its full mgmt static set on EVERY workload subnet: it declares colocated
+// placement, so no static is pinned to one index, and a bloc's ocfp-0/1/2
+// subnets get identical layouts relative to their own bases. This replaces
+// the pre-netlayout behavior where bootstrap wrote bastion/bosh only on
+// index 0, doomsday/shout only on index 1, and ocfp_ui only on index 2. A
+// spanning strategy is deliberately exempt: pinning statics to specific
+// indices is the whole point of spanning placement (see
+// TestSpanningLayerASlots in spanning_test.go for its own per-index proof).
 func TestSlots_ColocatedSameOnEveryIndex(t *testing.T) {
 	t.Parallel()
 
@@ -186,9 +219,8 @@ func TestSlots_ColocatedSameOnEveryIndex(t *testing.T) {
 				t.Fatalf("Lookup(%q) returned unexpected error: %v", strategy, err)
 			}
 
-			if got := layout.Placement(); got != netlayout.PlacementColocated {
-				t.Fatalf("Placement() = %q, want %q (this test asserts colocated behavior)",
-					got, netlayout.PlacementColocated)
+			if layout.Placement() != netlayout.PlacementColocated {
+				t.Skipf("Placement() = %q, this test only asserts colocated behavior", layout.Placement())
 			}
 
 			const cidr = "10.64.64.0/26"
