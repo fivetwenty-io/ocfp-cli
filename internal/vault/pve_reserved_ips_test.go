@@ -380,16 +380,23 @@ type workloadTableErrLayout struct{}
 func (workloadTableErrLayout) Name() string          { return "fake-table-err" }
 func (workloadTableErrLayout) SchemeVersion() string { return "0-test" }
 func (workloadTableErrLayout) MinPrefix() int        { return 25 }
+func (workloadTableErrLayout) MinSubnets() int       { return 1 }
+
+func (workloadTableErrLayout) Placement() netlayout.Placement {
+	return netlayout.PlacementColocated
+}
 
 func (workloadTableErrLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
 	return nil, netlayout.ErrNotImplemented
 }
 
-func (workloadTableErrLayout) Slots(_, _ string) (netlayout.InfraSlots, error) {
-	return netlayout.InfraSlots{}, netlayout.ErrNotImplemented
+func (workloadTableErrLayout) LayerASlots(_, _ string, _ int) (netlayout.LayerASlots, error) {
+	return netlayout.LayerASlots{}, netlayout.ErrNotImplemented
 }
 
 func (workloadTableErrLayout) ValidateSubnet(_ string) error { return nil }
+
+func (workloadTableErrLayout) ValidateSubnetSet(_ []string) error { return nil }
 
 func (workloadTableErrLayout) ValidateBand(_ netlayout.Tier, _ string, _, _ int) error {
 	return netlayout.ErrNotImplemented
