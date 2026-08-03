@@ -42,6 +42,22 @@ type InfraSlots struct {
 	ReservedC      int
 }
 
+// NamedSlot is one Layer A named static: Key is the full state-output stem
+// ("bastion_ip", or an ip_key like "rustfs_ip_smoke").
+type NamedSlot struct {
+	Key    string
+	Offset int
+}
+
+// LayerASlots is the Layer A slot set for one (role, subnet index).
+type LayerASlots struct {
+	Named      []NamedSlot
+	AvailableA int
+	AvailableB int
+	ReservedB  int
+	ReservedC  int
+}
+
 // Layout describes one reserved-IP numbering strategy. Implementations are
 // registered in registry.go and obtained via Lookup or Default — callers
 // never construct a Layout directly.

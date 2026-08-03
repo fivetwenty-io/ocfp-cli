@@ -72,6 +72,19 @@ var (
 	// ErrInvalidCIDR is returned when ValidateBand cannot parse cidr as an
 	// IPv4 CIDR.
 	ErrInvalidCIDR = errors.New("netlayout: invalid CIDR")
+	// ErrBandOverrideCollidesStatic is returned when a mgmt/ocf band
+	// override's [start,end] range contains a named static's offset from
+	// either tier, on any subnet index. Named statics from both tiers
+	// share one physical address space per workload subnet, so an
+	// override handed to one tier's dynamic allocator must not reach a
+	// fixed IP the other tier's kit already reads unconditionally.
+	ErrBandOverrideCollidesStatic = errors.New("netlayout: band override collides with a named static")
+	// ErrBandOverrideCrossTier is returned when a mgmt/ocf band
+	// override's [start,end] range intersects the OTHER tier's own
+	// available band (open bands closed at the subnet's last usable
+	// offset) on any subnet index, so the two directors' cloud-config
+	// allocators would never race for the same dynamic IP.
+	ErrBandOverrideCrossTier = errors.New("netlayout: band override intersects the other tier's available band")
 )
 
 // Sentinel errors for validateDefinition's semantic checks (offset/pinning,
@@ -103,4 +116,33 @@ func bandOverrideEndNotAfterStartError(start, end int) error {
 func bandOverrideEndBeyondSubnetError(end, lastUsableOffset int, cidr string) error {
 	return fmt.Errorf("%w: end=%d last-usable-offset=%d subnet=%s",
 		ErrBandOverrideEndBeyondSubnet, end, lastUsableOffset, cidr)
+}
+
+// ErrTooFewSubnets is the sentinel ValidateSubnetSet wraps when fewer cidrs
+// are given than a strategy's MinSubnets requires. Callers match it with
+// errors.Is.
+var ErrTooFewSubnets = errors.New("netlayout: too few workload subnets for strategy")
+
+// tooFewSubnetsError wraps ErrTooFewSubnets with the strategy name, its
+// MinSubnets, and the number of cidrs actually given.
+func tooFewSubnetsError(strategy string, minSubnets, got int) error {
+	return fmt.Errorf("%w: strategy %q requires at least %d workload subnets, got %d",
+		ErrTooFewSubnets, strategy, minSubnets, got)
+}
+
+// bandOverrideCollidesStaticError wraps ErrBandOverrideCollidesStatic with
+// the offending override range and the colliding static's tier, role, and
+// offset, so the "either tier" behavior is explained without the caller
+// cross-referencing the strategy's definition.
+func bandOverrideCollidesStaticError(start, end int, tier Tier, role string, offset int) error {
+	return fmt.Errorf("%w: [%d,%d] collides with tier %q static %q at offset %d",
+		ErrBandOverrideCollidesStatic, start, end, tier, role, offset)
+}
+
+// bandOverrideCrossTierError wraps ErrBandOverrideCrossTier with the
+// offending override range, the tier it was requested for, and the other
+// tier's own band range it intersects.
+func bandOverrideCrossTierError(start, end int, tier, otherTier Tier, otherStart, otherEnd int) error {
+	return fmt.Errorf("%w: tier %q override [%d,%d] intersects tier %q band [%d,%d]",
+		ErrBandOverrideCrossTier, tier, start, end, otherTier, otherStart, otherEnd)
 }
