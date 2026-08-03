@@ -20,6 +20,12 @@ var tierOrder = []Tier{TierMgmt, TierOCF}
 
 // placedOn reports whether a placement pinned to subnets applies to idx
 // (nil = all indices).
+//
+// A negative idx — a caller with no workload-subnet position, see
+// Layout.LayerASlots — matches no pinned placement, and needs no special
+// case to do so: validateSubnetPin rejects a negative pinned index at
+// Compile time, and the membership test below is an equality scan, so no
+// pinned entry can hold a value a negative idx would match.
 func placedOn(subnets []int, idx int) bool {
 	if subnets == nil {
 		return true

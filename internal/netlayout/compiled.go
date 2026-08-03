@@ -7,9 +7,32 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 )
 
+// slotRoleInfra and slotRoleOCFP are the two role values LayerASlots
+// accepts — any other role is rejected with unknownRoleError.
+const (
+	slotRoleInfra = "infra"
+	slotRoleOCFP  = "ocfp"
+)
+
+// The infra role's named-slot offsets and available band, carried over
+// unchanged from internal/bootstrap.defaultReservedIPLayout. They are fixed
+// for every strategy: Layer A's infra subnet is carved once per bloc and is
+// not a workload subnet whose layout varies by strategy, so a strategy's own
+// mgmt-tier offsets never apply here.
+const (
+	infraBastionOffset    = 3
+	infraBoshOffset       = 4
+	infraShieldOffset     = 9
+	infraBlacksmithOffset = 10
+	infraAvailableStart   = 12
+	infraAvailableEnd     = 29
+	infraReservedBOffset  = 10
+	infraReservedCOffset  = 30
+)
+
 // tierEnvType maps a Tier to the engine's envType key used as the second
-// level of a reservedip.AssignmentTable entry (the "mgmt"/"ocf" keys
-// wideLayout's hand-written table already uses).
+// level of a reservedip.AssignmentTable entry (the historical "mgmt"/"ocf"
+// keys every strategy's Layer B table is written in terms of).
 var tierEnvType = map[Tier]string{
 	TierMgmt: "mgmt",
 	TierOCF:  "ocf",
@@ -80,8 +103,10 @@ func (c *compiledLayout) MinSubnets() int { return c.def.MinSubnets }
 // LayerASlots returns the Layer A named-slot set for role on cidr at subnet
 // index idx. The infra role's table is fixed regardless of strategy, cidr,
 // or idx (see infraLayerASlots); the ocfp role's table is derived from this
-// definition's mgmt tier (see ocfpLayerASlots). Any other role is rejected
-// with unknownRoleError.
+// definition's mgmt tier (see ocfpLayerASlots). A negative idx means the
+// caller has no workload-subnet position at all, and yields only the
+// placements that apply to every index (see placedOn). Any other role is
+// rejected with unknownRoleError.
 func (c *compiledLayout) LayerASlots(role, cidr string, idx int) (LayerASlots, error) {
 	switch role {
 	case slotRoleInfra:
@@ -96,10 +121,8 @@ func (c *compiledLayout) LayerASlots(role, cidr string, idx int) (LayerASlots, e
 // infraLayerASlots returns the infra role's fixed LayerASlots: the four
 // named statics the Layer A bootstrap subnet reads before BOSH exists
 // (bastion, bosh, shield, blacksmith), plus the infra role's available band
-// and its derived reserved offsets. These reuse the infraXxxOffset
-// constants (wide.go) — the same historical infra-subnet layout every
-// strategy shares, since Layer A's bootstrap subnet is not a workload
-// subnet whose layout varies by strategy.
+// and its derived reserved offsets — the same historical infra-subnet
+// layout every strategy shares (see the infraXxxOffset constants above).
 func infraLayerASlots() LayerASlots {
 	return LayerASlots{
 		Named: []NamedSlot{
@@ -115,14 +138,21 @@ func infraLayerASlots() LayerASlots {
 	}
 }
 
-// ocfpLayerASlots returns the ocfp role's LayerASlots for idx: every
-// mgmt-tier static whose pinning includes idx, keyed by its ip_key (or
+// ocfpLayerASlots returns the ocfp role's LayerASlots for idx. A definition
+// with no mgmt tier at all (LoadDefinition accepts an ocf-only strategy) has
+// no Layer A workload layout to report and is rejected with
+// noMgmtTierError rather than silently reporting a zero-valued band. For
+// every other definition: every mgmt-tier static whose pinning includes idx,
+// keyed by its ip_key (or
 // role+"_ip" when unset) and sorted by offset then key for determinism,
 // plus the mgmt band covering idx. AvailableB closes an open-ended band at
 // cidr's last usable offset so Layer A and Layer B never disagree about
 // where the band ends.
 func (c *compiledLayout) ocfpLayerASlots(cidr string, idx int) (LayerASlots, error) {
-	tier := c.def.Tiers[TierMgmt]
+	tier, ok := c.def.Tiers[TierMgmt]
+	if !ok {
+		return LayerASlots{}, noMgmtTierError(c.def.Name)
+	}
 
 	band, err := bandFor(tier.Available, idx)
 	if err != nil {
@@ -327,8 +357,9 @@ func (c *compiledLayout) validateBandCrossTier(tier Tier, start, end, lastUsable
 
 // WorkloadTable returns the compiled Layer B assignment table. cidr is
 // accepted for Layout interface conformance but unused: the table is fixed
-// at Compile time and does not vary by subnet size, matching wideLayout's
-// documented contract.
+// at Compile time and does not vary by subnet size, preserving the contract
+// the hand-written wide/compact tables documented — every workload subnet
+// independently gets the same role set, computed from its own base address.
 func (c *compiledLayout) WorkloadTable(_ string) (reservedip.AssignmentTable, error) {
 	return c.table, nil
 }

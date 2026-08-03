@@ -7,11 +7,10 @@ import (
 )
 
 //go:embed strategies/*.yaml
-var builtinFS embed.FS //nolint:unused // used by go:embed directive
+var builtinFS embed.FS
 
 // builtinDefinitions returns the parsed built-in strategy definitions,
 // panicking if any embedded YAML is invalid (programmer error).
-//nolint:unused // used by builtinLayouts
 func builtinDefinitions() []Definition {
 	entries, err := builtinFS.ReadDir("strategies")
 	if err != nil {
@@ -46,7 +45,6 @@ func builtinDefinitions() []Definition {
 
 // builtinLayouts returns a map of strategy name to compiled layout for
 // every built-in strategy. It panics if compilation fails (programmer error).
-//nolint:unused // used by test
 func builtinLayouts() map[string]*compiledLayout {
 	layouts := make(map[string]*compiledLayout)
 

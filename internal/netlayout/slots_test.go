@@ -2,6 +2,7 @@ package netlayout_test
 
 import (
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,11 +35,11 @@ func parseRangeSpec(t *testing.T, spec string) (int, int) {
 	return start, end
 }
 
-// TestSlots_LayerAgreement proves the property this task exists to
-// guarantee: for every registered strategy, Slots("ocfp", cidr")'s
+// TestSlots_LayerAgreement proves the property this abstraction exists to
+// guarantee: for every registered strategy, LayerASlots("ocfp", cidr, idx)'s
 // available band is IDENTICAL to the mgmt-tier available band the same
 // strategy's own WorkloadTable emits for Layer B. If a future retune of
-// either side's constants drifts them apart, this test catches it.
+// either side's definition drifts them apart, this test catches it.
 func TestSlots_LayerAgreement(t *testing.T) {
 	t.Parallel()
 
@@ -77,46 +78,161 @@ func TestSlots_LayerAgreement(t *testing.T) {
 					tc.cidr, tableStart, tableEnd, tc.wantStart, tc.wantEnd)
 			}
 
-			slots, err := layout.Slots("ocfp", tc.cidr)
+			slots, err := layout.LayerASlots("ocfp", tc.cidr, 0)
 			if err != nil {
-				t.Fatalf("Slots(\"ocfp\", %q) returned unexpected error: %v", tc.cidr, err)
+				t.Fatalf("LayerASlots(\"ocfp\", %q, 0) returned unexpected error: %v", tc.cidr, err)
 			}
 
 			if slots.AvailableA != tableStart || slots.AvailableB != tableEnd {
-				t.Fatalf("Slots(\"ocfp\", %q) available band = %d-%d, want %d-%d (WorkloadTable's own mgmt band)",
+				t.Fatalf("LayerASlots(\"ocfp\", %q, 0) available band = %d-%d, want %d-%d (WorkloadTable's own mgmt band)",
 					tc.cidr, slots.AvailableA, slots.AvailableB, tableStart, tableEnd)
+			}
+
+			// The reserved complement brackets that same band: reserved_b is
+			// the offset immediately below it, reserved_c the one above.
+			if slots.ReservedB != tableStart-1 || slots.ReservedC != tableEnd+1 {
+				t.Fatalf("LayerASlots(\"ocfp\", %q, 0) reserved b/c = %d/%d, want %d/%d (band %d-%d bracketed)",
+					tc.cidr, slots.ReservedB, slots.ReservedC, tableStart-1, tableEnd+1, tableStart, tableEnd)
 			}
 		})
 	}
 }
 
-// TestSlots_Infra proves both strategies emit the exact historical
+// TestSlots_StaticAgreement proves Layer A's named statics agree with Layer
+// B's table role for role: every ocfp-role NamedSlot's offset is the offset
+// the same strategy's WorkloadTable assigns that role under "mgmt". This is
+// the guarantee the pre-netlayout scheme lacked — bootstrap's hand-written
+// idx branches placed doomsday/shout/ocfp_ui at offsets 9/10/9, while
+// vault's table put them at 18/19/17.
+func TestSlots_StaticAgreement(t *testing.T) {
+	t.Parallel()
+
+	for _, strategy := range netlayout.Names() {
+		t.Run(strategy, func(t *testing.T) {
+			t.Parallel()
+
+			layout, err := netlayout.Lookup(strategy)
+			if err != nil {
+				t.Fatalf("Lookup(%q) returned unexpected error: %v", strategy, err)
+			}
+
+			const cidr = "10.64.64.0/26"
+
+			table, err := layout.WorkloadTable(cidr)
+			if err != nil {
+				t.Fatalf("WorkloadTable returned unexpected error: %v", err)
+			}
+
+			// Layer B keys a role's output as ip_key when set, else
+			// "<role>_ip" — the same rule LayerASlots applies to NamedSlot.Key.
+			wantOffsets := map[string]int{}
+
+			for role, byEnvType := range table {
+				assignment, ok := byEnvType["mgmt"]
+				if !ok || assignment.RangeSpec != "" {
+					continue
+				}
+
+				key := assignment.IPKey
+				if key == "" {
+					key = role + "_ip"
+				}
+
+				wantOffsets[key] = assignment.Offset
+			}
+
+			slots, err := layout.LayerASlots("ocfp", cidr, 0)
+			if err != nil {
+				t.Fatalf("LayerASlots returned unexpected error: %v", err)
+			}
+
+			for _, slot := range slots.Named {
+				want, ok := wantOffsets[slot.Key]
+				if !ok {
+					t.Errorf("LayerASlots named %q, which WorkloadTable's mgmt tier does not assign", slot.Key)
+
+					continue
+				}
+
+				if slot.Offset != want {
+					t.Errorf("LayerASlots %q offset = %d, want %d (WorkloadTable's own mgmt offset)",
+						slot.Key, slot.Offset, want)
+				}
+			}
+
+			if len(slots.Named) != len(wantOffsets) {
+				t.Errorf("LayerASlots named %d statics, want all %d of the mgmt tier's",
+					len(slots.Named), len(wantOffsets))
+			}
+		})
+	}
+}
+
+// TestSlots_ColocatedSameOnEveryIndex proves both built-in strategies place
+// their full mgmt static set on EVERY workload subnet: they declare
+// colocated placement, so no static is pinned to one index, and a bloc's
+// ocfp-0/1/2 subnets get identical layouts relative to their own bases. This
+// replaces the pre-netlayout behavior where bootstrap wrote bastion/bosh only
+// on index 0, doomsday/shout only on index 1, and ocfp_ui only on index 2.
+func TestSlots_ColocatedSameOnEveryIndex(t *testing.T) {
+	t.Parallel()
+
+	for _, strategy := range netlayout.Names() {
+		t.Run(strategy, func(t *testing.T) {
+			t.Parallel()
+
+			layout, err := netlayout.Lookup(strategy)
+			if err != nil {
+				t.Fatalf("Lookup(%q) returned unexpected error: %v", strategy, err)
+			}
+
+			if got := layout.Placement(); got != netlayout.PlacementColocated {
+				t.Fatalf("Placement() = %q, want %q (this test asserts colocated behavior)",
+					got, netlayout.PlacementColocated)
+			}
+
+			const cidr = "10.64.64.0/26"
+
+			first, err := layout.LayerASlots("ocfp", cidr, 0)
+			if err != nil {
+				t.Fatalf("LayerASlots(idx 0) returned unexpected error: %v", err)
+			}
+
+			for idx := 1; idx < 3; idx++ {
+				got, err := layout.LayerASlots("ocfp", cidr, idx)
+				if err != nil {
+					t.Fatalf("LayerASlots(idx %d) returned unexpected error: %v", idx, err)
+				}
+
+				if !reflect.DeepEqual(got, first) {
+					t.Fatalf("LayerASlots(idx %d) = %+v, want identical to idx 0's %+v", idx, got, first)
+				}
+			}
+		})
+	}
+}
+
+// TestSlots_Infra proves every strategy emits the exact historical
 // infra-role slot layout carried over from
-// internal/bootstrap.pveSubnetStrategy.reservedIPLayout: the same named
-// offsets and the same 12-29 available band, regardless of strategy or
-// subnet size, since the infra role applies to the fixed infra subnet, not
-// a workload subnet whose size varies by strategy.
+// internal/bootstrap.pveSubnetStrategy.reservedIPLayout: the four named
+// statics the bootstrap subnet reads before BOSH exists, and the same 12-29
+// available band, regardless of strategy, subnet size, or index — the infra
+// role applies to the fixed infra subnet, not a workload subnet whose layout
+// varies by strategy.
 func TestSlots_Infra(t *testing.T) {
 	t.Parallel()
 
-	want := netlayout.InfraSlots{
-		Bastion:        3,
-		Bosh:           4,
-		Vault:          5,
-		Jumpbox:        6,
-		Concourse:      7,
-		Prometheus:     8,
-		Shield:         9,
-		Blacksmith:     10,
-		BlacksmithOCFP: 3,
-		Doomsday:       9,
-		Shout:          10,
-		OCFPUI:         9,
-		Artifacts:      11,
-		AvailableA:     12,
-		AvailableB:     29,
-		ReservedB:      10,
-		ReservedC:      30,
+	want := netlayout.LayerASlots{
+		Named: []netlayout.NamedSlot{
+			{Key: "bastion_ip", Offset: 3},
+			{Key: "bosh_ip", Offset: 4},
+			{Key: "shield_ip", Offset: 9},
+			{Key: "blacksmith_ip", Offset: 10},
+		},
+		AvailableA: 12,
+		AvailableB: 29,
+		ReservedB:  10,
+		ReservedC:  30,
 	}
 
 	for _, tc := range []struct {
@@ -137,13 +253,17 @@ func TestSlots_Infra(t *testing.T) {
 				t.Fatalf("Lookup(%q) returned unexpected error: %v", tc.strategy, err)
 			}
 
-			got, err := layout.Slots("infra", tc.cidr)
-			if err != nil {
-				t.Fatalf("Slots(\"infra\", %q) returned unexpected error: %v", tc.cidr, err)
-			}
+			// -1 is what bootstrap passes for the infra subnet, which has no
+			// workload position; 0 must give the same fixed answer.
+			for _, idx := range []int{-1, 0} {
+				got, err := layout.LayerASlots("infra", tc.cidr, idx)
+				if err != nil {
+					t.Fatalf("LayerASlots(\"infra\", %q, %d) returned unexpected error: %v", tc.cidr, idx, err)
+				}
 
-			if got != want {
-				t.Fatalf("Slots(\"infra\", %q) = %+v, want %+v", tc.cidr, got, want)
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("LayerASlots(\"infra\", %q, %d) = %+v, want %+v", tc.cidr, idx, got, want)
+				}
 			}
 		})
 	}
@@ -161,18 +281,18 @@ func TestSlots_InfraIgnoresCIDR(t *testing.T) {
 		t.Fatalf("Lookup(\"wide\") returned unexpected error: %v", err)
 	}
 
-	small, err := wide.Slots("infra", "10.0.0.0/24")
+	small, err := wide.LayerASlots("infra", "10.0.0.0/24", 0)
 	if err != nil {
-		t.Fatalf("Slots(\"infra\", /24) returned unexpected error: %v", err)
+		t.Fatalf("LayerASlots(\"infra\", /24) returned unexpected error: %v", err)
 	}
 
-	large, err := wide.Slots("infra", "10.0.0.0/16")
+	large, err := wide.LayerASlots("infra", "10.0.0.0/16", 0)
 	if err != nil {
-		t.Fatalf("Slots(\"infra\", /16) returned unexpected error: %v", err)
+		t.Fatalf("LayerASlots(\"infra\", /16) returned unexpected error: %v", err)
 	}
 
-	if small != large {
-		t.Fatalf("Slots(\"infra\", ...) varied with cidr: %+v != %+v", small, large)
+	if !reflect.DeepEqual(small, large) {
+		t.Fatalf("LayerASlots(\"infra\", ...) varied with cidr: %+v != %+v", small, large)
 	}
 }
 
@@ -189,28 +309,28 @@ func TestSlots_OCFPNoSizeWidening(t *testing.T) {
 		t.Fatalf("Lookup(\"wide\") returned unexpected error: %v", err)
 	}
 
-	small, err := wide.Slots("ocfp", "10.64.64.0/22")
+	small, err := wide.LayerASlots("ocfp", "10.64.64.0/22", 0)
 	if err != nil {
-		t.Fatalf("Slots(\"ocfp\", /22) returned unexpected error: %v", err)
+		t.Fatalf("LayerASlots(\"ocfp\", /22) returned unexpected error: %v", err)
 	}
 
-	large, err := wide.Slots("ocfp", "10.0.0.0/16")
+	large, err := wide.LayerASlots("ocfp", "10.0.0.0/16", 0)
 	if err != nil {
-		t.Fatalf("Slots(\"ocfp\", /16) returned unexpected error: %v", err)
+		t.Fatalf("LayerASlots(\"ocfp\", /16) returned unexpected error: %v", err)
 	}
 
-	if small != large {
-		t.Fatalf("Slots(\"ocfp\", ...) varied with cidr: %+v != %+v", small, large)
+	if !reflect.DeepEqual(small, large) {
+		t.Fatalf("LayerASlots(\"ocfp\", ...) varied with cidr: %+v != %+v", small, large)
 	}
 
 	if small.AvailableA != 32 || small.AvailableB != 63 {
-		t.Fatalf("Slots(\"ocfp\", ...) available band = %d-%d, want 32-63", small.AvailableA, small.AvailableB)
+		t.Fatalf("LayerASlots(\"ocfp\", ...) available band = %d-%d, want 32-63", small.AvailableA, small.AvailableB)
 	}
 }
 
-// TestSlots_UnknownRole proves both strategies reject a role that is
-// neither "infra" nor "ocfp" with a defined, greppable error rather than a
-// silently-wrong zero-value InfraSlots.
+// TestSlots_UnknownRole proves every strategy rejects a role that is neither
+// "infra" nor "ocfp" with a defined, greppable error rather than a
+// silently-wrong zero-value slot set.
 func TestSlots_UnknownRole(t *testing.T) {
 	t.Parallel()
 
@@ -223,17 +343,17 @@ func TestSlots_UnknownRole(t *testing.T) {
 				t.Fatalf("Lookup(%q) returned unexpected error: %v", strategy, err)
 			}
 
-			slots, err := layout.Slots("bogus", "10.0.0.0/22")
+			slots, err := layout.LayerASlots("bogus", "10.0.0.0/22", 0)
 			if !errors.Is(err, netlayout.ErrUnknownRole) {
-				t.Fatalf("Slots(\"bogus\", ...) error = %v, want wrapping ErrUnknownRole", err)
+				t.Fatalf("LayerASlots(\"bogus\", ...) error = %v, want wrapping ErrUnknownRole", err)
 			}
 
 			if !strings.Contains(err.Error(), "bogus") {
-				t.Fatalf("Slots(\"bogus\", ...) error %q does not mention the offending role", err.Error())
+				t.Fatalf("LayerASlots(\"bogus\", ...) error %q does not mention the offending role", err.Error())
 			}
 
-			if slots != (netlayout.InfraSlots{}) {
-				t.Fatalf("Slots(\"bogus\", ...) slots = %+v, want zero value on error", slots)
+			if !reflect.DeepEqual(slots, netlayout.LayerASlots{}) {
+				t.Fatalf("LayerASlots(\"bogus\", ...) slots = %+v, want zero value on error", slots)
 			}
 		})
 	}

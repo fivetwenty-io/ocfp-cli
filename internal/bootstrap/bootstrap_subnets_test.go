@@ -519,7 +519,10 @@ func TestCreateSubnets_PVE_CreatesRealPer22SDNSubnets(t *testing.T) {
 
 	// The blacksmith broker is pinned to z2 (workload subnet 1) by the kit's
 	// ocfp blueprint, which resolves reserved-ips:blacksmith_ip from ocfp-1.
-	verifyBlacksmithIPOutput(t, stateManager, "prod-ocfp-1", "10.64.72.3")
+	// Its offset is the strategy's own mgmt blacksmith static (10), the same
+	// offset Layer B's table assigns — not the historical 3, which bootstrap
+	// wrote only on subnet 1 and which collided with bastion's own slot.
+	verifyBlacksmithIPOutput(t, stateManager, "prod-ocfp-1", "10.64.72.10")
 }
 
 func setupStackitSubnetTest(t *testing.T) (*bootstrap.Manager, *fakeNet) {
@@ -881,7 +884,9 @@ func verifyOcfpSubnet(t *testing.T, stateManager *state.Manager, index int, expe
 
 	if index == 1 {
 		verifyDoomsdayIPOutput(t, stateManager, name)
-		verifyBlacksmithIPOutput(t, stateManager, name, "10.4.8.3")
+		// Offset 10, the strategy's own mgmt blacksmith static (see
+		// TestCreateSubnets_PVE_CreatesRealPer22SDNSubnets).
+		verifyBlacksmithIPOutput(t, stateManager, name, "10.4.8.10")
 	}
 }
 
