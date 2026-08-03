@@ -245,8 +245,12 @@ func (cfm *CFPluginManager) addPluginInstallSection(lines *[]string, plugin CFPl
 
 // addPluginExistenceCheck adds commands to check if plugin is already installed.
 func (cfm *CFPluginManager) addPluginExistenceCheck(lines *[]string, plugin CFPlugin) {
+	// `cf plugins` lists a plugin under the name it advertises, which is not
+	// always the key we track it by -- `targets` reports itself as
+	// `cf-targets`. Accept either spelling so an installed plugin is
+	// recognised instead of being reinstalled on every run.
 	*lines = append(*lines,
-		fmt.Sprintf("if cf plugins | grep -q '^%s '; then", plugin.Name),
+		fmt.Sprintf("if cf plugins 2>/dev/null | grep -qE '^(cf-)?%s[[:space:]]'; then", plugin.Name),
 		fmt.Sprintf("    log_info 'CF plugin %s already installed'", plugin.Name),
 		"else",
 		fmt.Sprintf("    log_info 'Installing CF plugin: %s'", plugin.Name))
@@ -258,33 +262,37 @@ func (cfm *CFPluginManager) addGitHubInstallCommands(lines *[]string, plugin CFP
 
 	cfm.addReleaseVersionCommands(lines, plugin)
 
-	// Construct binary name - use full plugin name format for CF plugins
-	binaryName := fmt.Sprintf("cf-%s-plugin-linux.amd64", plugin.Name)
+	// Select the asset from the release metadata rather than constructing a
+	// filename. Asset names embed the version and the separator has changed
+	// upstream (cf-targets-plugin-2.3.0+linux.amd64), so any name we build
+	// here 404s the moment that format moves.
 	*lines = append(*lines,
-		fmt.Sprintf("        PLUGIN_URL=\"https://github.com/%s/releases/download/${LATEST_RELEASE}/%s\"", plugin.GitHubRepo, binaryName),
-		"        ",
-		"        # Download and install plugin",
-		fmt.Sprintf("        curl -fsSL \"$PLUGIN_URL\" -o \"/tmp/%s-plugin\"", plugin.Name),
-		"        if [ $? -eq 0 ]; then",
-		fmt.Sprintf("            chmod +x \"/tmp/%s-plugin\"", plugin.Name))
+		"        # Resolve the linux.amd64 asset from the release metadata",
+		fmt.Sprintf("        PLUGIN_URL=$(curl -sL -H \"${GITHUB_AUTH_HEADER}\" https://api.github.com/repos/%s/releases/tags/${LATEST_RELEASE} | grep 'browser_download_url' | grep 'linux.amd64' | grep -v '\\.exe' | head -1 | cut -d'\"' -f4)", plugin.GitHubRepo),
+		"        if [ -n \"${PLUGIN_URL}\" ]; then",
+		"            # CF plugins are auxiliary tooling: a download failure must",
+		"            # not abort the phase and block the steps that follow.",
+		fmt.Sprintf("            curl -fsSL \"$PLUGIN_URL\" -o \"/tmp/%s-plugin\" || true", plugin.Name),
+		fmt.Sprintf("            if [ -s \"/tmp/%s-plugin\" ]; then", plugin.Name),
+		fmt.Sprintf("                chmod +x \"/tmp/%s-plugin\"", plugin.Name))
 
-	// Install command with correct indentation (12 spaces for nested conditionals)
 	installCmd := fmt.Sprintf("cf install-plugin \"/tmp/%s-plugin\"", plugin.Name)
 	if plugin.Force {
 		installCmd += cfInstallForceFlag
 	}
 
-	*lines = append(*lines, "            "+installCmd)
-
 	*lines = append(*lines,
-		"            if [ $? -eq 0 ]; then",
-		fmt.Sprintf("                log_success 'CF plugin %s installed successfully'", plugin.Name),
+		"                if "+installCmd+"; then",
+		fmt.Sprintf("                    log_success 'CF plugin %s installed successfully'", plugin.Name),
+		"                else",
+		fmt.Sprintf("                    log_error 'Failed to install CF plugin %s'", plugin.Name),
+		"                fi",
+		fmt.Sprintf("                rm -f \"/tmp/%s-plugin\"", plugin.Name),
 		"            else",
-		fmt.Sprintf("                log_error 'Failed to install CF plugin %s'", plugin.Name),
+		fmt.Sprintf("                log_warning 'Failed to download CF plugin %s, skipping'", plugin.Name),
 		"            fi",
-		fmt.Sprintf("            rm -f \"/tmp/%s-plugin\"", plugin.Name),
 		"        else",
-		fmt.Sprintf("            log_error 'Failed to download CF plugin %s'", plugin.Name),
+		fmt.Sprintf("            log_warning 'No linux.amd64 asset for CF plugin %s, skipping'", plugin.Name),
 		"        fi",
 		"    else",
 		fmt.Sprintf("        log_warning 'Failed to fetch latest release for %s, skipping'", plugin.Name),
@@ -293,14 +301,17 @@ func (cfm *CFPluginManager) addGitHubInstallCommands(lines *[]string, plugin CFP
 
 // addReleaseVersionCommands adds commands to determine release version.
 func (cfm *CFPluginManager) addReleaseVersionCommands(lines *[]string, plugin CFPlugin) {
+	// The auth header is set unconditionally: the asset lookup that follows
+	// queries the API even when the release tag is pinned.
+	*lines = append(*lines, "    # Use GitHub token if available to avoid rate limiting")
+	*lines = append(*lines, `    GITHUB_AUTH_HEADER=""`)
+	*lines = append(*lines, `    if [ -n "${GITHUB_TOKEN:-}" ]; then`)
+	*lines = append(*lines, `        GITHUB_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"`)
+	*lines = append(*lines, `    fi`)
+
 	if plugin.Version != "" {
 		*lines = append(*lines, fmt.Sprintf("    LATEST_RELEASE='%s'", plugin.Version))
 	} else {
-		*lines = append(*lines, "    # Use GitHub token if available to avoid rate limiting")
-		*lines = append(*lines, `    GITHUB_AUTH_HEADER=""`)
-		*lines = append(*lines, `    if [ -n "${GITHUB_TOKEN:-}" ]; then`)
-		*lines = append(*lines, `        GITHUB_AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"`)
-		*lines = append(*lines, `    fi`)
 		*lines = append(*lines, fmt.Sprintf("    LATEST_RELEASE=$(curl -sL -H \"${GITHUB_AUTH_HEADER}\" https://api.github.com/repos/%s/releases/latest | grep 'tag_name' | cut -d'\"' -f4)", plugin.GitHubRepo))
 	}
 	// Open conditional for successful version fetch - caller will close it
