@@ -177,6 +177,14 @@ linters:
       - path: internal/vault/genesis(_envs)?\.go
         linters:
           - unused
+      # validateDefinition and its helpers have no production caller yet:
+      # Task 3's Compile (not yet landed) will call validateDefinition
+      # before table building. Until then only validate_test.go calls it,
+      # and with tests:false the linter cannot see that caller and falsely
+      # reports the whole file as unused.
+      - path: internal/netlayout/validate\.go
+        linters:
+          - unused
       # Thin delegating wrappers kept only so stackit_reserved_ips_test.go's
       # pre-extraction tests keep calling parseCIDR/parseIPRangeSpec/etc.
       # unqualified, unchanged, after the shared assignment engine moved to
