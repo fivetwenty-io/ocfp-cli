@@ -29,15 +29,26 @@ func unknownStrategyError(name string) error {
 // Callers match it with errors.Is.
 var ErrSubnetTooSmall = errors.New("subnet too small for strategy")
 
-// ErrUnknownRole is the sentinel Slots wraps when asked for a role that is
-// neither "infra" nor "ocfp". Callers match it with errors.Is.
+// ErrUnknownRole is the sentinel LayerASlots wraps when asked for a role
+// that is neither "infra" nor "ocfp". Callers match it with errors.Is.
 var ErrUnknownRole = errors.New("unknown netlayout role")
 
 // unknownRoleError wraps ErrUnknownRole with the offending role name and
-// the two roles Slots recognizes, so the message is enough on its own to
-// explain the rejection.
+// the two roles LayerASlots recognizes, so the message is enough on its own
+// to explain the rejection.
 func unknownRoleError(role string) error {
 	return fmt.Errorf("%w %q: known roles are %q, %q", ErrUnknownRole, role, slotRoleInfra, slotRoleOCFP)
+}
+
+// ErrNoMgmtTier is the sentinel LayerASlots wraps when the "ocfp" role is
+// asked of a strategy whose definition declares no mgmt tier: the ocfp
+// role's Layer A layout is derived entirely from that tier, so there is
+// nothing to report. Callers match it with errors.Is.
+var ErrNoMgmtTier = errors.New("netlayout: strategy defines no mgmt tier")
+
+// noMgmtTierError wraps ErrNoMgmtTier with the offending strategy name.
+func noMgmtTierError(strategy string) error {
+	return fmt.Errorf("%w: strategy %q cannot answer the %q role", ErrNoMgmtTier, strategy, slotRoleOCFP)
 }
 
 // subnetTooSmallError wraps ErrSubnetTooSmall with the offending strategy

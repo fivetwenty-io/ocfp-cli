@@ -6,11 +6,23 @@ import "sort"
 // Lookup falls back to for an empty name.
 const defaultStrategyName = "wide"
 
-// registry holds every Layout implementation available for selection. Both
-// entries have every Layout method real (see wide.go and compact.go).
-var registry = map[string]Layout{
-	"wide":    wideLayout{},
-	"compact": compactLayout{},
+// registry holds every Layout available for selection: one compiled layout
+// per built-in strategy definition (see builtins.go and strategies/*.yaml).
+var registry = builtinRegistry()
+
+// builtinRegistry compiles the embedded strategy definitions into the
+// name-keyed Layout map registry is built from. Compilation failure is a
+// programmer error in an embedded YAML file and panics at package
+// initialization rather than at first Lookup.
+func builtinRegistry() map[string]Layout {
+	compiled := builtinLayouts()
+
+	layouts := make(map[string]Layout, len(compiled))
+	for name, layout := range compiled {
+		layouts[name] = layout
+	}
+
+	return layouts
 }
 
 // Lookup resolves name to a registered Layout. An empty name resolves to
@@ -44,6 +56,3 @@ func Names() []string {
 
 	return names
 }
-
-// wideLayout is declared in wide.go; compactLayout is declared in
-// compact.go. Both have every Layout method real.

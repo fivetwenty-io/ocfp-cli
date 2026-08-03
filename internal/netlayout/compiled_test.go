@@ -8,17 +8,16 @@ import (
 	"testing"
 )
 
-// wideDefinitionLiteral transcribes wide.go's exact offsets (wide.go:20-81)
-// into a Definition, so TestCompiledWideTableMatchesLegacy can prove Compile
-// produces byte-for-byte the same table as wideLayout's hand-written one.
-// Every offset below is copied from the pveXxxOffset constants in wide.go —
-// keep the two in lockstep if wide.go's offsets ever change.
+// wideDefinitionLiteral transcribes the deleted wide.go's exact offsets into
+// a Definition, so TestCompiledWideTableMatchesGolden can prove Compile
+// produces byte-for-byte the same table the hand-written wideLayout did,
+// independently of the embedded YAML the built-in registry loads.
 func wideDefinitionLiteral() Definition {
 	return Definition{
 		Name:          "wide",
-		SchemeVersion: wideSchemeVersion,
+		SchemeVersion: "2",
 		Placement:     PlacementColocated,
-		MinPrefix:     wideMinPrefix,
+		MinPrefix:     25,
 		MinSubnets:    1,
 		Source:        "test",
 		Tiers: map[Tier]TierDef{
@@ -61,10 +60,12 @@ func wideDefinitionLiteral() Definition {
 	}
 }
 
-// TestCompiledWideTableMatchesLegacy proves Compile+WorkloadTable produce
-// exactly the same reservedip.AssignmentTable as the hand-written
-// wideLayout, for a Definition transcribing wide.go's offsets verbatim.
-func TestCompiledWideTableMatchesLegacy(t *testing.T) {
+// TestCompiledWideTableMatchesGolden proves Compile+WorkloadTable produce
+// exactly the reservedip.AssignmentTable the hand-written wideLayout emitted
+// (wideGoldenTable, builtins_test.go) for a Definition transcribing its
+// offsets verbatim — the compiler's own byte-compat proof, separate from
+// TestBuiltinTablesMatchGolden's proof about the embedded YAML.
+func TestCompiledWideTableMatchesGolden(t *testing.T) {
 	def := wideDefinitionLiteral()
 
 	layout, err := Compile(def)
@@ -77,9 +78,9 @@ func TestCompiledWideTableMatchesLegacy(t *testing.T) {
 		t.Fatalf("WorkloadTable: %v", err)
 	}
 
-	want, _ := wideLayout{}.WorkloadTable("10.0.0.0/22")
+	want := wideGoldenTable()
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("compiled wide != legacy wide\ngot:  %#v\nwant: %#v", got, want)
+		t.Fatalf("compiled wide != golden wide\ngot:  %#v\nwant: %#v", got, want)
 	}
 }
 
@@ -212,16 +213,16 @@ func TestCompiledAccessorsReturnDefinitionFields(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", got, "wide")
 	}
 
-	if got := layout.SchemeVersion(); got != wideSchemeVersion {
-		t.Errorf("SchemeVersion() = %q, want %q", got, wideSchemeVersion)
+	if got := layout.SchemeVersion(); got != "2" {
+		t.Errorf("SchemeVersion() = %q, want %q", got, "2")
 	}
 
 	if got := layout.Placement(); got != PlacementColocated {
 		t.Errorf("Placement() = %q, want %q", got, PlacementColocated)
 	}
 
-	if got := layout.MinPrefix(); got != wideMinPrefix {
-		t.Errorf("MinPrefix() = %d, want %d", got, wideMinPrefix)
+	if got := layout.MinPrefix(); got != 25 {
+		t.Errorf("MinPrefix() = %d, want %d", got, 25)
 	}
 
 	if got := layout.MinSubnets(); got != 1 {
@@ -340,6 +341,40 @@ func TestLayerASlotsOCFPSpanningRespectsPinning(t *testing.T) {
 
 	if hasNamedKey(idx1.Named, "bastion_ip") {
 		t.Fatalf("LayerASlots(ocfp, idx 1) Named = %+v, want bastion_ip absent", idx1.Named)
+	}
+}
+
+// TestLayerASlotsOCFPNegativeIndexDropsPinned locks the contract callers
+// with no workload position depend on: bootstrap's infra subnet and the
+// STACKIT single-subnet layout both pass idx -1, and a static PINNED to a
+// specific subnet index must never be handed to them — they do not occupy
+// index 0, so claiming index 0's IP would collide with whichever subnet
+// actually does. Unpinned statics, which apply to every index, still apply.
+//
+// No code enforces this separately: it falls out of placedOn's equality
+// scan over indices validateSubnetPin has already proven non-negative. The
+// test exists because that is a property of two collaborating pieces rather
+// than a written rule, and the first strategy to pin a role to an index
+// (the spanning built-in) is the one that would notice it breaking.
+func TestLayerASlotsOCFPNegativeIndexDropsPinned(t *testing.T) {
+	layout, err := Compile(validSpanningDef())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	slots, err := layout.LayerASlots("ocfp", "10.0.0.0/25", -1)
+	if err != nil {
+		t.Fatalf("LayerASlots(idx -1): %v", err)
+	}
+
+	// validSpanningDef's mgmt tier: bastion pinned to subnet 0, vault
+	// unpinned.
+	if hasNamedKey(slots.Named, "bastion_ip") {
+		t.Errorf("LayerASlots(ocfp, idx -1) Named = %+v, want pinned bastion_ip absent", slots.Named)
+	}
+
+	if !hasNamedKey(slots.Named, "vault_ip") {
+		t.Errorf("LayerASlots(ocfp, idx -1) Named = %+v, want unpinned vault_ip present", slots.Named)
 	}
 }
 

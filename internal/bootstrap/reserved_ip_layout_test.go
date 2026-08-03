@@ -109,6 +109,100 @@ func TestPVEWorkloadBand_OCFPUnifiesToStrategyBand_InfraKeepsDefault(t *testing.
 	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_c"); got != "10.64.68.64" {
 		t.Errorf("ocfp-0 reserved_c = %q, want 10.64.68.64", got)
 	}
+
+	// reserved_b brackets the band from below: the offset immediately under
+	// available_a (32-1=31), not the infra role's fixed 10. Layer A used to
+	// inherit the infra value here even after widening the ocfp band, leaving
+	// 11..31 described as neither reserved nor available.
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_b"); got != "10.64.68.31" {
+		t.Errorf("ocfp-0 reserved_b = %q, want 10.64.68.31 (available_a - 1)", got)
+	}
+
+	// The infra subnet keeps its own historical bracket (offset 10).
+	if got := getOutputString(t, sm, "reserved_prod-infra_reserved_b"); got != "10.64.64.10" {
+		t.Errorf("infra reserved_b = %q, want 10.64.64.10", got)
+	}
+}
+
+// TestPVEWorkloadStatics_ColocatedOnEveryIndex verifies the Layer A
+// consequence of resolving statics from the bloc's strategy instead of
+// bootstrap's own idx branches: "wide" declares colocated placement, so
+// every workload subnet gets the full mgmt static set at the strategy's own
+// offsets, relative to its own base. Previously bastion/bosh landed only on
+// ocfp-0, doomsday/shout only on ocfp-1 (at 9/10, colliding with
+// shield/blacksmith), and ocfp_ui only on ocfp-2 (at 9) — none of which
+// matched the offsets Layer B writes into vault for the same roles.
+func TestPVEWorkloadStatics_ColocatedOnEveryIndex(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, _ := newPVEBandTestManager(t)
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// wide's mgmt statics, at their own offsets, on every workload subnet.
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{key: "reserved_prod-ocfp-0_bastion_ip", want: "10.64.68.3"},
+		{key: "reserved_prod-ocfp-0_bosh_ip", want: "10.64.68.4"},
+		{key: "reserved_prod-ocfp-0_doomsday_ip", want: "10.64.68.18"},
+		{key: "reserved_prod-ocfp-0_ocfp_ui_ip", want: "10.64.68.17"},
+		{key: "reserved_prod-ocfp-1_bastion_ip", want: "10.64.72.3"},
+		{key: "reserved_prod-ocfp-1_doomsday_ip", want: "10.64.72.18"},
+		{key: "reserved_prod-ocfp-1_shout_ip", want: "10.64.72.19"},
+		{key: "reserved_prod-ocfp-2_bosh_ip", want: "10.64.76.4"},
+		{key: "reserved_prod-ocfp-2_ocfp_ui_ip", want: "10.64.76.17"},
+		// ip_key statics keep their overridden output stem.
+		{key: "reserved_prod-ocfp-0_rustfs_ip_smoke", want: "10.64.68.21"},
+		{key: "reserved_prod-ocfp-0_garage_ip_smoke", want: "10.64.68.22"},
+	} {
+		if got := getOutputString(t, sm, tc.key); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+
+	// The infra subnet is NOT a workload subnet: it keeps its own four fixed
+	// statics and gains none of the workload set.
+	if _, err := sm.GetOutput("reserved_prod-infra_doomsday_ip"); err == nil {
+		t.Error("infra subnet has a doomsday_ip output, want none (infra layout is fixed at 4 statics)")
+	}
+}
+
+// TestReservedIPConsumerKeys_Unchanged pins the two reserved_* keys with
+// live non-Genesis consumers — internal/commands/bastion_lookup.go's
+// last-resort bastion fallback and internal/commands/init.go's legacy BOSH
+// manifest path — to the exact addresses they resolved to before the Layer A
+// cutover. Everything else about ocfp-0's static set may have grown; these
+// two must not move.
+func TestReservedIPConsumerKeys_Unchanged(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, _ := newPVEBandTestManager(t)
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_bastion_ip"); got != "10.64.68.3" {
+		t.Errorf("ocfp-0 bastion_ip = %q, want 10.64.68.3 (bastion_lookup.go consumer)", got)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_bosh_ip"); got != "10.64.68.4" {
+		t.Errorf("ocfp-0 bosh_ip = %q, want 10.64.68.4 (init.go createBOSHManifest consumer)", got)
+	}
 }
 
 // TestReservedBandOverride_AppliesToBothRoles verifies that a config-level
