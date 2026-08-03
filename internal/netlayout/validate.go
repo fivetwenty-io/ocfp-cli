@@ -111,6 +111,16 @@ func validateStatics(def Definition) error {
 					ErrBadPinning, def.Source, def.Name, t, role, s.Offset, minStaticOffset)
 			}
 
+			// A pinned static's compiled Assignment uses SubnetMapping, whose
+			// engine path (processSubnetMappingAssignment) never reads
+			// Assignment.IPKey — so ip_key on a pinned static could never
+			// reach its consumer. Reject at validation time rather than
+			// silently dropping it at compile time.
+			if s.Subnets != nil && s.IPKey != "" {
+				return fmt.Errorf("%w: %s: strategy %q tier %q static %q: ip_key is only supported on unpinned statics",
+					ErrBadPinning, def.Source, def.Name, t, role)
+			}
+
 			what := fmt.Sprintf("static %q", role)
 			if err := validateSubnetPin(def, t, what, s.Subnets); err != nil {
 				return err

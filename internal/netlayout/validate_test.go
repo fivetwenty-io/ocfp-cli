@@ -141,6 +141,11 @@ func TestValidateDefinitionMoreRules(t *testing.T) {
 			tier.Statics["bad"] = StaticPlacement{Offset: 5, Subnets: []int{0}}
 			d.Tiers[TierMgmt] = tier
 		}, ErrBadPinning, ""},
+		{"pinned static with ip_key", func(d *Definition) {
+			tier := d.Tiers[TierMgmt]
+			tier.Statics["bad"] = StaticPlacement{Offset: 20, Subnets: []int{0}, IPKey: "bad_ip_custom"}
+			d.Tiers[TierMgmt] = tier
+		}, ErrBadPinning, "ip_key is only supported on unpinned statics"},
 		{"band start not less than end", func(d *Definition) {
 			tier := d.Tiers[TierMgmt]
 			tier.Available = []BandPlacement{{Start: 63, End: 32}}
