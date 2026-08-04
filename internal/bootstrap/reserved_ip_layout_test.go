@@ -3,7 +3,9 @@ package bootstrap_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
@@ -691,8 +693,11 @@ func TestCreateSubnets_StackitSingle_SpanningRejectsTooFewSubnets(t *testing.T) 
 // (useVirtualSubnets is false for AWS without the triple subnet strategy).
 // The returned fakeNet records every CreateSubnet request so tests can
 // assert nothing was created. The returned *config.Config is the same
-// pointer wired into the Manager.
-func newAWSTestManager(t *testing.T, subnets []config.Subnet) (*bootstrap.Manager, *fakeNet, *config.Config) {
+// pointer wired into the Manager, and the *state.Manager the same store, so
+// tests can assert what CreateSubnets recorded.
+func newAWSTestManager(
+	t *testing.T, subnets []config.Subnet,
+) (*bootstrap.Manager, *fakeNet, *config.Config, *state.Manager) {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -720,7 +725,7 @@ func newAWSTestManager(t *testing.T, subnets []config.Subnet) (*bootstrap.Manage
 		Region:   "us-east-1",
 	})
 
-	return mgr, fakeNetwork, cfg
+	return mgr, fakeNetwork, cfg, sm
 }
 
 // TestCreateSubnets_AWS_SpanningRejectsTooFewSubnets proves Layer A
@@ -732,7 +737,7 @@ func newAWSTestManager(t *testing.T, subnets []config.Subnet) (*bootstrap.Manage
 func TestCreateSubnets_AWS_SpanningRejectsTooFewSubnets(t *testing.T) {
 	t.Parallel()
 
-	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+	mgr, fakeNetwork, _, _ := newAWSTestManager(t, []config.Subnet{
 		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
 		{Name: "prod-ocfp-1", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
 	})
@@ -764,7 +769,7 @@ func TestCreateSubnets_AWS_SpanningRejectsTooFewSubnets(t *testing.T) {
 func TestCreateSubnets_AWS_SpanningAcceptsThreeSubnets(t *testing.T) {
 	t.Parallel()
 
-	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+	mgr, fakeNetwork, _, _ := newAWSTestManager(t, []config.Subnet{
 		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
 		{Name: "prod-ocfp-1", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
 		{Name: "prod-ocfp-2", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
@@ -792,7 +797,7 @@ func TestCreateSubnets_AWS_SpanningAcceptsThreeSubnets(t *testing.T) {
 func TestCreateSubnets_AWS_SpanningAcceptsProviderAssignedCIDR(t *testing.T) {
 	t.Parallel()
 
-	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+	mgr, fakeNetwork, _, _ := newAWSTestManager(t, []config.Subnet{
 		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
 		{Name: "prod-ocfp-1", Type: "public", AvailabilityZone: "us-east-1b"},
 		{Name: "prod-ocfp-2", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
@@ -820,7 +825,7 @@ func TestCreateSubnets_AWS_SpanningAcceptsProviderAssignedCIDR(t *testing.T) {
 func TestCreateSubnets_AWS_SpanningRejectsTooFewProviderAssigned(t *testing.T) {
 	t.Parallel()
 
-	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+	mgr, fakeNetwork, _, _ := newAWSTestManager(t, []config.Subnet{
 		{Name: "prod-ocfp-0", Type: "public", AvailabilityZone: "us-east-1a"},
 		{Name: "prod-ocfp-1", Type: "public", AvailabilityZone: "us-east-1b"},
 	})
@@ -868,5 +873,94 @@ func TestReservedBandOverride_PartialConfigRejected(t *testing.T) {
 
 	if !errors.Is(err, netlayout.ErrBandOverridePartial) {
 		t.Errorf("CreateSubnets error = %v, want wrapping ErrBandOverridePartial", err)
+	}
+}
+
+// TestCreateSubnets_AWS_PersistsSubnetRoleAndIndex proves the standard
+// (provider-native) subnet path records each workload subnet's role and
+// list-position index in state — resource properties and subnet_<name>_role /
+// subnet_<name>_index outputs — so downstream consumers can classify subnets
+// without parsing the "-ocfp-<n>" name shape. The names here deliberately do
+// NOT follow that shape: an operator bringing pre-named subnets is exactly
+// the case name-parsing cannot cover.
+func TestCreateSubnets_AWS_PersistsSubnetRoleAndIndex(t *testing.T) {
+	t.Parallel()
+
+	mgr, _, _, sm := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-east-a", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-east-b", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
+		{Name: "prod-east-c", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
+	})
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	for i, name := range []string{"prod-east-a", "prod-east-b", "prod-east-c"} {
+		if got := getOutputString(t, sm, "subnet_"+name+"_role"); got != "ocfp" {
+			t.Errorf("subnet_%s_role = %q, want %q", name, got, "ocfp")
+		}
+
+		if got := getOutputString(t, sm, "subnet_"+name+"_index"); got != strconv.Itoa(i) {
+			t.Errorf("subnet_%s_index = %q, want %q", name, got, strconv.Itoa(i))
+		}
+
+		res, err := sm.GetResource("subnet", name)
+		if err != nil {
+			t.Fatalf("GetResource(subnet, %s): %v", name, err)
+		}
+
+		if got, ok := res.Properties["role"].(string); !ok || got != "ocfp" {
+			t.Errorf("resource %s role property = %v, want %q", name, res.Properties["role"], "ocfp")
+		}
+
+		if got, ok := res.Properties["workload_index"].(int); !ok || got != i {
+			t.Errorf("resource %s workload_index property = %v, want %d", name, res.Properties["workload_index"], i)
+		}
+	}
+}
+
+// TestCreateSubnets_PVE_PersistsSubnetRoleAndIndex is the virtual-subnet
+// counterpart: the PVE carve records role and workload index for each ocfp
+// subnet, and the infra subnet records its role with no index output (it has
+// no workload position).
+func TestCreateSubnets_PVE_PersistsSubnetRoleAndIndex(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, _ := newPVEBandTestManager(t)
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	for i := range 3 {
+		name := fmt.Sprintf("prod-ocfp-%d", i)
+
+		if got := getOutputString(t, sm, "subnet_"+name+"_role"); got != "ocfp" {
+			t.Errorf("subnet_%s_role = %q, want %q", name, got, "ocfp")
+		}
+
+		if got := getOutputString(t, sm, "subnet_"+name+"_index"); got != strconv.Itoa(i) {
+			t.Errorf("subnet_%s_index = %q, want %q", name, got, strconv.Itoa(i))
+		}
+	}
+
+	if got := getOutputString(t, sm, "subnet_prod-infra_role"); got != "infra" {
+		t.Errorf("subnet_prod-infra_role = %q, want %q", got, "infra")
+	}
+
+	if _, err := sm.GetOutput("subnet_prod-infra_index"); err == nil {
+		t.Error("subnet_prod-infra_index output exists, want none (infra has no workload position)")
 	}
 }

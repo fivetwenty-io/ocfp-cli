@@ -824,7 +824,7 @@ func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, 
 		return err
 	}
 
-	err = m.addVirtualSubnetToState(name, subnetCIDR, parentCIDR, networkID, role, az, slots)
+	err = m.addVirtualSubnetToState(name, subnetCIDR, parentCIDR, networkID, role, az, idx, slots)
 	if err != nil {
 		return err
 	}
@@ -995,8 +995,8 @@ func (m *Manager) createStandardSubnets(ctx context.Context, networkID any) erro
 		return err
 	}
 
-	for _, subnet := range subnets {
-		err := m.createSingleSubnet(ctx, subnet, netID, networkID)
+	for i, subnet := range subnets {
+		err := m.createSingleSubnet(ctx, subnet, netID, networkID, i)
 		if err != nil {
 			return fmt.Errorf("failed to create subnet %s: %w", subnet.Name, err)
 		}
@@ -1064,7 +1064,9 @@ func (m *Manager) validateNetworkID(networkID any) (string, error) {
 // Subnet Management Functions
 // ==============================================================================
 
-func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parentCIDR string, networkID any, role, az string, slots netlayout.LayerASlots) error {
+func (m *Manager) addVirtualSubnetToState(
+	name, subnetCIDR, parentCIDR string, networkID any, role, az string, idx int, slots netlayout.LayerASlots,
+) error {
 	// Skip if already present
 	if existingSubnet, _ := m.stateManager.GetResource("subnet", name); existingSubnet != nil {
 		logger.Infof("Virtual subnet %s already recorded, skipping", name)
@@ -1085,6 +1087,10 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		"type":              "public",
 		"virtual":           true,
 		"role":              role,
+		// The caller's own workload-subnet position (-1 = no position), the
+		// authoritative record consumers read instead of parsing the
+		// "-ocfp-<n>" name shape (which custom subnet names don't follow).
+		"workload_index": idx,
 		// Reserved fields
 		"ip_0":        CIDRFirstIP(subnetCIDR),
 		"ip_n":        CIDRLastUsableIP(subnetCIDR),
@@ -1124,6 +1130,8 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_az", name), az)
 	}
 
+	m.saveSubnetRoleOutputs(name, role, idx)
+
 	// Reserved IP role assignments (STACKIT parity for "ocfp"; PVE infra
 	// reservations when role == infra).
 	m.addReservedIPOutputs(name, subnetCIDR, slots)
@@ -1131,12 +1139,25 @@ func (m *Manager) addVirtualSubnetToState(name string, subnetCIDR string, parent
 	return nil
 }
 
+// saveSubnetRoleOutputs records a subnet's role and workload-subnet index as
+// state outputs. The index output is written only for subnets that hold a
+// workload position (idx >= 0); infra and single-subnet layouts have none.
+// Commands resolve subnet identity from these outputs rather than the
+// "-ocfp-<n>" name shape, which operator-named subnets don't follow.
+func (m *Manager) saveSubnetRoleOutputs(name, role string, idx int) {
+	_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_role", name), role)
+
+	if idx >= 0 {
+		_ = m.stateManager.SetOutput(fmt.Sprintf("subnet_%s_index", name), strconv.Itoa(idx))
+	}
+}
+
 func (m *Manager) addSubnetDependency(subnetName string) {
 	networkName := m.resolveNetworkName()
 	_ = m.stateManager.AddDependency("subnet."+subnetName, "network."+networkName)
 }
 
-func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, netID string, networkID any) error {
+func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, netID string, networkID any, idx int) error {
 	subnetName := subnet.Name
 
 	if m.subnetAlreadyExists(subnetName) {
@@ -1150,7 +1171,7 @@ func (m *Manager) createSingleSubnet(ctx context.Context, subnet config.Subnet, 
 		return err
 	}
 
-	return m.saveSubnetToState(createdSubnet, subnetName, networkID)
+	return m.saveSubnetToState(createdSubnet, subnetName, networkID, idx)
 }
 
 func (m *Manager) subnetAlreadyExists(subnetName string) bool {
@@ -1179,8 +1200,10 @@ func (m *Manager) createSubnetWithProvider(ctx context.Context, subnet config.Su
 	return createdSubnet, nil
 }
 
-func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string, networkID any) error {
-	// Save subnet to state
+func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string, networkID any, idx int) error {
+	// Save subnet to state. Standard-path subnets are all workload subnets;
+	// idx is the subnet's position in the creation list, persisted so
+	// consumers can classify the subnet without parsing its name.
 	err := m.stateManager.AddResource(&state.Resource{
 		ID:       createdSubnet.ID,
 		Type:     "subnet",
@@ -1192,6 +1215,8 @@ func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string
 			"availability_zone": createdSubnet.AvailabilityZone,
 			"network_id":        networkID,
 			"type":              createdSubnet.Type,
+			"role":              subnetRoleOCFP,
+			"workload_index":    idx,
 		},
 		Tags:      m.baseTags(),
 		CreatedAt: time.Now(),
@@ -1203,6 +1228,7 @@ func (m *Manager) saveSubnetToState(createdSubnet *cpi.Subnet, subnetName string
 
 	m.addSubnetDependency(subnetName)
 	m.saveSubnetOutputs(subnetName, createdSubnet)
+	m.saveSubnetRoleOutputs(subnetName, subnetRoleOCFP, idx)
 
 	logger.Infof("Subnet created successfully: id=%s name=%s", createdSubnet.ID, subnetName)
 
