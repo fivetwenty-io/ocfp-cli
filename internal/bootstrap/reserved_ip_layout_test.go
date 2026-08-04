@@ -686,6 +686,105 @@ func TestCreateSubnets_StackitSingle_SpanningRejectsTooFewSubnets(t *testing.T) 
 	}
 }
 
+// newAWSTestManager builds an AWS-provider Manager over a fresh state store
+// with explicit Network.Subnets, exercising the createStandardSubnets path
+// (useVirtualSubnets is false for AWS without the triple subnet strategy).
+// The returned fakeNet records every CreateSubnet request so tests can
+// assert nothing was created. The returned *config.Config is the same
+// pointer wired into the Manager.
+func newAWSTestManager(t *testing.T, subnets []config.Subnet) (*bootstrap.Manager, *fakeNet, *config.Config) {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = sm.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := createTestConfig()
+	cfg.Provider = "aws"
+	cfg.Network.NetworkCIDR = "10.4.0.0/20"
+	cfg.Network.Subnets = subnets
+
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+
+	mgr := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "aws",
+		Region:   "us-east-1",
+	})
+
+	return mgr, fakeNetwork, cfg
+}
+
+// TestCreateSubnets_AWS_SpanningRejectsTooFewSubnets proves Layer A
+// enforcement on the AWS standard-subnet path: AWS defaults to the spanning
+// strategy (MinSubnets 3), so a bloc explicitly configured with only two
+// workload subnets must fail CreateSubnets with netlayout.ErrTooFewSubnets
+// before any cloud subnet is created — the createStandardSubnets
+// counterpart to TestCreateSubnets_StackitSingle_SpanningRejectsTooFewSubnets.
+func TestCreateSubnets_AWS_SpanningRejectsTooFewSubnets(t *testing.T) {
+	t.Parallel()
+
+	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-ocfp-1", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
+	})
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	err := mgr.CreateSubnets(ctx)
+	if err == nil {
+		t.Fatal("CreateSubnets: want error, got nil")
+	}
+
+	if !errors.Is(err, netlayout.ErrTooFewSubnets) {
+		t.Errorf("CreateSubnets error = %v, want wrapping netlayout.ErrTooFewSubnets", err)
+	}
+
+	if len(fakeNetwork.createdSubnetReqs) != 0 {
+		t.Errorf("CreateSubnet called %d times despite ErrTooFewSubnets, want no cloud mutation",
+			len(fakeNetwork.createdSubnetReqs))
+	}
+}
+
+// TestCreateSubnets_AWS_SpanningAcceptsThreeSubnets is the passing
+// counterpart: three workload subnets satisfy spanning's MinSubnets and all
+// three reach the provider.
+func TestCreateSubnets_AWS_SpanningAcceptsThreeSubnets(t *testing.T) {
+	t.Parallel()
+
+	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-ocfp-1", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
+		{Name: "prod-ocfp-2", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
+	})
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	if len(fakeNetwork.createdSubnetReqs) != 3 {
+		t.Errorf("CreateSubnet called %d times, want 3", len(fakeNetwork.createdSubnetReqs))
+	}
+}
+
 // TestReservedBandOverride_PartialConfigRejected verifies that setting only
 // one of Bands.Infra.Start/End (rather than both, or neither) is treated as
 // a misconfiguration rather than silently defaulting one side.

@@ -92,7 +92,8 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: resolve security group: %w", err)
 	}
 
-	ipStr, err := CalculateIPFromCIDR(subnetInfo.CIDR, artifactsIPSlot)
+	ipStr, err := CalculateIPFromCIDR(subnetInfo.CIDR,
+		m.slotForNamedIP(subnetInfo.Name, subnetInfo.CIDR, "artifacts_ip", artifactsIPSlot))
 	if err != nil {
 		return fmt.Errorf("artifacts: compute static IP: %w", err)
 	}

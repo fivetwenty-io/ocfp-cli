@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/stretchr/testify/assert"
@@ -168,7 +169,49 @@ func TestFindReservedIP_MatchesInfraAndOcfpSubnets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, findReservedIP(tt.outputs, tt.role))
+			assert.Equal(t, tt.want, findReservedIP(tt.outputs, tt.role, nil))
+		})
+	}
+}
+
+// TestFindReservedIP_PrefersPinnedIndex verifies findReservedIP consults
+// the bloc's layout when given one: a role the strategy pins to a single
+// workload-subnet index resolves from that index's key even when a
+// lower-sorted key (e.g. a stale ocfp-0 output from a pre-migration
+// strategy) also matches. When the pinned index's key is absent, or the
+// role is unpinned, the sorted-first fallback still applies.
+func TestFindReservedIP_PrefersPinnedIndex(t *testing.T) {
+	t.Parallel()
+
+	spanning, err := netlayout.Lookup("spanning")
+	require.NoError(t, err)
+
+	outputs := map[string]interface{}{
+		"reserved_myblc-ocfp-0_doomsday_ip": "10.4.4.18",
+		"reserved_myblc-ocfp-1_doomsday_ip": "10.4.8.18",
+		"reserved_myblc-ocfp-0_vault_ip":    "10.4.4.5",
+		"reserved_myblc-ocfp-1_vault_ip":    "10.4.8.5",
+		"reserved_myblc-ocfp-0_shout_ip":    "10.4.4.19",
+	}
+
+	tests := []struct {
+		name   string
+		role   string
+		layout netlayout.Layout
+		want   string
+	}{
+		{name: "pinned role prefers its index", role: "doomsday", layout: spanning, want: "10.4.8.18"},
+		{name: "unpinned role keeps sorted-first", role: "vault", layout: spanning, want: "10.4.4.5"},
+		{name: "nil layout keeps sorted-first", role: "doomsday", layout: nil, want: "10.4.4.18"},
+		{name: "pinned key absent falls back to sorted-first", role: "shout", layout: spanning, want: "10.4.4.19"},
+		{name: "role absent entirely", role: "ocfp_ui", layout: spanning, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, findReservedIP(outputs, tt.role, tt.layout))
 		})
 	}
 }
@@ -265,7 +308,7 @@ func TestExpectedIPForService_ReservedStateOrBastion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP))
+			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP, nil))
 		})
 	}
 }
