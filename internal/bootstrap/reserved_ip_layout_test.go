@@ -428,6 +428,182 @@ func TestReservedBandOverride_ValidationErrors(t *testing.T) {
 	}
 }
 
+// newStackitTestManager builds a stackit-provider Manager over a fresh
+// state store with subnetStrategy set to select the stackit-single strategy
+// (selectVirtualSubnetStrategy: Network.SubnetStrategy contains "single").
+// cfg.Network.CIDR is the whole parent CIDR: createStackitSingleSubnet
+// records it, unsplit, as the bloc's one workload subnet (see
+// internal/bootstrap/network.go), unlike the triple strategy which carves
+// it into three.
+func newStackitTestManager(t *testing.T) (*bootstrap.Manager, *state.Manager, *config.Config) {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	sm, err := state.NewManager(filepath.Join(tmp, ".state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = sm.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := createTestConfig()
+	cfg.Network.NetworkCIDR = "10.4.0.0/20"
+	cfg.Network.SubnetStrategy = "single"
+
+	fakeNetwork := &fakeNet{}
+	fakeProvider := &fakeProv{n: fakeNetwork, c: &fakeCompute{}}
+
+	mgr := bootstrap.NewManager(cfg, fakeProvider, sm, &bootstrap.Options{
+		BlocName: "prod",
+		Provider: "stackit",
+		Region:   "eu01",
+	})
+
+	return mgr, sm, cfg
+}
+
+// TestStackitSingleSubnet_WideDefault_LocksNegativeIndexKeySet pins the
+// Layer A key set internal/bootstrap's createStackitSingleSubnet writes for
+// a stackit-single bloc's one workload subnet, deliberately rather than by
+// accident (see Task 6 review, Important 3: this path passes idx -1 to
+// netlayout.Layout.LayerASlots, and under the colocated wide built-in
+// placedOn(nil, -1) is true for every static — none is pinned to a subnet
+// index it doesn't occupy — so all 20 mgmt statics land here, including
+// bastion_ip/bosh_ip, which the pre-Task-6 idx-branching writer never
+// produced for this path). This is a Layer A (bootstrap) characterization,
+// distinct from the STACKIT vault provider's own single-subnet path (Layer
+// B), which always calls configureSubnetReservedIPs with a real index (0)
+// and never sees idx -1 — see
+// internal/vault/stackit_reserved_ips_test.go's
+// TestStackitReservedIPs_SingleSubnetWideDefault for that contract.
+func TestStackitSingleSubnet_WideDefault_LocksNegativeIndexKeySet(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, _ := newStackitTestManager(t)
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// prod-subnet is the whole 10.4.0.0/20 parent CIDR, unsplit.
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{key: "reserved_prod-subnet_bastion_ip", want: "10.4.0.3"},
+		{key: "reserved_prod-subnet_bosh_ip", want: "10.4.0.4"},
+		{key: "reserved_prod-subnet_vault_ip", want: "10.4.0.5"},
+		{key: "reserved_prod-subnet_jumpbox_ip", want: "10.4.0.6"},
+		{key: "reserved_prod-subnet_concourse_ip", want: "10.4.0.7"},
+		{key: "reserved_prod-subnet_prometheus_ip", want: "10.4.0.8"},
+		{key: "reserved_prod-subnet_shield_ip", want: "10.4.0.9"},
+		{key: "reserved_prod-subnet_blacksmith_ip", want: "10.4.0.10"},
+		{key: "reserved_prod-subnet_artifacts_ip", want: "10.4.0.11"},
+		{key: "reserved_prod-subnet_wireguard_ip", want: "10.4.0.12"},
+		{key: "reserved_prod-subnet_ovpn_ip", want: "10.4.0.13"},
+		{key: "reserved_prod-subnet_rustfs_ip", want: "10.4.0.14"},
+		{key: "reserved_prod-subnet_proxycache_ip", want: "10.4.0.15"},
+		{key: "reserved_prod-subnet_nfs_ip", want: "10.4.0.16"},
+		{key: "reserved_prod-subnet_ocfp_ui_ip", want: "10.4.0.17"},
+		{key: "reserved_prod-subnet_doomsday_ip", want: "10.4.0.18"},
+		{key: "reserved_prod-subnet_shout_ip", want: "10.4.0.19"},
+		{key: "reserved_prod-subnet_garage_ip", want: "10.4.0.20"},
+		{key: "reserved_prod-subnet_rustfs_ip_smoke", want: "10.4.0.21"},
+		{key: "reserved_prod-subnet_garage_ip_smoke", want: "10.4.0.22"},
+		{key: "reserved_prod-subnet_available_a", want: "10.4.0.32"},
+		{key: "reserved_prod-subnet_available_b", want: "10.4.0.63"},
+		{key: "reserved_prod-subnet_reserved_b", want: "10.4.0.31"},
+		{key: "reserved_prod-subnet_reserved_c", want: "10.4.0.64"},
+	} {
+		if got := getOutputString(t, sm, tc.key); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// TestStackitSingleSubnet_SpanningDropsPinnedStatics traces what actually
+// happens today when a stackit-single bloc explicitly sets
+// network.strategy: spanning (Task 6 review, Concern 3). spanning's mgmt
+// tier pins 13 of its 20 statics (bastion/bosh/shield/blacksmith/
+// wireguard/ovpn/rustfs/proxycache/nfs/garage to subnet 0, ocfp_ui to
+// subnet 2, doomsday/shout to subnet 1); at idx -1 none of those pinned
+// entries match (see netlayout's TestLayerASlotsOCFPNegativeIndexDropsPinned),
+// so they are silently absent here rather than erroring. The mgmt tier's
+// available band (32-63) has no subnet pinning of its own, so bandFor
+// still finds exactly one match at idx -1 and the band populates normally
+// — this is the "sane table, not an opaque error" outcome; had the band
+// itself been pinned, resolveReservedIPLayout would fail with netlayout's
+// "index -1 covered by 0 bands" ErrBandOverlap instead.
+func TestStackitSingleSubnet_SpanningDropsPinnedStatics(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, cfg := newStackitTestManager(t)
+	cfg.Network.Strategy = "spanning"
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// The 7 unpinned mgmt statics still apply to every index, idx -1 included.
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{key: "reserved_prod-subnet_vault_ip", want: "10.4.0.5"},
+		{key: "reserved_prod-subnet_jumpbox_ip", want: "10.4.0.6"},
+		{key: "reserved_prod-subnet_concourse_ip", want: "10.4.0.7"},
+		{key: "reserved_prod-subnet_prometheus_ip", want: "10.4.0.8"},
+		{key: "reserved_prod-subnet_artifacts_ip", want: "10.4.0.11"},
+		{key: "reserved_prod-subnet_rustfs_ip_smoke", want: "10.4.0.21"},
+		{key: "reserved_prod-subnet_garage_ip_smoke", want: "10.4.0.22"},
+		// The unpinned mgmt band (32-63) resolves cleanly at idx -1 too.
+		{key: "reserved_prod-subnet_available_a", want: "10.4.0.32"},
+		{key: "reserved_prod-subnet_available_b", want: "10.4.0.63"},
+		{key: "reserved_prod-subnet_reserved_b", want: "10.4.0.31"},
+		{key: "reserved_prod-subnet_reserved_c", want: "10.4.0.64"},
+	} {
+		if got := getOutputString(t, sm, tc.key); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+
+	// The 13 subnet-pinned mgmt statics never occupy index -1's position,
+	// so none of them appear.
+	for _, key := range []string{
+		"reserved_prod-subnet_bastion_ip",
+		"reserved_prod-subnet_bosh_ip",
+		"reserved_prod-subnet_shield_ip",
+		"reserved_prod-subnet_blacksmith_ip",
+		"reserved_prod-subnet_wireguard_ip",
+		"reserved_prod-subnet_ovpn_ip",
+		"reserved_prod-subnet_rustfs_ip",
+		"reserved_prod-subnet_proxycache_ip",
+		"reserved_prod-subnet_nfs_ip",
+		"reserved_prod-subnet_ocfp_ui_ip",
+		"reserved_prod-subnet_doomsday_ip",
+		"reserved_prod-subnet_shout_ip",
+		"reserved_prod-subnet_garage_ip",
+	} {
+		if _, err := sm.GetOutput(key); err == nil {
+			t.Errorf("output %s exists, want absent (pinned to a subnet index -1 does not occupy)", key)
+		}
+	}
+}
+
 // TestReservedBandOverride_PartialConfigRejected verifies that setting only
 // one of Bands.Infra.Start/End (rather than both, or neither) is treated as
 // a misconfiguration rather than silently defaulting one side.
