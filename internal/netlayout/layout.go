@@ -73,7 +73,9 @@ type Layout interface {
 	ValidateSubnet(cidr string) error
 
 	// ValidateSubnetSet returns an error if cidrs holds fewer subnets than
-	// this strategy needs, or if any one of them fails ValidateSubnet.
+	// this strategy needs, or if any non-empty entry fails ValidateSubnet.
+	// An empty entry (a CIDR the provider assigns later) counts toward the
+	// subnet floor but is not size-checked.
 	ValidateSubnetSet(cidrs []string) error
 
 	// ValidateBand returns an error if [start,end] is not a valid
