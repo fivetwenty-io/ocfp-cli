@@ -379,6 +379,10 @@ A populate drift guard sits in front of every write to a `reserved-ips` path (bo
 
 Moving a live reserved address recreates the VM that holds it, so the guard's withheld writes are surfaced for deliberate review rather than applied automatically. An operator reviews the report with `ocfp vault reserved-ips status`, then applies a chosen migration with `ocfp vault reserved-ips migrate`, or forces the derivation over the recorded addresses with `ocfp vault populate --force-reallocate`.
 
+The guard also reports the reverse case: keys a record still holds that the running build no longer derives at all. The drift check cannot see these, because it only compares the keys the derivation emits — a record carrying a retired band pair alongside the current one therefore reads as clean. They are not inert. Genesis' cloud-config IPAM unions every `reserved*`/`available*` pair it finds in a record, so a retired pair spanning the live band silently reserves it, and the director fails to generate a cloud-config with `Not enough available IPs in the subnet for the network 'compilation'`. `status` lists them under "obsolete reserved-IP keys" and `migrate` removes them; removing one moves nothing, so no VM needs recreating on that account.
+
+Obsolete-key detection needs the whole derived record to compare against, so it applies only where a writer supplies one — the per-tier workload tables on PVE, AWS, and STACKIT. The PVE infra subnet's role-keyed record is assembled from whatever `reserved_*_ip` outputs bootstrap state happens to hold, so a key absent from one write is not evidence of retirement there, and that record is never purged.
+
 ## 11. Choosing a strategy
 
 Use `wide` (the default for PVE and STACKIT single-subnet) when the workload subnet is `/25` or wider — it is the strategy every currently provisioned bloc already runs, and it needs no explicit config.
