@@ -139,48 +139,57 @@ State outputs:
 
 ### Reserved IPs
 
-For virtual subnets, OCFP computes reserved IPs used by operational services and load balancers. These are persisted to state as `reserved_<bloc>-ocfp-<n>_<key>`.
+For virtual subnets, OCFP computes reserved IPs used by operational services and load balancers. These are persisted to state as `reserved_<bloc>-ocfp-<n>_<key>` under `ocfp-triple`, and as `reserved_<bloc>-subnet_<key>` under `single`, whose one virtual subnet carries no per-AZ index.
 
-#### All Subnets
+The offsets are not STACKIT-specific. They come from the bloc's resolved reserved-IP strategy, the same engine PVE and AWS resolve theirs from: `ocfp-triple` defaults to `spanning`, `single` defaults to `wide`, and `network.strategy` overrides either default.
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .5 | `vault_ip` | Vault |
-| .6 | `jumpbox_ip` | Jumpbox |
-| .7 | `concourse_ip` | Concourse |
-| .8 | `prometheus_ip` | Prometheus |
+#### Triple Subnets (`spanning`)
 
-#### ocfp-0 Only
+A role pinned to one subnet index gets no key at all in the other subnets' outputs:
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .3 | `bastion_ip` | Bastion |
-| .4 | `bosh_ip` | BOSH Director |
-| .9 | `shield_ip` | SHIELD |
-| .10 | `blacksmith_ip` | Blacksmith |
+| Slot | Key | Service | Written on |
+|------|-----|---------|------------|
+| .3 | `bastion_ip` | Bastion | ocfp-0 |
+| .4 | `bosh_ip` | BOSH Director | ocfp-0 |
+| .5 | `vault_ip` | Vault | every subnet |
+| .6 | `jumpbox_ip` | Jumpbox | every subnet |
+| .7 | `concourse_ip` | Concourse | every subnet |
+| .8 | `prometheus_ip` | Prometheus | every subnet |
+| .9 | `shield_ip` | SHIELD | ocfp-0 |
+| .10 | `blacksmith_ip` | Blacksmith | ocfp-0 |
+| .11 | `artifacts_ip` | Artifacts | every subnet |
+| .12 | `wireguard_ip` | WireGuard | ocfp-0 |
+| .13 | `ovpn_ip` | OpenVPN | ocfp-0 |
+| .14 | `rustfs_ip` | RustFS blobstore | ocfp-0 |
+| .15 | `proxycache_ip` | Proxy cache | ocfp-0 |
+| .16 | `nfs_ip` | NFS | ocfp-0 |
+| .17 | `ocfp_ui_ip` | OCFP UI | ocfp-2 |
+| .18 | `doomsday_ip` | Doomsday | ocfp-1 |
+| .19 | `shout_ip` | Shout | ocfp-1 |
+| .20 | `garage_ip` | Garage blobstore | ocfp-0 |
+| .21 | `rustfs_ip_smoke` | RustFS smoke errand | every subnet |
+| .22 | `garage_ip_smoke` | Garage smoke errand | every subnet |
 
-#### ocfp-1 Only
+#### Single Subnet (`wide`)
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .9 | `doomsday_ip` | Doomsday |
-| .10 | `shout_ip` | Shout |
+`wide` is colocated: the one virtual subnet carries all twenty statics above, at the same offsets, with no per-index distinction.
 
-#### ocfp-2 Only
+#### Band Outputs
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .9 | `ocfp_ui_ip` | OCFP UI |
+Written for every workload subnet under both strategies:
 
-#### IP Ranges
+| Output | Slot | Purpose |
+|--------|------|---------|
+| `reserved_a` | .0 | Subnet base — floor of the reserved complement |
+| `reserved_b` | .31 | Last offset below the available band |
+| `available_a` | .32 | First allocatable offset |
+| `available_b` | .63 | Last allocatable offset |
+| `reserved_c` | .64 | First offset above the available band |
+| `reserved_d` | last usable | Ceiling of the reserved complement |
 
-| Range | Slots | Purpose |
-|-------|-------|---------|
-| Reserved A | 0-10 | System services |
-| Available | 11-29 | Available for allocation |
-| Reserved C/D | 30-end | Reserved for future use |
+These outputs enable LB tokens: `reserved:<key>[:index]` (e.g., `reserved:vault_ip`, `reserved:doomsday_ip:1`). A token that omits the index resolves against `ocfp-0`, so a pinned role must name its own index.
 
-These outputs enable LB tokens: `reserved:<key>[:index]` (e.g., `reserved:vault_ip`, `reserved:doomsday_ip:1`).
+See [Reserved-IP Strategies](reserved-ip-strategies.md) for the full offset catalog, the `ocf` tier's own table, band overrides, and the scheme-drift guard.
 
 ## Proxmox
 

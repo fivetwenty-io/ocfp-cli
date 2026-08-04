@@ -9,6 +9,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
@@ -1220,6 +1221,98 @@ func TestPVEVaultProvider_ConfigureSubnets_MgmtOcfDisjointOnSharedSubnet(t *test
 	assert.NotEqual(t, mgmtBand.data["available_0"], ocfBand.data["available_0"])
 	assert.Equal(t, "10.64.68.32", mgmtBand.data["available_0"])
 	assert.Equal(t, "10.64.68.96", ocfBand.data["available_0"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_TooFewWorkloadSubnetsRejected proves
+// Layer B enforcement (Task 12): a bloc explicitly set to the spanning
+// strategy (MinSubnets 3) whose bootstrap state records only ONE ocfp
+// workload subnet must fail ConfigureSubnets with netlayout.ErrTooFewSubnets
+// before writing anything — mirroring internal/bootstrap's identical
+// enforcement for Layer A (see
+// TestCreateSubnets_StackitSingle_SpanningRejectsTooFewSubnets).
+func TestPVEVaultProvider_ConfigureSubnets_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-infra",
+		Type: "subnet",
+		Name: blocName + "-infra",
+		Properties: map[string]any{
+			"cidr":    "10.64.64.0/22",
+			"gateway": "10.64.64.1",
+		},
+	}))
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-0",
+		Type: "subnet",
+		Name: blocName + "-ocfp-0",
+		Properties: map[string]any{
+			"cidr":              "10.64.68.0/22",
+			"availability_zone": "pvea",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		VPCCIDRBlock: "10.64.64.0/19",
+		Network:      config.NetworkConfig{Strategy: "spanning"},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
+
+	assert.Empty(t, mock.setMultipleCalls, "no subnet path written when the strategy minimum is not met")
+}
+
+// TestPVEVaultProvider_ConfigureReservedIPs_TooFewWorkloadSubnetsRejected is
+// the ConfigureReservedIPs (reserved-ips-only) counterpart of the test
+// above: this narrower entry point (reached from populate's reserved-ips
+// phase and the reservedIPs migrate/status commands — see
+// manager_reservedips_scope_test.go) must reject the same combination
+// before writing any reserved-ips path, not only the full-tree
+// ConfigureSubnets writer.
+func TestPVEVaultProvider_ConfigureReservedIPs_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-infra",
+		Type: "subnet",
+		Name: blocName + "-infra",
+		Properties: map[string]any{
+			"cidr":    "10.64.64.0/22",
+			"gateway": "10.64.64.1",
+		},
+	}))
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-ocfp-0",
+		Type: "subnet",
+		Name: blocName + "-ocfp-0",
+		Properties: map[string]any{
+			"cidr":              "10.64.68.0/22",
+			"availability_zone": "pvea",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		VPCCIDRBlock: "10.64.64.0/19",
+		Network:      config.NetworkConfig{Strategy: "spanning"},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureReservedIPs(nil, 0, 1)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
+
+	assert.Empty(t, mock.setMultipleCalls, "no reserved-ips path written when the strategy minimum is not met")
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_AutoSourcesFromArtifactsState — with

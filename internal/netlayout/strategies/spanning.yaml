@@ -1,0 +1,39 @@
+name: spanning
+description: >
+  Wide's offset catalog distributed across three AZ workload subnets.
+scheme_version: "4-spanning"
+placement: spanning
+min_prefix: 25
+min_subnets: 3
+tiers:
+  mgmt:
+    statics:
+      bastion:      { offset: 3, subnets: [0] }
+      bosh:         { offset: 4, subnets: [0] }
+      vault:        5
+      jumpbox:      6
+      concourse:    7
+      prometheus:   8
+      shield:       { offset: 9,  subnets: [0] }
+      blacksmith:   { offset: 10, subnets: [0] }
+      artifacts:    11
+      wireguard:    { offset: 12, subnets: [0] }
+      ovpn:         { offset: 13, subnets: [0] }
+      rustfs:       { offset: 14, subnets: [0] }
+      proxycache:   { offset: 15, subnets: [0] }
+      nfs:          { offset: 16, subnets: [0] }
+      ocfp_ui:      { offset: 17, subnets: [2] }
+      doomsday:     { offset: 18, subnets: [1] }
+      shout:        { offset: 19, subnets: [1] }
+      garage:       { offset: 20, subnets: [0] }
+      rustfs_smoke: { offset: 21, ip_key: rustfs_ip_smoke }
+      garage_smoke: { offset: 22, ip_key: garage_ip_smoke }
+    available: { start: 32, end: 63 }
+  ocf:
+    statics:
+      bosh:       { offset: 64, subnets: [0] }
+      vault:      65
+      jumpbox:    66
+      blacksmith: { offset: 67, subnets: [1] }
+      haproxy:    { offset: 97, subnets: [0] }
+    available: { start: 96 }

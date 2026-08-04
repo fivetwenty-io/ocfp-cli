@@ -676,6 +676,10 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 		return a.configureFallbackSubnet(envType)
 	}
 
+	if err := validateWorkloadSubnetCIDRs(a.Config, "aws vault provider: subnets", collectWorkloadSubnetCIDRs(subnets)); err != nil {
+		return err
+	}
+
 	for i, subnet := range subnets {
 		a.logger.Debugw("Processing subnet",
 			"index", i,
@@ -885,40 +889,30 @@ func (a *AWSVaultProvider) calculateNetworkPrefix(cidr string) string {
 }
 
 // configureSubnetReservedIPs configures reserved IP addresses for a subnet.
+// Reserved IPs are computed through the shared netlayout strategy engine
+// (see reservedIPsForSubnet), the same path PVE and STACKIT use, rather than
+// a provider-specific offset table. CF router and Diego cell addressing is
+// no longer written here: it lives in the public-ips/load-balancer paths.
 func (a *AWSVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
 	a.logger.Infow("Configuring reserved IPs", "subnet", fmt.Sprintf("%s-%d", subnetType, subnetNum))
 
-	systemIPs := a.calculateSystemIPs(cidr, envType)
+	reserved, err := reservedIPsForSubnet(cidr, envType, subnetNum, a.Config, a.logger)
+	if err != nil {
+		return fmt.Errorf("failed to compute reserved IPs for %s/%s-%d: %w", envType, subnetType, subnetNum, err)
+	}
+
+	if boshIP, ok := reserved["bosh_ip"]; ok {
+		reserved["ip"] = boshIP
+		reserved["director_ip"] = boshIP
+	}
 
 	reservedPath := a.PathBuilder.GetReservedIPsPath(envType, subnetType, subnetNum)
 
-	err := a.Safe.SetMultiple(reservedPath, systemIPs)
-	if err != nil {
+	if err := a.Safe.SetMultiple(reservedPath, reserved); err != nil {
 		return fmt.Errorf("failed to set reserved IPs: %w", err)
 	}
 
 	return nil
-}
-
-// calculateSystemIPs calculates IP addresses for system components.
-// Uses addOffsetToIP to compute IPs relative to the subnet's actual network
-// address, ensuring IPs fall within the subnet range even for non-/24 subnets.
-func (a *AWSVaultProvider) calculateSystemIPs(cidr string, envType string) map[string]interface{} {
-	network := strings.Split(cidr, "/")[0]
-	systemIPs := make(map[string]interface{})
-
-	switch envType {
-	case MgmtEnvType:
-		systemIPs["bosh_ip"] = addOffsetToIP(network, BoshIPOffset)
-		systemIPs["jumpbox_ip"] = addOffsetToIP(network, JumpboxOffset)
-	case OCFEnvType:
-		systemIPs["cf_router_0_ip"] = addOffsetToIP(network, CFRouterOffset)
-		systemIPs["cf_router_1_ip"] = addOffsetToIP(network, CFRouter1Offset)
-		systemIPs["diego_cell_0_ip"] = addOffsetToIP(network, DiegoCellOffset)
-		systemIPs["diego_cell_1_ip"] = addOffsetToIP(network, DiegoCell1Offset)
-	}
-
-	return systemIPs
 }
 
 // configureSecurityGroups configures security group settings.

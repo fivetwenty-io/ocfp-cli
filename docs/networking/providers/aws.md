@@ -90,6 +90,14 @@ network:
       az: us-east-1b
 ```
 
+## Reserved IPs
+
+AWS always resolves an empty `network.strategy` to `spanning` (`netlayout.DefaultNameFor("aws", ...)` returns `spanning` unconditionally, regardless of `subnetStrategy`): the three VPC subnets `ocfp-0`/`ocfp-1`/`ocfp-2` are genuinely separate address spaces, the same shape `spanning` was built for, so there is no "wide"-style single-subnet layout to colocate onto. Set `network.strategy: wide` or `compact` explicitly only if you have hand-configured AWS to run a single workload subnet — those two strategies fail `ValidateSubnet`/`ValidateSubnetSet` against a subnet too small (`wide` needs `/25`, `compact` needs `/26`), and `spanning` itself fails `ValidateSubnetSet` (`netlayout.ErrTooFewSubnets`) if fewer than three workload subnets are configured.
+
+Under `spanning`, each of the three `ocfp-N` subnets' `reserved-ips` vault record carries only the roles pinned to that index (plus every unpinned, "every subnet" role) — see [Reserved-IP Strategies §6](../reserved-ip-strategies.md#6-the-spanning-strategy) for the full per-index static table and the worked `10.4.4.0/22`/`10.4.8.0/22`/`10.4.12.0/22` example, which uses this exact three-subnet split.
+
+`cf_router_*`/`diego_cell_*` keys are NOT written to a subnet's `reserved-ips` record. AWS previously derived a hand-rolled offset table (`calculateSystemIPs`) that included per-instance `cf_router_N_ip`/`diego_cell_N_ip` keys alongside the mgmt/ocf statics; that table is gone. CF router and Diego Cell addressing on AWS lives entirely in the public-ips and load-balancer paths instead — Elastic IPs allocated per `router_public_ips`/`tcp_router_public_ips`/`cf_ssh_public_ips` (see [Public IPs](../public-ips.md)) and ALB target-group membership (see [Load Balancers](../load-balancers.md)), not a subnet-scoped reserved address.
+
 ## Security Groups
 
 AWS security groups are EC2 Security Groups attached to the VPC.
@@ -226,6 +234,7 @@ blocs:
 ## See Also
 
 - [Networking Overview](../README.md) for the provider support matrix
+- [Reserved-IP Strategies](../reserved-ip-strategies.md) for the `spanning` offset table and per-index static assignment
 - [Security Groups](../security-groups.md) for detailed rule definitions
 - [Public IPs](../public-ips.md) for IP allocation and tokens
 - [Subnets](../subnets.md) for CIDR splitting logic

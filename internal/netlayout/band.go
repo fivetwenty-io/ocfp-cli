@@ -4,13 +4,11 @@ import "net"
 
 // bandOverrideFloor is the lowest offset an available-band override may
 // start at: offsets 0-11 are the fixed named-IP slots (bastion/bosh/vault/
-// .../artifacts) on the infra role's layout (see infraSlots), so any
+// .../artifacts) on the infra role's layout (see infraLayerASlots), so any
 // override must start at or after the first free offset to avoid colliding
-// with them. This floor is NOT strategy-specific — it was already shared by
-// wide and compact's infra Slots before ValidateBand existed, and it stays
-// shared here rather than being duplicated per strategy: reusing
-// infraAvailableStart (wide.go) keeps the two definitions from drifting
-// apart.
+// with them. This floor is NOT strategy-specific — the infra subnet's layout
+// is the same for every strategy — so it reuses infraAvailableStart
+// (compiled.go) rather than restating the value.
 const bandOverrideFloor = infraAvailableStart
 
 // ipv4Bits and bandOverrideBroadcastOffset support subnetLastUsableOffset's
@@ -22,10 +20,10 @@ const (
 	bandOverrideBroadcastOffset = 2
 )
 
-// validateBand is the shared ValidateBand body wideLayout and compactLayout
-// both delegate to (see their ValidateBand methods). It is a faithful port
-// of the historical internal/bootstrap.applyAvailableBandOverride hand-
-// rolled validation branches: reject a partial pair (one of start/end
+// validateBand is the TierInfra body compiledLayout.ValidateBand delegates
+// to for every strategy alike. It is a faithful port of the historical
+// internal/bootstrap.applyAvailableBandOverride hand-rolled validation
+// branches: reject a partial pair (one of start/end
 // zero), start >= end, start below the historical floor, and a band that
 // exceeds cidr's usable host range. tier is accepted for interface
 // conformance and future per-tier bands but is not (yet) branched on: none

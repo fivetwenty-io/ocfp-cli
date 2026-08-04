@@ -177,14 +177,6 @@ linters:
       - path: internal/vault/genesis(_envs)?\.go
         linters:
           - unused
-      # Thin delegating wrappers kept only so stackit_reserved_ips_test.go's
-      # pre-extraction tests keep calling parseCIDR/parseIPRangeSpec/etc.
-      # unqualified, unchanged, after the shared assignment engine moved to
-      # internal/reservedip. With tests:false the linter cannot see those
-      # test-only callers and falsely reports the whole file as unused.
-      - path: internal/vault/stackit_reservedip_compat\.go
-        linters:
-          - unused
       # newReservedIPGuard (and the reservedIPSchemeVersion default it
       # passes) is now a thin delegating wrapper kept only so
       # reserved_ip_guard_providers_test.go and reserved_ip_legacy_test.go's

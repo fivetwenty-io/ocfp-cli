@@ -539,7 +539,7 @@ func (m *Manager) populateFullConfiguration(
 	// divergence rather than moving anything (see reserved_ip_guard.go).
 	// The stamped scheme comes from the bloc's own resolved layout, so a
 	// compact-strategy bloc is stamped "3-compact" rather than wide's "2".
-	layout, err := resolveLayout(m.config.Network)
+	layout, err := m.config.ResolveReservedIPLayout()
 	if err != nil {
 		return fmt.Errorf("resolve reserved-ip layout: %w", err)
 	}
@@ -578,7 +578,7 @@ func (m *Manager) populateFullConfiguration(
 func (m *Manager) populateReservedIPsPhase(reporter ProgressReporter, opts *PopulateOptions, w io.Writer) error {
 	m.logger.Infow("Populating reserved IPs to vault", "provider", m.config.Provider)
 
-	layout, err := resolveLayout(m.config.Network)
+	layout, err := m.config.ResolveReservedIPLayout()
 	if err != nil {
 		return fmt.Errorf("resolve reserved-ip layout: %w", err)
 	}
@@ -637,7 +637,7 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	// written rather than the raw derivation — a dry-run that listed
 	// reserved IPs the real run would withhold would be misleading. Stamped
 	// with the bloc's own resolved layout scheme, matching the real run.
-	layout, err := resolveLayout(m.config.Network)
+	layout, err := m.config.ResolveReservedIPLayout()
 	if err != nil {
 		return fmt.Errorf("resolve reserved-ip layout: %w", err)
 	}
@@ -721,7 +721,7 @@ func (m *Manager) reservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 		base = newRecordingSafe(m.safe)
 	}
 
-	layout, err := resolveLayout(m.config.Network)
+	layout, err := m.config.ResolveReservedIPLayout()
 	if err != nil {
 		return empty, fmt.Errorf("resolve reserved-ip layout: %w", err)
 	}
