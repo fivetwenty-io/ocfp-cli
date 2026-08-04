@@ -11,7 +11,7 @@ import (
 
 // TestSpanningReservedIPs_PerSubnetIndex proves the spanning strategy's
 // per-static subnet pinning reaches the vault layer through the full
-// pveReservedIPsForSubnet path: each of a bloc's three physical /22
+// reservedIPsForSubnet path: each of a bloc's three physical /22
 // workload subnets gets its OWN address space (10.4.4.0/22, 10.4.8.0/22,
 // 10.4.12.0/22 — the state-driven per-index CIDR pattern), and a static
 // pinned to one subnet index appears ONLY in that index's table, never the
@@ -29,19 +29,19 @@ func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
 		cidr2 = "10.4.12.0/22"
 	)
 
-	mgmt0, err := pveReservedIPsForSubnet(cidr0, MgmtEnvType, 0, cfg, logger.Get())
+	mgmt0, err := reservedIPsForSubnet(cidr0, MgmtEnvType, 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	mgmt1, err := pveReservedIPsForSubnet(cidr1, MgmtEnvType, 1, cfg, logger.Get())
+	mgmt1, err := reservedIPsForSubnet(cidr1, MgmtEnvType, 1, cfg, logger.Get())
 	require.NoError(t, err)
 
-	mgmt2, err := pveReservedIPsForSubnet(cidr2, MgmtEnvType, 2, cfg, logger.Get())
+	mgmt2, err := reservedIPsForSubnet(cidr2, MgmtEnvType, 2, cfg, logger.Get())
 	require.NoError(t, err)
 
-	ocf0, err := pveReservedIPsForSubnet(cidr0, OCFEnvType, 0, cfg, logger.Get())
+	ocf0, err := reservedIPsForSubnet(cidr0, OCFEnvType, 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	ocf1, err := pveReservedIPsForSubnet(cidr1, OCFEnvType, 1, cfg, logger.Get())
+	ocf1, err := reservedIPsForSubnet(cidr1, OCFEnvType, 1, cfg, logger.Get())
 	require.NoError(t, err)
 
 	t.Run("Idx0Mgmt", func(t *testing.T) {

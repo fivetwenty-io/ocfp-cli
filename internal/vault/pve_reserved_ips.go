@@ -10,11 +10,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// pveAssignmentPriority orders assignment types for deterministic reserved-
+// assignmentPriority orders assignment types for deterministic reserved-
 // ips output. Named statics are processed roughly in the order an operator
 // would read the offset table, with available/reserved (the two range-spec
 // pseudo-roles) processed last.
-var pveAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static ordering table, read-only
+var assignmentPriority = map[string]int{ //nolint:gochecknoglobals // static ordering table, read-only
 	"bastion":      1,
 	"bosh":         2,  //nolint:mnd
 	"vault":        3,  //nolint:mnd
@@ -95,16 +95,18 @@ func applyMgmtBandOverride(
 	return overridden, nil
 }
 
-// pveReservedIPsForSubnet computes the full reserved-ips secret data for one
-// PVE workload subnet: subnetCIDR is that subnet's OWN CIDR (each ocfp-N is
-// a distinct physical /22 in the state-driven path, or the single shared
-// CIDR reused across all three in the stateless-fallback path), envType is
+// reservedIPsForSubnet computes the full reserved-ips secret data for one
+// PVE or STACKIT workload subnet: subnetCIDR is that subnet's OWN CIDR
+// (each ocfp-N is a distinct physical /22 in the PVE state-driven path, or
+// the single shared CIDR reused across all three in the PVE
+// stateless-fallback path or a STACKIT triple/single subnet), envType is
 // "mgmt" or "ocf", and subnetNum is the workload subnet's index (0/1/2),
-// forwarded to the shared engine for parity even though the current PVE
-// table does not vary by index. cfg carries the selected reserved-ip layout
+// forwarded to the shared engine so a strategy with per-index pinning (e.g.
+// spanning) can vary the table by index even where the colocated built-ins
+// (wide/compact) do not. cfg carries the selected reserved-ip layout
 // Strategy (resolved via resolveLayout/cfg.ResolveReservedIPLayout; empty
-// means the provider default) and the optional mgmt-only
-// Network.Bands.Mgmt override.
+// means the provider default — see netlayout.DefaultNameFor) and the
+// optional mgmt-only Network.Bands.Mgmt override.
 //
 // Every step below that can fail — strategy resolution, subnet validation,
 // and table construction — returns its error immediately rather than
@@ -116,7 +118,7 @@ func applyMgmtBandOverride(
 // map), and never report success having written nothing. Each wrap names
 // the strategy and the failing step so an operator can tell a too-small
 // subnet from an unimplemented strategy without reading source.
-func pveReservedIPsForSubnet(
+func reservedIPsForSubnet(
 	subnetCIDR string, envType string, subnetNum int, cfg *config.Config, log *zap.SugaredLogger,
 ) (map[string]any, error) {
 	layout, err := resolveLayout(cfg)
@@ -124,13 +126,13 @@ func pveReservedIPsForSubnet(
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
 	}
 
-	return pveReservedIPsForSubnetWithLayout(layout, subnetCIDR, envType, subnetNum, cfg.Network, log)
+	return reservedIPsForSubnetWithLayout(layout, subnetCIDR, envType, subnetNum, cfg.Network, log)
 }
 
-// pveReservedIPsForSubnetWithLayout is pveReservedIPsForSubnet after
+// reservedIPsForSubnetWithLayout is reservedIPsForSubnet after
 // strategy resolution, split out so the per-step failure handling can be
 // exercised with any Layout implementation, not only the registered ones.
-func pveReservedIPsForSubnetWithLayout(
+func reservedIPsForSubnetWithLayout(
 	layout netlayout.Layout, subnetCIDR string, envType string, subnetNum int,
 	netCfg config.NetworkConfig, log *zap.SugaredLogger,
 ) (map[string]any, error) {
@@ -150,7 +152,7 @@ func pveReservedIPsForSubnetWithLayout(
 		return nil, err
 	}
 
-	vaultIPs, err := reservedip.Calculate(subnetCIDR, assignments, envType, subnetNum, pveAssignmentPriority, log)
+	vaultIPs, err := reservedip.Calculate(subnetCIDR, assignments, envType, subnetNum, assignmentPriority, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
 	}
