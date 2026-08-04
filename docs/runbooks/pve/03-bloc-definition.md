@@ -2,7 +2,7 @@
 
 We now hold every fact the automation needs: an address plan from chapter 1
 and an API credential from chapter 2. This chapter turns those facts into a
-bloc (one entry in `~/.ocfp/config.yml`), and that single document drives
+bloc (one entry in `~/.config/ocfp/config.yml`), and that single document drives
 everything the `ocfp` CLI does from here on. Nothing gets created yet; we are
 writing the score before the orchestra plays.
 

@@ -179,7 +179,7 @@ The bootstrap step is reposnsible for getting all the resources ready (including
 
 ### Configuration file
 
-It utilizes a configuration file in yaml format that provides the required information for the bloc we are creating. It looks for its presence under ~/.ocfp/config/bloc_name.yml. For example:
+It utilizes a configuration file in yaml format that provides the required information for the bloc we are creating. It looks for its presence under ~/.config/ocfp/bloc_name.yml. For example:
 
 ```yml
 ---
@@ -313,7 +313,7 @@ curl ifconfig.me
 Once you have the complete file contents you can place them under:
 
 ```shell
-~/.ocfp/config/bloc_name.yml
+~/.config/ocfp/bloc_name.yml
 ```
 
 ### running bootstrap

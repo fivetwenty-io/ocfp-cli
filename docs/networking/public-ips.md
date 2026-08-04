@@ -28,7 +28,7 @@ OCFP creates public IPs for these jobs:
 
 IP counts are configurable via bloc config parameters (`cf_ssh_public_ips`, `jumpbox_public_ips`, `router_public_ips`, `tcp_router_public_ips`). The workflow for adding more IPs is:
 
-1. Edit your bloc configuration file (`~/.ocfp/blocs/<bloc>.yml`) to set the desired count
+1. Edit your bloc configuration file (`~/.config/ocfp/<bloc>.yml`) to set the desired count
 
 2. Run `ocfp bootstrap` to allocate the new IPs
 

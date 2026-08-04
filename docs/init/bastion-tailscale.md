@@ -169,7 +169,7 @@ The bastion runs `tailscale up --ssh`, which starts the tailscaled SSH server. T
   `tag:ocfp-bastion` matches the tag the bastion self-assigns at join via `--advertise-tags=tag:ocfp-bastion`. Keeps the rule scoped to OCFP bastions instead of every machine in the tailnet.
 
 - `users`
-  Local usernames on the bastion that a tailnet user is allowed to land as. `ubuntu` matches the default user from `~/.ocfp/config.pve.yml`; `autogroup:nonroot` catches any future non-root account; `root` is optional and only useful when an operator needs raw root rather than `sudo`.
+  Local usernames on the bastion that a tailnet user is allowed to land as. `ubuntu` matches the default user from `~/.config/ocfp/config.pve.yml`; `autogroup:nonroot` catches any future non-root account; `root` is optional and only useful when an operator needs raw root rather than `sudo`.
 
 Verify after saving with `tailscale ssh ubuntu@<bastion-host>` from a workstation in the tailnet. The session should land directly without a password or key prompt.
 
@@ -191,7 +191,7 @@ Create the auth key under Tailscale admin → Settings → Keys → Generate aut
 
 Copy the `tskey-...` value.
 
-### 4. Tailscale config in `~/.ocfp/config.yml`
+### 4. Tailscale config in `~/.config/ocfp/config.yml`
 
 OCFP reads tailscale settings from the config file at two scopes:
 

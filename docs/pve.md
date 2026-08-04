@@ -125,7 +125,7 @@ make build
 
 ## Bloc configuration
 
-OCFP reads a bloc config from `~/.ocfp/<file>.yml` (or `--config <path>`). A minimal bloc that targets PVE with API-token auth and bridge networking:
+OCFP reads a bloc config from `~/.config/ocfp/<file>.yml` (or `--config <path>`). A minimal bloc that targets PVE with API-token auth and bridge networking:
 
 ```yaml
 --- # OCFP Config — Proxmox VE example
@@ -211,7 +211,7 @@ blocs:
 
 ## Global PVE credential defaults
 
-When you manage several PVE blocs that share the same API token, repeating the credentials in every bloc is error-prone and hard to rotate. The top-level `pve:` section in `~/.ocfp/config.yml` lets you set shared credentials once; each bloc inherits them automatically.
+When you manage several PVE blocs that share the same API token, repeating the credentials in every bloc is error-prone and hard to rotate. The top-level `pve:` section in `~/.config/ocfp/config.yml` lets you set shared credentials once; each bloc inherits them automatically.
 
 ### How it works
 
@@ -265,7 +265,7 @@ Dry-run first:
 ```bash
 cd ~/w/fivetwenty/studios/ocfp/src/clis/ocfp
 ./build/ocfp-darwin-arm64 \
-  --config ~/.ocfp/config.pve.yml \
+  --config ~/.config/ocfp/config.pve.yml \
   --bloc EXAMPLE-pve-bloc \
   bootstrap --bastion --dry-run --output yaml
 ```
@@ -276,17 +276,17 @@ Then run for real:
 
 ```bash
 ./build/ocfp-darwin-arm64 \
-  --config ~/.ocfp/config.pve.yml \
+  --config ~/.config/ocfp/config.pve.yml \
   --bloc EXAMPLE-pve-bloc \
   bootstrap --bastion -y --trace
 ```
 
 What it does:
 
-1. Generates an ed25519 keypair under `~/.ocfp/<bloc>/ssh/id_ed25519`.
+1. Generates an ed25519 keypair under `~/.local/share/ocfp/<bloc>/ssh/id_ed25519`.
 2. Creates the PVE firewall security group `<bloc>-bastion` with rules sourced from `allowed_ingress_ips`.
 3. Clones `bastion.image` to a new VM `<bloc>-bastion`, applies cloud-init (hostname, SSH keys, network), starts it.
-4. Stores VM ID, IP, and state under `~/.ocfp/<bloc>/state.yml`.
+4. Stores VM ID, IP, and state under `~/.local/state/ocfp/<bloc>/state.yml`.
 
 ## After bootstrap
 
@@ -294,7 +294,7 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 ```bash
 ./build/ocfp-darwin-arm64 \
-  --config ~/.ocfp/config.pve.yml \
+  --config ~/.config/ocfp/config.pve.yml \
   --bloc EXAMPLE-pve-bloc \
   init bastion
 ```
@@ -344,7 +344,7 @@ Alternatively the same values are in the local state file:
 ```bash
 jq -r '.resources["artifacts.'"$BLOC"'-artifacts"] |
        "AK=\(.access_key)\nSK=\(.secret_key)"' \
-  ~/.ocfp/state/$BLOC.json
+  ~/.local/state/ocfp/state/$BLOC.json
 ```
 
 ### 2. Reachability and TLS
@@ -416,7 +416,7 @@ ocfp artifacts status --bloc $BLOC --json
 ocfp artifacts lookup --bloc $BLOC --json
 ```
 
-Both run from anywhere with a configured `~/.ocfp/config.pve.yml`; `lookup` reports the endpoint and credentials, `status` adds the VM power state.
+Both run from anywhere with a configured `~/.config/ocfp/config.pve.yml`; `lookup` reports the endpoint and credentials, `status` adds the VM power state.
 
 ## PVE-specific limitations
 

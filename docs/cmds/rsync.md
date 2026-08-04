@@ -38,9 +38,9 @@ Exactly two arguments are required: a source and a destination. Prefix either wi
 
 When `--key` is not specified, the SSH key is searched in the following order:
 
-1. `~/.ocfp/{bloc}/ssh/id_ed25519` (preferred)
+1. `~/.local/share/ocfp/{bloc}/ssh/id_ed25519` (preferred)
 
-2. `~/.ocfp/{bloc}/ssh/id_rsa` (fallback)
+2. `~/.local/share/ocfp/{bloc}/ssh/id_rsa` (fallback)
 
 Key permissions are verified and automatically corrected to `0600` if needed.
 

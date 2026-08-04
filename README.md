@@ -44,7 +44,7 @@ brew install ocfp-cli
 
 ### 1. Configure your environment
 
-Create a configuration file at `~/.ocfp/config.yml` (provider comes from bloc config):
+Create a configuration file at `~/.config/ocfp/config.yml` (provider comes from bloc config):
 
 ```yaml
 name: production
@@ -116,7 +116,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `--debug` | `-d` | Enable debug output | `OCFP_DEBUG` | `false` |
 | `--verbose` | `-v` | Enable verbose output | `OCFP_VERBOSE` | `false` |
 | `--trace` | – | Enable trace-level debugging | `OCFP_TRACE` | `false` |
-| `--no-log` | – | Disable logging to `~/.ocfp/{bloc}/logs/` | `OCFP_NO_LOG` | `false` |
+| `--no-log` | – | Disable logging to `~/.local/state/ocfp/{bloc}/logs/` | `OCFP_NO_LOG` | `false` |
 | `--region` | – | Cloud region | `OCFP_REGION` | – |
 | `--debug-lookup` | – | Print bastion lookup strategy matches | `OCFP_DEBUG_LOOKUP` | `false` |
 | `--ascii` | – | Use ASCII-only tables in output | `OCFP_ASCII` | `false` |
@@ -147,6 +147,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `scale` | Scale resources |
 | `backup` | Backup configurations |
 | `restore` | Restore from backup |
+| `migrate` | Move a legacy `~/.ocfp` layout into the XDG config/state/data directories |
 
 ### State Management
 
@@ -229,10 +230,10 @@ Each resource type is displayed in a separate table with emoji icons for easy id
 
 ## Logging
 
-OCFP stores command logs in a bloc-specific hierarchical structure under `~/.ocfp/`:
+OCFP stores command logs in a bloc-specific hierarchical structure under `~/.local/state/ocfp/` (or `$XDG_STATE_HOME/ocfp` if set):
 
 ```
-~/.ocfp/
+~/.local/state/ocfp/
   ├── {bloc}/
   │   └── logs/
   │       ├── {command}/
@@ -251,16 +252,16 @@ OCFP stores command logs in a bloc-specific hierarchical structure under `~/.ocf
 ### Examples
 
 - Simple command with bloc: `ocfp --bloc dev bootstrap`
-  - Logs to: `~/.ocfp/dev/logs/bootstrap/20250122-143022.log`
+  - Logs to: `~/.local/state/ocfp/dev/logs/bootstrap/20250122-143022.log`
 
 - Subcommand with bloc: `ocfp --bloc prod state sync`
-  - Logs to: `~/.ocfp/prod/logs/state/sync/20250122-143022.log`
+  - Logs to: `~/.local/state/ocfp/prod/logs/state/sync/20250122-143022.log`
 
 - Command without bloc: `ocfp teardown`
-  - Logs to: `~/.ocfp/logs/teardown/20250122-143022.log`
+  - Logs to: `~/.local/state/ocfp/logs/teardown/20250122-143022.log`
 
 - Complex subcommand: `ocfp --bloc staging lb ops`
-  - Logs to: `~/.ocfp/staging/logs/lb/ops/20250122-143022.log`
+  - Logs to: `~/.local/state/ocfp/staging/logs/lb/ops/20250122-143022.log`
 
 Logs are stored in JSON format for structured parsing and contain:
 - Timestamp
@@ -271,6 +272,38 @@ Logs are stored in JSON format for structured parsing and contain:
 To disable file logging, use the `--no-log` flag or set `OCFP_NO_LOG=true`.
 
 ## Configuration
+
+### File Locations
+
+OCFP uses XDG Base Directory specification for organizing configuration, state, and data files. By default:
+
+- **Configuration**: `~/.config/ocfp/` (or `$XDG_CONFIG_HOME/ocfp`)
+- **State & Logs**: `~/.local/state/ocfp/` (or `$XDG_STATE_HOME/ocfp`)
+- **Data (SSH keys, bloc state)**: `~/.local/share/ocfp/` (or `$XDG_DATA_HOME/ocfp`)
+
+For backward compatibility, OCFP looks for files in the legacy `~/.ocfp/` directory if the XDG path does not exist, and emits a single deprecation warning per session. To force the legacy flat-directory layout entirely, set:
+
+```bash
+export OCFP_HOME=~/.ocfp
+```
+
+This overrides all three XDG directories and disables the deprecation warning.
+
+To move an existing `~/.ocfp` installation onto the XDG layout permanently, run:
+
+```bash
+ocfp migrate --dry-run  # preview the moves
+ocfp migrate            # move config.yml/configs/ under XDG_CONFIG_HOME,
+                         # state.yml/state/logs/checkpoints/backups/markers under XDG_STATE_HOME,
+                         # and keys/per-bloc directories under XDG_DATA_HOME
+                         # (a per-bloc directory's own state/ and logs/
+                         # subdirectories split to XDG_STATE_HOME first)
+```
+
+`ocfp migrate` refuses to run while `OCFP_HOME` is set (that override means the flat
+layout is intentional) and refuses to move anything if any destination path already
+exists, listing every conflict so you can resolve them by hand first. Files it does not
+recognize are left in `~/.ocfp` and reported rather than guessed at.
 
 ### Configuration File Structure
 
@@ -441,7 +474,7 @@ Alternatively, set `OCFP_ENABLE_BUCKET_POLICIES=1` to enable policies from the e
 | `OCFP_DEBUG` | Enable debug logging |
 | `OCFP_VERBOSE` | Enable verbose logging |
 | `OCFP_TRACE` | Enable trace-level logging |
-| `OCFP_NO_LOG` | Disable file logging to `~/.ocfp/{bloc}/logs/` |
+| `OCFP_NO_LOG` | Disable file logging to `~/.local/state/ocfp/{bloc}/logs/` |
 | `OCFP_DEBUG_LOOKUP` | Print bastion lookup strategy matches |
 | `OCFP_ASCII` | Use ASCII-only tables (equivalent to `--ascii`) |
 
