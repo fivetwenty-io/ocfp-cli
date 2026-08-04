@@ -119,3 +119,40 @@ func TestResolveReservedIPWithIndex(t *testing.T) {
 		t.Fatalf("got %s want 10.4.4.9", reservedIP)
 	}
 }
+
+// TestResolveReservedIPCustomSubnetName verifies the reserved:<key>:<index>
+// token resolves through bootstrap's subnet_<name>_index outputs when the
+// bloc's subnets carry operator names, instead of requiring the
+// "<bloc>-ocfp-<index>" key shape.
+func TestResolveReservedIPCustomSubnetName(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), ".state")
+	t.Setenv("OCFP_STATE_DIR", stateDir)
+
+	stateManager, err := state.NewManager(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bloc := testBloc
+
+	_, err = stateManager.Load(bloc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = stateManager.SetOutput("subnet_east-workload-b_index", "1")
+	_ = stateManager.SetOutput("reserved_east-workload-b_doomsday_ip", "10.4.8.18")
+
+	if err := stateManager.Save(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	reservedIP, err := commands.ResolveReservedIP(bloc, "reserved:doomsday_ip:1")
+	if err != nil {
+		t.Fatalf("resolve custom-name idx: %v", err)
+	}
+
+	if reservedIP != "10.4.8.18" {
+		t.Fatalf("got %s want 10.4.8.18", reservedIP)
+	}
+}
