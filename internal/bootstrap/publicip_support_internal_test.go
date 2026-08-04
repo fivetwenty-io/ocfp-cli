@@ -64,4 +64,3 @@ type capabilityProv struct {
 }
 
 func (p *capabilityProv) NetworkManager() cpi.NetworkManager { return p.n }
-
