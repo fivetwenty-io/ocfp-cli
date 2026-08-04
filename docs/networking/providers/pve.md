@@ -319,7 +319,7 @@ PVE blocs do not expose public IPs, so OCFP joins the bastion to a Tailscale tai
   `scripts/cloudflare-dns-sync` upserts `<base>` and `*.<base>` A records per bloc pointing at the bastion's tailnet IP. Generalized writeup: [Cloudflare DNS Sync](../dns-cloudflare-sync.md).
 
 - Multi-bloc init
-  `scripts/init-all-pve-blocs.sh` iterates every `ocfp-pve-*` bloc found in `~/.ocfp/config.pve.yml` and runs `ocfp init pve --bloc <name>` against each. Override the config path with `OCFP_CONFIG`.
+  `scripts/init-all-pve-blocs.sh` iterates every `ocfp-pve-*` bloc found in `~/.config/ocfp/config.pve.yml` and runs `ocfp init pve --bloc <name>` against each. Override the config path with `OCFP_CONFIG`.
 
 ## See Also
 

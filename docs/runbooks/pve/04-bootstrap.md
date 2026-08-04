@@ -44,7 +44,7 @@ vault if one is not already running. Chapter 5 gives it a proper
 introduction.
 
 Then security groups, matching our `allowed_ingress_ips`. Then the SSH
-keypair, stored under `~/.ocfp/<bloc>/ssh/`. And finally the bastion: a
+keypair, stored under `~/.local/share/ocfp/<bloc>/ssh/`. And finally the bastion: a
 clone of `ubuntu-noble-bastion-template` (auto-provisioned from the catalog
 on this cluster's first-ever run, about thirty seconds on every run after)
 placed at `10.108.16.3` with VMID 100, its per-VM configuration delivered
@@ -88,7 +88,7 @@ ocfp teardown --bloc ocfp-lab-wayne --nuke --force --empty
 
 One rebuilt-host trap deserves a callout: if the PVE host was reinstalled
 out from under an existing bloc, the state file under
-`~/.ocfp/<bloc>/state/` still records every old resource, and bootstrap
+`~/.local/state/ocfp/<bloc>/` still records every old resource, and bootstrap
 will politely skip "existing" bastions and subnets that no longer exist
 anywhere. When host reality and state disagree, back up and prune the
 phantom entries (or empty the state) before re-running bootstrap.

@@ -160,7 +160,7 @@ flowchart TD
   when the bastion-installed
   `/usr/local/share/ca-certificates/ocfp-{bloc}-internal-ca.crt` is
   present, then a `safe get secret/ocfp/{bloc}/ca:cert` fetch cached at
-  `~/.ocfp/{bloc}/ca.pem`. `--insecure` (`aws --no-verify-ssl` / `curl -k`)
+  `~/.local/share/ocfp/{bloc}/ca.pem`. `--insecure` (`aws --no-verify-ssl` / `curl -k`)
   is only used when none of those resolve and the flag is passed
   explicitly; otherwise the script fails pointing at
   `ocfp artifacts ca --bloc <bloc>`.
@@ -229,7 +229,7 @@ The leaf is valid for one year. `ocfp artifacts status --bloc <bloc>`
 reports days remaining and warns below 30 days — check it periodically or
 on a schedule rather than waiting for a handshake failure. Rotating the
 leaf is a single command from anywhere with a configured
-`~/.ocfp/config.pve.yml`:
+`~/.config/ocfp/config.pve.yml`:
 
 ```bash
 ocfp artifacts provision --bloc <bloc>

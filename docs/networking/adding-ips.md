@@ -7,7 +7,7 @@ This guide walks through increasing the number of CF SSH or jumpbox public IPs i
 ### CF SSH IPs
 
 ```yaml
-# ~/.ocfp/blocs/<bloc>.yml
+# ~/.config/ocfp/<bloc>.yml
 cf_ssh_public_ips: 3
 ```
 
@@ -20,7 +20,7 @@ ocfp lb status
 ### Jumpbox IPs
 
 ```yaml
-# ~/.ocfp/blocs/<bloc>.yml
+# ~/.config/ocfp/<bloc>.yml
 jumpbox_public_ips: 4
 ```
 
@@ -36,7 +36,7 @@ ocfp lb status
 Open your bloc configuration file and set `cf_ssh_public_ips` to the desired count:
 
 ```yaml
-# ~/.ocfp/blocs/<bloc>.yml
+# ~/.config/ocfp/<bloc>.yml
 cf_ssh_public_ips: 3   # default is 1
 ```
 
@@ -113,7 +113,7 @@ Public IPs are also exported to Vault as service definitions. The CF SSH service
 Open your bloc configuration file and set `jumpbox_public_ips` to the desired count:
 
 ```yaml
-# ~/.ocfp/blocs/<bloc>.yml
+# ~/.config/ocfp/<bloc>.yml
 jumpbox_public_ips: 4   # default is 2
 ```
 

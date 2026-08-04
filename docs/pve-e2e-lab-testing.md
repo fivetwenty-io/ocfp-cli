@@ -102,7 +102,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 - `ocfp init <bastion|pg|bosh|cf|all> [--bloc] [--genesis|--ocfp|--config] [--resume] [--dry-run]`
 - `ocfp teardown [--bloc] [--all|--nuke] [--force] [--empty] [--dry-run --output json]`
 - `ocfp test <smoke|c2c|acceptance|…> [--bloc] [--timeout]`
-- Bloc resolution: `--bloc` → `OCFP_BLOC` → state `~/.ocfp/<bloc>/.state/current.json` → single-bloc config.
+- Bloc resolution: `--bloc` → `OCFP_BLOC` → state `~/.local/state/ocfp/<bloc>/current.json` → single-bloc config.
 
 ---
 
@@ -135,7 +135,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 
 1. Confirm tooling: `ocfp version`, `bosh --version`, `genesis --version`, `safe --version`, `cf version`, `yq --version`.
 2. Confirm Genesis source on `v3.2.x-dev`: in the genesis checkout, `git branch --show-current` → `v3.2.x-dev` (do not push).
-3. Confirm config: `~/.ocfp/config.yml` has bloc `ocfp-lab-wayne` with PVE provider, region/datacenter, `artifacts.enabled: true`, and `genesis.branch: v3.2.x-dev`.
+3. Confirm config: `~/.config/ocfp/config.yml` has bloc `ocfp-lab-wayne` with PVE provider, region/datacenter, `artifacts.enabled: true`, and `genesis.branch: v3.2.x-dev`.
 4. Confirm Vault reachable and unsealed: `safe target` + `safe get secret/handshake` (or equivalent probe).
 5. Confirm the latest CPI tarball exists locally: `ls -la ~/w/proxmox/bosh-pve-cpi-release/dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-20260531113237.tgz` and verify sha1 = `3c6f9fa569ddacd7b025f755f745e71be83365f8`.
    - If absent or stale, rebuild: `cd ~/w/proxmox/bosh-pve-cpi-release && make dev-release` and capture the new `RELEASE_TGZ`, version, and sha1 (then update §3/§4 and the mgmt manifest in Phase 4).
@@ -143,7 +143,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 
 **Verify**: all tools report versions; genesis on `v3.2.x-dev`; CPI tarball sha1 matches; Vault reachable.
 
-**Debug note**: if config bloc missing fields, fix `~/.ocfp/config.yml` before continuing — bootstrap and init read it directly.
+**Debug note**: if config bloc missing fields, fix `~/.config/ocfp/config.yml` before continuing — bootstrap and init read it directly.
 
 ---
 
@@ -169,7 +169,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 4. Clean any BOSH/Genesis state that survives infra teardown:
    - On bastion (if it still exists at this point): remove `~/deployments/ocfp-lab-wayne/*.state` / create-env state files for mgmt BOSH.
    - Genesis exodus/secrets for the bloc, if a fresh secret tree is desired (confirm with operator before wiping Vault paths).
-5. Clear local OCFP state if a truly fresh bootstrap is wanted: inspect `~/.ocfp/ocfp-lab-wayne/.state/` (teardown should clear cloud state; verify).
+5. Clear local OCFP state if a truly fresh bootstrap is wanted: inspect `~/.local/state/ocfp/ocfp-lab-wayne/` (teardown should clear cloud state; verify).
 
 **Verify**
 

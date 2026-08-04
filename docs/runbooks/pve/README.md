@@ -45,7 +45,7 @@ where it first appears.
 A few concepts carry the whole story, so let us introduce them once.
 
 **The bloc** is our unit of deployment — one entry under `blocs:` in
-`~/.ocfp/config.yml`, holding the provider connection, the network plan, the
+`~/.config/ocfp/config.yml`, holding the provider connection, the network plan, the
 domains, and the artifacts store for everything we deploy. Every resource we
 create is named `<bloc>-<role>`.
 
@@ -112,7 +112,7 @@ third column shows the worked example we validated against.
 |---------|--------------------|
 | [1. Network planning](01-network-planning.md) | Carve the address space and design the SDN before anything exists |
 | [2. PVE foundation](02-pve-foundation.md) | Prepare the host: CPI service account, API token, storage, templates |
-| [3. Bloc definition](03-bloc-definition.md) | Author the bloc in `~/.ocfp/config.yml` |
+| [3. Bloc definition](03-bloc-definition.md) | Author the bloc in `~/.config/ocfp/config.yml` |
 | [4. Bootstrap](04-bootstrap.md) | `ocfp bootstrap` — network, security groups, bastion, and the RustFS artifacts store |
 | [5. Bastion init](05-bastion-init.md) | Tool the bastion, seed the inception vault, wire the deployment repos |
 | [6. Management BOSH](06-mgmt-bosh.md) | The proto-director, born by `bosh create-env` through the PVE CPI |
