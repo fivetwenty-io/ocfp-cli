@@ -1,49 +1,37 @@
 package netlayout
 
-import "sort"
-
 // defaultStrategyName is the registry key Default resolves to, and the key
 // Lookup falls back to for an empty name.
 const defaultStrategyName = "wide"
 
-// registry holds every Layout implementation available for selection. Both
-// entries have every Layout method real (see wide.go and compact.go).
-var registry = map[string]Layout{
-	"wide":    wideLayout{},
-	"compact": compactLayout{},
-}
-
-// Lookup resolves name to a registered Layout. An empty name resolves to
-// Default. An unrecognized name returns ErrUnknownStrategy wrapping name.
+// Lookup resolves name to a registered built-in Layout (see Builtins). An
+// empty name resolves to Default. An unrecognized name returns
+// ErrUnknownStrategy wrapping name. Lookup only ever sees the three
+// built-in strategies: operator BYO strategies loaded from
+// network.strategyPaths are resolved through a *Catalog instead (see
+// BuildCatalog and Config.ResolveReservedIPLayout), never through this
+// package-level built-ins-only registry.
 func Lookup(name string) (Layout, error) {
 	if name == "" {
 		return Default(), nil
 	}
 
-	layout, ok := registry[name]
-	if !ok {
-		return nil, unknownStrategyError(name)
-	}
-
-	return layout, nil
+	return Builtins().Lookup(name)
 }
 
-// Default returns the default Layout ("wide").
+// Default returns the default built-in Layout ("wide").
 func Default() Layout {
-	return registry[defaultStrategyName]
-}
-
-// Names returns every registered strategy name, sorted.
-func Names() []string {
-	names := make([]string, 0, len(registry))
-	for name := range registry {
-		names = append(names, name)
+	layout, err := Builtins().Lookup(defaultStrategyName)
+	if err != nil {
+		// Programmer error: the wide built-in failed to load/compile, which
+		// would already have panicked inside builtinLayouts().
+		panic(err)
 	}
 
-	sort.Strings(names)
-
-	return names
+	return layout
 }
 
-// wideLayout is declared in wide.go; compactLayout is declared in
-// compact.go. Both have every Layout method real.
+// Names returns every built-in strategy name, sorted.
+func Names() []string {
+	return Builtins().Names()
+}

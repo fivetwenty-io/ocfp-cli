@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func newReservedIPsScopeTestManager(cfg *config.Config, safe SafeInterface) *Man
 }
 
 // pveScopeTestConfig returns a minimal PVE config valid for reserved-ip
-// derivation (resolveLayout/pveReservedIPsForSubnet need a real CIDR).
+// derivation (resolveLayout/reservedIPsForSubnet need a real CIDR).
 func pveScopeTestConfig() *config.Config {
 	return &config.Config{ //nolint:exhaustruct // only the fields reserved-ip derivation reads are needed
 		Provider: "pve",
@@ -131,6 +132,48 @@ func TestPopulate_PhaseReservedIPs_StateDriven_WritesOnlyReservedIPsPaths(t *tes
 
 	assert.True(t, sawInfraBastion, "state-driven infra role writer did not run")
 	assert.True(t, sawSeededWorkload, "state-driven tiered workload writer did not run")
+}
+
+// TestPopulate_PhaseReservedIPs_StateDriven_TooFewWorkloadSubnetsRejected
+// proves Layer B enforcement (Task 12) through the populate reserved-ips
+// entry point (configureReservedIPsForEnv): a bloc explicitly set to the
+// spanning strategy (MinSubnets 3) whose bootstrap state records only ONE
+// ocfp workload subnet must fail before writing anything, rather than
+// silently producing a partial reserved-ips tree — the same enforcement
+// TestPVEVaultProvider_ConfigureReservedIPs_TooFewWorkloadSubnetsRejected
+// proves directly against the provider, exercised here through the actual
+// populate dispatch this file otherwise scopes.
+func TestPopulate_PhaseReservedIPs_StateDriven_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+
+	require.NoError(t, sm.AddResource(&state.Resource{ //nolint:exhaustruct // only the fields configureReservedIPsForEnv reads are needed
+		ID:         "subnet-infra",
+		Type:       "subnet",
+		Name:       blocName + "-infra",
+		Properties: map[string]any{"cidr": "10.64.64.0/22"},
+	}))
+	require.NoError(t, sm.AddResource(&state.Resource{ //nolint:exhaustruct
+		ID:         "subnet-ocfp-0",
+		Type:       "subnet",
+		Name:       blocName + "-ocfp-0",
+		Properties: map[string]any{"cidr": "10.64.68.0/22"},
+	}))
+	require.NoError(t, sm.Save())
+
+	cfg := pveScopeTestConfig()
+	cfg.Network.Strategy = "spanning"
+
+	safe := newFakeSafe()
+	mgr := newReservedIPsScopeTestManager(cfg, safe)
+
+	opts := &PopulateOptions{Subcommand: PhaseReservedIPs} //nolint:exhaustruct
+
+	err := mgr.populate(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
+	assert.Empty(t, safe.data, "no reserved-ips path written when the strategy minimum is not met")
 }
 
 // TestPopulate_PhaseReservedIPs_NonPVEProvider_ReturnsNamedError proves a

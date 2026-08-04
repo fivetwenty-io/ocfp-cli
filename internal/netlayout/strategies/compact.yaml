@@ -1,0 +1,46 @@
+name: compact
+description: Compact reserved-IP strategy for /26 workload subnets
+scheme_version: "3-compact"
+placement: colocated
+min_prefix: 26
+
+tiers:
+  mgmt:
+    statics:
+      bastion: 3
+      bosh: 4
+      vault: 5
+      jumpbox: 6
+      concourse: 7
+      prometheus: 8
+      shield: 9
+      blacksmith: 10
+      artifacts: 11
+      wireguard: 12
+      ovpn: 13
+      rustfs: 14
+      proxycache: 15
+      nfs: 16
+      ocfp_ui: 17
+      doomsday: 18
+      shout: 19
+      garage: 20
+      rustfs_smoke:
+        offset: 21
+        ip_key: rustfs_ip_smoke
+      garage_smoke:
+        offset: 22
+        ip_key: garage_ip_smoke
+    available:
+      - start: 28
+        end: 35
+
+  ocf:
+    statics:
+      bosh: 23
+      vault: 24
+      jumpbox: 25
+      blacksmith: 26
+      haproxy: 37
+    available:
+      - start: 36

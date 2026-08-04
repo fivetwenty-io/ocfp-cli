@@ -1,0 +1,46 @@
+name: wide
+description: Wide reserved-IP strategy for /22 workload subnets
+scheme_version: "2"
+placement: colocated
+min_prefix: 25
+
+tiers:
+  mgmt:
+    statics:
+      bastion: 3
+      bosh: 4
+      vault: 5
+      jumpbox: 6
+      concourse: 7
+      prometheus: 8
+      shield: 9
+      blacksmith: 10
+      artifacts: 11
+      wireguard: 12
+      ovpn: 13
+      rustfs: 14
+      proxycache: 15
+      nfs: 16
+      ocfp_ui: 17
+      doomsday: 18
+      shout: 19
+      garage: 20
+      rustfs_smoke:
+        offset: 21
+        ip_key: rustfs_ip_smoke
+      garage_smoke:
+        offset: 22
+        ip_key: garage_ip_smoke
+    available:
+      - start: 32
+        end: 63
+
+  ocf:
+    statics:
+      bosh: 64
+      vault: 65
+      jumpbox: 66
+      blacksmith: 67
+      haproxy: 97
+    available:
+      - start: 96

@@ -177,22 +177,27 @@ type Config struct {
 	// auto-provision seed phase, which needs DHCP and internet egress for
 	// apt/cloud-init. PVE-specific. Defaults to "vmbr1"; hosts without a
 	// vmbr1 WAN bridge (e.g. nested labs) set this to their SDN vnet bridge.
-	TemplateBridge   string                      `json:"template_bridge"     mapstructure:"template_bridge"     yaml:"template_bridge,omitempty"`
-	AccessKeyID      string                      `json:"access_key_id"       mapstructure:"access_key_id"       yaml:"access_key_id,omitempty"`
-	SecretAccessKey  string                      `json:"secret_access_key"   mapstructure:"secret_access_key"   yaml:"secret_access_key,omitempty"`
-	SubscriptionID   string                      `json:"subscription_id"     mapstructure:"subscription_id"     yaml:"subscription_id,omitempty"`
-	TenantID         string                      `json:"tenant_id"           mapstructure:"tenant_id"           yaml:"tenant_id,omitempty"`
-	ClientID         string                      `json:"client_id"           mapstructure:"client_id"           yaml:"client_id,omitempty"`
-	ClientSecret     string                      `json:"client_secret"       mapstructure:"client_secret"       yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	AuthURL          string                      `json:"auth_url"            mapstructure:"auth_url"            yaml:"auth_url,omitempty"`
-	Username         string                      `json:"username"            mapstructure:"username"            yaml:"username,omitempty"`
-	Password         string                      `json:"password"            mapstructure:"password"            yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	ProjectName      string                      `json:"project_name"        mapstructure:"project_name"        yaml:"project_name,omitempty"`
-	DomainName       string                      `json:"domain_name"         mapstructure:"domain_name"         yaml:"domain_name,omitempty"`
-	SessionToken     string                      `json:"session_token"       mapstructure:"session_token"       yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	BastionIP        string                      `json:"bastion_ip"          mapstructure:"bastion_ip"          yaml:"bastion_ip,omitempty"`
-	VPCCIDRBlock     string                      `json:"vpc_cidr_block"      mapstructure:"vpc_cidr_block"      yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
-	Network          NetworkConfig               `json:"network"             mapstructure:"network"             yaml:"network,omitempty"`
+	TemplateBridge  string        `json:"template_bridge"   mapstructure:"template_bridge"   yaml:"template_bridge,omitempty"`
+	AccessKeyID     string        `json:"access_key_id"     mapstructure:"access_key_id"     yaml:"access_key_id,omitempty"`
+	SecretAccessKey string        `json:"secret_access_key" mapstructure:"secret_access_key" yaml:"secret_access_key,omitempty"`
+	SubscriptionID  string        `json:"subscription_id"   mapstructure:"subscription_id"   yaml:"subscription_id,omitempty"`
+	TenantID        string        `json:"tenant_id"         mapstructure:"tenant_id"         yaml:"tenant_id,omitempty"`
+	ClientID        string        `json:"client_id"         mapstructure:"client_id"         yaml:"client_id,omitempty"`
+	ClientSecret    string        `json:"client_secret"     mapstructure:"client_secret"     yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthURL         string        `json:"auth_url"          mapstructure:"auth_url"          yaml:"auth_url,omitempty"`
+	Username        string        `json:"username"          mapstructure:"username"          yaml:"username,omitempty"`
+	Password        string        `json:"password"          mapstructure:"password"          yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ProjectName     string        `json:"project_name"      mapstructure:"project_name"      yaml:"project_name,omitempty"`
+	DomainName      string        `json:"domain_name"       mapstructure:"domain_name"       yaml:"domain_name,omitempty"`
+	SessionToken    string        `json:"session_token"     mapstructure:"session_token"     yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	BastionIP       string        `json:"bastion_ip"        mapstructure:"bastion_ip"        yaml:"bastion_ip,omitempty"`
+	VPCCIDRBlock    string        `json:"vpc_cidr_block"    mapstructure:"vpc_cidr_block"    yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
+	Network         NetworkConfig `json:"network"           mapstructure:"network"           yaml:"network,omitempty"`
+	// NetworkCatalog is this bloc's resolved netlayout strategy catalog
+	// (built-ins plus any Network.StrategyPaths definitions), built by
+	// LoadWithParams. Never serialized; nil until LoadWithParams runs, in
+	// which case ResolveReservedIPLayout falls back to netlayout.Builtins().
+	NetworkCatalog   *netlayout.Catalog          `json:"-"                   mapstructure:"-"                   yaml:"-"`
 	Bastion          Bastion                     `json:"bastion"             mapstructure:"bastion"             yaml:"bastion,omitempty"`
 	Artifacts        ArtifactsConfig             `json:"artifacts"           mapstructure:"artifacts"           yaml:"artifacts,omitempty"`
 	Jumpbox          Jumpbox                     `json:"jumpbox"             mapstructure:"jumpbox"             yaml:"jumpbox,omitempty"`
@@ -513,11 +518,21 @@ type NetworkConfig struct {
 
 	// Strategy selects the reserved-IP layout strategy (see internal/netlayout)
 	// used to number infra/mgmt/ocf tier addresses within this bloc's subnets.
-	// Empty resolves to netlayout.Default() ("wide"). An unrecognized value is
-	// rejected at UnmarshalYAML time with an error wrapping
-	// netlayout.ErrUnknownStrategy — netlayout's registry is the single source
-	// of truth for valid names; this package never hardcodes the name list.
+	// Empty resolves to the provider/subnetStrategy default (see
+	// netlayout.DefaultNameFor). Validated against the bloc's catalog (see
+	// StrategyPaths and Config.NetworkCatalog) by
+	// (*Config).ResolveReservedIPLayout, called from LoadWithParams, with an
+	// error wrapping netlayout.ErrUnknownStrategy for an unrecognized name —
+	// not at UnmarshalYAML time, since a BYO strategy name is not knowable
+	// until network.strategyPaths has been loaded.
 	Strategy string `json:"strategy,omitempty" mapstructure:"strategy" yaml:"strategy,omitempty"`
+
+	// StrategyPaths names operator-supplied BYO strategy definition files or
+	// directories (see internal/netlayout's Definition YAML shape), loaded
+	// alongside the built-in strategies into this bloc's catalog by
+	// LoadWithParams. A relative entry resolves against the directory
+	// containing the config file itself. Empty means "built-ins only".
+	StrategyPaths []string `json:"strategyPaths,omitempty" mapstructure:"strategyPaths" yaml:"strategyPaths,omitempty"`
 
 	// Bands carries per-tier reserved-IP band overrides for the selected
 	// Strategy. Zero-value Band entries mean "no override, use the strategy's
@@ -580,9 +595,11 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		LegacyBandEnd     int `yaml:"availableBandEnd,omitempty"`
 		LegacyBandEndSC   int `yaml:"available_band_end,omitempty"`
 
-		Strategy   string       `yaml:"strategy,omitempty"`
-		StrategySC string       `yaml:"network_strategy,omitempty"`
-		Bands      NetworkBands `yaml:"bands,omitempty"`
+		Strategy        string       `yaml:"strategy,omitempty"`
+		StrategySC      string       `yaml:"network_strategy,omitempty"`
+		StrategyPaths   []string     `yaml:"strategyPaths,omitempty"`
+		StrategyPathsSC []string     `yaml:"strategy_paths,omitempty"`
+		Bands           NetworkBands `yaml:"bands,omitempty"`
 	}
 
 	var raw rawNetwork
@@ -615,14 +632,18 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		return ErrAvailableBandRemoved
 	}
 
-	strategy := firstSetString(raw.Strategy, raw.StrategySC)
-	if strategy != "" {
-		if _, lookupErr := netlayout.Lookup(strategy); lookupErr != nil {
-			return fmt.Errorf("network.strategy: %w", lookupErr)
-		}
+	// Strategy-name validation is deferred to LoadWithParams (via
+	// (*Config).ResolveReservedIPLayout): a BYO strategy name is not
+	// resolvable here, before network.strategyPaths has been loaded into a
+	// catalog.
+	n.Strategy = firstSetString(raw.Strategy, raw.StrategySC)
+
+	if len(raw.StrategyPaths) > 0 {
+		n.StrategyPaths = raw.StrategyPaths
+	} else {
+		n.StrategyPaths = raw.StrategyPathsSC
 	}
 
-	n.Strategy = strategy
 	n.Bands = raw.Bands
 
 	return nil
@@ -636,6 +657,27 @@ func firstSetString(values ...string) string {
 	}
 
 	return ""
+}
+
+// ResolveReservedIPLayout resolves this bloc's reserved-IP layout: the
+// explicit network.strategy when set, else the provider default
+// (netlayout.DefaultNameFor), looked up in the bloc's catalog (built-ins
+// plus any network.strategyPaths definitions). NetworkCatalog is nil for a
+// *Config built by hand rather than LoadWithParams (most tests), in which
+// case this falls back to netlayout.Builtins() so BYO-name resolution is
+// the only thing such a Config cannot do.
+func (c *Config) ResolveReservedIPLayout() (netlayout.Layout, error) {
+	catalog := c.NetworkCatalog
+	if catalog == nil {
+		catalog = netlayout.Builtins()
+	}
+
+	name := c.Network.Strategy
+	if name == "" {
+		name = netlayout.DefaultNameFor(c.Provider, c.Network.SubnetStrategy)
+	}
+
+	return catalog.Lookup(name)
 }
 
 // mergePVEDefaults fills empty PVE credential fields on bloc from defaults.
@@ -1063,6 +1105,20 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	err = processConfiguration(cfg)
 	if err != nil {
 		return nil, err
+	}
+
+	// Build this bloc's netlayout strategy catalog (built-ins plus any
+	// network.strategyPaths definitions) now that cfg.Provider is resolved,
+	// then eagerly resolve the reserved-IP layout so an unknown or shadowed
+	// strategy name fails loudly here rather than surfacing later inside
+	// vault/bootstrap.
+	cfg.NetworkCatalog, err = netlayout.BuildCatalog(cfg.Network.StrategyPaths, filepath.Dir(configPath))
+	if err != nil {
+		return nil, err
+	}
+
+	if _, resolveErr := cfg.ResolveReservedIPLayout(); resolveErr != nil {
+		return nil, resolveErr
 	}
 
 	// Merge keys from state file for portability

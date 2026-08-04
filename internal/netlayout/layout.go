@@ -19,38 +19,25 @@ const (
 	TierInfra Tier = "infra"
 )
 
-// InfraSlots is the Layer A named-slot set — today's
-// bootstrap.reservedIPLayout, exported here so both layers can share one
-// type. It is populated by Layout.Slots.
-type InfraSlots struct {
-	Bastion        int
-	Bosh           int
-	Vault          int
-	Jumpbox        int
-	Concourse      int
-	Prometheus     int
-	Shield         int
-	Blacksmith     int
-	BlacksmithOCFP int
-	Doomsday       int
-	Shout          int
-	OCFPUI         int
-	Artifacts      int
-	AvailableA     int
-	AvailableB     int
-	ReservedB      int
-	ReservedC      int
+// NamedSlot is one Layer A named static: Key is the full state-output stem
+// ("bastion_ip", or an ip_key like "rustfs_ip_smoke").
+type NamedSlot struct {
+	Key    string
+	Offset int
 }
 
-// Layout describes one reserved-IP numbering strategy. Implementations are
-// registered in registry.go and obtained via Lookup or Default — callers
-// never construct a Layout directly.
-//
-// Stub-safety: for as long as a registered strategy's real behavior has not
-// yet landed, its Layout methods that can return an error return
-// ErrNotImplemented rather than a silently-wrong zero value or a panic. Name
-// is exempt — it is real for every registered strategy from registration
-// onward, since it carries no table-generation logic.
+// LayerASlots is the Layer A slot set for one (role, subnet index).
+type LayerASlots struct {
+	Named      []NamedSlot
+	AvailableA int
+	AvailableB int
+	ReservedB  int
+	ReservedC  int
+}
+
+// Layout describes one reserved-IP numbering strategy. Every implementation
+// is a *compiledLayout built from a Definition (see compiled.go); callers
+// obtain one via Lookup or Default and never construct a Layout directly.
 type Layout interface {
 	// Name returns the strategy's registry key, e.g. "wide" or "compact".
 	Name() string
@@ -59,25 +46,35 @@ type Layout interface {
 	// beside a bloc's reserved-ips record, e.g. "2" or "3-compact".
 	SchemeVersion() string
 
-	// WorkloadTable returns the Layer B assignment table for cidr.
-	// Strategies whose table does not vary by subnet size may ignore cidr.
-	WorkloadTable(cidr string) (reservedip.AssignmentTable, error)
-
-	// Slots returns the Layer A named-slot set for role ("infra" or
-	// "ocfp") on cidr.
-	//
-	// The error return lets not-yet-implemented strategies participate
-	// in the same ErrNotImplemented stub-safety contract as
-	// WorkloadTable and ValidateSubnet.
-	Slots(role, cidr string) (InfraSlots, error)
+	// Placement returns how the strategy distributes roles across a bloc's
+	// workload subnets (colocated or spanning).
+	Placement() Placement
 
 	// MinPrefix returns the minimum CIDR prefix length (e.g. 25, 26) this
 	// strategy fits in.
 	MinPrefix() int
 
+	// MinSubnets returns the minimum number of workload subnets this
+	// strategy needs (1 for colocated placements).
+	MinSubnets() int
+
+	// WorkloadTable returns the Layer B assignment table for cidr.
+	// Strategies whose table does not vary by subnet size may ignore cidr.
+	WorkloadTable(cidr string) (reservedip.AssignmentTable, error)
+
+	// LayerASlots returns the Layer A named-slot set for role ("infra" or
+	// "ocfp") on cidr at workload-subnet index idx. A negative idx means
+	// "no workload position" (the infra subnet, or a single-subnet
+	// layout): only placements that apply to every index are returned.
+	LayerASlots(role, cidr string, idx int) (LayerASlots, error)
+
 	// ValidateSubnet returns an error if cidr is too small for this
 	// strategy's highest fixed offset.
 	ValidateSubnet(cidr string) error
+
+	// ValidateSubnetSet returns an error if cidrs holds fewer subnets than
+	// this strategy needs, or if any one of them fails ValidateSubnet.
+	ValidateSubnetSet(cidrs []string) error
 
 	// ValidateBand returns an error if [start,end] is not a valid
 	// override band for tier on cidr.

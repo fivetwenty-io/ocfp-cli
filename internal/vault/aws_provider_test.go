@@ -5,6 +5,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -705,43 +706,38 @@ func TestAWS_ConfigureSubnets_FallbackDefaultCIDR(t *testing.T) {
 		"Should default to 10.0.0.0/16 when no CIDR configured")
 }
 
-// TestAWS_CalculateSystemIPs_SubnetNotAtZeroBoundary verifies IPs are within
-// a /25 subnet that does not start at a .0 boundary (e.g. 10.5.0.128/25).
-func TestAWS_CalculateSystemIPs_SubnetNotAtZeroBoundary(t *testing.T) {
-	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
+// TestAWS_ConfigureSubnets_TooFewWorkloadSubnetsRejected proves Layer B
+// enforcement (Task 12): AWS blocs always default to the spanning strategy
+// (netlayout.DefaultNameFor("aws", ...), MinSubnets 3 — AWS has no
+// wide/compact-sized single subnet to colocate onto), so a bloc whose
+// Config.Subnets records only two ocfp workload subnets must fail
+// configureSubnets with netlayout.ErrTooFewSubnets before writing anything,
+// with no explicit network.strategy override required to trigger it.
+func TestAWS_ConfigureSubnets_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Provider:     "aws",
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+		Subnets: []config.Subnet{
+			{CIDR: "10.0.64.0/18", Type: "ocfp"},
+			{CIDR: "10.0.128.0/18", Type: "ocfp"},
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
 
-	ips := provider.calculateSystemIPs("10.5.0.128/25", MgmtEnvType)
-	assert.Equal(t, "10.5.0.134", ips["bosh_ip"],
-		"bosh_ip should be network+6 (10.5.0.128+6=10.5.0.134)")
-	assert.Equal(t, "10.5.0.133", ips["jumpbox_ip"],
-		"jumpbox_ip should be network+5 (10.5.0.128+5=10.5.0.133)")
+	err := provider.configureSubnets(MgmtEnvType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
 
-	ips = provider.calculateSystemIPs("10.5.0.128/25", OCFEnvType)
-	assert.Equal(t, "10.5.0.138", ips["cf_router_0_ip"],
-		"cf_router_0_ip should be network+10 (10.5.0.128+10=10.5.0.138)")
-	assert.Equal(t, "10.5.0.139", ips["cf_router_1_ip"],
-		"cf_router_1_ip should be network+11 (10.5.0.128+11=10.5.0.139)")
-	assert.Equal(t, "10.5.0.148", ips["diego_cell_0_ip"],
-		"diego_cell_0_ip should be network+20 (10.5.0.128+20=10.5.0.148)")
-	assert.Equal(t, "10.5.0.149", ips["diego_cell_1_ip"],
-		"diego_cell_1_ip should be network+21 (10.5.0.128+21=10.5.0.149)")
+	assert.Empty(t, mock.setMultipleCalls, "no subnet path written when the strategy minimum is not met")
 }
 
-// TestAWS_CalculateSystemIPs_SubnetAtZeroBoundary verifies IPs are correct
-// for a subnet starting at .0 (regression test for the common case).
-func TestAWS_CalculateSystemIPs_SubnetAtZeroBoundary(t *testing.T) {
-	provider := newTestAWSProvider(&config.Config{}, &awsMockSafe{})
-
-	ips := provider.calculateSystemIPs("10.0.0.0/24", MgmtEnvType)
-	assert.Equal(t, "10.0.0.6", ips["bosh_ip"])
-	assert.Equal(t, "10.0.0.5", ips["jumpbox_ip"])
-
-	ips = provider.calculateSystemIPs("10.0.0.0/24", OCFEnvType)
-	assert.Equal(t, "10.0.0.10", ips["cf_router_0_ip"])
-	assert.Equal(t, "10.0.0.11", ips["cf_router_1_ip"])
-	assert.Equal(t, "10.0.0.20", ips["diego_cell_0_ip"])
-	assert.Equal(t, "10.0.0.21", ips["diego_cell_1_ip"])
-}
+// calculateSystemIPs (the AWS-specific offset table) was deleted in favor of
+// reservedIPsForSubnet, the shared netlayout strategy engine also used by
+// PVE and STACKIT — see aws_reserved_ips_test.go for its coverage via
+// configureSubnetReservedIPs.
 
 // TestAWS_ParseSubnetCIDR_Slash25 verifies lastHost is correct for /25 subnets.
 func TestAWS_ParseSubnetCIDR_Slash25(t *testing.T) {

@@ -48,7 +48,7 @@ func TestRegistry(t *testing.T) {
 	t.Run("NamesSortedBothRegistered", func(t *testing.T) {
 		t.Parallel()
 
-		want := []string{"compact", "wide"}
+		want := []string{"compact", "spanning", "wide"}
 		got := netlayout.Names()
 
 		if len(got) != len(want) {

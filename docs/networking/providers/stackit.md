@@ -14,9 +14,12 @@ flowchart TD
     NET --> PIP["Labeled Public IPs\n(STACKIT IAAS SDK)"]
     PIP --> LB["STACKIT Load Balancer\n(SDK-backed)"]
 
-    VS0 -.->|"reserved IPs"| RES["bastion, bosh, vault,\njumpbox, concourse,\nprometheus, shield,\nblacksmith"]
-    VS1 -.->|"reserved IPs"| RES2["doomsday, shout"]
-    VS2 -.->|"reserved IPs"| RES3["ocfp_ui"]
+    VS0 -.->|"reserved IPs"| RES["pinned to ocfp-0:\nbastion, bosh, shield,\nblacksmith, wireguard, ovpn,\nrustfs, proxycache, nfs, garage"]
+    VS1 -.->|"reserved IPs"| RES2["pinned to ocfp-1:\ndoomsday, shout"]
+    VS2 -.->|"reserved IPs"| RES3["pinned to ocfp-2:\nocfp_ui"]
+    VS0 -.-> RESA["on every subnet:\nvault, jumpbox, concourse,\nprometheus, artifacts,\nrustfs_smoke, garage_smoke"]
+    VS1 -.-> RESA
+    VS2 -.-> RESA
 ```
 
 ## Network Creation
@@ -57,50 +60,68 @@ subnet_strategy: ocfp-triple
 
 ### Reserved IP Assignments
 
-Virtual subnets compute reserved IPs for operational services:
+STACKIT no longer carries a provider-specific offset table. Both the bootstrap layer and the vault layer resolve every offset from the shared strategy engine, exactly as PVE and AWS do, so a STACKIT bloc's reserved addresses are its selected strategy's addresses:
 
-#### All Subnets
+| Subnet strategy | Default reserved-IP strategy | Workload subnets |
+|-----------------|------------------------------|------------------|
+| `ocfp-triple` | `spanning` | 3 |
+| `single` | `wide` | 1 |
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .5 | `vault_ip` | Vault |
-| .6 | `jumpbox_ip` | Jumpbox |
-| .7 | `concourse_ip` | Concourse |
-| .8 | `prometheus_ip` | Prometheus |
+Set `network.strategy` explicitly to override either default. `spanning` requires at least three workload subnets and rejects the `single` layout with `netlayout.ErrTooFewSubnets`; both `wide` and `spanning` require a workload subnet of at least `/25`.
 
-#### ocfp-0 Only
+#### Triple Subnets (`spanning`)
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .3 | `bastion_ip` | Bastion |
-| .4 | `bosh_ip` | BOSH Director |
-| .9 | `shield_ip` | SHIELD |
-| .10 | `blacksmith_ip` | Blacksmith |
+A role pinned to one subnet index has no key at all in the other subnets' records — the key is absent, not reserved-but-blank. The mgmt tier:
 
-#### ocfp-1 Only
+| Slot | Key | Service | Written on |
+|------|-----|---------|------------|
+| .3 | `bastion_ip` | Bastion | ocfp-0 |
+| .4 | `bosh_ip` | BOSH Director | ocfp-0 |
+| .5 | `vault_ip` | Vault | every subnet |
+| .6 | `jumpbox_ip` | Jumpbox | every subnet |
+| .7 | `concourse_ip` | Concourse | every subnet |
+| .8 | `prometheus_ip` | Prometheus | every subnet |
+| .9 | `shield_ip` | SHIELD | ocfp-0 |
+| .10 | `blacksmith_ip` | Blacksmith | ocfp-0 |
+| .11 | `artifacts_ip` | Artifacts | every subnet |
+| .12 | `wireguard_ip` | WireGuard | ocfp-0 |
+| .13 | `ovpn_ip` | OpenVPN | ocfp-0 |
+| .14 | `rustfs_ip` | RustFS blobstore | ocfp-0 |
+| .15 | `proxycache_ip` | Proxy cache | ocfp-0 |
+| .16 | `nfs_ip` | NFS | ocfp-0 |
+| .17 | `ocfp_ui_ip` | OCFP UI | ocfp-2 |
+| .18 | `doomsday_ip` | Doomsday | ocfp-1 |
+| .19 | `shout_ip` | Shout | ocfp-1 |
+| .20 | `garage_ip` | Garage blobstore | ocfp-0 |
+| .21 | `rustfs_ip_smoke` | RustFS smoke errand | every subnet |
+| .22 | `garage_ip_smoke` | Garage smoke errand | every subnet |
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .9 | `doomsday_ip` | Doomsday |
-| .10 | `shout_ip` | Shout |
+The ocf tier (vault `reserved-ips` records only — the bootstrap layer writes no ocf-tier state outputs):
 
-#### ocfp-2 Only
+| Slot | Key | Service | Written on |
+|------|-----|---------|------------|
+| .64 | `bosh_ip` | CF BOSH Director | ocfp-0 |
+| .65 | `vault_ip` | CF Vault | every subnet |
+| .66 | `jumpbox_ip` | CF Jumpbox | every subnet |
+| .67 | `blacksmith_ip` | CF Blacksmith | ocfp-1 |
+| .97 | `haproxy_ip` | CF HAProxy | ocfp-0 |
 
-| Slot | Key | Service |
-|------|-----|---------|
-| .9 | `ocfp_ui_ip` | OCFP UI |
+#### Single Subnet (`wide`)
+
+`wide` is colocated, so the one virtual subnet carries every mgmt static at the offsets above (all twenty, including the roles `spanning` pins elsewhere) and every ocf static, with no per-index distinction. Its state outputs are named `reserved_<bloc>-subnet_<key>` rather than `reserved_<bloc>-ocfp-<n>_<key>`.
 
 #### IP Ranges
 
-| Range | Slots | Purpose |
-|-------|-------|---------|
-| Reserved A | 0-10 | System services |
-| Available | 11-29 | Available for allocation |
-| Reserved C/D | 30-end | Reserved for future use |
+Identical under both strategies:
 
-These IPs enable LB tokens: `reserved:<key>[:index]` (e.g., `reserved:vault_ip`, `reserved:doomsday_ip:1`).
+| Tier | Available band | Reserved complement |
+|------|----------------|---------------------|
+| mgmt | 32-63 | 0-31, and 64 to the end of the subnet |
+| ocf | 96 to the end of the subnet | 0-95 |
 
-See [Subnets](../subnets.md) for full details.
+These IPs enable LB tokens: `reserved:<key>[:index]` (e.g., `reserved:vault_ip`, `reserved:doomsday_ip:1`). Under `spanning`, a token for a pinned role must name that role's index — `reserved:doomsday_ip` alone resolves against `ocfp-0`, where the key does not exist, and fails.
+
+See [Subnets](../subnets.md) for full details, and [Reserved-IP Strategies](../reserved-ip-strategies.md) for the per-index tables, band overrides, and the scheme-drift guard.
 
 ## Security Groups
 

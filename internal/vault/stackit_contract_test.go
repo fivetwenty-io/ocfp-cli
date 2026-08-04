@@ -259,95 +259,102 @@ func TestContract_AZFormat_PerlCompatibility(t *testing.T) {
 	}
 }
 
-// TestContract_ReservedIPs_PerlCompatibility verifies IP allocation matches Perl.
+// TestContract_ReservedIPs_PerlCompatibility verifies IP allocation. STACKIT
+// no longer carries its own hand-rolled offset table (see
+// stackit_reserved_ips_test.go's TestStackitReservedIPs_TripleDefaultsToSpanning):
+// every STACKIT bloc now resolves through the same netlayout engine PVE
+// uses, and since no STACKIT blocs are deployed today the "Perl
+// compatibility" contract this test locks IS the spanning strategy's
+// offset table (internal/netlayout/strategies/spanning.yaml), not the
+// legacy Perl offsets (31/32/33/36/37 on the ocf tier) this test asserted
+// before the reroute.
 func TestContract_ReservedIPs_PerlCompatibility(t *testing.T) {
-	provider := &StackitVaultProvider{
-		logger: logger.Get(),
-	}
-	assignments := getDefaultReservedIPAssignments()
+	cfg := &config.Config{Provider: "stackit", Network: config.NetworkConfig{Strategy: "spanning"}}
 
-	// Perl contract: Specific IP offsets for each environment
-	t.Run("mgmt_ip_offsets_match_perl", func(t *testing.T) {
+	// Spanning contract: specific IP offsets for each environment, subnet
+	// index 0 (mgmt roles pinned elsewhere — doomsday/shout on 1, ocfp_ui on
+	// 2 — are absent here; see spanning_golden_test.go for per-index proof).
+	t.Run("mgmt_ip_offsets_match_spanning", func(t *testing.T) {
 		cidr := "10.10.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "mgmt", 0)
+		vaultIPs, err := reservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
-		perlMgmtOffsets := map[string]string{
-			"bastion_ip":    "10.10.1.3",  // offset 3
-			"bosh_ip":       "10.10.1.4",  // offset 4 (subnet 4 workaround)
-			"vault_ip":      "10.10.1.5",  // offset 5
-			"jumpbox_ip":    "10.10.1.6",  // offset 6
-			"concourse_ip":  "10.10.1.7",  // offset 7
-			"prometheus_ip": "10.10.1.8",  // offset 8
-			"shield_ip":     "10.10.1.9",  // offset 9
-			"blacksmith_ip": "10.10.1.10", // offset 10
+		spanningMgmtOffsets := map[string]string{
+			"bastion_ip":    "10.10.1.3",  // offset 3, pinned subnet 0
+			"bosh_ip":       "10.10.1.4",  // offset 4, pinned subnet 0
+			"vault_ip":      "10.10.1.5",  // offset 5, unpinned
+			"jumpbox_ip":    "10.10.1.6",  // offset 6, unpinned
+			"concourse_ip":  "10.10.1.7",  // offset 7, unpinned
+			"prometheus_ip": "10.10.1.8",  // offset 8, unpinned
+			"shield_ip":     "10.10.1.9",  // offset 9, pinned subnet 0
+			"blacksmith_ip": "10.10.1.10", // offset 10, pinned subnet 0
 		}
 
-		for key, expectedIP := range perlMgmtOffsets {
+		for key, expectedIP := range spanningMgmtOffsets {
 			actualIP, exists := vaultIPs[key]
-			require.True(t, exists, "Perl requires IP: %s", key)
+			require.True(t, exists, "spanning requires IP: %s", key)
 			assert.Equal(t, expectedIP, actualIP, "IP offset mismatch for %s", key)
 		}
 	})
 
-	t.Run("ocf_ip_offsets_match_perl", func(t *testing.T) {
+	t.Run("ocf_ip_offsets_match_spanning", func(t *testing.T) {
 		cidr := "10.20.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "ocf", 0)
+		vaultIPs, err := reservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
-		perlOCFOffsets := map[string]string{
-			"bosh_ip":       "10.20.1.31", // offset 31
-			"vault_ip":      "10.20.1.32", // offset 32
-			"jumpbox_ip":    "10.20.1.33", // offset 33
-			"concourse_ip":  "10.20.1.34", // offset 34
-			"prometheus_ip": "10.20.1.35", // offset 35
-			"shield_ip":     "10.20.1.36", // offset 36
-			"bastion_ip":    "10.20.1.37", // offset 37
+		spanningOCFOffsets := map[string]string{
+			"bosh_ip":    "10.20.1.64", // offset 64, pinned subnet 0
+			"vault_ip":   "10.20.1.65", // offset 65, unpinned
+			"jumpbox_ip": "10.20.1.66", // offset 66, unpinned
+			"haproxy_ip": "10.20.1.97", // offset 97, pinned subnet 0
 		}
 
-		for key, expectedIP := range perlOCFOffsets {
+		for key, expectedIP := range spanningOCFOffsets {
 			actualIP, exists := vaultIPs[key]
-			require.True(t, exists, "Perl requires IP: %s", key)
+			require.True(t, exists, "spanning requires IP: %s", key)
 			assert.Equal(t, expectedIP, actualIP, "IP offset mismatch for %s", key)
 		}
+
+		// blacksmith is pinned to ocf subnet index 1, absent from index 0.
+		assert.NotContains(t, vaultIPs, "blacksmith_ip", "blacksmith is pinned to ocf subnet 1")
 	})
 
-	t.Run("available_ranges_match_perl", func(t *testing.T) {
-		// Mgmt available: 11-29
+	t.Run("available_ranges_match_spanning", func(t *testing.T) {
+		// Mgmt available: 32-63
 		cidr := "10.10.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "mgmt", 0)
+		vaultIPs, err := reservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
-		assert.Equal(t, "10.10.1.11", vaultIPs["available_0"])
-		assert.Equal(t, "10.10.1.29", vaultIPs["available_1"])
+		assert.Equal(t, "10.10.1.32", vaultIPs["available_0"])
+		assert.Equal(t, "10.10.1.63", vaultIPs["available_1"])
 
-		// OCF available: 38->
+		// OCF available: 96->
 		cidr = "10.20.1.0/24"
-		vaultIPs, err = provider.calculateReservedIPs(cidr, assignments, "ocf", 0)
+		vaultIPs, err = reservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
-		assert.Equal(t, "10.20.1.38", vaultIPs["available_0"])
+		assert.Equal(t, "10.20.1.96", vaultIPs["available_0"])
 		assert.Equal(t, "10.20.1.254", vaultIPs["available_1"])
 	})
 
-	t.Run("reserved_ranges_match_perl", func(t *testing.T) {
-		// Mgmt reserved: 0-10,30->
+	t.Run("reserved_ranges_match_spanning", func(t *testing.T) {
+		// Mgmt reserved: 0-31,64->
 		cidr := "10.10.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "mgmt", 0)
+		vaultIPs, err := reservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
 		assert.Equal(t, "10.10.1.0", vaultIPs["reserved_0"])
-		assert.Equal(t, "10.10.1.10", vaultIPs["reserved_1"])
-		assert.Equal(t, "10.10.1.30", vaultIPs["reserved_2"])
+		assert.Equal(t, "10.10.1.31", vaultIPs["reserved_1"])
+		assert.Equal(t, "10.10.1.64", vaultIPs["reserved_2"])
 		assert.Equal(t, "10.10.1.254", vaultIPs["reserved_3"])
 
-		// OCF reserved: 0-37
+		// OCF reserved: 0-95
 		cidr = "10.20.1.0/24"
-		vaultIPs, err = provider.calculateReservedIPs(cidr, assignments, "ocf", 0)
+		vaultIPs, err = reservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 		require.NoError(t, err)
 
 		assert.Equal(t, "10.20.1.0", vaultIPs["reserved_0"])
-		assert.Equal(t, "10.20.1.37", vaultIPs["reserved_1"])
+		assert.Equal(t, "10.20.1.95", vaultIPs["reserved_1"])
 	})
 }
 

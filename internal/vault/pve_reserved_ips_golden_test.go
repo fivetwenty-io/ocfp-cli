@@ -136,8 +136,8 @@ func renderPVEOffsetTable(t *testing.T, strategyName string) []byte {
 	}
 
 	for _, envType := range []string{MgmtEnvType, OCFEnvType} {
-		derived, err := pveReservedIPsForSubnet(
-			goldenReferenceCIDR, envType, 0, config.NetworkConfig{Strategy: strategyName}, logger.Get())
+		derived, err := reservedIPsForSubnet(
+			goldenReferenceCIDR, envType, 0, &config.Config{Network: config.NetworkConfig{Strategy: strategyName}}, logger.Get())
 		require.NoError(t, err)
 
 		out.WriteString("\n[" + envType + " " + goldenReferenceCIDR + "]\n")
