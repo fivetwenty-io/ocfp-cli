@@ -499,7 +499,7 @@ func pveWorkloadSubnetIndex(genesisName string) (int, bool) {
 
 // writeTieredReservedIPs writes the genesis-consumed reserved-ips block for a
 // workload (ocfp-*) subnet, computed entirely from the subnet's own CIDR plus
-// the per-tier assignment table (pveReservedIPsForSubnet) — the STACKIT
+// the per-tier assignment table (reservedIPsForSubnet) — the STACKIT
 // architecture ported to PVE. mgmt and ocf calls against the SAME cidr always
 // produce disjoint keys/values (see plans/pve-tiered-reserved-ip-map.md), so
 // bootstrap's tier-blind reserved_<name>_* state outputs are never consulted
@@ -507,7 +507,7 @@ func pveWorkloadSubnetIndex(genesisName string) (int, bool) {
 // aliases for bosh_ip: PVE historically exposed all three, and a kit hook
 // this change cannot see may still read either alias.
 func (p *PVEVaultProvider) writeTieredReservedIPs(cidr, envType string, subnetNum int, genesisName, subnetPath string) error {
-	reserved, err := pveReservedIPsForSubnet(cidr, envType, subnetNum, p.Config, p.logger)
+	reserved, err := reservedIPsForSubnet(cidr, envType, subnetNum, p.Config, p.logger)
 	if err != nil {
 		return fmt.Errorf("failed to compute reserved IPs for %s/%s-%d: %w", envType, genesisName, subnetNum, err)
 	}
@@ -587,7 +587,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 		// Named-role statics (bosh_ip, vault_ip, ...) and the tier's default
 		// available band, computed from the shared fallback cidr plus the
 		// per-tier assignment table — the same engine the state-driven path
-		// uses (pveReservedIPsForSubnet), so mgmt/ocf disjointness holds even
+		// uses (reservedIPsForSubnet), so mgmt/ocf disjointness holds even
 		// in this degraded, no-bootstrap-state mode.
 		reserved, err := p.finalizeFallbackReserved(cidr, envType, i)
 		if err != nil {
@@ -631,7 +631,7 @@ func (p *PVEVaultProvider) pveFallbackCIDR() string {
 // pve_reserved_ips.go), this knob predates the tiered layout and stays
 // tier-blind by design.
 func (p *PVEVaultProvider) finalizeFallbackReserved(cidr, envType string, i int) (map[string]any, error) {
-	reserved, err := pveReservedIPsForSubnet(cidr, envType, i, p.Config, p.logger)
+	reserved, err := reservedIPsForSubnet(cidr, envType, i, p.Config, p.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute fallback reserved IPs for ocfp-%d: %w", i, err)
 	}
@@ -679,7 +679,7 @@ func (p *PVEVaultProvider) writeFallbackReservedIPs(envType string) error {
 // stateless-fallback subnet at index i (0,1,2). Network.AvailableIPStart/End
 // (absolute, config-driven, tier-blind by design — see writeFallbackSubnet)
 // wins when both are set; otherwise defaultStart/defaultEnd (the calling
-// tier's map-derived available band, from pveReservedIPsForSubnet) is used.
+// tier's map-derived available band, from reservedIPsForSubnet) is used.
 // Either way the resolved band is split into three contiguous, non-
 // overlapping slices so each logical subnet on the shared flat range owns a
 // distinct slice. This keeps net-compilation (ocfp-2) clear of net-ocf
