@@ -13,6 +13,11 @@ func (m *Manager) GetAvailabilityZone(index int) string {
 	return m.getAvailabilityZone(index)
 }
 
+// SlotForNamedIP exposes slotForNamedIP for testing.
+func (m *Manager) SlotForNamedIP(subnetName, subnetCIDR, ipKey string, fallback int) int {
+	return m.slotForNamedIP(subnetName, subnetCIDR, ipKey, fallback)
+}
+
 // UseVirtualSubnets exposes useVirtualSubnets for testing.
 func (m *Manager) UseVirtualSubnets() bool {
 	return m.useVirtualSubnets()
