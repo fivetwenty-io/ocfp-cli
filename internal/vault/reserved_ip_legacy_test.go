@@ -211,7 +211,7 @@ func applyLegacyDerivation(t *testing.T, guard *reservedIPGuard, fixture legacyF
 		network, ok := record["reserved_a"].(string)
 		require.True(t, ok, "%s must record its network address as reserved_a", path)
 
-		derived, err := pveReservedIPsForSubnet(
+		derived, err := reservedIPsForSubnet(
 			network+legacyWorkloadPrefixLen, envType, subnetNum, &config.Config{}, logger.Get())
 		require.NoError(t, err)
 

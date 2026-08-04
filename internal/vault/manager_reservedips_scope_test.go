@@ -27,7 +27,7 @@ func newReservedIPsScopeTestManager(cfg *config.Config, safe SafeInterface) *Man
 }
 
 // pveScopeTestConfig returns a minimal PVE config valid for reserved-ip
-// derivation (resolveLayout/pveReservedIPsForSubnet need a real CIDR).
+// derivation (resolveLayout/reservedIPsForSubnet need a real CIDR).
 func pveScopeTestConfig() *config.Config {
 	return &config.Config{ //nolint:exhaustruct // only the fields reserved-ip derivation reads are needed
 		Provider: "pve",
