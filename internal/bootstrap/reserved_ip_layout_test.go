@@ -785,6 +785,67 @@ func TestCreateSubnets_AWS_SpanningAcceptsThreeSubnets(t *testing.T) {
 	}
 }
 
+// TestCreateSubnets_AWS_SpanningAcceptsProviderAssignedCIDR proves a
+// CIDR-less entry (provider-assigned addressing) counts toward the subnet
+// floor without a size check: three entries where one lacks a CIDR satisfy
+// spanning's MinSubnets and all three reach the provider.
+func TestCreateSubnets_AWS_SpanningAcceptsProviderAssignedCIDR(t *testing.T) {
+	t.Parallel()
+
+	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-ocfp-0", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-ocfp-1", Type: "public", AvailabilityZone: "us-east-1b"},
+		{Name: "prod-ocfp-2", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
+	})
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	if len(fakeNetwork.createdSubnetReqs) != 3 {
+		t.Errorf("CreateSubnet called %d times, want 3", len(fakeNetwork.createdSubnetReqs))
+	}
+}
+
+// TestCreateSubnets_AWS_SpanningRejectsTooFewProviderAssigned proves the
+// count floor holds even when no entry carries a CIDR: two provider-assigned
+// subnets are still only two subnets, so spanning (MinSubnets 3) rejects the
+// bloc before any cloud subnet is created.
+func TestCreateSubnets_AWS_SpanningRejectsTooFewProviderAssigned(t *testing.T) {
+	t.Parallel()
+
+	mgr, fakeNetwork, _ := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-ocfp-0", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-ocfp-1", Type: "public", AvailabilityZone: "us-east-1b"},
+	})
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	err := mgr.CreateSubnets(ctx)
+	if err == nil {
+		t.Fatal("CreateSubnets: want error, got nil")
+	}
+
+	if !errors.Is(err, netlayout.ErrTooFewSubnets) {
+		t.Errorf("CreateSubnets error = %v, want wrapping netlayout.ErrTooFewSubnets", err)
+	}
+
+	if len(fakeNetwork.createdSubnetReqs) != 0 {
+		t.Errorf("CreateSubnet called %d times despite ErrTooFewSubnets, want no cloud mutation",
+			len(fakeNetwork.createdSubnetReqs))
+	}
+}
+
 // TestReservedBandOverride_PartialConfigRejected verifies that setting only
 // one of Bands.Infra.Start/End (rather than both, or neither) is treated as
 // a misconfiguration rather than silently defaulting one side.

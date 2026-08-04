@@ -446,6 +446,30 @@ func TestValidateSubnetSetRejectsTooFew(t *testing.T) {
 	}
 }
 
+// TestValidateSubnetSetCountsEmptyCIDRs proves an empty entry — a subnet
+// whose CIDR the provider assigns later — counts toward the subnet-count
+// floor but has no size to check, so a mixed list is neither falsely
+// rejected on count nor tripped up by parsing "".
+func TestValidateSubnetSetCountsEmptyCIDRs(t *testing.T) {
+	layout, err := Compile(validSpanningDef()) // MinSubnets: 3
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	if err := layout.ValidateSubnetSet([]string{"10.0.0.0/25", "", "10.0.1.0/25"}); err != nil {
+		t.Fatalf("ValidateSubnetSet(mixed, 3 entries) = %v, want nil", err)
+	}
+
+	if err := layout.ValidateSubnetSet([]string{"", "", ""}); err != nil {
+		t.Fatalf("ValidateSubnetSet(all provider-assigned, 3 entries) = %v, want nil", err)
+	}
+
+	err = layout.ValidateSubnetSet([]string{"", ""})
+	if !errors.Is(err, ErrTooFewSubnets) {
+		t.Fatalf("ValidateSubnetSet(2 provider-assigned of 3) error = %v, want wrapping ErrTooFewSubnets", err)
+	}
+}
+
 // TestValidateBandDelegatesInfra proves TierInfra delegates to the shared
 // validateBand (band.go) unchanged.
 func TestValidateBandDelegatesInfra(t *testing.T) {

@@ -253,13 +253,20 @@ func (c *compiledLayout) ValidateSubnet(cidr string) error {
 
 // ValidateSubnetSet rejects cidrs if it has fewer entries than the compiled
 // definition's MinSubnets, wrapping ErrTooFewSubnets; otherwise it validates
-// every cidr with ValidateSubnet, returning the first failure.
+// every non-empty cidr with ValidateSubnet, returning the first failure. An
+// empty entry stands for a subnet whose CIDR the provider assigns later: it
+// counts toward the subnet floor — the subnet will exist — but has no size
+// to check yet.
 func (c *compiledLayout) ValidateSubnetSet(cidrs []string) error {
 	if len(cidrs) < c.def.MinSubnets {
 		return tooFewSubnetsError(c.def.Name, c.def.MinSubnets, len(cidrs))
 	}
 
 	for _, cidr := range cidrs {
+		if cidr == "" {
+			continue
+		}
+
 		if err := c.ValidateSubnet(cidr); err != nil {
 			return err
 		}
