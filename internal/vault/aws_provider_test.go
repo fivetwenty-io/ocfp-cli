@@ -5,6 +5,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -703,6 +704,34 @@ func TestAWS_ConfigureSubnets_FallbackDefaultCIDR(t *testing.T) {
 	require.NotNil(t, call0, "Should create fallback subnet with default CIDR")
 	assert.Equal(t, "10.0.0.0/16", call0.data["cidr_block"],
 		"Should default to 10.0.0.0/16 when no CIDR configured")
+}
+
+// TestAWS_ConfigureSubnets_TooFewWorkloadSubnetsRejected proves Layer B
+// enforcement (Task 12): AWS blocs always default to the spanning strategy
+// (netlayout.DefaultNameFor("aws", ...), MinSubnets 3 — AWS has no
+// wide/compact-sized single subnet to colocate onto), so a bloc whose
+// Config.Subnets records only two ocfp workload subnets must fail
+// configureSubnets with netlayout.ErrTooFewSubnets before writing anything,
+// with no explicit network.strategy override required to trigger it.
+func TestAWS_ConfigureSubnets_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Provider:     "aws",
+		Region:       "us-east-1",
+		VPCCIDRBlock: "10.0.0.0/16",
+		DNS:          []string{"10.0.0.2"},
+		Subnets: []config.Subnet{
+			{CIDR: "10.0.64.0/18", Type: "ocfp"},
+			{CIDR: "10.0.128.0/18", Type: "ocfp"},
+		},
+	}
+	provider := newTestAWSProvider(cfg, mock)
+
+	err := provider.configureSubnets(MgmtEnvType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
+
+	assert.Empty(t, mock.setMultipleCalls, "no subnet path written when the strategy minimum is not met")
 }
 
 // calculateSystemIPs (the AWS-specific offset table) was deleted in favor of

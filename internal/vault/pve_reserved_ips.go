@@ -95,6 +95,65 @@ func applyMgmtBandOverride(
 	return overridden, nil
 }
 
+// validateWorkloadSubnetCIDRs enforces that workloadCIDRs — the ocfp/
+// workload subnet CIDRs a provider is about to write reserved-ips or subnet
+// records for — satisfy cfg's resolved netlayout.Layout minimum subnet
+// count (Layout.MinSubnets, checked via ValidateSubnetSet), before ANY
+// subnet path is written to vault. label identifies the caller for the
+// wrapped error (provider and phase). This is Layer B's half of the shared
+// enforcement Task 12 wires in; internal/bootstrap's
+// Manager.validateWorkloadSubnetCount enforces the identical check for
+// Layer A before a subnet is ever recorded to state.
+//
+// An empty workloadCIDRs is not validated: it means this call touches no
+// workload subnet at all (e.g. an infra-only bootstrap-state fixture, or a
+// provider's own no-subnets-configured fallback, which always writes a
+// fixed count and is out of scope here) rather than a workload set that is
+// present but short of the strategy's minimum — the scenario this
+// enforcement targets (e.g. stackit-single's one subnet against spanning's
+// MinSubnets of 3).
+func validateWorkloadSubnetCIDRs(cfg *config.Config, label string, workloadCIDRs []string) error {
+	if len(workloadCIDRs) == 0 {
+		return nil
+	}
+
+	layout, err := resolveLayout(cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := layout.ValidateSubnetSet(workloadCIDRs); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+
+	return nil
+}
+
+// collectWorkloadSubnetCIDRs extracts the ocfp/workload subnet CIDRs from a
+// STACKIT- or AWS-shaped config.Subnet list (sourced from bootstrap state
+// via config.Subnets/Network.Subnets) for validateWorkloadSubnetCIDRs,
+// skipping any non-workload (subnetType != DefaultSubnetType) or CIDR-less
+// entry. PVE has no config.Subnet list to read; see pveWorkloadSubnetCIDRs
+// in pve_provider.go for its state.Resource-based equivalent.
+func collectWorkloadSubnetCIDRs(subnets []config.Subnet) []string {
+	cidrs := make([]string, 0, len(subnets))
+
+	for _, sub := range subnets {
+		subnetType := sub.Type
+		if subnetType == "" {
+			subnetType = DefaultSubnetType
+		}
+
+		if subnetType != DefaultSubnetType || sub.CIDR == "" {
+			continue
+		}
+
+		cidrs = append(cidrs, sub.CIDR)
+	}
+
+	return cidrs
+}
+
 // reservedIPsForSubnet computes the full reserved-ips secret data for one
 // PVE or STACKIT workload subnet: subnetCIDR is that subnet's OWN CIDR
 // (each ocfp-N is a distinct physical /22 in the PVE state-driven path, or
