@@ -286,3 +286,52 @@ func TestSpanningRegistered(t *testing.T) {
 		t.Fatal("Names() joined does not contain \"spanning\"")
 	}
 }
+
+// TestPinnedWorkloadIndex covers Layout.PinnedWorkloadIndex: a mgmt-tier
+// static pinned to exactly one workload subnet reports that index by its
+// Layer A output key; unpinned statics, multi-pinned statics, unknown keys,
+// and every key on a colocated strategy (wide pins nothing) report no pin.
+func TestPinnedWorkloadIndex(t *testing.T) {
+	t.Parallel()
+
+	spanning, err := netlayout.Lookup("spanning")
+	if err != nil {
+		t.Fatalf("Lookup(\"spanning\") returned unexpected error: %v", err)
+	}
+
+	wide, err := netlayout.Lookup("wide")
+	if err != nil {
+		t.Fatalf("Lookup(\"wide\") returned unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		layout  netlayout.Layout
+		ipKey   string
+		wantIdx int
+		wantOK  bool
+	}{
+		{name: "spanning doomsday pinned to 1", layout: spanning, ipKey: "doomsday_ip", wantIdx: 1, wantOK: true},
+		{name: "spanning ocfp_ui pinned to 2", layout: spanning, ipKey: "ocfp_ui_ip", wantIdx: 2, wantOK: true},
+		{name: "spanning bastion pinned to 0", layout: spanning, ipKey: "bastion_ip", wantIdx: 0, wantOK: true},
+		{name: "spanning vault unpinned", layout: spanning, ipKey: "vault_ip", wantOK: false},
+		{name: "spanning custom ip_key", layout: spanning, ipKey: "rustfs_ip_smoke", wantOK: false},
+		{name: "spanning unknown key", layout: spanning, ipKey: "nosuch_ip", wantOK: false},
+		{name: "wide pins nothing", layout: wide, ipKey: "doomsday_ip", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			idx, ok := tt.layout.PinnedWorkloadIndex(tt.ipKey)
+			if ok != tt.wantOK {
+				t.Fatalf("PinnedWorkloadIndex(%q) ok = %v, want %v", tt.ipKey, ok, tt.wantOK)
+			}
+
+			if ok && idx != tt.wantIdx {
+				t.Errorf("PinnedWorkloadIndex(%q) = %d, want %d", tt.ipKey, idx, tt.wantIdx)
+			}
+		})
+	}
+}
