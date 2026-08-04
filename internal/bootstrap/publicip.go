@@ -117,6 +117,7 @@ func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider st
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Jumpbox, defaultJumpboxCount)
 
 	ips := make([]*cpi.PublicIP, 0, count)
+	recorded := make([]indexedPublicIP, 0, count)
 
 	for i := range count {
 		name := fmt.Sprintf("%s-jumpbox-%d", m.options.BlocName, i)
@@ -138,9 +139,10 @@ func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider st
 		}
 
 		ips = append(ips, publicIP)
+		recorded = append(recorded, indexedPublicIP{index: i, ip: publicIP})
 	}
 
-	m.savePublicIPsToState(ips, "jumpbox", "jumpbox-%d")
+	m.savePublicIPsToState(recorded, "jumpbox", "jumpbox-%d")
 
 	return ips
 }
@@ -216,8 +218,18 @@ func (m *Manager) isBlocPublicIP(publicIP *cpi.PublicIP) bool {
 // Public IP State Management
 // ==============================================================================
 
-func (m *Manager) savePublicIPsToState(ips []*cpi.PublicIP, job, nameFormat string) {
-	for index, publicIP := range ips {
+// indexedPublicIP pairs an address with the slot it was requested for. The slot
+// must survive a failed sibling: recording by position in the success slice
+// renames every address after a gap.
+type indexedPublicIP struct {
+	index int
+	ip    *cpi.PublicIP
+}
+
+func (m *Manager) savePublicIPsToState(ips []indexedPublicIP, job, nameFormat string) {
+	for _, entry := range ips {
+		index, publicIP := entry.index, entry.ip
+
 		// Format name - if nameFormat contains %d, use index; otherwise use as-is
 		var formattedName string
 		if strings.Contains(nameFormat, "%") {
@@ -279,6 +291,7 @@ func (m *Manager) ensureAndRecordPublicIPs(
 	baseLabels map[string]string,
 ) []*cpi.PublicIP {
 	ips := make([]*cpi.PublicIP, 0, count)
+	recorded := make([]indexedPublicIP, 0, count)
 
 	const maxRetriesPerIP = 3
 
@@ -299,6 +312,7 @@ func (m *Manager) ensureAndRecordPublicIPs(
 			if ip != nil {
 				// Success! Add to list and break retry loop
 				ips = append(ips, ip)
+				recorded = append(recorded, indexedPublicIP{index: index, ip: ip})
 
 				break
 			}
@@ -312,7 +326,7 @@ func (m *Manager) ensureAndRecordPublicIPs(
 		}
 	}
 
-	m.savePublicIPsToState(ips, job, nameFormat)
+	m.savePublicIPsToState(recorded, job, nameFormat)
 
 	return ips
 }
