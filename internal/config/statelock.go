@@ -25,14 +25,18 @@ const (
 // ErrStateLockTimeout indicates the state file lock could not be acquired.
 var ErrStateLockTimeout = errors.New("timed out waiting for the OCFP state file lock")
 
-// stateLockPath returns the path of the lock file guarding state.yml.
+// stateLockPath returns the path of the lock file guarding state.yml. It
+// always sits alongside the resolved state.yml itself (see
+// StateFilePath), so the lock and the file it guards never land in
+// different directories, whichever side of the dual-read fallback
+// StateFilePath resolved to.
 func stateLockPath() string {
-	home := OcfpHome()
-	if home == "" {
+	statePath := StateFilePath()
+	if statePath == "" {
 		return ""
 	}
 
-	return filepath.Join(home, "state.yml.lock")
+	return statePath + ".lock"
 }
 
 // withStateLock runs fn while holding an exclusive lock on the state file.

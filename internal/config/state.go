@@ -27,14 +27,21 @@ const stateFileMode os.FileMode = 0o600
 // stateDirMode is the file permission for the state directory.
 const stateDirMode os.FileMode = 0o750
 
-// StateFilePath returns the path to the CLI state file.
+// StateFilePath returns the path to the CLI state file. Resolves under
+// StateHome(), with a dual-read fallback to the pre-migration
+// ~/.ocfp/state.yml when only that exists.
 func StateFilePath() string {
-	home := OcfpHome()
-	if home == "" {
+	stateHome := StateHome()
+	if stateHome == "" {
 		return ""
 	}
 
-	return filepath.Join(home, "state.yml")
+	newPath := filepath.Join(stateHome, "state.yml")
+	legacyPath := filepath.Join(OcfpHome(), "state.yml")
+
+	path, _ := ResolveExisting(newPath, legacyPath)
+
+	return path
 }
 
 // LoadState reads and unmarshals the state file.
@@ -186,7 +193,7 @@ func GetBlocKeys(blocName string) (map[string]string, error) {
 func migrateStateFromConfig() (*StateFile, error) {
 	state := &StateFile{}
 
-	configPath := filepath.Join(OcfpHome(), "config.yml")
+	configPath := defaultConfigPath()
 
 	data, err := os.ReadFile(configPath) //nolint:gosec // path is from trusted config
 	if err != nil {

@@ -14,7 +14,10 @@ var (
 
 	// ErrNoConfigFile is returned when no configuration file is found at the
 	// default locations and no explicit path was provided.
-	ErrNoConfigFile = errors.New("no configuration file found; use ~/.ocfp/config.yml or specify -f configfile.yml")
+	ErrNoConfigFile = errors.New(
+		"no configuration file found; use ~/.config/ocfp/config.yml " +
+			"(or the legacy ~/.ocfp/config.yml if present), or specify -f configfile.yml",
+	)
 
 	// ErrNoBlocName is returned when LoadWithParams is called without a bloc name.
 	ErrNoBlocName = errors.New("no bloc name provided")
