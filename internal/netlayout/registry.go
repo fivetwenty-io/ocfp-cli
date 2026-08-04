@@ -1,58 +1,37 @@
 package netlayout
 
-import "sort"
-
 // defaultStrategyName is the registry key Default resolves to, and the key
 // Lookup falls back to for an empty name.
 const defaultStrategyName = "wide"
 
-// registry holds every Layout available for selection: one compiled layout
-// per built-in strategy definition (see builtins.go and strategies/*.yaml).
-var registry = builtinRegistry()
-
-// builtinRegistry compiles the embedded strategy definitions into the
-// name-keyed Layout map registry is built from. Compilation failure is a
-// programmer error in an embedded YAML file and panics at package
-// initialization rather than at first Lookup.
-func builtinRegistry() map[string]Layout {
-	compiled := builtinLayouts()
-
-	layouts := make(map[string]Layout, len(compiled))
-	for name, layout := range compiled {
-		layouts[name] = layout
-	}
-
-	return layouts
-}
-
-// Lookup resolves name to a registered Layout. An empty name resolves to
-// Default. An unrecognized name returns ErrUnknownStrategy wrapping name.
+// Lookup resolves name to a registered built-in Layout (see Builtins). An
+// empty name resolves to Default. An unrecognized name returns
+// ErrUnknownStrategy wrapping name. Lookup only ever sees the three
+// built-in strategies: operator BYO strategies loaded from
+// network.strategyPaths are resolved through a *Catalog instead (see
+// BuildCatalog and Config.ResolveReservedIPLayout), never through this
+// package-level built-ins-only registry.
 func Lookup(name string) (Layout, error) {
 	if name == "" {
 		return Default(), nil
 	}
 
-	layout, ok := registry[name]
-	if !ok {
-		return nil, unknownStrategyError(name)
-	}
-
-	return layout, nil
+	return Builtins().Lookup(name)
 }
 
-// Default returns the default Layout ("wide").
+// Default returns the default built-in Layout ("wide").
 func Default() Layout {
-	return registry[defaultStrategyName]
-}
-
-// Names returns every registered strategy name, sorted.
-func Names() []string {
-	names := make([]string, 0, len(registry))
-	for name := range registry {
-		names = append(names, name)
+	layout, err := Builtins().Lookup(defaultStrategyName)
+	if err != nil {
+		// Programmer error: the wide built-in failed to load/compile, which
+		// would already have panicked inside builtinLayouts().
+		panic(err)
 	}
 
-	sort.Strings(names)
+	return layout
+}
 
-	return names
+// Names returns every built-in strategy name, sorted.
+func Names() []string {
+	return Builtins().Names()
 }

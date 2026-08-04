@@ -507,7 +507,7 @@ func pveWorkloadSubnetIndex(genesisName string) (int, bool) {
 // aliases for bosh_ip: PVE historically exposed all three, and a kit hook
 // this change cannot see may still read either alias.
 func (p *PVEVaultProvider) writeTieredReservedIPs(cidr, envType string, subnetNum int, genesisName, subnetPath string) error {
-	reserved, err := pveReservedIPsForSubnet(cidr, envType, subnetNum, p.Config.Network, p.logger)
+	reserved, err := pveReservedIPsForSubnet(cidr, envType, subnetNum, p.Config, p.logger)
 	if err != nil {
 		return fmt.Errorf("failed to compute reserved IPs for %s/%s-%d: %w", envType, genesisName, subnetNum, err)
 	}
@@ -631,7 +631,7 @@ func (p *PVEVaultProvider) pveFallbackCIDR() string {
 // pve_reserved_ips.go), this knob predates the tiered layout and stays
 // tier-blind by design.
 func (p *PVEVaultProvider) finalizeFallbackReserved(cidr, envType string, i int) (map[string]any, error) {
-	reserved, err := pveReservedIPsForSubnet(cidr, envType, i, p.Config.Network, p.logger)
+	reserved, err := pveReservedIPsForSubnet(cidr, envType, i, p.Config, p.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute fallback reserved IPs for ocfp-%d: %w", i, err)
 	}

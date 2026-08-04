@@ -816,12 +816,13 @@ func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, 
 }
 
 // resolveReservedIPLayout resolves the bloc's configured netlayout.Layout
-// strategy (m.config.Network.Strategy; empty resolves to the "wide"
-// default) and asks it for its named-slot/available-band offsets for role
-// on subnetCIDR at workload-subnet index idx (-1 for the infra subnet and
-// single-subnet layouts, which have no workload position), then applies any
-// config-level available-band override (m.config.Network.Bands.Infra) on top
-// of it. Every subnetStrategy shares this one resolution path — unlike the
+// strategy (m.config.ResolveReservedIPLayout: m.config.Network.Strategy when
+// set, else the provider/subnet-strategy default) and asks it for its
+// named-slot/available-band offsets for role on subnetCIDR at
+// workload-subnet index idx (-1 for the infra subnet and single-subnet
+// layouts, which have no workload position), then applies any config-level
+// available-band override (m.config.Network.Bands.Infra) on top of it.
+// Every subnetStrategy shares this one resolution path — unlike the
 // pre-netlayout scheme, where pveSubnetStrategy alone widened the ocfp
 // role's band from its own CIDR, every strategy here reads the identical
 // table internal/vault's reserved-ips population reads, so Layer A and Layer
@@ -829,7 +830,7 @@ func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, 
 // error if the strategy name is unrecognized, role is neither "infra" nor
 // "ocfp", or a configured override is invalid for subnetCIDR.
 func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string, idx int) (netlayout.LayerASlots, error) {
-	layout, err := netlayout.Lookup(m.config.Network.Strategy)
+	layout, err := m.config.ResolveReservedIPLayout()
 	if err != nil {
 		return netlayout.LayerASlots{}, fmt.Errorf("resolve reserved-ip layout strategy %q: %w",
 			m.config.Network.Strategy, err)
