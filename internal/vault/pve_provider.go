@@ -475,6 +475,10 @@ func (p *PVEVaultProvider) configureReservedIPsForEnv(envType string) error {
 
 		reservedPath := filepath.Join(subnetPath, "reserved-ips")
 
+		// Deliberately a partial write, not setCompleteRecord: roleKeys is
+		// assembled from whatever reserved_*_ip outputs bootstrap state
+		// happens to hold, so a key missing from it is not evidence the
+		// derivation retired that role — it may just be a stale state file.
 		if err := p.Safe.SetMultiple(reservedPath, roleKeys); err != nil {
 			return fmt.Errorf("failed to write reserved-ip keys for %s: %w", genesisName, err)
 		}
@@ -562,7 +566,10 @@ func (p *PVEVaultProvider) writeTieredReservedIPs(cidr, envType string, subnetNu
 
 	reservedPath := filepath.Join(subnetPath, "reserved-ips")
 
-	err = p.Safe.SetMultiple(reservedPath, reserved)
+	// Complete write: `reserved` is the whole per-tier table for this
+	// subnet, so a key the record still holds and this map omits was
+	// retired from the offset table (see reserved_ip_guard.go).
+	err = setCompleteRecord(p.Safe, reservedPath, reserved)
 	if err != nil {
 		return fmt.Errorf("failed to write reserved-ips band for %s: %w", genesisName, err)
 	}
@@ -635,7 +642,7 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 
 		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
 
-		err = p.Safe.SetMultiple(reservedPath, reserved)
+		err = setCompleteRecord(p.Safe, reservedPath, reserved)
 		if err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
 		}
@@ -706,7 +713,7 @@ func (p *PVEVaultProvider) writeFallbackReservedIPs(envType string) error {
 
 		reservedPath := p.PathBuilder.GetReservedIPsPath(envType, "ocfp", i)
 
-		if err := p.Safe.SetMultiple(reservedPath, reserved); err != nil {
+		if err := setCompleteRecord(p.Safe, reservedPath, reserved); err != nil {
 			return fmt.Errorf("failed to set ocfp-%d reserved-ips: %w", i, err)
 		}
 	}

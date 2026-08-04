@@ -700,7 +700,7 @@ type ReservedIPOptions struct {
 // refreshing configuration. With Apply set this is populate's write path
 // with the guard opened — the same derivation, applied on purpose.
 func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error) {
-	empty := ReservedIPReport{Drifts: nil, Schemes: nil}
+	empty := ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil}
 
 	err := m.client.ValidateConnection()
 	if err != nil {
@@ -714,7 +714,7 @@ func (m *Manager) ReservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 // without the live-connection precondition ReservedIPs already checked —
 // letting it run in tests against a fake safe.
 func (m *Manager) reservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error) {
-	empty := ReservedIPReport{Drifts: nil, Schemes: nil}
+	empty := ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil}
 
 	base := m.safe
 	if !opts.Apply {

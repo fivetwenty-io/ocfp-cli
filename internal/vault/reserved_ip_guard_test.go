@@ -334,6 +334,7 @@ func TestReservedIPReportRendering(t *testing.T) {
 		Schemes: []ReservedIPScheme{
 			{Path: testReservedPath, Existing: "", Current: reservedIPSchemeVersion},
 		},
+		Obsoletes: nil,
 	}
 
 	var sb strings.Builder
@@ -349,7 +350,7 @@ func TestReservedIPReportRendering(t *testing.T) {
 
 func TestReservedIPReportRenderingEmpty(t *testing.T) {
 	var sb strings.Builder
-	WriteReservedIPReport(&sb, ReservedIPReport{Drifts: nil, Schemes: nil})
+	WriteReservedIPReport(&sb, ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil})
 
 	assert.Empty(t, sb.String())
 }
