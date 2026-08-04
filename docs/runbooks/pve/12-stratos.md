@@ -156,7 +156,7 @@ console anyone can reach. Two gates guarded the way up, and every rung was
 verified before we trusted our weight to it.
 
 Just as important is what we can do now: rebuild the bastion without losing
-anything, tear down and recreate the whole bloc from `~/.ocfp/config.yml`
+anything, tear down and recreate the whole bloc from `~/.config/ocfp/config.yml`
 and the deployment repos, restore from SHIELD, and watch Doomsday count
 down our certificates. The runbooks end here, but the bloc's story is now
 ordinary operations — which was the goal all along.

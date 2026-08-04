@@ -6,10 +6,12 @@ OCFP uses structured JSON logging to capture detailed operational information fo
 
 ## Log Directory Structure
 
-All OCFP logs are stored under `~/.ocfp/` with the following hierarchy:
+All OCFP logs are stored under `~/.local/state/ocfp/` (or `$XDG_STATE_HOME/ocfp` if set) with the following hierarchy. For backward compatibility, OCFP falls back to the legacy `~/.ocfp/` directory when the XDG path does not exist, and emits a single deprecation warning per session. To force the legacy flat-directory layout entirely (which also disables the warning), set `OCFP_HOME` (e.g. `export OCFP_HOME=~/.ocfp`); this overrides the config, state, and data directories together, so logs land under `$OCFP_HOME/logs` instead.
+
+Run `ocfp migrate` (add `--dry-run` to preview first) to move an existing legacy layout onto the XDG paths permanently, including the top-level `~/.ocfp/logs` directory and each bloc's own `~/.ocfp/{bloc}/logs` directory; afterward, log lookups resolve the XDG state directory directly and no longer fall back. `ocfp migrate` refuses to run when `OCFP_HOME` is set.
 
 ```
-~/.ocfp/
+~/.local/state/ocfp/
   ├── {bloc}/
   │   └── logs/
   │       ├── {command}/
@@ -40,13 +42,13 @@ All OCFP logs are stored under `~/.ocfp/` with the following hierarchy:
 **With bloc:**
 ```bash
 ocfp --bloc dev bootstrap
-# Logs to: ~/.ocfp/dev/logs/bootstrap/20250122-143022.log
+# Logs to: ~/.local/state/ocfp/dev/logs/bootstrap/20250122-143022.log
 ```
 
 **Without bloc:**
 ```bash
 ocfp teardown
-# Logs to: ~/.ocfp/logs/teardown/20250122-143022.log
+# Logs to: ~/.local/state/ocfp/logs/teardown/20250122-143022.log
 ```
 
 ### Subcommands
@@ -54,19 +56,19 @@ ocfp teardown
 **State sync with bloc:**
 ```bash
 ocfp --bloc prod state sync
-# Logs to: ~/.ocfp/prod/logs/state/sync/20250122-143022.log
+# Logs to: ~/.local/state/ocfp/prod/logs/state/sync/20250122-143022.log
 ```
 
 **Load balancer operations:**
 ```bash
 ocfp --bloc staging lb ops
-# Logs to: ~/.ocfp/staging/logs/lb/ops/20250122-143022.log
+# Logs to: ~/.local/state/ocfp/staging/logs/lb/ops/20250122-143022.log
 ```
 
 **Vault management:**
 ```bash
 ocfp --bloc dev vault populate
-# Logs to: ~/.ocfp/dev/logs/vault/populate/20250122-143022.log
+# Logs to: ~/.local/state/ocfp/dev/logs/vault/populate/20250122-143022.log
 ```
 
 ### Multiple Blocs
@@ -74,7 +76,7 @@ ocfp --bloc dev vault populate
 Each bloc maintains separate log directories:
 
 ```
-~/.ocfp/
+~/.local/state/ocfp/
   ├── dev/
   │   └── logs/
   │       ├── bootstrap/
@@ -173,13 +175,13 @@ To manage log file accumulation:
 
 ```bash
 # Find logs older than 30 days
-find ~/.ocfp -name "*.log" -mtime +30
+find ~/.local/state/ocfp -name "*.log" -mtime +30
 
 # Delete logs older than 30 days
-find ~/.ocfp -name "*.log" -mtime +30 -delete
+find ~/.local/state/ocfp -name "*.log" -mtime +30 -delete
 
 # Archive old logs
-find ~/.ocfp -name "*.log" -mtime +30 -exec gzip {} \;
+find ~/.local/state/ocfp -name "*.log" -mtime +30 -exec gzip {} \;
 ```
 
 ### Analyzing Logs
@@ -188,16 +190,16 @@ find ~/.ocfp -name "*.log" -mtime +30 -exec gzip {} \;
 
 ```bash
 # Extract all ERROR level messages
-cat ~/.ocfp/dev/logs/bootstrap/20250122-143022.log | jq 'select(.level == "ERROR")'
+cat ~/.local/state/ocfp/dev/logs/bootstrap/20250122-143022.log | jq 'select(.level == "ERROR")'
 
 # Show all messages from a specific operation
-cat ~/.ocfp/dev/logs/state/sync/20250122-143022.log | jq 'select(.operation == "sync")'
+cat ~/.local/state/ocfp/dev/logs/state/sync/20250122-143022.log | jq 'select(.operation == "sync")'
 
 # Count log entries by level
-cat ~/.ocfp/dev/logs/bootstrap/20250122-143022.log | jq -r '.level' | sort | uniq -c
+cat ~/.local/state/ocfp/dev/logs/bootstrap/20250122-143022.log | jq -r '.level' | sort | uniq -c
 
 # Extract error messages with timestamps
-cat ~/.ocfp/dev/logs/bootstrap/20250122-143022.log | \
+cat ~/.local/state/ocfp/dev/logs/bootstrap/20250122-143022.log | \
   jq -r 'select(.level == "ERROR") | "\(.timestamp) \(.msg)"'
 ```
 
@@ -205,10 +207,10 @@ cat ~/.ocfp/dev/logs/bootstrap/20250122-143022.log | \
 
 ```bash
 # Find all logs containing "failed"
-grep -r "failed" ~/.ocfp/dev/logs/
+grep -r "failed" ~/.local/state/ocfp/dev/logs/
 
 # Search for specific resource ID across all logs
-grep -r "instance-xyz-123" ~/.ocfp/prod/logs/
+grep -r "instance-xyz-123" ~/.local/state/ocfp/prod/logs/
 ```
 
 ## Troubleshooting
@@ -220,11 +222,11 @@ grep -r "instance-xyz-123" ~/.ocfp/prod/logs/
 **Solution**:
 ```bash
 # Check directory permissions
-ls -la ~/.ocfp/
+ls -la ~/.local/state/ocfp/
 
 # Recreate if necessary
-mkdir -p ~/.ocfp
-chmod 750 ~/.ocfp
+mkdir -p ~/.local/state/ocfp
+chmod 750 ~/.local/state/ocfp
 ```
 
 ### Cannot Find Recent Logs
@@ -234,10 +236,10 @@ chmod 750 ~/.ocfp
 For `ocfp --bloc dev state sync`:
 ```bash
 # Correct location
-ls -lt ~/.ocfp/dev/logs/state/sync/
+ls -lt ~/.local/state/ocfp/dev/logs/state/sync/
 
 # Common mistake: looking in wrong location
-ls -lt ~/.ocfp/logs/dev/state/  # Wrong!
+ls -lt ~/.local/state/ocfp/logs/dev/state/  # Wrong!
 ```
 
 ### Logs Not Verbose Enough
@@ -272,7 +274,7 @@ To forward OCFP logs to a centralized logging system:
 
 ```bash
 # Example: Forward to Elasticsearch
-cat ~/.ocfp/dev/logs/bootstrap/*.log | \
+cat ~/.local/state/ocfp/dev/logs/bootstrap/*.log | \
   while read line; do
     curl -X POST "http://elasticsearch:9200/ocfp-logs/_doc" \
       -H "Content-Type: application/json" \
@@ -286,10 +288,10 @@ Monitor OCFP operations in real-time:
 
 ```bash
 # Tail latest log file
-tail -f ~/.ocfp/dev/logs/bootstrap/$(ls -t ~/.ocfp/dev/logs/bootstrap/ | head -1)
+tail -f ~/.local/state/ocfp/dev/logs/bootstrap/$(ls -t ~/.local/state/ocfp/dev/logs/bootstrap/ | head -1)
 
 # Watch for errors across all logs
-tail -f ~/.ocfp/dev/logs/*/*.log | jq -r 'select(.level == "ERROR")'
+tail -f ~/.local/state/ocfp/dev/logs/*/*.log | jq -r 'select(.level == "ERROR")'
 ```
 
 ## Security Considerations

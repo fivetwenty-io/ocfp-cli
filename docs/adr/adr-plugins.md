@@ -152,7 +152,7 @@ service HostUtility {
 
 * **Discovery locations:**
 
-  * Configured paths in `~/.ocfp/config.yaml` (kit search paths).
+  * Configured paths in `~/.config/ocfp/config.yml` (kit search paths).
   * Default search at `${OCFP_KIT_PATH}` and `${PATH}` for executables.
 * **Package layout (recommendation):**
   * `ocfp-kit-<name>` (binary)

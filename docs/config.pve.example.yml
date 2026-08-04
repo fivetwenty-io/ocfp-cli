@@ -1,8 +1,8 @@
 ---
 # OCFP config.yml — Proxmox VE (PVE) example
 #
-# Default location: ~/.ocfp/config.yml
-# Override via: OCFP_HOME env var or -f / --config flag.
+# Default location: ~/.config/ocfp/config.yml (or $XDG_CONFIG_HOME/ocfp/config.yml)
+# Override via: OCFP_HOME env var, -f / --config flag, or OCFP_CONFIG env var.
 #
 # Top-level structure:
 #   debug / verbose        — logging knobs

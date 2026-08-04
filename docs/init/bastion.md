@@ -160,7 +160,7 @@ The CF-Community repository (`https://plugins.cloudfoundry.org`) is automaticall
 
 ### Bloc Configuration
 
-Customize bastion provisioning in your bloc configuration file (e.g., `~/.ocfp/blocs/520-aws-wayne.yml`):
+Customize bastion provisioning in your bloc configuration file (e.g., `~/.config/ocfp/520-aws-wayne.yml`):
 
 ```yaml
 bastion:
@@ -348,7 +348,7 @@ cf autoscaling-policy --help
 ### Log File
 Detailed logs are saved to:
 ```
-~/.ocfp/logs/provision/bastion-init-YYYYMMDD-HHMMSS.log
+~/.local/state/ocfp/logs/provision/bastion-init-YYYYMMDD-HHMMSS.log
 ```
 
 ## Troubleshooting
@@ -419,7 +419,7 @@ If initialization fails at a specific phase, you can examine the generated provi
 cat /tmp/provision-bastion.sh
 
 # Check the phase that failed
-grep -A 20 "Phase failed: <phase-name>" ~/.ocfp/logs/provision/bastion-init-*.log
+grep -A 20 "Phase failed: <phase-name>" ~/.local/state/ocfp/logs/provision/bastion-init-*.log
 
 # Manually execute specific sections
 ssh bastion-host 'bash -s' < /tmp/provision-bastion.sh

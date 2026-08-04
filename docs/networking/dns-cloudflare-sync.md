@@ -26,7 +26,7 @@ Complete these once per workstation that will run the sync.
   Generate a token under `My Profile → API Tokens → Create Token`. Scope it `Zone:DNS:Edit` on the specific zone you target. Export as `CF_API_TOKEN` before running the script.
 
 - `fqdns.base` per bloc
-  Each bloc in `~/.ocfp/config.pve.yml` (or whatever `OCFP_CONFIG` points at) must have a `fqdns.base` value. Example:
+  Each bloc in `~/.config/ocfp/config.pve.yml` (or whatever `OCFP_CONFIG` points at) must have a `fqdns.base` value. Example:
 
   ```yaml
   blocs:
@@ -54,7 +54,7 @@ The script:
 
 1. Looks up the zone ID for `$CLOUDFLARE_ZONE` (default `fivetwenty.io`).
 
-2. Iterates every `ocfp-pve-*` bloc found in `$OCFP_CONFIG` (default `~/.ocfp/config.pve.yml`).
+2. Iterates every `ocfp-pve-*` bloc found in `$OCFP_CONFIG` (default `~/.config/ocfp/config.pve.yml`).
 
 3. For each bloc, reads `fqdns.base` and discovers the bastion's tailnet IP via `tailscale status --json`, matching on hostname `{bloc}-bastion`.
 
@@ -89,7 +89,7 @@ The script reads three environment variables.
   Zone name. Defaults to `fivetwenty.io`. Set to your own zone before first run.
 
 - `OCFP_CONFIG` (optional)
-  Path to the merged config. Defaults to `~/.ocfp/config.pve.yml`.
+  Path to the merged config. Defaults to `~/.config/ocfp/config.pve.yml`.
 
 Example targeting a different zone and config:
 
