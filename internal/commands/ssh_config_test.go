@@ -204,6 +204,29 @@ func TestExtractInternalHosts(t *testing.T) {
 			expected: map[string]string{},
 		},
 		{
+			name: "CustomSubnetNamesResolveViaSubnetOutputs",
+			outputs: map[string]interface{}{
+				"subnet_east-workload-a_cidr":         "10.4.4.0/22",
+				"reserved_east-workload-a_bosh_ip":    "10.4.4.4",
+				"reserved_east-workload-a_bastion_ip": "10.4.4.3",
+			},
+			blocName: "prod",
+			expected: map[string]string{
+				"bosh": "10.4.4.4",
+			},
+		},
+		{
+			name: "CustomNameWithUnderscoresKeepsComponentBoundary",
+			outputs: map[string]interface{}{
+				"subnet_east_zone_a_id":           "subnet-123",
+				"reserved_east_zone_a_ocfp_ui_ip": "10.4.4.17",
+			},
+			blocName: "prod",
+			expected: map[string]string{
+				"ocfp_ui": "10.4.4.17",
+			},
+		},
+		{
 			name: "MultipleSlotsSameComponent",
 			outputs: map[string]interface{}{
 				"reserved_prod-ocfp-0_bosh_ip": "10.0.0.5",

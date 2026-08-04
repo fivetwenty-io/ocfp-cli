@@ -13,6 +13,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// reservedIPPattern is the legacy reserved-key matcher for the default
+// "-ocfp-<n>" subnet-name shape, kept as the fallback when a key's subnet
+// segment matches no name recorded in the subnet_<name>_* outputs.
 var reservedIPPattern = regexp.MustCompile(`^reserved_.+-ocfp-\d+_(.+)_ip$`)
 
 func newSSHConfigCmd() *cobra.Command {
@@ -113,6 +116,8 @@ func discoverInternalHosts(blocName string, log logger.Logger) map[string]string
 func extractInternalHosts(outputs map[string]interface{}, _ string) map[string]string {
 	hosts := make(map[string]string)
 
+	subnetNames := subnetNamesFromOutputs(outputs)
+
 	// Sort keys for deterministic results (lowest slot number wins)
 	keys := make([]string, 0, len(outputs))
 	for k := range outputs {
@@ -122,14 +127,8 @@ func extractInternalHosts(outputs map[string]interface{}, _ string) map[string]s
 	sort.Strings(keys)
 
 	for _, key := range keys {
-		matches := reservedIPPattern.FindStringSubmatch(key)
-		if matches == nil {
-			continue
-		}
-
-		component := matches[1]
-
-		if component == "bastion" {
+		component := reservedComponentForKey(key, subnetNames)
+		if component == "" || component == "bastion" {
 			continue
 		}
 
@@ -146,6 +145,69 @@ func extractInternalHosts(outputs map[string]interface{}, _ string) map[string]s
 	}
 
 	return hosts
+}
+
+// subnetNamesFromOutputs collects the bloc's subnet names from the
+// subnet_<name>_{id,cidr,index} outputs bootstrap writes at creation,
+// longest name first so reservedComponentForKey's prefix match never
+// truncates a name that happens to be another name's prefix.
+func subnetNamesFromOutputs(outputs map[string]interface{}) []string {
+	set := make(map[string]struct{})
+
+	for key := range outputs {
+		rest, found := strings.CutPrefix(key, "subnet_")
+		if !found {
+			continue
+		}
+
+		for _, suffix := range []string{"_id", "_cidr", "_index"} {
+			if name, ok := strings.CutSuffix(rest, suffix); ok && name != "" {
+				set[name] = struct{}{}
+
+				break
+			}
+		}
+	}
+
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+
+	sort.Slice(names, func(i, j int) bool {
+		if len(names[i]) != len(names[j]) {
+			return len(names[i]) > len(names[j])
+		}
+
+		return names[i] < names[j]
+	})
+
+	return names
+}
+
+// reservedComponentForKey extracts the component ("bosh", "ocfp_ui", ...)
+// from a reserved_<subnet>_<component>_ip output key. The subnet segment is
+// matched against the bloc's recorded subnet names — the only way to place
+// the boundary when both segments may contain underscores — falling back to
+// the legacy "-ocfp-<n>" shape for keys predating the subnet-name outputs.
+// Returns "" for keys that are not reserved component IPs.
+func reservedComponentForKey(key string, subnetNames []string) string {
+	for _, name := range subnetNames {
+		rest, found := strings.CutPrefix(key, "reserved_"+name+"_")
+		if !found {
+			continue
+		}
+
+		if component, ok := strings.CutSuffix(rest, "_ip"); ok && component != "" {
+			return component
+		}
+	}
+
+	if matches := reservedIPPattern.FindStringSubmatch(key); matches != nil {
+		return matches[1]
+	}
+
+	return ""
 }
 
 func generateSSHConfig(bastionIP, blocName, user, keyPath string, internalHosts map[string]string) string {
