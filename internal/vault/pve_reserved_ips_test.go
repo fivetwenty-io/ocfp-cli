@@ -27,10 +27,10 @@ func TestPVEReservedIPs_MgmtOcfDisjoint(t *testing.T) {
 func testPVEReservedIPsMgmtOcfDisjointWide(t *testing.T) {
 	cidr := "10.64.64.0/22"
 
-	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
-	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, config.NetworkConfig{}, logger.Get())
+	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, "10.64.64.4", mgmt["bosh_ip"])
@@ -93,12 +93,12 @@ func testPVEReservedIPsMgmtOcfDisjointWide(t *testing.T) {
 // mgmt available 28-35, ocf available 36->).
 func testPVEReservedIPsMgmtOcfDisjointCompact(t *testing.T) {
 	cidr := "10.64.64.0/22"
-	netCfg := config.NetworkConfig{Strategy: "compact"}
+	cfg := &config.Config{Network: config.NetworkConfig{Strategy: "compact"}}
 
-	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, netCfg, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, netCfg, logger.Get())
+	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, "10.64.64.4", mgmt["bosh_ip"])
@@ -149,7 +149,7 @@ func testPVEReservedIPsMgmtOcfDisjointCompact(t *testing.T) {
 
 func TestPVEReservedIPs_ExactOffsetTable(t *testing.T) {
 	cidr := "10.64.68.0/22" // ocfp-1's base in a 4x/22 carve
-	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 1, config.NetworkConfig{}, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 1, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
 	want := map[string]string{
@@ -185,9 +185,9 @@ func TestPVEReservedIPs_SubnetIndexDoesNotAffectRoleOffsets(t *testing.T) {
 	// shared address space), so subnetNum must not gate which roles appear.
 	cidr := "10.1.2.0/22"
 
-	subnet0, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	subnet0, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
-	subnet2, err := pveReservedIPsForSubnet(cidr, "mgmt", 2, config.NetworkConfig{}, logger.Get())
+	subnet2, err := pveReservedIPsForSubnet(cidr, "mgmt", 2, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, subnet0["bosh_ip"], subnet2["bosh_ip"], "same CIDR => same offset regardless of AZ index")
@@ -195,24 +195,24 @@ func TestPVEReservedIPs_SubnetIndexDoesNotAffectRoleOffsets(t *testing.T) {
 
 func TestPVEReservedIPs_MgmtBandOverride(t *testing.T) {
 	cidr := "10.64.64.0/22"
-	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}
+	cfg := &config.Config{Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}}
 
-	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, netCfg, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, "10.64.64.40", mgmt["available_0"])
 	assert.Equal(t, "10.64.64.50", mgmt["available_1"])
 
 	// Override must not leak into the ocf tier.
-	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, netCfg, logger.Get())
+	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 	require.NoError(t, err)
 	assert.Equal(t, "10.64.64.96", ocf["available_0"])
 }
 
 func TestPVEReservedIPs_MgmtBandOverridePartialErrors(t *testing.T) {
-	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40}}}
+	cfg := &config.Config{Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40}}}}
 
-	_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
+	_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
 	assert.ErrorIs(t, err, ErrPVEBandOverridePartial)
 }
 
@@ -229,8 +229,10 @@ func TestPVEReservedIPs_MgmtBandOverrideOutOfRangeErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: tt.start, End: tt.end}}}
-			_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
+			cfg := &config.Config{
+				Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: tt.start, End: tt.end}}},
+			}
+			_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
 			assert.ErrorIs(t, err, ErrPVEBandOverrideOutOfRange)
 		})
 	}
@@ -243,12 +245,12 @@ func TestPVEReservedIPs_MgmtBandOverrideOutOfRangeErrors(t *testing.T) {
 // (28-35) and would silently admit an out-of-band override or reject a
 // valid one for the wrong reason.
 func TestPVEReservedIPs_MgmtBandOverrideUnsupportedForNonWideStrategy(t *testing.T) {
-	netCfg := config.NetworkConfig{
+	cfg := &config.Config{Network: config.NetworkConfig{
 		Strategy: "compact",
 		Bands:    config.NetworkBands{Mgmt: config.Band{Start: 30, End: 34}},
-	}
+	}}
 
-	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, netCfg, logger.Get())
+	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, cfg, logger.Get())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPVEBandOverrideUnsupportedStrategy)
 	assert.Contains(t, err.Error(), `mgmt band override not supported for strategy "compact"`)
@@ -260,12 +262,12 @@ func TestPVEReservedIPs_MgmtBandOverrideUnsupportedForNonWideStrategy(t *testing
 // (TestPVEReservedIPs_MgmtBandOverride above uses the empty-Strategy
 // default; this proves an explicit "wide" Strategy behaves identically).
 func TestPVEReservedIPs_MgmtBandOverrideStillWorksForWide(t *testing.T) {
-	netCfg := config.NetworkConfig{
+	cfg := &config.Config{Network: config.NetworkConfig{
 		Strategy: "wide",
 		Bands:    config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}},
-	}
+	}}
 
-	mgmt, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
 	require.NoError(t, err)
 	assert.Equal(t, "10.64.64.40", mgmt["available_0"])
 	assert.Equal(t, "10.64.64.50", mgmt["available_1"])
@@ -274,14 +276,14 @@ func TestPVEReservedIPs_MgmtBandOverrideStillWorksForWide(t *testing.T) {
 func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
 	// Guards against applyPVEMgmtBandOverride mutating the shared default
 	// table in place (which would corrupt subsequent calls across subnets).
-	first, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	first, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
-	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}
-	_, err = pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, netCfg, logger.Get())
+	cfg := &config.Config{Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40, End: 50}}}}
+	_, err = pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	second, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	second, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, first["available_0"], second["available_0"], "default table must not be mutated by a prior override call")
@@ -320,32 +322,32 @@ func TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable(t *testing.T) {
 // fixed offset, so it must hard-error here rather than silently emitting an
 // IP outside the subnet.
 func TestPVEReservedIPs_WideRejectsSubnetSmallerThan25(t *testing.T) {
-	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, config.NetworkConfig{}, logger.Get())
+	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, &config.Config{}, logger.Get())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, netlayout.ErrSubnetTooSmall)
 }
 
 // TestResolveLayout proves resolveLayout is a thin, testable wrapper over
-// netlayout.Lookup(netCfg.Strategy): empty Strategy resolves to the "wide"
+// cfg.ResolveReservedIPLayout: empty Strategy resolves to the "wide"
 // default, "compact" resolves by name (see TestPVEReservedIPs_CompactSelection
 // below for compact's real WorkloadTable exercised through the runtime
 // path), and an unrecognized name surfaces netlayout.ErrUnknownStrategy for
 // errors.Is callers.
 func TestResolveLayout(t *testing.T) {
 	t.Run("EmptyStrategyResolvesToWide", func(t *testing.T) {
-		layout, err := resolveLayout(config.NetworkConfig{})
+		layout, err := resolveLayout(&config.Config{})
 		require.NoError(t, err)
 		assert.Equal(t, "wide", layout.Name())
 	})
 
 	t.Run("CompactStrategyResolvesByName", func(t *testing.T) {
-		layout, err := resolveLayout(config.NetworkConfig{Strategy: "compact"})
+		layout, err := resolveLayout(&config.Config{Network: config.NetworkConfig{Strategy: "compact"}})
 		require.NoError(t, err)
 		assert.Equal(t, "compact", layout.Name())
 	})
 
 	t.Run("UnknownStrategyWrapsErrUnknownStrategy", func(t *testing.T) {
-		_, err := resolveLayout(config.NetworkConfig{Strategy: "bogus"})
+		_, err := resolveLayout(&config.Config{Network: config.NetworkConfig{Strategy: "bogus"}})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, netlayout.ErrUnknownStrategy)
 	})
@@ -358,14 +360,14 @@ func TestResolveLayout(t *testing.T) {
 // the ocf tier's bosh static lands at the compact table's offset 23.
 func TestPVEReservedIPs_CompactSelection(t *testing.T) {
 	cidr := "10.64.64.0/26"
-	netCfg := config.NetworkConfig{Strategy: "compact"}
+	cfg := &config.Config{Network: config.NetworkConfig{Strategy: "compact"}}
 
-	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, netCfg, logger.Get())
+	ocf, err := pveReservedIPsForSubnet(cidr, "ocf", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, "10.64.64.23", ocf["bosh_ip"], "compact ocf bosh: base + offset 23")
 
-	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, netCfg, logger.Get())
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
 	require.NoError(t, err)
 
 	assert.Equal(t, "10.64.64.4", mgmt["bosh_ip"], "compact mgmt bosh: identical to wide's offset 4")
