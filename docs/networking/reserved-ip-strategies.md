@@ -395,6 +395,22 @@ Strategy selection is per-bloc config, not a fleet-wide setting: different blocs
 
 Changing a provisioned bloc's strategy is not supported by redeploy. Every built-in strategy places live services — `bosh`, `vault`, `jumpbox`, and `blacksmith` on the `ocf` tier, plus `haproxy` — at different offsets or different subnet indices, so switching strategies would move addresses out from under running VMs. A strategy change on a provisioned bloc requires tearing down and rebuilding its workload subnets, not a rolling reconfigure.
 
+### Rebuilding onto a different strategy
+
+Tearing down the deployments is not sufficient on its own. State that outlives the deleted VMs still describes the old layout, and three categories of it have to be reconciled or the rebuild fails part-way through:
+
+- Certificate subjects and SANs
+
+  A director's TLS certificates are generated against its IP address and survive a teardown, because they live in Vault — and, when `entomb` is set, in the parent director's CredHub — rather than on the deleted VM. A rebuild at a new offset reuses them verbatim, and the director comes back up with `credhub`, `bosh_nats_sync`, and `health_monitor` crash-looping on a SAN mismatch. After repointing the environment file and before deploying, run `genesis check-secrets <env>`; if it reports subject or SAN warnings, clear them with `genesis rotate-secrets <env> -P --update-subjects`.
+
+- Obsolete band keys
+
+  A record can hold band keys an older scheme wrote that the running build no longer derives, and they silently reserve whatever range they span (see "Scheme stamping and drift guard" above). Run `ocfp vault reserved-ips status` from a current binary and clear anything it reports with `ocfp vault reserved-ips migrate`. Builds before 2026-08-04 could neither see nor remove these and reported such a record clean, so a bloc last touched by an older build needs a fresh `status` pass before you conclude anything from it.
+
+- Credentials held only on the director being replaced
+
+  Deleting a director's deployment destroys its persistent disk, and with it the director's own CredHub. Any variable an inline `director-cpi` block resolves against that CredHub — the PVE API tokens, for example — has to be restored before the new director can reach its CPI. The symptom is the post-deploy stemcell upload failing to resolve the variable. Bosh kits before the post-deploy step-result change discarded that failure and exited zero; against such a kit, confirm with `bosh stemcells` on the rebuilt director rather than trusting the exit code.
+
 ## 12. Diagram-update checklist
 
 When redrawing the OCFP networking diagram, verify each of the following against this document for the strategy the bloc runs:
