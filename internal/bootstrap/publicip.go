@@ -26,6 +26,14 @@ type stackitEnsure interface {
 	EnsureFloatingIP(ctx context.Context, req *cpi.PublicIPRequest) (*cpi.PublicIP, error)
 }
 
+// publicIPCapable lets a NetworkManager declare that its public IP methods are
+// unimplemented stubs. Providers that manage addresses externally (PVE) still
+// satisfy cpi.NetworkManager, so a non-nil manager is not by itself evidence
+// that public IPs can be created.
+type publicIPCapable interface {
+	SupportsPublicIPs() bool
+}
+
 // ==============================================================================
 // Public IP Creation
 // ==============================================================================
@@ -65,7 +73,16 @@ func (m *Manager) CreatePublicIPs(ctx context.Context) error {
 }
 
 func (m *Manager) supportsPublicIPs() bool {
-	return m.provider.NetworkManager() != nil
+	netMgr := m.provider.NetworkManager()
+	if netMgr == nil {
+		return false
+	}
+
+	if capable, ok := netMgr.(publicIPCapable); ok {
+		return capable.SupportsPublicIPs()
+	}
+
+	return true
 }
 
 func (m *Manager) getStackitProvider(netMgr cpi.NetworkManager) (stackitEnsure, bool) { //nolint:ireturn // interface type checking
