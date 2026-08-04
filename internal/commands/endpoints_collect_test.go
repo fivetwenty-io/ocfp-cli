@@ -243,6 +243,35 @@ func TestFindReservedIP_PinnedMatchIsExactKey(t *testing.T) {
 	assert.Equal(t, "10.4.8.18", findReservedIP(outputs, "doomsday", "trap-ocfp-1", spanning))
 }
 
+// TestFindReservedIP_PinnedResolvesCustomSubnetName verifies the pinned-index
+// preference resolves through bootstrap's subnet_<name>_index outputs when the
+// bloc's subnets carry operator names: the reserved key on the subnet recorded
+// at the pinned index wins, even though no key follows the
+// "<bloc>-ocfp-<idx>" shape the legacy construction expects.
+func TestFindReservedIP_PinnedResolvesCustomSubnetName(t *testing.T) {
+	t.Parallel()
+
+	spanning, err := netlayout.Lookup("spanning")
+	require.NoError(t, err)
+
+	outputs := map[string]interface{}{
+		"subnet_east-workload-a_index":         "0",
+		"subnet_east-workload-b_index":         "1",
+		"reserved_east-workload-a_doomsday_ip": "10.4.4.18",
+		"reserved_east-workload-b_doomsday_ip": "10.4.8.18",
+	}
+
+	// spanning pins doomsday to index 1: the recorded index outputs identify
+	// east-workload-b as that subnet.
+	assert.Equal(t, "10.4.8.18", findReservedIP(outputs, "doomsday", "myblc", spanning))
+
+	// Two subnets claiming one index is corrupt state; resolution stays
+	// deterministic (sorted-first name) rather than map-order dependent.
+	outputs["subnet_east-workload-z_index"] = "1"
+	outputs["reserved_east-workload-z_doomsday_ip"] = "10.4.12.18"
+	assert.Equal(t, "10.4.8.18", findReservedIP(outputs, "doomsday", "myblc", spanning))
+}
+
 // TestLoadReservedOutputs_ReturnsNilOnEmptyBlocName verifies loadReservedOutputs
 // never surfaces an error to its caller: an empty bloc name (state.GetStateDir's
 // own hard-error case) degrades to a nil map instead.
