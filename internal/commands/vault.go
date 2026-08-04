@@ -35,7 +35,9 @@ const (
 	VaultInceptionPort = config.LegacyInceptionVaultPort
 	// TestVaultInceptionPort is the port for testing the inception vault server.
 	TestVaultInceptionPort = 8235
-	// VaultInceptionLogDir is the directory for vault inception logs (relative to OcfpHome).
+	// VaultInceptionLogDir is the bloc-scoped directory suffix for vault
+	// inception logs, joined onto config.StateHome()/<bloc> (or, when no
+	// bloc is named, appended as "vault" onto config.GetLogDir()).
 	VaultInceptionLogDir = "logs/vault"
 	// VaultInceptionLogFile is the filename for vault inception logs.
 	VaultInceptionLogFile = "vault-inception.log"
@@ -93,8 +95,9 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 				}
 			}
 
-			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-			logDir := config.OcfpHome()
+			// Logger appends {bloc}/logs/{command} itself; pass the
+			// state-class root, not the legacy flat ~/.ocfp home.
+			logDir := config.StateHome()
 
 			return logger.Initialize(logger.Config{
 				Level:      viper.GetString("log_level"),
@@ -290,8 +293,11 @@ This command creates a local inception vault using 'safe local' running in a tmu
 with file-backed storage. The inception vault is used temporarily during bootstrap until the
 production vault is available.
 
-The vault runs on port 8234 by default and stores data in ~/.ocfp/{bloc}/vault/data.
-Root and unseal keys are saved to ~/.ocfp/{bloc}/vault/{root.key,unseal.keys}.
+The vault runs on port 8234 by default and stores data in
+~/.local/share/ocfp/{bloc}/vault/data (or $XDG_DATA_HOME/ocfp/{bloc}/vault/data if set).
+Root and unseal keys are saved to ~/.local/share/ocfp/{bloc}/vault/{root.key,unseal.keys}.
+Falls back to the legacy ~/.ocfp/{bloc}/vault/... layout when only that exists;
+set OCFP_HOME to force it.
 
 The 'init' alias is available for operator convenience: 'ocfp vault init' is equivalent.`,
 		Example: `  # Initialize inception vault
@@ -320,7 +326,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	tmuxSession := "inception-vault"
 	vaultName := "inception"
 	port := VaultInceptionPort
-	logDir := filepath.Join(config.OcfpHome(), VaultInceptionLogDir)
+	logDir := filepath.Join(config.GetLogDir(), "vault")
 	logFile := filepath.Join(logDir, VaultInceptionLogFile)
 
 	if blocName != "" {
@@ -335,8 +341,13 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		port = config.InceptionVaultPort(blocName)
 		// `safe local` tees its startup output here and waitForVaultReady reads
 		// it back, so a shared file lets one bloc decide readiness from another
-		// bloc's output.
-		logDir = filepath.Join(config.OcfpBlocDir(blocName), VaultInceptionLogDir)
+		// bloc's output. Logs are state, not data, so this resolves under
+		// StateHome() (with a dual-read fallback to the pre-migration
+		// ~/.ocfp/<bloc>/logs/vault directory when only that exists) rather
+		// than OcfpBlocDir(), which is DataHome()-rooted.
+		newLogDir := filepath.Join(config.StateHome(), blocName, VaultInceptionLogDir)
+		legacyLogDir := filepath.Join(config.OcfpHome(), blocName, VaultInceptionLogDir)
+		logDir, _ = config.ResolveExisting(newLogDir, legacyLogDir)
 		logFile = filepath.Join(logDir, VaultInceptionLogFile)
 	}
 
@@ -1230,14 +1241,17 @@ The output mode is automatically detected based on terminal capabilities.`,
 // runVaultMigrate executes the vault migrate command.
 func runVaultMigrate(cmd *cobra.Command, sourcePath, destPath string, dryRun bool) error {
 	// Use OCFP_BLOC for logging path (not the vault target name from .saferc)
-	// The bloc name determines the log directory structure: ~/.ocfp/{bloc}/logs/vault/migrate/
+	// The bloc name determines the log directory structure:
+	// {StateHome}/{bloc}/logs/vault/migrate/
 	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		blocName = os.Getenv("OCFP_BLOC")
 	}
 
-	// Reinitialize logger with migrate subcommand for proper log path
-	logDir := config.OcfpHome()
+	// Reinitialize logger with migrate subcommand for proper log path.
+	// Logger appends {bloc}/logs/{command}/{subcommand} itself; pass the
+	// state-class root, not the legacy flat ~/.ocfp home.
+	logDir := config.StateHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

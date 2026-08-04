@@ -70,13 +70,23 @@ type CheckpointData struct {
 	Version         string                 `json:"version"`
 }
 
+// checkpointsDir resolves the checkpoints directory: the new XDG state
+// root, with a dual-read fallback to the pre-migration ~/.ocfp/checkpoints
+// directory when only that exists.
+func checkpointsDir() string {
+	newPath := filepath.Join(config.StateHome(), "checkpoints")
+	legacyPath := filepath.Join(config.OcfpHome(), "checkpoints")
+
+	path, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return path
+}
+
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(cfg *config.Config) *CheckpointManager {
-	checkpointDir := filepath.Join(config.OcfpHome(), "checkpoints")
-
 	return &CheckpointManager{
 		config:        cfg,
-		checkpointDir: checkpointDir,
+		checkpointDir: checkpointsDir(),
 		log:           logger.Get(),
 	}
 }

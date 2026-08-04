@@ -43,7 +43,7 @@ func (km *KeyManager) FindPrivateKey(blocName string) (string, error) {
 	// Search paths in priority order
 	searchPaths := []string{
 		// Provider-specific key (bastion key from bootstrap) - prefer ed25519
-		// Primary location: ~/.ocfp/{bloc}/ssh/
+		// Primary location: config.OcfpSSHKeyDir(blocName), resolved above.
 		filepath.Join(sshKeyDir, "id_ed25519"),
 		filepath.Join(sshKeyDir, "id_rsa"),
 		// Legacy location: ~/.ssh/ocfp/{bloc}/
@@ -322,7 +322,7 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", nil
 	}
 
-	// Restore to primary location: ~/.ocfp/{bloc}/ssh/id_ed25519
+	// Restore to primary location: config.OcfpSSHKeyDir(blocName)/id_ed25519
 	keyDir := config.OcfpSSHKeyDir(blocName)
 	keyPath := filepath.Join(keyDir, "id_ed25519")
 

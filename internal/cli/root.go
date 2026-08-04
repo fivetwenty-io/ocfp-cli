@@ -180,7 +180,7 @@ func defineFlags(cmd *cobra.Command, flags *flagConfig) {
 	cmd.PersistentFlags().BoolVarP(flags.debug, "debug", "d", false, "enable debug output")
 	cmd.PersistentFlags().BoolVarP(flags.verbose, "verbose", "v", false, "enable verbose output")
 	cmd.PersistentFlags().BoolVar(flags.trace, "trace", false, "enable trace-level debugging")
-	cmd.PersistentFlags().BoolVar(flags.noLog, "no-log", false, "disable logging to ~/.ocfp/logs/")
+	cmd.PersistentFlags().BoolVar(flags.noLog, "no-log", false, "disable logging to the OCFP state log directory (default ~/.local/state/ocfp/logs)")
 	cmd.PersistentFlags().StringVar(flags.region, "region", "", "cloud region")
 	cmd.PersistentFlags().BoolVar(flags.debugLookup, "debug-lookup", false, "print bastion lookup strategy matches")
 	cmd.PersistentFlags().BoolVar(flags.asciiTables, "ascii", false, "use ASCII-only tables in output")
@@ -397,12 +397,18 @@ func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
 	}
 }
 
-// getBaseDir returns the base directory for OCFP data.
+// getBaseDir returns the base directory for OCFP command-tracking state
+// (active-command lock files and per-command log paths, see
+// getExpectedLogPath). Resolves under StateHome() -- the same class helper
+// GetLogDir() uses -- with a dual-read fallback to the pre-migration
+// ~/.ocfp directory when only that already exists.
 func getBaseDir() (string, error) {
-	baseDir := config.OcfpHome()
+	baseDir := config.StateHome()
 	if baseDir == "" {
 		return "", config.ErrOcfpHomeNotFound
 	}
+
+	baseDir, _ = config.ResolveExisting(baseDir, config.OcfpHome())
 
 	return baseDir, nil
 }
@@ -437,10 +443,17 @@ func initConfig(cfgFile string, verbose bool) {
 	// This ensures OCFP_BLOC takes precedence over config file
 	_ = viper.BindEnv("bloc", "OCFP_BLOC")
 
-	// Set default config path
+	// Set default config path: the directory holding config.yml. Resolves
+	// under ConfigHome() (the XDG config-class base), with a dual-read
+	// fallback to the pre-migration ~/.ocfp/config.yml when only that
+	// already exists.
 	if os.Getenv("OCFP_CONFIG_PATH") == "" {
-		if ocfpHome := config.OcfpHome(); ocfpHome != "" {
-			_ = os.Setenv("OCFP_CONFIG_PATH", ocfpHome)
+		if configHome := config.ConfigHome(); configHome != "" {
+			newConfigFile := filepath.Join(configHome, "config.yml")
+			legacyConfigFile := filepath.Join(config.OcfpHome(), "config.yml")
+
+			resolvedFile, _ := config.ResolveExisting(newConfigFile, legacyConfigFile)
+			_ = os.Setenv("OCFP_CONFIG_PATH", filepath.Dir(resolvedFile))
 		}
 	}
 
@@ -452,7 +465,8 @@ func initConfig(cfgFile string, verbose bool) {
 		// Search for config.yml in standard locations
 		viper.SetConfigName("config")
 		viper.SetConfigType("yml")
-		// Prefer ~/.ocfp
+		// Prefer the resolved config-class directory (ConfigHome(), or the
+		// legacy ~/.ocfp when only that has a config.yml).
 		viper.AddConfigPath(os.Getenv("OCFP_CONFIG_PATH"))
 		// Then repo config directory
 		viper.AddConfigPath("config")

@@ -71,8 +71,11 @@ Prefer rsync over scp for large directories or repeated transfers, as rsync
 uses delta transfers to only send changed portions of files.
 
 SSH keys are searched in the following order:
-1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
-2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`
+1. ~/.local/share/ocfp/{bloc}/ssh/id_ed25519 (preferred, or $XDG_DATA_HOME/ocfp/{bloc}/ssh/id_ed25519 if set)
+2. ~/.local/share/ocfp/{bloc}/ssh/id_rsa (fallback)
+3. ~/.ocfp/{bloc}/ssh/id_ed25519 or id_rsa (legacy, used only if the above are absent)
+
+Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`
 }
 
 func getRSyncExamples() string {

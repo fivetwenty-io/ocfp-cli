@@ -621,8 +621,9 @@ func runStateSyncCommand(cmd *cobra.Command, _args []string) error {
 
 // initializeStateLogger initializes the logger for state operations.
 func initializeStateLogger(blocName string, subcommand string) error {
-	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := config.OcfpHome()
+	// Logger appends {bloc}/logs/{command} itself; pass the state-class
+	// root, not the legacy flat ~/.ocfp home.
+	logDir := config.StateHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

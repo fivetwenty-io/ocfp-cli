@@ -116,10 +116,12 @@ func resolveInitAWSParams(cmd *cobra.Command) (*initAWSParams, error) {
 // It resolves the bloc name (flag > env > error), validates the format, persists
 // the bloc as the current bloc in CLI state, and writes two minimal v3.2 Genesis
 // env files so that downstream `genesis ocfp` operations resolve the correct
-// vault paths:
+// vault paths, under the bloc's resolved deployment directory
+// (config.OcfpBlocDir(bloc) + "/deployments"; the XDG data root by default,
+// falling back to the legacy ~/.ocfp/<bloc> layout when only that exists):
 //
-//   - $OCFP_HOME/<bloc>/deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env)
-//   - $OCFP_HOME/<bloc>/deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
+//   - deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env)
+//   - deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
 //
 // Config is persisted via config.SetCurrentBloc so that subsequent `ocfp`
 // invocations can resolve the bloc without re-supplying the flag.
@@ -173,19 +175,18 @@ const monitorCFFeature = "monitor-cf"
 // kit's monitor-cf defaults resolve natively: cf exodus path <bloc>-ocf/cf and
 // CF deployment <bloc>-ocf-cf, both on the same director.
 //
-// Path: $OCFP_HOME/<bloc>/deployments/prometheus/<bloc>-ocf.yml
+// Path: config.OcfpBlocDir(bloc)/deployments/prometheus/<bloc>-ocf.yml
 //
 // The reserved IP (net/subnets/.../reserved-ips:prometheus_ip) and the distinct
 // cf-grafana/cf-prometheus/cf-alertmanager FQDNs are populated separately in
 // vault, matching how operators tune a mgmt-director prometheus.
 func writeMonitoringEnvFile(bloc, iaas string) error {
-	ocfpHome := config.OcfpHome()
-	if ocfpHome == "" {
+	if config.DataHome() == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
 
 	envFileName := bloc + "-ocf.yml"
-	envFilePath := filepath.Join(ocfpHome, bloc, "deployments", "prometheus", envFileName)
+	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", "prometheus", envFileName)
 
 	opts := vault.WriteEnvFileV32Opts{
 		Path:     envFilePath,
@@ -233,16 +234,15 @@ func persistBlocToState(bloc string) error {
 //   - kit          Genesis kit name: "bosh" for mgmt, "cf" for ocf
 //   - useCreateEnv true for BOSH proto-director (create-env) deployments
 //
-// Path: $OCFP_HOME/<bloc>/deployments/<deployment>/<bloc>-<deployment>.yml
+// Path: config.OcfpBlocDir(bloc)/deployments/<deployment>/<bloc>-<deployment>.yml
 // IAAS is always "aws" for this command.
 func writeAWSDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) error {
-	ocfpHome := config.OcfpHome()
-	if ocfpHome == "" {
+	if config.DataHome() == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
 
 	envFileName := bloc + "-" + deployment + ".yml"
-	envFilePath := filepath.Join(ocfpHome, bloc, "deployments", deployment, envFileName)
+	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", deployment, envFileName)
 
 	const iaas = "aws"
 

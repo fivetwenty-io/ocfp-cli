@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -296,6 +297,71 @@ func TestCreateFileCore_RequestIDInFilename(t *testing.T) {
 		if !strings.Contains(filename, "req-xyz-789") {
 			t.Errorf("Expected request ID in filename, got: %s", filename)
 		}
+	}
+}
+
+// TestCreateFileCore_FallbackLogDir_ResolvesLegacyWhenStateHomeAbsent
+// exercises the cfg.LogDir == "" fallback path (as hit by root.go's
+// PersistentPreRunE, which never sets LogDir): with a pre-migration
+// ~/.ocfp/{bloc}/logs directory present and no XDG state directory yet,
+// the fallback must land the log file under the legacy directory rather
+// than a fresh, empty XDG_STATE_HOME/{bloc}/logs directory that no
+// resolver (GetStateDir, getBaseDir, vault.go's inception log resolution)
+// would ever look at. This mirrors the dual-read pattern every sibling
+// call site (e.g. vault.go's inception vault log dir) already uses.
+// Not run in parallel: it mutates process-wide HOME/XDG_* env vars via
+// t.Setenv.
+func TestCreateFileCore_FallbackLogDir_ResolvesLegacyWhenStateHomeAbsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", home)
+
+	legacyLogsDir := filepath.Join(home, ".ocfp", "test-bloc", "logs")
+
+	err := os.MkdirAll(legacyLogsDir, 0o750)
+	if err != nil {
+		t.Fatalf("MkdirAll(legacyLogsDir): %v", err)
+	}
+
+	cfg := Config{
+		Level:      "info",
+		Debug:      false,
+		Verbose:    false,
+		Trace:      false,
+		NoLog:      false,
+		LogDir:     "",
+		BlocName:   "test-bloc",
+		Command:    "bootstrap",
+		Subcommand: "",
+		RequestID:  "",
+		DirectorID: "",
+	}
+
+	encoderConfig := zapcore.EncoderConfig{
+		MessageKey: "msg",
+		LevelKey:   "level",
+	}
+
+	_, err = createFileCore(cfg, encoderConfig)
+	if err != nil {
+		t.Fatalf("createFileCore failed: %v", err)
+	}
+
+	expectedDir := filepath.Join(legacyLogsDir, "bootstrap")
+	if _, statErr := os.Stat(expectedDir); os.IsNotExist(statErr) {
+		t.Errorf("expected log dir under legacy path %s, not created", expectedDir)
+	}
+
+	staleNewDir := filepath.Join(config.StateHome(), "test-bloc", "logs", "bootstrap")
+	if staleNewDir == expectedDir {
+		t.Fatalf("test setup invalid: new and legacy dirs coincide (%s)", staleNewDir)
+	}
+
+	if _, statErr := os.Stat(staleNewDir); statErr == nil {
+		t.Errorf("expected no log dir under new XDG state path %s while legacy exists", staleNewDir)
 	}
 }
 

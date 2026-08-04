@@ -83,10 +83,13 @@ func resolveInitPVEParams(cmd *cobra.Command) (*initPVEParams, error) {
 // It resolves the bloc name (flag > env > error), validates the PVE bloc
 // format, persists the bloc as the current bloc in CLI state, and writes two
 // minimal v3.2 Genesis env files so that downstream `genesis ocfp` operations
-// resolve the correct vault paths:
+// resolve the correct vault paths, under the bloc's resolved deployment
+// directory (config.OcfpBlocDir(bloc) + "/deployments"; the XDG data root by
+// default, falling back to the legacy ~/.ocfp/<bloc> layout when only that
+// exists):
 //
-//   - $OCFP_HOME/<bloc>/deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env, iaas=pve)
-//   - $OCFP_HOME/<bloc>/deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
+//   - deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env, iaas=pve)
+//   - deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
 //
 // Config is persisted via config.SetCurrentBloc so that subsequent `ocfp`
 // invocations can resolve the bloc without re-supplying the flag.
@@ -120,13 +123,14 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 
-	ocfpHome := config.OcfpHome()
-	if ocfpHome == "" {
+	if config.DataHome() == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
 
+	blocDir := config.OcfpBlocDir(params.bloc)
+
 	for _, deployment := range []string{"mgmt", "ocf"} {
-		err := writePVEOpsFiles(ocfpHome, params.bloc, deployment)
+		err := writePVEOpsFiles(blocDir, params.bloc, deployment)
 		if err != nil {
 			return err
 		}
@@ -176,20 +180,19 @@ func pveDatacenterFromBloc(bloc string) string {
 //   - useCreateEnv true for BOSH proto-director (create-env) deployments
 //   - datacenter   PVE datacenter identity (from config Region; see resolvePVEDatacenter)
 //
-// Path: $OCFP_HOME/<bloc>/deployments/<deployment>/<bloc>-<deployment>.yml
+// Path: config.OcfpBlocDir(bloc)/deployments/<deployment>/<bloc>-<deployment>.yml
 // IAAS is always "pve" for this command.
 //
 // The ocf env file includes a params block with pve_datacenter set to the
 // supplied datacenter. The mgmt env file carries no params block, matching the
 // create-env pattern used by the AWS bosh kit.
 func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, datacenter string) error {
-	ocfpHome := config.OcfpHome()
-	if ocfpHome == "" {
+	if config.DataHome() == "" {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
 
 	envFileName := bloc + "-" + deployment + ".yml"
-	envFilePath := filepath.Join(ocfpHome, bloc, "deployments", deployment, envFileName)
+	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", deployment, envFileName)
 
 	const iaas = "pve"
 
@@ -220,19 +223,24 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 }
 
 // writePVEOpsFiles writes the PVE-specific BOSH ops files and runtime-config
-// for a single deployment under the given bloc into the conventional subdirs:
+// for a single deployment under the given bloc's resolved deployment
+// directory into the conventional subdirs:
 //
-//   - $OCFP_HOME/<bloc>/deployments/<deployment>/ops/
+//   - <blocDir>/deployments/<deployment>/ops/
 //     (nats-tuning.yml, hm-tuning.yml, os-conf.yml)
-//   - $OCFP_HOME/<bloc>/deployments/<deployment>/runtime-configs/
+//   - <blocDir>/deployments/<deployment>/runtime-configs/
 //     (pve-guest-agent.yml)
 //
+// blocDir is the bloc's resolved directory (config.OcfpBlocDir(bloc): the XDG
+// data root by default, falling back to the legacy ~/.ocfp/<bloc> layout when
+// only that exists).
+//
 // Both directories are created with MkdirAll mode 0755 if they do not exist.
-// ocfpHome must be non-empty; bloc and deployment must be non-empty validated
+// blocDir must be non-empty; bloc and deployment must be non-empty validated
 // strings (enforced by resolveInitPVEParams before this is called).
-func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
-	if ocfpHome == "" {
-		return errors.New("writePVEOpsFiles: ocfpHome must not be empty") //nolint:err113 // descriptive error, not caller-testable
+func writePVEOpsFiles(blocDir, bloc, deployment string) error {
+	if blocDir == "" {
+		return errors.New("writePVEOpsFiles: blocDir must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
 	if bloc == "" {
@@ -243,7 +251,7 @@ func writePVEOpsFiles(ocfpHome, bloc, deployment string) error {
 		return errors.New("writePVEOpsFiles: deployment must not be empty") //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	base := filepath.Join(ocfpHome, bloc, "deployments", deployment)
+	base := filepath.Join(blocDir, "deployments", deployment)
 
 	opsDir := filepath.Join(base, "ops")
 

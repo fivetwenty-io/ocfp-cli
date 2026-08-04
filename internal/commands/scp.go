@@ -42,8 +42,11 @@ address, which is discovered from the bloc configuration. The --bloc flag is
 required to identify which environment to connect to.
 
 SSH keys are searched in the following order:
-1. ~/.ocfp/{bloc}/ssh/id_ed25519 (preferred)
-2. ~/.ocfp/{bloc}/ssh/id_rsa (fallback)`,
+1. ~/.local/share/ocfp/{bloc}/ssh/id_ed25519 (preferred, or $XDG_DATA_HOME/ocfp/{bloc}/ssh/id_ed25519 if set)
+2. ~/.local/share/ocfp/{bloc}/ssh/id_rsa (fallback)
+3. ~/.ocfp/{bloc}/ssh/id_ed25519 or id_rsa (legacy, used only if the above are absent)
+
+Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 		Example: `  # Copy file to bastion
   ocfp scp --bloc production /local/file.txt bastion:/tmp/
 

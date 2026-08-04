@@ -495,15 +495,7 @@ type environmentInfo struct {
 func findEnvironments() []environmentInfo {
 	var envs []environmentInfo
 
-	// Search paths for configuration files
-	searchPaths := []string{
-		filepath.Join(config.OcfpHome(), "configs"),
-		config.OcfpHome(),
-		"./configs",
-		".",
-	}
-
-	for _, searchPath := range searchPaths {
+	for _, searchPath := range configSearchPaths() {
 		// Look for YAML files
 		pattern := filepath.Join(searchPath, "*.yml")
 		matches, _ := filepath.Glob(pattern)
@@ -541,6 +533,40 @@ func findEnvironments() []environmentInfo {
 	}
 
 	return envs
+}
+
+// configSearchPaths returns the directories findEnvironments scans for bloc
+// config files, in priority order with duplicates removed: the new
+// XDG config-class configs/ directory (ConfigHome()/configs), the legacy
+// ~/.ocfp/configs directory (dual-read fallback for configs written before
+// the XDG migration), the legacy ~/.ocfp root itself (pre-migration flat
+// layout with config files directly inside), and the current-directory
+// ./configs and . fallbacks. Deduplication matters when OCFP_HOME is set:
+// ConfigHome() then returns the same directory as OcfpHome(), which would
+// otherwise double-count every match.
+func configSearchPaths() []string {
+	candidates := []string{
+		filepath.Join(config.ConfigHome(), "configs"),
+		filepath.Join(config.OcfpHome(), "configs"),
+		config.OcfpHome(),
+		"./configs",
+		".",
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	paths := make([]string, 0, len(candidates))
+
+	for _, p := range candidates {
+		if p == "" || seen[p] {
+			continue
+		}
+
+		seen[p] = true
+
+		paths = append(paths, p)
+	}
+
+	return paths
 }
 
 // shellExporter defines the interface for different shell export formats.

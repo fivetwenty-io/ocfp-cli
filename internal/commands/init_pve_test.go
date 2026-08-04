@@ -561,22 +561,80 @@ func TestInitPVE_FlagOverridesEnvVar(t *testing.T) {
 		"directory for env-bloc %q must not exist when flag overrides it", envBloc)
 }
 
+// TestInitPVE_UsesXDGDataHomeWhenOCFPHomeUnset verifies that with OCFP_HOME
+// unset, the generated deployment env files and ops files land under the
+// XDG data root (config.OcfpBlocDir(bloc)/deployments/...), not a hardcoded
+// legacy path. A fake HOME is set so that, were the implementation to fall
+// back to the legacy ~/.ocfp layout, it would land in a throwaway temp dir
+// rather than the real developer home directory.
+func TestInitPVE_UsesXDGDataHomeWhenOCFPHomeUnset(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	// testSafetyGuard (TestMain sets OCFP_TEST_SAFETY_GUARD=1 package-wide)
+	// compares OcfpHome() against a real-home-derived legacy root computed
+	// from the SAME os.UserHomeDir() call, so it panics whenever OCFP_HOME
+	// is unset regardless of a faked HOME. Disable it for this test only;
+	// the faked HOME below still protects the real home directory.
+	t.Setenv("OCFP_TEST_SAFETY_GUARD", "")
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+
+	xdgDataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdgDataHome)
+
+	const bloc = "ocfp-pve-xdg"
+	viper.Set("bloc", bloc)
+
+	// Resolve the expected path BEFORE any write happens: at this point
+	// neither the new XDG path nor the legacy path exists, so
+	// config.OcfpBlocDir's dual-read returns the new XDG location. Resolving
+	// it after the write would let dual-read mask a legacy write as a pass.
+	wantDeploymentsDir := filepath.Join(config.OcfpBlocDir(bloc), "deployments")
+
+	err := initializePVE(makeBlocCmd(t, bloc), nil)
+	require.NoError(t, err)
+
+	envPath := filepath.Join(wantDeploymentsDir, "mgmt", bloc+"-mgmt.yml")
+	data, err := os.ReadFile(envPath)
+	require.NoError(t, err, "env file must exist under the XDG data root at %s", envPath)
+
+	var parsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	ocfpBlock, ok := parsed["ocfp"].(map[string]interface{})
+	require.True(t, ok, "ocfp: block must be present; content:\n%s", string(data))
+	assert.Equal(t, bloc, ocfpBlock["bloc"])
+
+	// Ops files must also resolve under the same XDG-rooted deployment dir.
+	opsPath := filepath.Join(wantDeploymentsDir, "mgmt", "ops")
+	entries, err := os.ReadDir(opsPath)
+	require.NoError(t, err, "ops dir must exist under the XDG data root at %s", opsPath)
+	assert.NotEmpty(t, entries, "ops dir must contain files")
+
+	// Regression guard: the legacy ~/.ocfp layout must not have been used.
+	legacyDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	_, statErr := os.Stat(legacyDir)
+	assert.True(t, os.IsNotExist(statErr),
+		"legacy ~/.ocfp dir must not be created when XDG_DATA_HOME is set; found %s", legacyDir)
+}
+
 // TestWritePVEOpsFiles_CreatesOpsAndRuntimeConfigs verifies that writePVEOpsFiles
 // materializes the 3 BOSH ops files and the runtime-config in the correct
-// subdirectories under $OCFP_HOME/<bloc>/deployments/<deployment>/.
+// subdirectories under <blocDir>/deployments/<deployment>/.
 func TestWritePVEOpsFiles_CreatesOpsAndRuntimeConfigs(t *testing.T) {
 	t.Parallel()
 
-	base := t.TempDir()
+	blocDir := t.TempDir()
 	const (
 		bloc       = "ocfp-pve-dc1"
 		deployment = "mgmt"
 	)
 
-	err := writePVEOpsFiles(base, bloc, deployment)
+	err := writePVEOpsFiles(blocDir, bloc, deployment)
 	require.NoError(t, err, "writePVEOpsFiles must succeed")
 
-	deployBase := filepath.Join(base, bloc, "deployments", deployment)
+	deployBase := filepath.Join(blocDir, "deployments", deployment)
 
 	// Verify each ops file exists and is non-empty.
 	for filename, content := range opsfiles.All() {
@@ -597,7 +655,7 @@ func TestWritePVEOpsFiles_CreatesOpsAndRuntimeConfigs(t *testing.T) {
 		"runtime-config content must match embedded constant")
 }
 
-// TestWritePVEOpsFiles_EmptyArgs_ReturnsError verifies that empty ocfpHome,
+// TestWritePVEOpsFiles_EmptyArgs_ReturnsError verifies that empty blocDir,
 // bloc, or deployment each produce a descriptive error without touching the FS.
 func TestWritePVEOpsFiles_EmptyArgs_ReturnsError(t *testing.T) {
 	t.Parallel()
@@ -605,19 +663,19 @@ func TestWritePVEOpsFiles_EmptyArgs_ReturnsError(t *testing.T) {
 	base := t.TempDir()
 	cases := []struct {
 		name       string
-		ocfpHome   string
+		blocDir    string
 		bloc       string
 		deployment string
 		wantSubstr string
 	}{
-		{"empty ocfpHome", "", "ocfp-pve-dc1", "mgmt", "ocfpHome must not be empty"},
+		{"empty blocDir", "", "ocfp-pve-dc1", "mgmt", "blocDir must not be empty"},
 		{"empty bloc", base, "", "mgmt", "bloc must not be empty"},
 		{"empty deployment", base, "ocfp-pve-dc1", "", "deployment must not be empty"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := writePVEOpsFiles(tc.ocfpHome, tc.bloc, tc.deployment)
+			err := writePVEOpsFiles(tc.blocDir, tc.bloc, tc.deployment)
 			require.Error(t, err, "writePVEOpsFiles must error for case %q", tc.name)
 			assert.Contains(t, err.Error(), tc.wantSubstr,
 				"error %q must mention %q", err.Error(), tc.wantSubstr)
