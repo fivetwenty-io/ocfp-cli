@@ -2,6 +2,7 @@ package netlayout
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 )
@@ -90,6 +91,10 @@ func validateDefinition(def Definition) error {
 		return err
 	}
 
+	if err := validateStaticKeys(def); err != nil {
+		return err
+	}
+
 	if err := validateBands(def); err != nil {
 		return err
 	}
@@ -131,6 +136,45 @@ func validateStatics(def Definition) error {
 			if err := validateSubnetPin(def, t, what, s.Subnets); err != nil {
 				return err
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateStaticKeys rejects two statics in one tier resolving to the same
+// output key (ip_key, or role+"_ip" when unset), wrapping ErrDuplicateIPKey.
+// Cross-tier reuse stays legal: the tiers write separate records, so the
+// same key in both is unambiguous. Roles are visited in sorted order so the
+// reported pair is deterministic.
+func validateStaticKeys(def Definition) error {
+	for _, t := range tierOrder {
+		tier, ok := def.Tiers[t]
+		if !ok {
+			continue
+		}
+
+		roles := make([]string, 0, len(tier.Statics))
+		for role := range tier.Statics {
+			roles = append(roles, role)
+		}
+
+		sort.Strings(roles)
+
+		owners := make(map[string]string, len(roles))
+
+		for _, role := range roles {
+			key := tier.Statics[role].IPKey
+			if key == "" {
+				key = role + "_ip"
+			}
+
+			if prev, dup := owners[key]; dup {
+				return fmt.Errorf("%w: %s: strategy %q tier %q: statics %q and %q both emit output key %q",
+					ErrDuplicateIPKey, def.Source, def.Name, t, prev, role, key)
+			}
+
+			owners[key] = role
 		}
 	}
 

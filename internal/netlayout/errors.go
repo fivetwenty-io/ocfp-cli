@@ -104,6 +104,12 @@ var (
 	ErrHaproxyCoupling = errors.New("netlayout: haproxy must sit at ocf band start + 1 (the cf kit claims its static window from inside the available band)")
 	ErrPrefixTooNarrow = errors.New("netlayout: min_prefix does not fit the definition's highest offset")
 	ErrBadPinning      = errors.New("netlayout: invalid subnet pinning")
+	// ErrDuplicateIPKey rejects two statics in one tier resolving to the
+	// same output key (ip_key, or role+"_ip" when unset). The key is how
+	// every downstream lookup — Layer A outputs, Layer B records,
+	// PinnedWorkloadIndex — identifies a static; a duplicate would make
+	// those lookups depend on map iteration order.
+	ErrDuplicateIPKey = errors.New("netlayout: duplicate reserved-IP output key")
 )
 
 // bandOverrideStartTooLowError wraps ErrBandOverrideStartTooLow with the

@@ -94,6 +94,20 @@ func TestValidateDefinitionSameOffsetDifferentIndexOK(t *testing.T) {
 	}
 }
 
+// TestValidateDefinitionCrossTierKeyReuseOK pins the uniqueness rule's
+// scope to a single tier: the mgmt and ocf tiers write separate records, so
+// the same output key in both tiers is unambiguous and must stay legal.
+func TestValidateDefinitionCrossTierKeyReuseOK(t *testing.T) {
+	def := validSpanningDef()
+	tier := def.Tiers[TierMgmt]
+	tier.Statics["bosh"] = StaticPlacement{Offset: 4} // ocf also has "bosh" — both emit bosh_ip
+	def.Tiers[TierMgmt] = tier
+
+	if err := validateDefinition(def); err != nil {
+		t.Fatalf("cross-tier key reuse rejected: %v", err)
+	}
+}
+
 // validColocatedDef is a minimal valid colocated definition (MinSubnets
 // forced to 1, as LoadDefinition would produce) used to exercise the
 // colocated-forbids-pinning rule, which validSpanningDef cannot cover since
@@ -146,6 +160,17 @@ func TestValidateDefinitionMoreRules(t *testing.T) {
 			tier.Statics["bad"] = StaticPlacement{Offset: 20, Subnets: []int{0}, IPKey: "bad_ip_custom"}
 			d.Tiers[TierMgmt] = tier
 		}, ErrBadPinning, "ip_key is only supported on unpinned statics"},
+		{"ip_key duplicates another role's default key", func(d *Definition) {
+			tier := d.Tiers[TierMgmt]
+			tier.Statics["clash"] = StaticPlacement{Offset: 6, IPKey: "vault_ip"} // vault's default key
+			d.Tiers[TierMgmt] = tier
+		}, ErrDuplicateIPKey, ""},
+		{"two statics share an explicit ip_key", func(d *Definition) {
+			tier := d.Tiers[TierMgmt]
+			tier.Statics["a"] = StaticPlacement{Offset: 6, IPKey: "shared_ip"}
+			tier.Statics["b"] = StaticPlacement{Offset: 7, IPKey: "shared_ip"}
+			d.Tiers[TierMgmt] = tier
+		}, ErrDuplicateIPKey, ""},
 		{"band start not less than end", func(d *Definition) {
 			tier := d.Tiers[TierMgmt]
 			tier.Available = []BandPlacement{{Start: 63, End: 32}}
