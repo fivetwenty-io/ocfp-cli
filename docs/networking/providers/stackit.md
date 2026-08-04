@@ -71,7 +71,7 @@ Set `network.strategy` explicitly to override either default. `spanning` require
 
 #### Triple Subnets (`spanning`)
 
-The mgmt- and ocf-tier offset tables, and each role's pinned subnet index, are `spanning`'s own — see [Reserved-IP Strategies §6](../reserved-ip-strategies.md#6-the-spanning-strategy) for the canonical tables and the per-index breakdown of which roles each `ocfp-N` record carries. Two STACKIT-relevant consequences:
+The mgmt- and ocf-tier offset tables, and each role's pinned subnet index, are `spanning`'s own — see [Reserved-IP Strategies §6](../reserved-ip-strategies.md#6-the-spanning-strategy) for the canonical tables and the per-index breakdown of which roles each `ocfp-N` record carries. For STACKIT that means:
 
 - A role pinned to one subnet index has no key at all in the other subnets' records — the key is absent, not reserved-but-blank.
 - The ocf tier exists in vault `reserved-ips` records only; the bootstrap layer writes no ocf-tier state outputs.
