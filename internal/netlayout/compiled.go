@@ -100,6 +100,38 @@ func (c *compiledLayout) MinPrefix() int { return c.def.MinPrefix }
 // count.
 func (c *compiledLayout) MinSubnets() int { return c.def.MinSubnets }
 
+// PinnedWorkloadIndex reports the single workload-subnet index the
+// mgmt-tier static whose Layer A output key (ip_key, or role+"_ip" when
+// unset) equals ipKey is pinned to. Unpinned statics (Subnets nil — placed
+// on every index), multi-pinned statics, unknown keys, and definitions
+// without a mgmt tier all report ok false: only an unambiguous single-index
+// pin is a preference a lookup can act on.
+func (c *compiledLayout) PinnedWorkloadIndex(ipKey string) (int, bool) {
+	tier, ok := c.def.Tiers[TierMgmt]
+	if !ok {
+		return 0, false
+	}
+
+	for role, s := range tier.Statics {
+		key := s.IPKey
+		if key == "" {
+			key = role + "_ip"
+		}
+
+		if key != ipKey {
+			continue
+		}
+
+		if len(s.Subnets) == 1 {
+			return s.Subnets[0], true
+		}
+
+		return 0, false
+	}
+
+	return 0, false
+}
+
 // LayerASlots returns the Layer A named-slot set for role on cidr at subnet
 // index idx. The infra role's table is fixed regardless of strategy, cidr,
 // or idx (see infraLayerASlots); the ocfp role's table is derived from this

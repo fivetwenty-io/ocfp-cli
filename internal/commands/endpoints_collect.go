@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
@@ -76,9 +78,13 @@ func orderedServiceFQDNs(envType string, explicit map[string]string, base string
 // "reserved_<bloc>-ocfp-<index>_<role>_ip" shape ResolveReservedIP (lb.go)
 // and the ssh_config.go regexp both hardcode, since a subnet can also be
 // named "<bloc>-infra-<index>" or similar. When more than one subnet's key
-// matches (a role reserved on more than one subnet), the keys are sorted and
-// the first is used; this never errors, an absent role simply returns "".
-func findReservedIP(outputs map[string]interface{}, role string) string {
+// matches (a role reserved on more than one subnet), a non-nil layout that
+// pins the role to a single workload-subnet index wins first — the key on
+// "<bloc>-ocfp-<pinned-index>" is the address the kits actually consume,
+// and a stale pre-migration key on a lower-sorted subnet must not shadow it
+// — otherwise the keys are sorted and the first is used; this never errors,
+// an absent role simply returns "".
+func findReservedIP(outputs map[string]interface{}, role string, layout netlayout.Layout) string {
 	if len(outputs) == 0 {
 		return ""
 	}
@@ -98,6 +104,19 @@ func findReservedIP(outputs map[string]interface{}, role string) string {
 	}
 
 	sort.Strings(matchingKeys)
+
+	if layout != nil {
+		if idx, pinned := layout.PinnedWorkloadIndex(role + "_ip"); pinned {
+			pinnedSuffix := fmt.Sprintf("-ocfp-%d%s", idx, suffix)
+
+			for _, key := range matchingKeys {
+				value, ok := outputs[key].(string)
+				if ok && strings.HasSuffix(key, pinnedSuffix) {
+					return value
+				}
+			}
+		}
+	}
 
 	value, ok := outputs[matchingKeys[0]].(string)
 	if !ok {
@@ -144,13 +163,17 @@ func loadReservedOutputs(blocName string) map[string]interface{} {
 // before falling back to any reserved-IP lookup). Every other role, and
 // bastion when cfg.BastionIP is blank, falls back to reserved-IP state.
 // Never errors, never reads Cloudflare config (a Cloudflare service route is
-// a routing decision, not an allocation fact).
-func expectedIPForService(service string, reservedOutputs map[string]interface{}, bastionIP string) string {
+// a routing decision, not an allocation fact). layout carries the bloc's
+// resolved reserved-IP strategy for pinned-index preference (see
+// findReservedIP); nil degrades to the sorted-first lookup.
+func expectedIPForService(
+	service string, reservedOutputs map[string]interface{}, bastionIP string, layout netlayout.Layout,
+) string {
 	if service == "bastion" && bastionIP != "" {
 		return bastionIP
 	}
 
-	return findReservedIP(reservedOutputs, service)
+	return findReservedIP(reservedOutputs, service, layout)
 }
 
 // originForService returns where traffic for a service's FQDN terminates
@@ -235,11 +258,19 @@ func collectServiceFQDNSection(cfg *config.Config) (ui.Section, []string) {
 	reservedOutputs := loadReservedOutputs(cfg.Name)
 	cfExact := cfExactHostnameOrigins(cfg.Cloudflare)
 
+	// The bloc's resolved strategy drives pinned-index preference in the
+	// EXPECTED-IP lookup; an unresolvable strategy degrades to the
+	// sorted-first fallback rather than failing the section.
+	layout, err := cfg.ResolveReservedIPLayout()
+	if err != nil {
+		layout = nil
+	}
+
 	var resolveKeys []string
 
 	appendEnvRows := func(envType string, explicit map[string]string) {
 		for _, pair := range orderedServiceFQDNs(envType, explicit, base, systemScoped) {
-			expected := expectedIPForService(pair.Service, reservedOutputs, cfg.BastionIP)
+			expected := expectedIPForService(pair.Service, reservedOutputs, cfg.BastionIP, layout)
 			origin := originForService(envType, pair.FQDN, cfExact, cfg.Cloudflare)
 
 			section.Rows = append(section.Rows, []string{
