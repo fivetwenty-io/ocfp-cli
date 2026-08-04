@@ -39,19 +39,6 @@ const (
 	// (network address + broadcast address), used to compute the last usable host.
 	BroadcastAndNetworkAddrs = 2
 
-	// JumpboxOffset is the IP offset for jumpbox allocation within a subnet.
-	JumpboxOffset = 5
-	// BoshIPOffset is the IP offset for BOSH director allocation within a subnet.
-	BoshIPOffset = 6
-	// CFRouterOffset is the IP offset for Cloud Foundry router allocation.
-	CFRouterOffset = 10
-	// CFRouter1Offset is the IP offset for the second Cloud Foundry router.
-	CFRouter1Offset = 11
-	// DiegoCellOffset is the IP offset for the first Diego cell.
-	DiegoCellOffset = 20
-	// DiegoCell1Offset is the IP offset for the second Diego cell.
-	DiegoCell1Offset = 21
-
 	// HTTPPort is the standard HTTP port number.
 	HTTPPort = 80
 	// HTTPSPort is the standard HTTPS port number.
@@ -1657,8 +1644,7 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 
 // addOffsetToIP adds an offset to an IP address. Delegates to
 // reservedip.AddOffsetToIP (see internal/reservedip). Used in production by
-// aws_provider.go's calculateSystemIPs in addition to calculateReservedIPs
-// above.
+// aws_provider.go's parseSubnetCIDR to compute a subnet's last usable host.
 func addOffsetToIP(baseIP string, offset int) string {
 	return reservedip.AddOffsetToIP(baseIP, offset)
 }
