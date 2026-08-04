@@ -49,11 +49,26 @@ var ErrAvailableBandRemoved = errors.New(
 
 // OcfpHome returns the OCFP home directory path.
 // It checks OCFP_HOME env var first, then falls back to $HOME/.ocfp.
+//
+// This is the pre-XDG-migration, single-flat-directory layout. It remains
+// the legacy side of every dual-read fallback in this package (see
+// ResolveExisting) and the override OCFP_HOME collapses ConfigHome,
+// StateHome, and DataHome to when set.
 func OcfpHome() string {
 	if v := os.Getenv("OCFP_HOME"); v != "" {
 		return v
 	}
 
+	return LegacyHome()
+}
+
+// LegacyHome returns the pre-XDG-migration flat layout directory,
+// $HOME/.ocfp, ignoring any OCFP_HOME override. OcfpHome() falls back to
+// this when OCFP_HOME is unset. Callers that need to distinguish "an
+// OCFP_HOME override is active" from "the legacy directory exists on disk"
+// (the `ocfp migrate` command) must use this rather than OcfpHome(), since
+// OcfpHome() collapses both cases together.
+func LegacyHome() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -62,19 +77,87 @@ func OcfpHome() string {
 	return filepath.Join(home, ".ocfp")
 }
 
-// OcfpBlocDir returns the directory path for a specific bloc.
+// xdgClassHome resolves one of the three XDG base-directory classes for
+// ocfp: OCFP_HOME verbatim when set (collapsing ConfigHome, StateHome, and
+// DataHome to the same single directory -- today's pre-migration behavior,
+// preserved for every caller and test that sets it), else the XDG-class
+// default supplied by xdgDefault (configHome, stateHome, or dataHome from
+// xdg.go).
+func xdgClassHome(xdgDefault func() string) string {
+	if v := os.Getenv("OCFP_HOME"); v != "" {
+		return v
+	}
+
+	return xdgDefault()
+}
+
+// ConfigHome returns ocfp's config-class base directory: OCFP_HOME when
+// set, else $XDG_CONFIG_HOME/ocfp or the literal default ~/.config/ocfp.
+func ConfigHome() string {
+	return xdgClassHome(configHome)
+}
+
+// StateHome returns ocfp's state-class base directory: OCFP_HOME when set,
+// else $XDG_STATE_HOME/ocfp or the literal default ~/.local/state/ocfp.
+func StateHome() string {
+	return xdgClassHome(stateHome)
+}
+
+// DataHome returns ocfp's data-class base directory: OCFP_HOME when set,
+// else $XDG_DATA_HOME/ocfp or the literal default ~/.local/share/ocfp.
+func DataHome() string {
+	return xdgClassHome(dataHome)
+}
+
+// ResolveExisting is the exported dual-read entry point every home-path
+// helper in this package uses to migrate off the pre-XDG ~/.ocfp layout: it
+// prefers newPath, falls back to legacyPath when only that exists, and
+// otherwise returns newPath as the write target for a fresh file or
+// directory.
+//
+// Cross-package consumers still resolving paths off OcfpHome() directly
+// (internal/cli, internal/commands, ...) must call this rather than
+// reimplementing dual-read: it shares the single process-wide
+// legacyWarnOnce gate with every other dual-read call site in this
+// package, so at most one fallback warning prints per process regardless
+// of which package or call site triggers it first.
+func ResolveExisting(newPath, legacyPath string) (string, bool) {
+	return resolveExisting(newPath, legacyPath)
+}
+
+// OcfpBlocDir returns the directory path for a specific bloc. Resolves
+// under DataHome(), with a dual-read fallback to the pre-migration
+// ~/.ocfp/<bloc> directory when only that exists (e.g. a bloc created
+// before the XDG migration).
 func OcfpBlocDir(blocName string) string {
-	return filepath.Join(OcfpHome(), blocName)
+	newPath := filepath.Join(DataHome(), blocName)
+	legacyPath := filepath.Join(OcfpHome(), blocName)
+
+	path, _ := ResolveExisting(newPath, legacyPath)
+
+	return path
 }
 
 // OcfpSSHKeyDir returns the SSH key directory path for a specific bloc.
+// Resolves under DataHome() with the same dual-read fallback as
+// OcfpBlocDir.
 func OcfpSSHKeyDir(blocName string) string {
-	return filepath.Join(OcfpHome(), blocName, "ssh")
+	newPath := filepath.Join(DataHome(), blocName, "ssh")
+	legacyPath := filepath.Join(OcfpHome(), blocName, "ssh")
+
+	path, _ := ResolveExisting(newPath, legacyPath)
+
+	return path
 }
 
-// testSafetyGuard panics if OCFP_TEST_SAFETY_GUARD is set and OcfpHome()
-// resolves to the real user home directory. This prevents tests from
-// accidentally writing to ~/.ocfp.
+// testSafetyGuard panics if OCFP_TEST_SAFETY_GUARD is set and any of
+// OcfpHome, ConfigHome, StateHome, or DataHome resolves to the real user's
+// default directory: the pre-migration ~/.ocfp, or its XDG-class
+// successors ~/.config/ocfp, ~/.local/state/ocfp, and ~/.local/share/ocfp.
+// This prevents a test that forgets to set OCFP_HOME (or the relevant
+// XDG_*_HOME) to a temp directory from accidentally writing into the
+// developer's real home directory, across both the legacy layout and the
+// new XDG-class layout.
 func testSafetyGuard(operation string) {
 	if os.Getenv("OCFP_TEST_SAFETY_GUARD") == "" {
 		return
@@ -85,13 +168,32 @@ func testSafetyGuard(operation string) {
 		return
 	}
 
-	realOcfpHome := filepath.Join(home, ".ocfp")
-	if OcfpHome() == realOcfpHome {
-		panic(fmt.Sprintf(
-			"SAFETY GUARD: %s attempted to use real home directory %s during testing. "+
-				"Set OCFP_HOME to a temp directory.",
-			operation, realOcfpHome,
-		))
+	realRoots := map[string]string{
+		"legacy ~/.ocfp":                filepath.Join(home, ".ocfp"),
+		"XDG config ~/.config/ocfp":     filepath.Join(home, ".config", appDirName),
+		"XDG state ~/.local/state/ocfp": filepath.Join(home, ".local", "state", appDirName),
+		"XDG data ~/.local/share/ocfp":  filepath.Join(home, ".local", "share", appDirName),
+	}
+
+	resolved := map[string]string{
+		"OcfpHome":   OcfpHome(),
+		"ConfigHome": ConfigHome(),
+		"StateHome":  StateHome(),
+		"DataHome":   DataHome(),
+	}
+
+	for label, root := range realRoots {
+		for fnName, got := range resolved {
+			if got == "" || got != root {
+				continue
+			}
+
+			panic(fmt.Sprintf(
+				"SAFETY GUARD: %s attempted to use real home directory %s (%s, via %s()) during testing. "+
+					"Set OCFP_HOME (or XDG_CONFIG_HOME/XDG_STATE_HOME/XDG_DATA_HOME) to a temp directory.",
+				operation, root, label, fnName,
+			))
+		}
 	}
 }
 
@@ -1373,6 +1475,25 @@ func ListBlocNames(configFile string) ([]string, error) {
 	return names, nil
 }
 
+// defaultConfigPath resolves the default config.yml location for this
+// process, without honoring the -c/--config override or the current-
+// directory config/config.yml fallback: ConfigHome()/config.yml, or the
+// pre-migration OcfpHome()/config.yml when only that exists. Returns "" if
+// ConfigHome() cannot be determined (e.g. os.UserHomeDir failed).
+func defaultConfigPath() string {
+	configHome := ConfigHome()
+	if configHome == "" {
+		return ""
+	}
+
+	newPath := filepath.Join(configHome, "config.yml")
+	legacyPath := filepath.Join(OcfpHome(), "config.yml")
+
+	path, _ := ResolveExisting(newPath, legacyPath)
+
+	return path
+}
+
 // determineConfigPath determines the configuration file path.
 func determineConfigPath(configFile string) string {
 	// Priority 1: Explicit config file
@@ -1380,11 +1501,9 @@ func determineConfigPath(configFile string) string {
 		return configFile
 	}
 
-	// Priority 2: Default config file at ~/.ocfp/config.yml
-	ocfpHome := OcfpHome()
-	if ocfpHome != "" {
-		defaultPath := filepath.Join(ocfpHome, "config.yml")
-
+	// Priority 2: Default config file at ConfigHome()/config.yml, falling
+	// back to the pre-migration ~/.ocfp/config.yml when only that exists.
+	if defaultPath := defaultConfigPath(); defaultPath != "" {
 		_, err := os.Stat(defaultPath)
 		if err == nil {
 			return defaultPath
@@ -1985,29 +2104,42 @@ func validatePVEVMIDRange(cfg *Config) error {
 	return nil
 }
 
-// GetLogDir returns the log directory path.
+// GetLogDir returns the log directory path. Resolves under StateHome(),
+// with a dual-read fallback to the pre-migration ~/.ocfp/logs directory
+// when only that exists.
 func GetLogDir() string {
-	ocfpHome := OcfpHome()
-	if ocfpHome == "" {
+	stateHome := StateHome()
+	if stateHome == "" {
 		return ""
 	}
 
-	return filepath.Join(ocfpHome, "logs")
+	newPath := filepath.Join(stateHome, "logs")
+	legacyPath := filepath.Join(OcfpHome(), "logs")
+
+	path, _ := ResolveExisting(newPath, legacyPath)
+
+	return path
 }
 
-// GetSSHKeyPath returns the SSH key path for a bloc.
+// GetSSHKeyPath returns the SSH key path for a bloc. The standard location
+// resolves under DataHome(), with a dual-read fallback to the pre-migration
+// ~/.ocfp/keys/<bloc>-bastion/id_rsa when only that exists. Failing both, a
+// second, independent legacy location in ~/.ssh (predating even the
+// ~/.ocfp layout) is checked.
 func GetSSHKeyPath(blocName string, keypair string) string {
-	ocfpHome := OcfpHome()
-	if ocfpHome == "" {
+	dataHome := DataHome()
+	if dataHome == "" {
 		return ""
 	}
 
-	// Try new standard location first
-	newPath := filepath.Join(ocfpHome, "keys", blocName+"-bastion", "id_rsa")
+	newPath := filepath.Join(dataHome, "keys", blocName+"-bastion", "id_rsa")
+	legacyHomePath := filepath.Join(OcfpHome(), "keys", blocName+"-bastion", "id_rsa")
 
-	_, err := os.Stat(newPath)
+	resolvedPath, _ := ResolveExisting(newPath, legacyHomePath)
+
+	_, err := os.Stat(resolvedPath)
 	if err == nil {
-		return newPath
+		return resolvedPath
 	}
 
 	// Try legacy location in ~/.ssh
@@ -2016,11 +2148,11 @@ func GetSSHKeyPath(blocName string, keypair string) string {
 		return ""
 	}
 
-	legacyPath := filepath.Join(home, ".ssh", fmt.Sprintf("%s-%s", blocName, keypair))
+	legacySSHPath := filepath.Join(home, ".ssh", fmt.Sprintf("%s-%s", blocName, keypair))
 
-	_, err = os.Stat(legacyPath)
+	_, err = os.Stat(legacySSHPath)
 	if err == nil {
-		return legacyPath
+		return legacySSHPath
 	}
 
 	return ""
