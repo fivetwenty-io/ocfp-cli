@@ -1,7 +1,6 @@
 package vault
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -213,52 +212,114 @@ func TestPVEReservedIPs_MgmtBandOverridePartialErrors(t *testing.T) {
 	cfg := &config.Config{Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 40}}}}
 
 	_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
-	assert.ErrorIs(t, err, ErrPVEBandOverridePartial)
+	assert.ErrorIs(t, err, netlayout.ErrBandOverridePartial)
 }
 
-func TestPVEReservedIPs_MgmtBandOverrideOutOfRangeErrors(t *testing.T) {
+// TestPVEReservedIPs_MgmtBandOverrideValidatedByLayout proves the mgmt band
+// override is validated against WHATEVER layout is resolved — not
+// wide-specific floor/ceiling literals — by exercising the same matrix
+// Task 4 established for ValidateBand directly: a static collision (either
+// tier, checked first) and a cross-tier collision both surface the
+// netlayout sentinel, for both wide and compact.
+func TestPVEReservedIPs_MgmtBandOverrideValidatedByLayout(t *testing.T) {
 	tests := []struct {
-		name  string
-		start int
-		end   int
+		name       string
+		strategy   string
+		cidr       string
+		start, end int
+		wantErr    error
 	}{
-		{"below floor collides with named statics", 10, 50},
-		{"above ceiling collides with ocf zone", 40, 70},
-		{"end not after start", 50, 40},
+		{
+			name: "compact succeeds inside its own mgmt available band", strategy: "compact",
+			cidr: "10.64.64.0/26", start: 29, end: 34,
+		},
+		{
+			name: "compact collides with its own ocf statics (23-26)", strategy: "compact",
+			cidr: "10.64.64.0/26", start: 20, end: 30, wantErr: netlayout.ErrBandOverrideCollidesStatic,
+		},
+		{
+			name: "wide succeeds inside its own mgmt available band", strategy: "wide",
+			cidr: "10.64.64.0/22", start: 40, end: 50,
+		},
+		{
+			name: "wide collides with its own ocf statics (64-67), checked before cross-tier", strategy: "wide",
+			cidr: "10.64.64.0/22", start: 30, end: 70, wantErr: netlayout.ErrBandOverrideCollidesStatic,
+		},
+		{
+			name: "wide crosses into ocf's open available band", strategy: "wide",
+			cidr: "10.64.64.0/22", start: 98, end: 120, wantErr: netlayout.ErrBandOverrideCrossTier,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				Network: config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: tt.start, End: tt.end}}},
+			cfg := &config.Config{Network: config.NetworkConfig{
+				Strategy: tt.strategy,
+				Bands:    config.NetworkBands{Mgmt: config.Band{Start: tt.start, End: tt.end}},
+			}}
+
+			_, err := pveReservedIPsForSubnet(tt.cidr, "mgmt", 0, cfg, logger.Get())
+
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+
+				return
 			}
-			_, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, cfg, logger.Get())
-			assert.ErrorIs(t, err, ErrPVEBandOverrideOutOfRange)
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tt.wantErr)
 		})
 	}
 }
 
-// TestPVEReservedIPs_MgmtBandOverrideUnsupportedForNonWideStrategy proves
-// applyPVEMgmtBandOverride rejects an explicit Bands.Mgmt override for any
-// strategy other than wide, rather than validating it against wide's
-// floor/ceiling literals (32/63), which do not describe compact's mgmt zone
-// (28-35) and would silently admit an out-of-band override or reject a
-// valid one for the wrong reason.
-func TestPVEReservedIPs_MgmtBandOverrideUnsupportedForNonWideStrategy(t *testing.T) {
+// TestPVEReservedIPs_MgmtBandOverrideCompactAppliesToTable proves the
+// compact case from TestPVEReservedIPs_MgmtBandOverrideValidatedByLayout
+// actually replaces compact's mgmt available/reserved rows (not merely
+// passing validation), matching the historical wide assertions in
+// TestPVEReservedIPs_MgmtBandOverride below.
+func TestPVEReservedIPs_MgmtBandOverrideCompactAppliesToTable(t *testing.T) {
+	cidr := "10.64.64.0/26"
 	cfg := &config.Config{Network: config.NetworkConfig{
 		Strategy: "compact",
-		Bands:    config.NetworkBands{Mgmt: config.Band{Start: 30, End: 34}},
+		Bands:    config.NetworkBands{Mgmt: config.Band{Start: 29, End: 34}},
 	}}
 
-	_, err := pveReservedIPsForSubnet("10.64.64.0/26", "mgmt", 0, cfg, logger.Get())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPVEBandOverrideUnsupportedStrategy)
-	assert.Contains(t, err.Error(), `mgmt band override not supported for strategy "compact"`)
+	mgmt, err := pveReservedIPsForSubnet(cidr, "mgmt", 0, cfg, logger.Get())
+	require.NoError(t, err)
+
+	assert.Equal(t, "10.64.64.29", mgmt["available_0"])
+	assert.Equal(t, "10.64.64.34", mgmt["available_1"])
+}
+
+// TestPVEReservedIPs_MgmtBandOverrideReservedIsGapFree proves the rebuilt
+// override still leaves the mgmt "reserved" row complementary to the
+// replaced "available" row (everything below start, everything from end+1
+// up) for an override well above the strategy's own default band, not only
+// for the narrow within-band cases above: wide's default mgmt band is
+// 32-63, and 68-95 sits unclaimed by any static or tier's available band
+// (ocf's own statics stop at 67, its available band opens at 96), so 70-90
+// is a valid override whose replaced reserved/mgmt row must cover 0-69 and
+// 91-> without a gap.
+func TestPVEReservedIPs_MgmtBandOverrideReservedIsGapFree(t *testing.T) {
+	layout, err := netlayout.Lookup("wide")
+	require.NoError(t, err)
+
+	table, err := layout.WorkloadTable("10.64.64.0/22")
+	require.NoError(t, err)
+
+	netCfg := config.NetworkConfig{Bands: config.NetworkBands{Mgmt: config.Band{Start: 70, End: 90}}}
+
+	overridden, err := applyMgmtBandOverride(table, netCfg, layout, "10.64.64.0/22")
+	require.NoError(t, err)
+
+	assert.Equal(t, "70-90", overridden["available"]["mgmt"].RangeSpec)
+	assert.Equal(t, "0-69,91->", overridden["reserved"]["mgmt"].RangeSpec,
+		"reserved must cover everything below start and everything from end+1 up, with no gap")
 }
 
 // TestPVEReservedIPs_MgmtBandOverrideStillWorksForWide guards against a
-// regression where threading the strategy name into
-// applyPVEMgmtBandOverride broke the wide path it was already exercising
+// regression where threading the resolved layout through
+// applyMgmtBandOverride broke the wide path it was already exercising
 // (TestPVEReservedIPs_MgmtBandOverride above uses the empty-Strategy
 // default; this proves an explicit "wide" Strategy behaves identically).
 func TestPVEReservedIPs_MgmtBandOverrideStillWorksForWide(t *testing.T) {
@@ -274,7 +335,7 @@ func TestPVEReservedIPs_MgmtBandOverrideStillWorksForWide(t *testing.T) {
 }
 
 func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
-	// Guards against applyPVEMgmtBandOverride mutating the shared default
+	// Guards against applyMgmtBandOverride mutating the shared default
 	// table in place (which would corrupt subsequent calls across subnets).
 	first, err := pveReservedIPsForSubnet("10.64.64.0/22", "mgmt", 0, &config.Config{}, logger.Get())
 	require.NoError(t, err)
@@ -287,32 +348,6 @@ func TestPVEReservedIPs_NoOverrideLeavesDefaultTableUnmodified(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, first["available_0"], second["available_0"], "default table must not be mutated by a prior override call")
-}
-
-// TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable couples
-// pveMgmtBandOverrideFloor/Ceiling to the wide strategy's own emitted mgmt
-// available band, rather than trusting the two to stay in sync by
-// convention alone: the floor/ceiling are declared as literals (see their
-// doc comment in pve_reserved_ips.go) because they cannot be imported from
-// netlayout directly, so without this test a future wide retune would
-// silently admit an override that reaches into ocf's territory instead of
-// failing loudly here.
-func TestPVEMgmtBandOverrideBoundsMatchWideMgmtAvailable(t *testing.T) {
-	table, err := netlayout.Default().WorkloadTable("")
-	require.NoError(t, err)
-
-	spec := table["available"]["mgmt"].RangeSpec
-
-	var start, end int
-
-	n, err := fmt.Sscanf(spec, "%d-%d", &start, &end)
-	require.NoError(t, err)
-	require.Equal(t, 2, n, "wide's mgmt available RangeSpec %q must be a plain start-end range", spec)
-
-	assert.Equal(t, start, pveMgmtBandOverrideFloor,
-		"wide's mgmt available band start drifted from the override floor")
-	assert.Equal(t, end, pveMgmtBandOverrideCeiling,
-		"wide's mgmt available band end drifted from the override ceiling")
 }
 
 // TestPVEReservedIPs_WideRejectsSubnetSmallerThan25 proves the vault-layer
@@ -407,7 +442,7 @@ func (workloadTableErrLayout) ValidateBand(_ netlayout.Tier, _ string, _, _ int)
 // TestPVEReservedIPs_WorkloadTableErrorFailsLoudly locks the guard on the
 // WorkloadTable step itself: a layout that validates the subnet but cannot
 // produce a table must error out with the strategy and step named, never
-// continue into applyPVEMgmtBandOverride with a nil table.
+// continue into applyMgmtBandOverride with a nil table.
 func TestPVEReservedIPs_WorkloadTableErrorFailsLoudly(t *testing.T) {
 	table, err := pveReservedIPsForSubnetWithLayout(
 		workloadTableErrLayout{}, "10.64.64.0/22", "mgmt", 0, config.NetworkConfig{}, logger.Get())
