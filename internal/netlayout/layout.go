@@ -79,4 +79,11 @@ type Layout interface {
 	// ValidateBand returns an error if [start,end] is not a valid
 	// override band for tier on cidr.
 	ValidateBand(tier Tier, cidr string, start, end int) error
+
+	// PinnedWorkloadIndex returns the workload-subnet index the mgmt-tier
+	// static identified by its Layer A output key (ip_key, or role+"_ip"
+	// when ip_key is unset) is pinned to. ok is false when the key is
+	// unknown, the static is unpinned (present on every index), it is
+	// pinned to more than one index, or the strategy has no mgmt tier.
+	PinnedWorkloadIndex(ipKey string) (idx int, ok bool)
 }
