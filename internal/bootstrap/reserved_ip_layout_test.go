@@ -249,6 +249,41 @@ func TestReservedBandOverride_AppliesToBothRoles(t *testing.T) {
 	}
 }
 
+// TestReservedBandOverride_RecomputesReservedFloor verifies that an
+// available-band override moves reserved_b (the floor of the reserved
+// complement below the band) to start-1, not just available_a/b and
+// reserved_c (end+1). Before this fix, applyAvailableBandOverride left
+// ReservedB at whatever the strategy's default layout computed (10 for the
+// infra role, 31 for wide's ocfp-0 mgmt band) — well below this override's
+// start of 100 — so offsets between the stale floor and the new band start
+// were described as neither reserved nor available. The override (100,200)
+// is chosen well above both roles' own default bands so a stale ReservedB
+// is visibly wrong rather than accidentally still correct.
+func TestReservedBandOverride_RecomputesReservedFloor(t *testing.T) {
+	t.Parallel()
+
+	mgr, sm, cfg := newPVEBandTestManager(t)
+	cfg.Network.Bands.Infra = config.Band{Start: 100, End: 200}
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-infra_reserved_b"); got != "10.64.64.99" {
+		t.Errorf("infra reserved_b = %q, want 10.64.64.99 (override start-1)", got)
+	}
+
+	if got := getOutputString(t, sm, "reserved_prod-ocfp-0_reserved_b"); got != "10.64.68.99" {
+		t.Errorf("ocfp-0 reserved_b = %q, want 10.64.68.99 (override start-1)", got)
+	}
+}
+
 // TestReservedBandOverride_Unset verifies that leaving network.bands.infra
 // at its zero value applies no override at all: resolveReservedIPLayout
 // returns the strategy's layout unchanged, and layout.ValidateBand is never
