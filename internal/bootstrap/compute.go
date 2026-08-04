@@ -271,7 +271,39 @@ func (m *Manager) findBastionSubnet() (*bastionSubnetInfo, error) {
 		return info, nil
 	}
 
+	// Operator-named subnets don't follow the "-ocfp-0" shape; the subnet
+	// recorded at workload index 0 is the same subnet under any name.
+	if info, ok := m.lookupSubnetByWorkloadIndex(0); ok {
+		return info, nil
+	}
+
 	return nil, ErrBastionSubnetNotFound(bastionSubnet)
+}
+
+// lookupSubnetByWorkloadIndex resolves the workload subnet recorded at idx
+// from state — creation persists role and workload_index properties — and
+// returns it as a bastionSubnetInfo. ok is false when no subnet record
+// carries that index (records predating the properties never match).
+func (m *Manager) lookupSubnetByWorkloadIndex(idx int) (*bastionSubnetInfo, bool) {
+	resources, err := m.stateManager.GetResourcesByType("subnet")
+	if err != nil {
+		return nil, false
+	}
+
+	for _, resource := range resources {
+		role, _ := resource.Properties["role"].(string)
+		if role != subnetRoleOCFP {
+			continue
+		}
+
+		if i, ok := intFromProperty(resource.Properties["workload_index"]); !ok || i != idx {
+			continue
+		}
+
+		return m.lookupSubnetByName(resource.Name)
+	}
+
+	return nil, false
 }
 
 // lookupSubnetByName resolves a subnet from state by name, returning a

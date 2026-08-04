@@ -1,11 +1,13 @@
 package bootstrap_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 )
 
@@ -128,5 +130,45 @@ func TestSlotForNamedIP_SpanningWorkloadIndex(t *testing.T) {
 
 	if got := mgr.SlotForNamedIP("prod-ocfp-1", "10.4.8.0/22", "bastion_ip", 99); got != 99 {
 		t.Errorf("ocfp-1 bastion_ip slot = %d, want fallback 99 (bastion not placed on index 1)", got)
+	}
+}
+
+// TestSlotForNamedIP_CustomNameResolvesFromState proves slot resolution
+// reads a subnet's recorded role and workload index from state when the
+// name doesn't follow the "-ocfp-<n>" shape: after CreateSubnets records
+// operator-named subnets, spanning's pinned statics resolve on the subnet
+// holding the pinned index instead of degrading to the fallback constant.
+func TestSlotForNamedIP_CustomNameResolvesFromState(t *testing.T) {
+	t.Parallel()
+
+	mgr, _, cfg, _ := newAWSTestManager(t, []config.Subnet{
+		{Name: "prod-east-a", CIDR: "10.4.4.0/22", Type: "public", AvailabilityZone: "us-east-1a"},
+		{Name: "prod-east-b", CIDR: "10.4.8.0/22", Type: "public", AvailabilityZone: "us-east-1b"},
+		{Name: "prod-east-c", CIDR: "10.4.12.0/22", Type: "public", AvailabilityZone: "us-east-1c"},
+	})
+	cfg.Network.Strategy = "spanning"
+
+	ctx := context.Background()
+
+	if err := mgr.CreateNetwork(ctx); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	if err := mgr.CreateSubnets(ctx); err != nil {
+		t.Fatalf("CreateSubnets: %v", err)
+	}
+
+	// prod-east-a recorded at workload index 0: spanning pins bastion there.
+	if got := mgr.SlotForNamedIP("prod-east-a", "10.4.4.0/22", "bastion_ip", 99); got != 3 {
+		t.Errorf("prod-east-a bastion_ip slot = %d, want 3 (index 0 from state)", got)
+	}
+
+	// prod-east-b recorded at index 1: doomsday is pinned there, bastion is not.
+	if got := mgr.SlotForNamedIP("prod-east-b", "10.4.8.0/22", "doomsday_ip", 99); got != 18 {
+		t.Errorf("prod-east-b doomsday_ip slot = %d, want 18 (index 1 from state)", got)
+	}
+
+	if got := mgr.SlotForNamedIP("prod-east-b", "10.4.8.0/22", "bastion_ip", 99); got != 99 {
+		t.Errorf("prod-east-b bastion_ip slot = %d, want fallback 99 (bastion not placed on index 1)", got)
 	}
 }
