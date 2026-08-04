@@ -71,44 +71,14 @@ Set `network.strategy` explicitly to override either default. `spanning` require
 
 #### Triple Subnets (`spanning`)
 
-A role pinned to one subnet index has no key at all in the other subnets' records — the key is absent, not reserved-but-blank. The mgmt tier:
+The mgmt- and ocf-tier offset tables, and each role's pinned subnet index, are `spanning`'s own — see [Reserved-IP Strategies §6](../reserved-ip-strategies.md#6-the-spanning-strategy) for the canonical tables and the per-index breakdown of which roles each `ocfp-N` record carries. Two STACKIT-relevant consequences:
 
-| Slot | Key | Service | Written on |
-|------|-----|---------|------------|
-| .3 | `bastion_ip` | Bastion | ocfp-0 |
-| .4 | `bosh_ip` | BOSH Director | ocfp-0 |
-| .5 | `vault_ip` | Vault | every subnet |
-| .6 | `jumpbox_ip` | Jumpbox | every subnet |
-| .7 | `concourse_ip` | Concourse | every subnet |
-| .8 | `prometheus_ip` | Prometheus | every subnet |
-| .9 | `shield_ip` | SHIELD | ocfp-0 |
-| .10 | `blacksmith_ip` | Blacksmith | ocfp-0 |
-| .11 | `artifacts_ip` | Artifacts | every subnet |
-| .12 | `wireguard_ip` | WireGuard | ocfp-0 |
-| .13 | `ovpn_ip` | OpenVPN | ocfp-0 |
-| .14 | `rustfs_ip` | RustFS blobstore | ocfp-0 |
-| .15 | `proxycache_ip` | Proxy cache | ocfp-0 |
-| .16 | `nfs_ip` | NFS | ocfp-0 |
-| .17 | `ocfp_ui_ip` | OCFP UI | ocfp-2 |
-| .18 | `doomsday_ip` | Doomsday | ocfp-1 |
-| .19 | `shout_ip` | Shout | ocfp-1 |
-| .20 | `garage_ip` | Garage blobstore | ocfp-0 |
-| .21 | `rustfs_ip_smoke` | RustFS smoke errand | every subnet |
-| .22 | `garage_ip_smoke` | Garage smoke errand | every subnet |
-
-The ocf tier (vault `reserved-ips` records only — the bootstrap layer writes no ocf-tier state outputs):
-
-| Slot | Key | Service | Written on |
-|------|-----|---------|------------|
-| .64 | `bosh_ip` | CF BOSH Director | ocfp-0 |
-| .65 | `vault_ip` | CF Vault | every subnet |
-| .66 | `jumpbox_ip` | CF Jumpbox | every subnet |
-| .67 | `blacksmith_ip` | CF Blacksmith | ocfp-1 |
-| .97 | `haproxy_ip` | CF HAProxy | ocfp-0 |
+- A role pinned to one subnet index has no key at all in the other subnets' records — the key is absent, not reserved-but-blank.
+- The ocf tier exists in vault `reserved-ips` records only; the bootstrap layer writes no ocf-tier state outputs.
 
 #### Single Subnet (`wide`)
 
-`wide` is colocated, so the one virtual subnet carries every mgmt static at the offsets above (all twenty, including the roles `spanning` pins elsewhere) and every ocf static, with no per-index distinction. Its state outputs are named `reserved_<bloc>-subnet_<key>` rather than `reserved_<bloc>-ocfp-<n>_<key>`.
+`wide` is colocated, so the one virtual subnet carries every mgmt static at the same offsets (all twenty, including the roles `spanning` pins elsewhere) and every ocf static, with no per-index distinction. Its state outputs are named `reserved_<bloc>-subnet_<key>` rather than `reserved_<bloc>-ocfp-<n>_<key>`.
 
 #### IP Ranges
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,11 +54,13 @@ const (
 	subnetRoleInfra = "infra"
 	subnetRoleOCFP  = "ocfp"
 
-	// bastionIPSlot is the bastion VM's static offset, shared by
-	// internal/bootstrap/compute.go's bastion placement and the named-slot
-	// layout owned by internal/netlayout (infraBastionOffset).
+	// bastionIPSlot is the bastion VM's fallback static offset, used only
+	// when slotForNamedIP cannot derive "bastion_ip" from the bloc's
+	// resolved strategy. It matches the fixed infra layout
+	// (internal/netlayout's infraBastionOffset) and Perl cidrhost().
 	bastionIPSlot = 3
-	// artifactsIPSlot is the RustFS blobstore VM's static offset. See
+	// artifactsIPSlot is the RustFS blobstore VM's fallback static offset,
+	// used only when slotForNamedIP cannot derive "artifacts_ip". See
 	// plans/ocfp-artifacts-rustfs-vm.md.
 	artifactsIPSlot = 11
 )
@@ -885,6 +888,53 @@ func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string, idx int) (net
 	return applyAvailableBandOverride(layout, slots, m.config.Network, subnetCIDR)
 }
 
+// subnetRoleAndIndex classifies a VM host subnet by name for slot
+// resolution: a "-infra" suffix is PVE's dedicated infra subnet (fixed
+// layout, no workload position), a trailing "-ocfp-<n>" segment is a
+// workload subnet at index n, and anything else resolves as a workload
+// subnet with no position (idx -1: only every-index placements apply).
+func (m *Manager) subnetRoleAndIndex(subnetName string) (string, int) {
+	if strings.HasSuffix(subnetName, pveInfraSubnetSuffix) {
+		return subnetRoleInfra, -1
+	}
+
+	if i := strings.LastIndex(subnetName, "-ocfp-"); i >= 0 {
+		if idx, err := strconv.Atoi(subnetName[i+len("-ocfp-"):]); err == nil {
+			return subnetRoleOCFP, idx
+		}
+	}
+
+	return subnetRoleOCFP, -1
+}
+
+// slotForNamedIP returns the static offset the bloc's resolved strategy
+// assigns to ipKey (e.g. "bastion_ip", "artifacts_ip") on the named subnet,
+// so VM placement follows a BYO strategy that relocates those statics
+// instead of hardcoding the built-in offsets. fallback is returned — with a
+// warning, never an error — when the strategy cannot resolve or places no
+// such static on this subnet, preserving the historical placement for
+// configs the strategy does not cover.
+func (m *Manager) slotForNamedIP(subnetName, subnetCIDR, ipKey string, fallback int) int {
+	role, idx := m.subnetRoleAndIndex(subnetName)
+
+	slots, err := m.resolveReservedIPLayout(role, subnetCIDR, idx)
+	if err != nil {
+		logger.Warnf("Cannot resolve %s slot from strategy (using fallback offset %d): %v", ipKey, fallback, err)
+
+		return fallback
+	}
+
+	for _, n := range slots.Named {
+		if n.Key == ipKey {
+			return n.Offset
+		}
+	}
+
+	logger.Warnf("Strategy places no %s on subnet %s; using fallback offset %d", ipKey, subnetName, fallback)
+
+	return fallback
+}
+
 // applyAvailableBandOverride overrides slots.AvailableA/AvailableB (and
 // recomputes ReservedB as start-1 and ReservedC as end+1, so the replaced
 // band stays self-consistent with its reserved complement) from
@@ -926,6 +976,28 @@ func (m *Manager) createStandardSubnets(ctx context.Context, networkID any) erro
 	}
 
 	subnets := m.resolveSubnetsForCreation()
+
+	// Layer A enforcement for provider-native subnets (AWS): the created
+	// subnets are all workload subnets — generateDefaultSubnets skips the
+	// infra child, and explicit Network.Subnets lists the workload set — so
+	// their CIDRs must satisfy the resolved layout's MinSubnets before any
+	// cloud subnet is created, matching the virtual-subnet paths above. A
+	// CIDR-less entry (provider-assigned) is skipped; an all-CIDR-less list
+	// skips validation entirely, mirroring internal/vault's
+	// validateWorkloadSubnetCIDRs empty-set exception.
+	cidrs := make([]string, 0, len(subnets))
+
+	for _, subnet := range subnets {
+		if subnet.CIDR != "" {
+			cidrs = append(cidrs, subnet.CIDR)
+		}
+	}
+
+	if len(cidrs) > 0 {
+		if err := m.validateWorkloadSubnetCount("standard", cidrs); err != nil {
+			return err
+		}
+	}
 
 	for _, subnet := range subnets {
 		err := m.createSingleSubnet(ctx, subnet, netID, networkID)
