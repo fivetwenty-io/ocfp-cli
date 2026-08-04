@@ -49,6 +49,7 @@ var OCFServices = []string{
 	"blacksmith",
 	"bosh",
 	"ocfp_ui",
+	"autoscaler",
 }
 
 // GetServicesForEnvType returns the list of known services for an environment type.

@@ -29,8 +29,36 @@ func TestOrderedServiceFQDNs_MgmtDerivesInOrder(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestOrderedServiceFQDNs_TailscaleBlocGetsSystemInfixPostFix models the
-// D-09 world directly: a bloc whose ingress is tailscale (not cloudflared)
+// TestOrderedServiceFQDNs_OCFDerivesAutoscalerFlatFQDN verifies autoscaler
+// (ocf-only: member of vault.OCFServices, absent from
+// vault.MgmtServices) appears in the OCF-scoped ordered pairs with a flat
+// derived FQDN — it is not in vault's systemScopedServices set, so it never
+// gains the .system. infix even when systemScoped is true.
+func TestOrderedServiceFQDNs_OCFDerivesAutoscalerFlatFQDN(t *testing.T) {
+	t.Parallel()
+
+	base := "ocf.example.lab.internal"
+
+	got := orderedServiceFQDNs(vault.OCFEnvType, nil, base, true)
+
+	var (
+		autoscalerFQDN string
+		found          bool
+	)
+
+	for _, pair := range got {
+		if pair.Service == "autoscaler" {
+			autoscalerFQDN = pair.FQDN
+			found = true
+		}
+	}
+
+	assert.True(t, found, "autoscaler must be present in the OCF-scoped service list")
+	assert.Equal(t, "autoscaler."+base, autoscalerFQDN, "autoscaler is not system-scoped, keeps the flat form")
+}
+
+// TestOrderedServiceFQDNs_TailscaleBlocGetsSystemInfixPostFix models a
+// tailscale-ingress bloc directly: a bloc whose ingress is tailscale (not cloudflared)
 // still gets systemScoped == true via config.SystemScoped, so its
 // system-scoped services (e.g. concourse) still derive the .system. infix.
 func TestOrderedServiceFQDNs_TailscaleBlocGetsSystemInfixPostFix(t *testing.T) {
@@ -369,7 +397,7 @@ func TestExpectedIPForService_ReservedStateOrBastion(t *testing.T) {
 	}
 }
 
-// TestOriginForService_ExactMatchOnly covers originForService's D-05
+// TestOriginForService_ExactMatchOnly covers originForService's
 // exact-match-only precedence: rung O1 (cfExact) always wins when present;
 // rung O2 (the OCF-tier-only wildcard-suffix fallthrough against cf.Origin)
 // only fires for unmatched OCF-tier services; mgmt-tier never reaches O2;
@@ -411,7 +439,7 @@ func TestOriginForService_ExactMatchOnly(t *testing.T) {
 			// FQDN disjoint from both the cfExact key (a different, .system.
 			// hostname for the same service) and the wildcard-suffix rung
 			// (the override string does not end in .system.<base>) — a pure
-			// D-05 naming-independence example, unrelated to systemScoped.
+			// naming-independence example, unrelated to systemScoped.
 			name:    "TestOriginForService_DisjointNamingSchemesAllBlank",
 			envType: vault.MgmtEnvType,
 			fqdn:    "shield.util." + base,
@@ -564,8 +592,8 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 // TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated is the
 // builder-level counterpart to originForService's gate-affected case: no
 // explicit override for concourse, a cf.Services[] entry carrying its
-// .system.-infixed derived hostname, and ingress.provider set (D-09's
-// systemScoped signal) rather than cloudflare.enabled — confirming the
+// .system.-infixed derived hostname, and ingress.provider set (the
+// tailscale systemScoped signal) rather than cloudflare.enabled — confirming the
 // wire-up, not re-testing originForService's own logic.
 func TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated(t *testing.T) {
 	t.Setenv("OCFP_HOME", t.TempDir())
