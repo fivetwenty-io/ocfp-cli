@@ -290,6 +290,10 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 		return nil
 	}
 
+	if err := validateWorkloadSubnetCIDRs(p.Config, "pve vault provider: subnets", pveWorkloadSubnetCIDRs(subnets, p.BlocName)); err != nil {
+		return err
+	}
+
 	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
 
 	for _, sub := range subnets {
@@ -433,6 +437,10 @@ func (p *PVEVaultProvider) configureReservedIPsForEnv(envType string) error {
 		return p.writeFallbackReservedIPs(envType)
 	}
 
+	if err := validateWorkloadSubnetCIDRs(p.Config, "pve vault provider: reserved-ips", pveWorkloadSubnetCIDRs(subnets, p.BlocName)); err != nil {
+		return err
+	}
+
 	subnetsPath := p.PathBuilder.GetSubnetsPath(envType)
 
 	for _, sub := range subnets {
@@ -495,6 +503,37 @@ func pveWorkloadSubnetIndex(genesisName string) (int, bool) {
 	}
 
 	return idx, true
+}
+
+// pveWorkloadSubnetCIDRs extracts the ocfp/workload subnet CIDRs from a
+// bloc's bootstrap-state subnet resources, for validateWorkloadSubnetCIDRs.
+// Mirrors the same bloc-prefix/genesis-name/workload-index filtering
+// ConfigureSubnets and configureReservedIPsForEnv apply in their own
+// per-subnet loops, so the pre-loop enforcement check and the loop it
+// guards can never disagree about which resources count as workload
+// subnets.
+func pveWorkloadSubnetCIDRs(subnets []*state.Resource, blocName string) []string {
+	cidrs := make([]string, 0, len(subnets))
+
+	for _, sub := range subnets {
+		if !strings.HasPrefix(sub.Name, blocName+"-") {
+			continue
+		}
+
+		genesisName := strings.TrimPrefix(sub.Name, blocName+"-")
+		if _, ok := pveWorkloadSubnetIndex(genesisName); !ok {
+			continue
+		}
+
+		cidr, _ := sub.Properties["cidr"].(string)
+		if cidr == "" {
+			continue
+		}
+
+		cidrs = append(cidrs, cidr)
+	}
+
+	return cidrs
 }
 
 // writeTieredReservedIPs writes the genesis-consumed reserved-ips block for a

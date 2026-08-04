@@ -676,6 +676,14 @@ func (m *Manager) createPVEVirtualSubnets(ctx context.Context, cidr string, netw
 			errCannotSplitNetwork, cidr, pveSubnetCount)
 	}
 
+	// Enforce the bloc's configured strategy minimum BEFORE recording any
+	// subnet (infra included): a strategy that needs more workload subnets
+	// than this carve produces must reject the whole bloc, not record a
+	// partial infra-only state ahead of the workload loop's own failure.
+	if err := m.validateWorkloadSubnetCount("pve", subnets[1:]); err != nil {
+		return err
+	}
+
 	// Subnet 0 → infra (no AZ assignment, hosts bastion/director/shared svc).
 	// The infra role's slot set is fixed regardless of idx; -1 makes that
 	// explicit rather than implying a workload position.
@@ -754,6 +762,10 @@ func (m *Manager) createStackitTripleSubnets(cidr string, networkID any) error {
 	// Skip first subnet, use next 3
 	subnets := allSubnets[1:]
 
+	if err := m.validateWorkloadSubnetCount("stackit-triple", subnets); err != nil {
+		return err
+	}
+
 	for i, subnetCIDR := range subnets {
 		name := fmt.Sprintf("%s-ocfp-%d", m.options.BlocName, i)
 
@@ -776,6 +788,10 @@ func (m *Manager) generateFallbackChildren(cidr string) []string {
 }
 
 func (m *Manager) createStackitSingleSubnet(cidr string, networkID any) error {
+	if err := m.validateWorkloadSubnetCount("stackit-single", []string{cidr}); err != nil {
+		return err
+	}
+
 	name := m.options.BlocName + "-subnet"
 
 	// The single-subnet layout has no per-AZ index; -1 marks it as such, and
@@ -811,6 +827,31 @@ func (m *Manager) addVirtualSubnetWithRole(name, subnetCIDR, parentCIDR string, 
 	}
 
 	m.addSubnetDependency(name)
+
+	return nil
+}
+
+// validateWorkloadSubnetCount enforces that workloadCIDRs — the CIDRs a
+// subnetStrategy is about to record as this bloc's workload subnets —
+// satisfy the bloc's configured netlayout.Layout minimum subnet count
+// (Layout.MinSubnets, checked via ValidateSubnetSet), before ANY subnet is
+// recorded to state. strategyName identifies the caller for the wrapped
+// error. Both Layer A (this function) and Layer B (internal/vault's
+// provider Configure* paths) enforce the identical check against the same
+// resolved layout, so a strategy that needs more workload subnets than a
+// bloc's carve produces (e.g. stackit-single's one subnet against
+// spanning's MinSubnets of 3) is rejected up front rather than silently
+// producing a sparse table (see
+// TestStackitSingleSubnet_SpanningDropsPinnedStatics).
+func (m *Manager) validateWorkloadSubnetCount(strategyName string, workloadCIDRs []string) error {
+	layout, err := m.config.ResolveReservedIPLayout()
+	if err != nil {
+		return fmt.Errorf("resolve reserved-ip layout strategy %q: %w", m.config.Network.Strategy, err)
+	}
+
+	if err := layout.ValidateSubnetSet(workloadCIDRs); err != nil {
+		return fmt.Errorf("bootstrap %s strategy: %w", strategyName, err)
+	}
 
 	return nil
 }

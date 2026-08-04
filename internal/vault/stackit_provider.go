@@ -1689,6 +1689,10 @@ func (s *StackitVaultProvider) configureSubnets(envType string, reporter provide
 		return err
 	}
 
+	if err := validateWorkloadSubnetCIDRs(s.Config, "stackit vault provider: subnets", collectWorkloadSubnetCIDRs(subnets)); err != nil {
+		return err
+	}
+
 	totalSubnets := len(subnets)
 	for i, subnet := range subnets { //nolint:varnamelen // i is clear in context
 		if reporter != nil {

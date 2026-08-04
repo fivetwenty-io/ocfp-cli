@@ -676,6 +676,10 @@ func (a *AWSVaultProvider) configureSubnets(envType string) error {
 		return a.configureFallbackSubnet(envType)
 	}
 
+	if err := validateWorkloadSubnetCIDRs(a.Config, "aws vault provider: subnets", collectWorkloadSubnetCIDRs(subnets)); err != nil {
+		return err
+	}
+
 	for i, subnet := range subnets {
 		a.logger.Debugw("Processing subnet",
 			"index", i,

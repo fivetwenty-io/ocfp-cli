@@ -5,9 +5,37 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// TestStackitConfigureSubnets_TooFewWorkloadSubnetsRejected proves Layer B
+// enforcement (Task 12): a STACKIT bloc explicitly set to the spanning
+// strategy (MinSubnets 3) whose Config.Subnets records only ONE ocfp
+// workload subnet must fail configureSubnets with
+// netlayout.ErrTooFewSubnets before writing anything — mirroring
+// internal/bootstrap's identical enforcement for Layer A (see
+// TestCreateSubnets_StackitSingle_SpanningRejectsTooFewSubnets).
+func TestStackitConfigureSubnets_TooFewWorkloadSubnetsRejected(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Provider: "stackit",
+		Region:   "eu01",
+		Network:  config.NetworkConfig{Strategy: "spanning"},
+		Subnets: []config.Subnet{
+			{CIDR: "10.4.4.0/22", Type: "ocfp"},
+		},
+	}
+	provider := NewStackitVaultProvider(cfg, mock, "test-bloc")
+
+	err := provider.configureSubnets("mgmt", nil, 1, 1)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, netlayout.ErrTooFewSubnets)
+
+	assert.Empty(t, mock.setMultipleCalls, "no subnet path written when the strategy minimum is not met")
+}
 
 func TestBuildSubnetDataContainsAllRequiredFields(t *testing.T) {
 	// Create a test provider
