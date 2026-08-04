@@ -54,7 +54,7 @@ func newCustomCatalogManager(t *testing.T) *bootstrap.Manager {
 		t.Fatalf("BuildCatalog: %v", err)
 	}
 
-	mgr, _, cfg := newAWSTestManager(t, nil)
+	mgr, _, cfg, _ := newAWSTestManager(t, nil)
 	cfg.NetworkCatalog = catalog
 	cfg.Network.Strategy = "custom-slots"
 
@@ -99,7 +99,7 @@ func TestSlotForNamedIP_InfraSubnetIsFixed(t *testing.T) {
 func TestSlotForNamedIP_FallsBack(t *testing.T) {
 	t.Parallel()
 
-	mgr, _, cfg := newAWSTestManager(t, nil)
+	mgr, _, cfg, _ := newAWSTestManager(t, nil)
 	cfg.Network.Strategy = "spanning"
 
 	if got := mgr.SlotForNamedIP("prod-net-subnet", "10.4.4.0/22", "bastion_ip", 3); got != 3 {
@@ -119,7 +119,7 @@ func TestSlotForNamedIP_FallsBack(t *testing.T) {
 func TestSlotForNamedIP_SpanningWorkloadIndex(t *testing.T) {
 	t.Parallel()
 
-	mgr, _, cfg := newAWSTestManager(t, nil)
+	mgr, _, cfg, _ := newAWSTestManager(t, nil)
 	cfg.Network.Strategy = "spanning"
 
 	if got := mgr.SlotForNamedIP("prod-ocfp-0", "10.4.4.0/22", "bastion_ip", 99); got != 3 {
