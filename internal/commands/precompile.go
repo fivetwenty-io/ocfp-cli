@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -84,13 +85,17 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 	}
 	addPrecompileFlags(boshCmd)
 
-	addCFFlags := func(c *cobra.Command) {
-		c.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+	addBlobstoreOverrideFlags := func(c *cobra.Command) {
 		c.Flags().String("blobstore-endpoint", "", "Blobstore base URL override (e.g. https://10.0.0.5:9000); bypasses bootstrap-state lookup")
 		c.Flags().String("blobstore-access-key", "", "Blobstore access key (or env OCFP_BLOBSTORE_ACCESS_KEY)")
 		c.Flags().String("blobstore-secret-key", "", "Blobstore secret key (or env OCFP_BLOBSTORE_SECRET_KEY; avoids argv exposure)")
 		c.Flags().String("blobstore-ca-cert-file", "", "Path to blobstore CA cert PEM (with --blobstore-endpoint)")
 		c.Flags().Bool("insecure-blobstore", false, "Skip TLS verification for the blobstore when no CA cert is available (self-signed only; never silently applied)")
+	}
+
+	addCFFlags := func(c *cobra.Command) {
+		c.Flags().String("cf-deployment", "", "Path to cf-deployment.yml (default ~/deployments/<bloc>/cf-deployment.yml)")
+		addBlobstoreOverrideFlags(c)
 	}
 
 	cfCmd := &cobra.Command{
@@ -116,7 +121,32 @@ Run after 'ocfp bootstrap' + 'ocfp artifacts provision' and before the matching
 	addPrecompileFlags(allCmd)
 	addCFFlags(allCmd)
 
-	cmd.AddCommand(boshCmd, cfCmd, allCmd)
+	stemcellCmd := &cobra.Command{
+		Use:   "stemcell <name> <version> <url>",
+		Short: "Pre-populate the artifacts blobstore with a stemcell tarball",
+		Long: `Cache a stemcell tarball in the artifacts blobstore ahead of a live
+director target, so 'ocfp pve stemcell upload' (or any 'bosh upload-stemcell')
+can reuse the cached copy instead of re-fetching from bosh.io/GCS every time.
+
+Idempotent: a warm run is a HEAD-only no-op unless --force is set. --dry-run
+reports whether the tarball is already cached without downloading or
+uploading anything.`,
+		Example: `  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
+    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584 \
+    --bloc dev --sha1 abcdef0123456789abcdef0123456789abcdef01
+  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
+    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584 \
+    --bloc dev --dry-run`,
+		Args: cobra.ExactArgs(3),
+		RunE: runPrecompileStemcell,
+	}
+	stemcellCmd.Flags().String("bloc", "", "Bloc name (required)")
+	stemcellCmd.Flags().Bool("force", false, "Re-download and re-upload even if already cached")
+	stemcellCmd.Flags().Bool("dry-run", false, "Report cache status without downloading, uploading, or otherwise mutating the blobstore")
+	stemcellCmd.Flags().String("sha1", "", "Expected sha1 of the stemcell tarball (e.g. from bosh.io); verified against the download before caching, skipped when empty")
+	addBlobstoreOverrideFlags(stemcellCmd)
+
+	cmd.AddCommand(boshCmd, cfCmd, allCmd, stemcellCmd)
 
 	return cmd
 }
@@ -184,26 +214,36 @@ func parsePrecompileFlags(cmd *cobra.Command) (precompileFlags, error) {
 // resolveBlobstore returns the artifacts blobstore lookup result, preferring
 // explicit override flags (needed on the bastion) over bootstrap-state lookup.
 func (f precompileFlags) resolveBlobstore(ctx context.Context) (*artifacts.LookupResult, error) {
-	if f.blobEndpoint == "" {
-		return lookupArtifactsFromState(ctx, f.bloc)
+	return resolveBlobstoreOverride(ctx, f.bloc, f.blobEndpoint, f.blobAccessKey, f.blobSecretKey, f.blobCACertFile)
+}
+
+// resolveBlobstoreOverride returns the artifacts blobstore lookup result,
+// preferring explicit override flags (needed on the bastion, which holds no
+// bootstrap state) over bootstrap-state lookup when blobEndpoint is empty.
+// Shared by every precompile verb (bosh/cf/all's precompileFlags.resolveBlobstore
+// and the stemcell verb) so the override-vs-state precedence lives in one place.
+func resolveBlobstoreOverride(ctx context.Context, bloc, blobEndpoint, blobAccessKey, blobSecretKey, blobCACertFile string) (*artifacts.LookupResult, error) {
+	if blobEndpoint == "" {
+		return lookupArtifactsFromState(ctx, bloc)
 	}
 
-	if f.blobAccessKey == "" || f.blobSecretKey == "" {
+	if blobAccessKey == "" || blobSecretKey == "" {
 		return nil, errors.New("--blobstore-endpoint requires --blobstore-access-key and --blobstore-secret-key")
 	}
 
 	lr := &artifacts.LookupResult{
-		Endpoint:  f.blobEndpoint,
-		AccessKey: f.blobAccessKey,
-		SecretKey: f.blobSecretKey,
+		Endpoint:  blobEndpoint,
+		AccessKey: blobAccessKey,
+		SecretKey: blobSecretKey,
 		// Manual --blobstore-endpoint overrides carry no tls.mode from state;
 		// tag as self-signed so precompileS3Client's EndpointForLookup call
 		// treats a missing CA cert as "needs the explicit --insecure-blobstore
 		// opt-in", not as an internal-ca state inconsistency.
 		TLSMode: config.ArtifactsTLSModeSelfSigned,
 	}
-	if f.blobCACertFile != "" {
-		pem, err := os.ReadFile(f.blobCACertFile) //nolint:gosec // operator-supplied path
+
+	if blobCACertFile != "" {
+		pem, err := os.ReadFile(blobCACertFile) //nolint:gosec // operator-supplied path
 		if err != nil {
 			return nil, fmt.Errorf("reading blobstore CA cert: %w", err)
 		}
@@ -319,7 +359,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 		Director:   precompile.NewBOSHDirector(f.boshEnv),
 		S3:         s3c,
 		HTTP:       &http.Client{Timeout: 30 * time.Minute},
-		Bucket:     f.bloc + "-ocf-bosh",
+		Bucket:     stemcellBucket(f.bloc),
 		Endpoint:   ep,
 		Deployment: f.bloc + "-precompile-cf",
 		WorkDir:    workDir,
@@ -333,6 +373,154 @@ func runPrecompileCF(cmd *cobra.Command) error {
 
 	return emitPinOps(res, f.stemcell, "ocfp precompile cf",
 		filepath.Join(f.outputDir, "manifests", "cf"), f.dryRun, log)
+}
+
+// precompileObjectAPI is the S3 method subset the stemcell verb needs to pass
+// to internal/precompile's ResolveStemcell/HeadCompiled. Declared locally
+// rather than imported: precompile's own equivalent (objectAPI) is
+// unexported, but Go interface satisfaction is structural, so a value of
+// this type — real *s3.Client or a test fake — is assignable to precompile's
+// parameter without needing to name its type.
+type precompileObjectAPI interface {
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+}
+
+// stemcellBucket is the artifacts blobstore bucket stemcell tarballs are
+// cached in, matching the bucket the cf verb already uses for compiled CF
+// releases (both are BOSH-consumable artifacts for the same bloc).
+func stemcellBucket(bloc string) string {
+	return bloc + "-ocf-bosh"
+}
+
+// runPrecompileStemcell implements `ocfp precompile stemcell <name> <version>
+// <url>`. It resolves the artifacts blobstore (override flags or bootstrap
+// state, same precedence as the cf verb), builds an S3 client, and delegates
+// to runPrecompileStemcellCore.
+func runPrecompileStemcell(cmd *cobra.Command, args []string) error {
+	cmd.SilenceUsage = true
+
+	name, version, url := args[0], args[1], args[2]
+
+	bloc, _ := cmd.Flags().GetString("bloc")
+	if bloc == "" {
+		bloc = viper.GetString("bloc")
+	}
+
+	if bloc == "" {
+		return ErrPrecompileBlocRequired
+	}
+
+	force, _ := cmd.Flags().GetBool("force")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	sha1, _ := cmd.Flags().GetString("sha1")
+
+	blobEndpoint, _ := cmd.Flags().GetString("blobstore-endpoint")
+	blobAccessKey, _ := cmd.Flags().GetString("blobstore-access-key")
+	blobSecretKey, _ := cmd.Flags().GetString("blobstore-secret-key")
+	blobCACertFile, _ := cmd.Flags().GetString("blobstore-ca-cert-file")
+	insecureBlobstore, _ := cmd.Flags().GetBool("insecure-blobstore")
+
+	// Allow secrets via env so they need not appear in argv (process list),
+	// same precedence as the cf verb's parsePrecompileFlags.
+	if blobAccessKey == "" {
+		blobAccessKey = os.Getenv("OCFP_BLOBSTORE_ACCESS_KEY")
+	}
+
+	if blobSecretKey == "" {
+		blobSecretKey = os.Getenv("OCFP_BLOBSTORE_SECRET_KEY")
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	lr, err := resolveBlobstoreOverride(ctx, bloc, blobEndpoint, blobAccessKey, blobSecretKey, blobCACertFile)
+	if err != nil {
+		return err
+	}
+
+	s3c, ep, err := precompileS3Client(bloc, lr, insecureBlobstore)
+	if err != nil {
+		return err
+	}
+
+	hc := &http.Client{Timeout: 30 * time.Minute}
+
+	return runPrecompileStemcellCore(ctx, s3c, hc, cmd.OutOrStdout(), stemcellBucket(bloc), ep, name, version, url, sha1, force, dryRun)
+}
+
+// runPrecompileStemcellCore resolves (or, in dry-run, reports on) a stemcell
+// tarball's cache state in the artifacts blobstore. Factored out from
+// runPrecompileStemcell so it is unit-testable against a fake objectAPI/HTTP
+// client, without needing a live bootstrap state or blobstore.
+//
+// dryRun never calls PutObject: it performs a HeadObject-only presence check
+// (mirroring precompile.Compiler.ResolveBlobstore's own dry-run behavior,
+// which still HEADs but never PUTs) and reports the plan, leaving the cache
+// untouched. A non-dry-run call delegates entirely to
+// precompile.ResolveStemcell, which owns the present/download/upload
+// decision and the optional sha1 verification.
+//
+// Failure modes: empty name, version, or url returns an error before any
+// I/O — url is required even in dry-run, since a caller with nothing to
+// fetch on a cache miss cannot report a meaningful plan. A HeadObject error
+// (dry-run) or any ResolveStemcell error (non-dry-run) is wrapped and
+// returned; neither path partially mutates the cache on error.
+func runPrecompileStemcellCore(
+	ctx context.Context,
+	s3c precompileObjectAPI,
+	hc *http.Client,
+	out io.Writer,
+	bucket, endpoint, name, version, upstreamURL, expectedSHA1 string,
+	force, dryRun bool,
+) error {
+	if name == "" {
+		return errors.New("precompile stemcell: name is required")
+	}
+
+	if version == "" {
+		return fmt.Errorf("precompile stemcell %s: version is required", name)
+	}
+
+	if upstreamURL == "" {
+		return fmt.Errorf("precompile stemcell %s/%s: url is required", name, version)
+	}
+
+	log := logger.WithOperation("precompile-stemcell")
+	key := precompile.StemcellKey(name, version)
+	resolvedURL := precompile.HTTPSURL(endpoint, bucket, key)
+
+	if dryRun {
+		_, cached, err := precompile.HeadCompiled(ctx, s3c, bucket, key)
+		if err != nil {
+			return fmt.Errorf("precompile stemcell %s/%s: checking cache: %w", name, version, err)
+		}
+
+		switch {
+		case cached && !force:
+			_, _ = fmt.Fprintf(out, "stemcell %s/%s: already cached at %s (dry-run, no changes made)\n", name, version, resolvedURL)
+		case cached && force:
+			_, _ = fmt.Fprintf(out, "stemcell %s/%s: cached at %s, --force would re-fetch %s and overwrite it (dry-run, no changes made)\n", name, version, resolvedURL, upstreamURL)
+		default:
+			_, _ = fmt.Fprintf(out, "stemcell %s/%s: not cached; would fetch %s and cache at %s (dry-run, no changes made)\n", name, version, upstreamURL, resolvedURL)
+		}
+
+		log.Infof("dry-run: stemcell %s/%s plan reported, blobstore not mutated", name, version)
+
+		return nil
+	}
+
+	resolvedURL, sha256hex, err := precompile.ResolveStemcell(ctx, s3c, hc, bucket, endpoint, name, version, upstreamURL, expectedSHA1, force)
+	if err != nil {
+		return fmt.Errorf("precompile stemcell %s/%s: %w", name, version, err)
+	}
+
+	_, _ = fmt.Fprintf(out, "stemcell %s/%s cached: %s (sha256=%s)\n", name, version, resolvedURL, sha256hex)
+	log.Infof("stemcell %s/%s ready at %s", name, version, resolvedURL)
+
+	return nil
 }
 
 // lookupArtifactsFromState resolves the artifacts blobstore VM from local state
