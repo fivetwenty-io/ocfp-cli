@@ -107,25 +107,8 @@ func findReservedIP(outputs map[string]interface{}, role, blocName string, layou
 	sort.Strings(matchingKeys)
 
 	if layout != nil {
-		if idx, pinned := layout.PinnedWorkloadIndex(role + "_ip"); pinned {
-			// The subnet recorded at the pinned index (bootstrap's
-			// subnet_<name>_index outputs) is authoritative — it holds under
-			// any subnet naming, operator names included.
-			if name, ok := workloadSubnetNameForIndex(outputs, idx); ok {
-				if value, ok := outputs["reserved_"+name+suffix].(string); ok {
-					return value
-				}
-			}
-
-			// Legacy states predate the index outputs; the default
-			// "<bloc>-ocfp-<idx>" shape is the only remaining pin candidate.
-			// Exact key, not a suffix match: a bloc whose own name ends in
-			// "-ocfp-<n>" would otherwise masquerade as a subnet index.
-			pinnedKey := fmt.Sprintf("reserved_%s-ocfp-%d%s", blocName, idx, suffix)
-
-			if value, ok := outputs[pinnedKey].(string); ok {
-				return value
-			}
+		if value, ok := pinnedReservedIP(outputs, role, blocName, suffix, layout); ok {
+			return value
 		}
 	}
 
@@ -135,6 +118,35 @@ func findReservedIP(outputs map[string]interface{}, role, blocName string, layou
 	}
 
 	return value
+}
+
+// pinnedReservedIP resolves role's reserved IP from the workload subnet its
+// layout pins it to. The subnet recorded at the pinned index (bootstrap's
+// subnet_<name>_index outputs) is authoritative — it holds under any subnet
+// naming, operator names included. Legacy states predate the index outputs;
+// there the default "<bloc>-ocfp-<idx>" shape is the only remaining pin
+// candidate, as an exact key rather than a suffix match — a bloc whose own
+// name ends in "-ocfp-<n>" would otherwise masquerade as a subnet index.
+// ok is false when the role is unpinned or neither key holds a string.
+func pinnedReservedIP(
+	outputs map[string]interface{}, role, blocName, suffix string, layout netlayout.Layout,
+) (string, bool) {
+	idx, pinned := layout.PinnedWorkloadIndex(role + "_ip")
+	if !pinned {
+		return "", false
+	}
+
+	if name, ok := workloadSubnetNameForIndex(outputs, idx); ok {
+		if value, isString := outputs["reserved_"+name+suffix].(string); isString {
+			return value, true
+		}
+	}
+
+	pinnedKey := fmt.Sprintf("reserved_%s-ocfp-%d%s", blocName, idx, suffix)
+
+	value, isString := outputs[pinnedKey].(string)
+
+	return value, isString
 }
 
 // workloadSubnetNameForIndex returns the subnet name recorded at workload
