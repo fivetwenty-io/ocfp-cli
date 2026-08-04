@@ -84,7 +84,7 @@ func orderedServiceFQDNs(envType string, explicit map[string]string, base string
 // and a stale pre-migration key on a lower-sorted subnet must not shadow it
 // — otherwise the keys are sorted and the first is used; this never errors,
 // an absent role simply returns "".
-func findReservedIP(outputs map[string]interface{}, role string, layout netlayout.Layout) string {
+func findReservedIP(outputs map[string]interface{}, role, blocName string, layout netlayout.Layout) string {
 	if len(outputs) == 0 {
 		return ""
 	}
@@ -107,13 +107,12 @@ func findReservedIP(outputs map[string]interface{}, role string, layout netlayou
 
 	if layout != nil {
 		if idx, pinned := layout.PinnedWorkloadIndex(role + "_ip"); pinned {
-			pinnedSuffix := fmt.Sprintf("-ocfp-%d%s", idx, suffix)
+			// Exact key, not a suffix match: a bloc whose own name ends in
+			// "-ocfp-<n>" would otherwise masquerade as a subnet index.
+			pinnedKey := fmt.Sprintf("reserved_%s-ocfp-%d%s", blocName, idx, suffix)
 
-			for _, key := range matchingKeys {
-				value, ok := outputs[key].(string)
-				if ok && strings.HasSuffix(key, pinnedSuffix) {
-					return value
-				}
+			if value, ok := outputs[pinnedKey].(string); ok {
+				return value
 			}
 		}
 	}
@@ -167,13 +166,13 @@ func loadReservedOutputs(blocName string) map[string]interface{} {
 // resolved reserved-IP strategy for pinned-index preference (see
 // findReservedIP); nil degrades to the sorted-first lookup.
 func expectedIPForService(
-	service string, reservedOutputs map[string]interface{}, bastionIP string, layout netlayout.Layout,
+	service string, reservedOutputs map[string]interface{}, bastionIP, blocName string, layout netlayout.Layout,
 ) string {
 	if service == "bastion" && bastionIP != "" {
 		return bastionIP
 	}
 
-	return findReservedIP(reservedOutputs, service, layout)
+	return findReservedIP(reservedOutputs, service, blocName, layout)
 }
 
 // originForService returns where traffic for a service's FQDN terminates
@@ -270,7 +269,7 @@ func collectServiceFQDNSection(cfg *config.Config) (ui.Section, []string) {
 
 	appendEnvRows := func(envType string, explicit map[string]string) {
 		for _, pair := range orderedServiceFQDNs(envType, explicit, base, systemScoped) {
-			expected := expectedIPForService(pair.Service, reservedOutputs, cfg.BastionIP, layout)
+			expected := expectedIPForService(pair.Service, reservedOutputs, cfg.BastionIP, cfg.Name, layout)
 			origin := originForService(envType, pair.FQDN, cfExact, cfg.Cloudflare)
 
 			section.Rows = append(section.Rows, []string{
