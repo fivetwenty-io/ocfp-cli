@@ -42,7 +42,7 @@ const (
 // (the bootstrap keypair's public key is installed on the bastion and the
 // artifacts VM), so a single -i covers the ProxyJump and the target.
 type artifactsProvisionConn struct {
-	KeyPath       string // local private key path (~/.ocfp/<bloc>/ssh/id_ed25519)
+	KeyPath       string // local private key path (config.OcfpSSHKeyDir(bloc)/id_ed25519)
 	User          string // login user for both bastion and artifacts (e.g. ubuntu)
 	BastionHost   string // bastion address reachable from the operator (tailscale IP)
 	ArtifactsHost string // artifacts SDN IP, reachable from the bastion

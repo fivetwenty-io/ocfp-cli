@@ -570,7 +570,7 @@ func (m *Manager) resolveBlocCACert() (pemText, source string, err error) {
 }
 
 // blocCACertFromState reads the operator's local bootstrap state
-// (~/.ocfp/<bloc>/state/<bloc>.json) for the artifacts VM resource and
+// (state.GetStateDir(bloc)/<bloc>.json) for the artifacts VM resource and
 // returns its ca_cert property when the resource is recorded in
 // internal-ca mode. Any failure to resolve or load local state is treated
 // as "not found here" (ok=false) — resolveBlocCACert falls back to vault.

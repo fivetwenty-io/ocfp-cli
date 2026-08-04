@@ -146,8 +146,7 @@ func parseScaleArgs(args []string) (string, int, error) {
 // initializeScaleLogger initializes logging for the scale command.
 func initializeScaleLogger() (logger.Logger, error) {
 	blocName := viper.GetString("bloc")
-	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := config.OcfpHome()
+	logDir := config.GetLogDir()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

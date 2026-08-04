@@ -102,11 +102,33 @@ func (md *ModeDetector) checkHostnamePattern() bool {
 	return false
 }
 
+// bastionMarkerPath resolves the path to a bastion state marker file under
+// the new XDG state root, with a dual-read fallback to the pre-migration
+// ~/.ocfp layout where the remote bastion provisioning scripts still write
+// these markers.
+func bastionMarkerPath(name string) string {
+	newPath := filepath.Join(config.StateHome(), name)
+	legacyPath := filepath.Join(config.OcfpHome(), name)
+
+	path, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return path
+}
+
+// bastionStateRoot resolves the bastion's state-root directory: the new XDG
+// state root, with a dual-read fallback to the pre-migration ~/.ocfp
+// directory when only that exists.
+func bastionStateRoot() string {
+	path, _ := config.ResolveExisting(config.StateHome(), config.OcfpHome())
+
+	return path
+}
+
 // checkMarkerFiles checks for bastion-specific marker files.
 func (md *ModeDetector) checkMarkerFiles() bool {
 	markerFiles := []string{
-		filepath.Join(config.OcfpHome(), "provisioned"),
-		filepath.Join(config.OcfpHome(), "bastion-init-completed"),
+		bastionMarkerPath("provisioned"),
+		bastionMarkerPath("bastion-init-completed"),
 	}
 
 	for _, marker := range markerFiles {
@@ -126,7 +148,7 @@ func (md *ModeDetector) checkDirectoryStructure() bool {
 	ocfpDirs := []string{
 		os.Getenv("HOME") + "/ocfp",
 		os.Getenv("HOME") + "/ocfp/deployments",
-		config.OcfpHome(),
+		bastionStateRoot(),
 	}
 
 	for _, dir := range ocfpDirs {
@@ -526,7 +548,7 @@ func getHostname() string {
 
 // isOCFPProvisioned checks if OCFP is provisioned.
 func isOCFPProvisioned() bool {
-	markerFile := filepath.Join(config.OcfpHome(), "provisioned")
+	markerFile := bastionMarkerPath("provisioned")
 	_, err := os.Stat(markerFile)
 
 	return err == nil

@@ -128,20 +128,12 @@ func Initialize(cfg Config) error {
 //
 //nolint:ireturn // returning zapcore.Core interface is intentional (zap API)
 func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Core, error) {
-	// Place logs under ~/.ocfp/{bloc}/logs/{command}/[{subcommand}/]
-	baseDir := cfg.LogDir
-	if baseDir == "" {
-		// Fallback to OcfpHome if not provided
-		baseDir = config.OcfpHome()
-	}
+	// Place logs under {bloc}/logs/{command}/[{subcommand}/], resolved from
+	// resolveLogsDir (StateHome()/[{bloc}/]logs by default).
+	logsDir := resolveLogsDir(cfg)
 
 	// Build path components
-	var pathParts []string
-	if cfg.BlocName != "" {
-		pathParts = append(pathParts, baseDir, cfg.BlocName, "logs", cfg.Command)
-	} else {
-		pathParts = append(pathParts, baseDir, "logs", cfg.Command)
-	}
+	pathParts := []string{logsDir, cfg.Command}
 
 	// Add subcommand directory if present
 	if cfg.Subcommand != "" {
@@ -180,6 +172,46 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
 
 	return zapcore.NewCore(jsonEncoder, zapcore.AddSync(file), atom), nil
+}
+
+// resolveLogsDir resolves the {bloc}/logs (or bare logs, when BlocName is
+// empty) directory that per-command log subdirectories are created under.
+//
+// When cfg.LogDir is set, the caller already made its own base-directory
+// decision (e.g. config.StateHome() or config.GetLogDir()), so it is
+// honored as-is, with only the bloc/logs suffix appended here.
+//
+// When cfg.LogDir is empty (root.go's PersistentPreRunE never sets it),
+// this falls back to the state-class root with the same dual-read
+// fallback every sibling call site uses (see vault.go's inception vault
+// log dir resolution): prefer the XDG state directory, but read from the
+// pre-migration ~/.ocfp/{bloc}/logs directory when only that exists. Without
+// this, a bloc with unmigrated logs would have its logs split across two
+// roots depending on which code path initialized the logger for a given
+// command.
+func resolveLogsDir(cfg Config) string {
+	if cfg.LogDir != "" {
+		if cfg.BlocName != "" {
+			return filepath.Join(cfg.LogDir, cfg.BlocName, "logs")
+		}
+
+		return filepath.Join(cfg.LogDir, "logs")
+	}
+
+	newBase := config.StateHome()
+	legacyBase := config.OcfpHome()
+
+	if cfg.BlocName != "" {
+		newBase = filepath.Join(newBase, cfg.BlocName, "logs")
+		legacyBase = filepath.Join(legacyBase, cfg.BlocName, "logs")
+	} else {
+		newBase = filepath.Join(newBase, "logs")
+		legacyBase = filepath.Join(legacyBase, "logs")
+	}
+
+	resolved, _ := config.ResolveExisting(newBase, legacyBase)
+
+	return resolved
 }
 
 // determineLogLevel determines the log level based on configuration.

@@ -91,7 +91,7 @@ You can specify:
   ocfp logs tail -f init
 
   # Tail a specific log file
-  ocfp logs tail -f ~/.ocfp/520-aws-wayne/logs/init/20251023-070445.log
+  ocfp logs tail -f ~/.local/state/ocfp/520-aws-wayne/logs/init/20251023-070445.log
 
   # Tail last 100 lines and follow
   ocfp logs tail -f -n 100 init
@@ -119,8 +119,10 @@ You can specify:
 func getLogsLongDescription() string {
 	return `View and manage OCFP CLI invocation logs.
 
-Log files are organized under ~/.ocfp/{bloc}/logs/{command}/[{subcommand}/]
-with timestamps and optional request IDs.
+Log files are organized under ~/.local/state/ocfp/{bloc}/logs/{command}/[{subcommand}/]
+(or $XDG_STATE_HOME/ocfp if set) with timestamps and optional request IDs.
+Falls back to the legacy ~/.ocfp/{bloc}/logs/... layout when only that exists;
+set OCFP_HOME to force it.
 
 Display Modes:
   Default:  Group logs by command with counts and latest timestamps

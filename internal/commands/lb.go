@@ -61,8 +61,7 @@ load balancers including adding/removing services and checking status.`,
 		PersistentPreRunE: func(_cmd *cobra.Command, _args []string) error {
 			// Initialize per-command file logger; keep stdout for UX
 			blocName := viper.GetString("bloc")
-			// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-			logDir := config.OcfpHome()
+			logDir := config.GetLogDir()
 
 			return logger.Initialize(logger.Config{
 				Level:      viper.GetString("log_level"),
