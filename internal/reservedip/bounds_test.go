@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,14 +15,12 @@ import (
 // pins to the narrowest CIDR that provider's own test suite documents as a
 // supported, currently-passing case — the closest thing to a written sizing
 // contract that exists in the repo today.
+//
+// AWS has no entry here: its flat offset table (calculateSystemIPs) was
+// deleted in favor of the shared netlayout strategy engine (see
+// internal/vault/aws_reserved_ips_test.go), so there is no
+// provider-specific AWS offset table left to audit.
 const (
-	// awsMinSupportedNetworkBits: internal/vault/aws_provider_test.go's
-	// TestAWS_CalculateSystemIPs_SubnetNotAtZeroBoundary and
-	// TestAWS_ParseSubnetCIDR_Slash25 exercise 10.5.0.128/25 and 10.5.1.0/25
-	// as supported, non-.0-boundary subnets. No narrower CIDR appears
-	// anywhere in AWS's reserved-IP test coverage.
-	awsMinSupportedNetworkBits = 25
-
 	// stackitMinSupportedNetworkBits: internal/vault/stackit_reserved_ips_test.go,
 	// internal/vault/stackit_contract_test.go, and
 	// internal/vault/stackit_mock_test.go all exercise
@@ -38,8 +35,8 @@ const (
 )
 
 // TestAudit_ProviderTables_NoExistingOutOfBoundsEntries is an audit probe:
-// it proves whether the AWS and STACKIT default reserved-IP tables, AS THEY
-// EXIST TODAY, already contain any offset or range endpoint past
+// it proves whether the STACKIT default reserved-IP table, AS IT EXISTS
+// TODAY, already contains any offset or range endpoint past
 // reservedip.CalculateLastHostOffset for that provider's minimum supported
 // CIDR — a precondition for the enforced ErrOffsetBeyondSubnet check in the
 // shared reservedip.Calculate engine. If this test ever fails, the
@@ -49,42 +46,9 @@ const (
 // Test-only: this file adds no bounds-checking to internal/reservedip or
 // internal/vault, and changes no production code.
 func TestAudit_ProviderTables_NoExistingOutOfBoundsEntries(t *testing.T) {
-	t.Run("AWS", func(t *testing.T) {
-		auditFlatOffsets(t, "AWS", awsMinSupportedNetworkBits, map[string]int{
-			// Read live from the exported constants
-			// internal/vault/aws_provider.go's calculateSystemIPs assigns from
-			// (internal/vault/stackit_provider.go:42-53) rather than
-			// transcribed, so this half of the audit can never drift from
-			// production.
-			"jumpbox_ip":      vault.JumpboxOffset,
-			"bosh_ip":         vault.BoshIPOffset,
-			"cf_router_0_ip":  vault.CFRouterOffset,
-			"cf_router_1_ip":  vault.CFRouter1Offset,
-			"diego_cell_0_ip": vault.DiegoCellOffset,
-			"diego_cell_1_ip": vault.DiegoCell1Offset,
-		})
-	})
-
 	t.Run("STACKIT", func(t *testing.T) {
 		auditAssignmentTable(t, "STACKIT", stackitMinSupportedNetworkBits, stackitDefaultReservedIPAssignmentsSnapshot())
 	})
-}
-
-// auditFlatOffsets asserts every offset in a flat name->offset table (AWS's
-// shape) is non-negative and does not exceed the last usable host offset for
-// networkBits.
-func auditFlatOffsets(t *testing.T, provider string, networkBits int, offsets map[string]int) {
-	t.Helper()
-
-	lastHost := reservedip.CalculateLastHostOffset(networkBits)
-
-	for key, offset := range offsets {
-		t.Run(key, func(t *testing.T) {
-			assert.GreaterOrEqualf(t, offset, 0, "%s %s offset %d must not be negative", provider, key, offset)
-			assert.LessOrEqualf(t, offset, lastHost,
-				"%s %s offset %d exceeds last usable host offset %d for /%d", provider, key, offset, lastHost, networkBits)
-		})
-	}
 }
 
 // auditAssignmentTable walks a reservedip.AssignmentTable (STACKIT's and

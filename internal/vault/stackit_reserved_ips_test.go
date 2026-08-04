@@ -10,7 +10,8 @@ import (
 
 // TestAddOffsetToIP tests IP offset calculation. addOffsetToIP stays a
 // production-reachable delegate to reservedip.AddOffsetToIP: AWS's
-// calculateSystemIPs still calls it directly (see stackit_provider.go).
+// parseSubnetCIDR still calls it directly to compute a subnet's last usable
+// host (see aws_provider.go).
 func TestAddOffsetToIP(t *testing.T) {
 	tests := []struct {
 		name   string
