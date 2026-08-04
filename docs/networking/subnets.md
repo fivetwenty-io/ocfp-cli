@@ -145,34 +145,11 @@ The offsets are not STACKIT-specific. They come from the bloc's resolved reserve
 
 #### Triple Subnets (`spanning`)
 
-A role pinned to one subnet index gets no key at all in the other subnets' outputs:
-
-| Slot | Key | Service | Written on |
-|------|-----|---------|------------|
-| .3 | `bastion_ip` | Bastion | ocfp-0 |
-| .4 | `bosh_ip` | BOSH Director | ocfp-0 |
-| .5 | `vault_ip` | Vault | every subnet |
-| .6 | `jumpbox_ip` | Jumpbox | every subnet |
-| .7 | `concourse_ip` | Concourse | every subnet |
-| .8 | `prometheus_ip` | Prometheus | every subnet |
-| .9 | `shield_ip` | SHIELD | ocfp-0 |
-| .10 | `blacksmith_ip` | Blacksmith | ocfp-0 |
-| .11 | `artifacts_ip` | Artifacts | every subnet |
-| .12 | `wireguard_ip` | WireGuard | ocfp-0 |
-| .13 | `ovpn_ip` | OpenVPN | ocfp-0 |
-| .14 | `rustfs_ip` | RustFS blobstore | ocfp-0 |
-| .15 | `proxycache_ip` | Proxy cache | ocfp-0 |
-| .16 | `nfs_ip` | NFS | ocfp-0 |
-| .17 | `ocfp_ui_ip` | OCFP UI | ocfp-2 |
-| .18 | `doomsday_ip` | Doomsday | ocfp-1 |
-| .19 | `shout_ip` | Shout | ocfp-1 |
-| .20 | `garage_ip` | Garage blobstore | ocfp-0 |
-| .21 | `rustfs_ip_smoke` | RustFS smoke errand | every subnet |
-| .22 | `garage_ip_smoke` | Garage smoke errand | every subnet |
+The static offset table and each role's pinned subnet index are `spanning`'s own — see [Reserved-IP Strategies §6](reserved-ip-strategies.md#6-the-spanning-strategy) for the canonical tables. A role pinned to one subnet index gets no key at all in the other subnets' outputs — the key is absent, not reserved-but-blank.
 
 #### Single Subnet (`wide`)
 
-`wide` is colocated: the one virtual subnet carries all twenty statics above, at the same offsets, with no per-index distinction.
+`wide` is colocated: the one virtual subnet carries all twenty mgmt statics, at the same offsets, with no per-index distinction.
 
 #### Band Outputs
 
