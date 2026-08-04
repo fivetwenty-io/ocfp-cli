@@ -2,6 +2,8 @@ package config_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -63,38 +65,136 @@ func TestNetworkStrategyUnmarshalAliases(t *testing.T) {
 }
 
 // TestNetworkStrategyUnmarshalUnknown proves an unrecognized network.strategy
-// value fails at UnmarshalYAML time with an error wrapping
-// netlayout.ErrUnknownStrategy, so operators get an actionable error instead
-// of an unresolved strategy leaking silently into bootstrap.
+// value no longer fails at UnmarshalYAML time — BYO strategy names are
+// unknown to bare UnmarshalYAML (they only become known once
+// network.strategyPaths is loaded into a catalog), so name validation moves
+// to LoadWithParams, where the bloc's catalog is built and
+// ResolveReservedIPLayout is exercised eagerly. See
+// TestNetworkStrategyLoadWithParamsUnknown below for that failure mode.
 func TestNetworkStrategyUnmarshalUnknown(t *testing.T) {
 	t.Parallel()
 
 	var nc config.NetworkConfig
 
 	err := yaml.Unmarshal([]byte("strategy: bogus-strategy"), &nc)
-	if err == nil {
-		t.Fatal("expected error for unknown strategy, got nil")
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if !errors.Is(err, netlayout.ErrUnknownStrategy) {
-		t.Errorf("error = %v, want wrapping netlayout.ErrUnknownStrategy", err)
+	if nc.Strategy != "bogus-strategy" {
+		t.Errorf("Strategy = %q, want %q (validation deferred to LoadWithParams)", nc.Strategy, "bogus-strategy")
 	}
 }
 
-// TestNetworkStrategyUnmarshalUnknownAlias proves the snake_case alias is
-// validated identically to the camelCase key.
+// TestNetworkStrategyUnmarshalUnknownAlias proves the snake_case alias
+// parses identically to the camelCase key, with the same deferred
+// validation as TestNetworkStrategyUnmarshalUnknown.
 func TestNetworkStrategyUnmarshalUnknownAlias(t *testing.T) {
 	t.Parallel()
 
 	var nc config.NetworkConfig
 
 	err := yaml.Unmarshal([]byte("network_strategy: bogus-strategy"), &nc)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if nc.Strategy != "bogus-strategy" {
+		t.Errorf("Strategy = %q, want %q (validation deferred to LoadWithParams)", nc.Strategy, "bogus-strategy")
+	}
+}
+
+// TestNetworkStrategyLoadWithParamsUnknown proves an unrecognized
+// network.strategy now fails at LoadWithParams time — the point at which
+// the bloc's catalog (built-ins plus any network.strategyPaths definitions)
+// exists and ResolveReservedIPLayout can actually be attempted — with an
+// error wrapping netlayout.ErrUnknownStrategy, so operators still get an
+// actionable error instead of an unresolved strategy leaking silently into
+// bootstrap.
+func TestNetworkStrategyLoadWithParamsUnknown(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte("" +
+		"blocs:\n" +
+		"  test:\n" +
+		"    name: test\n" +
+		"    provider: stackit\n" +
+		"    network:\n" +
+		"      strategy: bogus-strategy\n")
+
+	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	_, err := config.LoadWithParams(cfgPath, "test")
 	if err == nil {
-		t.Fatal("expected error for unknown strategy, got nil")
+		t.Fatal("LoadWithParams: want error for unknown network.strategy, got nil")
 	}
 
 	if !errors.Is(err, netlayout.ErrUnknownStrategy) {
-		t.Errorf("error = %v, want wrapping netlayout.ErrUnknownStrategy", err)
+		t.Errorf("LoadWithParams error = %v, want wrapping netlayout.ErrUnknownStrategy", err)
+	}
+}
+
+// TestNetworkStrategyLoadWithParamsBYORoundTrip proves a bloc can select a
+// BYO strategy loaded from network.strategyPaths: LoadWithParams succeeds,
+// and the bloc's ResolveReservedIPLayout resolves to the BYO definition's
+// own Layout (not a built-in), by name.
+func TestNetworkStrategyLoadWithParamsBYORoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	strategyPath := filepath.Join(dir, "my-strategy.yaml")
+	strategyYAML := []byte("" +
+		"name: my-strategy\n" +
+		"description: operator BYO strategy\n" +
+		"scheme_version: \"byo-round-trip-v1\"\n" +
+		"placement: colocated\n" +
+		"min_prefix: 26\n" +
+		"\n" +
+		"tiers:\n" +
+		"  mgmt:\n" +
+		"    statics:\n" +
+		"      bosh: 4\n" +
+		"    available:\n" +
+		"      - start: 10\n" +
+		"        end: 20\n")
+
+	if err := os.WriteFile(strategyPath, strategyYAML, 0o600); err != nil {
+		t.Fatalf("write strategy file: %v", err)
+	}
+
+	cfgPath := filepath.Join(dir, "config.yml")
+	yml := []byte("" +
+		"blocs:\n" +
+		"  test:\n" +
+		"    name: test\n" +
+		"    provider: stackit\n" +
+		"    network:\n" +
+		"      strategy: my-strategy\n" +
+		"      strategyPaths:\n" +
+		"        - " + strategyPath + "\n")
+
+	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	cfg, err := config.LoadWithParams(cfgPath, "test")
+	if err != nil {
+		t.Fatalf("LoadWithParams: unexpected error: %v", err)
+	}
+
+	layout, err := cfg.ResolveReservedIPLayout()
+	if err != nil {
+		t.Fatalf("ResolveReservedIPLayout: unexpected error: %v", err)
+	}
+
+	if got, want := layout.Name(), "my-strategy"; got != want {
+		t.Errorf("ResolveReservedIPLayout().Name() = %q, want %q", got, want)
 	}
 }
 

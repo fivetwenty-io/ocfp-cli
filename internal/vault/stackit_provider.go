@@ -39,19 +39,6 @@ const (
 	// (network address + broadcast address), used to compute the last usable host.
 	BroadcastAndNetworkAddrs = 2
 
-	// JumpboxOffset is the IP offset for jumpbox allocation within a subnet.
-	JumpboxOffset = 5
-	// BoshIPOffset is the IP offset for BOSH director allocation within a subnet.
-	BoshIPOffset = 6
-	// CFRouterOffset is the IP offset for Cloud Foundry router allocation.
-	CFRouterOffset = 10
-	// CFRouter1Offset is the IP offset for the second Cloud Foundry router.
-	CFRouter1Offset = 11
-	// DiegoCellOffset is the IP offset for the first Diego cell.
-	DiegoCellOffset = 20
-	// DiegoCell1Offset is the IP offset for the second Diego cell.
-	DiegoCell1Offset = 21
-
 	// HTTPPort is the standard HTTP port number.
 	HTTPPort = 80
 	// HTTPSPort is the standard HTTPS port number.
@@ -1614,8 +1601,15 @@ func (s *StackitVaultProvider) storeSecurityGroupToVault(sg map[string]any, sgTy
 	return nil
 }
 
-// configureSubnetReservedIPs configures reserved IP addresses for a subnet.
-// This matches the Perl implementation in OCFP::CPI::STACKIT::Vault::configure_subnet_reserved_ips (lines 1197-1279).
+// configureSubnetReservedIPs configures reserved IP addresses for a subnet,
+// routed through the same netlayout-strategy engine internal/vault uses for
+// PVE (see reservedIPsForSubnet in pve_reserved_ips.go): s.Config carries
+// the resolved strategy (explicit cfg.Network.Strategy, else the
+// provider/subnet-strategy default — netlayout.DefaultNameFor("stackit",
+// cfg.Network.SubnetStrategy) resolves to "spanning" for the canonical
+// "ocfp-triple" subnet strategy, "wide" otherwise). No STACKIT-specific
+// offset table survives here; STACKIT and PVE can no longer disagree about
+// where a role's static or band sits.
 func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, subnetNum int, envType string) error {
 	// Skip non-ocfp subnets (only process ocfp subnets)
 	if subnetType != DefaultSubnetType {
@@ -1625,11 +1619,7 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 	subnetName := fmt.Sprintf("%s-%d", subnetType, subnetNum)
 	s.logger.Infow("Configuring reserved IPs", "subnet", subnetName)
 
-	// Get default IP assignments for this environment
-	assignments := getDefaultReservedIPAssignments()
-
-	// Calculate IPs based on CIDR and assignments
-	vaultIPs, err := s.calculateReservedIPs(cidr, assignments, envType, subnetNum)
+	vaultIPs, err := reservedIPsForSubnet(cidr, envType, subnetNum, s.Config, s.logger)
 	if err != nil {
 		return fmt.Errorf("failed to calculate reserved IPs: %w", err)
 	}
@@ -1652,157 +1642,9 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 	return nil
 }
 
-// reservedIPAssignment is an alias for reservedip.Assignment: the shared
-// range-spec/offset/subnet-mapping model used by both the STACKIT and PVE
-// vault providers (see internal/reservedip). Kept as a package-level alias
-// (rather than renaming every reference) so this file's existing tests and
-// call sites are unaffected by the extraction.
-type reservedIPAssignment = reservedip.Assignment
-
-// stackitAssignmentPriority orders assignment types for deterministic
-// output. Matches the historical Perl implementation's processing order.
-var stackitAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static ordering table, read-only
-	"bosh":       1,
-	"vault":      2,  //nolint:mnd
-	"jumpbox":    3,  //nolint:mnd
-	"concourse":  4,  //nolint:mnd
-	"prometheus": 5,  //nolint:mnd
-	"shield":     6,  //nolint:mnd
-	"doomsday":   7,  //nolint:mnd
-	"ocfp_ui":    8,  //nolint:mnd
-	"bastion":    9,  //nolint:mnd
-	"blacksmith": 10, //nolint:mnd
-	"shout":      11, //nolint:mnd
-	"available":  12, //nolint:mnd
-	"reserved":   13, //nolint:mnd
-}
-
-// getDefaultReservedIPAssignments returns the default IP assignment map.
-// This matches the Perl implementation in default_reserved_ip_assignments (lines 2339-2394).
-//
-//nolint:funlen // reserved IP assignment map is inherently large
-func getDefaultReservedIPAssignments() map[string]map[string]*reservedIPAssignment {
-	return map[string]map[string]*reservedIPAssignment{
-		"bosh": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{4: {0}},
-			},
-			"ocf": {
-				SubnetMapping: map[int][]int{31: {0}},
-			},
-			"other": {
-				Offset: 10, //nolint:mnd
-			},
-		},
-		"vault": {
-			"mgmt": {Offset: 5},  //nolint:mnd
-			"ocf":  {Offset: 32}, //nolint:mnd
-		},
-		"jumpbox": {
-			"mgmt": {Offset: 6},  //nolint:mnd
-			"ocf":  {Offset: 33}, //nolint:mnd
-		},
-		"concourse": {
-			"mgmt": {Offset: 7},  //nolint:mnd
-			"ocf":  {Offset: 34}, //nolint:mnd
-		},
-		"prometheus": {
-			"mgmt": {Offset: 8},  //nolint:mnd
-			"ocf":  {Offset: 35}, //nolint:mnd
-		},
-		"shield": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{9: {0}},
-			},
-			"ocf": {
-				SubnetMapping: map[int][]int{36: {0}},
-			},
-		},
-		"doomsday": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{9: {1}},
-			},
-		},
-		"ocfp_ui": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{9: {2}},
-			},
-			"ocf": {
-				SubnetMapping: map[int][]int{36: {2}},
-			},
-		},
-		"bastion": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{3: {0}},
-			},
-			"ocf": {
-				SubnetMapping: map[int][]int{37: {0}},
-			},
-			"other": {
-				Offset: 3, //nolint:mnd
-			},
-		},
-		"blacksmith": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{10: {0}},
-			},
-			"ocf": {
-				SubnetMapping: map[int][]int{36: {1}},
-			},
-			"other": {
-				Offset: 10, //nolint:mnd
-			},
-		},
-		"shout": {
-			"mgmt": {
-				SubnetMapping: map[int][]int{10: {1}},
-			},
-		},
-		"available": {
-			"mgmt": {
-				RangeSpec: "11-29",
-			},
-			"ocf": {
-				SubnetRanges: map[string][]int{
-					"38->": {0},
-					"37->": {1, 2},
-				},
-			},
-		},
-		"reserved": {
-			"mgmt": {
-				RangeSpec: "0-10,30->",
-			},
-			"ocf": {
-				SubnetRanges: map[string][]int{
-					"0-36": {1, 2},
-					"0-37": {0},
-				},
-			},
-			"other": {
-				RangeSpec: "0-15",
-			},
-		},
-	}
-}
-
-// calculateReservedIPs calculates all reserved IPs for a subnet based on
-// assignments. Delegates to the shared reservedip engine (internal/reservedip)
-// so STACKIT and PVE compute reserved IPs identically; only the assignment
-// table and priority order differ per provider.
-func (s *StackitVaultProvider) calculateReservedIPs(
-	cidr string,
-	assignments map[string]map[string]*reservedIPAssignment,
-	envType string,
-	subnetNum int,
-) (map[string]any, error) {
-	return reservedip.Calculate(cidr, assignments, envType, subnetNum, stackitAssignmentPriority, s.logger)
-}
-
 // addOffsetToIP adds an offset to an IP address. Delegates to
 // reservedip.AddOffsetToIP (see internal/reservedip). Used in production by
-// aws_provider.go's calculateSystemIPs in addition to calculateReservedIPs
-// above.
+// aws_provider.go's parseSubnetCIDR to compute a subnet's last usable host.
 func addOffsetToIP(baseIP string, offset int) string {
 	return reservedip.AddOffsetToIP(baseIP, offset)
 }
@@ -1844,6 +1686,10 @@ func (s *StackitVaultProvider) configureSubnets(envType string, reporter provide
 			reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
 		}
 
+		return err
+	}
+
+	if err := validateWorkloadSubnetCIDRs(s.Config, "stackit vault provider: subnets", collectWorkloadSubnetCIDRs(subnets)); err != nil {
 		return err
 	}
 
