@@ -492,55 +492,14 @@ func TestStackitMock_FQDNFiltering_MgmtVsOCF(t *testing.T) {
 	})
 }
 
-// TestStackitMock_ReservedIPs_MgmtVsOCF verifies reserved IP calculations.
-func TestStackitMock_ReservedIPs_MgmtVsOCF(t *testing.T) {
-	provider := &StackitVaultProvider{
-		logger: logger.Get(),
-	}
-	assignments := getDefaultReservedIPAssignments()
-
-	t.Run("mgmt_subnet0_offsets", func(t *testing.T) {
-		cidr := "10.10.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "mgmt", 0)
-		require.NoError(t, err)
-
-		// Verify mgmt-specific offsets
-		assert.Equal(t, "10.10.1.3", vaultIPs["bastion_ip"], "bastion offset incorrect")
-		assert.Equal(t, "10.10.1.4", vaultIPs["bosh_ip"], "bosh offset incorrect")
-		assert.Equal(t, "10.10.1.5", vaultIPs["vault_ip"], "vault offset incorrect")
-		assert.Equal(t, "10.10.1.6", vaultIPs["jumpbox_ip"], "jumpbox offset incorrect")
-
-		// Verify available range
-		assert.Equal(t, "10.10.1.11", vaultIPs["available_0"])
-		assert.Equal(t, "10.10.1.29", vaultIPs["available_1"])
-
-		// Verify reserved range
-		assert.Equal(t, "10.10.1.0", vaultIPs["reserved_0"])
-		assert.Equal(t, "10.10.1.10", vaultIPs["reserved_1"])
-		assert.Equal(t, "10.10.1.30", vaultIPs["reserved_2"])
-		assert.Equal(t, "10.10.1.254", vaultIPs["reserved_3"])
-	})
-
-	t.Run("ocf_subnet0_offsets", func(t *testing.T) {
-		cidr := "10.20.1.0/24"
-		vaultIPs, err := provider.calculateReservedIPs(cidr, assignments, "ocf", 0)
-		require.NoError(t, err)
-
-		// Verify OCF-specific offsets (different from mgmt)
-		assert.Equal(t, "10.20.1.31", vaultIPs["bosh_ip"], "OCF bosh offset incorrect")
-		assert.Equal(t, "10.20.1.32", vaultIPs["vault_ip"], "OCF vault offset incorrect")
-		assert.Equal(t, "10.20.1.33", vaultIPs["jumpbox_ip"], "OCF jumpbox offset incorrect")
-		assert.Equal(t, "10.20.1.37", vaultIPs["bastion_ip"], "OCF bastion offset incorrect")
-
-		// Verify available range for OCF
-		assert.Equal(t, "10.20.1.38", vaultIPs["available_0"])
-		assert.Equal(t, "10.20.1.254", vaultIPs["available_1"])
-
-		// Verify reserved range for OCF
-		assert.Equal(t, "10.20.1.0", vaultIPs["reserved_0"])
-		assert.Equal(t, "10.20.1.37", vaultIPs["reserved_1"])
-	})
-}
+// TestStackitMock_ReservedIPs_MgmtVsOCF verified reserved IP calculations
+// against STACKIT's own hand-rolled offset table. That table is gone —
+// configureSubnetReservedIPs now routes through the shared netlayout engine
+// (see stackit_provider.go's configureSubnetReservedIPs) — and the
+// equivalent coverage (mgmt vs. ocf offsets, available/reserved ranges,
+// against the spanning strategy's own table) lives in
+// stackit_contract_test.go's TestContract_ReservedIPs_PerlCompatibility and
+// stackit_reserved_ips_test.go's TestStackitReservedIPs_TripleDefaultsToSpanning.
 
 // TestStackitMock_PublicIPs_GroupingAndFiltering verifies public IP handling.
 func TestStackitMock_PublicIPs_GroupingAndFiltering(t *testing.T) {

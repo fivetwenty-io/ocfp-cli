@@ -1144,10 +1144,9 @@ func CalculateIPFromCIDR(cidr string, offset int) (string, error) {
 // These outputs are tier-blind by construction (slots carries no envType):
 // the STACKIT and PVE vault providers therefore no longer read them
 // to compute a tier's reserved-ips (both now compute independently from the
-// subnet's own CIDR plus a per-envType assignment table — see
-// internal/vault/stackit_provider.go's getDefaultReservedIPAssignments and
-// internal/vault/pve_reserved_ips.go's pveDefaultReservedIPAssignments).
-// Deleting this writer outright would still regress two unrelated,
+// subnet's own CIDR via the shared netlayout engine — see
+// internal/vault/pve_reserved_ips.go's reservedIPsForSubnet, which both
+// providers call). Deleting this writer outright would still regress two unrelated,
 // non-Genesis consumers that read specific keys from these SAME outputs
 // before vault is ever populated: internal/commands/bastion_lookup.go's
 // last-resort bastion-IP fallback (reserved_<bloc>-ocfp-0_bastion_ip) and
