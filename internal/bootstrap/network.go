@@ -888,12 +888,39 @@ func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string, idx int) (net
 	return applyAvailableBandOverride(layout, slots, m.config.Network, subnetCIDR)
 }
 
-// subnetRoleAndIndex classifies a VM host subnet by name for slot
-// resolution: a "-infra" suffix is PVE's dedicated infra subnet (fixed
+// subnetRoleAndIndex classifies a VM host subnet for slot resolution. The
+// subnet's own state record is authoritative when present — creation
+// persists role and workload_index properties (see addVirtualSubnetToState
+// and saveSubnetToState), so operator-named subnets classify correctly.
+// Name parsing remains the fallback for records that predate those
+// properties: a "-infra" suffix is PVE's dedicated infra subnet (fixed
 // layout, no workload position), a trailing "-ocfp-<n>" segment is a
 // workload subnet at index n, and anything else resolves as a workload
 // subnet with no position (idx -1: only every-index placements apply).
 func (m *Manager) subnetRoleAndIndex(subnetName string) (string, int) {
+	role, idx := subnetRoleAndIndexFromName(subnetName)
+
+	if res, err := m.stateManager.GetResource("subnet", subnetName); err == nil && res != nil {
+		if r, ok := res.Properties["role"].(string); ok && r != "" {
+			role = r
+		}
+
+		if i, ok := intFromProperty(res.Properties["workload_index"]); ok {
+			idx = i
+		}
+	}
+
+	if role == subnetRoleInfra {
+		return subnetRoleInfra, -1
+	}
+
+	return role, idx
+}
+
+// subnetRoleAndIndexFromName is the legacy name-shape classification, kept
+// for subnet records that predate the persisted role/workload_index
+// properties.
+func subnetRoleAndIndexFromName(subnetName string) (string, int) {
 	if strings.HasSuffix(subnetName, pveInfraSubnetSuffix) {
 		return subnetRoleInfra, -1
 	}
@@ -905,6 +932,21 @@ func (m *Manager) subnetRoleAndIndex(subnetName string) (string, int) {
 	}
 
 	return subnetRoleOCFP, -1
+}
+
+// intFromProperty extracts an int from a state resource property, which is
+// an int in the run that wrote it and a float64 after a JSON reload.
+func intFromProperty(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 // slotForNamedIP returns the static offset the bloc's resolved strategy
