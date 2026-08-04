@@ -56,31 +56,44 @@ type Manager struct {
 }
 
 // GetStateDir returns the standard state directory path for a given bloc.
-// The directory structure is: ~/.ocfp/{blocName}/state/.
+// Resolves under config.StateHome() (OCFP_HOME when set, else
+// $XDG_STATE_HOME/ocfp or the ~/.local/state/ocfp default), with a
+// dual-read fallback to the pre-migration ~/.ocfp/{blocName}/state
+// directory when only that exists.
 func GetStateDir(blocName string) (string, error) {
 	if blocName == "" {
 		return "", ErrBlocNameEmpty
 	}
 
-	ocfpHome := config.OcfpHome()
-	if ocfpHome == "" {
+	stateHome := config.StateHome()
+	if stateHome == "" {
 		return "", config.ErrOcfpHomeNotFound
 	}
 
-	return filepath.Join(ocfpHome, blocName, "state"), nil
+	newPath := filepath.Join(stateHome, blocName, "state")
+	legacyPath := filepath.Join(config.OcfpHome(), blocName, "state")
+
+	path, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return path, nil
 }
 
 // NewManager creates a new state manager.
-// If stateDir is empty, it defaults to ~/.ocfp/state/ (legacy fallback).
-// For bloc-specific operations, use GetStateDir(blocName) to get the proper path.
+// If stateDir is empty, it defaults to the state directory under
+// config.StateHome(), with a dual-read fallback to the pre-migration
+// ~/.ocfp/state/ directory when only that exists. For bloc-specific
+// operations, use GetStateDir(blocName) to get the proper path.
 func NewManager(stateDir string) (*Manager, error) {
 	if stateDir == "" {
-		ocfpHome := config.OcfpHome()
-		if ocfpHome == "" {
+		stateHome := config.StateHome()
+		if stateHome == "" {
 			return nil, config.ErrOcfpHomeNotFound
 		}
 
-		stateDir = filepath.Join(ocfpHome, "state")
+		newPath := filepath.Join(stateHome, "state")
+		legacyPath := filepath.Join(config.OcfpHome(), "state")
+
+		stateDir, _ = config.ResolveExisting(newPath, legacyPath)
 	}
 
 	// Ensure state directory exists

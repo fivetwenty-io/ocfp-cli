@@ -1975,7 +1975,7 @@ func (m *Manager) savePrivateKey(privateKey, publicKey string) error {
 
 	logger.Infof("Private key saved to: %s", keyFile)
 
-	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Private key saved to: ~/.ocfp/%s/ssh/id_ed25519\n", m.options.BlocName)
+	_, _ = fmt.Fprintf(os.Stdout, "      ↳ Private key saved to: %s\n", keyFile)
 
 	return nil
 }
@@ -2075,7 +2075,7 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 			}
 		}
 
-		sshCommand := fmt.Sprintf("ssh -i ~/.ocfp/%s/ssh/%s ubuntu@%s", m.options.BlocName, keyFile, instance.PublicIP)
+		sshCommand := fmt.Sprintf("ssh -i %s ubuntu@%s", filepath.Join(keyDir, keyFile), instance.PublicIP)
 		_ = m.stateManager.SetOutput("bastion_ssh_command", sshCommand)
 	}
 }

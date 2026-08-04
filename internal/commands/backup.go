@@ -1027,9 +1027,21 @@ func exportSecrets(_ context.Context, _ *config.Config, outputFile string) error
 	return fmt.Errorf("failed to export secrets: %w", os.WriteFile(outputFile, []byte("{}"), BackupFilePerm))
 }
 
+// backupMetadataDir returns the directory backup metadata files are stored
+// in: StateHome()/backups as the write target, with a dual-read fallback to
+// the pre-migration OcfpHome()/backups directory when only that exists.
+func backupMetadataDir() string {
+	newPath := filepath.Join(config.StateHome(), "backups")
+	legacyPath := filepath.Join(config.OcfpHome(), "backups")
+
+	path, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return path
+}
+
 func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
-	metadataDir := filepath.Join(config.OcfpHome(), "backups")
+	metadataDir := backupMetadataDir()
 
 	err := os.MkdirAll(metadataDir, BackupDirPerm) //nolint:gosec // path components are from trusted HOME env
 	if err != nil {

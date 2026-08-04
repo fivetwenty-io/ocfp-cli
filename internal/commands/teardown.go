@@ -380,8 +380,9 @@ func getTeardownConfig() *teardownConfig {
 }
 
 func initializeTeardownLogger(blocName string) (logger.Logger, error) {
-	// Use new path structure: ~/.ocfp (not ~/.ocfp/logs)
-	logDir := config.OcfpHome()
+	// Logger appends {bloc}/logs/{command} itself; pass the state-class
+	// root, not the legacy flat ~/.ocfp home.
+	logDir := config.StateHome()
 
 	err := logger.Initialize(logger.Config{
 		Level:      viper.GetString("log_level"),

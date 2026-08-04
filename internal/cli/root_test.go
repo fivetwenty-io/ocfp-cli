@@ -3,6 +3,7 @@ package cli
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -271,4 +272,108 @@ func TestCreatePreRunHandler_UnstampedBuildWarningDoesNotBlockExecution(t *testi
 	assert.Contains(t, output, "unstamped build")
 	// The rest of PersistentPreRun still ran: bloc resolution completed.
 	assert.Equal(t, "env-bloc-name", viper.GetString("bloc"))
+}
+
+// isolateXDGHome points HOME at a fresh temp directory and clears every
+// XDG_*_HOME/OCFP_HOME override, so ConfigHome/StateHome/DataHome/OcfpHome
+// all resolve to distinct, disjoint directories under the temp home rather
+// than the developer's real home directory or a shared OCFP_HOME override
+// (which would collapse all four to the same path and defeat dual-read
+// assertions).
+func isolateXDGHome(t *testing.T) string {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	return tmpHome
+}
+
+// TestGetBaseDir covers both branches of getBaseDir's dual-read: StateHome()
+// used when it exists (or neither location exists, since a fresh temp home
+// has no pre-existing directories at all), and the legacy ~/.ocfp fallback
+// used only when StateHome() is absent but the legacy directory is present.
+func TestGetBaseDir(t *testing.T) {
+	t.Run("resolves under StateHome by default", func(t *testing.T) {
+		isolateXDGHome(t)
+
+		baseDir, err := getBaseDir()
+		require.NoError(t, err)
+		assert.Equal(t, config.StateHome(), baseDir)
+		assert.NotEqual(t, config.OcfpHome(), baseDir)
+	})
+
+	t.Run("falls back to legacy OcfpHome when only legacy exists", func(t *testing.T) {
+		isolateXDGHome(t)
+
+		legacyDir := config.OcfpHome()
+		require.NoError(t, os.MkdirAll(legacyDir, 0o750))
+
+		baseDir, err := getBaseDir()
+		require.NoError(t, err)
+		assert.Equal(t, legacyDir, baseDir)
+	})
+}
+
+// TestDefineFlags_NoLogHelpText asserts the --no-log flag's help text was
+// updated off the pre-migration ~/.ocfp/logs/ literal to describe the new
+// state-log default.
+func TestDefineFlags_NoLogHelpText(t *testing.T) {
+	rootCmd := createRootCommand()
+	flags := setupFlags()
+	defineFlags(rootCmd, flags)
+
+	f := rootCmd.PersistentFlags().Lookup("no-log")
+	require.NotNil(t, f)
+	assert.NotContains(t, f.Usage, "~/.ocfp/logs/")
+	assert.Contains(t, f.Usage, "state log")
+}
+
+// TestInitConfig_OCFPConfigPathResolution covers initConfig's OCFP_CONFIG_PATH
+// dual-read: it defaults to ConfigHome() when no config.yml exists anywhere
+// (or only the new location has one), and falls back to the legacy
+// ~/.ocfp directory when only ~/.ocfp/config.yml exists.
+func TestInitConfig_OCFPConfigPathResolution(t *testing.T) {
+	t.Run("defaults to ConfigHome when no config.yml exists anywhere", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		isolateXDGHome(t)
+		t.Setenv("OCFP_CONFIG_PATH", "")
+
+		initConfig("", false)
+
+		assert.Equal(t, config.ConfigHome(), os.Getenv("OCFP_CONFIG_PATH"))
+	})
+
+	t.Run("falls back to legacy OcfpHome when only legacy config.yml exists", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		isolateXDGHome(t)
+		t.Setenv("OCFP_CONFIG_PATH", "")
+
+		legacyDir := config.OcfpHome()
+		require.NoError(t, os.MkdirAll(legacyDir, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "config.yml"), []byte("blocs: {}\n"), 0o600))
+
+		initConfig("", false)
+
+		assert.Equal(t, legacyDir, os.Getenv("OCFP_CONFIG_PATH"))
+	})
+
+	t.Run("respects an existing OCFP_CONFIG_PATH override", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		isolateXDGHome(t)
+
+		override := t.TempDir()
+		t.Setenv("OCFP_CONFIG_PATH", override)
+
+		initConfig("", false)
+
+		assert.Equal(t, override, os.Getenv("OCFP_CONFIG_PATH"))
+	})
 }

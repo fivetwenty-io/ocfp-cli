@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -362,4 +363,56 @@ func TestInitAWS_FlagOverridesEnvVar(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(tmpDir, envBloc))
 	assert.True(t, os.IsNotExist(statErr),
 		"directory for env-bloc %q must not exist when flag overrides it", envBloc)
+}
+
+// TestInitAWS_UsesXDGDataHomeWhenOCFPHomeUnset verifies that with OCFP_HOME
+// unset, the generated deployment env files land under the XDG data root
+// (config.OcfpBlocDir(bloc)/deployments/...), not a hardcoded legacy path.
+// A fake HOME is set so that, were the implementation to fall back to the
+// legacy ~/.ocfp layout, it would land in a throwaway temp dir rather than
+// the real developer home directory.
+func TestInitAWS_UsesXDGDataHomeWhenOCFPHomeUnset(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	// testSafetyGuard (TestMain sets OCFP_TEST_SAFETY_GUARD=1 package-wide)
+	// compares OcfpHome() against a real-home-derived legacy root computed
+	// from the SAME os.UserHomeDir() call, so it panics whenever OCFP_HOME
+	// is unset regardless of a faked HOME. Disable it for this test only;
+	// the faked HOME below still protects the real home directory.
+	t.Setenv("OCFP_TEST_SAFETY_GUARD", "")
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+
+	xdgDataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdgDataHome)
+
+	const bloc = "xdg-bloc"
+	viper.Set("bloc", bloc)
+
+	// Resolve the expected path BEFORE any write happens: at this point
+	// neither the new XDG path nor the legacy path exists, so
+	// config.OcfpBlocDir's dual-read returns the new XDG location. Resolving
+	// it after the write would let dual-read mask a legacy write as a pass.
+	wantDeploymentsDir := filepath.Join(config.OcfpBlocDir(bloc), "deployments")
+
+	err := initializeAWS(makeBlocCmd(t, bloc))
+	require.NoError(t, err)
+
+	envPath := filepath.Join(wantDeploymentsDir, "mgmt", bloc+"-mgmt.yml")
+	data, err := os.ReadFile(envPath)
+	require.NoError(t, err, "env file must exist under the XDG data root at %s", envPath)
+
+	var parsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(data, &parsed))
+
+	ocfpBlock, ok := parsed["ocfp"].(map[string]interface{})
+	require.True(t, ok, "ocfp: block must be present; content:\n%s", string(data))
+	assert.Equal(t, bloc, ocfpBlock["bloc"])
+
+	// Regression guard: the legacy ~/.ocfp layout must not have been used.
+	legacyDir := filepath.Join(os.Getenv("HOME"), ".ocfp")
+	_, statErr := os.Stat(legacyDir)
+	assert.True(t, os.IsNotExist(statErr),
+		"legacy ~/.ocfp dir must not be created when XDG_DATA_HOME is set; found %s", legacyDir)
 }

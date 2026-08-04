@@ -532,7 +532,7 @@ func (m *Manager) addKeypairSection(table *ui.Table, plan *bootstrapPlan) {
 	idx := len(table.Sections) - 1
 	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Name", plan.KeyPair.Name})
 	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Type", plan.KeyPair.KeyType})
-	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Storage", fmt.Sprintf("~/.ocfp/%s/ssh/id_%s", m.options.BlocName, plan.KeyPair.KeyType)})
+	table.Sections[idx].Rows = append(table.Sections[idx].Rows, []string{"Storage", fmt.Sprintf("%s/id_%s", config.OcfpSSHKeyDir(m.options.BlocName), plan.KeyPair.KeyType)})
 }
 
 func (m *Manager) addBucketsSection(table *ui.Table, plan *bootstrapPlan) {
@@ -802,7 +802,7 @@ func (m *Manager) showPlannedKeypair(plan *bootstrapPlan) {
 	table.SetHeaders([]string{"Property", "Value"})
 	table.AddRow([]string{"Name", plan.KeyPair.Name})
 	table.AddRow([]string{"Type", plan.KeyPair.KeyType})
-	table.AddRow([]string{"Local Storage", fmt.Sprintf("~/.ocfp/%s/ssh/id_%s", m.options.BlocName, plan.KeyPair.KeyType)})
+	table.AddRow([]string{"Local Storage", fmt.Sprintf("%s/id_%s", config.OcfpSSHKeyDir(m.options.BlocName), plan.KeyPair.KeyType)})
 	metadata := FormatMetadataForDisplay(m.baseTags())
 	table.AddRow([]string{"Metadata", metadata})
 	_ = table.Render()

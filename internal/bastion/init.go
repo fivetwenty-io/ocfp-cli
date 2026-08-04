@@ -983,7 +983,7 @@ func (m *Manager) validatePrerequisites() error {
 	}
 
 	// Create local directories
-	logDir := filepath.Join(config.OcfpHome(), "logs", "provision")
+	logDir := filepath.Join(config.GetLogDir(), "provision")
 
 	err := os.MkdirAll(logDir, logDirectoryMode) //nolint:gosec // path components are from trusted config
 	if err != nil {
@@ -1490,8 +1490,7 @@ func (m *Manager) getProgressReporter() *ProgressReporter {
 
 // saveCheckpoint saves the current progress state.
 func (m *Manager) saveCheckpoint() error {
-	checkpointPath := filepath.Join(config.OcfpHome(), "checkpoints",
-		fmt.Sprintf("bastion-%s.json", m.config.Name))
+	checkpointPath := filepath.Join(checkpointsDir(), fmt.Sprintf("bastion-%s.json", m.config.Name))
 
 	// Implementation would save checkpoint data to file
 	// For now, just create the directory
@@ -2323,14 +2322,36 @@ func (m *Manager) copyOCFPConfig(ctx context.Context) error {
 	return m.transferConfigToBastion(ctx, yamlBytes)
 }
 
+// defaultOCFPConfigPath resolves the default config.yml location: the new
+// XDG config root, with a dual-read fallback to the pre-migration
+// ~/.ocfp/config.yml when only that exists. Returns "" if ConfigHome()
+// cannot be determined (e.g. os.UserHomeDir failed).
+func defaultOCFPConfigPath() string {
+	configHome := config.ConfigHome()
+	if configHome == "" {
+		return ""
+	}
+
+	newPath := filepath.Join(configHome, "config.yml")
+	legacyPath := filepath.Join(config.OcfpHome(), "config.yml")
+
+	path, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return path
+}
+
 // findConfigFile locates the OCFP configuration file from standard paths.
 func (m *Manager) findConfigFile() (string, error) {
 	configPaths := []string{
-		filepath.Join(config.OcfpHome(), "config.yml"),
+		defaultOCFPConfigPath(),
 		"config/config.yml",
 	}
 
 	for _, path := range configPaths {
+		if path == "" {
+			continue
+		}
+
 		cleanPath := filepath.Clean(path)
 
 		_, err := os.Stat(cleanPath) //nolint:gosec // path components are from trusted HOME env

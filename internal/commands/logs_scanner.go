@@ -275,12 +275,16 @@ func parseCommandList(commands string) []string {
 	return result
 }
 
-// getLogsBaseDir returns the base directory for logs.
+// getLogsBaseDir returns the base directory for logs: the XDG state-class
+// directory (config.StateHome()), with a dual-read fallback to the
+// pre-migration ~/.ocfp layout when only that exists.
 func getLogsBaseDir() (string, error) {
-	baseDir := config.OcfpHome()
+	baseDir := config.StateHome()
 	if baseDir == "" {
 		return "", config.ErrOcfpHomeNotFound
 	}
+
+	baseDir, _ = config.ResolveExisting(baseDir, config.OcfpHome())
 
 	return baseDir, nil
 }
