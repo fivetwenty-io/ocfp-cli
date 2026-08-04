@@ -429,8 +429,9 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 
 	subnetInfo, err := m.getBastionSubnetInfo()
 	if err == nil && subnetInfo.CIDR != "" {
-		// Default offset is 3 (4th IP: .3 address), matching Perl cidrhost() behavior
-		offset := bastionIPSlot
+		// Offset comes from the bloc's resolved strategy (bastionIPSlot is
+		// the fallback, matching Perl cidrhost() behavior).
+		offset := m.slotForNamedIP(subnetInfo.Name, subnetInfo.CIDR, "bastion_ip", bastionIPSlot)
 
 		calculatedIP, err := CalculateIPFromCIDR(subnetInfo.CIDR, offset)
 		if err != nil {
