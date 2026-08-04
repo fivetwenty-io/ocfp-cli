@@ -845,13 +845,15 @@ func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string, idx int) (net
 }
 
 // applyAvailableBandOverride overrides slots.AvailableA/AvailableB (and
-// forces ReservedC to end+1) from netCfg.Bands.Infra.Start/End when both are
-// configured. Zero values on both fields mean "no override": slots is
-// returned unchanged and layout.ValidateBand is never called. Otherwise
-// layout.ValidateBand validates the pair (partial pair, ordering, floor,
-// subnet fit — see internal/netlayout's ValidateBand) before it is applied.
-// The override applies uniformly to both infra and ocfp roles: it replaces
-// whatever the strategy computed, it does not add to it.
+// recomputes ReservedB as start-1 and ReservedC as end+1, so the replaced
+// band stays self-consistent with its reserved complement) from
+// netCfg.Bands.Infra.Start/End when both are configured. Zero values on both
+// fields mean "no override": slots is returned unchanged and
+// layout.ValidateBand is never called. Otherwise layout.ValidateBand
+// validates the pair (partial pair, ordering, floor, subnet fit — see
+// internal/netlayout's ValidateBand) before it is applied. The override
+// applies uniformly to both infra and ocfp roles: it replaces whatever the
+// strategy computed, it does not add to it.
 func applyAvailableBandOverride(
 	layout netlayout.Layout, slots netlayout.LayerASlots, netCfg config.NetworkConfig, subnetCIDR string,
 ) (netlayout.LayerASlots, error) {
@@ -868,6 +870,7 @@ func applyAvailableBandOverride(
 
 	slots.AvailableA = start
 	slots.AvailableB = end
+	slots.ReservedB = start - 1
 	slots.ReservedC = end + 1
 
 	return slots, nil
