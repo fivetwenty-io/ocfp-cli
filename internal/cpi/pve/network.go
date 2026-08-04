@@ -244,6 +244,13 @@ func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) err
 
 // Public IP operations (not natively supported)
 
+// SupportsPublicIPs reports that PVE cannot allocate public IPs. Proxmox has no
+// floating IP concept: public addressing is managed outside the cluster, so the
+// operations below are stubs and callers must skip them rather than retry.
+func (m *NetworkManager) SupportsPublicIPs() bool {
+	return false
+}
+
 // CreatePublicIP creates a public IP (not supported).
 func (m *NetworkManager) CreatePublicIP(_ctx context.Context, _req *cpi.PublicIPRequest) (*cpi.PublicIP, error) {
 	return nil, ErrFloatingIPsNotSupported
