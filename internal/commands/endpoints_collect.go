@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -107,6 +108,17 @@ func findReservedIP(outputs map[string]interface{}, role, blocName string, layou
 
 	if layout != nil {
 		if idx, pinned := layout.PinnedWorkloadIndex(role + "_ip"); pinned {
+			// The subnet recorded at the pinned index (bootstrap's
+			// subnet_<name>_index outputs) is authoritative — it holds under
+			// any subnet naming, operator names included.
+			if name, ok := workloadSubnetNameForIndex(outputs, idx); ok {
+				if value, ok := outputs["reserved_"+name+suffix].(string); ok {
+					return value
+				}
+			}
+
+			// Legacy states predate the index outputs; the default
+			// "<bloc>-ocfp-<idx>" shape is the only remaining pin candidate.
 			// Exact key, not a suffix match: a bloc whose own name ends in
 			// "-ocfp-<n>" would otherwise masquerade as a subnet index.
 			pinnedKey := fmt.Sprintf("reserved_%s-ocfp-%d%s", blocName, idx, suffix)
@@ -123,6 +135,44 @@ func findReservedIP(outputs map[string]interface{}, role, blocName string, layou
 	}
 
 	return value
+}
+
+// workloadSubnetNameForIndex returns the subnet name recorded at workload
+// index idx among bootstrap's subnet_<name>_index outputs (written at subnet
+// creation; values are decimal strings). ok is false when no output claims
+// idx — states predating the index outputs have none. Two subnets claiming
+// one index is corrupt state; the sorted-first name keeps the resolution
+// deterministic rather than map-order dependent.
+func workloadSubnetNameForIndex(outputs map[string]interface{}, idx int) (string, bool) {
+	want := strconv.Itoa(idx)
+
+	var names []string
+
+	for key, value := range outputs {
+		rest, found := strings.CutPrefix(key, "subnet_")
+		if !found {
+			continue
+		}
+
+		name, found := strings.CutSuffix(rest, "_index")
+		if !found || name == "" {
+			continue
+		}
+
+		if recorded, isString := value.(string); !isString || recorded != want {
+			continue
+		}
+
+		names = append(names, name)
+	}
+
+	if len(names) == 0 {
+		return "", false
+	}
+
+	sort.Strings(names)
+
+	return names[0], true
 }
 
 // loadReservedOutputs loads a bloc's local state outputs map for use by
