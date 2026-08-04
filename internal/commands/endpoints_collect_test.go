@@ -169,7 +169,7 @@ func TestFindReservedIP_MatchesInfraAndOcfpSubnets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, findReservedIP(tt.outputs, tt.role, nil))
+			assert.Equal(t, tt.want, findReservedIP(tt.outputs, tt.role, "myblc", nil))
 		})
 	}
 }
@@ -211,9 +211,36 @@ func TestFindReservedIP_PrefersPinnedIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, findReservedIP(outputs, tt.role, tt.layout))
+			assert.Equal(t, tt.want, findReservedIP(outputs, tt.role, "myblc", tt.layout))
 		})
 	}
+}
+
+// TestFindReservedIP_PinnedMatchIsExactKey pins the pinned-index preference
+// to the exact key "reserved_<bloc>-ocfp-<idx>_<role>_ip". A bloc whose own
+// name ends in "-ocfp-<n>" produces keys whose bloc segment suffix-matches a
+// subnet-index pattern; such a key must not satisfy the pin — when the
+// pinned index's real key is absent, the sorted-first fallback applies.
+func TestFindReservedIP_PinnedMatchIsExactKey(t *testing.T) {
+	t.Parallel()
+
+	spanning, err := netlayout.Lookup("spanning")
+	require.NoError(t, err)
+
+	outputs := map[string]interface{}{
+		// The real ocfp-0 key (stale under spanning's doomsday pin to 1).
+		"reserved_trap-ocfp-1-ocfp-0_doomsday_ip": "10.4.4.18",
+		// Foreign key whose bloc segment merely ends in "-ocfp-1".
+		"reserved_trap-ocfp-1_doomsday_ip": "10.9.9.9",
+	}
+
+	// doomsday is pinned to index 1; its key is absent, so the sorted-first
+	// fallback wins — never the suffix-lookalike.
+	assert.Equal(t, "10.4.4.18", findReservedIP(outputs, "doomsday", "trap-ocfp-1", spanning))
+
+	// With the real pinned-index key present, it wins outright.
+	outputs["reserved_trap-ocfp-1-ocfp-1_doomsday_ip"] = "10.4.8.18"
+	assert.Equal(t, "10.4.8.18", findReservedIP(outputs, "doomsday", "trap-ocfp-1", spanning))
 }
 
 // TestLoadReservedOutputs_ReturnsNilOnEmptyBlocName verifies loadReservedOutputs
@@ -308,7 +335,7 @@ func TestExpectedIPForService_ReservedStateOrBastion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP, nil))
+			assert.Equal(t, tt.want, expectedIPForService(tt.service, tt.reserved, tt.bastionIP, "myblc", nil))
 		})
 	}
 }
