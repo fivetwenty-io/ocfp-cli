@@ -238,6 +238,15 @@ func TestDefaultNameFor(t *testing.T) {
 		{"stackit", "ocfp-single", "wide"},
 		{"stackit", "ocfp-triple", "spanning"},
 		{"", "", "wide"},
+		// config.go validates provider with strings.EqualFold and never
+		// normalizes the stored value, so a config carrying "AWS" or
+		// "Stackit" reaches this function verbatim and must resolve to
+		// the same default its lowercase spelling does.
+		{"AWS", "", "spanning"},
+		{"Aws", "", "spanning"},
+		{"Stackit", "ocfp-triple", "spanning"},
+		{"STACKIT", "ocfp-single", "wide"},
+		{"PVE", "", "wide"},
 	}
 
 	for _, tt := range tests {
