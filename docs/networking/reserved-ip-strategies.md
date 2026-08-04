@@ -306,7 +306,7 @@ Layer A applies to two roles, both carved from the fixed infra subnet or a workl
 
 For the `ocfp` role, `ReservedB` is always `AvailableA - 1` and `ReservedC` is always `AvailableB + 1` — the reserved complement is derived from the band, never carried as an independent value, so a band override (section 9) can never leave the reserved complement pointing at the old band. The `infra` role is the one exception, and only for `ReservedB`: its fixed layout pairs an available band starting at 12 with a `ReservedB` of 10, a gap the infra subnet has always carried.
 
-This is identical across every provider subnet-carving strategy — PVE, the STACKIT triple-subnet layout, the STACKIT single-subnet layout, and AWS's VPC subnet split all resolve the `ocfp` role's slots through the same code path, so none of them can drift from the others or from Layer B's own per-tier table.
+This is identical across every subnet-carving path that records a virtual subnet — PVE, the STACKIT triple-subnet layout, the STACKIT single-subnet layout, and any bloc (AWS included) whose `network.subnetStrategy` is `ocfp-triple` all resolve the `ocfp` role's slots through the same code path, so none of them can drift from the others or from Layer B's own per-tier table. A bloc that creates real provider subnets instead — AWS's default VPC subnet split, with no `subnetStrategy` set — takes the standard creation path, which records the subnet and its CIDR but writes no `reserved_*` state outputs at all. Those blocs get their reserved-IP assignments from Layer B only.
 
 A negative `idx` (the bootstrap call this package uses for the infra subnet and for single-subnet contexts that have no workload-subnet position) returns only the placements that apply to every index — for a `spanning`-style definition, that means only its unpinned statics and bands; every pinned static and band is omitted, since a negative index can never satisfy a pinned-index membership test.
 
@@ -353,7 +353,9 @@ The subnet is not too small in absolute terms; it is too small for `wide` specif
 netlayout: too few workload subnets for strategy: strategy "spanning" requires at least 3 workload subnets, got 1
 ```
 
-Both bootstrap's subnet-creation path and every vault provider's populate path call `Layout.ValidateSubnetSet(cidrs)` against the same resolved strategy, so a provider/subnet-strategy combination that produces too few workload subnets for the selected strategy — STACKIT's single-subnet layout under `spanning`, for example — is rejected at the same point regardless of which layer runs first.
+Every vault provider's populate path — PVE, STACKIT, and AWS alike — calls `Layout.ValidateSubnetSet(cidrs)` against the resolved strategy before writing any reserved-IP record, so no provider derives an address under a strategy the bloc's workload subnets do not satisfy. The one case the check passes over is a bloc with no workload subnets recorded at all, where each provider falls back to its own fixed single-subnet default rather than a set that is short of the minimum.
+
+Bootstrap validates on its virtual-subnet paths only. The PVE carve, the STACKIT triple carve, and the STACKIT single carve each call `ValidateSubnetSet` before recording any subnet, so a mismatch there costs nothing — the bloc is rejected with no partial state written. AWS's default VPC subnet split does not take those paths: it creates real provider subnets and performs no subnet-count check. An AWS bloc whose workload subnet set is short of its strategy's minimum (`spanning` needs three) therefore has its subnets created first and is rejected afterwards, at the vault layer. No reserved-IP record is written for it and no address is derived, but the VPC subnets exist by the time the error surfaces and have to be cleaned up. Setting `network.subnetStrategy: ocfp-triple` on an AWS bloc routes it through the validating triple carve instead.
 
 ## 9. Band overrides
 
