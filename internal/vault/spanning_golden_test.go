@@ -21,7 +21,7 @@ import (
 // locks the OPPOSITE property for wide/compact, which have no pinning at
 // all.
 func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
-	netCfg := config.NetworkConfig{Strategy: "spanning"}
+	cfg := &config.Config{Network: config.NetworkConfig{Strategy: "spanning"}}
 
 	const (
 		cidr0 = "10.4.4.0/22"
@@ -29,19 +29,19 @@ func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
 		cidr2 = "10.4.12.0/22"
 	)
 
-	mgmt0, err := pveReservedIPsForSubnet(cidr0, MgmtEnvType, 0, netCfg, logger.Get())
+	mgmt0, err := pveReservedIPsForSubnet(cidr0, MgmtEnvType, 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	mgmt1, err := pveReservedIPsForSubnet(cidr1, MgmtEnvType, 1, netCfg, logger.Get())
+	mgmt1, err := pveReservedIPsForSubnet(cidr1, MgmtEnvType, 1, cfg, logger.Get())
 	require.NoError(t, err)
 
-	mgmt2, err := pveReservedIPsForSubnet(cidr2, MgmtEnvType, 2, netCfg, logger.Get())
+	mgmt2, err := pveReservedIPsForSubnet(cidr2, MgmtEnvType, 2, cfg, logger.Get())
 	require.NoError(t, err)
 
-	ocf0, err := pveReservedIPsForSubnet(cidr0, OCFEnvType, 0, netCfg, logger.Get())
+	ocf0, err := pveReservedIPsForSubnet(cidr0, OCFEnvType, 0, cfg, logger.Get())
 	require.NoError(t, err)
 
-	ocf1, err := pveReservedIPsForSubnet(cidr1, OCFEnvType, 1, netCfg, logger.Get())
+	ocf1, err := pveReservedIPsForSubnet(cidr1, OCFEnvType, 1, cfg, logger.Get())
 	require.NoError(t, err)
 
 	t.Run("Idx0Mgmt", func(t *testing.T) {

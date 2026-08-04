@@ -212,7 +212,7 @@ func applyLegacyDerivation(t *testing.T, guard *reservedIPGuard, fixture legacyF
 		require.True(t, ok, "%s must record its network address as reserved_a", path)
 
 		derived, err := pveReservedIPsForSubnet(
-			network+legacyWorkloadPrefixLen, envType, subnetNum, config.NetworkConfig{}, logger.Get())
+			network+legacyWorkloadPrefixLen, envType, subnetNum, &config.Config{}, logger.Get())
 		require.NoError(t, err)
 
 		// populate writes the two compatibility aliases alongside bosh_ip.

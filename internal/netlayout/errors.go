@@ -3,7 +3,6 @@ package netlayout
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ErrNotImplemented is returned by stub Layout methods that have not yet
@@ -14,15 +13,12 @@ import (
 var ErrNotImplemented = errors.New("netlayout: not implemented")
 
 // ErrUnknownStrategy is the sentinel Lookup wraps when asked for a strategy
-// name that is not registered. Callers match it with errors.Is.
+// name that is not registered. Callers match it with errors.Is. Every
+// caller resolves it through a *Catalog (see Catalog.unknownError in
+// catalog.go) — Lookup, Default, and the package-level registry are all
+// thin wrappers over Builtins(), a *Catalog scoped to the three built-in
+// strategies.
 var ErrUnknownStrategy = errors.New("unknown network strategy")
-
-// unknownStrategyError wraps ErrUnknownStrategy with the offending name and
-// the sorted list of registered strategy names ("unknown network strategy
-// %q: known strategies are ...").
-func unknownStrategyError(name string) error {
-	return fmt.Errorf("%w %q: known strategies are %s", ErrUnknownStrategy, name, strings.Join(Names(), ", "))
-}
 
 // ErrSubnetTooSmall is the sentinel ValidateSubnet wraps when cidr's prefix
 // is longer (fewer host addresses) than a strategy's MinPrefix requires.
@@ -156,4 +152,32 @@ func bandOverrideCollidesStaticError(start, end int, tier Tier, role string, off
 func bandOverrideCrossTierError(start, end int, tier, otherTier Tier, otherStart, otherEnd int) error {
 	return fmt.Errorf("%w: tier %q override [%d,%d] intersects tier %q band [%d,%d]",
 		ErrBandOverrideCrossTier, tier, start, end, otherTier, otherStart, otherEnd)
+}
+
+// ErrStrategyShadowed is the sentinel Catalog.add wraps when a BYO strategy
+// definition's name collides with an already-registered strategy — a
+// built-in, or an earlier BYO file loaded into the same catalog. Callers
+// match it with errors.Is.
+var ErrStrategyShadowed = errors.New("netlayout: strategy name conflicts with an already-registered strategy")
+
+// strategyShadowedError wraps ErrStrategyShadowed with the offending name
+// and the source (file path, or "built-in:...") it was loaded from.
+func strategyShadowedError(name, source string) error {
+	return fmt.Errorf("%w: strategy %q from %s conflicts with an already-registered strategy",
+		ErrStrategyShadowed, name, source)
+}
+
+// ErrSchemeCollision is the sentinel Catalog.add wraps when a BYO strategy
+// definition's scheme_version collides with an already-registered
+// strategy's — a built-in's, or an earlier BYO file loaded into the same
+// catalog. Two strategies sharing a scheme_version would make the stamped
+// guard value ambiguous about which strategy actually produced a bloc's
+// addresses. Callers match it with errors.Is.
+var ErrSchemeCollision = errors.New("netlayout: scheme_version conflicts with an already-registered strategy")
+
+// schemeCollisionError wraps ErrSchemeCollision with the offending
+// scheme_version and the two strategy names that both claim it.
+func schemeCollisionError(schemeVersion, name, existingName string) error {
+	return fmt.Errorf("%w: strategy %q's scheme_version %q already claimed by strategy %q",
+		ErrSchemeCollision, name, schemeVersion, existingName)
 }

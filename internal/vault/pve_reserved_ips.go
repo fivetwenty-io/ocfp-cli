@@ -69,16 +69,16 @@ var pveAssignmentPriority = map[string]int{ //nolint:gochecknoglobals // static 
 	"reserved":     23, //nolint:mnd
 }
 
-// resolveLayout resolves netCfg.Strategy to a registered netlayout.Layout.
-// It is a thin wrapper over netlayout.Lookup so strategy routing is
-// testable in isolation from WorkloadTable's body: an empty Strategy
-// resolves to netlayout.Default() ("wide"), and an unrecognized name
-// returns an error wrapping netlayout.ErrUnknownStrategy for errors.Is
-// callers.
-func resolveLayout(netCfg config.NetworkConfig) (netlayout.Layout, error) {
-	layout, err := netlayout.Lookup(netCfg.Strategy)
+// resolveLayout resolves cfg's reserved-ip layout strategy to a
+// netlayout.Layout via cfg.ResolveReservedIPLayout: the explicit
+// cfg.Network.Strategy when set, else the provider/subnet-strategy default,
+// looked up in cfg's catalog (built-ins plus any network.strategyPaths
+// definitions). An unrecognized name returns an error wrapping
+// netlayout.ErrUnknownStrategy for errors.Is callers.
+func resolveLayout(cfg *config.Config) (netlayout.Layout, error) {
+	layout, err := cfg.ResolveReservedIPLayout()
 	if err != nil {
-		return nil, fmt.Errorf("resolve reserved-ip layout strategy %q: %w", netCfg.Strategy, err)
+		return nil, fmt.Errorf("resolve reserved-ip layout strategy %q: %w", cfg.Network.Strategy, err)
 	}
 
 	return layout, nil
@@ -160,9 +160,10 @@ func applyPVEMgmtBandOverride(
 // CIDR reused across all three in the stateless-fallback path), envType is
 // "mgmt" or "ocf", and subnetNum is the workload subnet's index (0/1/2),
 // forwarded to the shared engine for parity even though the current PVE
-// table does not vary by index. netCfg carries the selected reserved-ip
-// layout Strategy (resolved via resolveLayout; empty means the netlayout
-// default) and the optional mgmt-only Bands.Mgmt override.
+// table does not vary by index. cfg carries the selected reserved-ip layout
+// Strategy (resolved via resolveLayout/cfg.ResolveReservedIPLayout; empty
+// means the provider default) and the optional mgmt-only
+// Network.Bands.Mgmt override.
 //
 // Every step below that can fail — strategy resolution, subnet validation,
 // and table construction — returns its error immediately rather than
@@ -175,14 +176,14 @@ func applyPVEMgmtBandOverride(
 // the strategy and the failing step so an operator can tell a too-small
 // subnet from an unimplemented strategy without reading source.
 func pveReservedIPsForSubnet(
-	subnetCIDR string, envType string, subnetNum int, netCfg config.NetworkConfig, log *zap.SugaredLogger,
+	subnetCIDR string, envType string, subnetNum int, cfg *config.Config, log *zap.SugaredLogger,
 ) (map[string]any, error) {
-	layout, err := resolveLayout(netCfg)
+	layout, err := resolveLayout(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: %w", envType, subnetNum, err)
 	}
 
-	return pveReservedIPsForSubnetWithLayout(layout, subnetCIDR, envType, subnetNum, netCfg, log)
+	return pveReservedIPsForSubnetWithLayout(layout, subnetCIDR, envType, subnetNum, cfg.Network, log)
 }
 
 // pveReservedIPsForSubnetWithLayout is pveReservedIPsForSubnet after
