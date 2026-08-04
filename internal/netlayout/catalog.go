@@ -207,11 +207,16 @@ func (c *Catalog) Names() []string {
 // strategy needs spanning; the single-subnet layout colocates like PVE's
 // default. Every other provider (including PVE and the empty/unset
 // default) colocates onto "wide".
+//
+// The provider match is case-insensitive: config validation accepts a
+// provider in any case (internal/config validates with strings.EqualFold)
+// and never normalizes the stored value, so "AWS" must resolve to the same
+// default "aws" does rather than falling through to "wide".
 func DefaultNameFor(provider, subnetStrategy string) string {
-	switch provider {
-	case "aws":
+	switch {
+	case strings.EqualFold(provider, "aws"):
 		return "spanning"
-	case "stackit":
+	case strings.EqualFold(provider, "stackit"):
 		if subnetStrategy == subnetStrategyTriple {
 			return "spanning"
 		}
