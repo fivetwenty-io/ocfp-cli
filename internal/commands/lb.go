@@ -890,7 +890,11 @@ func addServiceToLoadBalancer(ctx context.Context, network cpi.NetworkManager, l
 }
 
 // ResolveReservedIP resolves a reserved IP output from state based on
-// the token form reserved:<key>[:index]. Default index is 0 (ocfp-0).
+// the token form reserved:<key>[:index]. Default index is 0. The subnet
+// recorded at that index in bootstrap's subnet_<name>_index outputs is
+// consulted first — it holds under any subnet naming — with the legacy
+// "reserved_<bloc>-ocfp-<index>_<key>" shape as the fallback for states
+// predating the index outputs.
 func ResolveReservedIP(blocName string, token string) (string, error) {
 	// token format: reserved:key or reserved:key:index
 	parts := strings.Split(strings.TrimPrefix(token, "reserved:"), ":")
@@ -904,13 +908,24 @@ func ResolveReservedIP(blocName string, token string) (string, error) {
 	if len(parts) > 1 && parts[1] != "" {
 		index = parts[1]
 	}
-	// Build output key: reserved_<bloc>-ocfp-<index>_<key>
-	stateKey := fmt.Sprintf("reserved_%s-ocfp-%s_%s", blocName, index, key)
 
 	stateManager, err := initStateManager(blocName)
 	if err != nil {
 		return "", err
 	}
+
+	if st, loadErr := stateManager.Load(blocName); loadErr == nil && st != nil {
+		if idx, convErr := strconv.Atoi(index); convErr == nil {
+			if name, ok := workloadSubnetNameForIndex(st.Outputs, idx); ok {
+				if value, isString := st.Outputs["reserved_"+name+"_"+key].(string); isString && value != "" {
+					return value, nil
+				}
+			}
+		}
+	}
+
+	// Legacy output key: reserved_<bloc>-ocfp-<index>_<key>
+	stateKey := fmt.Sprintf("reserved_%s-ocfp-%s_%s", blocName, index, key)
 
 	val, err := stateManager.GetOutput(stateKey)
 	if err != nil {
