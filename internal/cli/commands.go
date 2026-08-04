@@ -28,6 +28,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewScaleCmd())
 	root.AddCommand(commands.NewBackupCmd())
 	root.AddCommand(commands.NewRestoreCmd())
+	root.AddCommand(commands.NewMigrateCmd())
 
 	// Networking / Public IPs
 	root.AddCommand(commands.NewPublicIPsCmd())
