@@ -908,7 +908,10 @@ func (a *AWSVaultProvider) configureSubnetReservedIPs(cidr, subnetType string, s
 
 	reservedPath := a.PathBuilder.GetReservedIPsPath(envType, subnetType, subnetNum)
 
-	if err := a.Safe.SetMultiple(reservedPath, reserved); err != nil {
+	// Complete write: `reserved` is the whole derived table for this
+	// subnet, so a key the record still holds and this map omits was
+	// retired from the offset table (see reserved_ip_guard.go).
+	if err := setCompleteRecord(a.Safe, reservedPath, reserved); err != nil {
 		return fmt.Errorf("failed to set reserved IPs: %w", err)
 	}
 

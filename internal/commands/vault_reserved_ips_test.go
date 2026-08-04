@@ -51,7 +51,7 @@ func TestNewVaultPopulateCmd_ForceReallocateFlag(t *testing.T) {
 func TestRunVaultReservedIPsStatus_CleanReport(t *testing.T) {
 	var sb strings.Builder
 
-	vault.WriteReservedIPReport(&sb, vault.ReservedIPReport{Drifts: nil, Schemes: nil})
+	vault.WriteReservedIPReport(&sb, vault.ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil})
 
 	assert.Empty(t, sb.String())
 }

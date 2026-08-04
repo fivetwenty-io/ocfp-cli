@@ -45,7 +45,8 @@ func newVaultReservedIPsStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Report reserved IPs that differ from this build's table",
 		Long: `Report every reserved IP whose recorded address differs from the
-address this build derives. Writes nothing.`,
+address this build derives, and every key a record still holds that this
+build no longer derives. Writes nothing.`,
 		Example: `  # Review divergence before deciding to migrate
   ocfp vault reserved-ips status`,
 		SilenceUsage: true,
@@ -65,11 +66,13 @@ func newVaultReservedIPsMigrateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Move reserved IPs onto this build's derived addresses",
-		Long: `Move every reserved IP onto the address this build derives.
+		Long: `Move every reserved IP onto the address this build derives, and
+remove every key a record still holds that this build no longer derives.
 
 Services already deployed at the recorded addresses must be recreated
-afterwards; BOSH will not move a VM to a new static IP on its own. Review
-'ocfp vault reserved-ips status' first.`,
+afterwards; BOSH will not move a VM to a new static IP on its own.
+Removing an obsolete key moves nothing. Review 'ocfp vault reserved-ips
+status' first.`,
 		Example: `  # Show what would move, then confirm
   ocfp vault reserved-ips migrate
 
@@ -93,7 +96,7 @@ func runVaultReservedIPsStatus(w io.Writer) error {
 		return err
 	}
 
-	if !report.HasDrift() && len(report.Schemes) == 0 {
+	if !report.HasDrift() && !report.HasObsolete() && len(report.Schemes) == 0 {
 		_, _ = fmt.Fprintln(w, "reserved IPs match this build's table; nothing to migrate")
 
 		return nil
@@ -113,7 +116,7 @@ func runVaultReservedIPsMigrate(w io.Writer, assumeYes bool) error {
 		return err
 	}
 
-	if !report.HasDrift() {
+	if !report.HasDrift() && !report.HasObsolete() {
 		_, _ = fmt.Fprintln(w, "reserved IPs match this build's table; nothing to migrate")
 
 		return nil
@@ -121,7 +124,7 @@ func runVaultReservedIPsMigrate(w io.Writer, assumeYes bool) error {
 
 	vault.WriteReservedIPReport(w, report)
 
-	if !assumeYes && !confirmReservedIPMigration(w, len(report.Drifts), log) {
+	if !assumeYes && !confirmReservedIPMigration(w, len(report.Drifts), len(report.Obsoletes), log) {
 		return nil
 	}
 
@@ -130,10 +133,17 @@ func runVaultReservedIPsMigrate(w io.Writer, assumeYes bool) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(w, "\nmoved %d reserved IP(s).\n", len(applied.Drifts))
-	_, _ = fmt.Fprintln(w,
-		"Recreate the affected instances so they pick up their new addresses"+
-			" (`bosh -d <deployment> recreate`), then redeploy.")
+	_, _ = fmt.Fprintf(w, "\nmoved %d reserved IP(s), removed %d obsolete key(s).\n",
+		len(applied.Drifts), len(applied.Obsoletes))
+
+	// Only a moved address needs a VM recreated; removing a key the
+	// derivation no longer produces changes nothing that is deployed, it
+	// only stops Genesis reserving a range on its behalf.
+	if len(applied.Drifts) > 0 {
+		_, _ = fmt.Fprintln(w,
+			"Recreate the affected instances so they pick up their new addresses"+
+				" (`bosh -d <deployment> recreate`), then redeploy.")
+	}
 
 	return nil
 }
@@ -141,7 +151,7 @@ func runVaultReservedIPsMigrate(w io.Writer, assumeYes bool) error {
 // computeReservedIPReport runs the derivation against the recorded addresses,
 // applying it when apply is set.
 func computeReservedIPReport(apply bool) (vault.ReservedIPReport, error) {
-	empty := vault.ReservedIPReport{Drifts: nil, Schemes: nil}
+	empty := vault.ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil}
 
 	manager, err := loadConfigAndManager()
 	if err != nil {
@@ -168,11 +178,13 @@ func computeReservedIPReport(apply bool) (vault.ReservedIPReport, error) {
 	return report, nil
 }
 
-// confirmReservedIPMigration prompts before addresses are moved.
-func confirmReservedIPMigration(w io.Writer, count int, log logger.Logger) bool {
+// confirmReservedIPMigration prompts before addresses are moved. Obsolete
+// keys are counted separately because removing one moves nothing.
+func confirmReservedIPMigration(w io.Writer, drifts, obsoletes int, log logger.Logger) bool {
 	_, err := fmt.Fprintf(w,
-		"\nThis moves %d reserved IP(s) and requires recreating the instances that hold them. Continue? [y/N]: ",
-		count)
+		"\nThis moves %d reserved IP(s) (requiring the instances that hold them to be recreated)"+
+			" and removes %d obsolete key(s). Continue? [y/N]: ",
+		drifts, obsoletes)
 	if err != nil {
 		log.Errorw("failed to write confirmation prompt", "error", err)
 

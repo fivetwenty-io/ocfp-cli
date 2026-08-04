@@ -1630,7 +1630,10 @@ func (s *StackitVaultProvider) configureSubnetReservedIPs(cidr, subnetType strin
 		"path", reservedPath,
 		"count", len(vaultIPs))
 
-	err = s.Safe.SetMultiple(reservedPath, vaultIPs)
+	// Complete write: `vaultIPs` is the whole derived table for this
+	// subnet, so a key the record still holds and this map omits was
+	// retired from the offset table (see reserved_ip_guard.go).
+	err = setCompleteRecord(s.Safe, reservedPath, vaultIPs)
 	if err != nil {
 		return fmt.Errorf("failed to set reserved IPs: %w", err)
 	}

@@ -62,15 +62,51 @@ type ReservedIPScheme struct {
 	Current  string
 }
 
+// ReservedIPObsolete is one key a reserved-ips record still holds that the
+// running build's derivation no longer produces.
+type ReservedIPObsolete struct {
+	Path     string
+	Key      string
+	Existing string
+}
+
 // ReservedIPReport aggregates everything the guard withheld during one run.
 type ReservedIPReport struct {
-	Drifts  []ReservedIPDrift
-	Schemes []ReservedIPScheme
+	Drifts    []ReservedIPDrift
+	Schemes   []ReservedIPScheme
+	Obsoletes []ReservedIPObsolete
 }
 
 // HasDrift reports whether any derived address disagreed with vault.
 func (r ReservedIPReport) HasDrift() bool {
 	return len(r.Drifts) > 0
+}
+
+// HasObsolete reports whether any record holds a key the derivation no
+// longer produces.
+func (r ReservedIPReport) HasObsolete() bool {
+	return len(r.Obsoletes) > 0
+}
+
+// CompleteRecordWriter is implemented by writers that can be told a map is
+// the COMPLETE derived contents of a reserved-ips record rather than a
+// subset of it. Only a complete write can distinguish a key the derivation
+// retired from a key this particular call simply did not carry.
+type CompleteRecordWriter interface {
+	SetCompleteRecord(path string, data map[string]interface{}) error
+}
+
+// setCompleteRecord writes data as the complete contents of path when safe
+// supports it, and falls back to an ordinary SetMultiple otherwise — the
+// fallback keeps undecorated safes (and the dry-run recorder) working, at
+// the cost of not detecting obsolete keys, which is the pre-existing
+// behavior rather than a regression.
+func setCompleteRecord(safe SafeInterface, path string, data map[string]interface{}) error {
+	if writer, ok := safe.(CompleteRecordWriter); ok {
+		return writer.SetCompleteRecord(path, data)
+	}
+
+	return safe.SetMultiple(path, data) //nolint:wrapcheck // transparent pass-through
 }
 
 // reservedIPGuard decorates a SafeInterface, applying the drift policy to
@@ -110,7 +146,7 @@ func newReservedIPGuardWithScheme(under SafeInterface, force bool, scheme string
 		SafeInterface: under,
 		force:         force,
 		scheme:        scheme,
-		report:        ReservedIPReport{Drifts: nil, Schemes: nil},
+		report:        ReservedIPReport{Drifts: nil, Schemes: nil, Obsoletes: nil},
 		logger:        log,
 	}
 }
@@ -125,7 +161,7 @@ func (g *reservedIPGuard) Set(path, key string, value interface{}) error {
 		return g.SafeInterface.Set(path, key, value) //nolint:wrapcheck // transparent decorator
 	}
 
-	return g.guardedWrite(path, map[string]interface{}{key: value})
+	return g.guardedWrite(path, map[string]interface{}{key: value}, false)
 }
 
 func (g *reservedIPGuard) SetMultiple(path string, data map[string]interface{}) error {
@@ -133,13 +169,27 @@ func (g *reservedIPGuard) SetMultiple(path string, data map[string]interface{}) 
 		return g.SafeInterface.SetMultiple(path, data) //nolint:wrapcheck // transparent decorator
 	}
 
-	return g.guardedWrite(path, data)
+	return g.guardedWrite(path, data, false)
+}
+
+// SetCompleteRecord writes data as the complete derived contents of path.
+// Only this entry point can conclude that a key vault holds but data omits
+// was retired from the offset table rather than merely absent from one
+// partial write, so it is the only one that reports obsolete keys.
+func (g *reservedIPGuard) SetCompleteRecord(path string, data map[string]interface{}) error {
+	if !isReservedIPPath(path) {
+		return g.SafeInterface.SetMultiple(path, data) //nolint:wrapcheck // transparent decorator
+	}
+
+	return g.guardedWrite(path, data, true)
 }
 
 // guardedWrite splits a derived reserved-ips write into the keys vault does
 // not hold (forwarded) and the keys whose value it would change (recorded,
-// and forwarded only under force).
-func (g *reservedIPGuard) guardedWrite(path string, data map[string]interface{}) error {
+// and forwarded only under force). When complete is set, keys vault holds
+// that the derivation no longer produces are reported too, and purged under
+// force.
+func (g *reservedIPGuard) guardedWrite(path string, data map[string]interface{}, complete bool) error {
 	existing, err := g.readExisting(path)
 	if err != nil {
 		return err
@@ -184,6 +234,12 @@ func (g *reservedIPGuard) guardedWrite(path string, data map[string]interface{})
 		g.stampScheme(path, existing, drifted, writes)
 	}
 
+	if complete && isReservedIPRecordPath(path) {
+		if err := g.purgeObsolete(path, existing, data); err != nil {
+			return err
+		}
+	}
+
 	if len(writes) == 0 {
 		return nil
 	}
@@ -191,6 +247,56 @@ func (g *reservedIPGuard) guardedWrite(path string, data map[string]interface{})
 	err = g.SafeInterface.SetMultiple(path, writes)
 	if err != nil {
 		return fmt.Errorf("failed to write reserved IPs to %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// purgeObsolete records every key the record still holds that the complete
+// derivation in data does not produce, and removes it under force.
+//
+// These are invisible to the drift check, which can only compare keys the
+// derivation emits. They are not inert: Genesis' cloud-config IPAM unions
+// EVERY reserved*/available* pair it finds in a record, so a pair left
+// behind by a retired band scheme silently reserves whatever range it
+// spans — up to the entire subnet, which surfaces much later as the
+// director failing to allocate a compilation network.
+//
+// The scheme stamp is the guard's own bookkeeping, not a derived address,
+// so it is never a candidate.
+func (g *reservedIPGuard) purgeObsolete(path string, existing, derived map[string]interface{}) error {
+	obsolete := make([]string, 0, len(existing))
+
+	for key := range existing {
+		if key == reservedIPSchemeKey {
+			continue
+		}
+
+		if _, produced := derived[key]; !produced {
+			obsolete = append(obsolete, key)
+		}
+	}
+
+	// Sorted so the report and the delete order read the same way twice.
+	sort.Strings(obsolete)
+
+	for _, key := range obsolete {
+		g.report.Obsoletes = append(g.report.Obsoletes, ReservedIPObsolete{
+			Path:     path,
+			Key:      key,
+			Existing: valueString(existing[key]),
+		})
+
+		if !g.force {
+			continue
+		}
+
+		//nolint:staticcheck // explicit delegation, matching the writers above
+		if err := g.SafeInterface.Delete(path, key); err != nil {
+			return fmt.Errorf("failed to remove obsolete reserved-IP key %s:%s: %w", path, key, err)
+		}
+
+		delete(existing, key)
 	}
 
 	return nil
@@ -283,7 +389,7 @@ func valueString(value interface{}) string {
 // quiet. Write errors are ignored: this goes to a console writer and a
 // failed print must not fail the run.
 func WriteReservedIPReport(w io.Writer, report ReservedIPReport) {
-	if len(report.Drifts) == 0 && len(report.Schemes) == 0 {
+	if len(report.Drifts) == 0 && len(report.Schemes) == 0 && len(report.Obsoletes) == 0 {
 		return
 	}
 
@@ -299,6 +405,19 @@ func WriteReservedIPReport(w io.Writer, report ReservedIPReport) {
 		}
 	}
 
+	if len(report.Obsoletes) > 0 {
+		_, _ = fmt.Fprintf(w,
+			"\nobsolete reserved-IP keys: %d key(s) recorded in vault are no longer derived by this build.\n",
+			len(report.Obsoletes))
+		_, _ = fmt.Fprintln(w,
+			"Genesis unions every reserved/available pair in a record, so a retired band"+
+				" pair can reserve a range nothing is using — run `ocfp vault reserved-ips migrate` to remove them.")
+
+		for _, obs := range report.Obsoletes {
+			_, _ = fmt.Fprintf(w, "  %s:%s  vault=%s  (not derived)\n", obs.Path, obs.Key, obs.Existing)
+		}
+	}
+
 	for _, scheme := range report.Schemes {
 		recorded := scheme.Existing
 		if recorded == "" {
@@ -307,6 +426,12 @@ func WriteReservedIPReport(w io.Writer, report ReservedIPReport) {
 
 		_, _ = fmt.Fprintf(w, "  %s was provisioned under reserved-IP scheme %s; this build derives scheme %s\n",
 			scheme.Path, recorded, scheme.Current)
+	}
+
+	// Removing an obsolete key moves nothing, so the recreate warning is
+	// only warranted when an address would actually change.
+	if len(report.Drifts) == 0 && len(report.Schemes) == 0 {
+		return
 	}
 
 	_, _ = fmt.Fprintln(w,
