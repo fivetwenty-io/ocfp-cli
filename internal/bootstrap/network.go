@@ -980,23 +980,19 @@ func (m *Manager) createStandardSubnets(ctx context.Context, networkID any) erro
 	// Layer A enforcement for provider-native subnets (AWS): the created
 	// subnets are all workload subnets — generateDefaultSubnets skips the
 	// infra child, and explicit Network.Subnets lists the workload set — so
-	// their CIDRs must satisfy the resolved layout's MinSubnets before any
-	// cloud subnet is created, matching the virtual-subnet paths above. A
-	// CIDR-less entry (provider-assigned) is skipped; an all-CIDR-less list
-	// skips validation entirely, mirroring internal/vault's
-	// validateWorkloadSubnetCIDRs empty-set exception.
+	// the set must satisfy the resolved layout's MinSubnets before any
+	// cloud subnet is created, matching the virtual-subnet paths above.
+	// Every entry counts toward the floor — a subnet exists whether or not
+	// its CIDR is known yet — while a CIDR-less (provider-assigned) entry
+	// has no size for ValidateSubnetSet to check.
 	cidrs := make([]string, 0, len(subnets))
 
 	for _, subnet := range subnets {
-		if subnet.CIDR != "" {
-			cidrs = append(cidrs, subnet.CIDR)
-		}
+		cidrs = append(cidrs, subnet.CIDR)
 	}
 
-	if len(cidrs) > 0 {
-		if err := m.validateWorkloadSubnetCount("standard", cidrs); err != nil {
-			return err
-		}
+	if err := m.validateWorkloadSubnetCount("standard", cidrs); err != nil {
+		return err
 	}
 
 	for _, subnet := range subnets {
