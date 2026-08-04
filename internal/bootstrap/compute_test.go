@@ -1454,3 +1454,58 @@ func TestManager_BastionStaticIPPrefix(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateBastion_CustomNamedSubnetFoundByIndex proves the bastion subnet
+// is found via its recorded role/workload_index when no subnet follows the
+// "<bloc>-ocfp-0" name shape: the subnet recorded at workload index 0 hosts
+// the bastion, regardless of its name or insertion order. Names here carry
+// no bloc prefix, so the legacy prefix-scan fallback cannot mask a miss.
+func TestCreateBastion_CustomNamedSubnetFoundByIndex(t *testing.T) {
+	t.Parallel()
+
+	manager, fakeComp, _, _ := setupComputeTest(t, "aws")
+	sm := manager.StateManager()
+
+	if err := sm.RemoveResource("subnet", "prod-ocfp-0"); err != nil {
+		t.Fatalf("Failed to remove subnet: %v", err)
+	}
+
+	// Index 1 inserted first: selection must follow the recorded index, not
+	// insertion order or name sort.
+	for _, res := range []*state.Resource{
+		{
+			ID:   "subnet-east-b",
+			Type: "subnet",
+			Name: "east-workload-b",
+			Properties: map[string]interface{}{
+				"cidr":              "10.4.4.0/22",
+				"availability_zone": "us-east-1b",
+				"role":              "ocfp",
+				"workload_index":    1,
+			},
+		},
+		{
+			ID:   "subnet-east-a",
+			Type: "subnet",
+			Name: "east-workload-a",
+			Properties: map[string]interface{}{
+				"cidr":              "10.4.0.0/22",
+				"availability_zone": "us-east-1a",
+				"role":              "ocfp",
+				"workload_index":    0,
+			},
+		},
+	} {
+		if err := sm.AddResource(res); err != nil {
+			t.Fatalf("Failed to add subnet %s: %v", res.Name, err)
+		}
+	}
+
+	if err := manager.CreateBastion(context.Background()); err != nil {
+		t.Fatalf("CreateBastion failed: %v", err)
+	}
+
+	if fakeComp.lastReq.SubnetID != "subnet-east-a" {
+		t.Errorf("SubnetID = %q, want subnet-east-a (workload index 0)", fakeComp.lastReq.SubnetID)
+	}
+}
