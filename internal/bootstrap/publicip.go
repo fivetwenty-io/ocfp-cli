@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -20,6 +21,11 @@ const (
 	defaultRouterCount    = 4
 	defaultTCPRouterCount = 2
 )
+
+// ErrPublicIPCreateFailed reports addresses that could not be allocated after
+// every retry. The bootstrap runner aborts on it rather than reporting a
+// completed step for work that did not happen.
+var ErrPublicIPCreateFailed = errors.New("public IP creation failed")
 
 // stackitEnsure is an interface for STACKIT-specific floating IP management.
 type stackitEnsure interface {
@@ -49,27 +55,40 @@ func (m *Manager) CreatePublicIPs(ctx context.Context) error {
 	netMgr := m.provider.NetworkManager()
 	stackitProvider, isStackit := m.getStackitProvider(netMgr)
 
-	var allIPs []*cpi.PublicIP
+	var (
+		allIPs []*cpi.PublicIP
+		errs   []error
+	)
+
+	collect := func(ips []*cpi.PublicIP, err error) {
+		allIPs = append(allIPs, ips...)
+
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
 
 	// Create ops public IPs (all providers)
-	allIPs = append(allIPs, m.createOpsPublicIPs(ctx, netMgr)...)
+	collect(m.createOpsPublicIPs(ctx, netMgr))
 
 	if isStackit {
 		// STACKIT-specific: Create jumpbox IPs using floating IP method
-		allIPs = append(allIPs, m.createJumpboxPublicIPs(ctx, stackitProvider)...)
+		collect(m.createJumpboxPublicIPs(ctx, stackitProvider))
 
 		// Create remaining public IPs (STACKIT only - other providers manage these differently)
-		allIPs = append(allIPs, m.createRouterPublicIPs(ctx, netMgr)...)
-		allIPs = append(allIPs, m.createCFSSHPublicIPs(ctx, netMgr)...)
-		allIPs = append(allIPs, m.createTCPRouterPublicIPs(ctx, netMgr)...)
-		allIPs = append(allIPs, m.createBastionPublicIPs(ctx, netMgr)...)
+		collect(m.createRouterPublicIPs(ctx, netMgr))
+		collect(m.createCFSSHPublicIPs(ctx, netMgr))
+		collect(m.createTCPRouterPublicIPs(ctx, netMgr))
+		collect(m.createBastionPublicIPs(ctx, netMgr))
 	}
 
 	if len(allIPs) > 0 {
 		m.renderPublicIPsSummary(allIPs)
 	}
 
-	return nil
+	// Every group is attempted before failing, so one unavailable address does
+	// not mask the state of the rest.
+	return errors.Join(errs...) //nolint:wrapcheck // already wrapped per group
 }
 
 func (m *Manager) supportsPublicIPs() bool {
@@ -102,7 +121,7 @@ func (m *Manager) getStackitProvider(netMgr cpi.NetworkManager) (stackitEnsure, 
 // Specific Public IP Creation Functions
 // ==============================================================================
 
-func (m *Manager) createOpsPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+func (m *Manager) createOpsPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) ([]*cpi.PublicIP, error) {
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Ops, 1)
 
 	return m.ensureAndRecordPublicIPs(
@@ -113,11 +132,12 @@ func (m *Manager) createOpsPublicIPs(ctx context.Context, netMgr cpi.NetworkMana
 	)
 }
 
-func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider stackitEnsure) []*cpi.PublicIP {
+func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider stackitEnsure) ([]*cpi.PublicIP, error) {
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Jumpbox, defaultJumpboxCount)
 
 	ips := make([]*cpi.PublicIP, 0, count)
 	recorded := make([]indexedPublicIP, 0, count)
+	failed := make([]string, 0, count)
 
 	for i := range count {
 		name := fmt.Sprintf("%s-jumpbox-%d", m.options.BlocName, i)
@@ -135,6 +155,8 @@ func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider st
 		if err != nil {
 			logger.Errorf("Failed to create jumpbox public IP %s: %v", name, err)
 
+			failed = append(failed, name)
+
 			continue
 		}
 
@@ -144,10 +166,20 @@ func (m *Manager) createJumpboxPublicIPs(ctx context.Context, stackitProvider st
 
 	m.savePublicIPsToState(recorded, "jumpbox", "jumpbox-%d")
 
-	return ips
+	return ips, publicIPFailure(failed)
 }
 
-func (m *Manager) createRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+// publicIPFailure names the addresses that could not be allocated, or returns
+// nil when every requested address is accounted for.
+func publicIPFailure(failed []string) error {
+	if len(failed) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %s", ErrPublicIPCreateFailed, strings.Join(failed, ", "))
+}
+
+func (m *Manager) createRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) ([]*cpi.PublicIP, error) {
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.Router, defaultRouterCount)
 
 	return m.ensureAndRecordPublicIPs(
@@ -158,7 +190,7 @@ func (m *Manager) createRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkM
 	)
 }
 
-func (m *Manager) createCFSSHPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+func (m *Manager) createCFSSHPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) ([]*cpi.PublicIP, error) {
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.CFSSH, 1)
 
 	return m.ensureAndRecordPublicIPs(
@@ -169,7 +201,7 @@ func (m *Manager) createCFSSHPublicIPs(ctx context.Context, netMgr cpi.NetworkMa
 	)
 }
 
-func (m *Manager) createTCPRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+func (m *Manager) createTCPRouterPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) ([]*cpi.PublicIP, error) {
 	count := m.getPublicIPCountWithDefault(m.config.PublicIPs.TCPRouter, defaultTCPRouterCount)
 
 	return m.ensureAndRecordPublicIPs(
@@ -180,7 +212,7 @@ func (m *Manager) createTCPRouterPublicIPs(ctx context.Context, netMgr cpi.Netwo
 	)
 }
 
-func (m *Manager) createBastionPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) []*cpi.PublicIP {
+func (m *Manager) createBastionPublicIPs(ctx context.Context, netMgr cpi.NetworkManager) ([]*cpi.PublicIP, error) {
 	// Always create exactly 1 bastion public IP
 	return m.ensureAndRecordPublicIPs(
 		ctx, netMgr, "bastion", 1,
@@ -289,9 +321,10 @@ func (m *Manager) ensureAndRecordPublicIPs(
 	count int,
 	nameFormat string,
 	baseLabels map[string]string,
-) []*cpi.PublicIP {
+) ([]*cpi.PublicIP, error) {
 	ips := make([]*cpi.PublicIP, 0, count)
 	recorded := make([]indexedPublicIP, 0, count)
+	failed := make([]string, 0, count)
 
 	const maxRetriesPerIP = 3
 
@@ -321,14 +354,16 @@ func (m *Manager) ensureAndRecordPublicIPs(
 			if attempt < maxRetriesPerIP-1 {
 				logger.Warnf("Failed to create public IP %s (attempt %d/%d), retrying...", name, attempt+1, maxRetriesPerIP)
 			} else {
-				logger.Errorf("Failed to create public IP %s after %d attempts, skipping", name, maxRetriesPerIP)
+				logger.Errorf("Failed to create public IP %s after %d attempts", name, maxRetriesPerIP)
+
+				failed = append(failed, name)
 			}
 		}
 	}
 
 	m.savePublicIPsToState(recorded, job, nameFormat)
 
-	return ips
+	return ips, publicIPFailure(failed)
 }
 
 func (m *Manager) getOrCreatePublicIP(
