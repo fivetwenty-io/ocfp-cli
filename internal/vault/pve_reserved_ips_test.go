@@ -439,6 +439,8 @@ func (workloadTableErrLayout) ValidateBand(_ netlayout.Tier, _ string, _, _ int)
 	return netlayout.ErrNotImplemented
 }
 
+func (workloadTableErrLayout) PinnedWorkloadIndex(_ string) (int, bool) { return 0, false }
+
 // TestPVEReservedIPs_WorkloadTableErrorFailsLoudly locks the guard on the
 // WorkloadTable step itself: a layout that validates the subnet but cannot
 // produce a table must error out with the strategy and step named, never
