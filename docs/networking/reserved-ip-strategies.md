@@ -6,7 +6,7 @@ This document describes how OCFP assigns reserved IP addresses inside each bloc'
 
 Before this change, the bootstrap layer (subnet carving, infra-role slots, state outputs) and the vault layer (per-workload-subnet mgmt/ocf reserved-IP tables) derived their reserved-IP bands independently, and could disagree. The historical PVE `ocfp` role widened its available band from a `total/2 - 3` computation tied to each subnet's own size, while vault's mgmt tier kept a fixed window; the two could land on different numbers for the same subnet. That mismatch is what caused the historical PVE band-widening bug.
 
-Both layers now resolve every offset from one shared table (`internal/netlayout`), selected by a strategy name, so the two layers cannot disagree again. Two strategies ship today: `wide` (the default, and the strategy every currently provisioned bloc already runs) and `compact` (for narrower subnets). Provisioned blocs see no change to the addresses their VMs actually hold, but their bootstrap-state `available_a`/`available_b`/`reserved_c` outputs change value at the next bootstrap apply — see "Layer A (bootstrap) slots" below for exactly which values and which blocs.
+Both layers now resolve every offset from one shared table (`internal/netlayout`), selected by a strategy name, so the two layers cannot disagree again. Three strategies ship today: `wide` (the default, and the strategy every currently provisioned PVE bloc already runs), `compact` (for narrower subnets), and `spanning` (for providers whose workload subnets are physically separate address spaces — AWS's VPC subnets, STACKIT's `ocfp-triple` layout). Operators can also register their own strategy definitions via `network.strategyPaths`; see [Authoring Reserved-IP Strategies](authoring-strategies.md) for the schema and validation rules a BYO definition must satisfy. Provisioned `wide`/`compact` blocs see no change to the addresses their VMs actually hold, but the set of bootstrap-state outputs each bloc writes changes at the next bootstrap apply — see "Layer A (bootstrap) slots" below for exactly which outputs and which blocs.
 
 ## 1. Overview
 
@@ -22,13 +22,34 @@ Both layers now resolve every offset from the same `internal/netlayout` registry
 
 ## 2. Strategy selection
 
-A bloc's config selects a strategy with the `strategy` key nested under `network:` (camelCase), or the snake_case alias `network_strategy`. Both are accepted; an empty value resolves to the default strategy, `wide`. An unrecognized strategy name fails at config load, and the error lists every known strategy name so the operator does not have to guess.
+A bloc's config selects a strategy with the `strategy` key nested under `network:` (camelCase), or the snake_case alias `network_strategy`. Both are accepted; an empty value resolves to the provider's own default strategy (see `netlayout.DefaultNameFor`, table below) rather than always falling back to `wide`. An unrecognized strategy name fails at config load, and the error lists every strategy name known to the bloc's own catalog, so the operator does not have to guess.
+
+A bloc's catalog is not always just the three built-ins: `network.strategyPaths` (or its snake_case alias `strategy_paths`) names files or directories of operator-supplied strategy definitions, loaded alongside the built-ins into a per-bloc catalog before `network.strategy` is resolved. `strategyPaths` (camelCase) wins over `strategy_paths` when both are set. See [Authoring Reserved-IP Strategies](authoring-strategies.md) for the file/directory discovery rules and the no-shadowing, unique-`scheme_version` guarantees that catalog build enforces.
+
+The empty-strategy provider default:
+
+| Provider | Subnet strategy | Default |
+| --- | --- | --- |
+| aws | (any) | spanning |
+| stackit | `ocfp-triple` | spanning |
+| stackit | anything else (including empty) | wide |
+| pve, or provider unset | (any) | wide |
 
 The selected strategy applies to both layers: Layer A's `ocfp`-role band and Layer B's per-tier assignment table both come from the same resolved strategy.
 
-## 3. The `wide` strategy
+## 3. Placement: colocated vs. spanning
 
-`wide` is the default strategy (scheme identity `"2"`), the strategy every currently provisioned PVE bloc already runs, and the strategy carried over unchanged from the pre-`netlayout` implementation. It requires a workload subnet of at least `/25`; its highest fixed offset is `97` (the `ocf` tier's haproxy static).
+Every strategy declares one `placement` mode, which controls whether a role's reserved address appears once per bloc or once per workload-subnet index:
+
+`colocated` (`wide`, `compact`) replicates the strategy's full statics-and-bands table on every workload subnet, unchanged from subnet to subnet other than the base address. No static may be pinned to a specific subnet index under colocated placement — the definition loader rejects one that tries (`ErrBadPinning`, see [Authoring Reserved-IP Strategies](authoring-strategies.md#2-validation-rule-catalog)). A colocated strategy needs only one workload subnet to be valid (`min_subnets` defaults to 1 and may not be set explicitly).
+
+`spanning` (`spanning`) distributes roles across a fixed number of workload subnets (`min_subnets`, at least 2): each static either names the specific subnet index (or indices) it is pinned to via `subnets: [...]`, or is left unpinned, in which case it still appears on every index — exactly like a colocated static. Available bands follow the same rule: a band may be pinned to specific indices or left open to every index. `spanning` requires at least 3 workload subnets (`min_subnets: 3`); asking it to lay out fewer fails with `netlayout.ErrTooFewSubnets` (see section 8).
+
+Spanning's per-index pinning generalizes a pattern this document's earlier revisions described as a PVE-specific special case: the historical `ocfp-0`/`ocfp-1`/`ocfp-2` subnets each hosted a different slice of shared infra (bastion/bosh/shield/blacksmith on `ocfp-0`, doomsday/shout on `ocfp-1`, `ocfp_ui` on `ocfp-2`), hand-coded as extra fields on the `infra` role. That hand-coding is gone; the same distribution is now declared once, in `spanning`'s own YAML definition, and is available to any provider whose workload subnets are genuinely separate address spaces — not just PVE.
+
+## 4. The `wide` strategy
+
+`wide` is the default strategy for PVE and STACKIT's single-subnet layout (scheme identity `"2"`), the strategy every currently provisioned PVE bloc already runs, and the strategy carried over unchanged from the pre-`netlayout` implementation. It is `colocated` and requires a workload subnet of at least `/25`; its highest fixed offset is `97` (the `ocf` tier's haproxy static).
 
 **mgmt tier named statics:**
 
@@ -83,7 +104,7 @@ Offsets 3–22 are fully used; 23–31 are spare for future growth within the mg
 
 mgmt's complement wraps around its own available band on both sides — it excludes offsets 0–31 below the band and everything at 64 and above — so the mgmt director never claims an address inside ocf's 64–95 statics or ocf's 96+ available territory. ocf's complement is simpler: everything below its own band (0–95) is off-limits, which happens to be the entirety of mgmt's territory.
 
-**Why haproxy sits at offset 97, not a named slot below 32:** the Cloud Foundry kit's cloud-config hook does not read a `haproxy_ip` key directly. It claims a window from the `ocf` tier's own available band and marks the first three claimed addresses as the subnet's static range; only the environment manifest reads `haproxy_ip` (as `static_ips`). The seed address therefore has to land inside that claim-derived static window, or BOSH rejects it as belonging to no subnet. That forces haproxy's offset to sit one past the `ocf` band's start — band start 96, haproxy 97. The pre-`netlayout` layout encoded the same coupling at a smaller scale (band start 12, haproxy 13).
+**Why haproxy sits at offset 97, not a named slot below 32:** the Cloud Foundry kit's cloud-config hook does not read a `haproxy_ip` key directly. It claims a window from the `ocf` tier's own available band and marks the first three claimed addresses as the subnet's static range; only the environment manifest reads `haproxy_ip` (as `static_ips`). The seed address therefore has to land inside that claim-derived static window, or BOSH rejects it as belonging to no subnet. That forces haproxy's offset to sit one past the `ocf` band's start — band start 96, haproxy 97. The pre-`netlayout` layout encoded the same coupling at a smaller scale (band start 12, haproxy 13). `netlayout`'s validator enforces this coupling on every strategy, built-in or BYO — see `ErrHaproxyCoupling` in [Authoring Reserved-IP Strategies](authoring-strategies.md#2-validation-rule-catalog).
 
 **Why RustFS and Garage get separate offsets despite being alternatives:** RustFS and Garage are alternative blobstore kit implementations — only one is ever deployed per bloc — but the reserved-IP engine deduplicates by computed address value, so two roles cannot share one offset (the second one processed would be silently dropped). RustFS and Garage therefore get distinct offsets (14 and 20) even though at most one is ever live at a time. The same reasoning applies to their smoke-test errands: `rustfs_smoke` (21) and `garage_smoke` (22) each read their own dedicated key (`rustfs_ip_smoke`, `garage_ip_smoke`), distinct from the role's own IP key.
 
@@ -108,9 +129,9 @@ flowchart LR
 | ocf haproxy | 97 | 10.64.64.97 |
 | last usable address | — | 10.64.67.254 |
 
-## 4. The `compact` strategy
+## 5. The `compact` strategy
 
-`compact` (scheme identity `"3-compact"`) is a `/26`-capable layout derived from `wide` by compressing the `ocf` tier's statics and both tiers' available bands. It requires a workload subnet of at least `/26`; its highest fixed offset is `37` (the `ocf` tier's haproxy static).
+`compact` (scheme identity `"3-compact"`) is a `/26`-capable, `colocated` layout derived from `wide` by compressing the `ocf` tier's statics and both tiers' available bands. It requires a workload subnet of at least `/26`; its highest fixed offset is `37` (the `ocf` tier's haproxy static).
 
 The mgmt tier's statics are numerically identical to `wide`'s (offsets 3–22, same role table above) — compact only compresses the `ocf` tier and the available bands.
 
@@ -163,76 +184,195 @@ flowchart LR
 | ocf haproxy | 37 | 10.20.30.37 |
 | last usable address | — | 10.20.30.62 |
 
-## 5. Layer A (bootstrap) slots
+## 6. The `spanning` strategy
 
-Layer A applies to two roles, both carved from the fixed infra subnet or a workload subnet at bootstrap time, independent of which strategy the bloc selected for band width:
+`spanning` (scheme identity `"4-spanning"`) reuses `wide`'s exact offset catalog — every role sits at the same offset it would under `wide` — but distributes the mgmt tier's singleton services across a bloc's three workload subnets instead of writing every role on every subnet. It is `spanning` placement, requires `min_subnets: 3`, and needs at least a `/25` workload subnet (`wide`'s own minimum, since the per-subnet offset ceiling is unchanged).
 
-**The `infra` role** (the fixed infra subnet — bastion, director, and shared infra services) has nine named statics at offsets 3–11, an available band of 12–29, and a reserved-continuation offset of 30:
+This is the default strategy for AWS (whose three VPC subnets are always separate address spaces) and for STACKIT's `ocfp-triple` subnet strategy (see section 2's default table).
+
+**mgmt tier statics** — offsets identical to `wide`'s; the "Pinned to" column is the only thing spanning changes:
+
+| Role | Offset | Pinned to |
+| --- | --- | --- |
+| bastion | 3 | subnet 0 |
+| bosh | 4 | subnet 0 |
+| vault | 5 | every subnet |
+| jumpbox | 6 | every subnet |
+| concourse | 7 | every subnet |
+| prometheus | 8 | every subnet |
+| shield | 9 | subnet 0 |
+| blacksmith | 10 | subnet 0 |
+| artifacts | 11 | every subnet |
+| wireguard | 12 | subnet 0 |
+| ovpn | 13 | subnet 0 |
+| rustfs | 14 | subnet 0 |
+| proxycache | 15 | subnet 0 |
+| nfs | 16 | subnet 0 |
+| ocfp_ui | 17 | subnet 2 |
+| doomsday | 18 | subnet 1 |
+| shout | 19 | subnet 1 |
+| garage | 20 | subnet 0 |
+| rustfs_smoke | 21 | every subnet |
+| garage_smoke | 22 | every subnet |
+
+**ocf tier statics:**
+
+| Role | Offset | Pinned to |
+| --- | --- | --- |
+| bosh | 64 | subnet 0 |
+| vault | 65 | every subnet |
+| jumpbox | 66 | every subnet |
+| blacksmith | 67 | subnet 1 |
+| haproxy | 97 | subnet 0 |
+
+**Available bands and reserved complements** are unpinned (open to every subnet index) and numerically identical to `wide`'s: mgmt 32–63 (complement 0–31, 64 and above), ocf 96 and above (complement 0–95).
+
+A "pinned to subnet N" static's `<role>_ip` key is written ONLY into that one subnet's `reserved-ips` record; the other subnets' records simply have no such key at all (not a reserved-but-unassigned offset — the key is absent). An "every subnet" static's key is written identically into all three subnets' records, at that subnet's own base address, the same as any `wide`/`compact` static.
+
+**Per-index static tables** (which roles a given `ocfp-N` subnet's `reserved-ips` record actually carries):
+
+| Index 0 (`ocfp-0`) mgmt | Index 1 (`ocfp-1`) mgmt | Index 2 (`ocfp-2`) mgmt |
+| --- | --- | --- |
+| bastion 3, bosh 4, vault 5, jumpbox 6, concourse 7, prometheus 8, shield 9, blacksmith 10, artifacts 11, wireguard 12, ovpn 13, rustfs 14, proxycache 15, nfs 16, garage 20, rustfs_smoke 21, garage_smoke 22 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, doomsday 18, shout 19, rustfs_smoke 21, garage_smoke 22 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, ocfp_ui 17, rustfs_smoke 21, garage_smoke 22 |
+
+| Index 0 (`ocfp-0`) ocf | Index 1 (`ocfp-1`) ocf | Index 2 (`ocfp-2`) ocf |
+| --- | --- | --- |
+| bosh 64, vault 65, jumpbox 66, haproxy 97 | vault 65, jumpbox 66, blacksmith 67 | vault 65, jumpbox 66 |
+
+```mermaid
+flowchart TD
+    subgraph IDX0["ocfp-0 (index 0)"]
+        direction LR
+        A0["0-2\nnetwork+gw"] --> B0["3-31 mgmt statics\nbastion,bosh,shield,blacksmith,\nwireguard,ovpn,rustfs,proxycache,\nnfs,garage + every-subnet roles"]
+        B0 --> C0["32-63\nmgmt available"]
+        C0 --> D0["64-95 ocf statics\nbosh + every-subnet roles"]
+        D0 --> E0["96-...\nocf available\n(haproxy at 97)"]
+    end
+    subgraph IDX1["ocfp-1 (index 1)"]
+        direction LR
+        A1["0-2\nnetwork+gw"] --> B1["3-31 mgmt statics\ndoomsday 18, shout 19\n+ every-subnet roles"]
+        B1 --> C1["32-63\nmgmt available"]
+        C1 --> D1["64-95 ocf statics\nblacksmith 67\n+ every-subnet roles"]
+        D1 --> E1["96-...\nocf available"]
+    end
+    subgraph IDX2["ocfp-2 (index 2)"]
+        direction LR
+        A2["0-2\nnetwork+gw"] --> B2["3-31 mgmt statics\nocfp_ui 17\n+ every-subnet roles"]
+        B2 --> C2["32-63\nmgmt available"]
+        C2 --> D2["64-95 ocf statics\nevery-subnet roles only"]
+        D2 --> E2["96-...\nocf available"]
+    end
+```
+
+**Worked `/22` triple example.** Take the standard three-subnet AWS/PVE split of a `/20` parent (`10.4.0.0/20` → `ocfp-0` = `10.4.4.0/22`, `ocfp-1` = `10.4.8.0/22`, `ocfp-2` = `10.4.12.0/22`):
+
+| Item | Index | Offset | Address |
+| --- | --- | --- | --- |
+| bastion | 0 | 3 | 10.4.4.3 |
+| mgmt vault (every subnet) | 0 / 1 / 2 | 5 | 10.4.4.5 / 10.4.8.5 / 10.4.12.5 |
+| mgmt available band | 0 / 1 / 2 | 32–63 | 10.4.4.32–63 / 10.4.8.32–63 / 10.4.12.32–63 |
+| doomsday | 1 | 18 | 10.4.8.18 |
+| shout | 1 | 19 | 10.4.8.19 |
+| ocfp_ui | 2 | 17 | 10.4.12.17 |
+| ocf bosh | 0 | 64 | 10.4.4.64 |
+| ocf haproxy | 0 | 97 | 10.4.4.97 |
+| ocf blacksmith | 1 | 67 | 10.4.8.67 |
+| ocf available band start | 0 / 1 / 2 | 96 | 10.4.4.96 / 10.4.8.96 / 10.4.12.96 |
+
+`doomsday_ip` is absent from `ocfp-0`'s and `ocfp-2`'s reserved-ips records; `bastion_ip` is absent from `ocfp-1`'s and `ocfp-2`'s; `blacksmith_ip` under the `ocf` tier is absent from `ocfp-0`'s and `ocfp-2`'s. `vault_ip` under either tier is present, at its own subnet's base address, on all three.
+
+**Subnet-count enforcement.** `spanning` needs `min_subnets: 3`; a bloc whose provider/subnet-strategy combination produces fewer than three workload subnets (for example, STACKIT's single-subnet layout, or an AWS VPC hand-configured with only one or two subnets) fails at bootstrap-subnet-creation time and at vault-provider populate time with `netlayout.ErrTooFewSubnets`, before any address is derived — see section 8.
+
+## 7. Layer A (bootstrap) slots
+
+Layer A applies to two roles, both carved from the fixed infra subnet or a workload subnet at bootstrap time:
+
+**The `infra` role** (the fixed infra subnet — bastion, director, and shared infra services) is fixed for every strategy, subnet size, and index: it has four named statics, an available band of 12–29, and a reserved-continuation offset of 30. Its layout does not come from a strategy's mgmt tier at all — it is a package-level constant, `internal/netlayout`'s `infraLayerASlots()` — because the infra subnet is carved once per bloc and is not a workload subnet whose layout varies by strategy:
 
 | Role | Offset |
 | --- | --- |
 | bastion | 3 |
 | bosh | 4 |
-| vault | 5 |
-| jumpbox | 6 |
-| concourse | 7 |
-| prometheus | 8 |
 | shield | 9 |
 | blacksmith | 10 |
-| artifacts | 11 |
 
-These same nine offsets are identical to `wide`'s mgmt-tier statics — both trace back to the same historical PVE layout — but they are declared as separate constants in the source specifically so a future retune of `wide`'s or `compact`'s mgmt-tier offsets never silently drags the infra role's numbers along with it.
-
-The infra role's slot set also carries four additional named fields that reuse offsets 3, 9, and 10 for a different purpose: `BlacksmithOCFP` (3), `Doomsday` (9), `Shout` (10), and `OCFPUI` (9). These are not a collision in practice — they are written only when populating the legacy `ocfp` workload subnets (`ocfp-0`, `ocfp-1`, `ocfp-2`), and each one lands on a physically different subnet: `ocfp-0` writes bastion/bosh/shield/blacksmith at idx 0, `ocfp-1` writes doomsday/shout/blacksmith(ocfp) at idx 1, and `ocfp-2` writes `ocfp_ui` at idx 2. If you are redrawing a diagram that shows all three `ocfp-N` subnets side by side, offsets 3/9/10 will appear to repeat across them with different labels — that is expected, not an error.
-
-**The `ocfp` role** (each AZ workload subnet) reuses the infra role's named statics unchanged, but its available band and reserved-continuation offset are the *selected strategy's own mgmt-tier band* — not a separately computed value:
+**The `ocfp` role** (each AZ workload subnet) now derives its named-slot set directly from the resolved strategy's own mgmt tier — `Layout.LayerASlots("ocfp", cidr, idx)` returns exactly the mgmt-tier statics whose `subnets:` pinning includes `idx` (every static, for a `colocated` strategy), keyed the same way Layer B keys them (`ip_key` when set, else `"<role>_ip"`), plus that strategy's own mgmt available band:
 
 | Strategy | Available band | Reserved-continuation offset |
 | --- | --- | --- |
 | wide | 32–63 | 64 |
 | compact | 28–35 | 36 |
+| spanning | 32–63 | 64 |
 
-This is identical across every provider subnet-carving strategy — PVE, the STACKIT triple-subnet layout, and the STACKIT single-subnet layout all resolve the `ocfp` role's band through the same code path, so none of them can drift from the others or from Layer B's own mgmt band.
+`ReservedB` is always `AvailableA - 1` and `ReservedC` is always `AvailableB + 1` — the reserved complement is derived from the band, never carried as an independent value, so a band override (section 9) can never leave the reserved complement pointing at the old band.
 
-**Migration note.** The `ocfp`-role bootstrap state outputs — `reserved_<bloc>-ocfp-N_available_a`, `reserved_<bloc>-ocfp-N_available_b`, and `reserved_<bloc>-ocfp-N_reserved_c` — change value on every existing PVE bloc at its next bootstrap apply. Historically, PVE widened these three outputs to offsets 12, 509, and 510 on a `/22` subnet (derived from that subnet's own size); STACKIT used the fixed infra-role band, 12, 29, and 30, unchanged. Both providers now emit the selected strategy's own band instead: 32/63/64 under `wide`, or 28/35/36 under `compact`. No STACKIT bloc is deployed today, so the STACKIT-side change is latent — there is nothing to migrate until one exists. For PVE, `bastion_ip` and `bosh_ip` (offsets 3 and 4) are unaffected, because the `ocfp` role's override only replaces the available band and reserved-continuation offset, never the named statics. The vault-layer reserved-IP keys are likewise unaffected under `wide` — its Layer B table is unchanged from the pre-`netlayout` implementation — so provisioned blocs see zero drift on the addresses their VMs actually hold. Only the three bootstrap-state outputs above move.
+This is identical across every provider subnet-carving strategy — PVE, the STACKIT triple-subnet layout, the STACKIT single-subnet layout, and AWS's VPC subnet split all resolve the `ocfp` role's slots through the same code path, so none of them can drift from the others or from Layer B's own per-tier table.
 
-## 6. Subnet-size validation
+A negative `idx` (the bootstrap call this package uses for the infra subnet and for single-subnet contexts that have no workload-subnet position) returns only the placements that apply to every index — for a `spanning`-style definition, that means only its unpinned statics and bands; every pinned static and band is omitted, since a negative index can never satisfy a pinned-index membership test.
 
-Each strategy rejects a workload subnet narrower than its minimum prefix at populate time, before deriving any address: `wide` requires at least `/25`, `compact` requires at least `/26`. The error names the strategy, the offending CIDR, its actual prefix, the required minimum prefix, and the strategy's highest fixed offset, so the message alone explains the rejection without cross-referencing source. This replaced the previous behavior of silently emitting an address outside the subnet's own range when the subnet was too small.
+**Colocated strategies now write every mgmt static on every index, not a fixed subset.** Before this change, Layer A's `ocfp`-role writer emitted only the nine named statics that also happen to be the `infra` role's own set (bastion, bosh, vault, jumpbox, concourse, prometheus, shield, blacksmith, artifacts), plus — on PVE's legacy `ocfp-0`/`ocfp-1`/`ocfp-2` special case — four hand-coded extra fields written at specific indices (`BlacksmithOCFP` at index 0, `Doomsday` and `Shout` at index 1, `OCFPUI` at index 2). That hand-coded special case is gone. Now, for `wide` and `compact` (both `colocated`, so every static is unpinned), `LayerASlots("ocfp", ...)` returns the strategy's FULL mgmt-tier static set — all twenty roles, including `wireguard`, `ovpn`, `rustfs`, `proxycache`, `nfs`, `ocfp_ui`, `doomsday`, `shout`, `garage`, `rustfs_smoke`, and `garage_smoke` — on EVERY `ocfp-N` workload subnet, as `reserved_<bloc>-ocfp-N_<role>_ip` bootstrap-state outputs. For `spanning`, the same writer emits only the roles pinned to that particular index (section 6's per-index tables), plus the unpinned "every subnet" roles.
 
-For example, configuring `wide` on a `10.20.30.0/26` subnet — the same subnet compact's worked example above uses — fails with an error equivalent to: `subnet too small for strategy: strategy "wide" cidr "10.20.30.0/26" is /26, requires minimum /25 (highest fixed offset 97)`. The subnet is not too small in absolute terms; it is too small for `wide` specifically, because `wide`'s highest offset (97) does not fit inside a 64-address block. The same subnet is valid for `compact`, whose highest offset (37) fits comfortably.
+**Migration note.** Two independent changes affect a bloc's bootstrap-state outputs at its next apply:
 
-## 7. Band overrides
+The `ocfp`-role band/reserved-continuation outputs (`reserved_<bloc>-ocfp-N_available_a`, `available_b`, `reserved_b`, `reserved_c`) already changed value when the netlayout registry was introduced: historically, PVE widened these to offsets 12, 509, and 510 on a `/22` subnet (derived from that subnet's own size), while STACKIT used the fixed infra-role band, 12/29/30, unchanged. Both providers now emit the selected strategy's own band instead — 32/63/64 for `wide` and `spanning`, or 28/35/36 for `compact`. `bastion_ip` and `bosh_ip` (offsets 3 and 4) are unaffected either way, because the `ocfp` role's band override only replaces the available band and reserved-continuation offset, never the named statics.
+
+Separately, and specific to this change: `wide`/`compact` blocs gain the additional `reserved_<bloc>-ocfp-N_<role>_ip` output keys listed above, on every index, at their next apply. This is purely additive — no output key that already existed changes VALUE, only new keys are added at indices where the pre-`netlayout` special case never wrote them (`doomsday_ip`/`shout_ip`/`ocfp_ui_ip` previously existed at only one index each; they now exist at all three). `wide`'s vault-layer (Layer B) reserved-IP keys are entirely unaffected — its table is unchanged from the pre-`netlayout` implementation — so provisioned blocs see zero drift on the addresses their VMs actually hold; `wide`'s scheme stamp stays `"2"` (section 10).
+
+This additive change fixes two downstream lookups that previously missed: `ocfp endpoints`' `findReservedIP` helper scans every subnet's `reserved_..._<role>_ip` output and, for a role pinned at only one index under the old special case, could fail to find a match at the index it checked first; and `ocfp lb add-service`'s `reserved:<key>[:index]` token (`ResolveReservedIP`, default index 0) previously 404'd for `reserved:doomsday_ip` and `reserved:shout_ip` because neither key existed on `ocfp-0`. Both now resolve, because `wide`/`compact` write every mgmt static's key on `ocfp-0` (and every other index) unconditionally.
+
+## 8. Subnet-size and subnet-count validation
+
+Each strategy rejects a workload subnet narrower than its minimum prefix at populate time, before deriving any address: `wide` and `spanning` require at least `/25`, `compact` requires at least `/26`. The error names the strategy, the offending CIDR, its actual prefix, the required minimum prefix, and the strategy's highest fixed offset, so the message alone explains the rejection without cross-referencing source:
+
+```
+subnet too small for strategy: strategy "wide" cidr "10.20.30.0/26" is /26, requires minimum /25 (highest fixed offset 97)
+```
+
+The subnet is not too small in absolute terms; it is too small for `wide` specifically, because `wide`'s highest offset (97) does not fit inside a 64-address block. The same subnet is valid for `compact`, whose highest offset (37) fits comfortably.
+
+`spanning` additionally rejects a workload-subnet SET with fewer than three entries, wrapping `netlayout.ErrTooFewSubnets`, before checking any individual subnet's size:
+
+```
+netlayout: too few workload subnets for strategy: strategy "spanning" requires at least 3 workload subnets, got 1
+```
+
+Both bootstrap's subnet-creation path and every vault provider's populate path call `Layout.ValidateSubnetSet(cidrs)` against the same resolved strategy, so a provider/subnet-strategy combination that produces too few workload subnets for the selected strategy — STACKIT's single-subnet layout under `spanning`, for example — is rejected at the same point regardless of which layer runs first.
+
+## 9. Band overrides
 
 Two config keys override a strategy's computed available band, each scoped to a different layer:
 
 `network.bands.infra` overrides Layer A's available band and reserved-continuation offset, uniformly for both the `infra` role and the `ocfp` role — it replaces whatever the strategy computed, it does not add to it. It is validated before being applied: both `start` and `end` must be set together (or neither); `start` may not fall below offset 12 (the floor below which the infra role's fixed named slots live); `end` must fall strictly after `start`; and `end` may not exceed the subnet's last usable host address. A validation failure is returned as an error naming the specific rule that failed.
 
-`network.bands.mgmt` overrides Layer B's mgmt-tier available band, for PVE only, and only for the `wide` strategy — an explicit `mgmt` override configured for any other strategy hard-errors, because the override's bounds (32–63) are `wide`-specific and would silently mis-validate a differently shaped strategy's mgmt zone (`compact`'s is 28–35). Both `start` and `end` must be set together; the pair must satisfy `32 <= start < end <= 63`.
+`network.bands.mgmt` overrides Layer B's mgmt-tier available band. Unlike the historical restriction, this is no longer `wide`-only: validation is now derived from the resolved strategy's own definition, not a hard-coded `32 <= start < end <= 63` range. `ValidateBand` (for any of `wide`, `compact`, `spanning`, or a BYO strategy) checks, in order: both `start`/`end` set together; `end` strictly after `start`; `end` within the subnet's usable range; `[start,end]` collides with no named static of EITHER tier, on any subnet index (`ErrBandOverrideCollidesStatic`); and `[start,end]` does not intersect the OTHER tier's own available band, on any subnet index (`ErrBandOverrideCrossTier`, an open band closed at the subnet's last usable offset). The full message catalog, with example error text, is in [Authoring Reserved-IP Strategies](authoring-strategies.md#2-validation-rule-catalog).
+
+Applying either override recomputes the reserved complement from the new band — `reserved_b = start - 1` and `reserved_c = end + 1` — so the band and its complement can never point at different generations of the same override.
 
 `network.bands.ocf` is not shipped by either layer's config today — no per-strategy `ocf`-tier override exists yet.
 
-The removed legacy key, `network.availableBandStart`/`network.availableBandEnd` (and its snake_case alias, `available_band_start`/`available_band_end`), now hard-errors at config load. The error names both replacement keys — `network.bands.infra` for the bootstrap subnet layout, and `network.bands.mgmt` for the PVE reserved-IP mgmt tier — so a config still carrying the old key fails loudly instead of silently losing its override.
+The removed legacy key, `network.availableBandStart`/`network.availableBandEnd` (and its snake_case alias, `available_band_start`/`available_band_end`), now hard-errors at config load. The error names both replacement keys — `network.bands.infra` for the bootstrap subnet layout, and `network.bands.mgmt` for the reserved-IP mgmt tier — so a config still carrying the old key fails loudly instead of silently losing its override.
 
-## 8. Scheme stamping and drift guard
+## 10. Scheme stamping and drift guard
 
-Every bloc's vault `reserved-ips` record carries a `scheme_version` key recording which strategy's table its addresses were derived from. `wide`-strategy blocs stamp `"2"` — the same value the pre-`netlayout` implementation already used, so no new vault key semantics were introduced for existing `wide` blocs. `compact`-strategy blocs stamp `"3-compact"`.
+Every bloc's vault `reserved-ips` record carries a `scheme_version` key recording which strategy's table its addresses were derived from. `wide`-strategy blocs stamp `"2"` — the same value the pre-`netlayout` implementation already used, so no new vault key semantics were introduced for existing `wide` blocs. `compact`-strategy blocs stamp `"3-compact"`, and `spanning`-strategy blocs stamp `"4-spanning"`. A BYO strategy stamps whatever `scheme_version` its own YAML declares; the catalog that loads it rejects a value already claimed by a built-in or another BYO definition (`ErrSchemeCollision`), so a stamped value always identifies exactly one strategy's table.
 
-A populate drift guard sits in front of every write to a `reserved-ips` path (both the keyed form and the per-role sub-path form). For a key vault does not yet hold, the guard forwards the write. For a key vault already holds with a value that disagrees with what this build derives, the guard withholds the write, records the disagreement (path, key, the value vault holds, and the value this build derived), and reports it — the recorded address is never silently moved. Records that predate scheme stamping, or that carry an older stamp than the running binary derives, get a separate report entry describing the mismatch, without being rewritten.
+A populate drift guard sits in front of every write to a `reserved-ips` path (both the keyed form and the per-role sub-path form), for every strategy alike — built-in or BYO. For a key vault does not yet hold, the guard forwards the write. For a key vault already holds with a value that disagrees with what this build derives, the guard withholds the write, records the disagreement (path, key, the value vault holds, and the value this build derived), and reports it — the recorded address is never silently moved. Records that predate scheme stamping, or that carry an older stamp than the running binary derives, get a separate report entry describing the mismatch, without being rewritten.
 
 Moving a live reserved address recreates the VM that holds it, so the guard's withheld writes are surfaced for deliberate review rather than applied automatically. An operator reviews the report with `ocfp vault reserved-ips status`, then applies a chosen migration with `ocfp vault reserved-ips migrate`, or forces the derivation over the recorded addresses with `ocfp vault populate --force-reallocate`.
 
-## 9. Choosing a strategy
+## 11. Choosing a strategy
 
-Use `wide` (the default) when the workload subnet is `/25` or wider — it is the strategy every currently provisioned bloc already runs, and it needs no explicit config.
+Use `wide` (the default for PVE and STACKIT single-subnet) when the workload subnet is `/25` or wider — it is the strategy every currently provisioned bloc already runs, and it needs no explicit config.
 
 Use `compact` when the workload subnet is `/26` — `wide` will not fit it, and `compact` is validated down to exactly that size.
 
-Strategy selection is per-bloc config, not a fleet-wide setting: different blocs can run different strategies without conflict, as long as each bloc's own workload subnets meet its selected strategy's minimum size.
+Use `spanning` when the bloc's workload subnets are physically separate address spaces spread across at least three subnets — this is AWS's and STACKIT's `ocfp-triple`'s default, and needs no explicit config on either provider; select it explicitly for a PVE bloc that wants the same distributed layout across three SDN-mode workload subnets.
 
-Changing a provisioned bloc's strategy is not supported by redeploy. The two strategies place live services — `bosh`, `vault`, `jumpbox`, and `blacksmith` on the `ocf` tier, plus `haproxy` — at different offsets, so switching strategies would move addresses out from under running VMs. A strategy change on a provisioned bloc requires tearing down and rebuilding its workload subnets, not a rolling reconfigure.
+Strategy selection is per-bloc config, not a fleet-wide setting: different blocs can run different strategies without conflict, as long as each bloc's own workload subnets meet its selected strategy's minimum size (and, for `spanning`, minimum subnet count).
 
-## 10. Diagram-update checklist
+Changing a provisioned bloc's strategy is not supported by redeploy. Every built-in strategy places live services — `bosh`, `vault`, `jumpbox`, and `blacksmith` on the `ocf` tier, plus `haproxy` — at different offsets or different subnet indices, so switching strategies would move addresses out from under running VMs. A strategy change on a provisioned bloc requires tearing down and rebuilding its workload subnets, not a rolling reconfigure.
+
+## 12. Diagram-update checklist
 
 When redrawing the OCFP networking diagram, verify each of the following against this document for the strategy the bloc runs:
 
@@ -260,12 +400,26 @@ For `compact`:
 
 - haproxy offset: 37 (one past the ocf band's start)
 
-For both strategies, also verify:
+For `spanning`:
+
+- offsets are numerically identical to `wide`'s (3–22 mgmt, 64–67/97 ocf, 32–63 mgmt available, 96+ ocf available) — only WHICH subnet index carries each role differs
+
+- verify each subnet's own per-index table (section 6) before drawing it: `ocfp-0` carries every singleton mgmt/ocf role plus the unpinned roles; `ocfp-1` carries only doomsday, shout, ocf-tier blacksmith, plus the unpinned roles; `ocfp-2` carries only ocfp_ui plus the unpinned roles
+
+- a role's `<role>_ip` key is ABSENT (not reserved-but-blank) from a subnet's record at any index it is not pinned to
+
+For every strategy, also verify:
 
 - the bastion sits at offset 3, not offset 0 — the network and gateway addresses occupy offsets 0–2 on every subnet, so bastion is the first named static after them
 
 - Layer A's `infra`-role available band is 12–29 on the fixed infra subnet, regardless of which strategy the bloc selected
 
-- Layer A's `ocfp`-role available band equals the selected strategy's own mgmt band (32–63 for wide, 28–35 for compact), not a separately computed value
+- Layer A's `ocfp`-role available band equals the selected strategy's own mgmt band (32–63 for wide/spanning, 28–35 for compact), not a separately computed value
 
-- the bootstrap state-output changes described in section 5 (the `available_a`/`available_b`/`reserved_c` outputs for each `ocfp-N` subnet) if the diagram annotates raw state-output values rather than the offset table
+- Layer A's `ocfp`-role named-slot set equals the selected strategy's own mgmt-tier statics pinned to that index (section 7) — for `wide`/`compact` that is the FULL mgmt static list on every index, not the historical nine-role subset
+
+- the bootstrap state-output changes described in section 7 (the `available_a`/`available_b`/`reserved_b`/`reserved_c` outputs for each `ocfp-N` subnet, and the now-complete per-index named-slot set) if the diagram annotates raw state-output values rather than the offset table
+
+## See Also
+
+- [Authoring Reserved-IP Strategies](authoring-strategies.md) for the BYO strategy YAML schema, the full validation-rule catalog, `network.strategyPaths` discovery, and a complete worked custom-strategy example
