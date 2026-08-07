@@ -89,7 +89,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 ### Kits
 
 - **CF kit** `kit.yml` v3.1.0; PVE is among its supported IaaS providers. PVE overlays in `ocfp/pve/` (`azs`, `external-blobstore`, `ocf`, `ssh-proxy`, `stemcell`). RustFS via `ocfp/pve/external-blobstore.yml` → `secret/config/<bloc>/ocf/cf/blobstores/main:*`. Bucket naming `<bloc>-ocf-cf[-packages|-buildpacks|-droplets|-resource-pool]`.
-- **BOSH kit** `kit.yml` v4.1.0; supports pve (currently dirty — uncommitted PVE work). CPI release **not hard-pinned**: sourced via `pve_cpi_release_path` / `_version` / `_sha1` params (`overlay/cpis/pve-proto.yml`, `pve-base.yml`) as `file://((pve_cpi_release_path))`. PVE auth read via `meta.ocfp.vault.config "/cpi/pve"` → `secret/config/<bloc>/<scope>/cpi/pve:*` (keys host, user, api_token, node, vm_storage, disk_storage, stemcell_storage, iso_storage, network_bridge; `port`/`verify_ssl`/`vmid_range_start` are literals, not vault-sourced; api_token default).
+- **BOSH kit** `kit.yml` v4.1.0; supports pve (currently dirty — uncommitted PVE work). CPI release defaults to the published `bosh-pve-cpi/0.1.0` GitHub release (defaults in `overlay/cpis/pve.yml` and `ocfp/pve/base.yml`, rendered by `pve-base.yml` as `((pve_cpi_release_url))`); override `pve_cpi_release_url` / `_version` / `_sha1` together to pin another release or a `file://` dev tarball. PVE auth read via `meta.ocfp.vault.config "/cpi/pve"` → `secret/config/<bloc>/<scope>/cpi/pve:*` (keys host, user, api_token, node, vm_storage, disk_storage, stemcell_storage, iso_storage, network_bridge; `port`/`verify_ssl`/`vmid_range_start` are literals, not vault-sourced; api_token default).
 
 ### PVE CPI release (`~/w/proxmox/bosh-pve-cpi-release/`)
 

@@ -15,28 +15,35 @@ VM in the bloc that BOSH does not manage from above.
 
 The PVE CPI — `bosh-pve-cpi-release` — is the translator between BOSH's
 wishes ("create a VM", "attach this disk") and the Proxmox API, speaking
-through the token we minted in chapter 2. For a released CPI this section is
-a version bump; in the lab we often carry a dev build, and that means
-shipping the tarball ourselves:
+through the token we minted in chapter 2. The BOSH kit pins a published
+release by default, so an env file that says nothing about the CPI deploys
+`bosh-pve-cpi/0.1.0` straight from its GitHub release — nothing to ship, and
+nothing to keep in sync.
+
+Carrying a dev build is the exception, and it means shipping the tarball
+ourselves:
 
 ```bash
 scp ~/w/proxmox/bosh-pve-cpi-release/dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-<build>.tgz \
     ocfp-lab-wayne-bastion:/home/ubuntu/
 ```
 
-The mgmt env file, `bosh/ocfp-lab-wayne-mgmt.yml`, names it in three params
-that must agree with each other:
+The mgmt env file, `bosh/ocfp-lab-wayne-mgmt.yml`, then names it in three
+params that must agree with each other:
 
 ```yaml
-pve_cpi_release_path: /home/ubuntu/bosh-pve-cpi-dev-<build>.tgz
+pve_cpi_release_url: file:///home/ubuntu/bosh-pve-cpi-dev-<build>.tgz
 pve_cpi_release_version: 0+dev.<n>
 pve_cpi_release_sha1: <sha1 of the tarball>
 ```
 
-The classic failure here is a `pve_cpi_release_version` that does not match
-the version embedded in the tarball, so we check the source of truth rather
-than guessing: `tar -xzOf <tgz> release.MF | grep version`. If we edited the
-env file on the workstation, we re-sync with
+Pinning a different published release uses the same three params with an
+`https://` URL. The classic failure here is a `pve_cpi_release_version` that
+does not match the version embedded in the tarball, so we check the source of
+truth rather than guessing: `tar -xzOf <tgz> release.MF | grep version`. The
+older `pve_cpi_release_path` param is gone — `genesis check` fails and names
+the replacement if an env file still carries it. If we edited the env file on
+the workstation, we re-sync with
 `ocfp init bastion --bloc ocfp-lab-wayne --config` before deploying.
 
 One more pre-flight: the CPI's connection settings live in Vault, written
