@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	yaml "github.com/goccy/go-yaml"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 )
 
 // Table represents a CLI-friendly plan with titled sections.
@@ -130,17 +130,18 @@ func renderSection(section Section) error {
 	tableWriter := setupTableWriter(&buf, section)
 
 	for _, row := range section.Rows {
-		tableWriter.Append(row)
+		err := tableWriter.Append(row)
+		if err != nil {
+			return fmt.Errorf("failed to append table row: %w", err)
+		}
 	}
 
-	tableWriter.Render()
-
-	out := buf.String()
-	if !ASCII {
-		out = boxifyUnicode(out)
+	err := tableWriter.Render()
+	if err != nil {
+		return fmt.Errorf("failed to render table: %w", err)
 	}
 
-	_, err := fmt.Fprint(os.Stdout, out)
+	_, err = fmt.Fprint(os.Stdout, buf.String())
 	if err != nil {
 		return fmt.Errorf("failed to write table output: %w", err)
 	}
@@ -154,54 +155,80 @@ func renderSection(section Section) error {
 }
 
 func setupTableWriter(buf *bytes.Buffer, section Section) *tablewriter.Table {
-	tableWriter := tablewriter.NewWriter(buf)
+	tableWriter := tablewriter.NewTable(buf,
+		tablewriter.WithRendition(tableRendition()),
+		tablewriter.WithConfig(tableConfig(section)),
+	)
 
 	if len(section.Headers) > 0 {
-		tableWriter.SetHeader(section.Headers)
+		tableWriter.Header(section.Headers)
 	}
-
-	configureTableStyle(tableWriter)
-	configureColumnAlignment(tableWriter, section)
 
 	return tableWriter
 }
 
-func configureTableStyle(tableWriter *tablewriter.Table) {
-	tableWriter.SetAutoWrapText(false)
-	tableWriter.SetAutoFormatHeaders(false)
-	tableWriter.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	tableWriter.SetAlignment(tablewriter.ALIGN_LEFT)
-	tableWriter.SetBorder(true)
-	tableWriter.SetRowLine(true)
-	tableWriter.SetHeaderLine(true)
-	tableWriter.SetBorders(tablewriter.Border{Left: true, Top: true, Right: true, Bottom: true})
-
+// tableRendition describes the visual styling: full borders, a line under the
+// header, and a separator between every row.
+func tableRendition() tw.Rendition {
+	style := tw.StyleLight
 	if ASCII {
-		tableWriter.SetCenterSeparator("+")
-		tableWriter.SetColumnSeparator("|")
-		tableWriter.SetRowSeparator("-")
-	} else {
-		tableWriter.SetCenterSeparator("┼")
-		tableWriter.SetColumnSeparator("│")
-		tableWriter.SetRowSeparator("─")
+		style = tw.StyleASCII
+	}
+
+	return tw.Rendition{
+		Borders: tw.Border{Left: tw.On, Right: tw.On, Top: tw.On, Bottom: tw.On, Overwrite: true},
+		Symbols: tw.NewSymbols(style),
+		Settings: tw.Settings{
+			Separators: tw.Separators{
+				ShowHeader:     tw.On,
+				ShowFooter:     tw.On,
+				BetweenRows:    tw.On,
+				BetweenColumns: tw.On,
+			},
+			Lines: tw.Lines{
+				ShowTop:        tw.On,
+				ShowBottom:     tw.On,
+				ShowHeaderLine: tw.On,
+				ShowFooterLine: tw.On,
+			},
+			CompactMode: tw.Off,
+		},
 	}
 }
 
-func configureColumnAlignment(tableWriter *tablewriter.Table, section Section) {
-	if len(section.Headers) == 0 || len(section.Rows) == 0 {
-		return
-	}
-
-	colAlign := make([]int, len(section.Headers))
-	for c := range section.Headers {
-		if isNumericColumn(section.Rows, c) {
-			colAlign[c] = tablewriter.ALIGN_RIGHT
-		} else {
-			colAlign[c] = tablewriter.ALIGN_LEFT
+// tableConfig disables text wrapping and header title-casing, keeping cells
+// verbatim, and right-aligns purely numeric columns.
+func tableConfig(section Section) tablewriter.Config {
+	cellConfig := func(perColumn []tw.Align) tw.CellConfig {
+		return tw.CellConfig{
+			Formatting: tw.CellFormatting{AutoWrap: tw.WrapNone, AutoFormat: tw.Off},
+			Alignment:  tw.CellAlignment{Global: tw.AlignLeft, PerColumn: perColumn},
 		}
 	}
 
-	tableWriter.SetColumnAlignment(colAlign)
+	return tablewriter.Config{
+		Header:   cellConfig(nil),
+		Row:      cellConfig(columnAlignments(section)),
+		Behavior: tw.Behavior{TrimSpace: tw.Off},
+	}
+}
+
+// columnAlignments returns per-column alignment, right-aligning numeric columns.
+func columnAlignments(section Section) []tw.Align {
+	if len(section.Headers) == 0 || len(section.Rows) == 0 {
+		return nil
+	}
+
+	colAlign := make([]tw.Align, len(section.Headers))
+	for c := range section.Headers {
+		if isNumericColumn(section.Rows, c) {
+			colAlign[c] = tw.AlignRight
+		} else {
+			colAlign[c] = tw.AlignLeft
+		}
+	}
+
+	return colAlign
 }
 
 // isNumericColumn returns true if all non-empty cells in column c parse as numbers.
@@ -223,116 +250,6 @@ func isNumericColumn(rows [][]string, columnIndex int) bool {
 	}
 
 	return true
-}
-
-// boxifyUnicode transforms tablewriter's uniform intersection characters into
-// proper box-drawing corners and T-junctions for a cleaner look.
-func boxifyUnicode(input string) string {
-	lines := strings.Split(input, "\n")
-	borderIdx := findBorderLines(lines)
-
-	if len(borderIdx) == 0 {
-		return input
-	}
-
-	applyBorderStyles(lines, borderIdx)
-
-	return strings.Join(lines, "\n")
-}
-
-// findBorderLines identifies lines that contain border characters.
-func findBorderLines(lines []string) []int {
-	borderIdx := []int{}
-
-	for index, line := range lines {
-		if isBorderLine(line) {
-			borderIdx = append(borderIdx, index)
-		}
-	}
-
-	return borderIdx
-}
-
-// isBorderLine checks if a line is a border line.
-func isBorderLine(line string) bool {
-	l := strings.TrimSpace(line)
-	if l == "" {
-		return false
-	}
-
-	hasNoColumnSeparators := !strings.Contains(line, "│")
-	hasHorizontalChars := strings.Contains(line, "─") || strings.Contains(line, "-")
-	hasIntersections := strings.Contains(line, "┼") || strings.Contains(line, "+")
-
-	return hasNoColumnSeparators && hasHorizontalChars && hasIntersections
-}
-
-// applyBorderStyles applies different border styles to top, middle, and bottom borders.
-func applyBorderStyles(lines []string, borderIdx []int) {
-	if len(borderIdx) == 0 {
-		return
-	}
-
-	// Top border
-	lines[borderIdx[0]] = replaceLine(lines[borderIdx[0]], '┌', '┬', '┐')
-
-	// Bottom border
-	if len(borderIdx) > 1 {
-		lastIdx := len(borderIdx) - 1
-		lines[borderIdx[lastIdx]] = replaceLine(lines[borderIdx[lastIdx]], '└', '┴', '┘')
-	}
-
-	// Middle borders (header separator and row separators)
-	for _, i := range borderIdx[1 : len(borderIdx)-1] {
-		lines[i] = replaceLine(lines[i], '├', '┼', '┤')
-	}
-}
-
-// replaceLine replaces intersection characters with appropriate border characters.
-func replaceLine(ln string, start, middle, end rune) string {
-	runes := []rune(ln)
-
-	replaceFirstIntersection(runes, start)
-	replaceLastIntersection(runes, end)
-	replaceMiddleIntersections(runes, middle)
-
-	return string(runes)
-}
-
-// replaceFirstIntersection replaces the first intersection character.
-func replaceFirstIntersection(runes []rune, start rune) {
-	for runeIndex := range runes {
-		if isIntersection(runes[runeIndex]) {
-			runes[runeIndex] = start
-
-			break
-		}
-	}
-}
-
-// replaceLastIntersection replaces the last intersection character.
-func replaceLastIntersection(runes []rune, end rune) {
-	for lastIndex := len(runes) - 1; lastIndex >= 0; lastIndex-- {
-		if isIntersection(runes[lastIndex]) {
-			runes[lastIndex] = end
-
-			break
-		}
-	}
-}
-
-// replaceMiddleIntersections replaces all remaining intersection characters.
-func replaceMiddleIntersections(runes []rune, middle rune) {
-	for midIndex := range runes {
-		if isIntersection(runes[midIndex]) {
-			runes[midIndex] = middle
-		}
-	}
-}
-
-// isIntersection checks if a character is an intersection character.
-func isIntersection(r rune) bool {
-	return r == '┼' || r == '+'
 }
 
 // NewTable creates a new Table with the given title.
