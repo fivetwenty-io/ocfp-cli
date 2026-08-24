@@ -13,18 +13,26 @@ VM in the bloc that BOSH does not manage from above.
 
 ## The CPI, and the one manifest that names it
 
-The PVE CPI — `bosh-pve-cpi-release` — is the translator between BOSH's
-wishes ("create a VM", "attach this disk") and the Proxmox API, speaking
-through the token we minted in chapter 2. The BOSH kit pins a published
-release by default, so an env file that says nothing about the CPI deploys
-`bosh-pve-cpi/0.1.0` straight from its GitHub release — nothing to ship, and
-nothing to keep in sync.
+The Proxmox CPI, `bosh-proxmox-cpi-release`, is the translator between
+BOSH's wishes ("create a VM", "attach this disk") and the Proxmox API,
+speaking through the token we minted in chapter 2. The BOSH kit pins a
+published release by default, so an env file that says nothing about the CPI
+deploys `bosh-proxmox-cpi/0.5.0` straight from its GitHub release: nothing to
+ship, and nothing to keep in sync.
+
+The release was called `bosh-pve-cpi` through 0.4.0 and was renamed to
+`bosh-proxmox-cpi` at 0.5.0, repository and tarball together. The job inside
+it is still `pve_cpi`, so cpi-config entries and property paths are unchanged.
+What did change is the name BOSH reads out of `release.MF`, and the kit now
+declares the new one. An env file that overrides the URL to point at a
+pre-0.5.0 tarball therefore fails at create-env with a name mismatch: move
+such pins to 0.5.0 or later.
 
 Carrying a dev build is the exception, and it means shipping the tarball
 ourselves:
 
 ```bash
-scp ~/w/proxmox/bosh-pve-cpi-release/dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-<build>.tgz \
+scp ~/w/proxmox/bosh-proxmox-cpi-release/dev_releases/bosh-proxmox-cpi/bosh-proxmox-cpi-dev-<build>.tgz \
     ocfp-lab-wayne-bastion:/home/ubuntu/
 ```
 
@@ -32,17 +40,25 @@ The mgmt env file, `bosh/ocfp-lab-wayne-mgmt.yml`, then names it in three
 params that must agree with each other:
 
 ```yaml
-pve_cpi_release_url: file:///home/ubuntu/bosh-pve-cpi-dev-<build>.tgz
+pve_cpi_release_url: file:///home/ubuntu/bosh-proxmox-cpi-dev-<build>.tgz
 pve_cpi_release_version: 0+dev.<n>
 pve_cpi_release_sha1: <sha1 of the tarball>
 ```
 
 Pinning a different published release uses the same three params with an
-`https://` URL. The classic failure here is a `pve_cpi_release_version` that
-does not match the version embedded in the tarball, so we check the source of
-truth rather than guessing: `tar -xzOf <tgz> release.MF | grep version`. The
-older `pve_cpi_release_path` param is gone — `genesis check` fails and names
-the replacement if an env file still carries it. If we edited the env file on
+`https://` URL, for example:
+
+```yaml
+pve_cpi_release_url: https://github.com/fivetwenty-io/bosh-proxmox-cpi-release/releases/download/v0.5.0/bosh-proxmox-cpi-0.5.0.tgz
+pve_cpi_release_version: 0.5.0
+pve_cpi_release_sha1: bfc7a0655814ac07607618cc868f02eeff7d0ee2
+```
+
+The classic failure here is a `pve_cpi_release_version` that does not match
+the version embedded in the tarball, so we check the source of truth rather
+than guessing: `tar -xzOf <tgz> release.MF | grep version`. The older
+`pve_cpi_release_path` param is gone: `genesis check` fails and names the
+replacement if an env file still carries it. If we edited the env file on
 the workstation, we re-sync with
 `ocfp init bastion --bloc ocfp-lab-wayne --config` before deploying.
 

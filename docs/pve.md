@@ -95,11 +95,11 @@ qm set "$TEMPLATE_VMID" --boot c --bootdisk scsi0
 qm template "$TEMPLATE_VMID"
 ```
 
-Reference: the `bosh-pve-cpi-release` project at `~/w/proxmox/bosh-pve-cpi-release/` is a working Go BOSH CPI for Proxmox; its test manifest `manifests/vars.yml` is the source of truth for known-good PVE settings.
+Reference: the `bosh-proxmox-cpi-release` project at `~/w/proxmox/bosh-proxmox-cpi-release/` is a working Go BOSH CPI for Proxmox; its test manifest `manifests/vars.yml` is the source of truth for known-good PVE settings.
 
-### 4. `pve-apiclient-go` v3.1.1 or newer
+### 4. `proxmox-apiclient-go` v3.9.2 or newer
 
-OCFP depends on `github.com/fivetwenty-io/pve-apiclient-go/v3 v3.1.1`. **v3.1.0 has a known iota bug** in `pkg/client/options.go` that silently shifts `SSLVerifyNone` to value 2 (which maps to internal `SSLVerifyHost`), leaving `InsecureSkipVerify=false` even when callers ask for it — TLS verification cannot be disabled on v3.1.0. v3.1.1 fixes it by splitting the SSL constants into a dedicated `const` block. Local upstream is at `~/w/proxmox/pve-apiclient-go`.
+OCFP depends on `github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.9.2`. The client was published as `pve-apiclient-go` through v3.3.1 and renamed at v3.4.0; GitHub redirects the old repo, but the module path inside `go.mod` changed with it, so the old path resolves no higher than v3.3.1. Anything still importing `github.com/fivetwenty-io/pve-apiclient-go/v3` is pinned to that ceiling and must switch paths to move forward. Local upstream is at `~/w/proxmox/proxmox-apiclient-go`.
 
 Pin or replace:
 
@@ -107,11 +107,11 @@ Pin or replace:
 cd ~/w/fivetwenty/studios/ocfp/src/clis/ocfp
 
 # Standard pin (recommended)
-go get github.com/fivetwenty-io/pve-apiclient-go/v3@v3.1.1
+go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.9.2
 go mod tidy
 
 # OR local replace (use unreleased fixes from HEAD)
-go mod edit -replace github.com/fivetwenty-io/pve-apiclient-go/v3=$HOME/w/proxmox/pve-apiclient-go
+go mod edit -replace github.com/fivetwenty-io/proxmox-apiclient-go/v3=$HOME/w/proxmox/proxmox-apiclient-go
 go mod tidy
 ```
 
@@ -201,7 +201,7 @@ blocs:
 | `api_endpoint` | yes | Full URL including scheme and port (`https://host:8006`). |
 | `auth_token` + `token_secret` | one of two auth modes | Token ID is `user@realm!token-name`; secret is the UUID. |
 | `username` + `password` | alternative auth mode | Mutually exclusive with API token. Token preferred. |
-| `verify_ssl` | optional | Defaults to `false` (skip TLS verification — safe for self-signed PVE certs). Set `true` only when the PVE host presents a certificate that chains to a trusted CA and the hostname in `api_endpoint` matches the cert SAN. Requires `pve-apiclient-go >= v3.1.1`. |
+| `verify_ssl` | optional | Defaults to `false` (skip TLS verification — safe for self-signed PVE certs). Set `true` only when the PVE host presents a certificate that chains to a trusted CA and the hostname in `api_endpoint` matches the cert SAN. Requires `proxmox-apiclient-go >= v3.1.1` (released as `pve-apiclient-go` at that version). |
 | `network.name` | yes | Existing Linux bridge (bridge mode) or VNet (SDN mode). |
 | `network.network_cidr` | optional | CIDR of the bridge subnet. Informational in bridge mode. |
 | `bastion.flavor` | yes | One of `small`, `medium`, `large`, `xlarge`, `bastion`, `bosh`. |
@@ -436,7 +436,7 @@ Do **not** pass `--public-ips` or `--routers` to `ocfp bootstrap` against a PVE 
 |---------|-------|-----|
 | `failed to create provider pve: pve: host URL is required` | `api_endpoint` missing or generic-map field aliases not wired. | Confirm `api_endpoint` is set; ensure ocfp is built from a tree where `internal/cpi/pve/register.go` reads `base_url`/`region`/`auth_token` aliases. |
 | `pve: API token or username/password required` | Auth fields didn't propagate from bloc to provider. | Confirm `auth_token` AND `token_secret` are both set (or `username` + `password`). Verify `internal/commands/bootstrap.go::addPVEProviderConfig` adds them to the provider config map. |
-| TLS verification errors with `verify_ssl: false` set | Using `pve-apiclient-go v3.1.0` — iota bug leaves `InsecureSkipVerify=false`. | Upgrade to `v3.1.1` or newer (`go get github.com/fivetwenty-io/pve-apiclient-go/v3@v3.1.1`). |
+| TLS verification errors with `verify_ssl: false` set | Using `pve-apiclient-go v3.1.0` — iota bug leaves `InsecureSkipVerify=false`. | Switch the import path to the renamed module and pin it: rewrite `pve-apiclient-go/v3` imports to `proxmox-apiclient-go/v3`, then `go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.9.2`. A `go get` alone leaves the old imports (and the bug) in place. |
 | TLS verification errors with verification intentionally enabled | PVE cert is self-signed or hostname in `api_endpoint` doesn't match cert SAN. | Set `verify_ssl: false`, or replace the PVE cert with one whose SAN matches `api_endpoint`. |
 | `authentication failed: ... 401 Unauthorized` | `auth_token` and `token_secret` not split correctly — both halves passed as one string. | `auth_token` is the token ID (`user@realm!name`); `token_secret` is the UUID **only**. The `=` separator is constructed by the client. |
 | `failed to resolve image ID for <name>` | Template VM doesn't exist or isn't marked as a template, AND the name is not in the auto-provision catalog. | Either rename the bloc's `bastion.image` to a catalog entry (e.g. `ubuntu-noble-template`), or create the template manually per §3 fallback. |
@@ -460,17 +460,17 @@ Do **not** pass `--public-ips` or `--routers` to `ocfp bootstrap` against a PVE 
     │   │   ├── register.go                          # NewProvider, field aliases
     │   │   └── storage.go
     │   └── bastion/providers/pve.go                 # bastion init logic
-    └── go.mod                                       # github.com/fivetwenty-io/pve-apiclient-go/v3 v3.1.0
+    └── go.mod                                       # github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.9.2
 
 ~/w/proxmox/
-├── bosh-pve-cpi-release/                            # reference BOSH CPI implementation
+├── bosh-proxmox-cpi-release/                        # reference BOSH CPI implementation
 │   ├── manifests/vars.yml                           # canonical PVE test settings
-│   └── src/pve_cpi/                                 # uses pve-apiclient-go v3.1.0
-└── pve-apiclient-go/                                # upstream Go client (v3.1.0 + HEAD)
+│   └── src/pve_cpi/                                 # uses proxmox-apiclient-go v3.9.2
+└── proxmox-apiclient-go/                            # upstream Go client (v3.9.2 + HEAD)
 ```
 
 ## See also
 
 - [Proxmox networking modes](src/clis/ocfp/docs/networking/providers/pve.md) — bridge vs SDN, security groups
 - [Bastion initialization](src/clis/ocfp/docs/init/bastion.md) — what `init bastion` installs
-- [`bosh-pve-cpi-release`](../proxmox/bosh-pve-cpi-release/) — working reference Go CPI for Proxmox
+- [`bosh-proxmox-cpi-release`](../proxmox/bosh-proxmox-cpi-release/) — working reference Go CPI for Proxmox
