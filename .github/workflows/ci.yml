@@ -140,8 +140,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # -race in a container makes the larger packages slow enough to crowd
+      # go test's 10 minute per-package default, which aborts the whole run
+      # with a panic instead of a test failure.
       - name: Run tests
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: go test -race -timeout 25m -coverprofile=coverage.txt -covermode=atomic ./...
 
       # This repository is private with no Codecov token, so an upload could
       # only ever fail. The profile ships as an artifact instead, so coverage
