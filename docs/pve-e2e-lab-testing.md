@@ -1231,3 +1231,48 @@ Fresh execution of the e2e flow after the lab rebuild (bloc `ocfp-lab-wayne`, pe
 - **Bastion has no wildcard DNS for the system domain.** Added `/etc/hosts` entries on the bastion pointing `api|uaa|login|doppler|log-cache.system.ocf.wayne.lab.fivetwenty.io` at haproxy 10.108.20.13 for CLI verification. App routes verified with `curl --resolve <route>:443:10.108.20.13`.
 
 - **Diego cell disk too small for staging (Phase 8 attempt 1).** PVE VMs get NO separate ephemeral disk, so the BOSH agent partitions the ROOT disk: ~5G root/home + swap (≈RAM, capped at half the remainder) + the rest as `/var/vcap/data`. At the vm_matrix default 32G that left a 13.5G data partition; after the grootfs store reserve the rep advertised `DiskMB: 3966` — below the default staging disk request — and `cf push` failed with `InsufficientResources` (memory was fine: 15993 MB). Fix: `bosh-configs.cpi.pve_diego_cell_disk: 65536` in the CF env; diego-cell redeployed (rep then advertised `DiskMB: 33879` and the push succeeded). Kit-side rectification (done): the PVE vm_matrix now documents the carve rule (disk ≥ ram + 5G + data, data ≥ ~2G) and the violating rows were resized — diego-cell dev 32G→64G; log-cache dev and errand/nats/haproxy prod 8G→16G. A real ephemeral disk in the CPI remains a possible longer-term improvement.
+
+---
+
+## 8.6 Full stack build and ordered teardown on `ocfp-lab-thunderdome` (2026-08-23 → 2026-08-24)
+
+First execution of the whole arc on a second bloc, on the freshly built
+`thunderdome` lab (per-/22 SDN: infra 10.113.16.0/22, ocfp-0/1/2 =
+10.113.20/24/28.0/22; bastion 10.113.16.3, PVE API 10.113.0.10). Scope was
+deliberately wider than 8.5: every mgmt service plus all three ocf services,
+then a full teardown in reverse to prove the lab returns to its pre-build
+state. Teardown is now its own chapter, [13. Teardown](runbooks/pve/13-teardown.md).
+
+| Phase | Result | Notes |
+|-------|--------|-------|
+| 4 Mgmt BOSH | ✅ PASS | create-env clean, v283.1.1, noble 1.383. |
+| 4.5 Mgmt Vault + migrate | ✅ PASS | 3-node OpenBAO unsealed; 770 secrets migrated off inception. |
+| 4.6 Mgmt services | ✅ PASS | doomsday (10.113.24.18), jumpbox, concourse (10.113.20.7). Doomsday and Concourse UIs both 200 through the bloc haproxy. |
+| 5 Env BOSH (ocf) | ✅ PASS | Director @ 10.113.20.64, v283.1.1, all 16 monit processes running. Three attempts; blockers below. |
+| 7 CF deploy | ✅ PASS | 15 instance groups, all VMs running, ingress per ADR-0015 at 10.113.20.97. |
+| 8 cf push | ✅ PASS | Route served the app body over the haproxy address. |
+| 9 cf ssh | ✅ PASS | Shell in the container, no bastion in the path. |
+| 11 Platform services (ocf) | ✅ PASS | blacksmith (10.113.24.67, valkey offering visible in `cf marketplace`), scheduler, autoscaler. |
+| 13 Teardown | ✅ PASS | Full reverse unwind; lab verified back to 4 guests and 9 volumes, matching the pre-build census exactly. |
+
+### Findings & fixes
+
+- **cpi-config entombment produces a dotted credhub name (genesis, unfixed upstream).** Genesis entombs the nested CPI property `pve.host` to a credhub entry whose name contains a dot. BOSH splits `((name.subkey))` on the first dot when resolving, so every `cpi-config` read 404s and the director never converges. Patched `Genesis/Hook/CpiConfig.pm` on the bastion to flatten the nested key before entombment. Needs a real upstream fix: the entombed name should be sanitized, or nested CPI properties should be excluded from entombment.
+
+- **Editing `static_ip` after `add-secrets` strands every IP-bearing cert SAN.** The ocf env file carried the reserved-ips scheme_version 1 address `10.113.20.4`; the correct scheme_version 2 value is `10.113.20.64`. Fixing the env file after secrets were generated left eight certs minted with the old SAN. The deploy then failed as `bosh_nats_sync`/`health_monitor`/`credhub` "not running after update", which reads as a service problem, not an addressing one. The tell is in `bosh-nats-sync.log`: `hostname "10.113.20.64" does not match the server certificate`. Fix: `rotate-secrets -y -v ssl/server ssl/mbus ssl/uaa ssl/uaa-sp credhub/server nats/director nats/health/monitor nats/server`, then redeploy. **`check-secrets` reported all 36 secrets valid throughout**, because it does not compare cert SANs against the manifest, so it cannot catch this class of drift. Worth a `check-secrets` enhancement.
+
+- **The CF/blacksmith dependency is asymmetric.** CF must be deployed before blacksmith (the broker registers against a live CF), but CF must also be *deleted* before blacksmith, because blacksmith's terminate removes the broker CA that CF's own manifest references at `router.ca_certs`. Deleting blacksmith first makes CF unmergeable and therefore undeletable until the CA is regenerated with `blacksmith add-secrets`. Also true on the way up: `cf add-secrets` fails on `router.ca_certs.5: .../blacksmith/broker/ca:certificate not found` unless blacksmith's secrets exist first.
+
+- **The proto-director and its vault are circularly dependent at teardown.** Genesis refuses to terminate a director with a live deployment on it, so OpenBAO must go first; but OpenBAO holds the director's own create-env artifacts, and Genesis clears `.genesis/deploy-cache/<env>/` after every successful deploy. The manifest, `.vars`, and `-state.json` live only in `secret/exodus/<env>/bosh/deployments/<ts>` under `artifacts[0]` as a base64-gzipped tar. Extracting them before terminating OpenBAO is what makes `bosh delete-env` possible at all; skipping it strands the director. Full procedure in chapter 13, step 8.
+
+- **`genesis terminate` exits 1 on success.** Every terminate ends with `No artifacts to archive -- all artifact files were missing or empty` and RC=1 while having deleted the deployment correctly. OpenBAO's additionally reports `No valid availability zones found for OpenBAO instances`. Verification has to come from `bosh deployments` on the director, never from the exit code.
+
+- **`remove-secrets --unused -y` removed 205 entries after previewing 1.** The interactive preview (`remove-secrets --unused`, no `-y`) listed a single secret; the same command with `-y` deleted 205. CF stayed healthy and the pushed app kept serving, so nothing load-bearing was lost here, but the gap between what the preview shows and what the flag does is a genuine defect and the `-y` form should not be trusted on a live environment until it is fixed.
+
+- **`bosh delete-env` fails on stemcell templates PVE no longer has.** The rescued state file named template 30512, already deleted. Clearing the `stemcells` array and re-running completes at RC=0. The delete is idempotent, so the empty `current_vm_cid`/`current_disk_id`/`disks` fields after a partial run are that run succeeding.
+
+- **Orphaned disks strand when directors are deleted before a disk cleanup.** Six BOSH persistent disks totalling ~424 GiB survived in `local-lvm-data` with no owning VM, identifiable only by LVM creation time once the directors were gone. `bosh clean-up --all` on each director *before* terminating it prevents this; recovery is `pmx -c <ctx> --insecure --node <node> pve storage volume delete <volid> --yes`, one volume at a time.
+
+- **`safe` v1.20 breaks every genesis command on a fresh bastion.** A bastion built by `ocfp init bastion` on or after 2026-08-23 gets safe v1.20.0 from `releases/latest`, which prints its version banner to stdout. Genesis' prereq check reads stderr (`safe -v 2>&1 >/dev/null`, `Genesis/Commands.pm`), captures an empty string, and dies with "Missing `safe`" even though the binary works. Workaround: copy v1.9.0 from an existing bastion. Real fix: pin the safe version in the CLI's tool table (`internal/bastion/provision/tools.go`) or widen the Genesis check to capture both streams.
+
+- **Stemcell tier discipline matters for blacksmith.** A post-deploy `upload-stemcells` pulled noble 1.484 onto the ocf director, above the tier's 1.460. Blacksmith's forge is deliberately unpinned, so it would have resolved the newer stemcell for every service instance. Uploaded 1.460 and deleted 1.484.
