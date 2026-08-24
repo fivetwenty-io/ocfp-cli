@@ -1749,7 +1749,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	// "is not a string" during manifest rendering.
 	//
 	// host is stored as bare hostname (no scheme, no port) because the
-	// bosh-pve-cpi-release Go client concatenates "https://" + host + ":" +
+	// bosh-proxmox-cpi-release Go client concatenates "https://" + host + ":" +
 	// port internally — a stored URL would double-prefix.
 	//
 	// Storage classification (R3-10 matrix):
@@ -1792,7 +1792,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	// vault value cannot be entombed into the director's CredHub, and an unused
 	// key is simply absent rather than present-and-empty.
 	//
-	// api_token is rendered in the bosh-pve-cpi-release format
+	// api_token is rendered in the bosh-proxmox-cpi-release format
 	// "user@realm!tokenid=secret" so the CPI's Proxmox client can authenticate
 	// directly with PVE.
 	switch {
@@ -1993,7 +1993,7 @@ func pveStorageOrDefault(cfg *config.Config, role, def string) string {
 // Local/block backends: lvm, lvmthin, zfspool, btrfs — all return "block".
 // Unknown pool names: "block" (conservative default, suitable for most installs).
 //
-// Source: R3-10 storage matrix; matches bosh-pve-cpi-release _LOCAL_DISK_TYPES.
+// Source: R3-10 storage matrix; matches bosh-proxmox-cpi-release _LOCAL_DISK_TYPES.
 func pveStorageBackend(poolName string) string {
 	switch strings.ToLower(strings.TrimSpace(poolName)) {
 	case "rbd", "cephfs", "nfs", "cifs", "glusterfs", "pbs":
@@ -2018,7 +2018,7 @@ func pveStorageBackend(poolName string) string {
 // containing lvm, zfs, or btrfs is treated as a block backend needing raw.
 // All other pools default to qcow2 (dir, rbd, nfs, cifs, glusterfs, pbs).
 //
-// Source: R3-10; Wayne-lab storage-pools.yml; bosh-pve-cpi docs.
+// Source: R3-10; Wayne-lab storage-pools.yml; bosh-proxmox-cpi docs.
 func pveDiskFormat(poolName string) string {
 	name := strings.ToLower(strings.TrimSpace(poolName))
 	for _, marker := range []string{"lvm", "zfs", "btrfs"} {

@@ -33,7 +33,7 @@ End-to-end validation of the OCFP stack on the Proxmox VE lab: full nuke, bootst
 - **Genesis branch**: `v3.2.x-dev` (canonical remote `RubidiumStudios/genesis`). Set `config.Genesis.Branch` accordingly. Never push to genesis.
 - **CF kit** (`~/w/fivetwenty/studios/ocfp/src/kits/cf`): fix in place, including local source changes, do not push.
 - **BOSH kit** (`~/w/fivetwenty/studios/ocfp/src/kits/bosh`): fix in place, do not push.
-- **PVE CPI**: use the latest dev build in `~/w/proxmox/bosh-pve-cpi-release/`.
+- **PVE CPI**: the published `bosh-proxmox-cpi/0.5.0` release is the default; build a dev release from `~/w/proxmox/bosh-proxmox-cpi-release/` only when testing an unreleased fix.
 - **Deployments repo**: local `src/deployments/fivetwenty-ocfp/`. Sync to the bastion; **do not push**.
 - **Genesis invocation**: use the `g` symlink (`/usr/local/bin/g` → `genesis`) with v3 environment addressing `g @<env>:<deployment-type> <verb>` (e.g. `g @ocfp-lab-wayne-mgmt:bosh deploy -F -y`). The `@<env>:<type>` notation, the `b` BOSH passthrough (`b deps`), and `do <addon>` are genesis v3 features — verified in the v3 lineage this project tracks (`RubidiumStudios/genesis v3.2.x-dev`). There is **no** `genesis list` command; discover env names with `ls ocfp/deployments/<type>/` (each env file's `genesis.env:` key is the canonical name, and matches the filename stem here).
 - **Teardown mode**: `--nuke --force` (operator confirmed the PVE project is exclusively `ocfp-lab-wayne`).
@@ -63,7 +63,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 
 | Component | Current | Desired | Action |
 |-----------|---------|---------|--------|
-| PVE CPI tarball (mgmt manifest) | `bosh-pve-cpi-dev-20260527172937.tgz`, ver `0+dev.1779589220`, sha1 `8209093f…` | latest build `bosh-pve-cpi-dev-20260531113237.tgz`, sha1 `3c6f9fa569ddacd7b025f755f745e71be83365f8`, size `70368515` | Ship tarball to bastion; update manifest path/version/sha1 |
+| PVE CPI release (mgmt manifest) | per-env `file://` dev tarball pinned in three params | kit default `bosh-proxmox-cpi/0.5.0` from GitHub | Drop the three `pve_cpi_release_*` params from the env file |
 | cf-deployment | v52.0.0 bundled (jammy-compiled ops) | **v56.5.0** noble-compiled | Enable feature `cf-deployment-version-56.5.0` (designed opt-in; not a manual submodule bump) — see §6 |
 | CF stemcell | pve overlay forces `ubuntu-noble` | noble (native in v56.5.0) | Remove pve noble overlay once v56.5.0 provides it |
 | CF compiled releases | conditional `kit_bug` bail at `blueprint.pm:366-384` (soft, fires only on pre-noble bundles via the `use-noble-stemcell.yml` gate) | compiled releases enabled on noble | Enable v56.5.0 feature so noble is default and the bail no longer fires; edit the hook only if it still trips |
@@ -89,12 +89,13 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 ### Kits
 
 - **CF kit** `kit.yml` v3.1.0; PVE is among its supported IaaS providers. PVE overlays in `ocfp/pve/` (`azs`, `external-blobstore`, `ocf`, `ssh-proxy`, `stemcell`). RustFS via `ocfp/pve/external-blobstore.yml` → `secret/config/<bloc>/ocf/cf/blobstores/main:*`. Bucket naming `<bloc>-ocf-cf[-packages|-buildpacks|-droplets|-resource-pool]`.
-- **BOSH kit** `kit.yml` v4.1.0; supports pve (currently dirty — uncommitted PVE work). CPI release defaults to the published `bosh-pve-cpi/0.1.0` GitHub release (defaults in `overlay/cpis/pve.yml` and `ocfp/pve/base.yml`, rendered by `pve-base.yml` as `((pve_cpi_release_url))`); override `pve_cpi_release_url` / `_version` / `_sha1` together to pin another release or a `file://` dev tarball. PVE auth read via `meta.ocfp.vault.config "/cpi/pve"` → `secret/config/<bloc>/<scope>/cpi/pve:*` (keys host, user, api_token, node, vm_storage, disk_storage, stemcell_storage, iso_storage, network_bridge; `port`/`verify_ssl`/`vmid_range_start` are literals, not vault-sourced; api_token default).
+- **BOSH kit** `kit.yml` v4.1.0; supports pve (currently dirty — uncommitted PVE work). CPI release defaults to the published `bosh-proxmox-cpi/0.5.0` GitHub release (defaults in `overlay/cpis/pve.yml` and `ocfp/pve/base.yml`, rendered by `pve-base.yml` as `((pve_cpi_release_url))`); override `pve_cpi_release_url` / `_version` / `_sha1` together to pin another release or a `file://` dev tarball. PVE auth read via `meta.ocfp.vault.config "/cpi/pve"` → `secret/config/<bloc>/<scope>/cpi/pve:*` (keys host, user, api_token, node, vm_storage, disk_storage, stemcell_storage, iso_storage, network_bridge; `port`/`verify_ssl`/`vmid_range_start` are literals, not vault-sourced; api_token default).
 
-### PVE CPI release (`~/w/proxmox/bosh-pve-cpi-release/`)
+### PVE CPI release (`~/w/proxmox/bosh-proxmox-cpi-release/`)
 
-- Latest dev: `dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-20260531113237.tgz`, sha1 `3c6f9fa569ddacd7b025f755f745e71be83365f8`, size `70368515`.
-- Branch `main`, clean, version `v0.0.1-94-g5ab6420`. Rebuild via `scripts/create-release dev` or `make dev-release` (emits `RELEASE_TGZ=…`).
+- Published default: `bosh-proxmox-cpi/0.5.0`, url `https://github.com/fivetwenty-io/bosh-proxmox-cpi-release/releases/download/v0.5.0/bosh-proxmox-cpi-0.5.0.tgz`, sha1 `bfc7a0655814ac07607618cc868f02eeff7d0ee2`, size `77449832`.
+- Renamed at 0.5.0: repo `bosh-pve-cpi-release` → `bosh-proxmox-cpi-release`, release `bosh-pve-cpi` → `bosh-proxmox-cpi`, tarball to match. The colocated job is still `pve_cpi`, so cpi-config entries and property paths are untouched.
+- Dev builds: `make dev-release` (emits `RELEASE_TGZ=…`) writes to `dev_releases/bosh-proxmox-cpi/`.
 
 ### OCFP CLI command surface
 
@@ -137,8 +138,8 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 2. Confirm Genesis source on `v3.2.x-dev`: in the genesis checkout, `git branch --show-current` → `v3.2.x-dev` (do not push).
 3. Confirm config: `~/.config/ocfp/config.yml` has bloc `ocfp-lab-wayne` with PVE provider, region/datacenter, `artifacts.enabled: true`, and `genesis.branch: v3.2.x-dev`.
 4. Confirm Vault reachable and unsealed: `safe target` + `safe get secret/handshake` (or equivalent probe).
-5. Confirm the latest CPI tarball exists locally: `ls -la ~/w/proxmox/bosh-pve-cpi-release/dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-20260531113237.tgz` and verify sha1 = `3c6f9fa569ddacd7b025f755f745e71be83365f8`.
-   - If absent or stale, rebuild: `cd ~/w/proxmox/bosh-pve-cpi-release && make dev-release` and capture the new `RELEASE_TGZ`, version, and sha1 (then update §3/§4 and the mgmt manifest in Phase 4).
+5. Confirm the CPI release the run will use. The default needs nothing local: the kit fetches `bosh-proxmox-cpi/0.5.0` from GitHub, so the env file carries no `pve_cpi_release_*` params.
+   - Testing an unreleased fix instead: `cd ~/w/proxmox/bosh-proxmox-cpi-release && make dev-release`, then capture the new `RELEASE_TGZ`, version, and sha1 (and update §3/§4 and the mgmt env file in Phase 4).
 6. Snapshot current state of dirty kits for reference: `git -C ~/w/fivetwenty/studios/ocfp/src/kits/bosh status`, same for cf kit. Record what is already modified (do not revert).
 
 **Verify**: all tools report versions; genesis on `v3.2.x-dev`; CPI tarball sha1 matches; Vault reachable.
@@ -322,17 +323,20 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 
 **Steps**
 
-1. **Ship the latest CPI tarball to the bastion** and place where the manifest expects it:
+1. **Settle the CPI release.** On the default path there is nothing to ship: the mgmt env file names no CPI params and the director fetches `bosh-proxmox-cpi/0.5.0` from GitHub during `create-env`.
+
+   Only when pinning a dev build, ship the tarball first:
 
    ```bash
-   scp ~/w/proxmox/bosh-pve-cpi-release/dev_releases/bosh-pve-cpi/bosh-pve-cpi-dev-20260531113237.tgz \
+   scp ~/w/proxmox/bosh-proxmox-cpi-release/dev_releases/bosh-proxmox-cpi/bosh-proxmox-cpi-dev-<build>.tgz \
        <bastion>:/home/ubuntu/
    ```
 
-2. **Update the mgmt manifest** `bosh/ocfp-lab-wayne-mgmt.yml` CPI reference to the latest build:
-   - `pve_cpi_release_path: /home/ubuntu/bosh-pve-cpi-dev-20260531113237.tgz`
-   - `pve_cpi_release_version: 0+dev.<matching>` (use the version embedded in the new tarball's `release.MF`)
-   - `pve_cpi_release_sha1: 3c6f9fa569ddacd7b025f755f745e71be83365f8`
+2. **Pin it in the mgmt env file** `bosh/ocfp-lab-wayne-mgmt.yml`, three params that must agree with each other (skip this step entirely on the default path):
+   - `pve_cpi_release_url: file:///home/ubuntu/bosh-proxmox-cpi-dev-<build>.tgz`
+   - `pve_cpi_release_version: 0+dev.<matching>` (use the version embedded in the tarball's `release.MF`)
+   - `pve_cpi_release_sha1: <sha1 of that tarball>`
+   - The tarball's own release name must be `bosh-proxmox-cpi`; a pre-0.5.0 tarball still names itself `bosh-pve-cpi` and fails `create-env` against the kit's release entry.
    - Re-sync config to bastion (`ocfp init bastion --config`) if edited locally.
 3. Confirm PVE CPI creds in Vault under the mgmt deployment's ocfp config base — `secret/config/ocfp-lab-wayne/<scope>/cpi/pve:*` (host, api_token, node, storage pools, network_bridge). Resolve the exact `<scope>` with `safe tree secret/config/ocfp-lab-wayne` (kit reads via `meta.ocfp.vault.config`; `port`/`verify_ssl`/`vmid_range_start` are literal defaults, not vault-sourced).
 4. Render and inspect the manifest before deploying:
@@ -468,7 +472,7 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
   ```
 
   `--self` is required — the ocf director is itself a BOSH-managed deployment of the mgmt director; a plain `bosh env` without `--self` fails outright. Confirm the `Version` field.
-- **CPI release floor**: `bosh-pve-cpi-release` must support per-request `context` property overrides (feature floor `0+dev.1784424172`; deploy `0+dev.1784424174` or later — `…173` adds effective-config validation and a stemcell-replication crash fix, `…174` adds REST-safe `pvd-` envelope disk CIDs plus `get_disks` CID fidelity, making `bosh attach-disk` usable for disks created at or above it). Below this floor the CPI silently ignores per-entry `context` and runs every cpi-config entry against the job-level (first) cluster — stemcell uploads and VM creates for the second AZ "succeed" while landing on the wrong cluster with no error. Confirm the CPI release version before proceeding past step 3.
+- **CPI release floor**: `bosh-proxmox-cpi-release` must support per-request `context` property overrides (feature floor `0+dev.1784424172`; deploy `0+dev.1784424174` or later — `…173` adds effective-config validation and a stemcell-replication crash fix, `…174` adds REST-safe `pvd-` envelope disk CIDs plus `get_disks` CID fidelity, making `bosh attach-disk` usable for disks created at or above it). Below this floor the CPI silently ignores per-entry `context` and runs every cpi-config entry against the job-level (first) cluster — stemcell uploads and VM creates for the second AZ "succeed" while landing on the wrong cluster with no error. Confirm the CPI release version before proceeding past step 3. The published `0.5.0` release is above every floor named here.
 - Both clusters have a live pmx context (`pmx -c <context> pve node list` returns 200).
 - Both clusters' `nfs-images` storage carries content type `images,import,snippets,iso` — a storage entry created with `images` only rejects the CPI's stemcell/disk uploads (`storage 'nfs-images' does not support 'import' content'`):
 

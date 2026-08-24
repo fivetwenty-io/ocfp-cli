@@ -44,7 +44,7 @@ func ClassifyStorageType(t string) StorageClass {
 }
 
 // RequiresRawDiskFormat returns true for PVE storage types whose block devices
-// require disk_format: raw. The bosh-pve-cpi-release rejects qcow2 for these
+// require disk_format: raw. The bosh-proxmox-cpi-release rejects qcow2 for these
 // backends because the underlying block device cannot hold a QEMU image file.
 //
 // Affected types: zfspool, lvm, lvmthin.

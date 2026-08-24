@@ -84,7 +84,7 @@ func TestPVEVaultProvider_configureCPI_WritesPath_APITokenMode(t *testing.T) {
 	// wiring references only the active auth key, so the inactive password key
 	// is absent (an empty value cannot be entombed into the director's CredHub).
 	assert.Nil(t, call.data["password"], "password key must be absent in API token mode")
-	// api_token is rendered in bosh-pve-cpi-release format
+	// api_token is rendered in bosh-proxmox-cpi-release format
 	// "user@realm!tokenid=secret" — the CPI's PVE client requires it joined.
 	assert.Equal(t, "root@pam!mytoken=supersecret", call.data["api_token"], "api_token must combine token_id and token_secret as user@realm!tokenid=secret")
 }
