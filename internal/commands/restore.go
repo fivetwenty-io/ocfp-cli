@@ -908,5 +908,10 @@ func extractArchive(archivePath, destDir string) error {
 func decryptFile(encryptedPath, destPath string) error {
 	// Decrypt file using GPG or similar
 	// Placeholder implementation
-	return fmt.Errorf("failed to decrypt file: %w", os.Rename(encryptedPath, destPath))
+	err := os.Rename(encryptedPath, destPath)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt file: %w", err)
+	}
+
+	return nil
 }
