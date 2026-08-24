@@ -10,7 +10,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas/v2api"
 )
 
 // NetworkManager handles STACKIT network operations.
@@ -120,12 +120,12 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 
 	payload := m.buildNetworkPayload(req)
 
-	created, err := cli.CreateNetwork(ctx, m.client.config.ProjectID).CreateNetworkPayload(payload).Execute()
+	created, err := cli.CreateNetwork(ctx, m.client.config.ProjectID, m.client.apiRegion()).CreateNetworkPayload(payload).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas CreateNetwork failed: %w", err)
 	}
 
-	networkID := stringOrEmpty(created.GetNetworkIdOk())
+	networkID := stringOrEmpty(created.GetIdOk())
 	logger.WithOperation("CreateNetwork").Infof("Network created: %s with CIDR: %s", networkID, req.CIDR)
 
 	out := m.buildNetworkFromResponse(created, req)
@@ -142,13 +142,13 @@ func (m *NetworkManager) GetNetwork(ctx context.Context, networkID string) (*cpi
 		return nil, err
 	}
 
-	got, err := cli.GetNetwork(ctx, m.client.config.ProjectID, networkID).Execute()
+	got, err := cli.GetNetwork(ctx, m.client.config.ProjectID, m.client.apiRegion(), networkID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetNetwork failed: %w", err)
 	}
 
 	out := &cpi.Network{
-		ID:         stringOrEmpty(got.GetNetworkIdOk()),
+		ID:         stringOrEmpty(got.GetIdOk()),
 		Name:       stringOrEmpty(got.GetNameOk()),
 		CIDR:       "",
 		Region:     "",
@@ -172,7 +172,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 		return nil, err
 	}
 
-	resp, err := cli.ListNetworks(ctx, m.client.config.ProjectID).Execute()
+	resp, err := cli.ListNetworks(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListNetworks failed: %w", err)
 	}
@@ -190,7 +190,7 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 		}
 
 		out := &cpi.Network{
-			ID:         stringOrEmpty(network.GetNetworkIdOk()),
+			ID:         stringOrEmpty(network.GetIdOk()),
 			Name:       stringOrEmpty(network.GetNameOk()),
 			CIDR:       "",
 			Region:     "",
@@ -217,7 +217,7 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, networkID string) er
 		return err
 	}
 
-	err = cli.DeleteNetwork(ctx, m.client.config.ProjectID, networkID).Execute()
+	err = cli.DeleteNetwork(ctx, m.client.config.ProjectID, m.client.apiRegion(), networkID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteNetwork failed: %w", err)
 	}
@@ -288,7 +288,7 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, floatingIPID string)
 		return nil, err
 	}
 
-	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, floatingIPID).Execute()
+	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion(), floatingIPID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
 	}
@@ -318,7 +318,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[strin
 
 	// Note: STACKIT doesn't support server-side filtering for public IPs via tags
 	// Filters would need to be applied client-side if needed
-	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
+	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListPublicIPs failed: %w", err)
 	}
@@ -355,7 +355,7 @@ func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID string, i
 		return err
 	}
 
-	err = cli.AddPublicIpToServer(ctx, m.client.config.ProjectID, instanceID, ipID).Execute()
+	err = cli.AddPublicIpToServer(ctx, m.client.config.ProjectID, m.client.apiRegion(), instanceID, ipID).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to associate floating IP %s to instance %s: %w", ipID, instanceID, err)
 	}
@@ -373,19 +373,19 @@ func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string
 		return err
 	}
 	// Find server by walking NICs and public IP mapping
-	servers, err := cli.ListServers(ctx, m.client.config.ProjectID).Execute()
+	servers, err := cli.ListServers(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return fmt.Errorf("list servers failed: %w", err)
 	}
 
 	items, _ := servers.GetItemsOk()
 	for _, s := range items {
-		sid, ok := s.GetIdOk()
-		if !ok {
+		sid := stringOrEmpty(s.GetIdOk())
+		if sid == "" {
 			continue
 		}
 
-		nicsResp, err := cli.ListServerNics(ctx, m.client.config.ProjectID, sid).Execute()
+		nicsResp, err := cli.ListServerNICs(ctx, m.client.config.ProjectID, m.client.apiRegion(), sid).Execute()
 		if err != nil {
 			continue
 		}
@@ -393,7 +393,7 @@ func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string
 		if nics, ok := nicsResp.GetItemsOk(); ok {
 			for _, nic := range nics {
 				if nid, ok := nic.GetIdOk(); ok {
-					found, err := m.checkPublicIPMatch(ctx, cli, ipID, nid, sid)
+					found, err := m.checkPublicIPMatch(ctx, cli, ipID, derefOr(nid), sid)
 					if err == nil && found {
 						return nil
 					}
@@ -412,7 +412,7 @@ func (m *NetworkManager) ReleaseFloatingIP(ctx context.Context, floatingIPID str
 		return err
 	}
 
-	err = cli.DeletePublicIP(ctx, m.client.config.ProjectID, floatingIPID).Execute()
+	err = cli.DeletePublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion(), floatingIPID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeletePublicIP failed: %w", err)
 	}
@@ -523,7 +523,7 @@ func (m *NetworkManager) ListPublicIPs(ctx context.Context) ([]*cpi.PublicIP, er
 		return nil, err
 	}
 
-	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID).Execute()
+	resp, err := iaasClient.ListPublicIPs(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListPublicIPs failed: %w", err)
 	}
@@ -598,7 +598,7 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, publicIPID string) (*c
 		return nil, err
 	}
 
-	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, publicIPID).Execute()
+	got, err := iaasClient.GetPublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion(), publicIPID).Execute()
 	if err != nil {
 		// Pending: inspect error for 404 mapping if needed
 		return nil, fmt.Errorf("stackit iaas GetPublicIP failed: %w", err)
@@ -639,7 +639,7 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, publicIPID string) 
 		return err
 	}
 
-	err = iaasClient.DeletePublicIP(ctx, m.client.config.ProjectID, publicIPID).Execute()
+	err = iaasClient.DeletePublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion(), publicIPID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeletePublicIP failed: %w", err)
 	}
@@ -735,7 +735,7 @@ func (m *NetworkManager) DeleteNetworkInterface(ctx context.Context, nicID strin
 	}
 
 	// List all networks to find which network this NIC belongs to
-	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID).Execute()
+	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to list networks: %w", err)
 	}
@@ -749,12 +749,12 @@ func (m *NetworkManager) DeleteNetworkInterface(ctx context.Context, nicID strin
 	var foundNetworkID string
 
 	for _, network := range networks {
-		networkID, exists := network.GetNetworkIdOk()
-		if !exists || networkID == "" {
+		networkID := stringOrEmpty(network.GetIdOk())
+		if networkID == "" {
 			continue
 		}
 
-		nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, networkID).Execute()
+		nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, m.client.apiRegion(), networkID).Execute()
 		if err != nil {
 			continue
 		}
@@ -765,7 +765,7 @@ func (m *NetworkManager) DeleteNetworkInterface(ctx context.Context, nicID strin
 		}
 
 		for _, nic := range items {
-			if nicIDVal, ok := nic.GetIdOk(); ok && nicIDVal == nicID {
+			if nicIDVal, ok := nic.GetIdOk(); ok && derefOr(nicIDVal) == nicID {
 				foundNetworkID = networkID
 
 				break
@@ -782,7 +782,7 @@ func (m *NetworkManager) DeleteNetworkInterface(ctx context.Context, nicID strin
 	}
 
 	// Delete the NIC from its network
-	err = cli.DeleteNic(ctx, m.client.config.ProjectID, foundNetworkID, nicID).Execute()
+	err = cli.DeleteNic(ctx, m.client.config.ProjectID, m.client.apiRegion(), foundNetworkID, nicID).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to delete network interface: %w", err)
 	}
@@ -809,11 +809,10 @@ func mapFromSlice(tags []string) map[string]string {
 // buildNetworkPayload builds the network creation payload.
 func (m *NetworkManager) buildNetworkPayload(req *cpi.NetworkRequest) iaas.CreateNetworkPayload {
 	// Build payload with direct struct initialization (matching STACKIT CLI pattern)
-	namePtr := req.Name
 	routed := true
 
 	payload := iaas.CreateNetworkPayload{
-		Name:   &namePtr,
+		Name:   req.Name,
 		Routed: &routed,
 	}
 
@@ -823,45 +822,34 @@ func (m *NetworkManager) buildNetworkPayload(req *cpi.NetworkRequest) iaas.Creat
 		payload.SetLabels(labels)
 	}
 
-	// Configure address family with CIDR if provided
+	// Configure the IPv4 block with CIDR if provided
 	if req.CIDR != "" {
-		addressFamily := m.buildAddressFamily(req)
-		payload.AddressFamily = addressFamily
+		payload.Ipv4 = m.buildIPv4Block(req)
 	}
 
 	return payload
 }
 
-// buildAddressFamily builds address family configuration with CIDR and DNS.
-func (m *NetworkManager) buildAddressFamily(req *cpi.NetworkRequest) *iaas.CreateNetworkAddressFamily {
+// buildIPv4Block builds the IPv4 network block with CIDR prefix and DNS.
+func (m *NetworkManager) buildIPv4Block(req *cpi.NetworkRequest) *iaas.CreateNetworkIPv4 {
 	logger.WithOperation("CreateNetwork").Infof("Setting network CIDR: %s", req.CIDR)
 
-	// Convert CIDR string to pointer
-	cidrPtr := req.CIDR
-
-	// Create IPv4 body with direct struct initialization
-	ipv4Body := &iaas.CreateNetworkIPv4Body{
-		Prefix: &cidrPtr,
-	}
+	withPrefix := iaas.NewCreateNetworkIPv4WithPrefix(req.CIDR)
 
 	// Set DNS nameservers if provided
 	if len(req.DNSServers) > 0 {
-		nameservers := req.DNSServers
-		ipv4Body.Nameservers = &nameservers
+		withPrefix.SetNameservers(req.DNSServers)
 	}
 
-	// Assign Ipv4 directly to AddressFamily (not using setter)
-	addressFamily := &iaas.CreateNetworkAddressFamily{
-		Ipv4: ipv4Body,
-	}
+	ipv4 := iaas.CreateNetworkIPv4WithPrefixAsCreateNetworkIPv4(withPrefix)
 
-	return addressFamily
+	return &ipv4
 }
 
 // buildNetworkFromResponse converts API response to CPI Network.
 func (m *NetworkManager) buildNetworkFromResponse(created *iaas.Network, req *cpi.NetworkRequest) *cpi.Network {
 	out := &cpi.Network{
-		ID:         stringOrEmpty(created.GetNetworkIdOk()),
+		ID:         stringOrEmpty(created.GetIdOk()),
 		Name:       stringOrEmpty(created.GetNameOk()),
 		CIDR:       req.CIDR,
 		Region:     "",
@@ -897,7 +885,26 @@ func mapAnyToString(input map[string]interface{}) map[string]string {
 	return out
 }
 
-func stringOrEmpty(val string, _ bool) string { return val }
+// stringOrEmpty adapts the SDK's `GetXOk() (*T, bool)` getters to a plain
+// value, treating both "absent" and "nil" as the zero value.
+func stringOrEmpty(val *string, _ bool) string {
+	if val == nil {
+		return ""
+	}
+
+	return *val
+}
+
+// derefOr returns the pointed-to value, or the zero value when the pointer is nil.
+func derefOr[T any](val *T) T {
+	var zero T
+
+	if val == nil {
+		return zero
+	}
+
+	return *val
+}
 
 // sanitizeLabelsForStackit converts tags/labels to STACKIT-compliant format.
 // STACKIT labels must match regex for values: ^(-|_|[a-z0-9]){0,63}$
@@ -1114,14 +1121,15 @@ func (m *NetworkManager) createPublicIPViaSDK(ctx context.Context, labels map[st
 	}
 
 	payload := iaas.CreatePublicIPPayload{
-		Id:               nil,
-		Ip:               nil,
-		Labels:           nil,
-		NetworkInterface: nil,
+		Id:                   nil,
+		Ip:                   nil,
+		Labels:               nil,
+		NetworkInterface:     iaas.NullableString{},
+		AdditionalProperties: nil,
 	}
 	payload.SetLabels(labels)
 
-	created, err := iaasClient.CreatePublicIP(ctx, m.client.config.ProjectID).
+	created, err := iaasClient.CreatePublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion()).
 		CreatePublicIPPayload(payload).
 		Execute()
 	if err != nil {
@@ -1131,14 +1139,14 @@ func (m *NetworkManager) createPublicIPViaSDK(ctx context.Context, labels map[st
 	return created, nil
 }
 
-func (m *NetworkManager) checkPublicIPMatch(ctx context.Context, cli *iaas.APIClient, ipID string, nid string, sid string) (bool, error) {
-	pip, err := cli.GetPublicIP(ctx, m.client.config.ProjectID, ipID).Execute()
+func (m *NetworkManager) checkPublicIPMatch(ctx context.Context, cli iaas.DefaultAPI, ipID string, nid string, sid string) (bool, error) {
+	pip, err := cli.GetPublicIP(ctx, m.client.config.ProjectID, m.client.apiRegion(), ipID).Execute()
 	if err != nil {
 		return false, fmt.Errorf("failed to get public IP %s: %w", ipID, err)
 	}
 
 	if ni, ok := pip.GetNetworkInterfaceOk(); ok && ni != nil && *ni == nid {
-		err = cli.RemovePublicIpFromServer(ctx, m.client.config.ProjectID, sid, ipID).Execute()
+		err = cli.RemovePublicIpFromServer(ctx, m.client.config.ProjectID, m.client.apiRegion(), sid, ipID).Execute()
 		if err != nil {
 			return true, fmt.Errorf("failed to remove public IP %s from server %s: %w", ipID, sid, err)
 		}
@@ -1150,8 +1158,8 @@ func (m *NetworkManager) checkPublicIPMatch(ctx context.Context, cli *iaas.APICl
 }
 
 // fetchNetworkList retrieves the list of networks from the API.
-func (m *NetworkManager) fetchNetworkList(ctx context.Context, cli *iaas.APIClient) ([]iaas.Network, error) {
-	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID).Execute()
+func (m *NetworkManager) fetchNetworkList(ctx context.Context, cli iaas.DefaultAPI) ([]iaas.Network, error) {
+	networksResp, err := cli.ListNetworks(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
@@ -1167,12 +1175,12 @@ func (m *NetworkManager) fetchNetworkList(ctx context.Context, cli *iaas.APIClie
 }
 
 // collectNetworkInterfaces collects NICs from all networks with filtering.
-func (m *NetworkManager) collectNetworkInterfaces(ctx context.Context, cli *iaas.APIClient, networks []iaas.Network, filters map[string]string) []*cpi.NetworkInterface {
+func (m *NetworkManager) collectNetworkInterfaces(ctx context.Context, cli iaas.DefaultAPI, networks []iaas.Network, filters map[string]string) []*cpi.NetworkInterface {
 	networkInterfaces := make([]*cpi.NetworkInterface, 0)
 
 	for _, network := range networks {
-		networkID, exists := network.GetNetworkIdOk()
-		if !exists || networkID == "" {
+		networkID := stringOrEmpty(network.GetIdOk())
+		if networkID == "" {
 			continue
 		}
 
@@ -1185,8 +1193,8 @@ func (m *NetworkManager) collectNetworkInterfaces(ctx context.Context, cli *iaas
 }
 
 // fetchNICsForNetwork retrieves NICs for a specific network.
-func (m *NetworkManager) fetchNICsForNetwork(ctx context.Context, cli *iaas.APIClient, networkID string) []iaas.NIC {
-	nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, networkID).Execute()
+func (m *NetworkManager) fetchNICsForNetwork(ctx context.Context, cli iaas.DefaultAPI, networkID string) []iaas.NIC {
+	nicsResp, err := cli.ListNics(ctx, m.client.config.ProjectID, m.client.apiRegion(), networkID).Execute()
 	if err != nil {
 		logger.WithOperation("ListNetworkInterfaces").Warnf("Failed to list NICs for network %s: %v", networkID, err)
 
@@ -1207,8 +1215,8 @@ func (m *NetworkManager) filterAndConvertNICs(nics []iaas.NIC, networkID string,
 
 	for _, nic := range nics {
 		// Skip metadata and gateway port NICs - they are provider-managed and cannot be deleted
-		nicType, hasType := nic.GetTypeOk()
-		if hasType && (nicType == "metadata" || nicType == "gateway") {
+		nicType := stringOrEmpty(nic.GetTypeOk())
+		if nicType == "metadata" || nicType == "gateway" {
 			logger.WithOperation("ListNetworkInterfaces").Debugf("Skipping provider-managed NIC type: %s (ID: %s)",
 				nicType, stringOrEmpty(nic.GetIdOk()))
 
@@ -1291,7 +1299,7 @@ func matchesNICFilters(nic iaas.NIC, filters map[string]string) bool {
 			// This would require additional API calls to determine attachment
 			continue
 		case "name":
-			if name, ok := nic.GetNameOk(); !ok || name != value {
+			if name, ok := nic.GetNameOk(); !ok || derefOr(name) != value {
 				return false
 			}
 		}
