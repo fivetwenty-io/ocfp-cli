@@ -8,27 +8,84 @@ on:
   pull_request:
     branches: [ main, dev ]
 
-env:
-  GO_VERSION: '1.27'
+# Read-only by default; only the release job elevates to contents: write.
+permissions:
+  contents: read
+
+# A superseded PR run would keep the shared lab runners busy long after
+# its result stopped mattering. Cancel it when new commits arrive; never
+# cancel a branch or tag run, whose result is the record for that commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job runs on the fivetwenty-io self-hosted lab runners, inside a
+# golang container: the runner hosts are intentionally minimal (docker and
+# little else), and mixing host jobs with container jobs leaves the shared
+# workspace with files owned by two different uids (host runner user vs
+# container root), which breaks checkout cleanup and trips git's
+# dubious-ownership guard. The "Trust the checkout" step writes
+# safe.directory at --system level (/etc/gitconfig): the checkout action
+# writes it under its own HOME, which shell steps in the container do not
+# share, so git run by go build's VCS stamping would otherwise exit 128 on
+# the runner-user-owned .git.
+#
+# Actions are pinned to full commit SHAs, since tags are movable and these
+# jobs execute on lab runners.
+#
+# Every cache is off. The runners are persistent, so the Actions cache
+# service costs more to fetch and unpack than the work it saves, and
+# setup-go's restore untars over Go's read-only module cache and floods the
+# log with tar "Cannot open: File exists". The Go module and build caches
+# are host directories bind-mounted into each container instead. They live
+# outside _work, so the runner's workspace reclaim hook leaves them alone.
+# GOCACHE is set explicitly because the runner overrides HOME to
+# /github/home inside the container, which is wiped between jobs.
+#
+# timeout-minutes on every job: a hung job would otherwise hold a runner
+# for GitHub's 6-hour default.
 
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
+      # The pinned release must be built with a Go toolchain at least as new
+      # as go.mod's target: golangci-lint parses the standard library with
+      # its own go/types, and one built against an older toolchain refuses
+      # to load the config outright. v2.12.2 (built with go1.26) died that
+      # way on "the Go language version (go1.26) used to build golangci-lint
+      # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
+      # with go1.27.0. Bump this in lockstep with the container image.
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.13.1
-      
+          skip-cache: true
+          skip-save-cache: true
+
       - name: Run go fmt
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
@@ -36,60 +93,98 @@ jobs:
             gofmt -s -l .
             exit 1
           fi
-      
+
       - name: Run go vet
         run: go vet ./...
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
       - name: Download dependencies
         run: go mod download
-      
+
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-      
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+
+      # This repository is private with no Codecov token, so an upload
+      # could only ever fail. The profile ships as an artifact instead, so
+      # coverage is still inspectable per run.
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
-          file: ./coverage.txt
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+          name: coverage
+          path: coverage.txt
+          if-no-files-found: error
 
   security:
     name: Security Scan
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
+      # The real gate: govulncheck reports only advisories on code paths
+      # this binary actually reaches, so a finding here is always actionable.
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
-      
+
+      # gosec runs over the tests too and without .golangci.yml's
+      # exclusions, so it is a report rather than a gate; the same gosec
+      # rules gate production code inside golangci-lint, where the tree is
+      # clean. Code scanning is unavailable on this private repository, so
+      # the SARIF ships as an artifact instead of an upload.
       - name: Run gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           gosec -fmt sarif -out gosec-results.sarif ./... || true
-      
+
       - name: Upload gosec report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: gosec-results
@@ -98,95 +193,154 @@ jobs:
 
   build:
     name: Build
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 30
+    # The lab runners are all linux/amd64, so every target is cross-compiled
+    # from the one container. The previous per-OS matrix gained nothing: it
+    # already set GOOS and GOARCH explicitly rather than relying on the
+    # runner's own platform, so those jobs were cross-compiling too.
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        arch: [amd64, arm64]
-        exclude:
-          - os: windows-latest
-            arch: arm64
-    runs-on: ${{ matrix.os }}
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
       - name: Build
         env:
-          GOOS: ${{ runner.os == 'Windows' && 'windows' || runner.os == 'macOS' && 'darwin' || 'linux' }}
-          GOARCH: ${{ matrix.arch }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
         run: |
-          go build -v -o ocfp-${{ runner.os }}-${{ matrix.arch }}${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/ocfp
-      
+          go build -v \
+            -o "ocfp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}" \
+            ./cmd/ocfp
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ocfp-${{ runner.os }}-${{ matrix.arch }}
-          path: ocfp-*
+          name: ocfp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ocfp-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
 
   integration-test:
     name: Integration Tests
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 30
     needs: build
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Download Linux binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ocfp-Linux-amd64
-      
+          name: ocfp-linux-amd64
+
       - name: Make binary executable
-        run: chmod +x ocfp-Linux-amd64
-      
+        run: chmod +x ocfp-linux-amd64
+
       - name: Test CLI help
-        run: ./ocfp-Linux-amd64 --help
-      
+        run: ./ocfp-linux-amd64 --help
+
       - name: Test version
-        run: ./ocfp-Linux-amd64 version
-      
+        run: ./ocfp-linux-amd64 version
+
+      # No bloc is configured on the runner, so these exercise the command
+      # wiring and argument parsing only; a missing environment is expected.
       - name: Test environment commands
         run: |
-          ./ocfp-Linux-amd64 env list || true
-          ./ocfp-Linux-amd64 env show || true
+          ./ocfp-linux-amd64 env list || true
+          ./ocfp-linux-amd64 env show || true
 
   release:
     name: Release
-    needs: [lint, test, security, build]
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 30
+    needs: [lint, test, security, build, integration-test]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # create the GitHub Release and upload assets
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
-      
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+
+      # Each artifact unpacks into its own directory, so the paths are
+      # stripped: a checksums file is only useful if its names match the
+      # release assets people actually download.
       - name: Create checksums
         run: |
-          for file in ocfp-*/ocfp-*; do
-            sha256sum "$file" >> checksums.txt
-          done
-      
+          set -euo pipefail
+          find artifacts -type f -name 'ocfp-*' -exec sha256sum {} + \
+            | sed 's#artifacts/[^/]*/##' > checksums.txt
+          cat checksums.txt
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           draft: false
           prerelease: false
           generate_release_notes: true
           files: |
-            ocfp-*/ocfp-*
+            artifacts/ocfp-*/ocfp-*
             checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
