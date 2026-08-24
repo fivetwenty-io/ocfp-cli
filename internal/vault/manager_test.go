@@ -306,4 +306,3 @@ func TestFilterInceptionSessions_MatchesOwnBlocOnly(t *testing.T) {
 	assert.Equal(t, []string{"ocfp-lab-drgao-inception-vault"}, matched,
 		"must not match other blocs' inception vault sessions")
 }
-
