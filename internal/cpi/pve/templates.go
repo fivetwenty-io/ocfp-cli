@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/nodes"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/nodes"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"

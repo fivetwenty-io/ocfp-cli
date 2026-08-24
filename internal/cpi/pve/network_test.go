@@ -9,8 +9,8 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 
-	pveclient "github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/client"
-	pmetrics "github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/metrics"
+	pveclient "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/client"
+	pmetrics "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/metrics"
 )
 
 // TestDeleteNetwork_BridgeModeIsNoOp guards against the production
@@ -557,12 +557,17 @@ func (f *fakePVEClient) DeleteRawCtx(_ context.Context, _ string, _ map[string]i
 	return nil, nil //nolint:nilnil // test stub
 }
 
+func (f *fakePVEClient) GetBytesCtx(_ context.Context, _ string, _ map[string]interface{}) ([]byte, error) {
+	return nil, nil
+}
+
 func (f *fakePVEClient) UploadCtx(_ context.Context, _ string, _ map[string]string, _, _ string, _ io.Reader) (*pveclient.Response, error) {
 	return nil, nil //nolint:nilnil // test stub
 }
 
 func (f *fakePVEClient) Login() error                          { return nil }
 func (f *fakePVEClient) Logout() error                         { return nil }
+func (f *fakePVEClient) Close() error                          { return nil }
 func (f *fakePVEClient) UpdateTicket(_ string)                 {}
 func (f *fakePVEClient) UpdateCSRFToken(_ string)              {}
 func (f *fakePVEClient) SetTimeout(_ time.Duration)            {}
@@ -576,6 +581,8 @@ func (f *fakePVEClient) SetTFAHandler(_ pveclient.TFAHandler)  {}
 func (f *fakePVEClient) InvalidateCache(_ string) int          { return 0 }
 func (f *fakePVEClient) ClearCache()                           {}
 func (f *fakePVEClient) CacheStats() *pveclient.CacheStats     { return nil }
+func (f *fakePVEClient) SetHeader(_, _ string)                 {}
+func (f *fakePVEClient) RemoveHeader(_ string)                 {}
 
 // Compile-time interface conformance.
 var _ pveclient.Client = (*fakePVEClient)(nil)
