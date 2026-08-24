@@ -155,7 +155,10 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "cf-cli@8", Enabled: false, CheckCommand: "cf", Tap: "cloudfoundry/tap"},
 		{Name: "credhub-cli", Enabled: false, CheckCommand: "credhub", Tap: "cloudfoundry/tap"},
 		{Name: "uaa-cli", Enabled: false, CheckCommand: "uaa", Tap: "cloudfoundry/tap"},
-		{Name: "spruce", Enabled: false, CheckCommand: "spruce", Tap: "cloudfoundry-community/cf"},
+		// graft is a spruce-compatible drop-in; the provisioner symlinks it as
+		// `spruce` so Genesis and the kits keep working unchanged. Upstream
+		// spruce is still installed alongside it, as `spruce-orig`.
+		{Name: "graft", Enabled: true, CheckCommand: "graft", Tap: "fivetwenty-io/tap", Cask: true},
 
 		// OpenBao
 		{Name: "openbao", Enabled: true, CheckCommand: "bao"},
@@ -443,6 +446,23 @@ func (bm *BrewManager) buildBrewInstallCommand(pkg BrewPackage) string {
 	return installCmd
 }
 
+// PackageEnabled reports whether a brew package will actually be installed on
+// this bastion, so callers can keep their expectations in step with the config.
+func (bm *BrewManager) PackageEnabled(name string) bool {
+	return bm.packageEnabled(name)
+}
+
+// packageEnabled reports whether a brew package is enabled after config overrides.
+func (bm *BrewManager) packageEnabled(name string) bool {
+	for _, pkg := range bm.GetBrewPackages() {
+		if pkg.Name == name {
+			return pkg.Enabled && !bm.shouldSkipCondition(pkg.Condition)
+		}
+	}
+
+	return false
+}
+
 // generateTapTrust trusts a third-party tap. Homebrew 6 refuses to evaluate
 // code from an untrusted tap, which breaks every tap-qualified install in a
 // non-interactive run. Older Homebrew has no `brew trust`, so the command is
@@ -454,6 +474,63 @@ func (bm *BrewManager) generateTapTrust(tap string) []string {
 		"    brew trust --tap " + tap,
 		"fi",
 	}
+}
+
+// GenerateGraftSpruceLinkScript symlinks graft as `spruce` so Genesis, the
+// kits, and every ops file keep calling `spruce` while graft does the work.
+// Upstream spruce remains available as `spruce-orig`.
+//
+// Something always has to answer to `spruce`, since verification and every kit
+// depend on it, so when graft is disabled the upstream binary is linked instead.
+func (bm *BrewManager) GenerateGraftSpruceLinkScript(_ctx context.Context) string {
+	if !bm.packageEnabled("graft") {
+		return bm.generateSpruceOrigLinkScript()
+	}
+
+	lines := []string{
+		"# Link graft as spruce",
+		"",
+		`eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"`,
+		"",
+		"if command -v graft >/dev/null 2>&1; then",
+		`    GRAFT_BIN="$(command -v graft)"`,
+		`    if [ "$(readlink -f ` + spruceLinkPath + ` 2>/dev/null)" != "$(readlink -f "$GRAFT_BIN")" ]; then`,
+		`        sudo ln -sf "$GRAFT_BIN" ` + spruceLinkPath,
+		`        log_success "Linked graft as spruce ($GRAFT_BIN)"`,
+		"    else",
+		"        log_info 'graft already linked as spruce'",
+		"    fi",
+		"else",
+		"    log_error 'graft not found; cannot link it as spruce'",
+		"    exit 1",
+		"fi",
+		"",
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// generateSpruceOrigLinkScript points `spruce` at the upstream binary, the
+// fallback for operators who opt out of graft via bastion.brews.disable.
+func (bm *BrewManager) generateSpruceOrigLinkScript() string {
+	lines := []string{
+		"# Link upstream spruce as spruce (graft disabled)",
+		"",
+		"if [ -x " + spruceOrigPath + " ]; then",
+		`    if [ "$(readlink -f ` + spruceLinkPath + ` 2>/dev/null)" != "` + spruceOrigPath + `" ]; then`,
+		"        sudo ln -sf " + spruceOrigPath + " " + spruceLinkPath,
+		"        log_success 'Linked upstream spruce as spruce (graft disabled)'",
+		"    else",
+		"        log_info 'upstream spruce already linked as spruce'",
+		"    fi",
+		"else",
+		"    log_error 'graft disabled and " + spruceOrigPath + " missing; nothing provides spruce'",
+		"    exit 1",
+		"fi",
+		"",
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // shouldSkipCondition evaluates whether a condition should be skipped.

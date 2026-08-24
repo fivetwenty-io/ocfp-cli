@@ -627,22 +627,23 @@ func (c *Config) getSafeTool() BinaryTool {
 	}
 }
 
-// getSpruceTool returns Spruce tool configuration.
-// Installed via brew (cloudfoundry-community/cf).
+// getSpruceTool returns the upstream Spruce tool configuration. It installs as
+// `spruce-orig`; the `spruce` command itself is a symlink to graft.
+// Installed via the advanced binary tools.
 func (c *Config) getSpruceTool() BinaryTool {
 	return BinaryTool{
-		Name:           "spruce",
+		Name:           "spruce-orig",
 		Enabled:        false,
 		Condition:      "",
 		URL:            "",
 		VersionURL:     "https://api.github.com/repos/geofffranks/spruce/releases/latest",
 		VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
 		URLTemplate:    "https://github.com/geofffranks/spruce/releases/download/v${VERSION}/spruce-linux-amd64",
-		Dest:           "/usr/local/bin/spruce",
+		Dest:           spruceOrigPath,
 		Mode:           fileModeExecutable,
 		Extract:        false,
 		InstallCommand: "",
-		Verify:         "spruce --version",
+		Verify:         "spruce-orig --version",
 		Sudo:           true,
 	}
 }

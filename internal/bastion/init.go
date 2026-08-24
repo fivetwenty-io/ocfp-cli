@@ -1959,7 +1959,7 @@ func (m *Manager) installBinaryTools(ctx context.Context) error {
 	toolNames := deduplicateToolNames(enabledBase, enabledAdv)
 
 	// Generate and execute binary tools installation scripts
-	// 1. Base tools (genesis, safe, spruce, vault, bosh, cf, etc.)
+	// 1. Base tools (genesis, safe, graft/spruce, vault, bosh, cf, etc.)
 	scriptGen := provision.NewScriptGenerator(m.config.Provider, m.config)
 	baseScript := scriptGen.GenerateBinaryToolScript(baseTools)
 
@@ -2217,15 +2217,37 @@ func (m *Manager) runCustomScripts(ctx context.Context) error {
 	return nil
 }
 
+// verificationTools lists the commands that must exist once provisioning is
+// done. It tracks the config rather than a fixed list: graft is only expected
+// when it is actually installed, and pmx only on PVE. `spruce` is always
+// expected, whether graft or the upstream binary is standing behind it.
+func (m *Manager) verificationTools() []string {
+	tools := []string{"genesis", "safe", "spruce", "bao", "bosh", "cf", "credhub", "uaa"}
+
+	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
+
+	if brewMgr.PackageEnabled("graft") {
+		tools = append(tools, "graft")
+	}
+
+	if brewMgr.PackageEnabled("pmx") {
+		tools = append(tools, "pmx")
+	}
+
+	// vault only verified when secrets_backend=vault; bao covers the default
+	// openbao path.
+	if m.config.SecretsBackendName() == "vault" {
+		tools = append(tools, "vault")
+	}
+
+	return tools
+}
+
 func (m *Manager) verifyInstallation(ctx context.Context) error {
 	m.log.Info("Verifying installation")
 
 	// Check if provisioning completed successfully
-	// vault only verified when secrets_backend=vault; bao covers the default openbao path.
-	tools := []string{"genesis", "safe", "spruce", "bao", "bosh", "cf", "credhub", "uaa"}
-	if m.config.SecretsBackendName() == "vault" {
-		tools = append(tools, "vault")
-	}
+	tools := m.verificationTools()
 
 	totalSteps := 1 + len(tools)
 

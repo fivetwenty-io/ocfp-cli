@@ -521,7 +521,7 @@ func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
 // vault is always required (the inception vault runs on it regardless of the
 // bloc's secrets backend); ruby is required by `bosh create-env` ERB rendering.
 func (om *OCFPManager) GenerateOCFPToolVerificationScript(_ctx context.Context) string {
-	requiredTools := []string{"safe", "bao", "vault", "bosh", "cf", "credhub", "uaa", "spruce", "yq", "go", "genesis", "ruby"}
+	requiredTools := []string{"safe", "bao", "vault", "bosh", "cf", "credhub", "uaa", "graft", "spruce", "yq", "go", "genesis", "ruby"}
 
 	lines := make([]string, 0, scriptBufferOCFPBase+scriptBufferOCFPPerTool*len(requiredTools))
 

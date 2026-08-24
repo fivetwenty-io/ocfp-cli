@@ -61,7 +61,9 @@ The bastion initialization proceeds through these phases:
 - **UAA CLI**: User Account and Authentication
 - **Genesis**: Deployment kit manager
 - **Safe**: Vault CLI wrapper
-- **Spruce**: YAML templating tool
+- **graft**: YAML templating tool, installed as `spruce` (a spruce-compatible
+  drop-in) from the `fivetwenty-io/tap` Homebrew tap
+- **spruce-orig**: upstream Spruce, kept alongside graft under its own name
 - **Vault**: Secret management
 
 ### CloudFoundry Plugins
@@ -86,7 +88,6 @@ The bastion initialization proceeds through these phases:
 - **Snap Tools**: go, kubectl, helm
 - **yq**: YAML processor
 - **fly**: Concourse CI/CD
-- **graft**: Binary deployment tool
 
 ## Recent Fixes and Updates
 
@@ -302,7 +303,13 @@ bosh --version
 credhub --version
 vault --version
 safe --version
+
+# graft, the spruce-compatible merge tool, linked as `spruce`
+graft --version
 spruce --version
+
+# upstream spruce, kept alongside graft
+spruce-orig --version
 
 # Genesis
 genesis --version
@@ -407,7 +414,7 @@ cf install-plugin -r CF-Community app-autoscaler-plugin
 ```
 
 #### 5. Genesis Tool Download Failures
-**Symptom**: Failed to download genesis/safe/spruce tools
+**Symptom**: Failed to download genesis/safe/spruce-orig tools
 
 **Cause**: GitHub API rate limiting or network issues
 

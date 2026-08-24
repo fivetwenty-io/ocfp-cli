@@ -1012,6 +1012,9 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	// Brew package installation
 	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateBrewPackageScript(ctx))
 
+	// graft (brew) linked as spruce
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateGraftSpruceLinkScript(ctx))
+
 	// Post-brew APT packages (packages with no brew formula, installed after brew)
 	postBrewPackages := map[string]PackageGroup{
 		"post_brew": NewConfig(sg.provider, sg.config, nil).GetPostBrewPackages(),
