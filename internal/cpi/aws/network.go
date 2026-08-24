@@ -805,6 +805,8 @@ func convertSubnetState(state types.SubnetState) cpi.ResourceState {
 		return cpi.ResourceStateCreating
 	case types.SubnetStateAvailable:
 		return cpi.ResourceStateAvailable
+	case types.SubnetStateUnavailable, types.SubnetStateFailed, types.SubnetStateFailedInsufficientCapacity:
+		return cpi.ResourceStateError
 	default:
 		return cpi.ResourceStateUnknown
 	}

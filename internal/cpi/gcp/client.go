@@ -435,7 +435,7 @@ func (c *Client) ensureClientsLoaded(ctx context.Context) error {
 
 	// Create client options
 	opts := []option.ClientOption{
-		option.WithCredentialsJSON(creds),
+		option.WithAuthCredentialsJSON(option.ServiceAccount, creds),
 	}
 
 	// Add custom endpoint if configured
@@ -561,7 +561,7 @@ func (c *Client) initLoadBalancingClients(ctx context.Context, opts []option.Cli
 // initStorageClient initializes the GCP storage SDK client.
 func (c *Client) initStorageClient(ctx context.Context, creds []byte) error {
 	storageOpts := []option.ClientOption{
-		option.WithCredentialsJSON(creds),
+		option.WithAuthCredentialsJSON(option.ServiceAccount, creds),
 	}
 
 	if c.config.UseCustomEndpoint && c.config.StorageEndpoint != "" {
