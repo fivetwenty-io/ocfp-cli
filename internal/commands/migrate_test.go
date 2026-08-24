@@ -33,6 +33,17 @@ func isolateXDGEnv(t *testing.T) (home string) {
 	return home
 }
 
+// skipIfRoot skips a test that proves behaviour on an unreadable file. Root
+// bypasses the permission bits entirely, so on CI (which runs the suite inside
+// a container as root) the read succeeds and the test proves nothing.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not restrict this process")
+	}
+}
+
 func writeMigrateTestFile(t *testing.T, path, content string) {
 	t.Helper()
 
@@ -554,6 +565,8 @@ func TestCopyMigrateDir_ReadOnlySourceModeSucceeds(t *testing.T) {
 // name the risk in the returned error, so a retried migrate never sees a
 // stale partial destination that looks like an ordinary conflict.
 func TestCopyMigrateEntryWithCleanup_PartialFailureRemovesDst(t *testing.T) {
+	skipIfRoot(t)
+
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")
 	dst := filepath.Join(tmp, "dst")
