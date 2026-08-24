@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -508,8 +509,8 @@ func GetExecutionInfo(cfg *config.Config) map[string]interface{} {
 
 	info := map[string]interface{}{
 		"hostname":         getHostname(),
-		"user":             os.Getenv("USER"),
-		"home":             os.Getenv("HOME"),
+		"user":             getUsername(),
+		"home":             getHomeDir(),
 		"os":               runtime.GOOS,
 		"arch":             runtime.GOARCH,
 		"is_bastion":       detector.isRunningOnBastion(),
@@ -541,6 +542,44 @@ func getHostname() string {
 	hostname, err := os.Hostname()
 	if err == nil {
 		return hostname
+	}
+
+	return "unknown"
+}
+
+// getUsername returns the name of the user running this process. $USER is
+// preferred (it is what an operator sees in their own shell), but it is unset
+// under systemd, cron, and container runtimes, so fall back to the passwd
+// database before giving up.
+func getUsername() string {
+	if name := os.Getenv("USER"); name != "" {
+		return name
+	}
+
+	if name := os.Getenv("LOGNAME"); name != "" {
+		return name
+	}
+
+	if current, err := user.Current(); err == nil && current.Username != "" {
+		return current.Username
+	}
+
+	return "unknown"
+}
+
+// getHomeDir returns the home directory of the user running this process,
+// falling back the same way getUsername does when $HOME is unset.
+func getHomeDir() string {
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+
+	if current, err := user.Current(); err == nil && current.HomeDir != "" {
+		return current.HomeDir
 	}
 
 	return "unknown"
