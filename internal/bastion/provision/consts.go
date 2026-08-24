@@ -11,6 +11,7 @@ const (
 	providerOpenStack = "openstack"
 	providerVMware    = "vmware"
 	providerVsphere   = "vsphere"
+	providerPVE       = "pve"
 )
 
 // Conditional keys used in config-driven steps.
@@ -21,6 +22,7 @@ const (
 	condProviderIsGCP       = "provider_is_gcp"
 	condProviderIsOpenstack = "provider_is_openstack"
 	condProviderIsVMware    = "provider_is_vmware"
+	condProviderIsPVE       = "provider_is_pve"
 )
 
 // File permissions used in provisioning.

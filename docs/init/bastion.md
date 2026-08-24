@@ -76,6 +76,8 @@ The bastion initialization proceeds through these phases:
 - **Azure CLI**: Microsoft Azure management
 - **GCP SDK**: Google Cloud Platform management
 - **OpenStack CLI**: OpenStack cloud management
+- **pmx**: Proxmox CLI (VE / PBS / PDM), installed on PVE bastions from the
+  `fivetwenty-io/tap` Homebrew tap
 
 ### Development Tools
 - **Node.js** (via NVM): JavaScript runtime
@@ -310,6 +312,7 @@ aws --version
 stackit --version
 az --version
 gcloud --version
+pmx --version
 
 # Operator helper scripts (~/bin)
 blobstores help

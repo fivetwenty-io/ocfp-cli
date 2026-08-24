@@ -459,3 +459,68 @@ func TestGetBrewPackages_OpenBaoAlwaysEnabled(t *testing.T) {
 		})
 	}
 }
+
+// TestGetBrewPackages_PMXOnlyOnPVE verifies pmx is a PVE-only package.
+func TestGetBrewPackages_PMXOnlyOnPVE(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{"pve": true, "aws": false, "gcp": false, "stackit": false}
+
+	for provider, want := range cases {
+		provider, want := provider, want
+		t.Run("provider="+provider, func(t *testing.T) {
+			t.Parallel()
+
+			bm := NewBrewManager(provider, nil)
+
+			found := false
+
+			for _, pkg := range bm.GetBrewPackages() {
+				if pkg.Name == "pmx" {
+					found = true
+
+					if !pkg.Cask || pkg.Tap != "fivetwenty-io/tap" {
+						t.Errorf("pmx = {Cask:%v Tap:%q}, want {Cask:true Tap:fivetwenty-io/tap}", pkg.Cask, pkg.Tap)
+					}
+				}
+			}
+
+			if found != want {
+				t.Errorf("pmx present = %v, want %v", found, want)
+			}
+		})
+	}
+}
+
+// TestGenerateBrewPackageScript_TrustsThirdPartyTaps verifies every tap we add
+// is also trusted: Homebrew 6 will not evaluate an untrusted tap's code.
+func TestGenerateBrewPackageScript_TrustsThirdPartyTaps(t *testing.T) {
+	t.Parallel()
+
+	script := NewBrewManager("pve", nil).GenerateBrewPackageScript(context.Background())
+
+	for _, tap := range []string{"fivetwenty-io/tap", "hashicorp/tap"} {
+		if !strings.Contains(script, "brew tap "+tap) {
+			t.Errorf("expected script to tap %s", tap)
+		}
+
+		if !strings.Contains(script, "brew trust --tap "+tap) {
+			t.Errorf("expected script to trust tap %s", tap)
+		}
+	}
+}
+
+// TestGenerateBrewPackageScript_InstallsPMXOnPVE verifies the PVE cask install.
+func TestGenerateBrewPackageScript_InstallsPMXOnPVE(t *testing.T) {
+	t.Parallel()
+
+	pveScript := NewBrewManager("pve", nil).GenerateBrewPackageScript(context.Background())
+	if !strings.Contains(pveScript, "fivetwenty-io/tap/pmx") {
+		t.Error("expected pmx cask install on the PVE bastion")
+	}
+
+	awsScript := NewBrewManager("aws", nil).GenerateBrewPackageScript(context.Background())
+	if strings.Contains(awsScript, "fivetwenty-io/tap/pmx") {
+		t.Error("pmx must not be installed on non-PVE bastions")
+	}
+}

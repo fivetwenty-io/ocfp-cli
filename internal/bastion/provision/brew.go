@@ -188,6 +188,11 @@ func (bm *BrewManager) getProviderBrewPackages() []BrewPackage {
 		return []BrewPackage{
 			{Name: "google-cloud-sdk", Enabled: true, CheckCommand: "gcloud", Condition: condProviderIsGCP, Cask: true},
 		}
+	case providerPVE:
+		// pmx drives the Proxmox API from the bastion.
+		return []BrewPackage{
+			{Name: "pmx", Enabled: true, CheckCommand: "pmx", Condition: condProviderIsPVE, Cask: true, Tap: "fivetwenty-io/tap"},
+		}
 	default:
 		return nil
 	}
@@ -307,6 +312,7 @@ func (bm *BrewManager) generateTapInstalls(packages []BrewPackage) []string {
 		lines = append(lines, "else")
 		lines = append(lines, fmt.Sprintf("    log_info 'Tap %s already added'", pkg.Tap))
 		lines = append(lines, "fi")
+		lines = append(lines, bm.generateTapTrust(pkg.Tap)...)
 		lines = append(lines, "")
 	}
 
@@ -437,6 +443,19 @@ func (bm *BrewManager) buildBrewInstallCommand(pkg BrewPackage) string {
 	return installCmd
 }
 
+// generateTapTrust trusts a third-party tap. Homebrew 6 refuses to evaluate
+// code from an untrusted tap, which breaks every tap-qualified install in a
+// non-interactive run. Older Homebrew has no `brew trust`, so the command is
+// only issued when it exists.
+func (bm *BrewManager) generateTapTrust(tap string) []string {
+	return []string{
+		fmt.Sprintf("if brew trust --help >/dev/null 2>&1 && ! brew trust --json=v1 2>/dev/null | grep -q '\"%s\"'; then", tap),
+		fmt.Sprintf("    log_info 'Trusting brew tap: %s'", tap),
+		"    brew trust --tap " + tap,
+		"fi",
+	}
+}
+
 // shouldSkipCondition evaluates whether a condition should be skipped.
 func (bm *BrewManager) shouldSkipCondition(condition string) bool {
 	if condition == "" {
@@ -456,6 +475,8 @@ func (bm *BrewManager) shouldSkipCondition(condition string) bool {
 		return bm.provider != providerOpenStack
 	case condProviderIsVMware:
 		return bm.provider != providerVMware && bm.provider != providerVsphere
+	case condProviderIsPVE:
+		return bm.provider != providerPVE
 	default:
 		return false
 	}

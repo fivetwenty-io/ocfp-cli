@@ -315,9 +315,25 @@ func (vm *VerificationManager) getProviderToolVerifications() []ToolVerification
 		return []ToolVerification{vm.getGCPToolsVerification()}
 	case providerOpenStack:
 		return []ToolVerification{vm.getOpenStackToolsVerification()}
+	case providerPVE:
+		return []ToolVerification{vm.getPVEToolsVerification()}
 	}
 
 	return nil
+}
+
+// getPVEToolsVerification checks pmx, the Proxmox CLI installed on PVE bastions.
+// No ConfigCheck runs here: pmx needs API credentials that are configured later.
+func (vm *VerificationManager) getPVEToolsVerification() ToolVerification {
+	return ToolVerification{
+		Name:            "pve-tools",
+		Commands:        []string{"pmx"},
+		VersionCommand:  "pmx --version",
+		ConfigCheck:     "",
+		Required:        true,
+		ServiceCheck:    "",
+		PostInstallTest: "",
+	}
 }
 
 func (vm *VerificationManager) getStackitToolsVerification() ToolVerification {
