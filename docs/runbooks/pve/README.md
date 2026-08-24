@@ -31,6 +31,7 @@ flowchart TD
     P9 --> P10[10. Validation — push and ssh]
     P10 --> P11[11. Platform services — both zones]
     P11 --> P12[12. Stratos — the front door]
+    P12 -.-> P13[13. Teardown: unwind the stack, keep the lab]
 ```
 
 The two gates matter. We do not deploy the management director until the
@@ -122,6 +123,7 @@ third column shows the worked example we validated against.
 | [10. Validation](10-validation.md) | `cf push`, `cf ssh`, and the proof the platform is real |
 | [11. Platform services](11-platform-services.md) | SHIELD, Doomsday, Prometheus, Concourse, Blacksmith, Autoscaler, Scheduler |
 | [12. Stratos](12-stratos.md) | Ingress, DNS, and the branded console at the canonical URL |
+| [13. Teardown](13-teardown.md) | Unwind every deployment in the order that works, leaving the lab intact |
 
 ## Where the facts live
 
@@ -141,8 +143,11 @@ layer that owns it:
 - `src/deployments/fivetwenty-ocfp/` — the live environment files for the
   worked example; each carries its own commentary.
 
-Teardown, when we need it, is a single idempotent command — we preview it
-first, always:
+Teardown comes in two kinds, and they are not interchangeable.
+
+When the bloc itself is going away, `ocfp teardown --nuke` deletes the
+infrastructure the CLI created, bastion and artifacts store included. We
+preview it first, always:
 
 ```bash
 ocfp teardown --bloc <bloc> --nuke --force --dry-run --output json
@@ -150,5 +155,11 @@ ocfp teardown --bloc <bloc> --nuke --force --empty
 ```
 
 (`--nuke` refuses to run without `--force`, even for the dry run.)
+
+When the lab is staying and only the deployments are going, that command is
+the wrong tool: it knows nothing about what BOSH built on top, and it leaves
+orphaned disks and an undeletable proto-director behind. [Chapter
+13](13-teardown.md) walks the order that actually works, including the two
+places where unwinding is not the bring-up read backwards.
 
 With the map in hand, let us go plan a network.
