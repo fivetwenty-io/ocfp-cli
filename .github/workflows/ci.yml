@@ -27,7 +27,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12.2
+          version: v2.13.1
       
       - name: Run go fmt
         run: |
@@ -88,11 +88,13 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           gosec -fmt sarif -out gosec-results.sarif ./... || true
       
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload gosec report
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          sarif_file: gosec-results.sarif
+          name: gosec-results
+          path: gosec-results.sarif
+          if-no-files-found: error
 
   build:
     name: Build
