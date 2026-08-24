@@ -9,8 +9,8 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
-	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas/v2api"
+	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage/v2api"
 
 	aws "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -22,7 +22,7 @@ import (
 // createAWSConfig creates an AWS config with the specified credentials.
 func (m *StorageManager) createAWSConfig(accessKey, secretKey string) aws.Config {
 	return aws.Config{
-		Region:                      m.client.config.Region,
+		Region:                      m.client.apiRegion(),
 		Credentials:                 aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		BearerAuthTokenProvider:     nil,
 		HTTPClient:                  nil,
@@ -79,7 +79,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 
 	payload := m.buildVolumePayload(req)
 
-	created, err := cli.CreateVolume(ctx, m.client.config.ProjectID).CreateVolumePayload(*payload).Execute()
+	created, err := cli.CreateVolume(ctx, m.client.config.ProjectID, m.client.apiRegion()).CreateVolumePayload(*payload).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas CreateVolume failed: %w", err)
 	}
@@ -137,11 +137,11 @@ func (m *StorageManager) buildVolumeResponse(created *iaas.Volume) *cpi.Volume {
 		CreatedAt:  time.Now(),
 	}
 	if size, ok := created.GetSizeOk(); ok {
-		out.Size = int(size)
+		out.Size = int(derefOr(size))
 	}
 
 	if az, ok := created.GetAvailabilityZoneOk(); ok {
-		out.Tags = map[string]string{"az": az}
+		out.Tags = map[string]string{"az": derefOr(az)}
 	}
 
 	return out
@@ -174,7 +174,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.V
 		return nil, err
 	}
 
-	got, err := cli.GetVolume(ctx, m.client.config.ProjectID, volumeID).Execute()
+	got, err := cli.GetVolume(ctx, m.client.config.ProjectID, m.client.apiRegion(), volumeID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetVolume failed: %w", err)
 	}
@@ -192,17 +192,17 @@ func (m *StorageManager) GetVolume(ctx context.Context, volumeID string) (*cpi.V
 		CreatedAt:  time.Now(),
 	}
 	if size, ok := got.GetSizeOk(); ok {
-		out.Size = int(size)
+		out.Size = int(derefOr(size))
 	}
 
 	// Map the status to cpi.ResourceState
 	if status, ok := got.GetStatusOk(); ok {
-		out.State = mapVolumeStatus(status)
+		out.State = mapVolumeStatus(derefOr(status))
 	}
 
 	// Include availability zone in tags
 	if az, ok := got.GetAvailabilityZoneOk(); ok {
-		out.Tags["az"] = az
+		out.Tags["az"] = derefOr(az)
 	}
 
 	return out, nil
@@ -217,7 +217,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 		return nil, err
 	}
 
-	resp, err := cli.ListVolumes(ctx, m.client.config.ProjectID).Execute()
+	resp, err := cli.ListVolumes(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas ListVolumes failed: %w", err)
 	}
@@ -247,16 +247,16 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 			CreatedAt:  time.Now(),
 		}
 		if size, ok := volumeItem.GetSizeOk(); ok {
-			vol.Size = int(size)
+			vol.Size = int(derefOr(size))
 		}
 
 		// Map the status to cpi.ResourceState
 		if status, ok := volumeItem.GetStatusOk(); ok {
-			vol.State = mapVolumeStatus(status)
+			vol.State = mapVolumeStatus(derefOr(status))
 		}
 
 		// Include availability zone in tags if available
-		if az, ok := volumeItem.GetAvailabilityZoneOk(); ok && az != "" {
+		if az := stringOrEmpty(volumeItem.GetAvailabilityZoneOk()); az != "" {
 			vol.Tags["az"] = az
 		}
 
@@ -277,7 +277,7 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, volumeID string) erro
 		return err
 	}
 
-	err = cli.DeleteVolume(ctx, m.client.config.ProjectID, volumeID).Execute()
+	err = cli.DeleteVolume(ctx, m.client.config.ProjectID, m.client.apiRegion(), volumeID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteVolume failed: %w", err)
 	}
@@ -294,7 +294,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 		return err
 	}
 
-	_, err = cli.AddVolumeToServer(ctx, m.client.config.ProjectID, instanceID, volumeID).Execute()
+	_, err = cli.AddVolumeToServer(ctx, m.client.config.ProjectID, m.client.apiRegion(), instanceID, volumeID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas AddVolumeToServer failed: %w", err)
 	}
@@ -318,7 +318,7 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 		return err
 	}
 
-	err = cli.RemoveVolumeFromServer(ctx, m.client.config.ProjectID, instanceID, volumeID).Execute()
+	err = cli.RemoveVolumeFromServer(ctx, m.client.config.ProjectID, m.client.apiRegion(), instanceID, volumeID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas RemoveVolumeFromServer failed: %w", err)
 	}
@@ -344,7 +344,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, volumeID string, newS
 
 	payload := iaas.NewResizeVolumePayload(int64(newSize))
 
-	err = cli.ResizeVolume(ctx, m.client.config.ProjectID, volumeID).ResizeVolumePayload(*payload).Execute()
+	err = cli.ResizeVolume(ctx, m.client.config.ProjectID, m.client.apiRegion(), volumeID).ResizeVolumePayload(*payload).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to resize volume %s: %w", volumeID, err)
 	}
@@ -366,7 +366,7 @@ func (m *StorageManager) CreateSnapshot(ctx context.Context, volumeID string, na
 		payload.SetName(name)
 	}
 
-	created, err := cli.CreateSnapshot(ctx, m.client.config.ProjectID).CreateSnapshotPayload(*payload).Execute()
+	created, err := cli.CreateSnapshot(ctx, m.client.config.ProjectID, m.client.apiRegion()).CreateSnapshotPayload(*payload).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas CreateSnapshot failed: %w", err)
 	}
@@ -399,7 +399,7 @@ func (m *StorageManager) GetSnapshot(ctx context.Context, snapshotID string) (*c
 		return nil, err
 	}
 
-	got, err := cli.GetSnapshot(ctx, m.client.config.ProjectID, snapshotID).Execute()
+	got, err := cli.GetSnapshot(ctx, m.client.config.ProjectID, m.client.apiRegion(), snapshotID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("stackit iaas GetSnapshot failed: %w", err)
 	}
@@ -427,7 +427,7 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, _fi
 		return nil, err
 	}
 
-	req := cli.ListSnapshots(ctx, m.client.config.ProjectID)
+	req := cli.ListSnapshotsInProject(ctx, m.client.config.ProjectID, m.client.apiRegion())
 	if volumeID != "" {
 		req = req.LabelSelector("volumeId=" + volumeID)
 	}
@@ -469,7 +469,7 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, snapshotID string) 
 		return err
 	}
 
-	err = cli.DeleteSnapshot(ctx, m.client.config.ProjectID, snapshotID).Execute()
+	err = cli.DeleteSnapshot(ctx, m.client.config.ProjectID, m.client.apiRegion(), snapshotID).Execute()
 	if err != nil {
 		return fmt.Errorf("stackit iaas DeleteSnapshot failed: %w", err)
 	}
@@ -532,7 +532,7 @@ func (m *StorageManager) handleBucketCreationError(err error, bucketName string)
 		strings.Contains(errStr, "service is not enabled"):
 		// Object storage not enabled - provide clear error message
 		return fmt.Errorf("is object storage enabled for the project?\n\nFailed to create bucket (service may not be enabled): %w\n\nTo enable object storage:\n1. Visit STACKIT portal: https://portal.stackit.cloud/\n2. Navigate to Project: %s\n3. Select Region: %s\n4. Enable Object Storage service",
-			err, m.client.config.ProjectID, m.client.config.Region)
+			err, m.client.config.ProjectID, m.client.apiRegion())
 	default:
 		// Other error - fail
 		return fmt.Errorf("failed to create bucket: %w", err)
@@ -569,7 +569,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 	}
 
 	// Try to create the bucket directly
-	_, err = cli.CreateBucket(ctx, m.client.config.ProjectID, m.client.config.Region, req.Name).Execute()
+	_, err = cli.CreateBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), req.Name).Execute()
 	if err != nil {
 		err = m.handleBucketCreationError(err, req.Name)
 		if err != nil {
@@ -581,7 +581,7 @@ func (m *StorageManager) CreateBucket(ctx context.Context, req *cpi.BucketReques
 	bucket := &cpi.Bucket{
 		ID:           req.Name, // Use bucket name as ID
 		Name:         req.Name,
-		Region:       m.client.config.Region,
+		Region:       m.client.apiRegion(),
 		StorageClass: "",
 		Versioning:   false,
 		Encryption:   false,
@@ -624,7 +624,7 @@ func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucke
 		return nil, err
 	}
 
-	resp, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+	resp, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), name).Execute()
 	if err != nil {
 		// Translate 404 if possible
 		return nil, &cpi.ProviderError{
@@ -637,8 +637,8 @@ func (m *StorageManager) GetBucket(ctx context.Context, name string) (*cpi.Bucke
 
 	// Map SDK model to CPI bucket
 	var bucketData objectstorage.Bucket
-	if bb, ok := resp.GetBucketOk(); ok {
-		bucketData = bb
+	if bb, ok := resp.GetBucketOk(); ok && bb != nil {
+		bucketData = *bb
 	}
 
 	bucket := &cpi.Bucket{
@@ -666,7 +666,7 @@ func (m *StorageManager) ListBuckets(ctx context.Context) ([]*cpi.Bucket, error)
 		return nil, err
 	}
 
-	resp, err := cli.ListBuckets(ctx, m.client.config.ProjectID, m.client.config.Region).Execute()
+	resp, err := cli.ListBuckets(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list buckets: %w", err)
 	}
@@ -703,7 +703,7 @@ func (m *StorageManager) DeleteBucket(ctx context.Context, name string) error {
 		return err
 	}
 
-	_, err = cli.DeleteBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+	_, err = cli.DeleteBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), name).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to delete bucket: %w", err)
 	}
@@ -810,14 +810,14 @@ func (m *StorageManager) getBucketEndpoint(ctx context.Context, name string) (st
 		return "", err
 	}
 
-	getBucketResp, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+	getBucketResp, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), name).Execute()
 	if err != nil {
 		return "", fmt.Errorf("failed to get bucket %s metadata: %w", name, err)
 	}
 
 	var bucketInfo objectstorage.Bucket
-	if bucketData, ok := getBucketResp.GetBucketOk(); ok {
-		bucketInfo = bucketData
+	if bucketData, ok := getBucketResp.GetBucketOk(); ok && bucketData != nil {
+		bucketInfo = *bucketData
 	} else {
 		return "", ErrBucketMetadataMissingInResponse(name)
 	}
@@ -856,7 +856,7 @@ func (m *StorageManager) createS3ClientWithTempCreds(ctx context.Context, endpoi
 
 		cli, err := m.client.getObjectStorageClient()
 		if err == nil {
-			_, derr := cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.config.Region, keyID).
+			_, derr := cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.apiRegion(), keyID).
 				CredentialsGroup(groupID).
 				Execute()
 			if derr != nil {
@@ -910,7 +910,7 @@ func (m *StorageManager) ensureTemporaryAccessKey(ctx context.Context) (string, 
 }
 
 // ensureCredentialsGroup finds or creates a credentials group.
-func (m *StorageManager) ensureCredentialsGroup(ctx context.Context, cli *objectstorage.APIClient) (string, error) {
+func (m *StorageManager) ensureCredentialsGroup(ctx context.Context, cli objectstorage.DefaultAPI) (string, error) {
 	const groupDisplay = "ocfp-cli"
 
 	// Find existing group
@@ -922,7 +922,7 @@ func (m *StorageManager) ensureCredentialsGroup(ctx context.Context, cli *object
 	// Create new group
 	payload := objectstorage.NewCreateCredentialsGroupPayload(groupDisplay)
 
-	_, err := cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region).
+	_, err := cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.apiRegion()).
 		CreateCredentialsGroupPayload(*payload).Execute()
 	if err != nil {
 		return "", fmt.Errorf("create credentials group failed: %w", err)
@@ -938,8 +938,8 @@ func (m *StorageManager) ensureCredentialsGroup(ctx context.Context, cli *object
 }
 
 // findCredentialsGroup finds a credentials group by display name.
-func (m *StorageManager) findCredentialsGroup(ctx context.Context, cli *objectstorage.APIClient, displayName string) string {
-	resp, err := cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.config.Region).Execute()
+func (m *StorageManager) findCredentialsGroup(ctx context.Context, cli objectstorage.DefaultAPI, displayName string) string {
+	resp, err := cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err != nil {
 		return ""
 	}
@@ -956,13 +956,13 @@ func (m *StorageManager) findCredentialsGroup(ctx context.Context, cli *objectst
 }
 
 // createAccessKey creates a new access key in the specified group.
-func (m *StorageManager) createAccessKey(ctx context.Context, cli *objectstorage.APIClient, groupID string) (*objectstorage.CreateAccessKeyResponse, error) {
+func (m *StorageManager) createAccessKey(ctx context.Context, cli objectstorage.DefaultAPI, groupID string) (*objectstorage.CreateAccessKeyResponse, error) {
 	payload := objectstorage.NewCreateAccessKeyPayload()
 	// Optional: leave Expires nil to create non-expiring; we set short expiry for safety
 	// t := time.Now().Add(1 * time.Hour)
 	// payload.SetExpires(t)
 
-	req := cli.CreateAccessKey(ctx, m.client.config.ProjectID, m.client.config.Region)
+	req := cli.CreateAccessKey(ctx, m.client.config.ProjectID, m.client.apiRegion())
 	req = req.CredentialsGroup(groupID)
 
 	car, err := req.CreateAccessKeyPayload(*payload).Execute()
@@ -1164,14 +1164,14 @@ func (m *StorageManager) EnableBucketVersioning(ctx context.Context, name string
 		return err
 	}
 
-	meta, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+	meta, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), name).Execute()
 	if err != nil {
 		return fmt.Errorf("get bucket for versioning: %w", err)
 	}
 
 	var bucketData objectstorage.Bucket
-	if bb, ok := meta.GetBucketOk(); ok {
-		bucketData = bb
+	if bb, ok := meta.GetBucketOk(); ok && bb != nil {
+		bucketData = *bb
 	} else {
 		return ErrBucketInfoMissing
 	}
@@ -1189,7 +1189,7 @@ func (m *StorageManager) EnableBucketVersioning(ctx context.Context, name string
 	}
 
 	defer func() {
-		_, _ = cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.config.Region, keyID).CredentialsGroup(groupID).Execute()
+		_, _ = cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.apiRegion(), keyID).CredentialsGroup(groupID).Execute()
 	}()
 
 	cfg := m.createAWSConfig(accessKey, secretKey)
@@ -1242,14 +1242,14 @@ func (m *StorageManager) SetBucketLifecycleNoncurrentDays(ctx context.Context, n
 	return m.applyLifecycleConfiguration(ctx, s3cli, name, days)
 }
 
-func (m *StorageManager) getBucketInfo(ctx context.Context, cli *objectstorage.APIClient, name string) (objectstorage.Bucket, error) {
-	meta, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.config.Region, name).Execute()
+func (m *StorageManager) getBucketInfo(ctx context.Context, cli objectstorage.DefaultAPI, name string) (objectstorage.Bucket, error) {
+	meta, err := cli.GetBucket(ctx, m.client.config.ProjectID, m.client.apiRegion(), name).Execute()
 	if err != nil {
 		return objectstorage.Bucket{}, fmt.Errorf("get bucket for lifecycle: %w", err)
 	}
 
-	if bb, ok := meta.GetBucketOk(); ok {
-		return bb, nil
+	if bb, ok := meta.GetBucketOk(); ok && bb != nil {
+		return *bb, nil
 	}
 
 	return objectstorage.Bucket{}, ErrBucketInfoMissing
@@ -1276,7 +1276,7 @@ func (m *StorageManager) createS3ClientWithTempKey(ctx context.Context, endpoint
 	}
 
 	cleanup := func() {
-		_, _ = cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.config.Region, keyID).CredentialsGroup(groupID).Execute()
+		_, _ = cli.DeleteAccessKey(ctx, m.client.config.ProjectID, m.client.apiRegion(), keyID).CredentialsGroup(groupID).Execute()
 	}
 
 	cfg := m.createAWSConfig(accessKey, secretKey)
@@ -1320,7 +1320,7 @@ func (m *StorageManager) EnsureObjectStorageCredentialsGroup(ctx context.Context
 		return "", err
 	}
 	// Try to find existing
-	resp, err := cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.config.Region).Execute()
+	resp, err := cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err == nil {
 		if groups, ok := resp.GetCredentialsGroupsOk(); ok {
 			for _, g := range groups {
@@ -1333,13 +1333,13 @@ func (m *StorageManager) EnsureObjectStorageCredentialsGroup(ctx context.Context
 	// Create new
 	payload := objectstorage.NewCreateCredentialsGroupPayload(displayName)
 
-	_, err = cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region).
+	_, err = cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.apiRegion()).
 		CreateCredentialsGroupPayload(*payload).Execute()
 	if err != nil {
 		return "", fmt.Errorf("create credentials group: %w", err)
 	}
 	// Fetch ID
-	resp, err = cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.config.Region).Execute()
+	resp, err = cli.ListCredentialsGroups(ctx, m.client.config.ProjectID, m.client.apiRegion()).Execute()
 	if err == nil {
 		if groups, ok := resp.GetCredentialsGroupsOk(); ok {
 			for _, g := range groups {
@@ -1365,7 +1365,7 @@ func (m *StorageManager) CreateCredentialsGroup(ctx context.Context, req *cpi.Cr
 	// Create the credentials group using SDK
 	payload := objectstorage.NewCreateCredentialsGroupPayload(req.Name)
 
-	_, err = cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region).CreateCredentialsGroupPayload(*payload).Execute()
+	_, err = cli.CreateCredentialsGroup(ctx, m.client.config.ProjectID, m.client.apiRegion()).CreateCredentialsGroupPayload(*payload).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create credentials group: %w", err)
 	}
@@ -1387,7 +1387,7 @@ func (m *StorageManager) DeleteCredentialsGroup(ctx context.Context, groupID str
 		return err
 	}
 
-	_, err = cli.DeleteCredentialsGroup(ctx, m.client.config.ProjectID, m.client.config.Region, groupID).Execute()
+	_, err = cli.DeleteCredentialsGroup(ctx, m.client.config.ProjectID, m.client.apiRegion(), groupID).Execute()
 	if err != nil {
 		return fmt.Errorf("delete credentials group %s: %w", groupID, err)
 	}
