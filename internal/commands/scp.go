@@ -213,6 +213,10 @@ func processSCPPath(path, bastionIP, user string) string {
 	return path
 }
 
+// scpConnectTimeout is the per-attempt TCP connect timeout handed to scp,
+// in seconds. Matches the value the provider SSH helpers use.
+const scpConnectTimeout = "30"
+
 // buildSCPCommand constructs the SCP command with all options.
 func buildSCPCommand(source, destination, keyPath string, recursive bool, extraOptions string) []string {
 	cmd := []string{"scp"}
@@ -237,6 +241,12 @@ func buildSCPCommand(source, destination, keyPath string, recursive bool, extraO
 		options := strings.Fields(extraOptions)
 		cmd = append(cmd, options...)
 	}
+
+	// Bound the TCP connect the way the provider helpers do. Without this a
+	// copy aimed at an unreachable bastion sits in connect() for minutes with
+	// no output. ssh keeps the first value it is given for an option, so a
+	// caller that passed its own ConnectTimeout above still wins.
+	cmd = append(cmd, "-o", "ConnectTimeout="+scpConnectTimeout)
 
 	// Add source and destination
 	cmd = append(cmd, source, destination)
