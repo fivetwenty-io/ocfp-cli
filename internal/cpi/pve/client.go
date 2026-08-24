@@ -14,11 +14,11 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/network"
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/qemu"
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/storage"
-	"github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/api/tasks"
-	pve "github.com/fivetwenty-io/pve-apiclient-go/v3/pkg/client"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/network"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/qemu"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/storage"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/tasks"
+	pve "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/client"
 )
 
 const (
