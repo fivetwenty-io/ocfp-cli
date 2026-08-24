@@ -48,6 +48,9 @@ func RegisterCommands(root *cobra.Command) {
 
 	// Logging and diagnostics
 	root.AddCommand(commands.NewLogsCmd())
+
+	// Version reporting
+	root.AddCommand(commands.NewVersionCmd())
 }
 
 // Placeholder implementations for commands not yet created
