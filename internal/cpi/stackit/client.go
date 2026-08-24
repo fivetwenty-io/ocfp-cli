@@ -11,9 +11,9 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	stackitconfig "github.com/stackitcloud/stackit-sdk-go/core/config"
-	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas"
-	lb "github.com/stackitcloud/stackit-sdk-go/services/loadbalancer"
-	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage"
+	iaas "github.com/stackitcloud/stackit-sdk-go/services/iaas/v2api"
+	lb "github.com/stackitcloud/stackit-sdk-go/services/loadbalancer/v2api"
+	objectstorage "github.com/stackitcloud/stackit-sdk-go/services/objectstorage/v2api"
 )
 
 // Client implements the STACKIT provider.
@@ -113,6 +113,17 @@ func (c *Client) Region() string {
 	return c.config.Region
 }
 
+// apiRegion returns the region every region-scoped IaaS call must carry. The
+// IaaS API became region-scoped in SDK v1, so an empty configured region falls
+// back to STACKIT's default region rather than sending an empty path segment.
+func (c *Client) apiRegion() string {
+	if c.config != nil && c.config.Region != "" {
+		return c.config.Region
+	}
+
+	return defaultStackitRegion
+}
+
 // Authenticate validates and stores credentials.
 func (c *Client) Authenticate(ctx context.Context) error {
 	logger.Debug("Authenticating with STACKIT")
@@ -122,7 +133,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("failed to init IAAS client: %w", err)
 	}
 
-	_, err = cli.ListNetworks(ctx, c.config.ProjectID).Execute()
+	_, err = cli.ListNetworks(ctx, c.config.ProjectID, c.apiRegion()).Execute()
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
@@ -402,10 +413,12 @@ func (c *Client) applyTimeout(cli httpClientConfigurer) {
 	cli.GetConfig().HTTPClient.Timeout = c.config.Timeout
 }
 
-// getIAASClient returns a cached IAAS API client, initializing on first use.
-func (c *Client) getIAASClient() (*iaas.APIClient, error) {
+// getIAASClient returns the cached IAAS API service, initializing on first use.
+//
+//nolint:ireturn // the SDK exposes its operations as the DefaultAPI interface
+func (c *Client) getIAASClient() (iaas.DefaultAPI, error) {
 	if c.iaasClient != nil {
-		return c.iaasClient, nil
+		return c.iaasClient.DefaultAPI, nil
 	}
 
 	cli, err := iaas.NewAPIClient(c.buildIAASConfigOptions()...)
@@ -417,13 +430,15 @@ func (c *Client) getIAASClient() (*iaas.APIClient, error) {
 
 	c.iaasClient = cli
 
-	return c.iaasClient, nil
+	return c.iaasClient.DefaultAPI, nil
 }
 
-// getObjectStorageClient returns a cached Object Storage API client, initializing on first use.
-func (c *Client) getObjectStorageClient() (*objectstorage.APIClient, error) {
+// getObjectStorageClient returns the cached Object Storage API service, initializing on first use.
+//
+//nolint:ireturn // the SDK exposes its operations as the DefaultAPI interface
+func (c *Client) getObjectStorageClient() (objectstorage.DefaultAPI, error) {
 	if c.objClient != nil {
-		return c.objClient, nil
+		return c.objClient.DefaultAPI, nil
 	}
 
 	cli, err := objectstorage.NewAPIClient(c.buildObjectStorageConfigOptions()...)
@@ -435,13 +450,15 @@ func (c *Client) getObjectStorageClient() (*objectstorage.APIClient, error) {
 
 	c.objClient = cli
 
-	return c.objClient, nil
+	return c.objClient.DefaultAPI, nil
 }
 
-// getLoadBalancerClient returns a cached Load Balancer API client, initializing on first use.
-func (c *Client) getLoadBalancerClient() (*lb.APIClient, error) {
+// getLoadBalancerClient returns the cached Load Balancer API service, initializing on first use.
+//
+//nolint:ireturn // the SDK exposes its operations as the DefaultAPI interface
+func (c *Client) getLoadBalancerClient() (lb.DefaultAPI, error) {
 	if c.lbClient != nil {
-		return c.lbClient, nil
+		return c.lbClient.DefaultAPI, nil
 	}
 
 	cli, err := lb.NewAPIClient(c.buildLoadBalancerConfigOptions()...)
@@ -453,7 +470,7 @@ func (c *Client) getLoadBalancerClient() (*lb.APIClient, error) {
 
 	c.lbClient = cli
 
-	return c.lbClient, nil
+	return c.lbClient.DefaultAPI, nil
 }
 
 // No raw HTTP helpers are needed; all operations use official SDKs
