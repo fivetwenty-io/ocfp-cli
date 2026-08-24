@@ -353,8 +353,8 @@ func TestGetBrewPackages_GoPinnedVersion(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		if pkg.Name == "go" {
-			if pkg.Version != "1.26" {
-				t.Errorf("Expected go pinned to version '1.26', got '%s'", pkg.Version)
+			if pkg.Version != "1.27" {
+				t.Errorf("Expected go pinned to version '1.27', got '%s'", pkg.Version)
 			}
 
 			return
