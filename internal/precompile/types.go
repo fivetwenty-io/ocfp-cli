@@ -3,7 +3,7 @@
 // tarballs, so create-env and CF deploys skip source compilation.
 //
 // Per-release resolution mirrors the reference store-ops pipeline in
-// bosh-pve-cpi-release/scripts (_compiled.py, _cfcompile.py):
+// bosh-proxmox-cpi-release/scripts (_compiled.py, _cfcompile.py):
 //
 //  1. present?       — the compiled tarball already exists in the blobstore for
 //     this stemcell, reuse it.

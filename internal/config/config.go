@@ -263,13 +263,13 @@ type Config struct {
 	// template auto-provisioning to stage downloaded cloud images.
 	IsoStorage string `json:"iso_storage" mapstructure:"iso_storage" yaml:"iso_storage,omitempty"`
 	// VMStorage is the PVE storage pool used for ephemeral (root) VM disks.
-	// PVE-specific. Maps to pve.vm_storage in the bosh-pve-cpi-release job
+	// PVE-specific. Maps to pve.vm_storage in the bosh-proxmox-cpi-release job
 	// properties. When empty, configureCPI falls back to
 	// Artifacts.Data.StoragePool, then to the hardcoded default "local-lvm".
 	// Example: "data" (lvmthin pool), "local-lvm" (default thin LVM).
 	VMStorage string `json:"vm_storage" mapstructure:"vm_storage" yaml:"vm_storage,omitempty"`
 	// DiskStorage is the PVE storage pool used for persistent BOSH disks.
-	// PVE-specific. Maps to pve.disk_storage in the bosh-pve-cpi-release job
+	// PVE-specific. Maps to pve.disk_storage in the bosh-proxmox-cpi-release job
 	// properties. When empty, configureCPI falls back to
 	// Artifacts.Data.StoragePool, then to the hardcoded default "zfs-1".
 	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
@@ -371,13 +371,13 @@ type Config struct {
 	// VmidRangeStart is the lower bound (inclusive) of the PVE VMID range the
 	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
 	// the default value 100 so the CPI never clobbers operator-reserved IDs.
-	// Maps to vmid_range_start in the bosh-pve-cpi-release job properties.
+	// Maps to vmid_range_start in the bosh-proxmox-cpi-release job properties.
 	VmidRangeStart int `json:"vmid_range_start,omitempty" mapstructure:"vmid_range_start" yaml:"vmid_range_start,omitempty"`
 
 	// VmidRangeEnd is the upper bound (inclusive) of the PVE VMID range the
 	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
 	// the default value 5999. Must be greater than VmidRangeStart when both are
-	// non-zero. Maps to vmid_range_end in the bosh-pve-cpi-release job properties.
+	// non-zero. Maps to vmid_range_end in the bosh-proxmox-cpi-release job properties.
 	VmidRangeEnd int `json:"vmid_range_end,omitempty" mapstructure:"vmid_range_end" yaml:"vmid_range_end,omitempty"`
 
 	// CfMaxInFlight is the maximum number of concurrent create_vm calls the

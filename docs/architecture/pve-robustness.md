@@ -2,7 +2,7 @@
 
 ## Why these changes
 
-The [`bosh-pve-cpi-release`](../../../proxmox/bosh-pve-cpi-release/) lab repo is
+The [`bosh-proxmox-cpi-release`](../../../proxmox/bosh-proxmox-cpi-release/) lab repo is
 a working Go BOSH CPI for Proxmox VE. Operating it against a real cluster produced
 14 learnings — specific failure modes, missing checks, and missing defaults that
 caused deploy or teardown problems in practice.
@@ -116,4 +116,4 @@ valid and continue to work with the stated defaults.
 - [PVE provider configuration](../pve.md) — bloc config reference, auth setup, and troubleshooting
 - [PVE robustness changes](../migrations/pve-robustness-changes.md) — breaking changes and migration steps
 - [PVE commands](../commands/pve-commands.md) — `ocfp pve unstick` and the integration harness
-- [`bosh-pve-cpi-release`](../../../proxmox/bosh-pve-cpi-release/) — upstream lab repo, source of the 14 learnings
+- [`bosh-proxmox-cpi-release`](../../../proxmox/bosh-proxmox-cpi-release/) — upstream lab repo, source of the 14 learnings
