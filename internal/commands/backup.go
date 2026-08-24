@@ -934,7 +934,12 @@ func shouldExclude(path string, excludePaths []string) bool {
 func copyForBackup(_, dest string) error {
 	// This would implement recursive copying
 	// For now, return a placeholder
-	return fmt.Errorf("failed to create backup directory: %w", os.MkdirAll(dest, BackupDirPerm)) //nolint:gosec // path from trusted config
+	err := os.MkdirAll(dest, BackupDirPerm) //nolint:gosec // path from trusted config
+	if err != nil {
+		return fmt.Errorf("failed to create backup directory: %w", err)
+	}
+
+	return nil
 }
 
 func createArchive(_, _ string, _ bool) error {
@@ -946,7 +951,12 @@ func createArchive(_, _ string, _ bool) error {
 func encryptFile(source, dest string) error {
 	// This would encrypt the file using GPG or similar
 	// Placeholder implementation
-	return fmt.Errorf("failed to encrypt file: %w", os.Rename(source, dest))
+	err := os.Rename(source, dest)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt file: %w", err)
+	}
+
+	return nil
 }
 
 func uploadBackup(ctx context.Context, cfg *config.Config, localPath, destination string) error {
@@ -1024,7 +1034,12 @@ func backupSecrets(_ctx context.Context, _cfg *config.Config, _stagingDir string
 func exportSecrets(_ context.Context, _ *config.Config, outputFile string) error {
 	// Export secrets to file
 	// Placeholder implementation
-	return fmt.Errorf("failed to export secrets: %w", os.WriteFile(outputFile, []byte("{}"), BackupFilePerm))
+	err := os.WriteFile(outputFile, []byte("{}"), BackupFilePerm)
+	if err != nil {
+		return fmt.Errorf("failed to export secrets: %w", err)
+	}
+
+	return nil
 }
 
 // backupMetadataDir returns the directory backup metadata files are stored
@@ -1049,8 +1064,14 @@ func saveBackupMetadata(backup *BackupMetadata) error {
 	}
 
 	metadataFile := filepath.Join(metadataDir, backup.ID+".json")
+
 	// Would marshal and save backup metadata
-	return fmt.Errorf("failed to save backup metadata: %w", os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm)) //nolint:gosec // path components are from trusted config
+	err = os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm) //nolint:gosec // path components are from trusted config
+	if err != nil {
+		return fmt.Errorf("failed to save backup metadata: %w", err)
+	}
+
+	return nil
 }
 
 func getLastBackup(_deployment string) (*BackupMetadata, error) {
