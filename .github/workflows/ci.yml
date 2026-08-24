@@ -12,9 +12,9 @@ on:
 permissions:
   contents: read
 
-# A superseded PR run would keep the shared lab runners busy long after
-# its result stopped mattering. Cancel it when new commits arrive; never
-# cancel a branch or tag run, whose result is the record for that commit.
+# A superseded PR run has nothing left to prove, and it would sit on lab
+# runners that later commits need. Cancel it; never cancel a branch or tag
+# run, whose result is the record for that commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -42,63 +42,25 @@ concurrency:
 # GOCACHE is set explicitly because the runner overrides HOME to
 # /github/home inside the container, which is wiped between jobs.
 #
+# The job graph is deliberately a chain, not a fan-out. This module links
+# the Azure, AWS, GCP and STACKIT SDKs, so a single compile of the
+# dependency tree is a heavy memory consumer, and a wide fan-out
+# OOM-killed every container on the runner at once (exit 137). lint, test,
+# build and security therefore run one after another rather than together,
+# and GOFLAGS caps the compiler's own parallelism within each of them.
+#
 # timeout-minutes on every job: a hung job would otherwise hold a runner
 # for GitHub's 6-hour default.
+
+env:
+  # -p bounds how many packages the toolchain compiles at once. It defaults
+  # to the core count, which on these runners means enough concurrent
+  # compiler processes to exhaust memory on the SDK packages.
+  GOFLAGS: -p=4
 
 jobs:
   lint:
     name: Lint
-    runs-on: self-hosted
-    container:
-      image: golang:1.27
-      volumes:
-        - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
-    env:
-      GOCACHE: /root/.cache/go-build
-    timeout-minutes: 30
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Trust the checkout despite mixed file owners
-        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.0'
-          cache: false
-
-      # The pinned release must be built with a Go toolchain at least as new
-      # as go.mod's target: golangci-lint parses the standard library with
-      # its own go/types, and one built against an older toolchain refuses
-      # to load the config outright. v2.12.2 (built with go1.26) died that
-      # way on "the Go language version (go1.26) used to build golangci-lint
-      # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
-      # with go1.27.0. Bump this in lockstep with the container image.
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.13.1
-          skip-cache: true
-          skip-save-cache: true
-
-      - name: Run go fmt
-        run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "Found unformatted files:"
-            gofmt -s -l .
-            exit 1
-          fi
-
-      - name: Run go vet
-        run: go vet ./...
-
-  test:
-    name: Test
     runs-on: self-hosted
     container:
       image: golang:1.27
@@ -123,25 +85,33 @@ jobs:
           go-version: '1.27.0'
           cache: false
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Run go fmt
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Found unformatted files:"
+            gofmt -s -l .
+            exit 1
+          fi
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Run go vet
+        run: go vet ./...
 
-      # This repository is private with no Codecov token, so an upload
-      # could only ever fail. The profile ships as an artifact instead, so
-      # coverage is still inspectable per run.
-      - name: Upload coverage profile
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+      # The pinned release must be built with a Go toolchain at least as new
+      # as go.mod's target: golangci-lint parses the standard library with
+      # its own go/types, and one built against an older toolchain refuses
+      # to load the config outright. v2.12.2 (built with go1.26) died that
+      # way on "the Go language version (go1.26) used to build golangci-lint
+      # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
+      # with go1.27.0. Bump this in lockstep with the container image.
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          name: coverage
-          path: coverage.txt
-          if-no-files-found: error
+          version: v2.13.1
+          skip-cache: true
+          skip-save-cache: true
 
-  security:
-    name: Security Scan
+  test:
+    name: Test
     runs-on: self-hosted
     container:
       image: golang:1.27
@@ -150,7 +120,8 @@ jobs:
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
     env:
       GOCACHE: /root/.cache/go-build
-    timeout-minutes: 30
+    timeout-minutes: 60
+    needs: lint
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,18 +137,150 @@ jobs:
           go-version: '1.27.0'
           cache: false
 
-      # The real gate: govulncheck reports only advisories on code paths
-      # this binary actually reaches, so a finding here is always actionable.
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      # This repository is private with no Codecov token, so an upload could
+      # only ever fail. The profile ships as an artifact instead, so coverage
+      # is still inspectable per run.
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage
+          path: coverage.txt
+          if-no-files-found: error
+
+  build:
+    name: Build
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 60
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
+      # One job cross-compiling in sequence, not a matrix. The lab runners
+      # are all linux/amd64, so a per-OS matrix bought nothing -- it already
+      # set GOOS and GOARCH explicitly rather than reading the runner
+      # platform -- while five simultaneous links of this dependency tree
+      # were what exhausted the runner's memory.
+      - name: Build every target
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            out="dist/ocfp-${goos}-${goarch}"
+            if [ "$goos" = "windows" ]; then
+              out="${out}.exe"
+            fi
+            echo "::group::build $target"
+            GOOS="$goos" GOARCH="$goarch" go build -o "$out" ./cmd/ocfp
+            echo "::endgroup::"
+          done
+          ls -l dist
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ocfp-binaries
+          path: dist/ocfp-*
+          if-no-files-found: error
+
+  integration-test:
+    name: Integration Tests
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+    timeout-minutes: 20
+    needs: build
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ocfp-binaries
+          path: dist
+
+      - name: Make binary executable
+        run: chmod +x dist/ocfp-linux-amd64
+
+      - name: Test CLI help
+        run: ./dist/ocfp-linux-amd64 --help
+
+      - name: Test version
+        run: ./dist/ocfp-linux-amd64 version
+
+      # No bloc is configured on the runner, so these exercise the command
+      # wiring and argument parsing only; a missing environment is expected.
+      - name: Test environment commands
+        run: |
+          ./dist/ocfp-linux-amd64 env list || true
+          ./dist/ocfp-linux-amd64 env show || true
+
+  security:
+    name: Security Scan
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 45
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          cache: false
+
+      # The real gate: govulncheck reports only advisories on code paths this
+      # binary actually reaches, so a finding here is always actionable.
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
-      # gosec runs over the tests too and without .golangci.yml's
-      # exclusions, so it is a report rather than a gate; the same gosec
-      # rules gate production code inside golangci-lint, where the tree is
-      # clean. Code scanning is unavailable on this private repository, so
-      # the SARIF ships as an artifact instead of an upload.
+      # gosec runs over the tests too and without .golangci.yml's exclusions,
+      # so it is a report rather than a gate; the same gosec rules gate
+      # production code inside golangci-lint, where the tree is clean. Code
+      # scanning is unavailable on this private repository, so the SARIF
+      # ships as an artifact instead of an upload.
       - name: Run gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
@@ -191,146 +294,28 @@ jobs:
           path: gosec-results.sarif
           if-no-files-found: error
 
-  build:
-    name: Build
-    runs-on: self-hosted
-    container:
-      image: golang:1.27
-      volumes:
-        - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
-    env:
-      GOCACHE: /root/.cache/go-build
-    timeout-minutes: 30
-    # The lab runners are all linux/amd64, so every target is cross-compiled
-    # from the one container. The previous per-OS matrix gained nothing: it
-    # already set GOOS and GOARCH explicitly rather than relying on the
-    # runner's own platform, so those jobs were cross-compiling too.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Trust the checkout despite mixed file owners
-        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.0'
-          cache: false
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-        run: |
-          go build -v \
-            -o "ocfp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}" \
-            ./cmd/ocfp
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ocfp-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ocfp-${{ matrix.goos }}-${{ matrix.goarch }}*
-          if-no-files-found: error
-
-  integration-test:
-    name: Integration Tests
-    runs-on: self-hosted
-    container:
-      image: golang:1.27
-      volumes:
-        - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
-    env:
-      GOCACHE: /root/.cache/go-build
-    timeout-minutes: 30
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Trust the checkout despite mixed file owners
-        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Download Linux binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ocfp-linux-amd64
-
-      - name: Make binary executable
-        run: chmod +x ocfp-linux-amd64
-
-      - name: Test CLI help
-        run: ./ocfp-linux-amd64 --help
-
-      - name: Test version
-        run: ./ocfp-linux-amd64 version
-
-      # No bloc is configured on the runner, so these exercise the command
-      # wiring and argument parsing only; a missing environment is expected.
-      - name: Test environment commands
-        run: |
-          ./ocfp-linux-amd64 env list || true
-          ./ocfp-linux-amd64 env show || true
-
   release:
     name: Release
     runs-on: self-hosted
     container:
       image: golang:1.27
-      volumes:
-        - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
-    env:
-      GOCACHE: /root/.cache/go-build
     timeout-minutes: 30
-    needs: [lint, test, security, build, integration-test]
+    needs: [lint, test, build, integration-test, security]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # create the GitHub Release and upload assets
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Trust the checkout despite mixed file owners
-        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Download all artifacts
+      - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: artifacts
+          name: ocfp-binaries
+          path: dist
 
-      # Each artifact unpacks into its own directory, so the paths are
-      # stripped: a checksums file is only useful if its names match the
-      # release assets people actually download.
       - name: Create checksums
         run: |
           set -euo pipefail
-          find artifacts -type f -name 'ocfp-*' -exec sha256sum {} + \
-            | sed 's#artifacts/[^/]*/##' > checksums.txt
+          cd dist
+          sha256sum ocfp-* > checksums.txt
           cat checksums.txt
 
       - name: Create Release
@@ -340,7 +325,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/ocfp-*/ocfp-*
-            checksums.txt
+            dist/ocfp-*
+            dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
