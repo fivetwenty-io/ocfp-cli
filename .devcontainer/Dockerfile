@@ -1,5 +1,5 @@
 # Development container for OCFP CLI Go implementation
-FROM golang:1.26-alpine
+FROM golang:1.27-alpine
 
 # Install development tools
 RUN apk add --no-cache \
