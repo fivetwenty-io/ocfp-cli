@@ -94,7 +94,13 @@ func (m *Manager) installBrewPackages(ctx context.Context) error {
 	brewMgr := provision.NewBrewManager(m.config.Provider, m.config)
 	script := brewMgr.GenerateBrewPackageScript(ctx)
 
-	return m.executeScript(ctx, script, "brew-packages")
+	if err := m.executeScript(ctx, script, "brew-packages"); err != nil {
+		return err
+	}
+
+	// The `spruce` command has to exist before Genesis or any kit runs, so the
+	// link goes in right after the packages it points at.
+	return m.executeScript(ctx, brewMgr.GenerateGraftSpruceLinkScript(ctx), "graft-spruce-link")
 }
 
 // installPostBrewPackages installs APT packages that have no brew formula,

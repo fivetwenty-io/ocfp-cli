@@ -25,7 +25,7 @@ func TestAdvancedTools_SafeDisabledByDefault(t *testing.T) {
 	}
 }
 
-func TestAdvancedTools_SpruceEnabledByDefault(t *testing.T) {
+func TestAdvancedTools_SpruceOrigEnabledByDefault(t *testing.T) {
 	cfg := &config.Config{
 		Bastion: config.Bastion{
 			Tools: config.OverrideSets{},
@@ -38,17 +38,17 @@ func TestAdvancedTools_SpruceEnabledByDefault(t *testing.T) {
 	found := false
 
 	for _, tool := range tools {
-		if tool.Name == "spruce" {
+		if tool.Name == "spruce-orig" {
 			found = true
 
 			if !tool.Enabled {
-				t.Error("Expected 'spruce' to be enabled in advanced tools")
+				t.Error("Expected 'spruce-orig' to be enabled in advanced tools")
 			}
 		}
 	}
 
 	if !found {
-		t.Error("Expected 'spruce' in advanced binary tools list")
+		t.Error("Expected 'spruce-orig' in advanced binary tools list")
 	}
 }
 
