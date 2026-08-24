@@ -31,7 +31,7 @@ func TestGetBrewPackages_Defaults(t *testing.T) {
 		"gcc": false, "make": false, "cpanminus": false, "gnupg": false,
 		"python@3": false, "readline": false, "libyaml": false, "zlib": false,
 		"bosh-cli": false, "cf-cli@8": false, "credhub-cli": false,
-		"uaa-cli": false, "spruce": false, "openbao": false,
+		"uaa-cli": false, "graft": false, "openbao": false,
 	}
 
 	for _, pkg := range pkgs {
@@ -213,7 +213,7 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 		t.Error("Expected brew shellenv in brew package script for PATH propagation")
 	}
 
-	// CF ecosystem tools (bosh, cf, credhub, uaa, spruce) are installed via binary_tools
+	// CF ecosystem tools (bosh, cf, credhub, uaa) are installed via binary_tools
 	// because the cloudfoundry brew taps ship macOS-only binaries
 }
 
@@ -460,6 +460,36 @@ func TestGetBrewPackages_OpenBaoAlwaysEnabled(t *testing.T) {
 	}
 }
 
+// TestGetBrewPackages_GraftCask verifies graft ships as a cask from the
+// FiveTwenty tap and is enabled everywhere.
+func TestGetBrewPackages_GraftCask(t *testing.T) {
+	t.Parallel()
+
+	bm := NewBrewManager("aws", nil)
+
+	for _, pkg := range bm.GetBrewPackages() {
+		if pkg.Name != "graft" {
+			continue
+		}
+
+		if !pkg.Enabled {
+			t.Error("graft brew package must be enabled by default")
+		}
+
+		if !pkg.Cask {
+			t.Error("graft is published as a cask, expected Cask=true")
+		}
+
+		if pkg.Tap != "fivetwenty-io/tap" {
+			t.Errorf("graft tap = %q, want fivetwenty-io/tap", pkg.Tap)
+		}
+
+		return
+	}
+
+	t.Error("graft package not found in brew packages")
+}
+
 // TestGetBrewPackages_PMXOnlyOnPVE verifies pmx is a PVE-only package.
 func TestGetBrewPackages_PMXOnlyOnPVE(t *testing.T) {
 	t.Parallel()
@@ -522,5 +552,43 @@ func TestGenerateBrewPackageScript_InstallsPMXOnPVE(t *testing.T) {
 	awsScript := NewBrewManager("aws", nil).GenerateBrewPackageScript(context.Background())
 	if strings.Contains(awsScript, "fivetwenty-io/tap/pmx") {
 		t.Error("pmx must not be installed on non-PVE bastions")
+	}
+}
+
+// TestGenerateGraftSpruceLinkScript verifies graft is linked as spruce.
+func TestGenerateGraftSpruceLinkScript(t *testing.T) {
+	t.Parallel()
+
+	script := NewBrewManager("aws", nil).GenerateGraftSpruceLinkScript(context.Background())
+
+	for _, want := range []string{
+		"command -v graft",
+		"sudo ln -sf \"$GRAFT_BIN\" /usr/local/bin/spruce",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("expected graft link script to contain %q\ngot:\n%s", want, script)
+		}
+	}
+}
+
+// TestGenerateGraftSpruceLinkScript_FallsBackWhenGraftDisabled verifies that
+// opting out of graft still leaves a working `spruce`, backed by the upstream
+// binary, since verification and every kit depend on that command existing.
+func TestGenerateGraftSpruceLinkScript_FallsBackWhenGraftDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Bastion: config.Bastion{
+			Brews: config.OverrideSets{Disable: []string{"graft"}},
+		},
+	}
+
+	script := NewBrewManager("aws", cfg).GenerateGraftSpruceLinkScript(context.Background())
+	if strings.Contains(script, "Link graft as spruce") {
+		t.Errorf("expected no graft link when graft is disabled, got:\n%s", script)
+	}
+
+	if !strings.Contains(script, spruceOrigPath+" "+spruceLinkPath) {
+		t.Errorf("expected upstream spruce to be linked as spruce, got:\n%s", script)
 	}
 }

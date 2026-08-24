@@ -172,17 +172,19 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 			Sudo:           true,
 			VerifyCommand:  "safe --version",
 		},
+		// Upstream spruce is installed under its own name; `spruce` itself is a
+		// symlink to graft, the spruce-compatible replacement installed via brew.
 		{
-			Name:           "spruce",
+			Name:           "spruce-orig",
 			Enabled:        true,
-			CheckCommand:   "spruce",
+			CheckCommand:   "spruce-orig",
 			VersionURL:     "https://api.github.com/repos/geofffranks/spruce/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
 			URLTemplate:    "https://github.com/geofffranks/spruce/releases/download/v${VERSION}/spruce-linux-amd64",
-			Dest:           "/usr/local/bin/spruce",
+			Dest:           spruceOrigPath,
 			Mode:           fileModeExecutable,
 			Sudo:           true,
-			VerifyCommand:  "spruce --version",
+			VerifyCommand:  "spruce-orig --version",
 		},
 		{
 			Name:           "yq",

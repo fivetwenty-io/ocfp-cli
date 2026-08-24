@@ -201,8 +201,8 @@ func (vm *VerificationManager) getEssentialToolsVerification() ToolVerification 
 func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerification {
 	// vault is only required when secrets_backend=vault; otherwise bao handles the
 	// secrets path and vault lives in the optional group.
-	commands := []string{"safe", "spruce", "jq", "bosh", "cf", "credhub"}
-	versionCommand := "safe --version && spruce --version && bosh --version && cf --version"
+	commands := []string{"safe", "graft", "spruce", "jq", "bosh", "cf", "credhub"}
+	versionCommand := "safe --version && graft --version && spruce --version && bosh --version && cf --version"
 
 	if vm.config != nil && vm.config.SecretsBackendName() == "vault" {
 		commands = append(commands, "vault")
@@ -689,7 +689,7 @@ func (vm *VerificationManager) generateNextStepsInfo() []string {
 		"log_info '     - Releases: ~/ocfp/releases'",
 		"log_info '     - Artifacts: ~/ocfp/artifacts'",
 		"log_info '     - Kits: ~/ocfp/kits (Genesis kit repositories)'",
-		"log_info '  3. Available tools: genesis (g), safe, spruce, vault, bosh, cf'",
+		"log_info '  3. Available tools: genesis (g), safe, graft (as spruce), vault, bosh, cf'",
 		"",
 	}
 }

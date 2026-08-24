@@ -25,6 +25,13 @@ const (
 	condProviderIsPVE       = "provider_is_pve"
 )
 
+// Paths for the spruce-compatible toolchain: graft is linked as `spruce`,
+// upstream spruce is kept alongside it under its own name.
+const (
+	spruceLinkPath = "/usr/local/bin/spruce"
+	spruceOrigPath = "/usr/local/bin/spruce-orig"
+)
+
 // File permissions used in provisioning.
 const (
 	directoryModeStandard = 0755
