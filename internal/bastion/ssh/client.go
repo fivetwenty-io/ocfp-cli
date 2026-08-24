@@ -529,7 +529,6 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 		Timeout:       shortTimeout,
 		Deadline:      time.Time{},
 		LocalAddr:     nil,
-		DualStack:     false,
 		FallbackDelay: 0,
 		KeepAlive:     0,
 		KeepAliveConfig: net.KeepAliveConfig{
@@ -539,7 +538,6 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 			Count:    0,
 		},
 		Resolver:       nil,
-		Cancel:         nil,
 		ControlContext: nil,
 		Control:        nil,
 	}
@@ -905,7 +903,6 @@ func (c *Client) createNetDialer() net.Dialer {
 		Timeout:       mediumTimeout,
 		Deadline:      time.Time{},
 		LocalAddr:     nil,
-		DualStack:     false,
 		FallbackDelay: 0,
 		KeepAlive:     0,
 		KeepAliveConfig: net.KeepAliveConfig{
@@ -915,7 +912,6 @@ func (c *Client) createNetDialer() net.Dialer {
 			Count:    0,
 		},
 		Resolver:       nil,
-		Cancel:         nil,
 		ControlContext: nil,
 		Control:        nil,
 	}
