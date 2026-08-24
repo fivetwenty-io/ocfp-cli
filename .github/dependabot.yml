@@ -1,0 +1,35 @@
+# Weekly dependency update PRs. The github-actions ecosystem also keeps the
+# workflows' full-SHA action pins current: it updates the SHA and its
+# trailing version comment together, which is what makes pinning to a
+# commit maintainable rather than a slow drift into stale actions.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: deps
+    # This module links the Azure, AWS, GCP and STACKIT SDKs, so ungrouped
+    # updates would open a queue of PRs every week and each one costs a full
+    # CI chain on the lab runners. One PR carries every patch and minor
+    # bump; majors stay separate, since those want reading.
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+
+# There is no docker entry: that ecosystem reads Dockerfiles, and this
+# repository has none. The golang image the CI jobs run in is bumped by
+# hand, in lockstep with the pinned golangci-lint release, which has to be
+# built with a toolchain at least as new as the image ships.
