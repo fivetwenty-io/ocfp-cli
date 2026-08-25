@@ -836,32 +836,24 @@ func pveFirstDNS(dns []string) string {
 	return dns[0]
 }
 
-// pveCIDRGateway returns the conventional gateway IP for a CIDR
-// ("10.64.64.0/18" -> "10.64.64.1").  Returns "" on parse failure.
+// pveCIDRGateway returns the conventional gateway IP for a CIDR: the first
+// host after the network base ("10.64.64.0/18" -> "10.64.64.1",
+// "10.61.148.64/26" -> "10.61.148.65").  Returns "" on parse failure.
+// Mirrors internal/bootstrap's CIDRGatewayIP (base + 1), which bootstrap's
+// SDN subnet creation uses for the same subnets; importing bootstrap here
+// would create an import cycle (see vaultIPToUint32).
 func pveCIDRGateway(cidr string) string {
-	for i := 0; i < len(cidr); i++ {
-		if cidr[i] == '/' {
-			cidr = cidr[:i]
-
-			break
-		}
-	}
-	// Replace last octet with .1.
-	last := -1
-
-	for i := len(cidr) - 1; i >= 0; i-- {
-		if cidr[i] == '.' {
-			last = i
-
-			break
-		}
-	}
-
-	if last <= 0 {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil || ipnet == nil {
 		return ""
 	}
 
-	return cidr[:last+1] + "1"
+	base, ok := vaultIPToUint32(ipnet.IP.Mask(ipnet.Mask).String())
+	if !ok {
+		return ""
+	}
+
+	return vaultUint32ToIP(base + 1)
 }
 
 // pveFirstAZ returns the first Proxmox node name as the AZ identifier, or "z1"
