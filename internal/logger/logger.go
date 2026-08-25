@@ -97,10 +97,9 @@ func Initialize(cfg Config) error {
 		cores = append(cores, fileCore)
 	}
 
-	// Create the logger
-	core := zapcore.NewTee(cores...)
-
-	core = newRedactingCore(core) // scrub secret-bearing fields before they reach the file core
+	// Create the logger, scrubbing secret-bearing fields before they reach
+	// the file core.
+	core := newRedactingCore(zapcore.NewTee(cores...))
 	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 
 	// Add context fields

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
@@ -160,26 +161,65 @@ func (s *configureNetworkStub) GetLoadBalancerHealth(_ context.Context, _ string
 	return nil, nil
 }
 
+// configureSecurityStub implements cpi.SecurityManager for configure tests.
+// It serves canned groups/rules and records the rules added.
+type configureSecurityStub struct {
+	groups       []*cpi.SecurityGroup
+	currentRules map[string][]*cpi.SecurityRule
+	addedRules   map[string][]*cpi.SecurityRule
+}
+
+func (s *configureSecurityStub) CreateSecurityGroup(_ context.Context, _ *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) { //nolint:nilnil // test stub
+	return nil, nil
+}
+
+func (s *configureSecurityStub) GetSecurityGroup(_ context.Context, _ string) (*cpi.SecurityGroup, error) { //nolint:nilnil // test stub
+	return nil, nil
+}
+
+func (s *configureSecurityStub) ListSecurityGroups(_ context.Context, _ map[string]string) ([]*cpi.SecurityGroup, error) {
+	return s.groups, nil
+}
+
+func (s *configureSecurityStub) DeleteSecurityGroup(_ context.Context, _ string) error { return nil }
+
+func (s *configureSecurityStub) AddSecurityRule(_ context.Context, groupID string, rule *cpi.SecurityRule) error {
+	if s.addedRules == nil {
+		s.addedRules = make(map[string][]*cpi.SecurityRule)
+	}
+
+	s.addedRules[groupID] = append(s.addedRules[groupID], rule)
+
+	return nil
+}
+
+func (s *configureSecurityStub) RemoveSecurityRule(_ context.Context, _, _ string) error { return nil }
+
+func (s *configureSecurityStub) ListSecurityRules(_ context.Context, groupID string) ([]*cpi.SecurityRule, error) {
+	return s.currentRules[groupID], nil
+}
+
 // configureTestProvider implements cpi.Provider for configure tests.
 type configureTestProvider struct {
-	network cpi.NetworkManager
-	compute cpi.ComputeManager
+	network  cpi.NetworkManager
+	compute  cpi.ComputeManager
+	security cpi.SecurityManager
 }
 
 func (p *configureTestProvider) Name() string                                      { return "aws" }
 func (p *configureTestProvider) Region() string                                    { return "us-east-1" }
 func (p *configureTestProvider) Authenticate(_ context.Context) error              { return nil }
 func (p *configureTestProvider) ValidateCredentials(_ context.Context) error       { return nil }
-func (p *configureTestProvider) Network() cpi.NetworkManager                       { return p.network } //nolint:ireturn
-func (p *configureTestProvider) Compute() cpi.ComputeManager                       { return p.compute } //nolint:ireturn
-func (p *configureTestProvider) Storage() cpi.StorageManager                       { return nil }       //nolint:ireturn
-func (p *configureTestProvider) Security() cpi.SecurityManager                     { return nil }       //nolint:ireturn
-func (p *configureTestProvider) LoadBalancer() cpi.LoadBalancerManager             { return nil }       //nolint:ireturn
-func (p *configureTestProvider) NetworkManager() cpi.NetworkManager                { return p.network } //nolint:ireturn
-func (p *configureTestProvider) ComputeManager() cpi.ComputeManager                { return p.compute } //nolint:ireturn
-func (p *configureTestProvider) StorageManager() cpi.StorageManager                { return nil }       //nolint:ireturn
-func (p *configureTestProvider) SecurityManager() cpi.SecurityManager              { return nil }       //nolint:ireturn
-func (p *configureTestProvider) LoadBalancerManager() cpi.LoadBalancerManager      { return nil }       //nolint:ireturn
+func (p *configureTestProvider) Network() cpi.NetworkManager                       { return p.network }  //nolint:ireturn
+func (p *configureTestProvider) Compute() cpi.ComputeManager                       { return p.compute }  //nolint:ireturn
+func (p *configureTestProvider) Storage() cpi.StorageManager                       { return nil }        //nolint:ireturn
+func (p *configureTestProvider) Security() cpi.SecurityManager                     { return p.security } //nolint:ireturn
+func (p *configureTestProvider) LoadBalancer() cpi.LoadBalancerManager             { return nil }        //nolint:ireturn
+func (p *configureTestProvider) NetworkManager() cpi.NetworkManager                { return p.network }  //nolint:ireturn
+func (p *configureTestProvider) ComputeManager() cpi.ComputeManager                { return p.compute }  //nolint:ireturn
+func (p *configureTestProvider) StorageManager() cpi.StorageManager                { return nil }        //nolint:ireturn
+func (p *configureTestProvider) SecurityManager() cpi.SecurityManager              { return p.security } //nolint:ireturn
+func (p *configureTestProvider) LoadBalancerManager() cpi.LoadBalancerManager      { return nil }        //nolint:ireturn
 func (p *configureTestProvider) SupportsStorage() bool                             { return false }
 func (p *configureTestProvider) Initialize(_ context.Context, _ interface{}) error { return nil }
 func (p *configureTestProvider) Cleanup(_ context.Context) error                   { return nil }
@@ -268,5 +308,52 @@ func TestConfigureFloatingIPsAssociatesCorrectEIP(t *testing.T) {
 
 	if network.associatedInstanceID != "i-bastion-456" {
 		t.Errorf("associated instance ID: want %q, got %q", "i-bastion-456", network.associatedInstanceID)
+	}
+}
+
+func TestConfigureSecurityGroupsReconcilesFromConfig(t *testing.T) {
+	t.Parallel()
+
+	blocName := "ocfp-lab-test"
+
+	security := &configureSecurityStub{
+		groups: []*cpi.SecurityGroup{
+			{ID: "g-bastion", Name: blocName + "-bastion"},
+			{ID: "g-mystery", Name: "hand-made-group"},
+		},
+		currentRules: map[string][]*cpi.SecurityRule{
+			"g-bastion": {
+				{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "1.2.3.4/32"},
+				{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0"},
+			},
+		},
+	}
+
+	cfg := &config.Config{
+		AllowedIngressIPs: []string{"1.2.3.4", "10.114.20.0/22"},
+	}
+
+	provider := &configureTestProvider{security: security}
+
+	err := configureSecurityGroups(context.Background(), provider, cfg, blocName, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The already-present /32 rule and egress rule must not be re-added; the
+	// missing CIDR rule from allowed_ingress_ips must be.
+	added := security.addedRules["g-bastion"]
+	if len(added) != 1 {
+		t.Fatalf("g-bastion added rules: want 1, got %d: %+v", len(added), added)
+	}
+
+	got := added[0]
+	if got.Direction != "ingress" || got.Protocol != "tcp" || got.PortRangeMin != 22 || got.RemoteIPCIDR != "10.114.20.0/22" {
+		t.Errorf("added rule mismatch: %+v", got)
+	}
+
+	// Groups ocfp has no definition for are left untouched.
+	if len(security.addedRules["g-mystery"]) != 0 {
+		t.Errorf("hand-made group must not be touched, got %+v", security.addedRules["g-mystery"])
 	}
 }

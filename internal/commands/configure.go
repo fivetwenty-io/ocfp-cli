@@ -5,43 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
+	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-)
-
-const (
-	// PortSSH is the standard SSH port.
-	PortSSH = 22
-
-	// PortHTTP is the standard HTTP port.
-	PortHTTP = 80
-
-	// PortHTTPS is the standard HTTPS port.
-	PortHTTPS = 443
-
-	// PortCFSSH is the Cloud Foundry SSH proxy port.
-	PortCFSSH = 2222
-
-	// PortWSS is the WebSocket Secure port used by CF logging.
-	PortWSS = 4443
-
-	// PortBoshAgent is the BOSH Agent port.
-	PortBoshAgent = 6868
-
-	// PortUAA is the UAA authentication server port.
-	PortUAA = 8443
-
-	// PortCredHub is the CredHub credential management port.
-	PortCredHub = 8844
-
-	// PortBoshDir is the BOSH Director API port.
-	PortBoshDir = 25555
 )
 
 type configureOptions struct {
@@ -134,7 +107,7 @@ func runConfigure(opts *configureOptions) error {
 
 	// Configure security groups
 	if !opts.skipSecGroups {
-		err := configureSecurityGroups(ctx, provider, opts.dryRun)
+		err := configureSecurityGroups(ctx, provider, cfg, blocName, opts.dryRun)
 		if err != nil {
 			return fmt.Errorf("failed to configure security groups: %w", err)
 		}
@@ -173,8 +146,12 @@ func runConfigure(opts *configureOptions) error {
 	return nil
 }
 
-// configureSecurityGroups configures security group rules.
-func configureSecurityGroups(ctx context.Context, provider cpi.Provider, dryRun bool) error {
+// configureSecurityGroups reconciles existing security groups against the
+// rule definitions derived from config — the same definitions bootstrap
+// creates them from — so config changes (e.g. allowed_ingress_ips) take
+// effect on `ocfp configure` without re-running bootstrap. Reconciliation is
+// add-only: missing rules are added, extra rules are left alone.
+func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *config.Config, blocName string, dryRun bool) error {
 	log := logger.Get()
 	log.Info("Configuring security groups")
 
@@ -189,60 +166,69 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, dryRun 
 		return fmt.Errorf("failed to list security groups: %w", err)
 	}
 
-	for _, group := range groups {
-		log.Infow("Found security group", "name", group.Name, "id", group.ID)
+	ruleDefs := bootstrap.DefaultSecurityGroupRules(cfg)
 
-		if dryRun {
-			log.Infow("[DRY RUN] Would configure rules for security group", "name", group.Name)
+	for _, group := range groups {
+		// Groups are named "<bloc>-<short name>"; groups ocfp has no
+		// definition for (including hand-made ones) are left untouched.
+		shortName := strings.TrimPrefix(group.Name, blocName+"-")
+
+		expected, ok := ruleDefs[shortName]
+		if !ok || shortName == group.Name {
+			log.Infow("Skipping security group with no ocfp definition", "name", group.Name)
 
 			continue
 		}
 
-		// Add default rules based on group type
-		rules := getSecurityGroupRules(group.Name)
-		if len(rules) > 0 {
-			applySecurityRules(ctx, security, group, rules)
+		if dryRun {
+			log.Infow("[DRY RUN] Would reconcile rules for security group", "name", group.Name)
+
+			continue
+		}
+
+		err := reconcileSecurityRules(ctx, security, group, expected)
+		if err != nil {
+			log.Warnw("Failed to reconcile security group", "name", group.Name, "error", err)
 		}
 	}
 
 	return nil
 }
 
-// getSecurityGroupRules returns the security rules for a given security group name.
-func getSecurityGroupRules(groupName string) []cpi.SecurityRule {
-	switch groupName {
-	case "bosh-sg":
-		return []cpi.SecurityRule{
-			{Protocol: "tcp", PortRangeMin: PortSSH, PortRangeMax: PortSSH, RemoteIPCIDR: "0.0.0.0/0", Description: "SSH", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortBoshAgent, PortRangeMax: PortBoshAgent, RemoteIPCIDR: "10.0.0.0/8", Description: "BOSH Agent", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortBoshDir, PortRangeMax: PortBoshDir, RemoteIPCIDR: "10.0.0.0/8", Description: "BOSH Director", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortUAA, PortRangeMax: PortUAA, RemoteIPCIDR: "10.0.0.0/8", Description: "UAA", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortCredHub, PortRangeMax: PortCredHub, RemoteIPCIDR: "10.0.0.0/8", Description: "CredHub", Direction: "ingress"},
-		}
-	case "ocf-sg":
-		return []cpi.SecurityRule{
-			{Protocol: "tcp", PortRangeMin: PortHTTP, PortRangeMax: PortHTTP, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTP", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortHTTPS, PortRangeMax: PortHTTPS, RemoteIPCIDR: "0.0.0.0/0", Description: "HTTPS", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortCFSSH, PortRangeMax: PortCFSSH, RemoteIPCIDR: "0.0.0.0/0", Description: "CF SSH", Direction: "ingress"},
-			{Protocol: "tcp", PortRangeMin: PortWSS, PortRangeMax: PortWSS, RemoteIPCIDR: "0.0.0.0/0", Description: "WSS", Direction: "ingress"},
-		}
-	default:
-		return nil
-	}
-}
-
-// applySecurityRules applies a set of security rules to a security group.
-func applySecurityRules(ctx context.Context, security cpi.SecurityManager, group *cpi.SecurityGroup, rules []cpi.SecurityRule) {
+// reconcileSecurityRules adds the expected rules a security group is missing.
+// Existing rules are never removed.
+func reconcileSecurityRules(ctx context.Context, security cpi.SecurityManager, group *cpi.SecurityGroup, expected []*cpi.SecurityRule) error {
 	log := logger.Get()
 
-	for _, rule := range rules {
-		err := security.AddSecurityRule(ctx, group.ID, &rule)
+	current, err := security.ListSecurityRules(ctx, group.ID)
+	if err != nil {
+		return fmt.Errorf("failed to list rules for group %s: %w", group.Name, err)
+	}
+
+	for _, rule := range expected {
+		exists := false
+
+		for _, cur := range current {
+			if bootstrap.RulesMatch(cur, rule) {
+				exists = true
+
+				break
+			}
+		}
+
+		if exists {
+			continue
+		}
+
+		err := security.AddSecurityRule(ctx, group.ID, rule)
 		if err != nil {
-			log.Warnw("Failed to add rule", "error", err, "rule", rule.Description)
+			log.Warnw("Failed to add rule", "group", group.Name, "rule", rule.Description, "error", err)
 		} else {
 			log.Infow("Added security rule", "group", group.Name, "rule", rule.Description)
 		}
 	}
+
+	return nil
 }
 
 // configureRoutes configures network routes.
