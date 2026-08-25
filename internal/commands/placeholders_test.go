@@ -2,7 +2,6 @@ package commands_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -108,19 +107,17 @@ func TestNewTmuxCmd(t *testing.T) {
 }
 
 func TestTmuxCommand(t *testing.T) {
+	// Point PATH at an empty dir so tmux is never found: the not-installed
+	// branch is the only one this test can assert deterministically (a real
+	// tmux would spawn a session against whatever terminal runs the tests).
+	t.Setenv("PATH", t.TempDir())
+
 	cmd := commands.NewTmuxCmd()
 	cmd.SetArgs([]string{})
 
-	// The command should fail if tmux is not installed
 	err := cmd.Execute()
-
-	_, tmuxErr := exec.LookPath("tmux")
-	if tmuxErr != nil {
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "tmux is not installed")
-	}
-	// If tmux is installed, it should attempt to create a session
-	// but may fail due to no display/terminal, which is expected in tests
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tmux is not installed")
 }
 
 func TestFindTmuxScript(t *testing.T) {

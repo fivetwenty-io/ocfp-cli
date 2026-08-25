@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
@@ -201,7 +202,13 @@ func TestRetryLogic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, attempts)
 
-	// Test retryable error
+	// Test retryable error. Same attempt/backoff shape as the defaults but
+	// with millisecond delays: the behavior under test is the retry decision,
+	// not the production wait times.
+	fastConfig := vault.DefaultRetryConfig()
+	fastConfig.BaseDelay = time.Millisecond
+	fastConfig.MaxDelay = 5 * time.Millisecond
+
 	attempts = 0
 	err = vault.WithRetry(func() error {
 		attempts++
@@ -210,7 +217,7 @@ func TestRetryLogic(t *testing.T) {
 		}
 
 		return nil
-	}, vault.DefaultRetryConfig())
+	}, fastConfig)
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, attempts)
