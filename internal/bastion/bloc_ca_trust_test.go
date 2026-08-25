@@ -561,3 +561,34 @@ func TestLocalPhaseList_Ordering(t *testing.T) {
 		}
 	}
 }
+
+// TestLocalExecutor_GenesisOnlyRequested covers the flag that decides between
+// a genesis-only update and a full local re-provision. It was not consulted at
+// all on the local path, so `ocfp init bastion --genesis` run on a bastion
+// accepted the flag, echoed it in the banner, and then ran all 25 phases: the
+// flag asked for to narrow the work was what widened it. Options are nil for
+// callers taking every default, so that case must not panic.
+func TestLocalExecutor_GenesisOnlyRequested(t *testing.T) {
+	t.Parallel()
+
+	cfg := newBaseConfig("bloc1", "aws")
+
+	tests := []struct {
+		name string
+		opts *ProvisioningOptions
+		want bool
+	}{
+		{"nil options take the full path", nil, false},
+		{"unset flag takes the full path", &ProvisioningOptions{}, false},
+		{"set flag takes the genesis-only path", &ProvisioningOptions{GenesisOnly: true}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			le := NewLocalExecutor(cfg, tc.opts)
+			assert.Equal(t, tc.want, le.genesisOnlyRequested())
+		})
+	}
+}
