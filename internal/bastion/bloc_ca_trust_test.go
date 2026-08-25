@@ -592,3 +592,39 @@ func TestLocalExecutor_GenesisOnlyRequested(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildGenesisUpgradeScript_ReconcilesOrigin covers the genesis-only
+// upgrade path, which read the configured repo in exactly one place: the
+// clone taken when no checkout exists. On an established bastion it ran
+// `git checkout` and `git pull origin` against whatever origin the directory
+// was created with, so a repository that moved upstream reached only freshly
+// cloned hosts. Every other bastion went on building the old fork and
+// reported the same version string while doing it, which is how a lab can
+// look updated and be 64 commits behind a different repository.
+func TestBuildGenesisUpgradeScript_ReconcilesOrigin(t *testing.T) {
+	t.Parallel()
+
+	m := newMinimalManager(newBaseConfig("bloc1", "pve"))
+	repo := "https://github.com/RubidiumStudios/genesis"
+	script := m.buildGenesisUpgradeScript("3.2.0", "v3.2.x-dev", repo)
+
+	setURL := strings.Index(script, "git remote set-url origin "+repo)
+	require.NotEqual(t, -1, setURL, "upgrade script never repoints origin at the configured repo:\n%s", script)
+
+	assert.Contains(t, script, "git remote add origin "+repo,
+		"a checkout with no origin at all must still get one")
+
+	fetch := strings.Index(script, "git fetch origin")
+	checkout := strings.Index(script, "git checkout -B v3.2.x-dev origin/v3.2.x-dev")
+
+	require.NotEqual(t, -1, fetch, "upgrade script never fetches after repointing origin")
+	require.NotEqual(t, -1, checkout, "upgrade script must take the branch from the fetched origin")
+
+	assert.Less(t, setURL, fetch, "origin must be repointed before fetching, or the fetch reads the old remote")
+	assert.Less(t, fetch, checkout, "the fetch must precede the checkout, or the branch comes from a stale ref")
+
+	// `git pull origin` on its own would merge whatever the old remote left
+	// behind; the checkout above is what makes the configured repo decide.
+	assert.NotContains(t, script, "git pull origin\n",
+		"a bare `git pull origin` can merge divergent fork history after a repoint")
+}
