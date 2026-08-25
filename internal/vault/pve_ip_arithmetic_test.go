@@ -95,3 +95,39 @@ func TestPveFallbackSubnetBand_UnsliceableFallsBackToSharedBand(t *testing.T) {
 		}
 	}
 }
+
+// TestPveCIDRGateway verifies the gateway is the true first host (network
+// base + 1), matching internal/bootstrap's CIDRGatewayIP. The non-octet-
+// aligned /26 cases guard against the old last-octet string replacement,
+// which wrote 10.61.148.1 for every /26 carved from a /24 — an address
+// outside each child subnet.
+func TestPveCIDRGateway(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cidr string
+		want string
+	}{
+		{"octet-aligned /24", "10.61.148.0/24", "10.61.148.1"},
+		{"/26 first child", "10.61.148.64/26", "10.61.148.65"},
+		{"/26 second child", "10.61.148.128/26", "10.61.148.129"},
+		{"/26 third child", "10.61.148.192/26", "10.61.148.193"},
+		{"octet-aligned /22", "10.4.0.0/22", "10.4.0.1"},
+		{"host bits set are masked to the base", "10.64.64.7/18", "10.64.64.1"},
+		{"bare IP without prefix", "10.61.148.64", ""},
+		{"empty", "", ""},
+		{"garbage", "not-a-cidr", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := pveCIDRGateway(tt.cidr)
+			if got != tt.want {
+				t.Errorf("pveCIDRGateway(%q) = %q, want %q", tt.cidr, got, tt.want)
+			}
+		})
+	}
+}
