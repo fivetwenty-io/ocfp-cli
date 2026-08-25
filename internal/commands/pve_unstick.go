@@ -111,14 +111,22 @@ func qgaPingUntil(
 
 		last = diag
 
-		if !time.Now().Before(deadline) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			return false, last
+		}
+
+		// Never sleep past the deadline: a 50ms budget should not pay for a
+		// full 2s pause before the loop notices time is up.
+		pause := 2 * time.Second //nolint:mnd // probe cadence, matches scripts/cf
+		if remaining < pause {
+			pause = remaining
 		}
 
 		select {
 		case <-ctx.Done():
 			return false, last
-		case <-time.After(2 * time.Second):
+		case <-time.After(pause):
 		}
 	}
 }
