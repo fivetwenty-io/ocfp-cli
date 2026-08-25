@@ -357,3 +357,24 @@ func TestConfigureSecurityGroupsReconcilesFromConfig(t *testing.T) {
 		t.Errorf("hand-made group must not be touched, got %+v", security.addedRules["g-mystery"])
 	}
 }
+
+// TestConfigureCmd_RejectsStrayPositional guards the other half of the
+// recursion: `ocfp configure` carries no subcommands, so without an Args
+// validator cobra discarded a positional and ran the full bastion provision.
+// The generated bastion-init script called `ocfp configure deployments`, and
+// provisioning regenerates that script, so the two ran each other unbounded.
+func TestConfigureCmd_RejectsStrayPositional(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewConfigureCmd()
+
+	err := cmd.Args(cmd, []string{"deployments"})
+	if err == nil {
+		t.Error("expected `ocfp configure deployments` to be rejected, but the positional was accepted")
+	}
+
+	err = cmd.Args(cmd, []string{})
+	if err != nil {
+		t.Errorf("expected `ocfp configure` with no positionals to be accepted, got: %v", err)
+	}
+}
