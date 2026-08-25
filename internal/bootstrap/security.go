@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
@@ -242,6 +243,23 @@ func (m *Manager) getNetworkIDFromState() (string, error) {
 // ==============================================================================
 // Security Group Definitions
 // ==============================================================================
+
+// DefaultSecurityGroupRules returns the rule definitions for every default
+// security group, keyed by short group name (e.g. "bastion"), derived from
+// cfg exactly as bootstrap derives them. `ocfp configure` uses this to
+// reconcile existing groups after config changes (e.g. allowed_ingress_ips)
+// without re-running bootstrap.
+func DefaultSecurityGroupRules(cfg *config.Config) map[string][]*cpi.SecurityRule {
+	m := &Manager{config: cfg}
+	defs := m.defaultSecurityGroupDefs()
+
+	out := make(map[string][]*cpi.SecurityRule, len(defs))
+	for _, def := range defs {
+		out[def.name] = def.rules
+	}
+
+	return out
+}
 
 func (m *Manager) defaultSecurityGroupDefs() []securityGroupDef {
 	return []securityGroupDef{
@@ -479,7 +497,7 @@ func (m *Manager) ensureSecurityGroupRules(ctx context.Context, groupID string, 
 // ruleExists checks if a rule exists in the list of current rules.
 func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi.SecurityRule) bool {
 	for _, current := range currentRules {
-		if m.rulesMatch(current, expectedRule) {
+		if RulesMatch(current, expectedRule) {
 			return true
 		}
 	}
@@ -487,8 +505,8 @@ func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi
 	return false
 }
 
-// rulesMatch compares two security rules for equivalence.
-func (m *Manager) rulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is clear in context
+// RulesMatch compares two security rules for equivalence.
+func RulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is clear in context
 	// Direction must match
 	if r1.Direction != r2.Direction {
 		return false
