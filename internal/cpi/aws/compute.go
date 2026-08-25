@@ -27,6 +27,18 @@ const (
 	ebsMaxSizeGB = 16384
 )
 
+// Polling cadence seams. Production keeps the AWS-appropriate values; the
+// package TestMain shortens them so waiter tests run without wall-clock waits.
+//
+//nolint:gochecknoglobals,mnd // intentional test seams
+var (
+	// instancePollInterval paces DescribeInstances calls in waitForInstanceState.
+	instancePollInterval = 5 * time.Second
+	// rebootTransitionDelay gives EC2 a moment to leave the running state
+	// after RebootInstances before the waiter starts polling.
+	rebootTransitionDelay = 2 * time.Second
+)
+
 // getEC2 returns the EC2API to use for this manager.
 // In tests, m.ec2 is set directly.  In production, m.ec2 is nil and
 // this falls back to the real client, preserving existing behaviour.
@@ -294,7 +306,7 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error {
 	}
 
 	// Wait a moment for reboot to initiate
-	time.Sleep(2 * time.Second) //nolint:mnd // brief delay for state transition
+	time.Sleep(rebootTransitionDelay)
 
 	// Wait for instance to be running again
 	return m.waitForInstanceState(ctx, id, types.InstanceStateNameRunning, instanceStartTimeout)
@@ -778,6 +790,9 @@ func ec2StateToResourceState(state *types.InstanceState) cpi.ResourceState {
 }
 
 // waitForInstanceState waits for an instance to reach the desired state.
+// The first DescribeInstances check happens immediately; instancePollInterval
+// only paces the checks after that, so already-settled instances return
+// without waiting out a tick.
 func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID string, desiredState types.InstanceStateName, timeout time.Duration) error {
 	client, err := m.getEC2(ctx)
 	if err != nil {
@@ -786,41 +801,46 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID st
 
 	deadline := time.Now().Add(timeout)
 
-	ticker := time.NewTicker(5 * time.Second) //nolint:mnd // polling interval
+	ticker := time.NewTicker(instancePollInterval)
 	defer ticker.Stop()
 
 	for {
+		if ctx.Err() != nil {
+			return fmt.Errorf("context cancelled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
+		}
+
+		result, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			InstanceIds: []string{instanceID},
+		})
+		if err != nil {
+			return wrapError(err, "failed to check instance state")
+		}
+
+		if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+			//nolint:err113 // dynamic error with instance ID is appropriate
+			return fmt.Errorf("instance %s not found", instanceID)
+		}
+
+		instance := result.Reservations[0].Instances[0]
+		if instance.State.Name == desiredState {
+			return nil
+		}
+
+		// Check for error states
+		if instance.State.Name == types.InstanceStateNameTerminated && desiredState != types.InstanceStateNameTerminated {
+			//nolint:err113 // dynamic error with instance ID is appropriate
+			return fmt.Errorf("instance %s was terminated", instanceID)
+		}
+
+		if time.Now().After(deadline) {
+			//nolint:err113 // dynamic error with instance context is appropriate
+			return fmt.Errorf("timeout waiting for instance %s to reach state %s", instanceID, desiredState)
+		}
+
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
 		case <-ticker.C:
-			if time.Now().After(deadline) {
-				//nolint:err113 // dynamic error with instance context is appropriate
-				return fmt.Errorf("timeout waiting for instance %s to reach state %s", instanceID, desiredState)
-			}
-
-			result, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-				InstanceIds: []string{instanceID},
-			})
-			if err != nil {
-				return wrapError(err, "failed to check instance state")
-			}
-
-			if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
-				//nolint:err113 // dynamic error with instance ID is appropriate
-				return fmt.Errorf("instance %s not found", instanceID)
-			}
-
-			instance := result.Reservations[0].Instances[0]
-			if instance.State.Name == desiredState {
-				return nil
-			}
-
-			// Check for error states
-			if instance.State.Name == types.InstanceStateNameTerminated && desiredState != types.InstanceStateNameTerminated {
-				//nolint:err113 // dynamic error with instance ID is appropriate
-				return fmt.Errorf("instance %s was terminated", instanceID)
-			}
 		}
 	}
 }
