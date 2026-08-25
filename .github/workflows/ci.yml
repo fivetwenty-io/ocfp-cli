@@ -173,6 +173,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Tags and history, so git describe can name a real version to
+          # stamp into the binaries.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Trust the checkout despite mixed file owners
@@ -189,11 +192,25 @@ jobs:
       # set GOOS and GOARCH explicitly rather than reading the runner
       # platform -- while five simultaneous links of this dependency tree
       # were what exhausted the runner's memory.
+      #
+      # The link flags are the ones the Makefile uses, so a CI binary
+      # reports the same version, commit, and build time `make build`
+      # embeds instead of "dev" and "unknown". -s -w also keeps the linker
+      # off the DWARF path, where cross-linking darwin/arm64 against the
+      # runners' warm build cache has been failing outright with
+      # "relocation target go:info... not defined".
       - name: Build every target
         env:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
+          pkg=github.com/ocfp/ocfp-cli-go/internal/version
+          version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          ldflags="-s -w"
+          ldflags="${ldflags} -X ${pkg}.Version=${version}"
+          ldflags="${ldflags} -X ${pkg}.GitCommit=$(git rev-parse --short HEAD)"
+          ldflags="${ldflags} -X ${pkg}.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')"
+          ldflags="${ldflags} -X ${pkg}.GoVersion=$(go version | cut -d' ' -f3)"
           mkdir -p dist
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             goos="${target%/*}"
@@ -203,7 +220,7 @@ jobs:
               out="${out}.exe"
             fi
             echo "::group::build $target"
-            GOOS="$goos" GOARCH="$goarch" go build -o "$out" ./cmd/ocfp
+            GOOS="$goos" GOARCH="$goarch" go build -ldflags "$ldflags" -o "$out" ./cmd/ocfp
             echo "::endgroup::"
           done
           ls -l dist
