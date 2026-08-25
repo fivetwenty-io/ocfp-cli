@@ -236,8 +236,27 @@ func (le *LocalExecutor) Initialize(ctx context.Context) error {
 	// Load provisioning configuration
 	manager.provConfig = manager.loadProvisioningConfig()
 
+	// `--genesis` promises to install or update Genesis and nothing else. The
+	// remote path honours it (Manager.Initialize), this one did not, so a flag
+	// asked for in order to NARROW the work silently ran a full bastion
+	// re-provision instead. That is how a genesis-only update came to re-run
+	// vault_inception, which repoints safe at the bootstrap vault, and
+	// ocfp_configure, neither of which genesis-only mode touches at all.
+	if le.genesisOnlyRequested() {
+		le.log.Info("Genesis-only mode: updating Genesis without running the full local phase list")
+
+		return manager.runGenesisOnlyMode(ctx)
+	}
+
 	// Execute local initialization
 	return le.executeLocalPhases(ctx, manager)
+}
+
+// genesisOnlyRequested reports whether this run was asked to touch Genesis
+// alone. Options are nil for callers that take every default, so the nil check
+// is load-bearing rather than defensive.
+func (le *LocalExecutor) genesisOnlyRequested() bool {
+	return le.options != nil && le.options.GenesisOnly
 }
 
 // executeLocalPhases executes initialization phases locally.
