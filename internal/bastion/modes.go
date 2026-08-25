@@ -285,15 +285,28 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"cpan_modules", manager.installCPANModules},
 		{"git_repos", manager.cloneGitRepositories},
 		{"cf_plugins", manager.installCFPlugins},
-		{"config_files", manager.createConfigFiles},
+		// Named for the function it runs. The remote lists use "config_files"
+		// for copyConfigFiles, which transfers the operator's config to the
+		// bastion; a local run is already on the bastion, so it has no
+		// counterpart and the shared name only invited confusion.
+		{"configuration_files", manager.createConfigFiles},
 		{"shell_environment", manager.setupShellEnvironment},
 		{"system_environment", manager.setupSystemEnvironment},
 		{"ocfp_cli_setup", manager.setupOCFPCLI},
 		{"helper_scripts", manager.installHelperScripts},
 		{"genesis", manager.setupGenesis},
+		// The ordering constraints here are the same ones the remote lists
+		// carry, and they were not being honoured: vault_populate must follow
+		// vault_inception immediately because it needs that vault to exist,
+		// bloc_ca_trust must land before anything reaches the artifacts
+		// endpoint over TLS, and ocfp_configure must precede
+		// genesis_secrets_providers because it clones the deployment
+		// repositories the latter walks.
 		{"vault_inception", manager.setupVaultInception},
-		{"ocfp_configure", manager.runOCFPConfigure},
 		{"vault_populate", manager.runVaultPopulate},
+		{"bloc_ca_trust", manager.installBlocCATrust},
+		{"ocfp_configure", manager.runOCFPConfigure},
+		{"genesis_secrets_providers", manager.setupGenesisSecretsProviders},
 		{"verification", manager.verifyInstallation},
 		{"health_check", manager.runHealthCheck},
 	}

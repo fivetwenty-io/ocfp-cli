@@ -17,6 +17,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -458,4 +459,105 @@ func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 
 	return hex.EncodeToString(sum[:])
+}
+
+// localPhaseNameOrder returns the local-executor phase names in execution
+// order. `ocfp init bastion` run ON a bastion takes this list, not either of
+// the remote ones.
+func localPhaseNameOrder(m *Manager) []string {
+	le := &LocalExecutor{log: logger.Get()}
+
+	var names []string
+	for _, p := range le.getLocalPhases(m) {
+		names = append(names, p.name)
+	}
+
+	return names
+}
+
+// knownRemoteOnlyPhaseNames are phases that legitimately have no local
+// counterpart, as opposed to ones that drifted out of the local list.
+var knownRemoteOnlyPhaseNames = map[string]string{
+	// Transfers the operator's config to the bastion; a local run is already
+	// there and reads the file in place.
+	"config_files": "copies operator config to a remote bastion",
+	// Stops the workstation-local inception vault, which a bastion-side run
+	// has no reach into and no business stopping.
+	"local_vault_teardown": "acts on the operator workstation",
+	// Not a deliberate exclusion. Custom scripts silently do not run in local
+	// mode, which is its own bug, but adding execution of operator-defined
+	// scripts to a mode that never ran them is a behaviour change rather than
+	// a fix. Tracked separately; listed here so parity does not mask it.
+	"custom_scripts": "known gap, see comment",
+}
+
+// TestPhaseLists_LocalParity extends the sequential-versus-parallel guard
+// above to the third list, which had no coverage and had drifted the
+// furthest. genesis_secrets_providers was registered in both remote lists and
+// absent from the local one, so a bastion-side init pointed safe at the
+// inception vault and never pointed it back: every later genesis command then
+// reported its secrets missing, with nothing in the log to say why, because
+// the phase that restores the target had simply never run.
+func TestPhaseLists_LocalParity(t *testing.T) {
+	t.Parallel()
+
+	m := newMinimalManager(newBaseConfig("bloc1", "aws"))
+
+	seq := sequentialPhaseNameSet(m)
+	local := make(map[string]bool)
+
+	for _, name := range localPhaseNameOrder(m) {
+		local[name] = true
+	}
+
+	for name := range seq {
+		if _, ok := knownRemoteOnlyPhaseNames[name]; ok {
+			continue
+		}
+
+		if !local[name] {
+			t.Errorf("phase %q is registered in the sequential phase list but missing from getLocalPhases(); a bastion-side init silently skips its work", name)
+		}
+	}
+}
+
+// TestLocalPhaseList_Ordering pins the three ordering constraints the local
+// list was violating. Each is load-bearing: vault_populate needs the vault
+// that vault_inception starts, bloc_ca_trust must converge the trust store
+// before anything reaches the artifacts endpoint over TLS, and ocfp_configure
+// clones the deployment repositories that genesis_secrets_providers walks.
+func TestLocalPhaseList_Ordering(t *testing.T) {
+	t.Parallel()
+
+	m := newMinimalManager(newBaseConfig("bloc1", "aws"))
+	names := localPhaseNameOrder(m)
+
+	ordered := []string{
+		"vault_inception",
+		"vault_populate",
+		"bloc_ca_trust",
+		"ocfp_configure",
+		"genesis_secrets_providers",
+	}
+
+	for i := 0; i < len(ordered)-1; i++ {
+		before, after := ordered[i], ordered[i+1]
+
+		bi, ai := indexOf(names, before), indexOf(names, after)
+		if bi == -1 {
+			t.Errorf("phase %q missing from getLocalPhases()", before)
+
+			continue
+		}
+
+		if ai == -1 {
+			t.Errorf("phase %q missing from getLocalPhases()", after)
+
+			continue
+		}
+
+		if bi >= ai {
+			t.Errorf("getLocalPhases() runs %q (position %d) at or after %q (position %d); it must come first", before, bi, after, ai)
+		}
+	}
 }
