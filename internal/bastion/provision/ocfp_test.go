@@ -570,3 +570,39 @@ func TestEnvironmentScript_ExportsResolvedInceptionPort(t *testing.T) {
 	assert.Contains(t, script, fmt.Sprintf("export %s='%d'", config.InceptionVaultPortEnvVar, derived),
 		"profile must export the port the bloc actually resolves to")
 }
+
+// TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget verifies the
+// script only points deployments at the inception vault while that vault is the
+// bloc's source of truth, and otherwise clears the block. The inception vault is
+// torn down at the end of every init, and genesis 3.2 fails hard on an
+// unreachable secrets_provider, so an unconditional rewrite breaks every
+// manifest render on an established bloc.
+func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing.T) {
+	t.Parallel()
+
+	script := NewOCFPManager("pve", &config.Config{Name: "ocfp-lab-example"}, nil).
+		GenerateGenesisSecretsProvidersScript(context.Background())
+
+	for _, want := range []string{
+		"INCEPTION_ACTIVE=no",
+		`BLOC_VAULT_TARGET="${OCFP_BLOC}-mgmt"`,
+		`safe targets 2>/dev/null | grep -q "$BLOC_VAULT_TARGET"`,
+		"safe target 2>/dev/null | grep -q 'inception'",
+		`if [ "$INCEPTION_ACTIVE" != yes ]; then`,
+		"genesis secrets-provider -c",
+		"yq -i 'del(.secrets_provider)'",
+		`elif safe target "$BLOC_VAULT_TARGET" >/dev/null 2>&1; then`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("expected secrets-provider script to contain %q\ngot:\n%s", want, script)
+		}
+	}
+
+	// The rewrite that pins deployments to inception must sit behind the gate.
+	gate := strings.Index(script, `if [ "$INCEPTION_ACTIVE" != yes ]; then`)
+	rewrite := strings.Index(script, `.secrets_provider.alias = "inception"`)
+
+	if gate < 0 || rewrite < 0 || gate > rewrite {
+		t.Errorf("expected the inception rewrite to follow the gate (gate=%d rewrite=%d)", gate, rewrite)
+	}
+}

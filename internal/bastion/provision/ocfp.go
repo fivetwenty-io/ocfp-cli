@@ -363,9 +363,11 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "    log_info 'Configuring Genesis secrets providers for deployments'")
 	lines = append(lines, "    ")
 	lines = append(lines, "    CONFIGURED_COUNT=0")
+	lines = append(lines, "    CLEARED_COUNT=0")
 	lines = append(lines, "    SKIPPED_COUNT=0")
 	lines = append(lines, "    FAILED_COUNT=0")
 	lines = append(lines, "    ")
+	lines = append(lines, om.inceptionActiveSnippet()...)
 	lines = append(lines, "    for deployment_dir in \"$DEPLOYMENTS_ROOT\"/*; do")
 	lines = append(lines, "        if [ ! -d \"$deployment_dir\" ]; then")
 	lines = append(lines, "            continue")
@@ -395,6 +397,9 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "    # Summary logging")
 	lines = append(lines, "    log_info 'Genesis secrets provider configuration summary:'")
 	lines = append(lines, "    log_info \"  Configured: $CONFIGURED_COUNT\"")
+	lines = append(lines, "    if [ $CLEARED_COUNT -gt 0 ]; then")
+	lines = append(lines, "        log_info \"  Cleared: $CLEARED_COUNT\"")
+	lines = append(lines, "    fi")
 	lines = append(lines, "    if [ $SKIPPED_COUNT -gt 0 ]; then")
 	lines = append(lines, "        log_info \"  Skipped: $SKIPPED_COUNT\"")
 	lines = append(lines, "    fi")
@@ -402,13 +407,17 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "        log_warning \"  Failed: $FAILED_COUNT\"")
 	lines = append(lines, "    fi")
 	lines = append(lines, "    ")
-	lines = append(lines, "    if [ $CONFIGURED_COUNT -gt 0 ]; then")
+	lines = append(lines, "    if [ $CLEARED_COUNT -gt 0 ] && [ $CONFIGURED_COUNT -eq 0 ]; then")
+	lines = append(lines, "        log_success 'Genesis deployments left on the bloc vault (inception provider cleared)'")
+	lines = append(lines, "    elif [ $CONFIGURED_COUNT -gt 0 ]; then")
 	lines = append(lines, "        log_success 'Genesis secrets providers configured successfully'")
 	lines = append(lines, "    elif [ $FAILED_COUNT -gt 0 ]; then")
 	lines = append(lines, "        log_warning 'Some deployments failed to configure - manual intervention may be required'")
 	lines = append(lines, "    else")
 	lines = append(lines, "        log_info 'No Genesis deployments found to configure'")
 	lines = append(lines, "    fi")
+	lines = append(lines, "    ")
+	lines = append(lines, om.restoreBlocVaultTargetSnippet()...)
 	lines = append(lines, "fi")
 	lines = append(lines, "")
 
@@ -434,6 +443,93 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 	}
 }
 
+// inceptionActiveSnippet decides whether the inception vault is still the
+// bloc's source of truth. The inception vault exists only to bootstrap a bloc:
+// it is torn down at the end of every init, and it holds nothing once the
+// bloc's own vault is up. Genesis 3.2 fails hard when a configured
+// secrets_provider is unreachable, so pointing an established bloc's
+// deployments at it breaks every manifest render and deploy after an init.
+//
+// `safe` is targeted at the inception vault for exactly as long as the bloc is
+// being bootstrapped, which makes the current target the signal to key off.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) inceptionActiveSnippet() []string {
+	return []string{
+		"    # The inception vault is a bootstrap-only store, torn down at the end",
+		"    # of every init and empty once the bloc's own vault is up. The bloc",
+		"    # vault's safe target is created when that vault is deployed, so its",
+		"    # existence is what separates a bloc still being bootstrapped from one",
+		"    # already running. Keying off the *current* target is not enough: init",
+		"    # points safe at the inception vault while it works.",
+		"    BLOC_VAULT_TARGET=\"\"",
+		"    if [ -n \"${OCFP_BLOC:-}\" ]; then",
+		"        BLOC_VAULT_TARGET=\"${OCFP_BLOC}-mgmt\"",
+		"    fi",
+		"    ",
+		"    INCEPTION_ACTIVE=no",
+		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>/dev/null | grep -q \"$BLOC_VAULT_TARGET\"; then",
+		"        log_info \"Bloc vault $BLOC_VAULT_TARGET is authoritative; clearing any inception secrets provider\"",
+		"    elif safe target 2>/dev/null | grep -q 'inception'; then",
+		"        INCEPTION_ACTIVE=yes",
+		"        log_info 'Inception vault is the current target; configuring deployments to use it'",
+		"    else",
+		"        log_info 'No bloc vault target found; leaving deployments on the system-targeted vault'",
+		"    fi",
+		"    ",
+	}
+}
+
+// restoreBlocVaultTargetSnippet points safe back at the bloc vault once the
+// inception work is done. Init targets safe at the inception vault while it
+// bootstraps, and nothing else moves it back, so an established bloc would be
+// left pointing at a torn-down, empty vault: every later genesis command then
+// reports its secrets as missing.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
+	return []string{
+		"    if [ \"$INCEPTION_ACTIVE\" != yes ] && [ -n \"$BLOC_VAULT_TARGET\" ]; then",
+		"        if safe target 2>&1 | grep -q \"$BLOC_VAULT_TARGET\"; then",
+		"            log_info \"safe already targets $BLOC_VAULT_TARGET\"",
+		"        elif safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
+		"            log_success \"Restored safe target to $BLOC_VAULT_TARGET\"",
+		"        else",
+		"            log_warning \"Could not restore safe target to $BLOC_VAULT_TARGET\"",
+		"        fi",
+		"    fi",
+		"    ",
+	}
+}
+
+// secretsProviderClearSnippet removes the deployment's secrets_provider block so
+// genesis falls back to the system-targeted vault. `genesis secrets-provider -c`
+// is the supported way to do this; the yq deletion covers a genesis too old to
+// offer the flag.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) secretsProviderClearSnippet() []string {
+	return []string{
+		"            if ! grep -q '^secrets_provider:' \"$GENESIS_CONFIG\" 2>/dev/null; then",
+		"                log_info \"  Already on the bloc vault: $deployment_name\"",
+		"                CLEARED_COUNT=$((CLEARED_COUNT + 1))",
+		"                continue",
+		"            fi",
+		"            ",
+		"            if genesis secrets-provider -c >/dev/null 2>&1; then",
+		"                log_success \"  Cleared inception secrets provider for: $deployment_name\"",
+		"                CLEARED_COUNT=$((CLEARED_COUNT + 1))",
+		"            elif command -v yq >/dev/null 2>&1 && yq -i 'del(.secrets_provider)' \"$GENESIS_CONFIG\" 2>/dev/null; then",
+		"                log_success \"  Cleared inception secrets provider (yq) for: $deployment_name\"",
+		"                CLEARED_COUNT=$((CLEARED_COUNT + 1))",
+		"            else",
+		"                log_warning \"  Failed to clear secrets provider for: $deployment_name\"",
+		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
+		"            fi",
+		"            continue",
+	}
+}
+
 // secretsProviderRewriteSnippet emits an idempotent rewrite of the deployment's
 // .genesis/config secrets_provider block, pointing it at the bloc inception
 // vault (alias inception, 127.0.0.1 on the bloc's resolved inception port,
@@ -455,12 +551,20 @@ func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
 	// nothing is listening on. A literal here is what let the two diverge.
 	url := fmt.Sprintf("http://127.0.0.1:%d", config.BlocInceptionVaultPort(om.config))
 
-	return []string{
+	lines := []string{
 		"        GENESIS_CONFIG=\".genesis/config\"",
 		"        if [ ! -f \"$GENESIS_CONFIG\" ]; then",
 		"            log_warning \"  No .genesis/config for $deployment_name; skipping\"",
 		"            SKIPPED_COUNT=$((SKIPPED_COUNT + 1))",
 		"            continue",
+		"        fi",
+		"        ",
+		"        if [ \"$INCEPTION_ACTIVE\" != yes ]; then",
+	}
+
+	lines = append(lines, om.secretsProviderClearSnippet()...)
+
+	return append(lines, []string{
 		"        fi",
 		"        ",
 		"        if command -v yq >/dev/null 2>&1; then",
@@ -514,7 +618,7 @@ func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
 		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
 		"            fi",
 		"        fi",
-	}
+	}...)
 }
 
 // GenerateOCFPToolVerificationScript generates script to verify required tools after bastion-init.
