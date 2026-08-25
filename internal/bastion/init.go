@@ -308,11 +308,22 @@ fi
 
 pushd ~/ocfp/genesis
 
-log_info "Checking out branch: %s"
-git checkout %s
+# An existing checkout keeps whatever origin it was cloned with, and the
+# configured repo is read above only when there is no checkout to reuse. A
+# repository that moves upstream therefore reached only freshly cloned
+# bastions, while every established one kept building the old fork forever
+# and reported the same version string while doing it. Reconcile origin
+# with the configured URL first, then take the branch from what that origin
+# actually holds, so the configured repo decides what gets built rather
+# than whatever this directory was created with.
+log_info "Pointing origin at %s"
+git remote set-url origin %s 2>/dev/null || git remote add origin %s
 
-log_info "Pulling latest changes"
-git pull origin
+log_info "Fetching from origin"
+git fetch origin --prune
+
+log_info "Checking out branch: %s"
+git checkout -B %s origin/%s
 
 log_info "Cleaning previous builds"
 rm -rf genesis-*
@@ -334,7 +345,7 @@ genesis --version
 
 popd
 
-log_success "Genesis upgraded successfully to version %s"`, repo, branch, repo, branch, branch, version, version, version, version)
+log_success "Genesis upgraded successfully to version %s"`, repo, branch, repo, repo, repo, repo, branch, branch, branch, version, version, version, version)
 }
 
 // upgradeGenesisBinary performs Genesis upgrade from binary download.

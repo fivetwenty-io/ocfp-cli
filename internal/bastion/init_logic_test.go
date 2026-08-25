@@ -232,7 +232,11 @@ func TestBuildGenesisUpgradeScript_ContainsCheckout(t *testing.T) {
 	script := m.buildGenesisUpgradeScript("3.0.0", "v3.x", "git@github.com:org/repo")
 
 	assert.Contains(t, script, "git checkout")
-	assert.Contains(t, script, "git pull")
+	// The bare `git pull origin` this used to assert was replaced by an
+	// explicit fetch plus `checkout -B`: after origin is repointed at the
+	// configured repo, a pull would merge whatever history the old remote
+	// left behind instead of building what the config asked for.
+	assert.Contains(t, script, "git fetch origin")
 }
 
 func TestBuildGenesisUpgradeScript_InstallsToPath(t *testing.T) {
