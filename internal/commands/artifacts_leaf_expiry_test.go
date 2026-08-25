@@ -70,9 +70,9 @@ func TestProbeArtifactsLiveLeaf_NonHTTPSErrors(t *testing.T) {
 func TestProbeArtifactsLiveLeaf_UnreachableEndpointErrorsNonFatally(t *testing.T) {
 	t.Parallel()
 
-	// TEST-NET-1 (RFC 5737): guaranteed unroutable, so the dial fails fast
-	// instead of actually attempting a connection to a real host.
-	_, err := probeArtifactsLiveLeaf(context.Background(), "https://192.0.2.1:9000", 500*time.Millisecond)
+	// A closed local port is refused immediately, so the test does not have
+	// to burn its timeout budget the way a blackholed address would.
+	_, err := probeArtifactsLiveLeaf(context.Background(), "https://127.0.0.1:1", 500*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected a dial error for an unreachable endpoint")
 	}
@@ -241,7 +241,7 @@ func TestBuildArtifactsLeafExpiry_RecordedValueSurfacesWithoutLiveEndpoint(t *te
 
 	lookup := &artifacts.LookupResult{
 		Name:     "dev-artifacts",
-		Endpoint: "https://192.0.2.1:9000", // TEST-NET-1: unroutable, dial fails fast
+		Endpoint: "https://127.0.0.1:1", // closed local port: dial refused instantly (TEST-NET-1 blackholes until the probe timeout)
 		TLSMode:  config.ArtifactsTLSModeInternalCA,
 	}
 
