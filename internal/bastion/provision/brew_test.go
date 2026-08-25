@@ -592,3 +592,47 @@ func TestGenerateGraftSpruceLinkScript_FallsBackWhenGraftDisabled(t *testing.T) 
 		t.Errorf("expected upstream spruce to be linked as spruce, got:\n%s", script)
 	}
 }
+
+// TestGenerateBrewPackageScript_UpgradesLatestTrackingTools verifies that every
+// init moves graft and pmx to their newest release. `brew install` is a no-op
+// once a package exists, so without the upgrade step a bastion keeps whichever
+// version it was first built with.
+func TestGenerateBrewPackageScript_UpgradesLatestTrackingTools(t *testing.T) {
+	t.Parallel()
+
+	script := NewBrewManager("pve", nil).GenerateBrewPackageScript(context.Background())
+
+	for _, want := range []string{
+		"brew update",
+		"brew upgrade --cask ",
+		"fivetwenty-io/tap/graft",
+		"fivetwenty-io/tap/pmx",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("expected package script to contain %q\ngot:\n%s", want, script)
+		}
+	}
+
+	upgrade := script[strings.Index(script, "brew upgrade --cask "):]
+	if !strings.Contains(upgrade, "fivetwenty-io/tap/graft") || !strings.Contains(upgrade, "fivetwenty-io/tap/pmx") {
+		t.Errorf("expected both casks on the upgrade line, got:\n%s", upgrade)
+	}
+}
+
+// TestGenerateBrewPackageScript_NoUpgradeWithoutLatestTrackingTools verifies the
+// upgrade step disappears when nothing asks to track latest, so bastions that
+// opt out of graft and pmx do not pay for a tap refresh.
+func TestGenerateBrewPackageScript_NoUpgradeWithoutLatestTrackingTools(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Bastion: config.Bastion{
+			Brews: config.OverrideSets{Disable: []string{"graft", "pmx"}},
+		},
+	}
+
+	script := NewBrewManager("pve", cfg).GenerateBrewPackageScript(context.Background())
+	if strings.Contains(script, "brew upgrade") {
+		t.Errorf("expected no upgrade step when no package tracks latest, got:\n%s", script)
+	}
+}
