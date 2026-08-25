@@ -26,6 +26,11 @@ type BrewPackage struct {
 	Cask         bool   `yaml:"cask"`
 	Version      string `yaml:"version"`
 	Options      string `yaml:"options"`
+	// TrackLatest marks a package that must move to the newest published
+	// version on every init, rather than staying at whatever version was
+	// first installed. `brew install` is a no-op once a package exists, so
+	// tools we publish ourselves would otherwise freeze at an old release.
+	TrackLatest bool `yaml:"trackLatest"`
 }
 
 // NewBrewManager creates a new brew package manager.
@@ -105,6 +110,9 @@ func (bm *BrewManager) GenerateBrewPackageScript(_ctx context.Context) string {
 	// Install packages
 	lines = append(lines, bm.generatePackageInstalls(packages)...)
 
+	// Move the tools we publish ourselves onto their newest release
+	lines = append(lines, bm.generateLatestUpgrades(packages)...)
+
 	// Re-enable auto-update
 	lines = append(lines, "# Re-enable auto-update")
 	lines = append(lines, "unset HOMEBREW_NO_AUTO_UPDATE")
@@ -158,7 +166,7 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		// graft is a spruce-compatible drop-in; the provisioner symlinks it as
 		// `spruce` so Genesis and the kits keep working unchanged. Upstream
 		// spruce is still installed alongside it, as `spruce-orig`.
-		{Name: "graft", Enabled: true, CheckCommand: "graft", Tap: "fivetwenty-io/tap", Cask: true},
+		{Name: "graft", Enabled: true, CheckCommand: "graft", Tap: "fivetwenty-io/tap", Cask: true, TrackLatest: true},
 
 		// OpenBao
 		{Name: "openbao", Enabled: true, CheckCommand: "bao"},
@@ -194,7 +202,7 @@ func (bm *BrewManager) getProviderBrewPackages() []BrewPackage {
 	case providerPVE:
 		// pmx drives the Proxmox API from the bastion.
 		return []BrewPackage{
-			{Name: "pmx", Enabled: true, CheckCommand: "pmx", Condition: condProviderIsPVE, Cask: true, Tap: "fivetwenty-io/tap"},
+			{Name: "pmx", Enabled: true, CheckCommand: "pmx", Condition: condProviderIsPVE, Cask: true, Tap: "fivetwenty-io/tap", TrackLatest: true},
 		}
 	default:
 		return nil
@@ -400,6 +408,60 @@ func (bm *BrewManager) generatePackageInstalls(packages []BrewPackage) []string 
 		lines = append(lines, fmt.Sprintf("log_info 'Installing brew package: %s'", pkg.Name))
 		lines = append(lines, installCmd)
 		lines = append(lines, fmt.Sprintf("log_success 'Brew package %s installed'", pkg.Name))
+		lines = append(lines, "")
+	}
+
+	return lines
+}
+
+// generateLatestUpgrades generates the upgrade commands for packages marked
+// TrackLatest. `brew install` does nothing for an already-installed package,
+// so without this an init leaves graft and pmx at whatever version the bastion
+// was first built with. `brew update` refreshes the tap metadata that the
+// bulk-install step deliberately skips via HOMEBREW_NO_AUTO_UPDATE.
+func (bm *BrewManager) generateLatestUpgrades(packages []BrewPackage) []string {
+	var formulae []string
+
+	var casks []string
+
+	for _, pkg := range packages {
+		if !pkg.Enabled || !pkg.TrackLatest || bm.shouldSkipCondition(pkg.Condition) {
+			continue
+		}
+
+		if pkg.Cask {
+			casks = append(casks, bm.brewPackageName(pkg))
+
+			continue
+		}
+
+		formulae = append(formulae, bm.brewPackageName(pkg))
+	}
+
+	if len(formulae) == 0 && len(casks) == 0 {
+		return nil
+	}
+
+	lines := []string{
+		"# Upgrade the tools that must track their latest release",
+		"log_info 'Refreshing brew metadata before upgrading latest-tracking tools'",
+		"brew update",
+		"",
+	}
+
+	if len(formulae) > 0 {
+		names := strings.Join(formulae, " ")
+		lines = append(lines, fmt.Sprintf("log_info 'Upgrading brew formulae to latest: %s'", names))
+		lines = append(lines, "brew upgrade "+names)
+		lines = append(lines, "log_success 'Latest-tracking brew formulae upgraded'")
+		lines = append(lines, "")
+	}
+
+	if len(casks) > 0 {
+		names := strings.Join(casks, " ")
+		lines = append(lines, fmt.Sprintf("log_info 'Upgrading brew casks to latest: %s'", names))
+		lines = append(lines, "brew upgrade --cask "+names)
+		lines = append(lines, "log_success 'Latest-tracking brew casks upgraded'")
 		lines = append(lines, "")
 	}
 
