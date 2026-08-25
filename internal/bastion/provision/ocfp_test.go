@@ -333,41 +333,6 @@ func TestGenerateVaultInceptionScript_SessionNameFromBloc(t *testing.T) {
 	}
 }
 
-// TestGenerateOCFPConfigureScript_RepoInitBeforeOCFPConfigure verifies that the
-// genesis repo-init section appears before the ocfp configure deployments section
-// within GenerateOCFPConfigureScript. Env files must be written into an
-// already-initialised genesis repo.
-func TestGenerateOCFPConfigureScript_RepoInitBeforeOCFPConfigure(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		Name: "ocfp-aws-us-east-1",
-	}
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateOCFPConfigureScript(context.Background())
-
-	repoInitIdx := strings.Index(script, "genesis repo-init")
-	ocfpConfigureIdx := strings.Index(script, "ocfp configure deployments")
-
-	if repoInitIdx == -1 {
-		t.Fatal("script missing 'genesis repo-init'")
-	}
-
-	if ocfpConfigureIdx == -1 {
-		// ocfp configure deployments block may be absent when OCFP_CLI_PATH is empty —
-		// check for the fallback log_warning path instead.
-		ocfpConfigureIdx = strings.Index(script, "configure deployments")
-		if ocfpConfigureIdx == -1 {
-			t.Fatal("script missing 'configure deployments' section")
-		}
-	}
-
-	if repoInitIdx >= ocfpConfigureIdx {
-		t.Errorf("genesis repo-init (pos %d) must appear before configure deployments (pos %d)",
-			repoInitIdx, ocfpConfigureIdx)
-	}
-}
-
 // --- A4: defaultDeploymentNames conditionalization ---
 
 func TestDefaultDeploymentNamesFor_OpenbaoDefault(t *testing.T) {
@@ -604,5 +569,29 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 
 	if gate < 0 || rewrite < 0 || gate > rewrite {
 		t.Errorf("expected the inception rewrite to follow the gate (gate=%d rewrite=%d)", gate, rewrite)
+	}
+}
+
+// TestGenerateOCFPConfigureScript_DoesNotReinvokeConfigure guards against the
+// script re-entering the command that produced it. `ocfp configure` provisions
+// the bastion, and provisioning generates and runs this script, so a trailing
+// `ocfp configure ...` call made the two invoke each other without bound: a
+// fresh process roughly every 53 seconds, 51 of them alive after 22 minutes,
+// none exiting, and `ocfp init bastion` never returning.
+func TestGenerateOCFPConfigureScript_DoesNotReinvokeConfigure(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Name: "ocfp-lab-example",
+	}
+	om := NewOCFPManager("pve", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	if strings.Contains(script, "configure deployments") {
+		t.Errorf("configure script calls `ocfp configure deployments`, which re-enters bastion provisioning\nScript:\n%s", script)
+	}
+
+	if strings.Contains(script, "OCFP_CLI_PATH} configure") {
+		t.Errorf("configure script invokes `ocfp configure`, which re-enters bastion provisioning\nScript:\n%s", script)
 	}
 }

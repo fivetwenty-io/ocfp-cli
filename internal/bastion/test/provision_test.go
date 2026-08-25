@@ -121,8 +121,12 @@ func TestProvisionScriptIncludesDeploymentRepoSetup(t *testing.T) {
 		t.Fatalf("expected dev kit symlink in script\nscript: %s", script)
 	}
 
-	if !strings.Contains(script, `"${OCFP_CLI_PATH}" configure deployments`) {
-		t.Fatalf("expected ocfp configure command in script\nscript: %s", script)
+	// The provisioning script must never invoke the command that generates it.
+	// `ocfp configure` provisions the bastion, and provisioning builds and runs
+	// this script, so the trailing `ocfp configure deployments` call had the two
+	// spawning each other without bound and `ocfp init bastion` never returned.
+	if strings.Contains(script, `"${OCFP_CLI_PATH}" configure`) {
+		t.Fatalf("provisioning script re-invokes ocfp configure, which re-enters provisioning\nscript: %s", script)
 	}
 }
 

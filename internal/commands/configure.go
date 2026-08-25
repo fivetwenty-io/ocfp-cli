@@ -51,6 +51,13 @@ configuration to your infrastructure.`,
 
   # Skip specific configuration steps
   ocfp configure --bloc production --skip-routes --skip-floating-ips`,
+		// This command runs a full bastion provision, and it carries no
+		// subcommands.  Without a validator cobra silently discards a stray
+		// positional, so `ocfp configure deployments` -- which the generated
+		// bastion-init script used to call -- ran the whole flow again, and
+		// that flow regenerates and runs the same script.  Reject the
+		// positional rather than let it mean something it does not.
+		Args: cobra.NoArgs,
 		RunE: func(_cmd *cobra.Command, _args []string) error {
 			return runConfigure(opts)
 		},

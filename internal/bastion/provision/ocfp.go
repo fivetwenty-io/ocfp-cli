@@ -45,7 +45,9 @@ func (om *OCFPManager) GenerateVaultInceptionScript(_ctx context.Context) string
 	return strings.Join(lines, "\n")
 }
 
-// GenerateOCFPConfigureScript generates script for OCFP configure deployments.
+// GenerateOCFPConfigureScript generates the script that sets up the genesis
+// deployment repositories on the bastion: kit checkouts, their dev symlinks,
+// and `genesis repo-init` for the mgmt and ocf roots.
 //
 //nolint:funlen // Script generation requires many statements
 func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string {
@@ -155,7 +157,6 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	lines = append(lines, "")
 
 	lines = append(lines, om.generateGenesisRepoInitScript()...)
-	lines = append(lines, om.generateDeploymentConfiguration()...)
 
 	return strings.Join(lines, "\n")
 }
@@ -295,28 +296,6 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		`    log_success 'genesis repo-init completed for ocf'`,
 		"else",
 		`    log_warning 'genesis repo-init failed for ocf — deployment may require manual init'`,
-		"fi",
-		"",
-	}
-}
-
-//nolint:funcorder // Helper method placed after exported methods
-func (om *OCFPManager) generateDeploymentConfiguration() []string {
-	return []string{
-		"# Run ocfp configure deployments",
-		"if [ -z \"$OCFP_CLI_PATH\" ]; then",
-		"    log_warning 'OCFP CLI not found, skipping ocfp configure deployments'",
-		"else",
-		"    CONFIGURE_ARGS=()",
-		"    if [ -n \"${OCFP_BLOC}\" ]; then",
-		"        CONFIGURE_ARGS+=(\"--bloc\" \"${OCFP_BLOC}\")",
-		"    fi",
-		"    log_info \"Executing: ${OCFP_CLI_PATH} configure deployments ${CONFIGURE_ARGS[*]}\"",
-		"    if \"${OCFP_CLI_PATH}\" configure deployments \"${CONFIGURE_ARGS[@]}\"; then",
-		"        log_success 'Genesis deployments setup completed successfully'",
-		"    else",
-		"        log_warning 'Deployment setup completed with warnings'",
-		"    fi",
 		"fi",
 		"",
 	}
