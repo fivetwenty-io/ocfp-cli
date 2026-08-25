@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,5 +74,20 @@ func TestVaultCleanupCommands_TargetsOwnSessionAndTarget(t *testing.T) {
 
 	if !strings.Contains(text, "ocfp-lab-drgao-inception") {
 		t.Errorf("cleanup plan does not delete its own safe target:\n%s", text)
+	}
+}
+
+func TestVaultCleanupCommands_PortKillSparesThisProcessAndClients(t *testing.T) {
+	t.Parallel()
+
+	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	text := planText(vaultCleanupCommands(paths))
+
+	if !strings.Contains(text, "-sTCP:LISTEN") {
+		t.Errorf("port kill is not restricted to listeners, so it also kills clients of the port:\n%s", text)
+	}
+
+	if !strings.Contains(text, "grep -vx "+strconv.Itoa(os.Getpid())) {
+		t.Errorf("port kill does not exclude this process, so the CLI can SIGKILL itself:\n%s", text)
 	}
 }

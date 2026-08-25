@@ -2183,10 +2183,16 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 			depth = gitDefaultDepth
 		}
 
+		// An existing checkout keeps whatever origin it was cloned with, so a
+		// repo that moves upstream leaves every already-provisioned bastion
+		// fetching the old fork forever while a fresh one gets the new URL.
+		// Reconcile origin with the configured URL before fetching.
+		setOrigin := fmt.Sprintf("git remote set-url origin '%s' 2>/dev/null || git remote add origin '%s'", repo.URL, repo.URL)
+
 		if branch != "" {
-			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && git fetch --all --prune && git checkout '%s' && git pull --ff-only; else git clone '%s' -b '%s' --depth %d \"%s\"; fi", dest, dest, branch, repo.URL, branch, depth, dest)
+			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && git fetch --all --prune && git checkout '%s' && git pull --ff-only; else git clone '%s' -b '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, branch, repo.URL, branch, depth, dest)
 		} else {
-			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d \"%s\"; fi", dest, dest, repo.URL, depth, dest)
+			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, repo.URL, depth, dest)
 		}
 
 		jobs <- job{index: index, name: repo.Name, cmd: cmd}

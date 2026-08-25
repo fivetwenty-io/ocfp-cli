@@ -479,7 +479,15 @@ type cleanupCommand struct {
 func vaultCleanupCommands(paths map[string]string) []cleanupCommand {
 	return []cleanupCommand{
 		{name: "tmux", args: []string{"kill-session", "-t", paths["tmuxSession"]}, tmux: true},
-		{name: "sh", args: []string{"-c", "lsof -ti :" + paths["port"] + " | xargs kill -9 2>/dev/null"}, tmux: false},
+		// Only listeners, and never this process. A bare `lsof -ti :PORT` also
+		// lists every client with a socket connected to that port, and the
+		// liveness probe that decides to run this cleanup leaves exactly such
+		// a socket open on our own side, so the unfiltered form had the CLI
+		// SIGKILL itself partway through `vault inception` (exit 137).
+		{name: "sh", args: []string{"-c",
+			"lsof -ti :" + paths["port"] + " -sTCP:LISTEN 2>/dev/null" +
+				" | grep -vx " + strconv.Itoa(os.Getpid()) +
+				" | xargs -r kill -9 2>/dev/null"}, tmux: false},
 		{name: "pkill", args: []string{"-f", "safe local.*--port " + paths["port"]}, tmux: false},
 	}
 }
