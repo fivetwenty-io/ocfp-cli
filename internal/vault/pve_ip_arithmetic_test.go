@@ -97,10 +97,11 @@ func TestPveFallbackSubnetBand_UnsliceableFallsBackToSharedBand(t *testing.T) {
 }
 
 // TestPveCIDRGateway verifies the gateway is the true first host (network
-// base + 1), matching internal/bootstrap's CIDRGatewayIP. The non-octet-
-// aligned /26 cases guard against the old last-octet string replacement,
-// which wrote 10.61.148.1 for every /26 carved from a /24 — an address
-// outside each child subnet.
+// base + 1), matching internal/bootstrap's CIDRGatewayIP. ConfigureSubnets
+// only ever feeds this helper the PARENT network CIDR now (the subnet
+// records carry the parent's shared gateway — see the flat/shared-gateway
+// shape in pve_provider.go); the non-octet-aligned /26 cases stay to pin the
+// pure arithmetic, including against the old last-octet string replacement.
 func TestPveCIDRGateway(t *testing.T) {
 	t.Parallel()
 
