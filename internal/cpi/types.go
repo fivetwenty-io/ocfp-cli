@@ -417,6 +417,16 @@ type InstanceRequest struct {
 	// for this request only. Zero leaves the preset value. Honored by
 	// providers that read the flavor at create time (currently PVE).
 	MemoryMiBOverride int
+	// OnLinkRoutes lists destinations the VM must reach on-link rather than
+	// through its default gateway, as bare addresses or CIDRs. Providers that
+	// generate cloud-init network-config emit them as netplan `scope: link`
+	// routes (currently PVE); others ignore the field.
+	//
+	// This is a workaround surface rather than a design feature. Needing an
+	// entry means the VM's subnet and the destination are asymmetrically
+	// routed, so the SYN and SYN-ACK both arrive and only the ACK is lost:
+	// the symptom is a hang after a successful handshake, not a refusal.
+	OnLinkRoutes []string
 }
 
 // TailscaleSpec describes how a VM should join the tailnet at first boot.
