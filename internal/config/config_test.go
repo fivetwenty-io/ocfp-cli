@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
@@ -518,5 +519,78 @@ func TestSecretsBackendYAMLRoundTrip(t *testing.T) {
 
 	if got, want := cfg.SecretsBackendName(), "vault"; got != want {
 		t.Errorf("SecretsBackendName() after YAML load = %q, want %q", got, want)
+	}
+}
+
+// TestBastionAcceptsBothKeyStyles guards the binding gap that let ssh_user
+// decode to nothing while every fleet config wrote it in that form.
+func TestBastionAcceptsBothKeyStyles(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		doc  string
+	}{
+		{"camelCase", "sshUser: operator\nrootDiskSize: 80\nonLinkRoutes: [10.254.0.10]\n"},
+		{"snake_case", "ssh_user: operator\nroot_disk_size: 80\non_link_routes: [10.254.0.10]\n"},
+	}
+
+	for _, tc := range cases {
+		var b config.Bastion
+		if err := yaml.Unmarshal([]byte(tc.doc), &b); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		if b.SSHUser != "operator" {
+			t.Errorf("%s: SSHUser = %q, want %q", tc.name, b.SSHUser, "operator")
+		}
+
+		if b.RootDiskSize != 80 {
+			t.Errorf("%s: RootDiskSize = %d, want 80", tc.name, b.RootDiskSize)
+		}
+
+		if len(b.OnLinkRoutes) != 1 || b.OnLinkRoutes[0] != "10.254.0.10" {
+			t.Errorf("%s: OnLinkRoutes = %v, want [10.254.0.10]", tc.name, b.OnLinkRoutes)
+		}
+	}
+}
+
+// TestBastionCamelCaseWinsOverSnakeCase pins the precedence, so a config
+// carrying both forms is never ambiguous.
+func TestBastionCamelCaseWinsOverSnakeCase(t *testing.T) {
+	t.Parallel()
+
+	var b config.Bastion
+	if err := yaml.Unmarshal([]byte("sshUser: explicit\nssh_user: alias\n"), &b); err != nil {
+		t.Fatal(err)
+	}
+
+	if b.SSHUser != "explicit" {
+		t.Errorf("SSHUser = %q, want the camelCase value %q", b.SSHUser, "explicit")
+	}
+}
+
+// TestBastionUnlistedFieldsStillBind proves the two-pass decode did not drop
+// the fields the alias list does not name.
+func TestBastionUnlistedFieldsStillBind(t *testing.T) {
+	t.Parallel()
+
+	var b config.Bastion
+
+	doc := "flavor: bastion\nimage: ubuntu-noble\nkeys:\n  wayne: github/wayneeseguin\ngenesis:\n  branch: v3.2.x-dev\n"
+	if err := yaml.Unmarshal([]byte(doc), &b); err != nil {
+		t.Fatal(err)
+	}
+
+	if b.Flavor != "bastion" || b.Image != "ubuntu-noble" {
+		t.Errorf("flavor/image did not bind: %+v", b)
+	}
+
+	if b.Keys["wayne"] != "github/wayneeseguin" {
+		t.Errorf("keys did not bind: %v", b.Keys)
+	}
+
+	if b.Genesis.Branch != "v3.2.x-dev" {
+		t.Errorf("nested genesis did not bind: %+v", b.Genesis)
 	}
 }

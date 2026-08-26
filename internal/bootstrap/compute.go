@@ -937,13 +937,6 @@ func (m *Manager) bastionDefaultUsername() string {
 	return ""
 }
 
-// bastionStaticIPPrefix returns the subnet prefix length the bastion VM
-// should advertise as "local" — the parent vnet/network CIDR's prefix, not
-// the per-AZ subnet ocfp carves out for accounting. PVE SDN simple zones
-// present a single L3 subnet per vnet (e.g. 10.64.64.0/18); the gateway lives
-// in that parent network. Pairing the bastion IP with a narrower mask (e.g.
-// /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
-// and breaks egress. Zero means "let the provider default decide.".
 // bastionOnLinkRoutes returns the destinations the bastion must reach on-link,
 // from bastion.onLinkRoutes in the bloc config. Empty for every bloc that does
 // not declare any, which is the expected case.
@@ -978,6 +971,13 @@ func (m *Manager) bastionOnLinkRoutes() []string {
 	return out
 }
 
+// bastionStaticIPPrefix returns the subnet prefix length the bastion VM
+// should advertise as "local" — the parent vnet/network CIDR's prefix, not
+// the per-AZ subnet ocfp carves out for accounting. PVE SDN simple zones
+// present a single L3 subnet per vnet (e.g. 10.64.64.0/18); the gateway lives
+// in that parent network. Pairing the bastion IP with a narrower mask (e.g.
+// /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
+// and breaks egress. Zero means "let the provider default decide.".
 func (m *Manager) bastionStaticIPPrefix() int {
 	if m.config == nil {
 		return 0
