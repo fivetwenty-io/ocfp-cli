@@ -851,6 +851,70 @@ type Bastion struct {
 	OnLinkRoutes []string `json:"onLinkRoutes,omitempty" mapstructure:"onLinkRoutes" yaml:"onLinkRoutes,omitempty"`
 }
 
+// UnmarshalYAML accepts snake_case aliases for Bastion's multi-word keys.
+// goccy/go-yaml matches struct tags case-sensitively, so before this hook a
+// config writing ssh_user bound nothing and the field fell through to its
+// package default. Every bloc config in the fleet writes ssh_user, and the
+// default happens to be the same value, which is why the gap stayed invisible:
+// it would have surfaced only when somebody set a username that was not the
+// default, and then as a login failure far from its cause.
+//
+// The primary decode runs against the struct's own tags, so fields not listed
+// below keep binding as they always did. Only the aliases are enumerated here,
+// and each one loses to an explicitly set camelCase key.
+func (b *Bastion) UnmarshalYAML(data []byte) error {
+	// A defined type does not inherit methods, so decoding through it avoids
+	// re-entering this hook.
+	type bastionFields Bastion
+
+	var primary bastionFields
+
+	if err := yaml.Unmarshal(data, &primary); err != nil {
+		return fmt.Errorf("decoding bastion config: %w", err)
+	}
+
+	*b = Bastion(primary)
+
+	var aliases struct {
+		InstanceType string   `yaml:"instance_type,omitempty"`
+		OSVersion    string   `yaml:"os_version,omitempty"`
+		SSHUser      string   `yaml:"ssh_user,omitempty"`
+		SSHOptions   string   `yaml:"ssh_options,omitempty"`
+		SSHKeyDir    string   `yaml:"ssh_key_storage_dir,omitempty"`
+		SSHKeyName   string   `yaml:"ssh_key_name,omitempty"`
+		UserData     string   `yaml:"user_data,omitempty"`
+		RootDiskSize int      `yaml:"root_disk_size,omitempty"`
+		DataDiskSize int      `yaml:"data_disk_size,omitempty"`
+		OnLinkRoutes []string `yaml:"on_link_routes,omitempty"`
+	}
+
+	if err := yaml.Unmarshal(data, &aliases); err != nil {
+		return fmt.Errorf("decoding bastion config aliases: %w", err)
+	}
+
+	b.InstanceType = firstSetString(b.InstanceType, aliases.InstanceType)
+	b.OSVersion = firstSetString(b.OSVersion, aliases.OSVersion)
+	b.SSHUser = firstSetString(b.SSHUser, aliases.SSHUser)
+	b.SSHOptions = firstSetString(b.SSHOptions, aliases.SSHOptions)
+	b.SSHKeyDir = firstSetString(b.SSHKeyDir, aliases.SSHKeyDir)
+	b.SSHKeyName = firstSetString(b.SSHKeyName, aliases.SSHKeyName)
+	b.UserData = firstSetString(b.UserData, aliases.UserData)
+
+	if b.RootDiskSize == 0 {
+		b.RootDiskSize = aliases.RootDiskSize
+	}
+
+	if b.DataDiskSize == 0 {
+		b.DataDiskSize = aliases.DataDiskSize
+	}
+
+	if len(b.OnLinkRoutes) == 0 {
+		b.OnLinkRoutes = aliases.OnLinkRoutes
+	}
+
+	return nil
+}
+
 // Jumpbox configuration for jumpbox user accounts.
 type Jumpbox struct {
 	Users map[string]string `json:"users,omitempty" mapstructure:"users" yaml:"users,omitempty"`
