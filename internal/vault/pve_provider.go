@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -240,12 +241,18 @@ func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter 
 	return nil
 }
 
-// ConfigureSubnets writes per-subnet entries to vault, sourcing CIDR, gateway,
-// and availability zone from bootstrap state's `subnet` resources. Each subnet
-// matching the bloc-name prefix is written to:
+// ConfigureSubnets writes per-subnet entries to vault, sourcing the parent
+// CIDR, parent gateway, and availability zone from bootstrap state's `subnet`
+// resources. Each subnet matching the bloc-name prefix is written to:
 //
 //	{subnetsPath}/{subnetName}                          → cidr, az, gateway
 //	{subnetsPath}/{subnetName}/reserved-ips/{role}      → ip
+//
+// Every record carries the PARENT network CIDR and gateway (the flat/shared-
+// gateway subnet shape — see the in-loop comment); only the reserved-ips
+// bands are derived from each subnet's own child CIDR, keeping the records
+// disjoint so Genesis' Logical Subnet Amalgamation merges them into one BOSH
+// subnet spanning all three AZs.
 //
 // When no bootstrap state is present the method falls back to the legacy
 // single-blob write so `populate` does not fail in stateless contexts.
@@ -301,27 +308,41 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 			continue
 		}
 
-		cidr, _ := sub.Properties["cidr"].(string)
+		childCIDR, _ := sub.Properties["cidr"].(string)
 		az, _ := sub.Properties["availability_zone"].(string)
 
-		if cidr == "" {
+		if childCIDR == "" {
 			continue
 		}
 
-		// Each PVE subnet's gateway is its OWN first host (per-/22), NOT the
-		// parent /18 SDN gateway. BOSH requires a subnet's gateway to be inside
-		// its range, and the PVE SDN provisions a real gateway per /22 subnet
-		// (infra .64.1, ocfp-0 .68.1, ocfp-1 .72.1, ocfp-2 .76.1). Bootstrap
-		// state records the parent /18 gateway (network.go addVirtualSubnetToState),
-		// so we recompute from the subnet's own CIDR here — mirroring the Stackit
-		// provider (parseSubnetCIDR), which likewise derives the subnet-local
-		// gateway rather than the network gateway. The cloud-config builder reads
-		// this per-subnet gateway/dns directly.
-		gateway := pveCIDRGateway(cidr)
+		// PVE virtual subnets are logical carves of ONE flat parent network:
+		// bridge mode adopts an existing bridge/vnet and never materializes
+		// per-child L3, so the parent's gateway is the only gateway that
+		// exists (docs/networking/sdn-subnet-model.md "Parent prefix wins on
+		// the host"; docs/runbooks/pve/01-network-planning.md "One gateway to
+		// rule the four subnets"). The subnet RECORD therefore carries the
+		// PARENT CIDR and the PARENT gateway — BOSH requires the gateway
+		// inside the subnet range, and a child-/N record with the parent
+		// gateway would be rejected, while a per-child base+1 gateway is a
+		// dead address on the wire. Genesis merges the resulting identical
+		// range/gateway records into a single BOSH subnet via Logical Subnet
+		// Amalgamation (CloudConfig.pm _build_logical_subnet_amalgamation),
+		// preserving the per-child AZs and the DISJOINT reserved/available
+		// bands, which stay derived from the child CIDR below.
+		parentCIDR, _ := sub.Properties["parent_cidr"].(string)
+		if parentCIDR == "" {
+			// State predating the parent_cidr property, or a hand-built
+			// resource: the configured network CIDR is the same parent.
+			parentCIDR = pveFirstNonEmpty(p.Config.Network.CIDR, p.Config.VPCCIDRBlock, childCIDR)
+		}
+
+		// Bootstrap state already records the parent gateway per virtual
+		// subnet (network.go addVirtualSubnetToState → CIDRGatewayIP(parent)),
+		// which is what the bastion boots with; derive it from the parent
+		// CIDR only when state carries no gateway.
+		gateway, _ := sub.Properties["gateway"].(string)
 		if gateway == "" {
-			// Defensive: malformed cidr (already guarded above) — fall back to
-			// whatever bootstrap state recorded.
-			gateway, _ = sub.Properties["gateway"].(string)
+			gateway = pveCIDRGateway(parentCIDR)
 		}
 
 		dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
@@ -339,8 +360,8 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 		subnetPath := filepath.Join(subnetsPath, genesisName)
 		if err := p.Safe.SetMultiple(subnetPath, map[string]any{
-			"cidr":       cidr,
-			"cidr_block": cidr,
+			"cidr":       parentCIDR,
+			"cidr_block": parentCIDR,
 			"az":         az,
 			"gateway":    gateway,
 			"dns":        dns,
@@ -351,13 +372,15 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 		if subnetNum, ok := pveWorkloadSubnetIndex(genesisName); ok {
 			// Workload (ocfp-*) subnets: reserved-ips computed entirely from
-			// this subnet's own CIDR plus the per-tier assignment table
+			// this subnet's own CHILD CIDR plus the per-tier assignment table
 			// (internal/vault/pve_reserved_ips.go), NOT from bootstrap
-			// state. mgmt and ocf therefore get DISJOINT reserved-ips on a
-			// shared subnet — bootstrap's tier-blind reserved_<name>_* state
-			// outputs are no longer consulted here (see
-			// plans/pve-tiered-reserved-ip-map.md).
-			err := p.writeTieredReservedIPs(cidr, envType, subnetNum, genesisName, subnetPath)
+			// state. The child-derived bands are what keeps the records
+			// disjoint inside the shared parent range — Genesis' LSA merge
+			// recomputes the amalgamated reserved set from them. mgmt and ocf
+			// likewise get DISJOINT reserved-ips on a shared subnet —
+			// bootstrap's tier-blind reserved_<name>_* state outputs are no
+			// longer consulted here (see plans/pve-tiered-reserved-ip-map.md).
+			err := p.writeTieredReservedIPs(childCIDR, envType, subnetNum, genesisName, subnetPath)
 			if err != nil {
 				return err
 			}
@@ -608,7 +631,6 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	gateway := pveCIDRGateway(cidr)
 	dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
 	bridgeID := pveFirstNonEmpty(p.Config.Network.Name, "vmbr0")
-	az := pveFirstAZ(p.Config)
 
 	// PVE single-network mode: populate ocfp-0..ocfp-2 with identical data so
 	// the bosh kit's cloud-config-director hook (which hardcodes specific
@@ -617,6 +639,14 @@ func (p *PVEVaultProvider) writeFallbackSubnet(envType string) error {
 	// lvnet bridge — this is conventional for single-vnet PVE deployments.
 	for i := range 3 {
 		subnetPath := p.PathBuilder.GetSubnetPath(envType, "ocfp", i)
+
+		// Same per-index zone keys the state-driven path assigns
+		// (bootstrap.pveAZNamePrefix) and ConfigureAZs writes under
+		// net/azs/{pvea,pveb,pvec}: Genesis' _set_network_azs resolves each
+		// subnet's az against those records, so a node name (the old
+		// all-same-AZ pveFirstAZ value) would be unresolvable — and identical
+		// az values would collapse the LSA merge to a single AZ.
+		az := pveAZKeyPrefix + string(rune('a'+i))
 
 		err := p.Safe.SetMultiple(subnetPath, map[string]any{
 			"cidr":       cidr,
@@ -854,20 +884,6 @@ func pveCIDRGateway(cidr string) string {
 	}
 
 	return vaultUint32ToIP(base + 1)
-}
-
-// pveFirstAZ returns the first Proxmox node name as the AZ identifier, or "z1"
-// when no nodes are configured.  Mirrors the kit's `meta.ocfp.bosh.az` default.
-func pveFirstAZ(cfg *config.Config) string {
-	if len(cfg.Nodes) > 0 {
-		return cfg.Nodes[0]
-	}
-
-	if cfg.Region != "" {
-		return cfg.Region
-	}
-
-	return "z1"
 }
 
 // writeReservedIPs iterates bootstrap state outputs looking for keys of the
@@ -2093,7 +2109,8 @@ const (
 // workload subnets reference. Genesis' _set_network_azs resolves every ocfp-*
 // subnet's az ("pvea"...) against these keys; keying by node ("pve") instead
 // leaves them unresolvable ("AZ pvea not found in the available AZs for the
-// network"). Each zone records the node that physically backs it via node_name;
+// network"). Each zone records the node that physically backs it via node_name
+// and pins VMs to that node via cloud_properties (see the in-loop comment);
 // multi-node blocs spread zones across Config.Nodes round-robin, while a
 // single-node bloc backs every zone with the one node.
 //
@@ -2125,13 +2142,30 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 		// Zone letters carry no trailing digit, so the explicit index yields
 		// pvea->"<env>-z1", pveb->z2, pvec->z3, matching the kit's
 		// default_cf_az and the workload subnets' az assignment.
-		azData := map[string]any{
-			"node_name": node,
-			"index":     z + 1,
-			"status":    "configured",
+		//
+		// cloud_properties pins the zone to its backing node. Genesis'
+		// _set_network_azs (Director.pm) reads this key as a JSON STRING
+		// (JSON::PP-decoded into the cloud-config azs block, defaulting to
+		// '{}' when absent), and BOSH merges AZ cloud_properties into the VM
+		// cloud properties sent to create_vm, where the Go CPI honors
+		// target_node as the highest-precedence operator pin
+		// (bosh-proxmox-cpi create_vm_placement.go). target_node is chosen
+		// over availability_zone + pve.placement.az_map because it works with
+		// zero kit or CPI-config changes; without it every BOSH AZ carries
+		// cloud_properties: {} and nothing pins a VM to its node.
+		cloudProps, err := json.Marshal(map[string]string{"target_node": node})
+		if err != nil {
+			return fmt.Errorf("failed to encode cloud_properties for zone %s: %w", zone, err)
 		}
 
-		err := p.Safe.SetMultiple(azPath, azData)
+		azData := map[string]any{
+			"node_name":        node,
+			"index":            z + 1,
+			"status":           "configured",
+			"cloud_properties": string(cloudProps),
+		}
+
+		err = p.Safe.SetMultiple(azPath, azData)
 		if err != nil {
 			return fmt.Errorf("failed to set AZ entry for zone %s: %w", zone, err)
 		}

@@ -191,6 +191,10 @@ func TestPVEVaultProvider_ConfigureAZs_SingleNode(t *testing.T) {
 		// ...but each carries a distinct 1-based index so Genesis derives
 		// pvea->"<env>-z1", pveb->z2, pvec->z3 (name = "<env>-z" . index).
 		assert.Equal(t, z+1, call.data["index"], "zone %s must carry 1-based index", zone)
+		// cloud_properties (JSON string, Director.pm decodes it) pins each
+		// zone's VMs to the backing node via the CPI's target_node override.
+		assert.Equal(t, `{"target_node":"pve-node1"}`, call.data["cloud_properties"],
+			"zone %s must pin its node via cloud_properties", zone)
 	}
 }
 
@@ -213,6 +217,10 @@ func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
 		// 3 zones across 3 nodes -> 1:1 mapping (pvea->pve-a, pveb->pve-b, ...).
 		assert.Equal(t, cfg.Nodes[z%len(cfg.Nodes)], call.data["node_name"])
 		assert.Equal(t, z+1, call.data["index"], "zone %s must carry 1-based index", zone)
+		// Each zone pins its own backing node, so BOSH AZs place VMs 1:1 on
+		// nodes (the whole point of the az->node spread).
+		assert.Equal(t, `{"target_node":"`+cfg.Nodes[z%len(cfg.Nodes)]+`"}`, call.data["cloud_properties"],
+			"zone %s must pin its backing node via cloud_properties", zone)
 	}
 }
 
@@ -837,7 +845,9 @@ func seedPVEState(t *testing.T, blocName string) *state.Manager {
 
 // TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries — given two
 // subnet resources in bootstrap state, ConfigureSubnets must write one vault
-// entry per subnet under .../net/subnets/{name} with cidr, az, and gateway.
+// entry per subnet under .../net/subnets/{name}, each carrying the PARENT
+// network CIDR and the PARENT gateway (the flat/shared-gateway shape Genesis'
+// LSA merge expects) while keeping the per-subnet az.
 func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) {
 	const blocName = "test-bloc"
 
@@ -850,7 +860,10 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 		Properties: map[string]any{
 			"cidr":              "10.64.64.0/22",
 			"availability_zone": "",
-			"gateway":           "10.64.64.1",
+			// Bootstrap records the PARENT gateway and parent CIDR
+			// (network.go addVirtualSubnetToState).
+			"gateway":     "10.64.64.1",
+			"parent_cidr": "10.64.64.0/19",
 		},
 	}))
 	require.NoError(t, sm.AddResource(&state.Resource{
@@ -860,11 +873,8 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 		Properties: map[string]any{
 			"cidr":              "10.64.68.0/22",
 			"availability_zone": "pvea",
-			// Bootstrap records the PARENT /18 gateway here
-			// (network.go addVirtualSubnetToState -> CIDRGatewayIP(parentCIDR)).
-			// ConfigureSubnets must override it with the subnet's OWN /22 gateway
-			// so BOSH's "gateway must be inside range" check passes and the PVE
-			// SDN's per-/22 gateway (.68.1) is used.
+			// parent_cidr deliberately omitted: pre-parent_cidr state must
+			// resolve the parent from the configured network CIDR instead.
 			"gateway": "10.64.64.1",
 		},
 	}))
@@ -883,7 +893,8 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	infraPath := filepath.Join(subnetsPath, "infra")
 	infraCall := mock.findSetMultipleCall(infraPath)
 	require.NotNil(t, infraCall, "infra subnet must be written at %s", infraPath)
-	assert.Equal(t, "10.64.64.0/22", infraCall.data["cidr"])
+	assert.Equal(t, "10.64.64.0/19", infraCall.data["cidr"], "record carries the parent CIDR from state")
+	assert.Equal(t, "10.64.64.0/19", infraCall.data["cidr_block"])
 	assert.Equal(t, "10.64.64.1", infraCall.data["gateway"])
 	assert.Equal(t, "", infraCall.data["az"])
 	// Per-subnet DNS must be written so genesis's dynamic-subnet cloud-config
@@ -893,15 +904,103 @@ func TestPVEVaultProvider_ConfigureSubnets_WritesPerSubnetEntries(t *testing.T) 
 	ocfp0Path := filepath.Join(subnetsPath, "ocfp-0")
 	ocfp0Call := mock.findSetMultipleCall(ocfp0Path)
 	require.NotNil(t, ocfp0Call, "ocfp-0 subnet must be written at %s", ocfp0Path)
-	assert.Equal(t, "10.64.68.0/22", ocfp0Call.data["cidr"])
+	assert.Equal(t, "10.64.64.0/19", ocfp0Call.data["cidr"], "parent CIDR resolved from config when state lacks parent_cidr")
+	assert.Equal(t, "10.64.64.0/19", ocfp0Call.data["cidr_block"])
 	assert.Equal(t, "pvea", ocfp0Call.data["az"])
-	// Overridden from the parent .64.1 in state to the subnet's own /22 gateway.
-	assert.Equal(t, "10.64.68.1", ocfp0Call.data["gateway"])
+	// The state-recorded PARENT gateway is honored, never a per-child base+1
+	// (10.64.68.1 would be a dead address on a flat network).
+	assert.Equal(t, "10.64.64.1", ocfp0Call.data["gateway"])
 	assert.Equal(t, "10.64.64.1", ocfp0Call.data["dns"])
 
 	// Fallback blob path must NOT be written when state-driven entries exist.
 	fallback := mock.findSetMultipleCall(subnetsPath)
 	assert.Nil(t, fallback, "with state present, no fallback blob should be written at %s", subnetsPath)
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_FlatVLANSharedGateway pins the
+// flat/shared-gateway contract with the ocfp-chc-lab literals: a /24 parent
+// on an upstream VLAN (one real gateway for the whole range) carved into
+// four /26 children. Every record must carry the parent CIDR
+// (10.61.148.0/24) and the parent gateway (10.61.148.1) — per-child base+1
+// gateways (.65/.129/.193) are dead addresses on a flat network — while the
+// per-child azs (pvea/pveb/pvec) and the child-derived, DISJOINT available
+// bands survive, because those are exactly what Genesis' Logical Subnet
+// Amalgamation merges into one multi-AZ BOSH subnet.
+func TestPVEVaultProvider_ConfigureSubnets_FlatVLANSharedGateway(t *testing.T) {
+	const (
+		blocName = "test-bloc"
+		parent   = "10.61.148.0/24"
+		parentGW = "10.61.148.1"
+	)
+
+	sm := seedPVEState(t, blocName)
+
+	subnets := []struct {
+		name  string
+		child string
+		az    string
+	}{
+		{"infra", "10.61.148.0/26", ""},
+		{"ocfp-0", "10.61.148.64/26", "pvea"},
+		{"ocfp-1", "10.61.148.128/26", "pveb"},
+		{"ocfp-2", "10.61.148.192/26", "pvec"},
+	}
+
+	for _, sub := range subnets {
+		require.NoError(t, sm.AddResource(&state.Resource{
+			ID:   "subnet-" + sub.name,
+			Type: "subnet",
+			Name: blocName + "-" + sub.name,
+			Properties: map[string]any{
+				"cidr":              sub.child,
+				"availability_zone": sub.az,
+				"gateway":           parentGW,
+				"parent_cidr":       parent,
+				"network_id":        "vlan54",
+			},
+		}))
+	}
+
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			Name:     "vlan54",
+			CIDR:     parent,
+			Strategy: "compact",
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+
+	for _, sub := range subnets {
+		call := mock.findSetMultipleCall(filepath.Join(subnetsPath, sub.name))
+		require.NotNil(t, call, "subnet %s must be written", sub.name)
+		assert.Equal(t, parent, call.data["cidr"], "%s: record carries the parent /24", sub.name)
+		assert.Equal(t, parent, call.data["cidr_block"], "%s: cidr_block carries the parent /24", sub.name)
+		assert.Equal(t, parentGW, call.data["gateway"], "%s: the one real gateway", sub.name)
+		assert.Equal(t, sub.az, call.data["az"], "%s: per-child az preserved for the LSA merge", sub.name)
+		assert.Equal(t, "vlan54", call.data["id"])
+	}
+
+	// Available bands stay derived from each CHILD /26 (compact layout: mgmt
+	// available = child base +28..+35), so the identical-range records remain
+	// disjoint inside the shared /24.
+	wantBands := map[string][2]string{
+		"ocfp-0": {"10.61.148.92", "10.61.148.99"},
+		"ocfp-1": {"10.61.148.156", "10.61.148.163"},
+		"ocfp-2": {"10.61.148.220", "10.61.148.227"},
+	}
+	for name, band := range wantBands {
+		call := mock.findSetMultipleCall(filepath.Join(subnetsPath, name, "reserved-ips"))
+		require.NotNil(t, call, "%s reserved-ips must be written", name)
+		assert.Equal(t, band[0], call.data["available_0"], "%s band start from its own child /26", name)
+		assert.Equal(t, band[1], call.data["available_1"], "%s band end from its own child /26", name)
+	}
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_NoStateFallsBack — without an OCFP_HOME
@@ -929,18 +1028,24 @@ func TestPVEVaultProvider_ConfigureSubnets_NoStateFallsBack(t *testing.T) {
 		"fallback note must indicate state was absent")
 
 	// The fallback per-subnet entries must carry gateway and dns derived from
-	// the CIDR, so genesis builds a valid subnet (no dns: [null], correct gw).
-	ocfp0Path := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", 0)
-	ocfp0 := mock.findSetMultipleCall(ocfp0Path)
-	require.NotNil(t, ocfp0, "fallback ocfp-0 subnet must be written at %s", ocfp0Path)
-	assert.Equal(t, "10.64.64.1", ocfp0.data["gateway"])
-	assert.Equal(t, "10.64.64.1", ocfp0.data["dns"])
+	// the CIDR, so genesis builds a valid subnet (no dns: [null], correct gw),
+	// and the same per-index zone keys the state-driven path assigns so
+	// Genesis resolves each az against the net/azs/{pvea,pveb,pvec} records.
+	for i, wantAZ := range []string{"pvea", "pveb", "pvec"} {
+		path := provider.PathBuilder.GetSubnetPath(MgmtEnvType, "ocfp", i)
+		call := mock.findSetMultipleCall(path)
+		require.NotNil(t, call, "fallback ocfp-%d subnet must be written at %s", i, path)
+		assert.Equal(t, "10.64.64.1", call.data["gateway"])
+		assert.Equal(t, "10.64.64.1", call.data["dns"])
+		assert.Equal(t, wantAZ, call.data["az"], "fallback ocfp-%d must carry its own zone key", i)
+	}
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent — when a
 // state subnet omits gateway and no config DNS is set, ConfigureSubnets derives
-// both from the subnet CIDR (gateway = first host; dns = gateway) so the
-// genesis cloud-config builder always has a usable gateway and resolver.
+// both from the PARENT network CIDR (gateway = parent first host; dns =
+// gateway) so the genesis cloud-config builder always has a usable gateway
+// and resolver.
 func TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent(t *testing.T) {
 	const blocName = "test-bloc"
 
@@ -966,8 +1071,9 @@ func TestPVEVaultProvider_ConfigureSubnets_DerivesGatewayAndDNSWhenAbsent(t *tes
 	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
 	ocfp0 := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-0"))
 	require.NotNil(t, ocfp0, "ocfp-0 subnet must be written")
-	assert.Equal(t, "10.64.68.1", ocfp0.data["gateway"], "gateway derived from CIDR")
-	assert.Equal(t, "10.64.68.1", ocfp0.data["dns"], "dns derived from subnet gateway")
+	assert.Equal(t, "10.64.64.0/19", ocfp0.data["cidr"], "record carries the parent CIDR")
+	assert.Equal(t, "10.64.64.1", ocfp0.data["gateway"], "gateway derived from the parent CIDR")
+	assert.Equal(t, "10.64.64.1", ocfp0.data["dns"], "dns derived from the parent gateway")
 }
 
 // TestPVEVaultProvider_ConfigureSubnets_ReservedIPsPropagated — when state has
@@ -1160,14 +1266,16 @@ func TestPVEVaultProvider_ConfigureSubnets_OCFTierComputedFromCIDR(t *testing.T)
 
 	subnetsPath := provider.PathBuilder.GetSubnetsPath("ocf")
 
-	// Subnet entry written at the bloc-stripped genesis name with the distinct /22.
+	// Subnet entry written at the bloc-stripped genesis name. The record
+	// carries the PARENT CIDR (flat/shared-gateway shape); only the
+	// reserved-ips bands below stay child-/22-derived.
 	subnet := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-2"))
 	require.NotNil(t, subnet, "ocfp-2 subnet entry must be written at the stripped path")
-	assert.Equal(t, "10.64.76.0/22", subnet.data["cidr"])
-	assert.Equal(t, "10.64.76.0/22", subnet.data["cidr_block"])
+	assert.Equal(t, "10.64.64.0/19", subnet.data["cidr"])
+	assert.Equal(t, "10.64.64.0/19", subnet.data["cidr_block"])
 	assert.Equal(t, "lvnet001", subnet.data["id"])
 
-	// Reserved band computed from the subnet's own CIDR + the ocf-tier table,
+	// Reserved band computed from the subnet's own CHILD CIDR + the ocf-tier table,
 	// NOT from the stale state outputs seeded above.
 	band := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-2", "reserved-ips"))
 	require.NotNil(t, band, "ocfp-2 reserved-ips band must be written")
