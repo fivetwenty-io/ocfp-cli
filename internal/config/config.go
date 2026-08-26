@@ -835,6 +835,20 @@ type Bastion struct {
 	// SSH keys to add to the bastion's authorized_keys.
 	// Values: direct public key, "github/<username>", or "gitlab/<username>".
 	Keys map[string]string `json:"keys,omitempty" mapstructure:"keys" yaml:"keys,omitempty"`
+	// OnLinkRoutes lists destinations the bastion must reach on-link rather
+	// than through its default gateway, as bare addresses or CIDRs. They are
+	// written into the cloud-init network-config, so cloud-init's regeneration
+	// on every boot preserves them and a reprovision does not lose them the
+	// way a hand-edited netplan file does.
+	//
+	// Treat an entry here as debt, not configuration. It means the bastion's
+	// subnet and that destination are asymmetrically routed, which on this
+	// platform has meant a bastion attached to a bridge whose declared
+	// gateway address exists on no interface. The failure it papers over is a
+	// hang after a successful TCP handshake rather than a refusal, because
+	// only the ACK is lost, so it reads as a slow host rather than a broken
+	// route. Prefer fixing the attachment.
+	OnLinkRoutes []string `json:"onLinkRoutes,omitempty" mapstructure:"onLinkRoutes" yaml:"onLinkRoutes,omitempty"`
 }
 
 // Jumpbox configuration for jumpbox user accounts.

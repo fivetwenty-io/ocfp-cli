@@ -500,6 +500,7 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	req.StaticPrivateIPPrefix = m.bastionStaticIPPrefix()
 	// Build the full tailscale spec from defaults + the now-known IP+prefix.
 	// PVE provider translates this into SMBIOS for the firstboot script.
+	req.OnLinkRoutes = m.bastionOnLinkRoutes()
 	req.Tailscale = m.bastionTailscaleSpec(bastionName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
 	req.Cloudflare = m.bastionCloudflareSpec()
 	req.Ingress = m.bastionIngressSpec()
@@ -943,6 +944,40 @@ func (m *Manager) bastionDefaultUsername() string {
 // in that parent network. Pairing the bastion IP with a narrower mask (e.g.
 // /20 from an AZ subnet, or the legacy /24 default) puts the gateway off-link
 // and breaks egress. Zero means "let the provider default decide.".
+// bastionOnLinkRoutes returns the destinations the bastion must reach on-link,
+// from bastion.onLinkRoutes in the bloc config. Empty for every bloc that does
+// not declare any, which is the expected case.
+//
+// This exists because a hand-added netplan file does not survive a
+// reprovision, and losing it breaks `bosh create-env` silently at the
+// stemcell-upload phase. Carrying the route through provisioning means the
+// bastion comes back the same way it went down. It does not make the
+// underlying asymmetry correct, and the config field's comment says so.
+func (m *Manager) bastionOnLinkRoutes() []string {
+	if m.config == nil {
+		return nil
+	}
+
+	routes := m.config.Bastion.OnLinkRoutes
+	if len(routes) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(routes))
+
+	for _, route := range routes {
+		if route = strings.TrimSpace(route); route != "" {
+			out = append(out, route)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
 func (m *Manager) bastionStaticIPPrefix() int {
 	if m.config == nil {
 		return 0

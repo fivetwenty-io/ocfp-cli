@@ -382,6 +382,15 @@ func buildNetworkDataSnippet(req *cpi.InstanceRequest, mac string) []byte {
 		fmt.Fprintf(&buf, "    gateway4: %s\n", gw)
 	}
 
+	if routes := normalizeOnLinkRoutes(req.OnLinkRoutes); len(routes) > 0 {
+		buf.WriteString("    routes:\n")
+
+		for _, route := range routes {
+			fmt.Fprintf(&buf, "    - to: %s\n", route)
+			buf.WriteString("      scope: link\n")
+		}
+	}
+
 	if len(req.DNSServers) > 0 || strings.TrimSpace(req.DomainSuffix) != "" {
 		buf.WriteString("    nameservers:\n")
 
@@ -405,6 +414,45 @@ func buildNetworkDataSnippet(req *cpi.InstanceRequest, mac string) []byte {
 	}
 
 	return buf.Bytes()
+}
+
+// normalizeOnLinkRoutes cleans the requested on-link destinations into netplan
+// `to:` values. Blank entries are dropped, and a bare address is widened to a
+// host route, since an on-link entry naming a single host is the only form we
+// have needed: the case it answers is one host that is asymmetrically routed,
+// not a whole subnet. Anything already carrying a prefix is passed through so
+// a caller can express a wider on-link range when it genuinely has one.
+func normalizeOnLinkRoutes(routes []string) []string {
+	if len(routes) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(routes))
+
+	for _, raw := range routes {
+		route := strings.TrimSpace(raw)
+		if route == "" {
+			continue
+		}
+
+		if !strings.Contains(route, "/") {
+			if ip := net.ParseIP(route); ip != nil {
+				if ip.To4() != nil {
+					route += "/32"
+				} else {
+					route += "/128"
+				}
+			}
+		}
+
+		out = append(out, route)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // splitCIDR returns the address portion and the prefix length. When the
