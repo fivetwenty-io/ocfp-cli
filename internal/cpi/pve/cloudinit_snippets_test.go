@@ -501,3 +501,92 @@ func TestBuildPVEDirectCloudInitConfigNoSnippetPlanOmitsCICustom(t *testing.T) {
 		t.Errorf("cicustom should be absent for empty plan, got %v", got["cicustom"])
 	}
 }
+
+// TestBuildNetworkDataSnippetOnLinkRoutes covers the pve-cpi case: a bastion
+// whose declared gateway cannot carry traffic to one host, where the symptom
+// is a hang after a successful handshake rather than a refusal.
+func TestBuildNetworkDataSnippetOnLinkRoutes(t *testing.T) {
+	t.Parallel()
+
+	req := &cpi.InstanceRequest{
+		StaticPrivateIP: "10.254.16.3/20",
+		GatewayIP:       "10.254.16.1",
+		OnLinkRoutes:    []string{"10.254.0.10"},
+	}
+
+	out := string(buildNetworkDataSnippet(req, "02:ab:cd:ef:12:34"))
+
+	checks := []string{
+		"    routes:\n",
+		"    - to: 10.254.0.10/32\n",
+		"      scope: link\n",
+	}
+
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("snippet missing %q\n----\n%s", want, out)
+		}
+	}
+
+	// The route block must follow gateway4, or netplan sees routes on an
+	// interface it has not finished describing.
+	if gw, routes := strings.Index(out, "gateway4:"), strings.Index(out, "routes:"); gw < 0 || routes < gw {
+		t.Errorf("routes must be emitted after gateway4, got:\n%s", out)
+	}
+}
+
+// TestBuildNetworkDataSnippetNoRoutesWhenUnset guards the default: every bloc
+// that declares nothing must render exactly as it did before the field existed.
+func TestBuildNetworkDataSnippetNoRoutesWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	for name, routes := range map[string][]string{
+		"nil":            nil,
+		"empty":          {},
+		"blank elements": {"", "   "},
+	} {
+		req := &cpi.InstanceRequest{
+			StaticPrivateIP: "10.4.4.3/22",
+			GatewayIP:       "10.4.4.1",
+			OnLinkRoutes:    routes,
+		}
+
+		if out := string(buildNetworkDataSnippet(req, "")); strings.Contains(out, "routes:") {
+			t.Errorf("%s: expected no routes block, got:\n%s", name, out)
+		}
+	}
+}
+
+func TestNormalizeOnLinkRoutes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"bare v4 widens to a host route", []string{"10.254.0.10"}, []string{"10.254.0.10/32"}},
+		{"explicit prefix passes through", []string{"10.254.0.0/24"}, []string{"10.254.0.0/24"}},
+		{"bare v6 widens to /128", []string{"fdea:6606:d272::10"}, []string{"fdea:6606:d272::10/128"}},
+		{"blanks are dropped", []string{"", "  ", "10.0.0.1"}, []string{"10.0.0.1/32"}},
+		{"surrounding space is trimmed", []string{"  10.0.0.1  "}, []string{"10.0.0.1/32"}},
+		{"a non-address is left alone", []string{"pve.example.com"}, []string{"pve.example.com"}},
+		{"nil stays nil", nil, nil},
+		{"all-blank collapses to nil", []string{"", " "}, nil},
+	}
+
+	for _, tc := range cases {
+		got := normalizeOnLinkRoutes(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+				break
+			}
+		}
+	}
+}
