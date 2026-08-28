@@ -194,8 +194,8 @@ func processAssignment(
 // processOffsetAssignment handles a simple offset-based single IP
 // reservation. ipKey, when non-empty, overrides the default
 // "{assignmentType}_ip" output key (see Assignment.IPKey); the "_a"/"_b"
-// bound keys always key off ipKey too when it is set, so a custom-keyed
-// role gets the same bound-key convention as the default case. Returns
+// bound keys always key off assignmentType regardless, keeping them out of
+// the "*_ip" namespace Genesis unions as addresses (FWT-1115). Returns
 // ErrOffsetBeyondSubnet (wrapped with the offending offset and the subnet's
 // last usable host offset) if offset exceeds the subnet's bounds.
 func processOffsetAssignment(
@@ -220,9 +220,15 @@ func processOffsetAssignment(
 	vaultIPs[key] = ip
 	usedIPs[ip] = true
 
-	// Add IP bounds (_a and _b) for Genesis compatibility.
-	vaultIPs[key+"_a"] = AddOffsetToIP(baseIP, offset-1)
-	vaultIPs[key+"_b"] = AddOffsetToIP(baseIP, offset+1)
+	// Add IP bounds (_a and _b) for Genesis compatibility. Bounds key off
+	// the assignment type, NEVER the ip key: Genesis brackets on
+	// "{target}_a"/"{target}_b" and separately unions every key matching
+	// the unanchored pattern /{target}_ip/, so a bound named
+	// "{target}_ip_a" is swept into the target's static range as if it
+	// were an address — and with consecutive offsets it IS a neighbouring
+	// service's live address (FWT-1115).
+	vaultIPs[assignmentType+"_a"] = AddOffsetToIP(baseIP, offset-1)
+	vaultIPs[assignmentType+"_b"] = AddOffsetToIP(baseIP, offset+1)
 
 	log.Debugw("Reserved IP", "type", assignmentType, "key", key, "ip", ip, "offset", offset)
 
