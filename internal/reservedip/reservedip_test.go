@@ -2,6 +2,7 @@ package reservedip_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
@@ -166,8 +167,50 @@ func TestCalculate_OffsetAssignmentWithIPKeyOverride(t *testing.T) {
 	assert.Equal(t, "10.64.64.14", got["rustfs_ip"], "default key is unaffected by an unrelated assignment's IPKey")
 	assert.Equal(t, "10.64.64.21", got["rustfs_ip_smoke"], "IPKey overrides the default {assignmentType}_ip key")
 	assert.NotContains(t, got, "rustfs_smoke_ip", "the default-shaped key must not also be written when IPKey is set")
-	assert.Equal(t, "10.64.64.20", got["rustfs_ip_smoke_a"], "bound keys key off IPKey, not assignmentType, when IPKey is set")
-	assert.Equal(t, "10.64.64.22", got["rustfs_ip_smoke_b"])
+	assert.Equal(t, "10.64.64.20", got["rustfs_smoke_a"], "bound keys key off assignmentType even when IPKey is set")
+	assert.Equal(t, "10.64.64.22", got["rustfs_smoke_b"])
+	assert.NotContains(t, got, "rustfs_ip_smoke_a", "bounds must never extend an *_ip key (FWT-1115)")
+	assert.NotContains(t, got, "rustfs_ip_smoke_b", "bounds must never extend an *_ip key (FWT-1115)")
+}
+
+// TestCalculate_BoundKeyGenesisContract pins the reserved-ips record shape
+// Genesis' cloud-config hook consumes. Genesis reads "{target}_a"/"{target}_b"
+// as exclusive bracket bounds and separately unions every key matching the
+// UNANCHORED pattern /{target}_ip/ as reserved addresses. Writing bounds as
+// "{target}_ip_a"/"{target}_ip_b" therefore sweeps both bounds into the
+// target's static range — and with consecutive offsets each bound IS a
+// neighbouring service's live address (FWT-1115: bosh's static range absorbed
+// the bastion and OpenBao addresses).
+func TestCalculate_BoundKeyGenesisContract(t *testing.T) {
+	// Consecutive offsets mirroring the PVE mgmt tier (bastion 1, bosh 2,
+	// vault 3): every bound lands exactly on a neighbour's address.
+	assignments := reservedip.AssignmentTable{
+		"bastion": {"mgmt": {Offset: 1}},
+		"bosh":    {"mgmt": {Offset: 2}}, //nolint:mnd
+		"vault":   {"mgmt": {Offset: 3}}, //nolint:mnd
+		"rustfs_smoke": {
+			"mgmt": {Offset: 21, IPKey: "rustfs_ip_smoke"}, //nolint:mnd
+		},
+		"doomsday": {"mgmt": {SubnetMapping: map[int][]int{9: {0}}}}, //nolint:mnd
+	}
+
+	got, err := reservedip.Calculate("10.108.20.0/24", assignments, "mgmt", 0, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "10.108.20.2", got["bosh_ip"])
+	assert.Equal(t, "10.108.20.1", got["bosh_a"], "Genesis brackets on {target}_a")
+	assert.Equal(t, "10.108.20.3", got["bosh_b"], "Genesis brackets on {target}_b")
+	assert.Equal(t, "10.108.20.8", got["doomsday_a"], "subnet-mapping path shares the bound-key convention")
+	assert.Equal(t, "10.108.20.10", got["doomsday_b"])
+
+	// The tripwire: no bound key may sit inside the *_ip namespace, or
+	// Genesis' unanchored /{target}_ip/ union claims both neighbours.
+	for key := range got {
+		if strings.HasSuffix(key, "_a") || strings.HasSuffix(key, "_b") {
+			assert.NotContains(t, key, "_ip",
+				"bound key %q would be swept into a static range by Genesis' unanchored _ip lookup (FWT-1115)", key)
+		}
+	}
 }
 
 func TestCalculate_ErrOffsetBeyondSubnet(t *testing.T) {
