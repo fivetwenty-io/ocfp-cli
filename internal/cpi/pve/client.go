@@ -56,8 +56,15 @@ type Config struct {
 	// Network settings
 	NetworkMode    string // "bridge" (default) or "sdn"
 	DefaultBridge  string // Default bridge (e.g., "vmbr0")
-	TemplateBridge string // Bridge for template seed VMs (needs DHCP + internet; default "vmbr1")
+	TemplateBridge string // Bridge for template seed VMs (needs internet egress; DHCP by default, or a static identity via the TemplateSeed* fields below; default "vmbr1")
 	SDNZone        string // SDN zone for SDN mode
+
+	// Template seed static network identity, used only when TemplateBridge
+	// has no DHCP. TemplateSeedIP empty means DHCP (the zero-value default).
+	TemplateSeedIP           string   // Static CIDR for the template seed VM (empty = DHCP)
+	TemplateSeedGateway      string   // Gateway for the seed VM; required with TemplateSeedIP
+	TemplateSeedDNS          []string // Resolvers for the seed VM; empty = defaultPVECloudInitDNS
+	TemplateSeedSearchDomain string   // Optional cloud-init searchdomain for the seed VM
 
 	// Storage settings
 	DefaultStorage string // Default storage pool (e.g., "local-lvm")
@@ -567,17 +574,35 @@ func (c *Client) parsePVEConfig(config interface{}) (*Config, error) {
 			return nil, ErrMixedAuthConfig
 		}
 
+		// TemplateSeedDNS falls back to Network.DNSServers, gated on
+		// TemplateSeedIP being set to match the map-config path built by
+		// addPVEProviderConfig, which only applies its own fallback inside
+		// `if cfg.TemplateSeedIP != ""`. This path has no bootstrap-layer
+		// resolveTemplateSeedDNS in front of it, so the fallback is applied
+		// here directly; the gate keeps the two parsing paths equivalent
+		// for a DHCP-mode bloc that sets network.dns_servers but no
+		// template_seed_ip, which must land TemplateSeedDNS as nil on both
+		// paths, not the resolved network DNS list.
+		templateSeedDNS := configValue.TemplateSeedDNS
+		if configValue.TemplateSeedIP != "" && len(templateSeedDNS) == 0 {
+			templateSeedDNS = configValue.Network.DNSServers
+		}
+
 		cfg := &Config{
-			Host:           configValue.APIEndpoint,
-			Node:           configValue.Region,
-			NetworkMode:    defaultNetworkMode,
-			DefaultBridge:  firstNonEmpty(configValue.Network.Name, defaultBridge),
-			TemplateBridge: firstNonEmpty(configValue.TemplateBridge, defaultTemplateBridge),
-			DefaultStorage: firstNonEmpty(configValue.VMStorage, configValue.Artifacts.Data.StoragePool, defaultStorage),
-			ISOStorage:     configValue.IsoStorage,
-			VerifySSL:      configValue.VerifySSL,
-			Timeout:        0,
-			MaxRetries:     0,
+			Host:                     configValue.APIEndpoint,
+			Node:                     configValue.Region,
+			NetworkMode:              defaultNetworkMode,
+			DefaultBridge:            firstNonEmpty(configValue.Network.Name, defaultBridge),
+			TemplateBridge:           firstNonEmpty(configValue.TemplateBridge, defaultTemplateBridge),
+			TemplateSeedIP:           configValue.TemplateSeedIP,
+			TemplateSeedGateway:      configValue.TemplateSeedGateway,
+			TemplateSeedDNS:          templateSeedDNS,
+			TemplateSeedSearchDomain: configValue.TemplateSeedSearchDomain,
+			DefaultStorage:           firstNonEmpty(configValue.VMStorage, configValue.Artifacts.Data.StoragePool, defaultStorage),
+			ISOStorage:               configValue.IsoStorage,
+			VerifySSL:                configValue.VerifySSL,
+			Timeout:                  0,
+			MaxRetries:               0,
 		}
 
 		if apiTokenMode {
