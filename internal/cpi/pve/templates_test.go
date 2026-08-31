@@ -113,3 +113,95 @@ func TestParseUPID_UnrecognizedShapeErrors(t *testing.T) {
 		t.Error("expected error for unrecognized UPID payload shape")
 	}
 }
+
+// TestBuildTemplateSeedNetParams pins the DHCP-default backward-compatibility
+// contract (a zero-value Config must reproduce exactly today's single-key
+// ipconfig0 map) alongside the static-mode key set.
+func TestBuildTemplateSeedNetParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *Config
+		want map[string]interface{}
+	}{
+		{
+			name: "dhcp default",
+			cfg:  &Config{},
+			want: map[string]interface{}{
+				"ipconfig0": "ip=dhcp",
+			},
+		},
+		{
+			name: "static full",
+			cfg: &Config{
+				TemplateSeedIP:           "10.61.148.2/24",
+				TemplateSeedGateway:      "10.61.148.1",
+				TemplateSeedDNS:          []string{"10.97.160.160", "10.97.160.161"},
+				TemplateSeedSearchDomain: "ldschurch.org",
+			},
+			want: map[string]interface{}{
+				"ipconfig0":    "ip=10.61.148.2/24,gw=10.61.148.1",
+				"nameserver":   "10.97.160.160 10.97.160.161",
+				"searchdomain": "ldschurch.org",
+			},
+		},
+		{
+			name: "static no dns",
+			cfg: &Config{
+				TemplateSeedIP:      "10.61.148.2/24",
+				TemplateSeedGateway: "10.61.148.1",
+			},
+			want: map[string]interface{}{
+				"ipconfig0":  "ip=10.61.148.2/24,gw=10.61.148.1",
+				"nameserver": defaultPVECloudInitDNS,
+			},
+		},
+		{
+			name: "static no searchdomain",
+			cfg: &Config{
+				TemplateSeedIP:      "10.61.148.2/24",
+				TemplateSeedGateway: "10.61.148.1",
+				TemplateSeedDNS:     []string{"10.97.160.160"},
+			},
+			want: map[string]interface{}{
+				"ipconfig0":  "ip=10.61.148.2/24,gw=10.61.148.1",
+				"nameserver": "10.97.160.160",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildTemplateSeedNetParams(tc.cfg)
+
+			if len(got) != len(tc.want) {
+				t.Fatalf("buildTemplateSeedNetParams(%+v) returned %d keys %v, want %d keys %v",
+					tc.cfg, len(got), got, len(tc.want), tc.want)
+			}
+
+			for k, wantV := range tc.want {
+				gotV, ok := got[k]
+				if !ok {
+					t.Errorf("missing key %q in %v", k, got)
+
+					continue
+				}
+
+				if gotV != wantV {
+					t.Errorf("key %q = %v, want %v", k, gotV, wantV)
+				}
+			}
+
+			if _, ok := tc.want["searchdomain"]; !ok {
+				if _, present := got["searchdomain"]; present {
+					t.Errorf("searchdomain key must be absent, not empty-valued; got %v", got)
+				}
+			}
+		})
+	}
+}

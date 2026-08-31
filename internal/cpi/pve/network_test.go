@@ -460,6 +460,19 @@ type fakePVEClient struct {
 	postParams []map[string]interface{}
 	// postErr, when set, decides whether a given POST fails.
 	postErr func(path string, params map[string]interface{}) error
+
+	// putParams records the path and body of every PUT so tests can assert
+	// on both which config path was targeted and what was sent, not just
+	// the call count.
+	putParams []fakePUTCall
+	// putErr, when set, decides whether a given PUT fails.
+	putErr func(path string, params map[string]interface{}) error
+}
+
+// fakePUTCall records one PutCtx invocation's path and body.
+type fakePUTCall struct {
+	Path   string
+	Params map[string]interface{}
 }
 
 var errFakeReloadFailed = errors.New("fakePVEClient: network reload failed")
@@ -495,8 +508,15 @@ func (f *fakePVEClient) PostCtx(_ context.Context, path string, params map[strin
 	return nil, nil //nolint:nilnil // test stub
 }
 
-func (f *fakePVEClient) PutCtx(_ context.Context, _ string, _ map[string]interface{}) (interface{}, error) {
+func (f *fakePVEClient) PutCtx(_ context.Context, path string, params map[string]interface{}) (interface{}, error) {
 	f.putCalls++
+	f.putParams = append(f.putParams, fakePUTCall{Path: path, Params: params})
+
+	if f.putErr != nil {
+		if err := f.putErr(path, params); err != nil {
+			return nil, err
+		}
+	}
 
 	return nil, nil //nolint:nilnil // test stub
 }
