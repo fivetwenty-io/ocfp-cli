@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -276,25 +277,35 @@ type Config struct {
 	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
 	DiskStorage string `json:"disk_storage" mapstructure:"disk_storage" yaml:"disk_storage,omitempty"`
 	// TemplateBridge is the PVE bridge attached to template VMs during the
-	// auto-provision seed phase, which needs DHCP and internet egress for
-	// apt/cloud-init. PVE-specific. Defaults to "vmbr1"; hosts without a
-	// vmbr1 WAN bridge (e.g. nested labs) set this to their SDN vnet bridge.
-	TemplateBridge  string        `json:"template_bridge"   mapstructure:"template_bridge"   yaml:"template_bridge,omitempty"`
-	AccessKeyID     string        `json:"access_key_id"     mapstructure:"access_key_id"     yaml:"access_key_id,omitempty"`
-	SecretAccessKey string        `json:"secret_access_key" mapstructure:"secret_access_key" yaml:"secret_access_key,omitempty"`
-	SubscriptionID  string        `json:"subscription_id"   mapstructure:"subscription_id"   yaml:"subscription_id,omitempty"`
-	TenantID        string        `json:"tenant_id"         mapstructure:"tenant_id"         yaml:"tenant_id,omitempty"`
-	ClientID        string        `json:"client_id"         mapstructure:"client_id"         yaml:"client_id,omitempty"`
-	ClientSecret    string        `json:"client_secret"     mapstructure:"client_secret"     yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	AuthURL         string        `json:"auth_url"          mapstructure:"auth_url"          yaml:"auth_url,omitempty"`
-	Username        string        `json:"username"          mapstructure:"username"          yaml:"username,omitempty"`
-	Password        string        `json:"password"          mapstructure:"password"          yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	ProjectName     string        `json:"project_name"      mapstructure:"project_name"      yaml:"project_name,omitempty"`
-	DomainName      string        `json:"domain_name"       mapstructure:"domain_name"       yaml:"domain_name,omitempty"`
-	SessionToken    string        `json:"session_token"     mapstructure:"session_token"     yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
-	BastionIP       string        `json:"bastion_ip"        mapstructure:"bastion_ip"        yaml:"bastion_ip,omitempty"`
-	VPCCIDRBlock    string        `json:"vpc_cidr_block"    mapstructure:"vpc_cidr_block"    yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
-	Network         NetworkConfig `json:"network"           mapstructure:"network"           yaml:"network,omitempty"`
+	// auto-provision seed phase, which needs internet egress for
+	// apt/cloud-init (DHCP by default, or a static address via the
+	// TemplateSeed* fields below when the bridge has no DHCP). PVE-specific.
+	// Defaults to "vmbr1"; hosts without a vmbr1 WAN bridge (e.g. nested
+	// labs) set this to their SDN vnet bridge.
+	TemplateBridge string `json:"template_bridge" mapstructure:"template_bridge" yaml:"template_bridge,omitempty"`
+	// TemplateSeedIP, TemplateSeedGateway, TemplateSeedDNS, and
+	// TemplateSeedSearchDomain give the template seed VM a static network
+	// identity, used only when the TemplateBridge network has no DHCP.
+	// Empty TemplateSeedIP means DHCP, today's default behavior.
+	TemplateSeedIP           string        `json:"template_seed_ip"           mapstructure:"template_seed_ip"           yaml:"template_seed_ip,omitempty"`
+	TemplateSeedGateway      string        `json:"template_seed_gateway"      mapstructure:"template_seed_gateway"      yaml:"template_seed_gateway,omitempty"`
+	TemplateSeedDNS          []string      `json:"template_seed_dns"          mapstructure:"template_seed_dns"          yaml:"template_seed_dns,omitempty"`
+	TemplateSeedSearchDomain string        `json:"template_seed_searchdomain" mapstructure:"template_seed_searchdomain" yaml:"template_seed_searchdomain,omitempty"`
+	AccessKeyID              string        `json:"access_key_id"              mapstructure:"access_key_id"              yaml:"access_key_id,omitempty"`
+	SecretAccessKey          string        `json:"secret_access_key"          mapstructure:"secret_access_key"          yaml:"secret_access_key,omitempty"`
+	SubscriptionID           string        `json:"subscription_id"            mapstructure:"subscription_id"            yaml:"subscription_id,omitempty"`
+	TenantID                 string        `json:"tenant_id"                  mapstructure:"tenant_id"                  yaml:"tenant_id,omitempty"`
+	ClientID                 string        `json:"client_id"                  mapstructure:"client_id"                  yaml:"client_id,omitempty"`
+	ClientSecret             string        `json:"client_secret"              mapstructure:"client_secret"              yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthURL                  string        `json:"auth_url"                   mapstructure:"auth_url"                   yaml:"auth_url,omitempty"`
+	Username                 string        `json:"username"                   mapstructure:"username"                   yaml:"username,omitempty"`
+	Password                 string        `json:"password"                   mapstructure:"password"                   yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ProjectName              string        `json:"project_name"               mapstructure:"project_name"               yaml:"project_name,omitempty"`
+	DomainName               string        `json:"domain_name"                mapstructure:"domain_name"                yaml:"domain_name,omitempty"`
+	SessionToken             string        `json:"session_token"              mapstructure:"session_token"              yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	BastionIP                string        `json:"bastion_ip"                 mapstructure:"bastion_ip"                 yaml:"bastion_ip,omitempty"`
+	VPCCIDRBlock             string        `json:"vpc_cidr_block"             mapstructure:"vpc_cidr_block"             yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
+	Network                  NetworkConfig `json:"network"                    mapstructure:"network"                    yaml:"network,omitempty"`
 	// NetworkCatalog is this bloc's resolved netlayout strategy catalog
 	// (built-ins plus any Network.StrategyPaths definitions), built by
 	// LoadWithParams. Never serialized; nil until LoadWithParams runs, in
@@ -2077,7 +2088,7 @@ func validate(cfg *Config) error {
 }
 
 // validatePVE runs all PVE-specific validation steps: auth mode, VMID range,
-// and director/CF cloud-config CIDR pairing.
+// template seed network fields, and director/CF cloud-config CIDR pairing.
 func validatePVE(cfg *Config) error {
 	err := validatePVEAuth(cfg, os.Stderr)
 	if err != nil {
@@ -2085,6 +2096,11 @@ func validatePVE(cfg *Config) error {
 	}
 
 	err = validatePVEVMIDRange(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = validateTemplateSeedNet(cfg)
 	if err != nil {
 		return err
 	}
@@ -2180,6 +2196,107 @@ func validatePVEVMIDRange(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// validateTemplateSeedNet validates the template_seed_* fields for a PVE
+// bloc.
+//
+// Rules (template_seed_ip empty is the zero value, meaning DHCP — today's
+// behavior — and is always valid):
+//   - template_seed_ip empty: template_seed_gateway, template_seed_dns, and
+//     template_seed_searchdomain must also all be empty, else
+//     ErrTemplateSeedIPRequired.
+//   - template_seed_ip set: must parse as an IPv4 CIDR via netip.ParsePrefix.
+//     For a prefix shorter than /31, it must also be a host address —
+//     neither the network address nor the broadcast address of its own
+//     prefix. /31 (RFC 3021: both addresses are valid hosts) and /32 (a
+//     single-address, point-to-point assignment) have no distinct network
+//     or broadcast address to reject, so that check is skipped for them.
+//     Any violation is ErrTemplateSeedIPInvalid.
+//   - template_seed_gateway is required when template_seed_ip is set, must
+//     parse via netip.ParseAddr, must be contained in the template_seed_ip
+//     prefix (the gateway-outside-mask hazard buildPVEIPConfig documents),
+//     and must differ from template_seed_ip, else ErrTemplateSeedGatewayInvalid.
+//     Note: for a bare /32, containment can only ever hold for the address
+//     itself, which the distinctness check then rejects, so a /32 seed
+//     address cannot yet express an off-link point-to-point gateway; that
+//     is a known residual gap, not a rule this function enforces on purpose.
+//   - Every template_seed_dns entry must parse via netip.ParseAddr, else
+//     ErrTemplateSeedDNSInvalid.
+func validateTemplateSeedNet(cfg *Config) error {
+	if cfg.TemplateSeedIP == "" {
+		if cfg.TemplateSeedGateway != "" || len(cfg.TemplateSeedDNS) > 0 || cfg.TemplateSeedSearchDomain != "" {
+			return ErrTemplateSeedIPRequired
+		}
+
+		return nil
+	}
+
+	prefix, err := netip.ParsePrefix(cfg.TemplateSeedIP)
+	if err != nil || !prefix.Addr().Is4() {
+		return fmt.Errorf("%w: %q", ErrTemplateSeedIPInvalid, cfg.TemplateSeedIP)
+	}
+
+	seedAddr := prefix.Addr()
+
+	// /31 and /32 prefixes have no address excluded as "network" or
+	// "broadcast": RFC 3021 makes both /31 addresses valid hosts, and a
+	// /32 is a single host address with no room for either concept.
+	if prefix.Bits() < 31 {
+		masked := prefix.Masked()
+
+		if seedAddr == masked.Addr() {
+			return fmt.Errorf("%w: %q is the network address of its prefix", ErrTemplateSeedIPInvalid, cfg.TemplateSeedIP)
+		}
+
+		if seedAddr == lastAddrInPrefix(masked) {
+			return fmt.Errorf("%w: %q is the broadcast address of its prefix", ErrTemplateSeedIPInvalid, cfg.TemplateSeedIP)
+		}
+	}
+
+	if cfg.TemplateSeedGateway == "" {
+		return fmt.Errorf("%w: template_seed_ip %q set without template_seed_gateway", ErrTemplateSeedGatewayInvalid, cfg.TemplateSeedIP)
+	}
+
+	gateway, err := netip.ParseAddr(cfg.TemplateSeedGateway)
+	if err != nil {
+		return fmt.Errorf("%w: %q", ErrTemplateSeedGatewayInvalid, cfg.TemplateSeedGateway)
+	}
+
+	if !prefix.Contains(gateway) {
+		return fmt.Errorf("%w: %q is outside prefix %q", ErrTemplateSeedGatewayInvalid, cfg.TemplateSeedGateway, cfg.TemplateSeedIP)
+	}
+
+	if gateway == seedAddr {
+		return fmt.Errorf("%w: %q equals template_seed_ip", ErrTemplateSeedGatewayInvalid, cfg.TemplateSeedGateway)
+	}
+
+	for _, dns := range cfg.TemplateSeedDNS {
+		if _, err := netip.ParseAddr(dns); err != nil {
+			return fmt.Errorf("%w: %q", ErrTemplateSeedDNSInvalid, dns)
+		}
+	}
+
+	return nil
+}
+
+// lastAddrInPrefix returns the highest address in a masked IPv4 prefix (the
+// broadcast address), used to reject it as a template seed host address.
+func lastAddrInPrefix(masked netip.Prefix) netip.Addr {
+	base := masked.Addr().As4()
+
+	bits := masked.Bits()
+	hostBits := 32 - bits
+
+	// Set every host bit to 1 by OR-ing in the inverse of the network mask,
+	// byte by byte, from the least significant end.
+	for i := range hostBits {
+		byteIdx := 3 - i/8
+		bitIdx := uint(i % 8)
+		base[byteIdx] |= 1 << bitIdx
+	}
+
+	return netip.AddrFrom4(base)
 }
 
 // GetLogDir returns the log directory path. Resolves under StateHome(),
