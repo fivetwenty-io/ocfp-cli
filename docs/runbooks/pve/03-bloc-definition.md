@@ -65,9 +65,15 @@ Vault exists in chapter 7.
     disk_storage: local-lvm-data
     iso_storage:  local
     template_bridge: ocfp
+    # template_seed_ip: 10.108.16.2/20
+    # template_seed_gateway: 10.108.16.1
+    # template_seed_dns:
+    #   - 10.97.160.160
+    #   - 10.97.160.161
+    # template_seed_searchdomain: ldschurch.org
 ```
 
-These four lines aim the CPI at the pools we validated in chapter 2: VM
+The first four lines aim the CPI at the pools we validated in chapter 2: VM
 disks and persistent disks on the LVM-thin pool, images on `local`. The
 `iso_storage` pool must advertise the right content types
 (`pmx pve storage set local --content vztmpl,iso,import,backup,snippets` —
@@ -77,7 +83,14 @@ PVE's default cloud-init, and the bastion's Tailscale setup is silently
 skipped.
 `template_bridge` tells template auto-provisioning where seed VMs get DHCP
 and internet — our SDN's infra subnet provides both, so the `ocfp` vnet
-serves double duty.
+serves double duty. See below for what to set instead when the template
+bridge has no DHCP.
+
+The remaining lines, commented out above because our own `ocfp` vnet already has DHCP, show the shape to use when the template bridge does not. Uncomment `template_seed_ip` and set the four `template_seed_*` keys so the seed VM gets a static network identity instead of DHCP. These four keys are all-or-nothing: uncommenting `template_seed_gateway`, `template_seed_dns`, or `template_seed_searchdomain` without also setting `template_seed_ip` is a hard config load error.
+
+The address must be a dedicated, otherwise unused, host address in the bridge's subnet, recorded in the bloc's reserved-IP plan. The example above borrows the offset-2 convention from our own reserved-IP table (`.16.1` gateway, `.16.3` bastion), so substitute a spare address from your own template bridge's subnet, not this one, since the template bridge is commonly a different network than the bloc's own bridge. The gateway must be on-link within the given prefix.
+
+Resolvers try `template_seed_dns` first, then fall back to `network.dns_servers`, then, if neither is set, to a hardcoded public default (`1.1.1.1 8.8.8.8`), worth setting explicitly on an air-gapped or egress-filtered lab, where that public default cannot resolve anything.
 
 ### Network
 

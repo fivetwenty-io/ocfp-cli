@@ -248,10 +248,7 @@ The catalog names are case-sensitive, and we choose by role:
   needs no first-boot magic.
 
 - `ubuntu-noble-bastion-template`
-  The same image with the OCFP firstboot and watchdog units pre-baked —
-  required for Tailscale-enabled bastions. Its first build on a cluster takes
-  a few extra minutes while OCFP drives the serial console to prepare it;
-  every later bastion clones in about thirty seconds.
+  The same image with the OCFP firstboot and watchdog units pre-baked, required for Tailscale-enabled bastions. Its first build on a cluster takes a few extra minutes while OCFP drives the serial console to prepare it; every later bastion clones in about thirty seconds. That seed boot uses DHCP by default, or a static network identity when the bloc config sets the `template_seed_*` keys, needed when the template bridge itself has no DHCP (chapter 3).
 
 We do nothing now except make sure our bloc config (next chapter) names a
 catalog entry. The provisioning happens lazily, on first use, and it is
