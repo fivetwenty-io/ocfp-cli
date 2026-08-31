@@ -57,6 +57,11 @@ func NewProvider(config interface{}) (cpi.Provider, error) {
 			Timeout:        0,
 			MaxRetries:     0,
 
+			TemplateSeedIP:           getString(cfg, "template_seed_ip"),
+			TemplateSeedGateway:      getString(cfg, "template_seed_gateway"),
+			TemplateSeedDNS:          getStringSlice(cfg, "template_seed_dns"),
+			TemplateSeedSearchDomain: getString(cfg, "template_seed_searchdomain"),
+
 			BlobstoreMode:      getString(cfg, "blobstore_mode"),
 			BlobstoreEndpoint:  getString(cfg, "blobstore_endpoint"),
 			BlobstoreRegion:    getString(cfg, "blobstore_region"),
@@ -94,6 +99,36 @@ func getString(m map[string]interface{}, key string) string {
 	}
 
 	return ""
+}
+
+// getStringSlice safely gets a string slice from a map. Accepts both a
+// native []string (the shape produced by config.Config field forwarding in
+// addPVEProviderConfig) and a []interface{} (the shape produced when the map
+// arrives via a generic YAML/JSON decode). Non-string elements in a
+// []interface{} are skipped rather than causing a type-assertion panic.
+// Absent keys, or values of any other type, return nil.
+func getStringSlice(m map[string]interface{}, key string) []string {
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+
+	switch vals := v.(type) {
+	case []string:
+		return vals
+	case []interface{}:
+		out := make([]string, 0, len(vals))
+
+		for _, item := range vals {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+
+		return out
+	default:
+		return nil
+	}
 }
 
 // firstNonEmpty returns the first non-empty string in the argument list, or "".
