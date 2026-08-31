@@ -31,6 +31,27 @@ var (
 	// and vmid_range_end values are inconsistent: end must be greater than start,
 	// both must be positive, and end must not exceed the PVE maximum (999999999).
 	ErrPVEVMIDRangeInvalid = errors.New("pve config: vmid_range_end must be > vmid_range_start > 0 and <= 999999999")
+
+	// ErrTemplateSeedIPRequired is returned when template_seed_gateway,
+	// template_seed_dns, or template_seed_searchdomain is set without
+	// template_seed_ip. The gateway/dns/searchdomain fields only make sense
+	// alongside a static seed address; DHCP mode (the zero value) leaves all
+	// four fields empty.
+	ErrTemplateSeedIPRequired = errors.New("pve config: template_seed_gateway/dns/searchdomain require template_seed_ip")
+
+	// ErrTemplateSeedIPInvalid is returned when template_seed_ip fails to
+	// parse as an IPv4 CIDR, or names the network or broadcast address of
+	// its own prefix rather than a host address.
+	ErrTemplateSeedIPInvalid = errors.New("pve config: template_seed_ip must be a valid IPv4 host address in CIDR notation, choose an address reserved for template seeding, outside every static and dynamic band")
+
+	// ErrTemplateSeedGatewayInvalid is returned when template_seed_ip is set
+	// but template_seed_gateway is missing, fails to parse, falls outside
+	// the template_seed_ip prefix, or equals template_seed_ip.
+	ErrTemplateSeedGatewayInvalid = errors.New("pve config: template_seed_gateway is required with template_seed_ip, must be a valid IP contained in the template_seed_ip prefix, and must differ from template_seed_ip")
+
+	// ErrTemplateSeedDNSInvalid is returned when a template_seed_dns entry
+	// fails to parse as an IP address.
+	ErrTemplateSeedDNSInvalid = errors.New("pve config: template_seed_dns entries must be valid IP addresses")
 )
 
 // ErrBlocNotFound returns an error indicating the specified bloc was not found in the configuration file.
