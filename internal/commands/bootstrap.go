@@ -478,6 +478,25 @@ func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Con
 		providerConfig["template_bridge"] = cfg.TemplateBridge
 	}
 
+	if cfg.TemplateSeedIP != "" {
+		providerConfig["template_seed_ip"] = cfg.TemplateSeedIP
+
+		// Guard each key by its own non-empty check, matching every other
+		// field in this function, so an unset optional field is simply
+		// absent from the map rather than forwarded as an empty string.
+		if cfg.TemplateSeedGateway != "" {
+			providerConfig["template_seed_gateway"] = cfg.TemplateSeedGateway
+		}
+
+		if cfg.TemplateSeedSearchDomain != "" {
+			providerConfig["template_seed_searchdomain"] = cfg.TemplateSeedSearchDomain
+		}
+
+		if dns := resolveTemplateSeedDNS(cfg); len(dns) > 0 {
+			providerConfig["template_seed_dns"] = dns
+		}
+	}
+
 	// default_storage drives where template auto-provisioning places VM
 	// disks; resolve it the same way configureCPI resolves vm_storage.
 	if cfg.VMStorage != "" {
@@ -493,6 +512,26 @@ func addPVEProviderConfig(providerConfig map[string]interface{}, cfg *config.Con
 	// VerifySSL is always passed so the provider sees an explicit value
 	// (defaults to false in the bloc Config zero value).
 	providerConfig["verify_ssl"] = cfg.VerifySSL
+}
+
+// resolveTemplateSeedDNS returns the resolver list to forward as
+// template_seed_dns. Explicit TemplateSeedDNS always wins; otherwise fall
+// back to the bloc's Network.DNSServers so the seed VM uses the same
+// resolvers as the rest of the bloc. Returns nil when neither is set, in
+// which case the pve provider applies its own default
+// (defaultPVECloudInitDNS). This keeps the provider ignorant of bloc network
+// structure, mirroring how resolveBastionDNSServers resolves DNS on the
+// bootstrap side.
+func resolveTemplateSeedDNS(cfg *config.Config) []string {
+	if len(cfg.TemplateSeedDNS) > 0 {
+		return cfg.TemplateSeedDNS
+	}
+
+	if len(cfg.Network.DNSServers) > 0 {
+		return cfg.Network.DNSServers
+	}
+
+	return nil
 }
 
 // addServiceAccountConfig adds service account configuration to provider config.
