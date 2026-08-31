@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/nodes"
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/qemu"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -213,7 +215,16 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 // it, drives the firstboot+watchdog seed via termproxy, and waits for the VM
 // to halt cleanly. The VM stays in `stopped` state on return so the caller
 // can `qm template` it.
-func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, vmid int) error {
+//
+// Once the seed PUT below succeeds, the VM's config carries the seed network
+// identity — in static mode, the reserved seed address. Every exit from
+// this point on is covered by the deferred recovery armed right after that
+// PUT: on any non-nil return it force-stops the VM and, in static mode,
+// resets the address-bearing keys, so a failure partway through (the start,
+// the multi-minute termproxy/apt step, or the force-stop fallback) can
+// never strand a live VM holding the reserved address (C1 in the
+// static-seed adversarial review).
+func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, vmid int) (err error) {
 	log := logger.WithOperation("seedBastionTemplate")
 
 	// Generate a fresh one-shot password per template build. The
@@ -224,10 +235,21 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 		return fmt.Errorf("generate seed password: %w", err)
 	}
 
-	// Update the VM config with the credentials + DHCP needed for termproxy
-	// login and apt internet egress. These are wiped by `cloud-init clean`
-	// inside the seed; cloned VMs get their own ciuser/cipassword from the
-	// bloc config.
+	// Update the VM config with the credentials and network identity needed
+	// for termproxy login and apt internet egress. `cloud-init clean`, run
+	// later in this same function, wipes guest-side state only — it does
+	// not touch these PVE VM config keys. ciuser, cipassword, ipconfig0,
+	// and net0 all persist in the template VM config after convert-to-
+	// template. buildPVEDirectCloudInitConfig writes ipconfig0 (via
+	// buildPVEIPConfig, which never returns empty) and nameserver
+	// unconditionally on every OCFP clone, so no clone inherits the seed's
+	// address or resolvers. net0 and ciuser are guarded there by
+	// `req.NetworkID != ""` and `req.DefaultUsername != ""`: a clone request
+	// that omits either one inherits the template's net0 (the seed's
+	// template bridge) or ciuser instead of getting its own. searchdomain
+	// is never written by the clone path at all. cipassword also survives
+	// into the template unmodified; that pre-existing residue is out of
+	// scope here.
 	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
 	// Override net0 to use the template bridge (default vmbr1, the classic
@@ -235,18 +257,50 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	// without one) for the template build phase. The bloc's own bridge
 	// typically doesn't run DHCP — VMs there use static IPs from state —
 	// so the template VM can't reach apt without an internet-capable
-	// bridge during seed. The seed bridge is wiped from the template
-	// config below before convert-to-template via cloud-init clean so
-	// cloned VMs get the per-bloc bridge from their own InstanceRequest.
-	_, err = m.client.pveClient.PutCtx(ctx, configPath, map[string]interface{}{
+	// bridge during seed. ipconfig0 (and, in static mode, nameserver and
+	// searchdomain) come from buildTemplateSeedNetParams: DHCP by default,
+	// or a static address when template_seed_ip is configured because the
+	// template bridge itself has no DHCP. In static mode, the cleanup PUT
+	// below (and the recovery path armed right after this PUT succeeds)
+	// resets ipconfig0 to DHCP and deletes whichever of nameserver /
+	// searchdomain the seed actually set (derived from seedNetParams, never
+	// hardcoded — see templateSeedCleanupParams), since a non-OCFP clone (a
+	// manual `qm clone` or the PVE UI) would otherwise boot straight onto
+	// the reserved seed address.
+	seedNetParams := buildTemplateSeedNetParams(m.client.config)
+
+	params := map[string]interface{}{
 		"ciuser":     templateSeedCIUser,
 		"cipassword": password,
-		"ipconfig0":  "ip=dhcp",
 		"net0":       "virtio,bridge=" + m.client.config.TemplateBridge,
-	})
+	}
+
+	for k, v := range seedNetParams {
+		params[k] = v
+	}
+
+	_, err = m.client.pveClient.PutCtx(ctx, configPath, params)
 	if err != nil {
 		return fmt.Errorf("seed config PUT: %w", err)
 	}
+
+	// From here on, arm best-effort recovery on every remaining exit path.
+	// It never destroys the VM: ProvisionTemplate owns the VMID lifecycle,
+	// and leaving the VM stopped (rather than destroyed) keeps its serial
+	// console available for diagnosing the failure, which matters because
+	// the most common failure is the multi-minute termproxy/apt step timing
+	// out. A recovery failure is appended to, never substituted for, the
+	// original error — the caller must still see what actually went wrong.
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		if recoverErr := m.recoverFailedSeed(ctx, node, vmid, configPath, seedNetParams); recoverErr != nil {
+			log.Warnf("seed recovery after failure: %v", recoverErr)
+			err = fmt.Errorf("%w (seed recovery also failed: %w)", err, recoverErr)
+		}
+	}()
 
 	qemuSvc := m.client.getQemuService()
 
@@ -264,26 +318,189 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 
 	log.Infof("template VM %d booted; running seed via termproxy", vmid)
 
-	if err := m.seedTemplateVM(ctx, node, vmid, password); err != nil {
+	if err := m.runSeedTemplateVM(ctx, node, vmid, password); err != nil {
 		return fmt.Errorf("seed termproxy: %w", err)
 	}
 
 	// Wait for the guest's `shutdown -h now` to actually halt the VM.
-	if err := waitForVMStopped(ctx, m.client, node, vmid, 120*time.Second); err != nil {
-		// Fallback: force stop if the guest never finished shutting down.
-		log.Warnf("seed VM did not stop within deadline; forcing stop: %v", err)
+	if stopErr := waitForVMStopped(ctx, m.client, node, vmid, 120*time.Second); stopErr != nil {
+		// Fallback: force stop if the guest never finished shutting down,
+		// then re-verify the VM actually reached `stopped` before
+		// proceeding. PVE records config changes made to a running VM in
+		// the config's [PENDING] section and returns success rather than
+		// erroring, so issuing the cleanup PUT below against a VM that
+		// never actually stopped would silently leave the live seed
+		// address in the active config (M1 in the static-seed adversarial
+		// review).
+		log.Warnf("seed VM did not stop within deadline; forcing stop: %v", stopErr)
 
-		stopUPID, stopErr := qemuSvc.Stop(ctx, node, vmid)
-		if stopErr != nil {
-			return fmt.Errorf("seed force stop: %w", stopErr)
+		if err := stopVMAndVerify(ctx, m.client, qemuSvc, node, vmid, 30*time.Second); err != nil {
+			return fmt.Errorf("seed force stop: %w", err)
 		}
+	}
 
-		if stopUPID != "" {
-			_ = m.client.waitForTask(ctx, node, stopUPID, 30)
+	// Static mode only: the VM is confirmed stopped (either by
+	// waitForVMStopped above or by stopVMAndVerify's own re-check), so
+	// reset the address-bearing keys before ProvisionTemplate converts to a
+	// template. templateSeedCleanupParams derives the delete list from
+	// seedNetParams — the same map the seed PUT above actually sent — so
+	// the cleanup never asks PVE to delete a key the seed never set. A
+	// failure here is a hard error: a template carrying a live reserved
+	// address is worse than a failed provision.
+	if m.client.config.TemplateSeedIP != "" {
+		_, err = m.client.pveClient.PutCtx(ctx, configPath, templateSeedCleanupParams(seedNetParams))
+		if err != nil {
+			return fmt.Errorf("seed cleanup PUT: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// recoverFailedSeed runs from seedBastionTemplate's deferred recovery
+// handler when the function is about to return an error after the seed PUT
+// already gave the VM its seed network identity. Best-effort: it stops the
+// VM (skipping the stop call entirely if it is already stopped) and, in
+// static mode, resets the address-bearing keys the seed wrote, so a failed
+// run never strands a live host holding the reserved seed address (C1 in
+// the static-seed adversarial review). It deliberately does not destroy the
+// VM — see the seedBastionTemplate doc comment for why — so a caller
+// investigating a failed build can still open the serial console.
+func (m *ComputeManager) recoverFailedSeed(ctx context.Context, node string, vmid int, configPath string, seedNetParams map[string]interface{}) error {
+	qemuSvc := m.client.getQemuService()
+
+	status, statusErr := qemuSvc.Status(ctx, node, vmid)
+	if statusErr != nil || !vmIsStopped(status) {
+		if err := stopVMAndVerify(ctx, m.client, qemuSvc, node, vmid, 30*time.Second); err != nil {
+			return fmt.Errorf("recovery stop: %w", err)
+		}
+	}
+
+	if m.client.config.TemplateSeedIP == "" {
+		return nil
+	}
+
+	_, err := m.client.pveClient.PutCtx(ctx, configPath, templateSeedCleanupParams(seedNetParams))
+	if err != nil {
+		return fmt.Errorf("recovery cleanup PUT: %w", err)
+	}
+
+	return nil
+}
+
+// stopVMAndVerify force-stops a VM, waits for the stop task if PVE returned
+// one rather than discarding its result, and confirms the VM actually
+// reached `stopped` before returning. A stop task that fails or times out,
+// or a VM still running after it completes, both surface as an error
+// instead of being treated as success (M1 in the static-seed adversarial
+// review).
+func stopVMAndVerify(ctx context.Context, c *Client, qemuSvc qemu.Service, node string, vmid int, verifyTimeout time.Duration) error {
+	stopUPID, err := qemuSvc.Stop(ctx, node, vmid)
+	if err != nil {
+		return fmt.Errorf("stop: %w", err)
+	}
+
+	if stopUPID != "" {
+		if err := c.waitForTask(ctx, node, stopUPID, 30); err != nil {
+			return fmt.Errorf("await stop task: %w", err)
+		}
+	}
+
+	if err := waitForVMStopped(ctx, c, node, vmid, verifyTimeout); err != nil {
+		return fmt.Errorf("verify stopped: %w", err)
+	}
+
+	return nil
+}
+
+// runSeedTemplateVM invokes seedTemplateVM, or the test-only override in
+// seedTemplateVMFunc when one is set. The seam exists because seedTemplateVM
+// drives real termproxy network I/O; tests substitute a fake here rather
+// than touching the network.
+func (m *ComputeManager) runSeedTemplateVM(ctx context.Context, node string, vmid int, password string) error {
+	if m.seedTemplateVMFunc != nil {
+		return m.seedTemplateVMFunc(ctx, node, vmid, password)
+	}
+
+	return m.seedTemplateVM(ctx, node, vmid, password)
+}
+
+// buildTemplateSeedNetParams returns the ipconfig0 (and, in static mode,
+// nameserver and searchdomain) PVE config keys for the template seed VM.
+//
+// cfg.TemplateSeedIP == "" (the zero value) means DHCP: this reproduces
+// exactly today's seed PUT map when merged with the ciuser/cipassword/net0
+// keys in seedBastionTemplate. Every existing bloc, which has none of the
+// template_seed_* fields set, is unaffected by this change.
+//
+// cfg.TemplateSeedIP != "" means static mode: the bloc's template_bridge
+// network has no DHCP, so the seed VM needs an explicit address, gateway,
+// and resolvers to reach apt over the internet. The caller
+// (validateTemplateSeedNet, at bloc load time) has already rejected
+// malformed values, and both provider construction paths (register.go's
+// map branch and client.go's parsePVEConfig) receive validated config, so
+// this helper trusts its input without re-validating.
+//
+// The returned map is also the single source of truth for what the seed
+// actually set: templateSeedCleanupParams derives its delete list from it,
+// so the two never drift out of sync.
+func buildTemplateSeedNetParams(cfg *Config) map[string]interface{} {
+	if cfg.TemplateSeedIP == "" {
+		return map[string]interface{}{
+			"ipconfig0": "ip=dhcp",
+		}
+	}
+
+	params := map[string]interface{}{
+		"ipconfig0": "ip=" + cfg.TemplateSeedIP + ",gw=" + cfg.TemplateSeedGateway,
+	}
+
+	if len(cfg.TemplateSeedDNS) > 0 {
+		params["nameserver"] = strings.Join(cfg.TemplateSeedDNS, " ")
+	} else {
+		params["nameserver"] = defaultPVECloudInitDNS
+	}
+
+	if cfg.TemplateSeedSearchDomain != "" {
+		params["searchdomain"] = cfg.TemplateSeedSearchDomain
+	}
+
+	return params
+}
+
+// templateSeedCleanupKeys are the network keys buildTemplateSeedNetParams
+// can write in static mode, other than ipconfig0 (which the cleanup PUT
+// resets to DHCP rather than deletes), and so are eligible for the cleanup
+// PUT's `delete` parameter.
+var templateSeedCleanupKeys = []string{"nameserver", "searchdomain"}
+
+// templateSeedCleanupParams returns the PVE PUT body that undoes a static
+// seed's network identity before convert-to-template: ipconfig0 resets to
+// DHCP, and `delete` names only the keys setParams actually contains among
+// templateSeedCleanupKeys — never a key the seed never set (M3 in the
+// static-seed adversarial review; PVE's `delete` parameter takes a
+// comma-separated key list). setParams is expected to be the exact map
+// buildTemplateSeedNetParams returned for the seed PUT, so the two stay in
+// sync by construction rather than by two independently hand-maintained
+// lists.
+func templateSeedCleanupParams(setParams map[string]interface{}) map[string]interface{} {
+	toDelete := make([]string, 0, len(templateSeedCleanupKeys))
+
+	for _, k := range templateSeedCleanupKeys {
+		if _, ok := setParams[k]; ok {
+			toDelete = append(toDelete, k)
+		}
+	}
+
+	params := map[string]interface{}{
+		"ipconfig0": "ip=dhcp",
+	}
+
+	if len(toDelete) > 0 {
+		params["delete"] = strings.Join(toDelete, ",")
+	}
+
+	return params
 }
 
 // waitForVMStopped polls qemu status until the VM reports `stopped` or the
@@ -294,10 +511,8 @@ func waitForVMStopped(ctx context.Context, c *Client, node string, vmid int, tim
 
 	for time.Now().Before(deadline) {
 		status, err := qemuSvc.Status(ctx, node, vmid)
-		if err == nil && status != nil {
-			if s, ok := status["status"].(string); ok && s == "stopped" {
-				return nil
-			}
+		if err == nil && vmIsStopped(status) {
+			return nil
 		}
 
 		select {
@@ -308,6 +523,18 @@ func waitForVMStopped(ctx context.Context, c *Client, node string, vmid int, tim
 	}
 
 	return fmt.Errorf("timeout waiting for vmid %d to stop", vmid) //nolint:err113 // descriptive error, not caller-testable
+}
+
+// vmIsStopped reports whether a qemu Status response's "status" field reads
+// "stopped".
+func vmIsStopped(status map[string]interface{}) bool {
+	if status == nil {
+		return false
+	}
+
+	s, ok := status["status"].(string)
+
+	return ok && s == "stopped"
 }
 
 // createTemplateVM creates the VM that will become the template. The
