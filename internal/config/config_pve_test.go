@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -358,4 +360,240 @@ func TestValidate_PVENetworkPairing_OneEmptySkips(t *testing.T) {
 	err := validate(cfg)
 
 	require.NoError(t, err, "single CIDR set must not trigger network pairing error")
+}
+
+// --- Template seed network validation tests ---
+
+// minimalPVEConfigWithTemplateSeed returns a Config with PVE token auth
+// populated and the supplied template_seed_* fields set.
+func minimalPVEConfigWithTemplateSeed(ip, gateway string, dns []string, searchDomain string) *Config {
+	return &Config{
+		Name:                     "test-pve",
+		Provider:                 "pve",
+		AuthToken:                "root@pam!tok",
+		TokenSecret:              "secret",
+		TemplateSeedIP:           ip,
+		TemplateSeedGateway:      gateway,
+		TemplateSeedDNS:          dns,
+		TemplateSeedSearchDomain: searchDomain,
+	}
+}
+
+// TestValidateTemplateSeedNet exercises validateTemplateSeedNet's full
+// decision table: DHCP mode (all empty), a fully valid static configuration
+// shaped after the CHC lab bloc, and every invalid combination it must reject.
+func TestValidateTemplateSeedNet(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		ip           string
+		gateway      string
+		dns          []string
+		searchDomain string
+		wantErr      error
+	}{
+		{
+			name: "all empty is valid DHCP mode",
+		},
+		{
+			name:         "full valid CHC-shaped config",
+			ip:           "10.61.148.2/24",
+			gateway:      "10.61.148.1",
+			dns:          []string{"10.97.160.160", "10.97.160.161"},
+			searchDomain: "ldschurch.org",
+		},
+		{
+			name:    "gateway without ip fails",
+			gateway: "10.61.148.1",
+			wantErr: ErrTemplateSeedIPRequired,
+		},
+		{
+			name:    "dns without ip fails",
+			dns:     []string{"10.97.160.160"},
+			wantErr: ErrTemplateSeedIPRequired,
+		},
+		{
+			name:         "searchdomain without ip fails",
+			searchDomain: "ldschurch.org",
+			wantErr:      ErrTemplateSeedIPRequired,
+		},
+		{
+			name:    "bare ip without prefix fails",
+			ip:      "10.61.148.2",
+			gateway: "10.61.148.1",
+			wantErr: ErrTemplateSeedIPInvalid,
+		},
+		{
+			name:    "network address of its own prefix fails",
+			ip:      "10.61.148.0/24",
+			gateway: "10.61.148.1",
+			wantErr: ErrTemplateSeedIPInvalid,
+		},
+		{
+			name:    "broadcast address of its own prefix fails",
+			ip:      "10.61.148.255/24",
+			gateway: "10.61.148.1",
+			wantErr: ErrTemplateSeedIPInvalid,
+		},
+		{
+			name:    "missing gateway fails",
+			ip:      "10.61.148.2/24",
+			wantErr: ErrTemplateSeedGatewayInvalid,
+		},
+		{
+			name:    "gateway outside prefix fails",
+			ip:      "10.61.148.2/26",
+			gateway: "10.61.149.1",
+			wantErr: ErrTemplateSeedGatewayInvalid,
+		},
+		{
+			name:    "gateway equal to ip fails",
+			ip:      "10.61.148.2/24",
+			gateway: "10.61.148.2",
+			wantErr: ErrTemplateSeedGatewayInvalid,
+		},
+		{
+			name:    "unparseable gateway fails",
+			ip:      "10.61.148.2/24",
+			gateway: "not-an-ip",
+			wantErr: ErrTemplateSeedGatewayInvalid,
+		},
+		{
+			name:    "bad dns entry fails",
+			ip:      "10.61.148.2/24",
+			gateway: "10.61.148.1",
+			dns:     []string{"10.97.160.160", "not-an-ip"},
+			wantErr: ErrTemplateSeedDNSInvalid,
+		},
+		{
+			// RFC 3021: a /31 has no network or broadcast address, both
+			// addresses are valid hosts, and each is on-link to the other.
+			name:    "/31 lower address as ip, upper address as gateway is valid",
+			ip:      "10.0.0.0/31",
+			gateway: "10.0.0.1",
+		},
+		{
+			name:    "/31 upper address as ip, lower address as gateway is valid",
+			ip:      "10.0.0.1/31",
+			gateway: "10.0.0.0",
+		},
+		{
+			// A bare /32 has no distinct network or broadcast address either
+			// (masking it changes nothing), so it must not be rejected on
+			// that basis the way a /24's .0 or .255 would be. It still
+			// fails today, on ErrTemplateSeedGatewayInvalid rather than
+			// ErrTemplateSeedIPInvalid: gateway containment requires the
+			// gateway to be inside the /32, which only the seed address
+			// itself satisfies, and the seed address is barred as its own
+			// gateway. Full off-link point-to-point support for /32 is a
+			// known residual gap (see the function doc comment), not
+			// something this test claims is fixed.
+			name:    "/32 skips the network/broadcast rejection, still fails on gateway containment",
+			ip:      "10.61.148.2/32",
+			gateway: "10.61.148.1",
+			wantErr: ErrTemplateSeedGatewayInvalid,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := minimalPVEConfigWithTemplateSeed(tc.ip, tc.gateway, tc.dns, tc.searchDomain)
+			err := validateTemplateSeedNet(cfg)
+
+			if tc.wantErr == nil {
+				require.NoError(t, err, "expected no error for %s", tc.name)
+
+				return
+			}
+
+			require.Error(t, err, "expected error for %s", tc.name)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+}
+
+// TestValidate_Integration_PVE_TemplateSeedNetWired asserts that validate()
+// propagates ErrTemplateSeedIPRequired for a PVE bloc with the gateway set
+// but no template_seed_ip, confirming validateTemplateSeedNet is wired into
+// the validatePVE chain.
+func TestValidate_Integration_PVE_TemplateSeedNetWired(t *testing.T) {
+	t.Parallel()
+
+	cfg := minimalPVEConfigWithTemplateSeed("", "10.61.148.1", nil, "")
+
+	err := validate(cfg)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTemplateSeedIPRequired)
+}
+
+// TestValidate_Integration_PVE_TemplateSeedNetValid asserts that validate()
+// returns nil for a PVE bloc with a fully valid static template seed
+// configuration.
+func TestValidate_Integration_PVE_TemplateSeedNetValid(t *testing.T) {
+	t.Parallel()
+
+	cfg := minimalPVEConfigWithTemplateSeed(
+		"10.61.148.2/24", "10.61.148.1",
+		[]string{"10.97.160.160", "10.97.160.161"}, "ldschurch.org",
+	)
+
+	err := validate(cfg)
+
+	require.NoError(t, err)
+}
+
+// Note: an earlier TestConfig_TemplateSeedFields_ZeroValueSafe asserted
+// only that `var cfg Config` has the four template_seed_* fields at their
+// Go zero value, which cannot fail for any implementation (Go guarantees
+// zero values) and was removed as tautological (m6 in the static-seed
+// adversarial review). Its intended purpose — pinning the DHCP-by-default
+// backward-compatibility contract — is what
+// TestSeedBastionTemplate_MergedPUT_DHCPMode in templates_test.go actually
+// verifies, end to end, against the real merged PUT body.
+
+// TestConfig_TemplateSeedFields_YAMLRoundTrip verifies the four
+// template_seed_* snake_case YAML keys bind to the correct Config fields
+// through a full bloc load, guarding the tag spelling — especially
+// template_seed_searchdomain, easy to typo against the "search_domain" or
+// "searchDomain" forms a reader might expect.
+func TestConfig_TemplateSeedFields_YAMLRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	yml := []byte("" +
+		"blocs:\n" +
+		"  chc-lab:\n" +
+		"    provider: pve\n" +
+		"    api_endpoint: https://pve.example.com:8006\n" +
+		"    auth_token: root@pam!tok\n" +
+		"    token_secret: secret\n" +
+		"    region: pve01\n" +
+		"    template_bridge: vlan54\n" +
+		"    template_seed_ip: 10.61.148.2/24\n" +
+		"    template_seed_gateway: 10.61.148.1\n" +
+		"    template_seed_dns:\n" +
+		"      - 10.97.160.160\n" +
+		"      - 10.97.160.161\n" +
+		"    template_seed_searchdomain: ldschurch.org\n")
+
+	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadWithParams(cfgPath, "chc-lab")
+	if err != nil {
+		t.Fatalf("LoadWithParams: %v", err)
+	}
+
+	assert.Equal(t, "10.61.148.2/24", cfg.TemplateSeedIP)
+	assert.Equal(t, "10.61.148.1", cfg.TemplateSeedGateway)
+	assert.Equal(t, []string{"10.97.160.160", "10.97.160.161"}, cfg.TemplateSeedDNS)
+	assert.Equal(t, "ldschurch.org", cfg.TemplateSeedSearchDomain)
 }
