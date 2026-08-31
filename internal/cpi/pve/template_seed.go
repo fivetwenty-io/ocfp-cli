@@ -77,7 +77,11 @@ func generateSeedPassword() (string, error) {
 //   - ciuser = templateSeedCIUser
 //   - cipassword = (the password argument passed here)
 //   - serial0 = socket
-//   - ipconfig0 = ip=dhcp (or whatever lets apt reach the internet)
+//   - ipconfig0 = ip=dhcp, or a static ip=/gw= pair when the template
+//     bridge has no DHCP (whatever lets apt reach the internet)
+//   - nameserver and, optionally, searchdomain set when ipconfig0 is
+//     static — cloud-init has no DHCP-supplied resolver to fall back
+//     on the way DHCP mode does
 //   - net0 = a bridge with internet egress
 //   - agent = enabled=1 (so QEMU exposes the agent device, even though
 //     the guest doesn't yet have the package installed)
