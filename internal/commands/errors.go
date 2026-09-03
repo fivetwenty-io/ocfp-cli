@@ -70,6 +70,7 @@ var (
 	ErrInvalidSortField                        = errors.New("invalid sort field")
 	ErrInvalidSortDirection                    = errors.New("invalid sort direction")
 	ErrStateIsNil                              = errors.New("state is nil")
+	ErrInvalidHealthCheckTimeout               = errors.New("invalid health check timeout")
 )
 
 // ErrInvalidBackupType returns an error for an unrecognized backup type.

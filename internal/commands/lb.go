@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -1236,6 +1237,13 @@ func newLBUpdateCmd() *cobra.Command {
 			log := logger.Get()
 			lbName := args[0]
 
+			// Validate before contacting the provider so bad input fails
+			// fast and costs nothing.
+			err := validateHealthCheckTimeout(timeout)
+			if err != nil {
+				return err
+			}
+
 			network, err := setupLBProvider(ctx)
 			if err != nil {
 				return err
@@ -1258,16 +1266,29 @@ func newLBUpdateCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&algorithm, "algorithm", "", "load balancing algorithm (round-robin|least-connections|ip-hash)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check path")
-	// TODO: bound this. It is unvalidated and reaches int32 casts in two
-	// providers (cpi/gcp/loadbalancer.go TimeoutSec and
-	// cpi/aws/loadbalancer.go HealthCheckTimeoutSeconds), so a value above
-	// math.MaxInt32 silently truncates instead of erroring. Rejecting
-	// out-of-range values here fixes both call sites at once.
 	cmd.Flags().IntVar(&timeout, "timeout", DefaultHealthTimeout, "health check timeout in seconds")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview updates without making changes")
 	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
 
 	return cmd
+}
+
+// validateHealthCheckTimeout rejects health check timeouts that are not a
+// positive number of seconds representable as an int32.
+//
+// The upper bound exists because the provider load balancer managers narrow
+// this value to an int32 (cpi/gcp/loadbalancer.go sets TimeoutSec from it),
+// where anything above math.MaxInt32 wraps silently — 1<<32 seconds becomes a
+// zero timeout rather than an error. Providers apply their own, far tighter
+// limits and report those themselves; this bound only guarantees the value
+// reaches them intact.
+func validateHealthCheckTimeout(timeout int) error {
+	if timeout < 1 || timeout > math.MaxInt32 {
+		return fmt.Errorf("%w %d: must be between 1 and %d seconds",
+			ErrInvalidHealthCheckTimeout, timeout, math.MaxInt32)
+	}
+
+	return nil
 }
 
 func showLBUpdatePlan(loadBalancer *cpi.LoadBalancer, algorithm, healthCheck string, timeout int, output string) error {
