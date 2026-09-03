@@ -1258,6 +1258,11 @@ func newLBUpdateCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&algorithm, "algorithm", "", "load balancing algorithm (round-robin|least-connections|ip-hash)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check path")
+	// TODO: bound this. It is unvalidated and reaches int32 casts in two
+	// providers (cpi/gcp/loadbalancer.go TimeoutSec and
+	// cpi/aws/loadbalancer.go HealthCheckTimeoutSeconds), so a value above
+	// math.MaxInt32 silently truncates instead of erroring. Rejecting
+	// out-of-range values here fixes both call sites at once.
 	cmd.Flags().IntVar(&timeout, "timeout", DefaultHealthTimeout, "health check timeout in seconds")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview updates without making changes")
 	cmd.Flags().StringVar(&output, "output", "table", "output format: table|json|yaml (for dry-run plan)")
