@@ -293,7 +293,7 @@ func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	// Try Ed25519 key first (preferred)
 	keyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_ed25519")
 
-	info, err := os.Stat(keyPath) //nolint:gosec // path components are from trusted config
+	info, err := os.Stat(keyPath) // #nosec -- path components are from trusted config
 	if err == nil && info.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", keyPath)
 
@@ -303,7 +303,7 @@ func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	// Fall back to RSA key
 	rsaKeyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_rsa")
 
-	rsaInfo, rsaErr := os.Stat(rsaKeyPath) //nolint:gosec // path components are from trusted config
+	rsaInfo, rsaErr := os.Stat(rsaKeyPath) // #nosec -- path components are from trusted config
 	if rsaErr == nil && rsaInfo.Size() > 0 {
 		log.Debugf("Found SSH key at: %s", rsaKeyPath)
 

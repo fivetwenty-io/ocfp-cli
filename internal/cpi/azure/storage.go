@@ -48,7 +48,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 			CreationData: &armcompute.CreationData{
 				CreateOption: to.Ptr(armcompute.DiskCreateOptionEmpty),
 			},
-			DiskSizeGB: to.Ptr(int32(sizeGB)), //nolint:gosec // bounds checked above
+			DiskSizeGB: to.Ptr(int32(sizeGB)), // #nosec G115 -- bounds checked above
 		},
 		SKU: &armcompute.DiskSKU{
 			Name: to.Ptr(storageType),
@@ -331,7 +331,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 	// Update disk size
 	diskUpdate := armcompute.DiskUpdate{
 		Properties: &armcompute.DiskUpdateProperties{
-			DiskSizeGB: to.Ptr(int32(size)), //nolint:gosec // disk size is a small config value
+			DiskSizeGB: to.Ptr(int32(size)), // #nosec G115 -- disk size is a small config value
 		},
 	}
 

@@ -36,7 +36,7 @@ func defaultProbeBuilder(boshEnv, deployment, directorIP string) []probes.Probe 
 		Deployment: deployment,
 		Instance:   "database/0",
 		RunBosh: func(ctx context.Context, args ...string) ([]byte, error) {
-			cmd := exec.CommandContext(ctx, "bosh", args...) //nolint:gosec // args come from validated config
+			cmd := exec.CommandContext(ctx, "bosh", args...) // #nosec G204 -- args come from validated config
 			cmd.Stderr = os.Stderr
 
 			return cmd.Output()

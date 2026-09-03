@@ -136,7 +136,8 @@ func (a *AWSVaultProvider) SaveConfigToVault(_reporter providers.ProgressReporte
 	a.logger.Info("Saving OCFP configuration to vault")
 
 	// Convert config to JSON
-	jsonConfig, err := json.Marshal(a.Config) //nolint:musttag,gosec // Config has json tags; G117: intentional secret serialization to vault
+	// #nosec G117 -- Config has json tags; intentional secret serialization to vault
+	jsonConfig, err := json.Marshal(a.Config) //nolint:musttag // Config has json tags
 	if err != nil {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}
@@ -416,7 +417,8 @@ func (a *AWSVaultProvider) resolveAWSCredentials() (string, string) {
 
 // fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
 func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
-	resp, err := http.Get(rdsGlobalCAURL) //nolint:gosec,noctx // trusted AWS URL
+	// #nosec -- trusted AWS URL
+	resp, err := http.Get(rdsGlobalCAURL) //nolint:noctx // trusted AWS URL
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch RDS CA: %w", err)
 	}

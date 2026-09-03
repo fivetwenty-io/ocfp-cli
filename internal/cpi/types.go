@@ -239,7 +239,7 @@ type KeyPair struct {
 	Name        string
 	Fingerprint string
 	PublicKey   string
-	PrivateKey  string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	PrivateKey  string // #nosec G101 -- field name is descriptive, not a hardcoded secret
 	CreatedAt   time.Time
 }
 

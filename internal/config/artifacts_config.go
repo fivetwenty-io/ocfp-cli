@@ -74,7 +74,7 @@ type RustfsConfig struct {
 	AccessKey string `json:"access_key,omitempty" mapstructure:"access_key" yaml:"access_key,omitempty"`
 
 	// SecretKey is the S3 secret key credential for RustFS.
-	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 }
 
 // ArtifactsDataConfig controls the data disk attached to the artifacts VM.

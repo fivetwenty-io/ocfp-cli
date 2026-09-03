@@ -25,7 +25,7 @@ import (
 func TestRedactingCore_ScrubsAllowListedFieldsOnly(t *testing.T) {
 	t.Parallel()
 
-	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE1234" //nolint:gosec // test fixture, not a real credential
+	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE1234" // #nosec -- test fixture, not a real credential
 
 	observedCore, logs := observer.New(zapcore.DebugLevel)
 	wrapped := newRedactingCore(observedCore)
@@ -80,7 +80,7 @@ func TestRedactingCore_ScrubsAllowListedFieldsOnly(t *testing.T) {
 func TestRedactingCore_With(t *testing.T) {
 	t.Parallel()
 
-	const fakeToken = "ghp_FAKEFAKEFAKEFAKEFAKE5678" //nolint:gosec // test fixture, not a real credential
+	const fakeToken = "ghp_FAKEFAKEFAKEFAKEFAKE5678" // #nosec -- test fixture, not a real credential
 
 	observedCore, logs := observer.New(zapcore.DebugLevel)
 	wrapped := newRedactingCore(observedCore)
@@ -116,7 +116,7 @@ func TestRedactingCore_With(t *testing.T) {
 func TestRedactingCore_ScrubsEscapedCommandShape(t *testing.T) {
 	t.Parallel()
 
-	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE4242" //nolint:gosec // test fixture, not a real credential
+	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE4242" // #nosec -- test fixture, not a real credential
 
 	observedCore, logs := observer.New(zapcore.DebugLevel)
 	wrapped := newRedactingCore(observedCore)

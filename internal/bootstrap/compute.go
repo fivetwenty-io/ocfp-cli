@@ -917,7 +917,7 @@ func (m *Manager) bastionPublicKey() string {
 	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	pubPath := filepath.Join(keyDir, "id_ed25519.pub")
 
-	data, err := os.ReadFile(pubPath) //nolint:gosec // path components are from trusted config
+	data, err := os.ReadFile(pubPath) // #nosec G304 -- path components are from trusted config
 	if err != nil {
 		return ""
 	}
@@ -1476,7 +1476,7 @@ func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 	localKeyExists := false
 
-	_, err := os.Stat(keyFile) //nolint:gosec // path components are from trusted config
+	_, err := os.Stat(keyFile) // #nosec -- path components are from trusted config
 	if err == nil {
 		localKeyExists = true
 	}
@@ -1617,16 +1617,16 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	// If local keypair exists, reuse it. Regenerating here would rotate the
 	// key and lock bootstrap out of every VM created with the old public
 	// half, so the private key on disk is always authoritative.
-	_, keyStatErr := os.Stat(existingKeyPath) //nolint:gosec // path components are from trusted config
+	_, keyStatErr := os.Stat(existingKeyPath) // #nosec -- path components are from trusted config
 	if keyStatErr == nil {                    //nolint:nestif // SSH key validation requires nested checks
 		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
 
-		privateKeyData, readErr := os.ReadFile(existingKeyPath) //nolint:gosec // path is controlled
+		privateKeyData, readErr := os.ReadFile(existingKeyPath) // #nosec G304 -- path is controlled
 		if readErr != nil {
 			return nil, nil, false, fmt.Errorf("failed to read existing private key: %w", readErr)
 		}
 
-		publicKeyData, readErr := os.ReadFile(existingPubPath) //nolint:gosec // path is controlled
+		publicKeyData, readErr := os.ReadFile(existingPubPath) // #nosec G304 -- path is controlled
 		if readErr != nil {
 			// The .pub sidecar is missing (older releases only persisted the
 			// private half). Derive it rather than rotating the pair, and
@@ -1636,7 +1636,7 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 				return nil, nil, false, fmt.Errorf("existing private key %s is unusable (refusing to rotate it): %w", existingKeyPath, readErr)
 			}
 
-			writeErr := os.WriteFile(existingPubPath, publicKeyData, sshKeyFileMode) //nolint:gosec // path components are from trusted config
+			writeErr := os.WriteFile(existingPubPath, publicKeyData, sshKeyFileMode) // #nosec G703 -- path components are from trusted config
 			if writeErr != nil {
 				logger.Warnf("Could not persist derived public key to %s: %v", existingPubPath, writeErr)
 			}
@@ -1819,7 +1819,7 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 
 	// Check if we have the local keypair (Ed25519 preferred)
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(keyFile); err == nil { //nolint:gosec // path components are from trusted config
+	if _, err := os.Stat(keyFile); err == nil { // #nosec -- path components are from trusted config
 		// Local keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local key found at %s, reusing", keypairName, keyFile)
@@ -1837,7 +1837,7 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 	rsaKeyFile := filepath.Join(keyDir, "id_rsa")
 
 	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(rsaKeyFile); err == nil { //nolint:gosec // path components are from trusted config
+	if _, err := os.Stat(rsaKeyFile); err == nil { // #nosec -- path components are from trusted config
 		// Local RSA keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local RSA key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local RSA key found at %s, reusing", keypairName, rsaKeyFile)
@@ -1985,13 +1985,13 @@ func (m *Manager) savePrivateKey(privateKey, publicKey string) error {
 	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))]) //nolint:mnd
 
 	// Create directory if it doesn't exist
-	err := os.MkdirAll(keyDir, sshKeyDirMode) //nolint:gosec // path components are from trusted config
+	err := os.MkdirAll(keyDir, sshKeyDirMode) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create SSH key directory: %w", err)
 	}
 
 	// Write private key
-	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode) //nolint:gosec // path components are from trusted config
+	err = os.WriteFile(keyFile, []byte(privateKey), sshKeyFileMode) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
@@ -2002,7 +2002,7 @@ func (m *Manager) savePrivateKey(privateKey, publicKey string) error {
 	if pub := strings.TrimSpace(publicKey); pub != "" {
 		pubFile := keyFile + ".pub"
 
-		err = os.WriteFile(pubFile, []byte(pub+"\n"), sshKeyFileMode) //nolint:gosec // path components are from trusted config
+		err = os.WriteFile(pubFile, []byte(pub+"\n"), sshKeyFileMode) // #nosec -- path components are from trusted config
 		if err != nil {
 			return fmt.Errorf("failed to write public key: %w", err)
 		}
@@ -2103,9 +2103,9 @@ func (m *Manager) saveBastionOutputs(instance *cpi.Instance) {
 		keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 
 		//nolint:noinlineerr // Idiomatic file existence check for key type fallback
-		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil { //nolint:gosec // path components are from trusted config
+		if _, err := os.Stat(filepath.Join(keyDir, "id_ed25519")); err != nil { // #nosec -- path components are from trusted config
 			// Check for RSA key fallback
-			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil { //nolint:gosec // path components are from trusted config
+			if _, err := os.Stat(filepath.Join(keyDir, "id_rsa")); err == nil { // #nosec -- path components are from trusted config
 				keyFile = "id_rsa"
 			}
 		}

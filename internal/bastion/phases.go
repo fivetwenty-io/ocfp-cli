@@ -201,7 +201,7 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 // the operator knows what to fix.
 func resolveLocalOCFPBinary() (string, error) {
 	if env := os.Getenv("OCFP_BINARY_PATH"); env != "" {
-		if _, err := os.Stat(env); err == nil { //nolint:gosec // G703: path is operator-supplied OCFP_BINARY_PATH
+		if _, err := os.Stat(env); err == nil { // #nosec G703 -- path is operator-supplied OCFP_BINARY_PATH
 			return env, nil
 		}
 	}
@@ -396,7 +396,7 @@ func (m *Manager) installHelperScripts(ctx context.Context) error {
 func resolveHelperScript(name string) (string, error) {
 	if env := os.Getenv("OCFP_HELPER_SCRIPTS_DIR"); env != "" {
 		p := filepath.Join(env, name)
-		if _, err := os.Stat(p); err == nil { //nolint:gosec // G703: path is operator-supplied OCFP_HELPER_SCRIPTS_DIR
+		if _, err := os.Stat(p); err == nil { // #nosec G703 -- path is operator-supplied OCFP_HELPER_SCRIPTS_DIR
 			return p, nil
 		}
 	}
@@ -1034,7 +1034,7 @@ func fetchKeysFromURL(ctx context.Context, url, provider string) ([]string, erro
 		return nil, fmt.Errorf("failed to build %s key request: %w", provider, err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL built from trusted config
+	resp, err := http.DefaultClient.Do(req) // #nosec -- URL built from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %s keys: %w", provider, err)
 	}

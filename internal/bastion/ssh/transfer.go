@@ -564,7 +564,7 @@ func (tm *TransferManager) addSourceAndDestination(args []string, local, remote 
 }
 
 func (tm *TransferManager) createSCPCommand(ctx context.Context, args []string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "scp", args...) //nolint:gosec // command args are from trusted config
+	cmd := exec.CommandContext(ctx, "scp", args...) // #nosec G204 -- command args are from trusted config
 
 	if tm.client.config.UseSSHPass && tm.client.config.Password != "" {
 		return tm.createSSHPassCommand(ctx, args)
@@ -578,7 +578,7 @@ func (tm *TransferManager) createSSHPassCommand(ctx context.Context, args []stri
 	if err != nil {
 		tm.log.Warn("sshpass not available for password authentication")
 
-		return exec.CommandContext(ctx, "scp", args...), err //nolint:gosec // command args are from trusted config
+		return exec.CommandContext(ctx, "scp", args...), err // #nosec G204 -- command args are from trusted config
 	}
 
 	// Use -e so sshpass reads the password from SSHPASS env var, not argv.

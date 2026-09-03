@@ -30,8 +30,8 @@ var ErrTailscaleAuthKeyConflict = errors.New("tailscale: auth_key and auth_key_v
 type TailscaleConfig struct {
 	Enabled *bool `json:"enabled,omitempty" mapstructure:"enabled" yaml:"enabled,omitempty"`
 
-	AuthKey          string `json:"auth_key,omitempty"            mapstructure:"auth_key"            yaml:"auth_key,omitempty"`            //nolint:gosec // field name describes a credential, not a hardcoded one
-	AuthKeyVaultPath string `json:"auth_key_vault_path,omitempty" mapstructure:"auth_key_vault_path" yaml:"auth_key_vault_path,omitempty"` //nolint:gosec // descriptive field name
+	AuthKey          string `json:"auth_key,omitempty"            mapstructure:"auth_key"            yaml:"auth_key,omitempty"`            // #nosec -- field name describes a credential, not a hardcoded one
+	AuthKeyVaultPath string `json:"auth_key_vault_path,omitempty" mapstructure:"auth_key_vault_path" yaml:"auth_key_vault_path,omitempty"` // #nosec -- descriptive field name
 
 	Hostname        string   `json:"hostname,omitempty"         mapstructure:"hostname"         yaml:"hostname,omitempty"`
 	Tags            []string `json:"tags,omitempty"             mapstructure:"tags"             yaml:"tags,omitempty"`

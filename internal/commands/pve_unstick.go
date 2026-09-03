@@ -63,7 +63,7 @@ func qgaPingOnce(ctx context.Context, sshArgs []string, pveHost string, vmid int
 	args = append(args, sshArgs...)
 	args = append(args, target, "qm", "guest", "cmd", vmidStr, "ping")
 
-	cmd := exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // vmid is a validated integer; sshArgs and pveHost are operator-provided
+	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 -- vmid is a validated integer; sshArgs and pveHost are operator-provided
 
 	var out bytes.Buffer
 
@@ -226,7 +226,7 @@ func coerceVMID(raw string) (int, error) {
 //   - VMID parse failure → delegated to coerceVMID
 func resolveVMIDForInstance(ctx context.Context, boshEnv, boshDeployment, instanceRef string) (int, error) {
 	args := []string{"-e", boshEnv, "-d", boshDeployment, "vms", "--json"}
-	cmd := exec.CommandContext(ctx, "bosh", args...) //nolint:gosec // args are from trusted config/flags
+	cmd := exec.CommandContext(ctx, "bosh", args...) // #nosec G204 -- args are from trusted config/flags
 
 	var out bytes.Buffer
 
@@ -307,7 +307,7 @@ func matchesInstanceRef(boshInstance, ref string) bool {
 // varsFile is the path to the BOSH vars file containing pve_host.
 // Failure mode: exec error or empty result → descriptive error.
 func resolvePVEHostFromVars(ctx context.Context, varsFile string) (string, error) {
-	cmd := exec.CommandContext(ctx, "bosh", "int", varsFile, "--path=/pve_host") //nolint:gosec // varsFile is operator-provided path
+	cmd := exec.CommandContext(ctx, "bosh", "int", varsFile, "--path=/pve_host") // #nosec G204 -- varsFile is operator-provided path
 
 	var out bytes.Buffer
 
@@ -367,7 +367,7 @@ func unstickAgent(ctx context.Context, pveHost string, vmid int, sshUnsafe bool)
 
 	log.Infow("restarting bosh-agent via qemu-guest-agent", "pve_host", pveHost, "vmid", vmid)
 
-	cmd := exec.CommandContext(ctx, "ssh", allArgs...) //nolint:gosec // args constructed from validated integer + trusted config
+	cmd := exec.CommandContext(ctx, "ssh", allArgs...) // #nosec G204 -- args constructed from validated integer + trusted config
 
 	var out bytes.Buffer
 

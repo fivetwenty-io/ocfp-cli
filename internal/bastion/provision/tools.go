@@ -104,7 +104,7 @@ func (atm *AdvancedToolManager) GetVersionFromAPI(ctx context.Context, versionUR
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
 
-	resp, err := client.Do(req) //nolint:gosec // URL is from trusted internal config
+	resp, err := client.Do(req) // #nosec -- URL is from trusted internal config
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version info: %w", err)
 	}

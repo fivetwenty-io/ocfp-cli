@@ -304,37 +304,36 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 	healthCheckName := lbID + "-health"
 
 	// Build health check based on protocol
-	//nolint:gosec // health check config values are small integers within int32 range
 	healthCheck := &computepb.HealthCheck{
 		Name:               proto(healthCheckName),
-		CheckIntervalSec:   proto(int32(check.Interval)),
-		TimeoutSec:         proto(int32(check.Timeout)),
-		HealthyThreshold:   proto(int32(check.HealthyThreshold)),
-		UnhealthyThreshold: proto(int32(check.UnhealthyThreshold)),
+		CheckIntervalSec:   proto(int32(check.Interval)),           // #nosec G115 -- callers only ever set this from the hardcoded HealthCheckIntervalSeconds constant (30)
+		TimeoutSec:         proto(int32(check.Timeout)),            // #nosec G115 -- operator-supplied local --timeout flag with no upper bound, so an absurd value truncates rather than erroring; operator-local input only, no attacker path
+		HealthyThreshold:   proto(int32(check.HealthyThreshold)),   // #nosec G115 -- callers only ever set this from the hardcoded HealthCheckThreshold constant (3)
+		UnhealthyThreshold: proto(int32(check.UnhealthyThreshold)), // #nosec G115 -- callers only ever set this from the hardcoded HealthCheckThreshold constant (3)
 	}
 
 	switch strings.ToUpper(check.Protocol) {
 	case "HTTP":
 		healthCheck.Type = proto("HTTP")
 		healthCheck.HttpHealthCheck = &computepb.HTTPHealthCheck{
-			Port:        proto(int32(check.Port)), //nolint:gosec // port values are within int32 range
+			Port:        proto(int32(check.Port)), // #nosec G115 -- callers only ever set this to 0 (unset) today; port values are within int32 range
 			RequestPath: proto(check.Path),
 		}
 	case "HTTPS":
 		healthCheck.Type = proto("HTTPS")
 		healthCheck.HttpsHealthCheck = &computepb.HTTPSHealthCheck{
-			Port:        proto(int32(check.Port)), //nolint:gosec // port values are within int32 range
+			Port:        proto(int32(check.Port)), // #nosec G115 -- callers only ever set this to 0 (unset) today; port values are within int32 range
 			RequestPath: proto(check.Path),
 		}
 	case "TCP":
 		healthCheck.Type = proto("TCP")
 		healthCheck.TcpHealthCheck = &computepb.TCPHealthCheck{
-			Port: proto(int32(check.Port)), //nolint:gosec // port values are within int32 range
+			Port: proto(int32(check.Port)), // #nosec G115 -- callers only ever set this to 0 (unset) today; port values are within int32 range
 		}
 	default:
 		healthCheck.Type = proto("HTTP")
 		healthCheck.HttpHealthCheck = &computepb.HTTPHealthCheck{
-			Port:        proto(int32(check.Port)), //nolint:gosec // port values are within int32 range
+			Port:        proto(int32(check.Port)), // #nosec G115 -- callers only ever set this to 0 (unset) today; port values are within int32 range
 			RequestPath: proto(check.Path),
 		}
 	}

@@ -2490,7 +2490,7 @@ func (m *TeardownManager) deleteSecurityResource(ctx context.Context, resource *
 //   - Malformed JSON → false (conservative: let bosh delete-env fail loudly)
 //   - OS read error  → false (conservative: let bosh delete-env fail loudly)
 func StateIsEmpty(path string) (bool, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is operator-supplied create-env state file
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is operator-supplied create-env state file
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil

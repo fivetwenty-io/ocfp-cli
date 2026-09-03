@@ -138,7 +138,7 @@ func addJitter(delay time.Duration, jitterFactor float64) time.Duration {
 	}
 
 	// Add random jitter between -jitterFactor and +jitterFactor
-	jitter := (rand.Float64()*2 - 1) * jitterFactor * float64(delay) //nolint:gosec // jitter does not need crypto-grade randomness
+	jitter := (rand.Float64()*2 - 1) * jitterFactor * float64(delay) // #nosec G404 -- jitter does not need crypto-grade randomness
 
 	return delay + time.Duration(jitter)
 }

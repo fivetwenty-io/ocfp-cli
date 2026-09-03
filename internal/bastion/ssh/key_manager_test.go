@@ -104,7 +104,7 @@ func TestRestoreKeyFromConfigResolvesUnderXDGDataHome(t *testing.T) {
 	tmpKeyPath := filepath.Join(t.TempDir(), "source_key")
 	writeTestEd25519Key(t, tmpKeyPath)
 
-	pemBytes, err := os.ReadFile(tmpKeyPath) //nolint:gosec // test-generated fixture path
+	pemBytes, err := os.ReadFile(tmpKeyPath) // #nosec -- test-generated fixture path
 	if err != nil {
 		t.Fatalf("read fixture key: %v", err)
 	}

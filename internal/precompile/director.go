@@ -52,7 +52,7 @@ type boshReleasesJSON struct {
 }
 
 func (d *boshDirector) ReleasePresent(ctx context.Context, name, version string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "bosh", d.args("releases", "--json")...) //nolint:gosec // fixed subcommand, no user shell
+	cmd := exec.CommandContext(ctx, "bosh", d.args("releases", "--json")...) // #nosec G204 -- fixed subcommand, no user shell
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -86,7 +86,7 @@ func (d *boshDirector) UploadRelease(ctx context.Context, url, sha string) error
 
 	rest = append(rest, url)
 
-	cmd := exec.CommandContext(ctx, "bosh", d.args(rest...)...) //nolint:gosec // args validated by caller; no shell
+	cmd := exec.CommandContext(ctx, "bosh", d.args(rest...)...) // #nosec G204 -- args validated by caller; no shell
 	cmd.Stdout = d.stdout
 
 	cmd.Stderr = d.stderr
@@ -100,7 +100,7 @@ func (d *boshDirector) UploadRelease(ctx context.Context, url, sha string) error
 }
 
 func (d *boshDirector) Deploy(ctx context.Context, deployment, manifestPath string) error {
-	cmd := exec.CommandContext(ctx, "bosh", d.args("-n", "-d", deployment, "deploy", manifestPath)...) //nolint:gosec // fixed args; no shell
+	cmd := exec.CommandContext(ctx, "bosh", d.args("-n", "-d", deployment, "deploy", manifestPath)...) // #nosec G204 -- fixed args; no shell
 	cmd.Stdout = d.stdout
 
 	cmd.Stderr = d.stderr
@@ -117,7 +117,7 @@ func (d *boshDirector) ExportRelease(ctx context.Context, deployment, name, vers
 	relRef := name + "/" + version
 	scRef := sc.OS + "/" + sc.Version
 
-	cmd := exec.CommandContext(ctx, "bosh", //nolint:gosec // fixed args; no shell
+	cmd := exec.CommandContext(ctx, "bosh", // #nosec G204 -- fixed args; no shell
 		d.args("-d", deployment, "export-release", relRef, scRef, "--dir", destDir)...)
 	cmd.Stdout = d.stdout
 

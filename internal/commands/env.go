@@ -506,7 +506,7 @@ func findEnvironments() []environmentInfo {
 
 		for _, match := range matches {
 			// Try to load and parse the file
-			data, err := os.ReadFile(match) //nolint:gosec // match is from glob pattern on trusted paths
+			data, err := os.ReadFile(match) // #nosec G304 -- match is from glob pattern on trusted paths
 			if err != nil {
 				continue
 			}
