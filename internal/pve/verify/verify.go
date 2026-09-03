@@ -104,7 +104,7 @@ func (v *PVEVerifier) httpClient() HTTPClient {
 	}
 
 	tlsCfg := &tls.Config{
-		InsecureSkipVerify: !v.VerifySSL, //nolint:gosec // lab certs are self-signed; VerifySSL=false is intentional
+		InsecureSkipVerify: !v.VerifySSL, // #nosec G402 -- lab certs are self-signed; VerifySSL=false is intentional
 	}
 
 	v.Client = &http.Client{

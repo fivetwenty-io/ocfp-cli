@@ -895,32 +895,32 @@ func (r *TestRunner) buildSmokeTestCommand(ctx context.Context) *exec.Cmd {
 
 func (r *TestRunner) buildC2CTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for C2C networking tests
-	return exec.CommandContext(ctx, "echo", "Running C2C test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running C2C test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) buildBlacksmithTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for Blacksmith service broker tests
-	return exec.CommandContext(ctx, "echo", "Running Blacksmith test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running Blacksmith test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) buildNFSTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for NFS volume service tests
-	return exec.CommandContext(ctx, "echo", "Running NFS test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running NFS test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) buildSMBTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for SMB volume service tests
-	return exec.CommandContext(ctx, "echo", "Running SMB test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running SMB test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) buildTCPTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for TCP routing tests
-	return exec.CommandContext(ctx, "echo", "Running TCP test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running TCP test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) buildAcceptanceTestCommand(ctx context.Context, testName string) *exec.Cmd {
 	// Build command for acceptance tests
-	return exec.CommandContext(ctx, "echo", "Running acceptance test:", testName) //nolint:gosec // command args are from trusted config
+	return exec.CommandContext(ctx, "echo", "Running acceptance test:", testName) // #nosec G204 -- command args are from trusted config
 }
 
 func (r *TestRunner) cleanupTestApps(_ctx context.Context) error {

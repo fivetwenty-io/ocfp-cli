@@ -995,7 +995,7 @@ func (m *Manager) validatePrerequisites() error {
 	// Create local directories
 	logDir := filepath.Join(config.GetLogDir(), "provision")
 
-	err := os.MkdirAll(logDir, logDirectoryMode) //nolint:gosec // path components are from trusted config
+	err := os.MkdirAll(logDir, logDirectoryMode) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -1493,7 +1493,7 @@ func (m *Manager) saveCheckpoint() error {
 	// For now, just create the directory
 	dir := filepath.Dir(checkpointPath)
 
-	err := os.MkdirAll(dir, logDirectoryMode) //nolint:gosec // path components are from trusted config
+	err := os.MkdirAll(dir, logDirectoryMode) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create checkpoint directory: %w", err)
 	}
@@ -2379,7 +2379,7 @@ func (m *Manager) findConfigFile() (string, error) {
 
 		cleanPath := filepath.Clean(path)
 
-		_, err := os.Stat(cleanPath) //nolint:gosec // path components are from trusted HOME env
+		_, err := os.Stat(cleanPath) // #nosec -- path components are from trusted HOME env
 		if err == nil {
 			return cleanPath, nil
 		}
@@ -2406,7 +2406,7 @@ func (m *Manager) loadConfigFile(configPath string) (*config.ConfigFile, error) 
 		return nil, fmt.Errorf("invalid config path %s: %w", configPath, err)
 	}
 
-	configBytes, err := os.ReadFile(configPath) //nolint:gosec // path validated above
+	configBytes, err := os.ReadFile(configPath) // #nosec G304 -- path validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
@@ -2622,7 +2622,7 @@ func resolveGitHubToken(ctx context.Context, log logger.Logger) string {
 	ghCtx, cancel := context.WithTimeout(ctx, 5*time.Second) //nolint:mnd // short timeout for local CLI call
 	defer cancel()
 
-	out, err := exec.CommandContext(ghCtx, "gh", "auth", "token").Output() //nolint:gosec // gh is a trusted CLI tool
+	out, err := exec.CommandContext(ghCtx, "gh", "auth", "token").Output() // #nosec -- gh is a trusted CLI tool
 	if err == nil {
 		if token := strings.TrimSpace(string(out)); token != "" {
 			log.Infow("Using GitHub token from gh CLI for bastion provisioning")

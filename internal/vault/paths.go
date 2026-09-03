@@ -413,14 +413,12 @@ type HostnameFormatter func(envType string) string
 
 // BuildDatabasesForEnv constructs database configuration maps for a given environment type
 // using the provided hostname formatter to generate database hostnames.
-//
-//nolint:gosec // map keys contain "password" but values are Genesis template placeholders, not real secrets
 func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) map[string]map[string]interface{} {
 	databases := make(map[string]map[string]interface{})
 
 	switch envType {
 	case MgmtEnvType:
-		databases["bosh"] = map[string]interface{}{
+		databases["bosh"] = map[string]interface{}{ // #nosec G101 -- map keys contain "password" but values are Genesis template placeholders, not real secrets
 			"hostname":          hostnameFormatter(MgmtEnvType),
 			"postgres_username": "bosh",
 			"postgres_password": "((postgres_password))", // Genesis will generate
@@ -432,7 +430,7 @@ func BuildDatabasesForEnv(envType string, hostnameFormatter HostnameFormatter) m
 			"credhub_password":  "((credhub_db_password))",
 		}
 	case OCFEnvType:
-		databases["cf"] = map[string]interface{}{
+		databases["cf"] = map[string]interface{}{ // #nosec G101 -- map keys contain "password" but values are Genesis template placeholders, not real secrets
 			"hostname":                      hostnameFormatter(OCFEnvType),
 			"postgres_username":             "postgres",
 			"postgres_password":             "((postgres_password))",

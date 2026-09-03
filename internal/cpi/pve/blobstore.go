@@ -112,7 +112,7 @@ func buildAWSConfig(region, endpoint string, httpClient *http.Client, creds aws.
 func buildBlobstoreHTTPClient(caPath string, insecure bool) (*http.Client, error) {
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: insecure, //nolint:gosec // operator-controlled flag
+		InsecureSkipVerify: insecure, // #nosec G402 -- operator-controlled flag: insecure comes from local bloc config, not attacker input
 	}
 
 	if caPath != "" {
@@ -121,7 +121,7 @@ func buildBlobstoreHTTPClient(caPath string, insecure bool) (*http.Client, error
 			pool = x509.NewCertPool()
 		}
 
-		pem, err := os.ReadFile(caPath) //nolint:gosec // operator-supplied path
+		pem, err := os.ReadFile(caPath) // #nosec G304 -- operator-supplied path from local bloc config, not attacker input
 		if err != nil {
 			return nil, fmt.Errorf("read CA bundle %s: %w", caPath, err)
 		}
@@ -385,7 +385,7 @@ func (m *StorageManager) SetBucketLifecycle(ctx context.Context, name string, no
 		return fmt.Errorf("set bucket lifecycle %s: noncurrentDays %d exceeds int32 max", name, noncurrentDays) //nolint:err113 // descriptive error, not caller-testable
 	}
 
-	days := int32(noncurrentDays) //nolint:gosec // bounded to [1, MaxInt32] above
+	days := int32(noncurrentDays) // #nosec G115 -- bounded to [1, MaxInt32] above
 
 	_, err = cli.cli.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
 		Bucket: aws.String(name),

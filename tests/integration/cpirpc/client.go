@@ -81,8 +81,8 @@ func (c *Client) initConfigFile() (string, error) {
 
 		enc := json.NewEncoder(f)
 		if err := enc.Encode(c.Config); err != nil {
-			f.Close()
-			os.Remove(f.Name())
+			f.Close()           // #nosec G104 -- best-effort cleanup on an error path already reported via initErr below
+			os.Remove(f.Name()) // #nosec G104 -- best-effort cleanup on an error path already reported via initErr below
 
 			initErr = fmt.Errorf("cpirpc: encode config: %w", err)
 
@@ -90,7 +90,7 @@ func (c *Client) initConfigFile() (string, error) {
 		}
 
 		if err := f.Close(); err != nil {
-			os.Remove(f.Name())
+			os.Remove(f.Name()) // #nosec G104 -- best-effort cleanup on an error path already reported via initErr below
 
 			initErr = fmt.Errorf("cpirpc: close temp config: %w", err)
 
@@ -177,7 +177,7 @@ func (c *Client) Call(ctx context.Context, req Request) (*Response, error) {
 	args = append(args, "--config", cfgPath)
 	args = append(args, c.ExtraArgs...)
 
-	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
+	cmd := exec.CommandContext(ctx, c.BinaryPath, args...) // #nosec G204 -- BinaryPath and args are supplied by the test harness constructing this Client (compiled-in fixture paths), not external or attacker-controlled input
 	cmd.Stdin = bytes.NewReader(body)
 
 	var stdout, stderr bytes.Buffer

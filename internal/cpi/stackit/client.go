@@ -37,7 +37,7 @@ type Client struct {
 type Config struct {
 	ProjectID           string
 	OrgID               string
-	AuthToken           string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthToken           string // #nosec G101 -- field name is descriptive, not a hardcoded secret
 	ServiceAccountToken string
 	ServiceAccountJSON  string
 	Region              string

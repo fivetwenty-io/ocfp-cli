@@ -501,7 +501,8 @@ func (s *StackitVaultProvider) SaveConfigToVault(reporter providers.ProgressRepo
 		reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing OCFP configuration")
 	}
 
-	jsonConfig, err := json.Marshal(s.Config) //nolint:musttag,gosec // Config has json tags; G117: intentional secret serialization to vault
+	// #nosec G117 -- Config has json tags; intentional secret serialization to vault
+	jsonConfig, err := json.Marshal(s.Config) //nolint:musttag // Config has json tags
 	if err != nil {
 		return fmt.Errorf("failed to marshal config to JSON: %w", err)
 	}
@@ -1265,7 +1266,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	// Try Ed25519 key (preferred)
 	ed25519Path := filepath.Join(sshKeyDir, "id_ed25519")
 
-	_, statErr := os.Stat(ed25519Path) //nolint:gosec // path from trusted config
+	_, statErr := os.Stat(ed25519Path) // #nosec -- path from trusted config
 	if statErr == nil {
 		return ed25519Path
 	}
@@ -1273,7 +1274,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 	// Try RSA key
 	rsaPath := filepath.Join(sshKeyDir, "id_rsa")
 
-	_, statErr = os.Stat(rsaPath) //nolint:gosec // path from trusted config
+	_, statErr = os.Stat(rsaPath) // #nosec -- path from trusted config
 	if statErr == nil {
 		return rsaPath
 	}
@@ -1286,7 +1287,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 
 	sshPath := filepath.Join(homeDir, ".ssh", keypairName)
 
-	_, statErr = os.Stat(sshPath) //nolint:gosec // path from trusted config
+	_, statErr = os.Stat(sshPath) // #nosec -- path from trusted config
 	if statErr == nil {
 		return sshPath
 	}
@@ -1296,7 +1297,7 @@ func (s *StackitVaultProvider) getPrivateKeyPath(keypairName string) string {
 
 // readPrivateKeyContent reads the private key content from the given path.
 func (s *StackitVaultProvider) readPrivateKeyContent(path string) (string, error) {
-	content, err := os.ReadFile(path) //nolint:gosec // path is from trusted internal resolution
+	content, err := os.ReadFile(path) // #nosec G304 -- path is from trusted internal resolution
 	if err != nil {
 		return "", fmt.Errorf("failed to read private key: %w", err)
 	}
@@ -2644,7 +2645,7 @@ func (s *StackitVaultProvider) fetchSSHKeysFromProvider(
 		return "", fmt.Errorf("failed to create request for %s: %w", url, err)
 	}
 
-	resp, err := client.Do(req) //nolint:gosec // URL is from trusted provider config
+	resp, err := client.Do(req) // #nosec -- URL is from trusted provider config
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch keys from %s: %w", url, err)
 	}

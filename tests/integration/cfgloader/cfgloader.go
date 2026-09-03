@@ -152,7 +152,7 @@ func RequiredTier3Keys() []string {
 // boshInt is accepted for interface symmetry with SynthesizeCPIConfig but is
 // not invoked inside Load.
 func Load(yamlPath string, _ BoshInt) (*Config, error) {
-	data, err := os.ReadFile(yamlPath)
+	data, err := os.ReadFile(yamlPath) // #nosec G304 -- yamlPath is a hardcoded fixture path from test callers in this package, not attacker-controlled
 	if err != nil {
 		return nil, fmt.Errorf("config file not found: %s: %w", yamlPath, err)
 	}

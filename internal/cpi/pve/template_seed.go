@@ -35,7 +35,7 @@ const (
 	// templateSeedPasswordPrefix is prepended to every generated seed
 	// password so the ephemeral nature is recognisable in any logs that
 	// accidentally capture it.
-	templateSeedPasswordPrefix = "OcfpSeed."
+	templateSeedPasswordPrefix = "OcfpSeed." // #nosec G101 -- this is a label prefix prepended to a generated password, not a credential itself
 
 	// timeouts for the seed phases. Real-world numbers from lab runs:
 	// cloud-init done in ~90s, apt install in ~45s, write_files in <5s,

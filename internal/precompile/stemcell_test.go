@@ -2,7 +2,7 @@ package precompile
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // computing the same digest ResolveStemcell verifies against, not for cryptographic security
+	"crypto/sha1" // #nosec -- computing the same digest ResolveStemcell verifies against, not for cryptographic security
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -177,7 +177,7 @@ func TestResolveStemcellUpstreamDownloadFailure(t *testing.T) {
 
 func TestResolveStemcellSHA1MatchSucceeds(t *testing.T) {
 	body := []byte("sha1-pinned-stemcell-bytes")
-	h1 := sha1.Sum(body) //nolint:gosec // matches the digest algorithm ResolveStemcell verifies against
+	h1 := sha1.Sum(body) // #nosec -- matches the digest algorithm ResolveStemcell verifies against
 	wantSHA1 := hex.EncodeToString(h1[:])
 	h256 := sha256.Sum256(body)
 	wantSHA256 := hex.EncodeToString(h256[:])

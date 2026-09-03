@@ -140,7 +140,7 @@ func TestRedactSecrets_EmptyString(t *testing.T) {
 func TestRedactSecrets_FullRenderedScript(t *testing.T) {
 	t.Parallel()
 
-	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE1234" //nolint:gosec // test fixture, not a real credential
+	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE1234" // #nosec -- test fixture, not a real credential
 
 	script := `#!/bin/bash
 set -euo pipefail
@@ -213,8 +213,8 @@ func escapeShellStringLikePhasesGo(script string) string {
 func TestRedactSecrets_EscapedCommand_QuoteFoldingVariant(t *testing.T) {
 	t.Parallel()
 
-	const fakeGithubToken = "gho_FAKEFAKEFAKEFAKEFAKE1234"    //nolint:gosec // test fixture, not a real credential
-	const fakeAWSSecret = "FAKEAWSSECRETfakeAWSsecret1234567" //nolint:gosec // test fixture, not a real credential
+	const fakeGithubToken = "gho_FAKEFAKEFAKEFAKEFAKE1234"    // #nosec -- test fixture, not a real credential
+	const fakeAWSSecret = "FAKEAWSSECRETfakeAWSsecret1234567" // #nosec -- test fixture, not a real credential
 
 	script := "#!/bin/bash\n" +
 		"set -euo pipefail\n" +
@@ -272,7 +272,7 @@ func TestRedactSecrets_EscapedCommand_QuoteFoldingVariant(t *testing.T) {
 func TestRedactSecrets_EscapedCommand_BackslashQuoteVariant(t *testing.T) {
 	t.Parallel()
 
-	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE9999" //nolint:gosec // test fixture, not a real credential
+	const fakeToken = "gho_FAKEFAKEFAKEFAKEFAKE9999" // #nosec -- test fixture, not a real credential
 
 	// Build the same shape escapeShellString produces, but using the `'\''`
 	// folding variant instead of `'"'"'`.

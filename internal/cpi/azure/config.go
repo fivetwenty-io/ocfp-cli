@@ -12,7 +12,7 @@ type Config struct {
 	SubscriptionID    string
 	TenantID          string
 	ClientID          string
-	ClientSecret      string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ClientSecret      string // #nosec G101 -- field name is descriptive, not a hardcoded secret
 	ClientCertificate string // Path to certificate for cert-based auth
 
 	// Authentication - Managed Identity

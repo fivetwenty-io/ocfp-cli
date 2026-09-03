@@ -363,9 +363,9 @@ func (m *LoadBalancerManager) ConfigureHealthCheck(ctx context.Context, lbID str
 		probe.Properties.Protocol = to.Ptr(armnetwork.ProbeProtocolTCP)
 	}
 
-	probe.Properties.Port = to.Ptr(int32(check.Port))                         //nolint:gosec // port values are within int32 range
-	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))        //nolint:gosec // interval is a small config value
-	probe.Properties.NumberOfProbes = to.Ptr(int32(check.UnhealthyThreshold)) //nolint:gosec // threshold is a small config value
+	probe.Properties.Port = to.Ptr(int32(check.Port))                         // #nosec G115 -- port values are within int32 range
+	probe.Properties.IntervalInSeconds = to.Ptr(int32(check.Interval))        // #nosec G115 -- interval is a small config value
+	probe.Properties.NumberOfProbes = to.Ptr(int32(check.UnhealthyThreshold)) // #nosec G115 -- threshold is a small config value
 
 	poller, err := m.client.loadBalancersClient.BeginCreateOrUpdate(
 		ctx,

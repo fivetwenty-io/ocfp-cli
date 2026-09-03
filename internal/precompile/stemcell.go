@@ -2,7 +2,7 @@ package precompile
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // sha1 verifies against the upstream-published bosh.io/GCS digest, not used for cryptographic security
+	"crypto/sha1" // #nosec G505 -- sha1 verifies against the upstream-published bosh.io/GCS digest, not used for cryptographic security
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -142,7 +142,7 @@ func downloadStemcellFile(ctx context.Context, hc *http.Client, url, destPath st
 		return "", "", fmt.Errorf("get %s: status %d", url, resp.StatusCode)
 	}
 
-	f, err := os.Create(destPath) //nolint:gosec // destPath is a caller-controlled temp path
+	f, err := os.Create(destPath) // #nosec G304 -- destPath is a caller-controlled temp path
 	if err != nil {
 		return "", "", fmt.Errorf("create %s: %w", destPath, err)
 	}
@@ -150,7 +150,7 @@ func downloadStemcellFile(ctx context.Context, hc *http.Client, url, destPath st
 
 	h256 := sha256.New()
 
-	h1 := sha1.New() //nolint:gosec // sha1 verifies against the upstream-published bosh.io/GCS digest, not used for cryptographic security
+	h1 := sha1.New() // #nosec G401 -- sha1 verifies against the upstream-published bosh.io/GCS digest, not used for cryptographic security
 	if _, err := io.Copy(io.MultiWriter(f, h256, h1), resp.Body); err != nil {
 		return "", "", fmt.Errorf("download %s: %w", url, err)
 	}
@@ -181,7 +181,7 @@ func headStemcell(ctx context.Context, cli objectAPI, bucket, key string) (sha s
 // recording its sha256 (hex, no prefix) as object metadata for later cache
 // verification by headStemcell.
 func uploadStemcell(ctx context.Context, cli objectAPI, bucket, key, path, sha256hex string) error {
-	f, err := os.Open(path) //nolint:gosec // path is a temp file this package created and controls
+	f, err := os.Open(path) // #nosec G304 -- path is a temp file this package created and controls
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

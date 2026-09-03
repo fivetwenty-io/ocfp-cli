@@ -35,7 +35,7 @@ type Config struct {
 	Namespace string
 	AuthType  string
 	Username  string
-	Password  string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Password  string // #nosec -- field name is descriptive, not a hardcoded secret
 	RoleID    string
 	SecretID  string
 	CACert    string

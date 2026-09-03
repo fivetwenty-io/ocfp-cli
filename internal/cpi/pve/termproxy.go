@@ -63,7 +63,7 @@ func OpenTermproxy(ctx context.Context, apiEndpoint, tokenHeader, node string, v
 
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: termproxyWSHandshakeTimeout,
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: !verifySSL}, //nolint:gosec // operator-controlled
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: !verifySSL}, // #nosec G402 -- operator-controlled: verifySSL is a local CLI/config flag, not attacker input
 	}
 
 	hdr := http.Header{}
@@ -285,7 +285,7 @@ func requestTermproxyTicket(ctx context.Context, apiEndpoint, tokenHeader, node 
 	client := &http.Client{
 		Timeout: termproxyWSHandshakeTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: !verifySSL}, //nolint:gosec // operator-controlled
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !verifySSL}, // #nosec G402 -- operator-controlled: verifySSL is a local CLI/config flag, not attacker input
 		},
 	}
 

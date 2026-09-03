@@ -202,10 +202,10 @@ func testSafetyGuard(operation string) {
 // whose corresponding credential field is not set. Bloc-level values always
 // take precedence over these defaults.
 type PVEDefaults struct {
-	AuthToken   string `json:"auth_token"   mapstructure:"auth_token"   yaml:"auth_token,omitempty"`   //nolint:gosec // field name is descriptive, not a hardcoded secret
-	TokenSecret string `json:"token_secret" mapstructure:"token_secret" yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthToken   string `json:"auth_token"   mapstructure:"auth_token"   yaml:"auth_token,omitempty"`   // #nosec -- field name is descriptive, not a hardcoded secret
+	TokenSecret string `json:"token_secret" mapstructure:"token_secret" yaml:"token_secret,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	Username    string `json:"username"     mapstructure:"username"     yaml:"username,omitempty"`
-	Password    string `json:"password"     mapstructure:"password"     yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Password    string `json:"password"     mapstructure:"password"     yaml:"password,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 }
 
 // ConfigFile represents the top-level configuration file structure.
@@ -244,11 +244,11 @@ type Config struct {
 	// Prefer snake_case to match README and user configs
 	ProjectID string `json:"project_id" mapstructure:"project_id" yaml:"project_id,omitempty"`
 	OrgID     string `json:"org_id"     mapstructure:"org_id"     yaml:"org_id,omitempty"`
-	AuthToken string `json:"auth_token" mapstructure:"auth_token" yaml:"auth_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	AuthToken string `json:"auth_token" mapstructure:"auth_token" yaml:"auth_token,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	// TokenSecret holds the PVE API token secret for API token auth. Distinct from
 	// Password, which is used only for username/password auth. When AuthToken is set,
 	// TokenSecret must also be set; Password is ignored for auth purposes in that mode.
-	TokenSecret           string `json:"token_secret"             mapstructure:"token_secret"             yaml:"token_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	TokenSecret           string `json:"token_secret"             mapstructure:"token_secret"             yaml:"token_secret,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	ServiceAccountToken   string `json:"service_account_token"    mapstructure:"service_account_token"    yaml:"service_account_token,omitempty"`
 	ServiceAccountJSON    string `json:"service_account_json"     mapstructure:"service_account_json"     yaml:"service_account_json,omitempty"`
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
@@ -296,13 +296,13 @@ type Config struct {
 	SubscriptionID           string        `json:"subscription_id"            mapstructure:"subscription_id"            yaml:"subscription_id,omitempty"`
 	TenantID                 string        `json:"tenant_id"                  mapstructure:"tenant_id"                  yaml:"tenant_id,omitempty"`
 	ClientID                 string        `json:"client_id"                  mapstructure:"client_id"                  yaml:"client_id,omitempty"`
-	ClientSecret             string        `json:"client_secret"              mapstructure:"client_secret"              yaml:"client_secret,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	ClientSecret             string        `json:"client_secret"              mapstructure:"client_secret"              yaml:"client_secret,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	AuthURL                  string        `json:"auth_url"                   mapstructure:"auth_url"                   yaml:"auth_url,omitempty"`
 	Username                 string        `json:"username"                   mapstructure:"username"                   yaml:"username,omitempty"`
-	Password                 string        `json:"password"                   mapstructure:"password"                   yaml:"password,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Password                 string        `json:"password"                   mapstructure:"password"                   yaml:"password,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	ProjectName              string        `json:"project_name"               mapstructure:"project_name"               yaml:"project_name,omitempty"`
 	DomainName               string        `json:"domain_name"                mapstructure:"domain_name"                yaml:"domain_name,omitempty"`
-	SessionToken             string        `json:"session_token"              mapstructure:"session_token"              yaml:"session_token,omitempty"` //nolint:gosec // field name is descriptive, not a hardcoded secret
+	SessionToken             string        `json:"session_token"              mapstructure:"session_token"              yaml:"session_token,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	BastionIP                string        `json:"bastion_ip"                 mapstructure:"bastion_ip"                 yaml:"bastion_ip,omitempty"`
 	VPCCIDRBlock             string        `json:"vpc_cidr_block"             mapstructure:"vpc_cidr_block"             yaml:"vpc_cidr_block,omitempty"` // AWS-specific network CIDR
 	Network                  NetworkConfig `json:"network"                    mapstructure:"network"                    yaml:"network,omitempty"`
@@ -458,7 +458,7 @@ type BlobstoreConfig struct {
 	Endpoint  string `json:"endpoint,omitempty"   mapstructure:"endpoint"   yaml:"endpoint,omitempty"`
 	Region    string `json:"region,omitempty"     mapstructure:"region"     yaml:"region,omitempty"`
 	AccessKey string `json:"access_key,omitempty" mapstructure:"access_key" yaml:"access_key,omitempty"`
-	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` //nolint:gosec // field name is descriptive
+	SecretKey string `json:"secret_key,omitempty" mapstructure:"secret_key" yaml:"secret_key,omitempty"` // #nosec -- field name is descriptive
 	CACert    string `json:"ca_cert,omitempty"    mapstructure:"ca_cert"    yaml:"ca_cert,omitempty"`
 	PathStyle *bool  `json:"path_style,omitempty" mapstructure:"path_style" yaml:"path_style,omitempty"`
 }
@@ -1761,7 +1761,7 @@ func FormatAvailabilityZone(provider, region string, index int) string {
 		return fmt.Sprintf("%s-%d", region, index)
 	}
 
-	suffix := string('a' + int32(index)) //nolint:gosec // bounds checked above
+	suffix := string('a' + int32(index)) // #nosec -- bounds checked above
 
 	return region + suffix
 }
@@ -1858,7 +1858,7 @@ func splitNetworkCIDR(parentCIDR string, count int) []string {
 
 	// Convert to uint32 — each octet is now bounded to [0, 255] so the
 	// cast cannot silently wrap.
-	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3]) //nolint:gosec // G115: octets bounded to [0,255] above, cast cannot wrap
+	baseIP := uint32(octets[0])<<octetShift24 | uint32(octets[1])<<octetShift16 | uint32(octets[2])<<octetShift8 | uint32(octets[3]) // #nosec G115 -- octets bounded to [0,255] above, cast cannot wrap
 
 	// Calculate subnet size
 	subnetSize := uint32(1) << (maxPrefixLen - newPrefixLen)

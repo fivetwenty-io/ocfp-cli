@@ -53,7 +53,7 @@ func LoadState() (*StateFile, error) {
 		return &StateFile{}, nil
 	}
 
-	data, err := os.ReadFile(statePath) //nolint:gosec // path is from trusted config
+	data, err := os.ReadFile(statePath) // #nosec G304 -- path is from trusted config
 	if err != nil {
 		if os.IsNotExist(err) {
 			return migrateStateFromConfig()
@@ -84,7 +84,7 @@ func SaveState(state *StateFile) error {
 	// Ensure directory exists
 	dir := filepath.Dir(statePath)
 
-	err := os.MkdirAll(dir, stateDirMode) //nolint:gosec // path is from trusted config
+	err := os.MkdirAll(dir, stateDirMode) // #nosec -- path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
@@ -95,7 +95,7 @@ func SaveState(state *StateFile) error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	err = os.WriteFile(statePath, data, stateFileMode) //nolint:gosec // path is from trusted config
+	err = os.WriteFile(statePath, data, stateFileMode) // #nosec -- path is from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
@@ -195,7 +195,7 @@ func migrateStateFromConfig() (*StateFile, error) {
 
 	configPath := defaultConfigPath()
 
-	data, err := os.ReadFile(configPath) //nolint:gosec // path is from trusted config
+	data, err := os.ReadFile(configPath) // #nosec G304 -- path is from trusted config
 	if err != nil {
 		// No config.yml either -- return empty state
 		return state, nil //nolint:nilerr // intentionally ignoring missing config file

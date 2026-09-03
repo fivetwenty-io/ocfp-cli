@@ -530,13 +530,13 @@ func copyMigrateDir(src, dst string, mode os.FileMode) error {
 }
 
 func copyMigrateFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src) //nolint:gosec // path is built from the operator's own legacy directory listing
+	in, err := os.Open(src) // #nosec G304 -- path is built from the operator's own legacy directory listing
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode) //nolint:gosec // destination derived from trusted XDG-class roots
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode) // #nosec G304 -- destination derived from trusted XDG-class roots
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", dst, err)
 	}

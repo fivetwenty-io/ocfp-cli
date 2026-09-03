@@ -176,7 +176,7 @@ type PopulateOptions struct {
 	// external mode is requested. Written to a dedicated vault path so the
 	// blobstore config path stays secret-free.
 	BlobstoreAccessKey string
-	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
+	BlobstoreSecretKey string // #nosec -- field name is descriptive
 
 	// ForceReallocate applies the derived reserved IPs over the addresses
 	// vault already records, instead of keeping the recorded ones and
@@ -497,7 +497,7 @@ func (m *Manager) getProductionVaultName() (string, error) {
 
 	saferc := filepath.Join(homeDir, ".saferc")
 
-	data, err := os.ReadFile(saferc) //nolint:gosec // path is from trusted HOME env
+	data, err := os.ReadFile(saferc) // #nosec G304,G703 -- path is from trusted HOME env
 	if err != nil {
 		return "", fmt.Errorf("failed to read .saferc: %w", err)
 	}
@@ -1519,12 +1519,12 @@ func (m *Manager) removeBlocSpecificVaultFiles() int {
 
 // removeFileIfExists removes a file if it exists and returns true if removed.
 func (m *Manager) removeFileIfExists(path, description string) bool {
-	_, err := os.Stat(path) //nolint:gosec // G703: path is a config-derived OCFP-managed file
+	_, err := os.Stat(path) // #nosec G703 -- path is a config-derived OCFP-managed file
 	if err != nil {
 		return false
 	}
 
-	err = os.Remove(path) //nolint:gosec // G703: path is a config-derived OCFP-managed file
+	err = os.Remove(path) // #nosec G703 -- path is a config-derived OCFP-managed file
 	if err != nil {
 		m.logger.Warnw("Failed to remove "+description, "file", path, "error", err)
 
@@ -1538,12 +1538,12 @@ func (m *Manager) removeFileIfExists(path, description string) bool {
 
 // removeDirIfExists removes a directory if it exists and returns true if removed.
 func (m *Manager) removeDirIfExists(path, description string) bool {
-	_, err := os.Stat(path) //nolint:gosec // G703: path is a config-derived OCFP-managed dir
+	_, err := os.Stat(path) // #nosec G703 -- path is a config-derived OCFP-managed dir
 	if err != nil {
 		return false
 	}
 
-	err = os.RemoveAll(path) //nolint:gosec // G703: path is a config-derived OCFP-managed dir
+	err = os.RemoveAll(path) // #nosec G703 -- path is a config-derived OCFP-managed dir
 	if err != nil {
 		m.logger.Warnw("Failed to remove "+description, "dir", path, "error", err)
 
@@ -1760,7 +1760,7 @@ func (m *Manager) createClientForTarget(targetName string) (*Client, error) {
 
 	saferc := filepath.Join(homeDir, ".saferc")
 
-	data, err := os.ReadFile(saferc) //nolint:gosec // path is from trusted HOME env
+	data, err := os.ReadFile(saferc) // #nosec G304,G703 -- path is from trusted HOME env
 	if err != nil {
 		return nil, fmt.Errorf("failed to read .saferc: %w", err)
 	}
@@ -2266,7 +2266,8 @@ func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
 
 	snapshotDir := filepath.Join(blocDir, "vault", "snapshots", "inception")
 
-	err := os.MkdirAll(snapshotDir, 0700) //nolint:gosec,mnd // path components are from trusted config
+	// #nosec -- path components are from trusted config
+	err := os.MkdirAll(snapshotDir, 0700) //nolint:mnd // path components are from trusted config
 	if err != nil {
 		return "", fmt.Errorf("failed to create snapshot directory: %w", err)
 	}
@@ -2298,7 +2299,8 @@ func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
 	}
 
 	// Write to file
-	err = os.WriteFile(snapshotPath, jsonData, 0600) //nolint:gosec,mnd // path components are from trusted config
+	// #nosec -- path components are from trusted config
+	err = os.WriteFile(snapshotPath, jsonData, 0600) //nolint:mnd // path components are from trusted config
 	if err != nil {
 		return "", fmt.Errorf("failed to write snapshot file: %w", err)
 	}

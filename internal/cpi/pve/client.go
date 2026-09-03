@@ -50,7 +50,7 @@ type Config struct {
 	TokenID     string // API Token ID (e.g., "root@pam!mytoken")
 	TokenSecret string // API Token secret
 	Username    string // Username for password auth (fallback)
-	Password    string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	Password    string // #nosec G101 -- field name is descriptive, not a hardcoded secret
 	Realm       string // Auth realm (default: "pam")
 
 	// Network settings
@@ -86,7 +86,7 @@ type Config struct {
 	BlobstoreEndpoint  string
 	BlobstoreRegion    string
 	BlobstoreAccessKey string
-	BlobstoreSecretKey string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	BlobstoreSecretKey string // #nosec G101 -- field name is descriptive, not a hardcoded secret
 	BlobstoreCAPath    string // path to CA bundle for self-signed endpoints
 	BlobstorePathStyle bool   // true for Ceph/RustFS (default true)
 }
