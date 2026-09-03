@@ -91,7 +91,7 @@ func FindTmuxScript() (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		_, err := os.Stat(path) //nolint:gosec // path components are from trusted config
+		_, err := os.Stat(path) // #nosec -- path components are from trusted config
 		if err == nil {
 			return path, nil
 		}
@@ -147,7 +147,7 @@ echo "Attach with: tmux attach-session -t ocfp"
 	_, err = tempFile.WriteString(scriptContent)
 	if err != nil {
 		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name()) //nolint:gosec // path from os.CreateTemp is trusted
+		_ = os.Remove(tempFile.Name()) // #nosec -- path from os.CreateTemp is trusted
 
 		return "", fmt.Errorf("failed to write script content: %w", err)
 	}

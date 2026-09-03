@@ -138,7 +138,7 @@ func newVaultPopulateCmd() *cobra.Command {
 		blobstoreMode      string
 		blobstoreRegion    string
 		blobstoreAccessKey string
-		blobstoreSecretKey string //nolint:gosec // descriptive flag var name
+		blobstoreSecretKey string // #nosec -- descriptive flag var name
 	)
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
@@ -191,7 +191,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 	cmd.Flags().StringVar(&blobstoreMode, "blobstore-mode", "", "PVE blobstore mode: 'local' (default; skip buckets) or 'external' (S3-compatible)")
 	cmd.Flags().StringVar(&blobstoreRegion, "blobstore-region", "", "S3 region for the PVE external blobstore (default 'us-east-1')")
 	cmd.Flags().StringVar(&blobstoreAccessKey, "blobstore-access-key", "", "S3 access key for the PVE external blobstore")
-	cmd.Flags().StringVar(&blobstoreSecretKey, "blobstore-secret-key", "", "S3 secret key for the PVE external blobstore") //nolint:gosec // CLI flag name, not a credential
+	cmd.Flags().StringVar(&blobstoreSecretKey, "blobstore-secret-key", "", "S3 secret key for the PVE external blobstore") // #nosec -- CLI flag name, not a credential
 
 	return cmd
 }
@@ -204,7 +204,7 @@ type vaultPopulateBlobstoreFlags struct {
 	Mode      string
 	Region    string
 	AccessKey string
-	SecretKey string //nolint:gosec // field name is descriptive
+	SecretKey string // #nosec -- field name is descriptive
 }
 
 // vaultPopulateFlags bundles the non-blobstore populate flags for the same
@@ -426,8 +426,7 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 // All three conditions must pass: tmux session exists + vault responds on port + safe target is set.
 func isVaultAlreadyRunning(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) bool {
 	// Check 1: tmux session exists
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", paths["tmuxSession"])
+	checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", paths["tmuxSession"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 	ensureTmuxEnv(checkCmd)
 
 	if checkCmd.Run() != nil {
@@ -503,8 +502,7 @@ func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
 // target that is already gone is the desired end state.
 func runCleanupCommands(ctx context.Context, cmds []cleanupCommand) {
 	for _, spec := range cmds {
-		//nolint:gosec // args come from the controlled getVaultInceptionPaths() function
-		cmd := exec.CommandContext(ctx, spec.name, spec.args...)
+		cmd := exec.CommandContext(ctx, spec.name, spec.args...) // #nosec G204 -- args come from the controlled getVaultInceptionPaths() function
 		if spec.tmux {
 			ensureTmuxEnv(cmd)
 		}
@@ -620,8 +618,7 @@ func hasTerminfo(term, terminfoDirs string) bool {
 		}
 
 		for _, sub := range []string{letterDir, hexDir} {
-			//nolint:gosec // dir comes from TERMINFO_DIRS env var and known safe paths; term validated above
-			_, statErr := os.Stat(filepath.Join(dir, sub, term))
+			_, statErr := os.Stat(filepath.Join(dir, sub, term)) // #nosec G703 -- dir comes from TERMINFO_DIRS env var and known safe paths; term validated above
 			if statErr == nil {
 				return true
 			}
@@ -669,8 +666,7 @@ func ensureTmuxEnv(cmd *exec.Cmd) {
 // createTmuxSession creates a new tmux session with fallbacks for non-PTY SSH environments.
 func createTmuxSession(ctx context.Context, session string, log *zap.SugaredLogger) error {
 	// Check if session already exists
-	//nolint:gosec // session name is controlled internally
-	checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session)
+	checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session) // #nosec G204 -- session name is controlled internally
 	ensureTmuxEnv(checkCmd)
 
 	if checkCmd.Run() == nil {
@@ -680,8 +676,7 @@ func createTmuxSession(ctx context.Context, session string, log *zap.SugaredLogg
 	}
 
 	// Attempt 1: direct tmux
-	//nolint:gosec // session name is controlled internally
-	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session)
+	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session) // #nosec G204 -- session name is controlled internally
 	ensureTmuxEnv(cmd)
 
 	output, err := cmd.CombinedOutput()
@@ -698,8 +693,7 @@ func createTmuxSession(ctx context.Context, session string, log *zap.SugaredLogg
 	if lookErr == nil {
 		scriptArg := "tmux new-session -d -s " + session
 
-		//nolint:gosec // scriptArg is controlled internally
-		cmd = exec.CommandContext(ctx, "script", "-qfec", scriptArg, "/dev/null")
+		cmd = exec.CommandContext(ctx, "script", "-qfec", scriptArg, "/dev/null") // #nosec G204 -- scriptArg is controlled internally
 		ensureTmuxEnv(cmd)
 
 		output, err = cmd.CombinedOutput()
@@ -707,8 +701,7 @@ func createTmuxSession(ctx context.Context, session string, log *zap.SugaredLogg
 			// Verify session was created
 			time.Sleep(tmuxVerifyWait)
 
-			//nolint:gosec // session name is controlled internally
-			verifyCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session)
+			verifyCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session) // #nosec G204 -- session name is controlled internally
 			ensureTmuxEnv(verifyCmd)
 
 			if verifyCmd.Run() == nil {
@@ -740,8 +733,7 @@ func startTmuxServerAndRetry(ctx context.Context, session string) ([]byte, error
 
 	time.Sleep(1 * time.Second)
 
-	//nolint:gosec // session name is controlled internally
-	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session)
+	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session) // #nosec G204 -- session name is controlled internally
 	ensureTmuxEnv(cmd)
 
 	output, err := cmd.CombinedOutput()
@@ -757,8 +749,7 @@ func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.Sug
 	log.Info("Starting vault in tmux session...")
 
 	// Clean stale session
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"])
+	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 	ensureTmuxEnv(killCmd)
 	_ = killCmd.Run()
 
@@ -773,13 +764,11 @@ func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.Sug
 	time.Sleep(1 * time.Second)
 
 	// Build the safe local command — pipe through tee to also capture in log file
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
 	safeCmd := fmt.Sprintf("safe local --file %s --as %s --port %s 2>&1 | tee %s",
-		paths["vaultDir"], paths["vaultName"], paths["port"], paths["logFile"])
+		paths["vaultDir"], paths["vaultName"], paths["port"], paths["logFile"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 
 	// Send command to tmux session
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m")
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 	ensureTmuxEnv(cmd)
 
 	sendOutput, sendErr := cmd.CombinedOutput()
@@ -805,8 +794,7 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 		}
 
 		// Check 1: tmux capture-pane
-		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-		captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p")
+		captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 		ensureTmuxEnv(captureCmd)
 
 		paneOutput, captureErr := captureCmd.Output()
@@ -860,8 +848,7 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 
 // dumpVaultDiagnostics logs tmux pane and log file contents on vault readiness failure.
 func dumpVaultDiagnostics(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50")
+	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 	ensureTmuxEnv(captureCmd)
 
 	paneOutput, paneErr := captureCmd.Output()
@@ -881,14 +868,12 @@ func targetInceptionVault(ctx context.Context, paths map[string]string, log *zap
 
 	vaultURL := "http://127.0.0.1:" + paths["port"]
 
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	cmd := exec.CommandContext(ctx, "safe", "target", paths["vaultName"], vaultURL)
+	cmd := exec.CommandContext(ctx, "safe", "target", paths["vaultName"], vaultURL) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 
 	err := cmd.Run()
 	if err != nil {
 		// Try without URL (might already be configured)
-		//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-		cmd = exec.CommandContext(ctx, "safe", "target", paths["vaultName"])
+		cmd = exec.CommandContext(ctx, "safe", "target", paths["vaultName"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 
 		err = cmd.Run()
 		if err != nil {
@@ -914,8 +899,7 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 	// Try tmux capture-pane first, then log file
 	var outputStr string
 
-	//nolint:gosec // paths come from controlled getVaultInceptionPaths() function
-	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50")
+	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
 	ensureTmuxEnv(captureCmd)
 
 	paneOutput, paneErr := captureCmd.Output()
@@ -940,7 +924,7 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 	// Parse seal key: "Your Vault Seal Key is <key>" or "Vault Seal Key is <key>"
 	sealKey := extractSealKey(outputStr)
 	if sealKey != "" {
-		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) //nolint:gosec // G703: path is the OCFP-managed vault output dir
+		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) // #nosec G703 -- path is the OCFP-managed vault output dir
 		if err != nil {
 			return fmt.Errorf("failed to write unseal key: %w", err)
 		}
@@ -965,8 +949,7 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 
 	safeRcPath := filepath.Join(homeDir, ".saferc")
 
-	//nolint:gosec // safeRcPath is derived from os.UserHomeDir() and a fixed filename
-	data, err := os.ReadFile(safeRcPath)
+	data, err := os.ReadFile(safeRcPath) // #nosec G304 -- safeRcPath is derived from os.UserHomeDir() and a fixed filename
 	if err != nil {
 		log.Warnw("Could not read .saferc for root token", "error", err)
 

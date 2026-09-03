@@ -62,7 +62,7 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, operation string
 		config = DefaultRetryConfig()
 	}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // not cryptographic
+	rng := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404 -- not cryptographic
 
 	return executeRetryLoop(ctx, config, operation, opFunc, rng)
 }

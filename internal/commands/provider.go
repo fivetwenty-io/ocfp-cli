@@ -322,7 +322,7 @@ func authenticateSTACKIT(serviceAccountJSON string, log *zap.Logger) error {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
 
-	defer func() { _ = os.Remove(tempFile.Name()) }() //nolint:gosec // path from os.CreateTemp is trusted
+	defer func() { _ = os.Remove(tempFile.Name()) }() // #nosec -- path from os.CreateTemp is trusted
 
 	_, err = tempFile.WriteString(serviceAccountJSON)
 	if err != nil {
@@ -442,7 +442,7 @@ func loginAWS(cmd *cobra.Command, log *zap.Logger) error {
 type AWSCredentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
-	SessionToken    string //nolint:gosec // field name is descriptive, not a hardcoded secret
+	SessionToken    string // #nosec -- field name is descriptive, not a hardcoded secret
 	Region          string
 }
 
@@ -734,7 +734,7 @@ func writeAWSCredentialsKey(profileName, key, value string) error {
 	}
 
 	// Read existing content (empty slice if file absent).
-	existing, err := os.ReadFile(credFile) //nolint:gosec // path is user home directory
+	existing, err := os.ReadFile(credFile) // #nosec G304 -- path is user home directory
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cannot read credentials file: %w", err)
 	}
@@ -795,7 +795,7 @@ func writeAWSCredentialsKey(profileName, key, value string) error {
 
 	content := strings.Join(lines, "\n")
 
-	if err := os.WriteFile(credFile, []byte(content), credentialsFileMode); err != nil { //nolint:gosec // path is user home directory
+	if err := os.WriteFile(credFile, []byte(content), credentialsFileMode); err != nil { // #nosec G703 -- path is user home directory
 		return fmt.Errorf("cannot write credentials file: %w", err)
 	}
 
@@ -890,7 +890,7 @@ func loginGCP(log *zap.Logger) error {
 		}
 
 		_, _ = fmt.Fprintln(os.Stdout, "GCP credentials configured")
-		_, _ = fmt.Fprintf(os.Stdout, "  GOOGLE_APPLICATION_CREDENTIALS=%s\n", credPath) //nolint:gosec // output to stdout, not web context
+		_, _ = fmt.Fprintf(os.Stdout, "  GOOGLE_APPLICATION_CREDENTIALS=%s\n", credPath) // #nosec -- output to stdout, not web context
 
 		return nil
 	}

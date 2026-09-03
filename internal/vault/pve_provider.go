@@ -45,7 +45,7 @@ type PVEVaultProvider struct {
 	// BlobstoreAccessKey + BlobstoreSecretKey carry external-mode S3 credentials.
 	// Written to a separate vault path so the config path stays secret-free.
 	BlobstoreAccessKey string
-	BlobstoreSecretKey string //nolint:gosec // field name is descriptive
+	BlobstoreSecretKey string // #nosec -- field name is descriptive
 
 	// blobstoreCACert is the PEM CA cert sourced from artifacts state (internal-ca
 	// or self-signed TLS mode). Written to vault alongside endpoint/region so

@@ -232,7 +232,9 @@ func artifactsLookup(ac *artifactsContext, asJSON bool) error {
 		// G117: --json is an explicit operator opt-in to dump the full lookup
 		// (including blobstore creds) to their own terminal; the text path
 		// deliberately omits secrets.
-		out, err := json.MarshalIndent(ac.lookup, "", "  ") //nolint:gosec,musttag // G117: explicit operator --json of own creds; lookup has no json tags by design
+		//nolint:musttag // lookup has no json tags by design
+		// #nosec G117 -- explicit operator --json of own creds
+		out, err := json.MarshalIndent(ac.lookup, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -298,7 +300,7 @@ func artifactsCA(cmd *cobra.Command, blocName string, asJSON bool) error {
 	}
 
 	if outPath != "" {
-		if writeErr := os.WriteFile(outPath, []byte(mat.CertPEM), 0o644); writeErr != nil { //nolint:gosec // G306: CA cert is public trust material, world-readable by design
+		if writeErr := os.WriteFile(outPath, []byte(mat.CertPEM), 0o644); writeErr != nil { // #nosec G306 -- CA cert is public trust material, world-readable by design
 			return fmt.Errorf("artifacts ca: writing CA cert to %s: %w", outPath, writeErr)
 		}
 	}
@@ -539,7 +541,7 @@ func probeArtifactsLiveLeaf(parent context.Context, endpoint string, timeout tim
 
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{},
-		Config:    &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: expiry/fingerprint probe only, never a trust decision — see doc comment above
+		Config:    &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- expiry/fingerprint probe only, never a trust decision — see doc comment above
 	}
 
 	conn, err := dialer.DialContext(ctx, "tcp", host)

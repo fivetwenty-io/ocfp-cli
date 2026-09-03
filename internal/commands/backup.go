@@ -934,7 +934,7 @@ func shouldExclude(path string, excludePaths []string) bool {
 func copyForBackup(_, dest string) error {
 	// This would implement recursive copying
 	// For now, return a placeholder
-	err := os.MkdirAll(dest, BackupDirPerm) //nolint:gosec // path from trusted config
+	err := os.MkdirAll(dest, BackupDirPerm) // #nosec -- path from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
@@ -1058,7 +1058,7 @@ func saveBackupMetadata(backup *BackupMetadata) error {
 	// Save backup metadata for tracking
 	metadataDir := backupMetadataDir()
 
-	err := os.MkdirAll(metadataDir, BackupDirPerm) //nolint:gosec // path components are from trusted HOME env
+	err := os.MkdirAll(metadataDir, BackupDirPerm) // #nosec -- path components are from trusted HOME env
 	if err != nil {
 		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
@@ -1066,7 +1066,7 @@ func saveBackupMetadata(backup *BackupMetadata) error {
 	metadataFile := filepath.Join(metadataDir, backup.ID+".json")
 
 	// Would marshal and save backup metadata
-	err = os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm) //nolint:gosec // path components are from trusted config
+	err = os.WriteFile(metadataFile, []byte("{}"), BackupFilePerm) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to save backup metadata: %w", err)
 	}

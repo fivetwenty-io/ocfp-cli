@@ -79,7 +79,7 @@ func detectTTY(env *Environment, w io.Writer) {
 		return
 	}
 
-	if !term.IsTerminal(int(file.Fd())) { //nolint:gosec // file descriptor fits in int
+	if !term.IsTerminal(int(file.Fd())) { // #nosec -- file descriptor fits in int
 		env.IsPiped = true
 
 		return
@@ -88,7 +88,7 @@ func detectTTY(env *Environment, w io.Writer) {
 	env.IsTTY = true
 	env.SupportsANSI = true
 
-	width, _, err := term.GetSize(int(file.Fd())) //nolint:gosec // file descriptor fits in int
+	width, _, err := term.GetSize(int(file.Fd())) // #nosec -- file descriptor fits in int
 	if err == nil {
 		env.TermWidth = width
 	} else {

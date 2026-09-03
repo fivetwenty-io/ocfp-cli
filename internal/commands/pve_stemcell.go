@@ -32,7 +32,7 @@ type stemcellUploadBuilder func(boshEnv, sha1Override string) (stemcell.RunBosh,
 func defaultStemcellUploadBuilder(boshEnv, sha1Override string) (stemcell.RunBosh, stemcell.SHA1Fetcher) {
 	runBosh := func(ctx context.Context, args ...string) ([]byte, error) {
 		full := append([]string{"-e", boshEnv}, args...)
-		cmd := exec.CommandContext(ctx, "bosh", full...) //nolint:gosec // args come from validated flag + positional inputs
+		cmd := exec.CommandContext(ctx, "bosh", full...) // #nosec G204 -- args come from validated flag + positional inputs
 
 		return cmd.Output()
 	}

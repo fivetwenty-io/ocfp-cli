@@ -243,7 +243,7 @@ func resolveBlobstoreOverride(ctx context.Context, bloc, blobEndpoint, blobAcces
 	}
 
 	if blobCACertFile != "" {
-		pem, err := os.ReadFile(blobCACertFile) //nolint:gosec // operator-supplied path
+		pem, err := os.ReadFile(blobCACertFile) // #nosec G304 -- operator-supplied path
 		if err != nil {
 			return nil, fmt.Errorf("reading blobstore CA cert: %w", err)
 		}
@@ -323,7 +323,7 @@ func runPrecompileCF(cmd *cobra.Command) error {
 		ctx = context.Background()
 	}
 
-	manifestData, err := os.ReadFile(f.cfManifest) //nolint:gosec // path is operator-supplied config
+	manifestData, err := os.ReadFile(f.cfManifest) // #nosec -- path is operator-supplied config
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: %s", ErrCFDeploymentNotFound, f.cfManifest)
@@ -643,7 +643,7 @@ func emitPinOps(res []precompile.Resolution, sc precompile.Stemcell, generatedBy
 	}
 
 	dest := filepath.Join(destDir, "compiled-releases.yml")
-	if err := os.WriteFile(dest, ops, 0o600); err != nil { //nolint:gosec // G703: dest derives from the config-controlled deployments dir
+	if err := os.WriteFile(dest, ops, 0o600); err != nil { // #nosec G703 -- dest derives from the config-controlled deployments dir
 		return fmt.Errorf("writing pin ops %s: %w", dest, err)
 	}
 

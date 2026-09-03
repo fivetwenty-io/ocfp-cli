@@ -30,14 +30,14 @@ type osCommandRunner struct{}
 // Inputs: ctx must be non-nil; name must be a valid executable.
 // Failure modes: exec failure, non-zero exit, context cancellation.
 func (osCommandRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output() //nolint:gosec // caller is responsible for safe arg construction
+	return exec.CommandContext(ctx, name, args...).Output() // #nosec G204 -- caller is responsible for safe arg construction
 }
 
 // Run executes name with args and returns combined stdout+stderr.
 // Inputs: ctx must be non-nil; name must be a valid executable.
 // Failure modes: exec failure, non-zero exit, context cancellation.
 func (osCommandRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // caller is responsible for safe arg construction
+	return exec.CommandContext(ctx, name, args...).CombinedOutput() // #nosec G204,G702 -- caller is responsible for safe arg construction
 }
 
 // RunSplit executes name with args, returning stdout and stderr as separate byte slices.
@@ -47,7 +47,7 @@ func (osCommandRunner) Run(ctx context.Context, name string, args ...string) ([]
 func (osCommandRunner) RunSplit(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
 	var stdoutBuf, stderrBuf bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // caller is responsible for safe arg construction
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- caller is responsible for safe arg construction
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 

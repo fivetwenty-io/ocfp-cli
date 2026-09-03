@@ -98,7 +98,7 @@ func newS3Client(ep Endpoint, creds Credentials) (*s3.Client, error) {
 
 	case ep.SkipTLSVerify:
 		// Operator explicitly opted out of verification (e.g. RustFS self-signed without CA).
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true} //nolint:gosec // operator-controlled; SkipTLSVerify must be set explicitly
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true} // #nosec G402 -- operator-controlled; SkipTLSVerify must be set explicitly
 		httpClient = &http.Client{
 			Transport: &http.Transport{TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment},
 			Timeout:   bucketProbeTimeout,

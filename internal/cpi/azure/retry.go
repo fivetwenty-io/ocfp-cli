@@ -100,7 +100,7 @@ func calculateBackoff(config *RetryConfig, attempt int) time.Duration {
 	// Add jitter
 	if config.Jitter > 0 {
 		jitterRange := backoff * config.Jitter
-		jitter := (rand.Float64() * 2 * jitterRange) - jitterRange //nolint:gosec // weak rand is fine for jitter
+		jitter := (rand.Float64() * 2 * jitterRange) - jitterRange // #nosec G404 -- weak rand is fine for jitter
 		backoff += jitter
 	}
 

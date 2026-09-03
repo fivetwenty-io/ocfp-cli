@@ -38,8 +38,8 @@ type ServiceIngress struct {
 type CloudflareConfig struct {
 	Enabled *bool `json:"enabled,omitempty" mapstructure:"enabled" yaml:"enabled,omitempty"`
 
-	APIToken          string `json:"api_token,omitempty"            mapstructure:"api_token"            yaml:"api_token,omitempty"`            //nolint:gosec // descriptive field name
-	APITokenVaultPath string `json:"api_token_vault_path,omitempty" mapstructure:"api_token_vault_path" yaml:"api_token_vault_path,omitempty"` //nolint:gosec // descriptive field name
+	APIToken          string `json:"api_token,omitempty"            mapstructure:"api_token"            yaml:"api_token,omitempty"`            // #nosec -- descriptive field name
+	APITokenVaultPath string `json:"api_token_vault_path,omitempty" mapstructure:"api_token_vault_path" yaml:"api_token_vault_path,omitempty"` // #nosec -- descriptive field name
 
 	Zone         string `json:"zone,omitempty"          mapstructure:"zone"          yaml:"zone,omitempty"`
 	TunnelName   string `json:"tunnel_name,omitempty"   mapstructure:"tunnel_name"   yaml:"tunnel_name,omitempty"`

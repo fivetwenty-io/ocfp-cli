@@ -360,7 +360,7 @@ func FindProvisionScript(scriptName string) (string, error) {
 	}
 
 	for _, path := range searchPaths {
-		_, err := os.Stat(path) //nolint:gosec // path components are from trusted config
+		_, err := os.Stat(path) // #nosec -- path components are from trusted config
 		if err == nil {
 			return path, nil
 		}
@@ -388,7 +388,7 @@ func materializeEmbeddedScript(scriptName string) (string, error) {
 
 	path := filepath.Join(dir, scriptName)
 
-	err = os.WriteFile(path, data, 0o700) //nolint:gosec // script must be executable
+	err = os.WriteFile(path, data, 0o700) // #nosec G306 -- script must be executable
 	if err != nil {
 		return "", fmt.Errorf("failed to write embedded script: %w", err)
 	}

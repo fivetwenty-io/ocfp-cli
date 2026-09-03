@@ -192,8 +192,8 @@ func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 	}
 
 	for _, statePath := range statePaths {
-		_, statErr := os.Stat(statePath) //nolint:gosec // path from trusted config
-		if statErr == nil {              //nolint:gosec // path components are from trusted config
+		_, statErr := os.Stat(statePath) // #nosec -- path from trusted config
+		if statErr == nil {              // #nosec -- path components are from trusted config
 			// State file exists - would parse and extract bastion IP
 			// For now, return empty to fall through to other methods
 			g.log.Debugw("Found state file", "path", statePath)
@@ -220,7 +220,7 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 
 	// Check environment
 	if keyPath := os.Getenv("OCFP_SSH_KEY"); keyPath != "" {
-		_, statErr := os.Stat(keyPath) //nolint:gosec // path from trusted env variable
+		_, statErr := os.Stat(keyPath) // #nosec G703 -- path from trusted env variable
 		if statErr == nil {
 			return keyPath, nil
 		}
@@ -237,7 +237,7 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 	}
 
 	for _, keyPath := range keyPaths {
-		_, statErr := os.Stat(keyPath) //nolint:gosec // path components are from trusted HOME env
+		_, statErr := os.Stat(keyPath) // #nosec G703 -- path components are from trusted HOME env
 		if statErr == nil {
 			return keyPath, nil
 		}

@@ -494,7 +494,7 @@ func (c *Client) initializeCredential(_ctx context.Context) error { //nolint:unp
 		ClientOptions: policy.ClientOptions{
 			Cloud: cloudConfig,
 			Retry: policy.RetryOptions{
-				MaxRetries: int32(c.config.MaxRetries), //nolint:gosec // MaxRetries is a small config value
+				MaxRetries: int32(c.config.MaxRetries), // #nosec G115 -- MaxRetries is a small config value
 			},
 		},
 	}

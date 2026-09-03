@@ -262,7 +262,7 @@ func checkLineCount(lines []string, targetCount int, readOffset int64) []string 
 // printFormattedLines outputs lines with formatting.
 func printFormattedLines(lines []string, outputFormat string) {
 	for _, line := range lines {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(line, outputFormat)) //nolint:gosec // output to stdout, not web context
+		_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(line, outputFormat)) // #nosec -- output to stdout, not web context
 	}
 }
 
@@ -336,7 +336,7 @@ func printTrimmedLine(line, outputFormat string) {
 		trimmedLine = trimmedLine[:len(trimmedLine)-1]
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(trimmedLine, outputFormat)) //nolint:gosec // output to stdout, not web context
+	_, _ = fmt.Fprintf(os.Stdout, "%s\n", formatLogLine(trimmedLine, outputFormat)) // #nosec -- output to stdout, not web context
 }
 
 // followMultipleFiles follows multiple files for new content.
@@ -451,7 +451,7 @@ func printFileHeader(path string) {
 // printLines prints multiple lines to stdout.
 func printLines(lines []string) {
 	for _, line := range lines {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", line) //nolint:gosec // output to stdout, not web context
+		_, _ = fmt.Fprintf(os.Stdout, "%s\n", line) // #nosec -- output to stdout, not web context
 	}
 }
 

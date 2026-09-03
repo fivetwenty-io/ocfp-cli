@@ -133,7 +133,7 @@ func (md *ModeDetector) checkMarkerFiles() bool {
 	}
 
 	for _, marker := range markerFiles {
-		_, err := os.Stat(marker) //nolint:gosec // path components are from trusted HOME env
+		_, err := os.Stat(marker) // #nosec -- path components are from trusted HOME env
 		if err == nil {
 			md.log.Debugw("Found bastion marker file", "file", marker)
 
@@ -153,7 +153,7 @@ func (md *ModeDetector) checkDirectoryStructure() bool {
 	}
 
 	for _, dir := range ocfpDirs {
-		_, err := os.Stat(dir) //nolint:gosec // path components are from trusted HOME env
+		_, err := os.Stat(dir) // #nosec G703 -- path components are from trusted HOME env
 		if os.IsNotExist(err) {
 			return false
 		}
@@ -399,7 +399,7 @@ func (lce *LocalCommandExecutor) ExecuteCommand(ctx context.Context, cmd string)
 
 	start := time.Now()
 
-	command := exec.CommandContext(ctx, "bash", "-lc", cmd) //nolint:gosec // command args are from trusted config
+	command := exec.CommandContext(ctx, "bash", "-lc", cmd) // #nosec G204 -- command args are from trusted config
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 

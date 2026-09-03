@@ -69,7 +69,7 @@ func BuildCatalog(paths []string, baseDir string) (*Catalog, error) {
 		}
 
 		for _, f := range files {
-			data, err := os.ReadFile(f) //nolint:gosec // f is an operator-configured strategy path, not user input
+			data, err := os.ReadFile(f) // #nosec G304 -- f is an operator-configured strategy path, not user input
 			if err != nil {
 				return nil, fmt.Errorf("netlayout: read strategy file %q: %w", f, err)
 			}

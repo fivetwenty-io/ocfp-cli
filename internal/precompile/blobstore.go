@@ -62,7 +62,7 @@ func UploadCompiledFile(ctx context.Context, cli objectAPI, bucket, key, path st
 		return "", err
 	}
 
-	f, err := os.Open(path) //nolint:gosec // path is a temp file produced by export-release/download
+	f, err := os.Open(path) // #nosec G304 -- path is a temp file produced by export-release/download
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", path, err)
 	}
@@ -103,7 +103,7 @@ func DownloadToFile(ctx context.Context, hc *http.Client, url, destPath string) 
 		return "", fmt.Errorf("get %s: status %d", url, resp.StatusCode)
 	}
 
-	f, err := os.Create(destPath) //nolint:gosec // destPath is a caller-controlled temp path
+	f, err := os.Create(destPath) // #nosec G304 -- destPath is a caller-controlled temp path
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", destPath, err)
 	}
@@ -149,7 +149,7 @@ func RemoteSHA256(ctx context.Context, hc *http.Client, url string) (string, err
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec // path is a temp file produced by export-release/download
+	f, err := os.Open(path) // #nosec G304 -- path is a temp file produced by export-release/download
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", path, err)
 	}

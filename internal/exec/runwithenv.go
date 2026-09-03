@@ -40,7 +40,7 @@ func RunWithEnv(ctx context.Context, extraEnv map[string]string, name string, ar
 		return nil, ErrEmptyName
 	}
 
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // caller is responsible for safe arg construction
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- caller is responsible for safe arg construction
 
 	// Build env: inherit current process, then overlay caller-supplied keys.
 	// Explicit construction (not append) ensures extraEnv is fully visible.
