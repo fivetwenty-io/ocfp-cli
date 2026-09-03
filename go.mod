@@ -19,6 +19,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.110.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.48.0
 	github.com/aws/smithy-go v1.28.1
+	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.9.2
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gorilla/websocket v1.5.3
@@ -27,7 +28,6 @@ require (
 	github.com/hashicorp/vault/api/auth/userpass v0.12.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/pkg/sftp v1.13.11
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stackitcloud/stackit-sdk-go/core v0.26.0
