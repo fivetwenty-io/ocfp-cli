@@ -20,7 +20,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/pmezard/go-difflib/difflib"
 )
 
 const (
@@ -1145,17 +1144,7 @@ func (m *Manager) outputFileDiff(path, current, desired string, mode os.FileMode
 		return
 	}
 
-	diff := difflib.UnifiedDiff{
-		A:        difflib.SplitLines(current),
-		B:        difflib.SplitLines(desired),
-		FromFile: path + " (current)",
-		ToFile:   path + " (proposed)",
-		FromDate: "",
-		ToDate:   "",
-		Eol:      "",
-		Context:  diffContextLines,
-	}
-	text, _ := difflib.GetUnifiedDiffString(diff)
+	text := unifiedDiff(path+" (current)", path+" (proposed)", current, desired)
 	_, _ = fmt.Fprintf(m.options.ProgressOut, "\n%s\n", text)
 }
 
@@ -1184,8 +1173,7 @@ func (m *Manager) previewProfileChanges(ctx context.Context) {
 	case current == "":
 		_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/profile.d/ocfp.sh")
 	case current != desired:
-		diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(desired), FromFile: "/etc/profile.d/ocfp.sh (current)", ToFile: "/etc/profile.d/ocfp.sh (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
-		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+		if text := unifiedDiff("/etc/profile.d/ocfp.sh (current)", "/etc/profile.d/ocfp.sh (proposed)", current, desired); text != "" {
 			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 		}
 	default:
@@ -1212,15 +1200,13 @@ func (m *Manager) previewEnvironmentChanges(ctx context.Context) {
 	switch {
 	case strings.TrimSpace(current) == "":
 		// Treat as create
-		diff := difflib.UnifiedDiff{A: []string{}, B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
-		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+		if text := unifiedDiff("/etc/environment (current)", "/etc/environment (proposed)", "", proposed); text != "" {
 			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 		} else {
 			_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/environment")
 		}
 	case current != proposed:
-		diff := difflib.UnifiedDiff{A: difflib.SplitLines(current), B: difflib.SplitLines(proposed), FromFile: "/etc/environment (current)", ToFile: "/etc/environment (proposed)", FromDate: "", ToDate: "", Eol: "", Context: diffContextLines}
-		if text, _ := difflib.GetUnifiedDiffString(diff); text != "" {
+		if text := unifiedDiff("/etc/environment (current)", "/etc/environment (proposed)", current, proposed); text != "" {
 			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 		}
 	default:
