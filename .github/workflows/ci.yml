@@ -296,14 +296,19 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
-      # gosec runs over the tests too and without .golangci.yml's exclusions,
-      # so it is a report rather than a gate; the same gosec rules gate
-      # production code inside golangci-lint, where the tree is clean. Code
+      # gosec is a report rather than a gate; the same gosec rules gate
+      # production code inside golangci-lint, where the tree is clean. The
+      # two disagree because the tree suppresses gosec with //nolint:gosec,
+      # which golangci-lint honours and the gosec binary cannot read, so
+      # this step re-reports findings that were already triaged. Code
       # scanning is unavailable on this private repository, so the SARIF
       # ships as an artifact instead of an upload.
+      #
+      # Pinned like govulncheck above: at @latest this step could change
+      # behaviour with no commit behind it.
       - name: Run gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
           gosec -fmt sarif -out gosec-results.sarif ./... || true
 
       - name: Upload gosec report
