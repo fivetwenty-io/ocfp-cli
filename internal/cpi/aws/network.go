@@ -793,6 +793,8 @@ func convertVPCState(state types.VpcState) cpi.ResourceState {
 		return cpi.ResourceStateCreating
 	case types.VpcStateAvailable:
 		return cpi.ResourceStateAvailable
+	case types.VpcStateDeleting:
+		return cpi.ResourceStateDeleting
 	default:
 		return cpi.ResourceStateUnknown
 	}

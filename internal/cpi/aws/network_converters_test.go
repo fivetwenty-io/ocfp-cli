@@ -21,6 +21,7 @@ func TestConvertVPCState(t *testing.T) {
 	}{
 		{"pending", types.VpcStatePending, cpi.ResourceStateCreating},
 		{"available", types.VpcStateAvailable, cpi.ResourceStateAvailable},
+		{"deleting", types.VpcStateDeleting, cpi.ResourceStateDeleting},
 		{"unknown enum", types.VpcState("bogus"), cpi.ResourceStateUnknown},
 	}
 
