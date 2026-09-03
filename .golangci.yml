@@ -196,11 +196,6 @@ linters:
           - gocognit
           - gocritic
           - funlen
-      # template_seed.go: G101 matches a credential-shaped const NAME, not a secret.
-      - path: internal/cpi/pve/template_seed\.go
-        text: "G101"
-        linters:
-          - gosec
 
 formatters:
   # Exclude paths from formatting checks
