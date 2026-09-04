@@ -192,6 +192,8 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 		err = m.uploadOCFPBinary(ctx)
 	case ocfpCLISourceRelease:
 		err = m.installOCFPRelease(ctx, spec.Version)
+	default:
+		return fmt.Errorf("%w: got %q", ErrOCFPCLISourceInvalid, spec.Source)
 	}
 
 	if err != nil {
@@ -199,8 +201,14 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 		if m.options.OCFPOnly {
 			return fmt.Errorf("OCFP binary install failed: %w", err)
 		}
-		// In full init mode, continue anyway - the binary might already be there
-		m.log.Warnw("Failed to install OCFP binary, continuing with setup", "error", err)
+		// In full init mode, continue when a binary is already present. A
+		// bastion with no ocfp at all would silently skip vault populate and
+		// configure later, so that case fails here where the cause is visible.
+		if !m.remoteOCFPBinaryPresent(ctx) {
+			return fmt.Errorf("OCFP binary install failed and no ocfp is present on the bastion: %w", err)
+		}
+
+		m.log.Warnw("Failed to install OCFP binary, keeping the existing one", "error", err)
 	} else if cerr := m.executeScript(ctx, provision.GenerateOCFPCompletionsScript(), "ocfp-cli-completions"); cerr != nil {
 		// Completions are a convenience; never fail the phase over them
 		m.log.Warnw("Failed to install OCFP shell completions", "error", cerr)
@@ -212,11 +220,25 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
 }
 
-// fileExists reports whether path names an existing file.
-func fileExists(path string) bool {
-	_, err := os.Stat(path) // #nosec G703 -- path is operator-supplied OCFP_BINARY_PATH
+// remoteOCFPBinaryPresent reports whether the bastion already has an
+// executable ocfp at the install path. A dry run reports true, since nothing
+// would have been installed anyway.
+func (m *Manager) remoteOCFPBinaryPresent(ctx context.Context) bool {
+	if m.options.DryRun {
+		return true
+	}
 
-	return err == nil
+	result, err := m.sshClient.ExecuteCommand(ctx, "test -x "+provision.OCFPInstallPath+" && echo present")
+
+	return err == nil && result != nil && strings.Contains(result.Stdout, "present")
+}
+
+// fileExists reports whether path names an existing regular file, so a
+// directory or a dangling path cannot select the local install source.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && info.Mode().IsRegular()
 }
 
 // ocfpCLIVersionLabel names an empty version "latest" for logs and progress.
@@ -234,9 +256,9 @@ func ocfpCLIVersionLabel(version string) string {
 func (m *Manager) installOCFPRelease(ctx context.Context, version string) error {
 	label := ocfpCLIVersionLabel(version)
 
-	m.log.Infow("Installing OCFP CLI from GitHub release", "version", label, "remote", "/usr/local/bin/ocfp", "force", m.options.Force)
+	m.log.Infow("Installing OCFP CLI from GitHub release", "version", label, "remote", provision.OCFPInstallPath, "force", m.options.Force)
 
-	if m.reporter != nil {
+	if m.reporter != nil && !m.options.DryRun {
 		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 2, "Installing release "+label) //nolint:mnd
 	}
 
