@@ -1,0 +1,175 @@
+name: Release
+
+# Publish a GitHub Release with cross-platform binaries whenever a
+# semver tag (v1.2.3) is pushed. GoReleaser builds the matrix, archives
+# each target, generates SHA256SUMS, signs + notarizes the darwin
+# binaries, uploads everything to the release, and pushes the Homebrew
+# cask to fivetwenty-io/homebrew-tap. Tests must pass before anything
+# ships.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Read-only by default; only the goreleaser job elevates to
+# contents: write (creating the Release and uploading assets).
+permissions:
+  contents: read
+
+# This module links the Azure, AWS, GCP and STACKIT SDKs, so a single
+# compile of the dependency tree is a heavy memory consumer on the lab
+# runners. GOFLAGS caps the compiler's own package parallelism, the same
+# cap ci.yml applies; the goreleaser step below serialises the targets on
+# top of that, since six simultaneous links of this tree is exactly the
+# fan-out that OOM-killed CI's build matrix (exit 137).
+env:
+  GOFLAGS: -p=4
+
+jobs:
+  # Every job runs on the fivetwenty-io self-hosted lab runners, inside a
+  # golang container: the runner hosts are intentionally minimal, and
+  # mixing host jobs with container jobs leaves the shared workspace with
+  # files owned by two different uids. Actions are pinned to full commit
+  # SHAs (tags are movable, and these jobs execute on a lab runner);
+  # Dependabot's github-actions ecosystem keeps the pins current.
+  #
+  # The Go module and build caches are host directories bind-mounted into
+  # both containers, and setup-go's own cache is off: on this persistent
+  # runner the Actions cache service costs more than it saves and untars
+  # over Go's read-only module cache. GOCACHE is set explicitly because the
+  # runner overrides HOME to /github/home inside the container. Same
+  # arrangement as ci.yml, which documents it at length.
+  test:
+    name: Test
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          # The mounted /go volume is the module cache; the action's own
+          # cache would restore a second copy over it and fail on tar.
+          cache: false
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      # ci.yml only runs on branch pushes and pull requests, so a tag push
+      # would otherwise publish binaries that no workflow ever tested.
+      # Short mode: the -race run is CI's job on the commit itself.
+      - name: Run tests
+        run: go test -short -timeout 25m ./...
+
+  goreleaser:
+    name: GoReleaser
+    runs-on: self-hosted
+    container:
+      image: golang:1.27
+      volumes:
+        - /home/runner/gha-container-cache/go:/go
+        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
+    env:
+      GOCACHE: /root/.cache/go-build
+    timeout-minutes: 90
+    needs: test
+    permissions:
+      contents: write # create the GitHub Release and upload assets
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history + tags for changelog generation
+          persist-credentials: false
+
+      - name: Trust the checkout despite mixed file owners
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.0'
+          # The mounted /go volume is the module cache; the action's own
+          # cache would restore a second copy over it and fail on tar.
+          cache: false
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          # Exact, not '~> v2': a floating minor is a moving dependency on a
+          # tag push, where there is no chance to catch a regression first.
+          # v2.18.0 added a config validation that failed a sibling repo's
+          # release outright, with nothing in that repo having changed.
+          # Bump this pin deliberately, with a release to verify it against.
+          version: 'v2.18.0'
+          # --parallelism 1 builds the six targets one after another; see
+          # the GOFLAGS note at the top.
+          args: release --clean --parallelism 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pushes the Homebrew cask to fivetwenty-io/homebrew-tap; the
+          # default GITHUB_TOKEN cannot write to another repo. Optional —
+          # homebrew_casks.skip_upload degrades gracefully when this secret
+          # is unset (an empty env value evaluates falsy in the goreleaser
+          # template, so the tap push is skipped rather than failing).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Apple code signing + notarization for the darwin binaries.
+          # Optional — notarize.macos.enabled degrades gracefully when
+          # MACOS_SIGN_P12 is unset, same pattern as the tap token above.
+          # MACOS_SIGN_P12: base64 of the Developer ID Application .p12
+          # (cert + key + Apple chain); MACOS_NOTARY_KEY: base64 of the
+          # App Store Connect API .p8 key.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+
+      # The cask push degrades gracefully when HOMEBREW_TAP_GITHUB_TOKEN is
+      # unset, which also makes it silent: a vanished or broken secret would
+      # leave this run green while the tap keeps serving the previous
+      # version. On the canonical repo the cask must always ship, so fail
+      # the release unless the tap's cask advertises this tag's version.
+      # Forks (which lack the tap secret by design) skip this check.
+      - name: Verify tap cask version
+        if: github.repository == 'fivetwenty-io/ocfp-cli'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # curl instead of gh: the golang job container has no gh CLI.
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5; do
+            published=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/fivetwenty-io/homebrew-tap/contents/Casks/ocfp.rb" \
+              | sed -n 's/^[[:space:]]*version "\(.*\)"/\1/p')
+            if [ "$published" = "$expected" ]; then
+              echo "tap cask is at ${published}"
+              exit 0
+            fi
+            echo "attempt ${attempt}: tap cask at '${published:-<none>}', want '${expected}'"
+            sleep 15
+          done
+          echo "tap cask never reached ${expected}" >&2
+          exit 1
