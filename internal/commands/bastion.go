@@ -71,12 +71,14 @@ func NewBastionCmd() *cobra.Command {
 	cmd.Flags().String("key", "", "Path to SSH private key")
 	cmd.Flags().String("bloc", "", "Bloc name for configuration")
 	cmd.Flags().Bool("dry-run", false, "Preview actions without executing remote changes")
+	cmd.Flags().Bool("force", false, "Reinstall the ocfp CLI even when the bastion already has the wanted version")
 
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
 	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
 	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
 	_ = viper.BindPFlag("dry-run", cmd.Flags().Lookup("dry-run"))
+	_ = viper.BindPFlag("bastion.init.force", cmd.Flags().Lookup("force"))
 
 	return cmd
 }
@@ -113,6 +115,7 @@ func bastionInit(cmd *cobra.Command, log logger.Logger) error {
 	// Create bastion manager
 	bastionMgr := bastion.NewManager(ctx, cfg, &bastion.ProvisioningOptions{
 		DryRun:      viper.GetBool("dry-run"),
+		Force:       viper.GetBool("bastion.init.force"),
 		Resume:      false,
 		Parallel:    false,
 		ProgressOut: os.Stdout,
