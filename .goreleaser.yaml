@@ -1,0 +1,209 @@
+# GoReleaser configuration for the ocfp CLI.
+# Docs: https://goreleaser.com
+#
+# Release targets:
+#   - darwin/amd64   (Intel Mac)
+#   - darwin/arm64   (Apple Silicon)
+#   - linux/amd64    (x86-64)
+#   - linux/arm64    (aarch64)
+#   - windows/amd64  (64-bit)
+#   - windows/arm64  (aarch64)
+#
+# Local snapshot:  goreleaser release --snapshot --clean
+# Local dry-run:   goreleaser build --snapshot --clean
+# Published by:    .github/workflows/release.yml on a v* tag.
+version: 2
+
+project_name: ocfp
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+    # Shell completions ship in the archives, packages, and the cask.
+    # `go run` can't set the binary name cobra reports in the generated
+    # scripts, so build once and generate from the built binary.
+    - mkdir -p ./completions/.bin
+    - go build -o ./completions/.bin/ocfp ./cmd/ocfp
+    - sh -c "./completions/.bin/ocfp completion bash > ./completions/ocfp.bash"
+    - sh -c "./completions/.bin/ocfp completion zsh  > ./completions/_ocfp"
+    - sh -c "./completions/.bin/ocfp completion fish > ./completions/ocfp.fish"
+
+builds:
+  - id: ocfp
+    main: ./cmd/ocfp
+    binary: ocfp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # Reproducible builds: pin the embedded timestamp to the commit.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # The same stamps the Makefile and ci.yml embed, so a release binary's
+    # `ocfp version` reads the tag rather than "dev". GoVersion is left to
+    # its runtime.Version() default, which is the compiling toolchain anyway.
+    # The commit date, not the wall clock, keeps release binaries
+    # byte-identical across rebuilds (same reason as mod_timestamp).
+    ldflags:
+      - -s -w
+      - -X github.com/ocfp/ocfp-cli-go/internal/version.Version={{ .Version }}
+      - -X github.com/ocfp/ocfp-cli-go/internal/version.GitCommit={{ .ShortCommit }}
+      - -X github.com/ocfp/ocfp-cli-go/internal/version.BuildTime={{ .CommitDate }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: ocfp
+    ids:
+      - ocfp
+    # tar.gz everywhere except Windows, which gets a .zip.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    # e.g. ocfp_0.1.0_darwin_arm64.tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      # NB: literal (non-glob) sources need the full destination *file*
+      # path, not just the directory — goreleaser resolves a directory-only
+      # dst relative to the src file itself for non-glob sources, dropping
+      # the filename.
+      - src: completions/ocfp.bash
+        dst: share/bash-completion/completions/ocfp.bash
+      - src: completions/_ocfp
+        dst: share/zsh/site-functions/_ocfp
+      - src: completions/ocfp.fish
+        dst: share/fish/vendor_completions.d/ocfp.fish
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+nfpms:
+  - id: ocfp
+    package_name: ocfp
+    ids:
+      - ocfp
+    vendor: FiveTwenty Inc.
+    homepage: https://github.com/fivetwenty-io/ocfp-cli
+    maintainer: Wayne E. Seguin <wayneeseguin@fivetwenty.io>
+    description: Open Cloud Foundry Platform CLI.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: ./completions/ocfp.bash
+        dst: /usr/share/bash-completion/completions/ocfp
+      - src: ./completions/_ocfp
+        dst: /usr/share/zsh/site-functions/_ocfp
+      - src: ./completions/ocfp.fish
+        dst: /usr/share/fish/vendor_completions.d/ocfp.fish
+      - src: LICENSE
+        dst: /usr/share/doc/ocfp/LICENSE
+
+# Sign + notarize the darwin binaries so Gatekeeper accepts them on first
+# launch (Homebrew quarantines cask artifacts; an unsigned binary is killed
+# outright on Apple Silicon). Runs via quill, so it works on the Linux
+# release runner — no macOS runner needed. All values come from secrets;
+# when MACOS_SIGN_P12 is unset/empty the step is skipped entirely, so local
+# snapshots and releases without the Apple secrets still succeed
+# (envOrDefault keeps the unset-env case from failing template evaluation
+# under missingkey=error).
+notarize:
+  macos:
+    - enabled: '{{ if index .Env "MACOS_SIGN_P12" }}true{{ else }}false{{ end }}'
+      ids:
+        - ocfp
+      sign:
+        certificate: '{{ envOrDefault "MACOS_SIGN_P12" "" }}'
+        password: '{{ envOrDefault "MACOS_SIGN_PASSWORD" "" }}'
+      notarize:
+        issuer_id: '{{ envOrDefault "MACOS_NOTARY_ISSUER_ID" "" }}'
+        key_id: '{{ envOrDefault "MACOS_NOTARY_KEY_ID" "" }}'
+        key: '{{ envOrDefault "MACOS_NOTARY_KEY" "" }}'
+        wait: true
+        # 20m is Apple's ceiling, not a preference: goreleaser mints an App
+        # Store Connect token whose lifetime is this timeout, and Apple
+        # rejects tokens that live longer. Anything above it fails the
+        # release at config-validation time, before a single binary builds.
+        timeout: 20m
+
+# The repository is private, so the cask's download URL needs GitHub
+# credentials (HOMEBREW_GITHUB_API_TOKEN) until the repo goes public; the
+# cask still ships so the tap is ready the moment it does.
+homebrew_casks:
+  - name: ocfp
+    ids:
+      - ocfp
+    repository:
+      owner: fivetwenty-io
+      name: homebrew-tap
+      # goreleaser accepts ONLY the literal `{{ .Env.VAR_NAME }}` form here —
+      # no envOrDefault, no `index .Env`, no other interpolation. The
+      # skip_upload guard below covers releases without the tap secret.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/fivetwenty-io/ocfp-cli
+    description: Open Cloud Foundry Platform CLI
+    # Skip pushing the cask whenever the tap token is not configured, so a
+    # release without the HOMEBREW_TAP_GITHUB_TOKEN secret still succeeds
+    # (`index .Env` is nil-safe under missingkey=error, unlike direct access).
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    binaries:
+      - ocfp
+    completions:
+      bash: share/bash-completion/completions/ocfp.bash
+      zsh: share/zsh/site-functions/_ocfp
+      fish: share/fish/vendor_completions.d/ocfp.fish
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^deps:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: fivetwenty-io
+    name: ocfp-cli
+  draft: false
+  prerelease: auto
+  name_template: "ocfp {{ .Version }}"
+  header: |
+    ## ocfp {{ .Version }}
+
+    Open Cloud Foundry Platform CLI.
+
+    ### Install
+
+    ```bash
+    brew install --cask fivetwenty-io/tap/ocfp
+    ```
+
+    Or download the archive for your platform from the assets below, verify
+    it against `ocfp_{{ .Version }}_SHA256SUMS`, extract, and place `ocfp`
+    on your `PATH`. Debian/RPM packages are also attached. The darwin
+    binaries are signed and notarized.
