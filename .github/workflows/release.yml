@@ -80,6 +80,13 @@ jobs:
       - name: Run tests
         run: go test -short -timeout 25m ./...
 
+  # Only the module cache is mounted here. The shared build cache is not:
+  # goreleaser's darwin/arm64 link against it has failed outright on a warm
+  # runner, demanding clang and cgo linker flags that a CGO_ENABLED=0 build
+  # cannot produce, while the same config linked fine cold. ci.yml records
+  # an earlier symptom of the same cache on the same target. A release build
+  # is the one place a cold compile is worth its seven minutes, so GOCACHE
+  # points at the container's own filesystem, which is fresh every job.
   goreleaser:
     name: GoReleaser
     runs-on: self-hosted
@@ -87,9 +94,8 @@ jobs:
       image: golang:1.27
       volumes:
         - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
     env:
-      GOCACHE: /root/.cache/go-build
+      GOCACHE: /tmp/go-build
     timeout-minutes: 90
     needs: test
     permissions:
