@@ -7,11 +7,11 @@ import (
 const (
 	// ocfpReleaseRepo is the GitHub repository that publishes ocfp releases.
 	ocfpReleaseRepo = "fivetwenty-io/ocfp-cli"
-	// ocfpReleaseInstallPath is where the bastion expects the ocfp binary. The
+	// OCFPInstallPath is where the bastion expects the ocfp binary. The
 	// locators in directories.go and ocfp.go both search this path, so the
 	// release install must land here rather than the /usr/bin the deb and rpm
 	// packages would use.
-	ocfpReleaseInstallPath = "/usr/local/bin/ocfp"
+	OCFPInstallPath = "/usr/local/bin/ocfp"
 )
 
 // GenerateOCFPReleaseInstallScript returns a bash fragment that installs the
@@ -31,7 +31,7 @@ func GenerateOCFPReleaseInstallScript(version string, force bool) string {
 	lines = append(lines,
 		"# OCFP CLI release install",
 		"",
-		`OCFP_INSTALL_PATH="`+ocfpReleaseInstallPath+`"`,
+		`OCFP_INSTALL_PATH="`+OCFPInstallPath+`"`,
 		"",
 	)
 
@@ -52,7 +52,7 @@ func GenerateOCFPReleaseInstallScript(version string, force bool) string {
 		lines = append(lines, `log_info "Forcing reinstall of ocfp ${OCFP_VERSION}"`)
 	} else {
 		lines = append(lines,
-			`if [ -x "${OCFP_INSTALL_PATH}" ] && "${OCFP_INSTALL_PATH}" version 2>/dev/null | grep -q "OCFP CLI v${OCFP_VERSION} "; then`,
+			`if [ -x "${OCFP_INSTALL_PATH}" ] && "${OCFP_INSTALL_PATH}" version 2>/dev/null | grep -qF "OCFP CLI v${OCFP_VERSION} "; then`,
 			`    log_info "ocfp ${OCFP_VERSION} is already installed at ${OCFP_INSTALL_PATH}"`,
 			"else",
 		)
@@ -80,7 +80,7 @@ func GenerateOCFPCompletionsScript() string {
 	return strings.Join([]string{
 		"# OCFP CLI shell completions",
 		"",
-		`OCFP_INSTALL_PATH="` + ocfpReleaseInstallPath + `"`,
+		`OCFP_INSTALL_PATH="` + OCFPInstallPath + `"`,
 		`if [ ! -x "${OCFP_INSTALL_PATH}" ]; then`,
 		`    log_warning "ocfp is not installed at ${OCFP_INSTALL_PATH}; skipping shell completions"`,
 		"else",
