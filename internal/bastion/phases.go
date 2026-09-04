@@ -22,6 +22,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
+	ocfpversion "github.com/ocfp/ocfp-cli-go/internal/version"
 )
 
 // Phase execution errors.
@@ -168,19 +169,41 @@ func (m *Manager) setupSystemEnvironment(ctx context.Context) error {
 	return m.executeScript(ctx, script, "system-environment")
 }
 
-// setupOCFPCLI sets up OCFP CLI.
+// setupOCFPCLI puts the ocfp binary on the bastion, from the published GitHub
+// release by default or from a local build when the operator asks for it, and
+// then wires up the ~/bin symlink.
 func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	m.log.Info("Setting up OCFP CLI")
 
-	// Upload the OCFP binary to the bastion
-	err := m.uploadOCFPBinary(ctx)
+	spec, err := resolveOCFPCLIInstall(ocfpCLIResolveInputs{
+		Config:          m.config.Bastion.OCFPCLI,
+		Getenv:          os.Getenv,
+		FileExists:      fileExists,
+		OperatorVersion: ocfpversion.Version,
+	})
 	if err != nil {
-		// In OCFPOnly mode, binary upload is critical
+		return err
+	}
+
+	m.log.Infow("Resolved OCFP CLI install", "source", spec.Source, "version", ocfpCLIVersionLabel(spec.Version))
+
+	switch spec.Source {
+	case ocfpCLISourceLocal:
+		err = m.uploadOCFPBinary(ctx)
+	case ocfpCLISourceRelease:
+		err = m.installOCFPRelease(ctx, spec.Version)
+	}
+
+	if err != nil {
+		// In OCFPOnly mode, getting the binary there is the whole point
 		if m.options.OCFPOnly {
-			return fmt.Errorf("OCFP binary upload failed: %w", err)
+			return fmt.Errorf("OCFP binary install failed: %w", err)
 		}
 		// In full init mode, continue anyway - the binary might already be there
-		m.log.Warnw("Failed to upload OCFP binary, continuing with setup", "error", err)
+		m.log.Warnw("Failed to install OCFP binary, continuing with setup", "error", err)
+	} else if cerr := m.executeScript(ctx, provision.GenerateOCFPCompletionsScript(), "ocfp-cli-completions"); cerr != nil {
+		// Completions are a convenience; never fail the phase over them
+		m.log.Warnw("Failed to install OCFP shell completions", "error", cerr)
 	}
 
 	dirMgr := provision.NewDirectoryManager(m.config.Provider, m.config)
@@ -189,8 +212,48 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 	return m.executeScript(ctx, script, "ocfp-cli-setup")
 }
 
+// fileExists reports whether path names an existing file.
+func fileExists(path string) bool {
+	_, err := os.Stat(path) // #nosec G703 -- path is operator-supplied OCFP_BINARY_PATH
+
+	return err == nil
+}
+
+// ocfpCLIVersionLabel names an empty version "latest" for logs and progress.
+func ocfpCLIVersionLabel(version string) string {
+	if version == "" {
+		return ocfpCLIVersionLatest
+	}
+
+	return version
+}
+
+// installOCFPRelease downloads and installs the ocfp release on the bastion.
+// An empty version installs the latest release. --force reinstalls even when
+// the installed binary already reports the wanted version.
+func (m *Manager) installOCFPRelease(ctx context.Context, version string) error {
+	label := ocfpCLIVersionLabel(version)
+
+	m.log.Infow("Installing OCFP CLI from GitHub release", "version", label, "remote", "/usr/local/bin/ocfp", "force", m.options.Force)
+
+	if m.reporter != nil {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 2, "Installing release "+label) //nolint:mnd
+	}
+
+	err := m.executeScript(ctx, provision.GenerateOCFPReleaseInstallScript(version, m.options.Force), "ocfp-cli-release")
+	if err != nil {
+		return fmt.Errorf("failed to install OCFP release %s: %w", label, err)
+	}
+
+	if m.reporter != nil && !m.options.DryRun {
+		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 2, 2, "Release "+label+" installed") //nolint:mnd
+	}
+
+	return nil
+}
+
 // resolveLocalOCFPBinary locates a linux/amd64 ocfp binary on the operator
-// machine.  Search order:
+// machine for the local install source.  Search order:
 //  1. OCFP_BINARY_PATH env var (operator override)
 //  2. ./build/ocfp-linux-amd64 (when invoked from the ocfp CLI repo)
 //  3. <dir-of-running-ocfp>/../build/ocfp-linux-amd64 (installed sibling)
@@ -200,7 +263,7 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 // Returns the first existing path or an error listing every location tried so
 // the operator knows what to fix.
 func resolveLocalOCFPBinary() (string, error) {
-	if env := os.Getenv("OCFP_BINARY_PATH"); env != "" {
+	if env := os.Getenv(envOCFPBinaryPath); env != "" {
 		if _, err := os.Stat(env); err == nil { // #nosec G703 -- path is operator-supplied OCFP_BINARY_PATH
 			return env, nil
 		}
@@ -226,16 +289,15 @@ func resolveLocalOCFPBinary() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("ocfp linux/amd64 binary not found; set OCFP_BINARY_PATH or build with 'make build-linux' (searched: %s)", strings.Join(candidates, ", "))
+	return "", fmt.Errorf("ocfp linux/amd64 binary not found; set OCFP_BINARY_PATH, build with 'make build-linux', or unset OCFP_CLI_SOURCE=local to install the GitHub release (searched: %s)", strings.Join(candidates, ", "))
 }
 
-// uploadOCFPBinary uploads the OCFP CLI binary to the bastion.
+// uploadOCFPBinary uploads a locally built OCFP CLI binary to the bastion.
+// This is the local install source, kept for developing ocfp itself; the
+// default installs the published release instead (see installOCFPRelease).
 //
 //nolint:funlen // sequential upload steps (checksum, transfer, install) must remain together
 func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
-	// NOTE: Currently uploading from local build until official OCFP releases are published.
-	// Once official releases are available via GitHub releases or package repositories,
-	// this should be updated to download and install from the official source.
 	localBinaryPath, err := resolveLocalOCFPBinary()
 	if err != nil {
 		return err
