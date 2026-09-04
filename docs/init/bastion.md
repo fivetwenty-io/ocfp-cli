@@ -325,6 +325,27 @@ pmx --version
 blobstores help
 ```
 
+### OCFP CLI on the bastion
+
+The `ocfp_cli_setup` phase puts the `ocfp` binary at `/usr/local/bin/ocfp` on the bastion, writes its shell completions from the installed binary, and links it into `~/bin`. By default the bastion downloads the published release from [fivetwenty-io/ocfp-cli](https://github.com/fivetwenty-io/ocfp-cli/releases) that matches the version of `ocfp` you are running, verifies the archive against the release's `SHA256SUMS`, and installs the binary. When the installed `ocfp version` already reports the wanted version the download is skipped, unless you pass `--force`. Only a release build carries a version with a matching asset. A `make build` binary is stamped with `git describe` output such as `v0.1.0-3-gabc1234` or `v0.1.0-dirty`, and the ldflags default is `dev`, so any of those gets the latest release instead. The download runs on the bastion, so it uses the bastion's outbound internet and the same `GITHUB_TOKEN` the other tool installs use.
+
+Two settings control this, and each can come from the bloc config or from the environment. The environment wins when both are set. An unknown source or an unsafe version pin is a configuration error and stops the run, even in a full `init bastion`.
+
+```yaml
+bastion:
+  ocfpCli:            # ocfp_cli also works
+    source: release   # release (default) or local
+    version: 0.1.0    # optional pin; omit to match the operator's ocfp
+```
+
+| Variable | Effect |
+|----------|--------|
+| `OCFP_CLI_SOURCE` | `release` (default) downloads the GitHub release on the bastion. `local` uploads a binary built on this machine. |
+| `OCFP_CLI_VERSION` | Pins the release to install, with or without a leading `v`. `latest` asks for the newest release. |
+| `OCFP_BINARY_PATH` | Path to a linux binary to upload. When the file exists it implies `local` unless `OCFP_CLI_SOURCE` says otherwise. A path that does not exist is ignored. |
+
+The local source exists for developing `ocfp` itself. It looks for `OCFP_BINARY_PATH`, then `./build/ocfp-linux-amd64` from `make build-linux`, then the same file next to the running binary, and finally the usual developer checkout under `~/w/fivetwenty/studios/ocfp`. In a full `init bastion` a missing binary is logged and the run continues, because the bastion may already have one. With `--ocfp` the failure is fatal, since installing the binary is the whole job.
+
 ### Operator helper scripts
 
 The `helper_scripts` phase installs self-contained bash tools from the OCFP

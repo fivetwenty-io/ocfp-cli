@@ -123,6 +123,8 @@ make build
 # Produces build/ocfp-darwin-arm64 and build/ocfp-linux-amd64
 ```
 
+The bastion does not need the linux build. By default `init bastion` downloads the GitHub release that matches the operator's `ocfp` version, or the latest release when the operator runs a dev build. Set `OCFP_CLI_SOURCE=local` to upload `build/ocfp-linux-amd64` instead while working on the CLI. See [docs/init/bastion.md](init/bastion.md#ocfp-cli-on-the-bastion) for the config file form and the version pin.
+
 ## Bloc configuration
 
 OCFP reads a bloc config from `~/.config/ocfp/<file>.yml` (or `--config <path>`). A minimal bloc that targets PVE with API-token auth and bridge networking:
@@ -305,6 +307,7 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 `ocfp bastion init` installs:
 
+- the `ocfp` CLI at `/usr/local/bin/ocfp` from the GitHub release matching the operator's version (or a local build when `OCFP_CLI_SOURCE=local`);
 - AWS CLI v2 at `/usr/local/bin/aws` (official zip installer); and
 - the `blobstores` helper at `~/bin/blobstores` from `scripts/blobstores` in this repo.
 
