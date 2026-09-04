@@ -86,7 +86,7 @@ type initFlags struct {
 
 // addFlags adds all flags to the command.
 func (f *initFlags) addFlags(cmd *cobra.Command) {
-	cmd.Flags().BoolVar(&f.force, "force", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&f.force, "force", false, "skip confirmation prompts and reinstall the ocfp CLI on the bastion")
 	cmd.Flags().BoolVar(&f.skipChecks, "skip-checks", false, "skip prerequisite validation")
 	cmd.Flags().BoolVar(&f.parallel, "parallel", false, "run independent tasks in parallel")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print actions without executing")
