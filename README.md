@@ -31,13 +31,12 @@ make install
 
 ### Pre-built Binaries
 
-Download the latest release from the [releases page](https://github.com/ocfp/ocfp-cli-go/releases).
+Download the latest release from the [releases page](https://github.com/fivetwenty-io/ocfp-cli/releases). Each release ships signed and notarized macOS builds, Linux and Windows archives for amd64 and arm64, deb and rpm packages, and a `SHA256SUMS` file.
 
 ### Using Homebrew (macOS/Linux)
 
 ```bash
-brew tap ocfp/tools
-brew install ocfp-cli
+brew install --cask fivetwenty-io/tap/ocfp
 ```
 
 ## Quick Start
