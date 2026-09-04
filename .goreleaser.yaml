@@ -140,9 +140,6 @@ notarize:
         # release at config-validation time, before a single binary builds.
         timeout: 20m
 
-# The repository is private, so the cask's download URL needs GitHub
-# credentials (HOMEBREW_GITHUB_API_TOKEN) until the repo goes public; the
-# cask still ships so the tap is ready the moment it does.
 homebrew_casks:
   - name: ocfp
     ids:
