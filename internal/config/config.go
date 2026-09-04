@@ -833,6 +833,8 @@ type Bastion struct {
 	DataDiskSize int       `json:"dataDiskSize,omitempty"     mapstructure:"dataDiskSize"     yaml:"dataDiskSize,omitempty"`
 	Genesis      Genesis   `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
 	Git          GitConfig `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
+	// OCFPCLI selects how the ocfp binary reaches the bastion. See OCFPCLIConfig.
+	OCFPCLI OCFPCLIConfig `json:"ocfpCli,omitempty" mapstructure:"ocfpCli" yaml:"ocfpCli,omitempty"`
 	// Optional overrides for tooling installation/selection
 	Tools     OverrideSets `json:"tools,omitempty"     mapstructure:"tools"     yaml:"tools,omitempty"`
 	CFPlugins OverrideSets `json:"cfPlugins,omitempty" mapstructure:"cfPlugins" yaml:"cfPlugins,omitempty"`
@@ -887,16 +889,17 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 	*b = Bastion(primary)
 
 	var aliases struct {
-		InstanceType string   `yaml:"instance_type,omitempty"`
-		OSVersion    string   `yaml:"os_version,omitempty"`
-		SSHUser      string   `yaml:"ssh_user,omitempty"`
-		SSHOptions   string   `yaml:"ssh_options,omitempty"`
-		SSHKeyDir    string   `yaml:"ssh_key_storage_dir,omitempty"`
-		SSHKeyName   string   `yaml:"ssh_key_name,omitempty"`
-		UserData     string   `yaml:"user_data,omitempty"`
-		RootDiskSize int      `yaml:"root_disk_size,omitempty"`
-		DataDiskSize int      `yaml:"data_disk_size,omitempty"`
-		OnLinkRoutes []string `yaml:"on_link_routes,omitempty"`
+		InstanceType string        `yaml:"instance_type,omitempty"`
+		OCFPCLI      OCFPCLIConfig `yaml:"ocfp_cli,omitempty"`
+		OSVersion    string        `yaml:"os_version,omitempty"`
+		SSHUser      string        `yaml:"ssh_user,omitempty"`
+		SSHOptions   string        `yaml:"ssh_options,omitempty"`
+		SSHKeyDir    string        `yaml:"ssh_key_storage_dir,omitempty"`
+		SSHKeyName   string        `yaml:"ssh_key_name,omitempty"`
+		UserData     string        `yaml:"user_data,omitempty"`
+		RootDiskSize int           `yaml:"root_disk_size,omitempty"`
+		DataDiskSize int           `yaml:"data_disk_size,omitempty"`
+		OnLinkRoutes []string      `yaml:"on_link_routes,omitempty"`
 	}
 
 	if err := yaml.Unmarshal(data, &aliases); err != nil {
@@ -904,6 +907,8 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 	}
 
 	b.InstanceType = firstSetString(b.InstanceType, aliases.InstanceType)
+	b.OCFPCLI.Source = firstSetString(b.OCFPCLI.Source, aliases.OCFPCLI.Source)
+	b.OCFPCLI.Version = firstSetString(b.OCFPCLI.Version, aliases.OCFPCLI.Version)
 	b.OSVersion = firstSetString(b.OSVersion, aliases.OSVersion)
 	b.SSHUser = firstSetString(b.SSHUser, aliases.SSHUser)
 	b.SSHOptions = firstSetString(b.SSHOptions, aliases.SSHOptions)
@@ -963,6 +968,19 @@ type GitUser struct {
 type OverrideSets struct {
 	Enable  []string `json:"enable,omitempty"  mapstructure:"enable"  yaml:"enable,omitempty"`
 	Disable []string `json:"disable,omitempty" mapstructure:"disable" yaml:"disable,omitempty"`
+}
+
+// OCFPCLIConfig selects how the ocfp binary is installed on the bastion.
+//
+// Source is "release" (the default) to download the published GitHub release
+// on the bastion, or "local" to upload a linux binary built on the operator
+// machine. Version pins the release to install; when empty the bastion gets
+// the same version the operator is running, or the latest release when the
+// operator runs a dev build. The OCFP_CLI_SOURCE and OCFP_CLI_VERSION
+// environment variables override both fields.
+type OCFPCLIConfig struct {
+	Source  string `json:"source,omitempty"  mapstructure:"source"  yaml:"source,omitempty"`
+	Version string `json:"version,omitempty" mapstructure:"version" yaml:"version,omitempty"`
 }
 
 // ToolOverride allows overriding advanced tool properties.
