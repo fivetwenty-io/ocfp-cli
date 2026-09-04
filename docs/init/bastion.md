@@ -344,7 +344,7 @@ bastion:
 | `OCFP_CLI_VERSION` | Pins the release to install, with or without a leading `v`. `latest` asks for the newest release. |
 | `OCFP_BINARY_PATH` | Path to a linux binary to upload. When the file exists it implies `local` unless `OCFP_CLI_SOURCE` says otherwise. A path that does not exist is ignored. |
 
-The local source exists for developing `ocfp` itself. It looks for `OCFP_BINARY_PATH`, then `./build/ocfp-linux-amd64` from `make build-linux`, then the same file next to the running binary, and finally the usual developer checkout under `~/w/fivetwenty/studios/ocfp`. In a full `init bastion` a missing binary is logged and the run continues, because the bastion may already have one. With `--ocfp` the failure is fatal, since installing the binary is the whole job.
+The local source exists for developing `ocfp` itself. It looks for `OCFP_BINARY_PATH`, then `./build/ocfp-linux-amd64` from `make build-linux`, then the same file next to the running binary, and finally the usual developer checkout under `~/w/fivetwenty/studios/ocfp`. In a full `init bastion` a failed install is logged and the run continues only when the bastion already has an `ocfp` at `/usr/local/bin/ocfp`. When nothing is installed the phase fails, because the later vault and configure steps would otherwise skip silently. With `--ocfp` any install failure is fatal, since installing the binary is the whole job. Both `ocfp init bastion --force` and `ocfp bastion init --force` reinstall even when the wanted version is already present.
 
 ### Operator helper scripts
 
