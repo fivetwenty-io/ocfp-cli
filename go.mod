@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	cloud.google.com/go/compute v1.67.0
-	cloud.google.com/go/storage v1.66.0
+	cloud.google.com/go/storage v1.67.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5 v5.7.0
@@ -15,12 +15,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.2
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.2
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.328.0
-	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.61.0
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.61.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.110.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.48.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/aymanbagabas/go-udiff v0.4.1
-	github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.9.2
+	github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.10.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/vault/api v1.23.0
