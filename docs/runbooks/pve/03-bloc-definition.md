@@ -61,9 +61,10 @@ Vault exists in chapter 7.
 ### Storage and templates
 
 ```yaml
-    vm_storage:   local-lvm-data
-    disk_storage: local-lvm-data
-    iso_storage:  local
+    vm_storage:       local-lvm-data
+    stemcell_storage: local-lvm-data
+    disk_storage:     local-lvm-data
+    iso_storage:      local
     template_bridge: ocfp
     # template_seed_ip: 10.108.16.2/20
     # template_seed_gateway: 10.108.16.1
@@ -73,8 +74,12 @@ Vault exists in chapter 7.
     # template_seed_searchdomain: ldschurch.org
 ```
 
-The first four lines aim the CPI at the pools we validated in chapter 2: VM
-disks and persistent disks on the LVM-thin pool, images on `local`. The
+The first five lines aim the CPI at the pools we validated in chapter 2: VM
+disks, stemcell templates, and persistent disks on the LVM-thin pool, images on
+`local`. The `stemcell_storage` pool should match `vm_storage`, because the CPI
+creates each root disk as a linked clone of the stemcell template, and PVE only
+allows that when both live on the same pool. When we leave `stemcell_storage`
+out, `ocfp` derives it from `vm_storage` for us. The
 `iso_storage` pool must advertise the right content types
 (`pmx pve storage set local --content vztmpl,iso,import,backup,snippets` —
 natively `pvesm set local --content vztmpl,iso,import,backup,snippets`).

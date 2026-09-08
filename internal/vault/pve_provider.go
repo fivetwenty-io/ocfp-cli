@@ -1785,7 +1785,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		"node":             node,
 		"port":             strconv.Itoa(pveCPIPort(host)),
 		"status":           "configured",
-		"stemcell_storage": pveStorageOrDefault(p.Config, "stemcell", "local"),
+		"stemcell_storage": pveCPIStemcellStorage(p.Config),
 		"storage_backend":  pveStorageBackend(diskStorage),
 		"user":             pveCPIUser(p.Config.AuthToken, p.Config.Username),
 		"verify_ssl":       strconv.FormatBool(p.Config.VerifySSL),
@@ -1980,17 +1980,33 @@ func pveCPIDiskStorage(cfg *config.Config) string {
 	return "zfs-1"
 }
 
-// pveStorageOrDefault honors per-role storage hints from the artifacts
-// config when present (artifacts.data.storage_pool maps to stemcell_storage),
-// and falls back to the supplied default.
-// NOTE: vm_storage and disk_storage are now resolved by pveCPIVMStorage and
-// pveCPIDiskStorage respectively; this helper is retained for stemcell_storage.
-func pveStorageOrDefault(cfg *config.Config, role, def string) string {
-	if cfg.Artifacts.Data.StoragePool != "" && role == "stemcell" {
+// pveCPIStemcellStorage resolves the effective stemcell_storage vault key value.
+//
+// The CPI creates each VM root disk as a linked clone of the stemcell template,
+// and PVE only allows a linked clone when the template and the clone share a
+// storage pool, so stemcell templates belong on the same pool as root disks
+// rather than on the persistent data pool.
+//
+// Priority:
+//  1. Config.StemcellStorage — explicit operator override.
+//  2. Config.VMStorage — templates ride with the root disks they are cloned into.
+//  3. Artifacts.Data.StoragePool — legacy fallback kept for blocs that only
+//     configured artifacts.data.storage_pool and never set vm_storage.
+//  4. "local" — conservative hardcoded default.
+func pveCPIStemcellStorage(cfg *config.Config) string {
+	if cfg.StemcellStorage != "" {
+		return cfg.StemcellStorage
+	}
+
+	if cfg.VMStorage != "" {
+		return cfg.VMStorage
+	}
+
+	if cfg.Artifacts.Data.StoragePool != "" {
 		return cfg.Artifacts.Data.StoragePool
 	}
 
-	return def
+	return "local"
 }
 
 // pveStorageBackend returns the BOSH-CPI storage_backend classification for a
