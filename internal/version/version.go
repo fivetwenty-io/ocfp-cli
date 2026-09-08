@@ -6,6 +6,7 @@ package version
 import (
 	"fmt"
 	"runtime"
+	"strings"
 )
 
 // Build information set via ldflags.
@@ -26,10 +27,18 @@ type Info struct {
 	Arch      string `json:"arch"`
 }
 
+// normalizeVersion strips the leading "v" that `git describe --tags` leaves on
+// the Makefile build stamp, so that callers can add the prefix themselves
+// without doubling it. GoReleaser stamps a bare version, and this leaves that
+// form alone.
+func normalizeVersion(v string) string {
+	return strings.TrimPrefix(strings.TrimSpace(v), "v")
+}
+
 // Get returns the version information.
 func Get() Info {
 	return Info{
-		Version:   Version,
+		Version:   normalizeVersion(Version),
 		BuildTime: BuildTime,
 		GitCommit: GitCommit,
 		GoVersion: GoVersion,
