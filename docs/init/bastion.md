@@ -206,6 +206,15 @@ bastion:
       version: "latest"
 ```
 
+### GitHub over port 443 (`bastion.githubSshPort`)
+
+Some site firewalls inspect outbound port 22, so the TCP connect to github.com succeeds but the SSH banner never arrives, and every `git@github.com` clone on the bastion hangs or fails. Set `githubSshPort: 443` (or `github_ssh_port: 443`) and the bastion's `~/.ssh/config` sends github.com traffic to `ssh.github.com` on port 443 with matching `[ssh.github.com]:443` entries in `known_hosts`, while the default of 22 keeps the direct connection. Only 22 and 443 are accepted, and any other value fails config validation.
+
+```yaml
+bastion:
+  githubSshPort: 443
+```
+
 ### Bastion SSH Keys (`bastion.keys`)
 
 Inject SSH public keys into the bastion's `~/.ssh/authorized_keys` during `ocfp init bastion`. This allows additional users to SSH directly into the bastion host.

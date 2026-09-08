@@ -171,6 +171,11 @@ blocs:
       # OCFP resizes to rootDiskSize on first boot.
       rootDiskSize: 50
 
+      # Port for reaching GitHub over SSH from the bastion. Leave unset for 22.
+      # Set 443 on a site whose firewall inspects outbound port 22; the bastion
+      # then reaches GitHub through ssh.github.com on port 443.
+      # githubSshPort: 443
+
       # Authorized SSH keys injected via cloud-init.
       # Values: literal public key, "github/<username>", or "gitlab/<username>".
       keys:
