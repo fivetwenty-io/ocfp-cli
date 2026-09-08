@@ -452,6 +452,7 @@ func newBridgeTestClient(fake *fakePVEClient) *Client {
 // PutCtx) record call counts and return canned data keyed by path.
 type fakePVEClient struct {
 	getResponses map[string]interface{}
+	getCalls     int
 	postCalls    int
 	putCalls     int
 	deleteCalls  int
@@ -483,6 +484,8 @@ var errFakeNoCannedResponse = errors.New("fakePVEClient: no canned response for 
 // one is sent — /nodes/{node}/network answers differently depending on it,
 // which is the whole point of the bridge-visibility tests.
 func (f *fakePVEClient) GetCtx(_ context.Context, path string, params map[string]interface{}) (interface{}, error) {
+	f.getCalls++
+
 	key := path
 	if typeFilter, ok := params["type"].(string); ok {
 		key = path + "?type=" + typeFilter

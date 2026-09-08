@@ -47,6 +47,7 @@ var (
 	ErrVolumeAttached           = errors.New("pve: volume is attached to a VM")
 	ErrInvalidVolumeFormat      = errors.New("pve: invalid volume format")
 	ErrInvalidVolumeIDFormat    = errors.New("pve: invalid volume ID format")
+	ErrStorageTypeUnknown       = errors.New("pve: storage type not reported by GET /storage/{storage}")
 	ErrInvalidSnapshotIDFormat  = errors.New("pve: invalid snapshot ID format")
 	ErrVolumeResizeUnsupported  = errors.New("pve: volume resize not supported for unattached volumes")
 	ErrVolumeNotFoundOnVM       = errors.New("pve: volume not found on VM")
