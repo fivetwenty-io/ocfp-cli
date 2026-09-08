@@ -1741,6 +1741,99 @@ func TestConfigureCPI_DiskStorageEmpty_FallsBackToBlobstorePool(t *testing.T) {
 	assert.Equal(t, "local-zfs", data["disk_storage"], "disk_storage must fall back to Artifacts.Data.StoragePool when DiskStorage is empty")
 }
 
+// TestPVECPIStemcellStorage_Precedence covers every branch of the
+// stemcell_storage resolution order: explicit stemcell_storage, then
+// vm_storage, then the legacy artifacts.data.storage_pool, then "local".
+func TestPVECPIStemcellStorage_Precedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  config.Config
+		want string
+	}{
+		{
+			name: "explicit stemcell_storage wins over everything",
+			cfg: config.Config{
+				StemcellStorage: "templates",
+				VMStorage:       "ephemeral",
+				DiskStorage:     "persistent",
+				Artifacts: config.ArtifactsConfig{
+					Data: config.ArtifactsDataConfig{StoragePool: "persistent"},
+				},
+			},
+			want: "templates",
+		},
+		{
+			name: "vm_storage when stemcell_storage is empty",
+			cfg: config.Config{
+				VMStorage:   "ephemeral",
+				DiskStorage: "persistent",
+				Artifacts: config.ArtifactsConfig{
+					Data: config.ArtifactsDataConfig{StoragePool: "persistent"},
+				},
+			},
+			want: "ephemeral",
+		},
+		{
+			name: "artifacts data pool when stemcell_storage and vm_storage are empty",
+			cfg: config.Config{
+				DiskStorage: "persistent",
+				Artifacts: config.ArtifactsConfig{
+					Data: config.ArtifactsDataConfig{StoragePool: "legacy-pool"},
+				},
+			},
+			want: "legacy-pool",
+		},
+		{
+			name: "local when nothing is configured",
+			cfg:  config.Config{},
+			want: "local",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := tt.cfg
+			assert.Equal(t, tt.want, pveCPIStemcellStorage(&cfg))
+		})
+	}
+}
+
+// TestConfigureCPI_StemcellStorage_FollowsVMStorageNotDataPool guards the
+// real-bloc shape: root disks on an ephemeral pool and persistent disks plus
+// the artifacts data share on an NFS pool. stemcell_storage must land next to
+// the root disks so the CPI can linked-clone, not on the persistent pool.
+func TestConfigureCPI_StemcellStorage_FollowsVMStorageNotDataPool(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: "https://pve.example.com:8006",
+		AuthToken:   "root@pam!tok",
+		TokenSecret: "secret",
+		Region:      "pve01",
+		VMStorage:   "A",
+		DiskStorage: "B",
+		Artifacts: config.ArtifactsConfig{
+			Data: config.ArtifactsDataConfig{StoragePool: "B"},
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "A", data["stemcell_storage"], "stemcell_storage must follow vm_storage, not the artifacts data pool")
+	assert.Equal(t, "A", data["vm_storage"])
+	assert.Equal(t, "B", data["disk_storage"])
+}
+
 // TestConfigureCPI_DiskStorageField_WritesStorageBackendAndFormat verifies that
 // when Config.DiskStorage is set, the storage_backend and disk_format keys
 // reflect the classification of that storage type.

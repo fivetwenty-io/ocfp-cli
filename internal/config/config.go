@@ -277,6 +277,15 @@ type Config struct {
 	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
 	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
 	DiskStorage string `json:"disk_storage" mapstructure:"disk_storage" yaml:"disk_storage,omitempty"`
+	// StemcellStorage is the PVE storage pool that holds stemcell templates.
+	// PVE-specific. Maps to pve.stemcell_storage in the bosh-proxmox-cpi-release
+	// job properties. The CPI creates root disks as linked clones of the
+	// template, which only works when the template and the root disk live on
+	// the same pool, so this should match VMStorage. When empty, configureCPI
+	// falls back to VMStorage, then to Artifacts.Data.StoragePool, then to
+	// the hardcoded default "local".
+	// Example: "data" (lvmthin pool), "local-lvm" (default thin LVM).
+	StemcellStorage string `json:"stemcell_storage" mapstructure:"stemcell_storage" yaml:"stemcell_storage,omitempty"`
 	// TemplateBridge is the PVE bridge attached to template VMs during the
 	// auto-provision seed phase, which needs internet egress for
 	// apt/cloud-init (DHCP by default, or a static address via the
