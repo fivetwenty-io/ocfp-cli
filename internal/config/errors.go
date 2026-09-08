@@ -59,6 +59,12 @@ func ErrBlocNotFound(blocName, configPath string) error {
 	return fmt.Errorf("bloc '%s' not found in configuration file %s", blocName, configPath) //nolint:err113 // dynamic error with context
 }
 
+// ErrBastionGitHubSSHPortInvalid returns an error when bastion.githubSshPort
+// is set to anything other than 22 or 443.
+func ErrBastionGitHubSSHPortInvalid(port int) error {
+	return fmt.Errorf("bastion config: githubSshPort must be 22 or 443, got %d", port) //nolint:err113 // dynamic error with context
+}
+
 // ErrInvalidProvider returns an error for an unrecognized or unsupported cloud provider.
 func ErrInvalidProvider(provider string) error {
 	return fmt.Errorf("invalid provider: %s", provider) //nolint:err113 // dynamic error with context

@@ -896,6 +896,14 @@ type Bastion struct {
 	// only the ACK is lost, so it reads as a slow host rather than a broken
 	// route. Prefer fixing the attachment.
 	OnLinkRoutes []string `json:"onLinkRoutes,omitempty" mapstructure:"onLinkRoutes" yaml:"onLinkRoutes,omitempty"`
+	// GitHubSSHPort selects the port the bastion uses to reach GitHub over
+	// SSH. Leave it unset or at 22 for a direct connection. Set it to 443 on
+	// a site whose firewall inspects outbound port 22, where the TCP connect
+	// succeeds but the SSH banner never arrives. With 443 the bastion ssh
+	// config sends github.com traffic to ssh.github.com on port 443 and the
+	// known_hosts scan is keyed the same way. Any other value fails
+	// validation.
+	GitHubSSHPort int `json:"githubSshPort,omitempty" mapstructure:"githubSshPort" yaml:"githubSshPort,omitempty"`
 }
 
 // UnmarshalYAML accepts snake_case aliases for Bastion's multi-word keys.
@@ -923,17 +931,18 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 	*b = Bastion(primary)
 
 	var aliases struct {
-		InstanceType string        `yaml:"instance_type,omitempty"`
-		OCFPCLI      OCFPCLIConfig `yaml:"ocfp_cli,omitempty"`
-		OSVersion    string        `yaml:"os_version,omitempty"`
-		SSHUser      string        `yaml:"ssh_user,omitempty"`
-		SSHOptions   string        `yaml:"ssh_options,omitempty"`
-		SSHKeyDir    string        `yaml:"ssh_key_storage_dir,omitempty"`
-		SSHKeyName   string        `yaml:"ssh_key_name,omitempty"`
-		UserData     string        `yaml:"user_data,omitempty"`
-		RootDiskSize int           `yaml:"root_disk_size,omitempty"`
-		DataDiskSize int           `yaml:"data_disk_size,omitempty"`
-		OnLinkRoutes []string      `yaml:"on_link_routes,omitempty"`
+		InstanceType  string        `yaml:"instance_type,omitempty"`
+		OCFPCLI       OCFPCLIConfig `yaml:"ocfp_cli,omitempty"`
+		OSVersion     string        `yaml:"os_version,omitempty"`
+		SSHUser       string        `yaml:"ssh_user,omitempty"`
+		SSHOptions    string        `yaml:"ssh_options,omitempty"`
+		SSHKeyDir     string        `yaml:"ssh_key_storage_dir,omitempty"`
+		SSHKeyName    string        `yaml:"ssh_key_name,omitempty"`
+		UserData      string        `yaml:"user_data,omitempty"`
+		RootDiskSize  int           `yaml:"root_disk_size,omitempty"`
+		DataDiskSize  int           `yaml:"data_disk_size,omitempty"`
+		GitHubSSHPort int           `yaml:"github_ssh_port,omitempty"`
+		OnLinkRoutes  []string      `yaml:"on_link_routes,omitempty"`
 	}
 
 	if err := yaml.Unmarshal(data, &aliases); err != nil {
@@ -958,11 +967,42 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 		b.DataDiskSize = aliases.DataDiskSize
 	}
 
+	if b.GitHubSSHPort == 0 {
+		b.GitHubSSHPort = aliases.GitHubSSHPort
+	}
+
 	if len(b.OnLinkRoutes) == 0 {
 		b.OnLinkRoutes = aliases.OnLinkRoutes
 	}
 
 	return nil
+}
+
+// GitHub SSH ports the bastion may be configured to use.
+const (
+	GitHubSSHPortDefault = 22
+	GitHubSSHPortHTTPS   = 443
+)
+
+// Validate rejects a bastion config whose githubSshPort is neither the
+// default nor 443. Zero means unset and behaves as 22.
+func (b *Bastion) Validate() error {
+	switch b.GitHubSSHPort {
+	case 0, GitHubSSHPortDefault, GitHubSSHPortHTTPS:
+		return nil
+	default:
+		return ErrBastionGitHubSSHPortInvalid(b.GitHubSSHPort)
+	}
+}
+
+// EffectiveGitHubSSHPort returns the port the bastion should use for GitHub
+// over SSH, mapping the unset zero value to 22.
+func (b *Bastion) EffectiveGitHubSSHPort() int {
+	if b.GitHubSSHPort == 0 {
+		return GitHubSSHPortDefault
+	}
+
+	return b.GitHubSSHPort
 }
 
 // Jumpbox configuration for jumpbox user accounts.
@@ -2140,6 +2180,11 @@ func validate(cfg *Config) error {
 	}
 
 	err = ValidateIngress(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = cfg.Bastion.Validate()
 	if err != nil {
 		return err
 	}
