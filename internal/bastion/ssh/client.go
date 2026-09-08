@@ -711,7 +711,8 @@ func (c *Client) setupAgentForwarding(ctx context.Context) {
 	// Check if SSH_AUTH_SOCK is set (agent is available)
 	authSock := os.Getenv("SSH_AUTH_SOCK")
 	if authSock == "" {
-		c.log.Debug("SSH agent not available (SSH_AUTH_SOCK not set)")
+		c.log.Warn("SSH_AUTH_SOCK is not set, so agent forwarding is disabled. " +
+			"Git clones on the bastion that need your GitHub key will fail until an ssh-agent holding that key is running on this machine.")
 
 		return
 	}
@@ -744,7 +745,12 @@ func (c *Client) setupAgentForwarding(ctx context.Context) {
 		return
 	}
 
-	c.log.Debugw("SSH agent has keys available", "key_count", len(keys))
+	if len(keys) == 0 {
+		c.log.Warn("SSH agent has no identities. " +
+			"Git clones on the bastion that need your GitHub key will fail. Run ssh-add on this machine and rerun.")
+	} else {
+		c.log.Debugw("SSH agent has keys available", "key_count", len(keys))
+	}
 
 	// Set up agent forwarding channel handler on the SSH client
 	// This registers a handler for "auth-agent@openssh.com" channels from the server
