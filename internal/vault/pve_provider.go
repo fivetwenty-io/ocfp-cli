@@ -1777,7 +1777,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	cfMaxInFlight := pveCFMaxInFlight(p.Config)
 	cpiConfig := map[string]any{
 		"cf_max_in_flight": strconv.Itoa(cfMaxInFlight),
-		"disk_format":      pveDiskFormat(diskStorage),
+		"disk_format":      pveDiskFormat(diskStorage, p.Config.DiskStorageType),
 		"disk_storage":     diskStorage,
 		"host":             pveHostnameOnly(host),
 		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
@@ -1786,7 +1786,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		"port":             strconv.Itoa(pveCPIPort(host)),
 		"status":           "configured",
 		"stemcell_storage": pveCPIStemcellStorage(p.Config),
-		"storage_backend":  pveStorageBackend(diskStorage),
+		"storage_backend":  pveStorageBackend(diskStorage, p.Config.DiskStorageType),
 		"user":             pveCPIUser(p.Config.AuthToken, p.Config.Username),
 		"verify_ssl":       strconv.FormatBool(p.Config.VerifySSL),
 		"vm_storage":       vmStorage,
@@ -2010,40 +2010,73 @@ func pveCPIStemcellStorage(cfg *config.Config) string {
 }
 
 // pveStorageBackend returns the BOSH-CPI storage_backend classification for a
-// PVE storage pool name.
+// PVE storage pool.
 //
-// Shared backends (cluster-visible): rbd, cephfs, nfs, cifs, glusterfs, pbs.
-// Dir backend: dir (special-cased; CPI uses "dir" not "block" or "shared").
-// Local/block backends: lvm, lvmthin, zfspool, btrfs — all return "block".
-// Unknown pool names: "block" (conservative default, suitable for most installs).
+// When storageType is set (the PVE storage type from disk_storage_type), it is
+// authoritative: shared types (rbd, cephfs, nfs, cifs, glusterfs, pbs) return
+// "shared", dir returns "dir", and local block types (lvm, lvmthin, zfspool,
+// btrfs) return "block". An unrecognised type falls through to the pool-name
+// heuristic below, as does an empty storageType.
+//
+// The pool-name heuristic only recognises names that literally are a type
+// keyword. Any other name returns "block" (conservative default, suitable for
+// most installs). Site-specific names such as an NFS share called after the
+// cluster carry no type hint, which is why disk_storage_type exists.
 //
 // Source: R3-10 storage matrix; matches bosh-proxmox-cpi-release _LOCAL_DISK_TYPES.
-func pveStorageBackend(poolName string) string {
-	switch strings.ToLower(strings.TrimSpace(poolName)) {
+func pveStorageBackend(poolName, storageType string) string {
+	if backend, ok := pveStorageBackendForType(storageType); ok {
+		return backend
+	}
+
+	if backend, ok := pveStorageBackendForType(poolName); ok {
+		return backend
+	}
+
+	// Unknown pool: default to "block" (most common local install type).
+	// Caller logs a warning via configureCPI summary; no error returned here
+	// because the pool name may be a site-specific alias.
+	return "block"
+}
+
+// pveStorageBackendForType maps a PVE storage type keyword to the CPI
+// storage_backend value. The second result is false when the keyword is not a
+// recognised type.
+func pveStorageBackendForType(storageType string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(storageType)) {
 	case "rbd", "cephfs", "nfs", "cifs", "glusterfs", "pbs":
-		return "shared"
+		return "shared", true
 	case "dir":
-		return "dir"
+		return "dir", true
 	case "lvm", "lvmthin", "zfspool", "btrfs":
-		return "block"
+		return "block", true
 	default:
-		// Unknown pool: default to "block" (most common local install type).
-		// Caller logs a warning via configureCPI summary; no error returned here
-		// because the pool name may be a site-specific alias.
-		return "block"
+		return "", false
 	}
 }
 
 // pveDiskFormat returns the disk_format required by the given storage pool.
 //
-// zfspool, lvm, lvmthin, and btrfs block devices do NOT support qcow2; they
-// require raw format. Pool names are site-specific aliases rather than type
-// keywords (e.g. "zfs-1", "local-lvm-data"), so match by substring: any name
-// containing lvm, zfs, or btrfs is treated as a block backend needing raw.
-// All other pools default to qcow2 (dir, rbd, nfs, cifs, glusterfs, pbs).
+// When storageType is set (the PVE storage type from disk_storage_type), it is
+// authoritative: lvm, lvmthin, zfspool, and btrfs are block backends that need
+// raw, rbd images are always raw, and the file-backed types (dir, nfs, cifs,
+// glusterfs, cephfs, pbs) take qcow2. An unrecognised or empty storageType
+// falls through to the pool-name heuristic.
+//
+// The heuristic exists because pool names are site-specific aliases rather
+// than type keywords (e.g. "zfs-1", "local-lvm-data"), so it matches by
+// substring: any name containing lvm, zfs, or btrfs is treated as a block
+// backend needing raw. All other pools default to qcow2.
 //
 // Source: R3-10; Wayne-lab storage-pools.yml; bosh-proxmox-cpi docs.
-func pveDiskFormat(poolName string) string {
+func pveDiskFormat(poolName, storageType string) string {
+	switch strings.ToLower(strings.TrimSpace(storageType)) {
+	case "lvm", "lvmthin", "zfspool", "btrfs", "rbd":
+		return "raw"
+	case "dir", "nfs", "cifs", "glusterfs", "cephfs", "pbs":
+		return "qcow2"
+	}
+
 	name := strings.ToLower(strings.TrimSpace(poolName))
 	for _, marker := range []string{"lvm", "zfs", "btrfs"} {
 		if strings.Contains(name, marker) {
