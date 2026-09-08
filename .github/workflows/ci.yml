@@ -39,7 +39,9 @@ concurrency:
 # are host directories bind-mounted into each container instead. They live
 # outside _work, so the runner's workspace reclaim hook leaves them alone.
 # GOCACHE is set explicitly because the runner overrides HOME to
-# /github/home inside the container, which is wiped between jobs.
+# /github/home inside the container, which is wiped between jobs. The build
+# job is the one exception, and the comment above it explains why it
+# compiles cold.
 #
 # The job graph is deliberately a chain, not a fan-out. This module links
 # the Azure, AWS, GCP and STACKIT SDKs, so a single compile of the
@@ -156,6 +158,19 @@ jobs:
           path: coverage.txt
           if-no-files-found: error
 
+  # Only the module cache is mounted here. The shared build cache is not,
+  # because cross-linking darwin/arm64 against it on a warm runner keeps
+  # breaking, and it breaks in a new way each time the cache turns over. It
+  # first demanded DWARF relocations the build never emitted, and it then
+  # crashed the linker outright in its dead-code pass with a nil pointer
+  # dereference, which failed the Build job on two consecutive commits
+  # while the same code linked fine cold. This is the one job that
+  # cross-compiles, so it is also the only one the stale entries reach.
+  # GOCACHE therefore points at the container's own filesystem, which is
+  # fresh every job, and the release workflow's GoReleaser job compiles
+  # cold for exactly the same reason. Lint, test and security still share
+  # the warm cache, since they only ever build for the runner's own
+  # platform.
   build:
     name: Build
     runs-on: self-hosted
@@ -163,9 +178,8 @@ jobs:
       image: golang:1.27
       volumes:
         - /home/runner/gha-container-cache/go:/go
-        - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
     env:
-      GOCACHE: /root/.cache/go-build
+      GOCACHE: /tmp/go-build
     timeout-minutes: 60
     needs: test
     steps:
@@ -195,9 +209,8 @@ jobs:
       # The link flags are the ones the Makefile uses, so a CI binary
       # reports the same version, commit, and build time `make build`
       # embeds instead of "dev" and "unknown". -s -w also keeps the linker
-      # off the DWARF path, where cross-linking darwin/arm64 against the
-      # runners' warm build cache has been failing outright with
-      # "relocation target go:info... not defined".
+      # off the DWARF path, which is where the cross-compiled targets used
+      # to fail first.
       - name: Build every target
         env:
           CGO_ENABLED: '0'
