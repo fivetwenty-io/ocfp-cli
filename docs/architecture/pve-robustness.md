@@ -102,6 +102,7 @@ The following fields were added to the PVE bloc config struct in `internal/confi
 | `VMStorage string` | `vm_storage` | `""` | PVE storage pool for VM disks |
 | `DiskStorage string` | `disk_storage` | `""` | PVE storage pool for persistent disks |
 | `StemcellStorage string` | `stemcell_storage` | `""` | PVE storage pool for stemcell templates, which should match `vm_storage` so the CPI can linked-clone root disks |
+| `DiskStorageType string` | `disk_storage_type` | `""` | PVE storage type of `disk_storage` (nfs, dir, lvmthin, zfspool, rbd, cephfs, cifs, glusterfs, btrfs, or lvm); set it when the pool name does not reveal its type |
 | `VmidRangeStart int` | `vmid_range_start` | 100 | Lower bound of the VMID range BOSH may allocate from |
 | `VmidRangeEnd int` | `vmid_range_end` | 5999 | Upper bound of the VMID range |
 | `CfMaxInFlight int` | `cf_max_in_flight` | 12 | Max parallel CF compilation workers |

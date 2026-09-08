@@ -1611,7 +1611,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_LocalMode_NoMetaWrite(t *testing.T
 func TestPVEStorageBackend_LVMThin_ReturnsBlock(t *testing.T) {
 	t.Parallel()
 
-	got := pveStorageBackend("lvmthin")
+	got := pveStorageBackend("lvmthin", "")
 	assert.Equal(t, "block", got)
 }
 
@@ -1620,7 +1620,7 @@ func TestPVEStorageBackend_LVMThin_ReturnsBlock(t *testing.T) {
 func TestPVEStorageBackend_ZFSPool_ReturnsBlock(t *testing.T) {
 	t.Parallel()
 
-	got := pveStorageBackend("zfspool")
+	got := pveStorageBackend("zfspool", "")
 	assert.Equal(t, "block", got)
 }
 
@@ -1629,7 +1629,7 @@ func TestPVEStorageBackend_ZFSPool_ReturnsBlock(t *testing.T) {
 func TestPVEStorageBackend_NFS_ReturnsShared(t *testing.T) {
 	t.Parallel()
 
-	got := pveStorageBackend("nfs")
+	got := pveStorageBackend("nfs", "")
 	assert.Equal(t, "shared", got)
 }
 
@@ -1642,7 +1642,7 @@ func TestPVEStorageBackend_SharedTypes(t *testing.T) {
 		s := s
 		t.Run(s, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "shared", pveStorageBackend(s), "storage type %q should be shared", s)
+			assert.Equal(t, "shared", pveStorageBackend(s, ""), "storage type %q should be shared", s)
 		})
 	}
 }
@@ -1652,7 +1652,7 @@ func TestPVEStorageBackend_SharedTypes(t *testing.T) {
 func TestPVEStorageBackend_ZFSPool_DiskFormatRaw(t *testing.T) {
 	t.Parallel()
 
-	got := pveDiskFormat("zfspool")
+	got := pveDiskFormat("zfspool", "")
 	assert.Equal(t, "raw", got, "zfspool block devices require disk_format: raw")
 }
 
@@ -1661,7 +1661,7 @@ func TestPVEStorageBackend_ZFSPool_DiskFormatRaw(t *testing.T) {
 func TestPVEStorageBackend_Unknown_DefaultsToBlock(t *testing.T) {
 	t.Parallel()
 
-	got := pveStorageBackend("some-unknown-pool")
+	got := pveStorageBackend("some-unknown-pool", "")
 	assert.Equal(t, "block", got, "unknown pool type must default to block (conservative)")
 }
 
@@ -1739,6 +1739,71 @@ func TestConfigureCPI_DiskStorageEmpty_FallsBackToBlobstorePool(t *testing.T) {
 
 	data := mock.setMultipleCalls[0].data
 	assert.Equal(t, "local-zfs", data["disk_storage"], "disk_storage must fall back to Artifacts.Data.StoragePool when DiskStorage is empty")
+}
+
+// TestPVEStorageClassification_DiskStorageType verifies that an explicit
+// disk_storage_type overrides the pool-name heuristic for both storage_backend
+// and disk_format, and that an empty or unknown type falls back to the name.
+func TestPVEStorageClassification_DiskStorageType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		pool        string
+		storageType string
+		wantBackend string
+		wantFormat  string
+	}{
+		{"nfs type on an opaque pool name", "pvuproxcf1_1", "nfs", "shared", "qcow2"},
+		{"zfspool type on an opaque pool name", "pvuproxcf1_1", "zfspool", "block", "raw"},
+		{"dir type", "pvuproxcf1_1", "dir", "dir", "qcow2"},
+		{"rbd type is shared and raw", "ceph-pool", "rbd", "shared", "raw"},
+		{"lvmthin type", "data", "lvmthin", "block", "raw"},
+		{"type overrides a misleading name", "nfs", "lvmthin", "block", "raw"},
+		{"type is case and space insensitive", "pvuproxcf1_1", "  NFS ", "shared", "qcow2"},
+		{"empty type falls back to name heuristic", "zfs-1", "", "block", "raw"},
+		{"empty type on a shared keyword name", "nfs", "", "shared", "qcow2"},
+		{"unknown type falls back to name heuristic", "local-lvm-data", "mystery", "block", "raw"},
+		{"unknown type and opaque name default to block qcow2", "pvuproxcf1_1", "mystery", "block", "qcow2"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.wantBackend, pveStorageBackend(tt.pool, tt.storageType), "storage_backend")
+			assert.Equal(t, tt.wantFormat, pveDiskFormat(tt.pool, tt.storageType), "disk_format")
+		})
+	}
+}
+
+// TestConfigureCPI_DiskStorageType_WritesBackendAndFormat verifies that the
+// cpi/pve record reflects disk_storage_type when the pool name carries no type
+// hint, which is the real-bloc shape of an NFS share named after the cluster.
+func TestConfigureCPI_DiskStorageType_WritesBackendAndFormat(t *testing.T) {
+	t.Parallel()
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint:     "https://pve.example.com:8006",
+		AuthToken:       "root@pam!tok",
+		TokenSecret:     "secret",
+		Region:          "pve01",
+		VMStorage:       "pvuproxcf1_ns_1",
+		DiskStorage:     "pvuproxcf1_1",
+		DiskStorageType: "nfs",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.configureCPI(MgmtEnvType)
+	require.NoError(t, err)
+	require.Len(t, mock.setMultipleCalls, 1)
+
+	data := mock.setMultipleCalls[0].data
+	assert.Equal(t, "pvuproxcf1_1", data["disk_storage"])
+	assert.Equal(t, "shared", data["storage_backend"], "storage_backend must follow disk_storage_type")
+	assert.Equal(t, "qcow2", data["disk_format"], "disk_format must follow disk_storage_type")
 }
 
 // TestPVECPIStemcellStorage_Precedence covers every branch of the

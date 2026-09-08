@@ -277,6 +277,13 @@ type Config struct {
 	// NOTE: zfspool backends require disk_format: raw — qcow2 is not supported.
 	// Example: "zfs-1" (zfspool), "local-lvm" (lvmthin).
 	DiskStorage string `json:"disk_storage" mapstructure:"disk_storage" yaml:"disk_storage,omitempty"`
+	// DiskStorageType is the PVE storage type of DiskStorage, such as nfs, dir,
+	// lvmthin, zfspool, rbd, cephfs, cifs, glusterfs, btrfs, or lvm.
+	// PVE-specific and optional. Set it when the pool name does not reveal its
+	// type, for example an NFS share named after a cluster. configureCPI uses
+	// it to derive storage_backend and disk_format; when empty, both fall back
+	// to a heuristic over the pool name.
+	DiskStorageType string `json:"disk_storage_type" mapstructure:"disk_storage_type" yaml:"disk_storage_type,omitempty"`
 	// StemcellStorage is the PVE storage pool that holds stemcell templates.
 	// PVE-specific. Maps to pve.stemcell_storage in the bosh-proxmox-cpi-release
 	// job properties. The CPI creates root disks as linked clones of the

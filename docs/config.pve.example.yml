@@ -113,6 +113,10 @@ blocs:
     stemcell_storage: "local-lvm"
     # disk_storage is the PVE storage pool that holds persistent BOSH disks.
     disk_storage: "local-lvm"
+    # disk_storage_type is the PVE storage type of disk_storage, such as nfs, dir,
+    # lvmthin, zfspool, rbd, cephfs, cifs, glusterfs, btrfs, or lvm. Set it when the
+    # pool name does not reveal its type, so storage_backend and disk_format are right.
+    # disk_storage_type: "lvmthin"
     # iso_storage — PVE storage that accepts ISO content and cloud-init snippets.
     # Used for cloud-image downloads and template auto-provisioning.
     iso_storage: "local"
