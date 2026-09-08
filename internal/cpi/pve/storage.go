@@ -3,6 +3,7 @@ package pve
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,85 @@ type StorageManager struct {
 	// local mode; see blobstore.go for the lazy-init path.
 	blobstoreMu sync.Mutex
 	blobstoreS3 *blobstoreS3Client
+
+	// storageTypes caches GET /storage/{storage} "type" answers by pool
+	// name. A pool's plugin type never changes while the CLI runs, and
+	// CreateVolume consults it on every call.
+	storageTypesMu sync.Mutex
+	storageTypes   map[string]string
+}
+
+// fileBackedStorageTypes lists the PVE storage plugin types that keep
+// volumes as files and parse the filename with a pattern that requires a
+// format extension (vm-<vmid>-<name>.<qcow2|raw|vmdk>). Block plugins (lvm,
+// lvmthin, zfspool, rbd, iscsi, ...) reject an extension outright.
+//
+//nolint:gochecknoglobals // package-level lookup set
+var fileBackedStorageTypes = map[string]struct{}{
+	"dir":       {},
+	"nfs":       {},
+	"cifs":      {},
+	"glusterfs": {},
+	"cephfs":    {},
+	"btrfs":     {},
+}
+
+// fileBackedVolumeFormat is the disk format used for volumes on file-backed
+// pools; it is the same default PVE itself picks for those plugins.
+const fileBackedVolumeFormat = "qcow2"
+
+// volumeNameAndFormat adapts a block-style volume name to the target pool's
+// plugin. On file-backed pools the name gains a ".qcow2" extension and the
+// matching format is returned so PVE's filename parser accepts it; on every
+// other pool the name is returned untouched with an empty format so PVE
+// applies its native default (raw). A name that already carries a
+// recognised extension is kept as-is with that extension as the format.
+func volumeNameAndFormat(volName, storageType string) (string, string) {
+	if _, ok := fileBackedStorageTypes[strings.ToLower(storageType)]; !ok {
+		return volName, ""
+	}
+
+	for _, ext := range []string{"qcow2", "raw", "vmdk"} {
+		if strings.HasSuffix(volName, "."+ext) {
+			return volName, ext
+		}
+	}
+
+	return volName + "." + fileBackedVolumeFormat, fileBackedVolumeFormat
+}
+
+// storageType returns the plugin type of a storage pool (nfs, dir, lvmthin,
+// zfspool, ...) from GET /storage/{storage}, caching the answer per pool.
+func (m *StorageManager) storageType(ctx context.Context, storage string) (string, error) {
+	m.storageTypesMu.Lock()
+	defer m.storageTypesMu.Unlock()
+
+	if cached, ok := m.storageTypes[storage]; ok {
+		return cached, nil
+	}
+
+	resp, err := m.client.pveClient.GetCtx(ctx, "/storage/"+url.PathEscape(storage), nil)
+	if err != nil {
+		return "", fmt.Errorf("lookup storage %q type: %w", storage, err)
+	}
+
+	data, ok := resp.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("%w: storage %q", ErrStorageTypeUnknown, storage)
+	}
+
+	storageType := getStringFromMap(data, "type")
+	if storageType == "" {
+		return "", fmt.Errorf("%w: storage %q", ErrStorageTypeUnknown, storage)
+	}
+
+	if m.storageTypes == nil {
+		m.storageTypes = make(map[string]string)
+	}
+
+	m.storageTypes[storage] = storageType
+
+	return storageType, nil
 }
 
 // pveVolumeName returns a volume filename that satisfies PVE's storage-pool
@@ -121,10 +201,19 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		volName = fmt.Sprintf("vol-%d", time.Now().UnixNano())
 	}
 
-	// Omit format so PVE picks the storage's native default (qcow2 for
-	// dir/NFS, raw for LVM/ZFS/RBD). Forcing qcow2 here breaks every block
-	// storage type because ZFSPoolPlugin et al. reject it.
-	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, "", vmid, volName)
+	// File-backed pools (dir, nfs, cifs, ...) parse the filename with a
+	// pattern that demands a format extension, so "vm-20001-data" fails
+	// there with "unable to parse volume filename". Block pools (lvm, zfs,
+	// rbd, ...) reject an extension and a forced qcow2 format. Ask PVE which
+	// plugin backs the pool and shape the name and format to match.
+	storageType, err := m.storageType(ctx, storage)
+	if err != nil {
+		return nil, err
+	}
+
+	volName, format := volumeNameAndFormat(volName, storageType)
+
+	volID, err := storageSvc.CreateVolume(ctx, node, storage, sizeGB, format, vmid, volName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}
