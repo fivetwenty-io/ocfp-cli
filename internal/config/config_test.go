@@ -442,7 +442,8 @@ func TestConfig_VMStorage_YAMLRoundTrip(t *testing.T) {
 		"    token_secret: secret\n" +
 		"    region: pve01\n" +
 		"    vm_storage: data\n" +
-		"    disk_storage: zfs-1\n")
+		"    disk_storage: zfs-1\n" +
+		"    stemcell_storage: data\n")
 
 	if err := os.WriteFile(cfgPath, yml, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -459,6 +460,10 @@ func TestConfig_VMStorage_YAMLRoundTrip(t *testing.T) {
 
 	if got, want := cfg.DiskStorage, "zfs-1"; got != want {
 		t.Errorf("DiskStorage after YAML load = %q, want %q", got, want)
+	}
+
+	if got, want := cfg.StemcellStorage, "data"; got != want {
+		t.Errorf("StemcellStorage after YAML load = %q, want %q", got, want)
 	}
 }
 

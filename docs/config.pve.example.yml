@@ -106,6 +106,13 @@ blocs:
     verify_ssl: false
 
     # ── Storage ────────────────────────────────────────────────────────────
+    # vm_storage is the PVE storage pool that holds ephemeral VM root disks.
+    vm_storage: "local-lvm"
+    # stemcell_storage holds the stemcell templates, and it should match vm_storage
+    # because the CPI can only linked-clone a root disk from a template on the same pool.
+    stemcell_storage: "local-lvm"
+    # disk_storage is the PVE storage pool that holds persistent BOSH disks.
+    disk_storage: "local-lvm"
     # iso_storage — PVE storage that accepts ISO content and cloud-init snippets.
     # Used for cloud-image downloads and template auto-provisioning.
     iso_storage: "local"
