@@ -64,6 +64,7 @@ Vault exists in chapter 7.
     vm_storage:       local-lvm-data
     stemcell_storage: local-lvm-data
     disk_storage:     local-lvm-data
+    # disk_storage_type: lvmthin
     iso_storage:      local
     template_bridge: ocfp
     # template_seed_ip: 10.108.16.2/20
@@ -79,7 +80,11 @@ disks, stemcell templates, and persistent disks on the LVM-thin pool, images on
 `local`. The `stemcell_storage` pool should match `vm_storage`, because the CPI
 creates each root disk as a linked clone of the stemcell template, and PVE only
 allows that when both live on the same pool. When we leave `stemcell_storage`
-out, `ocfp` derives it from `vm_storage` for us. The
+out, `ocfp` derives it from `vm_storage` for us. The commented
+`disk_storage_type` line names the PVE storage type behind `disk_storage`, and
+we only need it when the pool name says nothing about its type, for example an
+NFS share named after the cluster. Without it, `ocfp` guesses the storage
+backend and disk format from the pool name alone. The
 `iso_storage` pool must advertise the right content types
 (`pmx pve storage set local --content vztmpl,iso,import,backup,snippets` —
 natively `pvesm set local --content vztmpl,iso,import,backup,snippets`).
