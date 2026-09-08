@@ -81,6 +81,7 @@ type task struct {
 type job struct {
 	index int
 	name  string
+	url   string
 	cmd   string
 }
 
@@ -2106,7 +2107,7 @@ func (m *Manager) cloneGitRepositories(ctx context.Context) error {
 func (m *Manager) gitCloneWorker(ctx context.Context, jobs <-chan job, errs chan<- error, reporter *ProgressReporter, total int, completed *int) {
 	for job := range jobs {
 		result, err := m.executeGitJobWithRetry(ctx, &job)
-		errs <- m.buildGitJobError(job.name, result, err)
+		errs <- m.buildGitJobError(&job, result, err)
 
 		*completed++
 		if reporter != nil {
@@ -2179,17 +2180,36 @@ func (m *Manager) logGitFailure(repoName string, attempt int, result *ssh.Comman
 		"stderr", result.Stderr)
 }
 
-// buildGitJobError constructs the appropriate error for a git job result.
-func (m *Manager) buildGitJobError(name string, result *ssh.CommandResult, err error) error {
+// sshCloneHint names the two usual causes of a failed SSH clone on the
+// bastion, since the git error itself rarely says which one it was.
+const sshCloneHint = "The clone runs over SSH, so this usually means the forwarded agent holds no key for GitHub, or the site blocks outbound port 22. " +
+	"Run ssh-add on this machine and rerun, or set bastion.githubSshPort to 443 to reach GitHub through ssh.github.com."
+
+// isSSHGitURL reports whether a repository URL is cloned over SSH, where the
+// bastion depends on the forwarded agent and on outbound port 22.
+func isSSHGitURL(url string) bool {
+	return strings.HasPrefix(url, "git@") || strings.HasPrefix(url, "ssh://")
+}
+
+// buildGitJobError constructs the appropriate error for a git job result. A
+// failed SSH clone carries sshCloneHint on top of the git error.
+func (m *Manager) buildGitJobError(j *job, result *ssh.CommandResult, err error) error {
 	if err == nil {
 		return nil
 	}
 
+	var wrapped error
 	if result != nil && result.Stderr != "" {
-		return fmt.Errorf("git op failed for %s: %w (stderr: %s)", name, err, result.Stderr)
+		wrapped = fmt.Errorf("git op failed for %s: %w (stderr: %s)", j.name, err, result.Stderr)
+	} else {
+		wrapped = fmt.Errorf("git op failed for %s: %w", j.name, err)
 	}
 
-	return fmt.Errorf("git op failed for %s: %w", name, err)
+	if isSSHGitURL(j.url) {
+		return fmt.Errorf("%w. %s", wrapped, sshCloneHint)
+	}
+
+	return wrapped
 }
 
 // createGitJobs creates git clone/update jobs for each repository and enqueues them.
@@ -2225,7 +2245,7 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, repo.URL, depth, dest)
 		}
 
-		jobs <- job{index: index, name: repo.Name, cmd: cmd}
+		jobs <- job{index: index, name: repo.Name, url: repo.URL, cmd: cmd}
 	}
 
 	close(jobs)

@@ -2,10 +2,12 @@ package bastion
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
 
@@ -68,5 +70,83 @@ func TestCreateGitJobs_BranchlessRepoAlsoReconcilesOrigin(t *testing.T) {
 	cmd := collectGitJobs(t, repos)[0]
 	if !strings.Contains(cmd, "git remote set-url origin") {
 		t.Errorf("branchless repo does not reconcile origin:\n%s", cmd)
+	}
+}
+
+// TestCreateGitJobs_CarriesRepositoryURL pins that each job records the URL it
+// clones, which buildGitJobError needs to decide whether the SSH hint applies.
+func TestCreateGitJobs_CarriesRepositoryURL(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager(context.Background(), &config.Config{Name: "ocfp-lab-drgao"}, &ProvisioningOptions{})
+	jobs := make(chan job, 1)
+	m.createGitJobs([]provision.GitRepository{{
+		Name: "deployments",
+		URL:  "git@github.com:example/ocfp-deployments.git",
+		Dest: "/home/ubuntu/ocfp/deployments",
+	}}, jobs)
+
+	j := <-jobs
+	if j.url != "git@github.com:example/ocfp-deployments.git" {
+		t.Errorf("job.url = %q, want the configured repository URL", j.url)
+	}
+}
+
+// TestBuildGitJobError_SSHHint pins that a failed clone over SSH names the two
+// usual causes, while an HTTPS clone keeps the plain git error.
+func TestBuildGitJobError_SSHHint(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager(context.Background(), &config.Config{Name: "ocfp-lab-drgao"}, &ProvisioningOptions{})
+	cause := errors.New("exit status 128")
+
+	cases := []struct {
+		name     string
+		url      string
+		result   *ssh.CommandResult
+		wantHint bool
+	}{
+		{"scp style ssh url", "git@github.com:example/repo.git", &ssh.CommandResult{Stderr: "Connection timed out"}, true},
+		{"ssh scheme url", "ssh://git@github.com/example/repo.git", nil, true},
+		{"https url", "https://github.com/example/repo.git", &ssh.CommandResult{Stderr: "not found"}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := m.buildGitJobError(&job{name: "repo", url: tc.url}, tc.result, cause)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+
+			if !errors.Is(err, cause) {
+				t.Errorf("hint wrapping lost the underlying error: %v", err)
+			}
+
+			if !strings.Contains(err.Error(), "git op failed for repo") {
+				t.Errorf("missing git failure prefix: %v", err)
+			}
+
+			if tc.result != nil && !strings.Contains(err.Error(), tc.result.Stderr) {
+				t.Errorf("stderr dropped from the error: %v", err)
+			}
+
+			gotHint := strings.Contains(err.Error(), "bastion.githubSshPort to 443") &&
+				strings.Contains(err.Error(), "ssh-add")
+			if gotHint != tc.wantHint {
+				t.Errorf("hint present = %v, want %v: %v", gotHint, tc.wantHint, err)
+			}
+		})
+	}
+}
+
+// TestBuildGitJobError_NilOnSuccess pins that a successful job yields no error.
+func TestBuildGitJobError_NilOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager(context.Background(), &config.Config{Name: "ocfp-lab-drgao"}, &ProvisioningOptions{})
+	if err := m.buildGitJobError(&job{name: "repo", url: "git@github.com:x/y.git"}, nil, nil); err != nil {
+		t.Errorf("buildGitJobError() = %v, want nil", err)
 	}
 }
