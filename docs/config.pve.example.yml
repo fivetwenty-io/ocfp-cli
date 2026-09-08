@@ -144,6 +144,9 @@ blocs:
 
     # ── Bastion ────────────────────────────────────────────────────────────
     bastion:
+      # Bastion VM size preset (small, medium, large, xlarge, bastion, bosh); defaults to bastion when omitted.
+      flavor: "bastion"
+
       # Template VM name on the PVE cluster.
       # OCFP auto-provisions from the catalog when the template is missing.
       # Catalog names: ubuntu-noble-template,
