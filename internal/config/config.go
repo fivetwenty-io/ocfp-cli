@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -670,6 +671,21 @@ type NetworkBands struct {
 	Mgmt  Band `json:"mgmt,omitempty"  mapstructure:"mgmt"  yaml:"mgmt,omitempty"`
 }
 
+// normalizeDNS converges the resolver list onto both DNS and DNSServers so
+// that consumers reading either field see the same servers. The YAML keys
+// dnsServers and dns_servers both land in DNSServers and win over dns; when
+// only dns is set it is mirrored into DNSServers. Called from UnmarshalYAML
+// and again from applyDefaults so a Config assembled without YAML (tests,
+// programmatic callers) converges on the same load path.
+func (n *NetworkConfig) normalizeDNS() {
+	switch {
+	case len(n.DNSServers) > 0:
+		n.DNS = slices.Clone(n.DNSServers)
+	case len(n.DNS) > 0:
+		n.DNSServers = slices.Clone(n.DNS)
+	}
+}
+
 // UnmarshalYAML accepts the historical snake_case key network_cidr alongside
 // the documented cidr / networkCidr forms. goccy/go-yaml matches struct tags
 // case-sensitively, so without this hook a config that writes network_cidr
@@ -734,6 +750,8 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	} else {
 		n.DNSServers = raw.DNSServersSC
 	}
+
+	n.normalizeDNS()
 
 	n.SubnetStrategy = raw.SubnetStrategy
 	n.Subnets = raw.Subnets
@@ -1648,6 +1666,10 @@ func loadFromFile(path string, target interface{}) error {
 
 // applyDefaults applies provider-specific defaults.
 func applyDefaults(cfg *Config, provider string) error {
+	// Resolver convergence runs before any provider pass so the provider
+	// public-resolver fallbacks below only fire when the bloc set nothing.
+	applyDNSDefaults(cfg)
+
 	switch strings.ToLower(provider) {
 	case providerStackIT:
 		applyStackitDefaults(cfg)
@@ -1659,6 +1681,8 @@ func applyDefaults(cfg *Config, provider string) error {
 		applyAzureDefaults(cfg)
 	case "gcp":
 		applyGCPDefaults(cfg)
+	case "pve":
+		applyPVEDefaults(cfg)
 	}
 
 	// Apply common defaults
@@ -1671,6 +1695,31 @@ func applyDefaults(cfg *Config, provider string) error {
 	cfg.Artifacts.Defaults()
 
 	return nil
+}
+
+// applyDNSDefaults converges network.dns / network.dnsServers /
+// network.dns_servers onto both NetworkConfig fields, then lets the
+// bloc-level dns list (what the vault populate writes into the network and
+// subnet records) inherit the network resolvers when the operator set only
+// the network-scoped key. Without this a carved subnet record falls back to
+// its gateway address, which nothing answers DNS on.
+func applyDNSDefaults(cfg *Config) {
+	cfg.Network.normalizeDNS()
+
+	if len(cfg.DNS) == 0 && len(cfg.Network.DNSServers) > 0 {
+		cfg.DNS = slices.Clone(cfg.Network.DNSServers)
+	}
+}
+
+// applyPVEDefaults applies Proxmox-specific defaults. The bastion flavor
+// names a preset from internal/cpi/pve (small, medium, large, xlarge,
+// bastion, bosh, artifacts); "bastion" is the preset sized for the jump
+// host. A non-empty flavor is also what marks the bastion as enabled for the
+// artifacts validator, so leaving it unset made artifacts.enabled fail load.
+func applyPVEDefaults(cfg *Config) {
+	if cfg.Bastion.Flavor == "" {
+		cfg.Bastion.Flavor = "bastion"
+	}
 }
 
 // applyGenesisDefaults applies defaults for the global Genesis configuration.
