@@ -21,6 +21,12 @@ import (
 func TestStackitProvider_GetPrivateKeyPath_ResolvesUnderXDGDataHome(t *testing.T) {
 	xdgData := t.TempDir()
 	t.Setenv("OCFP_HOME", "")
+	// Clear every inherited XDG override too: a developer shell that
+	// exports XDG_STATE_HOME would otherwise steer this test's writes
+	// into the real ~/.local/state/ocfp despite the faked HOME.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("XDG_DATA_HOME", xdgData)
 
 	blocName := "stackit-ssh-xdg-bloc"

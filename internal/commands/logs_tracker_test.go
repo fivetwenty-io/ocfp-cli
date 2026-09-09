@@ -89,3 +89,53 @@ func TestLogsTracker_GetActiveCommands_RoundTripsThroughStateHomeBaseDir(t *test
 	// baseDir it was constructed with.
 	assert.Equal(t, filepath.Join(config.StateHome(), ".active"), tracker.activeDir)
 }
+
+// TestLogsTracker_RecycledPIDLockIsPruned asserts GetActiveCommands drops
+// a lock whose PID is alive but was assigned to a process that started
+// after the lock was written: that PID has been recycled and the command
+// the lock described is long gone.
+func TestLogsTracker_RecycledPIDLockIsPruned(t *testing.T) {
+	tracker := NewCommandTracker(t.TempDir())
+
+	info := ActiveCommand{
+		Timestamp:  time.Now().Add(-time.Hour),
+		PID:        liveChildPID(t),
+		Bloc:       "test-bloc",
+		Command:    "bootstrap",
+		Subcommand: "",
+		LogPath:    "",
+	}
+
+	require.NoError(t, tracker.CreateLockFile(info))
+
+	active, err := tracker.GetActiveCommands()
+	require.NoError(t, err)
+	assert.Empty(t, active, "a lock older than its PID's process must read as stale")
+
+	entries, err := os.ReadDir(tracker.activeDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "the recycled-PID lock file must be removed from .active")
+}
+
+// TestLogsTracker_LiveHolderLockIsKept asserts a lock stamped after its
+// process started, the shape CreateLockFile always produces for a real
+// command, still reads as active.
+func TestLogsTracker_LiveHolderLockIsKept(t *testing.T) {
+	tracker := NewCommandTracker(t.TempDir())
+
+	info := ActiveCommand{
+		Timestamp:  time.Now(),
+		PID:        liveChildPID(t),
+		Bloc:       "test-bloc",
+		Command:    "bootstrap",
+		Subcommand: "",
+		LogPath:    "",
+	}
+
+	require.NoError(t, tracker.CreateLockFile(info))
+
+	active, err := tracker.GetActiveCommands()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, info.PID, active[0].PID)
+}

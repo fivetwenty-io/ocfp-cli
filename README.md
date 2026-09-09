@@ -146,7 +146,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `scale` | Scale resources |
 | `backup` | Backup configurations |
 | `restore` | Restore from backup |
-| `migrate` | Move a legacy `~/.ocfp` layout into the XDG config/state/data directories |
+| `config migrate` | Move a legacy `~/.ocfp` layout into the XDG config/state/data directories |
 
 ### State Management
 
@@ -291,18 +291,15 @@ This overrides all three XDG directories and disables the deprecation warning.
 To move an existing `~/.ocfp` installation onto the XDG layout permanently, run:
 
 ```bash
-ocfp migrate --dry-run  # preview the moves
-ocfp migrate            # move config.yml/configs/ under XDG_CONFIG_HOME,
-                         # state.yml/state/logs/checkpoints/backups/markers under XDG_STATE_HOME,
-                         # and keys/per-bloc directories under XDG_DATA_HOME
-                         # (a per-bloc directory's own state/ and logs/
-                         # subdirectories split to XDG_STATE_HOME first)
+ocfp config migrate --dry-run  # preview the moves
+ocfp config migrate            # move config.yml, other config.* files, and configs/ under XDG_CONFIG_HOME,
+                                # state.yml/state/logs/checkpoints/backups/markers under XDG_STATE_HOME,
+                                # and keys/per-bloc directories under XDG_DATA_HOME
+                                # (a per-bloc directory's own state/ and logs/
+                                # subdirectories split to XDG_STATE_HOME first)
 ```
 
-`ocfp migrate` refuses to run while `OCFP_HOME` is set (that override means the flat
-layout is intentional) and refuses to move anything if any destination path already
-exists, listing every conflict so you can resolve them by hand first. Files it does not
-recognize are left in `~/.ocfp` and reported rather than guessed at.
+`ocfp config migrate` refuses to run while `OCFP_HOME` is set, because that override means the flat layout is intentional. It also waits for any other ocfp command to finish first, since that command's lock and log files are among the things being moved. Destination directories that already exist are merged, so the command locks and per-bloc logs that everyday use has already written under `~/.local/state/ocfp` are kept alongside what moves in. The command refuses only when a file would be overwritten, and it lists every such conflict so you can resolve them by hand first. Files it does not recognize are left in `~/.ocfp` and reported rather than guessed at. The old spelling, `ocfp migrate`, still works but prints a deprecation notice.
 
 ### Configuration File Structure
 

@@ -8,7 +8,7 @@ OCFP uses structured JSON logging to capture detailed operational information fo
 
 All OCFP logs are stored under `~/.local/state/ocfp/` (or `$XDG_STATE_HOME/ocfp` if set) with the following hierarchy. For backward compatibility, OCFP falls back to the legacy `~/.ocfp/` directory when the XDG path does not exist, and emits a single deprecation warning per session. To force the legacy flat-directory layout entirely (which also disables the warning), set `OCFP_HOME` (e.g. `export OCFP_HOME=~/.ocfp`); this overrides the config, state, and data directories together, so logs land under `$OCFP_HOME/logs` instead.
 
-Run `ocfp migrate` (add `--dry-run` to preview first) to move an existing legacy layout onto the XDG paths permanently, including the top-level `~/.ocfp/logs` directory and each bloc's own `~/.ocfp/{bloc}/logs` directory; afterward, log lookups resolve the XDG state directory directly and no longer fall back. `ocfp migrate` refuses to run when `OCFP_HOME` is set.
+Run `ocfp config migrate` (add `--dry-run` to preview first) to move an existing legacy layout onto the XDG paths permanently, including the top-level `~/.ocfp/logs` directory and each bloc's own `~/.ocfp/{bloc}/logs` directory; afterward, log lookups resolve the XDG state directory directly and no longer fall back. Logs that everyday use has already written under the XDG state directory are kept, and the legacy ones are merged in beside them. `ocfp config migrate` refuses to run when `OCFP_HOME` is set.
 
 ```
 ~/.local/state/ocfp/

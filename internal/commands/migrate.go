@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -50,9 +51,11 @@ const (
 
 // migrateKnownDirs and migrateKnownFiles classify the legacy ~/.ocfp
 // top-level entries this command recognizes. Any directory not listed here
-// is treated as an unclassified per-bloc data directory (migrateClassDataOther);
-// any file not listed here is left in place and reported as a warning,
-// since guessing at its purpose risks silently misplacing operator data.
+// is treated as an unclassified per-bloc data directory (migrateClassDataOther).
+// Files are matched by exact name here, or by the migrateConfigFilePrefix
+// rule in classifyMigrateEntry; any other file is left in place and
+// reported as a warning, since guessing at its purpose risks silently
+// misplacing operator data.
 var migrateKnownDirs = map[string]migrateEntryClass{
 	"configs":     migrateClassConfig,
 	"logs":        migrateClassState,
@@ -71,6 +74,14 @@ var migrateKnownDirs = map[string]migrateEntryClass{
 // the bloc directory into DataHome() would silently orphan them: no
 // resolver in the codebase ever looks there.
 var migrateBlocStateSubdirs = []string{"state", "logs"}
+
+// migrateConfigFilePrefix marks every top-level file that is an alternate
+// or backed-up configuration (config.pve.yml, config.yml.bak-20260719, ...)
+// as config-class. They belong beside config.yml for two reasons: operators
+// pass them with -f and expect them where config.yml went, and config.yml
+// itself is often a relative symlink to one of them, which would dangle if
+// the link moved and its target stayed behind.
+const migrateConfigFilePrefix = "config."
 
 var migrateKnownFiles = map[string]migrateEntryClass{
 	"config.yml":             migrateClassConfig,
@@ -125,10 +136,27 @@ type migratePlanEntry struct {
 	class migrateEntryClass
 }
 
-// NewMigrateCmd creates the 'migrate' command, which moves an existing
-// legacy ~/.ocfp layout into the three XDG base directories (config, state,
-// data) so path resolution lands on the XDG layout naturally afterward.
+// migrateDeprecationNotice is printed by the hidden top-level 'migrate'
+// alias so operators with the old spelling in scripts or muscle memory
+// learn the new one without the command breaking under them.
+const migrateDeprecationNotice = "use 'ocfp config migrate' instead"
+
+// NewMigrateCmd returns the hidden, deprecated top-level 'migrate' alias.
+// The command lives under 'ocfp config' now (see NewConfigCmd); this alias
+// keeps the original spelling working while announcing the move.
 func NewMigrateCmd() *cobra.Command {
+	cmd := newConfigMigrateCmd()
+	cmd.Hidden = true
+	cmd.Deprecated = migrateDeprecationNotice
+
+	return cmd
+}
+
+// newConfigMigrateCmd creates the 'config migrate' command, which moves an
+// existing legacy ~/.ocfp layout into the three XDG base directories
+// (config, state, data) so path resolution lands on the XDG layout
+// naturally afterward.
+func newConfigMigrateCmd() *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{
@@ -138,7 +166,7 @@ func NewMigrateCmd() *cobra.Command {
 		Long: `Migrate moves the contents of the legacy ~/.ocfp directory into the three
 XDG base directories OCFP now reads from and writes to:
 
-  config.yml, configs/                                       -> XDG_CONFIG_HOME/ocfp
+  config.yml, other config.* files, configs/                 -> XDG_CONFIG_HOME/ocfp
   state.yml, state.yml.lock, state/, logs/, checkpoints/,
   backups/, .active/, provisioned, bastion-init-completed      -> XDG_STATE_HOME/ocfp
   keys/, and any other per-bloc directory                      -> XDG_DATA_HOME/ocfp
@@ -154,15 +182,21 @@ recognize is left in place and reported; the legacy directory is retained
 in that case so nothing is lost.
 
 The command refuses to run when OCFP_HOME is set, since that variable is
-an explicit request for the legacy flat layout. It also refuses to move
-anything if any destination path already exists, listing every conflict
-so you can resolve them manually; no files are moved when a conflict is
-found.`,
+an explicit request for the legacy flat layout. It also refuses to run
+while another ocfp command is still running, because that command's lock
+and log files are among the things being moved.
+
+Destination directories that already exist are merged: ordinary ocfp use
+writes command locks and per-bloc logs under the XDG state directory long
+before a migration, and that content is kept alongside what moves in. The
+command refuses to move anything only when a file would be overwritten,
+listing every such conflict so you can resolve them manually; no files are
+moved when a conflict is found.`,
 		Example: `  # Preview what would move, without changing anything
-  ocfp migrate --dry-run
+  ocfp config migrate --dry-run
 
   # Migrate the legacy ~/.ocfp layout to XDG directories
-  ocfp migrate`,
+  ocfp config migrate`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runMigrate(dryRun)
 		},
@@ -211,20 +245,22 @@ func runMigrate(dryRun bool) error {
 		return nil
 	}
 
-	conflicts := conflictingMigrateDestinations(plan)
-	if len(conflicts) > 0 {
-		return newMigrateConflictsError(conflicts)
-	}
-
-	// The guard runs before the plan is printed so a refused operator is not
-	// shown moves that will not happen — but never on dry-run, because
-	// GetActiveCommands prunes dead-PID locks as it scans and --dry-run must
-	// not change anything on disk.
+	// The guard runs before the conflict check and before the plan is
+	// printed: it prunes stale command locks on both sides as it scans, so
+	// they never surface as conflicts, and a refused operator is not shown
+	// moves that will not happen. It never runs on dry-run, because that
+	// pruning is a change on disk; the conflict walk below recognises
+	// stale locks read-only instead (see migrateDiscardable).
 	if !dryRun {
 		err = refuseIfLiveProcessesActive(legacyDir, config.StateHome())
 		if err != nil {
 			return err
 		}
+	}
+
+	conflicts := conflictingMigrateDestinations(plan)
+	if len(conflicts) > 0 {
+		return newMigrateConflictsError(conflicts)
 	}
 
 	printMigratePlan(plan, warnings, dryRun)
@@ -234,12 +270,12 @@ func runMigrate(dryRun bool) error {
 	}
 
 	for _, entry := range plan {
-		err := moveMigrateEntry(entry)
+		verb, err := moveMigrateEntry(entry)
 		if err != nil {
 			return fmt.Errorf("migration failed partway through (some entries may already be moved): %w", err)
 		}
 
-		_, _ = fmt.Fprintf(os.Stdout, "moved %s -> %s\n", entry.src, entry.dst)
+		_, _ = fmt.Fprintf(os.Stdout, "%s %s -> %s\n", verb, entry.src, entry.dst)
 	}
 
 	return finalizeMigrateLegacyDir(legacyDir, warnings)
@@ -354,9 +390,15 @@ func classifyMigrateEntry(name string, isDir bool) (class migrateEntryClass, kno
 		return migrateClassDataOther, true
 	}
 
-	class, ok := migrateKnownFiles[name]
+	if class, ok := migrateKnownFiles[name]; ok {
+		return class, true
+	}
 
-	return class, ok
+	if strings.HasPrefix(name, migrateConfigFilePrefix) {
+		return migrateClassConfig, true
+	}
+
+	return migrateClassDataOther, false
 }
 
 // migrateDestinationFor resolves the XDG-class destination path for a
@@ -375,17 +417,59 @@ func migrateDestinationFor(class migrateEntryClass, name string) string {
 }
 
 // conflictingMigrateDestinations returns a sorted, human-readable list of
-// every planned destination that already exists on disk.
+// every planned source path whose destination is already occupied. A
+// destination directory that already exists is not a conflict on its own:
+// ordinary ocfp use writes command locks under StateHome()/.active and
+// per-bloc logs under StateHome()/{bloc}/logs long before anyone runs the
+// migration, so refusing on those would make the command impossible to run
+// on exactly the machines it exists for. Such directories are merged by
+// moveMigrateEntry; only a file that would be overwritten, or a directory
+// that would land on a non-directory, counts as a conflict.
 func conflictingMigrateDestinations(plan []migratePlanEntry) []string {
-	var conflicts []string
+	conflicts := make([]string, 0, len(plan))
 
 	for _, entry := range plan {
-		if _, err := os.Stat(entry.dst); err == nil {
-			conflicts = append(conflicts, fmt.Sprintf("%s (would receive %s)", entry.dst, entry.src))
-		}
+		conflicts = append(conflicts, migrateConflictsBetween(entry.src, entry.dst)...)
 	}
 
 	sort.Strings(conflicts)
+
+	return conflicts
+}
+
+// migrateConflictsBetween walks src and reports every path under it that
+// cannot move onto dst without overwriting something already there.
+// Symlinks are not followed: a symlink at either end is treated as a file.
+func migrateConflictsBetween(src, dst string) []string {
+	dstInfo, err := os.Lstat(dst)
+	if err != nil {
+		return nil
+	}
+
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return nil
+	}
+
+	if !srcInfo.IsDir() || !dstInfo.IsDir() {
+		if migrateDiscardable(src, dst) {
+			return nil
+		}
+
+		return []string{fmt.Sprintf("%s (would receive %s)", dst, src)}
+	}
+
+	children, err := os.ReadDir(src)
+	if err != nil {
+		return nil
+	}
+
+	conflicts := make([]string, 0, len(children))
+
+	for _, child := range children {
+		conflicts = append(conflicts, migrateConflictsBetween(
+			filepath.Join(src, child.Name()), filepath.Join(dst, child.Name()))...)
+	}
 
 	return conflicts
 }
@@ -400,6 +484,12 @@ func printMigratePlan(plan []migratePlanEntry, warnings []string, dryRun bool) {
 	}
 
 	for _, entry := range plan {
+		if bothMigrateDirs(entry.src, entry.dst) {
+			_, _ = fmt.Fprintf(os.Stdout, "  %s -> %s (merging into existing directory)\n", entry.src, entry.dst)
+
+			continue
+		}
+
 		_, _ = fmt.Fprintf(os.Stdout, "  %s -> %s\n", entry.src, entry.dst)
 	}
 
@@ -409,42 +499,195 @@ func printMigratePlan(plan []migratePlanEntry, warnings []string, dryRun bool) {
 }
 
 // moveMigrateEntry moves one plan entry from its legacy location to its
-// XDG-class destination. It prefers os.Rename; on a cross-device rename
-// error (EXDEV, e.g. legacy and XDG roots on different filesystems), it
-// falls back to a recursive copy that preserves file modes, then removes
-// the source. Keys-class destinations are always chmod'd to keysDirMode
-// after the move, regardless of which path was taken.
-func moveMigrateEntry(entry migratePlanEntry) error {
+// XDG-class destination (see moveMigratePath) and reports what happened
+// as a past-tense verb for the progress line: "moved", "merged" (into an
+// existing directory), or "discarded" (an ephemeral file dst already had).
+// Keys-class destinations are always chmod'd to keysDirMode after the
+// move, regardless of which path was taken.
+func moveMigrateEntry(entry migratePlanEntry) (string, error) {
 	err := os.MkdirAll(filepath.Dir(entry.dst), migrateDirMode)
 	if err != nil {
-		return fmt.Errorf("creating destination directory for %s: %w", entry.name, err)
+		return "", fmt.Errorf("creating destination directory for %s: %w", entry.name, err)
 	}
 
-	err = os.Rename(entry.src, entry.dst)
+	verb := "moved"
+
+	switch {
+	case migrateDiscardable(entry.src, entry.dst):
+		verb = "discarded"
+	case bothMigrateDirs(entry.src, entry.dst):
+		verb = "merged"
+	}
+
+	err = moveMigratePath(entry.src, entry.dst)
 	if err != nil {
-		if !isCrossDeviceMigrateError(err) {
-			return fmt.Errorf("moving %s to %s: %w", entry.src, entry.dst, err)
-		}
-
-		err = copyMigrateEntryWithCleanup(entry.src, entry.dst)
-		if err != nil {
-			return err
-		}
-
-		err = os.RemoveAll(entry.src)
-		if err != nil {
-			return fmt.Errorf("removing source %s after copy: %w", entry.src, err)
-		}
+		return "", err
 	}
 
 	if entry.class == migrateClassDataKeys {
 		err = os.Chmod(entry.dst, keysDirMode)
 		if err != nil {
-			return fmt.Errorf("restricting permissions on %s: %w", entry.dst, err)
+			return "", fmt.Errorf("restricting permissions on %s: %w", entry.dst, err)
 		}
 	}
 
+	warnIfDanglingMigrateSymlink(entry.dst)
+
+	return verb, nil
+}
+
+// warnIfDanglingMigrateSymlink prints a warning when a moved entry is a
+// symlink whose target no longer resolves from its new location. Relative
+// links between recognized entries (config.yml -> ./config.pve.yml) keep
+// working because both land in the same directory; a link to something
+// unrecognized, or outside ~/.ocfp, may not, and silently shipping a
+// dangling config.yml is exactly the failure this guards against.
+func warnIfDanglingMigrateSymlink(dst string) {
+	info, err := os.Lstat(dst)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+
+	_, err = os.Stat(dst)
+	if err == nil {
+		return
+	}
+
+	target, _ := os.Readlink(dst)
+
+	_, _ = fmt.Fprintf(os.Stderr, "warning: %s is a symlink to %s, which does not resolve from its new location; fix the link by hand\n",
+		dst, target)
+}
+
+// moveMigratePath moves src onto dst. When both are directories the
+// children are moved one at a time, recursively, so whatever ordinary use
+// has already written under dst stays alongside the legacy content;
+// conflictingMigrateDestinations has already ruled out file collisions by
+// the time this runs. Otherwise it prefers os.Rename and, on a
+// cross-device rename error (EXDEV, e.g. legacy and XDG roots on different
+// filesystems), falls back to a recursive copy that preserves file modes
+// before removing the source.
+func moveMigratePath(src, dst string) error {
+	if migrateDiscardable(src, dst) {
+		err := os.Remove(src)
+		if err != nil {
+			return fmt.Errorf("discarding %s: %w", src, err)
+		}
+
+		return nil
+	}
+
+	if bothMigrateDirs(src, dst) {
+		return mergeMigrateDir(src, dst)
+	}
+
+	err := os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+
+	if !isCrossDeviceMigrateError(err) {
+		return fmt.Errorf("moving %s to %s: %w", src, dst, err)
+	}
+
+	err = copyMigrateEntryWithCleanup(src, dst)
+	if err != nil {
+		return err
+	}
+
+	err = os.RemoveAll(src)
+	if err != nil {
+		return fmt.Errorf("removing source %s after copy: %w", src, err)
+	}
+
 	return nil
+}
+
+// mergeMigrateDir moves every child of src into the existing directory
+// dst, then removes the emptied src.
+func mergeMigrateDir(src, dst string) error {
+	children, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("reading directory %s: %w", src, err)
+	}
+
+	for _, child := range children {
+		childSrc := filepath.Join(src, child.Name())
+		childDst := filepath.Join(dst, child.Name())
+
+		if migrateDiscardable(childSrc, childDst) {
+			_, _ = fmt.Fprintf(os.Stdout, "  discarded %s (%s already exists)\n", childSrc, childDst)
+		}
+
+		err = moveMigratePath(childSrc, childDst)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = os.Remove(src)
+	if err != nil {
+		return fmt.Errorf("removing merged directory %s: %w", src, err)
+	}
+
+	return nil
+}
+
+// migrateDiscardable reports whether src is an ephemeral file that should
+// be dropped rather than moved because dst is already occupied. Two kinds
+// qualify: the content-free state.yml.lock flock target, and a command
+// lock under .active/ whose holder is no longer running (a crashed
+// command's leftover, or a PID since recycled). Neither carries anything
+// worth keeping, and treating them as conflicts would block the migration
+// on files ocfp itself would discard at the next scan.
+func migrateDiscardable(src, dst string) bool {
+	_, err := os.Lstat(dst)
+	if err != nil {
+		return false
+	}
+
+	if filepath.Base(src) == "state.yml.lock" {
+		return true
+	}
+
+	return isStaleCommandLock(src)
+}
+
+// isStaleCommandLock reports whether path is a command lock file under an
+// .active directory whose owning process is gone. It reads the lock
+// without removing it, so it is safe on a dry run. An unparseable lock
+// counts as stale, matching CommandTracker.CleanStaleLocks.
+func isStaleCommandLock(path string) bool {
+	if filepath.Base(filepath.Dir(path)) != ".active" || !strings.HasSuffix(path, ".lock") {
+		return false
+	}
+
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+
+	var cmd ActiveCommand
+
+	err = json.Unmarshal(data, &cmd)
+	if err != nil {
+		return true
+	}
+
+	return !lockHolderRunning(cmd)
+}
+
+// bothMigrateDirs reports whether src and dst both exist and are real
+// directories (symlinks are not followed), the precondition for merging.
+func bothMigrateDirs(src, dst string) bool {
+	srcInfo, err := os.Lstat(src)
+	if err != nil || !srcInfo.IsDir() {
+		return false
+	}
+
+	dstInfo, err := os.Lstat(dst)
+
+	return err == nil && dstInfo.IsDir()
 }
 
 // isCrossDeviceMigrateError reports whether err is an os.LinkError wrapping
@@ -579,12 +822,17 @@ func copyMigrateSymlink(src, dst string) error {
 // (wrapped with the offending commands) when any are found. Both the legacy
 // dir and the XDG state root are scanned: a command on a mixed-phase machine
 // may have written its lock under either.
-// CommandTracker.GetActiveCommands already removes locks whose PID is no
-// longer running as it scans, so a stale (dead-pid) lock left over from a
-// crashed command never blocks a migration; only a genuinely live process
-// does.
+//
+// CommandTracker.GetActiveCommands removes locks whose owner is gone as it
+// scans, including locks whose PID has since been recycled by an unrelated
+// process, so only a genuinely live ocfp command blocks a migration. A
+// lock naming this very process is skipped too: the CLI does not normally
+// track the config commands, but if it ever does, migrate must not refuse
+// on account of itself.
 func refuseIfLiveProcessesActive(baseDirs ...string) error {
 	var active []ActiveCommand
+
+	self := os.Getpid()
 
 	for _, baseDir := range baseDirs {
 		tracker := NewCommandTracker(baseDir)
@@ -594,7 +842,13 @@ func refuseIfLiveProcessesActive(baseDirs ...string) error {
 			return fmt.Errorf("checking for active ocfp processes: %w", err)
 		}
 
-		active = append(active, found...)
+		for _, cmd := range found {
+			if cmd.PID == self {
+				continue
+			}
+
+			active = append(active, cmd)
+		}
 	}
 
 	if len(active) == 0 {
