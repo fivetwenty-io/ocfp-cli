@@ -9,7 +9,7 @@ func TestRenderOpsFileRoundTrip(t *testing.T) {
 	sc := DefaultStemcell
 	rels := []Resolution{
 		{Release: Release{Name: "capi", Version: "1.235.0"}, Source: SourceCompiled,
-			URL: "https://10.0.0.5:9000/dev-ocf-bosh/compiled-releases/capi-1.235.0-ubuntu-noble-1.383.tgz",
+			URL: "https://10.0.0.5:9000/dev-ocf-bosh/compiled-releases/capi-1.235.0-ubuntu-noble-1.562.tgz",
 			SHA: "sha256:deadbeef"},
 	}
 
@@ -20,11 +20,11 @@ func TestRenderOpsFileRoundTrip(t *testing.T) {
 	s := string(out)
 
 	for _, want := range []string{
-		"# stemcell: ubuntu-noble/1.383",
+		"# stemcell: ubuntu-noble/1.562",
 		"path: /releases/name=capi?",
 		`sha1: "sha256:deadbeef"`,
 		"os: ubuntu-noble",
-		`version: "1.383"`,
+		`version: "1.562"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("ops file missing %q\n---\n%s", want, s)

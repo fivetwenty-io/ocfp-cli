@@ -18,7 +18,7 @@ func TestRenderCompileManifest(t *testing.T) {
 		"- name: capi",
 		"- name: uaa",
 		"os: ubuntu-noble",
-		`version: "1.383"`,
+		`version: "1.562"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("manifest missing %q\n---\n%s", want, s)

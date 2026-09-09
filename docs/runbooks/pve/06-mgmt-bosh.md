@@ -123,24 +123,26 @@ manifest and state file.
 ## Stocking the shelves
 
 A director without stemcells can deploy nothing, so we finish by uploading
-the OS images every later chapter draws from. One pin matters enough to
-explain: the bosh kit's compiled releases are built against **noble 1.364**,
-so the director VMs we deploy in chapter 8 must run exactly that version or
-BOSH will reject the compiled packages. bosh.io also delists old
-point-releases, so the download that always works is the GCS bucket:
+the OS image every later chapter draws from. We run one noble line across
+the whole fleet, and the mgmt env file's `stemcell_url` and `stemcell_sha1`
+pair is the source of truth for which version that is (1.562 as we write
+this). Upload the same version here:
 
 ```bash
 # On the bastion, targeting the mgmt director.
-bosh -n upload-stemcell \
-  https://storage.googleapis.com/bosh-core-stemcells/1.364/bosh-stemcell-1.364-openstack-kvm-ubuntu-noble.tgz \
-  --sha1 d6cc58bda0120fe47787a46775ff5bafc5718257
+bosh -n upload-stemcell --sha1 2c1715b4926ff895e779e1eaa738621887bcef1e \
+  "https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble?v=1.562"
 ```
 
 (The name carries no `-go_agent` suffix, and yes, `openstack-kvm` is
-correct: the PVE CPI consumes OpenStack KVM stemcells.) Workload VMs are
-free to ride newer nobles; the 1.364 pin exists for the *director*
-deployments. If we ever bump it, the kit's compiled-release URLs bump in
-lockstep.
+correct, because the PVE CPI consumes OpenStack KVM stemcells.) bosh.io
+delists old point-releases, so if that URL ever returns 404 the same tarball
+lives permanently at
+`https://storage.googleapis.com/bosh-core-stemcells/1.562/bosh-stemcell-1.562-openstack-kvm-ubuntu-noble.tgz`.
+Compiled releases cached for an older noble still apply, because the
+director reuses compiled packages across any noble 1.x stemcell. When we
+bump the line, we bump every env file, the CLI's `DefaultStemcell`, and this
+chapter together.
 
 **Verify**: `bosh stemcells` lists the noble stemcell on the mgmt director.
 

@@ -131,11 +131,11 @@ can reuse the cached copy instead of re-fetching from bosh.io/GCS every time.
 Idempotent: a warm run is a HEAD-only no-op unless --force is set. --dry-run
 reports whether the tarball is already cached without downloading or
 uploading anything.`,
-		Example: `  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
-    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584 \
+		Example: `  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.562 \
+    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.562 \
     --bloc dev --sha1 abcdef0123456789abcdef0123456789abcdef01
-  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
-    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584 \
+  ocfp precompile stemcell bosh-openstack-kvm-ubuntu-noble-go_agent 1.562 \
+    https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.562 \
     --bloc dev --dry-run`,
 		Args: cobra.ExactArgs(3),
 		RunE: runPrecompileStemcell,

@@ -10,7 +10,7 @@ const compiledKeyPrefix = "compiled-releases"
 
 // CompiledKey returns the blobstore object key for a release's compiled tarball,
 // encoding name, version, and stemcell so a mismatched stemcell can never be
-// confused with a match (e.g. compiled-releases/capi-1.235.0-ubuntu-noble-1.383.tgz).
+// confused with a match (e.g. compiled-releases/capi-1.235.0-ubuntu-noble-1.562.tgz).
 func CompiledKey(r Release, sc Stemcell) string {
 	return fmt.Sprintf("%s/%s-%s-%s-%s.tgz",
 		compiledKeyPrefix,
