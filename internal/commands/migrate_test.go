@@ -85,15 +85,44 @@ func mustExist(t *testing.T, path string) {
 	}
 }
 
-func TestNewMigrateCmd_Registration(t *testing.T) {
+func TestNewConfigCmd_HasMigrateSubcommand(t *testing.T) {
+	cmd := NewConfigCmd()
+
+	if cmd.Use != "config" {
+		t.Errorf("Use = %q, want %q", cmd.Use, "config")
+	}
+
+	migrate, _, err := cmd.Find([]string{"migrate"})
+	if err != nil || migrate == nil || migrate.Use != "migrate" {
+		t.Fatalf("Find(migrate) = %v, %v; want the migrate subcommand", migrate, err)
+	}
+
+	if migrate.Hidden || migrate.Deprecated != "" {
+		t.Error("config migrate must be the visible, supported spelling")
+	}
+
+	if migrate.Flags().Lookup("dry-run") == nil {
+		t.Error("expected --dry-run flag to be registered")
+	}
+}
+
+func TestNewMigrateCmd_IsDeprecatedAlias(t *testing.T) {
 	cmd := NewMigrateCmd()
 
 	if cmd.Use != "migrate" {
 		t.Errorf("Use = %q, want %q", cmd.Use, "migrate")
 	}
 
+	if !cmd.Hidden {
+		t.Error("top-level migrate alias must be hidden")
+	}
+
+	if !strings.Contains(cmd.Deprecated, "ocfp config migrate") {
+		t.Errorf("Deprecated = %q, want it to name 'ocfp config migrate'", cmd.Deprecated)
+	}
+
 	if cmd.Flags().Lookup("dry-run") == nil {
-		t.Error("expected --dry-run flag to be registered")
+		t.Error("expected --dry-run flag to be registered on the alias too")
 	}
 }
 
@@ -270,12 +299,13 @@ func TestRunMigrate_BlocStateAndLogsSplitFromDataDir(t *testing.T) {
 
 // writeMigrateLockFile writes a command-tracker lock file directly (bypassing
 // CommandTracker.CreateLockFile, since these tests need full control over
-// the embedded PID) at legacyDir/.active/{timestamp}-{pid}.lock, matching
-// the format logs_tracker.go's CreateLockFile produces.
-func writeMigrateLockFile(t *testing.T, legacyDir string, pid int) {
+// the embedded PID and timestamp) at legacyDir/.active/{timestamp}-{pid}.lock,
+// matching the format logs_tracker.go's CreateLockFile produces. The
+// timestamp matters: LockHolderRunning treats a lock older than its PID's
+// process as recycled, so a lock meant to read as live must be stamped
+// after that process started.
+func writeMigrateLockFile(t *testing.T, legacyDir string, pid int, timestamp time.Time) {
 	t.Helper()
-
-	timestamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	info := ActiveCommand{
 		Timestamp:  timestamp,
@@ -319,6 +349,31 @@ func deadPID(t *testing.T) int {
 	return pid
 }
 
+// liveChildPID starts a child process that outlives the test and returns
+// its PID, so a lock naming it reads as genuinely live without naming the
+// test process itself (which refuseIfLiveProcessesActive skips as self).
+func liveChildPID(t *testing.T) int {
+	t.Helper()
+
+	cmd := exec.Command("sleep", "60")
+
+	err := cmd.Start()
+	if err != nil {
+		t.Fatalf("starting long-lived child: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	// Give the kernel's start-time record a moment to be strictly older
+	// than any lock timestamp the test stamps with time.Now().
+	time.Sleep(20 * time.Millisecond)
+
+	return cmd.Process.Pid
+}
+
 // TestRunMigrate_LiveProcessLockRefuses is the regression test for
 // F-W6-05: a command lock in .active/ belonging to a live PID must refuse
 // the migration outright, before any file is moved, since relocating
@@ -329,7 +384,7 @@ func TestRunMigrate_LiveProcessLockRefuses(t *testing.T) {
 	legacyDir := filepath.Join(home, ".ocfp")
 
 	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
-	writeMigrateLockFile(t, legacyDir, os.Getpid())
+	writeMigrateLockFile(t, legacyDir, liveChildPID(t), time.Now())
 
 	err := runMigrate(false)
 	if err == nil {
@@ -353,7 +408,7 @@ func TestRunMigrate_StaleLockDoesNotBlock(t *testing.T) {
 	legacyDir := filepath.Join(home, ".ocfp")
 
 	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
-	writeMigrateLockFile(t, legacyDir, deadPID(t))
+	writeMigrateLockFile(t, legacyDir, deadPID(t), time.Now())
 
 	err := runMigrate(false)
 	if err != nil {
@@ -373,7 +428,7 @@ func TestRunMigrate_LiveProcessLockInStateHomeRefuses(t *testing.T) {
 	legacyDir := filepath.Join(home, ".ocfp")
 
 	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
-	writeMigrateLockFile(t, config.StateHome(), os.Getpid())
+	writeMigrateLockFile(t, config.StateHome(), liveChildPID(t), time.Now())
 
 	err := runMigrate(false)
 	if err == nil {
@@ -397,7 +452,7 @@ func TestRunMigrate_LiveProcessRefusalPrintsNoPlan(t *testing.T) {
 	legacyDir := filepath.Join(home, ".ocfp")
 
 	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
-	writeMigrateLockFile(t, legacyDir, os.Getpid())
+	writeMigrateLockFile(t, legacyDir, liveChildPID(t), time.Now())
 
 	var err error
 
@@ -412,6 +467,232 @@ func TestRunMigrate_LiveProcessRefusalPrintsNoPlan(t *testing.T) {
 	if strings.Contains(out, "Migration plan") {
 		t.Errorf("stdout contains the migration plan despite refusal:\n%s", out)
 	}
+}
+
+// TestRunMigrate_OwnLockDoesNotBlock asserts a lock naming the migrate
+// process itself never blocks the migration. The CLI does not track the
+// config commands, but a lock written for this PID (a stale lock from an
+// earlier process that happened to have the same PID, or tracking turned
+// back on) must be treated as self, not as "another ocfp process".
+func TestRunMigrate_OwnLockDoesNotBlock(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateLockFile(t, legacyDir, os.Getpid(), time.Now())
+
+	err := runMigrate(false)
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil (own lock must not block)", err)
+	}
+
+	mustExist(t, filepath.Join(config.ConfigHome(), "config.yml"))
+}
+
+// TestRunMigrate_RecycledPIDLockDoesNotBlock asserts a lock whose PID is
+// alive but belongs to a process that started after the lock was written
+// (the PID was recycled) is treated as stale. On a machine with months of
+// uptime every crashed command's lock eventually names some unrelated
+// live process, and those must not block the migration.
+func TestRunMigrate_RecycledPIDLockDoesNotBlock(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateLockFile(t, legacyDir, liveChildPID(t), time.Now().Add(-time.Hour))
+
+	err := runMigrate(false)
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil (recycled-PID lock must not block)", err)
+	}
+
+	mustExist(t, filepath.Join(config.ConfigHome(), "config.yml"))
+}
+
+// TestRunMigrate_MergesIntoExistingStateDirs asserts the migration merges
+// legacy content into destination directories that ordinary ocfp use has
+// already created under the XDG state root (.active/ locks and per-bloc
+// logs), keeping both sides, rather than refusing because they exist.
+func TestRunMigrate_MergesIntoExistingStateDirs(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+	stateHome := config.StateHome()
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, ".active", "legacy.lock.txt"), "legacy\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "mybloc", "logs", "bootstrap", "old.log"), "old\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "mybloc", "logs", "ssh", "older.log"), "older\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "mybloc", "vault", "data.txt"), "vault\n")
+
+	// Already populated by ordinary use before the migration.
+	writeMigrateTestFile(t, filepath.Join(stateHome, ".active", "recent.lock.txt"), "recent\n")
+	writeMigrateTestFile(t, filepath.Join(stateHome, "mybloc", "logs", "ssh", "new.log"), "new\n")
+
+	var err error
+
+	out := captureStdout(t, func() {
+		err = runMigrate(false)
+	})
+
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil (existing directories must merge)", err)
+	}
+
+	if !strings.Contains(out, "merging into existing directory") {
+		t.Errorf("plan output does not announce the merge:\n%s", out)
+	}
+
+	for path, want := range map[string]string{
+		filepath.Join(stateHome, ".active", "legacy.lock.txt"):             "legacy\n",
+		filepath.Join(stateHome, ".active", "recent.lock.txt"):             "recent\n",
+		filepath.Join(stateHome, "mybloc", "logs", "bootstrap", "old.log"): "old\n",
+		filepath.Join(stateHome, "mybloc", "logs", "ssh", "older.log"):     "older\n",
+		filepath.Join(stateHome, "mybloc", "logs", "ssh", "new.log"):       "new\n",
+		filepath.Join(config.DataHome(), "mybloc", "vault", "data.txt"):    "vault\n",
+	} {
+		if got := mustReadFile(t, path); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+
+	mustNotExist(t, legacyDir)
+}
+
+// TestRunMigrate_NestedFileConflictRefuses asserts that merging stops at
+// file granularity: a file present at the same path on both sides is a
+// conflict, reported by its full path, and nothing moves.
+func TestRunMigrate_NestedFileConflictRefuses(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+	stateHome := config.StateHome()
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "mybloc", "logs", "ssh", "same.log"), "legacy\n")
+	writeMigrateTestFile(t, filepath.Join(stateHome, "mybloc", "logs", "ssh", "same.log"), "xdg\n")
+
+	err := runMigrate(false)
+	if !errors.Is(err, ErrMigrateHasConflicts) {
+		t.Fatalf("error = %v, want wrapping %v", err, ErrMigrateHasConflicts)
+	}
+
+	conflictPath := filepath.Join(stateHome, "mybloc", "logs", "ssh", "same.log")
+	if !strings.Contains(err.Error(), conflictPath) {
+		t.Errorf("error does not name the conflicting file %s:\n%v", conflictPath, err)
+	}
+
+	mustExist(t, filepath.Join(legacyDir, "config.yml"))
+	mustNotExist(t, filepath.Join(config.ConfigHome(), "config.yml"))
+
+	if got := mustReadFile(t, conflictPath); got != "xdg\n" {
+		t.Errorf("existing destination content = %q, want unchanged %q", got, "xdg\n")
+	}
+}
+
+// TestRunMigrate_StaleLockOnBothSidesIsNotAConflict asserts a dead
+// command lock present under both .active directories, the shape a
+// crashed command leaves on a machine that has already started writing
+// locks under the XDG state root, neither blocks the migration nor
+// survives it. The dry run must agree without deleting anything.
+func TestRunMigrate_StaleLockOnBothSidesIsNotAConflict(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+	stateHome := config.StateHome()
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+
+	pid := deadPID(t)
+	stamp := time.Date(2026, 3, 5, 9, 0, 0, 0, time.UTC)
+	writeMigrateLockFile(t, legacyDir, pid, stamp)
+	writeMigrateLockFile(t, stateHome, pid, stamp)
+
+	lockName := stamp.Format("20060102-150405") + "-" + strconv.Itoa(pid) + ".lock"
+	legacyLock := filepath.Join(legacyDir, ".active", lockName)
+	xdgLock := filepath.Join(stateHome, ".active", lockName)
+
+	err := runMigrate(true)
+	if err != nil {
+		t.Fatalf("runMigrate(dryRun=true) error = %v, want nil (stale lock is not a conflict)", err)
+	}
+
+	mustExist(t, legacyLock)
+	mustExist(t, xdgLock)
+
+	err = runMigrate(false)
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil (stale lock is not a conflict)", err)
+	}
+
+	mustExist(t, filepath.Join(config.ConfigHome(), "config.yml"))
+	mustNotExist(t, legacyLock)
+	mustNotExist(t, xdgLock)
+	mustNotExist(t, legacyDir)
+}
+
+// TestRunMigrate_StateLockFileOnBothSidesIsDiscarded asserts the empty
+// state.yml.lock flock target is dropped, not reported as a conflict,
+// when ordinary use has already created one under the XDG state root.
+func TestRunMigrate_StateLockFileOnBothSidesIsDiscarded(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+	stateHome := config.StateHome()
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "state.yml.lock"), "")
+	writeMigrateTestFile(t, filepath.Join(stateHome, "state.yml.lock"), "")
+
+	var err error
+
+	out := captureStdout(t, func() {
+		err = runMigrate(false)
+	})
+
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil (state.yml.lock is discardable)", err)
+	}
+
+	if !strings.Contains(out, "discarded "+filepath.Join(legacyDir, "state.yml.lock")) {
+		t.Errorf("progress output does not report the discard:\n%s", out)
+	}
+
+	if strings.Contains(out, "moved "+filepath.Join(legacyDir, "state.yml.lock")) {
+		t.Errorf("progress output claims a discarded file was moved:\n%s", out)
+	}
+
+	mustExist(t, filepath.Join(stateHome, "state.yml.lock"))
+	mustNotExist(t, legacyDir)
+}
+
+// TestRunMigrate_ConfigVariantsFollowConfigYml asserts every top-level
+// config.* file (alternate configs and their backups) moves to the config
+// root beside config.yml, so a config.yml that is a relative symlink to
+// one of them still resolves afterward and the legacy directory empties.
+func TestRunMigrate_ConfigVariantsFollowConfigYml(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.pve.yml"), "name: pve\n")
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml.bak-20260719"), "name: old\n")
+
+	err := os.Symlink("./config.pve.yml", filepath.Join(legacyDir, "config.yml"))
+	if err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err = runMigrate(false)
+	if err != nil {
+		t.Fatalf("runMigrate() error = %v, want nil", err)
+	}
+
+	configHome := config.ConfigHome()
+	mustExist(t, filepath.Join(configHome, "config.pve.yml"))
+	mustExist(t, filepath.Join(configHome, "config.yml.bak-20260719"))
+
+	// os.Stat follows the link: it must resolve from its new home.
+	if got := mustReadFile(t, filepath.Join(configHome, "config.yml")); got != "name: pve\n" {
+		t.Errorf("config.yml via symlink = %q, want %q", got, "name: pve\n")
+	}
+
+	mustNotExist(t, legacyDir)
 }
 
 func TestRunMigrate_ConflictRefusesAllMoves(t *testing.T) {

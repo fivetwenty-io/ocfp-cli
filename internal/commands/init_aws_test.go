@@ -382,6 +382,12 @@ func TestInitAWS_UsesXDGDataHomeWhenOCFPHomeUnset(t *testing.T) {
 	// the faked HOME below still protects the real home directory.
 	t.Setenv("OCFP_TEST_SAFETY_GUARD", "")
 	t.Setenv("OCFP_HOME", "")
+	// Clear every inherited XDG override too: a developer shell that
+	// exports XDG_STATE_HOME would otherwise steer this test's writes
+	// into the real ~/.local/state/ocfp despite the faked HOME.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	xdgDataHome := t.TempDir()
