@@ -420,14 +420,13 @@ Each phase has: entry criteria, steps, verification, and a rollback/debug note. 
 **Steps**
 
 1. Confirm env manifest `bosh/ocfp-lab-wayne-ocf.yml` is `scale: dev` and `bosh_env: ocfp-lab-wayne-mgmt@/secret/exodus/` (prevents the recursion hook issue).
-2. Upload the noble stemcell to the mgmt director if not already present. Pin **openstack-kvm ubuntu-noble `1.364`** (sha1 `d6cc58bda0120fe47787a46775ff5bafc5718257`) — this version is **not arbitrary**: the bosh kit's compiled releases (`bosh-deployment/{bosh,uaa,credhub}.yml`) are compiled against noble-`1.364`, so the director VM stemcell must match it or BOSH rejects the compiled packages (they ship no source to recompile). **Download from the stable GCS bucket, not bosh.io.** `bosh.io/d/stemcells/...?v=1.364` returns 404 because bosh.io delists old point-releases; the artifact lives permanently at GCS:
+2. Upload the noble stemcell to the mgmt director if not already present. Use the fleet standard, **openstack-kvm ubuntu-noble `1.562`** (sha1 `2c1715b4926ff895e779e1eaa738621887bcef1e`), which is the same pair the mgmt env file carries in `stemcell_url` / `stemcell_sha1`. Compiled releases cached for an older noble still apply, because the director reuses compiled packages across any noble 1.x stemcell. If bosh.io has delisted the version, the same tarball lives permanently at `https://storage.googleapis.com/bosh-core-stemcells/1.562/bosh-stemcell-1.562-openstack-kvm-ubuntu-noble.tgz`. Upload it like this:
 
    ```bash
-   # NOTE: name has NO -go_agent suffix; pull from GCS (bosh.io delists old versions)
-   bosh -n upload-stemcell \
-     https://storage.googleapis.com/bosh-core-stemcells/1.364/bosh-stemcell-1.364-openstack-kvm-ubuntu-noble.tgz \
-     --sha1 d6cc58bda0120fe47787a46775ff5bafc5718257
-   # If/when bumping noble: bump the kit's compiled-release URLs to the SAME new version in lockstep.
+   # NOTE: name has NO -go_agent suffix
+   bosh -n upload-stemcell --sha1 2c1715b4926ff895e779e1eaa738621887bcef1e \
+     "https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble?v=1.562"
+   # If/when bumping noble: bump every env file, DefaultStemcell in the CLI, and the runbooks together.
    ```
 3. Deploy env BOSH via the mgmt director (now reading mgmt creds from the migrated Vault `@/secret/exodus/`):
 

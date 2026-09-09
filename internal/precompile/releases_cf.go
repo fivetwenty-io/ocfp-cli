@@ -8,7 +8,7 @@ import (
 
 // cfReleaseDoc is the minimal shape parsed from a cf-deployment manifest's
 // /releases entries. cf-deployment.yml lists source URLs + sha1; compiled
-// builds for our target stemcell (noble-1.383) are not published upstream, so
+// builds for our target stemcell (noble-1.562) are not published upstream, so
 // these releases take the compile-local path (the parsed url/sha1 are the
 // SOURCE tarball the director must upload before compiling).
 type cfReleaseDoc struct {
@@ -48,7 +48,7 @@ func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 			Version:           r.Version,
 			UpstreamSourceURL: r.URL,
 			UpstreamSourceSHA: r.SHA1,
-			// No upstream compiled build for noble-1.383 -> compile-local.
+			// No upstream compiled build for noble-1.562 -> compile-local.
 			UpstreamCompiledURL: "",
 		})
 	}

@@ -3,13 +3,15 @@ package precompile
 import "fmt"
 
 // boshCompiledHost is where cloudfoundry publishes compiled BOSH director
-// release tarballs, keyed by stemcell. Confirmed present for noble-1.383.
+// release tarballs, keyed by stemcell. Confirmed present for noble-1.562.
 const boshCompiledHost = "https://s3.amazonaws.com/bosh-compiled-release-tarballs"
 
 // directorReleases is the create-env release set (bosh + bpm). Versions are
-// pinned to the latest cloudfoundry/bosh release (v282.1.13 as of 2026-06-01;
-// = latest) and the matching bpm. Both have published compiled tarballs for
-// noble-1.383, so the director resolves entirely via the fetch-upstream path.
+// pinned to the newest cloudfoundry/bosh release that has a published
+// compiled tarball for DefaultStemcell (v283.1.8 on noble-1.562 as of
+// 2026-09-09) and the matching bpm, so the director resolves entirely via
+// the fetch-upstream path. Bump these together with DefaultStemcell after
+// checking the bucket listing for the new stemcell.
 //
 // SHAs are intentionally left empty: the create-env pin references the upstream
 // compiled URL directly (the artifacts blobstore does not exist at create-env
@@ -17,8 +19,8 @@ const boshCompiledHost = "https://s3.amazonaws.com/bosh-compiled-release-tarball
 // bosh-deployment manifest the create-env layers under. When BOSHReleases is
 // used for the compile-local path the sha is computed during upload.
 var directorReleases = []Release{
-	{Name: "bosh", Version: "282.1.13"},
-	{Name: "bpm", Version: "1.4.31"},
+	{Name: "bosh", Version: "283.1.8"},
+	{Name: "bpm", Version: "1.4.39"},
 }
 
 // BOSHReleases returns the director release set with upstream compiled URLs

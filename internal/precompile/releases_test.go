@@ -12,9 +12,9 @@ func TestBOSHReleasesPinUpstreamCompiled(t *testing.T) {
 	}
 	for _, r := range rels {
 		if r.UpstreamCompiledURL == "" {
-			t.Errorf("%s: expected upstream compiled URL for noble-1.383", r.Name)
+			t.Errorf("%s: expected upstream compiled URL for noble-1.562", r.Name)
 		}
-		if !strings.Contains(r.UpstreamCompiledURL, "ubuntu-noble-1.383.tgz") {
+		if !strings.Contains(r.UpstreamCompiledURL, "ubuntu-noble-1.562.tgz") {
 			t.Errorf("%s: URL %q missing stemcell suffix", r.Name, r.UpstreamCompiledURL)
 		}
 	}

@@ -163,7 +163,7 @@ func NewPVEStemcellCmd() *cobra.Command {
 // Usage: ocfp pve stemcell upload <name> <version> <url>
 //
 //   - name:    full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-noble-go_agent"
-//   - version: exact version string, e.g. "1.584"
+//   - version: exact version string, e.g. "1.562"
 //   - url:     upstream download URL for the stemcell tarball, used only on a
 //     blobstore cache miss
 //
@@ -229,12 +229,12 @@ only takes effect on that miss path: once the director already reports the
 stemcell present, this command exits early and --force has no effect. To
 refresh a stale or corrupt cached tarball in the blobstore itself, use
 'ocfp precompile stemcell --force' instead.`,
-		Example: `  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
-      https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.584 \
+		Example: `  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.562 \
+      https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble-go_agent?v=1.562 \
       --bloc dev
 
-  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.584 \
-      https://storage.example.com/stemcells/noble-1.584.tgz \
+  ocfp pve stemcell upload bosh-openstack-kvm-ubuntu-noble-go_agent 1.562 \
+      https://storage.example.com/stemcells/noble-1.562.tgz \
       --bloc dev --sha1 abc123deadbeef`,
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
