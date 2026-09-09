@@ -651,6 +651,11 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		// pmx_context reads the PVE CPI record vault_populate just wrote, so it
+		// runs immediately after vault_populate and before local_vault_teardown
+		// while the inception vault is still reachable. PVE-only; a no-op on
+		// every other provider.
+		{"pmx_context", m.runPMXContext},
 		// CRITICAL: bloc_ca_trust MUST run after vault_populate (which may need
 		// the bloc CA already minted) and before ocfp_configure / any later
 		// phase that talks to the artifacts endpoint over TLS, so the bastion's
@@ -752,6 +757,9 @@ func (m *Manager) parallelPostPhaseList() []struct {
 		{"helper_scripts", m.installHelperScripts},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
+		// pmx_context: see the sequential list's comment above. Keep both
+		// lists' phase-name sets identical (see TestPhaseLists_Parity).
+		{"pmx_context", m.runPMXContext},
 		// CRITICAL: bloc_ca_trust MUST run after vault_populate and before
 		// ocfp_configure / any later phase that talks to the artifacts endpoint
 		// over TLS — mirrors the sequential phase list ordering above; keep
