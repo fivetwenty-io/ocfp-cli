@@ -1018,6 +1018,17 @@ type ComponentConfig struct {
 	DiskSize int    `json:"diskSize,omitempty" mapstructure:"diskSize" yaml:"diskSize,omitempty"`
 }
 
+// Default Genesis source, used when neither genesis.repo nor
+// bastion.genesis.repo is set. RubidiumStudios carries the maintained
+// v3.2.x line. The genesis-community fork it grew out of reads the safe
+// version from stderr only, so with safe 1.10 or newer every command there
+// dies with "Missing safe".
+const (
+	DefaultGenesisRepo          = "git@github.com:RubidiumStudios/genesis"
+	DefaultGenesisBranch        = "v3.2.x-dev"
+	DefaultGenesisVersionPrefix = "3.2.0"
+)
+
 // Genesis configuration.
 type Genesis struct {
 	Enabled       bool   `json:"enabled,omitempty"       mapstructure:"enabled"       yaml:"enabled,omitempty"`
@@ -1789,14 +1800,18 @@ func applyGenesisDefaults(cfg *Config) {
 		cfg.Genesis.Enabled = true
 	}
 
+	if cfg.Genesis.Repo == "" {
+		cfg.Genesis.Repo = DefaultGenesisRepo
+	}
+
 	if cfg.Genesis.Branch == "" {
-		cfg.Genesis.Branch = "v3.2.x-dev"
+		cfg.Genesis.Branch = DefaultGenesisBranch
 	}
 
 	if cfg.Genesis.VersionPrefix == "" {
 		// Pack version must be semver-parseable (genesis `semver`/`new_enough`
 		// reject "x"/"-dev"); the dev line is identified by Branch, not version.
-		cfg.Genesis.VersionPrefix = "3.2.0"
+		cfg.Genesis.VersionPrefix = DefaultGenesisVersionPrefix
 	}
 }
 
@@ -1806,12 +1821,16 @@ func applyBastionGenesisDefaults(cfg *Config) {
 		return
 	}
 
+	if cfg.Bastion.Genesis.Repo == "" {
+		cfg.Bastion.Genesis.Repo = DefaultGenesisRepo
+	}
+
 	if cfg.Bastion.Genesis.Branch == "" {
-		cfg.Bastion.Genesis.Branch = "v3.2.x-dev"
+		cfg.Bastion.Genesis.Branch = DefaultGenesisBranch
 	}
 
 	if cfg.Bastion.Genesis.VersionPrefix == "" {
-		cfg.Bastion.Genesis.VersionPrefix = "3.2.0"
+		cfg.Bastion.Genesis.VersionPrefix = DefaultGenesisVersionPrefix
 	}
 }
 

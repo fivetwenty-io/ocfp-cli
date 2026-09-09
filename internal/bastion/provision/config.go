@@ -249,11 +249,11 @@ func (c *Config) getGenesisConfig() config.Genesis {
 
 	// Apply default values for Branch and Repo if not set (but don't override Enabled)
 	if genesisConfig.Branch == "" {
-		genesisConfig.Branch = "v3.2.x-dev"
+		genesisConfig.Branch = config.DefaultGenesisBranch
 	}
 
 	if genesisConfig.Repo == "" {
-		genesisConfig.Repo = "git@github.com:genesis-community/genesis"
+		genesisConfig.Repo = config.DefaultGenesisRepo
 	}
 
 	return genesisConfig
@@ -263,14 +263,14 @@ func (c *Config) getGenesisConfig() config.Genesis {
 func (c *Config) getGenesisRepository() GitRepository {
 	genesisConfig := c.getGenesisConfig()
 
-	repo := "git@github.com:genesis-community/genesis"
+	repo := config.DefaultGenesisRepo
 	if genesisConfig.Repo != "" {
 		repo = genesisConfig.Repo
 	}
 
 	branch := genesisConfig.Branch
 	if branch == "" {
-		branch = "v3.2.x-dev" // Default from applyDefaults
+		branch = config.DefaultGenesisBranch
 	}
 
 	return GitRepository{

@@ -138,7 +138,7 @@ func TestGetGenesisRepository_SourceBased(t *testing.T) {
 		t.Error("Expected repo to be enabled")
 	}
 
-	if repo.URL != "git@github.com:genesis-community/genesis" {
+	if repo.URL != "git@github.com:RubidiumStudios/genesis" {
 		t.Errorf("Expected default repo URL, got '%s'", repo.URL)
 	}
 
