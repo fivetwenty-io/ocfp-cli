@@ -323,6 +323,10 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		// repositories the latter walks.
 		{"vault_inception", manager.setupVaultInception},
 		{"vault_populate", manager.runVaultPopulate},
+		// pmx_context reads the PVE CPI record vault_populate just wrote, so it
+		// runs immediately after vault_populate while the inception vault is
+		// still reachable. PVE-only; a no-op on every other provider.
+		{"pmx_context", manager.runPMXContext},
 		{"bloc_ca_trust", manager.installBlocCATrust},
 		{"ocfp_configure", manager.runOCFPConfigure},
 		{"genesis_secrets_providers", manager.setupGenesisSecretsProviders},

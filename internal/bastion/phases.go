@@ -565,6 +565,28 @@ func (m *Manager) runVaultPopulate(ctx context.Context) error {
 	return m.executeScript(ctx, script, "vault-populate")
 }
 
+// runPMXContext builds the bastion's pmx context from the PVE CPI
+// credentials vault_populate wrote to secret/config/{bloc}/mgmt/cpi/pve, so
+// pmx can drive the Proxmox API without an operator hand-typing `pmx ctx
+// add`. PVE-only: pmx itself is only installed on PVE bastions (see
+// getProviderBrewPackages/condProviderIsPVE), and no other provider has a
+// CPI record at that vault path to read. A non-PVE bloc is a deliberate
+// no-op, logged rather than an error, mirroring brewSkipped/installBrewPackages.
+func (m *Manager) runPMXContext(ctx context.Context) error {
+	if !strings.EqualFold(m.config.Provider, "pve") {
+		m.log.Infow("Skipping pmx context setup: provider is not pve", "provider", m.config.Provider)
+
+		return nil
+	}
+
+	m.log.Info("Configuring pmx context from vault CPI credentials")
+
+	ocfpMgr := provision.NewOCFPManager(m.config.Provider, m.config, m.deploymentModes)
+	script := ocfpMgr.GeneratePMXContextScript(ctx)
+
+	return m.executeScript(ctx, script, "pmx-context")
+}
+
 // blocCATrustDir is the Debian/Ubuntu location update-ca-certificates scans
 // for locally-trusted certificates to fold into /etc/ssl/certs/ca-certificates.crt.
 const blocCATrustDir = "/usr/local/share/ca-certificates"
