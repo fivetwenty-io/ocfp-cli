@@ -294,11 +294,21 @@ $HOME/
 │   └── provisioned          # Completion marker
 ├── ocfp/
 │   ├── cli/                 # OCFP CLI binaries
-│   └── deployments/         # Genesis deployments
+│   ├── genesis/             # Genesis source checkout (built into /usr/local/bin/genesis)
+│   ├── kits/                # Kit checkouts, one directory per kit (bosh, cf, ...)
+│   └── deployments/         # Genesis deployment repos, one directory per kit
 ├── deployments/             # Deployment manifests
 ├── bin/                     # User binaries
 └── .ssh/                    # SSH keys and config
 ```
+
+### Genesis Deployment Repositories
+
+The deployment root at `~/ocfp/deployments` holds one directory per kit, so `bosh/`, `cf/`, `openbao/`, `concourse/`, and the rest each hold the env files for every environment of the bloc. The mgmt and ocf environments of a bloc both live in `bosh/`, for example, as `ocfp-<bloc>-mgmt.yml` and `ocfp-<bloc>-ocf.yml`.
+
+During the `ocfp-configure` phase the CLI runs `genesis repo-init` once for each dev-mode deployment directory that does not yet have a `.genesis/config`. Genesis only accepts a bare repository name and creates the repo under the current directory, and its `--force` flag deletes an existing target, so the CLI stages each repo in a private temporary directory with `genesis repo-init -l ~/ocfp/kits/<kit> --skip-vault --no-commit <kit>` and moves only the resulting `.genesis` into `~/ocfp/deployments/<kit>/`. Env files, `ops/` directories, and an existing `dev` symlink in that directory are left alone. A `dev` symlink to the kit is created only when none exists.
+
+A deployment whose kit has not been staged under `~/ocfp/kits/<kit>` is skipped with a notice, and a directory that already has `.genesis/config` is skipped. If `genesis repo-init` itself fails, for example because a prerequisite tool is missing, the phase fails rather than continuing with no repo. Release-mode deployments arrive with their `.genesis` from the deployments repository and are not initialised here.
 
 ## Verification
 
