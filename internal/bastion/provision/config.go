@@ -493,53 +493,110 @@ func (c *Config) getGenesisTool() BinaryTool {
 	}
 
 	// Default: source-based installation
-	return c.getGenesisSourceBuild(version)
+	repo := c.getGenesisRepository()
+
+	return c.getGenesisSourceBuild(version, repo.URL, repo.Branch)
 }
 
 // getGenesisSourceBuild returns Genesis tool configuration for source-based installation.
-func (c *Config) getGenesisSourceBuild(version string) BinaryTool {
+//
+// The install command reconciles the CLI-owned checkout at ~/ocfp/genesis
+// with the configured repository and branch before it decides anything: an
+// established checkout otherwise keeps the origin and branch it was created
+// with, so a repository change in the config never reached it and a
+// re-run reported the same version string while building the old fork.
+// It then rebuilds only when the installed binary does not already embed
+// the checkout's HEAD commit, so an unchanged bastion keeps the fast path.
+//
+//nolint:funlen // one shell script, kept whole so it reads top to bottom
+func (c *Config) getGenesisSourceBuild(version, repo, branch string) BinaryTool {
 	installCmd := fmt.Sprintf(`# Genesis source-based installation
-if [ ! -d ~/ocfp/genesis/.git ]; then
+GENESIS_SRC="${HOME}/ocfp/genesis"
+GENESIS_REPO='%s'
+GENESIS_BRANCH='%s'
+GENESIS_VERSION='%s'
+
+if [ ! -d "${GENESIS_SRC}/.git" ]; then
     log_error "Genesis repository not cloned. This should not happen."
     exit 1
 fi
 
-pushd ~/ocfp/genesis > /dev/null
+pushd "${GENESIS_SRC}" > /dev/null
 
-# Clean previous builds
-rm -rf genesis-*
-
-# Build genesis
-log_info "Building genesis version %s"
-if ! ./pack %s; then
-    log_error "Failed to build genesis"
-    popd > /dev/null
-    exit 1
+# Reconcile origin and branch with the configuration before comparing
+# commits, so a repository or branch change decides what gets built.
+CURRENT_ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+if [ "${CURRENT_ORIGIN}" != "${GENESIS_REPO}" ]; then
+    log_info "Pointing genesis origin at ${GENESIS_REPO}"
+    git remote set-url origin "${GENESIS_REPO}" 2>/dev/null || git remote add origin "${GENESIS_REPO}"
 fi
 
-# Install genesis binary
-GENESIS_BIN="genesis-%s"
-if [ ! -f "$GENESIS_BIN" ]; then
-    log_error "Genesis binary not found: $GENESIS_BIN"
-    popd > /dev/null
-    exit 1
+# Fetch the branch by explicit refspec: a single-branch clone only tracks
+# the branch it was cloned with, so a plain fetch never sees a new one.
+log_info "Fetching genesis ${GENESIS_BRANCH} from ${GENESIS_REPO}"
+git fetch --prune origin "+refs/heads/${GENESIS_BRANCH}:refs/remotes/origin/${GENESIS_BRANCH}"
+git checkout -q -B "${GENESIS_BRANCH}" "origin/${GENESIS_BRANCH}"
+
+# genesis --version prints the packed commit as "(<sha>)", with a trailing
+# "+" for a dirty tree, or as "+<sha>" with "-dirty" inside the version.
+# The build is skipped only for a clean binary built from this HEAD.
+HEAD_SHA=$(git rev-parse HEAD)
+INSTALLED=$(genesis --version 2>/dev/null | grep -m1 'Genesis' || true)
+INSTALLED_SHA=$(echo "${INSTALLED}" | sed -n 's/.*(\([0-9a-f]\{7,40\}\)+\{0,1\}).*/\1/p')
+if [ -z "${INSTALLED_SHA}" ]; then
+    INSTALLED_SHA=$(echo "${INSTALLED}" | sed -n 's/.*+\([0-9a-f]\{7,40\}\).*/\1/p')
 fi
 
-# Determine installation path
-if command -v genesis > /dev/null 2>&1; then
-    INSTALL_PATH=$(command -v genesis)
+GENESIS_CURRENT=no
+if [ -n "${INSTALLED_SHA}" ]; then
+    case "${INSTALLED}" in
+        *+\)*|*-dirty*) ;;
+        *"${GENESIS_VERSION}"*)
+            case "${HEAD_SHA}" in
+                "${INSTALLED_SHA}"*) GENESIS_CURRENT=yes ;;
+            esac
+            ;;
+    esac
+fi
+
+if [ "${GENESIS_CURRENT}" = yes ]; then
+    log_info "genesis ${GENESIS_VERSION} already built from ${INSTALLED_SHA}; skipping rebuild"
 else
-    INSTALL_PATH="/usr/local/bin/genesis"
+    # Clean previous builds
+    rm -rf genesis-*
+
+    # Build genesis
+    log_info "Building genesis version ${GENESIS_VERSION} from ${HEAD_SHA}"
+    if ! ./pack "${GENESIS_VERSION}"; then
+        log_error "Failed to build genesis"
+        popd > /dev/null
+        exit 1
+    fi
+
+    # Install genesis binary
+    GENESIS_BIN="genesis-${GENESIS_VERSION}"
+    if [ ! -f "$GENESIS_BIN" ]; then
+        log_error "Genesis binary not found: $GENESIS_BIN"
+        popd > /dev/null
+        exit 1
+    fi
+
+    # Determine installation path
+    if command -v genesis > /dev/null 2>&1; then
+        INSTALL_PATH=$(command -v genesis)
+    else
+        INSTALL_PATH="/usr/local/bin/genesis"
+    fi
+
+    log_info "Installing genesis to $INSTALL_PATH"
+    sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
+    sudo chmod +x "$INSTALL_PATH"
+
+    log_info "Creating symbolic link 'g' for genesis"
+    sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
 fi
 
-log_info "Installing genesis to $INSTALL_PATH"
-sudo cp "$GENESIS_BIN" "$INSTALL_PATH"
-sudo chmod +x "$INSTALL_PATH"
-
-log_info "Creating symbolic link 'g' for genesis"
-sudo ln -sf /usr/local/bin/genesis /usr/local/bin/g
-
-popd > /dev/null`, version, version, version)
+popd > /dev/null`, repo, branch, version)
 
 	return BinaryTool{
 		Name:           "genesis",
