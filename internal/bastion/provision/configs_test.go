@@ -89,7 +89,7 @@ func TestGenerateGenesisConfig_LogsConfiguration(t *testing.T) {
 		"- file: \"/home/ubuntu/.genesis/logs/debug.log\"",
 		"level: DEBUG",
 		"style: rfc-5424",
-		"lifespan: current",
+		"lifespan: 1",
 		"show_stack: full",
 		"# Error-only log",
 		"- file: \"/home/ubuntu/.genesis/logs/errors.log\"",
