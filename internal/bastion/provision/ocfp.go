@@ -261,13 +261,30 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 //
 //nolint:funcorder // Helper placed after exported methods
 func (om *OCFPManager) generateGenesisRepoInitScript() []string {
-	return []string{
+	name, email, fallback := om.repoInitGitIdentity()
+
+	lines := []string{
 		"# Initialise genesis deployment repos (must exist before env files are written)",
 		"# One repo per kit directory. repo-init takes a bare name and creates ./<name>,",
 		"# and --force would delete the env files and dev symlink already there, so",
 		"# each repo is staged under mktemp and only its .genesis is moved into place.",
 		"# --skip-vault defers the secrets provider until the inception step runs.",
 		"# Release-mode deployments arrive with their .genesis from the deployments repo.",
+		"# repo-init refuses to run without a git identity, so one is exported for the",
+		"# genesis invocation alone; the bastion's global git config is left untouched.",
+		"",
+		"REPO_INIT_GIT_NAME=" + shellSingleQuote(name),
+		"REPO_INIT_GIT_EMAIL=" + shellSingleQuote(email),
+	}
+
+	if fallback {
+		lines = append(lines,
+			`log_warning 'Bloc config has no bastion.git.user; genesis will initialise the deployment repos with a placeholder git identity'`,
+			`log_warning 'Commits made from the bastion need a real identity: set bastion.git.user.name and bastion.git.user.email, or run git config --global user.name / user.email'`,
+		)
+	}
+
+	lines = append(lines,
 		"",
 		`log_info 'Initialising genesis deployment repos'`,
 		`for deployment in "${DEV_DEPLOYMENTS[@]}"; do`,
@@ -283,7 +300,7 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		"    fi",
 		`    log_info "Running genesis repo-init for ${deployment}"`,
 		`    STAGE_DIR=$(mktemp -d)`,
-		`    if ! (cd "${STAGE_DIR}" && genesis repo-init -l "${KIT_DIR}" --skip-vault --no-commit "${deployment}"); then`,
+		`    if ! (cd "${STAGE_DIR}" && GIT_AUTHOR_NAME="${REPO_INIT_GIT_NAME}" GIT_AUTHOR_EMAIL="${REPO_INIT_GIT_EMAIL}" genesis repo-init -l "${KIT_DIR}" --skip-vault --no-commit "${deployment}"); then`,
 		`        log_error "genesis repo-init failed for ${deployment}"`,
 		`        rm -rf "${STAGE_DIR}"`,
 		"        exit 1",
@@ -303,7 +320,31 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		`    log_success "genesis repo-init completed for ${deployment}"`,
 		"done",
 		"",
+	)
+
+	return lines
+}
+
+// repoInitGitIdentity returns the git author identity exported to `genesis
+// repo-init`, and whether it is the bloc-derived placeholder. The configured
+// bastion.git.user wins when both keys are set; otherwise the placeholder
+// names the bloc under the reserved .invalid TLD so it can never route and is
+// recognisable as a stand-in if it ever leaks into a commit.
+//
+//nolint:funcorder,nonamedreturns // Helper placed after exported methods; named returns for clarity
+func (om *OCFPManager) repoInitGitIdentity() (name, email string, fallback bool) {
+	user := om.config.Bastion.Git.User
+	if user.Name != "" && user.Email != "" {
+		return user.Name, user.Email, false
 	}
+
+	return "ocfp bastion (" + om.config.Name + ")", "ocfp-bastion@" + om.config.Name + ".invalid", true
+}
+
+// shellSingleQuote wraps s in single quotes for bash, closing and reopening
+// the quotes around any embedded single quote so the value survives verbatim.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 //nolint:funcorder // Helper method placed after exported methods

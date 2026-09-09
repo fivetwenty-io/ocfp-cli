@@ -1004,7 +1004,27 @@ func (m *Manager) validatePrerequisites() error {
 	// Validate config overrides names (non-fatal warnings)
 	m.validateOverrides()
 
+	if warning := gitIdentityWarning(m.config); warning != "" {
+		m.log.Warn(warning)
+	}
+
 	return nil
+}
+
+// gitIdentityWarning returns a warning when the bloc config leaves the
+// bastion without a git identity, or "" when both keys are set. Genesis
+// repo-init refuses to run without one, so provisioning exports a
+// bloc-derived placeholder for that step alone, but any real commit made
+// from the bastion still needs the configured identity.
+func gitIdentityWarning(cfg *config.Config) string {
+	user := cfg.Bastion.Git.User
+	if user.Name != "" && user.Email != "" {
+		return ""
+	}
+
+	return "Bloc config has no git identity: set bastion.git.user.name and bastion.git.user.email. " +
+		"genesis repo-init on the bastion will use a placeholder identity for this run, " +
+		"and commits made from the bastion need a real one."
 }
 
 // validateOverrides warns about unknown names in enable/disable and override maps.
