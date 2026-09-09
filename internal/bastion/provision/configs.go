@@ -369,7 +369,7 @@ func (cfm *ConfigFileManager) writeDebugLog(config *strings.Builder) {
 	config.WriteString("  - file: \"/home/ubuntu/.genesis/logs/debug.log\"\n")
 	config.WriteString("    level: DEBUG\n")
 	config.WriteString("    style: rfc-5424\n")
-	config.WriteString("    lifespan: current\n")
+	config.WriteString("    lifespan: 1\n")
 	config.WriteString("    truncate: true\n")
 	config.WriteString("    timestamp: true\n")
 	config.WriteString("    show_stack: full\n")
