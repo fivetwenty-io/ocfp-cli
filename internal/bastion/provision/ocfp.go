@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
@@ -55,6 +56,14 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	defaults := defaultDeploymentNamesFor(om.config.SecretsBackendName())
 	names := om.mergeDeploymentNames(defaults, resolver.Configured())
 	devDeployments, releaseDeployments := om.partitionDeployments(names)
+
+	kitRepos := make(map[string]string, len(devDeployments))
+	kitBranches := make(map[string]string, len(devDeployments))
+
+	for _, name := range devDeployments {
+		kitRepos[name] = resolver.KitRepo(name)
+		kitBranches[name] = resolver.KitBranch(name)
+	}
 
 	lines := make([]string, 0, scriptBufferOCFPBase)
 	lines = append(lines, "# OCFP deployments setup")
@@ -127,33 +136,41 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	lines = append(lines, "done")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Setup dev kits when using global deployments repository")
-	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
-	lines = append(lines, `    for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
-	lines = append(lines, `        KIT_REPO="git@github.com:genesis-community/${deployment}-genesis-kit.git"`)
-	lines = append(lines, `        KIT_DIR="${KITS_ROOT}/${deployment}"`)
-	lines = append(lines, `        if [ -d "${KIT_DIR}/.git" ]; then`)
-	lines = append(lines, `            log_info "Updating ${deployment} genesis kit"`)
-	lines = append(lines, `            if git -C "${KIT_DIR}" pull --ff-only; then`)
-	lines = append(lines, `                log_success "${deployment} kit updated"`)
-	lines = append(lines, "            else")
-	lines = append(lines, `                log_warning "Failed to update ${deployment} kit"`)
-	lines = append(lines, "                continue")
-	lines = append(lines, "            fi")
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_info "Cloning ${deployment} genesis kit"`)
-	lines = append(lines, `            if git clone "$KIT_REPO" "$KIT_DIR"; then`)
-	lines = append(lines, `                log_success "${deployment} kit cloned"`)
-	lines = append(lines, "            else")
-	lines = append(lines, `                log_warning "Failed to clone ${deployment} kit from $KIT_REPO"`)
-	lines = append(lines, "                continue")
-	lines = append(lines, "            fi")
+	lines = append(lines, "# Clone or refresh the kit checkout for every dev-mode deployment.")
+	lines = append(lines, "# The kits come from genesis-community over HTTPS, so this runs whether or")
+	lines = append(lines, "# not a deployments repository is configured, and a kit tree that was")
+	lines = append(lines, "# rsynced in by hand (no .git) is left exactly as it is.")
+	lines = append(lines, "declare -A KIT_REPOS="+formatShellAssoc(kitRepos))
+	lines = append(lines, "declare -A KIT_BRANCHES="+formatShellAssoc(kitBranches))
+	lines = append(lines, `for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
+	lines = append(lines, `    KIT_REPO="${KIT_REPOS[$deployment]}"`)
+	lines = append(lines, `    KIT_BRANCH="${KIT_BRANCHES[$deployment]:-}"`)
+	lines = append(lines, `    KIT_DIR="${KITS_ROOT}/${deployment}"`)
+	lines = append(lines, `    if [ -d "${KIT_DIR}/.git" ]; then`)
+	lines = append(lines, `        log_info "Updating ${deployment} genesis kit"`)
+	lines = append(lines, `        if [ -n "$KIT_BRANCH" ] && [ "$(git -C "${KIT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$KIT_BRANCH" ]; then`)
+	lines = append(lines, `            git -C "${KIT_DIR}" fetch --quiet origin "$KIT_BRANCH" && git -C "${KIT_DIR}" checkout --quiet "$KIT_BRANCH" || log_warning "Failed to switch ${deployment} kit to ${KIT_BRANCH}"`)
 	lines = append(lines, "        fi")
-	lines = append(lines, `        mkdir -p "${DEPLOYMENTS_ROOT}/${deployment}"`)
-	lines = append(lines, `        ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`)
-	lines = append(lines, `        log_info "Linked ${DEPLOYMENTS_ROOT}/${deployment}/dev -> ${KIT_DIR}"`)
-	lines = append(lines, "    done")
-	lines = append(lines, "fi")
+	lines = append(lines, `        if git -C "${KIT_DIR}" pull --ff-only --quiet; then`)
+	lines = append(lines, `            log_success "${deployment} kit updated ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`)
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_warning "Failed to update ${deployment} kit"`)
+	lines = append(lines, "        fi")
+	lines = append(lines, `    elif [ -d "${KIT_DIR}" ] && [ -n "$(ls -A "${KIT_DIR}" 2>/dev/null)" ]; then`)
+	lines = append(lines, `        log_info "${deployment} kit at ${KIT_DIR} is not a git checkout; leaving it in place"`)
+	lines = append(lines, "    else")
+	lines = append(lines, `        log_info "Cloning ${deployment} genesis kit from ${KIT_REPO}${KIT_BRANCH:+ (branch ${KIT_BRANCH})}"`)
+	lines = append(lines, `        if git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"} "$KIT_REPO" "$KIT_DIR"; then`)
+	lines = append(lines, `            log_success "${deployment} kit cloned ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`)
+	lines = append(lines, "        else")
+	lines = append(lines, `            log_warning "Failed to clone ${deployment} kit from $KIT_REPO"`)
+	lines = append(lines, "            continue")
+	lines = append(lines, "        fi")
+	lines = append(lines, "    fi")
+	lines = append(lines, `    mkdir -p "${DEPLOYMENTS_ROOT}/${deployment}"`)
+	lines = append(lines, `    ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`)
+	lines = append(lines, `    log_info "Linked ${DEPLOYMENTS_ROOT}/${deployment}/dev -> ${KIT_DIR}"`)
+	lines = append(lines, "done")
 	lines = append(lines, "")
 
 	lines = append(lines, om.generateGenesisRepoInitScript()...)
@@ -195,6 +212,28 @@ func formatShellArray(values []string) string {
 	}
 
 	return fmt.Sprintf("(%s)", strings.Join(escaped, " "))
+}
+
+// formatShellAssoc renders a bash associative-array literal with keys in a
+// stable order. Empty values are kept so every key resolves.
+func formatShellAssoc(values map[string]string) string {
+	if len(values) == 0 {
+		return "()"
+	}
+
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = fmt.Sprintf("[%s]=%q", k, values[k])
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(pairs, " "))
 }
 
 //nolint:funcorder,nonamedreturns // Helper method placed after exported methods; named returns for clarity
