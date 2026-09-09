@@ -202,12 +202,67 @@ func TestGetGenesisTool_SourceBased(t *testing.T) {
 		t.Error("Expected InstallCommand to be set for source-based install")
 	}
 
-	if !strings.Contains(tool.InstallCommand, "./pack 3.2.0") {
-		t.Error("Expected InstallCommand to contain './pack 3.2.0'")
+	if !strings.Contains(tool.InstallCommand, "GENESIS_VERSION='3.2.0'") ||
+		!strings.Contains(tool.InstallCommand, `./pack "${GENESIS_VERSION}"`) {
+		t.Error("Expected InstallCommand to pack version 3.2.0")
 	}
 
-	if !strings.Contains(tool.InstallCommand, "~/ocfp/genesis") {
+	if !strings.Contains(tool.InstallCommand, `GENESIS_SRC="${HOME}/ocfp/genesis"`) {
 		t.Error("Expected InstallCommand to reference ~/ocfp/genesis")
+	}
+}
+
+// TestGetGenesisTool_SourceBuildReconcilesAndSkips pins the idempotent
+// source install: the checkout is re-pointed at the configured repository and
+// branch before anything else, and the build runs only when the installed
+// binary does not already embed the checkout's HEAD.
+func TestGetGenesisTool_SourceBuildReconcilesAndSkips(t *testing.T) {
+	cfg := &config.Config{
+		Genesis: config.Genesis{
+			Enabled: true,
+			Repo:    "git@github.com:myorg/genesis-fork",
+			Branch:  "custom-branch",
+		},
+	}
+
+	provCfg := NewConfig("pve", cfg, nil)
+	cmd := provCfg.getGenesisTool().InstallCommand
+
+	ordered := []string{
+		"GENESIS_REPO='git@github.com:myorg/genesis-fork'",
+		"GENESIS_BRANCH='custom-branch'",
+		`git remote set-url origin "${GENESIS_REPO}"`,
+		`git fetch --prune origin "+refs/heads/${GENESIS_BRANCH}:refs/remotes/origin/${GENESIS_BRANCH}"`,
+		`git checkout -q -B "${GENESIS_BRANCH}" "origin/${GENESIS_BRANCH}"`,
+		"HEAD_SHA=$(git rev-parse HEAD)",
+		"INSTALLED=$(genesis --version",
+		`if [ "${GENESIS_CURRENT}" = yes ]; then`,
+		"skipping rebuild",
+		`./pack "${GENESIS_VERSION}"`,
+	}
+
+	previous := -1
+
+	for _, step := range ordered {
+		idx := strings.Index(cmd, step)
+		if idx == -1 {
+			t.Fatalf("install command missing %q\n%s", step, cmd)
+		}
+
+		if idx <= previous {
+			t.Errorf("%q must come after the previous step\n%s", step, cmd)
+		}
+
+		previous = idx
+	}
+
+	if strings.Contains(cmd, "genesis-community") {
+		t.Errorf("install command still names the old fork:\n%s", cmd)
+	}
+
+	defaultCmd := NewConfig("pve", &config.Config{Genesis: config.Genesis{Enabled: true}}, nil).getGenesisTool().InstallCommand
+	if !strings.Contains(defaultCmd, "GENESIS_REPO='"+config.DefaultGenesisRepo+"'") {
+		t.Errorf("install command does not carry the default repository:\n%s", defaultCmd)
 	}
 }
 

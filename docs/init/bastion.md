@@ -302,6 +302,10 @@ $HOME/
 └── .ssh/                    # SSH keys and config
 ```
 
+### Genesis Source Build
+
+Genesis is built from the checkout at `~/ocfp/genesis`. On every run the CLI points that checkout's `origin` at the configured repository, fetches the configured branch, and resets the local branch onto the remote tip, so changing `genesis.repo` or `genesis.branch` and re-running `ocfp init bastion` takes effect on an existing bastion. The build itself runs only when the commit embedded in the installed binary, as printed by `genesis --version`, differs from the checkout's HEAD or the binary was packed from a dirty tree. An unchanged bastion skips the build.
+
 ### Genesis Deployment Repositories
 
 The deployment root at `~/ocfp/deployments` holds one directory per kit, so `bosh/`, `cf/`, `openbao/`, `concourse/`, and the rest each hold the env files for every environment of the bloc. The mgmt and ocf environments of a bloc both live in `bosh/`, for example, as `ocfp-<bloc>-mgmt.yml` and `ocfp-<bloc>-ocf.yml`.

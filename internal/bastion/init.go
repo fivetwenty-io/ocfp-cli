@@ -2240,7 +2240,14 @@ func (m *Manager) createGitJobs(repos interface{}, jobs chan<- job) {
 		setOrigin := fmt.Sprintf("git remote set-url origin '%s' 2>/dev/null || git remote add origin '%s'", repo.URL, repo.URL)
 
 		if branch != "" {
-			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && git fetch --all --prune && git checkout '%s' && git pull --ff-only; else git clone '%s' -b '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, branch, repo.URL, branch, depth, dest)
+			// The clones are CLI-owned, so the branch is reset onto the
+			// remote tip rather than pulled: a fast-forward pull fails once
+			// origin points at a fork whose history diverged from the old
+			// one. The explicit refspec matters too, because a single-branch
+			// clone never fetches a branch it was not cloned with.
+			fetch := fmt.Sprintf("git fetch --prune origin '+refs/heads/%s:refs/remotes/origin/%s'", branch, branch)
+			checkout := fmt.Sprintf("git checkout -q -B '%s' 'origin/%s'", branch, branch)
+			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && %s && %s; else git clone '%s' -b '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, fetch, checkout, repo.URL, branch, depth, dest)
 		} else {
 			cmd = fmt.Sprintf("if [ -d \"%s/.git\" ]; then cd \"%s\" && %s && git fetch --all --prune && git pull --ff-only; else git clone '%s' --depth %d \"%s\"; fi", dest, dest, setOrigin, repo.URL, depth, dest)
 		}

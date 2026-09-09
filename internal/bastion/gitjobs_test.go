@@ -58,6 +58,38 @@ func TestCreateGitJobs_ReconcilesOriginOnExistingCheckout(t *testing.T) {
 	}
 }
 
+// TestCreateGitJobs_ResetsBranchOntoRemote pins that an existing checkout
+// fetches the configured branch by explicit refspec and resets onto the
+// remote tip. A single-branch clone never fetches a branch it was not
+// cloned with, and a fast-forward pull fails once origin points at a fork
+// whose history diverged from the old one.
+func TestCreateGitJobs_ResetsBranchOntoRemote(t *testing.T) {
+	t.Parallel()
+
+	repos := []provision.GitRepository{{
+		Name:   "genesis",
+		URL:    "git@github.com:RubidiumStudios/genesis",
+		Dest:   "/home/ubuntu/ocfp/genesis",
+		Branch: "v3.2.x-dev",
+	}}
+
+	cmd := collectGitJobs(t, repos)[0]
+
+	for _, want := range []string{
+		"git fetch --prune origin '+refs/heads/v3.2.x-dev:refs/remotes/origin/v3.2.x-dev'",
+		"git checkout -q -B 'v3.2.x-dev' 'origin/v3.2.x-dev'",
+		"git clone 'git@github.com:RubidiumStudios/genesis' -b 'v3.2.x-dev'",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("missing %q in:\n%s", want, cmd)
+		}
+	}
+
+	if strings.Contains(cmd, "pull --ff-only") {
+		t.Errorf("existing checkout still relies on a fast-forward pull:\n%s", cmd)
+	}
+}
+
 func TestCreateGitJobs_BranchlessRepoAlsoReconcilesOrigin(t *testing.T) {
 	t.Parallel()
 
