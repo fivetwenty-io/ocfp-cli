@@ -477,6 +477,9 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 //
 // `safe` is targeted at the inception vault for exactly as long as the bloc is
 // being bootstrapped, which makes the current target the signal to key off.
+// safe reports its target and its target list on stderr, so both streams are
+// read; reading stdout alone never matched and left every deployment without
+// a provider.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) inceptionActiveSnippet() []string {
@@ -487,17 +490,21 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"    # existence is what separates a bloc still being bootstrapped from one",
 		"    # already running. Keying off the *current* target is not enough: init",
 		"    # points safe at the inception vault while it works.",
+		"    # safe prints its target report on stderr, hence the 2>&1 below.",
 		"    BLOC_VAULT_TARGET=\"\"",
 		"    if [ -n \"${OCFP_BLOC:-}\" ]; then",
 		"        BLOC_VAULT_TARGET=\"${OCFP_BLOC}-mgmt\"",
 		"    fi",
 		"    ",
+		"    CURRENT_VAULT_TARGET=\"$(safe target 2>&1 | sed -n 's/^Currently targeting \\(.*\\) at .*$/\\1/p' | head -n 1)\"",
 		"    INCEPTION_ACTIVE=no",
-		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>/dev/null | grep -q \"$BLOC_VAULT_TARGET\"; then",
+		"    INCEPTION_TARGET=\"\"",
+		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>&1 | grep -q \"$BLOC_VAULT_TARGET\"; then",
 		"        log_info \"Bloc vault $BLOC_VAULT_TARGET is authoritative; clearing any inception secrets provider\"",
-		"    elif safe target 2>/dev/null | grep -q 'inception'; then",
+		"    elif printf '%s\\n' \"$CURRENT_VAULT_TARGET\" | grep -q 'inception'; then",
 		"        INCEPTION_ACTIVE=yes",
-		"        log_info 'Inception vault is the current target; configuring deployments to use it'",
+		"        INCEPTION_TARGET=\"$CURRENT_VAULT_TARGET\"",
+		"        log_info \"Inception vault $INCEPTION_TARGET is the current target; configuring deployments to use it\"",
 		"    else",
 		"        log_info 'No bloc vault target found; leaving deployments on the system-targeted vault'",
 		"    fi",
@@ -529,8 +536,8 @@ func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
 
 // secretsProviderClearSnippet removes the deployment's secrets_provider block so
 // genesis falls back to the system-targeted vault. `genesis secrets-provider -c`
-// is the supported way to do this; the yq deletion covers a genesis too old to
-// offer the flag.
+// is the supported way to do this; a graft merge of a `(( prune ))` fragment
+// covers a genesis too old to offer the flag.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) secretsProviderClearSnippet() []string {
@@ -544,36 +551,43 @@ func (om *OCFPManager) secretsProviderClearSnippet() []string {
 		"            if genesis secrets-provider -c >/dev/null 2>&1; then",
 		"                log_success \"  Cleared inception secrets provider for: $deployment_name\"",
 		"                CLEARED_COUNT=$((CLEARED_COUNT + 1))",
-		"            elif command -v yq >/dev/null 2>&1 && yq -i 'del(.secrets_provider)' \"$GENESIS_CONFIG\" 2>/dev/null; then",
-		"                log_success \"  Cleared inception secrets provider (yq) for: $deployment_name\"",
-		"                CLEARED_COUNT=$((CLEARED_COUNT + 1))",
 		"            else",
-		"                log_warning \"  Failed to clear secrets provider for: $deployment_name\"",
-		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
+		"                prune_fragment=\"$(mktemp)\"",
+		"                printf 'secrets_provider: (( prune ))\\n' > \"$prune_fragment\"",
+		"                if graft merge \"$GENESIS_CONFIG\" \"$prune_fragment\" > \"${GENESIS_CONFIG}.tmp\" 2>/dev/null && mv \"${GENESIS_CONFIG}.tmp\" \"$GENESIS_CONFIG\"; then",
+		"                    log_success \"  Cleared inception secrets provider (graft) for: $deployment_name\"",
+		"                    CLEARED_COUNT=$((CLEARED_COUNT + 1))",
+		"                else",
+		"                    rm -f \"${GENESIS_CONFIG}.tmp\"",
+		"                    log_warning \"  Failed to clear secrets provider for: $deployment_name\"",
+		"                    FAILED_COUNT=$((FAILED_COUNT + 1))",
+		"                fi",
+		"                rm -f \"$prune_fragment\"",
 		"            fi",
 		"            continue",
 	}
 }
 
-// secretsProviderRewriteSnippet emits an idempotent rewrite of the deployment's
-// .genesis/config secrets_provider block, pointing it at the bloc inception
-// vault (alias inception, 127.0.0.1 on the bloc's resolved inception port,
-// strongbox true). This replaces
-// the previous `genesis secrets-provider inception` call, which required a live,
-// reachable vault at provisioning time and silently failed when the embedded
-// genesis re-exec dropped to the wrong port. The rewrite is vault-independent
-// and converges regardless of the existing (possibly stale) block contents.
+// secretsProviderRewriteSnippet points the deployment's .genesis/config at the
+// bloc inception vault while that vault is the bloc's source of truth.
 //
-// yq is the preferred tool (it is in the bastion required-tools set); a POSIX
-// awk fallback handles environments where yq is unavailable.
+// `genesis secrets-provider <alias>` is the primary path: genesis owns the
+// config schema, resolves the alias against the safe targets on the bastion,
+// and writes url, insecure, namespace, alias, and strongbox itself. It needs
+// no live vault to write the block. The embedded genesis is refreshed just
+// before this runs, so the re-exec that once dropped the write to a stale
+// binary cannot recur.
+//
+// If genesis refuses, a graft merge of a small fragment writes the same block
+// with the alias safe reports and the port the bastion's own ocfp resolves for
+// the inception vault, so the rewritten config cannot point at a port nothing
+// is listening on. graft is in the bastion required-tools set; no other YAML
+// tool is involved.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
-	const alias = "inception"
-
 	// Resolved the same way the bastion's own ocfp resolves it when starting
-	// the vault, so the rewritten .genesis/config cannot point at a port
-	// nothing is listening on. A literal here is what let the two diverge.
+	// the vault. A literal here is what let the two diverge.
 	url := fmt.Sprintf("http://127.0.0.1:%d", config.BlocInceptionVaultPort(om.config))
 
 	lines := []string{
@@ -592,56 +606,22 @@ func (om *OCFPManager) secretsProviderRewriteSnippet() []string {
 	return append(lines, []string{
 		"        fi",
 		"        ",
-		"        if command -v yq >/dev/null 2>&1; then",
-		"            if yq -i '" +
-			".secrets_provider.alias = \"" + alias + "\" | " +
-			".secrets_provider.url = \"" + url + "\" | " +
-			".secrets_provider.strongbox = true | " +
-			".secrets_provider.insecure = false | " +
-			".secrets_provider.namespace = \"\"' \"$GENESIS_CONFIG\" 2>/dev/null; then",
-		"                log_success \"  Secrets provider set to " + alias + " for: $deployment_name\"",
-		"                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))",
-		"            else",
-		"                log_warning \"  yq rewrite failed for: $deployment_name\"",
-		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
-		"            fi",
+		"        if genesis secrets-provider \"$INCEPTION_TARGET\" >/dev/null 2>&1 && grep -q '^secrets_provider:' \"$GENESIS_CONFIG\" 2>/dev/null; then",
+		"            log_success \"  Secrets provider set to $INCEPTION_TARGET for: $deployment_name\"",
+		"            CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))",
 		"        else",
-		"            # awk fallback: replace the secrets_provider block in place.",
-		"            tmp_config=\"$(mktemp)\"",
-		"            awk '",
-		"                BEGIN { in_sp = 0; done_sp = 0 }",
-		"                /^secrets_provider:[[:space:]]*$/ {",
-		"                    print \"secrets_provider:\";",
-		"                    print \"  alias: " + alias + "\";",
-		"                    print \"  insecure: false\";",
-		"                    print \"  namespace: \\\"\\\"\";",
-		"                    print \"  strongbox: true\";",
-		"                    print \"  url: " + url + "\";",
-		"                    in_sp = 1; done_sp = 1; next",
-		"                }",
-		"                in_sp == 1 {",
-		"                    # Skip the old indented block body (two-space indent).",
-		"                    if ($0 ~ /^[[:space:]]+/) { next } else { in_sp = 0 }",
-		"                }",
-		"                { print }",
-		"                END {",
-		"                    if (done_sp == 0) {",
-		"                        print \"secrets_provider:\";",
-		"                        print \"  alias: " + alias + "\";",
-		"                        print \"  insecure: false\";",
-		"                        print \"  namespace: \\\"\\\"\";",
-		"                        print \"  strongbox: true\";",
-		"                        print \"  url: " + url + "\";",
-		"                    }",
-		"                }",
-		"            ' \"$GENESIS_CONFIG\" > \"$tmp_config\" && mv \"$tmp_config\" \"$GENESIS_CONFIG\"",
-		"            if grep -q 'alias: " + alias + "' \"$GENESIS_CONFIG\" 2>/dev/null; then",
-		"                log_success \"  Secrets provider set to " + alias + " (awk) for: $deployment_name\"",
+		"            log_warning \"  genesis secrets-provider $INCEPTION_TARGET failed for $deployment_name; merging the block with graft\"",
+		"            sp_fragment=\"$(mktemp)\"",
+		"            printf 'secrets_provider:\\n  alias: %s\\n  insecure: false\\n  namespace: \"\"\\n  strongbox: true\\n  url: %s\\n' \"$INCEPTION_TARGET\" '" + url + "' > \"$sp_fragment\"",
+		"            if graft merge \"$GENESIS_CONFIG\" \"$sp_fragment\" > \"${GENESIS_CONFIG}.tmp\" 2>/dev/null && mv \"${GENESIS_CONFIG}.tmp\" \"$GENESIS_CONFIG\"; then",
+		"                log_success \"  Secrets provider set to $INCEPTION_TARGET (graft) for: $deployment_name\"",
 		"                CONFIGURED_COUNT=$((CONFIGURED_COUNT + 1))",
 		"            else",
+		"                rm -f \"${GENESIS_CONFIG}.tmp\"",
 		"                log_warning \"  Failed to configure secrets provider for: $deployment_name\"",
 		"                FAILED_COUNT=$((FAILED_COUNT + 1))",
 		"            fi",
+		"            rm -f \"$sp_fragment\"",
 		"        fi",
 	}...)
 }
