@@ -47,7 +47,7 @@ func (om *OCFPManager) GenerateVaultInceptionScript(_ctx context.Context) string
 
 // GenerateOCFPConfigureScript generates the script that sets up the genesis
 // deployment repositories on the bastion: kit checkouts, their dev symlinks,
-// and `genesis repo-init` for the mgmt and ocf roots.
+// and `genesis repo-init` for each dev-mode deployment directory.
 //
 //nolint:funlen // Script generation requires many statements
 func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string {
@@ -246,57 +246,62 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 	return combined
 }
 
-// generateGenesisRepoInitScript emits idempotent genesis repo-init calls for the
-// mgmt (BOSH director) and ocf (CF) deployment repos. Repos must exist and have a
-// valid .genesis/config before env files are written or genesis secrets-provider
-// inception is run.
+// generateGenesisRepoInitScript emits the per-deployment `genesis repo-init`
+// loop. The deployment root holds one directory per kit (bosh, cf, openbao,
+// ...), and every environment of the bloc lives in that kit's directory, so
+// the repo name is the kit name and `deployment_type` in .genesis/config
+// follows from it.
 //
-// Flags used:
-//   - --kit bosh / --kit cf   — kit for the deployment type
-//   - --ci-provider concourse — writes nested ci.provider.type: concourse (v3.2 format)
-//   - --skip-vault            — vault not yet deployed at repo-init time
-//   - --force                 — overwrite without prompt; makes re-runs idempotent
-//   - --directory             — explicit path so repos land under DEPLOYMENTS_ROOT
+// repo-init only accepts a bare repository name, creates ./<name> under the
+// current directory, and with -f/--force deletes an existing target first.
+// The deployment directories already hold operator data (env files, ops/,
+// and a dev symlink), so the repo is staged in a private temp directory and
+// only its .genesis is moved into place. A failed repo-init fails the phase:
+// a warning here left a bastion with no .genesis anywhere and a green init.
 //
 //nolint:funcorder // Helper placed after exported methods
 func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 	return []string{
 		"# Initialise genesis deployment repos (must exist before env files are written)",
-		`# genesis repo-init creates .genesis/config and CI scaffold for each deployment.`,
-		`# --skip-vault defers vault config until genesis secrets-provider inception runs.`,
-		`# --force makes this section safe to re-run on an already-initialised repo.`,
+		"# One repo per kit directory. repo-init takes a bare name and creates ./<name>,",
+		"# and --force would delete the env files and dev symlink already there, so",
+		"# each repo is staged under mktemp and only its .genesis is moved into place.",
+		"# --skip-vault defers the secrets provider until the inception step runs.",
+		"# Release-mode deployments arrive with their .genesis from the deployments repo.",
 		"",
 		`log_info 'Initialising genesis deployment repos'`,
-		"",
-		`# mgmt repo — BOSH director kit`,
-		`MGMT_DIR="${DEPLOYMENTS_ROOT}/mgmt"`,
-		`mkdir -p "${MGMT_DIR}"`,
-		`log_info "Running genesis repo-init for mgmt (bosh kit)"`,
-		`if genesis repo-init \`,
-		`    --kit bosh \`,
-		`    --ci-provider concourse \`,
-		`    --skip-vault \`,
-		`    --force \`,
-		`    --directory "${MGMT_DIR}"; then`,
-		`    log_success 'genesis repo-init completed for mgmt'`,
-		"else",
-		`    log_warning 'genesis repo-init failed for mgmt — deployment may require manual init'`,
-		"fi",
-		"",
-		`# ocf repo — Cloud Foundry kit`,
-		`OCF_DIR="${DEPLOYMENTS_ROOT}/ocf"`,
-		`mkdir -p "${OCF_DIR}"`,
-		`log_info "Running genesis repo-init for ocf (cf kit)"`,
-		`if genesis repo-init \`,
-		`    --kit cf \`,
-		`    --ci-provider concourse \`,
-		`    --skip-vault \`,
-		`    --force \`,
-		`    --directory "${OCF_DIR}"; then`,
-		`    log_success 'genesis repo-init completed for ocf'`,
-		"else",
-		`    log_warning 'genesis repo-init failed for ocf — deployment may require manual init'`,
-		"fi",
+		`for deployment in "${DEV_DEPLOYMENTS[@]}"; do`,
+		`    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`,
+		`    KIT_DIR="${KITS_ROOT}/${deployment}"`,
+		`    if [ -f "${DEPLOY_PATH}/.genesis/config" ]; then`,
+		`        log_info "genesis repo already initialised: ${deployment}"`,
+		"        continue",
+		"    fi",
+		`    if [ ! -d "${KIT_DIR}" ]; then`,
+		`        log_info "Kit not staged at ${KIT_DIR}; skipping genesis repo-init for ${deployment}"`,
+		"        continue",
+		"    fi",
+		`    log_info "Running genesis repo-init for ${deployment}"`,
+		`    STAGE_DIR=$(mktemp -d)`,
+		`    if ! (cd "${STAGE_DIR}" && genesis repo-init -l "${KIT_DIR}" --skip-vault --no-commit "${deployment}"); then`,
+		`        log_error "genesis repo-init failed for ${deployment}"`,
+		`        rm -rf "${STAGE_DIR}"`,
+		"        exit 1",
+		"    fi",
+		`    if [ ! -f "${STAGE_DIR}/${deployment}/.genesis/config" ]; then`,
+		`        log_error "genesis repo-init wrote no .genesis/config for ${deployment}"`,
+		`        rm -rf "${STAGE_DIR}"`,
+		"        exit 1",
+		"    fi",
+		`    mkdir -p "${DEPLOY_PATH}"`,
+		`    mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
+		`    if [ ! -e "${DEPLOY_PATH}/dev" ]; then`,
+		`        ln -s "${KIT_DIR}" "${DEPLOY_PATH}/dev"`,
+		`        log_info "Linked ${DEPLOY_PATH}/dev -> ${KIT_DIR}"`,
+		"    fi",
+		`    rm -rf "${STAGE_DIR}"`,
+		`    log_success "genesis repo-init completed for ${deployment}"`,
+		"done",
 		"",
 	}
 }

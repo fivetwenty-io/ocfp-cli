@@ -36,33 +36,6 @@ func TestGenerateVaultInceptionScript_ContainsIdempotencyCheck(t *testing.T) {
 	}
 }
 
-// TestGenerateOCFPConfigureScript_ContainsRepoInit verifies that the generated
-// configure script includes genesis repo-init with the required flags for both
-// the mgmt (bosh) and ocf (cf) deployment directories.
-func TestGenerateOCFPConfigureScript_ContainsRepoInit(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		Name: "ocfp-aws-us-east-1",
-	}
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateOCFPConfigureScript(context.Background())
-
-	requiredSubstrings := []string{
-		"genesis repo-init",
-		"--kit bosh",
-		"--kit cf",
-		"--ci-provider concourse",
-		"--skip-vault",
-	}
-
-	for _, s := range requiredSubstrings {
-		if !strings.Contains(script, s) {
-			t.Errorf("expected configure script to contain %q\nscript:\n%s", s, script)
-		}
-	}
-}
-
 func TestGenerateVaultInceptionScript_ContainsFallbackCheck(t *testing.T) {
 	t.Parallel()
 
@@ -86,84 +59,37 @@ func TestGenerateVaultInceptionScript_ContainsFallbackCheck(t *testing.T) {
 	}
 }
 
-// TestGenerateOCFPConfigureScript_RepoInitBeforeSecretsProvider verifies ordering:
-// genesis repo-init must appear before the per-deployment secrets-provider
-// configuration (the `genesis embed` + .genesis/config rewrite) in the combined
-// configure + secrets-provider output, reflecting the required bootstrap
-// sequence (repo must exist before its secrets provider is configured).
-//
-// GenerateOCFPConfigureScript produces the repo-init section; the
-// secrets-provider configuration lives in GenerateGenesisSecretsProvidersScript.
-// Together they model the ordered bastion provisioning sequence, so the
-// repo-init index must be lower.
-func TestGenerateOCFPConfigureScript_RepoInitBeforeSecretsProvider(t *testing.T) {
-	t.Parallel()
+// repoInitScriptLines splits a script into lines and returns a lookup that
+// gives the 1-based number of the first executable (non-comment, non-blank)
+// line containing substr, or -1. Comments describe the commands they sit
+// next to and would otherwise produce false matches.
+func repoInitScriptLines(script string) ([]string, func(string) int) {
+	lines := strings.Split(script, "\n")
 
-	cfg := &config.Config{
-		Name: "ocfp-aws-us-east-1",
-	}
-	om := NewOCFPManager("aws", cfg, nil)
+	isComment := func(line string) bool {
+		trimmed := strings.TrimSpace(line)
 
-	configureScript := om.GenerateOCFPConfigureScript(context.Background())
-	secretsScript := om.GenerateGenesisSecretsProvidersScript(context.Background())
-
-	combined := configureScript + "\n" + secretsScript
-
-	repoInitIdx := strings.Index(combined, "genesis repo-init")
-	secretsProviderIdx := strings.Index(combined, "genesis embed")
-
-	if repoInitIdx == -1 {
-		t.Fatal("combined script missing 'genesis repo-init'")
+		return trimmed == "" || strings.HasPrefix(trimmed, "#")
 	}
 
-	if secretsProviderIdx == -1 {
-		t.Fatal("combined script missing 'genesis embed'")
-	}
-
-	if repoInitIdx >= secretsProviderIdx {
-		t.Errorf("genesis repo-init (pos %d) must appear before genesis embed (pos %d)",
-			repoInitIdx, secretsProviderIdx)
-	}
-}
-
-// TestGenerateOCFPConfigureScript_RepoInitFlags verifies that all required flags
-// are present on the repo-init invocations: --kit bosh, --kit cf,
-// --ci-provider concourse, --skip-vault.
-func TestGenerateOCFPConfigureScript_RepoInitFlags(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		Name: "ocfp-aws-us-east-1",
-	}
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateOCFPConfigureScript(context.Background())
-
-	tests := []struct {
-		name     string
-		contains string
-	}{
-		{"kit bosh flag", "--kit bosh"},
-		{"kit cf flag", "--kit cf"},
-		{"ci-provider concourse flag", "--ci-provider concourse"},
-		{"skip-vault flag", "--skip-vault"},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			if !strings.Contains(script, tc.contains) {
-				t.Errorf("configure script missing %q\nscript:\n%s", tc.contains, script)
+	lineOf := func(substr string) int {
+		for i, line := range lines {
+			if !isComment(line) && strings.Contains(line, substr) {
+				return i + 1
 			}
-		})
+		}
+
+		return -1
 	}
+
+	return lines, lineOf
 }
 
-// TestGenerateOCFPConfigureScript_RepoInitIdempotent verifies the repo-init
-// invocations include --force so repeated script runs do not prompt or fail when
-// the deployment directory already exists.
-func TestGenerateOCFPConfigureScript_RepoInitIdempotent(t *testing.T) {
+// TestGenerateOCFPConfigureScript_ContainsRepoInit verifies the configure
+// script runs genesis repo-init once per dev-mode deployment directory, links
+// the staged kit with -l, defers vault, and passes the bare kit name so the
+// repo's deployment_type follows from it.
+func TestGenerateOCFPConfigureScript_ContainsRepoInit(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
@@ -172,15 +98,25 @@ func TestGenerateOCFPConfigureScript_RepoInitIdempotent(t *testing.T) {
 	om := NewOCFPManager("aws", cfg, nil)
 	script := om.GenerateOCFPConfigureScript(context.Background())
 
-	if !strings.Contains(script, "--force") {
-		t.Errorf("configure script repo-init calls must include --force for idempotency\nscript:\n%s", script)
+	requiredSubstrings := []string{
+		`for deployment in "${DEV_DEPLOYMENTS[@]}"; do`,
+		`genesis repo-init -l "${KIT_DIR}" --skip-vault --no-commit "${deployment}"`,
+		`DEV_DEPLOYMENTS=("bosh" "openbao" "concourse" "cf"`,
+	}
+
+	for _, s := range requiredSubstrings {
+		if !strings.Contains(script, s) {
+			t.Errorf("expected configure script to contain %q\nscript:\n%s", s, script)
+		}
 	}
 }
 
-// TestGenerateOCFPConfigureScript_RepoInitDirectoryFlags verifies that repo-init
-// uses --directory with deployment-specific paths so repos land in the correct
-// subdirectory under DEPLOYMENTS_ROOT.
-func TestGenerateOCFPConfigureScript_RepoInitDirectoryFlags(t *testing.T) {
+// TestGenerateOCFPConfigureScript_RepoInitRejectedFlagsAbsent verifies the
+// repo-init invocation carries none of the flags that the maintained genesis
+// rejects or that would destroy operator data: --ci-provider is unknown,
+// -d/--directory must be a bare name, and -f/--force deletes the target.
+// Nothing may name mgmt or ocf directories as repo roots either.
+func TestGenerateOCFPConfigureScript_RepoInitRejectedFlagsAbsent(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
@@ -189,21 +125,127 @@ func TestGenerateOCFPConfigureScript_RepoInitDirectoryFlags(t *testing.T) {
 	om := NewOCFPManager("aws", cfg, nil)
 	script := om.GenerateOCFPConfigureScript(context.Background())
 
-	if !strings.Contains(script, "--directory") {
-		t.Errorf("configure script repo-init calls must include --directory flag\nscript:\n%s", script)
+	_, lineOf := repoInitScriptLines(script)
+
+	for _, forbidden := range []string{"--ci-provider", "--directory", "--force", `/mgmt"`, `/ocf"`} {
+		if line := lineOf(forbidden); line != -1 {
+			t.Errorf("configure script line %d still uses %q\nscript:\n%s", line, forbidden, script)
+		}
+	}
+
+	lines, _ := repoInitScriptLines(script)
+	for i, line := range lines {
+		if !strings.Contains(line, "genesis repo-init") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+
+		for _, short := range []string{" -f ", " -d ", " -f\\", " -d\\"} {
+			if strings.Contains(line, short) {
+				t.Errorf("repo-init line %d carries %q: %s", i+1, strings.TrimSpace(short), line)
+			}
+		}
 	}
 }
 
-// TestGenerateOCFPConfigureScript_GenesisCallSequence is an integration test that
-// generates a full provision script with realistic inputs and asserts the complete
-// genesis call sequence by line-number position, not just substring presence.
-//
-// Required order:
-//  1. genesis repo-init --kit bosh  (mgmt repo, first)
-//  2. genesis repo-init --kit cf    (ocf repo, second)
-//  3. genesis embed (per-deployment secrets-provider config, after all repo-inits)
-//
-// Also asserts: no "genesis init" (old v3.1 command) appears anywhere.
+// TestGenerateOCFPConfigureScript_RepoInitStagesAndMoves verifies the
+// staging sequence: repo-init runs inside a mktemp directory, only .genesis
+// is moved into the deployment directory, the dev symlink is created only
+// when none exists, and the staging directory is removed.
+func TestGenerateOCFPConfigureScript_RepoInitStagesAndMoves(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Name: "ocfp-aws-us-east-1",
+	}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	_, lineOf := repoInitScriptLines(script)
+
+	ordered := []string{
+		`STAGE_DIR=$(mktemp -d)`,
+		`cd "${STAGE_DIR}" && genesis repo-init`,
+		`if [ ! -f "${STAGE_DIR}/${deployment}/.genesis/config" ]`,
+		`mkdir -p "${DEPLOY_PATH}"`,
+		`mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
+		`if [ ! -e "${DEPLOY_PATH}/dev" ]`,
+		`ln -s "${KIT_DIR}" "${DEPLOY_PATH}/dev"`,
+	}
+
+	previous := 0
+
+	for _, step := range ordered {
+		line := lineOf(step)
+		if line == -1 {
+			t.Fatalf("configure script missing executable %q\nscript:\n%s", step, script)
+		}
+
+		if line <= previous {
+			t.Errorf("%q (line %d) must follow the previous step (line %d)", step, line, previous)
+		}
+
+		previous = line
+	}
+
+	// The failure branch removes the staging directory before exiting, so
+	// the cleanup that matters is the last one, and it must follow the move.
+	if last := strings.LastIndex(script, `rm -rf "${STAGE_DIR}"`); last < strings.Index(script, `mv "${STAGE_DIR}/${deployment}/.genesis"`) {
+		t.Errorf("staging directory is removed before .genesis is moved out of it\nscript:\n%s", script)
+	}
+}
+
+// TestGenerateOCFPConfigureScript_RepoInitSkipsAndFails verifies the loop
+// skips a directory that already has .genesis/config, skips a deployment whose
+// kit is not staged, and turns a failed repo-init into a phase failure rather
+// than a warning.
+func TestGenerateOCFPConfigureScript_RepoInitSkipsAndFails(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Name: "ocfp-aws-us-east-1",
+	}
+	om := NewOCFPManager("aws", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	lines, lineOf := repoInitScriptLines(script)
+
+	for _, guard := range []string{
+		`if [ -f "${DEPLOY_PATH}/.genesis/config" ]; then`,
+		`if [ ! -d "${KIT_DIR}" ]; then`,
+	} {
+		if lineOf(guard) == -1 {
+			t.Errorf("configure script missing guard %q\nscript:\n%s", guard, script)
+		}
+	}
+
+	failLine := lineOf(`log_error "genesis repo-init failed for ${deployment}"`)
+	if failLine == -1 {
+		t.Fatalf("configure script does not log_error on repo-init failure\nscript:\n%s", script)
+	}
+
+	exitSeen := false
+
+	for _, line := range lines[failLine : failLine+3] {
+		if strings.TrimSpace(line) == "exit 1" {
+			exitSeen = true
+		}
+	}
+
+	if !exitSeen {
+		t.Errorf("repo-init failure must exit non-zero within the lines after the log_error\nscript:\n%s", script)
+	}
+
+	for i, line := range lines {
+		if strings.Contains(line, "log_warning") && strings.Contains(line, "repo-init") {
+			t.Errorf("line %d downgrades a repo-init failure to a warning: %s", i+1, line)
+		}
+	}
+}
+
+// TestGenerateOCFPConfigureScript_GenesisCallSequence generates the configure
+// and secrets-provider scripts together and asserts the genesis call order by
+// executable line: repo-init before genesis embed, bosh ahead of cf in the
+// deployment list, and no `genesis init` (the v3.1 command) anywhere.
 func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
 	t.Parallel()
 
@@ -216,98 +258,40 @@ func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
 	secretsScript := om.GenerateGenesisSecretsProvidersScript(context.Background())
 	combined := configureScript + "\n" + secretsScript
 
-	lines := strings.Split(combined, "\n")
+	lines, lineOf := repoInitScriptLines(combined)
 
-	// isComment reports whether a shell script line is a comment or blank.
-	// Comment lines starting with '#' are documentation/annotations, not commands.
-	// Ordering assertions must target executable lines only.
-	isComment := func(line string) bool {
-		trimmed := strings.TrimSpace(line)
-		return trimmed == "" || strings.HasPrefix(trimmed, "#")
-	}
-
-	// lineOfCommand returns the 1-based line number of the first non-comment line
-	// containing substr, or -1 if not found. Using line numbers (not byte offsets)
-	// gives clearer failure messages and is immune to variable-length content before
-	// the match. Skipping comment lines prevents false positives from inline
-	// documentation that references command names (e.g. "# runs genesis init").
-	lineOfCommand := func(substr string) int {
-		for i, line := range lines {
-			if !isComment(line) && strings.Contains(line, substr) {
-				return i + 1
-			}
-		}
-
-		return -1
-	}
-
-	// allCommandLines returns all 1-based line numbers of non-comment lines
-	// containing substr.
-	allCommandLines := func(substr string) []int {
-		var hits []int
-
-		for i, line := range lines {
-			if !isComment(line) && strings.Contains(line, substr) {
-				hits = append(hits, i+1)
-			}
-		}
-
-		return hits
-	}
-
-	// 1. Both repo-init calls must be present on executable lines.
-	repoInitBoshLine := lineOfCommand("genesis repo-init")
-	if repoInitBoshLine == -1 {
+	repoInitLine := lineOf("genesis repo-init")
+	if repoInitLine == -1 {
 		t.Fatal("combined script missing executable 'genesis repo-init'")
 	}
 
-	// Find the executable line that carries --kit bosh (must exist).
-	kitBoshLine := lineOfCommand("--kit bosh")
-	if kitBoshLine == -1 {
-		t.Fatal("combined script missing executable '--kit bosh'")
-	}
-
-	// Find the executable line that carries --kit cf (must exist, after bosh block).
-	kitCFLine := lineOfCommand("--kit cf")
-	if kitCFLine == -1 {
-		t.Fatal("combined script missing executable '--kit cf'")
-	}
-
-	// 2. bosh repo-init block must precede cf repo-init block.
-	if kitBoshLine >= kitCFLine {
-		t.Errorf("genesis repo-init --kit bosh (line %d) must appear before genesis repo-init --kit cf (line %d)",
-			kitBoshLine, kitCFLine)
-	}
-
-	// 3. The per-deployment secrets-provider config (genesis embed + .genesis/config
-	// rewrite) must appear after both repo-init blocks. This logic lives in
-	// GenerateGenesisSecretsProvidersScript; the repo-init calls live in
-	// GenerateOCFPConfigureScript. The combined script models the ordered bastion
-	// provisioning sequence.
-	secretsProviderLine := lineOfCommand("genesis embed")
-	if secretsProviderLine == -1 {
+	embedLine := lineOf("genesis embed")
+	if embedLine == -1 {
 		t.Fatal("combined script missing executable 'genesis embed'")
 	}
 
-	if kitBoshLine >= secretsProviderLine {
-		t.Errorf("genesis repo-init --kit bosh (line %d) must appear before genesis embed (line %d)",
-			kitBoshLine, secretsProviderLine)
+	if repoInitLine >= embedLine {
+		t.Errorf("genesis repo-init (line %d) must appear before genesis embed (line %d)", repoInitLine, embedLine)
 	}
 
-	if kitCFLine >= secretsProviderLine {
-		t.Errorf("genesis repo-init --kit cf (line %d) must appear before genesis embed (line %d)",
-			kitCFLine, secretsProviderLine)
+	devLine := lineOf("DEV_DEPLOYMENTS=(")
+	if devLine == -1 {
+		t.Fatal("combined script missing DEV_DEPLOYMENTS array")
 	}
 
-	// 4. "genesis init" (old v3.1 command) must not appear on any executable line.
-	// Comments referencing "genesis init" in documentation context are allowed;
-	// only actual invocations are rejected.
-	genesisInitLines := allCommandLines("genesis init")
-	for _, lineNum := range genesisInitLines {
-		line := lines[lineNum-1]
-		// "genesis repo-init" contains the substring "genesis init"; skip those.
-		if !strings.Contains(line, "genesis repo-init") {
-			t.Errorf("line %d contains deprecated 'genesis init' command (old v3.1): %q", lineNum, line)
+	devList := lines[devLine-1]
+	if strings.Index(devList, `"bosh"`) > strings.Index(devList, `"cf"`) {
+		t.Errorf("bosh must be initialised before cf: %s", devList)
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.Contains(line, "genesis init") && !strings.Contains(line, "genesis repo-init") {
+			t.Errorf("line %d contains deprecated 'genesis init' command (old v3.1): %q", i+1, line)
 		}
 	}
 }
