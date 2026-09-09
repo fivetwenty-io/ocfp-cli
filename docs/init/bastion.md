@@ -322,7 +322,18 @@ Genesis is built from the checkout at `~/ocfp/genesis`. On every run the CLI poi
 
 The deployment root at `~/ocfp/deployments` holds one directory per kit, so `bosh/`, `cf/`, `openbao/`, `concourse/`, and the rest each hold the env files for every environment of the bloc. The mgmt and ocf environments of a bloc both live in `bosh/`, for example, as `ocfp-<bloc>-mgmt.yml` and `ocfp-<bloc>-ocf.yml`.
 
-During the `ocfp-configure` phase the CLI runs `genesis repo-init` once for each dev-mode deployment directory that does not yet have a `.genesis/config`. Genesis only accepts a bare repository name and creates the repo under the current directory, and its `--force` flag deletes an existing target, so the CLI stages each repo in a private temporary directory with `genesis repo-init -l ~/ocfp/kits/<kit> --skip-vault --no-commit <kit>` and moves only the resulting `.genesis` into `~/ocfp/deployments/<kit>/`. Env files, `ops/` directories, and an existing `dev` symlink in that directory are left alone. A `dev` symlink to the kit is created only when none exists.
+Before any repository is initialised, the `ocfp-configure` phase clones the kit for every dev-mode deployment into `~/ocfp/kits/<kit>` and links `~/ocfp/deployments/<kit>/dev` to it. The clones come from the public genesis-community repositories over HTTPS, so the bastion needs no GitHub key for this step, and they run whether or not `deployments.url` is set. A kit directory that already holds a git checkout is fast-forwarded instead, and a kit tree that was copied in by hand, with no `.git` inside it, is left exactly as it is. Two optional keys on a deployment entry in the bloc config steer the clone: `kit_repo` replaces the repository URL, and `kit_branch` names the branch to check out, as in this example:
+
+```yaml
+deployments:
+  concourse:
+    kit_branch: github-oauth-teams
+  jumpbox:
+    kit_repo: https://github.com/example/jumpbox-genesis-kit.git
+    kit_branch: wireguard
+```
+
+During the same phase the CLI runs `genesis repo-init` once for each dev-mode deployment directory that does not yet have a `.genesis/config`. Genesis only accepts a bare repository name and creates the repo under the current directory, and its `--force` flag deletes an existing target, so the CLI stages each repo in a private temporary directory with `genesis repo-init -l ~/ocfp/kits/<kit> --skip-vault --no-commit <kit>` and moves only the resulting `.genesis` into `~/ocfp/deployments/<kit>/`. Env files, `ops/` directories, and an existing `dev` symlink in that directory are left alone. A `dev` symlink to the kit is created only when none exists.
 
 A deployment whose kit has not been staged under `~/ocfp/kits/<kit>` is skipped with a notice, and a directory that already has `.genesis/config` is skipped. If `genesis repo-init` itself fails, for example because a prerequisite tool is missing, the phase fails rather than continuing with no repo. Release-mode deployments arrive with their `.genesis` from the deployments repository and are not initialised here.
 

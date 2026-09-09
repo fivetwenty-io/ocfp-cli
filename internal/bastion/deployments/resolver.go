@@ -100,11 +100,25 @@ func (r *Resolver) KitPath(name string) string {
 		return ""
 	}
 
-	if strings.TrimSpace(r.GlobalURL()) != "" {
-		return filepath.Join(r.KitsRoot(), name)
+	return filepath.Join(r.KitsRoot(), name)
+}
+
+// KitRepo returns the git URL a dev-mode deployment's kit is cloned from.
+func (r *Resolver) KitRepo(name string) string {
+	if r == nil || r.cfg == nil {
+		return config.DefaultKitRepo(name)
 	}
 
-	return filepath.Join(r.KitsRoot(), name, "dev")
+	return r.cfg.GetDeploymentKitRepo(name)
+}
+
+// KitBranch returns the branch a dev-mode deployment's kit should track, or "" for the default.
+func (r *Resolver) KitBranch(name string) string {
+	if r == nil || r.cfg == nil {
+		return ""
+	}
+
+	return r.cfg.GetDeploymentKitBranch(name)
 }
 
 // ShouldCloneDeploymentRepo indicates whether the global deployments repository should be cloned.

@@ -1125,7 +1125,7 @@ type DeploymentSettings struct {
 	Entries map[string]*DeploymentEntry
 }
 
-// DeploymentEntry stores per-deployment overrides (currently only mode) along with the raw configuration.
+// DeploymentEntry stores per-deployment overrides (mode, kit_repo, kit_branch) along with the raw configuration.
 type DeploymentEntry struct {
 	Mode string
 	Raw  map[string]interface{}
@@ -1176,6 +1176,46 @@ func (d *DeploymentSettings) Configured() []string {
 	sort.Strings(names)
 
 	return names
+}
+
+// KitRepoFor returns the git URL of the kit checkout for a dev-mode deployment.
+// A per-deployment kit_repo entry wins; otherwise the public genesis-community
+// repository is used over HTTPS, so the bastion needs no key to clone it.
+func (d *DeploymentSettings) KitRepoFor(name string) string {
+	if repo := d.rawString(name, "kit_repo"); repo != "" {
+		return repo
+	}
+
+	return DefaultKitRepo(name)
+}
+
+// KitBranchFor returns the branch the kit checkout should track for a dev-mode
+// deployment, or an empty string to follow the repository's default branch.
+func (d *DeploymentSettings) KitBranchFor(name string) string {
+	return d.rawString(name, "kit_branch")
+}
+
+func (d *DeploymentSettings) rawString(name, key string) string {
+	if d == nil {
+		return ""
+	}
+
+	entry, ok := d.Entries[name]
+	if !ok || entry == nil || entry.Raw == nil {
+		return ""
+	}
+
+	value, ok := extractString(entry.Raw[key])
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(value)
+}
+
+// DefaultKitRepo returns the public genesis-community HTTPS URL for a kit.
+func DefaultKitRepo(name string) string {
+	return "https://github.com/genesis-community/" + name + "-genesis-kit.git"
 }
 
 // Entry returns the deployment entry if configured.
@@ -2128,6 +2168,24 @@ func (cfg *Config) GetDeploymentMode(name string) string {
 	}
 
 	return cfg.Deployments.ModeFor(name)
+}
+
+// GetDeploymentKitRepo returns the kit repository URL for a dev-mode deployment.
+func (cfg *Config) GetDeploymentKitRepo(name string) string {
+	if cfg == nil || cfg.Deployments == nil {
+		return DefaultKitRepo(name)
+	}
+
+	return cfg.Deployments.KitRepoFor(name)
+}
+
+// GetDeploymentKitBranch returns the kit branch for a dev-mode deployment, or "" for the default branch.
+func (cfg *Config) GetDeploymentKitBranch(name string) string {
+	if cfg == nil || cfg.Deployments == nil {
+		return ""
+	}
+
+	return cfg.Deployments.KitBranchFor(name)
 }
 
 // GetConfiguredDeployments returns the configured deployment identifiers.

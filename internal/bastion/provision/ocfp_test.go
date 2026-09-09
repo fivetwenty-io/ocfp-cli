@@ -693,3 +693,72 @@ func TestShellSingleQuote(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateOCFPConfigureScript_KitClonesWithoutDeploymentsURL verifies the
+// kit checkouts are cloned for every dev-mode deployment even when no
+// deployments repository is configured, over HTTPS from genesis-community,
+// and that the clone loop is not wrapped in a GLOBAL_DEPLOYMENTS_URL guard.
+func TestGenerateOCFPConfigureScript_KitClonesWithoutDeploymentsURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "ocfp-cf1-lab"}
+	om := NewOCFPManager("pve", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	required := []string{
+		`[openbao]="https://github.com/genesis-community/openbao-genesis-kit.git"`,
+		`[bosh]="https://github.com/genesis-community/bosh-genesis-kit.git"`,
+		`git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"} "$KIT_REPO" "$KIT_DIR"`,
+		`is not a git checkout; leaving it in place`,
+		`ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`,
+	}
+
+	for _, s := range required {
+		if !strings.Contains(script, s) {
+			t.Errorf("expected configure script to contain %q\nscript:\n%s", s, script)
+		}
+	}
+
+	if strings.Contains(script, "Setup dev kits when using global deployments repository") {
+		t.Errorf("kit clones are still gated on the deployments repository\nscript:\n%s", script)
+	}
+
+	if strings.Contains(script, "git@github.com:genesis-community") {
+		t.Errorf("kit clones still use SSH, which needs a key the bastion does not have\nscript:\n%s", script)
+	}
+
+	cloneIdx := strings.Index(script, `git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"}`)
+	guardIdx := strings.Index(script, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
+	guardEnd := strings.Index(script[guardIdx:], "\nfi\n") + guardIdx
+
+	if cloneIdx > guardIdx && cloneIdx < guardEnd {
+		t.Errorf("kit clone sits inside the GLOBAL_DEPLOYMENTS_URL guard\nscript:\n%s", script)
+	}
+}
+
+// TestGenerateOCFPConfigureScript_KitRepoAndBranchOverrides verifies a
+// per-deployment kit_repo and kit_branch reach the generated script.
+func TestGenerateOCFPConfigureScript_KitRepoAndBranchOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Name: "ocfp-cf1-lab"}
+	cfg.Deployments = config.NewDeploymentSettings("", map[string]*config.DeploymentEntry{
+		"concourse": {Raw: map[string]interface{}{"kit_branch": "github-oauth-teams"}},
+		"jumpbox":   {Raw: map[string]interface{}{"kit_repo": "https://example.invalid/jumpbox-genesis-kit.git", "kit_branch": "wireguard"}},
+	})
+	om := NewOCFPManager("pve", cfg, nil)
+	script := om.GenerateOCFPConfigureScript(context.Background())
+
+	required := []string{
+		`[concourse]="github-oauth-teams"`,
+		`[jumpbox]="https://example.invalid/jumpbox-genesis-kit.git"`,
+		`[jumpbox]="wireguard"`,
+		`[bosh]=""`,
+	}
+
+	for _, s := range required {
+		if !strings.Contains(script, s) {
+			t.Errorf("expected configure script to contain %q\nscript:\n%s", s, script)
+		}
+	}
+}

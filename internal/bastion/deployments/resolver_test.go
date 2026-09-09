@@ -68,8 +68,37 @@ func TestResolverKitPathDevWithoutURL(t *testing.T) {
 	tempHome := t.TempDir()
 	resolver.SetHome(tempHome)
 
-	expected := filepath.Join(tempHome, "ocfp", "kits", "vault", "dev")
+	expected := filepath.Join(tempHome, "ocfp", "kits", "vault")
 	if resolver.KitPath("vault") != expected {
 		t.Fatalf("expected kit path %s, got %s", expected, resolver.KitPath("vault"))
+	}
+}
+
+func TestResolverKitRepoAndBranch(t *testing.T) {
+	cfg := config.NewTestConfig().Build()
+	cfg.Deployments = config.NewDeploymentSettings("", map[string]*config.DeploymentEntry{
+		"concourse": {Mode: config.DeploymentModeDev, Raw: map[string]interface{}{
+			"kit_repo":   "git@github.com:example/concourse-genesis-kit.git",
+			"kit_branch": "github-oauth-teams",
+		}},
+		"bosh": {Mode: config.DeploymentModeDev},
+	})
+
+	resolver := NewResolver(cfg)
+
+	if got := resolver.KitRepo("concourse"); got != "git@github.com:example/concourse-genesis-kit.git" {
+		t.Fatalf("unexpected concourse kit repo: %s", got)
+	}
+
+	if got := resolver.KitBranch("concourse"); got != "github-oauth-teams" {
+		t.Fatalf("unexpected concourse kit branch: %s", got)
+	}
+
+	if got := resolver.KitRepo("bosh"); got != "https://github.com/genesis-community/bosh-genesis-kit.git" {
+		t.Fatalf("unexpected default bosh kit repo: %s", got)
+	}
+
+	if got := resolver.KitBranch("openbao"); got != "" {
+		t.Fatalf("unconfigured kit must follow the default branch, got %q", got)
 	}
 }
