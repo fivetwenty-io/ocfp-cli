@@ -1781,7 +1781,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		"disk_storage":     diskStorage,
 		"host":             pveHostnameOnly(host),
 		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
-		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "lvnet001"),
+		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "vmbr0"),
 		"node":             node,
 		"port":             strconv.Itoa(pveCPIPort(host)),
 		"status":           "configured",
