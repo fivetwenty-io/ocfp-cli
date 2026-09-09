@@ -164,7 +164,7 @@ func TestGenerateOCFPConfigureScript_RepoInitStagesAndMoves(t *testing.T) {
 
 	ordered := []string{
 		`STAGE_DIR=$(mktemp -d)`,
-		`cd "${STAGE_DIR}" && genesis repo-init`,
+		`cd "${STAGE_DIR}" && GIT_AUTHOR_NAME="${REPO_INIT_GIT_NAME}" GIT_AUTHOR_EMAIL="${REPO_INIT_GIT_EMAIL}" genesis repo-init`,
 		`if [ ! -f "${STAGE_DIR}/${deployment}/.genesis/config" ]`,
 		`mkdir -p "${DEPLOY_PATH}"`,
 		`mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
@@ -577,5 +577,102 @@ func TestGenerateOCFPConfigureScript_DoesNotReinvokeConfigure(t *testing.T) {
 
 	if strings.Contains(script, "OCFP_CLI_PATH} configure") {
 		t.Errorf("configure script invokes `ocfp configure`, which re-enters bastion provisioning\nScript:\n%s", script)
+	}
+}
+
+// TestGenerateOCFPConfigureScript_RepoInitGitIdentity pins that genesis
+// repo-init always gets a git author identity on its own invocation, taken
+// from bastion.git.user when both keys are set and otherwise derived from the
+// bloc name, with a warning only in the fallback case. An apostrophe in the
+// configured name proves the single-quote escaping.
+func TestGenerateOCFPConfigureScript_RepoInitGitIdentity(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		user         config.GitUser
+		wantName     string
+		wantEmail    string
+		wantFallback bool
+	}{
+		{
+			name:      "configured identity",
+			user:      config.GitUser{Name: "Sinéad O'Connor", Email: "sinead@example.com"},
+			wantName:  `REPO_INIT_GIT_NAME='Sinéad O'\''Connor'`,
+			wantEmail: `REPO_INIT_GIT_EMAIL='sinead@example.com'`,
+		},
+		{
+			name:         "no identity configured",
+			user:         config.GitUser{},
+			wantName:     `REPO_INIT_GIT_NAME='ocfp bastion (ocfp-cf1-lab)'`,
+			wantEmail:    `REPO_INIT_GIT_EMAIL='ocfp-bastion@ocfp-cf1-lab.invalid'`,
+			wantFallback: true,
+		},
+		{
+			name:         "name without email falls back as a whole",
+			user:         config.GitUser{Name: "Only Name"},
+			wantName:     `REPO_INIT_GIT_NAME='ocfp bastion (ocfp-cf1-lab)'`,
+			wantEmail:    `REPO_INIT_GIT_EMAIL='ocfp-bastion@ocfp-cf1-lab.invalid'`,
+			wantFallback: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{Name: "ocfp-cf1-lab"}
+			cfg.Bastion.Git.User = tc.user
+			om := NewOCFPManager("pve", cfg, nil)
+			script := om.GenerateOCFPConfigureScript(context.Background())
+			lines, lineOf := repoInitScriptLines(script)
+
+			for _, want := range []string{tc.wantName, tc.wantEmail} {
+				if !strings.Contains(script, want) {
+					t.Errorf("configure script missing %q\nscript:\n%s", want, script)
+				}
+			}
+
+			invocation := `GIT_AUTHOR_NAME="${REPO_INIT_GIT_NAME}" GIT_AUTHOR_EMAIL="${REPO_INIT_GIT_EMAIL}" genesis repo-init`
+			if lineOf(invocation) < 0 {
+				t.Errorf("repo-init is not invoked with the exported identity\nscript:\n%s", script)
+			}
+
+			for i, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "export GIT_AUTHOR") || strings.HasPrefix(trimmed, "git config") {
+					t.Errorf("line %d leaks the repo-init identity beyond the genesis invocation: %s", i+1, line)
+				}
+			}
+
+			warnLine := lineOf(`log_warning 'Bloc config has no bastion.git.user`)
+			if tc.wantFallback != (warnLine >= 0) {
+				t.Errorf("fallback warning present = %v, want %v\nscript:\n%s", warnLine >= 0, tc.wantFallback, script)
+			}
+
+			if tc.wantFallback && warnLine > lineOf(invocation) {
+				t.Errorf("fallback warning at line %d must precede the repo-init loop", warnLine)
+			}
+		})
+	}
+}
+
+// TestShellSingleQuote pins the bash single-quote escaping used for values
+// that reach the configure script from operator config.
+func TestShellSingleQuote(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"":               `''`,
+		"plain":          `'plain'`,
+		"O'Connor":       `'O'\''Connor'`,
+		`$HOME "x" \n`:   `'$HOME "x" \n'`,
+		"two ' quotes '": `'two '\'' quotes '\'''`,
+	}
+
+	for in, want := range cases {
+		if got := shellSingleQuote(in); got != want {
+			t.Errorf("shellSingleQuote(%q) = %s, want %s", in, got, want)
+		}
 	}
 }

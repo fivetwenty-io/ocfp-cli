@@ -206,6 +206,18 @@ bastion:
       version: "latest"
 ```
 
+### Git identity (`bastion.git.user`)
+
+Genesis needs a git identity before `repo-init` will create a deployment repository, so we should set both `bastion.git.user.name` and `bastion.git.user.email` in the bloc config. When either key is missing, `ocfp init bastion` warns on the client and on the bastion, and it hands `repo-init` a placeholder identity derived from the bloc name (for example `ocfp bastion (ocfp-cf1-lab)` with the address `ocfp-bastion@ocfp-cf1-lab.invalid`) for that step alone. The placeholder never reaches the bastion's global git config, so any real commit we make from the bastion still needs these two keys set, or a manual `git config --global user.name` and `user.email`.
+
+```yaml
+bastion:
+  git:
+    user:
+      name: "Your Name"
+      email: "your.email@example.com"
+```
+
 ### GitHub over port 443 (`bastion.githubSshPort`)
 
 Some site firewalls inspect outbound port 22, so the TCP connect to github.com succeeds but the SSH banner never arrives, and every `git@github.com` clone on the bastion hangs or fails. Set `githubSshPort: 443` (or `github_ssh_port: 443`) and the bastion's `~/.ssh/config` sends github.com traffic to `ssh.github.com` on port 443 with matching `[ssh.github.com]:443` entries in `known_hosts`, while the default of 22 keeps the direct connection. Only 22 and 443 are accepted, and any other value fails config validation.
