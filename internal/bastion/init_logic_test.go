@@ -197,11 +197,11 @@ func TestBuildGenesisUpgradeScript_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	m := newMinimalManager(newBaseConfig("bloc1", "aws"))
-	script := m.buildGenesisUpgradeScript("3.2.0", "v3.2.x-dev", "git@github.com:genesis-community/genesis")
+	script := m.buildGenesisUpgradeScript("3.2.0", "v3.2.x-dev", "git@github.com:RubidiumStudios/genesis")
 
 	assert.Contains(t, script, "3.2.0")
 	assert.Contains(t, script, "v3.2.x-dev")
-	assert.Contains(t, script, "genesis-community/genesis")
+	assert.Contains(t, script, "RubidiumStudios/genesis")
 	assert.Contains(t, script, "set -e")
 }
 
