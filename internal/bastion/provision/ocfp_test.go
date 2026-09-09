@@ -526,6 +526,10 @@ func TestEnvironmentScript_ExportsResolvedInceptionPort(t *testing.T) {
 // torn down at the end of every init, and genesis 3.2 fails hard on an
 // unreachable secrets_provider, so an unconditional rewrite breaks every
 // manifest render on an established bloc.
+//
+// safe reports its target and target list on stderr. Reading stdout alone
+// never matched, so the gate saw no inception target, took the clear branch,
+// and left every fresh repo-init without a provider. Both streams are read.
 func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing.T) {
 	t.Parallel()
 
@@ -535,11 +539,14 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 	for _, want := range []string{
 		"INCEPTION_ACTIVE=no",
 		`BLOC_VAULT_TARGET="${OCFP_BLOC}-mgmt"`,
-		`safe targets 2>/dev/null | grep -q "$BLOC_VAULT_TARGET"`,
-		"safe target 2>/dev/null | grep -q 'inception'",
+		`safe targets 2>&1 | grep -q "$BLOC_VAULT_TARGET"`,
+		`CURRENT_VAULT_TARGET="$(safe target 2>&1 | sed -n 's/^Currently targeting \(.*\) at .*$/\1/p' | head -n 1)"`,
+		`INCEPTION_TARGET="$CURRENT_VAULT_TARGET"`,
 		`if [ "$INCEPTION_ACTIVE" != yes ]; then`,
 		"genesis secrets-provider -c",
-		"yq -i 'del(.secrets_provider)'",
+		"printf 'secrets_provider: (( prune ))\\n'",
+		`genesis secrets-provider "$INCEPTION_TARGET"`,
+		`graft merge "$GENESIS_CONFIG" "$sp_fragment"`,
 		`elif safe target "$BLOC_VAULT_TARGET" >/dev/null 2>&1; then`,
 	} {
 		if !strings.Contains(script, want) {
@@ -547,9 +554,19 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 		}
 	}
 
+	for _, reject := range []string{
+		"2>/dev/null | grep",
+		"yq ",
+		"awk ",
+	} {
+		if strings.Contains(script, reject) {
+			t.Errorf("secrets-provider script must not contain %q\ngot:\n%s", reject, script)
+		}
+	}
+
 	// The rewrite that pins deployments to inception must sit behind the gate.
 	gate := strings.Index(script, `if [ "$INCEPTION_ACTIVE" != yes ]; then`)
-	rewrite := strings.Index(script, `.secrets_provider.alias = "inception"`)
+	rewrite := strings.Index(script, `genesis secrets-provider "$INCEPTION_TARGET"`)
 
 	if gate < 0 || rewrite < 0 || gate > rewrite {
 		t.Errorf("expected the inception rewrite to follow the gate (gate=%d rewrite=%d)", gate, rewrite)

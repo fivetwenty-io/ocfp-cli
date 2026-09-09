@@ -326,6 +326,8 @@ During the `ocfp-configure` phase the CLI runs `genesis repo-init` once for each
 
 A deployment whose kit has not been staged under `~/ocfp/kits/<kit>` is skipped with a notice, and a directory that already has `.genesis/config` is skipped. If `genesis repo-init` itself fails, for example because a prerequisite tool is missing, the phase fails rather than continuing with no repo. Release-mode deployments arrive with their `.genesis` from the deployments repository and are not initialised here.
 
+The `genesis-secrets-providers` phase then wires each repository to a vault. While the bloc is still being bootstrapped, safe on the bastion targets the inception vault, and the phase runs `genesis secrets-provider <alias>` in each deployment directory with the alias safe reports, so Genesis writes the `secrets_provider` block in `.genesis/config` itself. If Genesis refuses, the phase merges the same block into the file with graft, using the port the bastion resolves for the inception vault. Once the bloc vault has its own safe target, named after the bloc with a `-mgmt` suffix, the phase clears the block instead, so every deployment follows the system safe target, and it points safe back at the bloc vault. Both `safe target` and `safe targets` print on stderr, so the phase reads both streams. Before any of this runs, the embedded genesis in each repository is refreshed with `genesis embed`.
+
 ## Verification
 
 The initialization process includes comprehensive verification:
