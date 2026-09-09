@@ -132,9 +132,9 @@ func (t *CommandTracker) GetActiveCommands() ([]ActiveCommand, error) {
 			continue
 		}
 
-		// Check if process is still running
-		if !t.IsProcessRunning(cmd.PID) {
-			// Process is dead, remove stale lock
+		// Drop the lock when its owner is gone, including the case where
+		// an unrelated process has since been assigned the same PID.
+		if !t.LockHolderRunning(cmd) {
 			_ = os.Remove(lockPath)
 
 			continue
@@ -146,8 +146,36 @@ func (t *CommandTracker) GetActiveCommands() ([]ActiveCommand, error) {
 	return activeCommands, nil
 }
 
+// LockHolderRunning reports whether the ocfp command that wrote the lock
+// is still running. A bare PID-exists check is not enough: PIDs are
+// recycled, and on a long-running machine a lock left behind by a
+// crashed command can name a PID that now belongs to an unrelated
+// process. The lock's own timestamp settles that, because the genuine
+// holder wrote the lock after it started, so any process that started
+// after the lock's timestamp cannot be the holder.
+func (t *CommandTracker) LockHolderRunning(cmd ActiveCommand) bool {
+	return lockHolderRunning(cmd)
+}
+
+// lockHolderRunning is LockHolderRunning without the receiver, for callers
+// that only have a lock's contents and no tracker.
+func lockHolderRunning(cmd ActiveCommand) bool {
+	if !processRunning(cmd.PID) {
+		return false
+	}
+
+	return !startedAfterLock(cmd.PID, cmd.Timestamp)
+}
+
 // IsProcessRunning checks if a process with the given PID is running.
+// Callers deciding whether a lock is stale should use LockHolderRunning,
+// which also rules out a recycled PID.
 func (t *CommandTracker) IsProcessRunning(pid int) bool {
+	return processRunning(pid)
+}
+
+// processRunning reports whether some process currently holds pid.
+func processRunning(pid int) bool {
 	// On Unix-like systems, we can check if a process exists by sending signal 0
 	process, err := os.FindProcess(pid)
 	if err != nil {
@@ -198,9 +226,7 @@ func (t *CommandTracker) CleanStaleLocks() error {
 			continue
 		}
 
-		// Check if process is still running
-		if !t.IsProcessRunning(cmd.PID) {
-			// Remove stale lock
+		if !t.LockHolderRunning(cmd) {
 			_ = os.Remove(lockPath)
 		}
 	}

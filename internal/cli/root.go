@@ -83,6 +83,13 @@ func Execute() {
 	RegisterCommands(rootCmd)
 
 	err = rootCmd.ExecuteContext(ctx)
+
+	// cobra skips PersistentPostRun when RunE returns an error, which used
+	// to leave every failed command's lock behind in .active/ until a later
+	// scan noticed its PID was dead. Release it here unconditionally; the
+	// post-run handler has already cleared the tracker on the success path.
+	releaseCommandLock(lock)
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// os.Exit skips deferred calls; release the signal handler explicitly.
@@ -281,9 +288,9 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			fmt.Fprintln(os.Stderr, "logger init:", initErr)
 		}
 
-		// Create lock file for active command tracking
-		// Skip if no-log is enabled or if this is the logs command itself
-		if !viper.GetBool("no_log") && commandName != "logs" {
+		// Create lock file for active command tracking, unless logging is
+		// off or the command is one that must not be tracked.
+		if !viper.GetBool("no_log") && !commandTrackingDisabled(commandName) {
 			setupCommandTracking(lock, commandName, subcommandName)
 		}
 	}
@@ -382,19 +389,41 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 	}
 }
 
+// commandTrackingDisabled reports whether a top-level command runs without
+// an active-command lock. The logs command reads the locks and must not
+// see itself among them, and the config group (and its deprecated
+// top-level migrate alias) moves the .active directory the locks live in.
+func commandTrackingDisabled(commandName string) bool {
+	switch commandName {
+	case "logs", "config", "migrate":
+		return true
+	default:
+		return false
+	}
+}
+
 // createPostRunHandler creates the persistent post-run handler.
 func createPostRunHandler(lock *lockInfo) func(*cobra.Command, []string) {
 	return func(_cmd *cobra.Command, _args []string) {
-		// Clean up lock file
-		if lock.tracker != nil && !lock.timestamp.IsZero() {
-			if viper.GetBool("debug") {
-				fmt.Fprintf(os.Stderr, "DEBUG: PostRun cleanup: Removing lock file for timestamp %v, pid %d\n",
-					lock.timestamp, lock.pid)
-			}
-
-			_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
-		}
+		releaseCommandLock(lock)
 	}
+}
+
+// releaseCommandLock removes the active-command lock file, if one was
+// created, and clears the tracker so a second call is a no-op. It runs
+// from the post-run handler on success and from Execute on failure.
+func releaseCommandLock(lock *lockInfo) {
+	if lock.tracker == nil || lock.timestamp.IsZero() {
+		return
+	}
+
+	if viper.GetBool("debug") {
+		fmt.Fprintf(os.Stderr, "DEBUG: Removing lock file for timestamp %v, pid %d\n",
+			lock.timestamp, lock.pid)
+	}
+
+	_ = lock.tracker.RemoveLockFile(lock.timestamp, lock.pid)
+	lock.tracker = nil
 }
 
 // getBaseDir returns the base directory for OCFP command-tracking state
