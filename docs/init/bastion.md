@@ -170,8 +170,8 @@ bastion:
   # Genesis configuration
   genesis:
     enabled: true
-    repo: "git@github.com:genesis-community/genesis.git"
-    branch: "v3.1.x-dev"
+    repo: "git@github.com:RubidiumStudios/genesis"   # default
+    branch: "v3.2.x-dev"                               # default
 
   # Git configuration
   git:
