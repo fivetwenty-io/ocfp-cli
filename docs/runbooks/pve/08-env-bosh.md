@@ -40,9 +40,8 @@ g @ocfp-lab-wayne-ocf:bosh deploy -F -y
 
 Same kit as chapter 6, different delivery. This time nothing compiles on
 the bastion: the mgmt director orchestrates, and the PVE CPI builds the VM.
-The noble 1.364 stemcell we pinned in chapter 6 becomes the new director's
-foundation — this is exactly the deployment that pin exists for. The
-director comes up at `10.108.20.4`, the ocf zone's reserved static, with
+The noble 1.562 stemcell we uploaded in chapter 6 becomes the new director's
+foundation. The director comes up at `10.108.20.4`, the ocf zone's reserved static, with
 CredHub alongside for the runtime secrets CF will generate.
 
 **Verify**:
@@ -65,14 +64,13 @@ if the ocf director VM dies, it gets rebuilt automatically.
 
 ## Stocking this director too
 
-The ocf director deploys the workloads, so it needs the workload stemcell.
-Workload VMs are not bound by the 1.364 director pin (any current noble
-serves); the validated run used 1.460:
+The ocf director deploys the workloads, and they ride the same noble line
+as the directors, so upload the same version here (1.562 as we write this):
 
 ```bash
 # On the bastion, targeting the ocf director.
-bosh -e ocf upload-stemcell \
-  https://storage.googleapis.com/bosh-core-stemcells/1.460/bosh-stemcell-1.460-openstack-kvm-ubuntu-noble.tgz
+bosh -e ocf -n upload-stemcell --sha1 2c1715b4926ff895e779e1eaa738621887bcef1e \
+  "https://bosh.io/d/stemcells/bosh-openstack-kvm-ubuntu-noble?v=1.562"
 ```
 
 **Verify**: `bosh -e ocf stemcells` lists it.

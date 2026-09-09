@@ -21,7 +21,7 @@ import (
 const stemcellKeyPrefix = "stemcells"
 
 // StemcellKey returns the blobstore object key for a cached stemcell tarball
-// (e.g. stemcells/ubuntu-noble-1.383.tgz). Unlike CompiledKey, no OS/stemcell
+// (e.g. stemcells/ubuntu-noble-1.562.tgz). Unlike CompiledKey, no OS/stemcell
 // pin is folded in beyond the stemcell's own name+version: a stemcell tarball
 // is not compiled against another stemcell, so there is no cross-stemcell
 // collision to guard against.
@@ -43,7 +43,7 @@ func StemcellKey(name, version string) string {
 // existing SHA1Fetcher, not from this function — the sha256 returned here is
 // only a cache-integrity value, never handed to bosh.
 //
-// Inputs: name/version identify the stemcell (e.g. "ubuntu-noble", "1.383")
+// Inputs: name/version identify the stemcell (e.g. "ubuntu-noble", "1.562")
 // and must be non-empty. upstreamURL is the fetch source used on a cache
 // miss; it may be empty only when the tarball is already cached (force=false
 // and a prior upload exists) — an empty upstreamURL on a genuine cache miss

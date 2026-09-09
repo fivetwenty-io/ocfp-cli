@@ -37,6 +37,12 @@ func writeTestEd25519Key(t *testing.T, path string) {
 func TestFindPrivateKeyFindsSharedOCFPBastionsKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Clear the inherited XDG overrides too, or a bloc key under the real
+	// $XDG_DATA_HOME/ocfp/<bloc>/ssh wins over the faked HOME.
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {

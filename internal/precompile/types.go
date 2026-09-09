@@ -34,9 +34,9 @@ type Stemcell struct {
 // DefaultStemcell is the single stemcell standardized across the director and
 // CF (locked decision). Director compiled releases are published upstream for
 // this version; CF releases are compiled locally once and cached.
-var DefaultStemcell = Stemcell{OS: "ubuntu-noble", Version: "1.383"}
+var DefaultStemcell = Stemcell{OS: "ubuntu-noble", Version: "1.562"}
 
-// String renders the stemcell as "os/version" (e.g. "ubuntu-noble/1.383").
+// String renders the stemcell as "os/version" (e.g. "ubuntu-noble/1.562").
 func (s Stemcell) String() string { return s.OS + "/" + s.Version }
 
 // Release is a single BOSH release to precompile, with its upstream source.
