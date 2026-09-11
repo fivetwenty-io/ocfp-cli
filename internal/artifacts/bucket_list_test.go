@@ -8,6 +8,7 @@ import "testing"
 //   - mgmt-bosh blobstore (mgmt director releases/stemcells)
 //   - ocf-bosh blobstore (env-BOSH director releases/stemcells)
 //   - CF cloud-controller blobstore (droplets/packages/buildpacks/resources)
+//   - SHIELD archive stores (mgmt-shield and ocf-shield)
 func TestCanonicalBucketNames_ContainsAllRequiredBuckets(t *testing.T) {
 	t.Parallel()
 
@@ -20,6 +21,8 @@ func TestCanonicalBucketNames_ContainsAllRequiredBuckets(t *testing.T) {
 		"ocfp-lab-wayne-ocf-cf-packages":      true,
 		"ocfp-lab-wayne-ocf-cf-buildpacks":    true,
 		"ocfp-lab-wayne-ocf-cf-resource-pool": true,
+		"ocfp-lab-wayne-mgmt-shield":          true,
+		"ocfp-lab-wayne-ocf-shield":           true,
 	}
 
 	if len(got) != len(want) {
@@ -76,8 +79,8 @@ func TestCanonicalBucketNames_EmptyBlocName(t *testing.T) {
 	t.Parallel()
 
 	got := CanonicalBucketNames("")
-	if len(got) != 6 {
-		t.Fatalf("CanonicalBucketNames(\"\") returned %d entries, want 6", len(got))
+	if len(got) != 8 {
+		t.Fatalf("CanonicalBucketNames(\"\") returned %d entries, want 8", len(got))
 	}
 
 	if got[0] != "-mgmt-bosh" {

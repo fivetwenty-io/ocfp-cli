@@ -402,7 +402,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalEndpointOnly(t *testing.T)
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 2, "mgmt external mode without creds writes cf + bosh config entries")
+	require.Len(t, mock.setMultipleCalls, 3, "mgmt external mode without creds writes cf, bosh, and shield config entries")
 
 	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
 	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
@@ -440,7 +440,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalWithCreds(t *testing.T) {
 	err := provider.ConfigureBlobstores("", MgmtEnvType, nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 4, "mgmt external mode with creds writes cf config+creds and bosh config+creds")
+	require.Len(t, mock.setMultipleCalls, 6, "mgmt external mode with creds writes cf, bosh, and shield config+creds")
 
 	cfPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "cf", "main")
 	boshPath := provider.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "bosh")
@@ -486,7 +486,7 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvWritesBOSH(t *testin
 	err := provider.ConfigureBlobstores("", "ocf", nil, 0, 1)
 	require.NoError(t, err)
 
-	require.Len(t, mock.setMultipleCalls, 4, "ocf external mode writes cf config+creds and ocf bosh config+creds")
+	require.Len(t, mock.setMultipleCalls, 6, "ocf external mode writes cf, ocf bosh, and ocf shield config+creds")
 
 	boshPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "bosh", "bosh")
 	boshCall := mock.findSetMultipleCall(boshPath)
@@ -497,6 +497,18 @@ func TestPVEVaultProvider_ConfigureBlobstores_ExternalOcfEnvWritesBOSH(t *testin
 	boshCreds := mock.findSetMultipleCall(boshPath + "/creds")
 	require.NotNil(t, boshCreds, "ocf bosh creds must be written")
 	assert.Equal(t, "AKIA-test", boshCreds.data["access_key"])
+
+	shieldPath := provider.PathBuilder.GetSystemBlobstorePath("ocf", "shield", "main")
+	shieldCall := mock.findSetMultipleCall(shieldPath)
+	require.NotNil(t, shieldCall, "ocf env must write the ocf-scoped SHIELD archive store")
+	assert.Equal(t, "external", shieldCall.data["mode"])
+	assert.Equal(t, blocName+"-ocf-shield", shieldCall.data["bucket"], "ocf shield bucket follows <bloc>-ocf-shield")
+	assert.Equal(t, blocName+"-ocf-shield", shieldCall.data["name"])
+
+	shieldCreds := mock.findSetMultipleCall(shieldPath + "/creds")
+	require.NotNil(t, shieldCreds, "ocf shield creds must be written")
+	assert.Equal(t, "AKIA-test", shieldCreds.data["access_key"])
+	assert.Equal(t, "secret-test", shieldCreds.data["secret_key"])
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_EnsuresBuckets — external mode must
@@ -522,6 +534,37 @@ func TestPVEVaultProvider_ConfigureBlobstores_EnsuresBuckets(t *testing.T) {
 
 	assert.Contains(t, ensurer.buckets, blocName+"-ocf-cf", "CF blobstore bucket must be created")
 	assert.Contains(t, ensurer.buckets, blocName+"-ocf-bosh", "BOSH director blobstore bucket must be created")
+	assert.Contains(t, ensurer.buckets, blocName+"-ocf-shield", "SHIELD archive bucket must be created")
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_MgmtWritesSHIELD — the mgmt scope
+// gets its own SHIELD archive record and bucket, since the mgmt SHIELD core
+// archives mgmt-tier backups separately from ocf-tier ones.
+func TestPVEVaultProvider_ConfigureBlobstores_MgmtWritesSHIELD(t *testing.T) {
+	const blocName = "test-bloc"
+
+	mock := &awsMockSafe{}
+	ensurer := &recordingBucketEnsurer{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.bucketEnsurer = ensurer
+	provider.BlobstoreMode = "external"
+	provider.BlobstoreEndpoint = "https://10.64.64.11:9000"
+	provider.BlobstoreAccessKey = "AKIA-test"
+	provider.BlobstoreSecretKey = "secret-test"
+
+	err := provider.ConfigureBlobstores("", "mgmt", nil, 0, 1)
+	require.NoError(t, err)
+
+	shieldPath := provider.PathBuilder.GetSystemBlobstorePath("mgmt", "shield", "main")
+	shieldCall := mock.findSetMultipleCall(shieldPath)
+	require.NotNil(t, shieldCall, "mgmt env must write the mgmt-scoped SHIELD archive store")
+	assert.Equal(t, blocName+"-mgmt-shield", shieldCall.data["bucket"])
+	assert.Equal(t, "10.64.64.11", shieldCall.data["host"])
+	assert.Equal(t, true, shieldCall.data["path_style"])
+
+	require.NotNil(t, mock.findSetMultipleCall(shieldPath+"/creds"), "mgmt shield creds must be written")
+	assert.Contains(t, ensurer.buckets, blocName+"-mgmt-shield", "mgmt SHIELD archive bucket must be created")
 }
 
 // TestPVEVaultProvider_ConfigureBlobstores_BucketFailureIsFatal — a written
