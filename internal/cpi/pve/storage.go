@@ -291,10 +291,25 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 }
 
 // ListVolumes lists volumes with optional filters.
+//
+// Recognised filters: "storage" picks the pool (default: the configured
+// DefaultStorage), "node" picks the cluster node (default: the configured node,
+// else the first online one), and "name" keeps volumes whose volid contains the
+// given substring.
+//
+// Each returned volume carries the owning guest's VMID in AttachedTo when PVE
+// reports one. PVE records that owner on the content entry itself, which is
+// what lets a caller delete a guest's volumes by attribution rather than by
+// sweeping a pool.
 func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	node, err := m.client.getNode(ctx)
-	if err != nil {
-		return nil, err
+	node, ok := filters["node"]
+	if !ok || node == "" {
+		var err error
+
+		node, err = m.client.getNode(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	storage := m.client.config.DefaultStorage
@@ -341,13 +356,21 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 			sizeGB = int(size / bytesPerGB)
 		}
 
+		// PVE reports the owning guest on image and rootdir entries. Keep it:
+		// it is the only authoritative link from a volume back to its VM.
+		owner := ""
+		if ownerVMID := getIntFromMap(volData, "vmid"); ownerVMID > 0 {
+			owner = strconv.Itoa(ownerVMID)
+		}
+
 		volumes = append(volumes, &cpi.Volume{
-			ID:    volID,
-			Name:  volID,
-			Size:  sizeGB,
-			Type:  storage,
-			State: cpi.ResourceStateAvailable,
-			Tags:  make(map[string]string),
+			ID:         volID,
+			Name:       volID,
+			Size:       sizeGB,
+			Type:       storage,
+			State:      cpi.ResourceStateAvailable,
+			AttachedTo: owner,
+			Tags:       make(map[string]string),
 		})
 	}
 
