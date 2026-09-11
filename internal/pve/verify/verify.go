@@ -319,6 +319,58 @@ func (v *PVEVerifier) VMExists(ctx context.Context, nameOrID string) (bool, erro
 	return false, nil
 }
 
+// VM is a minimal summary of a QEMU guest as it appears in the node's VM list.
+type VM struct {
+	// VMID is the numeric Proxmox guest id, rendered as a string.
+	VMID string
+
+	// Name is the guest's configured name. It is empty for a guest that has
+	// never been given one.
+	Name string
+}
+
+// ListVMs returns every QEMU guest on the verifier's node, each with its VMID
+// and name. Callers that need to match a group of guests, rather than one
+// known id, should use this instead of calling VMExists once per candidate:
+// it costs a single API round trip and it sees guests whose names the caller
+// could not have predicted.
+func (v *PVEVerifier) ListVMs(ctx context.Context) ([]VM, error) {
+	node, err := v.requireNode()
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf(pveAPIPathVMs, url.PathEscape(node))
+
+	raw, err := v.get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := asList(raw)
+	if err != nil {
+		return nil, fmt.Errorf("pve verify ListVMs: parse list: %w", err)
+	}
+
+	vms := make([]VM, 0, len(items))
+
+	for _, item := range items {
+		var vm VM
+
+		if vmid, ok := item["vmid"]; ok {
+			vm.VMID = strings.TrimSpace(fmt.Sprintf("%v", vmid))
+		}
+
+		if name, ok := item["name"]; ok {
+			vm.Name = strings.TrimSpace(fmt.Sprintf("%v", name))
+		}
+
+		vms = append(vms, vm)
+	}
+
+	return vms, nil
+}
+
 // VNetExists returns true when an SDN vnet with the given ID appears in the
 // /cluster/sdn/vnets list. Matches on the "vnet" field.
 func (v *PVEVerifier) VNetExists(ctx context.Context, vnetID string) (bool, error) {
