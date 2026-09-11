@@ -32,6 +32,14 @@ const (
 	spruceOrigPath = "/usr/local/bin/spruce-orig"
 )
 
+// SHIELD CLI install target. The version is pinned because the CLI and the
+// SHIELD core it talks to speak a versioned API, so the bastion gets the same
+// release the mgmt plane deploys.
+const (
+	shieldVersion = "9.0.2"
+	shieldPath    = "/usr/local/bin/shield"
+)
+
 // File permissions used in provisioning.
 const (
 	directoryModeStandard = 0755
