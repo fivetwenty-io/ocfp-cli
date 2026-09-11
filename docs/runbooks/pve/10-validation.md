@@ -83,9 +83,14 @@ for PVE's flat network — and dropping it breaks the deploy itself.
 Push, route, shell: three greens, and the bloc's primary arc is complete —
 network to bastion to directors to Vault to platform to running app. We
 clean up our test artifacts (`cf delete e2e-test -f`, and the org too if we
-like), or keep them as a standing smoke test. `ocfp test smoke` and the CF
-smoke-test errand offer the automated version of this chapter when we want
-it on a schedule.
+like), or keep them as a standing smoke test. `ocfp test smoke` run from the
+bastion is the automated version of this chapter. It pushes a static app into
+a throwaway org, confirms the HTTPS route answers 200, reads the app's recent
+logs, and deletes everything again. `ocfp test acceptance --bosh-env <alias>`
+runs the CF smoke-tests errand through the director instead, and `ocfp test
+c2c` covers container networking once we want more than the arc. Each check
+reports passed, failed, or skipped with a reason, so a skip never reads as a
+green. See [docs/commands/test.md](../../commands/test.md) for the suites.
 
 What remains is turning a working platform into an operable one:
 [11. Platform services](11-platform-services.md).

@@ -139,7 +139,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | Command | Description |
 |---------|-------------|
 | `init` | Initialize OCFP components (PostgreSQL, CF, BOSH) |
-| `test` | Run platform tests |
+| `test` | Run validation suites against the CF foundation (see docs/commands/test.md) |
 | `vault` | Manage secrets in Vault |
 | `endpoints` | List DNS/endpoint facts for a bloc (see docs/networking/endpoints.md) |
 | `lb` | Load balancer management (see go/docs/cmds/lb.md) |
@@ -485,6 +485,7 @@ to 100, PVE credentials are validated at config load, and the BOSH Director flav
 was resized to 8 vCPU / 16 GiB / 128 GiB.
 
 - [Breaking and behavior changes](docs/migrations/pve-robustness-changes.md) — read before deploying to existing PVE blocs
+- [Test suites](docs/commands/test.md) — what each `ocfp test` suite checks, its flags, and how skips are reported
 - [PVE commands](docs/commands/pve-commands.md) — `ocfp pve unstick` and the integration harness
 - [Architecture overview](docs/architecture/pve-robustness.md) — package layout, probe flow, and config additions
 

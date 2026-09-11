@@ -223,16 +223,6 @@ func ErrTestsFailed(passed, failed, skipped int) error {
 	return fmt.Errorf("tests failed: %d passed, %d failed, %d skipped", passed, failed, skipped) //nolint:err113 // dynamic error with context
 }
 
-// ErrUnsupportedTestSuite returns an error for an unsupported test suite.
-func ErrUnsupportedTestSuite(suite string) error {
-	return fmt.Errorf("unsupported test suite: %s", suite) //nolint:err113 // dynamic error with context
-}
-
-// ErrTestDirectoryNotFound returns an error when the test directory does not exist.
-func ErrTestDirectoryNotFound(dir string) error {
-	return fmt.Errorf("test directory not found: %s", dir) //nolint:err113 // dynamic error with context
-}
-
 // ErrUnknownTestSuite returns an error for an unrecognized test suite.
 func ErrUnknownTestSuite(suite string) error {
 	return fmt.Errorf("unknown test suite: %s", suite) //nolint:err113 // dynamic error with context
