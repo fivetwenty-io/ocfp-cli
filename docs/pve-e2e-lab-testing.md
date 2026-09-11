@@ -102,7 +102,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 - `ocfp bootstrap [--bloc] [--all|--artifacts|--bastion|--network|…] [--dry-run --output json] [--yes|--force]`
 - `ocfp init <bastion|pg|bosh|cf|all> [--bloc] [--genesis|--ocfp|--config] [--resume] [--dry-run]`
 - `ocfp teardown [--bloc] [--all|--nuke] [--force] [--empty] [--dry-run --output json]`
-- `ocfp test <smoke|c2c|acceptance|…> [--bloc] [--timeout]`
+- `ocfp test <smoke|c2c|blacksmith|tcp|nfs|smb|acceptance|all> [--bloc] [--timeout] [--parallel] [--output results.xml]` — cf CLI driven suites from any logged-in machine; see [docs/commands/test.md](commands/test.md)
 - Bloc resolution: `--bloc` → `OCFP_BLOC` → state `~/.local/state/ocfp/<bloc>/current.json` → single-bloc config.
 
 ---
