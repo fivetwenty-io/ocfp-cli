@@ -10,7 +10,7 @@ import (
 )
 
 // ArtifactsWriter persists ocfp-artifacts blobstore configuration into vault.
-// Implements artifacts.VaultWriter. The writer fans out to seven paths:
+// Implements artifacts.VaultWriter. The writer fans out to eleven paths:
 //
 //   - {bloc}/mgmt/bosh/blobstores/bosh           (mgmt-BOSH director config)
 //   - {bloc}/mgmt/bosh/blobstores/bosh/creds     (mgmt-BOSH director credentials)
@@ -18,6 +18,10 @@ import (
 //   - {bloc}/ocf/bosh/blobstores/bosh/creds      (env-BOSH director credentials)
 //   - {bloc}/ocf/cf/blobstores/main              (CF blobstore config)
 //   - {bloc}/ocf/cf/blobstores/main/creds        (CF blobstore credentials)
+//   - {bloc}/mgmt/shield/blobstores/main         (SHIELD mgmt-tier archive store config)
+//   - {bloc}/mgmt/shield/blobstores/main/creds   (SHIELD mgmt-tier archive store credentials)
+//   - {bloc}/ocf/shield/blobstores/main          (SHIELD ocf-tier archive store config)
+//   - {bloc}/ocf/shield/blobstores/main/creds    (SHIELD ocf-tier archive store credentials)
 //   - {bloc}/ocfp/artifacts                      (operational metadata)
 //
 // The CA cert (when TLS is enabled) is read from `ep.CACert` and written into
@@ -41,6 +45,11 @@ import (
 //     The CF kit never reads `:ca_cert` — it relies on the BOSH director
 //     distributing `trusted_certs` to CF-deployed VMs instead of pinning the
 //     blobstore CA directly.
+//   - {bloc}/{mgmt,ocf}/shield/blobstores/main(/creds): the S3 store the
+//     mgmt SHIELD core archives that tier's backups into. Read by the
+//     operator when creating the SHIELD store (`:endpoint`, `:host`, `:bucket`,
+//     `/creds:access_key` + `/creds:secret_key`); the shield kit itself does
+//     not configure stores at deploy time.
 //   - {bloc}/ocfp/artifacts: operator/status metadata only (endpoint, host,
 //     port, tls_mode, tls_fingerprint_sha256, tls_leaf_not_after). Not read
 //     by any kit today — see the tls_fingerprint_sha256 warning below before
@@ -102,6 +111,14 @@ func (w *ArtifactsWriter) WriteArtifacts(_ context.Context, blocName string, ep 
 		{
 			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "cf", "main"),
 			body: blobstoreEntry(ep, caPEM, w.BlocName+"-ocf-cf"),
+		},
+		{
+			path: w.PathBuilder.GetSystemBlobstorePath("mgmt", "shield", "main"),
+			body: blobstoreEntry(ep, caPEM, w.BlocName+"-mgmt-shield"),
+		},
+		{
+			path: w.PathBuilder.GetSystemBlobstorePath("ocf", "shield", "main"),
+			body: blobstoreEntry(ep, caPEM, w.BlocName+"-ocf-shield"),
 		},
 	}
 

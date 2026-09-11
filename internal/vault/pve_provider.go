@@ -1204,6 +1204,13 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		return err
 	}
 
+	// SHIELD archives this tier's backups into its own bucket. The mgmt SHIELD
+	// core reads the mgmt-scoped record for mgmt-tier targets and the
+	// ocf-scoped record for ocf-tier targets, so both scopes get a record.
+	if err := p.configureSHIELDBlobstoreForScope(envType, region); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1392,14 +1399,34 @@ func (p *PVEVaultProvider) ensureBlobstoreBucket(bucketName string) error {
 // kit can deploy with an S3-compatible blobstore. Bucket names follow the
 // <bloc>-<scope>-bosh convention. Path mirrors AWS naming convention.
 func (p *PVEVaultProvider) configureBOSHBlobstoreForScope(scope, region string) error {
-	boshPath := p.PathBuilder.GetSystemBlobstorePath(scope, "bosh", "bosh")
-	bucketName := fmt.Sprintf("%s-%s-bosh", p.BlocName, scope)
+	// The BOSH director blobstore bucket is the one whose absence silently broke
+	// CF deploy (NoSuchUpload on every compiled-release UploadPart), so the
+	// record and the bucket are written together.
+	return p.configureScopedBlobstore(scope, "bosh", "bosh", "bosh", "BOSH director", region)
+}
+
+// configureSHIELDBlobstoreForScope writes the SHIELD archive store config and
+// credentials for the given scope (mgmt or ocf) and creates the backing
+// bucket. The shield kit does not configure stores at deploy time; the
+// operator creates the SHIELD store from this record after the core is
+// initialized. Bucket names follow the <bloc>-<scope>-shield convention.
+func (p *PVEVaultProvider) configureSHIELDBlobstoreForScope(scope, region string) error {
+	return p.configureScopedBlobstore(scope, "shield", "main", "shield", "SHIELD archive", region)
+}
+
+// configureScopedBlobstore writes one <scope>/<system>/blobstores/<entry>
+// record (plus /creds when credentials are set) for the <bloc>-<scope>-<suffix>
+// bucket and ensures that bucket exists. label names the consumer in logs and
+// errors.
+func (p *PVEVaultProvider) configureScopedBlobstore(scope, system, entry, suffix, label, region string) error {
+	path := p.PathBuilder.GetSystemBlobstorePath(scope, system, entry)
+	bucketName := fmt.Sprintf("%s-%s-%s", p.BlocName, scope, suffix)
 	host := pveHostnameOnly(p.BlobstoreEndpoint)
 
-	p.logger.Infow("Configuring external BOSH director blobstore",
-		"scope", scope, "endpoint", p.BlobstoreEndpoint, "region", region, "path", boshPath)
+	p.logger.Infow("Configuring external "+label+" blobstore",
+		"scope", scope, "endpoint", p.BlobstoreEndpoint, "region", region, "path", path)
 
-	boshConfig := map[string]any{
+	blobstoreConfig := map[string]any{
 		"mode":       "external",
 		"endpoint":   p.BlobstoreEndpoint,
 		"host":       host,
@@ -1410,26 +1437,26 @@ func (p *PVEVaultProvider) configureBOSHBlobstoreForScope(scope, region string) 
 		"status":     "configured",
 	}
 	if p.blobstoreCACert != "" {
-		boshConfig["ca_cert"] = p.blobstoreCACert
+		blobstoreConfig["ca_cert"] = p.blobstoreCACert
 	}
 
-	err := p.Safe.SetMultiple(boshPath, boshConfig)
+	err := p.Safe.SetMultiple(path, blobstoreConfig)
 	if err != nil {
-		return fmt.Errorf("failed to set BOSH blobstore configuration: %w", err)
+		return fmt.Errorf("failed to set %s blobstore configuration: %w", label, err)
 	}
 
 	if p.BlobstoreAccessKey != "" || p.BlobstoreSecretKey != "" {
-		err = p.Safe.SetMultiple(boshPath+"/creds", map[string]any{
+		err = p.Safe.SetMultiple(path+"/creds", map[string]any{
 			"access_key": p.BlobstoreAccessKey,
 			"secret_key": p.BlobstoreSecretKey,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to set BOSH blobstore credentials: %w", err)
+			return fmt.Errorf("failed to set %s blobstore credentials: %w", label, err)
 		}
 	}
 
-	// Create the BOSH director blobstore bucket. This is the bucket whose absence
-	// silently broke CF deploy (NoSuchUpload on every compiled-release UploadPart).
+	// A record pointing at a bucket that does not exist is worse than a loud
+	// failure at populate time, so the bucket is created alongside the record.
 	if err := p.ensureBlobstoreBucket(bucketName); err != nil {
 		return err
 	}

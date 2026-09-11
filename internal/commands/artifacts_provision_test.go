@@ -37,6 +37,8 @@ func TestArtifactsProvisionBuckets_FollowsNamingConvention(t *testing.T) {
 		"ocfp-lab-wayne-ocf-cf-packages",
 		"ocfp-lab-wayne-ocf-cf-buildpacks",
 		"ocfp-lab-wayne-ocf-cf-resource-pool",
+		"ocfp-lab-wayne-mgmt-shield",
+		"ocfp-lab-wayne-ocf-shield",
 	}
 
 	if len(got) != len(want) {
