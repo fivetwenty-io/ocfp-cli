@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,6 +199,44 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	}
 
 	return m.finalizeAndStartVM(ctx, node, vmid, req)
+}
+
+// vmDiskKeyPattern matches the config keys that hold a disk volid. The bus
+// slots (scsi0, virtio1, ide2, sata0) carry attached disks; the unusedN slots
+// carry disks the guest still owns after being detached from a bus.
+var vmDiskKeyPattern = regexp.MustCompile(`^(scsi|virtio|ide|sata|unused)\d+$`)
+
+// parseVMVolumeIDs returns the volids of every disk a VM config references,
+// attached or merely owned. PVE writes a disk as "<volid>,size=64G", so the
+// volid is whatever precedes the first comma. The cloud-init drive on ide2 and
+// the detached disks in unusedN slots both count: a guest owns them, and a
+// caller deleting that guest's storage has to know about them.
+func parseVMVolumeIDs(config map[string]interface{}) []string {
+	volIDs := make([]string, 0, len(config))
+
+	for key, value := range config {
+		if !vmDiskKeyPattern.MatchString(key) {
+			continue
+		}
+
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+
+		volID, _, _ := strings.Cut(raw, ",")
+
+		volID = strings.TrimSpace(volID)
+		if volID == "" || strings.EqualFold(volID, "none") {
+			continue
+		}
+
+		volIDs = append(volIDs, volID)
+	}
+
+	sort.Strings(volIDs)
+
+	return volIDs
 }
 
 // GetInstance retrieves a VM by ID.
@@ -1388,6 +1427,8 @@ func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[
 			}
 		}
 	}
+
+	instance.Volumes = parseVMVolumeIDs(config)
 
 	// Get IP addresses from QEMU guest agent
 	if qga, ok := status["qmpstatus"].(string); ok && qga == "running" {
