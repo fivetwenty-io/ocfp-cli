@@ -592,14 +592,22 @@ func (m *TeardownManager) Execute(ctx context.Context) error {
 
 	defer func() { _ = m.stateManager.Unlock(m.options.BlocName) }()
 
-	cerr := m.teardownCloudflare(ctx)
-	if cerr != nil {
-		log.Warnf("cloudflare teardown: %v", cerr)
-	}
+	// Both DNS steps delete live records, so a dry run has to stop short of
+	// them. They used to run before the dry-run check below, which meant
+	// `teardown --dry-run` really did remove the CNAMEs, delete the tunnel,
+	// and blank the tunnel keys in vault.
+	if m.options.DryRun {
+		log.Info("Dry run: skipping Cloudflare and ingress DNS teardown")
+	} else {
+		cerr := m.teardownCloudflare(ctx)
+		if cerr != nil {
+			log.Warnf("cloudflare teardown: %v", cerr)
+		}
 
-	ierr := m.teardownIngressDNS(ctx)
-	if ierr != nil {
-		log.Warnf("ingress teardown: %v", ierr)
+		ierr := m.teardownIngressDNS(ctx)
+		if ierr != nil {
+			log.Warnf("ingress teardown: %v", ierr)
+		}
 	}
 
 	sortedResources, err := m.prepareResourcesForDeletion(ctx)
@@ -2528,16 +2536,34 @@ func pveAPIToken(cfg *config.Config) string {
 	return ""
 }
 
-// pveVerifierFromConfig constructs a PVEVerifier from bloc config.
-// Returns an error when neither token auth nor username/password is present.
-func pveVerifierFromConfig(cfg *config.Config) (*verify.PVEVerifier, error) {
-	if cfg.APIEndpoint == "" {
-		return nil, errors.New("pve teardown probe: api_endpoint is required in bloc config")
+// pveProbeNodes returns the cluster nodes the teardown probe must look at. A
+// bloc can spread its guests across every node in cfg.Nodes, so checking only
+// the first one would report a bloc as gone while its VMs are still running
+// somewhere else in the cluster.
+func pveProbeNodes(cfg *config.Config) []string {
+	seen := make(map[string]bool, len(cfg.Nodes)+1)
+	nodes := make([]string, 0, len(cfg.Nodes)+1)
+
+	for _, node := range append([]string{cfg.Region}, cfg.Nodes...) {
+		node = strings.TrimSpace(node)
+		if node == "" || seen[node] {
+			continue
+		}
+
+		seen[node] = true
+
+		nodes = append(nodes, node)
 	}
 
-	node := cfg.Region
-	if node == "" && len(cfg.Nodes) > 0 {
-		node = cfg.Nodes[0]
+	return nodes
+}
+
+// pveVerifierFromConfig constructs a PVEVerifier from bloc config, scoped to
+// the given cluster node.
+// Returns an error when neither token auth nor username/password is present.
+func pveVerifierFromConfig(cfg *config.Config, node string) (*verify.PVEVerifier, error) {
+	if cfg.APIEndpoint == "" {
+		return nil, errors.New("pve teardown probe: api_endpoint is required in bloc config")
 	}
 
 	if node == "" {
@@ -2552,42 +2578,81 @@ func pveVerifierFromConfig(cfg *config.Config) (*verify.PVEVerifier, error) {
 	return v, nil
 }
 
-// probePVEVMExists uses the out-of-band PVE verifier to check whether the
-// BOSH director VM identified by nameOrID is present on the PVE cluster.
-// nameOrID may be a numeric VMID string or a VM name.
-func probePVEVMExists(ctx context.Context, cfg *config.Config, nameOrID string) (bool, error) {
-	v, err := pveVerifierFromConfig(cfg)
-	if err != nil {
-		return false, err
+// belongsToBlocByName reports whether a PVE guest name identifies a VM of the
+// named bloc. A bloc's guests are named after it: the bloc name on its own, or
+// the bloc name followed by a hyphen and a role, as in "<bloc>-bastion" and
+// "<bloc>-artifacts". The hyphen matters — without it "ocfp-cf1-lab" would
+// also claim the guests of "ocfp-cf1-lab2".
+func belongsToBlocByName(vmName, blocName string) bool {
+	vmName = strings.TrimSpace(vmName)
+	if vmName == "" || blocName == "" {
+		return false
 	}
 
-	return v.VMExists(ctx, nameOrID)
+	return strings.EqualFold(vmName, blocName) ||
+		strings.HasPrefix(strings.ToLower(vmName), strings.ToLower(blocName)+"-")
 }
 
-// pveCheckAlreadyTornDown probes whether the PVE BOSH director has already
-// been torn down. Returns (true, nil) when teardown is confirmed complete and
-// the caller should exit 0. Returns (false, nil) when the VM is present and
-// teardown should proceed. Returns (false, err) when the probe itself fails;
-// callers should log and proceed conservatively.
-//
-// Director VM identity: cfg.Name (bloc name) is used as the VM name to match
-// in the PVE qemu list. PVE BOSH directors are named after the bloc by default.
-func pveCheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger.Logger) (bool, error) {
-	nameOrID := cfg.Name
-
-	exists, err := probePVEVMExists(ctx, cfg, nameOrID)
-	if err != nil {
-		return false, fmt.Errorf("pve teardown probe VMExists(%q): %w", nameOrID, err)
+// pveBlocVMs returns the names of every guest on the bloc's cluster nodes that
+// belongs to the bloc.
+func pveBlocVMs(ctx context.Context, cfg *config.Config) ([]string, error) {
+	nodes := pveProbeNodes(cfg)
+	if len(nodes) == 0 {
+		return nil, errors.New("pve teardown probe: node (region or nodes[0]) is required in bloc config")
 	}
 
-	if !exists {
-		log.Infow("teardown: VM already gone, nothing to delete", "nameOrID", nameOrID)
-		_, _ = fmt.Fprintf(os.Stdout, "teardown: VM already gone (nameOrID=%s), nothing to delete\n", nameOrID)
+	var found []string
+
+	for _, node := range nodes {
+		v, err := pveVerifierFromConfig(cfg, node)
+		if err != nil {
+			return nil, err
+		}
+
+		vms, err := v.ListVMs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("pve teardown probe ListVMs(node=%q): %w", node, err)
+		}
+
+		for _, vm := range vms {
+			if belongsToBlocByName(vm.Name, cfg.Name) {
+				found = append(found, vm.Name)
+			}
+		}
+	}
+
+	return found, nil
+}
+
+// pveCheckAlreadyTornDown probes whether a PVE bloc has already been torn
+// down. Returns (true, nil) when teardown is confirmed complete and the caller
+// should exit 0. Returns (false, nil) when at least one of the bloc's VMs is
+// still present and teardown should proceed. Returns (false, err) when the
+// probe itself fails; callers should log and proceed conservatively.
+//
+// The probe matches every guest belonging to the bloc, not one VM named after
+// it. Bootstrap names its guests "<bloc>-bastion" and "<bloc>-artifacts", so a
+// probe that looked only for a guest named exactly "<bloc>" reported every
+// bloc as already torn down and made the whole command a no-op, dry runs
+// included.
+func pveCheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger.Logger) (bool, error) {
+	if cfg.Name == "" {
+		return false, errors.New("pve teardown probe: bloc name is required in bloc config")
+	}
+
+	found, err := pveBlocVMs(ctx, cfg)
+	if err != nil {
+		return false, fmt.Errorf("pve teardown probe for bloc %q: %w", cfg.Name, err)
+	}
+
+	if len(found) == 0 {
+		log.Infow("teardown: no VMs left for bloc, nothing to delete", "bloc", cfg.Name)
+		_, _ = fmt.Fprintf(os.Stdout, "teardown: no VMs left for bloc %s, nothing to delete\n", cfg.Name)
 
 		return true, nil
 	}
 
-	log.Infow("teardown: VM present, proceeding with teardown", "nameOrID", nameOrID)
+	log.Infow("teardown: bloc VMs present, proceeding with teardown", "bloc", cfg.Name, "vms", found)
 
 	return false, nil
 }
