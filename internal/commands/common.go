@@ -49,6 +49,7 @@ const (
 	ResourceLoadBalancer     = "loadbalancer"
 	ResourceSecurityGroup    = "security_group"
 	ResourceNetworkInterface = "network_interface"
+	ResourceArtifacts        = "artifacts"
 
 	CategoryNetwork = "network"
 
