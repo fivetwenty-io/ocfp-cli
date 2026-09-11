@@ -163,12 +163,14 @@ func TestArtifactsWriter_DisabledModeNoCACert(t *testing.T) {
 	}
 }
 
-// TestArtifactsWriter_WritesAllThreeBlobstoreTriples pins the vault tree the
-// writer fans out to: mgmt-bosh, ocf-bosh, and ocf-cf-main. Each triple has
-// a config entry, a /creds entry, and consistent bucket naming. Forgetting
-// the ocf-bosh triple (added when env-BOSH switched to external blobstore)
-// silently breaks the env-BOSH deploy with a manifest-resolve failure.
-func TestArtifactsWriter_WritesAllThreeBlobstoreTriples(t *testing.T) {
+// TestArtifactsWriter_WritesAllBlobstoreTriples pins the vault tree the
+// writer fans out to: mgmt-bosh, ocf-bosh, ocf-cf-main, mgmt-shield, and
+// ocf-shield. Each triple has a config entry, a /creds entry, and consistent
+// bucket naming. Forgetting the ocf-bosh triple (added when env-BOSH switched
+// to external blobstore) silently breaks the env-BOSH deploy with a
+// manifest-resolve failure; forgetting a shield triple leaves the SHIELD core
+// with no store record to archive into.
+func TestArtifactsWriter_WritesAllBlobstoreTriples(t *testing.T) {
 	t.Parallel()
 
 	safe := newFakeSafe()
@@ -198,6 +200,8 @@ func TestArtifactsWriter_WritesAllThreeBlobstoreTriples(t *testing.T) {
 		{"mgmt", "bosh", "bosh", "ocfp-lab-wayne-mgmt-bosh"},
 		{"ocf", "bosh", "bosh", "ocfp-lab-wayne-ocf-bosh"},
 		{"ocf", "cf", "main", "ocfp-lab-wayne-ocf-cf"},
+		{"mgmt", "shield", "main", "ocfp-lab-wayne-mgmt-shield"},
+		{"ocf", "shield", "main", "ocfp-lab-wayne-ocf-shield"},
 	}
 
 	for _, c := range cases {

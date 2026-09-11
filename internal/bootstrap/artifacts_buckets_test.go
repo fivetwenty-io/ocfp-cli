@@ -22,6 +22,8 @@ func TestArtifactsBucketList_ContainsAllRequiredBuckets(t *testing.T) {
 		"ocfp-lab-wayne-ocf-cf-packages":      true,
 		"ocfp-lab-wayne-ocf-cf-buildpacks":    true,
 		"ocfp-lab-wayne-ocf-cf-resource-pool": true,
+		"ocfp-lab-wayne-mgmt-shield":          true,
+		"ocfp-lab-wayne-ocf-shield":           true,
 	}
 
 	if len(got) != len(want) {
