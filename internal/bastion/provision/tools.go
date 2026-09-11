@@ -269,6 +269,23 @@ func (atm *AdvancedToolManager) getCFEcosystemTools() []AdvancedBinaryTool {
 			Sudo:          true,
 			VerifyCommand: "uaa version",
 		},
+		{
+			// The SHIELD CLI ships no Linux package, and its Homebrew formula
+			// is macOS-only, so the bastion takes the binary straight from the
+			// GitHub release. The asset name carries no version, which is why
+			// ${VERSION} appears only in the release tag. The version is pinned
+			// rather than tracked from latest because the CLI and the SHIELD
+			// core it talks to move together.
+			Name:          "shield",
+			Enabled:       true,
+			CheckCommand:  "shield",
+			FixedVersion:  shieldVersion,
+			URLTemplate:   "https://github.com/shieldproject/shield/releases/download/v${VERSION}/shield-linux-amd64",
+			Dest:          shieldPath,
+			Mode:          fileModeExecutable,
+			Sudo:          true,
+			VerifyCommand: "shield --version",
+		},
 	}
 }
 

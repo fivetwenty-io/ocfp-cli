@@ -223,9 +223,10 @@ func (vm *VerificationManager) getCloudFoundryToolsVerification() ToolVerificati
 // getOptionalCFToolsVerification covers tools that are part of the OCFP toolchain
 // but not required for the core BOSH/CF deploy path. bao is always optional (installed
 // via brew); vault is optional when secrets_backend=openbao (the default). uaa is
-// optional in all cases.
+// optional in all cases. shield is optional too: the CLI only matters once a
+// SHIELD core is deployed, and the BOSH/CF deploy path never calls it.
 func (vm *VerificationManager) getOptionalCFToolsVerification() ToolVerification {
-	commands := []string{"bao", "uaa"}
+	commands := []string{"bao", "uaa", "shield"}
 
 	// When using the default openbao backend, vault is also optional (not required).
 	if vm.config == nil || vm.config.SecretsBackendName() != "vault" {

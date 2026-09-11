@@ -122,3 +122,112 @@ func TestAdvancedTools_VersionScript_ClearsVersionOnFailure(t *testing.T) {
 		t.Error("Expected script to clear LATEST_VERSION on version fetch failure")
 	}
 }
+
+// findAdvancedTool returns the named tool from the advanced list, failing the
+// test when it is absent.
+func findAdvancedTool(t *testing.T, tools []AdvancedBinaryTool, name string) AdvancedBinaryTool {
+	t.Helper()
+
+	for _, tool := range tools {
+		if tool.Name == name {
+			return tool
+		}
+	}
+
+	t.Fatalf("expected %q in the advanced binary tool list", name)
+
+	return AdvancedBinaryTool{}
+}
+
+func TestAdvancedTools_ShieldEnabledAndPinned(t *testing.T) {
+	cfg := &config.Config{
+		Bastion: config.Bastion{
+			Tools: config.OverrideSets{},
+		},
+	}
+
+	atm := NewAdvancedToolManager("aws", cfg)
+	shield := findAdvancedTool(t, atm.GetAdvancedBinaryTools(), "shield")
+
+	if !shield.Enabled {
+		t.Error("expected shield to be enabled: the Homebrew formula is macOS-only, so the bastion needs the release binary")
+	}
+
+	if shield.FixedVersion != "9.0.2" {
+		t.Errorf("expected shield pinned to 9.0.2, got %q", shield.FixedVersion)
+	}
+
+	if shield.VersionURL != "" {
+		t.Errorf("expected no version lookup for a pinned tool, got %q", shield.VersionURL)
+	}
+
+	wantURL := "https://github.com/shieldproject/shield/releases/download/v${VERSION}/shield-linux-amd64"
+	if shield.URLTemplate != wantURL {
+		t.Errorf("expected url template %q, got %q", wantURL, shield.URLTemplate)
+	}
+
+	if shield.Dest != "/usr/local/bin/shield" {
+		t.Errorf("expected shield installed at /usr/local/bin/shield, got %q", shield.Dest)
+	}
+
+	if shield.Extract {
+		t.Error("expected shield-linux-amd64 to be treated as a bare binary, not an archive")
+	}
+
+	if !shield.Sudo {
+		t.Error("expected shield install to use sudo: /usr/local/bin is root-owned")
+	}
+
+	if shield.Mode != fileModeExecutable {
+		t.Errorf("expected mode %o, got %o", fileModeExecutable, shield.Mode)
+	}
+
+	if shield.VerifyCommand != "shield --version" {
+		t.Errorf("expected verification via 'shield --version', got %q", shield.VerifyCommand)
+	}
+}
+
+func TestAdvancedTools_ShieldScriptUsesPinnedRelease(t *testing.T) {
+	cfg := &config.Config{
+		Bastion: config.Bastion{
+			Tools: config.OverrideSets{},
+		},
+	}
+
+	atm := NewAdvancedToolManager("aws", cfg)
+	script := atm.GenerateAdvancedToolScript(context.Background())
+
+	if !strings.Contains(script, "LATEST_VERSION='9.0.2'") {
+		t.Error("expected the script to set the pinned shield version directly")
+	}
+
+	if !strings.Contains(script, "https://github.com/shieldproject/shield/releases/download/v${VERSION}/shield-linux-amd64") {
+		t.Error("expected the script to carry the shield release URL template")
+	}
+
+	if !strings.Contains(script, "sudo mv '/tmp/shield-download' '/usr/local/bin/shield'") {
+		t.Error("expected the script to install the downloaded shield binary into /usr/local/bin")
+	}
+
+	if strings.Contains(script, "api.github.com/repos/shieldproject/shield") {
+		t.Error("expected a pinned tool to skip the GitHub releases API entirely")
+	}
+}
+
+func TestAdvancedTools_ShieldVersionOverrideApplies(t *testing.T) {
+	cfg := &config.Config{
+		Bastion: config.Bastion{
+			Tools: config.OverrideSets{},
+			ToolOverrides: map[string]config.ToolOverride{
+				"shield": {Version: "9.1.0"},
+			},
+		},
+	}
+
+	atm := NewAdvancedToolManager("aws", cfg)
+	shield := findAdvancedTool(t, atm.GetAdvancedBinaryTools(), "shield")
+
+	if shield.FixedVersion != "9.1.0" {
+		t.Errorf("expected the config override to repin shield to 9.1.0, got %q", shield.FixedVersion)
+	}
+}
