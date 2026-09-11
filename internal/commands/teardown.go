@@ -773,7 +773,7 @@ func cloudflareSafe() vault.SafeInterface {
 // DeleteResource deletes a single resource.
 func (m *TeardownManager) DeleteResource(ctx context.Context, resource *ResourceToDelete) error {
 	switch resource.Type {
-	case ResourceInstance:
+	case ResourceInstance, ResourceArtifacts:
 		return m.deleteComputeResource(ctx, resource)
 	case ResourceVolume, ResourceSnapshot, ResourceBucket, "credentials_group":
 		return m.deleteStorageResource(ctx, resource)
@@ -841,6 +841,16 @@ func TestMergeResources(existing, discovered []*ResourceToDelete) []*ResourceToD
 	return mergeResources(existing, discovered)
 }
 
+// DiscoverResourcesForTest exposes discoverResources for testing.
+func (m *TeardownManager) DiscoverResourcesForTest(ctx context.Context) ([]*ResourceToDelete, error) {
+	return m.discoverResources(ctx)
+}
+
+// PrepareResourcesForTest exposes prepareResourcesForDeletion for testing.
+func (m *TeardownManager) PrepareResourcesForTest(ctx context.Context) ([]*ResourceToDelete, error) {
+	return m.prepareResourcesForDeletion(ctx)
+}
+
 // TestPVECheckAlreadyTornDown exposes pveCheckAlreadyTornDown for testing.
 func TestPVECheckAlreadyTornDown(ctx context.Context, cfg *config.Config, log logger.Logger) (bool, error) {
 	return pveCheckAlreadyTornDown(ctx, cfg, log)
@@ -891,7 +901,65 @@ func (m *TeardownManager) prepareResourcesForDeletion(ctx context.Context) ([]*R
 		return nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
+	m.resolveArtifactsVMIDs(ctx, resourcesToDelete)
+
 	return m.sortResourcesForDeletion(resourcesToDelete), nil
+}
+
+// resolveArtifactsVMIDs rewrites each artifacts resource's ID to the guest's
+// VMID. Bootstrap records the artifacts VM under its name rather than its VMID,
+// so the row arrives carrying "<bloc>-artifacts" in both fields. Deleting a
+// guest needs the VMID, and an operator reading a dry run needs to see which
+// VMID teardown resolved before agreeing to delete it, so the lookup happens
+// here rather than at delete time.
+func (m *TeardownManager) resolveArtifactsVMIDs(ctx context.Context, resources []*ResourceToDelete) {
+	log := logger.Get()
+
+	compute := m.provider.ComputeManager()
+	if compute == nil {
+		return
+	}
+
+	for _, resource := range resources {
+		if resource.Type != ResourceArtifacts || isNumericID(resource.ID) {
+			continue
+		}
+
+		instances, err := compute.ListInstances(ctx, map[string]string{"name": resource.Name})
+		if err != nil {
+			log.Warnw("cannot resolve the artifacts VMID, leaving the recorded id in place",
+				"name", resource.Name, "error", err)
+
+			continue
+		}
+
+		switch len(instances) {
+		case 0:
+			log.Infow("artifacts VM is already gone", "name", resource.Name)
+		case 1:
+			log.Infow("resolved the artifacts VMID", "name", resource.Name, "vmid", instances[0].ID)
+
+			resource.ID = instances[0].ID
+		default:
+			log.Warnw("several guests share the artifacts VM name, leaving the recorded id in place",
+				"name", resource.Name, "matches", len(instances))
+		}
+	}
+}
+
+// isNumericID reports whether an id is already a VMID rather than a name.
+func isNumericID(id string) bool {
+	if id == "" {
+		return false
+	}
+
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (m *TeardownManager) handleDeletionPlan(sortedResources []*ResourceToDelete, log logger.Logger) error {
@@ -1062,7 +1130,8 @@ func (m *TeardownManager) discoverResources(ctx context.Context) ([]*ResourceToD
 	resources := make([]*ResourceToDelete, 0, InitialResourcesBufferSize)
 
 	if m.options.Nuke {
-		// Nuke mode: find ALL resources in the project
+		// Nuke mode: ask the cloud rather than the state file, still scoped to
+		// the bloc's own guests and their storage.
 		return m.discoverAllResources(ctx)
 	}
 
@@ -1816,68 +1885,244 @@ func (m *TeardownManager) discoverSecurityResources(ctx context.Context, tagFilt
 	log.Infow("Discovered security groups", "count", filteredCount, "total", len(secGroups))
 }
 
-// discoverAllResources finds ALL resources in the project (nuke mode).
+// discoverAllResources finds every resource belonging to the bloc (nuke mode).
+// Nuke skips the state file and asks the cloud directly, which is the point of
+// the flag: it catches resources a failed teardown dropped from state. It does
+// not skip the bloc scope. Every candidate is identified by the bloc's own
+// names and VMIDs, never by a storage path, a band, or an apparent lack of an
+// owner.
 func (m *TeardownManager) discoverAllResources(ctx context.Context) ([]*ResourceToDelete, error) {
 	log := logger.Get()
-	log.Warn("NUKE MODE: Discovering ALL resources in project")
-	log.Warn("NUKE MODE bypasses bloc name filtering - ALL resources will be deleted regardless of bloc tags")
+	log.Warnw("NUKE MODE: discovering every resource belonging to the bloc", "bloc", m.options.BlocName)
+
+	guests := m.discoverNukeGuests(ctx)
 
 	resources := make([]*ResourceToDelete, 0, NukeModeResourcesBufferSize)
+	resources = append(resources, guests...)
+	resources = append(resources, m.discoverNukeVolumes(ctx, guests)...)
+	resources = append(resources, m.discoverNukeNetworks()...)
 
-	// List ALL instances
-	if compute := m.provider.ComputeManager(); compute != nil {
-		instances, err := compute.ListInstances(ctx, nil)
-		if err == nil {
-			for _, instance := range instances {
-				resources = append(resources, &ResourceToDelete{
-					Type:         "instance",
-					ID:           instance.ID,
-					Name:         instance.Name,
-					Dependencies: nil,
-					State:        "",
-					Properties:   nil,
-				})
+	log.Warnw("NUKE MODE: found resources", "count", len(resources), "guests", len(guests))
+
+	return m.filterResources(resources), nil
+}
+
+// discoverNukeGuests returns the QEMU guests that belong to the bloc, across
+// every node the provider reports. Nuke mode is still bloc-scoped: a guest
+// named for another bloc is another team's machine, and a shared cluster is the
+// normal case rather than the exception. ListInstances already leaves templates
+// out of its result, so a template is never a deletion candidate here.
+func (m *TeardownManager) discoverNukeGuests(ctx context.Context) []*ResourceToDelete {
+	log := logger.Get()
+
+	compute := m.provider.ComputeManager()
+	if compute == nil {
+		return nil
+	}
+
+	instances, err := compute.ListInstances(ctx, nil)
+	if err != nil {
+		log.Warnw("NUKE MODE: failed to list instances", "error", err)
+
+		return nil
+	}
+
+	guests := make([]*ResourceToDelete, 0, len(instances))
+
+	for _, instance := range instances {
+		if !belongsToBlocByName(instance.Name, m.options.BlocName) {
+			log.Debugw("NUKE MODE: skipping guest outside the bloc", "name", instance.Name, "id", instance.ID)
+
+			continue
+		}
+
+		guests = append(guests, &ResourceToDelete{
+			Type:         ResourceInstance,
+			ID:           instance.ID,
+			Name:         instance.Name,
+			Dependencies: nil,
+			State:        string(instance.State),
+			Properties:   map[string]interface{}{"node": instance.AvailabilityZone},
+			Tags:         instance.Tags,
+		})
+	}
+
+	return guests
+}
+
+// nukeStorageScope records which storages the bloc's guests actually use, and
+// on which node each of those storages was seen.
+type nukeStorageScope struct {
+	// vmids holds the VMIDs of the guests nuke is about to delete.
+	vmids map[string]bool
+
+	// nodeStorages maps a cluster node to the storages the bloc's guests use
+	// on it.
+	nodeStorages map[string]map[string]bool
+}
+
+// buildNukeStorageScope reads each guest's config to learn which storages it
+// uses. Nothing here guesses: the storages come from the guests' own disks, so
+// a pool no bloc guest ever touched is never even listed.
+func (m *TeardownManager) buildNukeStorageScope(ctx context.Context, guests []*ResourceToDelete) nukeStorageScope {
+	log := logger.Get()
+
+	scope := nukeStorageScope{
+		vmids:        make(map[string]bool, len(guests)),
+		nodeStorages: make(map[string]map[string]bool, len(guests)),
+	}
+
+	compute := m.provider.ComputeManager()
+	if compute == nil {
+		return scope
+	}
+
+	for _, guest := range guests {
+		scope.vmids[guest.ID] = true
+
+		instance, err := compute.GetInstance(ctx, guest.ID)
+		if err != nil {
+			log.Warnw("NUKE MODE: cannot read guest config, its storages stay out of scope",
+				"id", guest.ID, "name", guest.Name, "error", err)
+
+			continue
+		}
+
+		node := instance.AvailabilityZone
+		if scope.nodeStorages[node] == nil {
+			scope.nodeStorages[node] = make(map[string]bool, len(instance.Volumes))
+		}
+
+		for _, volID := range instance.Volumes {
+			if storage := storageFromVolID(volID); storage != "" {
+				scope.nodeStorages[node][storage] = true
 			}
 		}
 	}
 
-	// List ALL volumes
-	if storage := m.provider.StorageManager(); storage != nil {
-		volumes, err := storage.ListVolumes(ctx, nil)
-		if err == nil {
-			for _, volume := range volumes {
-				resources = append(resources, &ResourceToDelete{
+	return scope
+}
+
+// discoverNukeVolumes returns the volumes attributable to the guests nuke is
+// deleting. A volume qualifies when PVE names one of those guests as its owner,
+// or when its volid carries one of their VMIDs. Everything else on the pool is
+// left alone, however abandoned it looks: an unattributed volume on a shared
+// cluster belongs to somebody, and teardown is not the code that gets to guess
+// whose.
+func (m *TeardownManager) discoverNukeVolumes(ctx context.Context, guests []*ResourceToDelete) []*ResourceToDelete {
+	log := logger.Get()
+
+	storage := m.provider.StorageManager()
+	if storage == nil || len(guests) == 0 {
+		return nil
+	}
+
+	scope := m.buildNukeStorageScope(ctx, guests)
+
+	var (
+		volumes []*ResourceToDelete
+		seen    = make(map[string]bool)
+	)
+
+	for node, storages := range scope.nodeStorages {
+		for pool := range storages {
+			listed, err := storage.ListVolumes(ctx, map[string]string{"node": node, "storage": pool})
+			if err != nil {
+				log.Warnw("NUKE MODE: failed to list volumes", "node", node, "storage", pool, "error", err)
+
+				continue
+			}
+
+			for _, volume := range listed {
+				if seen[volume.ID] || !volumeBelongsToVMIDs(volume, scope.vmids) {
+					continue
+				}
+
+				seen[volume.ID] = true
+
+				volumes = append(volumes, &ResourceToDelete{
 					Type:         ResourceVolume,
 					ID:           volume.ID,
 					Name:         volume.Name,
 					Dependencies: nil,
-					State:        "",
-					Properties:   nil,
+					State:        string(volume.State),
+					Properties:   map[string]interface{}{"node": node, "storage": pool},
+					Tags:         volume.Tags,
 				})
 			}
 		}
 	}
 
-	// List ALL networks
-	if network := m.provider.NetworkManager(); network != nil {
-		networks, err := network.ListNetworks(ctx, nil)
-		if err == nil {
-			for _, net := range networks {
-				resources = append(resources, &ResourceToDelete{
-					Type:         CategoryNetwork,
-					ID:           net.ID,
-					Name:         net.Name,
-					Dependencies: nil,
-					State:        "",
-					Properties:   nil,
-				})
-			}
+	return volumes
+}
+
+// discoverNukeNetworks returns the network and subnet resources the bloc's own
+// state file records. Nuke never enumerates the cluster's networks: an SDN vnet,
+// subnet, or zone that bootstrap did not record is not ours to delete, and on a
+// shared cluster deleting one would cut off somebody else's guests. Bridge mode
+// stays a no-op either way, because DeleteNetwork refuses to remove a host
+// bridge it cannot prove it created.
+func (m *TeardownManager) discoverNukeNetworks() []*ResourceToDelete {
+	log := logger.Get()
+
+	stateResources, err := m.getResourcesFromState()
+	if err != nil {
+		log.Warnw("NUKE MODE: cannot read state, no networks are in scope", "error", err)
+
+		return nil
+	}
+
+	networks := make([]*ResourceToDelete, 0, len(stateResources))
+
+	for _, resource := range stateResources {
+		if resource.Type == CategoryNetwork || resource.Type == ResourceSubnet {
+			networks = append(networks, resource)
 		}
 	}
 
-	log.Warnw("NUKE MODE: Found resources", "count", len(resources))
+	return networks
+}
 
-	return resources, nil
+// storageFromVolID returns the storage pool of a PVE volid. A volid is
+// "<storage>:<path>", and the path may itself contain colons, so only the first
+// separator counts.
+func storageFromVolID(volID string) string {
+	storage, _, found := strings.Cut(volID, ":")
+	if !found {
+		return ""
+	}
+
+	return strings.TrimSpace(storage)
+}
+
+// volumeBelongsToVMIDs reports whether a volume is attributable to one of the
+// given guests. PVE's own owner field settles it when present. Failing that the
+// volid has to carry the VMID the way PVE names guest disks, as "vm-<vmid>-" on
+// block storage, "base-<vmid>-" for a template's disks, or a "<vmid>/" path
+// segment on file-backed storage. A volume matching none of these is not ours.
+func volumeBelongsToVMIDs(volume *cpi.Volume, vmids map[string]bool) bool {
+	if volume == nil || len(vmids) == 0 {
+		return false
+	}
+
+	if volume.AttachedTo != "" {
+		return vmids[volume.AttachedTo]
+	}
+
+	for vmid := range vmids {
+		if vmid == "" {
+			continue
+		}
+
+		if strings.Contains(volume.ID, "vm-"+vmid+"-") ||
+			strings.Contains(volume.ID, "base-"+vmid+"-") ||
+			strings.Contains(volume.ID, ":"+vmid+"/") ||
+			strings.Contains(volume.ID, "/"+vmid+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isSelectiveModeActive checks if any selective resource type flags are set.
@@ -2074,6 +2319,7 @@ func (m *TeardownManager) sortResourcesForDeletion(resources []*ResourceToDelete
 	order := map[string]int{
 		"loadbalancer":           LoadBalancerPriority,     // 1: Delete load balancers first
 		"instance":               InstancePriority,         // 2: Delete instances early (releases volumes, NICs, SGs)
+		ResourceArtifacts:        InstancePriority,         // 2: The artifacts VM is a guest like any other
 		ResourceNetworkInterface: NetworkInterfacePriority, // 3: Delete network interfaces (after instances detached)
 		"bucket":                 BucketPriority,           // 4: Delete buckets
 		ResourceSnapshot:         SnapshotPriority,         // 5: Delete snapshots before volumes
