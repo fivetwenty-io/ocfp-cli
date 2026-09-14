@@ -345,6 +345,27 @@ func artifactsTags(base map[string]string, blocName string) map[string]string {
 
 // attachArtifactsDataVolume creates and attaches the bulk data volume.
 func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmName string) (*cpi.Volume, error) {
+	// Adopt a preserved disk before allocating a new one. A teardown that
+	// spared the disk achieves nothing if the rebuild allocates a fresh
+	// volume beside it and strands the one holding every compiled release and
+	// cached stemcell.
+	if existing := m.preservedArtifactsVolume(vmName); existing != "" {
+		logger.Infof("Adopting preserved artifacts data volume %s", existing)
+
+		err := m.provider.StorageManager().AttachVolume(ctx, existing, instanceID, artifactsDataDeviceHint)
+		if err != nil {
+			return nil, fmt.Errorf("attach preserved data volume %s: %w", existing, err)
+		}
+
+		return &cpi.Volume{
+			ID:    existing,
+			Name:  vmName + "-data",
+			Size:  m.config.Artifacts.Data.DiskSizeGiB,
+			Type:  m.config.Artifacts.Data.StoragePool,
+			State: cpi.ResourceStateAvailable,
+		}, nil
+	}
+
 	vol, err := m.provider.StorageManager().CreateVolume(ctx, &cpi.VolumeRequest{
 		Name:       vmName + "-data",
 		SizeGB:     m.config.Artifacts.Data.DiskSizeGiB,

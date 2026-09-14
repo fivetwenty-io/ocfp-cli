@@ -52,3 +52,62 @@ func TestArtifactsDataVolumeRecord(t *testing.T) {
 		t.Errorf("role = %v, want artifacts-data", got)
 	}
 }
+
+// TestResolveExistingArtifactsDataVolume asserts a rebuild adopts the disk it
+// was told to preserve rather than allocating a second one.
+//
+// Without this, teardown sparing the disk achieves nothing: the next
+// bootstrap creates a fresh volume, attaches that, and strands the one holding
+// every compiled release and cached stemcell where nothing mounts it.
+func TestResolveExistingArtifactsDataVolume(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		resources []*state.Resource
+		want      string
+	}{
+		{
+			name: "adopts the preserved volume",
+			resources: []*state.Resource{{
+				ID:   "local-lvm-data:vm-101-data",
+				Type: state.ResourceTypeVolume,
+				Name: "prod-artifacts-data",
+				Properties: map[string]interface{}{
+					"role": "artifacts-data", "preserve": true,
+				},
+			}},
+			want: "local-lvm-data:vm-101-data",
+		},
+		{
+			name: "ignores a volume that is not the artifacts disk",
+			resources: []*state.Resource{{
+				ID:   "local-lvm-data:vm-100-data",
+				Type: state.ResourceTypeVolume,
+				Name: "prod-bastion-data",
+				Properties: map[string]interface{}{
+					"role": "bastion-data", "preserve": true,
+				},
+			}},
+			want: "",
+		},
+		{
+			name:      "nothing recorded",
+			resources: nil,
+			want:      "",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := findPreservedArtifactsVolume(tc.resources, "prod-artifacts")
+			if got != tc.want {
+				t.Errorf("findPreservedArtifactsVolume = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
