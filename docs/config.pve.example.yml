@@ -292,3 +292,18 @@ blocs:
       system_domain: "system.ocf.wayne.lab.fivetwenty.io"
       ssh_hostname: "ssh.system.ocf.wayne.lab.fivetwenty.io"
       origin_server_name: "api.system.ocf.wayne.lab.fivetwenty.io"
+      # Extra per-hostname ingress rules for the infra-service UIs that the CF
+      # gorouter never sees. Each becomes an explicit rule ahead of the
+      # *.apps/*.system wildcards (cloudflared matches first rule wins) plus a
+      # proxied CNAME, re-applied on every bootstrap. A hostname left out of
+      # this list falls through to the wildcard and reaches HAProxy, which has
+      # no backend for it. Addresses come from the bloc's reserved-IP map.
+      services:
+        - hostname: "shield.system.ocf.wayne.lab.fivetwenty.io"
+          service: "https://10.64.64.9"
+          no_tls_verify: true
+        - hostname: "concourse.system.ocf.wayne.lab.fivetwenty.io"
+          service: "https://10.64.64.7"
+          no_tls_verify: true
+        - hostname: "grafana.system.ocf.wayne.lab.fivetwenty.io"
+          service: "http://10.64.64.8:3000"
