@@ -250,3 +250,58 @@ func TestDatasetScript_CarriesHostKeysNotSSHConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestDatasetScript_BindsPureDataDirectories covers a revert we watched happen.
+//
+// Copying a directory off the data disk on every boot means anything the
+// running system writes there is thrown away at the next reboot. For tailscale
+// that is the node key, which the daemon rotates on its own schedule; for
+// letsencrypt it is a renewed certificate. Worse, a copy races the daemon: the
+// tailscale state we restored by hand landed on disk while tailscaled was
+// already running, so the daemon kept the identity it had registered with and
+// the bastion came back as a second node at a new address.
+//
+// Binding the data-disk copy over the live path removes both problems, because
+// then there is only ever one copy and the daemon opens it directly.
+func TestDatasetScript_BindsPureDataDirectories(t *testing.T) {
+	t.Parallel()
+
+	for _, dir := range []string{"/var/lib/tailscale", "/etc/letsencrypt"} {
+		if !strings.Contains(datasetScript, dir) {
+			t.Fatalf("the dataset script no longer persists %s", dir)
+		}
+	}
+
+	if !strings.Contains(datasetScript, "persist_dir ") {
+		t.Fatal("the dataset script has no bind-mount helper for the pure-data directories")
+	}
+
+	// The helper has to actually bind, not copy.
+	idx := strings.Index(datasetScript, "persist_dir() {")
+	if idx < 0 {
+		t.Fatal("persist_dir is called but never defined")
+	}
+
+	body := datasetScript[idx:]
+	if end := strings.Index(body, "\n}\n"); end > 0 {
+		body = body[:end]
+	}
+
+	if !strings.Contains(body, "mount --bind") {
+		t.Errorf("persist_dir does not bind-mount; a per-boot copy reverts whatever the daemon wrote:\n%s", body)
+	}
+}
+
+// TestDatasetService_OrderedBeforeFirstboot keeps the tailscale identity from
+// being decided before the data disk has had its say.
+//
+// ocfp-firstboot runs "tailscale up" with an auth key. If it wins the race, the
+// bastion registers as a brand new node and the identity we preserved on the
+// data disk never gets used.
+func TestDatasetService_OrderedBeforeFirstboot(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(datasetService, "ocfp-firstboot.service") {
+		t.Errorf("ocfp-dataset.service does not order itself before ocfp-firstboot.service:\n%s", datasetService)
+	}
+}

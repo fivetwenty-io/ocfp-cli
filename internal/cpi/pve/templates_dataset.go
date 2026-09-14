@@ -160,22 +160,41 @@ if [ -n "${PUBKEY}" ]; then
   chown -R "${HOMEUSER}:${HOMEUSER}" "${HOMEDIR}/.ssh" 2>/dev/null || true
 fi
 
-# Restore the state that lives outside the home directory. Each is restored
-# only when the disk actually carries a copy, so a fresh bloc (empty disk)
-# and a recycled one (populated disk) both work with the same code path.
-restore_dir() {
-  src="$1"; dst="$2"; label="$3"
-  if [ -d "${src}" ] && [ -n "$(ls -A "${src}" 2>/dev/null)" ]; then
-    mkdir -p "${dst}"
-    cp -a "${src}/." "${dst}/" 2>/dev/null && log "restored ${label} from ${src}"
-  fi
-}
+# Keep a directory whose contents are pure data on the data disk, and bind
+# that copy over the path the software expects to find it at.
+#
+# The obvious alternative, copying the directory off the disk on every boot,
+# is wrong twice. Anything the running system writes there is thrown away at
+# the next reboot, which for tailscale means the node key the daemon rotates on
+# its own schedule and for letsencrypt means a freshly renewed certificate. And
+# a copy races the daemon that reads it: restore the tailscale state a moment
+# after tailscaled has started and the daemon carries on with the identity it
+# already registered, so the bastion comes back as a second node at a new
+# address. A bind mount has neither problem, because there is only ever one
+# copy and the daemon opens it directly.
+#
+# Only directories that hold data belong here. Anything the operating system
+# owns has to keep coming from the release we just installed.
+persist_dir() {
+  live="$1"; store="$2"; label="$3"
 
-save_dir() {
-  src="$1"; dst="$2"; label="$3"
-  if [ -d "${src}" ] && [ ! -d "${dst}" ]; then
-    mkdir -p "${dst}"
-    cp -a "${src}/." "${dst}/" 2>/dev/null && log "captured ${label} onto the data disk"
+  if [ ! -d "${store}" ]; then
+    mkdir -p "${store}"
+    if [ -d "${live}" ]; then
+      cp -a "${live}/." "${store}/" 2>/dev/null || true
+      log "captured ${label} onto the data disk"
+    fi
+  fi
+
+  mkdir -p "${live}"
+
+  if ! findmnt -n "${live}" >/dev/null 2>&1; then
+    mount --bind "${store}" "${live}" || { log "FATAL: bind ${store} onto ${live} failed"; exit 1; }
+    log "bound ${label} from ${store} onto ${live}"
+  fi
+
+  if ! grep -q " ${live} " /etc/fstab 2>/dev/null; then
+    printf '%s %s none bind,nofail 0 0\n' "${store}" "${live}" >> /etc/fstab
   fi
 }
 
@@ -200,13 +219,11 @@ persist_host_keys() {
 
 persist_host_keys
 
-# Tailscale identity: restoring it brings the replacement back as the same
-# node at the same address rather than as a new one.
-restore_dir "${SYSDIR}/tailscale" /var/lib/tailscale "tailscale state"
-save_dir /var/lib/tailscale "${SYSDIR}/tailscale" "tailscale state"
+# Tailscale identity. Binding it back brings the replacement onto the tailnet
+# as the same node at the same address rather than as a new one.
+persist_dir /var/lib/tailscale "${SYSDIR}/tailscale" "tailscale state"
 
-restore_dir "${SYSDIR}/letsencrypt" /etc/letsencrypt "letsencrypt material"
-save_dir /etc/letsencrypt "${SYSDIR}/letsencrypt" "letsencrypt material"
+persist_dir /etc/letsencrypt "${SYSDIR}/letsencrypt" "letsencrypt material"
 
 # The OS-disk state directory. Claims about how far provisioning got belong
 # here, on the disposable disk, never on the persistent one.
@@ -223,13 +240,16 @@ exit 0
 // win the race with sshd and tailscaled. Ordering here is correctness: the
 // SSH host keys and the tailscale state directory have to be in place before
 // the daemon that reads them starts, or the bastion comes back with a churned
-// host key and as a new tailnet node.
+// host key and as a new tailnet node. ocfp-firstboot is in that list for the
+// same reason: it runs "tailscale up" with an auth key, and if it wins the race
+// the bastion registers as a brand new node and the identity we went to the
+// trouble of preserving never gets used.
 const datasetService = `[Unit]
 Description=OCFP bastion data disk
 DefaultDependencies=no
 After=systemd-udev-settle.service local-fs.target
 Wants=systemd-udev-settle.service
-Before=ssh.service sshd.service tailscaled.service cloud-init.service sysinit.target
+Before=ssh.service sshd.service tailscaled.service ocfp-firstboot.service cloud-init.service sysinit.target
 ConditionVirtualization=!container
 
 [Service]
