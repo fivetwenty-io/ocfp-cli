@@ -60,11 +60,11 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 		Example: `  # Connect to bastion host (interactive session)
   ocfp ssh --bloc production
 
-  # Execute a single command on bastion
-  ocfp ssh --bloc production 'hostname'
+  # Execute a single command on bastion (name the target explicitly)
+  ocfp ssh --bloc production bastion 'hostname'
 
   # Execute multiple commands
-  ocfp ssh --bloc production 'ls /tmp; hostname; echo $OCFP_BLOC'
+  ocfp ssh --bloc production bastion 'ls /tmp; hostname; echo $OCFP_BLOC'
 
   # Port forwarding (local)
   ocfp ssh --bloc production -L 8080:localhost:80
