@@ -43,6 +43,9 @@ flowchart TD
 - Provider sees one subnet
   The provider's `CreateSubnet` short-circuits when the requested child CIDR is fully contained inside the existing parent SDN subnet. No second registration is attempted.
 
+- One bloc, one wire
+  Because every `ocfp-*` record carries the parent CIDR and the parent gateway, Genesis folds those records into a single BOSH subnet through Logical Subnet Amalgamation. A BOSH subnet applies one set of cloud properties to every AZ it lists. BOSH also puts no per-AZ constraint on the addresses inside a subnet, so it can hand an instance in one AZ an address from another AZ's band. Both behaviors are correct while every subnet in the bloc names the same bridge on the same L2, and both are wrong the moment an AZ selects a different wire. So a bloc whose AZs sit on different bridges, different VLANs, or different physical clusters cannot use one parent CIDR. Give those AZs distinct parent ranges instead, which stops the merge and gives each AZ its own BOSH subnet. Genesis refuses the merge outright when the records disagree on cloud properties, but it cannot see a divergence that the records do not express, such as two clusters that both call their bridge `vmbr0`.
+
 ### Default carve (PVE today)
 
 | Index | Logical name | Prefix | AZ | Role |
