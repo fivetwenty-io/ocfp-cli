@@ -133,8 +133,10 @@ The command supports different modes:
 - Selective: Delete only specified resource types (--servers, --volumes, --snapshots, --buckets, --security-groups, --network)
 - Bastion: Delete only the bastion instance (--bastion)
 - All: Delete all OCFP/BOSH-managed resources (--all)
-- Nuke: Delete ALL resources in the project (--nuke, requires --force)
-  WARNING: Nuke mode bypasses bloc name filtering and deletes ALL resources
+- Nuke: Discover the bloc's resources from the cloud instead of the state file
+  (--nuke, requires --force). Use it when the state file is lost or wrong.
+  Nuke still deletes only resources whose names belong to the bloc; it widens
+  where we look, not what we delete.
 
 Selective mode allows you to specify one or more resource types to delete.
 Multiple flags can be combined (e.g., --bastion --security-groups):
@@ -218,7 +220,7 @@ func getTeardownExamples() string {
   # Skip specific resource types
   ocfp teardown --bloc production --skip network --skip storage
 
-  # DANGER: Delete ALL resources in project
+  # Rediscover the bloc's resources from the cloud when the state file is gone
   ocfp teardown --bloc production --nuke --force`
 }
 
@@ -228,7 +230,7 @@ func addTeardownFlags(cmd *cobra.Command, force, dryRun *bool, skip *[]string, p
 	cmd.Flags().StringSliceVar(skip, "skip", []string{}, "skip deletion of specific resource types")
 	cmd.Flags().BoolVar(publicIPs, "public-ips", false, "include public IPs in deletion")
 	cmd.Flags().BoolVar(all, "all", false, "delete all OCFP/BOSH-managed resources")
-	cmd.Flags().BoolVar(nuke, "nuke", false, "DANGER: delete ALL resources in project")
+	cmd.Flags().BoolVar(nuke, "nuke", false, "discover the bloc's resources from the cloud rather than the state file")
 	cmd.Flags().BoolVar(empty, "empty", false, "empty non-empty buckets before deletion")
 	cmd.Flags().StringVar(output, "output", OutputTable, "output format: table|json|yaml (for dry-run plan)")
 
