@@ -1,20 +1,12 @@
-# OCFP on Proxmox VE — The Full Bring-Up
+# The Full Bring-Up of OCFP on Proxmox VE
 
-This is the story of how we take a bare Proxmox VE host and end up, some hours
-later, logged into a branded console riding on a complete OCFP stack: two BOSH
-directors, a real Vault, Cloud Foundry, and the platform services that make it
-all operable. Every chapter was validated end-to-end against the
-`ocfp-lab-wayne` bloc, and that bloc remains our worked example throughout.
+This is the story of how we take a bare Proxmox VE host and end up, some hours later, logged into a branded console riding on a complete OCFP stack: two BOSH directors, a real Vault, Cloud Foundry, and the platform services that make it all operable. `ocfp-lab-wayne` is our worked example throughout, and most chapters were validated end-to-end against it. Chapter 13 was validated against a different bloc, which is noted where it matters, and that gap is how the teardown chapter came to miss two deployments chapter 11 creates.
 
-We wrote these runbooks to be read in order the first time through. Each
-chapter opens with why the step exists, walks through the commands we run
-together, and closes with how we prove it worked before moving on. Once we
-have been through the whole arc, any chapter stands on its own as a reference.
+We wrote these runbooks to be read in order the first time through. Each chapter opens with why the step exists, walks through the commands we run together, and closes with how we prove it worked before moving on. Once we have been through the whole arc, any chapter stands on its own as a reference.
 
 ## The arc
 
-We begin with nothing but address space and a plan. We end with an app
-running, a route answering, and a console we can hand to a teammate.
+We begin with nothing but address space and a plan. We end with an app running, a route answering, and a console we can hand to a teammate.
 
 ```mermaid
 flowchart TD
@@ -23,85 +15,53 @@ flowchart TD
     P3 --> P4[4. Bootstrap]
     P4 --> P5[5. Bastion init + inception vault]
     P5 --> G1{{gate: bastion healthy}}
-    G1 --> P6[6. Management BOSH — create-env]
+    G1 --> P6[6. Management BOSH, create-env]
     P6 --> P7[7. Management Vault + migration]
     P7 --> G2{{gate: secrets live in the real Vault}}
-    G2 --> P8[8. Environment BOSH — ocf zone]
+    G2 --> P8[8. Environment BOSH, ocf zone]
     P8 --> P9[9. Cloud Foundry]
-    P9 --> P10[10. Validation — push and ssh]
-    P10 --> P11[11. Platform services — both zones]
-    P11 --> P12[12. Stratos — the front door]
+    P9 --> P10[10. Validation, push and ssh]
+    P10 --> P11[11. Platform services, both zones]
+    P11 --> P12[12. Stratos, the front door]
     P12 -.-> P13[13. Teardown: unwind the stack, keep the lab]
 ```
 
-The two gates matter. We do not deploy the management director until the
-bastion is provably healthy. And we do not deploy anything beyond the
-management zone until our secrets have migrated off the temporary inception
-vault and into the real one. When a verification fails, we stop and debug at
-that point — the chapters are ordered so that every failure is cheapest to fix
-where it first appears.
+The two gates matter. We do not deploy the management director until the bastion is provably healthy. And we do not deploy anything beyond the management zone until our secrets have migrated off the temporary inception vault and into the real one. When a verification fails, we stop and debug at that point, because the chapters are ordered so that every failure is cheapest to fix where it first appears.
 
 ## The cast
 
 A few concepts carry the whole story, so let us introduce them once.
 
-**The bloc** is our unit of deployment — one entry under `blocs:` in
-`~/.config/ocfp/config.yml`, holding the provider connection, the network plan, the
-domains, and the artifacts store for everything we deploy. Every resource we
-create is named `<bloc>-<role>`.
+**The bloc** is our unit of deployment, a single entry under `blocs:` in `~/.config/ocfp/config.yml` that holds the provider connection, the network plan, the domains, and the artifacts store for everything we deploy. Every resource we create is named `<bloc>-<role>`.
 
-**Zones** are the two tiers inside a bloc. The `mgmt` zone holds the
-proto-BOSH director, the management Vault, and the operator services: SHIELD,
-Doomsday, Prometheus, Concourse, and the jumpbox. The `ocf` zone holds the
-environment BOSH director, Cloud Foundry, and the services that live beside
-it — Blacksmith, Autoscaler, and Scheduler.
+**Zones** are the two tiers inside a bloc. The `mgmt` zone holds the proto-BOSH director, the management Vault, and the operator services: SHIELD, Doomsday, Prometheus, Concourse, and the jumpbox. The `ocf` zone holds the environment BOSH director, Cloud Foundry, and the services that live beside it, namely Blacksmith, Autoscaler, and Scheduler.
 
-Genesis environment names encode the pairing: `ocfp-lab-wayne-mgmt` and
-`ocfp-lab-wayne-ocf`.
+Genesis environment names encode the pairing: `ocfp-lab-wayne-mgmt` and `ocfp-lab-wayne-ocf`.
 
-**The two vaults** are a deliberate two-act structure. During bootstrap we
-have no infrastructure to host a real secrets store, so the CLI runs a small
-local **inception vault** on the bastion. Once the management director exists,
-we deploy the real Vault (the OpenBao lineage — the `openbao` kit provides the
-same `vault` service) and migrate everything into it. Chapter 7 tells that
-story in full.
+**The two vaults** are a deliberate two-act structure. During bootstrap we have no infrastructure to host a real secrets store, so the CLI runs a small local **inception vault** on the bastion. Once the management director exists, we deploy the real Vault (the OpenBao lineage, where the `openbao` kit provides the same `vault` service) and migrate everything into it. Chapter 7 tells that story in full.
 
-**Genesis and the kits** do the deploying. We address environments with the
-`g` alias: `g @<env>:<type> <verb>`, as in
-`g @ocfp-lab-wayne-mgmt:bosh deploy -F -y`. Each deployment type (bosh, vault,
-cf, shield, and the rest) is a Genesis kit. The PVE ports live in each kit's
-`ocfp/pve/` overlays and hooks.
+**Genesis and the kits** do the deploying. We address environments with the `g` alias, written `g @<env>:<type> <verb>`, as in `g @ocfp-lab-wayne-mgmt:bosh deploy -F -y`. Each deployment type (bosh, vault, cf, shield, and the rest) is a Genesis kit. The PVE ports live in each kit's `ocfp/pve/` overlays and hooks.
 
-**pmx** is our Proxmox API client. Everything we once did as root on the
-hypervisor — SDN zones, service accounts, storage checks, listing VMs — we
-now drive from the workstation with `pmx pve <resource> <verb>`, against a
-named context that stores the endpoint and credentials. The old on-host
-commands (`pveum`, `pvesh`, `pvesm`, `qm`) still work, and every step shows
-them as the native fallback, but pmx is the path we walk.
+**pmx** is our Proxmox API client. Everything we once did as root on the hypervisor, such as creating SDN zones and service accounts, checking storage, and listing VMs, we now drive from the workstation with `pmx pve <resource> <verb>`, against a named context that stores the endpoint and credentials. The old on-host commands (`pveum`, `pvesh`, `pvesm`, `qm`) still work, but these runbooks no longer show them, because pmx is the path we walk.
 
 ## Conventions
 
-Every step in these runbooks follows the same shape: a sentence or two of
-intent, the command, and a **Verify** that proves it landed. Steps that change
-something hard to undo also carry a **Rollback**. We never move past a red
-verification.
+Every step in these runbooks follows the same shape, namely a sentence or two of intent, the command, and a **Verify** that proves it landed. Steps that change something hard to undo also carry a **Rollback**. We never move past a red verification.
 
-Proxmox steps come in pairs: the `pmx` command first, then the same
-operation as an **On the host (native):** block for anyone working directly
-on the hypervisor. Run one or the other, never both — they are the same API
-call wearing different clothes. Destructive pmx verbs require `--yes`; that
-is deliberate, and we keep it.
+Chapter 13 is the exception to the Rollback convention, and deliberately so. Tearing a bloc down is a sequence of irreversible steps, so what that chapter carries instead is an ordering we have to respect and a rescue step to run before the point of no return.
 
-The variables below appear throughout, standing in for our own values. The
-third column shows the worked example we validated against.
+Every Proxmox operation goes through `pmx`, run from the workstation against a named context. Where a step genuinely needs a shell on the node, because the PVE API exposes no equivalent, we open one with `pmx pve node exec <node> --` rather than logging in separately. Destructive pmx verbs require `--yes`. That is deliberate, and we keep it.
+
+The variables below appear throughout, standing in for our own values. The third column shows the worked example we validated against.
 
 | Variable | Meaning | `ocfp-lab-wayne` example |
 |----------|---------|--------------------------|
 | `<bloc>` | The OCFP bloc name | `ocfp-lab-wayne` |
 | `<node>` | The PVE node name | `lab-wayne` |
+| `<ctx>` | Shorthand for `<context>` in chapter 13 | `lab-wayne` |
 | `<vnet>` | The SDN vnet (bridge) | `ocfp` |
 | `<supernet>` | The bloc's address block | `10.108.16.0/20` |
-| `<gateway>` | The SDN gateway and DNS | `10.108.16.1` |
+| `<gateway>` | The `infra` subnet's SDN gateway and DNS. Each workload `/22` gets its own at `.1` | `10.108.16.1` |
 | `<base-domain>` | The bloc's DNS base | `ocf.wayne.lab.fivetwenty.io` |
 | `<system-domain>` | The CF system domain | `system.ocf.wayne.lab.fivetwenty.io` |
 | `<apps-domain>` | The CF apps domain | `apps.ocf.wayne.lab.fivetwenty.io` |
@@ -112,42 +72,34 @@ third column shows the worked example we validated against.
 | Chapter | What we accomplish |
 |---------|--------------------|
 | [1. Network planning](01-network-planning.md) | Carve the address space and design the SDN before anything exists |
-| [2. PVE foundation](02-pve-foundation.md) | Prepare the host: CPI service account, API token, storage, templates |
+| [2. PVE foundation](02-pve-foundation.md) | Prepare the host with a CPI service account, an API token, storage, and templates |
 | [3. Bloc definition](03-bloc-definition.md) | Author the bloc in `~/.config/ocfp/config.yml` |
-| [4. Bootstrap](04-bootstrap.md) | `ocfp bootstrap` — network, security groups, bastion, and the RustFS artifacts store |
-| [5. Bastion init](05-bastion-init.md) | Tool the bastion, seed the inception vault, wire the deployment repos |
+| [4. Bootstrap](04-bootstrap.md) | `ocfp bootstrap` builds the network, the security groups, the bastion, and the RustFS artifacts store |
+| [5. Bastion init](05-bastion-init.md) | Tool the bastion, seed the inception vault, and wire the deployment repos |
 | [6. Management BOSH](06-mgmt-bosh.md) | The proto-director, born by `bosh create-env` through the PVE CPI |
-| [7. Management Vault](07-mgmt-vault.md) | Deploy the real Vault, migrate the secrets, retire inception |
+| [7. Management Vault](07-mgmt-vault.md) | Deploy the real Vault, migrate the secrets, and retire inception |
 | [8. Environment BOSH](08-env-bosh.md) | The mgmt director deploys the ocf zone's director |
-| [9. Cloud Foundry](09-cloud-foundry.md) | CF v56.5.0 on noble, blobstore on RustFS |
+| [9. Cloud Foundry](09-cloud-foundry.md) | Cloud Foundry on noble, with the blobstore on RustFS |
 | [10. Validation](10-validation.md) | `cf push`, `cf ssh`, and the proof the platform is real |
-| [11. Platform services](11-platform-services.md) | SHIELD, Doomsday, Prometheus, Concourse, Blacksmith, Autoscaler, Scheduler |
+| [11. Platform services](11-platform-services.md) | SHIELD, Doomsday, Prometheus, Concourse, Blacksmith, Autoscaler, and Scheduler |
 | [12. Stratos](12-stratos.md) | Ingress, DNS, and the branded console at the canonical URL |
 | [13. Teardown](13-teardown.md) | Unwind every deployment in the order that works, leaving the lab intact |
 
 ## Where the facts live
 
-These runbooks tell us *how*. When we need *what* or *why*, we reach for the
-layer that owns it:
+These runbooks tell us *how*. When we need *what* or *why*, we reach for the layer that owns it:
 
-- [`docs/pve.md`](../../pve.md) — the PVE provider primer: auth modes, the
-  template catalog, bloc config field reference, and artifacts TLS.
+- [`docs/pve.md`](../../pve.md) is the PVE provider primer, and it covers the auth modes, the template catalog, the bloc config field reference, and artifacts TLS.
 
-- [`docs/pve-e2e-lab-testing.md`](../../pve-e2e-lab-testing.md) — the
-  validation plan and run log these chapters are distilled from, including the
-  full findings history.
+- [`docs/pve-e2e-lab-testing.md`](../../pve-e2e-lab-testing.md) holds the validation plan and the run log these chapters are distilled from, including the full findings history.
 
-- [`docs/config.pve.example.yml`](../../config.pve.example.yml) — the
-  authoritative bloc config shape.
+- [`docs/config.pve.example.yml`](../../config.pve.example.yml) is the authoritative bloc config shape.
 
-- `src/deployments/fivetwenty-ocfp/` — the live environment files for the
-  worked example; each carries its own commentary.
+- `src/deployments/fivetwenty-ocfp/` holds the live environment files for the worked example, and each one carries its own commentary.
 
 Teardown comes in two kinds, and they are not interchangeable.
 
-When the bloc itself is going away, `ocfp teardown --nuke` deletes the
-infrastructure the CLI created, bastion and artifacts store included. We
-preview it first, always:
+When the bloc itself is going away, `ocfp teardown --nuke` deletes the infrastructure the CLI created, bastion and artifacts store included. We preview it first, always:
 
 ```bash
 ocfp teardown --bloc <bloc> --nuke --force --dry-run --output json
@@ -156,10 +108,6 @@ ocfp teardown --bloc <bloc> --nuke --force --empty
 
 (`--nuke` refuses to run without `--force`, even for the dry run.)
 
-When the lab is staying and only the deployments are going, that command is
-the wrong tool: it knows nothing about what BOSH built on top, and it leaves
-orphaned disks and an undeletable proto-director behind. [Chapter
-13](13-teardown.md) walks the order that actually works, including the two
-places where unwinding is not the bring-up read backwards.
+When the lab is staying and only the deployments are going, that command is the wrong tool, because it knows nothing about what BOSH built on top, and it leaves orphaned disks and an undeletable proto-director behind. [Chapter 13](13-teardown.md) walks the order that actually works, including the two places where unwinding is not the bring-up read backwards.
 
 With the map in hand, let us go plan a network.
