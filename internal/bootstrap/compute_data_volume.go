@@ -55,7 +55,13 @@ func (m *Manager) EnsureBastionDataVolume(ctx context.Context) error {
 		return nil
 	}
 
-	if !m.provider.SupportsStorage() {
+	// Deliberately NOT gated on provider.SupportsStorage(). On PVE that
+	// reports whether the configured blobstore is external — an object-store
+	// capability with nothing to do with block volumes — so gating on it made
+	// every bloc in the default local blobstore mode skip its data disk while
+	// reporting the step as completed.
+	storage := m.provider.StorageManager()
+	if storage == nil {
 		logger.Debugf("Provider %s has no storage manager; skipping bastion data disk", m.options.Provider)
 
 		return nil
@@ -89,12 +95,12 @@ func (m *Manager) EnsureBastionDataVolume(ctx context.Context) error {
 	// The attach is safe to repeat: the client library looks the volume up in
 	// the VM config before choosing a slot, so attaching an attached disk is a
 	// no-op rewrite rather than a duplicate.
-	err = m.provider.StorageManager().AttachVolume(ctx, volume.ID, instanceID, bastionDataAttachSpec())
+	err = storage.AttachVolume(ctx, volume.ID, instanceID, bastionDataAttachSpec())
 	if err != nil {
 		// Only clean up a volume we just made. Deleting one that predates this
 		// run would destroy the operator state the disk exists to protect.
 		if created {
-			if delErr := m.provider.StorageManager().DeleteVolume(ctx, volume.ID); delErr != nil {
+			if delErr := storage.DeleteVolume(ctx, volume.ID); delErr != nil {
 				logger.Warnf("Failed to clean up orphaned data volume %s: %v", volume.ID, delErr)
 			}
 		}

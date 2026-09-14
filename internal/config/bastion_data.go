@@ -20,7 +20,7 @@ const (
 
 // BastionDataDiskSerial is the disk serial PVE stamps on the bastion's data
 // disk, which the guest then exposes at
-// /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>.
+// /dev/disk/by-id/scsi-SQEMU_QEMU_HARDDISK_<serial> (verified on PVE 9).
 //
 // The boot-time unit resolves the disk by this path rather than by /dev/sdb,
 // because the /dev/sdN letter depends on enumeration order and is correct
