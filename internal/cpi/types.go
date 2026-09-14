@@ -436,7 +436,14 @@ type InstanceRequest struct {
 	// DataDisk, when non-nil, tells the guest how to prepare and mount its
 	// persistent data disk at first boot. Delivered via SMBIOS alongside
 	// tailscale.
-	DataDisk        *DataDiskSpec
+	DataDisk *DataDiskSpec
+	// CreateStopped leaves the new VM powered off instead of starting it.
+	//
+	// The recycle operation needs this: the replacement is built while the
+	// machine it replaces is only stopped, so both exist at once. Starting it
+	// immediately would put a second guest on the same static address, and it
+	// would boot against a data disk it does not own yet.
+	CreateStopped   bool
 	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)

@@ -852,23 +852,23 @@ type Subnet struct {
 
 // Bastion configuration.
 type Bastion struct {
-	Flavor       string    `json:"flavor,omitempty"           mapstructure:"flavor"           yaml:"flavor,omitempty"`
-	InstanceType string    `json:"instanceType,omitempty"     mapstructure:"instanceType"     yaml:"instanceType,omitempty"`
-	Image        string    `json:"image,omitempty"            mapstructure:"image"            yaml:"image,omitempty"`
-	OS           string    `json:"os,omitempty"               mapstructure:"os"               yaml:"os,omitempty"`
-	OSVersion    string    `json:"osVersion,omitempty"        mapstructure:"osVersion"        yaml:"osVersion,omitempty"`
-	Keypair      string    `json:"keypair,omitempty"          mapstructure:"keypair"          yaml:"keypair,omitempty"`
-	SSHUser      string    `json:"sshUser,omitempty"          mapstructure:"sshUser"          yaml:"sshUser,omitempty"`
-	SSHOptions   string    `json:"sshOptions,omitempty"       mapstructure:"sshOptions"       yaml:"sshOptions,omitempty"`
-	SSHKeyDir    string    `json:"sshKeyStorageDir,omitempty" mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir,omitempty"`
-	SSHKeyName   string    `json:"sshKeyName,omitempty"       mapstructure:"sshKeyName"       yaml:"sshKeyName,omitempty"`
-	UserData     string    `json:"userData,omitempty"         mapstructure:"userData"         yaml:"userData,omitempty"`
-	RootDiskSize int       `json:"rootDiskSize,omitempty"     mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
+	Flavor       string `json:"flavor,omitempty"           mapstructure:"flavor"           yaml:"flavor,omitempty"`
+	InstanceType string `json:"instanceType,omitempty"     mapstructure:"instanceType"     yaml:"instanceType,omitempty"`
+	Image        string `json:"image,omitempty"            mapstructure:"image"            yaml:"image,omitempty"`
+	OS           string `json:"os,omitempty"               mapstructure:"os"               yaml:"os,omitempty"`
+	OSVersion    string `json:"osVersion,omitempty"        mapstructure:"osVersion"        yaml:"osVersion,omitempty"`
+	Keypair      string `json:"keypair,omitempty"          mapstructure:"keypair"          yaml:"keypair,omitempty"`
+	SSHUser      string `json:"sshUser,omitempty"          mapstructure:"sshUser"          yaml:"sshUser,omitempty"`
+	SSHOptions   string `json:"sshOptions,omitempty"       mapstructure:"sshOptions"       yaml:"sshOptions,omitempty"`
+	SSHKeyDir    string `json:"sshKeyStorageDir,omitempty" mapstructure:"sshKeyStorageDir" yaml:"sshKeyStorageDir,omitempty"`
+	SSHKeyName   string `json:"sshKeyName,omitempty"       mapstructure:"sshKeyName"       yaml:"sshKeyName,omitempty"`
+	UserData     string `json:"userData,omitempty"         mapstructure:"userData"         yaml:"userData,omitempty"`
+	RootDiskSize int    `json:"rootDiskSize,omitempty"     mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
 	// Data configures the persistent data disk that lets the bastion's
 	// operating system be replaced without losing operator state.
-	Data BastionDataConfig `json:"data,omitempty" mapstructure:"data" yaml:"data,omitempty"`
-	Genesis      Genesis   `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
-	Git          GitConfig `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
+	Data    BastionDataConfig `json:"data,omitempty" mapstructure:"data" yaml:"data,omitempty"`
+	Genesis Genesis           `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
+	Git     GitConfig         `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
 	// OCFPCLI selects how the ocfp binary reaches the bastion. See OCFPCLIConfig.
 	OCFPCLI OCFPCLIConfig `json:"ocfpCli,omitempty" mapstructure:"ocfpCli" yaml:"ocfpCli,omitempty"`
 	// Optional overrides for tooling installation/selection
