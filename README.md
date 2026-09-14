@@ -81,6 +81,9 @@ ocfp scp local-file.txt bastion:/tmp/
 
 # Sync directories
 ocfp rsync --archive /local/dir/ bastion:/remote/dir/
+
+# Hand rsync any flag we do not model, after a -- separator
+ocfp rsync /local/dir/ bastion:/remote/dir/ -- --itemize-changes --info=progress2
 ```
 
 ### 4. Environment management

@@ -17,36 +17,87 @@ import (
 const (
 	// Command arguments.
 	rsyncTwoArgs = 2
+
+	// rsyncModelledFlagCount is how many rsync flags ocfp models as its own
+	// boolean flags, used to size the slice that renders them.
+	rsyncModelledFlagCount = 6
 )
 
 // NewRSyncCmd creates the rsync command.
 func NewRSyncCmd() *cobra.Command {
-	var (
-		user         string
-		key          string
-		archive      bool
-		compress     bool
-		verbose      bool
-		deleteFiles  bool
-		dryRun       bool
-		exclude      []string
-		include      []string
-		rsyncOptions string
-	)
+	opts := &rsyncFlagTargets{} //nolint:exhaustruct // Every field is a pointer target filled in by pflag.
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
-		Use:     "rsync <source> <destination>",
+		Use:     "rsync <source> <destination> [-- <rsync flag>...]",
 		Short:   "Synchronize files to/from bastion host",
 		Long:    getRSyncLongDescription(),
 		Example: getRSyncExamples(),
-		Args:    cobra.ExactArgs(rsyncTwoArgs),
+		Args:    validateRSyncArgs,
 		RunE:    runRSync,
 	}
 
-	addRSyncFlags(cmd, &user, &key, &archive, &compress, &verbose, &deleteFiles, &dryRun, &exclude, &include, &rsyncOptions)
+	cmd.SetFlagErrorFunc(rsyncFlagError)
+	addRSyncFlags(cmd, opts)
 	bindRSyncViperFlags(cmd)
 
 	return cmd
+}
+
+// rsyncFlagTargets holds the variables that pflag writes the command's own
+// flags into. They are only read back through viper, so the struct exists to
+// keep the flag registration readable.
+type rsyncFlagTargets struct {
+	user           string
+	key            string
+	archive        bool
+	compress       bool
+	verbose        bool
+	deleteFiles    bool
+	dryRun         bool
+	itemizeChanges bool
+	exclude        []string
+	include        []string
+	rsyncOptions   string
+}
+
+// rsyncFlagError explains the -- separator whenever cobra rejects a flag, so
+// that an rsync flag ocfp does not model reads as a nudge rather than a wall.
+func rsyncFlagError(_ *cobra.Command, err error) error {
+	return fmt.Errorf("%w\n\nocfp rsync models only the most common rsync flags. "+
+		"Put any other rsync flag after a -- separator and it is handed to rsync unchanged, for example:\n"+
+		"  ocfp rsync --bloc <bloc> <source> <destination> -- --info=progress2 --filter=':- .gitignore'", err)
+}
+
+// rsyncPositionalArgs returns the arguments before the -- separator, which are
+// the source and the destination.
+func rsyncPositionalArgs(cmd *cobra.Command, args []string) []string {
+	dash := cmd.ArgsLenAtDash()
+	if dash < 0 || dash > len(args) {
+		return args
+	}
+
+	return args[:dash]
+}
+
+// rsyncPassthroughArgs returns the arguments after the -- separator, which are
+// handed to rsync verbatim and in the order the caller wrote them.
+func rsyncPassthroughArgs(cmd *cobra.Command, args []string) []string {
+	dash := cmd.ArgsLenAtDash()
+	if dash < 0 || dash > len(args) {
+		return nil
+	}
+
+	return args[dash:]
+}
+
+// validateRSyncArgs requires a source and a destination, counting only the
+// arguments before the -- separator.
+func validateRSyncArgs(cmd *cobra.Command, args []string) error {
+	if len(rsyncPositionalArgs(cmd, args)) != rsyncTwoArgs {
+		return ErrRsyncNeedsSourceAndDestination
+	}
+
+	return nil
 }
 
 func getRSyncLongDescription() string {
@@ -66,6 +117,15 @@ Advanced options include:
 - Compression for efficient transfer
 - Delete mode for mirror synchronization
 - Include/exclude patterns for selective sync
+- Itemized change summaries for auditing a dry run
+
+Only the most common rsync flags are modelled as ocfp flags. Every other rsync
+flag goes after a -- separator, and everything after that separator is handed
+to rsync unchanged and in the order it was written, so any rsync flag at all
+can be used:
+  ocfp rsync --bloc <bloc> <source> <destination> -- --info=progress2 --copy-links
+The source and the destination stay in front of the separator, and ocfp's own
+flags, such as --bloc, are never forwarded to rsync.
 
 Prefer rsync over scp for large directories or repeated transfers, as rsync
 uses delta transfers to only send changed portions of files.
@@ -101,42 +161,50 @@ func getRSyncExamples() string {
   ocfp rsync --bloc production --include "*.yml" --exclude "*" /local/configs/ bastion:/remote/configs/
 
   # Combine archive, verbose, and compress flags
-  ocfp rsync --bloc production -a -v -z /local/dir/ bastion:/remote/dir/`
+  ocfp rsync --bloc production -a -v -z /local/dir/ bastion:/remote/dir/
+
+  # Itemize every change a dry run would make
+  ocfp rsync --bloc production --dry-run --itemize-changes /local/dir/ bastion:/remote/dir/
+
+  # Hand rsync flags that ocfp does not model straight through after --
+  ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/ -- --info=progress2 --copy-links`
 }
 
-func addRSyncFlags(cmd *cobra.Command, user, key *string, archive, compress, verbose, deleteFiles, dryRun *bool, exclude, include *[]string, rsyncOptions *string) {
-	cmd.Flags().StringVar(user, "user", "ubuntu", "username for rsync")
-	cmd.Flags().StringVar(key, "key", "", "path to SSH private key")
-	cmd.Flags().BoolVarP(archive, "archive", "a", true, "archive mode (preserves permissions, etc)")
-	cmd.Flags().BoolVarP(compress, "compress", "z", false, "compress data during transfer")
-	cmd.Flags().BoolVarP(verbose, "verbose", "v", false, "verbose output")
-	cmd.Flags().BoolVar(deleteFiles, "delete", false, "delete files in destination not present in source")
-	cmd.Flags().BoolVar(dryRun, "dry-run", false, "perform a trial run with no changes made")
-	cmd.Flags().StringSliceVar(exclude, "exclude", nil, "exclude files matching pattern")
-	cmd.Flags().StringSliceVar(include, "include", nil, "include files matching pattern")
-	cmd.Flags().StringVar(rsyncOptions, "rsync-options", "", "additional rsync options")
+func addRSyncFlags(cmd *cobra.Command, opts *rsyncFlagTargets) {
+	cmd.Flags().StringVar(&opts.user, "user", "ubuntu", "username for rsync")
+	cmd.Flags().StringVar(&opts.key, "key", "", "path to SSH private key")
+	cmd.Flags().BoolVarP(&opts.archive, "archive", "a", true, "archive mode (preserves permissions, etc)")
+	cmd.Flags().BoolVarP(&opts.compress, "compress", "z", false, "compress data during transfer")
+	cmd.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "verbose output")
+	cmd.Flags().BoolVar(&opts.deleteFiles, "delete", false, "delete files in destination not present in source")
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "perform a trial run with no changes made")
+	cmd.Flags().BoolVarP(&opts.itemizeChanges, "itemize-changes", "i", false, "output a change-summary for all updates")
+	cmd.Flags().StringSliceVar(&opts.exclude, "exclude", nil, "exclude files matching pattern")
+	cmd.Flags().StringSliceVar(&opts.include, "include", nil, "include files matching pattern")
+	cmd.Flags().StringVar(&opts.rsyncOptions, "rsync-options", "", "additional rsync options")
 }
 
 func bindRSyncViperFlags(cmd *cobra.Command) {
 	bindFlagsToViper(cmd, map[string]string{
-		"rsync.user":     "user",
-		"rsync.key":      "key",
-		"rsync.archive":  "archive",
-		"rsync.compress": "compress",
-		"rsync.verbose":  "verbose",
-		"rsync.delete":   "delete",
-		"rsync.dry_run":  "dry-run",
-		"rsync.exclude":  "exclude",
-		"rsync.include":  "include",
-		"rsync.options":  "rsync-options",
+		"rsync.user":            "user",
+		"rsync.key":             "key",
+		"rsync.archive":         "archive",
+		"rsync.compress":        "compress",
+		"rsync.verbose":         "verbose",
+		"rsync.delete":          "delete",
+		"rsync.dry_run":         "dry-run",
+		"rsync.itemize_changes": "itemize-changes",
+		"rsync.exclude":         "exclude",
+		"rsync.include":         "include",
+		"rsync.options":         "rsync-options",
 	})
 }
 
-func runRSync(_cmd *cobra.Command, args []string) error {
+func runRSync(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("rsync")
 
-	config, err := parseRSyncConfig(args)
+	config, err := parseRSyncConfig(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -150,19 +218,21 @@ func runRSync(_cmd *cobra.Command, args []string) error {
 }
 
 type rsyncConfig struct {
-	blocName     string
-	user         string
-	keyPath      string
-	archive      bool
-	compress     bool
-	verbose      bool
-	deleteFlag   bool
-	dryRun       bool
-	exclude      []string
-	include      []string
-	rsyncOptions string
-	source       string
-	destination  string
+	blocName       string
+	user           string
+	keyPath        string
+	archive        bool
+	compress       bool
+	verbose        bool
+	deleteFlag     bool
+	dryRun         bool
+	itemizeChanges bool
+	exclude        []string
+	include        []string
+	rsyncOptions   string
+	passthrough    []string
+	source         string
+	destination    string
 }
 
 type rsyncEnvironment struct {
@@ -172,26 +242,33 @@ type rsyncEnvironment struct {
 	keyPath   string
 }
 
-func parseRSyncConfig(args []string) (*rsyncConfig, error) {
+func parseRSyncConfig(cmd *cobra.Command, args []string) (*rsyncConfig, error) {
 	blocName := viper.GetString("bloc")
 	if blocName == "" {
 		return nil, ErrBlocIsRequired
 	}
 
+	positional := rsyncPositionalArgs(cmd, args)
+	if len(positional) != rsyncTwoArgs {
+		return nil, ErrRsyncNeedsSourceAndDestination
+	}
+
 	return &rsyncConfig{
-		blocName:     blocName,
-		user:         viper.GetString("rsync.user"),
-		keyPath:      viper.GetString("rsync.key"),
-		archive:      viper.GetBool("rsync.archive"),
-		compress:     viper.GetBool("rsync.compress"),
-		verbose:      viper.GetBool("rsync.verbose"),
-		deleteFlag:   viper.GetBool("rsync.delete"),
-		dryRun:       viper.GetBool("rsync.dry_run"),
-		exclude:      viper.GetStringSlice("rsync.exclude"),
-		include:      viper.GetStringSlice("rsync.include"),
-		rsyncOptions: viper.GetString("rsync.options"),
-		source:       args[0],
-		destination:  args[1],
+		blocName:       blocName,
+		user:           viper.GetString("rsync.user"),
+		keyPath:        viper.GetString("rsync.key"),
+		archive:        viper.GetBool("rsync.archive"),
+		compress:       viper.GetBool("rsync.compress"),
+		verbose:        viper.GetBool("rsync.verbose"),
+		deleteFlag:     viper.GetBool("rsync.delete"),
+		dryRun:         viper.GetBool("rsync.dry_run"),
+		itemizeChanges: viper.GetBool("rsync.itemize_changes"),
+		exclude:        viper.GetStringSlice("rsync.exclude"),
+		include:        viper.GetStringSlice("rsync.include"),
+		rsyncOptions:   viper.GetString("rsync.options"),
+		passthrough:    rsyncPassthroughArgs(cmd, args),
+		source:         positional[0],
+		destination:    positional[1],
 	}, nil
 }
 
@@ -274,8 +351,7 @@ func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config 
 	processedSource := processRSyncPath(config.source, env.bastionIP, config.user)
 	processedDest := processRSyncPath(config.destination, env.bastionIP, config.user)
 
-	rsyncCmd := buildRSyncCommand(processedSource, processedDest, env.keyPath, config.archive, config.compress,
-		config.verbose, config.deleteFlag, config.dryRun, config.exclude, config.include, config.rsyncOptions)
+	rsyncCmd := buildRSyncCommand(config, processedSource, processedDest, env.keyPath)
 
 	if config.dryRun {
 		log.Infof("Performing dry run: %s -> %s", config.source, config.destination)
@@ -311,30 +387,10 @@ func processRSyncPath(path, bastionIP, user string) string {
 }
 
 // buildRSyncCommand constructs the rsync command with all options.
-func buildRSyncCommand(source, destination, keyPath string, archive, compress, verbose,
-	deleteFlag, dryRun bool, exclude, include []string, extraOptions string) []string {
+func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string) []string {
 	cmd := []string{"rsync"}
 
-	// Add flags
-	if archive {
-		cmd = append(cmd, "-a")
-	}
-
-	if compress {
-		cmd = append(cmd, "-z")
-	}
-
-	if verbose {
-		cmd = append(cmd, "-v")
-	}
-
-	if deleteFlag {
-		cmd = append(cmd, "--delete")
-	}
-
-	if dryRun {
-		cmd = append(cmd, "--dry-run")
-	}
+	cmd = append(cmd, rsyncModelledFlags(config)...)
 
 	// Add progress indicator
 	cmd = append(cmd, "--progress")
@@ -348,25 +404,59 @@ func buildRSyncCommand(source, destination, keyPath string, archive, compress, v
 	cmd = append(cmd, "-e", sshCmd)
 
 	// Add exclude patterns
-	for _, pattern := range exclude {
+	for _, pattern := range config.exclude {
 		cmd = append(cmd, "--exclude", pattern)
 	}
 
 	// Add include patterns
-	for _, pattern := range include {
+	for _, pattern := range config.include {
 		cmd = append(cmd, "--include", pattern)
 	}
 
 	// Add extra options if provided
-	if extraOptions != "" {
-		options := strings.Fields(extraOptions)
-		cmd = append(cmd, options...)
+	if config.rsyncOptions != "" {
+		cmd = append(cmd, strings.Fields(config.rsyncOptions)...)
 	}
+
+	// Hand everything after the -- separator to rsync unchanged, keeping the
+	// order the caller wrote it in.
+	cmd = append(cmd, config.passthrough...)
 
 	// Add source and destination
 	cmd = append(cmd, source, destination)
 
 	return cmd
+}
+
+// rsyncModelledFlags renders the rsync flags that ocfp models as its own.
+func rsyncModelledFlags(config *rsyncConfig) []string {
+	flags := make([]string, 0, rsyncModelledFlagCount)
+
+	if config.archive {
+		flags = append(flags, "-a")
+	}
+
+	if config.compress {
+		flags = append(flags, "-z")
+	}
+
+	if config.verbose {
+		flags = append(flags, "-v")
+	}
+
+	if config.deleteFlag {
+		flags = append(flags, "--delete")
+	}
+
+	if config.dryRun {
+		flags = append(flags, "--dry-run")
+	}
+
+	if config.itemizeChanges {
+		flags = append(flags, "--itemize-changes")
+	}
+
+	return flags
 }
 
 // executeRSync executes the rsync command.

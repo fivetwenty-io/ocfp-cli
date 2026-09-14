@@ -13,10 +13,24 @@ The `--bloc` flag is required to identify which environment to connect to.
 ## Usage
 
 ```
-ocfp rsync [flags] <source> <destination>
+ocfp rsync [flags] <source> <destination> [-- <rsync flag>...]
 ```
 
-Exactly two arguments are required: a source and a destination. Prefix either with `bastion:` to indicate the remote side.
+We require exactly two positional arguments, a source and a destination, and we prefix either one with `bastion:` to say which side is remote.
+
+## Passing Any RSync Flag Through
+
+We model only the rsync flags we reach for most often, and everything else goes to rsync through the `--` separator. Whatever we write after `--` is handed to rsync unchanged and in the order we wrote it, so any rsync flag at all works, including ones we have never named here.
+
+```bash
+ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/ -- --info=progress2 --copy-links --filter=':- .gitignore'
+```
+
+The source and the destination stay in front of the separator, because ocfp needs them to resolve the `bastion:` prefix. Our own flags, such as `--bloc`, `--user`, and `--key`, are never forwarded to rsync, and nothing after the separator is interpreted by ocfp, so a flag that takes its own value keeps that value.
+
+If we forget the separator, ocfp reports the unknown flag and reminds us how to pass it, so the fix is to move the flag after `--` and run the command again.
+
+Ordering is worth knowing. We render the modelled flags first, then the `--exclude` and `--include` patterns in the order they were given, then anything from `--rsync-options`, and finally everything after the separator. When the relative order of a filter rule matters, we put the whole set of rules after the separator so that rsync sees them in exactly the order we wrote.
 
 ## Flags
 
@@ -30,9 +44,11 @@ Exactly two arguments are required: a source and a destination. Prefix either wi
 | `-v`, `--verbose` | `-v` | `false` | Verbose output |
 | `--delete` | | `false` | Delete files in destination not present in source |
 | `--dry-run` | | `false` | Perform a trial run with no changes made |
+| `-i`, `--itemize-changes` | `-i` | `false` | Output a change summary for every update |
 | `--exclude` | | | Exclude files matching pattern (repeatable) |
 | `--include` | | | Include files matching pattern (repeatable) |
 | `--rsync-options` | | | Additional rsync options passed through |
+| `--` | | | Everything after this separator goes to rsync unchanged |
 
 ## SSH Key Resolution
 
@@ -98,6 +114,18 @@ Combining common flags (`-avz`):
 
 ```bash
 ocfp rsync --bloc production -a -v -z /local/dir/ bastion:/remote/dir/
+```
+
+Itemizing every change a dry run would make:
+
+```bash
+ocfp rsync --bloc production --dry-run --itemize-changes /local/dir/ bastion:/remote/dir/
+```
+
+Handing rsync a flag we do not model, in this case a progress meter and a filter file:
+
+```bash
+ocfp rsync --bloc production /local/dir/ bastion:/remote/dir/ -- --info=progress2 --filter=':- .gitignore'
 ```
 
 ## See Also

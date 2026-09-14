@@ -40,6 +40,7 @@ var (
 	ErrUnableToParseFileAsYAMLOrJSON           = errors.New("unable to parse file as YAML or JSON")
 	ErrSecretsFileNotFoundInBackup             = errors.New("secrets file not found in backup")
 	ErrInvalidRsyncCommand                     = errors.New("invalid rsync command")
+	ErrRsyncNeedsSourceAndDestination          = errors.New("rsync needs exactly two positional arguments, a source and a destination, before the -- separator")
 	ErrCountMustBeNonNegative                  = errors.New("count must be non-negative")
 	ErrGenericInstanceScalingNotImplemented    = errors.New("generic instance scaling not yet implemented")
 	ErrNoLoadBalancersFound                    = errors.New("no load balancers found")
