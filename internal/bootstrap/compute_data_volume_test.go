@@ -587,3 +587,106 @@ func TestDryRunPreviewsTheDiskItWillCreate(t *testing.T) {
 		})
 	}
 }
+
+// nilStorageProv is a provider with no storage manager at all, which is the
+// only condition that should actually skip the data disk.
+type nilStorageProv struct{ fakeProvWithStorage }
+
+//nolint:ireturn
+func (p *nilStorageProv) StorageManager() cpi.StorageManager { return nil }
+
+// TestEnsureBastionDataVolume_DoesNotGateOnObjectStorage guards a bug found on
+// a live bloc: the step was gated on provider.SupportsStorage().
+//
+// On PVE that method reports whether the configured BLOBSTORE is external —
+// an object-store capability with nothing to do with block volumes. A bloc in
+// the default local blobstore mode therefore skipped the data disk silently,
+// reporting the step as completed while creating nothing.
+func TestEnsureBastionDataVolume_DoesNotGateOnObjectStorage(t *testing.T) {
+	t.Parallel()
+
+	st := &dataVolStorage{}
+
+	stateManager, err := state.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = stateManager.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	err = stateManager.AddResource(&state.Resource{
+		ID: "100", Type: state.ResourceTypeInstance, Name: "prod-bastion", Provider: "pve", State: "active",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Name: "prod", Provider: "pve",
+		Bastion: config.Bastion{Data: config.BastionDataConfig{
+			Enabled: true, DiskSizeGiB: 64, StoragePool: "local-lvm-data",
+			Mountpoint: "/data", Filesystem: config.BastionFilesystemExt4,
+		}},
+	}
+
+	// A provider that has block volumes but no object storage, which is the
+	// default PVE bloc.
+	prov := &noObjectStorageProv{fakeProvWithStorage{s: st}}
+
+	manager := bootstrap.NewManager(cfg, prov, stateManager, &bootstrap.Options{
+		BlocName: "prod", Provider: "pve", Yes: true,
+	})
+
+	if err := manager.EnsureBastionDataVolume(context.Background()); err != nil {
+		t.Fatalf("EnsureBastionDataVolume: %v", err)
+	}
+
+	if !st.called("CreateVolume") {
+		t.Errorf("the data disk was skipped because object storage was unavailable: %v", st.calls)
+	}
+}
+
+// noObjectStorageProv has block volumes but no object store, which is what a
+// PVE bloc in the default local blobstore mode looks like.
+type noObjectStorageProv struct{ fakeProvWithStorage }
+
+func (p *noObjectStorageProv) SupportsStorage() bool { return false }
+
+// TestEnsureBastionDataVolume_SkipsWithoutAStorageManager asserts the one
+// condition that genuinely means we cannot make a volume.
+func TestEnsureBastionDataVolume_SkipsWithoutAStorageManager(t *testing.T) {
+	t.Parallel()
+
+	stateManager, err := state.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = stateManager.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	err = stateManager.AddResource(&state.Resource{
+		ID: "100", Type: state.ResourceTypeInstance, Name: "prod-bastion", Provider: "pve", State: "active",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Name: "prod", Provider: "pve",
+		Bastion: config.Bastion{Data: config.BastionDataConfig{
+			Enabled: true, DiskSizeGiB: 64, Mountpoint: "/data", Filesystem: config.BastionFilesystemExt4,
+		}},
+	}
+
+	manager := bootstrap.NewManager(cfg, &nilStorageProv{}, stateManager, &bootstrap.Options{
+		BlocName: "prod", Provider: "pve", Yes: true,
+	})
+
+	if err := manager.EnsureBastionDataVolume(context.Background()); err != nil {
+		t.Fatalf("EnsureBastionDataVolume: %v", err)
+	}
+}
