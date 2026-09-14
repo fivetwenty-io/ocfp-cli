@@ -43,6 +43,81 @@ func (p SMBIOSPayload) IsEmpty() bool {
 	return p.Serial == "" && p.SKU == "" && p.Family == ""
 }
 
+// smbiosMaxLength is PVE's cap on the smbios1 config string.
+//
+// Everything in that string is base64, so the encoding costs a third again on
+// top of the JSON. A bastion carrying a tailscale block, an ingress block, and
+// a data block with the bootstrap public key in it renders well past the cap,
+// and PVE then rejects the whole value: the VM comes up with no SKU, which
+// means no tailscale and an unprepared data disk.
+const smbiosMaxLength = 512
+
+// dataBlock renders the data-disk block, leaving out anything the guest
+// already defaults.
+//
+// The dataset script defaults the mountpoint, the filesystem, the home
+// directory, and the user, so sending them spends budget and buys nothing. The
+// serial is the one field it cannot work without: given no serial it refuses
+// to guess a device, and the disk goes unmounted.
+func dataBlock(data *cpi.DataDiskSpec) map[string]interface{} {
+	block := map[string]interface{}{"serial": data.Serial}
+
+	for key, value := range map[string]string{
+		"mountpoint":     data.Mountpoint,
+		"filesystem":     data.Filesystem,
+		"home":           data.HomeDir,
+		"user":           data.User,
+		"authorized_key": data.AuthorizedKey,
+	} {
+		if value != "" {
+			block[key] = value
+		}
+	}
+
+	return block
+}
+
+// trimToFit drops the optional data fields, largest first, until the rendered
+// value fits PVE's limit.
+//
+// Dropping is better than sending something PVE refuses, because a refused
+// smbios1 costs the guest every field rather than one. The order is chosen so
+// the fields the guest can default go first and the bootstrap public key,
+// which it cannot, goes last. The disk serial is never dropped.
+func trimToFit(skuMap map[string]interface{}, serial, family string) string {
+	render := func() string {
+		blob, err := json.Marshal(skuMap)
+		if err != nil {
+			return ""
+		}
+
+		return renderSMBIOS(serial, string(blob), family)
+	}
+
+	value := render()
+
+	block, _ := skuMap["data"].(map[string]interface{})
+	if block == nil {
+		return value
+	}
+
+	for _, field := range []string{"home", "user", "mountpoint", "filesystem", "authorized_key"} {
+		if len(value) <= smbiosMaxLength {
+			return value
+		}
+
+		if _, present := block[field]; !present {
+			continue
+		}
+
+		delete(block, field)
+
+		value = render()
+	}
+
+	return value
+}
+
 // BastionSMBIOSPayload builds the SMBIOS payload from the bastion's
 // tailscale + cloudflare + ingress specs. Serial carries the tailscale auth
 // key; SKU is a JSON blob the firstboot script jq-parses.
@@ -77,14 +152,7 @@ func BastionSMBIOSPayload(
 	}
 
 	if data != nil {
-		skuMap["data"] = map[string]interface{}{
-			"serial":         data.Serial,
-			"mountpoint":     data.Mountpoint,
-			"filesystem":     data.Filesystem,
-			"home":           data.HomeDir,
-			"user":           data.User,
-			"authorized_key": data.AuthorizedKey,
-		}
+		skuMap["data"] = dataBlock(data)
 	}
 	if cf != nil && cf.TunnelToken != "" {
 		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
@@ -96,6 +164,11 @@ func BastionSMBIOSPayload(
 			"ports":     ing.Ports,
 		}
 	}
+
+	// Trim before returning, so the caller never renders something PVE
+	// refuses. Trimming reads the rendered length rather than the JSON
+	// length, because base64 is what the limit actually applies to.
+	trimToFit(skuMap, authKeyOf(ts), smbiosFamilyBastion)
 
 	sku, err := json.Marshal(skuMap)
 	if err != nil {
@@ -147,18 +220,21 @@ func BuildSMBIOSConfigValue(p SMBIOSPayload) string {
 		return ""
 	}
 
+	return renderSMBIOS(p.Serial, p.SKU, p.Family)
+}
+
+// renderSMBIOS renders the three fields as PVE's smbios1 config value.
+func renderSMBIOS(serial, sku, family string) string {
 	parts := []string{"base64=1"}
 
-	if p.Serial != "" {
-		parts = append(parts, "serial="+base64.StdEncoding.EncodeToString([]byte(p.Serial)))
-	}
-
-	if p.SKU != "" {
-		parts = append(parts, "sku="+base64.StdEncoding.EncodeToString([]byte(p.SKU)))
-	}
-
-	if p.Family != "" {
-		parts = append(parts, "family="+base64.StdEncoding.EncodeToString([]byte(p.Family)))
+	for _, f := range []struct{ key, value string }{
+		{"serial", serial},
+		{"sku", sku},
+		{"family", family},
+	} {
+		if f.value != "" {
+			parts = append(parts, f.key+"="+base64.StdEncoding.EncodeToString([]byte(f.value)))
+		}
 	}
 
 	return strings.Join(parts, ",")
