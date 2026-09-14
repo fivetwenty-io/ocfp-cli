@@ -114,3 +114,57 @@ func TestNewManager_EmptyStateDirUsesXDGStateHome(t *testing.T) {
 		t.Errorf("%q exists but is not a directory", wantDir)
 	}
 }
+
+// TestAddResource_UpdatesIDOfExistingResource pins the behaviour a bastion
+// recycle depends on, and which it did not have.
+//
+// Resources are keyed by type and name, not by provider id, precisely so that
+// a guest can be replaced while keeping its name. The recycle does exactly
+// that: it builds a replacement, destroys the original, and rewrites the
+// instance record so the bloc knows which VMID to talk to now. That rewrite
+// went through AddResource, which copied state, properties, and tags onto the
+// record it already held and left the ID alone. The bloc state then still
+// named the VM that had just been destroyed, which aims the next teardown at a
+// VMID that no longer exists, or at whatever guest later takes that number.
+func TestAddResource_UpdatesIDOfExistingResource(t *testing.T) {
+	mgr, err := state.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	_, err = mgr.Load("mybloc")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	err = mgr.AddResource(&state.Resource{
+		ID:       "100",
+		Type:     state.ResourceTypeInstance,
+		Name:     "mybloc-bastion",
+		Provider: "pve",
+		State:    "active",
+	})
+	if err != nil {
+		t.Fatalf("AddResource() error: %v", err)
+	}
+
+	err = mgr.AddResource(&state.Resource{
+		ID:       "102",
+		Type:     state.ResourceTypeInstance,
+		Name:     "mybloc-bastion",
+		Provider: "pve",
+		State:    "active",
+	})
+	if err != nil {
+		t.Fatalf("AddResource() re-record error: %v", err)
+	}
+
+	got, err := mgr.GetResource(state.ResourceTypeInstance, "mybloc-bastion")
+	if err != nil {
+		t.Fatalf("GetResource() error: %v", err)
+	}
+
+	if got.ID != "102" {
+		t.Errorf("resource ID = %q, want %q; the replacement's id must replace the retired one", got.ID, "102")
+	}
+}
