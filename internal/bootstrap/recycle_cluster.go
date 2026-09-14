@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/recycle"
@@ -59,13 +58,25 @@ type Archiver interface {
 type BastionRecycleCluster struct {
 	mgr *Manager
 
-	// archiveStorage names the backup storage for the optional archive.
+	// archiveStorage names the backup storage for the safety copy.
 	archiveStorage string
+
+	// safetyCopyTaken records that the operator already has a copy, for the
+	// case where they took one by hand.
+	safetyCopyTaken bool
 }
 
 // NewBastionRecycleCluster returns a recycle.Cluster for this bloc's bastion.
 func NewBastionRecycleCluster(mgr *Manager, archiveStorage string) *BastionRecycleCluster {
 	return &BastionRecycleCluster{mgr: mgr, archiveStorage: archiveStorage}
+}
+
+// WithSafetyCopyTaken records that the operator already holds a copy of the OS
+// disk, so the recycle need not take one.
+func (c *BastionRecycleCluster) WithSafetyCopyTaken(taken bool) *BastionRecycleCluster {
+	c.safetyCopyTaken = taken
+
+	return c
 }
 
 func (c *BastionRecycleCluster) finalName() string {
@@ -185,24 +196,31 @@ func (c *BastionRecycleCluster) StartOriginal(ctx context.Context) error {
 	return c.mgr.provider.ComputeManager().StartInstance(ctx, id)
 }
 
-// Snapshot takes the cheap in-place safety copy. It is never optional, because
-// neither VM in a typical bloc is covered by any backup job.
+// Snapshot takes the recycle's safety copy.
+//
+// It deliberately does NOT take a VM snapshot, despite the name the engine
+// gives the phase. A snapshot pins every disk in the VM's config, and Proxmox
+// then refuses to move or detach any of them, so snapshotting here would
+// deadlock the handover two phases later. recycleSafetyCopyRationale explains
+// it at length, and a test pins the reasoning.
+//
+// The copy that works is a vzdump archive: it pins nothing, it survives the VM
+// being destroyed, and with the data disk marked backup=0 it captures exactly
+// the half that is about to be thrown away.
 func (c *BastionRecycleCluster) Snapshot(ctx context.Context) error {
-	id, ok := c.findByName(ctx, c.finalName())
-	if !ok {
-		return ErrRecycleNoBastion
-	}
-
-	name := "pre-recycle-" + time.Now().UTC().Format("20060102-150405")
-
-	_, err := c.mgr.provider.StorageManager().CreateSnapshot(ctx, id, name)
+	err := checkSafetyCopyPlan(c.archiveStorage, c.safetyCopyTaken)
 	if err != nil {
-		return fmt.Errorf("snapshot %s: %w", c.finalName(), err)
+		return err
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "    • Snapshot %s taken\n", name)
+	if c.archiveStorage == "" {
+		_, _ = fmt.Fprintln(os.Stdout,
+			"    • Skipping the safety copy; you confirmed one already exists.")
 
-	return nil
+		return nil
+	}
+
+	return c.Archive(ctx)
 }
 
 // Archive takes a copy that survives the VM being destroyed.
@@ -357,7 +375,12 @@ func (c *BastionRecycleCluster) recordVolumeOwner(volumeID, instanceID string) e
 	res.Properties["vm_id"] = instanceID
 	res.ID = volumeID
 
-	return c.mgr.stateManager.AddResource(res)
+	err := c.mgr.stateManager.AddResource(res)
+	if err != nil {
+		return err
+	}
+
+	return c.mgr.stateManager.Save()
 }
 
 // RetireOriginal destroys the VM being replaced. Past this, nothing can be
@@ -409,6 +432,11 @@ func (c *BastionRecycleCluster) AdoptReplacement(ctx context.Context) error {
 		return fmt.Errorf("record replacement in state: %w", err)
 	}
 
+	err = c.mgr.stateManager.Save()
+	if err != nil {
+		return fmt.Errorf("persist replacement in state: %w", err)
+	}
+
 	_, _ = fmt.Fprintf(os.Stdout, "    • Adopted %s as %s; starting\n", id, c.finalName())
 
 	return c.mgr.provider.ComputeManager().StartInstance(ctx, id)
@@ -448,7 +476,7 @@ func (c *BastionRecycleCluster) SaveJournal(_ context.Context, j *recycle.Journa
 		return fmt.Errorf("marshal journal: %w", err)
 	}
 
-	return c.mgr.stateManager.AddResource(&state.Resource{
+	err = c.mgr.stateManager.AddResource(&state.Resource{
 		ID:       c.finalName(),
 		Type:     recycleJournalResourceType,
 		Name:     c.finalName(),
@@ -458,6 +486,14 @@ func (c *BastionRecycleCluster) SaveJournal(_ context.Context, j *recycle.Journa
 			"journal": string(blob),
 		},
 	})
+	if err != nil {
+		return err
+	}
+
+	// Flush. AddResource only mutates the in-memory state, and a journal that
+	// never reaches disk is no journal at all: the next invocation reads
+	// nothing, concludes the run never started, and begins again from the top.
+	return c.mgr.stateManager.Save()
 }
 
 // LoadJournal reads a recycle in progress, or nil when there is none.
@@ -482,7 +518,12 @@ func (c *BastionRecycleCluster) LoadJournal(_ context.Context) (*recycle.Journal
 
 // ClearJournal removes the progress record after a successful run.
 func (c *BastionRecycleCluster) ClearJournal(_ context.Context) error {
-	return c.mgr.stateManager.RemoveResource(recycleJournalResourceType, c.finalName())
+	err := c.mgr.stateManager.RemoveResource(recycleJournalResourceType, c.finalName())
+	if err != nil {
+		return err
+	}
+
+	return c.mgr.stateManager.Save()
 }
 
 // compile-time check that the adapter satisfies the engine's contract.
