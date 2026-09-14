@@ -904,7 +904,7 @@ Beyond the CF-focused phases, the CF-coupled and operator platform services were
 | Scheduler | ocf | 2026-06-04 | ✅ PASS | 10.64.68.40/z1 | PVE-ported (kit.yml + cloud-config.pm pve branches for scheduler/smoke-test vm + db disk). Env needs **`internal-postgres`** in features explicitly (ocfp alone falls through to external-postgres). Colocated postgres + route_registrar + pg_janitor all running; smoke-tests is an errand. |
 | Autoscaler | ocf | 2026-06-04 | ✅ PASS | z2 (ocfp-1) 10.64.72.41–47 | PVE-ported (kit.yml + 9 pve branches in cloud-config.pm: network + 7 vm_types + as-postgres disk; blueprint loads new `ocfp/pve.yml` when iaas==pve). `ocfp/pve.yml` does two things: `use_dns_addresses:false` (dotted OCFP network names break bosh-dns long-form links across the 7 interlinked jobs) and pins every instance group to z2 (so dynamic IPs don't spill into ocfp-0/CF or ocfp-2/compilation on the shared bridge). All 7 components + colocated postgres running. |
 | Jumpbox | mgmt | 2026-06-05 | ✅ PASS | 10.64.72.6/z2 (ocfp-1) static | PVE-ported (kit.yml + 3 pve branches in cloud-config.pm modern-helper style: network bridge, vm cpu/ram/disk, disk storage/raw). Single VM on **noble**; bosh-dns + watcher running. Runs upstream-**main** jumpbox-boshrelease + 2 noble fixes (dev release `jumpbox/5.1.2+dev.1780659498`). Several blockers hit and fixed (see below). |
-| Stratos (console) | ocf | 2026-06-10 | ✅ PASS | CF app in `system`/`stratos` space; route `console.apps.ocf` | Stratos **`develop`** (native CC **v3**, `v5.0.0-dev.102`) deployed as a CF app via the cf kit `stratos-integration` feature + `genesis <env> do stratos deploy`, built **in-platform** (`stratos-buildpack#v6`) — the tagged `5.0.0-dev.10` rendered empty (removed CC v2). Needs a 16G diego cell (`pve_diego_cell_ram`), `maximum_app_disk_in_mb` on api+cc-worker+scheduler, build-info.ts gen, and `UI_PATH: ./ui/frontend/browser`. Colocated `stratos` DB on CF postgres; egress ASG; DB-from-vault + `ENCRYPTION_KEY` in the hook. `https://console.apps.ocf.wayne.lab.fivetwenty.io` HTTP 200. See §8.4. |
+| Stratos (console) | ocf | 2026-09-14 | ✅ PASS | CF app in `system`/`stratos` space; route `console.apps.ocf` | Stratos **v5.5.3** (stable, native CC **v3**) pushed from the published `stratos-cf-v5.5.3.zip` on `binary_buildpack`, via the cf kit `stratos-integration` feature + `genesis <env> do stratos deploy`. Retires the June 2026 in-platform `develop` build and everything it needed: no 16G diego cell, no `maximum_app_disk_in_mb` overrides, no build-info.ts, no `UI_PATH` fix. Eleven addon defects fixed upstream on `cf-genesis-kit` branch `stratos-5x-repair` (PR #239). Colocated `stratos` DB on the CF postgres; `stratos-api`, `stratos-db`, and `stratos-app-ssh` egress ASGs. Feature + version pin now COMMITTED in the env file, which is what June lacked. `https://console.apps.ocf.wayneeseguin.lab.fivetwenty.io` HTTP 200, `/pp/v1/version` `v5.5.3`, app `1/1 running`, clean-slate re-run verified. See §8.4. |
 
 ### 8.1 cross-cutting findings & fixes
 
@@ -1012,7 +1012,79 @@ tailscaled`. The `ocfp rsync` wrapper resolves a separate hostname that was also
 unreachable during the wedge; pushing files via `tar | ocfp ssh … 'tar x'`
 over the working ssh path is the reliable fallback.
 
-## 8.4 Stratos console at the canonical URL (2026-06-09; v3 update 2026-06-10)
+## 8.4 Stratos console at the canonical URL (2026-06-09; rewritten 2026-09-14)
+
+> **Update 2026-09-14:** everything below the "How we deploy it now" heading has been rewritten. The console is back, on the v5.5.3 binary release rather than an in-platform build of the `develop` branch, and the enablement now lives in committed configuration instead of on a bastion. The 2026-06 material is kept further down under "History", because the reasoning still explains why several of the fixes exist.
+
+Stratos is the Cloud Foundry web console. It is a CF **app**, not a BOSH deployment, and the cf kit brings it up in two halves. The `stratos-integration` feature registers a `stratos_client` UAA OAuth client and publishes the client and its secret to exodus. The `do stratos` addon (`hooks/addon-stratos~st.pm`) then downloads the release, creates the `system`/`stratos` space, wires the database, and pushes the app. When all of that has run, the console answers HTTP 200 at `https://console.apps.ocf.<bloc>.lab.fivetwenty.io` and jetstream answers at `/pp/v1/version`, both through the existing ingress, since `console.apps.ocf` already sits under the wildcard certificate and the wildcard DNS record.
+
+### Why the June approach is retired
+
+In June 2026 there was no stable 5.x release. The line was all `-dev` prereleases, and only the `develop` branch spoke v3. The newest tagged build rendered an empty console, because it enumerated resources through the Cloud Controller v2 API that cf-deployment had removed. So we built `develop` in-platform with `stratos-buildpack#v6`, and that build needed a 16 GB diego cell, an override of `maximum_app_disk_in_mb` on three instance groups, a generated `build-info.ts`, and a corrected `UI_PATH`.
+
+None of that is needed now. Stratos v5.0.0 went stable on 2026-08-06 and the line has reached v5.5.3, released 2026-09-09. Its release notes record that name-uniqueness checks moved off the v2 API and that a v3-only foundation sources its auth endpoints from the root links when `/v2/info` is absent, so the console works against a modern CAPI. The release ships a prebuilt `stratos-cf-v5.5.3.zip` for `binary_buildpack`, and the `ui/` directory sits at the top of that bundle, which is why the `UI_PATH` correction is no longer required either.
+
+**Do not reach for the in-platform build again unless a future release regresses.** It costs an order of magnitude more, in cell memory and in moving parts, than pushing the published bundle.
+
+### The durability lesson, which is the point of this rewrite
+
+The June deployment was lost. Not by an outage, and not by a bad change, but because every piece of the enablement lived somewhere a rebuild does not preserve. The feature and the version pin were hand-edited into the environment file on the bastion and never committed. The hook fixes were bastion-local, and the bastion's kit checkout is not a git repository, so re-seeding it erased them without a trace. The section you are reading warned about exactly this in its own durability note, and we did not act on the warning.
+
+So the rule now is simple. Anything that has to survive a rebuild goes into a repository. The feature and the version pin are committed in the bloc's environment file. The hook fixes are committed to the cf kit on a branch and pushed upstream. Nothing about Stratos should exist only on a bastion, and if you find yourself editing a kit in place to make this work, that is the signal that the fix belongs upstream instead.
+
+### How we deploy it now
+
+The kit hook needed real repair before any of this worked, and those fixes are upstream in `cf-genesis-kit` on the `stratos-5x-repair` branch rather than described here as patches to apply by hand. Five of them are worth knowing about, because they change what you can expect. The addon now resolves the CF API URL and both domains from `params.*` and exodus, rather than from a top-level `cf:` key that no OCFP environment defines. It picks the right release asset for the major version and downloads it to a fixed filename. It reads the database coordinates from the vault at deploy time, and it refuses to push when no hostname is configured. It reads its own persistent secrets by key, so they no longer stringify into the manifest as `HASH(0x...)`. And it opens egress security groups to the database and to the CF API.
+
+The steps below assume the foundation is already deployed and healthy.
+
+1. Create the console's database. Stratos gets its own `stratos` role and `stratos` database on the CF internal Postgres, on the `database` instance group at port **5524**, rather than a database server of its own. Create them through `bosh ssh database/0` as the local-trust `vcap` superuser, and pass the SQL in a file rather than on the command line so the password does not land in the process table. This is durable across a redeploy of the same deployment, because `pg_hba.conf` ends with a fixed permissive `host all all 0.0.0.0/0 md5` rule and postgres-release does not prune databases or roles it does not know about. It is **not** durable across a rebuild that replaces the database VM, which is how the June database was lost, so treat recreating it as a normal part of a rebuild.
+
+2. Write the coordinates to the vault, at `<secrets_base>stratos/db/stratos`, with the keys `scheme`, `hostname`, `username`, `password`, `port`, `database`, and `sslmode`. Use `safe set … password@<file>` for the password. Note that `sslmode` must be `disable` and not `disabled`, which Postgres rejects.
+
+3. Add `stratos-integration` to `kit.features` in the bloc's environment file, and set the version:
+
+   ```yaml
+   stratos:
+     version: 5.5.3
+   ```
+
+   Commit both. That is the whole point of the durability lesson above.
+
+4. Run `genesis <env> add-secrets`, which generates the UAA client secret along with the console's own session store secret and encryption key, and then `genesis <env> deploy`. **The deploy is mandatory and it has to come before the addon**, because the addon reads the client and its secret back out of exodus, and only a successful deploy writes them there. Skipping it does not fail loudly. The addon warns once and then bakes the literal strings `stratos_client` and `stratos_secret` into the app's environment, and the only symptom is a UAA rejection when a human tries to sign in.
+
+5. Fetch the release bundle and verify it against the published sums:
+
+   ```bash
+   curl -sSLO https://github.com/cloudfoundry/stratos/releases/download/v5.5.3/stratos-cf-v5.5.3.zip
+   curl -sSL https://github.com/cloudfoundry/stratos/releases/download/v5.5.3/SHA256SUMS | grep stratos-cf
+   sha256sum stratos-cf-v5.5.3.zip
+   ```
+
+6. Log in to CF as an admin, with `genesis <env> do login`, and push the console:
+
+   ```bash
+   genesis <env> do stratos deploy --file ~/stratos/stratos-cf-v5.5.3.zip --version 5.5.3
+   ```
+
+   The environment name comes first and `do` comes second. The addon's own on-screen help prints `genesis <env> stratos deploy`, without the `do`, and Genesis rejects that form. The help text is corrected upstream, but an older bastion will still show the old wording. Pass `--version` alongside `--file` so that a later `info` reports the version that is actually installed rather than the default. If an app is already there the addon stops and tells you to pass `--force`, and it does that even when the app it found is crashed, so read the message rather than the exit code.
+
+### Verification
+
+Ask for the console and for jetstream's version endpoint, and expect 200 from both. On 2026-09-14 `/pp/v1/version` returned `v5.5.3` built on 2026-09-09, and the app sat at `1/1 running` and ready in the `system`/`stratos` space. Sign in through UAA as well, since the console is pushed with `SSO_LOGIN` set and has no local admin account to fall back on. You can check the client without a browser by asking UAA to authorize it. A 302 to the login page means the client and the redirect URI are both right, and an error page means they are not. If the client is wrong you are locked out of the interface entirely and will have to work from `cf logs`.
+
+The console answers on the apps domain, at `console.apps.ocf.<bloc>.lab.fivetwenty.io`, and not on the system domain where the other service interfaces live. That trips people up, because `shield`, `blacksmith`, `doomsday`, and `concourse` are all reached under `*.system.ocf`. Those are haproxy-routed BOSH deployments and Stratos is an ordinary CF app, so it takes an ordinary app route. Asking for `console.system.ocf` gets a gorouter 404, which looks exactly like a console that is down.
+
+A console that loads but shows no orgs, spaces, or apps means the release is reading the v2 API. That points at the version rather than at a broken foundation. A console that loads and then errors on nearly every page usually means the database is unreachable, and the first thing to check is the `stratos-db` security group, because an app container has no egress to the BOSH network without it. Note that the app's health check is a port check, so a database failure still presents as a healthy, running app.
+
+If the app crashes on start-up instead, read `cf logs apps --recent` and widen your terminal first, because the interesting line is long and the useful half of it gets cut off. Two failures look alarming and are not. `could not get the info for Cloud Foundry ... connection refused` is the `stratos-api` group missing, not an API outage. The console reaches CF over the same public route an operator uses, and that route resolves to the load balancer on a private address. Because `public_networks` deliberately excludes the private ranges, Diego rejects the blocked connection rather than dropping it. `ENCRYPTION_KEY is not valid hex` means the key never made it out of the vault, so check that `<secrets_base>stratos` actually holds `encryption_key` and `session_store`.
+
+Prove durability the way we did in June, by deleting the app, all three security groups, and the CUPS service, and running the addon again from a clean slate. On 2026-09-14 that cold run came back up with no manual steps. It is the check that catches a fix that only worked because of leftover state.
+
+### History (2026-06-09 and 2026-06-10)
+
+The material below describes the original deployment and the reasoning behind it. It is kept because several of the fixes now upstream in the kit were first worked out here, and because the empty-console diagnosis explains why the version matters so much.
+
 
 > **Update 2026-06-10:** the `5.0.0-dev.10` binary rendered an **empty** console
 > (removed CC v2 API). The working approach is now the `develop` branch (native
@@ -1030,7 +1102,7 @@ and `cf push`es the app. End state: **HTTP 200** at
 tunnel/DNS/cert work, since `console.apps.ocf` is already under the `*.apps.ocf`
 edge cert + wildcard CNAME.
 
-### Version reality
+#### Version reality
 
 There is **no stable 5.x** release — the 5.x line is all `-dev` prereleases;
 latest is **`v5.0.0-dev.10`** (stable tops out at `v4.9.4`). 5.x also **renamed
@@ -1040,7 +1112,7 @@ bundle is still `cf push`-able (jetstream binary + `ui/` + `templates/` +
 **requires an explicit `ENCRYPTION_KEY`** for binary-buildpack deploys (the old
 source buildpack defaulted it).
 
-### cf kit addon hook patches (`addon-stratos~st.pm`, bastion copy; local-only)
+#### cf kit addon hook patches (`addon-stratos~st.pm`, bastion copy; local-only)
 
 The bastion's hook (a newer, locally-modified v3.1.0 variant — diverged from the
 `genesis-community/cf-genesis-kit` `develop` checkout, which is older) had a
@@ -1076,7 +1148,7 @@ deploy path that had never actually run on this env shape. Patched (all
   (`dial tcp 10.64.68.16:5524: connect: connection refused`) until the ASG was
   bound.
 
-### Colocated database on the CF postgres
+#### Colocated database on the CF postgres
 
 Per operator decision, Stratos gets its own `stratos` database + `stratos` role
 on the **CF internal postgres** (instance group `database`, `10.64.68.16`, port
@@ -1088,7 +1160,7 @@ and postgres-release does **not** prune unlisted databases/roles on redeploy.
 Credentials stored in vault at `<secrets_base>stratos/db/stratos`. md5 TCP login
 from the cell network verified.
 
-### Enable + deploy steps (this env)
+#### Enable + deploy steps (this env)
 
 1. `safe set <secrets_base>stratos/db/stratos …` (DB creds) and create the
    `stratos`/`stratos` role+db on `database/0`.
@@ -1105,7 +1177,7 @@ from the cell network verified.
    (downloads `stratos-cf-v5.0.0-dev.10.zip`, creates space, binds ASG, CUPS
    service, `cf push`).
 
-### Verification
+#### Verification
 
 Clean-slate proof (deleted the app **and** the ASG, then re-ran
 `do stratos deploy`): the addon recreated the ASG, pushed with the correct
@@ -1120,7 +1192,7 @@ patches are bastion-local only** (the bastion's cf kit carries the local v56 PVE
 fixes and is not synced from the diverged `develop` checkout), so they must be
 re-applied (or upstreamed) if the bastion kit is re-seeded.
 
-### Empty console → `develop` (native CC v3), in-platform build (2026-06-10)
+#### Empty console → `develop` (native CC v3), in-platform build (2026-06-10)
 
 The `5.0.0-dev.10` binary deployed and served, but the console rendered **empty**
 — no orgs, spaces, or apps. Root cause: that tag enumerates resources via the CF
