@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// ErrDiskNotHandedOver refuses a destroy that would take the data disk with
+// it. The check reads the cluster rather than the journal, because the journal
+// records what was attempted and not what succeeded.
+var ErrDiskNotHandedOver = errors.New(
+	"refusing to destroy the original: it still holds the data disk. " +
+		"The handover has not succeeded, and destroying the VM now would destroy the disk with it")
+
 // ErrNothingToRecycle is returned when neither the original nor a replacement
 // can be found. There is no run to start and none to resume, and if a data
 // volume survived, the operator has to name it explicitly rather than let the
@@ -193,12 +200,17 @@ func (e *Engine) resolveStartPhase(ctx context.Context) (Phase, error) {
 
 	journal, err := e.cluster.LoadJournal(ctx)
 	if err == nil && journal != nil && journal.Phase != "" {
-		if next, ok := NextPhase(journal.Phase); ok {
-			return next, nil
-		}
-
-		// The journal records the final phase; the run already finished.
-		return "", nil
+		// Resume AT the recorded phase, not after it.
+		//
+		// The journal is written before a phase runs, so a recorded phase may
+		// have failed. Starting at the next one skips work that never
+		// happened — observed for real on a live cluster, where a failed
+		// handover left the journal saying "handed-over" and the resume went
+		// straight to destroying the original, which still held the data disk
+		// the whole feature exists to preserve.
+		//
+		// Every phase is written to be safe to re-enter. Skipping one is not.
+		return journal.Phase, nil
 	}
 
 	// No journal. Place the run from the cluster and continue from the phase
@@ -244,6 +256,18 @@ func (e *Engine) runPhase(ctx context.Context, phase Phase) error {
 	case PhaseHandedOver:
 		return e.cluster.HandOverDisk(ctx)
 	case PhaseRetired:
+		// Check the cluster, never the journal. Destroying the original while
+		// it still holds the data disk destroys that disk too, because the
+		// delete purges every disk the config references.
+		obs, err := e.cluster.Observe(ctx)
+		if err != nil {
+			return fmt.Errorf("confirm the disk moved before destroying the original: %w", err)
+		}
+
+		if obs.OriginalExists && obs.DiskOwner != DiskOnReplacement {
+			return fmt.Errorf("%w (disk owner: %s)", ErrDiskNotHandedOver, obs.DiskOwner)
+		}
+
 		return e.cluster.RetireOriginal(ctx)
 	case PhaseAdopted:
 		return e.cluster.AdoptReplacement(ctx)
