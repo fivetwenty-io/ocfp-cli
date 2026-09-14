@@ -465,7 +465,7 @@ func attachValueForVolume(volumeID, props string) string {
 // guest-side device path predictable instead of dependent on PVE's next-free
 // arithmetic. Any properties carried on the hint ride along on the config
 // value; `serial=` in particular gives the guest a stable
-// /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial> path.
+// /dev/disk/by-id/scsi-SQEMU_QEMU_HARDDISK_<serial> path.
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
