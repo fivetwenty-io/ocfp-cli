@@ -53,21 +53,30 @@ fi
 # Resolve the disk by its serial rather than by /dev/sdN. The letter depends
 # on enumeration order and is correct today only because a cloned template
 # happens to occupy scsi0 and nothing else is attached.
-DEV=""
+#
+# Two lookups, because udev does not name by-id entries the same way on every
+# release. Ubuntu Noble names them after the serial
+# (scsi-SQEMU_QEMU_HARDDISK_ocfpdata); Ubuntu Resolute names them after the
+# slot (scsi-0QEMU_QEMU_HARDDISK_drive-scsi1). The serial is authoritative on
+# both and lsblk reports it on both, so by-id is tried first as the cheaper and
+# more specific match and lsblk is the fallback.
+REAL=""
 for candidate in /dev/disk/by-id/*"${SERIAL}"; do
   if [ -b "${candidate}" ]; then
-    DEV="${candidate}"
+    REAL="$(readlink -f "${candidate}")"
     break
   fi
 done
 
-if [ -z "${DEV}" ]; then
+if [ -z "${REAL}" ]; then
+  REAL="$(lsblk -dno PATH,SERIAL 2>/dev/null | awk -v s="${SERIAL}" '$2 == s { print $1; exit }')"
+fi
+
+if [ -z "${REAL}" ] || [ ! -b "${REAL}" ]; then
   log "no block device with serial ${SERIAL}; the data disk is not attached"
   exit 0
 fi
-
-REAL="$(readlink -f "${DEV}")"
-log "data disk ${SERIAL} is ${REAL}"
+log "data disk ${SERIAL} resolved to ${REAL}"
 
 # Refuse outright if the device backs the running root filesystem. This script
 # formats, and the cost of getting the device wrong is the whole machine.
