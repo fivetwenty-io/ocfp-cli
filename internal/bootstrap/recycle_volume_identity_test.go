@@ -70,3 +70,35 @@ func TestIsPreservedDataVolume(t *testing.T) {
 		})
 	}
 }
+
+// TestNeedsStart covers the last phase that could not be re-entered.
+//
+// Adopting the replacement renames it and starts it. The journal records a
+// phase before it runs, so a resume lands here after a start that already
+// succeeded, and asking a running VM to start is an error on Proxmox rather
+// than a no-op: the run died on "VM 102 already running" with the recycle
+// otherwise complete.
+func TestNeedsStart(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state cpi.ResourceState
+		want  bool
+	}{
+		{cpi.ResourceStateStopped, true},
+		{cpi.ResourceStateActive, false},
+		{cpi.ResourceStateInUse, false},
+		{cpi.ResourceStateCreating, true},
+		{cpi.ResourceStateUnknown, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.state), func(t *testing.T) {
+			t.Parallel()
+
+			if got := needsStart(tc.state); got != tc.want {
+				t.Errorf("needsStart(%q) = %v, want %v", tc.state, got, tc.want)
+			}
+		})
+	}
+}
