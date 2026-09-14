@@ -20,15 +20,31 @@ const (
 
 	// LegacyProvisionedMarkerPath is where the marker used to live. It is
 	// still read so bastions provisioned before the move are not put through
-	// a full re-provision the first time they are touched.
+	// a full re-provision the first time they are touched, but only when the
+	// home directory is this machine's own rather than a persisted one.
 	LegacyProvisionedMarkerPath = "${HOME}/.ocfp/provisioned"
 )
 
 // provisionedMarkerCheckCommand reports the provisioning date from whichever
 // marker exists, preferring the OS-disk one.
+//
+// The legacy marker is read only when the home directory is not a mount point.
+// Moving the marker onto the OS disk was meant to stop a claim about the state
+// of the OS riding across a rebuild on the data disk, and reading the old
+// home-directory marker unconditionally put that back exactly as it was. It
+// cost us the lab's first cycle onto Resolute: the new bastion came up with no
+// brew, no binaries, and no genesis, and init read a marker dated three weeks
+// earlier off the persisted home and reported the bastion already fully
+// provisioned.
+//
+// A bind-mounted home is the tell. When the home directory is a mount point,
+// whatever marker sits in it came from the data disk rather than from this
+// installation, and it says nothing about the operating system now running.
 func provisionedMarkerCheckCommand() string {
 	return fmt.Sprintf(
-		"if [ -f '%s' ]; then cat '%s'; elif [ -f \"%s\" ]; then cat \"%s\"; else exit 1; fi",
+		"if [ -f '%s' ]; then cat '%s'; "+
+			"elif ! findmnt -n \"${HOME}\" >/dev/null 2>&1 && [ -f \"%s\" ]; then cat \"%s\"; "+
+			"else exit 1; fi",
 		ProvisionedMarkerPath, ProvisionedMarkerPath,
 		LegacyProvisionedMarkerPath, LegacyProvisionedMarkerPath,
 	)

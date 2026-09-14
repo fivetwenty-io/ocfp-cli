@@ -67,3 +67,40 @@ func TestProvisionedMarkerWriteCommandTargetsOSDisk(t *testing.T) {
 		t.Errorf("the write still targets the persisted home directory: %s", cmd)
 	}
 }
+
+// TestLegacyMarkerIgnoredWhenHomeIsPersisted closes the hole the legacy
+// fallback reopened.
+//
+// Moving the marker to the OS disk was meant to stop a claim about the state
+// of the OS riding across a rebuild on the data disk. Reading the old
+// home-directory marker as a fallback puts that back exactly as it was, and it
+// cost us the first real cycle: the Resolute bastion came up with no brew, no
+// binaries, and no genesis, and `ocfp bastion init` read a marker dated three
+// weeks earlier off the persisted home and reported the bastion already fully
+// provisioned.
+//
+// A bind-mounted home is the tell. When the home directory is a mount point,
+// whatever marker sits in it came from the data disk rather than from this
+// installation, and it says nothing about the operating system now running.
+func TestLegacyMarkerIgnoredWhenHomeIsPersisted(t *testing.T) {
+	t.Parallel()
+
+	cmd := provisionedMarkerCheckCommand()
+
+	if !strings.Contains(cmd, "findmnt") {
+		t.Errorf("the marker check never asks whether the home directory is persisted:\n%s", cmd)
+	}
+
+	// The OS-disk marker must still be read without that question being asked
+	// of it, since it cannot have come from the data disk.
+	osFirst := strings.Index(cmd, ProvisionedMarkerPath)
+	guard := strings.Index(cmd, "findmnt")
+
+	if osFirst < 0 || guard < 0 {
+		t.Fatalf("expected both the OS-disk marker and the guard in:\n%s", cmd)
+	}
+
+	if osFirst > guard {
+		t.Errorf("the persisted-home guard precedes the OS-disk marker; the OS-disk marker is authoritative:\n%s", cmd)
+	}
+}
