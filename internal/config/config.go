@@ -398,8 +398,15 @@ type Config struct {
 
 	// VmidRangeStart is the lower bound (inclusive) of the PVE VMID range the
 	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
-	// the default value 100 so the CPI never clobbers operator-reserved IDs.
+	// the default value 100, which clears PVE's own internal IDs (1-99).
 	// Maps to vmid_range_start in the bosh-proxmox-cpi-release job properties.
+	//
+	// Note that this value reaches Vault but not the director. The BOSH kit
+	// writes vmid_range_start as a literal 200 into the CPI properties and
+	// deliberately does not source it from Vault, because safe stores every
+	// leaf as a string and the CPI's config decoder rejects a string where it
+	// wants an int. Overriding the director's floor means going through the
+	// bosh-configs path (cpi.pve_vmid_range_start), not through this field.
 	VmidRangeStart int `json:"vmid_range_start,omitempty" mapstructure:"vmid_range_start" yaml:"vmid_range_start,omitempty"`
 
 	// VmidRangeEnd is the upper bound (inclusive) of the PVE VMID range the
