@@ -105,6 +105,7 @@ func NewPVETemplateProvisionCmd() *cobra.Command {
 	var (
 		blocName   string
 		configFile string
+		rebuild    bool
 	)
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional cobra fields
@@ -117,7 +118,11 @@ bastion variants boots that VM once over the serial console to seed the OCFP
 firstboot and watchdog units before converting it to a template.
 
 The command is idempotent: a template that already exists is reported and
-left alone.
+left alone. Pass --rebuild to destroy it and build it again, which is what
+you want after the units a bastion template carries have changed, since those
+are baked in when the template is seeded and reach no new bastion until it is
+rebuilt. Rebuilding cannot harm the guests already cloned from the template,
+because OCFP clones full rather than linked.
 
 A failed bastion seed deliberately leaves the VM stopped rather than
 destroying it, so its serial console stays available for diagnosis.`,
@@ -126,18 +131,19 @@ destroying it, so its serial console stays available for diagnosis.`,
   ocfp pve template provision ubuntu-resolute-bastion-template --bloc my-bloc`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPVETemplateProvision(cmd.Context(), args[0], blocName, configFile)
+			return runPVETemplateProvision(cmd.Context(), args[0], blocName, configFile, rebuild)
 		},
 	}
 
 	cmd.Flags().StringVarP(&blocName, "bloc", "b", "", "bloc whose PVE cluster to build on (required)")
 	cmd.Flags().StringVarP(&configFile, "config", "c", "", "path to the bloc config file")
+	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "destroy the existing template and build it again")
 	_ = cmd.MarkFlagRequired("bloc")
 
 	return cmd
 }
 
-func runPVETemplateProvision(ctx context.Context, templateName, blocName, configFile string) error {
+func runPVETemplateProvision(ctx context.Context, templateName, blocName, configFile string, rebuild bool) error {
 	spec, err := resolveTemplateName(templateName)
 	if err != nil {
 		return err
@@ -180,7 +186,15 @@ func runPVETemplateProvision(ctx context.Context, templateName, blocName, config
 			"  This is a bastion template: the VM boots once and is seeded over the serial console, which takes several minutes.")
 	}
 
-	vmid, err := pveCompute.ProvisionTemplate(ctx, spec.Name)
+	build := pveCompute.ProvisionTemplate
+	if rebuild {
+		_, _ = fmt.Fprintln(os.Stdout,
+			"  Rebuilding: the existing template will be destroyed first. Guests already cloned from it are unaffected.")
+
+		build = pveCompute.RebuildTemplate
+	}
+
+	vmid, err := build(ctx, spec.Name)
 	if err != nil {
 		return fmt.Errorf("provision template %s: %w", spec.Name, err)
 	}
