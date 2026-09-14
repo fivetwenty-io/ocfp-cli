@@ -327,9 +327,13 @@ func TestEngine_JournalsEveryPhaseBeforeActing(t *testing.T) {
 	}
 }
 
-// TestEngine_ResumesFromJournal asserts a second run continues rather than
-// repeating. Re-stopping an already-stopped VM is harmless, but re-building a
-// replacement that already exists is not.
+// TestEngine_ResumesFromJournal asserts a second run picks up where the first
+// left off rather than starting over.
+//
+// It re-enters the recorded phase, because the journal is written before a
+// phase runs and so records what was attempted rather than what succeeded.
+// Earlier phases are not repeated: re-stopping a stopped VM is harmless, but
+// rebuilding a replacement that already exists is not.
 func TestEngine_ResumesFromJournal(t *testing.T) {
 	t.Parallel()
 
@@ -342,14 +346,18 @@ func TestEngine_ResumesFromJournal(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, shouldNotRun := range []string{"StopOriginal", "Snapshot", "BuildReplacement", "HandOverDisk"} {
+	for _, shouldNotRun := range []string{"StopOriginal", "Snapshot", "BuildReplacement"} {
 		if f.called(shouldNotRun) {
 			t.Errorf("%s ran again on a resume from handed-over: %v", shouldNotRun, f.calls)
 		}
 	}
 
+	if !f.called("HandOverDisk") {
+		t.Errorf("the recorded phase was skipped rather than re-entered: %v", f.calls)
+	}
+
 	if !f.called("RetireOriginal") {
-		t.Errorf("the resume did not continue into the next phase: %v", f.calls)
+		t.Errorf("the resume did not continue past the recorded phase: %v", f.calls)
 	}
 }
 
@@ -482,7 +490,7 @@ func TestEngine_StopBeforeRetireHaltsAtThePointOfNoReturn(t *testing.T) {
 	}
 
 	if f.journal == nil || f.journal.Phase != PhaseHandedOver {
-		t.Errorf("journal = %+v, want it parked at handed-over", f.journal)
+		t.Errorf("journal = %+v, want it parked at handed-over so a resume re-enters it", f.journal)
 	}
 }
 
@@ -507,5 +515,62 @@ func TestEngine_ResumesPastThePauseOnASecondRun(t *testing.T) {
 
 	if !f.called("Verify") {
 		t.Errorf("the resume did not finish the run: %v", f.calls)
+	}
+}
+
+// TestEngine_ResumeRepeatsTheRecordedPhase is a safety regression test for a
+// bug caught on a live cluster.
+//
+// The journal is written BEFORE a phase runs, so a recorded phase may have
+// failed. Resuming at the phase AFTER it therefore skips work that never
+// happened. Observed for real: a handover failed, the journal said
+// "handed-over", and the resume went straight to destroying the original —
+// which still held the data disk the whole feature exists to preserve.
+//
+// A resume must re-enter the recorded phase. Every phase is written to be safe
+// to run twice; skipping one is not safe at all.
+func TestEngine_ResumeRepeatsTheRecordedPhase(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeCluster()
+	f.replacementExists = true
+	f.diskOwner = DiskOnOriginal // the handover did NOT succeed
+	f.journal = &Journal{Phase: PhaseHandedOver}
+
+	if err := New(f, Options{}).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !f.called("HandOverDisk") {
+		t.Fatalf("the resume skipped the handover that had failed: %v", f.calls)
+	}
+
+	if f.indexOf("HandOverDisk") > f.indexOf("RetireOriginal") {
+		t.Errorf("the original was destroyed before the retried handover: %v", f.calls)
+	}
+}
+
+// TestEngine_RefusesToRetireWhileTheDiskIsStillOnTheOriginal is the backstop.
+//
+// Whatever the journal claims, destroying the original while it still holds
+// the data disk destroys that disk too, because the delete purges every disk
+// the config references. The engine checks the cluster rather than trusting
+// its own record.
+func TestEngine_RefusesToRetireWhileTheDiskIsStillOnTheOriginal(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeCluster()
+	f.replacementExists = true
+	f.diskOwner = DiskOnOriginal
+	f.journal = &Journal{Phase: PhaseRetired}
+	f.handoverErr = errors.New("still refusing")
+
+	err := New(f, Options{}).Run(context.Background())
+	if err == nil {
+		t.Fatal("Run succeeded with the data disk still on the VM it was about to destroy")
+	}
+
+	if f.called("RetireOriginal") {
+		t.Errorf("the original was destroyed while it still held the data disk: %v", f.calls)
 	}
 }
