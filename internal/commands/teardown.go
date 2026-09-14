@@ -2464,6 +2464,12 @@ func (m *TeardownManager) deleteComputeResource(ctx context.Context, resource *R
 		return ErrProviderDoesNotSupportComputeMgmt
 	}
 
+	// Detach any disk recorded as preserved BEFORE destroying the guest.
+	// PVE's DeleteInstance purges with purge=true, which destroys every disk
+	// the VM config still references, so a data disk left attached dies with
+	// the machine it was meant to outlive.
+	m.detachPreservedVolumes(ctx, resource)
+
 	err := compute.DeleteInstance(ctx, resource.ID)
 	if err != nil {
 		// If resource doesn't exist, that's success (already deleted)
