@@ -51,6 +51,7 @@ var (
 	ErrInvalidSnapshotIDFormat  = errors.New("pve: invalid snapshot ID format")
 	ErrVolumeResizeUnsupported  = errors.New("pve: volume resize not supported for unattached volumes")
 	ErrVolumeNotFoundOnVM       = errors.New("pve: volume not found on VM")
+	ErrUnexpectedTaskResponse   = errors.New("pve: unrecognized task response shape")
 
 	// Parse errors.
 	ErrInvalidVMID            = errors.New("pve: invalid VMID")
