@@ -93,7 +93,11 @@ func runBastionRecycle(
 	}
 
 	cluster := bootstrap.NewBastionRecycleCluster(mgr, opts.archiveStorage)
-	engine := recycle.New(cluster, recycle.Options{Archive: opts.archive, Role: "bastion"})
+	engine := recycle.New(cluster, recycle.Options{
+		Archive:          opts.archive,
+		Role:             "bastion",
+		StopBeforeRetire: opts.stopBeforeRetire,
+	})
 
 	if opts.abort {
 		log.Info("Aborting the recycle in progress")
@@ -112,10 +116,11 @@ func runBastionRecycle(
 
 // recycleFlags holds the resolved flags for a recycle run.
 type recycleFlags struct {
-	archive        bool
-	archiveStorage string
-	yes            bool
-	abort          bool
+	archive          bool
+	archiveStorage   string
+	yes              bool
+	abort            bool
+	stopBeforeRetire bool
 }
 
 // buildBootstrapManager assembles the bootstrap manager a recycle drives.

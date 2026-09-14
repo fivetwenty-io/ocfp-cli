@@ -52,6 +52,7 @@ var (
 	ErrVolumeResizeUnsupported  = errors.New("pve: volume resize not supported for unattached volumes")
 	ErrVolumeNotFoundOnVM       = errors.New("pve: volume not found on VM")
 	ErrUnexpectedTaskResponse   = errors.New("pve: unrecognized task response shape")
+	ErrArchiveStorageUnset      = errors.New("pve: an archive needs a backup-capable storage")
 
 	// Parse errors.
 	ErrInvalidVMID            = errors.New("pve: invalid VMID")
