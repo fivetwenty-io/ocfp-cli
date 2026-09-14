@@ -603,6 +603,7 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		Hostname:         bastionName,
 		DomainSuffix:     m.bastionDomainSuffix(),
 		TailscaleAuthKey: m.resolveBastionTailscaleAuthKey(),
+		DataDisk:         m.bastionDataDiskSpec(),
 	}
 }
 

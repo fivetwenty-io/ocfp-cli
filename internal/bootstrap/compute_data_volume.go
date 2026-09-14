@@ -236,3 +236,32 @@ func (m *Manager) recordBastionDataVolume(vol *cpi.Volume, instanceID string) er
 		},
 	})
 }
+
+// bastionDataDiskSpec builds the spec the provider delivers to the guest via
+// SMBIOS, describing how to prepare the data disk and what to restore off it.
+//
+// Returns nil when the feature is off, so the guest script no-ops rather than
+// guessing at a device.
+func (m *Manager) bastionDataDiskSpec() *cpi.DataDiskSpec {
+	data := &m.config.Bastion.Data
+	if !data.Enabled {
+		return nil
+	}
+
+	user := m.bastionDefaultUsername()
+	if user == "" {
+		user = "ubuntu"
+	}
+
+	return &cpi.DataDiskSpec{
+		Serial:     config.BastionDataDiskSerial,
+		Mountpoint: data.Mountpoint,
+		Filesystem: data.Filesystem,
+		HomeDir:    "/home/" + user,
+		User:       user,
+		// The bootstrap public key, re-asserted on every boot. Without it a
+		// replacement bastion would trust only the authorized_keys the
+		// persistent home brought over from the machine it replaced.
+		AuthorizedKey: strings.TrimSpace(m.bastionPublicKey()),
+	}
+}

@@ -174,7 +174,7 @@ func TestBastionSMBIOSPayload_IncludesIngress(t *testing.T) {
 	ts := &cpi.TailscaleSpec{AuthKey: "tskey-abc", Hostname: "b1"}
 	ing := &cpi.IngressSpec{OriginIP: "10.108.20.97", Ports: []int{80, 443}}
 
-	p := BastionSMBIOSPayload(ts, nil, ing)
+	p := BastionSMBIOSPayload(ts, nil, ing, nil)
 
 	var sku map[string]any
 	if err := json.Unmarshal([]byte(p.SKU), &sku); err != nil {
@@ -193,7 +193,7 @@ func TestBastionSMBIOSPayload_IncludesIngress(t *testing.T) {
 func TestBastionSMBIOSPayload_NilIngressOmitsKey(t *testing.T) {
 	ts := &cpi.TailscaleSpec{AuthKey: "tskey-abc"}
 
-	p := BastionSMBIOSPayload(ts, nil, nil)
+	p := BastionSMBIOSPayload(ts, nil, nil, nil)
 
 	var sku map[string]any
 	if err := json.Unmarshal([]byte(p.SKU), &sku); err != nil {
@@ -223,5 +223,100 @@ func TestBuildSMBIOSConfigValue_RealisticPayloadFitsSlot(t *testing.T) {
 		if len(v) > 400 {
 			t.Errorf("slot value %d chars exceeds safe ceiling 400 — consider splitting", len(v))
 		}
+	}
+}
+
+// TestBastionSMBIOSPayload_CarriesDataDisk asserts the data-disk block reaches
+// the guest. The boot-time dataset script reads its whole configuration from
+// here, because PVE 9.x cannot deliver cloud-init snippets to per-VM clones.
+func TestBastionSMBIOSPayload_CarriesDataDisk(t *testing.T) {
+	t.Parallel()
+
+	ts := &cpi.TailscaleSpec{AuthKey: "tskey-auth-abc", Hostname: "bloc-bastion"}
+	data := &cpi.DataDiskSpec{
+		Serial:        "ocfpdata",
+		Mountpoint:    "/data",
+		Filesystem:    "ext4",
+		HomeDir:       "/home/ubuntu",
+		User:          "ubuntu",
+		AuthorizedKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKE bloc-keypair",
+	}
+
+	payload := BastionSMBIOSPayload(ts, nil, nil, data)
+
+	var sku map[string]interface{}
+	if err := json.Unmarshal([]byte(payload.SKU), &sku); err != nil {
+		t.Fatalf("SKU is not valid JSON: %v", err)
+	}
+
+	raw, ok := sku["data"]
+	if !ok {
+		t.Fatalf("SKU carries no data block: %s", payload.SKU)
+	}
+
+	block, ok := raw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("data block is not an object: %v", raw)
+	}
+
+	for key, want := range map[string]string{
+		"serial":         "ocfpdata",
+		"mountpoint":     "/data",
+		"filesystem":     "ext4",
+		"home":           "/home/ubuntu",
+		"user":           "ubuntu",
+		"authorized_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKE bloc-keypair",
+	} {
+		if got := block[key]; got != want {
+			t.Errorf("data.%s = %v, want %q", key, got, want)
+		}
+	}
+}
+
+// TestBastionSMBIOSPayload_OmitsDataWhenAbsent asserts a bloc with no data
+// disk gets no data block, so the guest script no-ops rather than guessing.
+func TestBastionSMBIOSPayload_OmitsDataWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	ts := &cpi.TailscaleSpec{AuthKey: "tskey-auth-abc"}
+
+	payload := BastionSMBIOSPayload(ts, nil, nil, nil)
+
+	var sku map[string]interface{}
+	if err := json.Unmarshal([]byte(payload.SKU), &sku); err != nil {
+		t.Fatalf("SKU is not valid JSON: %v", err)
+	}
+
+	if _, present := sku["data"]; present {
+		t.Errorf("SKU carries a data block when none was configured: %s", payload.SKU)
+	}
+}
+
+// TestBastionSMBIOSPayload_DataWithoutTailscale asserts the data disk is
+// delivered even when tailscale is not configured. The payload used to be
+// gated entirely on a tailscale auth key, which would have left a
+// tailscale-less bastion with an unprepared disk.
+func TestBastionSMBIOSPayload_DataWithoutTailscale(t *testing.T) {
+	t.Parallel()
+
+	data := &cpi.DataDiskSpec{Serial: "ocfpdata", Mountpoint: "/data", Filesystem: "ext4"}
+
+	payload := BastionSMBIOSPayload(nil, nil, nil, data)
+
+	if payload.IsEmpty() {
+		t.Fatal("payload is empty; a data disk must be delivered without tailscale")
+	}
+
+	if payload.Family != smbiosFamilyBastion {
+		t.Errorf("Family = %q, want the bastion discriminator", payload.Family)
+	}
+
+	var sku map[string]interface{}
+	if err := json.Unmarshal([]byte(payload.SKU), &sku); err != nil {
+		t.Fatalf("SKU is not valid JSON: %v", err)
+	}
+
+	if _, present := sku["data"]; !present {
+		t.Errorf("SKU carries no data block: %s", payload.SKU)
 	}
 }
