@@ -643,6 +643,26 @@ func (m *Manager) recordArtifactsState(
 		return err
 	}
 
+	// Record the data disk as a preserved volume in its own right. Carried
+	// only as a property of the VM's resource it is invisible to the teardown
+	// guard, so the disk would be destroyed with the guest — and it holds
+	// every compiled release and cached stemcell for the bloc, which is the
+	// expensive thing to lose, not the OS beside it.
+	err = m.stateManager.AddResource(artifactsDataVolumeResource(
+		m.options.BlocName,
+		m.options.Provider,
+		vmName,
+		inst.ID,
+		vol.ID,
+		m.config.Artifacts.Data.DiskSizeGiB,
+		m.config.Artifacts.Data.StoragePool,
+		m.config.Artifacts.ResolvedFilesystem(),
+		m.config.Artifacts.Data.Mountpoint,
+	))
+	if err != nil {
+		return err
+	}
+
 	_ = m.stateManager.SetOutput("artifacts_ip", ip.String())
 	_ = m.stateManager.SetOutput("artifacts_endpoint", ep.URL)
 	_ = m.stateManager.SetOutput("artifacts_vm_id", inst.ID)
