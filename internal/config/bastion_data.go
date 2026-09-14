@@ -142,3 +142,13 @@ func (d *BastionDataConfig) HomeSource(homeDir string) string {
 func (d *BastionDataConfig) SystemDir() string {
 	return strings.TrimSuffix(d.Mountpoint, "/") + "/system"
 }
+
+// applyBastionDataDefaults applies the data-disk defaults using the provider
+// resolved by the config loader.
+//
+// It takes the provider as an argument rather than reading cfg.Provider,
+// because that field is not yet populated when applyDefaults runs. Keying off
+// the struct field silently disabled the data disk on every PVE bloc.
+func applyBastionDataDefaults(cfg *Config, provider string) {
+	cfg.Bastion.Data.Defaults(provider)
+}

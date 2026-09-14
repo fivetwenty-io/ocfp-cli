@@ -1797,7 +1797,7 @@ func applyDefaults(cfg *Config, provider string) error {
 	applyGenesisDefaults(cfg)
 	applyBastionGenesisDefaults(cfg)
 	cfg.Artifacts.Defaults()
-	cfg.Bastion.Data.Defaults(cfg.Provider)
+	applyBastionDataDefaults(cfg, provider)
 
 	return nil
 }

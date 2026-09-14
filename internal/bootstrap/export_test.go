@@ -118,3 +118,8 @@ func (m *Manager) PlannedVolumes() []VolumeDescriptor {
 func (m *Manager) BastionDataDiskSpec() *cpi.DataDiskSpec {
 	return m.bastionDataDiskSpec()
 }
+
+// ShowsVolumesInPlan exposes shouldShowVolumes for testing.
+func (m *Manager) ShowsVolumesInPlan() bool {
+	return m.shouldShowVolumes()
+}
