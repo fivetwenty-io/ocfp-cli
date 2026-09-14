@@ -151,10 +151,13 @@ func (bm *BrewManager) getDefaultBrewPackages() []BrewPackage {
 		{Name: "kubectl", Enabled: true, CheckCommand: "kubectl"},
 		{Name: "node", Enabled: false, CheckCommand: "node"}, // Disabled by default, use nvm
 
-		// From advanced tools — vault is always required: the inception vault
-		// (`safe local` in tmux, `vault status` health checks) runs on the vault
-		// binary even when the bloc's secrets backend is openbao.
-		{Name: "vault", Enabled: true, CheckCommand: "vault", Tap: "hashicorp/tap"},
+		// vault is always required: the inception vault (`safe local` in tmux,
+		// `vault status` health checks) runs on the vault binary even when the
+		// bloc's secrets backend is openbao. It comes from HashiCorp's own
+		// release archive through binary_tools rather than from hashicorp/tap,
+		// because that tap ships macOS-only casks with no `depends_on :macos`
+		// and Homebrew refuses the whole tap on Linux.
+		{Name: "vault", Enabled: false, CheckCommand: "vault", Tap: "hashicorp/tap"},
 		{Name: "yq", Enabled: true, CheckCommand: "yq"},
 		{Name: "hl", Enabled: true, CheckCommand: "hl"},
 

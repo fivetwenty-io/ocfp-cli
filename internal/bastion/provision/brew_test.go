@@ -217,8 +217,21 @@ func TestGenerateBrewPackageScript(t *testing.T) {
 	// because the cloudfoundry brew taps ship macOS-only binaries
 }
 
-// TestGenerateBrewPackageScript_VaultTap verifies hashicorp/tap appears when vault backend is selected.
-func TestGenerateBrewPackageScript_VaultTap(t *testing.T) {
+// TestGenerateBrewPackageScript_NoHashicorpTap keeps a tap that cannot be
+// evaluated on Linux out of the provisioning run.
+//
+// hashicorp/homebrew-tap ships macOS-only casks (vagrant, boundary-desktop)
+// that declare neither `depends_on :macos` nor an architecture, so Homebrew
+// refuses the whole tap with "Cannot tap hashicorp/tap: invalid syntax in
+// tap!". That is fatal rather than partial: the tap is added for vault alone,
+// and it took the whole brew_packages phase down with it on a live bastion.
+//
+// It is the same failure the cloudfoundry taps have, and it gets the same
+// answer. vault comes from HashiCorp's own release archive through
+// binary_tools, which is where the entry for it already sat, disabled.
+func TestGenerateBrewPackageScript_NoHashicorpTap(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		SecretsBackend: "vault",
 		Bastion: config.Bastion{
@@ -227,11 +240,10 @@ func TestGenerateBrewPackageScript_VaultTap(t *testing.T) {
 		},
 	}
 
-	bm := NewBrewManager("aws", cfg)
-	script := bm.GenerateBrewPackageScript(context.Background())
+	script := NewBrewManager("aws", cfg).GenerateBrewPackageScript(context.Background())
 
-	if !strings.Contains(script, "hashicorp/tap") {
-		t.Error("Expected hashicorp/tap in brew package script when secrets_backend=vault")
+	if strings.Contains(script, "hashicorp/tap") {
+		t.Errorf("the brew script still adds hashicorp/tap, which Homebrew refuses to evaluate on Linux:\n%s", script)
 	}
 }
 
@@ -388,49 +400,31 @@ func TestGetBrewPackages_NodeDisabledByDefault(t *testing.T) {
 	t.Error("Expected 'node' package in brew packages (even if disabled)")
 }
 
-// --- A5: vault brew package enabled state ---
+// --- A5: vault never comes from brew ---
 
-// The inception vault (`safe local` + `vault status`) runs on the vault
-// binary regardless of the bloc's secrets backend, so vault must be
-// installed even with the openbao default.
-func TestGetBrewPackages_VaultEnabledByDefault(t *testing.T) {
+// The inception vault (`safe local` + `vault status`) runs on the vault binary
+// regardless of the bloc's secrets backend, so vault must always be installed.
+// It just cannot come from Homebrew.
+//
+// Installing it there means adding hashicorp/tap, and that tap ships macOS-only
+// casks (vagrant, boundary-desktop) declaring neither `depends_on :macos` nor
+// an architecture. Homebrew refuses the whole tap with "Cannot tap
+// hashicorp/tap: invalid syntax in tap!", which took the entire brew_packages
+// phase down on a live bastion. vault comes from HashiCorp's own release
+// archive through binary_tools instead, the same answer the cloudfoundry taps
+// already got for the same reason.
+func TestGetBrewPackages_VaultNeverFromBrew(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{}
-	bm := NewBrewManager("aws", cfg)
-	pkgs := bm.GetBrewPackages()
+	for _, backend := range []string{"", "vault", "openbao"} {
+		cfg := &config.Config{SecretsBackend: backend}
 
-	for _, p := range pkgs {
-		if p.Name == "vault" {
-			if !p.Enabled {
-				t.Error("vault brew package must be Enabled=true even when secrets_backend is default (openbao); the inception vault requires it")
+		for _, p := range NewBrewManager("aws", cfg).GetBrewPackages() {
+			if p.Name == "vault" && p.Enabled {
+				t.Errorf("vault is installed from brew with secrets_backend=%q; hashicorp/tap will not evaluate on Linux", backend)
 			}
-
-			return
 		}
 	}
-
-	t.Error("vault package not found in brew packages")
-}
-
-func TestGetBrewPackages_VaultEnabledWhenVaultBackend(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{SecretsBackend: "vault"}
-	bm := NewBrewManager("aws", cfg)
-	pkgs := bm.GetBrewPackages()
-
-	for _, p := range pkgs {
-		if p.Name == "vault" {
-			if !p.Enabled {
-				t.Error("vault brew package must be Enabled=true when secrets_backend=vault")
-			}
-
-			return
-		}
-	}
-
-	t.Error("vault package not found in brew packages")
 }
 
 func TestGetBrewPackages_OpenBaoAlwaysEnabled(t *testing.T) {
@@ -529,7 +523,7 @@ func TestGenerateBrewPackageScript_TrustsThirdPartyTaps(t *testing.T) {
 
 	script := NewBrewManager("pve", nil).GenerateBrewPackageScript(context.Background())
 
-	for _, tap := range []string{"fivetwenty-io/tap", "hashicorp/tap"} {
+	for _, tap := range []string{"fivetwenty-io/tap"} {
 		if !strings.Contains(script, "brew tap "+tap) {
 			t.Errorf("expected script to tap %s", tap)
 		}
