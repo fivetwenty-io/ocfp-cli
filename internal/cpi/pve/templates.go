@@ -93,6 +93,33 @@ var templateCatalog = map[string]TemplateSpec{
 		Cores:               2,
 		RequireBastionUnits: true,
 	},
+	// Resolute (26.04 LTS) is the forward-facing pair. New blocs get these;
+	// the Noble entries above stay until the fleet has moved, because a live
+	// bloc's config still names them and they are the rollback during a
+	// recycle onto Resolute.
+	//
+	// The stored filename must differ from Noble's. downloadTemplateImage
+	// skips the fetch whenever a file of that name is already on the import
+	// storage — which is how the bastion variant reuses the vanilla
+	// template's image at no extra cost — so an entry that borrowed
+	// "ubuntu-noble-amd64.qcow2" would silently build a Resolute-named
+	// template from the Noble image, with no error raised anywhere.
+	// TestCatalog_SharedSourceFilenameImpliesSharedURL pins that invariant.
+	"ubuntu-resolute-template": {
+		Name:           "ubuntu-resolute-template",
+		SourceURL:      "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
+		SourceFilename: "ubuntu-resolute-amd64.qcow2",
+		Memory:         2048,
+		Cores:          2,
+	},
+	"ubuntu-resolute-bastion-template": {
+		Name:                "ubuntu-resolute-bastion-template",
+		SourceURL:           "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
+		SourceFilename:      "ubuntu-resolute-amd64.qcow2",
+		Memory:              2048,
+		Cores:               2,
+		RequireBastionUnits: true,
+	},
 }
 
 // LookupCatalogSpec returns the catalog entry for a template name, or false if
