@@ -440,6 +440,27 @@ func (c *BastionRecycleCluster) RetireOriginal(ctx context.Context) error {
 	return c.mgr.provider.ComputeManager().DeleteInstance(ctx, id)
 }
 
+// needsStart reports whether a replacement still has to be started.
+//
+// Adopting renames the replacement and starts it, and the journal records a
+// phase before it runs, so a resume lands there after a start that already
+// succeeded. Asking a running VM to start is an error on Proxmox rather than a
+// no-op, which left a finished recycle reporting failure. An unknown state
+// still asks for the start, because a start that is refused as redundant is
+// cheaper than a bastion left stopped.
+func needsStart(state cpi.ResourceState) bool {
+	switch state {
+	case cpi.ResourceStateActive, cpi.ResourceStateInUse:
+		return false
+	case cpi.ResourceStateCreating, cpi.ResourceStateAvailable, cpi.ResourceStateStopped,
+		cpi.ResourceStateDeleting, cpi.ResourceStateDeleted, cpi.ResourceStateError,
+		cpi.ResourceStateUnknown:
+		return true
+	default:
+		return true
+	}
+}
+
 // AdoptReplacement renames the replacement, rewrites the state entry, and
 // starts it.
 func (c *BastionRecycleCluster) AdoptReplacement(ctx context.Context) error {
@@ -479,6 +500,13 @@ func (c *BastionRecycleCluster) AdoptReplacement(ctx context.Context) error {
 	err = c.mgr.stateManager.Save()
 	if err != nil {
 		return fmt.Errorf("persist replacement in state: %w", err)
+	}
+
+	inst, err := c.mgr.provider.ComputeManager().GetInstance(ctx, id)
+	if err == nil && inst != nil && !needsStart(inst.State) {
+		_, _ = fmt.Fprintf(os.Stdout, "    • Adopted %s as %s; already running\n", id, c.finalName())
+
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(os.Stdout, "    • Adopted %s as %s; starting\n", id, c.finalName())
