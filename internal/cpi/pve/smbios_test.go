@@ -320,3 +320,103 @@ func TestBastionSMBIOSPayload_DataWithoutTailscale(t *testing.T) {
 		t.Errorf("SKU carries no data block: %s", payload.SKU)
 	}
 }
+
+// TestBuildSMBIOSConfigValue_StaysUnderPVELimit pins the budget that broke the
+// first Resolute bastion build.
+//
+// PVE caps the smbios1 config string at 512 characters, and every field in it
+// is base64, so the encoding costs a third again on top of the JSON. A bastion
+// carrying a tailscale block, an ingress block, and a data block with the
+// bootstrap public key in it rendered well past the cap, and the VM came up
+// with no SKU at all: no tailscale, and an unprepared data disk.
+func TestBuildSMBIOSConfigValue_StaysUnderPVELimit(t *testing.T) {
+	t.Parallel()
+
+	ts := &cpi.TailscaleSpec{
+		AuthKey:         "tskey-auth-kH8vQ2mXnR4pL9wYtZ1bC7dF3gJ6sA0eU5iO",
+		Hostname:        "ocfp-lab-wayneeseguin-bastion",
+		Tags:            []string{"tag:ocfp-bastion"},
+		AcceptDNS:       true,
+		AcceptRoutes:    true,
+		SSH:             true,
+		AdvertiseRoutes: "10.108.16.0/20",
+	}
+
+	ing := &cpi.IngressSpec{OriginIP: "10.108.20.97", Ports: []int{80, 443}}
+
+	data := &cpi.DataDiskSpec{
+		Serial:     "ocfpdata",
+		Mountpoint: "/data",
+		Filesystem: "ext4",
+		HomeDir:    "/home/ubuntu",
+		User:       "ubuntu",
+		AuthorizedKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7kQ2mXnR4pL9wYtZ1bC7dF3gJ6sA0eU5iOxV8nMpQr " +
+			"ocfp-lab-wayneeseguin",
+	}
+
+	value := BuildSMBIOSConfigValue(BastionSMBIOSPayload(ts, nil, ing, data))
+
+	if len(value) > smbiosMaxLength {
+		t.Errorf("smbios1 renders to %d characters, over PVE's limit of %d:\n%s",
+			len(value), smbiosMaxLength, value)
+	}
+
+	// Dropping fields to fit must never drop the one the guest cannot work
+	// without. Without the serial the dataset script refuses to guess a
+	// device, so the data disk goes unmounted.
+	if !strings.Contains(value, "sku=") {
+		t.Fatal("the payload lost its SKU entirely")
+	}
+
+	decoded := decodeSKU(t, value)
+	if !strings.Contains(decoded, `"serial":"ocfpdata"`) {
+		t.Errorf("the data block lost the disk serial:\n%s", decoded)
+	}
+
+	if !strings.Contains(decoded, "ocfp-lab-wayneeseguin-bastion") {
+		t.Errorf("the payload lost the tailscale hostname:\n%s", decoded)
+	}
+}
+
+// TestBastionSMBIOSPayload_OmitsUnsetDataFields keeps the payload small by
+// leaving out what the guest already defaults.
+//
+// The dataset script defaults the mountpoint, the filesystem, the home
+// directory, and the user, so sending them costs budget and buys nothing.
+func TestBastionSMBIOSPayload_OmitsUnsetDataFields(t *testing.T) {
+	t.Parallel()
+
+	p := BastionSMBIOSPayload(nil, nil, nil, &cpi.DataDiskSpec{Serial: "ocfpdata"})
+
+	for _, unwanted := range []string{"mountpoint", "filesystem", "home", "user", "authorized_key"} {
+		if strings.Contains(p.SKU, `"`+unwanted+`"`) {
+			t.Errorf("the SKU carries an unset %q field: %s", unwanted, p.SKU)
+		}
+	}
+
+	if !strings.Contains(p.SKU, `"serial":"ocfpdata"`) {
+		t.Errorf("the SKU lost the disk serial: %s", p.SKU)
+	}
+}
+
+// decodeSKU pulls the sku field back out of a rendered smbios1 value.
+func decodeSKU(t *testing.T, value string) string {
+	t.Helper()
+
+	for _, part := range strings.Split(value, ",") {
+		if !strings.HasPrefix(part, "sku=") {
+			continue
+		}
+
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(part, "sku="))
+		if err != nil {
+			t.Fatalf("decode sku: %v", err)
+		}
+
+		return string(raw)
+	}
+
+	t.Fatal("no sku field in the rendered value")
+
+	return ""
+}
