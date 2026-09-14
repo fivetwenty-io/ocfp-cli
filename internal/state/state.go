@@ -226,7 +226,12 @@ func (m *Manager) AddResource(resource *Resource) error {
 
 	// Check if resource exists
 	if existing, ok := m.current.Resources[key]; ok {
-		// Update existing resource
+		// Update existing resource. The id is part of that: resources are
+		// keyed by type and name so a guest can be replaced while keeping
+		// its name, and a recycle rewrites this record to name the
+		// replacement. Leaving the old id in place aims the next teardown
+		// at a VMID that no longer exists.
+		existing.ID = resource.ID
 		existing.State = resource.State
 		existing.Properties = resource.Properties
 		existing.Tags = resource.Tags
