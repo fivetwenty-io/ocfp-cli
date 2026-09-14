@@ -163,6 +163,62 @@ func (m *ComputeManager) LookupTemplateByName(ctx context.Context, name string) 
 // Returns the VMID of the resulting template (existing or newly created).
 // Storage pools are pulled from the PVE Client config (DefaultStorage for the
 // template disk, ISOStorage for the scratch download).
+// templatePlan says what a build run should do about a template that may
+// already be present on the cluster.
+type templatePlan struct {
+	// Destroy is true when the existing template has to be removed first.
+	Destroy bool
+
+	// Build is true when a template has to be built.
+	Build bool
+}
+
+// planTemplateBuild decides between reusing, rebuilding, and building.
+//
+// A bastion template costs a large download and a console-driven seed to
+// build, and every bastion in the bloc is cloned from it, so destroying one
+// the operator did not ask to have destroyed is both expensive and
+// surprising. Leaving an existing template alone therefore stays the default.
+func planTemplateBuild(exists, rebuild bool) templatePlan {
+	switch {
+	case exists && rebuild:
+		return templatePlan{Destroy: true, Build: true}
+	case exists:
+		return templatePlan{Destroy: false, Build: false}
+	default:
+		return templatePlan{Destroy: false, Build: true}
+	}
+}
+
+// RebuildTemplate builds a catalog template even when one already exists.
+//
+// The units a bastion template carries are baked in when the template is
+// seeded, so a change to the dataset script or the firstboot units reaches no
+// new bastion until the template itself is rebuilt. Without this the only
+// recourse was to find the template VM and destroy it by hand.
+//
+// Destroying the template cannot harm the guests cloned from it, because OCFP
+// clones full rather than linked.
+func (m *ComputeManager) RebuildTemplate(ctx context.Context, name string) (int, error) {
+	existing, err := m.LookupTemplateByName(ctx, name)
+	if err != nil {
+		return 0, fmt.Errorf("pre-flight lookup: %w", err)
+	}
+
+	plan := planTemplateBuild(existing != nil, true)
+
+	if plan.Destroy {
+		logger.WithOperation("RebuildTemplate").Infof("destroying the existing %s template (vmid %s)", name, existing.ID)
+
+		err = m.DeleteInstance(ctx, existing.ID)
+		if err != nil {
+			return 0, fmt.Errorf("destroy the existing %s template: %w", name, err)
+		}
+	}
+
+	return m.ProvisionTemplate(ctx, name)
+}
+
 func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (int, error) {
 	spec, ok := templateCatalog[name]
 	if !ok {

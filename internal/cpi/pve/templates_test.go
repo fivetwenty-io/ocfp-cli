@@ -280,3 +280,43 @@ func TestCatalog_ResoluteEntriesUseTheirOwnImage(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanTemplateBuild_NeverDestroysUnlessAsked pins the safety property of
+// the rebuild path.
+//
+// A bastion template takes a large download and a console-driven seed to
+// build, and every bastion in the bloc is cloned from it. Destroying one the
+// operator did not ask to have destroyed is expensive and surprising, so the
+// default for a template that already exists stays "leave it alone".
+func TestPlanTemplateBuild_NeverDestroysUnlessAsked(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		exists      bool
+		rebuild     bool
+		wantDestroy bool
+		wantBuild   bool
+	}{
+		{"absent, no rebuild asked", false, false, false, true},
+		{"absent, rebuild asked", false, true, false, true},
+		{"present, no rebuild asked", true, false, false, false},
+		{"present, rebuild asked", true, true, true, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := planTemplateBuild(tc.exists, tc.rebuild)
+
+			if got.Destroy != tc.wantDestroy {
+				t.Errorf("Destroy = %v, want %v", got.Destroy, tc.wantDestroy)
+			}
+
+			if got.Build != tc.wantBuild {
+				t.Errorf("Build = %v, want %v", got.Build, tc.wantBuild)
+			}
+		})
+	}
+}
