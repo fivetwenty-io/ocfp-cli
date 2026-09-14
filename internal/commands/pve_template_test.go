@@ -90,3 +90,25 @@ func TestCatalogTemplateNames(t *testing.T) {
 		}
 	}
 }
+
+// TestTemplateProvisionCmd_OffersRebuild covers a gap the first OS cycle found.
+//
+// The units a bastion template carries are baked in when the template is
+// seeded, so a change to any of them reaches no new bastion until the template
+// itself is rebuilt. Provision was idempotent and had no way to say "build it
+// again", which left an operator destroying the template VM by hand: easy to
+// get wrong, and easier still to forget.
+func TestTemplateProvisionCmd_OffersRebuild(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewPVETemplateProvisionCmd()
+
+	flag := cmd.Flags().Lookup("rebuild")
+	if flag == nil {
+		t.Fatal("ocfp pve template provision has no --rebuild flag")
+	}
+
+	if flag.DefValue != "false" {
+		t.Errorf("--rebuild defaults to %q; it must default to false so a plain provision never destroys a template", flag.DefValue)
+	}
+}
