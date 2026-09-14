@@ -233,28 +233,13 @@ func seedWriteUnits(sess *TermproxySession) error {
 		return fmt.Errorf("apt install: %w", err)
 	}
 
-	files := []struct {
-		path, content string
-		mode          string
-	}{
-		{"/usr/local/sbin/ocfp-firstboot", firstbootScript, "0755"},
-		{"/usr/local/sbin/ocfp-tailscale-watchdog", watchdogScript, "0755"},
-		{"/etc/systemd/system/ocfp-firstboot.service", firstbootService, "0644"},
-		{"/etc/systemd/system/ocfp-tailscale-watchdog.service", watchdogService, "0644"},
-		{"/etc/systemd/system/ocfp-tailscale-watchdog.timer", watchdogTimer, "0644"},
-	}
-
-	for _, f := range files {
+	for _, f := range seedUnitFiles() {
 		if err := writeRemoteFile(sess, f.path, f.content, f.mode); err != nil {
 			return fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}
 
-	for _, c := range []string{
-		"sudo systemctl daemon-reload",
-		"sudo systemctl enable ocfp-firstboot.service",
-		"sudo systemctl enable ocfp-tailscale-watchdog.timer",
-	} {
+	for _, c := range seedEnableCommands() {
 		if err := runShell(sess, c, templateSeedShellTimeout); err != nil {
 			return fmt.Errorf("%s: %w", c, err)
 		}

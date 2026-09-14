@@ -1,6 +1,10 @@
 package bootstrap
 
-import "time"
+import (
+	"time"
+
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+)
 
 // SetSleepFn replaces the package-level sleepFn. Call once from TestMain
 // before parallel tests start to avoid data races on the shared variable.
@@ -108,4 +112,9 @@ func (m *Manager) PlannedVolumes() []VolumeDescriptor {
 	}
 
 	return out
+}
+
+// BastionDataDiskSpec exposes bastionDataDiskSpec for testing.
+func (m *Manager) BastionDataDiskSpec() *cpi.DataDiskSpec {
+	return m.bastionDataDiskSpec()
 }
