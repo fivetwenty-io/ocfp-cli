@@ -904,21 +904,35 @@ func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vm
 		}
 	}
 
-	// Start the VM
-	qemuSvc := m.client.getQemuService()
+	// Start the VM, unless the caller asked for it stopped.
+	if shouldStartAfterCreate(req) {
+		qemuSvc := m.client.getQemuService()
 
-	upid, err := qemuSvc.Start(ctx, node, vmid)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start VM: %w", err)
-	}
+		upid, err := qemuSvc.Start(ctx, node, vmid)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start VM: %w", err)
+		}
 
-	err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
-	if err != nil {
-		return nil, fmt.Errorf("VM start task failed: %w", err)
+		err = m.client.waitForTask(ctx, node, upid, taskTimeoutDefault)
+		if err != nil {
+			return nil, fmt.Errorf("VM start task failed: %w", err)
+		}
+	} else {
+		logger.Infof("VM %d created stopped as requested", vmid)
 	}
 
 	// Get the created instance
 	return m.GetInstance(ctx, strconv.Itoa(vmid))
+}
+
+// shouldStartAfterCreate reports whether a freshly created VM should be
+// powered on. Starting is the default so existing callers are unaffected.
+func shouldStartAfterCreate(req *cpi.InstanceRequest) bool {
+	if req == nil {
+		return true
+	}
+
+	return !req.CreateStopped
 }
 
 // Helper methods

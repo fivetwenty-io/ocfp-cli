@@ -518,6 +518,89 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 	return instance, nil
 }
 
+// createBastionInstanceStopped builds a bastion under an arbitrary name and
+// leaves it powered off.
+//
+// It exists for the recycle operation, which builds the replacement while the
+// machine it replaces is only stopped. Both guests exist at once, so starting
+// the replacement immediately would put a second VM on the same static address
+// and boot it against a data disk it does not own yet.
+//
+// It deliberately goes through the same request builder a fresh bootstrap
+// uses, so the replacement matches what a new bloc would get rather than
+// drifting from it.
+func (m *Manager) createBastionInstanceStopped(
+	ctx context.Context,
+	name, networkID string,
+	subnetInfo *bastionSubnetInfo,
+	sgID string,
+) (*cpi.Instance, error) {
+	computeMgr := m.provider.ComputeManager()
+
+	imageID, err := m.resolveImageID(ctx, m.config.Bastion.Image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve image ID for %s: %w", m.config.Bastion.Image, err)
+	}
+
+	flavorID, err := m.resolveFlavorID(ctx, m.config.Bastion.Flavor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve flavor ID for %s: %w", m.config.Bastion.Flavor, err)
+	}
+
+	useBootVolume, bootVolumeSize := m.checkBootVolumeRequirements(ctx, computeMgr, flavorID)
+
+	bastionIP := ""
+
+	if subnetInfo != nil && subnetInfo.CIDR != "" {
+		offset := m.slotForNamedIP(subnetInfo.Name, subnetInfo.CIDR, "bastion_ip", bastionIPSlot)
+
+		calculated, ipErr := CalculateIPFromCIDR(subnetInfo.CIDR, offset)
+		if ipErr != nil {
+			logger.Warnf("Failed to calculate bastion static IP from %s offset %d: %v", subnetInfo.CIDR, offset, ipErr)
+		} else {
+			bastionIP = calculated
+		}
+	}
+
+	subnetID, availabilityZone := "", ""
+	if subnetInfo != nil {
+		subnetID = m.adjustSubnetForProvider(subnetInfo.ID)
+		availabilityZone = subnetInfo.AvailabilityZone
+	}
+
+	req := m.buildInstanceRequest(
+		name, flavorID, imageID, networkID, subnetID,
+		availabilityZone, sgID, generateBastionUserData(m.config), useBootVolume, bootVolumeSize)
+
+	req.StaticPrivateIP = bastionIP
+	req.StaticPrivateIPPrefix = m.bastionStaticIPPrefix()
+	req.OnLinkRoutes = m.bastionOnLinkRoutes()
+
+	// The replacement adopts the FINAL hostname and tailscale identity, not
+	// the transient one it is built under. The transient name exists only so
+	// name-based discovery and teardown are not confused while both guests are
+	// live; it must not leak into the guest's own identity.
+	finalName := m.options.BlocName + "-bastion"
+	req.Hostname = finalName
+	req.Tailscale = m.bastionTailscaleSpec(finalName, req.StaticPrivateIP, req.StaticPrivateIPPrefix)
+	req.Cloudflare = m.bastionCloudflareSpec()
+	req.Ingress = m.bastionIngressSpec()
+	req.CreateStopped = true
+
+	if req.Tags == nil {
+		req.Tags = make(map[string]string)
+	}
+
+	req.Tags["role"] = "bastion"
+
+	instance, err := computeMgr.CreateInstance(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create replacement bastion %s: %w", name, err)
+	}
+
+	return instance, nil
+}
+
 //nolint:unparam // Boot volume size may vary in future implementations
 func (m *Manager) checkBootVolumeRequirements(ctx context.Context, computeMgr cpi.ComputeManager, flavorID string) (bool, int) {
 	const defaultBootVolumeSize = 50

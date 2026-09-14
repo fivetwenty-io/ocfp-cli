@@ -72,6 +72,10 @@ func NewBastionCmd() *cobra.Command {
 	cmd.Flags().String("bloc", "", "Bloc name for configuration")
 	cmd.Flags().Bool("dry-run", false, "Preview actions without executing remote changes")
 	cmd.Flags().Bool("force", false, "Reinstall the ocfp CLI even when the bastion already has the wanted version")
+	cmd.Flags().Bool("archive", false, "recycle: also take a backup that survives the VM being destroyed")
+	cmd.Flags().String("archive-storage", "", "recycle: backup-capable storage for --archive")
+	cmd.Flags().Bool("yes", false, "recycle: skip the confirmation prompt")
+	cmd.Flags().Bool("abort", false, "recycle: walk back a recycle in progress")
 
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
@@ -92,6 +96,8 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 		return bastionInit(cmd, log)
 	case "provision":
 		return bastionProvision(cmd, log)
+	case "recycle":
+		return bastionRecycle(cmd, log)
 	default:
 		return ErrUnknownBastionAction(action)
 	}
@@ -547,4 +553,25 @@ func appendEnvVar(vars *[]string, name string, configEnv map[string]string) {
 	// Escape single quotes inside the value: end quote, escaped quote, reopen quote.
 	escaped := strings.ReplaceAll(val, "'", `'\''`)
 	*vars = append(*vars, fmt.Sprintf("%s='%s'", name, escaped))
+}
+
+// bastionRecycle replaces the bastion's operating system, carrying its
+// persistent data disk across to the replacement.
+func bastionRecycle(cmd *cobra.Command, log logger.Logger) error {
+	blocName := viper.GetString("bloc")
+	if blocName == "" {
+		return ErrBlocIsRequired
+	}
+
+	archive, _ := cmd.Flags().GetBool("archive")
+	archiveStorage, _ := cmd.Flags().GetString("archive-storage")
+	yes, _ := cmd.Flags().GetBool("yes")
+	abort, _ := cmd.Flags().GetBool("abort")
+
+	return runBastionRecycle(cmd.Context(), log, blocName, viper.GetString("config"), recycleFlags{
+		archive:        archive,
+		archiveStorage: archiveStorage,
+		yes:            yes,
+		abort:          abort,
+	})
 }
