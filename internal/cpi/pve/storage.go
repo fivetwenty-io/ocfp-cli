@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/qemu"
+
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
@@ -377,7 +379,93 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 	return volumes, nil
 }
 
+// attachBuses are the PVE disk buses a slot spec may name. Order matters only
+// for readability; the match is exact on the alphabetic prefix.
+//
+//nolint:gochecknoglobals // intentional package-level lookup table
+var attachBuses = []string{"virtio", "scsi", "sata", "ide"}
+
+// parseAttachDevice interprets the cpi StorageManager's free-form `device`
+// hint for PVE.
+//
+// The hint has two dialects. Historically callers passed a Linux device path
+// such as "/dev/sdb", which says what the guest should end up seeing rather
+// than what PVE should configure; that pins no slot, so PVE assigns the next
+// free index on the bus and the correspondence to /dev/sdN holds only by
+// luck. The second dialect is a PVE-native slot spec such as "scsi1", which
+// pins the slot exactly, optionally followed by disk properties after a comma
+// ("scsi1,discard=on,serial=ocfpdata").
+//
+// It returns the bus to attach on, the slot to pin (empty when the caller
+// named none), and the properties to append to the disk's config value.
+func parseAttachDevice(device string) (bus, slot, props string) {
+	bus = "scsi"
+
+	if device == "" || strings.HasPrefix(device, "/") {
+		return bus, "", ""
+	}
+
+	spec := device
+
+	if idx := strings.Index(spec, ","); idx >= 0 {
+		props = spec[idx+1:]
+		spec = spec[:idx]
+	}
+
+	for _, candidate := range attachBuses {
+		if !strings.HasPrefix(spec, candidate) {
+			continue
+		}
+
+		bus = candidate
+
+		// A bare bus name with no index is not a slot: "scsi" selects the bus
+		// but leaves the index to PVE, whereas "scsi1" pins it.
+		if index := spec[len(candidate):]; index != "" && isAllDigits(index) {
+			slot = spec
+		}
+
+		return bus, slot, props
+	}
+
+	// An unrecognised spec keeps the historical default bus and pins nothing.
+	return bus, "", props
+}
+
+// isAllDigits reports whether s is non-empty and consists only of ASCII digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// attachValueForVolume builds the value PVE stores under the disk's config
+// key. Properties must be appended to the volume id rather than sent as
+// separate parameters, because the client library's AttachOpts.Extra map
+// writes each of its keys as its own top-level VM config key.
+func attachValueForVolume(volumeID, props string) string {
+	if props == "" {
+		return volumeID
+	}
+
+	return volumeID + "," + props
+}
+
 // AttachVolume attaches a volume to an instance.
+//
+// When the device hint names a PVE slot the slot is pinned, which makes the
+// guest-side device path predictable instead of dependent on PVE's next-free
+// arithmetic. Any properties carried on the hint ride along on the config
+// value; `serial=` in particular gives the guest a stable
+// /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial> path.
 func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
@@ -391,16 +479,193 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, inst
 
 	qemuSvc := m.client.getQemuService()
 
-	// Determine bus and device ID
-	bus := "scsi"
-	if device != "" && strings.HasPrefix(device, "virtio") {
-		bus = "virtio"
+	bus, slot, props := parseAttachDevice(device)
+
+	var opts *qemu.AttachOpts
+	if slot != "" {
+		opts = &qemu.AttachOpts{DiskID: slot}
 	}
 
 	// Attach the disk
-	_, err = qemuSvc.AttachDisk(ctx, node, vmid, volumeID, bus, nil)
+	_, err = qemuSvc.AttachDisk(ctx, node, vmid, attachValueForVolume(volumeID, props), bus, opts)
 	if err != nil {
 		return fmt.Errorf("failed to attach volume: %w", err)
+	}
+
+	return nil
+}
+
+// diskSlotPrefixes are the VM config key prefixes that can hold a volume
+// reference. `unused` belongs here alongside the buses: PVE's own detach moves
+// a volume into an unusedN slot, so a scan that skips those reports an
+// already-half-detached disk as missing.
+//
+//nolint:gochecknoglobals // intentional package-level lookup table
+var diskSlotPrefixes = []string{"scsi", "virtio", "sata", "ide", "unused"}
+
+// findDiskSlotForVolume returns the VM config key holding the given volume id.
+//
+// A config value is either the bare volid or the volid followed by a
+// comma-separated property list, so the match is on the first comma-delimited
+// field rather than on a substring. Matching on a substring would let
+// vm-100-data match a slot holding vm-100-data2.
+func findDiskSlotForVolume(config map[string]interface{}, volumeID string) (string, bool) {
+	for key, value := range config {
+		if !hasAnyPrefix(key, diskSlotPrefixes) {
+			continue
+		}
+
+		valueStr, ok := value.(string)
+		if !ok {
+			continue
+		}
+
+		candidate := valueStr
+		if idx := strings.Index(candidate, ","); idx >= 0 {
+			candidate = candidate[:idx]
+		}
+
+		if candidate == volumeID {
+			return key, true
+		}
+	}
+
+	return "", false
+}
+
+// hasAnyPrefix reports whether s starts with any of the given prefixes.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// reassignTaskTimeout bounds the move_disk task. A reassignment is a config
+// rewrite plus a volume rename rather than a data copy, so it completes in
+// seconds; the headroom is for a busy cluster.
+const reassignTaskTimeout = 300
+
+// upidFromResponse pulls a task id out of a raw PVE POST response.
+//
+// The client hands back whatever sits under the API envelope's "data" key,
+// which for a task-returning endpoint is the UPID string. Some endpoints wrap
+// it in an object instead, and some return nothing at all when the work was
+// synchronous, so all three shapes are accepted and only a genuinely
+// unrecognised one is an error.
+func upidFromResponse(resp interface{}) (string, error) {
+	switch v := resp.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, nil
+	case map[string]interface{}:
+		for _, key := range []string{"upid", "UPID", "data"} {
+			if raw, ok := v[key]; ok {
+				if s, isStr := raw.(string); isStr {
+					return s, nil
+				}
+			}
+		}
+
+		return "", fmt.Errorf("%w: object response carried no task id: %v", ErrUnexpectedTaskResponse, v)
+	default:
+		return "", fmt.Errorf("%w: %T", ErrUnexpectedTaskResponse, resp)
+	}
+}
+
+// reassignPath is the move_disk endpoint for a VM. The call is issued against
+// the SOURCE VM; the destination travels in the body as target-vmid.
+func reassignPath(node string, sourceVMID int) string {
+	return fmt.Sprintf("/nodes/%s/qemu/%d/move_disk", url.PathEscape(node), sourceVMID)
+}
+
+// buildReassignParams builds the move_disk body. An empty targetSlot is
+// omitted entirely rather than sent blank, which lets PVE pick the next free
+// slot on the target.
+func buildReassignParams(slot string, targetVMID int, targetSlot string) map[string]interface{} {
+	params := map[string]interface{}{
+		"disk":        slot,
+		"target-vmid": targetVMID,
+	}
+
+	if targetSlot != "" {
+		params["target-disk"] = targetSlot
+	}
+
+	return params
+}
+
+// ReassignVolume hands a volume from one VM to another in a single server-side
+// operation, so the volume never belongs to nothing.
+//
+// PVE renames the volume to match its new owner and preserves the disk's
+// properties, which is why this is preferred over detach-then-re-attach: the
+// storage entry's ownership stays truthful, so ListVolumes and
+// teardown-by-attribution keep working without special cases.
+//
+// Two constraints, both confirmed against a live PVE 9 cluster and both
+// enforced by PVE as safe refusals that leave the disk where it was. The
+// source VM must be stopped; a running one fails with "Cannot move disk to
+// another VM while the source VM is running - detach first". And the target
+// slot must be free; an occupied one fails with "Target disk key '...' is
+// already in use".
+func (m *StorageManager) ReassignVolume(
+	ctx context.Context,
+	volumeID string,
+	sourceInstanceID string,
+	targetInstanceID string,
+	targetSlot string,
+) error {
+	sourceVMID, err := strconv.Atoi(sourceInstanceID)
+	if err != nil {
+		return fmt.Errorf("%w: source %s", ErrInvalidVMID, sourceInstanceID)
+	}
+
+	targetVMID, err := strconv.Atoi(targetInstanceID)
+	if err != nil {
+		return fmt.Errorf("%w: target %s", ErrInvalidVMID, targetInstanceID)
+	}
+
+	node, err := m.client.getNode(ctx)
+	if err != nil {
+		return err
+	}
+
+	config, err := m.client.getQemuService().Config(ctx, node, sourceVMID)
+	if err != nil {
+		return fmt.Errorf("failed to get source VM config: %w", err)
+	}
+
+	slot, found := findDiskSlotForVolume(config, volumeID)
+	if !found {
+		return fmt.Errorf("%w: %s on VM %d", ErrVolumeNotFoundOnVM, volumeID, sourceVMID)
+	}
+
+	logger.WithOperation("ReassignVolume").Infof(
+		"reassigning %s from VM %d (%s) to VM %d (%s)", volumeID, sourceVMID, slot, targetVMID, targetSlot)
+
+	resp, err := m.client.pveClient.PostCtx(ctx, reassignPath(node, sourceVMID),
+		buildReassignParams(slot, targetVMID, targetSlot))
+	if err != nil {
+		return fmt.Errorf("reassign %s from VM %d to VM %d: %w", volumeID, sourceVMID, targetVMID, err)
+	}
+
+	upid, err := upidFromResponse(resp)
+	if err != nil {
+		return fmt.Errorf("reassign task id: %w", err)
+	}
+
+	if upid == "" {
+		return nil
+	}
+
+	err = m.client.waitForTask(ctx, node, upid, reassignTaskTimeout)
+	if err != nil {
+		return fmt.Errorf("await reassign task: %w", err)
 	}
 
 	return nil
@@ -426,20 +691,8 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 		return fmt.Errorf("failed to get VM config: %w", err)
 	}
 
-	// Find the disk ID that matches the volume
-	var diskID string
-
-	for key, value := range config {
-		if strings.HasPrefix(key, "scsi") || strings.HasPrefix(key, "virtio") || strings.HasPrefix(key, "ide") {
-			if valueStr, ok := value.(string); ok && strings.Contains(valueStr, volumeID) {
-				diskID = key
-
-				break
-			}
-		}
-	}
-
-	if diskID == "" {
+	diskID, found := findDiskSlotForVolume(config, volumeID)
+	if !found {
 		return fmt.Errorf("%w: %s on VM %d", ErrVolumeNotFoundOnVM, volumeID, vmid)
 	}
 
