@@ -224,3 +224,29 @@ func TestDatasetScript_ResolvesSerialAcrossDistros(t *testing.T) {
 		t.Error("the lsblk fallback precedes the by-id lookup; by-id is the cheaper and more specific match")
 	}
 }
+
+// TestDatasetScript_CarriesHostKeysNotSSHConfig guards the line between data
+// and operating system, at the place where we first crossed it.
+//
+// The restore used to copy the whole of /etc/ssh off the data disk. On the
+// lab's first cycle onto Resolute that put Ubuntu Noble's sshd_config, and an
+// ssh_import_id from 2020, onto Ubuntu 26.04, silently undoing whatever the
+// newer image ships. The host keys are data and have to survive the cycle.
+// Everything else in that directory belongs to the release we just installed.
+func TestDatasetScript_CarriesHostKeysNotSSHConfig(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(datasetScript, "ssh_host_") {
+		t.Error("the dataset script does not narrow the ssh restore to the host key files")
+	}
+
+	for _, forbidden := range []string{
+		`cp -a "${store}/." /etc/ssh`,
+		`"${SYSDIR}/ssh" /etc/ssh`,
+		`--bind "${SYSDIR}/ssh" /etc/ssh`,
+	} {
+		if strings.Contains(datasetScript, forbidden) {
+			t.Errorf("the dataset script still moves the whole of /etc/ssh (%q); it would carry the retired release's sshd_config forward", forbidden)
+		}
+	}
+}
