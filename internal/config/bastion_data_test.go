@@ -181,3 +181,46 @@ func TestBastionDataDeviceSerial(t *testing.T) {
 			BastionDataDiskSerial, len(BastionDataDiskSerial))
 	}
 }
+
+// TestBastionDataDefaultsUseTheResolvedProvider guards a bug found on the live
+// lab: the defaulting pass keyed off cfg.Provider, which is not yet populated
+// when applyDefaults runs, so a PVE bloc silently got Enabled=false and the
+// data disk never appeared in a dry run or a bootstrap.
+//
+// applyDefaults receives the resolved provider as an argument precisely
+// because the struct field cannot be trusted at that point.
+func TestBastionDataDefaultsUseTheResolvedProvider(t *testing.T) {
+	t.Parallel()
+
+	// cfg.Provider deliberately left empty, exactly as it is during loading.
+	cfg := &Config{}
+
+	applyBastionDataDefaults(cfg, "pve")
+
+	if !cfg.Bastion.Data.Enabled {
+		t.Error("a PVE bloc did not enable its data disk; the defaulting pass ignored the resolved provider")
+	}
+
+	if cfg.Bastion.Data.DiskSizeGiB != BastionDataDefaultSizeGiB {
+		t.Errorf("DiskSizeGiB = %d, want %d", cfg.Bastion.Data.DiskSizeGiB, BastionDataDefaultSizeGiB)
+	}
+}
+
+func TestBastionDataDefaultsStayOffForOtherProviders(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"aws", "stackit", "gcp", "azure"} {
+		provider := provider
+
+		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &Config{}
+			applyBastionDataDefaults(cfg, provider)
+
+			if cfg.Bastion.Data.Enabled {
+				t.Errorf("provider %q enabled the bastion data disk", provider)
+			}
+		})
+	}
+}

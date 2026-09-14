@@ -200,10 +200,18 @@ func (m *Manager) setupVolumesPlan(plan *bootstrapPlan) {
 		return
 	}
 
+	// An unset pool is not "no pool": CreateVolume falls through to the
+	// provider's default storage, which is the pool the bastion's own boot
+	// disk came from. Say that rather than printing an empty cell.
+	pool := data.StoragePool
+	if pool == "" {
+		pool = "provider default"
+	}
+
 	plan.Volumes = append(plan.Volumes, volumePreview{
 		Name:   m.options.BlocName + "-bastion-data",
 		SizeGB: data.DiskSizeGiB,
-		Type:   data.StoragePool,
+		Type:   pool,
 	})
 }
 
@@ -710,7 +718,15 @@ func (m *Manager) shouldShowVolumes() bool {
 		return true // Default all mode
 	}
 
-	return m.options.Volumes
+	if m.options.Volumes {
+		return true
+	}
+
+	// The bastion data volume step sits in the "servers" category, so
+	// --bastion and --servers both keep it and will allocate the disk. The
+	// preview has to say so: a dry run that under-reports what the run will do
+	// is worse than no dry run, because the operator has checked it.
+	return (m.options.Bastion || m.options.Servers) && m.config.Bastion.Data.Enabled
 }
 
 // shouldShowCompute determines if compute resources should be displayed.
