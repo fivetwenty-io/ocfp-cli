@@ -200,6 +200,11 @@ func planTemplateBuild(exists, rebuild bool) templatePlan {
 // Destroying the template cannot harm the guests cloned from it, because OCFP
 // clones full rather than linked.
 func (m *ComputeManager) RebuildTemplate(ctx context.Context, name string) (int, error) {
+	spec, ok := templateCatalog[name]
+	if !ok {
+		return 0, fmt.Errorf("%w: %s", ErrTemplateAutoProvisionUnknown, name)
+	}
+
 	existing, err := m.LookupTemplateByName(ctx, name)
 	if err != nil {
 		return 0, fmt.Errorf("pre-flight lookup: %w", err)
@@ -216,7 +221,7 @@ func (m *ComputeManager) RebuildTemplate(ctx context.Context, name string) (int,
 		}
 	}
 
-	return m.ProvisionTemplate(ctx, name)
+	return m.buildTemplate(ctx, spec)
 }
 
 func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (int, error) {
@@ -224,8 +229,6 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 	if !ok {
 		return 0, fmt.Errorf("%w: %s", ErrTemplateAutoProvisionUnknown, name)
 	}
-
-	log := logger.WithOperation("ProvisionTemplate")
 
 	existing, err := m.LookupTemplateByName(ctx, name)
 	if err != nil {
@@ -238,10 +241,26 @@ func (m *ComputeManager) ProvisionTemplate(ctx context.Context, name string) (in
 			return 0, fmt.Errorf("existing template %s has non-numeric VMID %q: %w", name, existing.ID, convErr)
 		}
 
-		log.Infof("template %s already present (vmid %d)", name, vmid)
+		logger.WithOperation("ProvisionTemplate").Infof("template %s already present (vmid %d)", name, vmid)
 
 		return vmid, nil
 	}
+
+	return m.buildTemplate(ctx, spec)
+}
+
+// buildTemplate downloads the image, creates the VM, seeds it when the spec
+// calls for it, and converts it to a template.
+//
+// It is deliberately separate from ProvisionTemplate, which decides whether a
+// build is needed at all. A caller that has already made that decision has to
+// reach the build directly: routing a rebuild back through the idempotent
+// entry point once destroyed a template and then built nothing, because the
+// cluster's resource index had not caught up with the deletion and the lookup
+// still reported the template present.
+func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (int, error) {
+	name := spec.Name
+	log := logger.WithOperation("buildTemplate")
 
 	targetStorage := m.client.config.DefaultStorage
 	if targetStorage == "" {
