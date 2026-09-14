@@ -76,6 +76,8 @@ func NewBastionCmd() *cobra.Command {
 	cmd.Flags().String("archive-storage", "", "recycle: backup-capable storage for --archive")
 	cmd.Flags().Bool("yes", false, "recycle: skip the confirmation prompt")
 	cmd.Flags().Bool("abort", false, "recycle: walk back a recycle in progress")
+	cmd.Flags().Bool("stop-before-retire", false,
+		"recycle: pause once the replacement holds the data disk, before the original is destroyed")
 
 	// Bind to viper for reuse
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
@@ -567,11 +569,13 @@ func bastionRecycle(cmd *cobra.Command, log logger.Logger) error {
 	archiveStorage, _ := cmd.Flags().GetString("archive-storage")
 	yes, _ := cmd.Flags().GetBool("yes")
 	abort, _ := cmd.Flags().GetBool("abort")
+	stopBeforeRetire, _ := cmd.Flags().GetBool("stop-before-retire")
 
 	return runBastionRecycle(cmd.Context(), log, blocName, viper.GetString("config"), recycleFlags{
-		archive:        archive,
-		archiveStorage: archiveStorage,
-		yes:            yes,
-		abort:          abort,
+		archive:          archive,
+		archiveStorage:   archiveStorage,
+		yes:              yes,
+		abort:            abort,
+		stopBeforeRetire: stopBeforeRetire,
 	})
 }
