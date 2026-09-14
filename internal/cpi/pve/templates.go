@@ -784,3 +784,15 @@ func parseUPID(resp *nodes.CreateStorageDownloadUrlResponse) (string, error) {
 
 	return "", fmt.Errorf("unrecognized UPID payload: %s", string(raw)) //nolint:err113 // descriptive error, not caller-testable
 }
+
+// CatalogTemplateNames returns the names of every template OCFP knows how to
+// build. Exported so commands can list and validate against the catalog
+// without reaching into the package-level map.
+func CatalogTemplateNames() []string {
+	names := make([]string, 0, len(templateCatalog))
+	for name := range templateCatalog {
+		names = append(names, name)
+	}
+
+	return names
+}
