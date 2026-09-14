@@ -293,7 +293,10 @@ This command creates a local inception vault using 'safe local' running in a tmu
 with file-backed storage. The inception vault is used temporarily during bootstrap until the
 production vault is available.
 
-The vault runs on port 8234 by default and stores data in
+The vault listens on a port derived from the bloc name, in the range
+18234-19233, so several blocs can run an inception vault side by side. Port
+8234 is the legacy value, used only when no bloc is named. Override with
+OCFP_VAULT_INCEPTION_PORT or the bloc's own config. It stores data in
 ~/.local/share/ocfp/{bloc}/vault/data (or $XDG_DATA_HOME/ocfp/{bloc}/vault/data if set).
 Root and unseal keys are saved to ~/.local/share/ocfp/{bloc}/vault/{root.key,unseal.keys}.
 Falls back to the legacy ~/.ocfp/{bloc}/vault/... layout when only that exists;
