@@ -112,6 +112,33 @@ func newDataVolManagerWithData(
 ) (*bootstrap.Manager, *state.Manager) {
 	t.Helper()
 
+	return newDataVolManagerFull(t, st, data, bootstrap.Options{BlocName: "prod", Provider: "pve", Yes: true})
+}
+
+func newDataVolManagerWithOptions(
+	t *testing.T,
+	st *dataVolStorage,
+	opts bootstrap.Options,
+) (*bootstrap.Manager, *state.Manager) {
+	t.Helper()
+
+	return newDataVolManagerFull(t, st, config.BastionDataConfig{
+		Enabled:     true,
+		DiskSizeGiB: 64,
+		StoragePool: "local-lvm-data",
+		Filesystem:  config.BastionFilesystemExt4,
+		Mountpoint:  "/data",
+	}, opts)
+}
+
+func newDataVolManagerFull(
+	t *testing.T,
+	st *dataVolStorage,
+	data config.BastionDataConfig,
+	opts bootstrap.Options,
+) (*bootstrap.Manager, *state.Manager) {
+	t.Helper()
+
 	stateManager, err := state.NewManager(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -142,11 +169,7 @@ func newDataVolManagerWithData(
 		},
 	}
 
-	manager := bootstrap.NewManager(cfg, &fakeProvWithStorage{s: st}, stateManager, &bootstrap.Options{
-		BlocName: "prod",
-		Provider: "pve",
-		Yes:      true,
-	})
+	manager := bootstrap.NewManager(cfg, &fakeProvWithStorage{s: st}, stateManager, &opts)
 
 	return manager, stateManager
 }
@@ -448,6 +471,27 @@ func TestSetupVolumesPlan_PreviewsBastionDataDisk(t *testing.T) {
 	}
 }
 
+// TestSetupVolumesPlan_NamesTheDefaultPool asserts an unset pool reads as what
+// will happen rather than as an empty cell. CreateVolume falls through to the
+// provider's default storage, which is not the same as "nowhere".
+func TestSetupVolumesPlan_NamesTheDefaultPool(t *testing.T) {
+	t.Parallel()
+
+	st := &dataVolStorage{}
+	manager, _ := newDataVolManagerWithData(t, st, config.BastionDataConfig{
+		Enabled: true, DiskSizeGiB: 64, Mountpoint: "/data", Filesystem: config.BastionFilesystemExt4,
+	})
+
+	vols := manager.PlannedVolumes()
+	if len(vols) != 1 {
+		t.Fatalf("planned volumes = %v", vols)
+	}
+
+	if vols[0].Type == "" {
+		t.Error("an unset storage pool rendered as an empty cell")
+	}
+}
+
 func TestSetupVolumesPlan_EmptyWhenDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -500,5 +544,46 @@ func TestBastionDataDiskSpec_NilWhenDisabled(t *testing.T) {
 
 	if spec := manager.BastionDataDiskSpec(); spec != nil {
 		t.Errorf("a disabled data disk produced a spec: %+v", spec)
+	}
+}
+
+// TestDryRunPreviewsTheDiskItWillCreate guards a preview/execution mismatch
+// found on the live lab.
+//
+// The data-volume step sits in the "servers" category, so `--bastion` keeps
+// and runs it. But the plan's volume section was gated on --volumes alone, so
+// a `--bastion --dry-run` reported two resources and no disk, then the real
+// run allocated one. A dry run that under-reports what the run will do is
+// worse than no dry run, because the operator has checked it.
+func TestDryRunPreviewsTheDiskItWillCreate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts bootstrap.Options
+		want bool
+	}{
+		{"bastion rebuild", bootstrap.Options{BlocName: "prod", Provider: "pve", Bastion: true}, true},
+		{"servers", bootstrap.Options{BlocName: "prod", Provider: "pve", Servers: true}, true},
+		{"explicit volumes", bootstrap.Options{BlocName: "prod", Provider: "pve", Volumes: true}, true},
+		{"full run", bootstrap.Options{BlocName: "prod", Provider: "pve"}, true},
+		{"network only", bootstrap.Options{BlocName: "prod", Provider: "pve", Network: true}, false},
+		{"buckets only", bootstrap.Options{BlocName: "prod", Provider: "pve", Buckets: true}, false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			st := &dataVolStorage{}
+			manager, _ := newDataVolManagerWithOptions(t, st, tc.opts)
+
+			got := manager.ShowsVolumesInPlan()
+			if got != tc.want {
+				t.Errorf("volumes shown = %v, want %v for %+v", got, tc.want, tc.opts)
+			}
+		})
 	}
 }
