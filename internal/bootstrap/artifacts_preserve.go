@@ -38,3 +38,39 @@ func artifactsDataVolumeResource(
 		},
 	}
 }
+
+// findPreservedArtifactsVolume returns the recorded artifacts data volume for
+// this VM, or empty when there is none.
+//
+// A rebuild must adopt the disk it was told to preserve. Without this,
+// teardown sparing the disk achieves nothing: the next bootstrap allocates a
+// fresh volume, attaches that, and strands the one holding every compiled
+// release and cached stemcell where nothing mounts it.
+func findPreservedArtifactsVolume(resources []*state.Resource, vmName string) string {
+	want := vmName + "-data"
+
+	for _, res := range resources {
+		if res == nil || res.Type != state.ResourceTypeVolume || res.Name != want {
+			continue
+		}
+
+		if role, _ := res.Properties["role"].(string); role != "artifacts-data" {
+			continue
+		}
+
+		return res.ID
+	}
+
+	return ""
+}
+
+// preservedArtifactsVolume returns the recorded artifacts data volume id for
+// this bloc, or empty when none is recorded.
+func (m *Manager) preservedArtifactsVolume(vmName string) string {
+	resources, err := m.stateManager.GetResourcesByType(state.ResourceTypeVolume)
+	if err != nil {
+		return ""
+	}
+
+	return findPreservedArtifactsVolume(resources, vmName)
+}
