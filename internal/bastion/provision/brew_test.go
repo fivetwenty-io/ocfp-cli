@@ -534,6 +534,34 @@ func TestGenerateBrewPackageScript_TrustsThirdPartyTaps(t *testing.T) {
 	}
 }
 
+// TestGenerateBrewPackageScript_TrustsBeforeTapping pins the order of the two
+// commands, which is what actually failed on a bastion cycle.
+//
+// Homebrew 7 evaluates a tap's casks as part of `brew tap`, and it refuses to
+// evaluate code from a tap nobody has trusted. The refusal does not read as a
+// permission problem either: it surfaces as `Cannot tap fivetwenty-io/tap:
+// invalid syntax in tap!`, and it takes the whole brew_packages phase down
+// with it. Trusting first avoids the refusal, and trusting does not require
+// the tap to be added, so nothing is lost by the swap.
+func TestGenerateBrewPackageScript_TrustsBeforeTapping(t *testing.T) {
+	t.Parallel()
+
+	script := NewBrewManager("pve", nil).GenerateBrewPackageScript(context.Background())
+
+	for _, tap := range []string{"fivetwenty-io/tap"} {
+		trustAt := strings.Index(script, "brew trust --tap "+tap)
+		tapAt := strings.Index(script, "brew tap "+tap)
+
+		if trustAt < 0 || tapAt < 0 {
+			t.Fatalf("expected both a trust and a tap for %s (trust at %d, tap at %d)", tap, trustAt, tapAt)
+		}
+
+		if trustAt > tapAt {
+			t.Errorf("script taps %s before trusting it; Homebrew 7 refuses the untrusted tap and the phase dies", tap)
+		}
+	}
+}
+
 // TestGenerateBrewPackageScript_InstallsPMXOnPVE verifies the PVE cask install.
 func TestGenerateBrewPackageScript_InstallsPMXOnPVE(t *testing.T) {
 	t.Parallel()

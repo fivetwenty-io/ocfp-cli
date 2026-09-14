@@ -319,14 +319,18 @@ func (bm *BrewManager) generateTapInstalls(packages []BrewPackage) []string {
 
 		seen[pkg.Tap] = true
 
+		// Trust comes first. Homebrew 7 evaluates a tap's casks while adding
+		// it and refuses to read an untrusted one, reporting the refusal as
+		// `invalid syntax in tap`, so tapping first is what fails. Trusting a
+		// tap does not require it to be added.
 		lines = append(lines, "# Add tap: "+pkg.Tap)
+		lines = append(lines, bm.generateTapTrust(pkg.Tap)...)
 		lines = append(lines, fmt.Sprintf("if ! brew tap | grep -q '%s'; then", pkg.Tap))
 		lines = append(lines, fmt.Sprintf("    log_info 'Adding brew tap: %s'", pkg.Tap))
 		lines = append(lines, "    brew tap "+pkg.Tap)
 		lines = append(lines, "else")
 		lines = append(lines, fmt.Sprintf("    log_info 'Tap %s already added'", pkg.Tap))
 		lines = append(lines, "fi")
-		lines = append(lines, bm.generateTapTrust(pkg.Tap)...)
 		lines = append(lines, "")
 	}
 
