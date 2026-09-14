@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/recycle"
@@ -160,7 +161,20 @@ func (c *BastionRecycleCluster) dataVolumeOwnedBy(ctx context.Context, instanceI
 		return "", false
 	}
 
-	// The recorded id is consulted first because a handover renames the disk.
+	// The serial is asked for first, because it is the only identity that
+	// survives a handover. Proxmox renames a reassigned volume to match its
+	// new owner, so vm-100-data arrives as vm-102-disk-1 and no name-based
+	// rule can tell it from the OS disk beside it.
+	bySerial, ok := c.mgr.provider.StorageManager().(interface {
+		VolumeBySerial(ctx context.Context, instanceID, serial string) (string, bool)
+	})
+	if ok {
+		if volID, found := bySerial.VolumeBySerial(ctx, instanceID, config.BastionDataDiskSerial); found {
+			return volID, true
+		}
+	}
+
+	// The recorded id is consulted next because a handover renames the disk.
 	// Ask for it rather than requiring it: a bloc whose disk has never been
 	// recorded still has to be recognisable.
 	recorded, _ := c.dataVolumeID()
