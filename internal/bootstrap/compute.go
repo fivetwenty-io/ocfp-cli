@@ -34,8 +34,6 @@ var sleepFn = time.Sleep
 
 // Compute-specific constants.
 const (
-	bastionRootDiskSize   = 50
-	bastionDataDiskSize   = 100
 	maxDebugImagesDisplay = 5
 	sshKeyDirMode         = 0700
 	sshKeyFileMode        = 0600
