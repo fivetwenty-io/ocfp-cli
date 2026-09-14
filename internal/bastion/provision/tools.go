@@ -150,7 +150,7 @@ func (atm *AdvancedToolManager) getBaseTool() []AdvancedBinaryTool {
 	return []AdvancedBinaryTool{
 		{
 			Name:           "vault",
-			Enabled:        false, // installed via brew (hashicorp/tap)
+			Enabled:        true, // hashicorp/tap will not evaluate on Linux
 			CheckCommand:   "vault",
 			VersionURL:     "https://api.github.com/repos/hashicorp/vault/releases/latest",
 			VersionPattern: `"tag_name":\s*"v?([^"]+)"`,
