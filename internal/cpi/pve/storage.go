@@ -599,13 +599,88 @@ func buildReassignParams(slot string, targetVMID int, targetSlot string) map[str
 	return params
 }
 
+// diskOptionsFrom returns the options a disk's config value carries after the
+// volume id, or empty when it carries none.
+//
+// Proxmox's move_disk hands the volume to the target VM and renames it, but
+// writes the new config entry as the bare volume id. Everything the source
+// slot was carrying is dropped, and for the OCFP data disk that means
+// discard=on and, far more importantly, serial=ocfpdata. The serial is how the
+// guest finds the disk at all: without it the dataset script refuses to guess
+// a device, and the recycled bastion comes up with an empty home directory.
+func diskOptionsFrom(value string) string {
+	idx := strings.Index(value, ",")
+	if idx < 0 {
+		return ""
+	}
+
+	return value[idx+1:]
+}
+
+// reattachValue rebuilds a slot's config value from the volume the move
+// produced and the options the source slot was carrying.
+func reattachValue(volumeID, options string) string {
+	if options == "" {
+		return volumeID
+	}
+
+	return volumeID + "," + options
+}
+
+// restoreDiskOptions re-applies the options a reassign dropped.
+//
+// It reads the target's config rather than assuming the volume's new name,
+// because the rename is Proxmox's to decide and guessing it is how this goes
+// wrong quietly.
+func (m *StorageManager) restoreDiskOptions(ctx context.Context, node string, targetVMID int, slot, options string) error {
+	if options == "" {
+		return nil
+	}
+
+	config, err := m.client.getQemuService().Config(ctx, node, targetVMID)
+	if err != nil {
+		return fmt.Errorf("read target VM config: %w", err)
+	}
+
+	current, _ := config[slot].(string)
+	if current == "" {
+		return fmt.Errorf("%w: %s on VM %d after reassign", ErrVolumeNotFoundOnVM, slot, targetVMID)
+	}
+
+	volumeID := current
+	if idx := strings.Index(current, ","); idx >= 0 {
+		volumeID = current[:idx]
+	}
+
+	want := reattachValue(volumeID, options)
+	if want == current {
+		return nil
+	}
+
+	logger.WithOperation("ReassignVolume").Infof(
+		"restoring disk options on VM %d %s: %s", targetVMID, slot, options)
+
+	_, err = m.client.pveClient.PutCtx(ctx,
+		buildPVEPathf(node, "qemu/%d/config", targetVMID),
+		map[string]interface{}{slot: want})
+	if err != nil {
+		return fmt.Errorf("restore disk options on VM %d %s: %w", targetVMID, slot, err)
+	}
+
+	return nil
+}
+
 // ReassignVolume hands a volume from one VM to another in a single server-side
 // operation, so the volume never belongs to nothing.
 //
-// PVE renames the volume to match its new owner and preserves the disk's
-// properties, which is why this is preferred over detach-then-re-attach: the
-// storage entry's ownership stays truthful, so ListVolumes and
-// teardown-by-attribution keep working without special cases.
+// PVE renames the volume to match its new owner, which is why this is
+// preferred over detach-then-re-attach: the storage entry's ownership stays
+// truthful, so ListVolumes and teardown-by-attribution keep working without
+// special cases.
+//
+// It does not, however, carry the disk's options across. The new config entry
+// is the bare volume id, so we capture what the source slot was carrying and
+// put it back afterwards.
 //
 // Two constraints, both confirmed against a live PVE 9 cluster and both
 // enforced by PVE as safe refusals that leave the disk where it was. The
@@ -645,6 +720,9 @@ func (m *StorageManager) ReassignVolume(
 		return fmt.Errorf("%w: %s on VM %d", ErrVolumeNotFoundOnVM, volumeID, sourceVMID)
 	}
 
+	sourceValue, _ := config[slot].(string)
+	options := diskOptionsFrom(sourceValue)
+
 	logger.WithOperation("ReassignVolume").Infof(
 		"reassigning %s from VM %d (%s) to VM %d (%s)", volumeID, sourceVMID, slot, targetVMID, targetSlot)
 
@@ -659,16 +737,14 @@ func (m *StorageManager) ReassignVolume(
 		return fmt.Errorf("reassign task id: %w", err)
 	}
 
-	if upid == "" {
-		return nil
+	if upid != "" {
+		err = m.client.waitForTask(ctx, node, upid, reassignTaskTimeout)
+		if err != nil {
+			return fmt.Errorf("await reassign task: %w", err)
+		}
 	}
 
-	err = m.client.waitForTask(ctx, node, upid, reassignTaskTimeout)
-	if err != nil {
-		return fmt.Errorf("await reassign task: %w", err)
-	}
-
-	return nil
+	return m.restoreDiskOptions(ctx, node, targetVMID, targetSlot, options)
 }
 
 // DetachVolume detaches a volume from an instance.

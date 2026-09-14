@@ -198,3 +198,54 @@ func TestUpidFromResponse(t *testing.T) {
 		})
 	}
 }
+
+// TestDiskOptionsFrom covers the options a reassign silently drops.
+//
+// Proxmox's move_disk carries the volume to the target VM and renames it, but
+// the new config entry is the bare volume id. Everything the slot was carrying
+// is gone, and for the OCFP data disk that means discard=on and, far more
+// importantly, serial=ocfpdata. The serial is how the guest finds the disk at
+// all: without it the dataset script refuses to guess a device, and the
+// recycled bastion comes up with an empty home directory.
+func TestDiskOptionsFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"bare volume id", "local-lvm-data:vm-100-data", ""},
+		{"serial and discard", "local-lvm-data:vm-100-data,discard=on,serial=ocfpdata", "discard=on,serial=ocfpdata"},
+		{"single option", "local-lvm:vm-9-disk-0,size=32G", "size=32G"},
+		{"empty", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := diskOptionsFrom(tc.value)
+			if got != tc.want {
+				t.Errorf("diskOptionsFrom(%q) = %q, want %q", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReattachValue rebuilds the target slot's config value from the volume
+// the move produced and the options the source slot was carrying.
+func TestReattachValue(t *testing.T) {
+	t.Parallel()
+
+	got := reattachValue("local-lvm-data:vm-102-data", "discard=on,serial=ocfpdata")
+
+	want := "local-lvm-data:vm-102-data,discard=on,serial=ocfpdata"
+	if got != want {
+		t.Errorf("reattachValue = %q, want %q", got, want)
+	}
+
+	if bare := reattachValue("local-lvm-data:vm-102-data", ""); bare != "local-lvm-data:vm-102-data" {
+		t.Errorf("with no options reattachValue = %q, want the bare volume id", bare)
+	}
+}
