@@ -533,6 +533,79 @@ func findDiskSlotForVolume(config map[string]interface{}, volumeID string) (stri
 	return "", false
 }
 
+// findVolumeBySerial returns the volume id of the disk carrying the given
+// serial, if the config has one.
+//
+// This is how a reassigned disk stays findable. Proxmox renames a volume to
+// match its new owner, turning vm-100-data into vm-102-disk-1, so the name
+// tells us nothing about which disk we are looking at and cannot be told apart
+// from the OS disk beside it. The serial we set at creation is the one piece
+// of identity that survives the move.
+func findVolumeBySerial(config map[string]interface{}, serial string) (string, bool) {
+	if serial == "" {
+		return "", false
+	}
+
+	for key, value := range config {
+		if !hasAnyPrefix(key, diskSlotPrefixes) {
+			continue
+		}
+
+		valueStr, ok := value.(string)
+		if !ok {
+			continue
+		}
+
+		if !diskCarriesSerial(valueStr, serial) {
+			continue
+		}
+
+		volumeID := valueStr
+		if idx := strings.Index(volumeID, ","); idx >= 0 {
+			volumeID = volumeID[:idx]
+		}
+
+		return volumeID, true
+	}
+
+	return "", false
+}
+
+// diskCarriesSerial reports whether a disk's config value sets exactly the
+// given serial. The whole option is compared so that a disk serialised
+// ocfpdata-old is not mistaken for ocfpdata.
+func diskCarriesSerial(value, serial string) bool {
+	for _, opt := range strings.Split(value, ",") {
+		if opt == "serial="+serial {
+			return true
+		}
+	}
+
+	return false
+}
+
+// VolumeBySerial returns the volume the instance has attached under the given
+// serial. It reads the guest config rather than the storage listing, because
+// Proxmox reports a serial only in the config.
+func (m *StorageManager) VolumeBySerial(ctx context.Context, instanceID, serial string) (string, bool) {
+	vmid, err := strconv.Atoi(instanceID)
+	if err != nil {
+		return "", false
+	}
+
+	node, err := m.client.getNode(ctx)
+	if err != nil {
+		return "", false
+	}
+
+	config, err := m.client.getQemuService().Config(ctx, node, vmid)
+	if err != nil {
+		return "", false
+	}
+
+	return findVolumeBySerial(config, serial)
+}
+
 // hasAnyPrefix reports whether s starts with any of the given prefixes.
 func hasAnyPrefix(s string, prefixes []string) bool {
 	for _, p := range prefixes {
