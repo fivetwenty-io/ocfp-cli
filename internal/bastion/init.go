@@ -441,9 +441,13 @@ func (m *Manager) isAlreadyProvisioned(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	// Check for completion marker on remote system
-	markerPath := "${HOME}/.ocfp/provisioned"
-	cmd := fmt.Sprintf("test -f '%s' && cat '%s'", markerPath, markerPath)
+	// Check for the completion marker on the remote system. The marker lives
+	// on the OS disk so a persisted home directory cannot carry a stale
+	// "already provisioned" claim onto a freshly rebuilt machine; the legacy
+	// home-directory path is still read so existing bastions are not put
+	// through a needless re-provision.
+	markerPath := ProvisionedMarkerPath
+	cmd := provisionedMarkerCheckCommand()
 
 	result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 	if err != nil {
@@ -2295,8 +2299,9 @@ func (m *Manager) setupGenesis(_ctx context.Context) error {
 func (m *Manager) runCustomScripts(ctx context.Context) error {
 	m.log.Info("Creating completion markers")
 
-	// Create the provisioned marker file
-	cmd := `mkdir -p ~/.ocfp && touch ~/.ocfp/provisioned && echo "$(date)" > ~/.ocfp/provisioned`
+	// Create the provisioned marker on the OS disk, not in the home
+	// directory, which is persisted across an OS replacement.
+	cmd := provisionedMarkerWriteCommand()
 
 	_, err := m.sshClient.ExecuteCommand(ctx, cmd)
 	if err != nil {
@@ -2346,7 +2351,7 @@ func (m *Manager) verifyInstallation(ctx context.Context) error {
 		m.reporter.ReportSubtaskProgress("verification", 1, totalSteps, "Checking provisioning marker")
 	}
 
-	cmd := "test -f ~/.ocfp/provisioned && echo 'provisioned' || echo 'not-provisioned'"
+	cmd := provisionedMarkerCheckCommand() + " >/dev/null 2>&1 && echo 'provisioned' || echo 'not-provisioned'"
 
 	result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 	if err != nil {

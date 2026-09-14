@@ -698,8 +698,11 @@ func (vm *VerificationManager) generateNextStepsInfo() []string {
 func (vm *VerificationManager) generateCompletionMarkers() []string {
 	return []string{
 		"# Create completion markers",
-		"touch \"$HOME/.ocfp/provisioned\"",
-		"echo \"$(date)\" > \"$HOME/.ocfp/provisioned\"",
+		"# The provisioned marker goes on the OS disk: the home directory is",
+		"# bind-mounted off the persistent data disk and would carry a stale",
+		"# \"already provisioned\" claim onto a rebuilt machine.",
+		"sudo mkdir -p /var/lib/ocfp",
+		"date | sudo tee " + ProvisionedMarker + " >/dev/null",
 		"touch \"$HOME/.ocfp/bastion-init-completed\"",
 		"echo \"$(date)\" > \"$HOME/.ocfp/bastion-init-completed\"",
 		"",

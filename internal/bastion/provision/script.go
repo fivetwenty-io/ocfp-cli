@@ -213,8 +213,16 @@ func (sg *ScriptGenerator) generateShebangAndComments() string {
 
 set -euo pipefail
 
-# Early exit if already provisioned (idempotency optimization)
-PROVISIONED_MARKER="${HOME}/.ocfp/provisioned"
+# Early exit if already provisioned (idempotency optimization).
+#
+# The marker lives on the OS disk. The home directory is bind-mounted off the
+# persistent data disk, so a marker kept there would survive an OS replacement
+# and make a freshly rebuilt machine look fully provisioned.
+PROVISIONED_MARKER="/var/lib/ocfp/provisioned"
+LEGACY_PROVISIONED_MARKER="${HOME}/.ocfp/provisioned"
+if [ ! -f "${PROVISIONED_MARKER}" ] && [ -f "${LEGACY_PROVISIONED_MARKER}" ]; then
+    PROVISIONED_MARKER="${LEGACY_PROVISIONED_MARKER}"
+fi
 if [ -f "${PROVISIONED_MARKER}" ]; then
     echo "[INFO] Bastion already provisioned (marker exists: ${PROVISIONED_MARKER})"
     echo "[INFO] Provisioned at: $(cat ${PROVISIONED_MARKER})"
@@ -683,9 +691,9 @@ log_success "Bastion provisioning completed successfully at $(date)"
 log_info "Total duration: $(($(date +%s) - start_time)) seconds"
 log_info "Log file: ${LOG_FILE}"
 
-# Create completion marker
-touch "${HOME}/.ocfp/provisioned"
-echo "$(date)" > "${HOME}/.ocfp/provisioned"`
+# Create completion marker on the OS disk, never in the persisted home
+sudo mkdir -p /var/lib/ocfp
+date | sudo tee /var/lib/ocfp/provisioned >/dev/null`
 }
 
 // shouldProcessTool checks if a tool should be processed.

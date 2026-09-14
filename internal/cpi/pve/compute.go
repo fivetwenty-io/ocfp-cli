@@ -1035,7 +1035,7 @@ func (m *ComputeManager) configureCloudInit(ctx context.Context, node string, vm
 	// snippet path above is fundamentally broken on PVE 9.x (snippets-upload
 	// API enum excludes them); SMBIOS is how the firstboot script baked into
 	// the bastion template reads per-VM config.
-	smbiosPayload := BastionSMBIOSPayload(req.Tailscale, req.Cloudflare, req.Ingress)
+	smbiosPayload := BastionSMBIOSPayload(req.Tailscale, req.Cloudflare, req.Ingress, req.DataDisk)
 	if !smbiosPayload.IsEmpty() {
 		smbiosVal := BuildSMBIOSConfigValue(smbiosPayload)
 

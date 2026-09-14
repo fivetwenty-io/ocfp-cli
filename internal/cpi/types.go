@@ -372,6 +372,41 @@ type VolumeRequest struct {
 	InstanceID string
 }
 
+// DataDiskSpec describes the persistent data disk a VM should prepare at
+// first boot, and the state that has to be restored off it.
+//
+// It reaches the guest through the SMBIOS SKU blob rather than cloud-init,
+// because PVE 9.x forbids uploading snippets and so cannot deliver per-VM
+// cloud-init to a clone.
+type DataDiskSpec struct {
+	// Serial is the disk serial PVE stamps on the volume, which the guest
+	// resolves under /dev/disk/by-id. Naming the disk this way rather than
+	// by /dev/sdN is what makes the lookup independent of enumeration order.
+	Serial string
+
+	// Mountpoint is where the disk is mounted inside the guest.
+	Mountpoint string
+
+	// Filesystem is how a blank disk should be formatted. An existing
+	// filesystem of a different type stops the guest script rather than
+	// being reformatted.
+	Filesystem string
+
+	// HomeDir is the operator home directory bind-mounted off the disk.
+	HomeDir string
+
+	// User owns the persisted home directory.
+	User string
+
+	// AuthorizedKey is the bootstrap public key, re-asserted on every boot.
+	//
+	// This is the guard that makes persisting a whole home directory safe.
+	// The persistent copy carries an authorized_keys from the retired
+	// machine, and if the replacement's keypair differs the bastion comes up
+	// healthy, joins the tailnet, and nobody can get in.
+	AuthorizedKey string
+}
+
 // InstanceRequest represents a request for creating instances.
 type InstanceRequest struct {
 	Name                  string
@@ -397,7 +432,11 @@ type InstanceRequest struct {
 	Cloudflare *CloudflareSpec
 	// Ingress, when non-nil, configures bastion-side nftables forwarding
 	// for tailscale ingress via SMBIOS alongside tailscale.
-	Ingress         *IngressSpec
+	Ingress *IngressSpec
+	// DataDisk, when non-nil, tells the guest how to prepare and mount its
+	// persistent data disk at first boot. Delivered via SMBIOS alongside
+	// tailscale.
+	DataDisk        *DataDiskSpec
 	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)

@@ -46,23 +46,45 @@ func (p SMBIOSPayload) IsEmpty() bool {
 // BastionSMBIOSPayload builds the SMBIOS payload from the bastion's
 // tailscale + cloudflare + ingress specs. Serial carries the tailscale auth
 // key; SKU is a JSON blob the firstboot script jq-parses.
-func BastionSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec, ing *cpi.IngressSpec) SMBIOSPayload {
-	if ts == nil || ts.AuthKey == "" {
+func BastionSMBIOSPayload(
+	ts *cpi.TailscaleSpec,
+	cf *cpi.CloudflareSpec,
+	ing *cpi.IngressSpec,
+	data *cpi.DataDiskSpec,
+) SMBIOSPayload {
+	// The payload used to be gated entirely on a tailscale auth key. It no
+	// longer can be: the data-disk block has to reach a bastion whether or
+	// not tailscale is configured, or a tailscale-less bloc would boot with
+	// an unprepared disk and an empty home directory.
+	hasTailscale := ts != nil && ts.AuthKey != ""
+	if !hasTailscale && data == nil {
 		return SMBIOSPayload{}
 	}
 
-	// Marshal the role config as compact JSON; the firstboot script
-	// `jq`-parses fields with sane defaults so we can add keys later
-	// without breaking older templates.
-	skuMap := map[string]interface{}{
-		"v":                1,
-		"hostname":         ts.Hostname,
-		"tags":             ts.Tags,
-		"accept_dns":       ts.AcceptDNS,
-		"accept_routes":    ts.AcceptRoutes,
-		"ssh":              ts.SSH,
-		"exit_node":        ts.ExitNode,
-		"advertise_routes": ts.AdvertiseRoutes,
+	// Marshal the role config as compact JSON; the guest scripts `jq`-parse
+	// fields with sane defaults so we can add keys later without breaking
+	// older templates.
+	skuMap := map[string]interface{}{"v": 1}
+
+	if hasTailscale {
+		skuMap["hostname"] = ts.Hostname
+		skuMap["tags"] = ts.Tags
+		skuMap["accept_dns"] = ts.AcceptDNS
+		skuMap["accept_routes"] = ts.AcceptRoutes
+		skuMap["ssh"] = ts.SSH
+		skuMap["exit_node"] = ts.ExitNode
+		skuMap["advertise_routes"] = ts.AdvertiseRoutes
+	}
+
+	if data != nil {
+		skuMap["data"] = map[string]interface{}{
+			"serial":         data.Serial,
+			"mountpoint":     data.Mountpoint,
+			"filesystem":     data.Filesystem,
+			"home":           data.HomeDir,
+			"user":           data.User,
+			"authorized_key": data.AuthorizedKey,
+		}
 	}
 	if cf != nil && cf.TunnelToken != "" {
 		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
@@ -80,14 +102,23 @@ func BastionSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec, ing *cp
 		// Marshalling fixed-shape data shouldn't realistically fail; if it
 		// does, fall back to a minimal payload so the bastion at least has
 		// the auth key and can join the tailnet manually.
-		return SMBIOSPayload{Serial: ts.AuthKey, Family: smbiosFamilyBastion}
+		return SMBIOSPayload{Serial: authKeyOf(ts), Family: smbiosFamilyBastion}
 	}
 
 	return SMBIOSPayload{
-		Serial: ts.AuthKey,
+		Serial: authKeyOf(ts),
 		SKU:    string(sku),
 		Family: smbiosFamilyBastion,
 	}
+}
+
+// authKeyOf returns the tailscale auth key, or empty when there is no spec.
+func authKeyOf(ts *cpi.TailscaleSpec) string {
+	if ts == nil {
+		return ""
+	}
+
+	return ts.AuthKey
 }
 
 // BastionSpecToSMBIOSPayload builds the SMBIOS payload from the bastion's
@@ -95,7 +126,7 @@ func BastionSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec, ing *cp
 // a JSON blob the firstboot script jq-parses, now including a "cloudflare"
 // object with the connector token.
 func BastionSpecToSMBIOSPayload(ts *cpi.TailscaleSpec, cf *cpi.CloudflareSpec) SMBIOSPayload {
-	return BastionSMBIOSPayload(ts, cf, nil)
+	return BastionSMBIOSPayload(ts, cf, nil, nil)
 }
 
 // TailscaleSpecToSMBIOSPayload is retained for callers with no cloudflare spec.

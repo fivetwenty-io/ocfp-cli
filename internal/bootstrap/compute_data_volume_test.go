@@ -458,3 +458,47 @@ func TestSetupVolumesPlan_EmptyWhenDisabled(t *testing.T) {
 		t.Errorf("planned volumes = %v, want none when the data disk is disabled", vols)
 	}
 }
+
+// TestBastionDataDiskSpec_CarriesEverythingTheGuestNeeds asserts the spec
+// handed to the provider is complete. The guest's boot-time script reads its
+// whole configuration out of this, so a missing field is a bastion that comes
+// up with an unprepared disk.
+func TestBastionDataDiskSpec_CarriesEverythingTheGuestNeeds(t *testing.T) {
+	t.Parallel()
+
+	st := &dataVolStorage{}
+	manager, _ := newDataVolManager(t, st)
+
+	spec := manager.BastionDataDiskSpec()
+
+	if spec == nil {
+		t.Fatal("no data disk spec was built for an enabled data disk")
+	}
+
+	if spec.Serial != "ocfpdata" {
+		t.Errorf("Serial = %q, want the fixed serial the guest resolves by-id", spec.Serial)
+	}
+
+	if spec.Mountpoint != "/data" {
+		t.Errorf("Mountpoint = %q, want /data", spec.Mountpoint)
+	}
+
+	if spec.Filesystem != "ext4" {
+		t.Errorf("Filesystem = %q, want ext4", spec.Filesystem)
+	}
+
+	if spec.HomeDir == "" || spec.User == "" {
+		t.Errorf("HomeDir/User incomplete: %q / %q", spec.HomeDir, spec.User)
+	}
+}
+
+func TestBastionDataDiskSpec_NilWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	st := &dataVolStorage{}
+	manager, _ := newDataVolManagerWithData(t, st, config.BastionDataConfig{Enabled: false})
+
+	if spec := manager.BastionDataDiskSpec(); spec != nil {
+		t.Errorf("a disabled data disk produced a spec: %+v", spec)
+	}
+}
