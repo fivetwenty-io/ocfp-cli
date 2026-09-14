@@ -12,6 +12,9 @@ func TestShouldAutoProvisionTemplate(t *testing.T) {
 		want     bool
 	}{
 		{"pve + known catalog name → true", "pve", "ubuntu-noble-template", true},
+		{"pve + noble bastion template → true", "pve", "ubuntu-noble-bastion-template", true},
+		{"pve + resolute template → true", "pve", "ubuntu-resolute-template", true},
+		{"pve + resolute bastion template → true", "pve", "ubuntu-resolute-bastion-template", true},
 		{"PVE (uppercase) + known catalog name → true", "PVE", "ubuntu-noble-template", true},
 		{"pve + unknown name → false", "pve", "some-random-template", false},
 		{"non-pve provider + known name → false", "stackit", "ubuntu-noble-template", false},

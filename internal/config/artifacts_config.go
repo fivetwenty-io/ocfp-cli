@@ -131,7 +131,9 @@ type ArtifactsConfig struct {
 	MemoryMiB int `json:"memory_mib,omitempty" mapstructure:"memory_mib" yaml:"memory_mib,omitempty"`
 
 	// Template is the cloud-init image template name used to create the VM.
-	// Defaults to "ubuntu-2204-cloudinit".
+	// Defaults to "ubuntu-resolute-template", which the PVE template catalog
+	// knows how to build, so a bloc that accepts the default gets the image
+	// provisioned for it rather than failing at image resolution.
 	Template string `json:"template,omitempty" mapstructure:"template" yaml:"template,omitempty"`
 
 	// Rustfs holds RustFS version and port configuration.
@@ -152,7 +154,7 @@ func (a *ArtifactsConfig) Defaults() {
 	}
 
 	if a.Template == "" {
-		a.Template = "ubuntu-2204-cloudinit"
+		a.Template = "ubuntu-resolute-template"
 	}
 
 	if a.Rustfs.Version == "" {
