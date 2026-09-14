@@ -114,7 +114,7 @@ func TestRsyncCommand(t *testing.T) {
 	t.Run("CreateCommand", func(t *testing.T) {
 		cmd := commands.NewRSyncCmd()
 		assert.NotNil(t, cmd)
-		assert.Equal(t, "rsync <source> <destination>", cmd.Use)
+		assert.Equal(t, "rsync <source> <destination> [-- <rsync flag>...]", cmd.Use)
 	})
 
 	t.Run("ValidateArgs", func(t *testing.T) {
@@ -142,8 +142,31 @@ func TestRsyncCommand(t *testing.T) {
 		assert.NotNil(t, cmd.Flags().Lookup("archive"))
 		assert.NotNil(t, cmd.Flags().Lookup("compress"))
 		assert.NotNil(t, cmd.Flags().Lookup("delete"))
+		assert.NotNil(t, cmd.Flags().Lookup("dry-run"))
+		assert.NotNil(t, cmd.Flags().Lookup("itemize-changes"))
 		assert.NotNil(t, cmd.Flags().Lookup("exclude"))
 		assert.NotNil(t, cmd.Flags().Lookup("include"))
 		assert.NotNil(t, cmd.Flags().Lookup("rsync-options"))
+	})
+
+	t.Run("PassthroughSeparator", func(t *testing.T) {
+		cmd := commands.NewRSyncCmd()
+
+		args := []string{
+			"--dry-run", "--exclude", ".git",
+			"/local/dir/", "bastion:/remote/dir/",
+			"--", "--itemize-changes", "--info=progress2",
+		}
+
+		err := cmd.ParseFlags(args)
+		require.NoError(t, err)
+
+		// The source and the destination sit in front of the separator, and
+		// everything after it is left untouched for rsync.
+		assert.Equal(t, 2, cmd.ArgsLenAtDash())
+		assert.Equal(t,
+			[]string{"/local/dir/", "bastion:/remote/dir/", "--itemize-changes", "--info=progress2"},
+			cmd.Flags().Args())
+		assert.NoError(t, cmd.Args(cmd, cmd.Flags().Args()))
 	})
 }
