@@ -262,6 +262,22 @@ WantedBy=sysinit.target
 `
 
 // seedUnitFile is one file the template seed installs into the image.
+// keepHostKeysConfig stops cloud-init from replacing the SSH host keys that
+// ocfp-dataset restores off the data disk.
+//
+// ocfp-dataset runs at sysinit and puts the retired machine's host keys back.
+// cloud-init's ssh module then runs in the config stage and, with its default
+// ssh_deletekeys, deletes them and generates a new set, so the replacement's
+// first boot presents an identity nobody has seen. Every later boot is
+// correct, because cloud-init does not re-run its first-boot modules, which
+// makes this a confusing failure as well as a disruptive one.
+const keepHostKeysConfig = `# Managed by OCFP.
+# The bastion's SSH host keys are data: they live on the persistent disk and
+# ocfp-dataset restores them before sshd starts. cloud-init must not replace
+# them, or a recycled bastion comes up as a stranger to every known_hosts file.
+ssh_deletekeys: false
+`
+
 type seedUnitFile struct {
 	path    string
 	content string
@@ -280,6 +296,7 @@ func seedUnitFiles() []seedUnitFile {
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.service", watchdogService, "0644"},
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.timer", watchdogTimer, "0644"},
 		{"/etc/systemd/system/ocfp-dataset.service", datasetService, "0644"},
+		{"/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg", keepHostKeysConfig, "0644"},
 	}
 }
 
