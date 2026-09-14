@@ -864,7 +864,9 @@ type Bastion struct {
 	SSHKeyName   string    `json:"sshKeyName,omitempty"       mapstructure:"sshKeyName"       yaml:"sshKeyName,omitempty"`
 	UserData     string    `json:"userData,omitempty"         mapstructure:"userData"         yaml:"userData,omitempty"`
 	RootDiskSize int       `json:"rootDiskSize,omitempty"     mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
-	DataDiskSize int       `json:"dataDiskSize,omitempty"     mapstructure:"dataDiskSize"     yaml:"dataDiskSize,omitempty"`
+	// Data configures the persistent data disk that lets the bastion's
+	// operating system be replaced without losing operator state.
+	Data BastionDataConfig `json:"data,omitempty" mapstructure:"data" yaml:"data,omitempty"`
 	Genesis      Genesis   `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
 	Git          GitConfig `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
 	// OCFPCLI selects how the ocfp binary reaches the bastion. See OCFPCLIConfig.
@@ -940,7 +942,6 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 		SSHKeyName    string        `yaml:"ssh_key_name,omitempty"`
 		UserData      string        `yaml:"user_data,omitempty"`
 		RootDiskSize  int           `yaml:"root_disk_size,omitempty"`
-		DataDiskSize  int           `yaml:"data_disk_size,omitempty"`
 		GitHubSSHPort int           `yaml:"github_ssh_port,omitempty"`
 		OnLinkRoutes  []string      `yaml:"on_link_routes,omitempty"`
 	}
@@ -961,10 +962,6 @@ func (b *Bastion) UnmarshalYAML(data []byte) error {
 
 	if b.RootDiskSize == 0 {
 		b.RootDiskSize = aliases.RootDiskSize
-	}
-
-	if b.DataDiskSize == 0 {
-		b.DataDiskSize = aliases.DataDiskSize
 	}
 
 	if b.GitHubSSHPort == 0 {
@@ -1800,6 +1797,7 @@ func applyDefaults(cfg *Config, provider string) error {
 	applyGenesisDefaults(cfg)
 	applyBastionGenesisDefaults(cfg)
 	cfg.Artifacts.Defaults()
+	cfg.Bastion.Data.Defaults(cfg.Provider)
 
 	return nil
 }
@@ -2105,10 +2103,6 @@ func applyAWSDefaults(cfg *Config) {
 		cfg.Bastion.RootDiskSize = 10
 	}
 
-	if cfg.Bastion.DataDiskSize == 0 {
-		cfg.Bastion.DataDiskSize = 50
-	}
-
 	if cfg.Bastion.Image == "" && cfg.Bastion.OS == "" {
 		cfg.Bastion.OS = "Ubuntu"
 		cfg.Bastion.OSVersion = "24.04"
@@ -2276,6 +2270,11 @@ func validate(cfg *Config) error {
 	err = cfg.Artifacts.Validate(cfg.Provider, bastionEnabled, true)
 	if err != nil {
 		return fmt.Errorf("artifacts config: %w", err)
+	}
+
+	err = cfg.Bastion.Data.Validate()
+	if err != nil {
+		return fmt.Errorf("bastion data disk config: %w", err)
 	}
 
 	// Validate PVE credential configuration (Decision D2):
