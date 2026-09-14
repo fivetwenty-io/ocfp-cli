@@ -279,9 +279,12 @@ func TestAdvancedToolsGeneration(t *testing.T) {
 		t.Error("Expected advanced binary tools to be configured")
 	}
 
-	// Check for required tools (yq and ripgrep moved to brew, now disabled here)
-	requiredTools := []string{"fly", "bun"}
-	brewDisabledTools := []string{"yq", "ripgrep", "vault"}
+	// yq and ripgrep moved to brew and are disabled here. vault came back the
+	// other way: hashicorp/tap ships macOS-only casks that Homebrew refuses to
+	// evaluate on Linux, so vault is installed from HashiCorp's own release
+	// archive again.
+	requiredTools := []string{"fly", "bun", "vault"}
+	brewDisabledTools := []string{"yq", "ripgrep"}
 	toolMap := make(map[string]bool)
 
 	for _, tool := range tools {
