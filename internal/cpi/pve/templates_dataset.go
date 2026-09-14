@@ -179,11 +179,26 @@ save_dir() {
   fi
 }
 
-# SSH host keys: restoring them is what stops every operator, and the
-# artifacts provisioner's ProxyCommand, hitting a host-key mismatch after a
-# rebuild.
-restore_dir "${SYSDIR}/ssh" /etc/ssh "ssh host keys"
-save_dir /etc/ssh "${SYSDIR}/ssh" "ssh host keys"
+# SSH host keys are copied rather than bound, and only the key files move.
+#
+# Restoring them is what stops every operator, and the artifacts provisioner's
+# ProxyCommand, hitting a host-key mismatch after a rebuild. But /etc/ssh also
+# holds sshd_config, ssh_config, and the moduli file, and those belong to the
+# release. Moving the whole directory put Ubuntu Noble's sshd_config onto
+# Ubuntu Resolute the first time we cycled the lab, quietly undoing whatever
+# the newer image ships. So we move the keys and leave the configuration alone.
+persist_host_keys() {
+  store="${SYSDIR}/ssh"
+  mkdir -p "${store}"
+
+  if ls "${store}"/ssh_host_* >/dev/null 2>&1; then
+    cp -a "${store}"/ssh_host_* /etc/ssh/ 2>/dev/null && log "restored ssh host keys from ${store}"
+  elif ls /etc/ssh/ssh_host_* >/dev/null 2>&1; then
+    cp -a /etc/ssh/ssh_host_* "${store}/" 2>/dev/null && log "captured ssh host keys onto the data disk"
+  fi
+}
+
+persist_host_keys
 
 # Tailscale identity: restoring it brings the replacement back as the same
 # node at the same address rather than as a new one.
