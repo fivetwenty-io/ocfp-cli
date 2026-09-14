@@ -185,3 +185,42 @@ func TestSeedEnablesDatasetUnit(t *testing.T) {
 		t.Errorf("the seed never enables ocfp-dataset.service: %v", seedEnableCommands())
 	}
 }
+
+// TestDatasetScript_ResolvesSerialAcrossDistros covers a difference found
+// between Ubuntu Noble and Ubuntu Resolute on the same hypervisor.
+//
+// On Noble, udev names the by-id entry after the disk's serial:
+// /dev/disk/by-id/scsi-SQEMU_QEMU_HARDDISK_ocfpdata. On Resolute it names it
+// after the slot instead: scsi-0QEMU_QEMU_HARDDISK_drive-scsi1. A lookup that
+// only globs for the serial under by-id therefore finds nothing on Resolute,
+// and the data disk goes unmounted — which is exactly how a recycled bastion
+// comes up with an empty home directory.
+//
+// The serial is still authoritative and still visible; lsblk reports it on
+// every distro. So the script tries by-id first and falls back to matching the
+// serial reported by lsblk.
+func TestDatasetScript_ResolvesSerialAcrossDistros(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(datasetScript, "lsblk") {
+		t.Error("the dataset script has no lsblk fallback; it would fail on Resolute, where by-id is named after the slot")
+	}
+
+	if !strings.Contains(datasetScript, "/dev/disk/by-id/") {
+		t.Error("the dataset script dropped the by-id lookup")
+	}
+
+	// The fallback must come after the by-id attempt, not instead of it.
+	// Compare the code, not the prose: the explanation above the loop mentions
+	// both mechanisms and would otherwise decide the ordering.
+	byIDAt := strings.Index(datasetScript, `for candidate in /dev/disk/by-id/`)
+	lsblkAt := strings.Index(datasetScript, `lsblk -dno PATH,SERIAL`)
+
+	if byIDAt < 0 || lsblkAt < 0 {
+		t.Fatalf("expected both lookups in the script (by-id at %d, lsblk at %d)", byIDAt, lsblkAt)
+	}
+
+	if byIDAt > lsblkAt {
+		t.Error("the lsblk fallback precedes the by-id lookup; by-id is the cheaper and more specific match")
+	}
+}
