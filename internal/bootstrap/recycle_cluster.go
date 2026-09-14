@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/recycle"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
@@ -159,17 +160,46 @@ func (c *BastionRecycleCluster) dataVolumeOwnedBy(ctx context.Context, instanceI
 		return "", false
 	}
 
+	// The recorded id is consulted first because a handover renames the disk.
+	// Ask for it rather than requiring it: a bloc whose disk has never been
+	// recorded still has to be recognisable.
+	recorded, _ := c.dataVolumeID()
+
 	for _, v := range vols {
-		if v == nil || v.AttachedTo != instanceID {
+		if v.AttachedTo != instanceID {
 			continue
 		}
 
-		if strings.HasSuffix(v.Name, "-data") || strings.HasSuffix(v.ID, "-data") {
+		if isPreservedDataVolume(v, recorded) {
 			return v.ID, true
 		}
 	}
 
 	return "", false
+}
+
+// isPreservedDataVolume reports whether a provider volume is the disk this
+// recycle carries across.
+//
+// The disk starts life named after the bloc, so a "-data" suffix finds it.
+// Proxmox's move_disk then renames it after its new owner, and the disk
+// becomes "vm-102-disk-1": no suffix, and nothing about the name says what it
+// is any more. That broke both halves of a resumed run, because Observe could
+// no longer see who held the disk and the handover fell back to a recorded id
+// naming a volume that no longer existed.
+//
+// So the recorded id decides when we have one, and the suffix stays as the
+// fallback for a disk this bloc has not recorded yet.
+func isPreservedDataVolume(vol *cpi.Volume, recordedID string) bool {
+	if vol == nil {
+		return false
+	}
+
+	if recordedID != "" {
+		return vol.ID == recordedID || vol.Name == recordedID
+	}
+
+	return strings.HasSuffix(vol.Name, "-data") || strings.HasSuffix(vol.ID, "-data")
 }
 
 // StopOriginal stops the VM being replaced. Proxmox requires this before a
@@ -291,6 +321,20 @@ func (c *BastionRecycleCluster) DeleteReplacement(ctx context.Context) error {
 
 // HandOverDisk moves the data disk from the original to the replacement.
 func (c *BastionRecycleCluster) HandOverDisk(ctx context.Context) error {
+	// Safe to re-enter. The journal records a phase before it runs, so a
+	// resume lands here whether the handover finished or failed, and moving a
+	// disk that has already moved is an error rather than a no-op.
+	toID, ok := c.findByName(ctx, c.transientName())
+	if ok {
+		volID, owned := c.dataVolumeOwnedBy(ctx, toID)
+		if owned {
+			_, _ = fmt.Fprintf(os.Stdout,
+				"    • %s already holds %s; nothing to hand over\n", c.transientName(), volID)
+
+			return c.recordVolumeOwner(volID, toID)
+		}
+	}
+
 	return c.moveDisk(ctx, c.finalName(), c.transientName())
 }
 
