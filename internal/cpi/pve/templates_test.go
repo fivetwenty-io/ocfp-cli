@@ -2,6 +2,7 @@ package pve
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -318,5 +319,47 @@ func TestPlanTemplateBuild_NeverDestroysUnlessAsked(t *testing.T) {
 				t.Errorf("Build = %v, want %v", got.Build, tc.wantBuild)
 			}
 		})
+	}
+}
+
+// TestRebuildTemplate_DoesNotReenterTheIdempotentPath covers a rebuild that
+// destroyed a template and then quietly built nothing.
+//
+// RebuildTemplate deleted the template and called ProvisionTemplate, which
+// opens by looking the template up and returning early when it finds one.
+// Proxmox's cluster resource index had not caught up with the deletion, so the
+// lookup still reported the template present and the run finished reporting
+// "ready" with no template on the cluster at all.
+//
+// The fix is structural: the rebuild path must reach the build directly rather
+// than re-entering a function whose first act is to decide whether to build.
+func TestRebuildTemplate_DoesNotReenterTheIdempotentPath(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("templates.go")
+	if err != nil {
+		t.Fatalf("read templates.go: %v", err)
+	}
+
+	body := string(src)
+
+	start := strings.Index(body, "func (m *ComputeManager) RebuildTemplate(")
+	if start < 0 {
+		t.Fatal("RebuildTemplate is gone")
+	}
+
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not delimit RebuildTemplate")
+	}
+
+	fn := body[start : start+end]
+
+	if strings.Contains(fn, "m.ProvisionTemplate(") {
+		t.Error("RebuildTemplate calls ProvisionTemplate, whose lookup can still see the template it just destroyed and skip the build")
+	}
+
+	if !strings.Contains(fn, "buildTemplate(") {
+		t.Error("RebuildTemplate does not reach the build directly")
 	}
 }
