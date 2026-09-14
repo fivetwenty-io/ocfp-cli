@@ -19,7 +19,11 @@ func TestArtifactsConfigDefaults(t *testing.T) {
 		want interface{}
 	}{
 		{"Flavor", a.Flavor, "artifacts"},
-		{"Template", a.Template, "ubuntu-2204-cloudinit"},
+		// The default must name a template the PVE catalog knows how to build.
+		// "ubuntu-2204-cloudinit" was in no catalog, so a bloc that accepted
+		// the default got no auto-provisioning and failed at image resolution
+		// unless someone had built that template by hand on the cluster.
+		{"Template", a.Template, "ubuntu-resolute-template"},
 		{"Rustfs.Version", a.Rustfs.Version, "1.0.0-beta.7"},
 		{"Rustfs.S3Port", a.Rustfs.S3Port, 9000},
 		{"Rustfs.ConsolePort", a.Rustfs.ConsolePort, 9001},

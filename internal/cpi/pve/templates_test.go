@@ -16,6 +16,9 @@ func TestLookupCatalogSpec_KnownNames(t *testing.T) {
 		wantSourceHost string
 	}{
 		{"ubuntu-noble-template", "cloud-images.ubuntu.com"},
+		{"ubuntu-noble-bastion-template", "cloud-images.ubuntu.com"},
+		{"ubuntu-resolute-template", "cloud-images.ubuntu.com"},
+		{"ubuntu-resolute-bastion-template", "cloud-images.ubuntu.com"},
 	}
 
 	for _, tc := range tests {
@@ -203,5 +206,77 @@ func TestBuildTemplateSeedNetParams(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCatalog_SharedSourceFilenameImpliesSharedURL is the trap test. Two specs
+// may deliberately share a stored filename so the second costs no download —
+// that is how the Noble bastion template reuses the vanilla template's image.
+// But downloadTemplateImage skips the fetch whenever a file of that name is
+// already on the import storage, so a spec that borrows another release's
+// filename would silently build from the wrong image, with no error anywhere.
+func TestCatalog_SharedSourceFilenameImpliesSharedURL(t *testing.T) {
+	t.Parallel()
+
+	byFilename := make(map[string]TemplateSpec, len(templateCatalog))
+
+	for _, spec := range templateCatalog {
+		prev, seen := byFilename[spec.SourceFilename]
+		if seen && prev.SourceURL != spec.SourceURL {
+			t.Errorf("templates %q and %q share SourceFilename %q but have different SourceURLs (%q vs %q): "+
+				"downloadTemplateImage would skip the second download and build from the first image",
+				prev.Name, spec.Name, spec.SourceFilename, prev.SourceURL, spec.SourceURL)
+		}
+
+		byFilename[spec.SourceFilename] = spec
+	}
+}
+
+// TestCatalog_BastionVariantsRequireSeedUnits pins which catalog entries boot
+// and seed during provisioning. Only the bastion variants do; the vanilla
+// templates that artifacts and jumpbox clone from must not, because seeding
+// costs several minutes over a serial console for units they never run.
+func TestCatalog_BastionVariantsRequireSeedUnits(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]bool{
+		"ubuntu-noble-template":            false,
+		"ubuntu-noble-bastion-template":    true,
+		"ubuntu-resolute-template":         false,
+		"ubuntu-resolute-bastion-template": true,
+	}
+
+	for name, wantSeed := range want {
+		spec, ok := LookupCatalogSpec(name)
+		if !ok {
+			t.Errorf("LookupCatalogSpec(%q) returned ok=false", name)
+
+			continue
+		}
+
+		if spec.RequireBastionUnits != wantSeed {
+			t.Errorf("%s RequireBastionUnits = %v, want %v", name, spec.RequireBastionUnits, wantSeed)
+		}
+	}
+}
+
+// TestCatalog_ResoluteEntriesUseTheirOwnImage guards the specific mistake the
+// trap test generalises: a Resolute entry that kept the Noble stored filename.
+func TestCatalog_ResoluteEntriesUseTheirOwnImage(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"ubuntu-resolute-template", "ubuntu-resolute-bastion-template"} {
+		spec, ok := LookupCatalogSpec(name)
+		if !ok {
+			t.Fatalf("LookupCatalogSpec(%q) returned ok=false", name)
+		}
+
+		if !strings.Contains(spec.SourceURL, "resolute") {
+			t.Errorf("%s SourceURL = %q, want a resolute image", name, spec.SourceURL)
+		}
+
+		if !strings.Contains(spec.SourceFilename, "resolute") {
+			t.Errorf("%s SourceFilename = %q, want a resolute-specific filename", name, spec.SourceFilename)
+		}
 	}
 }
