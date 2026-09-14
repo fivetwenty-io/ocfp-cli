@@ -92,7 +92,7 @@ func runBastionRecycle(
 		return err
 	}
 
-	cluster := bootstrap.NewBastionRecycleCluster(mgr, opts.archiveStorage)
+	cluster := bootstrap.NewBastionRecycleCluster(mgr, opts.archiveStorage).WithSafetyCopyTaken(opts.safetyCopyTaken)
 	engine := recycle.New(cluster, recycle.Options{
 		Archive:          opts.archive,
 		Role:             "bastion",
@@ -121,6 +121,7 @@ type recycleFlags struct {
 	yes              bool
 	abort            bool
 	stopBeforeRetire bool
+	safetyCopyTaken  bool
 }
 
 // buildBootstrapManager assembles the bootstrap manager a recycle drives.
