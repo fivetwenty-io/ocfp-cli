@@ -450,3 +450,62 @@ func TestEngine_RefusesWhenNothingToRecycle(t *testing.T) {
 		t.Errorf("a replacement was built with no run to resume: %v", f.calls)
 	}
 }
+
+// TestEngine_StopBeforeRetireHaltsAtThePointOfNoReturn covers the gate an
+// operator wants on a bloc they cannot afford to lose.
+//
+// It runs everything reversible — stop, snapshot, build, hand the disk over —
+// and then stops, leaving the journal so the operator can verify the
+// replacement really works before anything is destroyed. Re-running continues
+// from there.
+func TestEngine_StopBeforeRetireHaltsAtThePointOfNoReturn(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeCluster()
+
+	err := New(f, Options{StopBeforeRetire: true}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !f.called("HandOverDisk") {
+		t.Errorf("the run stopped before handing the disk over: %v", f.calls)
+	}
+
+	if f.called("RetireOriginal") {
+		t.Errorf("the original was destroyed despite StopBeforeRetire: %v", f.calls)
+	}
+
+	// The journal must survive, or the operator cannot resume.
+	if f.called("ClearJournal") {
+		t.Errorf("the journal was cleared on a paused run; a resume would have nothing to read: %v", f.calls)
+	}
+
+	if f.journal == nil || f.journal.Phase != PhaseHandedOver {
+		t.Errorf("journal = %+v, want it parked at handed-over", f.journal)
+	}
+}
+
+// TestEngine_ResumesPastThePauseOnASecondRun asserts the gate is a pause, not
+// a wall: running again without the flag carries on and destroys the original.
+func TestEngine_ResumesPastThePauseOnASecondRun(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeCluster()
+
+	if err := New(f, Options{StopBeforeRetire: true}).Run(context.Background()); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	if err := New(f, Options{}).Run(context.Background()); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	if !f.called("RetireOriginal") {
+		t.Errorf("the resume did not continue past the pause: %v", f.calls)
+	}
+
+	if !f.called("Verify") {
+		t.Errorf("the resume did not finish the run: %v", f.calls)
+	}
+}

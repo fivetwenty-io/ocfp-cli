@@ -94,6 +94,15 @@ type Options struct {
 
 	// Role is recorded in the journal.
 	Role string
+
+	// StopBeforeRetire runs everything that can still be undone and then
+	// stops, leaving the journal so the operator can verify the replacement
+	// really works before anything is destroyed.
+	//
+	// It is a pause, not a wall: running again without it carries on from
+	// where it parked. On a bloc that cannot be lost, this is the difference
+	// between a verified upgrade and a hopeful one.
+	StopBeforeRetire bool
 }
 
 // Engine drives a recycle.
@@ -125,6 +134,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	for phase := start; phase != ""; {
+		// Park at the point of no return when asked, leaving the journal so a
+		// later run resumes from exactly here.
+		if e.opts.StopBeforeRetire && phase == PhaseRetired {
+			_, _ = fmt.Printf(
+				"\nPaused before destroying the original, as asked. The replacement holds the data disk.\n" +
+					"Verify it, then re-run without --stop-before-retire to finish, or --abort to walk it back.\n")
+
+			return nil
+		}
+
 		journal.Phase = phase
 
 		// Journal before acting, never after. A crash mid-phase must leave a
