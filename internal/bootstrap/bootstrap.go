@@ -109,19 +109,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		return err
 	}
 
-	allSteps := []bootstrapStep{
-		{"Create Network", m.CreateNetwork, "network", true},
-		{"Create Subnets", m.CreateSubnets, "network", true},
-		{"Create Security Groups", m.CreateSecurityGroups, "security", true},
-		{"Create Public IPs", m.CreatePublicIPs, "network", false},
-		{"Create Key Pair", m.createKeyPair, "servers", true},
-		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
-		// {"Create Volumes", m.createVolumes, "volumes", false},
-		{"Create Bastion", m.CreateBastion, "servers", false},
-		{"Configure Ingress DNS", m.ConfigureIngressDNS, "network", false},
-		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
-		{"Create Buckets", m.CreateBuckets, "buckets", false},
-	}
+	allSteps := m.buildSteps()
 
 	// Filter steps based on mode
 	steps := m.filterSteps(allSteps)
@@ -292,6 +280,30 @@ func (m *Manager) filterSteps(allSteps []bootstrapStep) []bootstrapStep {
 
 	// --all flag or default behavior
 	return allSteps
+}
+
+// buildSteps is the ordered bootstrap step list.
+//
+// "Ensure Bastion Data Volume" sits immediately after "Create Bastion" and
+// carries the "servers" category on purpose. It has to be its own step because
+// CreateBastion returns early when a bastion already exists, which is exactly
+// when the data disk needs re-attaching, and it has to be in "servers" because
+// that is the category filterBastionSteps keeps for the documented
+// `ocfp bootstrap --bastion` rebuild flow.
+func (m *Manager) buildSteps() []bootstrapStep {
+	return []bootstrapStep{
+		{"Create Network", m.CreateNetwork, "network", true},
+		{"Create Subnets", m.CreateSubnets, "network", true},
+		{"Create Security Groups", m.CreateSecurityGroups, "security", true},
+		{"Create Public IPs", m.CreatePublicIPs, "network", false},
+		{"Create Key Pair", m.createKeyPair, "servers", true},
+		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
+		{"Create Bastion", m.CreateBastion, "servers", false},
+		{"Ensure Bastion Data Volume", m.EnsureBastionDataVolume, "servers", false},
+		{"Configure Ingress DNS", m.ConfigureIngressDNS, "network", false},
+		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
+		{"Create Buckets", m.CreateBuckets, "buckets", false},
+	}
 }
 
 // filterBastionSteps filters steps for bastion mode.

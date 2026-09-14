@@ -187,24 +187,24 @@ func (m *Manager) setupBucketsPlan(plan *bootstrapPlan) {
 }
 
 func (m *Manager) setupVolumesPlan(plan *bootstrapPlan) {
-	// Volume creation disabled - volumes are never attached to bastion.
-	// Both AWS and STACKIT handle volumes inline during instance creation
-	// (via BlockDeviceMappings for AWS and bootVolume for STACKIT).
 	plan.Volumes = []volumePreview{}
 
-	// Original code (disabled):
-	// rootDiskSize := m.config.Bastion.RootDiskSize
-	// if rootDiskSize == 0 {
-	// 	rootDiskSize = bastionRootDiskSize
-	// }
-	// dataDiskSize := m.config.Bastion.DataDiskSize
-	// if dataDiskSize == 0 {
-	// 	dataDiskSize = bastionDataDiskSize
-	// }
-	// plan.Volumes = []volumePreview{
-	// 	{Name: m.options.BlocName + "-bastion-root", SizeGB: rootDiskSize, Type: "gp3"},
-	// 	{Name: m.options.BlocName + "-bastion-data", SizeGB: dataDiskSize, Type: "gp3"},
-	// }
+	// The boot disk is deliberately absent. Every provider handles it inline
+	// during instance creation — BlockDeviceMappings on AWS, bootVolume on
+	// STACKIT, the clone's own scsi0 on PVE — so previewing it would promise
+	// a separate allocation that never happens.
+	//
+	// The bastion's data disk is a real separate volume, so it belongs here.
+	data := &m.config.Bastion.Data
+	if !data.Enabled {
+		return
+	}
+
+	plan.Volumes = append(plan.Volumes, volumePreview{
+		Name:   m.options.BlocName + "-bastion-data",
+		SizeGB: data.DiskSizeGiB,
+		Type:   data.StoragePool,
+	})
 }
 
 func (m *Manager) setupKeypairPlan(plan *bootstrapPlan) {
