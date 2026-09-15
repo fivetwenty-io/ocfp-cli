@@ -76,20 +76,19 @@ func (m *Manager) EnsureBastionDataVolume(ctx context.Context) error {
 		return nil
 	}
 
-	volume, err := m.resolveBastionDataVolume(ctx, instanceID)
-	if err != nil {
-		return err
-	}
+	var err error
+
+	volume := m.resolveBastionDataVolume(ctx, instanceID)
 
 	created := false
 
 	if volume == nil {
+		created = true
+
 		volume, err = m.createBastionDataVolume(ctx, instanceID)
 		if err != nil {
 			return err
 		}
-
-		created = true
 	}
 
 	// The attach is safe to repeat: the client library looks the volume up in
@@ -144,7 +143,12 @@ func (m *Manager) bastionInstanceID(bastionName string) (string, bool) {
 // drifts, and a volume the provider knows about must be adopted rather than
 // duplicated. Creating a second data disk beside a first would leave the
 // operator's state stranded on a disk nothing mounts.
-func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID string) (*cpi.Volume, error) {
+//
+// A nil return means absent-or-unknown, which is the caller's signal to
+// create one. There is deliberately no error result: a listing failure is not
+// fatal on its own, because the attach is what would actually conflict, so it
+// is logged loudly and treated as "unknown" rather than failing bootstrap.
+func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID string) *cpi.Volume {
 	name := m.bastionDataVolumeName()
 
 	if res, _ := m.stateManager.GetResource(state.ResourceTypeVolume, name); res != nil && res.ID != "" {
@@ -155,17 +159,14 @@ func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID strin
 			Name: name,
 			Size: m.config.Bastion.Data.DiskSizeGiB,
 			Type: m.config.Bastion.Data.StoragePool,
-		}, nil
+		}
 	}
 
 	volumes, err := m.provider.StorageManager().ListVolumes(ctx, nil)
 	if err != nil {
-		// A listing failure is not fatal on its own: the caller will create a
-		// volume, and the attach is what would actually conflict. Say so
-		// loudly rather than failing the whole bootstrap.
 		logger.Warnf("Could not list volumes to adopt an existing bastion data disk: %v", err)
 
-		return nil, nil //nolint:nilnil // absent-or-unknown is the caller's create signal
+		return nil
 	}
 
 	for _, vol := range volumes {
@@ -176,11 +177,11 @@ func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID strin
 		if isBastionDataVolume(vol, instanceID, name) {
 			logger.Warnf("Adopting existing bastion data volume %s found on the provider but not in state", vol.ID)
 
-			return vol, nil
+			return vol
 		}
 	}
 
-	return nil, nil //nolint:nilnil // no volume yet; the caller creates one
+	return nil
 }
 
 // isBastionDataVolume reports whether a provider volume is this bastion's data
