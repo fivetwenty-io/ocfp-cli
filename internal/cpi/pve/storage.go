@@ -845,6 +845,12 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, inst
 		return fmt.Errorf("%w: %s on VM %d", ErrVolumeNotFoundOnVM, volumeID, vmid)
 	}
 
+	// A detach is two drive removals, the slot and the unusedN entry Proxmox
+	// puts the volume in, and Proxmox refuses both on a protected guest. Both
+	// callers detach a disk from a guest they are about to destroy, so the
+	// flag has done its job by the time we get here.
+	clearProtection(ctx, m.client, node, vmid)
+
 	// Detach the disk
 	err = qemuSvc.DetachDisk(ctx, node, vmid, diskID)
 	if err != nil {
