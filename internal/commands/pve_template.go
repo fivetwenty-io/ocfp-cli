@@ -187,6 +187,7 @@ func runPVETemplateProvision(ctx context.Context, templateName, blocName, config
 	}
 
 	build := pveCompute.ProvisionTemplate
+
 	if rebuild {
 		_, _ = fmt.Fprintln(os.Stdout,
 			"  Rebuilding: the existing template will be destroyed first. Guests already cloned from it are unaffected.")

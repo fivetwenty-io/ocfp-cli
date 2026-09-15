@@ -154,6 +154,7 @@ func BastionSMBIOSPayload(
 	if data != nil {
 		skuMap["data"] = dataBlock(data)
 	}
+
 	if cf != nil && cf.TunnelToken != "" {
 		skuMap["cloudflare"] = map[string]interface{}{"token": cf.TunnelToken}
 	}
