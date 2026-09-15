@@ -218,6 +218,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		DomainSuffix:          m.bastionDomainSuffix(),
 		VCPUsOverride:         m.config.Artifacts.CPU,
 		MemoryMiBOverride:     m.config.Artifacts.MemoryMiB,
+		Protected:             true,
 	}
 
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)
@@ -508,6 +509,7 @@ func (m *Manager) refreshArtifactsCACert(existing *state.Resource) {
 // never fail an otherwise no-op bootstrap re-run.
 func (m *Manager) convergeExistingArtifacts(ctx context.Context, existing *state.Resource) {
 	m.refreshArtifactsCACert(existing)
+	m.ensureArtifactsGuestOptions(ctx, existing)
 
 	ep, creds, ok := artifactsEndpointCredsFromState(existing, m.config)
 	if !ok {
@@ -544,6 +546,26 @@ func (m *Manager) convergeExistingArtifacts(ctx context.Context, existing *state
 	if err != nil {
 		logger.Warnf("artifacts: ensure buckets on skip path: %v", err)
 	}
+}
+
+// ensureArtifactsGuestOptions converges the artifacts VM's provider-level
+// options on the skip path, which is the only path an already-deployed
+// artifacts VM takes. The VMID comes from state rather than from a provider
+// lookup, because the state record is written with it and a convergence pass
+// should not depend on name-based discovery.
+func (m *Manager) ensureArtifactsGuestOptions(ctx context.Context, existing *state.Resource) {
+	if m.provider == nil {
+		return
+	}
+
+	vmID, ok := existing.Properties["vm_id"].(string)
+	if !ok || vmID == "" {
+		logger.Debugf("artifacts: state resource %s records no vm_id; skipping guest options", existing.Name)
+
+		return
+	}
+
+	ensureGuestOptions(ctx, m.provider.ComputeManager(), vmID, existing.Name)
 }
 
 // artifactsEndpointCredsFromState rebuilds the Endpoint + Credentials the

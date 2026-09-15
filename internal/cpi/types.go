@@ -443,7 +443,18 @@ type InstanceRequest struct {
 	// machine it replaces is only stopped, so both exist at once. Starting it
 	// immediately would put a second guest on the same static address, and it
 	// would boot against a data disk it does not own yet.
-	CreateStopped   bool
+	CreateStopped bool
+	// Protected asks the provider to guard the VM against deletion.
+	//
+	// The bastion and artifacts VMs set it: they are long-lived, they hold
+	// state no other guest holds, and an accidental destroy from the
+	// provider's own console is the failure it defends against. ocfp's own
+	// teardown, rollback, and recycle paths clear the guard first, so it
+	// stops a stray click rather than an operator who meant it.
+	//
+	// Only the PVE provider implements it today, as Proxmox's protection
+	// flag; elsewhere it is ignored.
+	Protected       bool
 	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)

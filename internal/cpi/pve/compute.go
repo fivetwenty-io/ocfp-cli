@@ -541,6 +541,12 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 		return err
 	}
 
+	// Proxmox refuses to destroy a protected guest, and the bastion and
+	// artifacts VMs are created protected on purpose. An operator who asked
+	// for the guest to go has already given the answer the flag exists to
+	// demand, so drop it rather than report a refusal they cannot act on.
+	clearProtection(ctx, m.client, node, vmid)
+
 	// Stop the VM first if running; log but do not abort if stop fails —
 	// the delete API handles powered-on VMs on most PVE versions.
 	stopErr := m.StopInstance(ctx, id)
@@ -902,6 +908,15 @@ func (m *ComputeManager) finalizeAndStartVM(ctx context.Context, node string, vm
 		if err != nil {
 			logger.Warnf("Failed to attach security groups to VM %d: %v", vmid, err)
 		}
+	}
+
+	// Turn off the pointer device and, for the guests that ask for it, turn
+	// on Proxmox's protection flag. Done here, after the disks and before the
+	// start, so the flag is on from the moment the guest is first bootable.
+	// Failures are logged and the create continues: a guest missing a flag is
+	// still a working guest, and the next bootstrap run converges it.
+	if err := m.applyGuestOptions(ctx, node, vmid, req); err != nil {
+		logger.Warnf("Failed to apply guest options to VM %d: %v", vmid, err)
 	}
 
 	// Start the VM, unless the caller asked for it stopped.
