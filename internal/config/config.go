@@ -873,9 +873,9 @@ type Bastion struct {
 	RootDiskSize int    `json:"rootDiskSize,omitempty"     mapstructure:"rootDiskSize"     yaml:"rootDiskSize,omitempty"`
 	// Data configures the persistent data disk that lets the bastion's
 	// operating system be replaced without losing operator state.
-	Data    BastionDataConfig `json:"data,omitempty" mapstructure:"data" yaml:"data,omitempty"`
-	Genesis Genesis           `json:"genesis,omitempty"          mapstructure:"genesis"          yaml:"genesis,omitempty"`
-	Git     GitConfig         `json:"git,omitempty"              mapstructure:"git"              yaml:"git,omitempty"`
+	Data    BastionDataConfig `json:"data,omitempty"    mapstructure:"data"    yaml:"data,omitempty"`
+	Genesis Genesis           `json:"genesis,omitempty" mapstructure:"genesis" yaml:"genesis,omitempty"`
+	Git     GitConfig         `json:"git,omitempty"     mapstructure:"git"     yaml:"git,omitempty"`
 	// OCFPCLI selects how the ocfp binary reaches the bastion. See OCFPCLIConfig.
 	OCFPCLI OCFPCLIConfig `json:"ocfpCli,omitempty" mapstructure:"ocfpCli" yaml:"ocfpCli,omitempty"`
 	// Optional overrides for tooling installation/selection
