@@ -16,6 +16,8 @@ package pve
 // The design rule it enforces, and the reason the provisioning marker moved
 // off the home directory: the persistent disk carries data, never claims about
 // the state of the OS.
+//
+//nolint:dupword // the embedded shell closes nested ifs, so `fi` follows `fi`
 const datasetScript = `#!/usr/bin/env bash
 #
 # OCFP bastion data disk: format if blank, mount, bind the home directory,
