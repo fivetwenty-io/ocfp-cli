@@ -303,6 +303,18 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 `init bastion` is idempotent — it writes a `~/.ocfp/provisioned` marker on the bastion and re-runs complete in under a second.
 
+## Guest options on the bastion and artifacts VMs
+
+Both VMs are created with two Proxmox options that differ from the defaults a clone inherits.
+
+`Use tablet for pointer` is set to `No`. The emulated USB tablet exists so a graphical console can do absolute pointing, and neither of these guests is ever driven that way, so all it earns the host is a wakeup for every pointer event.
+
+`Protection` is set to `Yes`. Proxmox then refuses to destroy the guest, and it refuses to remove a disk from it. That is the guard against a mistaken click in the web UI taking away a bastion that holds an operator's deployment trees, or an artifacts VM that holds the bloc's blobstore. Adding a disk is not affected, so the data disk still attaches after the guest is created.
+
+ocfp clears the flag itself wherever a removal is the point. `ocfp teardown` drops it before destroying a guest, the preserve path drops it before detaching a data disk that has to survive, and a recycle drops it before destroying the machine it replaced. An operator who runs one of those has already answered the question the flag exists to ask.
+
+Both options are converged on every bootstrap run, so a bloc built before they existed picks them up on the next `ocfp bootstrap`. The bastion gets them from the `Ensure Bastion Guest Options` step, and the artifacts VM gets them on the skip path that an already-deployed artifacts VM takes. Neither needs a rebuild, and blocs on the other providers are untouched, because these options are Proxmox's own.
+
 ## Testing the artifacts blobstore
 
 `ocfp bastion init` installs:
