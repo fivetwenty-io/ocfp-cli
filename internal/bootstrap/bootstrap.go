@@ -300,6 +300,7 @@ func (m *Manager) buildSteps() []bootstrapStep {
 		{"Create Cloudflare Tunnel", m.CreateCloudflareTunnel, "network", false},
 		{"Create Bastion", m.CreateBastion, "servers", false},
 		{"Ensure Bastion Data Volume", m.EnsureBastionDataVolume, "servers", false},
+		{"Ensure Bastion Guest Options", m.EnsureBastionGuestOptions, "servers", false},
 		{"Configure Ingress DNS", m.ConfigureIngressDNS, "network", false},
 		{"Create Artifacts", m.CreateArtifacts, "artifacts", false},
 		{"Create Buckets", m.CreateBuckets, "buckets", false},
