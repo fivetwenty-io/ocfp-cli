@@ -187,6 +187,13 @@ linters:
       - path: internal/vault/reserved_ip_guard\.go
         linters:
           - unused
+      # recycleSafetyCopyRationale is prose kept in the code so the reasoning
+      # behind taking the safety copy as an archive cannot quietly rot, and
+      # recycle_safety_test.go asserts on it. With tests:false the linter
+      # cannot see that caller and reports it as unused.
+      - path: internal/bootstrap/recycle_safety\.go
+        linters:
+          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:
