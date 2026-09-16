@@ -1837,7 +1837,7 @@ func (m *Manager) getVaultPathsWithKeysFromSafe(safe *Safe, basePath string) ([]
 func (m *Manager) walkVaultPathsFromSafe(safe *Safe, basePath, currentPath string, paths *[]string) error {
 	fullPath := basePath
 	if currentPath != "" {
-		fullPath = basePath + "/" + currentPath
+		fullPath = joinVaultPath(basePath, currentPath)
 	}
 
 	// Try to read as a secret first
@@ -1967,7 +1967,7 @@ func (m *Manager) calculatePathChecksumFromSafe(safe *Safe, basePath, pathWithKe
 	// relativePath is relative to basePath (may be empty for base-level secrets)
 	fullPath := basePath
 	if relativePath != "" && !strings.HasPrefix(relativePath, ":") {
-		fullPath = basePath + "/" + relativePath
+		fullPath = joinVaultPath(basePath, relativePath)
 	}
 
 	// Get the value from vault
@@ -2054,7 +2054,7 @@ func (m *Manager) migrateAndValidateSingleKey(
 	// Build full path from base + relative path
 	fullPath := basePath
 	if relativePath != "" && !strings.HasPrefix(relativePath, ":") {
-		fullPath = basePath + "/" + relativePath
+		fullPath = joinVaultPath(basePath, relativePath)
 	}
 
 	// STEP 1: EXPORT from inception vault
@@ -2195,13 +2195,15 @@ func (m *Manager) walkAndStreamMigrate(
 	return nil
 }
 
-// joinVaultPath joins a base path with a current path segment.
-func joinVaultPath(basePath, currentPath string) string {
-	if currentPath != "" {
-		return basePath + currentPath
+// joinVaultPath joins a base vault path and a relative path with exactly one slash between them.
+// The base path is returned unchanged when the relative path is empty, so a base that already
+// ends in a slash keeps it.
+func joinVaultPath(basePath, relativePath string) string {
+	if relativePath == "" {
+		return basePath
 	}
 
-	return basePath
+	return strings.TrimSuffix(basePath, "/") + "/" + strings.TrimPrefix(relativePath, "/")
 }
 
 // sortedChildNames extracts child directory names from vault list output, sorted alphabetically.

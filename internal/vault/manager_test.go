@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -305,4 +306,34 @@ func TestFilterInceptionSessions_MatchesOwnBlocOnly(t *testing.T) {
 
 	assert.Equal(t, []string{"ocfp-lab-drgao-inception-vault"}, matched,
 		"must not match other blocs' inception vault sessions")
+}
+
+func TestJoinVaultPath_BaseWithTrailingSlash(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "secret/config/bloc", joinVaultPath("secret/", "config/bloc"))
+}
+
+func TestJoinVaultPath_BaseWithoutTrailingSlash(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "secret/config/bloc", joinVaultPath("secret", "config/bloc"))
+}
+
+func TestJoinVaultPath_RelativeWithLeadingSlash(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "secret/config/bloc", joinVaultPath("secret/", "/config/bloc"))
+}
+
+// The migrate walk hands migrateAndValidateSingleKey a base of "secret/" and a relative path built by
+// buildPathWithKey. Joining those two must never yield a double slash, which is what the vault
+// rejects on the verification read.
+func TestJoinVaultPath_MigrateWalkNeverDoublesSlash(t *testing.T) {
+	t.Parallel()
+
+	current := joinChildPath(joinChildPath("", "config"), "bloc")
+	pathWithKey := buildPathWithKey(current, "name")
+	relative := strings.SplitN(pathWithKey, ":", pathKeyDelimiterParts)[0]
+
+	full := joinVaultPath("secret/", relative)
+	assert.Equal(t, "secret/config/bloc", full)
+	assert.NotContains(t, full, "//")
 }
