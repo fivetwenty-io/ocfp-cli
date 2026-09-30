@@ -87,3 +87,39 @@ func TestBuildArtifactsProvisionSSHArgs_RemoteCommandLast(t *testing.T) {
 		t.Errorf("destination must precede the remote command; args: %v", args)
 	}
 }
+
+func TestBastionProxyCommand_RelaxedJumpHop(t *testing.T) {
+	t.Parallel()
+
+	got := BastionProxyCommand("/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519", "ubuntu", "100.109.226.53")
+
+	want := "ssh -i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519" +
+		" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" +
+		" -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=15" +
+		" -W %h:%p ubuntu@100.109.226.53"
+
+	if got != want {
+		t.Errorf("BastionProxyCommand:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestBuildArtifactsProvisionSSHArgs_SharesBastionProxyCommand(t *testing.T) {
+	t.Parallel()
+
+	c := testProvisionConn()
+	args := buildArtifactsProvisionSSHArgs(c)
+
+	want := "ProxyCommand=" + BastionProxyCommand(c.KeyPath, c.User, c.BastionHost)
+
+	found := false
+
+	for _, a := range args {
+		if a == want {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Errorf("provision args must hop through BastionProxyCommand %q; args: %v", want, args)
+	}
+}

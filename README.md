@@ -76,6 +76,9 @@ ocfp configure --bloc production
 # SSH to bastion
 ocfp ssh --bloc production
 
+# SSH to the artifacts VM, hopping through the bastion
+ocfp ssh --bloc production artifacts
+
 # Copy files
 ocfp scp local-file.txt bastion:/tmp/
 

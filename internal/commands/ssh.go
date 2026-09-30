@@ -3,12 +3,15 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -20,6 +23,23 @@ import (
 const (
 	// SSHKeyFileMode is the file permission mode for SSH private key files.
 	SSHKeyFileMode = 0600
+
+	// sshTargetNameBastion and sshTargetNameArtifacts are the bloc VMs that
+	// `ocfp ssh` resolves by name.
+	sshTargetNameBastion   = "bastion"
+	sshTargetNameArtifacts = "artifacts"
+)
+
+// sshTargetKind says how `ocfp ssh` reaches a target.
+type sshTargetKind int
+
+const (
+	// sshTargetBastion is the bloc bastion, reached directly.
+	sshTargetBastion sshTargetKind = iota
+	// sshTargetArtifacts is the bloc artifacts VM, reached through the bastion.
+	sshTargetArtifacts
+	// sshTargetAddress is an IP address or dotted hostname handed to ssh as is.
+	sshTargetAddress
 )
 
 var (
@@ -41,13 +61,25 @@ func NewSSHCmd() *cobra.Command {
 	//nolint:exhaustruct // Using zero values for optional fields
 	cmd := &cobra.Command{
 		Use:   "ssh [target] [command...]",
-		Short: "Connect to bastion host or other servers",
-		Long: `SSH connects to the bastion host or other servers in the OCFP environment.
+		Short: "Connect to the bastion, the artifacts VM, or another host",
+		Long: `SSH connects to a VM in the OCFP environment.
+
+The target is one of:
+- bastion (the default): the bloc bastion, at its bastion_ip override or its discovered address
+- artifacts: the bloc artifacts VM, at the private IP recorded in state (or found by provider tags),
+  reached by hopping through the bastion
+- an IP address or a dotted hostname, which is passed to ssh unchanged
+
+Any other bare word is rejected rather than handed to DNS.
 
 The command automatically:
-- Locates the bastion host's public IP address
+- Locates the target's address and, for artifacts, the bastion to hop through
 - Finds the SSH key in standard locations
 - Uses the correct private key to establish connection
+
+The artifacts hop runs as an explicit ProxyCommand through the bastion with the same key and user,
+so a rebuilt bastion's new host key never blocks the connection. Pass --no-proxy-jump to connect to
+the artifacts VM directly when you are already on its network, for example on the bastion itself.
 
 You can execute remote commands, use SSH port forwarding, and pass SSH-specific options.
 
@@ -65,6 +97,18 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 
   # Execute multiple commands
   ocfp ssh --bloc production bastion 'ls /tmp; hostname; echo $OCFP_BLOC'
+
+  # Connect to the artifacts VM through the bastion
+  ocfp ssh --bloc production artifacts
+
+  # Execute a command on the artifacts VM
+  ocfp ssh --bloc production artifacts 'chronyc tracking'
+
+  # Connect to the artifacts VM directly (from the bastion or the SDN)
+  ocfp ssh --bloc production --no-proxy-jump artifacts
+
+  # Connect to any other host by IP address or dotted hostname
+  ocfp ssh --bloc production 10.0.1.25
 
   # Port forwarding (local)
   ocfp ssh --bloc production -L 8080:localhost:80
@@ -95,6 +139,7 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 	cmd.Flags().StringVar(&user, "user", "ubuntu", "username for SSH login")
 	cmd.Flags().StringVar(&key, "key", "", "path to SSH private key")
 	cmd.Flags().StringVar(&sshOptions, "ssh-options", "", "additional SSH options")
+	cmd.Flags().Bool("no-proxy-jump", false, "Connect directly to the artifacts VM (use when running on the bastion or otherwise on the SDN)")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
@@ -104,7 +149,7 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 	return cmd
 }
 
-func runSSH(_cmd *cobra.Command, args []string) error {
+func runSSH(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("ssh")
 
@@ -113,12 +158,21 @@ func runSSH(_cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	noProxyJump, _ := cmd.Flags().GetBool("no-proxy-jump")
+
 	cfg, provider, err := setupSSHProvider(ctx, sshConfig)
 	if err != nil {
 		return err
 	}
 
-	bastionIP, err := resolveBastionIP(ctx, provider, sshConfig, cfg.Name)
+	route, err := resolveSSHRoute(ctx, sshConfig.Kind, sshConfig.Target, noProxyJump, sshRouteResolver{
+		bastionIP: func(ctx context.Context) (string, error) {
+			return findBastionIP(ctx, provider, cfg.Name)
+		},
+		artifactsIP: func(ctx context.Context) (string, error) {
+			return lookupArtifactsIPForSSH(ctx, provider, cfg.Name)
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -133,12 +187,17 @@ func runSSH(_cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("SSH key verification failed: %w", err)
 	}
 
-	sshCmd := buildSSHCommand(bastionIP, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
+	sshCmd := buildSSHCommandForRoute(route, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
+
+	where := route.Host
+	if route.Bastion != "" {
+		where = fmt.Sprintf("%s via bastion %s", route.Host, route.Bastion)
+	}
 
 	if len(sshConfig.Command) > 0 {
-		log.Infof("Executing command on %s at %s as %s: %s", sshConfig.Target, bastionIP, sshConfig.User, strings.Join(sshConfig.Command, " "))
+		log.Infof("Executing command on %s at %s as %s: %s", sshConfig.Target, where, sshConfig.User, strings.Join(sshConfig.Command, " "))
 	} else {
-		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, bastionIP, sshConfig.User)
+		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, where, sshConfig.User)
 	}
 
 	log.Debugf("Using SSH key: %s", keyPath)
@@ -152,6 +211,7 @@ type sshConfig struct {
 	KeyPath  string
 	Options  string
 	Target   string
+	Kind     sshTargetKind
 	SSHArgs  []string // SSH-specific flags like -L, -R, -D
 	Command  []string // Remote command to execute
 }
@@ -222,15 +282,44 @@ func getSSHConfig(args []string) (*sshConfig, error) {
 	// Classify arguments into target, SSH flags, and remote command
 	target, sshArgs, command := classifySSHArguments(args)
 
+	kind, err := classifySSHTarget(target)
+	if err != nil {
+		return nil, err
+	}
+
 	return &sshConfig{
 		BlocName: blocName,
 		User:     viper.GetString("ssh.user"),
 		KeyPath:  viper.GetString("ssh.key"),
 		Options:  viper.GetString("ssh.options"),
 		Target:   target,
+		Kind:     kind,
 		SSHArgs:  sshArgs,
 		Command:  command,
 	}, nil
+}
+
+// classifySSHTarget decides how a target is reached. The named targets are
+// resolved from the bloc; an IP address or anything containing a dot is taken
+// as an address and handed to ssh unchanged. Any other bare word is rejected
+// here, because ssh would only pass it to DNS and fail with "Could not resolve
+// hostname", which hides the real mistake.
+func classifySSHTarget(target string) (sshTargetKind, error) {
+	switch target {
+	case sshTargetNameBastion:
+		return sshTargetBastion, nil
+	case sshTargetNameArtifacts:
+		return sshTargetArtifacts, nil
+	}
+
+	if net.ParseIP(target) != nil || strings.Contains(target, ".") {
+		return sshTargetAddress, nil
+	}
+
+	return sshTargetBastion, fmt.Errorf(
+		"%w %q: the named targets are %s, %s; pass an IP address or a dotted hostname for any other host, "+
+			"and name the target before a remote command (ocfp ssh --bloc <bloc> bastion '<command>')",
+		ErrUnknownSSHTarget, target, sshTargetNameBastion, sshTargetNameArtifacts)
 }
 
 //nolint:ireturn // Returns interface by design for provider abstraction
@@ -257,12 +346,88 @@ func setupSSHProvider(ctx context.Context, sshCfg *sshConfig) (*config.Config, c
 	return cfg, provider, nil
 }
 
-func resolveBastionIP(ctx context.Context, provider cpi.Provider, sshCfg *sshConfig, blocName string) (string, error) {
-	if sshCfg.Target == "bastion" {
-		return findBastionIP(ctx, provider, blocName)
+// sshRoute is where the final ssh hop connects. Host is the address it
+// dials, and Bastion, when set, is the bastion address that hop is proxied
+// through.
+type sshRoute struct {
+	Host    string
+	Bastion string
+}
+
+// sshRouteResolver supplies the bloc lookups resolveSSHRoute needs, so the
+// routing decision can be exercised without a provider or state.
+type sshRouteResolver struct {
+	bastionIP   func(ctx context.Context) (string, error)
+	artifactsIP func(ctx context.Context) (string, error)
+}
+
+// resolveSSHRoute turns a classified target into a route. The bastion is
+// dialled directly at the address findBastionIP resolves (the bastion_ip
+// override first). The artifacts VM sits on the SDN, so its private IP is
+// reached through that same bastion unless noProxyJump says the operator is
+// already on the SDN. Addresses pass through without any bloc lookup.
+func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noProxyJump bool, resolver sshRouteResolver) (sshRoute, error) {
+	switch kind {
+	case sshTargetBastion:
+		ip, err := resolver.bastionIP(ctx)
+		if err != nil {
+			return sshRoute{}, err
+		}
+
+		return sshRoute{Host: ip, Bastion: ""}, nil
+	case sshTargetArtifacts:
+		artifactsIP, err := resolver.artifactsIP(ctx)
+		if err != nil {
+			return sshRoute{}, err
+		}
+
+		if noProxyJump {
+			return sshRoute{Host: artifactsIP, Bastion: ""}, nil
+		}
+
+		bastionIP, err := resolver.bastionIP(ctx)
+		if err != nil {
+			return sshRoute{}, fmt.Errorf("resolve bastion jump host: %w", err)
+		}
+
+		return sshRoute{Host: artifactsIP, Bastion: bastionIP}, nil
+	case sshTargetAddress:
+		return sshRoute{Host: target, Bastion: ""}, nil
 	}
 
-	return sshCfg.Target, nil
+	return sshRoute{Host: target, Bastion: ""}, nil
+}
+
+// lookupArtifactsIPForSSH resolves the artifacts VM's private IP with
+// artifacts.Lookup, which reads state first and falls back to the provider's
+// role tags. A state load failure is not fatal, because the tag query can
+// still find the VM.
+func lookupArtifactsIPForSSH(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
+	sm, err := createStateManager(blocName)
+	if err != nil {
+		return "", fmt.Errorf("creating state manager: %w", err)
+	}
+
+	_, err = sm.Load(blocName)
+	if err != nil {
+		logger.WithOperation("ssh").Debugf("Loading state for %s failed, falling back to provider tags: %v", blocName, err)
+	}
+
+	lr, err := artifacts.Lookup(ctx, sm, provider, blocName)
+	if err != nil {
+		return "", fmt.Errorf("looking up artifacts VM: %w", err)
+	}
+
+	if lr == nil {
+		return "", fmt.Errorf("%w: %s", ErrArtifactsNotFound, blocName)
+	}
+
+	ip := strings.TrimSpace(lr.PrivateIP)
+	if ip == "" {
+		return "", fmt.Errorf("%w: %s; re-run bootstrap --artifacts", ErrArtifactsNoPrivateIP, lr.Name)
+	}
+
+	return ip, nil
 }
 
 func resolveSSHKeyForSSH(sshCfg *sshConfig, cfg *config.Config) (string, error) {
@@ -455,10 +620,47 @@ func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command 
 		return []string{"ssh", "--help"} // Return safe command
 	}
 
+	return assembleSSHCommand(host, user, keyPath, nil, extraOptions, sshArgs, command)
+}
+
+// buildSSHCommandForRoute constructs the SSH command for a resolved route.
+// A direct route is exactly buildSSHCommand. A route through the bastion adds
+// the explicit ProxyCommand hop that bootstrap uses to reach the artifacts VM,
+// with the same key and user on both hops, and keeps every final-hop option
+// (agent forwarding, --ssh-options, the filtered flags, and the bash -lc
+// command wrapping) unchanged.
+func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+	if route.Bastion == "" {
+		return buildSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
+	}
+
+	// The ProxyCommand string runs through a shell, so the bastion address,
+	// user, and key path must all pass validation before they reach it.
+	err := validateSSHInputs(route.Host, user, keyPath)
+	if err == nil {
+		err = validateSSHInputs(route.Bastion, user, keyPath)
+	}
+
+	if err != nil {
+		return []string{"ssh", "--help"} // Return safe command
+	}
+
+	hop := []string{"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(keyPath, user, route.Bastion)}
+
+	return assembleSSHCommand(route.Host, user, keyPath, hop, extraOptions, sshArgs, command)
+}
+
+// assembleSSHCommand builds the ssh argument vector from inputs the caller
+// has already validated. hopOptions carries any bastion hop and sits after
+// the standard options.
+func assembleSSHCommand(host, user, keyPath string, hopOptions []string, extraOptions string, sshArgs, command []string) []string {
 	cmd := []string{"ssh"}
 
 	// Add standard options
 	cmd = addSSHStandardOptions(cmd, keyPath)
+
+	// Add the bastion hop, if any
+	cmd = append(cmd, hopOptions...)
 
 	// Add filtered extra options
 	cmd = append(cmd, filterSSHOptions(extraOptions)...)

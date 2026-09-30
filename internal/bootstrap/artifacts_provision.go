@@ -62,10 +62,7 @@ type artifactsProvisionConn struct {
 // host key. The ProxyCommand re-passes the same relaxed host-key flags to the
 // jump hop so a churned bastion key never blocks provisioning.
 func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
-	proxyCommand := fmt.Sprintf(
-		"ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o IdentitiesOnly=yes -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-		c.KeyPath, os.DevNull, artifactsSSHConnectTimeout, c.User, c.BastionHost,
-	)
+	proxyCommand := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost)
 
 	return []string{
 		"-i", c.KeyPath,
@@ -78,6 +75,20 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 		c.User + "@" + c.ArtifactsHost,
 		remoteCmd,
 	}
+}
+
+// BastionProxyCommand returns the ssh ProxyCommand that reaches a host behind
+// the bloc bastion. It relays through the bastion with -W and re-passes the
+// relaxed host-key options to the jump hop, which `-o ProxyJump=…` would not
+// do (see artifactsSSHArgs). The jump hop authenticates with the same key and
+// login user as the final hop, and keyPath, user, and bastionHost are
+// interpolated into a string ssh runs through a shell, so callers must pass
+// validated values.
+func BastionProxyCommand(keyPath, user, bastionHost string) string {
+	return fmt.Sprintf(
+		"ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+		keyPath, os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
+	)
 }
 
 // buildArtifactsProvisionSSHArgs returns the ssh args that run the provision
