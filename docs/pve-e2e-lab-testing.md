@@ -64,7 +64,7 @@ The deploy/validation flow — bastion → mgmt BOSH → mgmt Vault → inceptio
 | Component | Current | Desired | Action |
 |-----------|---------|---------|--------|
 | PVE CPI release (mgmt manifest) | per-env `file://` dev tarball pinned in three params | kit default `bosh-proxmox-cpi/0.5.0` from GitHub | Drop the three `pve_cpi_release_*` params from the env file |
-| cf-deployment | v52.0.0 bundled (jammy-compiled ops) | **v56.5.0** noble-compiled | Enable feature `cf-deployment-version-56.5.0` (designed opt-in; not a manual submodule bump) — see §6 |
+| cf-deployment | v52.0.0 bundled (jammy-compiled ops) | **v56.5.0** noble-compiled (now superseded, because the kit vendors v60.7.0 and needs no version feature) | An earlier run enabled `cf-deployment-version-56.5.0`. Do not repeat it, because v56.5.0 predates storage-cli and fails with `pve-blobstore`. See §6. |
 | CF stemcell | pve overlay forces `ubuntu-noble` | noble (native in v56.5.0) | Remove pve noble overlay once v56.5.0 provides it |
 | CF compiled releases | conditional `kit_bug` bail at `blueprint.pm:366-384` (soft, fires only on pre-noble bundles via the `use-noble-stemcell.yml` gate) | compiled releases enabled on noble | Enable v56.5.0 feature so noble is default and the bail no longer fires; edit the hook only if it still trips |
 | CF blobstore | `pve-blobstore` → RustFS via Vault | unchanged (keep RustFS) | Verify `secret/config/ocfp-lab-wayne/ocf/cf/blobstores/main` |
@@ -656,6 +656,8 @@ Confirms guest continuity when moving a VM between nodes **within one cluster**.
 ## Phase 6 — CF Kit Upgrade to v56.5.0 (noble + compiled)
 
 **Entry**: env BOSH ready. This is the highest-risk phase — do it as a focused, validated change. **Local source only, do not push.**
+
+> **Superseded for CF.** The cf kit now vendors cf-deployment v60.7.0, which defaults to the noble stemcell and configures Cloud Controller's blobstore through storage-cli. Do not add `cf-deployment-version-56.5.0` to a CF env file anymore. cf-deployment moved the external blobstore off the deprecated fog library in v59.0.0, so v56.5.0's `use-external-blobstore.yml` sets `fog_connection: ((fog_connection))` on every bucket, and with `pve-blobstore` nothing defines that variable. BOSH then fails template rendering on api, cc-worker, and scheduler with a 404 from the config server. The kit now refuses that pairing at render time. The steps below are the record of the June run, not current instructions.
 
 **Goal**: get the local CF kit to **cf-deployment v56.5.0 with noble-compiled releases**. Memory note: v56.5.0 ships noble as default plus noble-compiled releases (including bpm 1.4.31), which collapses the PVE cf-kit hacks.
 
