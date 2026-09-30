@@ -56,6 +56,7 @@ func ParseCFReleases(manifestYAML []byte, minExpected int) ([]Release, error) {
 	return out, nil
 }
 
-// CFMinReleases is the expected floor for cf-deployment v56.5.0 (39 releases).
-// A parse yielding fewer signals a wrong or truncated manifest.
+// CFMinReleases is the expected floor for a cf-deployment manifest. v60.7.0,
+// which the cf kit vendors, lists 31 releases, and the older v56.5.0 listed
+// 30. A parse yielding fewer signals a wrong or truncated manifest.
 const CFMinReleases = 30

@@ -17,7 +17,6 @@ kit:
   - haproxy
   - self-signed
   - pve-blobstore
-  - cf-deployment-version-56.5.0
   - source-releases
 ```
 
@@ -25,9 +24,9 @@ Each line is a decision we can now read fluently. `ocfp` wires the kit into the 
 
 `self-signed` mints HAProxy's TLS in-deployment, which gives us honest lab TLS until real certificates arrive, and it is the reason chapter 3 set `origin_no_tls_verify` for the tunnel. `pve-blobstore` points CF's packages and droplets at our RustFS store instead of internal WebDAV VMs.
 
-The last two pick the cf-deployment lineage, and this is the pair to check before copying. The `cf-deployment-version-<ver>` feature tells the kit to fetch that version of upstream cf-deployment at render time and swap its tree in, in place of the one the kit vendors. When the runbook's validated run happened, the kit vendored v52.0.0, so naming v56.5.0 moved us forward onto a noble-default lineage, which expects the same Ubuntu 24.04 stemcell family PVE requires and dissolved a layer of stemcell-forcing workarounds.
+The list names no cf-deployment version, and that absence is deliberate. The kit vendors cf-deployment v60.7.0, which defaults to the noble stemcell that PVE requires and configures Cloud Controller's blobstore through storage-cli. The kit does offer a `cf-deployment-version-<ver>` feature, which fetches another upstream release at render time and swaps it in for the vendored tree. Earlier runs of this runbook used it to name v56.5.0, back when the kit vendored v52.0.0, which defaulted to jammy. We no longer do, because v56.5.0 predates storage-cli.
 
-The kit has since vendored v60.5.0, which is noble-default too. Against that kit the same feature line is a downgrade rather than an upgrade, and the noble argument no longer tells the two apart. So read the kit's `cf-deployment/cf-deployment.yml` for its `manifest_version` before deciding. Pin a version when we have a reason to sit on a specific lineage, and drop the feature entirely to take what the kit ships.
+cf-deployment moved the external blobstore off the deprecated fog library and onto storage-cli in v59.0.0. Before that release, upstream's `use-external-blobstore.yml` set `fog_connection: ((fog_connection))` on every Cloud Controller bucket. The kit's `pve-blobstore` wiring configures those same buckets for storage-cli and never defines `fog_connection`. A v56.5.0 render therefore hands BOSH a variable that nothing provides, and the deploy stops in template rendering with a 404 from the config server on the api, cc-worker, and scheduler groups. The kit now refuses that pairing at render time and says which feature to remove. If we ever pin a version alongside `pve-blobstore`, it has to be v59.0.0 or later.
 
 `source-releases` then chooses how we compile. Releases compile from source on the ocf director, with the blobs cached in RustFS. (The compiled-blob route, `vendored-compiled-releases`, is also validated and much faster on first deploy, though source is the lab's current choice while the long-term compiled strategy settles.)
 
@@ -72,7 +71,7 @@ Our run generated 132 definitions: one RSA, 42 randoms, one SSH, and 88 x509. Th
 g @ocfp-lab-wayne-ocf:cf manifest
 ```
 
-**Verify** (in the render, before anything deploys): the v56.5.0 lineage, `ubuntu-noble` as the stemcell throughout, the blobstore stanzas pointing at our RustFS endpoint, and an `ssh_proxy` job on the `scheduler` instance group, which chapter 10 depends on. Look for the job rather than a group of that name, because CF has not shipped a standalone `ssh_proxy` group for years. This read costs five minutes and has caught real kit bugs.
+**Verify** the render before anything deploys. We should see the vendored v60.7.0 lineage, `ubuntu-noble` as the stemcell throughout, `blobstore_type: storage-cli` with `blobstore_provider: s3` and our RustFS host on all twelve bucket stanzas, no `fog_connection` anywhere, and an `ssh_proxy` job on the `scheduler` instance group, which chapter 10 depends on. Look for the job rather than a group of that name, because CF has not shipped a standalone `ssh_proxy` group for years. This read costs five minutes and has caught real kit bugs.
 
 Then comes the commitment:
 
