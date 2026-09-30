@@ -47,6 +47,8 @@ var (
 	ErrDatabaseScalingNotImplemented           = errors.New("database scaling not yet implemented")
 	ErrInvalidSCPCommand                       = errors.New("invalid SCP command")
 	ErrInvalidSSHCommand                       = errors.New("invalid SSH command")
+	ErrUnknownSSHTarget                        = errors.New("unknown ssh target")
+	ErrArtifactsNoPrivateIP                    = errors.New("artifacts VM has no recorded private IP")
 	ErrNukeRequiresForceForSafety              = errors.New("--nuke requires --force for safety")
 	ErrNoStateLoaded                           = errors.New("no state loaded")
 	ErrProviderDoesNotSupportStorageMgmt       = errors.New("provider does not support storage management")

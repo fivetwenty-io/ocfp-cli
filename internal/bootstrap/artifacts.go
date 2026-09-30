@@ -252,7 +252,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	err = m.waitArtifactsReady(ctx, ep, creds)
 	if err != nil {
 		// Don't delete the VM here — operator may want to triage it. Surface
-		// the timeout but leave the VM in place so `ocfp artifacts ssh` works.
+		// the timeout but leave the VM in place so `ocfp ssh --bloc <bloc> artifacts` works.
 		_, _ = fmt.Fprintf(os.Stderr, "warning: %v — VM left running for triage\n", err)
 	}
 
