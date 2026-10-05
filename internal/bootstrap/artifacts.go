@@ -56,9 +56,11 @@ var ErrArtifactsVaultUnavailable = errors.New("vault access unavailable for this
 //  3. Render cloud-init.
 //  4. Create the VM. On failure, no state recorded.
 //  5. Create + attach the data volume. On failure, delete the VM.
-//  6. Poll the RustFS S3 endpoint until ready.
-//  7. Create the configured buckets directly via the artifacts endpoint.
-//  8. Record state.
+//  6. Record the VM and data volume in state and save it to disk, before
+//     any long wait, so a killed run never leaves a VM that teardown cannot
+//     see.
+//  7. Deliver provisioning and poll the RustFS S3 endpoint until ready.
+//  8. Create the configured buckets directly via the artifacts endpoint.
 //
 // The step is idempotent: if state already records an artifacts VM and the
 // readiness probe succeeds, it returns nil without touching anything.
@@ -233,6 +235,24 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: attach data volume: %w", attachErr)
 	}
 
+	// Record the VM and its data volume, and save to disk, before the
+	// delivery and readiness waits below. Those waits run for minutes, and
+	// Execute only saves state once the whole step returns. A process killed
+	// in between would leave a running VM that the bloc state does not know
+	// about, which `ocfp teardown` cannot see. On failure here the VM stays in
+	// place for the operator to triage.
+	ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+
+	err = m.recordArtifactsState(vmName, inst, vol, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat))
+	if err != nil {
+		return fmt.Errorf("artifacts: record state: %w", err)
+	}
+
+	err = m.stateManager.Save()
+	if err != nil {
+		return fmt.Errorf("artifacts: save state: %w", err)
+	}
+
 	// Cloud-init user-data (rendered above, attached to req.UserData) is the
 	// default delivery path. Providers whose compute backend needs an extra
 	// out-of-band step (PVE 9.x blocks cloud-init snippet upload) implement
@@ -247,18 +267,19 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: artifacts provisioning delivery: %v\n", err)
 	}
 
-	ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
-
 	err = m.waitArtifactsReady(ctx, ep, creds)
 	if err != nil {
+		// An interrupted run (cancelled context) stops here: the vault write
+		// and bucket creation below would only fail against the same dead
+		// context. The VM is already recorded in state, so a re-run converges
+		// on it and teardown can remove it.
+		if ctx.Err() != nil {
+			return fmt.Errorf("artifacts: interrupted while waiting for readiness; VM %s is recorded in state: %w", vmName, err)
+		}
+
 		// Don't delete the VM here — operator may want to triage it. Surface
 		// the timeout but leave the VM in place so `ocfp ssh --bloc <bloc> artifacts` works.
 		_, _ = fmt.Fprintf(os.Stderr, "warning: %v — VM left running for triage\n", err)
-	}
-
-	err = m.recordArtifactsState(vmName, inst, vol, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat))
-	if err != nil {
-		return fmt.Errorf("artifacts: record state: %w", err)
 	}
 
 	if m.safe != nil {
