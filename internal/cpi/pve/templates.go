@@ -457,6 +457,10 @@ func (m *ComputeManager) seedTemplate(ctx context.Context, node string, vmid int
 		"ciuser":     templateSeedCIUser,
 		"cipassword": password,
 		"net0":       "virtio,bridge=" + m.client.config.TemplateBridge,
+		// PVE renders package_upgrade: true into the cloud-init user-data
+		// unless ciupgrade is 0. The seed boot would then upgrade every
+		// package on a 3.5 GiB disk, filling it before the seed steps run.
+		"ciupgrade": 0,
 	}
 
 	for k, v := range seedNetParams {
