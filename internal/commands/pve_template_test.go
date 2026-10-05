@@ -112,3 +112,18 @@ func TestTemplateProvisionCmd_OffersRebuild(t *testing.T) {
 		t.Errorf("--rebuild defaults to %q; it must default to false so a plain provision never destroys a template", flag.DefValue)
 	}
 }
+
+// TestTemplateProvisionCmd_HelpTellsResoluteOperatorsToRebuild pins the help
+// sentence that names the other group needing --rebuild. A Resolute template
+// built before the initramfs fix has no bastion units to refresh, so the
+// bastion-only advice would never tell its owner the template is stale.
+func TestTemplateProvisionCmd_HelpTellsResoluteOperatorsToRebuild(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Join(strings.Fields(NewPVETemplateProvisionCmd().Long), " ")
+
+	want := "Resolute templates built before this release keep the DHCP initramfs and need --rebuild too."
+	if !strings.Contains(long, want) {
+		t.Errorf("provision help is missing %q:\n%s", want, long)
+	}
+}
