@@ -69,9 +69,11 @@ func generateSeedPassword() (string, error) {
 	return templateSeedPasswordPrefix + hex.EncodeToString(b), nil
 }
 
-// seedTemplateVM connects to the template-build VM via termproxy and writes
-// the firstboot + watchdog units, enables systemd, runs cloud-init clean,
-// and shuts the VM down so it can be converted to a template.
+// seedTemplateVM connects to the template-build VM via termproxy, runs the
+// seed steps the spec asks for (the firstboot + watchdog units for a bastion
+// template, and an initramfs rebuild without network modules for a dracut
+// image), runs cloud-init clean, and shuts the VM down so it can be
+// converted to a template.
 //
 // The VM must already be set up with:
 //   - ciuser = templateSeedCIUser
@@ -87,7 +89,7 @@ func generateSeedPassword() (string, error) {
 //     the guest doesn't yet have the package installed)
 //
 // On return, the VM is in `stopped` state and ready for `qm template`.
-func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid int, password string) error {
+func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid int, password string, spec TemplateSpec) error {
 	log := logger.WithOperation("seedTemplateVM")
 
 	tokenHeader := buildPVEAPITokenHeader(m.client.config)
@@ -112,10 +114,24 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 		return fmt.Errorf("seed login: %w", err)
 	}
 
-	log.Infof("seeding firstboot + watchdog units")
+	if err := seedPrepare(sess); err != nil {
+		return fmt.Errorf("seed prepare: %w", err)
+	}
 
-	if err := seedWriteUnits(sess); err != nil {
-		return fmt.Errorf("seed write units: %w", err)
+	if spec.RequireBastionUnits {
+		log.Infof("seeding firstboot + watchdog units")
+
+		if err := seedWriteUnits(sess); err != nil {
+			return fmt.Errorf("seed write units: %w", err)
+		}
+	}
+
+	if spec.DisableInitrdNetwork {
+		log.Infof("rebuilding initramfs without network modules")
+
+		if err := seedDisableInitrdNetwork(sess); err != nil {
+			return fmt.Errorf("seed disable initrd network: %w", err)
+		}
 	}
 
 	if err := seedFinalize(sess); err != nil {
@@ -177,9 +193,10 @@ func seedLogin(sess *TermproxySession, password string) error {
 	return nil
 }
 
-// seedWriteUnits installs jq + qemu-guest-agent, writes the script + unit
-// files, and enables the services.
-func seedWriteUnits(sess *TermproxySession) error {
+// seedPrepare waits for first-boot cloud-init to finish and quiesces the
+// background apt units, so every later seed step runs against a settled
+// guest. It runs for every seeded template, whatever steps follow.
+func seedPrepare(sess *TermproxySession) error {
 	// Wait for cloud-init to finish before we touch apt — its first-boot
 	// runcmd phase holds the apt lock, and our `sudo tee` calls race with
 	// it (observed empirically: file writes time out while cloud-init is
@@ -217,6 +234,12 @@ func seedWriteUnits(sess *TermproxySession) error {
 		return fmt.Errorf("apt quiesce/heal: %w", err)
 	}
 
+	return nil
+}
+
+// seedWriteUnits installs jq + qemu-guest-agent, writes the script + unit
+// files, and enables the services. seedPrepare must have run first.
+func seedWriteUnits(sess *TermproxySession) error {
 	// Refresh package metadata first: cloud-init's default
 	// `package_update_upgrade_install` only fetches if upgrades are
 	// requested, leaving the apt cache empty on noble cloud images.
@@ -243,6 +266,30 @@ func seedWriteUnits(sess *TermproxySession) error {
 		if err := runShell(sess, c, templateSeedShellTimeout); err != nil {
 			return fmt.Errorf("%s: %w", c, err)
 		}
+	}
+
+	return nil
+}
+
+// seedDisableInitrdNetwork writes the dracut drop-in that leaves the network
+// modules out of the initramfs, rebuilds every installed kernel's initramfs,
+// and then checks each one, so a template is never converted while an
+// initramfs could still bring the NIC up. The drop-in stays in the image,
+// so initramfs rebuilds after a kernel update in a clone honour it too.
+func seedDisableInitrdNetwork(sess *TermproxySession) error {
+	if err := writeRemoteFile(sess, initrdNoNetworkConfPath, initrdNoNetworkConf, "0644"); err != nil {
+		return fmt.Errorf("write %s: %w", initrdNoNetworkConfPath, err)
+	}
+
+	if err := writeRemoteFile(sess, initrdNoNetworkScriptPath, initrdNoNetworkScript, "0755"); err != nil {
+		return fmt.Errorf("write %s: %w", initrdNoNetworkScriptPath, err)
+	}
+
+	// Rebuilding takes about 15 seconds per kernel, and a fresh cloud
+	// image carries one or two kernels.
+	run := fmt.Sprintf("sudo bash %s && sudo rm -f %s", initrdNoNetworkScriptPath, initrdNoNetworkScriptPath)
+	if err := runShell(sess, run, templateSeedAptTimeout); err != nil {
+		return fmt.Errorf("rebuild initramfs: %w", err)
 	}
 
 	return nil
