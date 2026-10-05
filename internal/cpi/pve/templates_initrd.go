@@ -27,28 +27,63 @@ const initrdNoNetworkScriptPath = "/tmp/ocfp-initrd-no-network"
 
 // initrdNoNetworkScript rebuilds every installed kernel's initramfs with the
 // drop-in in place, then reads each image's module list back. It fails when
-// an image is missing, when its module list can't be read, or when any
-// network module survived, so the seed never converts a template whose
-// initramfs could still DHCP the NIC.
+// /boot lacks room for the rebuild, when an image is missing, when its module
+// list can't be read, or when any network module survived, so the seed never
+// converts a template whose initramfs could still DHCP the NIC.
+//
+// The template disk is only as large as the cloud image, so the script makes
+// room and checks it has some. It empties the apt package cache first. A
+// rebuild writes each new image beside the old one, so it then requires /boot
+// to have free space for the largest existing image plus a 64 MiB margin, and
+// fails with the numbers rather than letting dracut die partway through.
 //
 // dracut stages each image under a private tmpfs. Its default staging
-// directory is /var/tmp, on the template's root filesystem, and the template
-// disk is only as large as the cloud image, so a rebuild there runs out of
-// space partway through depmod.
+// directory is /var/tmp, on the template's root filesystem, and a rebuild
+// there runs out of space partway through depmod.
+//
+// OCFP_BOOT_DIR points the script at a different /boot. The seed never sets
+// it, and sudo drops it from the environment; the tests use it to run the
+// script against a scratch directory.
 const initrdNoNetworkScript = `#!/bin/bash
 # ocfp-initrd-no-network: run once by the OCFP template seed, then deleted.
 set -euo pipefail
 
+boot=${OCFP_BOOT_DIR:-/boot}
+margin_kib=65536
+
+apt-get clean
+
+shopt -s nullglob
+images=("$boot"/initrd.img-*)
+
+largest_kib=0
+for img in "${images[@]+"${images[@]}"}"; do
+  size_kib=$(( ($(wc -c <"$img") + 1023) / 1024 ))
+  if (( size_kib > largest_kib )); then
+    largest_kib=$size_kib
+  fi
+done
+
+need_kib=$(( largest_kib + margin_kib ))
+avail_kib=$(df -Pk "$boot" | awk 'NR==2 {print $4}')
+if [[ ! $avail_kib =~ ^[0-9]+$ ]]; then
+  echo "ocfp-initrd-no-network: cannot read the free space under $boot" >&2
+  exit 1
+fi
+if (( avail_kib < need_kib )); then
+  echo "ocfp-initrd-no-network: only $avail_kib KiB free under $boot, need $need_kib KiB (largest initramfs $largest_kib KiB plus $margin_kib KiB)" >&2
+  exit 1
+fi
+
 stage=$(mktemp -d /run/ocfp-dracut.XXXXXX)
 mount -t tmpfs -o size=1g,mode=0700 ocfp-dracut "$stage"
-trap 'umount "$stage"; rmdir "$stage"' EXIT
+trap 'umount "$stage" || true; rmdir "$stage" || true' EXIT
 
 dracut --quiet --force --regenerate-all --tmpdir "$stage"
 
-shopt -s nullglob
-images=(/boot/initrd.img-*)
+images=("$boot"/initrd.img-*)
 if (( ${#images[@]} == 0 )); then
-  echo "ocfp-initrd-no-network: no initramfs images under /boot" >&2
+  echo "ocfp-initrd-no-network: no initramfs images under $boot" >&2
   exit 1
 fi
 
