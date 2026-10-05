@@ -542,7 +542,7 @@ func stopVMAndVerify(ctx context.Context, c *Client, qemuSvc qemu.Service, node 
 // than touching the network.
 func (m *ComputeManager) runSeedTemplateVM(ctx context.Context, node string, vmid int, password string, spec TemplateSpec) error {
 	if m.seedTemplateVMFunc != nil {
-		return m.seedTemplateVMFunc(ctx, node, vmid, password)
+		return m.seedTemplateVMFunc(ctx, node, vmid, password, spec)
 	}
 
 	return m.seedTemplateVM(ctx, node, vmid, password, spec)

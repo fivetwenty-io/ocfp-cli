@@ -89,8 +89,9 @@ type ComputeManager struct {
 	// seedTemplateVMFunc, when set, replaces seedTemplateVM in
 	// runSeedTemplateVM. Test-only seam: seedTemplateVM drives real
 	// termproxy network I/O, and tests need to substitute a fake for it
-	// without touching the network. Nil in production.
-	seedTemplateVMFunc func(ctx context.Context, node string, vmid int, password string) error
+	// without touching the network. It receives the spec so tests can see
+	// which seed steps the template asks for. Nil in production.
+	seedTemplateVMFunc func(ctx context.Context, node string, vmid int, password string, spec TemplateSpec) error
 }
 
 // Flavor presets for Proxmox (no native flavor concept).
