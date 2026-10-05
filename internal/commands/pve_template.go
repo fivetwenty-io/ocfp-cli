@@ -170,7 +170,7 @@ func runPVETemplateProvision(ctx context.Context, templateName, blocName, config
 		return fmt.Errorf("%w: bloc %q targets %s", ErrTemplateProvisionNotPVE, blocName, iaas)
 	}
 
-	provider, err := createProvider(iaas, buildProviderConfig(cfg, region))
+	provider, err := createProvider(ctx, iaas, buildProviderConfig(cfg, region))
 	if err != nil {
 		return err
 	}

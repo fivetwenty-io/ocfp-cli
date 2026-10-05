@@ -87,7 +87,7 @@ func runBastionRecycle(
 		return err
 	}
 
-	mgr, err := buildBootstrapManager(blocName, configFile)
+	mgr, err := buildBootstrapManager(ctx, blocName, configFile)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ type recycleFlags struct {
 // It reuses the same config load, provider construction, and state manager
 // that `ocfp bootstrap` uses, so the replacement is built by exactly the code
 // path a fresh bloc would take rather than by a parallel one that drifts.
-func buildBootstrapManager(blocName, configFile string) (*bootstrap.Manager, error) {
+func buildBootstrapManager(ctx context.Context, blocName, configFile string) (*bootstrap.Manager, error) {
 	cfg, err := loadBlocConfiguration(configFile, blocName)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func buildBootstrapManager(blocName, configFile string) (*bootstrap.Manager, err
 		return nil, err
 	}
 
-	provider, err := createProvider(iaas, buildProviderConfig(cfg, region))
+	provider, err := createProvider(ctx, iaas, buildProviderConfig(cfg, region))
 	if err != nil {
 		return nil, err
 	}
