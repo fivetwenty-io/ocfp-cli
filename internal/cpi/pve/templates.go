@@ -64,6 +64,23 @@ type TemplateSpec struct {
 	// because tailscale install + watchdog must be baked into the image
 	// (PVE 9.x can't deliver snippets to per-VM clones).
 	RequireBastionUnits bool
+
+	// DisableInitrdNetwork, when true, makes ProvisionTemplate boot the VM
+	// and rebuild its initramfs without dracut's network modules before
+	// converting to a template. Images that boot through dracut (Ubuntu
+	// 26.04 onward) otherwise DHCP the NIC from the initramfs, and the link
+	// is still up when cloud-init renames it to eth0. The rename fails with
+	// EBUSY, the static address from ipconfig0 never applies, and the clone
+	// stays on its DHCP lease. Images built with initramfs-tools (Noble)
+	// have no initramfs networking and must leave this off, because the
+	// seed step runs dracut.
+	DisableInitrdNetwork bool
+}
+
+// needsSeed reports whether ProvisionTemplate must boot the template VM and
+// run the termproxy seed before converting it to a template.
+func (s TemplateSpec) needsSeed() bool {
+	return s.RequireBastionUnits || s.DisableInitrdNetwork
 }
 
 // templateCatalog is the compile-time registry of known templates.
@@ -111,14 +128,18 @@ var templateCatalog = map[string]TemplateSpec{
 		SourceFilename: "ubuntu-resolute-amd64.qcow2",
 		Memory:         2048,
 		Cores:          2,
+		// Resolute boots through dracut, so both Resolute entries are
+		// seeded to strip initramfs networking. See DisableInitrdNetwork.
+		DisableInitrdNetwork: true,
 	},
 	"ubuntu-resolute-bastion-template": {
-		Name:                "ubuntu-resolute-bastion-template",
-		SourceURL:           "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
-		SourceFilename:      "ubuntu-resolute-amd64.qcow2",
-		Memory:              2048,
-		Cores:               2,
-		RequireBastionUnits: true,
+		Name:                 "ubuntu-resolute-bastion-template",
+		SourceURL:            "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
+		SourceFilename:       "ubuntu-resolute-amd64.qcow2",
+		Memory:               2048,
+		Cores:                2,
+		RequireBastionUnits:  true,
+		DisableInitrdNetwork: true,
 	},
 }
 
@@ -296,10 +317,10 @@ func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (
 		return 0, fmt.Errorf("create template VM: %w", err)
 	}
 
-	if spec.RequireBastionUnits {
-		err := m.seedBastionTemplate(ctx, node, vmid)
+	if spec.needsSeed() {
+		err := m.seedTemplate(ctx, node, vmid, spec)
 		if err != nil {
-			return 0, fmt.Errorf("seed bastion template: %w", err)
+			return 0, fmt.Errorf("seed template: %w", err)
 		}
 	}
 
@@ -313,9 +334,9 @@ func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (
 	return vmid, nil
 }
 
-// seedBastionTemplate configures the template VM for cloud-init login, starts
-// it, drives the firstboot+watchdog seed via termproxy, and waits for the VM
-// to halt cleanly. The VM stays in `stopped` state on return so the caller
+// seedTemplate configures the template VM for cloud-init login, starts it,
+// drives the seed steps the spec asks for (bastion units, initramfs network
+// removal) via termproxy, and waits for the VM to halt cleanly. The VM stays in `stopped` state on return so the caller
 // can `qm template` it.
 //
 // Once the seed PUT below succeeds, the VM's config carries the seed network
@@ -326,8 +347,8 @@ func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (
 // the multi-minute termproxy/apt step, or the force-stop fallback) can
 // never strand a live VM holding the reserved address (C1 in the
 // static-seed adversarial review).
-func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, vmid int) (err error) {
-	log := logger.WithOperation("seedBastionTemplate")
+func (m *ComputeManager) seedTemplate(ctx context.Context, node string, vmid int, spec TemplateSpec) (err error) {
+	log := logger.WithOperation("seedTemplate")
 
 	// Generate a fresh one-shot password per template build. The
 	// credential lives only inside this process and the VM's cloud-init
@@ -420,7 +441,7 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 
 	log.Infof("template VM %d booted; running seed via termproxy", vmid)
 
-	if err := m.runSeedTemplateVM(ctx, node, vmid, password); err != nil {
+	if err := m.runSeedTemplateVM(ctx, node, vmid, password, spec); err != nil {
 		return fmt.Errorf("seed termproxy: %w", err)
 	}
 
@@ -459,14 +480,14 @@ func (m *ComputeManager) seedBastionTemplate(ctx context.Context, node string, v
 	return nil
 }
 
-// recoverFailedSeed runs from seedBastionTemplate's deferred recovery
+// recoverFailedSeed runs from seedTemplate's deferred recovery
 // handler when the function is about to return an error after the seed PUT
 // already gave the VM its seed network identity. Best-effort: it stops the
 // VM (skipping the stop call entirely if it is already stopped) and, in
 // static mode, resets the address-bearing keys the seed wrote, so a failed
 // run never strands a live host holding the reserved seed address (C1 in
 // the static-seed adversarial review). It deliberately does not destroy the
-// VM — see the seedBastionTemplate doc comment for why — so a caller
+// VM — see the seedTemplate doc comment for why — so a caller
 // investigating a failed build can still open the serial console.
 func (m *ComputeManager) recoverFailedSeed(ctx context.Context, node string, vmid int, configPath string, seedNetParams map[string]interface{}) error {
 	qemuSvc := m.client.getQemuService()
@@ -519,12 +540,12 @@ func stopVMAndVerify(ctx context.Context, c *Client, qemuSvc qemu.Service, node 
 // seedTemplateVMFunc when one is set. The seam exists because seedTemplateVM
 // drives real termproxy network I/O; tests substitute a fake here rather
 // than touching the network.
-func (m *ComputeManager) runSeedTemplateVM(ctx context.Context, node string, vmid int, password string) error {
+func (m *ComputeManager) runSeedTemplateVM(ctx context.Context, node string, vmid int, password string, spec TemplateSpec) error {
 	if m.seedTemplateVMFunc != nil {
 		return m.seedTemplateVMFunc(ctx, node, vmid, password)
 	}
 
-	return m.seedTemplateVM(ctx, node, vmid, password)
+	return m.seedTemplateVM(ctx, node, vmid, password, spec)
 }
 
 // buildTemplateSeedNetParams returns the ipconfig0 (and, in static mode,
@@ -532,7 +553,7 @@ func (m *ComputeManager) runSeedTemplateVM(ctx context.Context, node string, vmi
 //
 // cfg.TemplateSeedIP == "" (the zero value) means DHCP: this reproduces
 // exactly today's seed PUT map when merged with the ciuser/cipassword/net0
-// keys in seedBastionTemplate. Every existing bloc, which has none of the
+// keys in seedTemplate. Every existing bloc, which has none of the
 // template_seed_* fields set, is unaffected by this change.
 //
 // cfg.TemplateSeedIP != "" means static mode: the bloc's template_bridge
