@@ -107,7 +107,7 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 
 	tokenHeader := buildPVEAPITokenHeader(m.client.config)
 	if tokenHeader == "" {
-		return errors.New("template seed requires API token auth (TokenID + TokenSecret)") //nolint:err113 // descriptive error, not caller-testable
+		return errSeedNeedsAPIToken
 	}
 
 	log.Infof("opening termproxy to vmid %d", vmid)
