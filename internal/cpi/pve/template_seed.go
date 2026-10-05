@@ -44,6 +44,10 @@ const (
 	templateSeedLoginTimeout = 60 * time.Second
 	templateSeedAptTimeout   = 180 * time.Second
 	templateSeedShellTimeout = 30 * time.Second
+
+	// templateSeedLoginAttempts bounds both the user names seedLogin sends
+	// and the prompt waits it may retry after a timeout.
+	templateSeedLoginAttempts = 4
 )
 
 // shellPromptRe matches a typical interactive prompt at end-of-buffer. We
@@ -54,7 +58,16 @@ var (
 	loginPromptRe = regexp.MustCompile(`login:\s*$`)
 	pwPromptRe    = regexp.MustCompile(`Password:\s*$`)
 	shellPromptRe = regexp.MustCompile(`[\$#]\s*$`)
+	anyPromptRe   = regexp.MustCompile(`(?:login:|Password:|[\$#])\s*$`)
 )
+
+// seedConsole is the part of TermproxySession that seedLogin drives, so the
+// login sequence can run against a scripted console in tests.
+type seedConsole interface {
+	SendLine(line string) error
+	ExpectRegex(re *regexp.Regexp, timeout time.Duration) (string, error)
+	Drain(window time.Duration) string
+}
 
 // generateSeedPassword returns a fresh, prefixed, hex-encoded random
 // password. The prefix tags the credential as ephemeral so it is
@@ -147,7 +160,14 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 // sending wake-up CRs first because the VM may still be mid-boot when we
 // connect. password is the ephemeral credential configured on the
 // template VM via cloud-init.
-func seedLogin(sess *TermproxySession, password string) error {
+//
+// The sequence is driven by whichever prompt shows up next rather than by
+// a fixed order, because on a slow first boot cloud-init keeps writing to
+// ttyS0 after getty prints login:, and a prompt can be lost in that output.
+// A wait that times out sends an empty line, which makes getty, login, or
+// the shell print a fresh prompt, and a garbled login lands back at login:
+// and starts over. Both retries are bounded by templateSeedLoginAttempts.
+func seedLogin(sess seedConsole, password string) error {
 	// Wake the serial; cloud-init may be writing boot messages.
 	for range 3 {
 		_ = sess.SendLine("")
@@ -155,26 +175,62 @@ func seedLogin(sess *TermproxySession, password string) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	if _, err := sess.ExpectRegex(loginPromptRe, templateSeedBootTimeout); err != nil {
-		return fmt.Errorf("wait login prompt: %w", err)
-	}
+	timeout := templateSeedBootTimeout
+	usersSent, nudges := 0, 0
+	passwordSent := false
 
-	if err := sess.SendLine(templateSeedCIUser); err != nil {
-		return err
-	}
+	for {
+		out, err := sess.ExpectRegex(anyPromptRe, timeout)
+		timeout = templateSeedLoginTimeout
 
-	if _, err := sess.ExpectRegex(pwPromptRe, templateSeedLoginTimeout); err != nil {
-		return fmt.Errorf("wait password prompt: %w", err)
-	}
+		if err != nil {
+			if !errors.Is(err, errTermproxyTimeout) || nudges >= templateSeedLoginAttempts {
+				return fmt.Errorf("wait for login sequence prompt: %w", err)
+			}
 
-	if err := sess.SendLine(password); err != nil {
-		return err
-	}
+			nudges++
 
-	if _, err := sess.ExpectRegex(shellPromptRe, templateSeedLoginTimeout); err != nil {
-		return fmt.Errorf("wait shell prompt: %w", err)
-	}
+			if err := sess.SendLine(""); err != nil {
+				return err
+			}
 
+			continue
+		}
+
+		switch {
+		case passwordSent && shellPromptRe.MatchString(out):
+			return seedShellSetup(sess)
+		case usersSent > 0 && !passwordSent && pwPromptRe.MatchString(out):
+			if err := sess.SendLine(password); err != nil {
+				return err
+			}
+
+			passwordSent = true
+		case loginPromptRe.MatchString(out):
+			if usersSent >= templateSeedLoginAttempts {
+				return fmt.Errorf("no shell after %d login attempts", usersSent) //nolint:err113 // descriptive error, not caller-testable
+			}
+
+			if err := sess.SendLine(templateSeedCIUser); err != nil {
+				return err
+			}
+
+			usersSent++
+			passwordSent = false
+		default:
+			// Console output that only looks like a prompt, such as a
+			// boot message ending in '#'. Counted so it cannot spin.
+			if nudges >= templateSeedLoginAttempts {
+				return fmt.Errorf("unexpected console output before login: %q", tail(out, 200)) //nolint:err113 // descriptive error, not caller-testable
+			}
+
+			nudges++
+		}
+	}
+}
+
+// seedShellSetup prepares a freshly logged-in shell for marker matching.
+func seedShellSetup(sess seedConsole) error {
 	// Disable terminal echo so our marker matching doesn't get false
 	// positives from the kernel's input echo (when we send
 	// "echo OCFP_CMD_OK_X\r\n" the tty echoes those bytes back before the

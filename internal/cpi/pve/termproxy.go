@@ -37,6 +37,10 @@ const (
 // noVNC client uses cookie-auth because it operates inside a logged-in
 // browser session; token clients must NOT send a cookie or PVE returns 401.
 
+// errTermproxyTimeout marks an ExpectRegex wait that ran out of time with
+// the connection still healthy, which callers may retry.
+var errTermproxyTimeout = errors.New("termproxy: timeout")
+
 // TermproxySession carries an authenticated PVE serial-console WebSocket plus
 // a small read buffer. Calls are NOT goroutine-safe.
 type TermproxySession struct {
@@ -160,8 +164,8 @@ func (s *TermproxySession) ExpectRegex(re *regexp.Regexp, timeout time.Duration)
 
 			s.buf.Write(data)
 		case <-deadline.C:
-			return s.buf.String(), fmt.Errorf("termproxy: timeout waiting for %s; buffer tail: %q", //nolint:err113 // descriptive error, not caller-testable
-				re.String(), tail(s.buf.String(), 200))
+			return s.buf.String(), fmt.Errorf("%w waiting for %s; buffer tail: %q",
+				errTermproxyTimeout, re.String(), tail(s.buf.String(), 200))
 		}
 	}
 }
