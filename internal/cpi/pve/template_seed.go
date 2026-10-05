@@ -48,6 +48,12 @@ const (
 	// templateSeedLoginAttempts bounds both the user names seedLogin sends
 	// and the prompt waits it may retry after a timeout.
 	templateSeedLoginAttempts = 4
+
+	// templateSeedNoiseLimit bounds the console output seedLogin waits
+	// through when it only looks like a prompt. cloud-init's modules:final
+	// banner prints rows of '#' to ttyS0, and each chunk of it matches the
+	// shell prompt pattern, so this is far larger than the retry budget.
+	templateSeedNoiseLimit = 200
 )
 
 // shellPromptRe matches a typical interactive prompt at end-of-buffer. We
@@ -207,6 +213,9 @@ func (m *ComputeManager) seedTemplateVM(ctx context.Context, node string, vmid i
 // A wait that times out sends an empty line, which makes getty, login, or
 // the shell print a fresh prompt, and a garbled login lands back at login:
 // and starts over. Both retries are bounded by templateSeedLoginAttempts.
+// Output that only looks like a prompt, such as the rows of '#' in the
+// cloud-init banner, does not spend that budget. seedLogin keeps waiting
+// through it, up to templateSeedNoiseLimit matches.
 func seedLogin(sess seedConsole, password string) error {
 	// Wake the serial; cloud-init may be writing boot messages.
 	for range 3 {
@@ -216,7 +225,7 @@ func seedLogin(sess seedConsole, password string) error {
 	}
 
 	timeout := templateSeedBootTimeout
-	usersSent, nudges := 0, 0
+	usersSent, nudges, noise := 0, 0, 0
 	passwordSent := false
 
 	for {
@@ -259,12 +268,13 @@ func seedLogin(sess seedConsole, password string) error {
 			passwordSent = false
 		default:
 			// Console output that only looks like a prompt, such as a
-			// boot message ending in '#'. Counted so it cannot spin.
-			if nudges >= templateSeedLoginAttempts {
+			// cloud-init banner line ending in '#'. Keep waiting, but
+			// count it so a console that never stops cannot spin.
+			if noise >= templateSeedNoiseLimit {
 				return fmt.Errorf("unexpected console output before login: %q", tail(out, 200)) //nolint:err113 // descriptive error, not caller-testable
 			}
 
-			nudges++
+			noise++
 		}
 	}
 }

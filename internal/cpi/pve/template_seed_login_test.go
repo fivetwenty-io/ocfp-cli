@@ -188,3 +188,59 @@ func TestSeedLogin_GivesUpAfterBoundedRetries(t *testing.T) {
 		t.Fatalf("waits = %d, want %d", console.waits, templateSeedLoginAttempts+1)
 	}
 }
+
+// cloudInitBannerStep is one chunk of the cloud-init modules:final banner as
+// it reached ttyS0 on the pipes rebuild. It ends in '#', so it looks like a
+// shell prompt to the prompt matcher.
+func cloudInitBannerStep() consoleStep {
+	return consoleStep{out: "ci-info: no authorized SSH keys fingerprints found for user ubuntu.\r\n<14>Oct  5 23:00:34 cloud-init: ##"}
+}
+
+// TestSeedLogin_WaitsThroughCloudInitBanner covers the v0.3.5 pipes rebuild
+// failure: the modules:final banner printed more '#'-terminated lines than
+// the retry budget, and seedLogin gave up although getty was fine.
+func TestSeedLogin_WaitsThroughCloudInitBanner(t *testing.T) {
+	t.Parallel()
+
+	script := []consoleStep{{out: "ubuntu-resolute login: "}}
+	for range 3 * templateSeedLoginAttempts {
+		script = append(script, cloudInitBannerStep())
+	}
+
+	script = append(script,
+		consoleStep{out: "Password: "},
+		consoleStep{out: "ubuntu@ubuntu-resolute:~$ "},
+	)
+
+	console := &scriptedConsole{t: t, script: script}
+
+	err := seedLogin(console, testSeedPassword)
+	if err != nil {
+		t.Fatalf("seedLogin() error = %v", err)
+	}
+
+	want := []string{templateSeedCIUser, testSeedPassword}
+	if got := console.typed(); len(got) != 3 || !slices.Equal(got[:2], want) {
+		t.Fatalf("typed = %q, want %q followed by the stty line", got, want)
+	}
+}
+
+func TestSeedLogin_BoundsEndlessConsoleNoise(t *testing.T) {
+	t.Parallel()
+
+	script := make([]consoleStep, 0, templateSeedNoiseLimit+1)
+	for range templateSeedNoiseLimit + 1 {
+		script = append(script, cloudInitBannerStep())
+	}
+
+	console := &scriptedConsole{t: t, script: script}
+
+	err := seedLogin(console, testSeedPassword)
+	if err == nil {
+		t.Fatal("seedLogin() error = nil, want the console noise error")
+	}
+
+	if console.waits != templateSeedNoiseLimit+1 {
+		t.Fatalf("waits = %d, want %d", console.waits, templateSeedNoiseLimit+1)
+	}
+}
