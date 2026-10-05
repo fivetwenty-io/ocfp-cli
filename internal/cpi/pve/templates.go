@@ -423,17 +423,16 @@ func (m *ComputeManager) seedTemplate(ctx context.Context, node string, vmid int
 	// for termproxy login and apt internet egress. `cloud-init clean`, run
 	// later in this same function, wipes guest-side state only — it does
 	// not touch these PVE VM config keys. ciuser, cipassword, ipconfig0,
-	// and net0 all persist in the template VM config after convert-to-
-	// template. buildPVEDirectCloudInitConfig writes ipconfig0 (via
-	// buildPVEIPConfig, which never returns empty) and nameserver
-	// unconditionally on every OCFP clone, so no clone inherits the seed's
-	// address or resolvers. net0 and ciuser are guarded there by
-	// `req.NetworkID != ""` and `req.DefaultUsername != ""`: a clone request
-	// that omits either one inherits the template's net0 (the seed's
-	// template bridge) or ciuser instead of getting its own. searchdomain
-	// is never written by the clone path at all. cipassword also survives
-	// into the template unmodified; that pre-existing residue is out of
-	// scope here.
+	// and net0 all persist in the template VM config unless the cleanup PUT
+	// near the end of this function resets them (see templateSeedFinalParams
+	// for what it resets and why ciuser and net0 stay).
+	// buildPVEDirectCloudInitConfig writes ipconfig0 (via buildPVEIPConfig, which never returns empty) and
+	// nameserver unconditionally on every OCFP clone, so no clone inherits the
+	// seed's address or resolvers. net0 and ciuser are guarded there by
+	// `req.NetworkID != ""` and `req.DefaultUsername != ""`, and the whole
+	// call is skipped when the request carries no user-data, so a clone can
+	// still inherit the template's ciuser. searchdomain is never written by
+	// the clone path at all.
 	configPath := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
 
 	// Override net0 to use the template bridge (default vmbr1, the classic
@@ -527,19 +526,18 @@ func (m *ComputeManager) seedTemplate(ctx context.Context, node string, vmid int
 		}
 	}
 
-	// Static mode only: the VM is confirmed stopped (either by
-	// waitForVMStopped above or by stopVMAndVerify's own re-check), so
-	// reset the address-bearing keys before ProvisionTemplate converts to a
-	// template. templateSeedCleanupParams derives the delete list from
+	// The VM is confirmed stopped (either by waitForVMStopped above or by
+	// stopVMAndVerify's own re-check), so take the seed's identity back out
+	// of the config before the caller converts it to a template.
+	// templateSeedFinalParams derives the address-key delete list from
 	// seedNetParams — the same map the seed PUT above actually sent — so
 	// the cleanup never asks PVE to delete a key the seed never set. A
 	// failure here is a hard error: a template carrying a live reserved
-	// address is worse than a failed provision.
-	if m.client.config.TemplateSeedIP != "" {
-		_, err = m.client.pveClient.PutCtx(ctx, configPath, templateSeedCleanupParams(seedNetParams))
-		if err != nil {
-			return fmt.Errorf("seed cleanup PUT: %w", err)
-		}
+	// address, or the seed's throwaway password, is worse than a failed
+	// provision.
+	_, err = m.client.pveClient.PutCtx(ctx, configPath, templateSeedFinalParams(seedNetParams))
+	if err != nil {
+		return fmt.Errorf("seed cleanup PUT: %w", err)
 	}
 
 	return nil
@@ -687,6 +685,31 @@ func templateSeedCleanupParams(setParams map[string]interface{}) map[string]inte
 	if len(toDelete) > 0 {
 		params["delete"] = strings.Join(toDelete, ",")
 	}
+
+	return params
+}
+
+// templateSeedFinalParams returns the PVE PUT body that takes the seed's
+// identity out of the stopped template VM: everything templateSeedCleanupParams
+// resets for a static seed, plus the residue every seed leaves. cipassword is
+// the seed's one-shot random password. ciupgrade=0 only keeps the seed boot
+// from upgrading every package, so deleting it gives clones PVE's default
+// first-boot upgrade, as they had before the seed set it.
+//
+// ciuser and net0 are deliberately kept. A clone that skips
+// configureCloudInit, as the scale commands do, or whose request carries no
+// DefaultUsername, inherits the template's values rather than setting its
+// own, so resetting them would change which user and bridge those clones get.
+func templateSeedFinalParams(setParams map[string]interface{}) map[string]interface{} {
+	params := templateSeedCleanupParams(setParams)
+
+	toDelete := []string{}
+	if existing, ok := params["delete"].(string); ok && existing != "" {
+		toDelete = append(toDelete, existing)
+	}
+
+	toDelete = append(toDelete, "cipassword", "ciupgrade")
+	params["delete"] = strings.Join(toDelete, ",")
 
 	return params
 }

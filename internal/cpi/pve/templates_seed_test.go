@@ -181,8 +181,8 @@ func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 		t.Fatalf("seedTemplate() error = %v, want nil", err)
 	}
 
-	if len(fake.putParams) != 1 {
-		t.Fatalf("PUT calls = %d, want exactly 1 (the seed PUT; no cleanup PUT in DHCP mode): %+v", len(fake.putParams), fake.putParams)
+	if len(fake.putParams) != 2 {
+		t.Fatalf("PUT calls = %d, want exactly 2 (the seed PUT, then the post-seed cleanup PUT): %+v", len(fake.putParams), fake.putParams)
 	}
 
 	got := fake.putParams[0].Params
@@ -206,6 +206,38 @@ func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	pw, ok := got["cipassword"].(string)
 	if !ok || !strings.HasPrefix(pw, templateSeedPasswordPrefix) {
 		t.Errorf("merged seed PUT[%q] = %v, want a string with prefix %q", "cipassword", got["cipassword"], templateSeedPasswordPrefix)
+	}
+}
+
+// TestSeedTemplate_CleanupPUT_ResetsSeedResidue pins what the post-seed PUT
+// takes back out of the template: the throwaway cipassword and the seed-only
+// ciupgrade=0 are deleted. ciuser and net0 stay, because a clone that skips
+// the cloud-init config (bastion.user unset, or the scale commands) relies on
+// the template's values.
+func TestSeedTemplate_CleanupPUT_ResetsSeedResidue(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakePVEClient{}
+	fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
+	cm := newSeedTestComputeManager(fake, fakeQemu, nil)
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
+
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
+	if err != nil {
+		t.Fatalf("seedTemplate() error = %v, want nil", err)
+	}
+
+	if len(fake.putParams) != 2 {
+		t.Fatalf("PUT calls = %d, want 2 (seed PUT then cleanup PUT): %+v", len(fake.putParams), fake.putParams)
+	}
+
+	cleanup := fake.putParams[1].Params
+	if net0, ok := cleanup["net0"]; ok {
+		t.Errorf("cleanup PUT net0 = %v, want it left alone (clones that skip cloud-init config inherit it)", net0)
+	}
+
+	if cleanup["delete"] != "cipassword,ciupgrade" {
+		t.Errorf("cleanup PUT delete = %v, want %q (ciuser must stay; DHCP mode has no address keys to delete)", cleanup["delete"], "cipassword,ciupgrade")
 	}
 }
 
@@ -240,8 +272,8 @@ func TestSeedBastionTemplate_CleanupPUT_StaticMode(t *testing.T) {
 		t.Errorf("cleanup PUT ipconfig0 = %v, want %q", cleanup["ipconfig0"], "ip=dhcp")
 	}
 
-	if cleanup["delete"] != "nameserver,searchdomain" {
-		t.Errorf("cleanup PUT delete = %v, want %q (derived from what the seed set)", cleanup["delete"], "nameserver,searchdomain")
+	if cleanup["delete"] != "nameserver,searchdomain,cipassword,ciupgrade" {
+		t.Errorf("cleanup PUT delete = %v, want %q (the address keys the seed set, then the seed-only keys)", cleanup["delete"], "nameserver,searchdomain,cipassword,ciupgrade")
 	}
 }
 
@@ -674,6 +706,42 @@ func assertParsesAsBash(t *testing.T, command string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n rejected %q: %v\n%s", command, err, out)
 	}
+}
+
+// TestSeedFinalizeCommand pins what the seed runs before it shuts the VM
+// down. A template that keeps /etc/machine-id gives every clone the same
+// machine-id, and so the same DHCP client identifier and journal directory;
+// the journal would carry the build boot into every clone.
+func TestSeedFinalizeCommand(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []string{
+		"sudo cloud-init clean --logs",
+		"sudo truncate -s0 /etc/machine-id",
+		"( [ -L /var/lib/dbus/machine-id ] || sudo rm -f /var/lib/dbus/machine-id )",
+		"sudo journalctl --rotate",
+		"sudo journalctl --vacuum-time=1s",
+	} {
+		if !strings.Contains(seedFinalizeCommand, want) {
+			t.Errorf("seedFinalizeCommand missing %q: %s", want, seedFinalizeCommand)
+		}
+	}
+
+	// cloud-init clean --machine-id would delete the file rather than leave
+	// it empty, and systemd needs the empty file to treat the next boot as a
+	// first boot.
+	if strings.Contains(seedFinalizeCommand, "--machine-id") {
+		t.Errorf("seedFinalizeCommand must not use cloud-init clean --machine-id: %s", seedFinalizeCommand)
+	}
+
+	clean := strings.Index(seedFinalizeCommand, "cloud-init clean --logs")
+	machineID := strings.Index(seedFinalizeCommand, "truncate -s0 /etc/machine-id")
+
+	if clean < 0 || machineID < clean {
+		t.Errorf("machine-id must be truncated after cloud-init clean runs: %s", seedFinalizeCommand)
+	}
+
+	assertParsesAsBash(t, seedFinalizeCommand)
 }
 
 // TestSeedQuiesceCommand pins the tmpfs on /var/tmp that backs the seed's
