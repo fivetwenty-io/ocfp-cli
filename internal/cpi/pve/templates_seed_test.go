@@ -10,7 +10,7 @@ import (
 	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/qemu"
 )
 
-// fakeQemuService is a minimal qemu.Service stub for seedBastionTemplate
+// fakeQemuService is a minimal qemu.Service stub for seedTemplate
 // tests. Start and Stop return an empty UPID so waitForTask is never
 // invoked, keeping the fake independent of the tasks service; Status
 // answers from a small, test-configured sequence so waitForVMStopped
@@ -111,7 +111,7 @@ func (f *fakeQemuService) RollbackSnapshot(_ context.Context, _ string, _ int, _
 var _ qemu.Service = (*fakeQemuService)(nil)
 
 // newSeedTestComputeManager builds a ComputeManager wired to a fake PVE
-// client and a fake qemu service so seedBastionTemplate can run without any
+// client and a fake qemu service so seedTemplate can run without any
 // network I/O. cfg defaults to a DHCP-mode bloc with a non-empty
 // TemplateBridge when nil.
 func newSeedTestComputeManager(fake *fakePVEClient, fakeQemu *fakeQemuService, cfg *Config) *ComputeManager {
@@ -142,6 +142,14 @@ func canceledContext() context.Context {
 	return ctx
 }
 
+// bastionSeedSpec is the spec the seed tests pass to seedTemplate. The
+// tests replace the termproxy step through seedTemplateVMFunc, so only the
+// PUT, start, stop, and cleanup sequence around it is under test, and that
+// sequence is the same for every spec.
+func bastionSeedSpec() TemplateSpec {
+	return TemplateSpec{Name: "test-bastion-template", RequireBastionUnits: true}
+}
+
 // staticSeedConfig returns a Config with a full static template-seed
 // network identity set, shaped after the CHC lab bloc.
 func staticSeedConfig() *Config {
@@ -155,11 +163,11 @@ func staticSeedConfig() *Config {
 }
 
 // TestSeedBastionTemplate_MergedPUT_DHCPMode pins the actual backward-
-// compatibility contract end to end: the merged PUT body seedBastionTemplate
+// compatibility contract end to end: the merged PUT body seedTemplate
 // sends is byte-exact with today's four-key DHCP map, and no cleanup PUT is
 // issued at all in DHCP mode (M4 in the static-seed adversarial review —
 // TestBuildTemplateSeedNetParams alone only pinned the helper in isolation,
-// not the merged map seedBastionTemplate actually sends).
+// not the merged map seedTemplate actually sends).
 func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	t.Parallel()
 
@@ -168,9 +176,9 @@ func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	cm := newSeedTestComputeManager(fake, fakeQemu, nil)
 	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
 
-	err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err != nil {
-		t.Fatalf("seedBastionTemplate() error = %v, want nil", err)
+		t.Fatalf("seedTemplate() error = %v, want nil", err)
 	}
 
 	if len(fake.putParams) != 1 {
@@ -212,9 +220,9 @@ func TestSeedBastionTemplate_CleanupPUT_StaticMode(t *testing.T) {
 	cm := newSeedTestComputeManager(fake, fakeQemu, cfg)
 	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
 
-	err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err != nil {
-		t.Fatalf("seedBastionTemplate() error = %v, want nil", err)
+		t.Fatalf("seedTemplate() error = %v, want nil", err)
 	}
 
 	if len(fake.putParams) != 2 {
@@ -252,9 +260,9 @@ func TestSeedBastionTemplate_CleanupPUT_FiresOnBothStopBranches(t *testing.T) {
 		cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
 		cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
 
-		err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+		err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 		if err != nil {
-			t.Fatalf("seedBastionTemplate() error = %v, want nil", err)
+			t.Fatalf("seedTemplate() error = %v, want nil", err)
 		}
 
 		if fakeQemu.stopCalls != 0 {
@@ -280,9 +288,9 @@ func TestSeedBastionTemplate_CleanupPUT_FiresOnBothStopBranches(t *testing.T) {
 		// A pre-canceled context makes the first waitForVMStopped call
 		// fail immediately via ctx.Done() instead of polling for the real
 		// 120-second deadline; see canceledContext's doc comment.
-		err := cm.seedBastionTemplate(canceledContext(), "pve1", 9000)
+		err := cm.seedTemplate(canceledContext(), "pve1", 9000, bastionSeedSpec())
 		if err != nil {
-			t.Fatalf("seedBastionTemplate() error = %v, want nil", err)
+			t.Fatalf("seedTemplate() error = %v, want nil", err)
 		}
 
 		if fakeQemu.stopCalls != 1 {
@@ -297,7 +305,7 @@ func TestSeedBastionTemplate_CleanupPUT_FiresOnBothStopBranches(t *testing.T) {
 
 // TestSeedBastionTemplate_ForceStop_StillRunning_Errors covers M1 directly:
 // if the VM is still running after the force-stop task completes, the
-// cleanup PUT must never be attempted, and seedBastionTemplate must return
+// cleanup PUT must never be attempted, and seedTemplate must return
 // an error rather than silently proceeding, since PVE would park the
 // cleanup's config change in [PENDING] against a running VM and the live
 // seed address would survive into the template.
@@ -311,9 +319,9 @@ func TestSeedBastionTemplate_ForceStop_StillRunning_Errors(t *testing.T) {
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
 	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
 
-	err := cm.seedBastionTemplate(canceledContext(), "pve1", 9000)
+	err := cm.seedTemplate(canceledContext(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
-		t.Fatal("seedBastionTemplate() error = nil, want an error when the VM never reaches stopped")
+		t.Fatal("seedTemplate() error = nil, want an error when the VM never reaches stopped")
 	}
 
 	if !strings.Contains(err.Error(), "seed force stop") {
@@ -332,7 +340,7 @@ func TestSeedBastionTemplate_ForceStop_StillRunning_Errors(t *testing.T) {
 var errFakeCleanupFailed = errors.New("fake: cleanup PUT rejected")
 
 // TestSeedBastionTemplate_CleanupPUT_FailurePropagates asserts that a
-// cleanup PUT failure surfaces as an error from seedBastionTemplate, and
+// cleanup PUT failure surfaces as an error from seedTemplate, and
 // that when the subsequent deferred recovery also fails to clean up, its
 // failure is appended to, not substituted for, the original error.
 func TestSeedBastionTemplate_CleanupPUT_FailurePropagates(t *testing.T) {
@@ -356,9 +364,9 @@ func TestSeedBastionTemplate_CleanupPUT_FailurePropagates(t *testing.T) {
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
 	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
 
-	err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
-		t.Fatal("seedBastionTemplate() error = nil, want the cleanup PUT failure to propagate")
+		t.Fatal("seedTemplate() error = nil, want the cleanup PUT failure to propagate")
 	}
 
 	if !errors.Is(err, errFakeCleanupFailed) {
@@ -396,9 +404,9 @@ func TestSeedBastionTemplate_RecoveryOnSeedTemplateVMFailure(t *testing.T) {
 		return errFakeSeedTemplateVMFailed
 	}
 
-	err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
-		t.Fatal("seedBastionTemplate() error = nil, want the termproxy failure to propagate")
+		t.Fatal("seedTemplate() error = nil, want the termproxy failure to propagate")
 	}
 
 	if !errors.Is(err, errFakeSeedTemplateVMFailed) {
@@ -449,9 +457,9 @@ func TestSeedBastionTemplate_RecoveryNotArmed_BeforeSeedPUT(t *testing.T) {
 		return nil
 	}
 
-	err := cm.seedBastionTemplate(context.Background(), "pve1", 9000)
+	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
-		t.Fatal("seedBastionTemplate() error = nil, want the seed PUT failure to propagate")
+		t.Fatal("seedTemplate() error = nil, want the seed PUT failure to propagate")
 	}
 
 	if !errors.Is(err, errFakeSeedPUTFailed) {
