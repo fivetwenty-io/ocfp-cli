@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -226,6 +227,20 @@ func (m *ComputeManager) RebuildTemplate(ctx context.Context, name string) (int,
 		return 0, fmt.Errorf("%w: %s", ErrTemplateAutoProvisionUnknown, name)
 	}
 
+	// Check the seed requirements before destroying anything: a rebuild that
+	// cannot seed would otherwise cost the operator a working template.
+	if spec.needsSeed() {
+		node, nodeErr := m.client.getNode(ctx)
+		if nodeErr != nil {
+			return 0, fmt.Errorf("resolve node: %w", nodeErr)
+		}
+
+		err := m.preflightSeed(ctx, node, spec)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	existing, err := m.LookupTemplateByName(ctx, name)
 	if err != nil {
 		return 0, fmt.Errorf("pre-flight lookup: %w", err)
@@ -298,6 +313,15 @@ func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (
 		return 0, fmt.Errorf("resolve node: %w", err)
 	}
 
+	// Check what the seed needs before the image download and the VM create,
+	// so a build that cannot seed fails without leaving a stray VM behind.
+	if spec.needsSeed() {
+		err := m.preflightSeed(ctx, node, spec)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	vmid, err := m.client.nextTemplateVMID(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("allocate VMID: %w", err)
@@ -332,6 +356,43 @@ func (m *ComputeManager) buildTemplate(ctx context.Context, spec TemplateSpec) (
 	log.Infof("template %s ready (vmid %d)", name, vmid)
 
 	return vmid, nil
+}
+
+// errSeedNeedsAPIToken is returned when a template that needs a seed is built
+// without API-token auth. termproxy rejects every other form of credential.
+var errSeedNeedsAPIToken = errors.New("template seed requires API token auth (TokenID + TokenSecret)")
+
+// errSeedBridgeMissing is returned when the node has no bridge for the seed VM
+// to attach to.
+var errSeedBridgeMissing = errors.New("template bridge not found on node")
+
+// preflightSeed checks the requirements of a seed that do not depend on the
+// VM: API-token auth, which termproxy needs, and the template bridge the seed
+// VM attaches to. Running it before the image download and the VM create keeps
+// a build that cannot seed from leaving a stray VM behind.
+//
+// A bridge listing that fails does not fail the preflight. It is not proof the
+// bridge is missing, and the seed PUT reports a missing bridge on its own.
+func (m *ComputeManager) preflightSeed(ctx context.Context, node string, spec TemplateSpec) error {
+	if buildPVEAPITokenHeader(m.client.config) == "" {
+		return fmt.Errorf("%s needs a seed: %w", spec.Name, errSeedNeedsAPIToken)
+	}
+
+	bridge := m.client.config.TemplateBridge
+
+	bridges, err := (&NetworkManager{client: m.client}).listNodeBridges(ctx, node)
+	if err != nil {
+		logger.WithOperation("preflightSeed").Warnf("cannot confirm template bridge %q exists: %v", bridge, err)
+
+		return nil
+	}
+
+	if !slices.Contains(bridges, bridge) {
+		return fmt.Errorf("%s needs a seed VM on bridge %q (set provider.template_bridge to a bridge with internet egress; node %s has %v): %w",
+			spec.Name, bridge, node, bridges, errSeedBridgeMissing)
+	}
+
+	return nil
 }
 
 // seedTemplate configures the template VM for cloud-init login, starts it,
