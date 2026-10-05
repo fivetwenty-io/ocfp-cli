@@ -174,7 +174,7 @@ func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	fake := &fakePVEClient{}
 	fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
 	cm := newSeedTestComputeManager(fake, fakeQemu, nil)
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err != nil {
@@ -218,7 +218,7 @@ func TestSeedBastionTemplate_CleanupPUT_StaticMode(t *testing.T) {
 	fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
 	cfg := staticSeedConfig()
 	cm := newSeedTestComputeManager(fake, fakeQemu, cfg)
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err != nil {
@@ -258,7 +258,7 @@ func TestSeedBastionTemplate_CleanupPUT_FiresOnBothStopBranches(t *testing.T) {
 		fake := &fakePVEClient{}
 		fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
 		cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-		cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+		cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 		err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 		if err != nil {
@@ -283,7 +283,7 @@ func TestSeedBastionTemplate_CleanupPUT_FiresOnBothStopBranches(t *testing.T) {
 		// stopVMAndVerify's re-check) reports "stopped".
 		fakeQemu := &fakeQemuService{statuses: []string{"running", "stopped"}}
 		cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-		cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+		cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 		// A pre-canceled context makes the first waitForVMStopped call
 		// fail immediately via ctx.Done() instead of polling for the real
@@ -317,7 +317,7 @@ func TestSeedBastionTemplate_ForceStop_StillRunning_Errors(t *testing.T) {
 	// the post-force-stop re-check ever sees "stopped".
 	fakeQemu := &fakeQemuService{statuses: []string{"running"}}
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 	err := cm.seedTemplate(canceledContext(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
@@ -362,7 +362,7 @@ func TestSeedBastionTemplate_CleanupPUT_FailurePropagates(t *testing.T) {
 	}
 	fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error { return nil }
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error { return nil }
 
 	err := cm.seedTemplate(context.Background(), "pve1", 9000, bastionSeedSpec())
 	if err == nil {
@@ -400,7 +400,7 @@ func TestSeedBastionTemplate_RecoveryOnSeedTemplateVMFailure(t *testing.T) {
 	// force-stop it before resetting the config.
 	fakeQemu := &fakeQemuService{statuses: []string{"running", "stopped"}}
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error {
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error {
 		return errFakeSeedTemplateVMFailed
 	}
 
@@ -451,7 +451,7 @@ func TestSeedBastionTemplate_RecoveryNotArmed_BeforeSeedPUT(t *testing.T) {
 	}
 	fakeQemu := &fakeQemuService{statuses: []string{"stopped"}}
 	cm := newSeedTestComputeManager(fake, fakeQemu, staticSeedConfig())
-	cm.seedTemplateVMFunc = func(context.Context, string, int, string) error {
+	cm.seedTemplateVMFunc = func(context.Context, string, int, string, TemplateSpec) error {
 		t.Fatal("seedTemplateVMFunc must not run when the seed PUT itself failed")
 
 		return nil
@@ -586,6 +586,72 @@ func TestVMIsStopped(t *testing.T) {
 
 			if got := vmIsStopped(tc.status); got != tc.want {
 				t.Errorf("vmIsStopped(%v) = %v, want %v", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSeedTemplate_PassesSpecToSeedStep pins which seed steps each catalog
+// template asks for. The seed hook receives the spec, so the test sees the
+// step selection itself rather than only the PUT and shutdown sequence around
+// it: the plain Resolute template runs the initrd step without the bastion
+// units, the Resolute bastion runs both, and Noble is unchanged.
+func TestSeedTemplate_PassesSpecToSeedStep(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wantUnits  bool
+		wantInitrd bool
+		wantSeed   bool
+	}{
+		{name: "ubuntu-noble-template", wantUnits: false, wantInitrd: false, wantSeed: false},
+		{name: "ubuntu-noble-bastion-template", wantUnits: true, wantInitrd: false, wantSeed: true},
+		{name: "ubuntu-resolute-template", wantUnits: false, wantInitrd: true, wantSeed: true},
+		{name: "ubuntu-resolute-bastion-template", wantUnits: true, wantInitrd: true, wantSeed: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec, ok := LookupCatalogSpec(tc.name)
+			if !ok {
+				t.Fatalf("LookupCatalogSpec(%q) returned ok=false", tc.name)
+			}
+
+			var got TemplateSpec
+
+			called := false
+			cm := newSeedTestComputeManager(&fakePVEClient{}, &fakeQemuService{statuses: []string{"stopped"}}, nil)
+			cm.seedTemplateVMFunc = func(_ context.Context, _ string, _ int, _ string, s TemplateSpec) error {
+				got, called = s, true
+
+				return nil
+			}
+
+			if err := cm.seedTemplate(context.Background(), "pve1", 9000, spec); err != nil {
+				t.Fatalf("seedTemplate() error = %v, want nil", err)
+			}
+
+			if !called {
+				t.Fatal("seedTemplateVMFunc was not called")
+			}
+
+			if got.Name != tc.name {
+				t.Errorf("hook spec Name = %q, want %q", got.Name, tc.name)
+			}
+
+			if got.RequireBastionUnits != tc.wantUnits {
+				t.Errorf("hook spec RequireBastionUnits = %v, want %v", got.RequireBastionUnits, tc.wantUnits)
+			}
+
+			if got.DisableInitrdNetwork != tc.wantInitrd {
+				t.Errorf("hook spec DisableInitrdNetwork = %v, want %v", got.DisableInitrdNetwork, tc.wantInitrd)
+			}
+
+			if got.needsSeed() != tc.wantSeed {
+				t.Errorf("hook spec needsSeed() = %v, want %v", got.needsSeed(), tc.wantSeed)
 			}
 		})
 	}
