@@ -3,6 +3,7 @@ package pve
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -162,12 +163,11 @@ func staticSeedConfig() *Config {
 	}
 }
 
-// TestSeedBastionTemplate_MergedPUT_DHCPMode pins the actual backward-
-// compatibility contract end to end: the merged PUT body seedTemplate
-// sends is byte-exact with today's four-key DHCP map, and no cleanup PUT is
-// issued at all in DHCP mode (M4 in the static-seed adversarial review —
-// TestBuildTemplateSeedNetParams alone only pinned the helper in isolation,
-// not the merged map seedTemplate actually sends).
+// TestSeedBastionTemplate_MergedPUT_DHCPMode pins the seed PUT body end to
+// end in DHCP mode: the five keys the seed needs, with package upgrades
+// switched off so the seed boot cannot start an apt upgrade that fills the
+// small template disk (PVE emits package_upgrade: true unless ciupgrade is
+// 0).
 func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	t.Parallel()
 
@@ -186,13 +186,14 @@ func TestSeedBastionTemplate_MergedPUT_DHCPMode(t *testing.T) {
 	}
 
 	got := fake.putParams[0].Params
-	if len(got) != 4 {
-		t.Fatalf("merged seed PUT has %d keys, want exactly 4 (ciuser, cipassword, net0, ipconfig0): %v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("merged seed PUT has %d keys, want exactly 5 (ciuser, cipassword, net0, ciupgrade, ipconfig0): %v", len(got), got)
 	}
 
 	wantExact := map[string]interface{}{
 		"ciuser":    templateSeedCIUser,
 		"net0":      "virtio,bridge=vmbr1",
+		"ciupgrade": 0,
 		"ipconfig0": "ip=dhcp",
 	}
 
@@ -655,6 +656,49 @@ func TestSeedTemplate_PassesSpecToSeedStep(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertParsesAsBash fails when bash rejects the one-line command, so a
+// quoting slip shows up here and not as a seed failure on the serial console.
+func assertParsesAsBash(t *testing.T, command string) {
+	t.Helper()
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+
+	cmd := exec.Command(bash, "-n")
+	cmd.Stdin = strings.NewReader(command)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bash -n rejected %q: %v\n%s", command, err, out)
+	}
+}
+
+// TestSeedQuiesceCommand pins the tmpfs on /var/tmp that backs the seed's
+// apt and dpkg work. The template disk is only 3.5 GiB and dracut stages in
+// /var/tmp, so a package upgrade there fills the root filesystem.
+func TestSeedQuiesceCommand(t *testing.T) {
+	t.Parallel()
+
+	const mount = "sudo mount -t tmpfs -o mode=1777 tmpfs /var/tmp"
+
+	// The group keeps "a || b" from binding into the surrounding && chain.
+	const guarded = "( mountpoint -q /var/tmp || " + mount + " )"
+
+	if !strings.Contains(seedQuiesceCommand, guarded) {
+		t.Fatalf("seedQuiesceCommand must mount /var/tmp as a tmpfs unless it is already a mount point, as %q: %s", guarded, seedQuiesceCommand)
+	}
+
+	mountAt := strings.Index(seedQuiesceCommand, guarded)
+	dpkgAt := strings.Index(seedQuiesceCommand, "dpkg --configure -a")
+
+	if dpkgAt < 0 || mountAt > dpkgAt {
+		t.Errorf("the /var/tmp tmpfs must be mounted before dpkg --configure -a runs: %s", seedQuiesceCommand)
+	}
+
+	assertParsesAsBash(t, seedQuiesceCommand)
 }
 
 func seedPreflightManager(cfg *Config, fake *fakePVEClient) *ComputeManager {

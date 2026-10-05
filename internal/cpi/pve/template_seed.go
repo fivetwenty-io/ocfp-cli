@@ -61,6 +61,25 @@ var (
 	anyPromptRe   = regexp.MustCompile(`(?:login:|Password:|[\$#])\s*$`)
 )
 
+// seedQuiesceCommand stops the background apt units, waits for the dpkg and
+// apt locks, and heals any interrupted dpkg state. seedPrepare runs it as one
+// shell line.
+//
+// The /var/tmp tmpfs is a backstop. The template disk is only as large as the
+// cloud image (3.5 GiB), and dpkg triggers that rebuild an initramfs, dracut
+// included, stage their work in /var/tmp on the root filesystem. With the
+// tmpfs in place a heavy apt run uses RAM instead and cannot fill the disk.
+// The tmpfs is discarded when the VM shuts down, and the mount point check
+// makes a second run, or a template that already mounts /var/tmp, harmless.
+// The parentheses keep the || from binding into the && chain around it.
+var seedQuiesceCommand = strings.Join([]string{
+	"sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
+	"sudo systemctl kill --kill-who=all apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
+	"for _i in $(seq 1 90); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || break; sleep 2; done",
+	"( mountpoint -q /var/tmp || sudo mount -t tmpfs -o mode=1777 tmpfs /var/tmp )",
+	"sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+}, " && ")
+
 // seedConsole is the part of TermproxySession that seedLogin drives, so the
 // login sequence can run against a scripted console in tests.
 type seedConsole interface {
@@ -280,13 +299,7 @@ func seedPrepare(sess *TermproxySession) error {
 	// background apt units, kill any in-flight run, wait for the dpkg/apt
 	// locks to release, then heal any interrupted state with
 	// `dpkg --configure -a` BEFORE we touch apt ourselves.
-	quiesce := strings.Join([]string{
-		"sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
-		"sudo systemctl kill --kill-who=all apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true",
-		"for _i in $(seq 1 90); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || break; sleep 2; done",
-		"sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
-	}, " && ")
-	if err := runShell(sess, quiesce, templateSeedAptTimeout); err != nil {
+	if err := runShell(sess, seedQuiesceCommand, templateSeedAptTimeout); err != nil {
 		return fmt.Errorf("apt quiesce/heal: %w", err)
 	}
 
