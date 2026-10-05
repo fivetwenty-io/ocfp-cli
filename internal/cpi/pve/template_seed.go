@@ -80,6 +80,27 @@ var seedQuiesceCommand = strings.Join([]string{
 	"sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
 }, " && ")
 
+// seedFinalizeCommand is the last shell line of the seed, run just before the
+// shutdown. It rotates and vacuums the journal so the build boot does not ship
+// in every clone, runs cloud-init clean so clones re-run cloud-init with their
+// own config, and then empties /etc/machine-id.
+//
+// An empty /etc/machine-id, rather than a missing one, is what makes systemd
+// treat the next boot as a first boot and generate a fresh id. Without it
+// every clone shares the template's machine-id, and with it the DHCP client
+// identifier and the journal directory name. cloud-init clean --machine-id
+// is deliberately not used because it removes the file instead of emptying it.
+// /var/lib/dbus/machine-id is removed only when it is a copy; on Ubuntu it is
+// a symlink to /etc/machine-id, and removing that would leave dbus without it.
+// The machine-id steps run last so nothing after them reads the file.
+var seedFinalizeCommand = strings.Join([]string{
+	"sudo journalctl --rotate",
+	"sudo journalctl --vacuum-time=1s",
+	"sudo cloud-init clean --logs",
+	"sudo truncate -s0 /etc/machine-id",
+	"( [ -L /var/lib/dbus/machine-id ] || sudo rm -f /var/lib/dbus/machine-id )",
+}, " && ")
+
 // seedConsole is the part of TermproxySession that seedLogin drives, so the
 // login sequence can run against a scripted console in tests.
 type seedConsole interface {
@@ -364,13 +385,14 @@ func seedDisableInitrdNetwork(sess *TermproxySession) error {
 	return nil
 }
 
-// seedFinalize runs cloud-init clean (so cloned VMs re-run cloud-init with
-// their own per-VM config) and shuts the VM down. We do NOT wait for the
+// seedFinalize runs seedFinalizeCommand (journal vacuum, cloud-init clean, and
+// machine-id reset, so cloned VMs start clean and re-run cloud-init with their
+// own per-VM config) and shuts the VM down. We do NOT wait for the
 // shell prompt after shutdown because the session dies as soon as systemd
 // stops the getty.
 func seedFinalize(sess *TermproxySession) error {
-	if err := runShell(sess, "sudo cloud-init clean --logs", templateSeedShellTimeout); err != nil {
-		return fmt.Errorf("cloud-init clean: %w", err)
+	if err := runShell(sess, seedFinalizeCommand, templateSeedShellTimeout); err != nil {
+		return fmt.Errorf("finalize template state: %w", err)
 	}
 
 	// Fire-and-forget shutdown. ExpectRegex will see connection close and
