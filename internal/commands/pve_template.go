@@ -113,9 +113,12 @@ func NewPVETemplateProvisionCmd() *cobra.Command {
 		Short: "Build a PVE template from the OCFP catalog",
 		Long: `Build one of OCFP's cloud-image templates on the bloc's PVE cluster.
 
-The build downloads the release's cloud image, creates a VM from it, and for
-bastion variants boots that VM once over the serial console to seed the OCFP
-firstboot and watchdog units before converting it to a template.
+The build downloads the release's cloud image and creates a VM from it. For
+bastion variants and for Resolute images, it then boots that VM once over the
+serial console to seed it before converting it to a template. A bastion seed
+installs the OCFP firstboot and watchdog units, and a Resolute seed rebuilds
+the initramfs without network modules, so clones come up on their static
+address rather than a DHCP lease.
 
 The command is idempotent: a template that already exists is reported and
 left alone. Pass --rebuild to destroy it and build it again, which is what
@@ -124,7 +127,7 @@ are baked in when the template is seeded and reach no new bastion until it is
 rebuilt. Rebuilding cannot harm the guests already cloned from the template,
 because OCFP clones full rather than linked.
 
-A failed bastion seed deliberately leaves the VM stopped rather than
+A failed seed deliberately leaves the VM stopped rather than
 destroying it, so its serial console stays available for diagnosis.`,
 		Example: `  ocfp pve template list
   ocfp pve template provision ubuntu-resolute-template --bloc my-bloc
