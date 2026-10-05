@@ -181,7 +181,7 @@ func runBootstrap(cmd *cobra.Command, _args []string) error {
 	if blocsFlag == "" || blocsFlag == string(KeywordAll) {
 		// Run for all blocs in the config file
 		// Fallback to single bloc via --bloc if config has no blocs
-		err := runBootstrapForSelection(configFile, nil)
+		err := runBootstrapForSelection(cmd.Context(), configFile, nil)
 		if err != nil {
 			return err
 		}
@@ -198,7 +198,7 @@ func runBootstrap(cmd *cobra.Command, _args []string) error {
 		}
 	}
 
-	err := runBootstrapForSelection(configFile, sel)
+	err := runBootstrapForSelection(cmd.Context(), configFile, sel)
 	if err != nil {
 		return err
 	}
@@ -206,9 +206,9 @@ func runBootstrap(cmd *cobra.Command, _args []string) error {
 	return nil
 }
 
-func runBootstrapForSelection(configFile string, selected []string) error {
+func runBootstrapForSelection(ctx context.Context, configFile string, selected []string) error {
 	if singleBloc := getSingleBlocIfNoSelection(selected); singleBloc != "" {
-		return runBootstrapForBloc(configFile, singleBloc)
+		return runBootstrapForBloc(ctx, configFile, singleBloc)
 	}
 
 	configData, err := loadConfigData(configFile)
@@ -217,7 +217,7 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 	}
 
 	if len(configData.Blocs) == 0 {
-		return handleNoBlocsInConfig(configFile)
+		return handleNoBlocsInConfig(ctx, configFile)
 	}
 
 	toRun, err := determineBlocsToRun(selected, configData.Blocs)
@@ -225,7 +225,7 @@ func runBootstrapForSelection(configFile string, selected []string) error {
 		return err
 	}
 
-	return runBootstrapForBlocs(configFile, toRun)
+	return runBootstrapForBlocs(ctx, configFile, toRun)
 }
 
 // getSingleBlocIfNoSelection returns single bloc name if no selection provided.
@@ -259,13 +259,13 @@ func loadConfigData(configFile string) (*struct {
 }
 
 // handleNoBlocsInConfig handles the case when no blocs are defined in config.
-func handleNoBlocsInConfig(configFile string) error {
+func handleNoBlocsInConfig(ctx context.Context, configFile string) error {
 	single := viper.GetString("bloc")
 	if single == "" {
 		return ErrNoBlocsFoundInConfigAndBlocNotProvided
 	}
 
-	return runBootstrapForBloc(configFile, single)
+	return runBootstrapForBloc(ctx, configFile, single)
 }
 
 // determineBlocsToRun determines which blocs should be run based on selection.
@@ -311,9 +311,14 @@ func filterSelectedBlocs(selected []string, availableBlocs map[string]interface{
 }
 
 // runBootstrapForBlocs runs bootstrap for multiple blocs.
-func runBootstrapForBlocs(configFile string, toRun []string) error {
+func runBootstrapForBlocs(ctx context.Context, configFile string, toRun []string) error {
 	for _, name := range toRun {
-		err := runBootstrapForBloc(configFile, name)
+		err := ctx.Err()
+		if err != nil {
+			return fmt.Errorf("bootstrap interrupted before bloc %s: %w", name, err)
+		}
+
+		err = runBootstrapForBloc(ctx, configFile, name)
 		if err != nil {
 			return err
 		}
@@ -322,7 +327,7 @@ func runBootstrapForBlocs(configFile string, toRun []string) error {
 	return nil
 }
 
-func runBootstrapForBloc(configFile, blocName string) error {
+func runBootstrapForBloc(ctx context.Context, configFile, blocName string) error {
 	if blocName == "" {
 		return ErrBlocIsRequired
 	}
@@ -346,19 +351,21 @@ func runBootstrapForBloc(configFile, blocName string) error {
 
 	providerConfig := buildProviderConfig(cfg, region)
 
-	provider, err := createProvider(iaas, providerConfig)
+	provider, err := createProvider(ctx, iaas, providerConfig)
 	if err != nil {
 		return err
 	}
 
-	defer func() { _ = provider.Cleanup(context.Background()) }()
+	// Cleanup must still run after an interrupt, so it keeps the context's
+	// values but not its cancellation.
+	defer func() { _ = provider.Cleanup(context.WithoutCancel(ctx)) }()
 
 	stateManager, err := createStateManager(blocName)
 	if err != nil {
 		return err
 	}
 
-	err = executeBootstrap(cfg, provider, stateManager, blocName, iaas, region)
+	err = executeBootstrap(ctx, cfg, provider, stateManager, blocName, iaas, region)
 	if err != nil {
 		return err
 	}
@@ -566,8 +573,8 @@ func addAPIEndpointConfig(providerConfig map[string]interface{}, cfg *config.Con
 // createProvider initializes the cloud provider
 //
 //nolint:ireturn // Returns interface by design for provider abstraction
-func createProvider(iaas string, providerConfig map[string]interface{}) (cpi.Provider, error) {
-	provider, err := cpi.CreateProvider(context.Background(), iaas, providerConfig)
+func createProvider(ctx context.Context, iaas string, providerConfig map[string]interface{}) (cpi.Provider, error) {
+	provider, err := cpi.CreateProvider(ctx, iaas, providerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
@@ -607,7 +614,7 @@ func artifactsStepInScope(o *bootstrap.Options) bool {
 }
 
 // executeBootstrap performs the actual bootstrap execution.
-func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, blocName, iaas, region string) error {
+func executeBootstrap(ctx context.Context, cfg *config.Config, provider cpi.Provider, stateManager *state.Manager, blocName, iaas, region string) error {
 	// Load state for the bloc
 	_, err := stateManager.Load(blocName)
 	if err != nil {
@@ -662,8 +669,6 @@ func executeBootstrap(cfg *config.Config, provider cpi.Provider, stateManager *s
 	} else {
 		logger.Debugf("vault unavailable for bootstrap auto-write: %v", vaultErr)
 	}
-
-	ctx := context.Background()
 
 	err = bootstrapManager.Execute(ctx)
 	if err != nil {
