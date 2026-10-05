@@ -656,3 +656,152 @@ func TestSeedTemplate_PassesSpecToSeedStep(t *testing.T) {
 		})
 	}
 }
+
+func seedPreflightManager(cfg *Config, fake *fakePVEClient) *ComputeManager {
+	return &ComputeManager{client: &Client{config: cfg, pveClient: fake, qemuService: &fakeQemuService{}}}
+}
+
+func preflightConfig() *Config {
+	return &Config{
+		Node:           "pve1",
+		DefaultStorage: "local-lvm",
+		ISOStorage:     "local",
+		TemplateBridge: "vmbr1",
+		DefaultBridge:  "vmbr0",
+		TokenID:        "root@pam!ocfp",
+		TokenSecret:    "secret",
+	}
+}
+
+func resoluteSpec(t *testing.T) TemplateSpec {
+	t.Helper()
+
+	spec, ok := LookupCatalogSpec("ubuntu-resolute-template")
+	if !ok {
+		t.Fatal("LookupCatalogSpec(ubuntu-resolute-template) returned ok=false")
+	}
+
+	return spec
+}
+
+// TestBuildTemplate_Preflight_MissingToken pins that a template that needs a
+// seed fails on missing API-token auth before anything is downloaded or
+// created, so the failed attempt leaves no VM behind.
+func TestBuildTemplate_Preflight_MissingToken(t *testing.T) {
+	t.Parallel()
+
+	cfg := preflightConfig()
+	cfg.TokenID, cfg.TokenSecret = "", ""
+	fake := &fakePVEClient{}
+	cm := seedPreflightManager(cfg, fake)
+
+	_, err := cm.buildTemplate(context.Background(), resoluteSpec(t))
+	if !errors.Is(err, errSeedNeedsAPIToken) {
+		t.Fatalf("buildTemplate() error = %v, want errSeedNeedsAPIToken", err)
+	}
+
+	if fake.getCalls != 0 || fake.postCalls != 0 || fake.putCalls != 0 {
+		t.Errorf("API calls before the preflight failure: get=%d post=%d put=%d, want none", fake.getCalls, fake.postCalls, fake.putCalls)
+	}
+}
+
+// TestBuildTemplate_Preflight_MissingBridge pins that a template bridge the
+// node does not have is reported by name before the image download.
+func TestBuildTemplate_Preflight_MissingBridge(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakePVEClient{getResponses: map[string]interface{}{
+		"/nodes/pve1/network?type=any_bridge": []interface{}{
+			map[string]interface{}{"iface": "vmbr0"},
+		},
+	}}
+	cm := seedPreflightManager(preflightConfig(), fake)
+
+	_, err := cm.buildTemplate(context.Background(), resoluteSpec(t))
+	if !errors.Is(err, errSeedBridgeMissing) {
+		t.Fatalf("buildTemplate() error = %v, want errSeedBridgeMissing", err)
+	}
+
+	if !strings.Contains(err.Error(), "vmbr1") {
+		t.Errorf("error = %v, want it to name the missing bridge vmbr1", err)
+	}
+
+	if fake.getCalls != 1 || fake.postCalls != 0 {
+		t.Errorf("API calls = get %d, post %d, want only the one bridge listing", fake.getCalls, fake.postCalls)
+	}
+}
+
+// TestBuildTemplate_Preflight_PassesThrough pins that the preflight does not
+// block a build it cannot fault. A bridge listing that fails is not proof the
+// bridge is missing, and a template that needs no seed skips the check; both
+// proceed to the VMID allocation, which the bare fake rejects.
+func TestBuildTemplate_Preflight_PassesThrough(t *testing.T) {
+	t.Parallel()
+
+	noble, ok := LookupCatalogSpec("ubuntu-noble-template")
+	if !ok {
+		t.Fatal("LookupCatalogSpec(ubuntu-noble-template) returned ok=false")
+	}
+
+	tests := []struct {
+		name string
+		cfg  func() *Config
+		spec TemplateSpec
+		fake *fakePVEClient
+	}{
+		{
+			name: "bridge present",
+			cfg:  preflightConfig,
+			spec: resoluteSpec(t),
+			fake: &fakePVEClient{getResponses: map[string]interface{}{
+				"/nodes/pve1/network?type=any_bridge": []interface{}{map[string]interface{}{"iface": "vmbr1"}},
+			}},
+		},
+		{name: "bridge listing fails", cfg: preflightConfig, spec: resoluteSpec(t), fake: &fakePVEClient{}},
+		{
+			name: "noble without a seed needs no token",
+			cfg: func() *Config {
+				cfg := preflightConfig()
+				cfg.TokenID, cfg.TokenSecret = "", ""
+
+				return cfg
+			},
+			spec: noble,
+			fake: &fakePVEClient{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cm := seedPreflightManager(tc.cfg(), tc.fake)
+
+			_, err := cm.buildTemplate(context.Background(), tc.spec)
+			if err == nil || !strings.Contains(err.Error(), "allocate VMID") {
+				t.Fatalf("buildTemplate() error = %v, want it to get past the preflight to %q", err, "allocate VMID")
+			}
+		})
+	}
+}
+
+// TestRebuildTemplate_Preflight_RunsBeforeDestroy pins that a rebuild checks
+// the seed requirements before it destroys the existing template. Otherwise a
+// missing token would cost the operator a working template.
+func TestRebuildTemplate_Preflight_RunsBeforeDestroy(t *testing.T) {
+	t.Parallel()
+
+	cfg := preflightConfig()
+	cfg.TokenID, cfg.TokenSecret = "", ""
+	fake := &fakePVEClient{}
+	cm := seedPreflightManager(cfg, fake)
+
+	_, err := cm.RebuildTemplate(context.Background(), "ubuntu-resolute-template")
+	if !errors.Is(err, errSeedNeedsAPIToken) {
+		t.Fatalf("RebuildTemplate() error = %v, want errSeedNeedsAPIToken", err)
+	}
+
+	if fake.deleteCalls != 0 || fake.getCalls != 0 {
+		t.Errorf("API calls before the preflight failure: get=%d delete=%d, want none", fake.getCalls, fake.deleteCalls)
+	}
+}
