@@ -183,7 +183,7 @@ func buildArtifactsContext(parent context.Context, blocName string) (*artifactsC
 		return nil, nil, fmt.Errorf("resolving provider: %w", err)
 	}
 
-	provider, err := createProvider(iaas, buildProviderConfig(cfg, region))
+	provider, err := createProvider(parent, iaas, buildProviderConfig(cfg, region))
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating provider: %w", err)
 	}
