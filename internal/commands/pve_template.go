@@ -124,8 +124,9 @@ The command is idempotent: a template that already exists is reported and
 left alone. Pass --rebuild to destroy it and build it again, which is what
 you want after the units a bastion template carries have changed, since those
 are baked in when the template is seeded and reach no new bastion until it is
-rebuilt. Rebuilding cannot harm the guests already cloned from the template,
-because OCFP clones full rather than linked.
+rebuilt. Resolute templates built before this release keep the DHCP
+initramfs and need --rebuild too. Rebuilding cannot harm the guests already
+cloned from the template, because OCFP clones full rather than linked.
 
 A failed seed deliberately leaves the VM stopped rather than
 destroying it, so its serial console stays available for diagnosis.`,
