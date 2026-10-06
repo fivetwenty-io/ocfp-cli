@@ -224,6 +224,9 @@ func finishInceptionVault(
 		if !inceptionKeysUsable(paths) {
 			log.Errorw("The new inception vault's keys were not both saved; it cannot be reopened after it stops",
 				"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
+
+			return fmt.Errorf("%w: the vault is still running, and its full keys are in the vault log at %s",
+				ErrInceptionKeysNotSaved, paths["logFile"])
 		}
 	}
 
