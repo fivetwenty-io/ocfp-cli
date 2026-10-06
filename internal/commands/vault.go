@@ -58,8 +58,6 @@ var (
 	// ErrSafeNotFound indicates the safe CLI is not installed.
 	ErrSafeNotFound = errors.New("'safe' command not found - please install safe CLI")
 
-	// ErrVaultNotFound indicates the vault CLI is not installed.
-	ErrVaultNotFound = errors.New("'vault' command not found - please install vault")
 	// ErrVaultNotReady indicates vault did not become ready within the timeout period.
 	ErrVaultNotReady = errors.New("vault did not become ready within timeout")
 	// ErrVaultStartupError indicates a vault startup error was detected in output.
@@ -446,7 +444,7 @@ func findInceptionCommand(name string) (string, bool) {
 	for _, dir := range inceptionCommandFallbackDirs {
 		explicitPath := filepath.Join(dir, name)
 
-		_, statErr := os.Stat(explicitPath)
+		_, statErr := os.Stat(explicitPath) // #nosec G703 -- dir is a fixed fallback and name a fixed tool or a validated engine name
 		if statErr == nil {
 			return explicitPath, true
 		}
@@ -456,28 +454,35 @@ func findInceptionCommand(name string) (string, bool) {
 }
 
 // checkVaultInceptionPrerequisites verifies required commands are available,
-// and that safe is new enough to run a raft-backed inception vault.
-func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogger) error {
+// that safe is new enough to run a raft-backed inception vault, and which
+// engine safe will run. Either engine will do.
+func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogger) (inceptionEngine, error) {
 	requiredCommands := map[string]error{
-		"safe":  ErrSafeNotFound,
-		"vault": ErrVaultNotFound,
-		"tmux":  ErrTmuxNotFound,
+		"safe": ErrSafeNotFound,
+		"tmux": ErrTmuxNotFound,
 	}
 
 	for cmd, cmdErr := range requiredCommands {
 		cmdPath, found := findInceptionCommand(cmd)
 		if !found {
-			return cmdErr
+			return inceptionEngine{}, cmdErr
 		}
 
 		log.Infow("Found required command", "command", cmd, "path", cmdPath)
 	}
 
+	engine, err := resolveInceptionEngine()
+	if err != nil {
+		return inceptionEngine{}, err
+	}
+
+	log.Infow("Found vault engine", "engine", engine.name, "path", engine.path)
+
 	safePath, _ := findInceptionCommand("safe")
 
-	err := checkSafeCompatibility(ctx, safePath)
+	err = checkSafeCompatibility(ctx, safePath)
 	if err != nil {
-		return err
+		return inceptionEngine{}, err
 	}
 
 	// Advisory: script command for non-PTY SSH fallback
@@ -486,7 +491,7 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 		log.Warn("script command not found — tmux may fail in non-PTY SSH sessions")
 	}
 
-	return nil
+	return engine, nil
 }
 
 // isVaultAlreadyRunning checks if the inception vault is already running and healthy.
@@ -1146,7 +1151,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	err = checkVaultInceptionPrerequisites(context.TODO(), log)
+	_, err = checkVaultInceptionPrerequisites(context.TODO(), log)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
