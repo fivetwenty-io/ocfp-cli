@@ -23,7 +23,7 @@ func readyTestPaths(t *testing.T) map[string]string {
 }
 
 func paneCommand(paths map[string]string) string {
-	return "tmux capture-pane -t " + paths["tmuxSession"] + " -p -S -200"
+	return "tmux capture-pane -t " + paths["tmuxSession"] + " -p -J -S -200"
 }
 
 func TestWaitForVaultReady_NowTargetingIsReady(t *testing.T) {
