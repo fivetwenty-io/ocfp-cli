@@ -7,9 +7,8 @@ import (
 )
 
 // genesisWorkDir must prefer an explicit DEPLOYMENTS_DIR over any detected
-// layout: genesis @env:type addressing only resolves from inside the
-// deployments repository, and the override is the operator's word on where
-// that repository lives.
+// layout: the override is the operator's word on where the deployment
+// repositories live.
 func TestGenesisWorkDir_DeploymentsDirOverride(t *testing.T) {
 	t.Setenv("DEPLOYMENTS_DIR", "/custom/deployments")
 

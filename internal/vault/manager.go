@@ -36,6 +36,7 @@ const (
 var (
 	ErrValidationFailed           = errors.New("vault validation failed")
 	ErrEnvironmentUpdate          = errors.New("environment update failed")
+	ErrNoGenesisRepos             = errors.New("no genesis deployment repositories found")
 	ErrPortInUse                  = errors.New("port is still in use")
 	ErrHomeNotSet                 = errors.New("HOME environment variable not set")
 	ErrInvalidPathFormat          = errors.New("invalid path format")
@@ -61,19 +62,6 @@ type Manager struct {
 	blocName  string
 	startTime time.Time
 	logger    *zap.SugaredLogger
-}
-
-// environmentUpdate represents a successfully updated environment.
-type environmentUpdate struct {
-	Kit    string
-	Target string
-}
-
-// environmentFailure represents a failed environment update.
-type environmentFailure struct {
-	Kit    string
-	Target string
-	Error  string
 }
 
 // TreeNode represents a node in the vault hierarchy.
@@ -1058,69 +1046,136 @@ func (m *Manager) decommissionInception(inceptionName string) error {
 	return nil
 }
 
-// updateEnvironmentSecrets updates environment secrets-providers configuration.
-// This matches the Perl implementation in OCFP::Vault::Manager::update_environment_secrets_providers.
+// updateEnvironmentSecrets points every genesis deployment repository at the
+// bloc's production vault.
+//
+// It runs after the inception vault is decommissioned, so it must not depend
+// on any live vault. `genesis secrets-provider <alias>` only rewrites the
+// repo's .genesis/config, which is why each repo is found on the filesystem
+// rather than through `genesis envs`: that command needs the repo's current
+// provider, skips every repo whose vault is gone, and still exits 0.
 func (m *Manager) updateEnvironmentSecrets() error {
 	m.logger.Info("Updating environment secrets-providers")
 
-	environments, err := m.getGenesisEnvironments()
+	vaultName := m.blocName + "-mgmt"
+
+	searchDir, repos, err := findGenesisRepos()
 	if err != nil {
-		m.logger.Warnw("Failed to get Genesis environments", "error", err)
-
-		return fmt.Errorf("failed to get Genesis environments: %w", err)
+		return err
 	}
 
-	if len(environments) == 0 {
-		m.logger.Warn("No deployed environments found to update")
+	if len(repos) == 0 {
+		m.logger.Errorw("No genesis deployment repositories found", "dir", searchDir)
+		m.logger.Warnf("Run `genesis secrets-provider %s` inside each deployment repository", vaultName)
 
-		return nil
+		return fmt.Errorf("%w in %s", ErrNoGenesisRepos, searchDir)
 	}
 
-	m.logger.Infow("Found environments to update", "count", len(environments))
+	m.logger.Infow("Found genesis deployment repositories", "dir", searchDir, "count", len(repos))
 
-	updatedEnvs, failedEnvs := m.updateAllEnvironments(environments)
-	m.reportEnvironmentUpdateResults(updatedEnvs, failedEnvs)
+	var failed []string
 
-	if len(failedEnvs) > 0 {
-		return fmt.Errorf("%w: failed to update %d environments", ErrEnvironmentUpdate, len(failedEnvs))
+	for _, repo := range repos {
+		err := m.setRepoSecretsProvider(repo, vaultName)
+		if err != nil {
+			failed = append(failed, repo)
+		}
 	}
 
-	m.logger.Info("Environment secrets-providers updated successfully")
+	if len(failed) > 0 {
+		m.logger.Warn("Update these repositories manually:")
+
+		for _, repo := range failed {
+			m.logger.Warnf("  cd %s && genesis secrets-provider %s", repo, vaultName)
+		}
+
+		return fmt.Errorf("%w: failed to update %d of %d repositories",
+			ErrEnvironmentUpdate, len(failed), len(repos))
+	}
+
+	m.logger.Infow("Environment secrets-providers updated successfully", "count", len(repos))
 
 	return nil
 }
 
-// updateAllEnvironments updates secrets providers for all environments.
-func (m *Manager) updateAllEnvironments(environments []parsedGenesisEnv) ([]environmentUpdate, []environmentFailure) {
-	var (
-		updatedEnvs []environmentUpdate
-		failedEnvs  []environmentFailure
-	)
+// setRepoSecretsProvider runs `genesis secrets-provider` inside one
+// deployment repository, logging the outcome and genesis's output on failure.
+func (m *Manager) setRepoSecretsProvider(repo, vaultName string) error {
+	m.logger.Infow("Running Genesis command",
+		"dir", repo, "command", "genesis secrets-provider "+vaultName)
 
-	vaultName := m.blocName + "-mgmt"
+	ctx := context.Background()
+	// #nosec G204 - vaultName is constructed from validated internal state
+	cmd := exec.CommandContext(ctx, "genesis", "secrets-provider", vaultName)
+	cmd.Dir = repo
 
-	for _, env := range environments {
-		targets := m.getTargetTypesForKit(env.Kit)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		m.logger.Errorw("✗ Failed to update", "repo", repo, "error", err, "output", string(output))
 
-		for _, target := range targets {
-			updated, failed := m.updateEnvironmentTarget(env.Kit, target, vaultName)
-			if failed != nil {
-				failedEnvs = append(failedEnvs, *failed)
-			} else if updated != nil {
-				updatedEnvs = append(updatedEnvs, *updated)
-			}
+		return fmt.Errorf("genesis secrets-provider in %s: %w", repo, err)
+	}
+
+	m.logger.Infow("✓ Successfully updated", "repo", repo)
+
+	return nil
+}
+
+// findGenesisRepos returns the directory it searched and the genesis
+// deployment repositories found there, sorted by name. The search starts at
+// genesisWorkDir, or the current directory when that is unset. A directory
+// holding .genesis/config is itself the only repository; otherwise each
+// immediate subdirectory holding one is a repository.
+func findGenesisRepos() (string, []string, error) {
+	dir := genesisWorkDir()
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to determine current directory: %w", err)
+		}
+
+		dir = cwd
+	}
+
+	if isGenesisRepo(dir) {
+		return dir, []string{dir}, nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return dir, nil, fmt.Errorf("failed to read deployments directory %s: %w", dir, err)
+	}
+
+	var repos []string
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		repo := filepath.Join(dir, entry.Name())
+		if isGenesisRepo(repo) {
+			repos = append(repos, repo)
 		}
 	}
 
-	return updatedEnvs, failedEnvs
+	sort.Strings(repos)
+
+	return dir, repos, nil
 }
 
-// genesisWorkDir returns the directory genesis commands must run from.
-// Genesis resolves @env:type addressing from the deployments repository it
-// is invoked in, so an arbitrary caller cwd breaks it. Prefer an explicit
-// DEPLOYMENTS_DIR, then the standard ~/ocfp/deployments layout; return ""
-// (inherit the caller cwd) when neither exists so an operator running from
-// inside a differently-located repository keeps working.
+// isGenesisRepo reports whether dir holds a regular .genesis/config file.
+func isGenesisRepo(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".genesis", "config"))
+
+	return err == nil && info.Mode().IsRegular()
+}
+
+// genesisWorkDir returns the directory that holds the genesis deployment
+// repositories. Prefer an explicit DEPLOYMENTS_DIR, then the standard
+// ~/ocfp/deployments layout; return "" (use the caller cwd) when neither
+// exists so an operator running from inside a differently-located
+// repository keeps working.
 func genesisWorkDir() string {
 	if dir := os.Getenv("DEPLOYMENTS_DIR"); dir != "" {
 		return dir
@@ -1137,61 +1192,6 @@ func genesisWorkDir() string {
 	}
 
 	return ""
-}
-
-// updateEnvironmentTarget updates secrets provider for a single environment target.
-func (m *Manager) updateEnvironmentTarget(kit, target, vaultName string) (*environmentUpdate, *environmentFailure) {
-	genesisEnv := fmt.Sprintf("@%s-%s:%s", m.blocName, target, kit)
-
-	m.logger.Infow("Running Genesis command",
-		"command", fmt.Sprintf("genesis %s secrets-provider %s", genesisEnv, vaultName))
-
-	ctx := context.Background()
-	// #nosec G204 - genesis, genesisEnv and vaultName are constructed from validated internal state
-	cmd := exec.CommandContext(ctx, "genesis", genesisEnv, "secrets-provider", vaultName)
-	cmd.Dir = genesisWorkDir()
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		m.logger.Errorw("✗ Failed to update", "env", genesisEnv, "error", string(output))
-
-		return nil, &environmentFailure{
-			Kit:    kit,
-			Target: target,
-			Error:  string(output),
-		}
-	}
-
-	m.logger.Infow("✓ Successfully updated", "env", genesisEnv)
-
-	return &environmentUpdate{
-		Kit:    kit,
-		Target: target,
-	}, nil
-}
-
-// reportEnvironmentUpdateResults logs the results of environment updates.
-func (m *Manager) reportEnvironmentUpdateResults(updatedEnvs []environmentUpdate, failedEnvs []environmentFailure) {
-	if len(updatedEnvs) > 0 {
-		m.logger.Infow("Successfully updated environments", "count", len(updatedEnvs))
-
-		for _, env := range updatedEnvs {
-			m.logger.Infow("Updated", "env", fmt.Sprintf("@%s:%s", env.Target, env.Kit))
-		}
-	}
-
-	if len(failedEnvs) > 0 {
-		m.logger.Errorw("Failed to update environments", "count", len(failedEnvs))
-
-		for _, failed := range failedEnvs {
-			m.logger.Errorw("Failed", "env", fmt.Sprintf("@%s:%s", failed.Target, failed.Kit))
-		}
-
-		m.logger.Warn("\nYou may need to manually update these environments using:")
-		m.logger.Warn("  genesis @type:kit secrets-provider <vault-name>")
-		m.logger.Warn("\nFor example:")
-		m.logger.Warnf("  genesis @mgmt:bosh secrets-provider %s-mgmt", m.blocName)
-	}
 }
 
 // createVaultProvider creates a provider-specific vault implementation.
@@ -1564,173 +1564,6 @@ func (m *Manager) logCleanupResults(removedFiles int) {
 	}
 }
 
-// getTargetTypesForKit determines which target types (mgmt/ocf) apply to a given kit.
-// This matches the Perl implementation in OCFP::Vault::Manager::update_environment_secrets_providers.
-func (m *Manager) getTargetTypesForKit(kit string) []string {
-	// mgmt-only kits
-	mgmtKits := map[string]bool{
-		"concourse": true,
-		"doomsday":  true,
-		"jumpbox":   true,
-		"shield":    true,
-		"vault":     true,
-		"bosh":      true,
-	}
-
-	// Kits that support both mgmt and ocf
-	bothKits := map[string]bool{
-		"prometheus": true,
-	}
-
-	if mgmtKits[kit] {
-		return []string{MgmtEnvType}
-	}
-
-	if bothKits[kit] {
-		return []string{MgmtEnvType, OCFEnvType}
-	}
-
-	// Default to ocf for all other kits (cf, autoscaler, blacksmith, scheduler, etc.)
-	return []string{OCFEnvType}
-}
-
-// parsedGenesisEnv represents a parsed Genesis environment from genesis envs output.
-type parsedGenesisEnv struct {
-	Kit  string
-	Name string
-	Type string
-}
-
-// getGenesisEnvironments gets the list of deployed Genesis environments.
-// This matches the Perl implementation in OCFP::Vault::Manager::get_genesis_environments.
-//
-//nolint:unparam // error return for interface consistency and future implementation
-func (m *Manager) getGenesisEnvironments() ([]parsedGenesisEnv, error) {
-	output, err := m.executeGenesisEnvsCommand()
-	if err != nil {
-		m.logger.Warnw("Failed to get genesis environments", "error", err, "output", string(output))
-
-		return []parsedGenesisEnv{}, nil
-	}
-
-	return m.parseGenesisOutput(output), nil
-}
-
-// executeGenesisEnvsCommand runs genesis envs with fallback strategies.
-func (m *Manager) executeGenesisEnvsCommand() ([]byte, error) {
-	ctx := context.Background()
-	workDir := genesisWorkDir()
-
-	// Run genesis envs command
-	cmd := exec.CommandContext(ctx, "genesis", "envs")
-	cmd.Dir = workDir
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Try with full path
-		m.logger.Debug("genesis envs failed, trying with full path")
-
-		whichCmd := exec.CommandContext(ctx, "which", "genesis")
-
-		whichOutput, whichErr := whichCmd.Output()
-		if whichErr == nil {
-			genesisPath := strings.TrimSpace(string(whichOutput))
-			if genesisPath != "" {
-				m.logger.Infof("Found genesis at: %s", genesisPath)
-
-				// #nosec G204 - genesisPath is from system 'which' command for genesis binary
-				cmd = exec.CommandContext(ctx, genesisPath, "envs")
-				cmd.Dir = workDir
-
-				output, err = cmd.CombinedOutput()
-			}
-		}
-
-		// Try shell fallback
-		if err != nil {
-			m.logger.Debug("Attempting shell fallback: sh -c 'genesis envs 2>&1'")
-
-			cmd = exec.CommandContext(ctx, "sh", "-c", "genesis envs 2>&1")
-			cmd.Dir = workDir
-
-			output, err = cmd.CombinedOutput()
-		}
-	}
-
-	if err != nil {
-		return output, fmt.Errorf("failed to execute genesis envs command: %w", err)
-	}
-
-	return output, nil
-}
-
-// parseGenesisOutput parses genesis envs command output into environment structs.
-func (m *Manager) parseGenesisOutput(output []byte) []parsedGenesisEnv {
-	var environments []parsedGenesisEnv
-
-	lines := strings.Split(string(output), "\n")
-
-	for _, line := range lines {
-		// Skip empty lines and headers
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		if strings.Contains(line, "Deployment root") || strings.Contains(line, "contains the following") {
-			continue
-		}
-
-		// Look for lines like: "    bosh/scf-stackit-eu01-004-sb-mgmt"
-		// Format: whitespace + kit/environment-name
-		parts := strings.Fields(line)
-		if len(parts) == 0 {
-			continue
-		}
-
-		if env := m.buildParsedEnv(parts[len(parts)-1]); env != nil {
-			environments = append(environments, *env)
-		}
-	}
-
-	return environments
-}
-
-// buildParsedEnv creates a parsedGenesisEnv from a kit/environment string.
-func (m *Manager) buildParsedEnv(kitEnvStr string) *parsedGenesisEnv {
-	if !strings.Contains(kitEnvStr, "/") {
-		return nil
-	}
-
-	kitAndEnv := strings.SplitN(kitEnvStr, "/", pathKeyDelimiterParts)
-	if len(kitAndEnv) != pathKeyDelimiterParts {
-		return nil
-	}
-
-	kit := strings.TrimSpace(kitAndEnv[0])
-	envName := strings.TrimSpace(kitAndEnv[1])
-
-	// Remove ANSI color codes
-	kit = stripANSI(kit)
-	envName = stripANSI(envName)
-
-	// Skip blank entries
-	if kit == "" || envName == "" {
-		return nil
-	}
-
-	// Determine type based on environment name suffix
-	envType := OCFEnvType // default
-	if strings.Contains(envName, "-mgmt") {
-		envType = MgmtEnvType
-	}
-
-	return &parsedGenesisEnv{
-		Kit:  kit,
-		Name: envName,
-		Type: envType,
-	}
-}
-
 // isValidTmuxSession validates a tmux session name to prevent command injection.
 // Tmux session names should only contain alphanumeric characters, hyphens, and underscores.
 func isValidTmuxSession(session string) bool {
@@ -1738,14 +1571,6 @@ func isValidTmuxSession(session string) bool {
 	validPattern := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 	return validPattern.MatchString(session)
-}
-
-// stripANSI removes ANSI escape codes from a string.
-func stripANSI(str string) string {
-	// Simple ANSI escape sequence pattern: \x1b[...m
-	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-	return re.ReplaceAllString(str, "")
 }
 
 // createClientForTarget creates a vault client for a specific safe target by reading ~/.saferc.
