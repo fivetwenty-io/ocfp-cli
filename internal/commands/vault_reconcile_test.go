@@ -338,6 +338,52 @@ func TestReconcile_ArchivedThenNewVaultWithoutSavedKeys(t *testing.T) {
 	assert.Equal(t, "finish fresh", fake.calls[len(fake.calls)-1], "the new vault must be left running")
 }
 
+// A new vault that fails to finish has started, and may hold the only copy
+// of its keys in memory and in its log. Whatever finish reports, the run must
+// end there: no stop, no archive, and no second start afterwards.
+func TestReconcile_FinishFailureLeavesTheNewVaultRunning(t *testing.T) {
+	finishErrs := map[string]error{
+		"keys not saved": fmt.Errorf("%w: the vault is still running", ErrInceptionKeysNotSaved),
+		"target failed":  errors.New("failed to target vault: safe target exited 1"),
+	}
+
+	for name, finishErr := range finishErrs {
+		t.Run("fresh/"+name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			fake := &fakeInception{probe: stoppedProbe(), finishErr: finishErr}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, finishErr)
+
+			assert.Equal(t, []string{
+				"probe", "stop", "cluster-port " + paths["clusterPort"], "start fresh", "finish fresh",
+			}, fake.calls)
+			assert.Empty(t, archivesOf(t, paths))
+		})
+
+		t.Run("archive then fresh/"+name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			fake := &fakeInception{
+				probe:     stoppedProbe(),
+				startErrs: []error{fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected)},
+				finishErr: finishErr,
+			}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, finishErr)
+
+			assert.Equal(t, []string{
+				"probe", "stop", "cluster-port " + paths["clusterPort"],
+				"start restart", "stop", "start fresh", "finish fresh",
+			}, fake.calls)
+			require.Len(t, archivesOf(t, paths), 1, "only the rejected vault may be archived")
+		})
+	}
+}
+
 // A rejected key that leaves a vault we cannot stop must not archive data out
 // from under the running engine.
 func TestReconcile_RejectedKeysButStuckVaultArchivesNothing(t *testing.T) {
