@@ -2,7 +2,10 @@ package commands
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,6 +26,7 @@ type fakeVaultOps struct {
 	mu       sync.Mutex
 	commands []string
 	outputs  map[string][]string // command line -> successive outputs; the last repeats
+	errs     map[string]error    // command line -> error returned with its output
 	portOpen []bool              // successive answers; the last repeats
 	portAsks int
 	sleeps   int
@@ -35,9 +39,11 @@ func (f *fakeVaultOps) run(_ context.Context, spec cleanupCommand) ([]byte, erro
 	line := spec.name + " " + strings.Join(spec.args, " ")
 	f.commands = append(f.commands, line)
 
+	err := f.errs[line]
+
 	seq := f.outputs[line]
 	if len(seq) == 0 {
-		return nil, nil
+		return nil, err
 	}
 
 	out := seq[0]
@@ -45,7 +51,7 @@ func (f *fakeVaultOps) run(_ context.Context, spec cleanupCommand) ([]byte, erro
 		f.outputs[line] = seq[1:]
 	}
 
-	return []byte(out), nil
+	return []byte(out), err
 }
 
 func (f *fakeVaultOps) isPortOpen(_ context.Context, _ string) bool {
@@ -99,7 +105,7 @@ func (f *fakeVaultOps) ran(prefix string) bool {
 func installFakeVaultOps(t *testing.T) *fakeVaultOps {
 	t.Helper()
 
-	fake := &fakeVaultOps{outputs: map[string][]string{}}
+	fake := &fakeVaultOps{outputs: map[string][]string{}, errs: map[string]error{}}
 	orig := vaultOps
 	vaultOps = inceptionVaultOps{run: fake.run, portOpen: fake.isPortOpen, sleep: fake.sleep}
 
@@ -215,6 +221,52 @@ func TestStopInceptionVault_IgnoresLsofNoise(t *testing.T) {
 
 	require.NoError(t, stopInceptionVault(context.Background(), paths, zap.NewNop().Sugar()))
 	assert.False(t, fake.ran("kill "))
+}
+
+// lsof exits 1 when nobody has the file open, which is the answer a stop
+// waits for. It must not be mistaken for a failure.
+func TestStopInceptionVault_LsofFindingNobodyIsNotAFailure(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := stopTestPaths(t, "ocfp-lab-drgao")
+	fake.errs[lsofDataCommand(paths)] = fmt.Errorf("lsof failed: %w", exitError(t, 1))
+
+	require.NoError(t, stopInceptionVault(context.Background(), paths, zap.NewNop().Sugar()))
+	assert.True(t, fake.ran("safe target delete"))
+}
+
+// A missing or failing lsof says nothing about who holds vault.db. Taking
+// that silence for "nobody" would let a restart or an archive run under an
+// orphaned engine, so the stop must fail and keep the target.
+func TestStopInceptionVault_FailsWhenLsofCannotCheckTheData(t *testing.T) {
+	for name, lsofErr := range map[string]error{
+		"lsof missing":     fmt.Errorf("lsof failed: %w", exec.ErrNotFound),
+		"lsof broke":       fmt.Errorf("lsof failed: %w", exitError(t, 2)),
+		"lsof was stopped": errors.New("lsof failed: signal: killed"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := stopTestPaths(t, "ocfp-lab-drgao")
+			fake.errs[lsofDataCommand(paths)] = lsofErr
+
+			err := stopInceptionVault(context.Background(), paths, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrVaultLockUnknown)
+			assert.Contains(t, err.Error(), filepath.Join(paths["vaultDir"], "vault.db"))
+			assert.False(t, fake.ran("safe target delete"))
+			assert.False(t, fake.ran("kill -9"), "an unknown answer is no reason to kill anything")
+		})
+	}
+}
+
+// exitError returns a real *exec.ExitError carrying code.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+
+	err := exec.CommandContext(context.Background(), "sh", "-c", "exit "+strconv.Itoa(code)).Run()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+
+	return exitErr
 }
 
 func TestStopInceptionVault_NeverTouchesKeysOrData(t *testing.T) {
