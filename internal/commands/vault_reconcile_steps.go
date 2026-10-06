@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"go.uber.org/zap"
 )
 
@@ -40,8 +41,9 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		finish: func(ctx context.Context, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger) error {
 			return finishInceptionVault(ctx, tools.safe, paths, mode, log)
 		},
-		migrate: migrateFileVaultToRaft,
-		now:     time.Now,
+		migrate:     migrateFileVaultToRaft,
+		recoverKeys: recoverInceptionKeys,
+		now:         time.Now,
 	}
 }
 
@@ -239,6 +241,147 @@ func setAsidePreviousVaultLog(logFile string) error {
 	err := os.Rename(logFile, logFile+".previous")
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("failed to set the previous inception vault log aside: %w", err)
+	}
+
+	return nil
+}
+
+// recoverInceptionKeys writes whichever of the bloc's key files are missing or
+// blank, from what its running vault left behind. The unseal key comes from
+// the log safe local tees its output to, or failing that from the tmux pane's
+// history. The root token comes from the bloc's own target in ~/.saferc, and
+// only when that target points at the bloc's port; the global current target
+// is never read, because any sibling bloc can move it. A key file that holds
+// a value is never replaced, and finding nothing is not an error: the vault
+// then goes down the archive path.
+func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
+		return nil
+	}
+
+	if !keyFileHasValue(paths["unsealKeysFile"]) {
+		sealKey := extractSealKey(runningVaultOutput(ctx, paths))
+		if sealKey == "" {
+			log.Warnw("The running inception vault's unseal key is not in its log", "log", paths["logFile"])
+		} else {
+			err := writeRecoveredKey(paths["unsealKeysFile"], sealKey)
+			if err != nil {
+				return err
+			}
+
+			log.Infow("Recovered the unseal key from the running vault's output", "path", paths["unsealKeysFile"])
+		}
+	}
+
+	if !keyFileHasValue(paths["rootKeyFile"]) {
+		token := blocTargetToken(paths)
+		if token == "" {
+			log.Warnw("No root token for the inception vault in ~/.saferc", "target", paths["vaultName"])
+
+			return nil
+		}
+
+		err := writeRecoveredKey(paths["rootKeyFile"], token)
+		if err != nil {
+			return err
+		}
+
+		log.Infow("Recovered the root token from safe's target", "path", paths["rootKeyFile"], "target", paths["vaultName"])
+	}
+
+	return nil
+}
+
+// runningVaultOutput returns safe local's output for the running vault, from
+// the tee'd log when it has the seal key, and otherwise from the whole of the
+// tmux pane's history.
+func runningVaultOutput(ctx context.Context, paths map[string]string) string {
+	logData, err := os.ReadFile(paths["logFile"]) // #nosec G304 -- the bloc's own log file from getVaultInceptionPaths()
+	if err == nil {
+		output := stripANSI(string(logData))
+		if extractSealKey(output) != "" {
+			return output
+		}
+	}
+
+	pane, err := vaultOps.run(ctx, cleanupCommand{
+		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-"}, tmux: true,
+	})
+	if err != nil {
+		return ""
+	}
+
+	return stripANSI(string(pane))
+}
+
+// blocTargetToken returns the token safe holds for the bloc's own target, or
+// "" unless that target exists and points at the bloc's port.
+func blocTargetToken(paths map[string]string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".saferc")) // #nosec G304 -- safe's own config under the user's home
+	if err != nil {
+		return ""
+	}
+
+	var safeRC struct {
+		Vaults map[string]struct {
+			URL   string `yaml:"url"`
+			Token string `yaml:"token"`
+		} `yaml:"vaults"`
+	}
+
+	if yaml.Unmarshal(data, &safeRC) != nil {
+		return ""
+	}
+
+	target, ok := safeRC.Vaults[paths["vaultName"]]
+	if !ok || strings.TrimRight(target.URL, "/") != "http://127.0.0.1:"+paths["port"] {
+		return ""
+	}
+
+	return strings.TrimSpace(target.Token)
+}
+
+// writeRecoveredKey writes one key file with mode 0600, through a temporary
+// file and a rename so a crash never leaves a partial key behind.
+func writeRecoveredKey(path, value string) error {
+	dir := filepath.Dir(path)
+
+	err := os.MkdirAll(dir, vaultKeyDirMode)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", dir, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+
+	tmpName := tmp.Name()
+
+	_, err = tmp.WriteString(value + "\n")
+	closeErr := tmp.Close()
+
+	if err == nil {
+		err = closeErr
+	}
+
+	if err == nil {
+		err = os.Chmod(tmpName, VaultOutputFileMode)
+	}
+
+	if err == nil {
+		err = os.Rename(tmpName, path)
+	}
+
+	if err != nil {
+		_ = os.Remove(tmpName) // the temporary file holds only this write's copy of the key
+
+		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 
 	return nil
