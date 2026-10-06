@@ -330,7 +330,8 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 // some other vault is never written. When none is found, the disk is left
 // exactly as it is and the error says so. A missing or blank key file is
 // left to the archive path, as before, and one that cannot be read is an
-// error.
+// error. A whole key with stray whitespace around it is rewritten to the key
+// and a newline, which is the only form safe passes on intact.
 func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	keyFile := paths["unsealKeysFile"]
 	if paths["rootKeyFile"] == keyFile {
@@ -349,7 +350,7 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 
 	shapeErr := checkSealKey(held)
 	if shapeErr == nil {
-		return nil
+		return canonicalizeKeyFile(keyFile, data, held, log)
 	}
 
 	var found []string
@@ -375,6 +376,50 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 	}
 
 	log.Warnw("Restored the whole unseal key to a key file that held only part of it", "path", keyFile)
+
+	return nil
+}
+
+// canonicalizeKeyFile rewrites a key file whose trimmed content is a whole
+// key, but whose bytes are not exactly that key and a newline. safe reads only
+// the first line of what it is fed and strips only the line ending, so a key
+// behind a blank line or beside a stray space reaches the engine as a key it
+// refuses, and a refused key archives the vault. A file already in that form
+// is left untouched.
+func canonicalizeKeyFile(keyFile string, data []byte, key string, log *zap.SugaredLogger) error {
+	if string(data) == key+"\n" {
+		return nil
+	}
+
+	err := writeRecoveredKey(keyFile, key)
+	if err != nil {
+		return err
+	}
+
+	log.Warnw("Rewrote a key file that held its key with stray whitespace around it", "path", keyFile)
+
+	return nil
+}
+
+// canonicalizeRootKeyFile gives root.key the treatment canonicalizeKeyFile
+// gives the unseal key. Re-targeting a running vault feeds root.key to safe
+// on stdin, where only the first line counts. A token that is not the shape
+// of a token is left as it is, for the engine to judge.
+func canonicalizeRootKeyFile(paths map[string]string, log *zap.SugaredLogger) error {
+	keyFile := paths["rootKeyFile"]
+	if keyFile == paths["unsealKeysFile"] {
+		return nil
+	}
+
+	data, err := readKeyFileBytes(keyFile)
+	if err != nil {
+		return err
+	}
+
+	token := strings.TrimSpace(string(data))
+	if token != "" && checkRootToken(token) == nil {
+		return canonicalizeKeyFile(keyFile, data, token, log)
+	}
 
 	return nil
 }

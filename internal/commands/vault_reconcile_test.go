@@ -1109,3 +1109,70 @@ func TestReadKeyFile(t *testing.T) {
 	_, err = readKeyFile(dir)
 	require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable, "a directory is not a key file")
 }
+
+// safe hands the engine only the first line of unseal.keys, and only with
+// its line ending stripped, so a whole key behind a blank line or beside a
+// stray space reaches the engine as a key it refuses. The key file is
+// rewritten to hold the key and a newline before anything starts, and the
+// vault restarts in place rather than being archived. root.key gets the same
+// treatment, because re-targeting feeds it to safe the same way.
+func TestReconcile_KeyFilesWithStrayWhitespaceAreRewritten(t *testing.T) {
+	const token = "s.ROOT-TOKEN-SENTINEL"
+
+	for name, wrap := range map[string]func(string) string{
+		"leading blank line":  func(k string) string { return "\n" + k + "\n" },
+		"trailing space":      func(k string) string { return k + " \n" },
+		"leading spaces":      func(k string) string { return "  " + k + "\n" },
+		"no newline":          func(k string) string { return k },
+		"crlf":                func(k string) string { return k + "\r\n" },
+		"trailing blank line": func(k string) string { return k + "\n\n" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeRaftData(t, paths["vaultDir"])
+			require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte(wrap(testSealKey)), 0o600))
+			require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte(wrap(token)), 0o600))
+
+			fake := &fakeInception{probe: stoppedProbe()}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Equal(t, []string{
+				"probe", "stop", "cluster-port " + paths["clusterPort"], "start restart", "finish restart",
+			}, fake.calls)
+			assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+			assert.Equal(t, token+"\n", readKey(t, paths["rootKeyFile"]))
+
+			for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
+				info, err := os.Stat(keyFile)
+				require.NoError(t, err)
+				assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+			}
+
+			assert.Empty(t, archivesOf(t, paths))
+		})
+	}
+}
+
+// A key file already in its canonical form is left exactly as it is.
+func TestReconcile_CanonicalKeyFilesAreNotRewritten(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	before := map[string]os.FileInfo{}
+
+	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
+		info, err := os.Stat(keyFile)
+		require.NoError(t, err)
+
+		before[keyFile] = info
+	}
+
+	require.NoError(t, runReconcile(t, paths, &fakeInception{probe: stoppedProbe()}))
+
+	for keyFile, info := range before {
+		after, err := os.Stat(keyFile)
+		require.NoError(t, err)
+		assert.True(t, os.SameFile(info, after), "%s was replaced", keyFile)
+	}
+}
