@@ -32,16 +32,19 @@ func startTestPaths(t *testing.T, dataDir string) map[string]string {
 	return paths
 }
 
-func testEngine() inceptionEngine {
-	return inceptionEngine{name: "bao", path: "/opt/engines/bin/bao"}
+func testTools() inceptionTools {
+	return inceptionTools{
+		safe:   "/opt/safe/bin/safe",
+		engine: inceptionEngine{name: "bao", path: "/opt/engines/bin/bao"},
+	}
 }
 
 func TestBuildSafeLocalCommand_FreshStartUsesRaft(t *testing.T) {
 	paths := startTestPaths(t, filepath.Join(t.TempDir(), "vault", "data"))
 
-	cmd := buildSafeLocalCommand(paths, testEngine(), safeLocalFresh)
+	cmd := buildSafeLocalCommand(paths, testTools(), safeLocalFresh)
 
-	assert.True(t, strings.HasPrefix(cmd, `PATH='/opt/engines/bin':"$PATH" safe local `), cmd)
+	assert.True(t, strings.HasPrefix(cmd, `PATH='/opt/engines/bin':"$PATH" '/opt/safe/bin/safe' local `), cmd)
 	assert.Contains(t, cmd, "--raft '"+paths["vaultDir"]+"'")
 	assert.Contains(t, cmd, "--as '"+paths["vaultName"]+"'")
 	assert.Contains(t, cmd, "--port "+paths["port"]+" ")
@@ -56,7 +59,7 @@ func TestBuildSafeLocalCommand_FreshStartUsesRaft(t *testing.T) {
 func TestBuildSafeLocalCommand_RestartReopensWithSavedKeys(t *testing.T) {
 	paths := startTestPaths(t, filepath.Join(t.TempDir(), "vault", "data"))
 
-	cmd := buildSafeLocalCommand(paths, testEngine(), safeLocalRestart)
+	cmd := buildSafeLocalCommand(paths, testTools(), safeLocalRestart)
 
 	assert.Contains(t, cmd, "--raft '"+paths["vaultDir"]+"'")
 	assert.Contains(t, cmd, "--cluster-port "+paths["clusterPort"]+" ")
@@ -70,7 +73,7 @@ func TestBuildSafeLocalCommand_NeverCarriesKeyValues(t *testing.T) {
 	paths := startTestPaths(t, filepath.Join(t.TempDir(), "vault", "data"))
 
 	for _, mode := range []safeLocalMode{safeLocalFresh, safeLocalRestart} {
-		cmd := buildSafeLocalCommand(paths, testEngine(), mode)
+		cmd := buildSafeLocalCommand(paths, testTools(), mode)
 
 		assert.NotContains(t, cmd, "ROOT-TOKEN-SENTINEL")
 		assert.NotContains(t, cmd, "UNSEAL-KEY-SENTINEL")
@@ -88,12 +91,14 @@ func TestBuildSafeLocalCommand_QuotingSurvivesTheShell(t *testing.T) {
 	paths := startTestPaths(t, filepath.Join(base, "vault", "data"))
 	paths["logFile"] = filepath.Join(base, "log's here.log")
 
-	stubDir := filepath.Join(t.TempDir(), "engine dir's bin")
+	stubDir := filepath.Join(t.TempDir(), "safe dir's bin")
 	require.NoError(t, os.MkdirAll(stubDir, 0o700))
-	writeFakeExecutable(t, stubDir, "safe", `for a in "$@"; do printf '%s\n' "$a"; done`)
 
-	engine := inceptionEngine{name: "vault", path: filepath.Join(stubDir, "vault")}
-	cmd := buildSafeLocalCommand(paths, engine, safeLocalRestart)
+	tools := inceptionTools{
+		safe:   writeFakeExecutable(t, stubDir, "safe", `for a in "$@"; do printf '%s\n' "$a"; done`),
+		engine: inceptionEngine{name: "vault", path: filepath.Join(t.TempDir(), "engine dir's bin", "vault")},
+	}
+	cmd := buildSafeLocalCommand(paths, tools, safeLocalRestart)
 
 	out, err := exec.Command("sh", "-c", cmd).CombinedOutput() // #nosec G204 -- test runs the command it just built against a stub
 	require.NoError(t, err, string(out))
@@ -118,4 +123,23 @@ func TestShellQuote(t *testing.T) {
 	assert.Equal(t, `'plain'`, shellQuote("plain"))
 	assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
 	assert.Equal(t, `''`, shellQuote(""))
+}
+
+// The pane must run the safe whose version ocfp checked. Putting the engine's
+// directory first on PATH would let a different safe in that directory answer
+// instead, so the line names the checked safe by its absolute path.
+func TestBuildSafeLocalCommand_RunsTheCheckedSafe(t *testing.T) {
+	paths := startTestPaths(t, filepath.Join(t.TempDir(), "vault", "data"))
+
+	engineDir := t.TempDir()
+	writeFakeExecutable(t, engineDir, "safe", "echo WRONG-SAFE\n")
+
+	tools := inceptionTools{
+		safe:   writeFakeExecutable(t, t.TempDir(), "safe", "echo CHECKED-SAFE\n"),
+		engine: inceptionEngine{name: "bao", path: filepath.Join(engineDir, "bao")},
+	}
+
+	out, err := exec.Command("sh", "-c", buildSafeLocalCommand(paths, tools, safeLocalFresh)).CombinedOutput() // #nosec G204 -- test runs the command it just built against a stub
+	require.NoError(t, err, string(out))
+	assert.Equal(t, "CHECKED-SAFE\n", string(out))
 }
