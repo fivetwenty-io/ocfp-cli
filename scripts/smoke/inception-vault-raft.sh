@@ -464,10 +464,20 @@ case_c3() {
 case_d1() {
   local archive
   new_ocfp smoke-f || fail "fresh start failed; see $S/logs/$CASE.log" || return 1
+  put_canary smoke-f || return 1
   stop_vault smoke-f || return 1
   mv "$(vault_root smoke-f)/unseal.keys" "$S/aside/smoke-f.unseal.keys" ||
     fail "the fresh start left no unseal.keys to move aside" || return 1
   new_ocfp smoke-f || fail "the run after losing a key failed; see $S/logs/$CASE.log" || return 1
+  [[ -z $(archive_of smoke-f) ]] || fail "a key the vault log still held led to an archive" || return 1
+  [[ -s $(vault_root smoke-f)/unseal.keys ]] || fail "the unseal key was not restored from the vault log" || return 1
+  check_canary smoke-f || return 1
+  stop_vault smoke-f || return 1
+  mv "$(vault_root smoke-f)/unseal.keys" "$S/aside/smoke-f.unseal.keys.restored" ||
+    fail "the restored unseal.keys could not be moved aside" || return 1
+  mv "$(dirname "$(vault_log smoke-f)")" "$S/aside/smoke-f.logs" ||
+    fail "the vault logs could not be moved aside" || return 1
+  new_ocfp smoke-f || fail "the run after losing the key and its logs failed; see $S/logs/$CASE.log" || return 1
   archive=$(archive_of smoke-f)
   [[ -n $archive && -f $archive/data/vault.db ]] || fail "the archive does not hold the old data" || return 1
   expect_raft smoke-f || return 1
@@ -544,7 +554,7 @@ run_case "B3 restart with a moved cluster port" case_b3
 run_case "C1 migrate a running file vault" case_c1
 run_case "C2 migrate a stopped file vault" case_c2
 run_case "C3 resume a partial migration" case_c3
-run_case "D1 archive on a missing key" case_d1
+run_case "D1 recover or archive on a missing key" case_d1
 run_case "D2 archive on a wrong token" case_d2
 run_case "D3 refuse a taken cluster port" case_d3
 run_case "D4 refuse an old safe" case_d4
