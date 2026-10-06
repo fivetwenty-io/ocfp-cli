@@ -180,3 +180,51 @@ func TestFQDNsPhase_ManagerDispatchWritesOnlyFQDNPaths(t *testing.T) {
 		assert.Contains(t, path, "/fqdns")
 	}
 }
+
+// With no fqdns block in the bloc config there is nothing to evaluate. The
+// phase says so instead of finishing silently.
+func TestFQDNsPhase_NoFQDNsConfiguredSaysNothingWasEvaluated(t *testing.T) {
+	cfg := fqdnPhaseConfig()
+	cfg.FQDNs = nil
+
+	t.Run("real run", func(t *testing.T) {
+		safe := newWriteLogSafe()
+		mgr := newReservedIPsScopeTestManager(cfg, safe)
+
+		var out bytes.Buffer
+
+		require.NoError(t, mgr.populateFQDNsPhase(&PopulateOptions{Subcommand: PhaseFQDNs}, &out)) //nolint:exhaustruct
+
+		assert.Contains(t, out.String(), "test-bloc")
+		assert.Contains(t, out.String(), "No fqdns are configured")
+		assert.Contains(t, out.String(), "nothing was evaluated")
+		assert.Empty(t, safe.sent)
+	})
+
+	t.Run("dry run", func(t *testing.T) {
+		safe := newWriteLogSafe()
+		mgr := newReservedIPsScopeTestManager(cfg, safe)
+
+		var out bytes.Buffer
+
+		err := mgr.populateDryRun(&PopulateOptions{Subcommand: PhaseFQDNs, DryRun: true}, safe, "target", &out) //nolint:exhaustruct
+		require.NoError(t, err)
+
+		assert.Contains(t, out.String(), "[DRY RUN]")
+		assert.Contains(t, out.String(), "test-bloc")
+		assert.Contains(t, out.String(), "No fqdns are configured")
+		assert.Contains(t, out.String(), "nothing was evaluated")
+		assert.Empty(t, safe.sent)
+	})
+}
+
+func TestFQDNsPhase_ConfiguredFQDNsPrintNoEmptyNotice(t *testing.T) {
+	safe := newWriteLogSafe()
+	mgr := newReservedIPsScopeTestManager(fqdnPhaseConfig(), safe)
+
+	var out bytes.Buffer
+
+	require.NoError(t, mgr.populateFQDNsPhase(&PopulateOptions{Subcommand: PhaseFQDNs}, &out)) //nolint:exhaustruct
+
+	assert.NotContains(t, out.String(), "nothing was evaluated")
+}
