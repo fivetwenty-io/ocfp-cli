@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,6 +42,10 @@ func (f *fakeVaultOps) run(_ context.Context, spec cleanupCommand) ([]byte, erro
 	f.commands = append(f.commands, line)
 
 	err := f.errs[line]
+
+	if err == nil && spec.name == "safe" && len(spec.args) == 3 && spec.args[0] == "target" && spec.args[1] == "delete" {
+		err = deleteScratchSafeTarget(spec.args[2])
+	}
 
 	seq := f.outputs[line]
 	if len(seq) == 0 {
@@ -98,6 +104,54 @@ func (f *fakeVaultOps) ran(prefix string) bool {
 	}
 
 	return false
+}
+
+// deleteScratchSafeTarget does what safe target delete does to ~/.saferc: it
+// removes the named target, so a token read after a stop is gone, as it is in
+// production. It edits ~/.saferc only when HOME lies under the temp directory,
+// so a test that forgot to point HOME at a scratch directory can never change
+// the real file. Without a ~/.saferc there is nothing to delete.
+func deleteScratchSafeTarget(name string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("fake safe target delete: %w", err)
+	}
+
+	if !strings.HasPrefix(filepath.Clean(home)+string(os.PathSeparator), filepath.Clean(os.TempDir())+string(os.PathSeparator)) {
+		return nil
+	}
+
+	rcFile := filepath.Join(home, ".saferc")
+
+	data, err := os.ReadFile(rcFile) // #nosec G304 -- the scratch ~/.saferc of a test
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("fake safe target delete: %w", err)
+	}
+
+	var rc map[string]any
+
+	err = yaml.Unmarshal(data, &rc)
+	if err != nil {
+		return fmt.Errorf("fake safe target delete: %w", err)
+	}
+
+	vaults, ok := rc["vaults"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	delete(vaults, name)
+
+	out, err := yaml.Marshal(rc)
+	if err != nil {
+		return fmt.Errorf("fake safe target delete: %w", err)
+	}
+
+	return os.WriteFile(rcFile, out, 0o600)
 }
 
 // installFakeVaultOps swaps the inception vault seam for a fake and restores
