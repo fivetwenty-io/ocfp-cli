@@ -80,7 +80,7 @@ ocfp configure --bloc production --prune-duplicate-rules
 ocfp configure --bloc production --prune-duplicate-rules --apply
 ```
 
-The prune option runs on its own, so it cannot be combined with `--dry-run` or the `--skip-*` options, and `--apply` is only valid with it. Rules are twins only when direction, protocol, port range, remote address, comment, and every other field the rule carries match after normalization. The lowest position in each set of twins is always kept, so the last copy of a rule is never removed. Only groups named `<bloc>-<name>` that ocfp defines rules for are touched. Before each delete the command re-lists the group, and it stops with an error if the rule at the next position is not the duplicate it expected.
+The prune option works only on PVE blocs, because it deletes rules by the numeric position PVE reports, and it stops with an error on any other provider before it lists anything. It runs on its own, so it cannot be combined with `--dry-run` or the `--skip-*` options, and `--apply` is only valid with it. Rules are twins only when direction, protocol, port range, remote address, comment, and every other field the rule carries match after normalization. The lowest position in each set of twins is always kept, so the last copy of a rule is never removed. Only groups named `<bloc>-<name>` that ocfp defines rules for are touched. Before each delete the command re-lists the group, and it stops with an error if the rule at the next position is not the duplicate it expected.
 
 ### 3. Access bastion host
 
