@@ -143,9 +143,10 @@ The mgmt tier's statics are numerically identical to `wide`'s (offsets 3–22, s
 | vault | 24 |
 | jumpbox | 25 |
 | blacksmith | 26 |
+| prometheus | 27 |
 | haproxy | 37 |
 
-Offset 27 is spare (a gap between the `ocf` statics and the mgmt available band).
+Offset 27 holds the `ocf` prometheus static, which is the last offset before the mgmt available band. The `wide` and `spanning` strategies do not give the `ocf` tier a prometheus static.
 
 **Available bands:**
 
@@ -167,7 +168,7 @@ The same haproxy-offset coupling described for `wide` applies here: haproxy sits
 flowchart LR
     A["0-2\nnetwork + gateway"] --> B["3-22\nmgmt statics"]
     B --> C["23-26\nocf statics"]
-    C --> D["27\nspare"]
+    C --> D["27\nocf prometheus static"]
     D --> E["28-35\nmgmt available band"]
     E --> F["36-...\nocf available band\n(haproxy static at 37)"]
 ```
@@ -435,7 +436,7 @@ For `compact`:
 
 - mgmt available band: 28–35
 
-- ocf static range: 23–27 (named 23–26, spare 27)
+- ocf static range: 23–27 (bosh, vault, jumpbox, blacksmith, and prometheus), plus haproxy at 37
 
 - ocf available band: 36 and above
 
