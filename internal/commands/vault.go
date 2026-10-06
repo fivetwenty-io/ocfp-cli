@@ -608,12 +608,12 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 
 	runCleanupCommands(ctx, vaultCleanupTargetCommands(paths))
 
-	// Clear the vault data, preserving it when it holds key material. This runs
-	// on a liveness probe returning false, and a probe can be wrong; keeping the
-	// keys makes that mistake survivable instead of terminal.
+	// Move the vault data aside rather than deleting it. This runs on a
+	// liveness probe returning false, and a probe can be wrong; keeping the
+	// data makes that mistake survivable instead of terminal.
 	archived, err := archiveVaultState(paths, time.Now().Format("20060102-150405"), log)
 	if err != nil {
-		log.Warnw("Failed to clear vault data directory", "error", err)
+		log.Warnw("Failed to archive vault data directory", "error", err)
 	}
 
 	if archived != "" {
