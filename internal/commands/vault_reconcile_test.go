@@ -31,6 +31,7 @@ type fakeInception struct {
 	clusterPortErr error
 	notOurs        bool  // the vault on the port is not this bloc's
 	ownsErr        error // the ownership check could not decide
+	migrate        func(paths map[string]string) (string, error)
 	calls          []string
 }
 
@@ -76,6 +77,15 @@ func (f *fakeInception) steps() inceptionSteps {
 			f.record("finish " + modeName(mode))
 
 			return nil
+		},
+		migrate: func(_ context.Context, paths map[string]string, _ inceptionTools, _ *zap.SugaredLogger) (string, error) {
+			f.record("migrate")
+
+			if f.migrate == nil {
+				return "", nil
+			}
+
+			return f.migrate(paths)
 		},
 		now: func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
 	}
@@ -585,20 +595,91 @@ func TestReconcile_FailedFreshStartAfterArchiveNamesTheArchive(t *testing.T) {
 	assert.Equal(t, "stop", fake.calls[len(fake.calls)-1], "the failed fresh vault is stopped")
 }
 
-// A file-backed vault with both keys is never archived or replaced by a
-// fresh raft vault, because its keys still open it.
-func TestReconcile_FileVaultWithKeysIsLeftAsItIs(t *testing.T) {
+// fakeMigration does on disk what a successful migration does: the file
+// store becomes the backup, and a raft store takes its place.
+func fakeMigration(t *testing.T) func(paths map[string]string) (string, error) {
+	t.Helper()
+
+	return func(paths map[string]string) (string, error) {
+		backup := paths["vaultDir"] + ".file-backup-20261006-120000"
+		require.NoError(t, os.Rename(paths["vaultDir"], backup))
+		writeRaftData(t, paths["vaultDir"])
+
+		return backup, nil
+	}
+}
+
+func TestReconcile_FileVaultWithKeysMigratesThenRestarts(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+	}, fake.calls)
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+// File storage without both keys cannot be reopened after a migration, so it
+// is archived with its data and never migrated.
+func TestReconcile_FileVaultMissingAKeyIsArchivedNotMigrated(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, false, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.NotContains(t, fake.calls, "migrate")
+	assert.Contains(t, fake.calls, "start fresh")
+
+	archives := archivesOf(t, paths)
+	require.Len(t, archives, 1)
+	assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+}
+
+func TestReconcile_FailedMigrationStartsNothing(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeFileData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, true)
 
 	before := treeDigest(t, blocDir(paths))
-	fake := &fakeInception{probe: stoppedProbe()}
+	fake := &fakeInception{
+		probe:   stoppedProbe(),
+		migrate: func(map[string]string) (string, error) { return "", ErrEngineCannotReadFile },
+	}
 
 	err := runReconcile(t, paths, fake)
-	require.ErrorIs(t, err, ErrFileVaultNotMigrated)
-	assert.Contains(t, err.Error(), paths["vaultDir"])
+	require.ErrorIs(t, err, ErrEngineCannotReadFile)
 	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start")
 	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
 	assert.Empty(t, archivesOf(t, paths))
+}
+
+// Right after a migration even a rejected key must not archive. The keys
+// opened the file store a moment ago, so the failure is the migration's, and
+// a person has to look at both directories.
+func TestReconcile_RestartFailureAfterMigrationNeverArchives(t *testing.T) {
+	for _, startErr := range []error{ErrVaultKeysRejected, ErrVaultNotReady} {
+		t.Run(startErr.Error(), func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t), startErrs: []error{startErr}}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, startErr)
+			require.ErrorIs(t, err, ErrRestartAfterMigrationFailed)
+			assert.Contains(t, err.Error(), paths["vaultDir"])
+			assert.Contains(t, err.Error(), paths["vaultDir"]+".file-backup-20261006-120000")
+			assert.Equal(t, "stop", fake.calls[len(fake.calls)-1])
+			assert.NotContains(t, fake.calls, "start fresh")
+			assert.Empty(t, archivesOf(t, paths))
+			assert.Equal(t, vaultDataRaft, classifyVaultData(paths["vaultDir"]))
+		})
+	}
 }
