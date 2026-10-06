@@ -505,11 +505,18 @@ func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi
 	return false
 }
 
-// RulesMatch compares two security rules for equivalence. Direction,
-// protocol, and remote address are compared in normalized form, so a rule read
-// back from a provider ("in", "TCP", a bare IP) matches the desired rule
-// ("ingress", "tcp", a host CIDR).
+// RulesMatch reports whether the current rule r1 satisfies the desired rule
+// r2. Direction, protocol, and remote address are compared in normalized form,
+// so a rule read back from a provider ("in", "TCP", a bare IP) matches the
+// desired rule ("ingress", "tcp", a host CIDR). A current rule that does
+// anything other than plainly accept the traffic (it drops, is disabled, or is
+// narrowed by a destination, source port, macro, interface, or port list)
+// never satisfies a desired rule, because the desired rule is an allow rule.
 func RulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is clear in context
+	if !isPlainAcceptRule(r1) {
+		return false
+	}
+
 	if cpi.NormalizeDirection(r1.Direction) != cpi.NormalizeDirection(r2.Direction) {
 		return false
 	}
@@ -530,6 +537,43 @@ func RulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is cl
 	}
 
 	return normalizePortRange(r1) == normalizePortRange(r2)
+}
+
+// isPlainAcceptRule reports whether a rule's provider-specific attributes leave
+// it as a plain, enabled ACCEPT rule that the typed fields describe in full.
+// Attributes that do not change what traffic the rule allows, such as log,
+// ipversion, comment, and digest, are ignored.
+func isPlainAcceptRule(rule *cpi.SecurityRule) bool {
+	for key, value := range rule.Attributes {
+		value = strings.TrimSpace(value)
+
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "action":
+			if value != "" && !strings.EqualFold(value, "ACCEPT") {
+				return false
+			}
+		case "enable":
+			if value != "" && value != "1" {
+				return false
+			}
+		case "dest", "sport", "macro", "iface":
+			if value != "" {
+				return false
+			}
+		case "dport":
+			if !isPlainPortRange(value) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// isPlainPortRange reports whether a destination port value is empty, one
+// number, or a single "low:high" range, the forms the typed port fields hold.
+func isPlainPortRange(dport string) bool {
+	return strings.Trim(dport, "0123456789:") == "" && strings.Count(dport, ":") <= 1
 }
 
 // normalizePortRange returns the effective port range, treating a zero max as
