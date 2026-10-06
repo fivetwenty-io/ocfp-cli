@@ -162,7 +162,7 @@ func writeKeys(t *testing.T, paths map[string]string, root, unseal bool) {
 	}
 
 	if unseal {
-		require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte("UNSEAL-KEY-SENTINEL\n"), 0o600))
+		require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte(testSealKey+"\n"), 0o600))
 	}
 }
 
@@ -943,6 +943,91 @@ func TestGuardInceptionTeardown(t *testing.T) {
 			}
 
 			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+// writeTruncatedUnsealKey leaves unseal.keys holding the first n digits of
+// the key, the way a capture cut at a tmux pane's edge saved it.
+func writeTruncatedUnsealKey(t *testing.T, paths map[string]string, n int) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte(testSealKey[:n]+"\n"), 0o600))
+}
+
+// A cut-short unseal key would be refused by the engine and archive a vault
+// whose real key still sits in safe's output. The whole key is recovered
+// from that output first, and the vault restarts in place.
+func TestReconcile_TruncatedUnsealKeyIsRepairedFromTheOutput(t *testing.T) {
+	line := "Your Vault Seal Key is " + testSealKey + "\n"
+
+	for name, place := range map[string]func(fake *fakeVaultOps, paths map[string]string){
+		"log": func(_ *fakeVaultOps, paths map[string]string) {
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Now targeting x\n"+line), 0o600))
+		},
+		"previous log": func(_ *fakeVaultOps, paths map[string]string) {
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Now targeting x\n"), 0o600))
+			require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte(line), 0o600))
+		},
+		"pane": func(fake *fakeVaultOps, paths map[string]string) {
+			fakePaneHistory(fake, paths, line)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ops := installFakeVaultOps(t)
+			paths := reconcilePaths(t)
+			require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, false)
+			writeTruncatedUnsealKey(t, paths, 57)
+			place(ops, paths)
+
+			fake := &fakeInception{probe: stoppedProbe()}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Equal(t, []string{
+				"probe", "stop", "cluster-port " + paths["clusterPort"], "start restart", "finish restart",
+			}, fake.calls)
+			assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+
+			info, err := os.Stat(paths["unsealKeysFile"])
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+			assert.Empty(t, archivesOf(t, paths))
+		})
+	}
+}
+
+// When safe's output holds no key that the truncated file is the start of,
+// nothing is stopped, started, archived, or rewritten, and the error says
+// what to do without printing any part of the key.
+func TestReconcile_TruncatedUnsealKeyNotFoundChangesNothing(t *testing.T) {
+	other := strings.Repeat("fedcba9876543210", 4)
+
+	for name, logged := range map[string]string{
+		"no output":           "",
+		"another vault's key": "Your Vault Seal Key is " + other + "\n",
+		"the same cut key":    "Your Vault Seal Key is " + testSealKey[:57] + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			installFakeVaultOps(t)
+			paths := reconcilePaths(t)
+			require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, false)
+			writeTruncatedUnsealKey(t, paths, 57)
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte(logged), 0o600))
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{probe: stoppedProbe()}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrUnsealKeyFileMalformed)
+			assert.NotContains(t, err.Error(), testSealKey[:20])
+			assert.Contains(t, err.Error(), paths["unsealKeysFile"])
+			assert.Equal(t, []string{"probe"}, fake.calls)
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+			assert.Empty(t, archivesOf(t, paths))
 		})
 	}
 }
