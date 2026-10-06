@@ -1031,3 +1031,81 @@ func TestReconcile_TruncatedUnsealKeyNotFoundChangesNothing(t *testing.T) {
 		})
 	}
 }
+
+// makeUnreadable takes every permission off path for the rest of the test,
+// and gives them back before the temp dir is cleaned up or the tree hashed.
+func makeUnreadable(t *testing.T, path string) func() {
+	t.Helper()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+
+	require.NoError(t, os.Chmod(path, 0o000))
+
+	restore := func() { _ = os.Chmod(path, 0o600) }
+	t.Cleanup(restore)
+
+	return restore
+}
+
+// A key file that exists but cannot be read says nothing about the key, so
+// the run stops with an error naming the file and touches nothing, whether
+// the vault is stopped or running and healthy.
+func TestReconcile_UnreadableKeyFileChangesNothing(t *testing.T) {
+	for _, keyFile := range []string{"rootKeyFile", "unsealKeysFile"} {
+		for name, probe := range map[string]vaultProbe{"stopped": stoppedProbe(), "healthy": healthyRaftProbe()} {
+			t.Run(keyFile+" "+name, func(t *testing.T) {
+				paths := reconcilePaths(t)
+				writeRaftData(t, paths["vaultDir"])
+				writeKeys(t, paths, true, true)
+
+				before := treeDigest(t, blocDir(paths))
+				restore := makeUnreadable(t, paths[keyFile])
+				fake := &fakeInception{probe: probe, session: true, target: true}
+
+				err := runReconcile(t, paths, fake)
+				require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable)
+				assert.Contains(t, err.Error(), paths[keyFile])
+				assert.NotContains(t, err.Error(), testSealKey)
+				assert.Equal(t, []string{"probe"}, fake.calls)
+
+				restore()
+				assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+				assert.Empty(t, archivesOf(t, paths))
+			})
+		}
+	}
+}
+
+// An empty key file holds nothing to protect, so it counts as missing even
+// when its mode would keep it from being read.
+func TestReadKeyFile(t *testing.T) {
+	dir := t.TempDir()
+
+	value, err := readKeyFile(filepath.Join(dir, "absent"))
+	require.NoError(t, err)
+	assert.Empty(t, value)
+
+	held := filepath.Join(dir, "held")
+	require.NoError(t, os.WriteFile(held, []byte("\n  s.TOKEN-VALUE \n"), 0o600))
+	value, err = readKeyFile(held)
+	require.NoError(t, err)
+	assert.Equal(t, "s.TOKEN-VALUE", value)
+
+	empty := filepath.Join(dir, "empty")
+	require.NoError(t, os.WriteFile(empty, nil, 0o600))
+	makeUnreadable(t, empty)
+	value, err = readKeyFile(empty)
+	require.NoError(t, err)
+	assert.Empty(t, value)
+
+	makeUnreadable(t, held)
+	_, err = readKeyFile(held)
+	require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable)
+	assert.Contains(t, err.Error(), held)
+	assert.NotContains(t, err.Error(), "s.TOKEN-VALUE")
+
+	_, err = readKeyFile(dir)
+	require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable, "a directory is not a key file")
+}

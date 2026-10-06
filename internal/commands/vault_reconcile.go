@@ -121,6 +121,11 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		return err
 	}
 
+	err = requireReadableKeyFiles(paths)
+	if err != nil {
+		return err
+	}
+
 	err = repairUnsealKeyFile(ctx, paths, run.log)
 	if err != nil {
 		return err
@@ -133,7 +138,12 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	// The log and safe's target hold the keys of a vault that runs now, so
 	// they are recovered before the stop. Without both keys the vault goes
 	// down the archive path below and is never migrated.
-	if found.running && !inceptionKeysUsable(paths) {
+	keys, err := inceptionKeysUsable(paths)
+	if err != nil {
+		return err
+	}
+
+	if found.running && !keys {
 		err = run.steps.recoverKeys(ctx, paths, run.log)
 		if err != nil {
 			return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
@@ -234,7 +244,12 @@ func (run *inceptionRun) resumeMigration(ctx context.Context, journal *migration
 		return err
 	}
 
-	if !inceptionKeysUsable(paths) {
+	keys, err := inceptionKeysUsable(paths)
+	if err != nil {
+		return err
+	}
+
+	if !keys {
 		return fmt.Errorf("%w: the raft data is in %s and the file store it came from is kept in %s, "+
 			"but %s and %s do not hold both keys", ErrRestartAfterMigrationFailed, paths["vaultDir"], backup,
 			paths["rootKeyFile"], paths["unsealKeysFile"])
@@ -306,12 +321,17 @@ func (run *inceptionRun) keepHealthy(ctx context.Context) error {
 		return nil
 	}
 
-	if !keyFileHasValue(paths["rootKeyFile"]) {
+	token, err := keyFileHasValue(paths["rootKeyFile"])
+	if err != nil {
+		return err
+	}
+
+	if !token {
 		return fmt.Errorf("%w: safe has no %s target and %s holds no root token; the vault at %s keeps running",
 			ErrInceptionTargetLost, paths["vaultName"], paths["rootKeyFile"], "http://127.0.0.1:"+paths["port"])
 	}
 
-	err := run.steps.retarget(ctx, paths, run.log)
+	err = run.steps.retarget(ctx, paths, run.log)
 	if err != nil {
 		return fmt.Errorf("failed to re-target the running inception vault: %w", err)
 	}
@@ -327,7 +347,16 @@ func (run *inceptionRun) keepHealthy(ctx context.Context) error {
 func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 	paths := run.paths
 	data := classifyVaultData(paths["vaultDir"])
-	keys := inceptionKeysUsable(paths)
+
+	keys, err := inceptionKeysUsable(paths)
+	if err != nil {
+		return err
+	}
+
+	anyKey, err := anyInceptionKeyPresent(paths)
+	if err != nil {
+		return err
+	}
 
 	switch {
 	case data == vaultDataMixed:
@@ -336,7 +365,7 @@ func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 		return run.restart(ctx)
 	case data == vaultDataFile && keys:
 		return run.migrateAndRestart(ctx)
-	case data == vaultDataAbsent && !anyInceptionKeyPresent(paths):
+	case data == vaultDataAbsent && !anyKey:
 		return run.fresh(ctx)
 	case data == vaultDataAbsent:
 		return run.archiveAndStartFresh(ctx, "key files were left with no vault data")
@@ -453,38 +482,113 @@ func (run *inceptionRun) fresh(ctx context.Context) error {
 	return run.steps.finish(ctx, paths, safeLocalFresh, run.log)
 }
 
-// keyFileHasValue reports whether path holds anything besides whitespace.
-// safe refuses an empty token file, and an empty unseal key opens nothing.
-func keyFileHasValue(path string) bool {
-	data, err := os.ReadFile(path) // #nosec G304 -- path is the bloc's own key file from getVaultInceptionPaths()
-	if err != nil {
-		return false
+// readKeyFileBytes returns exactly what a key file holds. A file that does
+// not exist, or that is empty, holds nothing, and an empty file counts as
+// empty even when its mode would keep it from being read. A file that exists
+// with content but cannot be read is ErrInceptionKeyFileUnreadable, because
+// it may hold the only copy of its key: treating it as missing would archive
+// the vault or write a recovered key over it.
+func readKeyFileBytes(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
 
-	return strings.TrimSpace(string(data)) != ""
+	if err != nil {
+		return nil, keyFileUnreadableError(path, err)
+	}
+
+	if info.Mode().IsRegular() && info.Size() == 0 {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the bloc's own key file from getVaultInceptionPaths()
+	if err != nil {
+		return nil, keyFileUnreadableError(path, err)
+	}
+
+	return data, nil
+}
+
+// readKeyFile returns what a key file holds with surrounding whitespace
+// trimmed, or "" when it is missing or blank.
+func readKeyFile(path string) (string, error) {
+	data, err := readKeyFileBytes(path)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(data)), nil
+}
+
+// keyFileUnreadableError names the key file and why it could not be read,
+// never what it holds.
+func keyFileUnreadableError(path string, err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		err = pathErr.Err
+	}
+
+	return fmt.Errorf("%w: %s: %w; make it readable by this user and run this again",
+		ErrInceptionKeyFileUnreadable, path, err)
+}
+
+// keyFileHasValue reports whether path holds anything besides whitespace.
+// safe refuses an empty token file, and an empty unseal key opens nothing.
+func keyFileHasValue(path string) (bool, error) {
+	value, err := readKeyFile(path)
+
+	return value != "", err
+}
+
+// requireReadableKeyFiles refuses a run whose key files cannot be read,
+// before anything is stopped or moved.
+func requireReadableKeyFiles(paths map[string]string) error {
+	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
+		_, err := readKeyFileBytes(keyFile)
+		if err != nil {
+			return fmt.Errorf("%w; nothing was started, stopped, or changed", err)
+		}
+	}
+
+	return nil
 }
 
 // inceptionKeysUsable reports whether the bloc has both keys a restart needs.
 // The legacy and test layouts keep one file for both, and that file ends up
 // holding only the root token, so a single shared file is never a pair.
-func inceptionKeysUsable(paths map[string]string) bool {
+func inceptionKeysUsable(paths map[string]string) (bool, error) {
 	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
-		return false
+		return false, nil
 	}
 
-	return keyFileHasValue(paths["rootKeyFile"]) && keyFileHasValue(paths["unsealKeysFile"])
+	root, err := keyFileHasValue(paths["rootKeyFile"])
+	if err != nil {
+		return false, err
+	}
+
+	unseal, err := keyFileHasValue(paths["unsealKeysFile"])
+	if err != nil {
+		return false, err
+	}
+
+	return root && unseal, nil
 }
 
 // anyInceptionKeyPresent reports whether either key file exists. A lookup
-// that fails for a reason other than absence counts as present, so a key
-// that cannot be read is archived rather than reused.
-func anyInceptionKeyPresent(paths map[string]string) bool {
+// that fails for a reason other than absence is an error, because it says
+// nothing about the key.
+func anyInceptionKeyPresent(paths map[string]string) (bool, error) {
 	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
 		_, err := os.Lstat(keyFile)
-		if err == nil || !errors.Is(err, fs.ErrNotExist) {
-			return true
+		if err == nil {
+			return true, nil
+		}
+
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false, keyFileUnreadableError(keyFile, err)
 		}
 	}
 
-	return false
+	return false, nil
 }
