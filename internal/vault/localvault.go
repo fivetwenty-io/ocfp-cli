@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
 )
@@ -68,6 +69,44 @@ func localInceptionVaultDB(blocName string) string {
 	}
 
 	return filepath.Join(home, ".vault", "vault.db")
+}
+
+// localInceptionRootKeyFile returns the file holding the root token of the
+// bloc's workstation-local inception vault (see getVaultInceptionPaths in
+// internal/commands).
+func localInceptionRootKeyFile(blocName string) (string, error) {
+	if blocName != "" {
+		return filepath.Join(config.OcfpBlocDir(blocName), "vault", "root.key"), nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to find the home directory: %w", err)
+	}
+
+	return filepath.Join(home, "vault.key"), nil
+}
+
+// keepLocalTargetToken saves the root token safe holds for the local vault's
+// target before the target is deleted, which may remove the only copy of the
+// token. It reads the token only from the bloc's own target, and only when
+// that target points at the bloc's port. A token root.key lacks goes into
+// root.key; a token that differs from what root.key holds goes into a
+// root.key.saferc-<timestamp> copy beside it.
+func keepLocalTargetToken(blocName, target, port string, log *zap.SugaredLogger) error {
+	token := keyfile.TargetToken(target, port)
+	if token == "" {
+		return nil
+	}
+
+	rootKeyFile, err := localInceptionRootKeyFile(blocName)
+	if err != nil {
+		return err
+	}
+
+	_, err = keyfile.PreserveTargetToken(rootKeyFile, target, token, time.Now(), log)
+
+	return err
 }
 
 // lsofPIDs lists the PIDs lsof prints for args. lsof exits 1 with no output
@@ -170,8 +209,11 @@ func killOrphanedInceptionEngine(ctx context.Context, port, vaultDB string, log 
 // deliberately does NOT remove the vault data directory: that data is the
 // last local copy of bootstrap-era secrets and is kept as a snapshot.
 //
-// All steps are best-effort; a session or target that is already gone is
-// not an error.
+// Before it stops or deletes anything, it keeps the root token the bloc's
+// own safe target holds, since deleting the target may remove the only copy.
+// When the token cannot be kept it returns the error and changes nothing.
+// After that, the steps are best-effort; a session or target that is already
+// gone is not an error.
 func TeardownLocalInception(ctx context.Context, blocName string) error {
 	session := "inception-vault"
 	target := "inception"
@@ -189,6 +231,15 @@ func TeardownLocalInception(ctx context.Context, blocName string) error {
 
 	log := logger.Get()
 	log.Infow("Decommissioning local inception vault", "session", session, "target", target, "port", port)
+
+	// Deleting the target removes safe's copy of the root token, which may be
+	// the only one, so the token is kept first. When that fails nothing is
+	// stopped or deleted.
+	keepErr := keepLocalTargetToken(blocName, target, port, log)
+	if keepErr != nil {
+		return fmt.Errorf("failed to keep the root token from safe's target before decommissioning "+
+			"the local inception vault: %w", keepErr)
+	}
 
 	//nolint:noinlineerr // errors are passed to the logger for context
 	if err := runLocalCommand(ctx, "tmux", "kill-session", "-t", session); err != nil {

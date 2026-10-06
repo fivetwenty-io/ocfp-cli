@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/vault"
 	"github.com/spf13/cobra"
@@ -25,7 +26,7 @@ import (
 
 const (
 	// VaultOutputFileMode is the file permission mode for vault output files.
-	VaultOutputFileMode = 0600
+	VaultOutputFileMode = keyfile.FileMode
 
 	// VaultDirMode is the file permission mode for vault directories.
 	VaultDirMode = 0750
@@ -589,7 +590,7 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 	// The stop deletes the bloc's safe target, which may hold the only copy
 	// of the root token, so the token is put beside the data first and goes
 	// into the archive with it.
-	_, err := preserveTargetToken(paths, blocTargetToken(paths), now, log)
+	_, err := keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], blocTargetToken(paths), now, log)
 	if err != nil {
 		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
 	}
@@ -856,7 +857,7 @@ const safeLocalLauncherMode = 0o700
 
 // vaultKeyDirMode keeps the directory that holds a bloc's vault data and keys
 // private to the user.
-const vaultKeyDirMode = 0o700
+const vaultKeyDirMode = keyfile.DirMode
 
 // ErrSafeLocalLineTooLong reports a launcher path too long to type into tmux.
 var ErrSafeLocalLineTooLong = errors.New("the inception vault launch line is too long for tmux")
@@ -1292,7 +1293,7 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 	}
 
 	if v, ok := safeCfg.Vaults[targetName]; ok && v.Token != "" {
-		err = checkRootToken(v.Token)
+		err = keyfile.CheckRootToken(v.Token)
 		if err != nil {
 			return fmt.Errorf("refusing to save the root token of target %s to %s: %w", targetName, paths["rootKeyFile"], err)
 		}

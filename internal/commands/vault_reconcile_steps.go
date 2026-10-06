@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"go.uber.org/zap"
 )
 
@@ -433,7 +433,7 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 					paths["unsealKeysFile"], err)
 			}
 
-			err = writeRecoveredKey(paths["unsealKeysFile"], sealKey)
+			err = keyfile.WriteRecovered(paths["unsealKeysFile"], sealKey)
 			if err != nil {
 				return err
 			}
@@ -450,13 +450,13 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 			return nil
 		}
 
-		err := checkRootToken(token)
+		err := keyfile.CheckRootToken(token)
 		if err != nil {
 			return fmt.Errorf("refusing to recover the root token of target %s into %s: %w",
 				paths["vaultName"], paths["rootKeyFile"], err)
 		}
 
-		err = writeRecoveredKey(paths["rootKeyFile"], token)
+		err = keyfile.WriteRecovered(paths["rootKeyFile"], token)
 		if err != nil {
 			return err
 		}
@@ -486,7 +486,7 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 		return nil
 	}
 
-	data, err := readKeyFileBytes(keyFile)
+	data, err := keyfile.ReadBytes(keyFile)
 	if err != nil {
 		return err
 	}
@@ -518,7 +518,7 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 			ErrUnsealKeyFileMalformed, keyFile, shapeErr, paths["logFile"], paths["logFile"], paths["tmuxSession"])
 	}
 
-	err = writeRecoveredKey(keyFile, found[0])
+	err = keyfile.WriteRecovered(keyFile, found[0])
 	if err != nil {
 		return err
 	}
@@ -539,7 +539,7 @@ func canonicalizeKeyFile(keyFile string, data []byte, key string, log *zap.Sugar
 		return nil
 	}
 
-	err := writeRecoveredKey(keyFile, key)
+	err := keyfile.WriteRecovered(keyFile, key)
 	if err != nil {
 		return err
 	}
@@ -559,13 +559,13 @@ func canonicalizeRootKeyFile(paths map[string]string, log *zap.SugaredLogger) er
 		return nil
 	}
 
-	data, err := readKeyFileBytes(keyFile)
+	data, err := keyfile.ReadBytes(keyFile)
 	if err != nil {
 		return err
 	}
 
 	token := strings.TrimSpace(string(data))
-	if token != "" && checkRootToken(token) == nil {
+	if token != "" && keyfile.CheckRootToken(token) == nil {
 		return canonicalizeKeyFile(keyFile, data, token, log)
 	}
 
@@ -608,7 +608,7 @@ func recoverUnsealKeyFromLogs(paths map[string]string, log *zap.SugaredLogger) e
 			continue
 		}
 
-		err = writeRecoveredKey(keyFile, keys[len(keys)-1])
+		err = keyfile.WriteRecovered(keyFile, keys[len(keys)-1])
 		if err != nil {
 			return err
 		}
@@ -689,101 +689,5 @@ func runningVaultOutput(ctx context.Context, paths map[string]string) string {
 // blocTargetToken returns the token safe holds for the bloc's own target, or
 // "" unless that target exists and points at the bloc's port.
 func blocTargetToken(paths map[string]string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".saferc")) // #nosec G304 -- safe's own config under the user's home
-	if err != nil {
-		return ""
-	}
-
-	var safeRC struct {
-		Vaults map[string]struct {
-			URL   string `yaml:"url"`
-			Token string `yaml:"token"`
-		} `yaml:"vaults"`
-	}
-
-	if yaml.Unmarshal(data, &safeRC) != nil {
-		return ""
-	}
-
-	target, ok := safeRC.Vaults[paths["vaultName"]]
-	if !ok || strings.TrimRight(target.URL, "/") != "http://127.0.0.1:"+paths["port"] {
-		return ""
-	}
-
-	return strings.TrimSpace(target.Token)
-}
-
-// writeRecoveredKey writes one key file with mode 0600, through a temporary
-// file and a rename so a crash never leaves a partial key behind.
-func writeRecoveredKey(path, value string) error {
-	return writeKeyFile(path, value, true)
-}
-
-// writeNewKeyFile writes a key file that must not exist yet, the same way
-// writeRecoveredKey does, and fails with ErrVaultArchiveExists rather than
-// replace anything already at path.
-func writeNewKeyFile(path, value string) error {
-	return writeKeyFile(path, value, false)
-}
-
-// writeKeyFile writes value and a newline to path with mode 0600, through a
-// temporary file in the same directory. With replace it renames the
-// temporary file over path. Without it, it hard-links the temporary file to
-// path, which fails when path exists, so nothing there is ever replaced.
-func writeKeyFile(path, value string, replace bool) error {
-	dir := filepath.Dir(path)
-
-	err := os.MkdirAll(dir, vaultKeyDirMode)
-	if err != nil {
-		return fmt.Errorf("failed to create %s: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
-	if err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
-	}
-
-	tmpName := tmp.Name()
-
-	_, err = tmp.WriteString(value + "\n")
-	closeErr := tmp.Close()
-
-	if err == nil {
-		err = closeErr
-	}
-
-	if err == nil {
-		err = os.Chmod(tmpName, VaultOutputFileMode)
-	}
-
-	if err == nil && replace {
-		err = os.Rename(tmpName, path)
-	}
-
-	if err == nil && !replace {
-		err = os.Link(tmpName, path)
-		if errors.Is(err, fs.ErrExist) {
-			err = fmt.Errorf("%w: %s", ErrVaultArchiveExists, path)
-		}
-
-		if err == nil {
-			err = os.Remove(tmpName)
-			if err != nil {
-				return fmt.Errorf("wrote %s, but could not remove its temporary copy %s: %w", path, tmpName, err)
-			}
-		}
-	}
-
-	if err != nil {
-		_ = os.Remove(tmpName) // the temporary file holds only this write's copy of the key
-
-		return fmt.Errorf("failed to write %s: %w", path, err)
-	}
-
-	return nil
+	return keyfile.TargetToken(paths["vaultName"], paths["port"])
 }
