@@ -198,11 +198,28 @@ new_ocfp() {
 
 # old_ocfp BLOC creates a file-backed vault with the previous release and the
 # 2.6.4 engine.
+#
+# That release types a bare `safe local` into a new tmux session, so the
+# pane's shell, not ocfp's environment, decides which safe and which engine
+# run. The pane inherits the environment of whichever run started the
+# scratch tmux server, and a macOS login shell then runs path_helper, which
+# puts Homebrew's safe and bao ahead of everything else. Homebrew's bao no
+# longer serves file storage, so the old release's vault never started.
+#
+# While the old release runs, new sessions therefore start a plain shell with
+# the PATH that release was used with. That release also knew nothing of
+# SAFE_ENGINE and required a `vault` command, which the 2.6.4 directory
+# provides as a link to bao, so SAFE_ENGINE is unset and safe picks `vault`
+# as it did then.
 old_ocfp() {
-  local bloc=$1
-  OCFP_VAULT_INCEPTION_PORT=$(api_port "$bloc") SAFE_ENGINE=bao \
-    PATH="$S/bin:$(dirname "$BAO26"):$BASE_PATH" \
-    "$S/bin-old/ocfp" vault inception --bloc "$bloc" >>"$S/logs/$CASE.log" 2>&1
+  local bloc=$1 old_path rc=0
+  old_path="$S/bin:$(dirname "$BAO26"):$BASE_PATH"
+  tmux has-session -t smoke-hold 2>/dev/null || tmux new-session -d -s smoke-hold 'sleep 86400'
+  tmux set-option -g default-command "exec env -u SAFE_ENGINE PATH=$(printf '%q' "$old_path") /bin/sh"
+  env -u SAFE_ENGINE OCFP_VAULT_INCEPTION_PORT="$(api_port "$bloc")" PATH="$old_path" \
+    "$S/bin-old/ocfp" vault inception --bloc "$bloc" >>"$S/logs/$CASE.log" 2>&1 || rc=$?
+  tmux set-option -gu default-command
+  return "$rc"
 }
 
 # scratch_safe runs safe against the scratch HOME's .saferc.
@@ -356,19 +373,49 @@ case_b3() {
 
 # --- C. File-to-raft migration ----------------------------------------------------
 
+# save_keys BLOC copies the key files the old release wrote into the scratch
+# aside directory, so keys_kept can compare them later without printing them.
+save_keys() {
+  local root aside=$S/aside/$1.keys
+  root=$(vault_root "$1")
+  [[ -s $root/root.key && -s $root/unseal.keys ]] || fail "ocfp $OLD_REF did not save both keys of $1" || return 1
+  mkdir -m 700 "$aside"
+  cp -p "$root/root.key" "$root/unseal.keys" "$aside/"
+}
+
+# keys_kept BLOC checks that the root token is byte for byte the one the old
+# release saved, and that the unseal key is either the same or the whole key
+# that the old file held only the start of. The old release read the key
+# from an 80-column tmux pane, which cut it short, and ocfp restores the
+# whole key from the log before it migrates. It prints only which it was.
+keys_kept() {
+  local aside=$S/aside/$1.keys root
+  root=$(vault_root "$1")
+  cmp -s "$aside/root.key" "$root/root.key" || return 1
+  cmp -s "$aside/unseal.keys" "$root/unseal.keys" && return 0
+  python3 - "$aside/unseal.keys" "$root/unseal.keys" <<'PY' || return 1
+import re, sys
+old = open(sys.argv[1]).read().strip()
+new = open(sys.argv[2]).read().strip()
+sys.exit(0 if old and re.fullmatch(r"[0-9a-fA-F]{64}", new) and new.startswith(old) else 1)
+PY
+  printf '  note: %s had a cut-short unseal key from %s, and ocfp restored the whole key\n' "$1" "$OLD_REF"
+}
+
 make_file_vault() {
   local bloc=$1
   old_ocfp "$bloc" || fail "ocfp $OLD_REF could not create $bloc; see $S/logs/$CASE.log" || return 1
   [[ -d $(data_dir "$bloc")/core ]] || fail "$bloc is not file-backed" || return 1
+  save_keys "$bloc" || return 1
   put_canary "$bloc"
 }
 
 expect_migrated() {
-  local bloc=$1 keys=$2 backup
+  local bloc=$1 backup
   backup=$(ls -d "$(data_dir "$bloc").file-backup-"* 2>/dev/null | head -n 1)
   [[ -n $backup && -d $backup/core ]] || fail "$bloc has no file backup with core/" || return 1
   expect_raft "$bloc" || return 1
-  [[ $(key_sha "$bloc") == "$keys" ]] || fail "the keys of $bloc changed" || return 1
+  keys_kept "$bloc" || fail "the keys of $bloc changed" || return 1
   check_canary "$bloc" || return 1
   assert_no_archive "$bloc" || return 1
   [[ ! -e $(data_dir "$bloc").raft-migration.json ]] || fail "a journal was left behind for $bloc" || return 1
@@ -376,9 +423,8 @@ expect_migrated() {
 }
 
 case_c1() {
-  local keys old_pid
+  local old_pid
   make_file_vault smoke-c || return 1
-  keys=$(key_sha smoke-c)
   old_pid=$(listeners "$(api_port smoke-c)")
   [[ -n $old_pid ]] || fail "the old vault is not running" || return 1
   new_ocfp smoke-c || fail "migration of a running vault failed; see $S/logs/$CASE.log" || return 1
@@ -388,22 +434,19 @@ case_c1() {
       return 1
     fi
   done
-  expect_migrated smoke-c "$keys"
+  expect_migrated smoke-c
 }
 
 case_c2() {
-  local keys
   make_file_vault smoke-d || return 1
-  keys=$(key_sha smoke-d)
   stop_vault smoke-d || return 1
   new_ocfp smoke-d || fail "migration of a stopped vault failed; see $S/logs/$CASE.log" || return 1
-  expect_migrated smoke-d "$keys"
+  expect_migrated smoke-d
 }
 
 case_c3() {
-  local keys data
+  local data
   make_file_vault smoke-e || return 1
-  keys=$(key_sha smoke-e)
   stop_vault smoke-e || return 1
   data=$(data_dir smoke-e)
   mkdir -m 700 "$data.raft-migrating"
@@ -413,7 +456,7 @@ case_c3() {
   chmod 600 "$data.raft-migration.json"
   new_ocfp smoke-e || fail "resuming the migration failed; see $S/logs/$CASE.log" || return 1
   ls -d "$data.raft-partial-"* >/dev/null 2>&1 || fail "the partial copy was not moved aside" || return 1
-  expect_migrated smoke-e "$keys"
+  expect_migrated smoke-e
 }
 
 # --- D. Fallbacks and refusals ----------------------------------------------------
