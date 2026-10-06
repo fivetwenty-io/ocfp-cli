@@ -25,6 +25,8 @@ In the bloc layout, which every current bloc uses, the vault's files live under 
 | `<bloc>/vault/data/` | The vault's storage. A raft vault has `vault.db` and a `raft/` directory here, and a file-backed vault from an older ocfp has a `core/` directory instead. |
 | `<bloc>/vault/root.key` | The root token, with mode 0600. |
 | `<bloc>/vault/unseal.keys` | The unseal key, with mode 0600. |
+| `<bloc>/vault/root.key.saferc-<timestamp>` | A copy of the root token that safe held for the bloc's target, kept with mode 0600 when it differed from `root.key` at the moment ocfp stopped the vault. |
+| `<bloc>/vault/root.key.rejected-<timestamp>` | A root token that the engine refused, moved aside after the token from safe's target opened the vault instead. |
 
 Two more files live under the state home, which is `~/.local/state/ocfp` unless `XDG_STATE_HOME` or `OCFP_HOME` says otherwise.
 
@@ -50,8 +52,9 @@ flowchart TD
     D -->|yes, but not this bloc's| X1
     D -->|yes, healthy raft, no journal| H[Leave it running]
     D -->|yes, other state| R[Recover any missing key while it runs]
-    D -->|no| S
-    R --> S[Stop the vault and wait until the port and data are free]
+    D -->|no| T
+    R --> T[Keep the root token from safe's target]
+    T --> S[Stop the vault and wait until the port and data are free]
     S --> P{Cluster port free?}
     P -->|no| X4[Refuse: cluster port taken]
     P -->|yes| J{Journal present?}
@@ -61,7 +64,9 @@ flowchart TD
     K -->|file data, both keys| MG[Migrate to raft, then restart]
     K -->|no data, no keys| F[Start a new vault]
     K -->|anything else| AR[Archive, then start a new vault]
+    RS -->|engine rejects root.key, safe's token differs| RT[Restart once with safe's token]
     RS -->|engine rejects the keys| AR
+    RT -->|engine rejects it too| AR
 ```
 
 A vault counts as this bloc's own when the process listening on the API port also holds this bloc's `vault.db`. Without raft data there is no lock to compare, so the bloc's own tmux session is the evidence instead. Derived ports can collide between blocs, and this check is what keeps one bloc from stopping a sibling's vault.
@@ -70,9 +75,13 @@ A vault is healthy when it is initialized and unsealed, it reports raft storage 
 
 Before ocfp stops a running vault that is missing a key, it tries to recover the key while the vault still runs. The unseal key comes from the vault's log, or failing that from the tmux pane's history. The root token comes from the bloc's own target in `~/.saferc`, and only when that target points at the bloc's port. ocfp writes only the key files that are missing or blank, and it never replaces a key file that holds a value or one that it cannot read.
 
+Stopping a vault deletes the bloc's safe target, and that target may hold the only copy of the root token. So before every stop, whether the vault is running or not, ocfp reads the token that `~/.saferc` holds for the bloc's own target, and only when that target points at the bloc's port. When `root.key` is missing or blank and the token has the shape of a token, ocfp writes it to `root.key`. When `root.key` holds a different value, ocfp keeps both, and writes the token to `root.key.saferc-<timestamp>` beside `root.key` with mode 0600. That copy sits inside the bloc's `vault` directory, so an archive carries it along. A later run that finds the same token in an existing copy reuses that copy rather than writing another one.
+
 ## The archive
 
 ocfp archives a vault only when one of its keys is missing, when key files exist without any data, or when the engine itself rejects the saved root token or unseal key. Network trouble, a busy port, or an engine that fails to start never leads to an archive. In those cases ocfp stops whatever it started and returns an error.
+
+When the engine refuses the token in `root.key` and ocfp kept a different token from safe's target before the stop, ocfp restarts the vault once more with that token before it archives anything. If the engine takes it, `root.key` is updated to hold it, the refused token moves to `root.key.rejected-<timestamp>`, and the vault keeps its data. If the engine refuses that token too, ocfp archives the vault with both tokens inside the archive. A retry that fails for any other reason returns an error and archives nothing.
 
 An archive renames the bloc's whole `vault` directory, with its data and both key files, to `vault.superseded-<timestamp>` beside it. Nothing is deleted. A new vault then starts in an empty `vault` directory, and the command ends with an error-level log line that names the archive, so the change is hard to miss. In the legacy and test layouts, where the key file sits in the home directory, the data directory and the key file are each renamed aside under the same suffix.
 
@@ -131,7 +140,7 @@ The node ID must be `safe-local`, because that is the ID safe gives its raft nod
 
 ocfp stops a vault by killing the bloc's tmux session, the listener on the bloc's API port, and any `safe local` process for that port. It then waits up to fifteen seconds for the port to close and for no process to hold `vault.db`, and it sends SIGKILL to anything still holding the data after a grace period. If the data stays locked, ocfp returns an error and moves nothing, because archiving or migrating under a live engine is how a store gets corrupted.
 
-`ocfp vault teardown` stops the bloc's vault the same way, deletes its safe target, and archives it as described above. It first checks that the vault on the port is the bloc's own, and it stops nothing when it cannot prove that. When `ocfp init bastion` hands the vault over to the bastion, it stops the workstation's vault. That includes an engine that outlived its safe but still holds the bloc's raft data. The workstation's data stays on disk as a snapshot of the bootstrap-era secrets.
+`ocfp vault teardown` stops the bloc's vault the same way, deletes its safe target, and archives it as described above. Before it stops anything, it keeps the token from the bloc's safe target in `root.key`, or beside it when `root.key` holds something else, so the token goes into the archive with the data. It first checks that the vault on the port is the bloc's own, and it stops nothing when it cannot prove that. When `ocfp init bastion` hands the vault over to the bastion, it stops the workstation's vault. That includes an engine that outlived its safe but still holds the bloc's raft data. The workstation's data stays on disk as a snapshot of the bootstrap-era secrets.
 
 ## A cut-short unseal key
 
@@ -166,6 +175,7 @@ A new vault is held to the same standard. When ocfp starts one and cannot save b
 | `an inception vault key file cannot be read` | `root.key` or `unseal.keys` exists but this user cannot read it, often because a `sudo` run left it owned by root. Nothing was started, stopped, or changed. | Give the file back to this user with mode 0600, for example with `sudo chown "$USER" <file>` and `chmod 600 <file>`, and run the command again. |
 | `the inception vault unseal key file does not hold a whole key` | `unseal.keys` is cut short and no log or pane history still holds the whole key. | Follow the steps in the section on a cut-short unseal key, then run the command again. Nothing on disk changed. |
 | `the new inception vault's keys were not saved` | A new vault is running, but the root token or the unseal key could not be saved in a valid shape. | Find the full keys in the vault log that the error names, write them to `root.key` and `unseal.keys` at mode 0600, and run the command again. The vault was left running. |
+| `no free name to keep a copy of the inception vault root token` | ocfp tried to keep a copy of a root token beside `root.key`, but every name it tried was already taken. Nothing was stopped. | Move old `root.key.saferc-*` or `root.key.rejected-*` files somewhere safe, and run the command again. |
 | `timed out waiting for another ocfp run to release its lock` | Another ocfp run has worked on this bloc's vault for more than five minutes. | Wait for that run to finish, or stop it, and run the command again. A killed run releases the lock on its own. |
 
 ## Testing on a workstation

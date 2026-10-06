@@ -43,6 +43,7 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		},
 		migrate:     migrateFileVaultToRaft,
 		recoverKeys: recoverInceptionKeys,
+		targetToken: blocTargetToken,
 		now:         time.Now,
 	}
 }
@@ -518,6 +519,21 @@ func blocTargetToken(paths map[string]string) string {
 // writeRecoveredKey writes one key file with mode 0600, through a temporary
 // file and a rename so a crash never leaves a partial key behind.
 func writeRecoveredKey(path, value string) error {
+	return writeKeyFile(path, value, true)
+}
+
+// writeNewKeyFile writes a key file that must not exist yet, the same way
+// writeRecoveredKey does, and fails with ErrVaultArchiveExists rather than
+// replace anything already at path.
+func writeNewKeyFile(path, value string) error {
+	return writeKeyFile(path, value, false)
+}
+
+// writeKeyFile writes value and a newline to path with mode 0600, through a
+// temporary file in the same directory. With replace it renames the
+// temporary file over path. Without it, it hard-links the temporary file to
+// path, which fails when path exists, so nothing there is ever replaced.
+func writeKeyFile(path, value string, replace bool) error {
 	dir := filepath.Dir(path)
 
 	err := os.MkdirAll(dir, vaultKeyDirMode)
@@ -543,8 +559,22 @@ func writeRecoveredKey(path, value string) error {
 		err = os.Chmod(tmpName, VaultOutputFileMode)
 	}
 
-	if err == nil {
+	if err == nil && replace {
 		err = os.Rename(tmpName, path)
+	}
+
+	if err == nil && !replace {
+		err = os.Link(tmpName, path)
+		if errors.Is(err, fs.ErrExist) {
+			err = fmt.Errorf("%w: %s", ErrVaultArchiveExists, path)
+		}
+
+		if err == nil {
+			err = os.Remove(tmpName)
+			if err != nil {
+				return fmt.Errorf("wrote %s, but could not remove its temporary copy %s: %w", path, tmpName, err)
+			}
+		}
 	}
 
 	if err != nil {

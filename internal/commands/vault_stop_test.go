@@ -121,6 +121,10 @@ func stopTestPaths(t *testing.T, bloc string) map[string]string {
 
 	paths := getVaultInceptionPaths(bloc, false)
 
+	// Teardown reads the bloc's target from ~/.saferc, which must never be
+	// the real one.
+	t.Setenv("HOME", t.TempDir())
+
 	vaultRoot := filepath.Join(t.TempDir(), bloc, "vault")
 	paths["vaultDir"] = filepath.Join(vaultRoot, "data")
 	paths["rootKeyFile"] = filepath.Join(vaultRoot, "root.key")
@@ -354,4 +358,54 @@ func TestArchiveAndForgetVault_LegacyLayoutKeepsTheKeyBesideTheArchive(t *testin
 	key, err := os.ReadFile(paths["rootKeyFile"] + VaultArchiveSuffix + "20261006-120000")
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-key\n", string(key))
+}
+
+// Teardown stops the vault, which deletes its safe target, and then archives
+// it. The target's root token goes into the archive with the data: as
+// root.key when root.key is missing, and beside root.key when root.key holds
+// a different value.
+func TestCleanupExistingVault_KeepsTheTargetTokenInTheArchive(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rootKey  string // "" removes root.key
+		wantRoot string
+		wantKept bool
+	}{
+		"root.key missing":   {wantRoot: "s.SAFERC-TOKEN-SENTINEL\n"},
+		"root.key different": {rootKey: "test-root-token\n", wantRoot: "test-root-token\n", wantKept: true},
+		"root.key the same":  {rootKey: "s.SAFERC-TOKEN-SENTINEL\n", wantRoot: "s.SAFERC-TOKEN-SENTINEL\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			installFakeVaultOps(t)
+			paths := stopTestPaths(t, "ocfp-lab-drgao")
+			vaultRoot := filepath.Dir(paths["vaultDir"])
+
+			require.NoError(t, os.Remove(paths["rootKeyFile"]))
+
+			if tc.rootKey != "" {
+				require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte(tc.rootKey), 0o600))
+			}
+
+			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: http://127.0.0.1:"+paths["port"]+
+				"\n    token: s.SAFERC-TOKEN-SENTINEL\n")
+
+			require.NoError(t, cleanupExistingVault(context.Background(), paths, zap.NewNop().Sugar()))
+
+			archives, err := filepath.Glob(vaultRoot + VaultArchiveSuffix + "*")
+			require.NoError(t, err)
+			require.Len(t, archives, 1)
+			assert.Equal(t, tc.wantRoot, readKey(t, filepath.Join(archives[0], "root.key")))
+
+			kept, err := filepath.Glob(filepath.Join(archives[0], "root.key.saferc-*"))
+			require.NoError(t, err)
+
+			if !tc.wantKept {
+				assert.Empty(t, kept)
+
+				return
+			}
+
+			require.Len(t, kept, 1)
+			assert.Equal(t, "s.SAFERC-TOKEN-SENTINEL\n", readKey(t, kept[0]))
+		})
+	}
 }

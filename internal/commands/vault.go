@@ -65,6 +65,10 @@ var (
 	// open the vault. It is the only startup failure that says anything about
 	// the keys on disk.
 	ErrVaultKeysRejected = errors.New("the saved inception vault keys were rejected")
+	// ErrVaultRootTokenRejected is the kind of ErrVaultKeysRejected where the
+	// engine refused the root token, or found it was not a root token, after
+	// the unseal key had opened the vault. Another token may still work.
+	ErrVaultRootTokenRejected = fmt.Errorf("%w: the root token was refused", ErrVaultKeysRejected)
 	// ErrVaultTargetVerify indicates failure to verify the inception vault target.
 	ErrVaultTargetVerify = errors.New("failed to verify inception vault target")
 )
@@ -580,12 +584,22 @@ func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
 // because archiving data out from under a running engine is how a store gets
 // corrupted.
 func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
-	err := stopInceptionVault(ctx, paths, log)
+	now := time.Now()
+
+	// The stop deletes the bloc's safe target, which may hold the only copy
+	// of the root token, so the token is put beside the data first and goes
+	// into the archive with it.
+	_, err := preserveTargetToken(paths, blocTargetToken(paths), now, log)
+	if err != nil {
+		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
+	}
+
+	err = stopInceptionVault(ctx, paths, log)
 	if err != nil {
 		return err
 	}
 
-	archived, err := archiveAndForgetVault(paths, time.Now().Format("20060102-150405"), log)
+	archived, err := archiveAndForgetVault(paths, now.Format(vaultArchiveTimeFormat), log)
 	if err != nil {
 		return fmt.Errorf("failed to archive the inception vault: %w", err)
 	}
@@ -992,13 +1006,7 @@ var unsealKeyRefusals = []string{
 // archive a vault and start a fresh one.
 func isSafeKeyFailure(line string) bool {
 	if strings.Contains(line, "The root token in ") {
-		for _, refusal := range safeTokenRefusals {
-			if strings.Contains(line, refusal) {
-				return true
-			}
-		}
-
-		return false
+		return isSafeTokenRefusal(line)
 	}
 
 	if !strings.Contains(line, "Unable to unseal") {
@@ -1009,6 +1017,22 @@ func isSafeKeyFailure(line string) bool {
 
 	for _, refusal := range unsealKeyRefusals {
 		if strings.Contains(lower, refusal) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isSafeTokenRefusal reports whether a "!! " line says the engine refused the
+// saved root token, or that the token is not a root token.
+func isSafeTokenRefusal(line string) bool {
+	if !strings.Contains(line, "The root token in ") {
+		return false
+	}
+
+	for _, refusal := range safeTokenRefusals {
+		if strings.Contains(line, refusal) {
 			return true
 		}
 	}
@@ -1058,6 +1082,10 @@ func classifyVaultStartup(output string) (bool, error) {
 		line = strings.TrimSpace(line)
 
 		if strings.HasPrefix(line, "!! ") && !isSafeNonFatalWarning(line) {
+			if isSafeTokenRefusal(line) {
+				return false, fmt.Errorf("%w: %s", ErrVaultRootTokenRejected, redactVaultOutput(line))
+			}
+
 			if isSafeKeyFailure(line) {
 				return false, fmt.Errorf("%w: %s", ErrVaultKeysRejected, redactVaultOutput(line))
 			}
