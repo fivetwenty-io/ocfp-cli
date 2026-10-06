@@ -938,23 +938,104 @@ func TestReconcile_RunningVaultOverFileDataStopsThenMigrates(t *testing.T) {
 	}, fake.calls)
 }
 
-// When recovery finds nothing, the vault cannot be reopened after it stops,
-// so it is archived with its data and never migrated.
-func TestReconcile_RunningFileVaultWithoutRecoverableKeysIsArchived(t *testing.T) {
-	paths := reconcilePaths(t)
-	writeFileData(t, paths["vaultDir"])
-	writeKeys(t, paths, false, true)
+// An open vault, initialized and unsealed, still serves its secrets, but once
+// it stops it can be reopened only with both keys. When recovery cannot save
+// them, the run fails with the keys-not-saved error before it keeps a token,
+// stops, archives, or starts anything, and the vault keeps running. This
+// holds for every open vault that is not healthy: one on file data, an engine
+// whose session is gone, and one with a migration journal.
+func TestReconcile_OpenVaultWithoutRecoverableKeysIsLeftRunning(t *testing.T) {
+	for name, tc := range map[string]struct {
+		probe        vaultProbe
+		file         bool
+		session      bool
+		root, unseal bool
+		journal      bool
+	}{
+		"file data, no root token":        {probe: runningFileProbe(), file: true, session: true, unseal: true},
+		"file data, no unseal key":        {probe: runningFileProbe(), file: true, session: true, root: true},
+		"raft engine without its session": {probe: healthyRaftProbe(), unseal: true},
+		"raft engine, neither key":        {probe: healthyRaftProbe()},
+		"migration journal":               {probe: runningFileProbe(), file: true, session: true, root: true, journal: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
 
-	fake := &fakeInception{probe: runningFileProbe(), session: true, migrate: fakeMigration(t)}
+			if tc.file {
+				writeFileData(t, paths["vaultDir"])
+			} else {
+				writeRaftData(t, paths["vaultDir"])
+			}
+
+			writeKeys(t, paths, tc.root, tc.unseal)
+
+			if tc.journal {
+				writeJournal(t, paths, migratePhaseMigrating, paths["vaultDir"]+".file-backup-20261006-110000")
+			}
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{
+				probe: tc.probe, session: tc.session, migrate: fakeMigration(t), targetToken: safeRCToken,
+			}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
+			assert.Contains(t, err.Error(), "still running")
+			assert.NotContains(t, err.Error(), testSealKey)
+			assert.NotContains(t, err.Error(), "SENTINEL")
+			assert.Equal(t, []string{"probe", "recover-keys"}, fake.calls,
+				"nothing may be stopped, migrated, or started while the keys are not saved")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)),
+				"no token is kept and nothing is archived or moved")
+			assert.Empty(t, archivesOf(t, paths))
+		})
+	}
+}
+
+// When recovery saves the missing key, an open vault that is not healthy goes
+// on to the stop and the restart or migration as before.
+func TestReconcile_OpenVaultWhoseKeysAreRecoveredIsRestarted(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, false)
+
+	fake := &fakeInception{
+		probe:   healthyRaftProbe(),
+		recover: func(paths map[string]string) { writeKeys(t, paths, false, true) },
+	}
 
 	require.NoError(t, runReconcile(t, paths, fake))
-	assert.Equal(t, "recover-keys", fake.calls[1])
-	assert.NotContains(t, fake.calls, "migrate")
-	assert.Contains(t, fake.calls, "start fresh")
+	assert.Equal(t, []string{
+		"probe", "recover-keys", "stop", "cluster-port " + paths["clusterPort"], "start restart", "finish restart",
+	}, fake.calls)
+	assert.Empty(t, archivesOf(t, paths))
+}
 
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+// A sealed or never-initialized engine holds nothing in memory that its data
+// and key files do not, so stopping it loses nothing. Without both keys it
+// still goes down the archive path, with its data kept.
+func TestReconcile_SealedRunningVaultWithoutKeysIsArchived(t *testing.T) {
+	for name, probe := range map[string]vaultProbe{
+		"sealed":            {state: vaultProbeVault, initialized: true, sealed: true, storageType: "file"},
+		"never initialized": {state: vaultProbeVault, sealed: true, storageType: "file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, false, true)
+
+			fake := &fakeInception{probe: probe, session: true, migrate: fakeMigration(t)}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Equal(t, "recover-keys", fake.calls[1])
+			assert.NotContains(t, fake.calls, "migrate")
+			assert.Contains(t, fake.calls, "start fresh")
+
+			archives := archivesOf(t, paths)
+			require.Len(t, archives, 1)
+			assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+		})
+	}
 }
 
 // A file vault that will not stop, or whose port or data stays held, must

@@ -52,6 +52,7 @@ flowchart TD
     D -->|yes, but not this bloc's| X1
     D -->|yes, healthy raft, no journal| H[Leave it running]
     D -->|yes, other state| R[Recover any missing key while it runs]
+    R -->|open vault, keys still not saved| X5[Refuse: keys not saved, the vault keeps running]
     D -->|no| T
     R --> T[Keep the root token from safe's target]
     T --> S[Stop the vault and wait until the port and data are free]
@@ -73,9 +74,11 @@ A vault counts as this bloc's own when the process listening on the API port als
 
 A vault is healthy when it is initialized and unsealed, it reports raft storage or no storage type at all, the data directory holds raft data, and the bloc's tmux session exists. ocfp leaves a healthy vault running. If safe has lost the bloc's target, ocfp registers it again and authenticates it with the token in `root.key`.
 
-A running vault also needs both of its keys saved, because without them it cannot be reopened once it stops. When `root.key` or `unseal.keys` is missing, blank, or not the shape of a key, ocfp tries to recover the key from the running vault the way it does before a stop. If both keys are still not saved after that, the command exits non-zero with the error that the keys were not saved, and the vault keeps running. Running the command again gives the same error until the keys are in place, so a vault in this state is never reported as healthy. `ocfp init bastion` runs `ocfp vault inception` on the bastion every time, even when a vault there already answers, so the bastion gets the same check. When the command fails, the bastion init fails with its exit code.
+An open vault, meaning one that is initialized and unsealed, also needs both of its keys saved, whether or not it is healthy, because without them it cannot be reopened once it stops. When `root.key` or `unseal.keys` is missing, blank, or not the shape of a key, ocfp tries to recover the key from the running vault. If both keys are still not saved after that, the command exits non-zero with the error that the keys were not saved. It keeps no token, and it stops, archives, migrates, and starts nothing, so the vault keeps running and its secrets can still be read through it. Running the command again gives the same error until the keys are in place, so a vault in this state is never reported as healthy and is never replaced. `ocfp init bastion` runs `ocfp vault inception` on the bastion every time, even when a vault there already answers, so the bastion gets the same check. When the command fails, the bastion init fails with its exit code.
 
-Before ocfp stops a running vault that is missing a key, it tries to recover the key while the vault still runs. The unseal key comes from the vault's log, or failing that from the tmux pane's history. The root token comes from the bloc's own target in `~/.saferc`, and only when that target points at the bloc's port. ocfp writes only the key files that are missing or blank, and it never replaces a key file that holds a value or one that it cannot read.
+A sealed or never-initialized vault holds nothing in memory that its data and key files do not, so stopping it loses nothing. Before ocfp stops such a vault, it tries to recover a missing key while the vault still runs, and when a key is still missing after the stop, the vault goes down the archive path with its data kept.
+
+Key recovery works the same way for every running vault. The unseal key comes from the vault's log, or failing that from the tmux pane's history. The root token comes from the bloc's own target in `~/.saferc`, and only when that target points at the bloc's port. ocfp writes only the key files that are missing or blank, and it never replaces a key file that holds a value or one that it cannot read.
 
 Stopping a vault deletes the bloc's safe target, and that target may hold the only copy of the root token. So before every stop, whether the vault is running or not, ocfp reads the token that `~/.saferc` holds for the bloc's own target, and only when that target points at the bloc's port. When `root.key` is missing or blank and the token has the shape of a token, ocfp writes it to `root.key`. When `root.key` holds a different value, ocfp keeps both, and writes the token to `root.key.saferc-<timestamp>` beside `root.key` with mode 0600. That copy sits inside the bloc's `vault` directory, so an archive carries it along. A later run that finds the same token in an existing copy reuses that copy rather than writing another one.
 
@@ -83,7 +86,7 @@ A stopped vault has no running process to recover a key from, but its logs may s
 
 ## The archive
 
-ocfp archives a vault only when one of its keys is missing, when key files exist without any data, or when the engine itself rejects the saved root token or unseal key. Network trouble, a busy port, or an engine that fails to start never leads to an archive. In those cases ocfp stops whatever it started and returns an error.
+ocfp archives a vault only when one of its keys is missing, when key files exist without any data, or when the engine itself rejects the saved root token or unseal key. It never stops an open vault whose keys are not saved, so a vault that is archived for a missing key was already stopped, sealed, or never initialized. Network trouble, a busy port, or an engine that fails to start never leads to an archive. In those cases ocfp stops whatever it started and returns an error.
 
 When the engine refuses the token in `root.key` and ocfp kept a different token from safe's target before the stop, ocfp restarts the vault once more with that token before it archives anything. If the engine takes it, `root.key` is updated to hold it, the refused token moves to `root.key.rejected-<timestamp>`, and the vault keeps its data. If the engine refuses that token too, ocfp archives the vault with both tokens inside the archive. A retry that fails for any other reason returns an error and archives nothing.
 
