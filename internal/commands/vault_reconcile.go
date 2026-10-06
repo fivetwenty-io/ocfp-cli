@@ -699,8 +699,9 @@ func requireReadableKeyFiles(paths map[string]string) error {
 }
 
 // inceptionKeysUsable reports whether the bloc has both keys a restart needs.
-// The legacy and test layouts keep one file for both, and that file ends up
-// holding only the root token, so a single shared file is never a pair.
+// Older releases kept both keys in one file without a bloc, and that file
+// ended up holding only the root token, so a single shared file is never a
+// pair.
 func inceptionKeysUsable(paths map[string]string) (bool, error) {
 	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
 		return false, nil

@@ -421,14 +421,27 @@ func TestTeardownLocalInception_IgnoresATargetOnAnotherPort(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist, "a target that is not the bloc's own must not be saved")
 }
 
-func TestTeardownLocalInception_BareNamesKeepTheTokenInHomeVaultKey(t *testing.T) {
+// Without a bloc the token goes to ~/vault.root.key, the root key file of
+// that layout. The ~/vault.key an older release wrote stays exactly as it was.
+func TestTeardownLocalInception_BareNamesKeepTheTokenInHomeVaultRootKey(t *testing.T) {
 	home := isolateLocalHome(t)
 	writeSafeRC(t, home, "inception", blocPortURL(""), teardownTestToken)
 	stubLocalCommands(t)
 
+	oldKeyFile := filepath.Join(home, "vault.key")
+	require.NoError(t, os.WriteFile(oldKeyFile, []byte("older-release-key\n"), 0o600))
+
 	require.NoError(t, TeardownLocalInception(context.Background(), ""))
 
-	data, err := os.ReadFile(filepath.Join(home, "vault.key"))
+	data, err := os.ReadFile(filepath.Join(home, "vault.root.key"))
 	require.NoError(t, err)
 	assert.Equal(t, teardownTestToken, strings.TrimSpace(string(data)))
+
+	kept, err := os.ReadFile(oldKeyFile)
+	require.NoError(t, err)
+	assert.Equal(t, "older-release-key\n", string(kept))
+
+	saferc, err := filepath.Glob(oldKeyFile + ".*")
+	require.NoError(t, err)
+	assert.Empty(t, saferc, "nothing is written beside the old key file")
 }
