@@ -40,7 +40,8 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		finish: func(ctx context.Context, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger) error {
 			return finishInceptionVault(ctx, tools.safe, paths, mode, log)
 		},
-		now: time.Now,
+		migrate: migrateFileVaultToRaft,
+		now:     time.Now,
 	}
 }
 
