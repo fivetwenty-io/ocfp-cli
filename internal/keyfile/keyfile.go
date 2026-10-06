@@ -31,9 +31,9 @@ const (
 	// TimestampFormat stamps the names of what is kept or moved aside.
 	TimestampFormat = "20060102-150405"
 
-	// sidecarInfix names the copy of safe's root token that is kept beside
+	// TokenCopyInfix names the copy of safe's root token that is kept beside
 	// root.key when root.key holds something else: root.key.saferc-<timestamp>.
-	sidecarInfix = ".saferc-"
+	TokenCopyInfix = ".saferc-"
 
 	// KeepNameAttempts bounds the -N suffixes tried for a free name.
 	KeepNameAttempts = 100
@@ -356,7 +356,7 @@ func keepTokenCopy(rootKeyFile, vaultName, token string, now time.Time, log *zap
 		}
 	}
 
-	kept, err := WriteUnderFreeName(rootKeyFile+sidecarInfix+now.Format(TimestampFormat), token)
+	kept, err := WriteUnderFreeName(rootKeyFile+TokenCopyInfix+now.Format(TimestampFormat), token)
 	if err != nil {
 		return "", err
 	}
@@ -380,7 +380,7 @@ func keptTokenCopies(rootKeyFile string) ([]string, error) {
 		return nil, fmt.Errorf("failed to list %s: %w", dir, err)
 	}
 
-	prefix := filepath.Base(rootKeyFile) + sidecarInfix
+	prefix := filepath.Base(rootKeyFile) + TokenCopyInfix
 
 	var kept []string
 
