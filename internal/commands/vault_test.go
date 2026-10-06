@@ -67,6 +67,7 @@ func TestGetVaultInceptionPaths(t *testing.T) {
 				"tmuxSession": "inception-vault",
 				"vaultName":   "inception",
 				"port":        "8234",
+				"clusterPort": "9234",
 				"vaultDir":    filepath.Join(homeDir, ".vault"),
 			},
 		},
@@ -80,6 +81,7 @@ func TestGetVaultInceptionPaths(t *testing.T) {
 				"port":        strconv.Itoa(config.InceptionVaultPort("520-aws-wayne")),
 				"vaultDir":    filepath.Join(config.OcfpBlocDir("520-aws-wayne"), "vault", "data"),
 				"rootKeyFile": filepath.Join(config.OcfpBlocDir("520-aws-wayne"), "vault", "root.key"),
+				"clusterPort": strconv.Itoa(config.InceptionVaultPort("520-aws-wayne") + config.InceptionVaultClusterPortOffset),
 			},
 		},
 	}
@@ -116,6 +118,10 @@ func TestGetVaultInceptionPaths_TestMode(t *testing.T) {
 
 	if paths["port"] != "8235" {
 		t.Errorf("port = %q, want %q", paths["port"], "8235")
+	}
+
+	if paths["clusterPort"] != "9235" {
+		t.Errorf("clusterPort = %q, want %q", paths["clusterPort"], "9235")
 	}
 
 	if paths["vaultDir"] != filepath.Join(homeDir, ".test-vault") {
@@ -181,5 +187,34 @@ func TestGetVaultInceptionPaths_BlocLogDirUnderStateHomeNotDataHome(t *testing.T
 
 	if strings.Contains(paths["logDir"], legacyHome) {
 		t.Errorf("logDir = %q, must not resolve under legacy HOME %q", paths["logDir"], legacyHome)
+	}
+}
+
+// TestRequireClusterPort_FailsBeforeAnyWork guards an operator override high
+// enough that the cluster port would pass 65535: the error must surface while
+// resolving paths, before anything is stopped or moved.
+func TestRequireClusterPort_FailsBeforeAnyWork(t *testing.T) {
+	t.Setenv(config.InceptionVaultPortEnvVar, "64600")
+
+	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+
+	if paths["clusterPort"] != "" {
+		t.Fatalf("clusterPort = %q, want empty for an API port past 64535", paths["clusterPort"])
+	}
+
+	err := requireClusterPort(paths)
+	if err == nil {
+		t.Fatal("requireClusterPort accepted an API port with no room for its cluster port")
+	}
+
+	if !strings.Contains(err.Error(), "64600") || !strings.Contains(err.Error(), config.InceptionVaultPortEnvVar) {
+		t.Errorf("error %q should name the API port and the override variable", err)
+	}
+
+	t.Setenv(config.InceptionVaultPortEnvVar, "18500")
+
+	err = requireClusterPort(getVaultInceptionPaths("ocfp-lab-drgao", false))
+	if err != nil {
+		t.Errorf("requireClusterPort rejected a usable API port: %v", err)
 	}
 }

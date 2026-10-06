@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"hash/fnv"
 	"os"
 	"strconv"
@@ -29,8 +31,18 @@ const (
 	// InceptionVaultPortRangeSize is the number of ports in the per-bloc range.
 	InceptionVaultPortRangeSize = 1000
 
+	// InceptionVaultClusterPortOffset is added to an inception vault's API
+	// port to give its raft cluster port. It equals the range size, so the
+	// derived API range 18234-19233 maps to 19234-20233 and no bloc's
+	// cluster port can land on another bloc's API port.
+	InceptionVaultClusterPortOffset = InceptionVaultPortRangeSize
+
 	maxTCPPort = 65535
 )
+
+// ErrInceptionClusterPortOutOfRange reports an API port too high to leave
+// room for its cluster port.
+var ErrInceptionClusterPortOutOfRange = errors.New("inception vault cluster port is out of range")
 
 // InceptionVaultPort returns the workstation-local inception vault listener
 // port for a bloc.
@@ -62,6 +74,26 @@ func InceptionVaultPort(blocName string) int {
 	}
 
 	return DeterministicInceptionVaultPort(blocName)
+}
+
+// InceptionVaultClusterPort returns the raft cluster port that pairs with an
+// inception vault's API port.
+//
+// The engine's own default is the API port plus one, which is the next
+// bloc's API port often enough to matter on a workstation running several
+// blocs. A fixed offset past the end of the derived range keeps the two port
+// sets apart. An operator override can still pick an API port whose cluster
+// port falls inside the range; both safe and ocfp check that the port is free
+// before starting, so that case fails loudly rather than silently.
+func InceptionVaultClusterPort(apiPort int) (int, error) {
+	clusterPort := apiPort + InceptionVaultClusterPortOffset
+	if apiPort <= 0 || clusterPort > maxTCPPort {
+		return 0, fmt.Errorf("%w: API port %d plus %d exceeds %d (set %s to a lower port)",
+			ErrInceptionClusterPortOutOfRange, apiPort, InceptionVaultClusterPortOffset, maxTCPPort,
+			InceptionVaultPortEnvVar)
+	}
+
+	return clusterPort, nil
 }
 
 // BlocInceptionVaultPort resolves the inception vault port for an already
