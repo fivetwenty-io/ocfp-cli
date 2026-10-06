@@ -36,9 +36,10 @@ var (
 	// for and that ocfp has no root token to re-target.
 	ErrInceptionTargetLost = errors.New("the inception vault is running but cannot be re-targeted")
 
-	// ErrFileVaultNotMigrated reports a file-backed vault that this ocfp
-	// leaves as it is rather than restarting it on raft.
-	ErrFileVaultNotMigrated = errors.New("the inception vault still uses file storage")
+	// ErrRestartAfterMigrationFailed reports a vault that did not reopen
+	// right after its storage was migrated. Nothing is archived then: the
+	// keys opened the file store moments earlier, so a person has to look.
+	ErrRestartAfterMigrationFailed = errors.New("the inception vault did not restart after its migration to raft")
 )
 
 // inceptionSteps are the actions reconcileInceptionVault takes. Production
@@ -67,6 +68,9 @@ type inceptionSteps struct {
 		log *zap.SugaredLogger) error
 	// finish targets the started vault and, for a new vault, saves its keys.
 	finish func(ctx context.Context, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger) error
+	// migrate copies a stopped file vault into raft storage, swaps the raft
+	// store into place, and returns where the file store was kept.
+	migrate func(ctx context.Context, paths map[string]string, tools inceptionTools, log *zap.SugaredLogger) (string, error)
 	// now stamps archive names.
 	now func() time.Time
 }
@@ -190,7 +194,7 @@ func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 	case data == vaultDataRaft && keys:
 		return run.restart(ctx)
 	case data == vaultDataFile && keys:
-		return fmt.Errorf("%w: %s was left as it is, with its keys", ErrFileVaultNotMigrated, paths["vaultDir"])
+		return run.migrateAndRestart(ctx)
 	case data == vaultDataAbsent && !anyInceptionKeyPresent(paths):
 		return run.fresh(ctx)
 	case data == vaultDataAbsent:
@@ -198,6 +202,28 @@ func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 	default:
 		return run.archiveAndStartFresh(ctx, "the vault data has no usable root token and unseal key to reopen it")
 	}
+}
+
+// migrateAndRestart moves a stopped file vault onto raft storage and reopens
+// it with the same keys. A restart that fails right after the migration stops
+// the vault and returns an error naming both directories, and never archives.
+func (run *inceptionRun) migrateAndRestart(ctx context.Context) error {
+	paths := run.paths
+
+	backup, err := run.steps.migrate(ctx, paths, run.tools, run.log)
+	if err != nil {
+		return err
+	}
+
+	err = run.steps.start(ctx, paths, run.tools, safeLocalRestart, run.log)
+	if err == nil {
+		return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
+	}
+
+	err = fmt.Errorf("%w: the raft data is in %s and the file store it came from is kept in %s, "+
+		"and neither was changed after the migration: %w", ErrRestartAfterMigrationFailed, paths["vaultDir"], backup, err)
+
+	return errors.Join(err, wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log)))
 }
 
 // restart reopens the vault with its saved keys. Only the engine refusing a
