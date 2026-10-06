@@ -41,8 +41,10 @@ const (
 	VaultInceptionLogDir = "logs/vault"
 	// VaultInceptionLogFile is the filename for vault inception logs.
 	VaultInceptionLogFile = "vault-inception.log"
-	// MaxVaultReadyAttempts is the maximum number of attempts to wait for vault readiness.
-	MaxVaultReadyAttempts = 30
+	// MaxVaultReadyAttempts is how many seconds to wait for the vault to
+	// become ready. A raft node has to elect itself leader before safe can
+	// set it up, which takes longer than the file backend ever did.
+	MaxVaultReadyAttempts = 60
 
 	// VaultInitWait is the duration to wait after vault startup before initialization.
 	VaultInitWait = 5 * time.Second
@@ -59,6 +61,10 @@ var (
 	ErrVaultNotReady = errors.New("vault did not become ready within timeout")
 	// ErrVaultStartupError indicates a vault startup error was detected in output.
 	ErrVaultStartupError = errors.New("vault startup error detected in output")
+	// ErrVaultKeysRejected indicates the saved root token or unseal key did not
+	// open the vault. It is the only startup failure that says anything about
+	// the keys on disk.
+	ErrVaultKeysRejected = errors.New("the saved inception vault keys were rejected")
 	// ErrVaultTargetVerify indicates failure to verify the inception vault target.
 	ErrVaultTargetVerify = errors.New("failed to verify inception vault target")
 )
@@ -859,63 +865,137 @@ func startVaultInTmux(
 	return nil
 }
 
-// waitForVaultReady waits for the vault to become ready by checking tmux pane, log file, and vault status.
+// safeNonFatalWarnings match the "!! " lines safe prints when it cannot save
+// the root token in ~/.saferc. The vault keeps running after them and safe
+// still goes on to print "Now targeting", so they must not end the wait.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var safeNonFatalWarnings = []*regexp.Regexp{
+	regexp.MustCompile(`^!! Unable to save the root token in ~/\.saferc`),
+	regexp.MustCompile(`^!! The \S+ server at \S+ is still running\.$`),
+	regexp.MustCompile(`^!! Its root token is `),
+	regexp.MustCompile(`^!! To reach it: `),
+	regexp.MustCompile(`^!! You are still authenticated to it`),
+}
+
+// safeKeyFailures mark the "!! " lines safe prints when the saved root token
+// or unseal key does not open the vault. Only these may lead the caller to
+// archive a vault and start a fresh one.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var safeKeyFailures = []string{"The root token in", "Unable to unseal"}
+
+// vaultSecretMarkers precede the secret values safe prints, the seal key of a
+// new vault and a root token it could not save.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var vaultSecretMarkers = []string{"Seal Key is ", "token is "}
+
+// redactVaultOutput blanks everything after a secret marker on each line, so
+// safe's output can be logged or quoted in an error.
+func redactVaultOutput(s string) string {
+	lines := strings.Split(s, "\n")
+
+	for i, line := range lines {
+		for _, marker := range vaultSecretMarkers {
+			idx := strings.Index(line, marker)
+			if idx >= 0 {
+				line = line[:idx+len(marker)] + "[redacted]"
+			}
+		}
+
+		lines[i] = line
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// classifyVaultStartup reads safe's output so far. It reports ready once safe
+// prints "Now targeting", ErrVaultKeysRejected when the saved keys were
+// refused, and ErrVaultStartupError for any other failure.
+//
+// The difference matters to the caller. A key failure means the keys on disk
+// do not open this vault; anything else, such as a busy port, says nothing
+// about the keys or the data and must never lead to archiving.
+func classifyVaultStartup(output string) (bool, error) {
+	if strings.Contains(output, "Now targeting") {
+		return true, nil
+	}
+
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, "!! ") && !isSafeNonFatalWarning(line) {
+			for _, marker := range safeKeyFailures {
+				if strings.Contains(line, marker) {
+					return false, fmt.Errorf("%w: %s", ErrVaultKeysRejected, redactVaultOutput(line))
+				}
+			}
+
+			return false, fmt.Errorf("%w: %s", ErrVaultStartupError, redactVaultOutput(line))
+		}
+
+		if strings.Contains(line, "ERROR:") || strings.Contains(line, "fatal:") ||
+			strings.Contains(line, "Unable to initialize") {
+			return false, fmt.Errorf("%w: %s", ErrVaultStartupError, redactVaultOutput(line))
+		}
+	}
+
+	return false, nil
+}
+
+// isSafeNonFatalWarning reports whether a "!! " line is one safe prints while
+// it keeps the vault running.
+func isSafeNonFatalWarning(line string) bool {
+	for _, pattern := range safeNonFatalWarnings {
+		if pattern.MatchString(line) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// vaultStartupOutput returns safe's output so far, from the tmux pane and the
+// log file that tee writes, with colour codes removed.
+func vaultStartupOutput(ctx context.Context, paths map[string]string) string {
+	pane, _ := vaultOps.run(ctx, cleanupCommand{
+		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-200"}, tmux: true,
+	})
+
+	logData, _ := os.ReadFile(paths["logFile"])
+
+	return stripANSI(string(pane) + "\n" + string(logData))
+}
+
+// waitForVaultReady waits for safe to report the vault ready, and stops early
+// when safe reports a failure.
+//
+// Only "Now targeting" counts as ready. An engine can answer on its port, and
+// even be unsealed, before safe has finished setting it up, so a status check
+// that something answers is not enough.
 func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Waiting for vault to initialize...")
-
-	vaultAddr := "http://127.0.0.1:" + paths["port"]
 
 	for attempt := range MaxVaultReadyAttempts {
 		if attempt > 0 && attempt%5 == 0 {
 			log.Info(".")
 		}
 
-		// Check 1: tmux capture-pane
-		captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
-		ensureTmuxEnv(captureCmd)
+		ready, err := classifyVaultStartup(vaultStartupOutput(ctx, paths))
+		if err != nil {
+			log.Errorw("Vault startup failed", "error", err)
 
-		paneOutput, captureErr := captureCmd.Output()
-		if captureErr == nil {
-			paneStr := stripANSI(string(paneOutput))
-
-			if strings.Contains(paneStr, "ERROR:") || strings.Contains(paneStr, "fatal:") ||
-				strings.Contains(paneStr, "Unable to initialize") {
-				log.Errorw("Vault startup error detected", "pane_output", paneStr)
-
-				return ErrVaultStartupError
-			}
-
-			if strings.Contains(paneStr, "Now targeting") {
-				log.Info("Vault initialized successfully!")
-
-				return nil
-			}
+			return err
 		}
 
-		// Check 2: log file (populated by tee)
-		logData, readErr := os.ReadFile(paths["logFile"])
-		if readErr == nil {
-			logStr := stripANSI(string(logData))
-
-			if strings.Contains(logStr, "Now targeting") {
-				log.Info("Vault initialized (detected from log file)!")
-
-				return nil
-			}
-		}
-
-		// Check 3: vault status as fallback
-		cmd := exec.CommandContext(ctx, "vault", "status")
-
-		cmd.Env = append(os.Environ(), "VAULT_ADDR="+vaultAddr)
-
-		if cmd.Run() == nil {
-			log.Info("Vault is ready!")
+		if ready {
+			log.Info("Vault initialized successfully!")
 
 			return nil
 		}
 
-		time.Sleep(1 * time.Second)
+		vaultOps.sleep(time.Second)
 	}
 
 	dumpVaultDiagnostics(ctx, paths, log)
@@ -923,19 +1003,20 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 	return ErrVaultNotReady
 }
 
-// dumpVaultDiagnostics logs tmux pane and log file contents on vault readiness failure.
+// dumpVaultDiagnostics logs the tmux pane and the log file after the vault
+// failed to become ready. safe prints the seal key of a new vault, so the
+// output is redacted before it is logged.
 func dumpVaultDiagnostics(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
-	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
-	ensureTmuxEnv(captureCmd)
-
-	paneOutput, paneErr := captureCmd.Output()
+	pane, paneErr := vaultOps.run(ctx, cleanupCommand{
+		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50"}, tmux: true,
+	})
 	if paneErr == nil {
-		log.Errorw("Vault ready timeout - tmux pane dump", "output", string(paneOutput))
+		log.Errorw("Vault ready timeout - tmux pane dump", "output", redactVaultOutput(stripANSI(string(pane))))
 	}
 
 	logData, logErr := os.ReadFile(paths["logFile"])
 	if logErr == nil {
-		log.Errorw("Vault ready timeout - log file dump", "output", string(logData))
+		log.Errorw("Vault ready timeout - log file dump", "output", redactVaultOutput(stripANSI(string(logData))))
 	}
 }
 
