@@ -37,9 +37,19 @@ const (
 	vaultRaftDBFile = "vault.db"
 )
 
-// ErrVaultWouldNotStop reports an inception vault whose port or data was
-// still held after the stop plan ran.
-var ErrVaultWouldNotStop = errors.New("inception vault did not stop")
+var (
+	// ErrVaultWouldNotStop reports an inception vault whose port or data was
+	// still held after the stop plan ran.
+	ErrVaultWouldNotStop = errors.New("inception vault did not stop")
+
+	// ErrVaultLockUnknown reports that lsof could not say whether a process
+	// still holds the raft database, so the vault cannot be known to be down.
+	ErrVaultLockUnknown = errors.New("cannot tell whether the inception vault data is still in use")
+)
+
+// lsofNoMatchExit is the status lsof exits with when no process has the
+// named file open.
+const lsofNoMatchExit = 1
 
 // inceptionVaultOps is the seam between the inception vault code and the
 // host. Tests swap it for a fake that records commands and scripts answers,
@@ -122,7 +132,13 @@ func stopInceptionVault(ctx context.Context, paths map[string]string, log *zap.S
 		}
 
 		portOpen = vaultOps.portOpen(ctx, paths["port"])
-		holders = vaultDataHolders(ctx, dbPath)
+
+		var err error
+
+		holders, err = vaultDataHolders(ctx, dbPath)
+		if err != nil {
+			return err
+		}
 
 		if !portOpen && len(holders) == 0 {
 			for _, spec := range vaultCleanupTargetCommands(paths) {
@@ -164,13 +180,22 @@ func killVaultFromPIDFile(ctx context.Context, paths map[string]string) {
 
 // vaultDataHolders lists the processes, other than this one, that have the
 // raft database open. A file-backed vault has no vault.db and so no holders.
-func vaultDataHolders(ctx context.Context, dbPath string) []string {
+//
+// lsof exits 1 with no output when nobody has the file open, which is the
+// answer a stop waits for. Any other failure, including lsof being missing,
+// says nothing about the lock, and taking it for "nobody" would let a restart
+// or an archive run under an orphaned engine. It is reported as
+// ErrVaultLockUnknown instead.
+func vaultDataHolders(ctx context.Context, dbPath string) ([]string, error) {
 	_, err := os.Lstat(dbPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 
-	out, _ := vaultOps.run(ctx, cleanupCommand{name: "lsof", args: []string{"-t", dbPath}})
+	out, err := vaultOps.run(ctx, cleanupCommand{name: "lsof", args: []string{"-t", dbPath}})
+	if err != nil && !lsofFoundNobody(err, out) {
+		return nil, fmt.Errorf("%w: lsof could not check %s: %w", ErrVaultLockUnknown, dbPath, err)
+	}
 
 	self := strconv.Itoa(os.Getpid())
 
@@ -183,7 +208,16 @@ func vaultDataHolders(ctx context.Context, dbPath string) []string {
 		}
 	}
 
-	return pids
+	return pids, nil
+}
+
+// lsofFoundNobody reports whether an lsof failure is only its way of saying
+// that no process has the file open.
+func lsofFoundNobody(err error, out []byte) bool {
+	var exitErr *exec.ExitError
+
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == lsofNoMatchExit &&
+		strings.TrimSpace(string(out)) == ""
 }
 
 // isPID reports whether s is a positive decimal process ID. lsof can mix
