@@ -503,43 +503,6 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 	return inceptionTools{safe: safePath, engine: engine}, nil
 }
 
-// isVaultAlreadyRunning checks if the inception vault is already running and healthy.
-// All three conditions must pass: tmux session exists + vault responds on port + safe target is set.
-func isVaultAlreadyRunning(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) bool {
-	// Check 1: tmux session exists
-	checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", paths["tmuxSession"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
-	ensureTmuxEnv(checkCmd)
-
-	if checkCmd.Run() != nil {
-		log.Debugw("Tmux session not found", "session", paths["tmuxSession"])
-
-		return false
-	}
-
-	// Check 2: vault responds on port
-	vaultAddr := "http://127.0.0.1:" + paths["port"]
-
-	if !vaultRespondsOnAddr(ctx, vaultAddr) {
-		log.Debugw("Vault not responding", "addr", vaultAddr)
-
-		return false
-	}
-
-	// Check 3: safe target contains the vault name
-	cmd := exec.CommandContext(ctx, "safe", "target")
-
-	output, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), paths["vaultName"]) {
-		log.Debugw("Safe target not set", "expected", paths["vaultName"])
-
-		return false
-	}
-
-	log.Debugw("Vault is fully operational", "session", paths["tmuxSession"], "vault", paths["vaultName"])
-
-	return true
-}
-
 // cleanupCommand is one step of the inception vault cleanup plan. Keeping the
 // plan as data lets tests assert that a bloc's cleanup reaches only that
 // bloc's own session, target, and port.
@@ -844,6 +807,10 @@ const tmuxSendKeysLimit = 1024
 // paths, never key values, but nobody else has reason to see them.
 const safeLocalLauncherMode = 0o700
 
+// vaultKeyDirMode keeps the directory that holds a bloc's vault data and keys
+// private to the user.
+const vaultKeyDirMode = 0o700
+
 // ErrSafeLocalLineTooLong reports a launcher path too long to type into tmux.
 var ErrSafeLocalLineTooLong = errors.New("the inception vault launch line is too long for tmux")
 
@@ -915,6 +882,11 @@ func startVaultInTmux(
 	}
 
 	safeCmd, err := safeLocalLauncherLine(script)
+	if err != nil {
+		return err
+	}
+
+	err = setAsidePreviousVaultLog(paths["logFile"])
 	if err != nil {
 		return err
 	}
@@ -1145,30 +1117,23 @@ func dumpVaultDiagnostics(ctx context.Context, paths map[string]string, log *zap
 	}
 }
 
-// targetInceptionVault sets the safe target to the inception vault.
-func targetInceptionVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+// targetInceptionVault points safe at the inception vault and checks that
+// safe now lists the bloc's target at the bloc's port. The check reads every
+// target rather than the current one, which a sibling bloc can move at any
+// moment.
+func targetInceptionVault(ctx context.Context, safePath string, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Targeting inception vault...")
 
 	vaultURL := "http://127.0.0.1:" + paths["port"]
 
-	cmd := exec.CommandContext(ctx, "safe", "target", paths["vaultName"], vaultURL) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
+	cmd := exec.CommandContext(ctx, safePath, "target", paths["vaultName"], vaultURL) // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
 
 	err := cmd.Run()
 	if err != nil {
-		// Try without URL (might already be configured)
-		cmd = exec.CommandContext(ctx, "safe", "target", paths["vaultName"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
-
-		err = cmd.Run()
-		if err != nil {
-			return fmt.Errorf("failed to target inception vault: %w", err)
-		}
+		return fmt.Errorf("failed to target inception vault: %w", err)
 	}
 
-	// Verify target was set (safe target outputs to stderr)
-	cmd = exec.CommandContext(ctx, "safe", "target")
-
-	output, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), paths["vaultName"]) {
+	if !inceptionTargetRegistered(ctx, safePath, paths) {
 		return ErrVaultTargetVerify
 	}
 
@@ -1329,7 +1294,18 @@ func prepareVaultDirectories(paths map[string]string, log *zap.SugaredLogger) er
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	log.Infow("Prepared directories", "logDir", paths["logDir"])
+	// An archive renames <bloc>/vault away, and the keys of the vault that
+	// starts next are written beside its data, so the parent must exist
+	// before safe starts. In the legacy layout the parent is the home
+	// directory, which already exists.
+	vaultRoot := filepath.Dir(paths["vaultDir"])
+
+	err = os.MkdirAll(vaultRoot, vaultKeyDirMode)
+	if err != nil {
+		return fmt.Errorf("failed to create the vault directory %s: %w", vaultRoot, err)
+	}
+
+	log.Infow("Prepared directories", "logDir", paths["logDir"], "vaultDir", vaultRoot)
 
 	return nil
 }
@@ -1339,11 +1315,12 @@ func runVaultInception() error {
 	return ensureInceptionVault(viper.GetString("bloc"), viper.GetBool("test"))
 }
 
-// ensureInceptionVault starts (or verifies) the file-backed inception vault for
-// the given bloc. It is idempotent — if the vault is already running and
-// accessible it returns nil without doing anything. Exported within the package
-// so bootstrap can guarantee the vault is up before the artifacts step, instead
-// of failing late (after the bastion is created) on a dead vault.
+// ensureInceptionVault brings the given bloc's raft-backed inception vault up,
+// or leaves it alone when it is already healthy. A stopped vault is restarted
+// in place with its saved keys, and reconcileInceptionVault holds the rules
+// for everything else. Exported within the package so bootstrap can guarantee
+// the vault is up before the artifacts step, instead of failing late (after
+// the bastion is created) on a dead vault.
 func ensureInceptionVault(blocName string, testMode bool) error {
 	log := logger.Get()
 
@@ -1354,6 +1331,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		"bloc", blocName,
 		"vault_name", paths["vaultName"],
 		"port", paths["port"],
+		"cluster_port", paths["clusterPort"],
 		"tmux_session", paths["tmuxSession"],
 		"vault_dir", paths["vaultDir"],
 	)
@@ -1368,48 +1346,12 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
 
-	if isVaultAlreadyRunning(context.TODO(), paths, log) {
-		log.Info("Inception vault is already running and accessible")
-		printVaultInfo(paths, log)
-
-		return nil
-	}
-
-	err = cleanupExistingVault(context.TODO(), paths, log)
-	if err != nil {
-		return fmt.Errorf("failed to clear the previous inception vault: %w", err)
-	}
-
-	err = prepareVaultDirectories(paths, log)
-	if err != nil {
-		return err
-	}
-
-	err = startVaultInTmux(context.TODO(), paths, tools, safeLocalFresh, log)
-	if err != nil {
-		return fmt.Errorf("failed to start vault: %w", err)
-	}
-
-	err = waitForVaultReady(context.TODO(), paths, log)
-	if err != nil {
-		return fmt.Errorf("vault did not become ready: %w", err)
-	}
-
-	// safe local targets the new vault itself, but verify
-	err = targetInceptionVault(context.TODO(), paths, log)
-	if err != nil {
-		return fmt.Errorf("failed to target vault: %w", err)
-	}
-
-	saveErr := saveVaultKeys(context.TODO(), paths, log)
-	if saveErr != nil {
-		log.Warnw("Failed to save vault keys", "error", saveErr)
-	}
-
-	log.Info("=== Vault Inception Completed Successfully ===")
-	printVaultInfo(paths, log)
-
-	return nil
+	return reconcileInceptionVault(context.TODO(), &inceptionRun{
+		paths: paths,
+		tools: tools,
+		steps: newInceptionSteps(tools),
+		log:   log,
+	})
 }
 
 // newVaultTeardownCmd creates the vault teardown subcommand.
