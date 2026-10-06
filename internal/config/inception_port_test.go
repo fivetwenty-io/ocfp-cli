@@ -118,3 +118,45 @@ func TestDeterministicInceptionVaultPort_NoConfigDependency(t *testing.T) {
 	assert.NotEqual(t, config.DeterministicInceptionVaultPort("ocfp-lab-dbell"),
 		config.DeterministicInceptionVaultPort("ocfp-lab-drhu"))
 }
+
+// TestInceptionVaultClusterPort_OutsideAPIRange guards the reason the cluster
+// port has its own offset: every bloc's API port lives in the derived range,
+// so a cluster port that landed inside it would collide with a sibling bloc's
+// listener.
+func TestInceptionVaultClusterPort_OutsideAPIRange(t *testing.T) {
+	t.Parallel()
+
+	rangeEnd := config.InceptionVaultPortRangeStart + config.InceptionVaultPortRangeSize
+
+	for apiPort := config.InceptionVaultPortRangeStart; apiPort < rangeEnd; apiPort++ {
+		clusterPort, err := config.InceptionVaultClusterPort(apiPort)
+		require.NoError(t, err)
+
+		if clusterPort >= config.InceptionVaultPortRangeStart && clusterPort < rangeEnd {
+			t.Fatalf("API port %d maps to cluster port %d, inside the API range", apiPort, clusterPort)
+		}
+	}
+}
+
+func TestInceptionVaultClusterPort_LegacyAndTestPorts(t *testing.T) {
+	t.Parallel()
+
+	legacy, err := config.InceptionVaultClusterPort(config.LegacyInceptionVaultPort)
+	require.NoError(t, err)
+	assert.Equal(t, 9234, legacy)
+
+	testPort, err := config.InceptionVaultClusterPort(8235)
+	require.NoError(t, err)
+	assert.Equal(t, 9235, testPort)
+}
+
+func TestInceptionVaultClusterPort_RejectsPortsPastTheTCPRange(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.InceptionVaultClusterPort(64535)
+	require.NoError(t, err, "64535 maps to 65535, the last valid port")
+
+	_, err = config.InceptionVaultClusterPort(64536)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "64536")
+}

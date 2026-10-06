@@ -389,13 +389,43 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		"tmuxSession":    tmuxSession,
 		"vaultName":      vaultName,
 		"port":           strconv.Itoa(port),
+		"clusterPort":    "",
 		"logDir":         logDir,
 		"logFile":        logFile,
+	}
+
+	// An API port too high to leave room for its cluster port leaves the
+	// entry empty; requireClusterPort turns that into an error before any
+	// work starts.
+	clusterPort, err := config.InceptionVaultClusterPort(port)
+	if err == nil {
+		paths["clusterPort"] = strconv.Itoa(clusterPort)
 	}
 
 	paths["pidFile"] = filepath.Join(paths["vaultDir"], "vault.pid")
 
 	return paths
+}
+
+// requireClusterPort reports why paths has no cluster port. The port is
+// derived from the API port, so the only way to lose it is an API port too
+// high to leave room for the offset; recomputing it recovers that error.
+func requireClusterPort(paths map[string]string) error {
+	if paths["clusterPort"] != "" {
+		return nil
+	}
+
+	port, err := strconv.Atoi(paths["port"])
+	if err != nil {
+		return fmt.Errorf("invalid inception vault port %q: %w", paths["port"], err)
+	}
+
+	_, err = config.InceptionVaultClusterPort(port)
+	if err != nil {
+		return fmt.Errorf("cannot derive the inception vault cluster port: %w", err)
+	}
+
+	return nil
 }
 
 // checkVaultInceptionPrerequisites verifies required commands are available.
@@ -1094,7 +1124,12 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		"vault_dir", paths["vaultDir"],
 	)
 
-	err := checkVaultInceptionPrerequisites(log)
+	err := requireClusterPort(paths)
+	if err != nil {
+		return err
+	}
+
+	err = checkVaultInceptionPrerequisites(log)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
