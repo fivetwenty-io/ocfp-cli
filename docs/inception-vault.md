@@ -79,6 +79,8 @@ Before ocfp stops a running vault that is missing a key, it tries to recover the
 
 Stopping a vault deletes the bloc's safe target, and that target may hold the only copy of the root token. So before every stop, whether the vault is running or not, ocfp reads the token that `~/.saferc` holds for the bloc's own target, and only when that target points at the bloc's port. When `root.key` is missing or blank and the token has the shape of a token, ocfp writes it to `root.key`. When `root.key` holds a different value, ocfp keeps both, and writes the token to `root.key.saferc-<timestamp>` beside `root.key` with mode 0600. That copy sits inside the bloc's `vault` directory, so an archive carries it along. A later run that finds the same token in an existing copy reuses that copy rather than writing another one.
 
+A stopped vault has no running process to recover a key from, but its logs may still hold one. When the data directory holds raft or file data and `unseal.keys` is missing or blank, ocfp looks for a whole unseal key in `vault-inception.log` and then in `vault-inception.log.previous`, and writes the key from the newest log that has one to `unseal.keys` with mode 0600. Only then does it decide whether the vault can be restarted or has to be archived. A log that exists but cannot be read stops the run with an error, and nothing is started or archived.
+
 ## The archive
 
 ocfp archives a vault only when one of its keys is missing, when key files exist without any data, or when the engine itself rejects the saved root token or unseal key. Network trouble, a busy port, or an engine that fails to start never leads to an archive. In those cases ocfp stops whatever it started and returns an error.

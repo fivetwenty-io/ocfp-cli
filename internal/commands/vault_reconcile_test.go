@@ -1439,3 +1439,87 @@ func TestReconcile_HealthyVaultRecoversMissingKeys(t *testing.T) {
 	assert.Equal(t, []string{"probe", "recover-keys"}, fake.calls)
 	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
 }
+
+// A stopped vault with no unseal.keys is not archived while its log, or the
+// log of the start before, still holds a whole unseal key. The newest log
+// wins, and the vault restarts in place, or migrates when it is file-backed.
+func TestReconcile_StoppedVaultRecoversTheUnsealKeyFromItsLogs(t *testing.T) {
+	other := strings.Repeat("fedcba9876543210", 4)
+	line := func(key string) string { return "Now targeting x\nYour OpenBao Seal Key is " + key + "\n" }
+
+	for name, tc := range map[string]struct {
+		log, previous string
+		file          bool
+		want          string
+	}{
+		"in the log":          {log: line(testSealKey), want: testSealKey},
+		"in the previous log": {log: "Now targeting x\n", previous: line(testSealKey), want: testSealKey},
+		"newest log wins":     {log: line(testSealKey), previous: line(other), want: testSealKey},
+		"file data migrates":  {log: line(testSealKey), file: true, want: testSealKey},
+		"blank key file":      {previous: line(testSealKey), want: testSealKey},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+
+			if tc.file {
+				writeFileData(t, paths["vaultDir"])
+			} else {
+				writeRaftData(t, paths["vaultDir"])
+			}
+
+			writeKeys(t, paths, true, false)
+
+			if name == "blank key file" {
+				require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte("\n"), 0o600))
+			}
+
+			if tc.log != "" {
+				require.NoError(t, os.WriteFile(paths["logFile"], []byte(tc.log), 0o600))
+			}
+
+			if tc.previous != "" {
+				require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte(tc.previous), 0o600))
+			}
+
+			fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Equal(t, tc.want+"\n", readKey(t, paths["unsealKeysFile"]))
+			assert.Equal(t, []string{"start restart", "finish restart"}, fake.calls[len(fake.calls)-2:])
+			assert.NotContains(t, fake.calls, "start fresh")
+			assert.Empty(t, archivesOf(t, paths))
+
+			info, err := os.Stat(paths["unsealKeysFile"])
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+		})
+	}
+}
+
+// Only a whole key counts. A log with a cut-short key, or none, leaves the
+// vault to the archive path as before, with its data and keys kept.
+func TestReconcile_StoppedVaultWithoutAKeyInItsLogsIsArchived(t *testing.T) {
+	for name, logged := range map[string]string{
+		"no log":        "",
+		"no key":        "Now targeting x\n",
+		"cut-short key": "Your OpenBao Seal Key is " + testSealKey[:57] + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, false)
+
+			if logged != "" {
+				require.NoError(t, os.WriteFile(paths["logFile"], []byte(logged), 0o600))
+			}
+
+			fake := &fakeInception{probe: stoppedProbe()}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Contains(t, fake.calls, "start fresh")
+			require.Len(t, archivesOf(t, paths), 1)
+		})
+	}
+}
