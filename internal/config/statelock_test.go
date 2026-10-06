@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,4 +63,72 @@ func TestWithStateLock_NoOcfpHomeStillRuns(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, ran)
+}
+
+// A second run for the same lock waits and then gives up with a clear error,
+// and the critical section it guards never runs.
+func TestWithFileLock_SamePathWaitsThenTimesOut(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "bloc", "inception-vault.lock")
+
+	err := WithFileLock(path, time.Second, func() error {
+		ran := false
+		start := time.Now()
+
+		inner := WithFileLock(path, 150*time.Millisecond, func() error {
+			ran = true
+
+			return nil
+		})
+
+		require.ErrorIs(t, inner, ErrFileLockTimeout)
+		assert.Contains(t, inner.Error(), path)
+		assert.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "the second run must wait before it gives up")
+		assert.False(t, ran)
+
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+// Different blocs never wait for each other.
+func TestWithFileLock_DifferentPathsDoNotWait(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	err := WithFileLock(filepath.Join(dir, "a", "inception-vault.lock"), time.Second, func() error {
+		start := time.Now()
+		ran := false
+
+		inner := WithFileLock(filepath.Join(dir, "b", "inception-vault.lock"), time.Second, func() error {
+			ran = true
+
+			return nil
+		})
+
+		require.NoError(t, inner)
+		assert.True(t, ran)
+		assert.Less(t, time.Since(start), 500*time.Millisecond)
+
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+// The lock is released whether the critical section succeeds or fails, and
+// the section's own error comes back unchanged.
+func TestWithFileLock_ReleasesAndReturnsTheSectionsError(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "inception-vault.lock")
+	boom := errors.New("boom")
+
+	require.ErrorIs(t, WithFileLock(path, time.Second, func() error { return boom }), boom)
+	require.NoError(t, WithFileLock(path, 100*time.Millisecond, func() error { return nil }))
+
+	info, err := os.Stat(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +19,22 @@ const inceptionPortEnvVar = "OCFP_VAULT_INCEPTION_PORT"
 
 // vaultArchiveTimeFormat stamps the directories a superseded vault moves to.
 const vaultArchiveTimeFormat = "20060102-150405"
+
+// inceptionLockFileName is the per-bloc lock that serialises every ocfp run
+// that starts, migrates, or tears down the bloc's inception vault.
+const inceptionLockFileName = "inception-vault.lock"
+
+// inceptionLockTimeout bounds how long a run waits for another run on the
+// same bloc. It covers a migration, which may take several minutes.
+var inceptionLockTimeout = 5 * time.Minute //nolint:gochecknoglobals // tests shorten the wait
+
+// withInceptionVaultLock runs fn while holding the bloc's inception vault
+// lock. Two runs for one bloc would otherwise stop each other's vault, or
+// migrate a store the other is starting on; the second waits, and usually
+// then finds the vault healthy and leaves it running.
+func withInceptionVaultLock(paths map[string]string, fn func() error) error {
+	return config.WithFileLock(paths["lockFile"], inceptionLockTimeout, fn)
+}
 
 var (
 	// ErrInceptionPortTaken reports an API port held by something other than
