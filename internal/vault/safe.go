@@ -106,8 +106,10 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	return nil
 }
 
-// SetMultiple stores multiple key-value pairs at the specified path
-// This is more efficient than calling Set multiple times.
+// SetMultiple stores multiple key-value pairs at the specified path, merging
+// them into the keys already there. This is more efficient than calling Set
+// multiple times. It fails without writing when the existing record cannot be
+// read.
 func (s *Safe) SetMultiple(path string, data map[string]interface{}) error { //nolint:funlen // KV v2 support requires additional logic
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -131,10 +133,15 @@ func (s *Safe) SetMultiple(path string, data map[string]interface{}) error { //n
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
+	// A missing record comes back as a nil secret with no error, and starts
+	// empty. Any read error is returned without writing, because writing now
+	// would replace the record with only the keys sent and drop the rest.
 	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
-		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
-	} else if secret != nil && secret.Data != nil {
+		return fmt.Errorf("failed to read existing secrets at %s before merging: %w", path, err)
+	}
+
+	if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if secretData, ok := secret.Data["data"].(map[string]interface{}); ok {
 			// KV v2 format
