@@ -128,15 +128,9 @@ func TestFQDNsPhase_ExplicitConfigBeatsDerivedDefault(t *testing.T) {
 }
 
 func TestFQDNsPhase_UnsentKeySurvivesWrite(t *testing.T) {
+	// The merge itself is covered against the real Safe in
+	// TestSafeSetMultiple_MergesIntoExistingRecord.
 	safe := newWriteLogSafe()
-	path := "secret/config/test-bloc/mgmt/fqdns"
-
-	require.NoError(t, safe.SetMultiple(path, map[string]interface{}{"legacy": "legacy.example.io"}))
-	require.NoError(t, safe.SetMultiple(path, map[string]interface{}{"shield": "s.example.io"}))
-
-	assert.Equal(t, "legacy.example.io", safe.data[path]["legacy"], "SetMultiple must merge, not replace")
-	assert.Equal(t, "s.example.io", safe.data[path]["shield"])
-
 	provider := newFQDNPhaseProvider(fqdnPhaseConfig(), safe)
 	mgmtPath := provider.PathBuilder.GetFQDNsPath(MgmtEnvType)
 	require.NoError(t, safe.fakeSafe.SetMultiple(mgmtPath, map[string]interface{}{"extra": "extra.example.io"}))
