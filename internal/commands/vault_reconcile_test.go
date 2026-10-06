@@ -34,9 +34,10 @@ type fakeInception struct {
 	notOurs        bool  // the vault on the port is not this bloc's
 	ownsErr        error // the ownership check could not decide
 	migrate        func(paths map[string]string) (string, error)
-	recover        func(paths map[string]string) // what key recovery finds
-	targetToken    string                        // the token ~/.saferc holds for the bloc's target; a stop deletes it
-	tokenFiles     []string                      // the root token file each start was given
+	recover        func(paths map[string]string)                                       // what key recovery finds
+	targetToken    string                                                              // the token ~/.saferc holds for the bloc's target; a stop deletes it
+	tokenFiles     []string                                                            // the root token file each start was given
+	onStart        func(f *fakeInception, paths map[string]string, mode safeLocalMode) // what a start leaves behind
 	calls          []string
 }
 
@@ -86,6 +87,10 @@ func (f *fakeInception) steps() inceptionSteps {
 
 			if mode == safeLocalRestart {
 				f.tokenFiles = append(f.tokenFiles, paths["rootKeyFile"])
+			}
+
+			if f.onStart != nil {
+				f.onStart(f, paths, mode)
 			}
 
 			return popErr(&f.startErrs)
@@ -617,6 +622,57 @@ func TestReconcile_StopFailureChangesNothing(t *testing.T) {
 	require.ErrorIs(t, err, ErrVaultWouldNotStop)
 	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start")
 	assert.Equal(t, before, treeDigest(t, blocDir(paths)), "nothing may be archived while the vault may still run")
+}
+
+// safe initializes a new vault and saves its root token in the bloc's target
+// before ocfp waits for it to be ready. When the wait fails, the stop deletes
+// that target, so the token is kept in root.key first, as before every other
+// stop. When it cannot be kept, the new vault is left running.
+func TestReconcile_FailedFreshStartKeepsTheNewToken(t *testing.T) {
+	startErr := errors.New("timed out waiting for the vault")
+	savesToken := func(f *fakeInception, _ map[string]string, mode safeLocalMode) {
+		if mode == safeLocalFresh {
+			f.targetToken = safeRCToken
+		}
+	}
+
+	t.Run("kept, then stopped", func(t *testing.T) {
+		paths := reconcilePaths(t)
+		fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{startErr}, onStart: savesToken}
+
+		err := runReconcile(t, paths, fake)
+		require.ErrorIs(t, err, startErr)
+		assert.NotContains(t, err.Error(), "SENTINEL")
+		assert.Equal(t, []string{"probe", "stop", "cluster-port " + paths["clusterPort"], "start fresh", "stop"}, fake.calls)
+		assert.Equal(t, safeRCToken+"\n", readKey(t, paths["rootKeyFile"]))
+
+		info, statErr := os.Stat(paths["rootKeyFile"])
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	})
+
+	t.Run("cannot be kept, so not stopped", func(t *testing.T) {
+		paths := reconcilePaths(t)
+		fake := &fakeInception{
+			probe: stoppedProbe(), startErrs: []error{startErr},
+			onStart: func(f *fakeInception, paths map[string]string, mode safeLocalMode) {
+				savesToken(f, paths, mode)
+				// A root.key that holds a value nobody can read cannot be
+				// compared with the token, so the token cannot be kept.
+				require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("x\n"), 0o000))
+			},
+		}
+
+		if os.Geteuid() == 0 {
+			t.Skip("root reads any file, so the key file cannot be made unreadable")
+		}
+
+		err := runReconcile(t, paths, fake)
+		require.ErrorIs(t, err, startErr)
+		require.ErrorIs(t, err, keyfile.ErrUnreadable)
+		assert.Contains(t, err.Error(), "left running")
+		assert.Equal(t, "start fresh", fake.calls[len(fake.calls)-1], "the new vault must not be stopped")
+	})
 }
 
 // The legacy and test layouts keep one key file for both keys, and that file

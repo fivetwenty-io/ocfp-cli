@@ -652,16 +652,29 @@ func (run *inceptionRun) archiveAndStartFresh(ctx context.Context, reason string
 }
 
 // fresh starts a new, empty vault, and stops it again if it fails to start.
+//
+// safe may have initialized the new vault and saved its root token in the
+// bloc's target before the start failed, and the stop deletes that target.
+// So the token is kept first, as before every other stop. When it cannot be
+// kept, the new vault is left running and nothing is stopped.
 func (run *inceptionRun) fresh(ctx context.Context) error {
 	paths := run.paths
 
 	err := run.steps.start(ctx, paths, run.tools, safeLocalFresh, run.log)
-	if err != nil {
-		return errors.Join(fmt.Errorf("failed to start a new inception vault: %w", err),
-			wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log)))
+	if err == nil {
+		return run.steps.finish(ctx, paths, safeLocalFresh, run.log)
 	}
 
-	return run.steps.finish(ctx, paths, safeLocalFresh, run.log)
+	err = fmt.Errorf("failed to start a new inception vault: %w", err)
+
+	_, keepErr := keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], run.steps.targetToken(paths),
+		run.steps.now(), run.log)
+	if keepErr != nil {
+		return errors.Join(err, fmt.Errorf("the new vault was left running, because the root token in safe's target "+
+			"could not be kept before stopping it: %w", keepErr))
+	}
+
+	return errors.Join(err, wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log)))
 }
 
 // keyFileHasValue reports whether path holds anything besides whitespace.
