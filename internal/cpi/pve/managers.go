@@ -318,10 +318,11 @@ func (m *SecurityManager) DeleteSecurityGroup(ctx context.Context, id string) er
 	return nil
 }
 
-// AddSecurityRule adds a rule to a firewall group.
-func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
-	path := "/cluster/firewall/groups/" + sanitizePVEGroupName(groupID)
-
+// buildPVERuleParams returns the request body AddSecurityRule posts for a
+// rule. Every rule is written as an enabled ACCEPT rule; the direction becomes
+// "in" or "out", and proto, dport, source, and comment are set only when the
+// rule has them.
+func buildPVERuleParams(rule *cpi.SecurityRule) map[string]interface{} {
 	// Map direction
 	ruleType := "in"
 	if cpi.NormalizeDirection(rule.Direction) == cpi.DirectionEgress {
@@ -360,6 +361,14 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 	if rule.Description != "" {
 		params["comment"] = rule.Description
 	}
+
+	return params
+}
+
+// AddSecurityRule adds a rule to a firewall group.
+func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, rule *cpi.SecurityRule) error {
+	path := "/cluster/firewall/groups/" + sanitizePVEGroupName(groupID)
+	params := buildPVERuleParams(rule)
 
 	_, err := m.client.pveClient.PostCtx(ctx, path, params)
 	if err != nil {
