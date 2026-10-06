@@ -29,8 +29,9 @@ func NewSafe(client *Client) *Safe {
 	}
 }
 
-// Set stores a key-value pair at the specified path
-// This mimics the behavior of 'safe set path key=value'.
+// Set stores a key-value pair at the specified path, merging it into the keys
+// already there. This mimics the behavior of 'safe set path key=value'. It
+// fails without writing when the existing record cannot be read.
 func (s *Safe) Set(path, key string, value interface{}) error {
 	// Ensure path doesn't start with /
 	path = strings.TrimPrefix(path, "/")
@@ -54,10 +55,15 @@ func (s *Safe) Set(path, key string, value interface{}) error {
 	// Read existing data first to preserve other keys
 	existingData := make(map[string]interface{})
 
+	// A missing record comes back as a nil secret with no error, and starts
+	// empty. Any read error is returned without writing, because writing now
+	// would replace the record with only this key and drop the rest.
 	secret, err := s.client.logical.Read(readPath)
 	if err != nil {
-		s.logger.Debugw("Failed to read existing data (may not exist yet)", "path", path, "error", err)
-	} else if secret != nil && secret.Data != nil {
+		return fmt.Errorf("failed to read existing secrets at %s before merging: %w", path, err)
+	}
+
+	if secret != nil && secret.Data != nil {
 		// Handle both KV v1 and v2 formats
 		if data, ok := secret.Data["data"].(map[string]interface{}); ok {
 			// KV v2 format
