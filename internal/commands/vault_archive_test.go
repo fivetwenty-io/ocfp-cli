@@ -140,3 +140,66 @@ func TestArchiveVaultState_RenamesDataInUnscopedLayout(t *testing.T) {
 	require.NoError(t, err, "key files must stay where they are")
 	assert.Equal(t, "k", string(key))
 }
+
+// rename(2) would quietly replace an empty directory or overwrite a file at
+// the destination, so an aside path that is already taken must be refused
+// and both entries left exactly as they were.
+func TestMoveAsideIfPresent_RefusesAnExistingDestination(t *testing.T) {
+	for name, makeAside := range map[string]func(t *testing.T, aside string){
+		"file": func(t *testing.T, aside string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(aside, []byte("older-key\n"), 0o600))
+		},
+		"empty directory": func(t *testing.T, aside string) {
+			t.Helper()
+			require.NoError(t, os.Mkdir(aside, 0o700))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "vault.key")
+			aside := path + VaultArchiveSuffix + "20261006-120000"
+
+			require.NoError(t, os.WriteFile(path, []byte("current-key\n"), 0o600))
+			makeAside(t, aside)
+
+			err := moveAsideIfPresent(path, aside, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrVaultArchiveExists)
+
+			current, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+			assert.Equal(t, "current-key\n", string(current))
+
+			if name == "file" {
+				older, readErr := os.ReadFile(aside)
+				require.NoError(t, readErr)
+				assert.Equal(t, "older-key\n", string(older))
+			} else {
+				assert.DirExists(t, aside)
+			}
+		})
+	}
+}
+
+// When the data moved aside but a key file then cannot, the archive that was
+// made stays where it is and the key stays in place. Nothing is undone by
+// deleting, and nothing is lost.
+func TestArchiveAndForgetVault_KeyMoveFailureKeepsEverything(t *testing.T) {
+	home := t.TempDir()
+	paths := map[string]string{
+		"vaultDir":       filepath.Join(home, ".vault"),
+		"rootKeyFile":    filepath.Join(home, "vault.key"),
+		"unsealKeysFile": filepath.Join(home, "vault.key"),
+	}
+
+	require.NoError(t, os.MkdirAll(filepath.Join(paths["vaultDir"], "core"), 0o700))
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("legacy-key\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"]+VaultArchiveSuffix+"20261006-120000", []byte("taken\n"), 0o600))
+
+	archived, err := archiveAndForgetVault(paths, "20261006-120000", zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrVaultArchiveExists)
+
+	assert.Equal(t, paths["vaultDir"]+VaultArchiveSuffix+"20261006-120000", archived)
+	assert.DirExists(t, filepath.Join(archived, "core"))
+	assert.FileExists(t, paths["rootKeyFile"])
+}
