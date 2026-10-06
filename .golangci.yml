@@ -194,6 +194,13 @@ linters:
       - path: internal/bootstrap/recycle_safety\.go
         linters:
           - unused
+      # The migrate config renderer is built and tested ahead of the
+      # migration that calls it. With tests:false the linter sees no caller
+      # yet and reports it as unused. Drop this rule once the migration
+      # calls renderRaftMigrationConfig.
+      - path: internal/commands/vault_storage_migration\.go
+        linters:
+          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:
