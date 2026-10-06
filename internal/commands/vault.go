@@ -44,9 +44,6 @@ const (
 	// MaxVaultReadyAttempts is the maximum number of attempts to wait for vault readiness.
 	MaxVaultReadyAttempts = 30
 
-	// VaultCleanupWait is the duration to wait after process termination before cleanup.
-	VaultCleanupWait = 2 * time.Second
-
 	// VaultInitWait is the duration to wait after vault startup before initialization.
 	VaultInitWait = 5 * time.Second
 
@@ -570,73 +567,28 @@ func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
 	}
 }
 
-// runCleanupCommands executes a cleanup plan, ignoring failures: a session or
-// target that is already gone is the desired end state.
-func runCleanupCommands(ctx context.Context, cmds []cleanupCommand) {
-	for _, spec := range cmds {
-		cmd := exec.CommandContext(ctx, spec.name, spec.args...) // #nosec G204 -- args come from the controlled getVaultInceptionPaths() function
-		if spec.tmux {
-			ensureTmuxEnv(cmd)
-		}
-
-		_ = cmd.Run()
-	}
-}
-
-// cleanupExistingVault removes this bloc's existing vault processes and files.
-func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
-	log.Infow("Cleaning up existing vault processes...",
-		"session", paths["tmuxSession"], "port", paths["port"])
-
-	runCleanupCommands(ctx, vaultCleanupCommands(paths))
-
-	// Kill by PID file if present (backward compat with old background process approach)
-	pidData, readErr := os.ReadFile(paths["pidFile"])
-	if readErr == nil {
-		pid, atoiErr := strconv.Atoi(strings.TrimSpace(string(pidData)))
-		if atoiErr == nil {
-			proc, findErr := os.FindProcess(pid)
-			if findErr == nil {
-				_ = proc.Signal(os.Kill)
-			}
-		}
-
-		_ = os.Remove(paths["pidFile"])
-	}
-
-	time.Sleep(VaultCleanupWait)
-
-	runCleanupCommands(ctx, vaultCleanupTargetCommands(paths))
-
-	// Move the vault data aside rather than deleting it. This runs on a
-	// liveness probe returning false, and a probe can be wrong; keeping the
-	// data makes that mistake survivable instead of terminal.
-	archived, err := archiveVaultState(paths, time.Now().Format("20060102-150405"), log)
+// cleanupExistingVault stops this bloc's inception vault and moves its data
+// and keys aside. A vault that will not stop is left exactly where it is,
+// because archiving data out from under a running engine is how a store gets
+// corrupted.
+func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+	err := stopInceptionVault(ctx, paths, log)
 	if err != nil {
-		log.Warnw("Failed to archive vault data directory", "error", err)
+		return err
+	}
+
+	archived, err := archiveAndForgetVault(paths, time.Now().Format("20060102-150405"), log)
+	if err != nil {
+		return fmt.Errorf("failed to archive the inception vault: %w", err)
 	}
 
 	if archived != "" {
 		log.Infow("Previous vault state kept", "archive", archived)
 	}
 
-	// Remove safe's vault metadata (safe local stores metadata in ~/.vault/)
-	homeDir, err := os.UserHomeDir()
-	if err == nil {
-		vaultMetaDir := filepath.Join(homeDir, ".vault", paths["vaultName"])
-
-		err = os.RemoveAll(vaultMetaDir)
-		if err != nil && !os.IsNotExist(err) {
-			log.Warnw("Failed to remove vault metadata", "error", err)
-		}
-	}
-
-	// Remove vault key files
-	_ = os.Remove(paths["rootKeyFile"])
-	_ = os.Remove(paths["unsealKeysFile"])
-	_ = os.Remove(paths["pidFile"])
-
 	log.Info("Cleanup completed")
+
+	return nil
 }
 
 // stripANSI removes ANSI escape sequences from a string.
@@ -1163,7 +1115,10 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return nil
 	}
 
-	cleanupExistingVault(context.TODO(), paths, log)
+	err = cleanupExistingVault(context.TODO(), paths, log)
+	if err != nil {
+		return fmt.Errorf("failed to clear the previous inception vault: %w", err)
+	}
 
 	err = prepareVaultDirectories(paths, log)
 	if err != nil {
@@ -1226,7 +1181,10 @@ func runVaultTeardown() error {
 
 	log.Info("=== Tearing Down Inception Vault ===")
 
-	cleanupExistingVault(context.TODO(), paths, log)
+	err := cleanupExistingVault(context.TODO(), paths, log)
+	if err != nil {
+		return fmt.Errorf("teardown failed: %w", err)
+	}
 
 	log.Info("=== Teardown Completed ===")
 
