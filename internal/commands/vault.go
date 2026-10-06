@@ -835,11 +835,89 @@ func buildSafeLocalCommand(paths map[string]string, tools inceptionTools, mode s
 	return strings.Join(args, " ")
 }
 
+// tmuxSendKeysLimit is the most ocfp will type into a tmux pane in one line.
+// tmux send-keys cuts input off at about 1024 bytes, and a cut line would run
+// a different command from the one built.
+const tmuxSendKeysLimit = 1024
+
+// safeLocalLauncherMode lets only the user read or run the launcher. It holds
+// paths, never key values, but nobody else has reason to see them.
+const safeLocalLauncherMode = 0o700
+
+// ErrSafeLocalLineTooLong reports a launcher path too long to type into tmux.
+var ErrSafeLocalLineTooLong = errors.New("the inception vault launch line is too long for tmux")
+
+// writeSafeLocalLauncher writes the safe local command for paths into a
+// script in the bloc's log directory and returns the script's path.
+//
+// tmux send-keys would cut the full command off once long data, key, and log
+// paths push it past about 1024 bytes, so the pane runs this script instead.
+// The script carries only what buildSafeLocalCommand builds, which names the
+// key files and never holds their contents. It lives in the log directory
+// because ocfp owns that directory in every layout, and it is replaced whole
+// on every start so an old launcher's contents or permissions never linger.
+func writeSafeLocalLauncher(paths map[string]string, tools inceptionTools, mode safeLocalMode) (string, error) {
+	script := filepath.Join(paths["logDir"], paths["vaultName"]+"-start.sh")
+	body := "#!/bin/sh\n" + buildSafeLocalCommand(paths, tools, mode) + "\n"
+
+	tmp, err := os.CreateTemp(paths["logDir"], ".start-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("failed to create the inception vault launcher: %w", err)
+	}
+
+	tmpName := tmp.Name()
+
+	_, err = tmp.WriteString(body)
+	if err == nil {
+		err = tmp.Chmod(safeLocalLauncherMode)
+	}
+
+	closeErr := tmp.Close()
+	if err == nil {
+		err = closeErr
+	}
+
+	if err == nil {
+		err = os.Rename(tmpName, script)
+	}
+
+	if err != nil {
+		_ = os.Remove(tmpName) // the half-written temp file is ocfp's own, never vault data
+
+		return "", fmt.Errorf("failed to write the inception vault launcher %s: %w", script, err)
+	}
+
+	return script, nil
+}
+
+// safeLocalLauncherLine is the line typed into tmux to run script. It is
+// refused when it would not fit in one send-keys, rather than typed cut off.
+func safeLocalLauncherLine(script string) (string, error) {
+	line := "sh " + shellQuote(script)
+	if len(line) >= tmuxSendKeysLimit {
+		return "", fmt.Errorf("%w: %d bytes for %s", ErrSafeLocalLineTooLong, len(line), script)
+	}
+
+	return line, nil
+}
+
 // startVaultInTmux starts the vault inside a tmux session with output captured via tee.
 func startVaultInTmux(
 	ctx context.Context, paths map[string]string, tools inceptionTools, mode safeLocalMode, log *zap.SugaredLogger,
 ) error {
 	log.Info("Starting vault in tmux session...")
+
+	// The launcher is written before any session is touched, so a launcher
+	// that cannot be written or typed leaves the pane as it was.
+	script, err := writeSafeLocalLauncher(paths, tools, mode)
+	if err != nil {
+		return err
+	}
+
+	safeCmd, err := safeLocalLauncherLine(script)
+	if err != nil {
+		return err
+	}
 
 	// Clean stale session
 	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", paths["tmuxSession"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
@@ -849,17 +927,15 @@ func startVaultInTmux(
 	time.Sleep(tmuxVerifyWait)
 
 	// Create new session
-	err := createTmuxSession(ctx, paths["tmuxSession"], log)
+	err = createTmuxSession(ctx, paths["tmuxSession"], log)
 	if err != nil {
 		return err
 	}
 
 	time.Sleep(1 * time.Second)
 
-	safeCmd := buildSafeLocalCommand(paths, tools, mode)
-
 	// Send command to tmux session
-	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- every path in safeCmd is shell-quoted by buildSafeLocalCommand
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- the launcher path is shell-quoted by safeLocalLauncherLine
 	ensureTmuxEnv(cmd)
 
 	sendOutput, sendErr := cmd.CombinedOutput()
