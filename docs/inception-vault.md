@@ -141,6 +141,8 @@ Before it starts a stopped vault, ocfp now checks that `unseal.keys` holds a who
 
 To recover by hand, we find the line in the vault log that reads `Your Vault Seal Key is` or `Your OpenBao Seal Key is`, and copy the 64 hexadecimal characters that follow. We write them to `unseal.keys` with mode 0600, and then we run the command again.
 
+safe passes the engine only the first line of `unseal.keys`, with nothing but its line ending removed, so a whole key behind a blank line or next to a stray space would reach the engine as a key it refuses. When a key file holds a whole key with extra whitespace around it, ocfp rewrites the file to hold just the key and a newline, at mode 0600, before it starts anything. It does the same for `root.key` when that file holds a token-shaped value, because re-targeting a running vault feeds `root.key` to safe in the same way. A file that is already in that form is left untouched.
+
 A new vault is held to the same standard. When ocfp starts one and cannot save both the root token and the unseal key in a valid shape, the command exits non-zero. The error says that the vault is still running and gives the path of the bloc's vault log, where the full keys can be found. It never prints a key. The vault keeps running, and ocfp archives and deletes nothing, so we can save the keys from the log by hand as described above.
 
 ## Errors and how to recover

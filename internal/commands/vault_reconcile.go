@@ -131,6 +131,11 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		return err
 	}
 
+	err = canonicalizeRootKeyFile(paths, run.log)
+	if err != nil {
+		return err
+	}
+
 	if found.healthy {
 		return run.keepHealthy(ctx)
 	}
