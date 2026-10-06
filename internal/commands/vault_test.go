@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGetVaultInceptionPaths_PortIsPerBloc guards concurrent bootstraps: two
@@ -127,6 +129,38 @@ func TestGetVaultInceptionPaths_TestMode(t *testing.T) {
 	if paths["vaultDir"] != filepath.Join(homeDir, ".test-vault") {
 		t.Errorf("vaultDir = %q, want %q", paths["vaultDir"], filepath.Join(homeDir, ".test-vault"))
 	}
+}
+
+// TestGetVaultInceptionPaths_TestModeKeyFilesAreSeparate guards the check
+// that a running vault's keys are saved: it needs the root token and the
+// unseal key in two files, so a test-mode vault that shares one file for both
+// can never pass it.
+func TestGetVaultInceptionPaths_TestModeKeyFilesAreSeparate(t *testing.T) {
+	home := t.TempDir()
+
+	original := homeDirFn
+	homeDirFn = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { homeDirFn = original })
+
+	paths := getVaultInceptionPaths("any-bloc", true)
+
+	assert.Equal(t, filepath.Join(home, "test-vault.root.key"), paths["rootKeyFile"])
+	assert.Equal(t, filepath.Join(home, "test-vault.unseal.keys"), paths["unsealKeysFile"])
+	assert.NotEqual(t, paths["rootKeyFile"], paths["unsealKeysFile"])
+	assert.Equal(t, filepath.Join(home, "test-vault.key"), paths["vaultKeyFile"], "nothing else reads vaultKeyFile")
+
+	// A vault that holds both keys in those files counts as saved.
+	saved, err := inceptionKeysSaved(paths)
+	require.NoError(t, err)
+	assert.False(t, saved, "no keys are written yet")
+
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("hvs.testmodetoken0123456789\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte(testSealKey+"\n"), 0o600))
+
+	saved, err = inceptionKeysSaved(paths)
+	require.NoError(t, err)
+	assert.True(t, saved, "a test-mode vault with both keys written must count as saved")
 }
 
 // TestGetVaultInceptionPaths_NoBlocLogDirUnderStateHomeNotOcfpHome verifies

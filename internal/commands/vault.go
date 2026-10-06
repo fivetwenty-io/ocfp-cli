@@ -411,8 +411,11 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	if testMode {
 		vaultDir = filepath.Join(home, ".test-vault")
 		vaultKeyFile = filepath.Join(home, "test-vault.key")
-		rootKeyFile = filepath.Join(home, "test-vault.key")
-		unsealKeysFile = filepath.Join(home, "test-vault.key")
+		// The root token and the unseal key each get their own file beside
+		// the test vault, as in a bloc's layout. One file for both cannot
+		// hold two keys, so a running test vault would never count as saved.
+		rootKeyFile = filepath.Join(home, "test-vault.root.key")
+		unsealKeysFile = filepath.Join(home, "test-vault.unseal.keys")
 		tmuxSession = "test-inception-vault"
 		vaultName = "test-inception"
 		port = TestVaultInceptionPort
