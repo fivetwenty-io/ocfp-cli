@@ -482,3 +482,39 @@ func TestRootTokenWritesRefuseAMalformedToken(t *testing.T) {
 	require.ErrorIs(t, err, ErrRootTokenMalformed)
 	assert.NoFileExists(t, paths["rootKeyFile"])
 }
+
+// A new vault whose keys could not both be saved cannot be reopened once it
+// stops, so the command must fail. The vault itself keeps running, nothing
+// is archived or deleted, and the error names the log and no key value.
+func TestFinishInceptionVault_FailsWhenNewKeysAreNotSaved(t *testing.T) {
+	for name, key := range map[string]string{
+		"a cut-short key": testSealKey[:56],
+		"no key at all":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := keyRecoveryPaths(t)
+			safePath := filepath.Join(t.TempDir(), "safe")
+			require.NoError(t, os.WriteFile(safePath, []byte("#!/bin/sh\nexit 0\n"), 0o700)) // #nosec G306 -- test stub must be executable
+
+			url := "http://127.0.0.1:" + paths["port"]
+			fake.outputs[safePath+" targets --json"] = []string{`[{"name":"` + paths["vaultName"] + `","url":"` + url + `"}]`}
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your OpenBao Seal Key is "+key+"\n"), 0o600))
+			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
+
+			err := finishInceptionVault(context.Background(), safePath, paths, safeLocalFresh, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
+			assert.Contains(t, err.Error(), "still running")
+			assert.Contains(t, err.Error(), paths["logFile"])
+
+			if key != "" {
+				assert.NotContains(t, err.Error(), key)
+			}
+
+			assert.NotContains(t, err.Error(), testSealKey)
+			assert.NotContains(t, err.Error(), "s.BLOC-TOKEN")
+			assert.False(t, fake.ran("tmux kill"), "the vault keeps running")
+			assert.NoFileExists(t, paths["unsealKeysFile"])
+		})
+	}
+}
