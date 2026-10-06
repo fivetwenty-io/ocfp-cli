@@ -30,3 +30,23 @@ func TestMgmtServicesExcludesAutoscaler(t *testing.T) {
 		}
 	}
 }
+
+// TestOCFServicesIncludesMonitoringStack ensures the prometheus kit's three
+// web endpoints are pre-populated as OCF FQDNs.
+func TestOCFServicesIncludesMonitoringStack(t *testing.T) {
+	for _, want := range []string{"prometheus", "grafana", "alertmanager"} {
+		found := false
+
+		for _, svc := range OCFServices {
+			if svc == want {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			t.Errorf("OCFServices missing %q", want)
+		}
+	}
+}

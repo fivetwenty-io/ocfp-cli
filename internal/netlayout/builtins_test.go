@@ -51,7 +51,8 @@ func wideGoldenTable() reservedip.AssignmentTable {
 // compactGoldenTable is the same byte-compat contract for scheme
 // "3-compact", transcribed verbatim from the deleted compactLayout's
 // WorkloadTable: wide's mgmt tier unchanged, ocf's four cross-tier statics
-// compressed from 64-67 down to 23-26, and both available bands shrunk to
+// compressed from 64-67 down to 23-26, plus prometheus at 27 (the last free
+// offset below the mgmt available band), and both available bands shrunk to
 // fit a /26.
 func compactGoldenTable() reservedip.AssignmentTable {
 	return reservedip.AssignmentTable{
@@ -60,7 +61,7 @@ func compactGoldenTable() reservedip.AssignmentTable {
 		"vault":        {"mgmt": {Offset: 5}, "ocf": {Offset: 24}},
 		"jumpbox":      {"mgmt": {Offset: 6}, "ocf": {Offset: 25}},
 		"concourse":    {"mgmt": {Offset: 7}},
-		"prometheus":   {"mgmt": {Offset: 8}},
+		"prometheus":   {"mgmt": {Offset: 8}, "ocf": {Offset: 27}},
 		"shield":       {"mgmt": {Offset: 9}},
 		"blacksmith":   {"mgmt": {Offset: 10}, "ocf": {Offset: 26}},
 		"artifacts":    {"mgmt": {Offset: 11}},

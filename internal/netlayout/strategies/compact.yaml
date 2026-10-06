@@ -41,6 +41,7 @@ tiers:
       vault: 24
       jumpbox: 25
       blacksmith: 26
+      prometheus: 27
       haproxy: 37
     available:
       - start: 36
