@@ -2,7 +2,11 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,50 +16,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerateVaultInceptionScript_ContainsIdempotencyCheck(t *testing.T) {
-	t.Parallel()
+// runVaultInception runs the vault inception block against a fake ocfp that
+// records its arguments and exits with exitCode. tmux, vault, and safe are
+// shell functions that report a running, targeted inception vault, so no real
+// binary is ever run, and a script that trusts them over ocfp is caught.
+func runVaultInception(t *testing.T, exitCode int, errexit bool) (string, string, error) {
+	t.Helper()
 
-	cfg := &config.Config{
-		Name: "520-aws-wayne",
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "ocfp-args.log")
+	ocfp := filepath.Join(dir, "ocfp")
+	fake := fmt.Sprintf("#!/bin/bash\necho \"$*\" >> %s\nexit %d\n", shellSingleQuote(argsFile), exitCode)
+	require.NoError(t, os.WriteFile(ocfp, []byte(fake), 0o700)) // #nosec G306 -- test executable in t.TempDir
+
+	om := NewOCFPManager("pve", &config.Config{Name: "ocfp-lab"}, nil)
+
+	header := []string{"set -uo pipefail"}
+	if errexit {
+		header = []string{"set -euo pipefail"}
 	}
 
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateVaultInceptionScript(context.Background())
+	script := strings.Join(append(header,
+		`log_info() { echo "INFO: $*"; }`,
+		`log_success() { echo "OK: $*"; }`,
+		`log_error() { echo "ERROR: $*"; }`,
+		`tmux() { return 0; }`,
+		`vault() { return 0; }`,
+		`safe() { echo "ocfp-lab-inception (http://127.0.0.1:18234)"; }`,
+		"OCFP_CLI_PATH="+shellSingleQuote(ocfp),
+		"OCFP_BLOC=ocfp-lab",
+		strings.Join(om.generateVaultInceptionExecution(), "\n"),
+		`echo "EXPORTED_VAULT_ADDR=$(printenv VAULT_ADDR)"`,
+	), "\n")
 
-	// The fast-path idempotency check should be present
-	idempotencyPatterns := []string{
-		"tmux has-session -t",
-		"vault status",
-		"Inception vault already running - skipping",
+	out, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+
+	args, readErr := os.ReadFile(argsFile)
+	if !errors.Is(readErr, os.ErrNotExist) {
+		require.NoError(t, readErr)
 	}
 
-	for _, pattern := range idempotencyPatterns {
-		if !strings.Contains(script, pattern) {
-			t.Errorf("Expected script to contain idempotency pattern %q\nScript:\n%s", pattern, script)
-		}
-	}
+	return string(out), string(args), err
 }
 
-func TestGenerateVaultInceptionScript_ContainsFallbackCheck(t *testing.T) {
+// ocfp decides whether a running inception vault is healthy and its keys are
+// saved, and recovers or fails when they are not. A script that skipped ocfp
+// because tmux, vault, and safe looked fine would hide a vault whose keys
+// were never saved, so ocfp must run every time.
+func TestVaultInceptionScript_AlwaysRunsOCFP(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Name: "520-aws-wayne",
-	}
+	out, args, err := runVaultInception(t, 0, true)
+	require.NoError(t, err, out)
 
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateVaultInceptionScript(context.Background())
+	assert.Equal(t, "vault inception --bloc ocfp-lab\n", args, "ocfp must run even when a vault looks healthy")
+	assert.NotContains(t, out, "skipping")
+	assert.Contains(t, out, "EXPORTED_VAULT_ADDR=http://127.0.0.1:")
+}
 
-	// The fallback check on failure should still be present
-	fallbackPatterns := []string{
-		`safe target 2>&1 | grep -q 'inception\|production'`,
-		"Vault already configured",
-	}
+// A failed ocfp must fail the script. A safe target that merely names an
+// inception vault says nothing about whether that vault's keys are saved.
+func TestVaultInceptionScript_NeverSwallowsAFailure(t *testing.T) {
+	t.Parallel()
 
-	for _, pattern := range fallbackPatterns {
-		if !strings.Contains(script, pattern) {
-			t.Errorf("Expected script to contain fallback pattern %q\nScript:\n%s", pattern, script)
-		}
+	for _, errexit := range []bool{true, false} {
+		t.Run(fmt.Sprintf("errexit=%t", errexit), func(t *testing.T) {
+			t.Parallel()
+
+			out, args, err := runVaultInception(t, 3, errexit)
+
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr, out)
+			assert.Equal(t, 3, exitErr.ExitCode(), out)
+			assert.Equal(t, "vault inception --bloc ocfp-lab\n", args)
+			assert.NotContains(t, out, "already configured")
+			assert.NotContains(t, out, "EXPORTED_VAULT_ADDR")
+		})
 	}
 }
 
@@ -293,27 +329,6 @@ func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
 		if strings.Contains(line, "genesis init") && !strings.Contains(line, "genesis repo-init") {
 			t.Errorf("line %d contains deprecated 'genesis init' command (old v3.1): %q", i+1, line)
 		}
-	}
-}
-
-func TestGenerateVaultInceptionScript_SessionNameFromBloc(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		Name: "520-aws-wayne",
-	}
-
-	om := NewOCFPManager("aws", cfg, nil)
-	script := om.GenerateVaultInceptionScript(context.Background())
-
-	// Should derive session name from OCFP_BLOC
-	if !strings.Contains(script, `INCEPTION_SESSION="${OCFP_BLOC}-inception-vault"`) {
-		t.Errorf("Expected script to derive session name from OCFP_BLOC\nScript:\n%s", script)
-	}
-
-	// Should also handle no-bloc case
-	if !strings.Contains(script, `INCEPTION_SESSION="inception-vault"`) {
-		t.Errorf("Expected script to handle no-bloc case\nScript:\n%s", script)
 	}
 }
 
