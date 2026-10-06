@@ -349,6 +349,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	port := VaultInceptionPort
 	logDir := filepath.Join(config.GetLogDir(), "vault")
 	logFile := filepath.Join(logDir, VaultInceptionLogFile)
+	lockFile := filepath.Join(config.StateHome(), inceptionLockFileName)
 
 	if blocName != "" {
 		vaultDir = filepath.Join(config.OcfpBlocDir(blocName), "vault", "data")
@@ -370,6 +371,9 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		legacyLogDir := filepath.Join(config.OcfpHome(), blocName, VaultInceptionLogDir)
 		logDir, _ = config.ResolveExisting(newLogDir, legacyLogDir)
 		logFile = filepath.Join(logDir, VaultInceptionLogFile)
+		// The lock sits outside <bloc>/vault because the archive renames that
+		// directory while the lock is held.
+		lockFile = filepath.Join(config.StateHome(), blocName, inceptionLockFileName)
 	}
 
 	if testMode {
@@ -380,6 +384,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		tmuxSession = "test-inception-vault"
 		vaultName = "test-inception"
 		port = TestVaultInceptionPort
+		lockFile = filepath.Join(config.StateHome(), "test-"+inceptionLockFileName)
 	}
 
 	paths := map[string]string{
@@ -393,6 +398,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 		"clusterPort":    "",
 		"logDir":         logDir,
 		"logFile":        logFile,
+		"lockFile":       lockFile,
 	}
 
 	// An API port too high to leave room for its cluster port leaves the
@@ -1322,9 +1328,17 @@ func runVaultInception() error {
 // the vault is up before the artifacts step, instead of failing late (after
 // the bastion is created) on a dead vault.
 func ensureInceptionVault(blocName string, testMode bool) error {
-	log := logger.Get()
-
 	paths := getVaultInceptionPaths(blocName, testMode)
+
+	return withInceptionVaultLock(paths, func() error {
+		return ensureInceptionVaultLocked(blocName, paths)
+	})
+}
+
+// ensureInceptionVaultLocked does the work of ensureInceptionVault while the
+// bloc's inception vault lock is held.
+func ensureInceptionVaultLocked(blocName string, paths map[string]string) error {
+	log := logger.Get()
 
 	log.Info("=== Starting OCFP Vault Inception ===")
 	log.Infow("Configuration",
@@ -1381,16 +1395,18 @@ func runVaultTeardown() error {
 
 	paths := getVaultInceptionPaths(blocName, testMode)
 
-	log.Info("=== Tearing Down Inception Vault ===")
+	return withInceptionVaultLock(paths, func() error {
+		log.Info("=== Tearing Down Inception Vault ===")
 
-	err := cleanupExistingVault(context.TODO(), paths, log)
-	if err != nil {
-		return fmt.Errorf("teardown failed: %w", err)
-	}
+		err := cleanupExistingVault(context.TODO(), paths, log)
+		if err != nil {
+			return fmt.Errorf("teardown failed: %w", err)
+		}
 
-	log.Info("=== Teardown Completed ===")
+		log.Info("=== Teardown Completed ===")
 
-	return nil
+		return nil
+	})
 }
 
 // newVaultMigrateCmd creates the vault migrate subcommand.
