@@ -119,10 +119,11 @@ type inceptionRun struct {
 // Every check that can refuse runs before anything is stopped or moved: a
 // stranger on the port, someone else's vault on the port, a data directory
 // holding both kinds of storage, and a cluster port in use all return an
-// error with the disk exactly as it was. A healthy vault is left running. A
-// vault with its data and both keys is restarted in place. Only missing keys,
-// or keys the engine itself refused, lead to an archive, and the archive
-// renames the old vault aside rather than deleting anything.
+// error with the disk exactly as it was, and so does an open vault whose
+// keys cannot be saved, which is left running. A healthy vault is left
+// running. A vault with its data and both keys is restarted in place. Only
+// missing keys, or keys the engine itself refused, lead to an archive, and
+// the archive renames the old vault aside rather than deleting anything.
 func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	paths := run.paths
 
@@ -150,19 +151,9 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		return run.keepHealthy(ctx)
 	}
 
-	// The log and safe's target hold the keys of a vault that runs now, so
-	// they are recovered before the stop. Without both keys the vault goes
-	// down the archive path below and is never migrated.
-	keys, err := inceptionKeysUsable(paths)
+	err = run.recoverRunningKeys(ctx, found)
 	if err != nil {
 		return err
-	}
-
-	if found.running && !keys {
-		err = run.steps.recoverKeys(ctx, paths, run.log)
-		if err != nil {
-			return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
-		}
 	}
 
 	// Stopping deletes the bloc's safe target, which may hold the only copy
@@ -193,12 +184,51 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	return run.startFromDisk(ctx)
 }
 
+// recoverRunningKeys recovers the keys of the bloc's running vault before
+// anything stops it, because the log and safe's target hold the keys of a
+// vault that runs now.
+//
+// An open vault, initialized and unsealed, still serves its secrets, and
+// once it stops it can be reopened only with both keys. Its keys must be
+// saved in a valid shape, as for a healthy vault, or the run fails with
+// ErrInceptionKeysNotSaved before any token is kept and before anything is
+// stopped, archived, or started, and the vault keeps running.
+//
+// A sealed or never-initialized engine holds nothing in memory that its
+// data and key files do not, so stopping it loses nothing. Its missing keys
+// are recovered when they can be, and without both it goes down the archive
+// path and is never migrated.
+func (run *inceptionRun) recoverRunningKeys(ctx context.Context, found preflightFindings) error {
+	if found.open {
+		return run.requireSavedKeys(ctx)
+	}
+
+	if !found.running {
+		return nil
+	}
+
+	keys, err := inceptionKeysUsable(run.paths)
+	if err != nil || keys {
+		return err
+	}
+
+	err = run.steps.recoverKeys(ctx, run.paths, run.log)
+	if err != nil {
+		return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
+	}
+
+	return nil
+}
+
 // preflightFindings is what preflight learned about the bloc.
 type preflightFindings struct {
 	// journal is the migration in flight, if any.
 	journal *migrationJournal
 	// running reports that this bloc's own vault answers on the port.
 	running bool
+	// open reports that the running vault is initialized and unsealed, so
+	// its secrets can still be read through it.
+	open bool
 	// healthy reports that the running vault can be left as it is.
 	healthy bool
 }
@@ -244,6 +274,7 @@ func (run *inceptionRun) preflight(ctx context.Context) (preflightFindings, erro
 	return preflightFindings{
 		journal: journal,
 		running: true,
+		open:    probe.initialized && !probe.sealed,
 		healthy: journal == nil && run.isHealthy(ctx, probe, data),
 	}, nil
 }
