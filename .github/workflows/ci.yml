@@ -87,15 +87,21 @@ jobs:
           cache: false
 
       - name: Run go fmt
-        run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "Found unformatted files:"
-            gofmt -s -l .
-            exit 1
-          fi
+        run: bash scripts/ci/check-gofmt.sh
+
+      # The shell scripts every job below runs, so a broken one fails here
+      # instead of in the job that depends on it.
+      - name: Test the CI scripts
+        run: make test-scripts
 
       - name: Run go vet
         run: go vet ./...
+
+      # The version lives in .golangci-version, which `make preflight`
+      # installs from too, so CI and the local run cannot disagree.
+      - name: Read golangci-lint version
+        id: golangci
+        run: echo "version=$(tr -d '[:space:]' < .golangci-version)" >> "$GITHUB_OUTPUT"
 
       # The pinned release must be built with a Go toolchain at least as new
       # as go.mod's target: golangci-lint parses the standard library with
@@ -103,11 +109,12 @@ jobs:
       # to load the config outright. v2.12.2 (built with go1.26) died that
       # way on "the Go language version (go1.26) used to build golangci-lint
       # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
-      # with go1.27.0. Bump this in lockstep with the container image.
+      # with go1.27.0. Bump .golangci-version in lockstep with the container
+      # image.
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.13.1
+          version: ${{ steps.golangci.outputs.version }}
           skip-cache: true
           skip-save-cache: true
 
@@ -212,30 +219,7 @@ jobs:
       # off the DWARF path, which is where the cross-compiled targets used
       # to fail first.
       - name: Build every target
-        env:
-          CGO_ENABLED: '0'
-        run: |
-          set -euo pipefail
-          pkg=github.com/ocfp/ocfp-cli-go/internal/version
-          version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
-          ldflags="-s -w"
-          ldflags="${ldflags} -X ${pkg}.Version=${version}"
-          ldflags="${ldflags} -X ${pkg}.GitCommit=$(git rev-parse --short HEAD)"
-          ldflags="${ldflags} -X ${pkg}.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')"
-          ldflags="${ldflags} -X ${pkg}.GoVersion=$(go version | cut -d' ' -f3)"
-          mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            goos="${target%/*}"
-            goarch="${target#*/}"
-            out="dist/ocfp-${goos}-${goarch}"
-            if [ "$goos" = "windows" ]; then
-              out="${out}.exe"
-            fi
-            echo "::group::build $target"
-            GOOS="$goos" GOARCH="$goarch" go build -ldflags "$ldflags" -o "$out" ./cmd/ocfp
-            echo "::endgroup::"
-          done
-          ls -l dist
+        run: bash scripts/ci/build-all.sh
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -252,27 +236,26 @@ jobs:
     timeout-minutes: 20
     needs: build
     steps:
+      # Only the CI scripts are needed, not the tree. Checkout goes first
+      # because it cleans the workspace, which would remove the downloaded
+      # binaries if it ran after them.
+      - name: Checkout CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ocfp-binaries
           path: dist
 
-      - name: Make binary executable
-        run: chmod +x dist/ocfp-linux-amd64
-
-      - name: Test CLI help
-        run: ./dist/ocfp-linux-amd64 --help
-
-      - name: Test version
-        run: ./dist/ocfp-linux-amd64 version
-
-      # No bloc is configured on the runner, so these exercise the command
-      # wiring and argument parsing only; a missing environment is expected.
-      - name: Test environment commands
-        run: |
-          ./dist/ocfp-linux-amd64 env list || true
-          ./dist/ocfp-linux-amd64 env show || true
+      # No bloc is configured on the runner, so the environment commands
+      # exercise the command wiring and argument parsing only; a missing
+      # environment is expected.
+      - name: Smoke-test the CLI
+        run: bash scripts/ci/integration-smoke.sh dist/ocfp-linux-amd64
 
   security:
     name: Security Scan
@@ -301,27 +284,11 @@ jobs:
           go-version: '1.27.0'
           cache: false
 
-      # The real gate: govulncheck reports only advisories on code paths this
-      # binary actually reaches, so a finding here is always actionable.
-      - name: Run govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          govulncheck ./...
-
-      # gosec reports zero findings: the tree suppresses it with #nosec,
-      # which this binary and golangci-lint both honour, so the two now
-      # agree. Still a report rather than a gate — the trailing || true
-      # keeps a newly introduced finding from blocking a merge, and it
-      # surfaces in the SARIF instead. Code scanning is unavailable on
-      # this private repository, so the SARIF ships as an artifact
-      # instead of an upload.
-      #
-      # Pinned like govulncheck above: at @latest this step could change
-      # behaviour with no commit behind it.
-      - name: Run gosec
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
-          gosec -fmt sarif -out gosec-results.sarif ./... || true
+      # govulncheck is the gate; gosec is a report that never blocks a merge
+      # and ships as a SARIF artifact, since code scanning is unavailable on
+      # this private repository. Both tools are pinned inside the script.
+      - name: Run govulncheck and gosec
+        run: bash scripts/ci/security-scan.sh
 
       - name: Upload gosec report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

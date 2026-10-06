@@ -50,3 +50,8 @@ ocfp
 
 # GoReleaser before-hook output (shell completions built for packaging)
 completions/
+
+# Pinned tools and CI scratch output from `make preflight`
+.bin/
+coverage.txt
+gosec-results.sarif
