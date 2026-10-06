@@ -28,8 +28,9 @@ const (
 	// VaultOutputFileMode is the file permission mode for vault output files.
 	VaultOutputFileMode = keyfile.FileMode
 
-	// VaultDirMode is the file permission mode for vault directories.
-	VaultDirMode = 0750
+	// VaultDirMode is the mode of the inception vault's log directory. A log
+	// may hold the only copy of an unseal key, so only the user can enter it.
+	VaultDirMode = 0o700
 
 	// VaultInceptionPort is the inception vault port used when no bloc is named.
 	// Bloc-scoped runs resolve their own port via config.InceptionVaultPort.
@@ -881,7 +882,9 @@ var ErrSafeLocalLineTooLong = errors.New("the inception vault launch line is too
 // on every start so an old launcher's contents or permissions never linger.
 func writeSafeLocalLauncher(paths map[string]string, tools inceptionTools, mode safeLocalMode) (string, error) {
 	script := filepath.Join(paths["logDir"], paths["vaultName"]+"-start.sh")
-	body := "#!/bin/sh\n" + buildSafeLocalCommand(paths, tools, mode) + "\n"
+	// umask 077 makes the log tee creates, and anything else the start
+	// creates, private to the user, since the log holds the new vault's keys.
+	body := "#!/bin/sh\numask 077\n" + buildSafeLocalCommand(paths, tools, mode) + "\n"
 
 	tmp, err := os.CreateTemp(paths["logDir"], ".start-*.sh")
 	if err != nil {
@@ -1370,9 +1373,9 @@ func printVaultInfo(paths map[string]string, log *zap.SugaredLogger) {
 // initialized only when it holds vault.db or raft/, and a fresh start reads
 // stdin from /dev/null, so nothing can wait on an unseal prompt.
 func prepareVaultDirectories(paths map[string]string, log *zap.SugaredLogger) error {
-	err := os.MkdirAll(paths["logDir"], VaultDirMode)
+	err := makeVaultLogDir(paths, log)
 	if err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+		return err
 	}
 
 	// An archive renames <bloc>/vault away, and the keys of the vault that
@@ -1424,6 +1427,10 @@ func ensureInceptionVaultLocked(blocName string, paths map[string]string) error 
 		"tmux_session", paths["tmuxSession"],
 		"vault_dir", paths["vaultDir"],
 	)
+
+	// Logs an older release left readable by other users are made private
+	// on every run, before anything else, since one may hold an unseal key.
+	tightenVaultLogs(paths, log)
 
 	err := requireClusterPort(paths)
 	if err != nil {
