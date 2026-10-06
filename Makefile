@@ -236,6 +236,11 @@ test-scripts: ## Run the shell script tests (scripts/ci/tests)
 	@bash scripts/ci/tests/run.sh
 	@echo "$(GREEN)✓ Script tests complete$(RESET)"
 
+.PHONY: hooks
+hooks: ## Enable the pre-push hook in .githooks (runs preflight on pushes to main and tags)
+	@git config core.hooksPath .githooks
+	@echo "$(GREEN)✓ core.hooksPath set to .githooks$(RESET)"
+
 .PHONY: preflight
 preflight: ## Run every CI check locally (lint, test, build, integration, security)
 	@bash scripts/ci/check-go-version.sh
