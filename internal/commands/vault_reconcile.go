@@ -335,24 +335,36 @@ func (run *inceptionRun) isHealthy(ctx context.Context, probe vaultProbe, data v
 // global and any sibling bloc can move it, so it proves nothing; the bloc's
 // own entry among safe's targets is what must exist. When it is missing it is
 // registered again from root.key rather than restarting a working vault.
+//
+// A vault whose keys are not both saved is not healthy, however well it runs:
+// once it stops it cannot be reopened. Its keys are recovered while it runs,
+// and when that fails the run fails with the vault left running.
 func (run *inceptionRun) keepHealthy(ctx context.Context) error {
 	paths := run.paths
 
-	if run.steps.targetRegistered(ctx, paths) {
-		run.log.Info("Inception vault is already running and accessible")
-		printVaultInfo(paths, run.log)
+	registered := run.steps.targetRegistered(ctx, paths)
+	if !registered {
+		token, err := keyFileHasValue(paths["rootKeyFile"])
+		if err != nil {
+			return err
+		}
 
-		return nil
+		if !token {
+			return fmt.Errorf("%w: safe has no %s target and %s holds no root token; the vault at %s keeps running",
+				ErrInceptionTargetLost, paths["vaultName"], paths["rootKeyFile"], "http://127.0.0.1:"+paths["port"])
+		}
 	}
 
-	token, err := keyFileHasValue(paths["rootKeyFile"])
+	err := run.requireSavedKeys(ctx)
 	if err != nil {
 		return err
 	}
 
-	if !token {
-		return fmt.Errorf("%w: safe has no %s target and %s holds no root token; the vault at %s keeps running",
-			ErrInceptionTargetLost, paths["vaultName"], paths["rootKeyFile"], "http://127.0.0.1:"+paths["port"])
+	if registered {
+		run.log.Info("Inception vault is already running and accessible")
+		printVaultInfo(paths, run.log)
+
+		return nil
 	}
 
 	err = run.steps.retarget(ctx, paths, run.log)
@@ -364,6 +376,35 @@ func (run *inceptionRun) keepHealthy(ctx context.Context) error {
 	printVaultInfo(paths, run.log)
 
 	return nil
+}
+
+// requireSavedKeys makes sure a running vault's keys are both saved in a
+// valid shape, recovering whichever is missing from what the vault left
+// behind, and fails with ErrInceptionKeysNotSaved when they still are not.
+func (run *inceptionRun) requireSavedKeys(ctx context.Context) error {
+	paths := run.paths
+
+	saved, err := inceptionKeysSaved(paths)
+	if err != nil || saved {
+		return err
+	}
+
+	err = run.steps.recoverKeys(ctx, paths, run.log)
+	if err != nil {
+		return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
+	}
+
+	saved, err = inceptionKeysSaved(paths)
+	if err != nil || saved {
+		return err
+	}
+
+	run.log.Errorw("The running inception vault's keys are not both saved; it cannot be reopened after it stops",
+		"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
+
+	return fmt.Errorf("%w: the vault at %s is still running, but %s and %s do not both hold a valid key; "+
+		"its full keys are in the vault log at %s", ErrInceptionKeysNotSaved, "http://127.0.0.1:"+paths["port"],
+		paths["rootKeyFile"], paths["unsealKeysFile"], paths["logFile"])
 }
 
 // startFromDisk starts a stopped vault from what its data directory and key
@@ -667,6 +708,26 @@ func inceptionKeysUsable(paths map[string]string) (bool, error) {
 	}
 
 	return root && unseal, nil
+}
+
+// inceptionKeysSaved reports whether both key files hold a key of the right
+// shape, which is what a vault needs to be reopened after it stops.
+func inceptionKeysSaved(paths map[string]string) (bool, error) {
+	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
+		return false, nil
+	}
+
+	root, err := readKeyFile(paths["rootKeyFile"])
+	if err != nil {
+		return false, err
+	}
+
+	unseal, err := readKeyFile(paths["unsealKeysFile"])
+	if err != nil {
+		return false, err
+	}
+
+	return checkRootToken(root) == nil && checkSealKey(unseal) == nil, nil
 }
 
 // anyInceptionKeyPresent reports whether either key file exists. A lookup

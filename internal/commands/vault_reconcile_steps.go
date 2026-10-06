@@ -222,7 +222,7 @@ func finishInceptionVault(
 			log.Warnw("Failed to save vault keys", "error", saveErr)
 		}
 
-		keys, keysErr := inceptionKeysUsable(paths)
+		keys, keysErr := inceptionKeysSaved(paths)
 		if keysErr != nil || !keys {
 			log.Errorw("The new inception vault's keys were not both saved; it cannot be reopened after it stops",
 				"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
