@@ -295,12 +295,18 @@ func (c *Config) getCorePackages() map[string]PackageGroup {
 
 // getEssentialPackages returns brew prerequisite packages only.
 // All other packages moved to brew (system tools, dev libs) or CPAN (Perl modules).
+// lsof stays here because `ocfp vault inception` runs it on the bastion to find
+// the processes holding the vault's port and data, and refuses to stop or
+// archive a vault when it cannot.
 func (c *Config) getEssentialPackages() PackageGroup {
 	return PackageGroup{
-		Enabled:     true,
-		Condition:   "",
-		DependsOn:   []string{},
-		Packages:    []string{"build-essential", "procps", "curl", "file", "git", "ca-certificates", "ncurses-term", "zlib1g-dev", "libssl-dev", "libffi-dev", "unzip"},
+		Enabled:   true,
+		Condition: "",
+		DependsOn: []string{},
+		Packages: []string{
+			"build-essential", "procps", "curl", "file", "git", "ca-certificates", "ncurses-term",
+			"zlib1g-dev", "libssl-dev", "libffi-dev", "unzip", "lsof",
+		},
 		PipPackages: []string{},
 		Verify:      []string{},
 		PostInstall: "",
