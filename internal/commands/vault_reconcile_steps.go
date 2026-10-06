@@ -305,7 +305,7 @@ func runningVaultOutput(ctx context.Context, paths map[string]string) string {
 	}
 
 	pane, err := vaultOps.run(ctx, cleanupCommand{
-		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-"}, tmux: true,
+		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-"), tmux: true,
 	})
 	if err != nil {
 		return ""
