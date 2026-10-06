@@ -104,9 +104,9 @@ func vaultRootContains(vaultDir, vaultRoot string, keyFiles ...string) bool {
 // caller must have stopped the vault first.
 //
 // In the bloc layout archiveVaultState renames <bloc>/vault, which carries
-// the keys along with the data. In the legacy and test layouts the key file
-// sits loose in the home directory, where the next fresh vault would write
-// its own key over it, so it is renamed aside under the same suffix. Deleting
+// the keys along with the data. In the legacy and test layouts the key files
+// sit loose in the home directory, where the next fresh vault would write
+// its own keys over them, so each is renamed aside under the same suffix. Deleting
 // it instead, as this path once did, would leave the archived data with no
 // way back in.
 func archiveAndForgetVault(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {

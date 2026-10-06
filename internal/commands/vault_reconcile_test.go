@@ -675,7 +675,7 @@ func TestReconcile_FailedFreshStartKeepsTheNewToken(t *testing.T) {
 	})
 }
 
-// The legacy and test layouts keep one key file for both keys, and that file
+// A key file shared by both keys, as older releases used without a bloc,
 // ends up holding only the root token. Such a vault cannot be reopened, so it
 // goes down the archive path rather than feeding a token to the unseal prompt.
 func TestReconcile_SharedKeyFileIsNotAPairOfKeys(t *testing.T) {

@@ -84,7 +84,7 @@ func localInceptionRootKeyFile(blocName string) (string, error) {
 		return "", fmt.Errorf("failed to find the home directory: %w", err)
 	}
 
-	return filepath.Join(home, "vault.key"), nil
+	return filepath.Join(home, "vault.root.key"), nil
 }
 
 // keepLocalTargetToken saves the root token safe holds for the local vault's
