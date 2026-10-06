@@ -1378,3 +1378,64 @@ func TestReconcile_NoRetryWithoutADifferentToken(t *testing.T) {
 		})
 	}
 }
+
+// A running vault whose keys were never both saved cannot be reopened once
+// it stops, so it is not healthy however well it runs. Its keys are recovered
+// while it runs, and when that fails the run fails with the vault still
+// running and nothing stopped, archived, or changed.
+func TestReconcile_HealthyVaultWithoutSavedKeysFails(t *testing.T) {
+	for name, tc := range map[string]struct {
+		root, unseal bool
+		malformed    string // a value of the wrong shape in root.key
+	}{
+		"no unseal key":        {root: true},
+		"no root token":        {unseal: true},
+		"neither key":          {},
+		"malformed root token": {unseal: true, malformed: "s.BAD TOKEN"},
+		"one shared key file":  {root: true, unseal: true, malformed: "shared"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, tc.root, tc.unseal)
+
+			switch tc.malformed {
+			case "":
+			case "shared":
+				paths["unsealKeysFile"] = paths["rootKeyFile"]
+			default:
+				require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte(tc.malformed+"\n"), 0o600))
+			}
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{probe: healthyRaftProbe(), session: true, target: true}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
+			assert.Contains(t, err.Error(), "still running")
+			assert.Contains(t, err.Error(), paths["logFile"])
+			assert.NotContains(t, err.Error(), testSealKey)
+			assert.NotContains(t, err.Error(), "ROOT-TOKEN-SENTINEL")
+			assert.NotContains(t, fake.calls, "stop")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+			assert.Empty(t, archivesOf(t, paths))
+		})
+	}
+}
+
+// When recovery finds the missing key, the healthy vault is left running and
+// the run succeeds.
+func TestReconcile_HealthyVaultRecoversMissingKeys(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, false)
+
+	fake := &fakeInception{
+		probe: healthyRaftProbe(), session: true, target: true,
+		recover: func(paths map[string]string) { writeKeys(t, paths, false, true) },
+	}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{"probe", "recover-keys"}, fake.calls)
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+}

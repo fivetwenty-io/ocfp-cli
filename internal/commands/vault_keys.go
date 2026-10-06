@@ -27,9 +27,10 @@ var (
 	// ErrRootTokenMalformed reports a root token holding characters no
 	// engine issues, or of a length no token has.
 	ErrRootTokenMalformed = errors.New("the inception vault root token is malformed")
-	// ErrInceptionKeysNotSaved reports a new inception vault whose root
-	// token and unseal key were not both saved in a valid shape.
-	ErrInceptionKeysNotSaved = errors.New("the new inception vault's keys were not saved")
+	// ErrInceptionKeysNotSaved reports a running inception vault, new or
+	// not, whose root token and unseal key are not both saved in a valid
+	// shape, so it could not be reopened once it stopped.
+	ErrInceptionKeysNotSaved = errors.New("the inception vault's keys were not saved")
 	// ErrUnsealKeyFileMalformed reports an unseal key file that holds
 	// something other than a whole key, whose whole key could not be found
 	// in what safe printed.
