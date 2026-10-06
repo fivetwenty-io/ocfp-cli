@@ -27,6 +27,10 @@ var (
 	// ErrRootTokenMalformed reports a root token holding characters no
 	// engine issues, or of a length no token has.
 	ErrRootTokenMalformed = errors.New("the inception vault root token is malformed")
+	// ErrUnsealKeyFileMalformed reports an unseal key file that holds
+	// something other than a whole key, whose whole key could not be found
+	// in what safe printed.
+	ErrUnsealKeyFileMalformed = errors.New("the inception vault unseal key file does not hold a whole key")
 )
 
 // checkSealKey reports why key cannot be the unseal key safe printed. The

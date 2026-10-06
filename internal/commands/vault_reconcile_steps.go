@@ -304,6 +304,102 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 	return nil
 }
 
+// repairUnsealKeyFile restores a whole unseal key to a key file that holds
+// only the start of one, the way older captures of a tmux pane cut the key
+// at the pane's edge. The engine would refuse the cut key and the vault would
+// be archived while its real key still sat in safe's output, so the key file
+// is repaired from that output before anything starts: the tee'd log, the log
+// of the run before it, and the pane's history.
+//
+// Only a key that begins with what the file holds is taken, so a key from
+// some other vault is never written. When none is found, the disk is left
+// exactly as it is and the error says so. A missing or blank key file is
+// left to the archive path, as before.
+func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+	keyFile := paths["unsealKeysFile"]
+	if paths["rootKeyFile"] == keyFile {
+		return nil
+	}
+
+	data, err := os.ReadFile(keyFile) // #nosec G304 -- the bloc's own key file from getVaultInceptionPaths()
+	if err != nil {
+		return nil //nolint:nilerr // a missing or unreadable key file is the archive path's to handle
+	}
+
+	held := strings.TrimSpace(string(data))
+	if held == "" {
+		return nil
+	}
+
+	shapeErr := checkSealKey(held)
+	if shapeErr == nil {
+		return nil
+	}
+
+	var found []string
+
+	for _, output := range unsealKeySources(ctx, paths) {
+		for _, key := range sealKeysIn(output) {
+			if strings.HasPrefix(key, held) && !slices.Contains(found, key) {
+				found = append(found, key)
+			}
+		}
+	}
+
+	if len(found) != 1 {
+		return fmt.Errorf("%w: %s: %w, and safe's output in %s, %s.previous, and the tmux session %s "+
+			"holds no single whole key that it is the start of, so nothing was started, stopped, or changed; "+
+			"put the vault's whole unseal key in that file and run this again",
+			ErrUnsealKeyFileMalformed, keyFile, shapeErr, paths["logFile"], paths["logFile"], paths["tmuxSession"])
+	}
+
+	err = writeRecoveredKey(keyFile, found[0])
+	if err != nil {
+		return err
+	}
+
+	log.Warnw("Restored the whole unseal key to a key file that held only part of it", "path", keyFile)
+
+	return nil
+}
+
+// unsealKeySources returns what safe printed for the bloc's vault, from the
+// tee'd log, the previous run's log, and the tmux pane's whole history.
+func unsealKeySources(ctx context.Context, paths map[string]string) []string {
+	var sources []string
+
+	for _, logFile := range []string{paths["logFile"], paths["logFile"] + ".previous"} {
+		data, err := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
+		if err == nil {
+			sources = append(sources, stripANSI(string(data)))
+		}
+	}
+
+	pane, err := vaultOps.run(ctx, cleanupCommand{
+		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-"), tmux: true,
+	})
+	if err == nil {
+		sources = append(sources, stripANSI(string(pane)))
+	}
+
+	return sources
+}
+
+// sealKeysIn returns every whole unseal key in safe's output, in the order
+// printed, and skips any that is not the shape of a key.
+func sealKeysIn(output string) []string {
+	var keys []string
+
+	for line := range strings.Lines(output) {
+		key := extractSealKey(line)
+		if key != "" && checkSealKey(key) == nil {
+			keys = append(keys, key)
+		}
+	}
+
+	return keys
+}
+
 // runningVaultOutput returns safe local's output for the running vault, from
 // the tee'd log when it has the seal key, and otherwise from the whole of the
 // tmux pane's history.
