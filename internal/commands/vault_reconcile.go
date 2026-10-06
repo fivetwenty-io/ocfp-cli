@@ -601,8 +601,16 @@ func (run *inceptionRun) archiveAndStartFresh(ctx context.Context, reason string
 	}
 
 	err = run.fresh(ctx)
+	if errors.Is(err, ErrInceptionKeysNotSaved) {
+		run.log.Errorw("Started a new, empty inception vault, but its keys were not saved; the previous one was kept, not deleted",
+			"reason", reason, "archive", archive)
+
+		return fmt.Errorf("the previous inception vault was kept at %s, and a new vault is running in its place: %w",
+			archive, err)
+	}
+
 	if err != nil {
-		return fmt.Errorf("the previous inception vault was kept at %s, but a new one did not start: %w", archive, err)
+		return fmt.Errorf("the previous inception vault was kept at %s, but a new one could not be set up: %w", archive, err)
 	}
 
 	run.log.Errorw("Started a new, empty inception vault; the previous one was kept, not deleted",
