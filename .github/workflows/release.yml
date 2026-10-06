@@ -118,7 +118,7 @@ jobs:
           # cache would restore a second copy over it and fail on tar.
           cache: false
 
-      - name: Run GoReleaser
+      - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
@@ -128,9 +128,17 @@ jobs:
           # release outright, with nothing in that repo having changed.
           # Bump this pin deliberately, with a release to verify it against.
           version: 'v2.18.0'
-          # --parallelism 1 builds the six targets one after another; see
-          # the GOFLAGS note at the top.
-          args: release --clean --parallelism 1
+          # Install only: the next step runs goreleaser through the retry
+          # wrapper, which needs the binary on PATH.
+          install-only: true
+
+      # The wrapper runs goreleaser and reruns it once when Apple's notary
+      # service times out and no release exists yet; see
+      # scripts/ci/release-with-notary-retry.sh. It checks for the release
+      # with curl, using GITHUB_TOKEN below and the default
+      # GITHUB_REPOSITORY, because the golang job container has no gh CLI.
+      - name: Run GoReleaser
+        run: bash scripts/ci/release-with-notary-retry.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pushes the Homebrew cask to fivetwenty-io/homebrew-tap; the
