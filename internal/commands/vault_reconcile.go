@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -91,6 +92,9 @@ type inceptionSteps struct {
 	// recoverKeys writes whichever key files are missing from what the bloc's
 	// running vault left behind, and never replaces a key file that exists.
 	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// targetToken returns the root token safe holds for the bloc's own
+	// target, read before a stop deletes that target.
+	targetToken func(paths map[string]string) string
 	// now stamps archive names.
 	now func() time.Time
 }
@@ -101,6 +105,12 @@ type inceptionRun struct {
 	tools inceptionTools
 	steps inceptionSteps
 	log   *zap.SugaredLogger
+
+	// targetToken is the root token safe held for the bloc's target before
+	// the stop deleted the target, and targetTokenFile is the file that has
+	// held it since. Both are empty when safe had no such target.
+	targetToken     string
+	targetTokenFile string
 }
 
 // reconcileInceptionVault brings a bloc's inception vault from whatever state
@@ -153,6 +163,15 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		if err != nil {
 			return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
 		}
+	}
+
+	// Stopping deletes the bloc's safe target, which may hold the only copy
+	// of the root token, whether or not the vault is running now.
+	run.targetToken = run.steps.targetToken(paths)
+
+	run.targetTokenFile, err = preserveTargetToken(paths, run.targetToken, run.steps.now(), run.log)
+	if err != nil {
+		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
 	}
 
 	err = run.steps.stop(ctx, paths, run.log)
@@ -414,6 +433,10 @@ func (run *inceptionRun) restartAfterMigration(ctx context.Context, backup strin
 // restart reopens the vault with its saved keys. Only the engine refusing a
 // key leads to an archive. Any other failure says nothing about the keys, so
 // it stops what was started and leaves the data and keys where they are.
+//
+// When the engine refuses the token in root.key and safe's target held a
+// different one before the stop, the vault is reopened once with that token
+// before anything is archived.
 func (run *inceptionRun) restart(ctx context.Context) error {
 	paths := run.paths
 
@@ -424,21 +447,87 @@ func (run *inceptionRun) restart(ctx context.Context) error {
 		return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
 	}
 
-	stopErr := run.steps.stop(ctx, paths, run.log)
-
-	if !errors.Is(err, ErrVaultKeysRejected) {
-		err = fmt.Errorf("failed to restart the inception vault, and its data in %s and its keys were left as they were: %w",
-			paths["vaultDir"], err)
-
-		return errors.Join(err, wrapStopAfterFailure(stopErr))
+	archive, err := run.stopAfterFailedRestart(ctx, err)
+	if !archive {
+		return err
 	}
 
-	if stopErr != nil {
-		return fmt.Errorf("the saved keys were rejected, but the vault did not stop, so nothing was archived: %w",
-			errors.Join(err, stopErr))
+	tokenFile := run.retryTokenFile(err)
+	if tokenFile != "" {
+		retryErr := run.restartWithTargetToken(ctx, tokenFile)
+		if retryErr == nil {
+			return nil
+		}
+
+		archive, retryErr = run.stopAfterFailedRestart(ctx, retryErr)
+		if !archive {
+			return retryErr
+		}
+
+		err = fmt.Errorf("%w; the token from safe's target, kept in %s, was refused too: %w", err, tokenFile, retryErr)
 	}
 
 	return run.archiveAndStartFresh(ctx, err.Error())
+}
+
+// stopAfterFailedRestart stops a vault that failed to restart, and reports
+// whether the failure allows an archive: only a refused key does, and only
+// once the vault is known to be down.
+func (run *inceptionRun) stopAfterFailedRestart(ctx context.Context, startErr error) (bool, error) {
+	paths := run.paths
+	stopErr := run.steps.stop(ctx, paths, run.log)
+
+	if !errors.Is(startErr, ErrVaultKeysRejected) {
+		err := fmt.Errorf("failed to restart the inception vault, and its data in %s and its keys were left as they were: %w",
+			paths["vaultDir"], startErr)
+
+		return false, errors.Join(err, wrapStopAfterFailure(stopErr))
+	}
+
+	if stopErr != nil {
+		return false, fmt.Errorf("the saved keys were rejected, but the vault did not stop, so nothing was archived: %w",
+			errors.Join(startErr, stopErr))
+	}
+
+	return true, startErr
+}
+
+// retryTokenFile returns the file holding safe's token when a restart that
+// failed with err is worth one more try with it: the engine refused the root
+// token, and safe's target held a different, token-shaped one.
+func (run *inceptionRun) retryTokenFile(err error) string {
+	if !errors.Is(err, ErrVaultRootTokenRejected) || run.targetTokenFile == "" ||
+		run.targetTokenFile == run.paths["rootKeyFile"] || checkRootToken(run.targetToken) != nil {
+		return ""
+	}
+
+	return run.targetTokenFile
+}
+
+// restartWithTargetToken reopens the vault with the token kept in tokenFile.
+// When the engine takes it, root.key is made to hold it, with the refused
+// token moved aside, and the vault is targeted as after any restart.
+func (run *inceptionRun) restartWithTargetToken(ctx context.Context, tokenFile string) error {
+	paths := run.paths
+
+	run.log.Warnw("The engine refused the root token in root.key; trying once more with the token safe's target held",
+		"root_key", paths["rootKeyFile"], "token_file", tokenFile)
+
+	retry := maps.Clone(paths)
+	retry["rootKeyFile"] = tokenFile
+
+	err := run.steps.start(ctx, retry, run.tools, safeLocalRestart, run.log)
+	if err != nil {
+		return err
+	}
+
+	err = promoteTargetToken(paths, run.targetToken, run.steps.now(), run.log)
+	if err != nil {
+		return fmt.Errorf("the inception vault reopened with the root token kept in %s and is running, "+
+			"but %s could not be updated to hold it: %w", tokenFile, paths["rootKeyFile"], err)
+	}
+
+	return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
 }
 
 // wrapStopAfterFailure explains a stop that failed while cleaning up after a

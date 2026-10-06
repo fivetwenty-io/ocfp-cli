@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,9 @@ func TestWaitForVaultReady_KeyFailuresFromTheLog(t *testing.T) {
 
 			err := waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar())
 			require.ErrorIs(t, err, ErrVaultKeysRejected)
+
+			// Only a refused token is worth retrying with another token.
+			assert.Equal(t, strings.Contains(line, "The root token in "), errors.Is(err, ErrVaultRootTokenRejected))
 		})
 	}
 }
