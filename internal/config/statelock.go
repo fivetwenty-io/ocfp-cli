@@ -20,10 +20,20 @@ const (
 
 	// stateLockFileMode is the permission for the lock file.
 	stateLockFileMode os.FileMode = 0o600
+
+	// fileLockDirMode is the permission for a directory WithFileLock creates
+	// to hold its lock file.
+	fileLockDirMode os.FileMode = 0o700
 )
 
-// ErrStateLockTimeout indicates the state file lock could not be acquired.
-var ErrStateLockTimeout = errors.New("timed out waiting for the OCFP state file lock")
+var (
+	// ErrStateLockTimeout indicates the state file lock could not be acquired.
+	ErrStateLockTimeout = errors.New("timed out waiting for the OCFP state file lock")
+
+	// ErrFileLockTimeout indicates that another ocfp run held a WithFileLock
+	// lock for longer than the caller was willing to wait.
+	ErrFileLockTimeout = errors.New("timed out waiting for another ocfp run to release its lock")
+)
 
 // stateLockPath returns the path of the lock file guarding state.yml. It
 // always sits alongside the resolved state.yml itself (see
@@ -61,6 +71,31 @@ func withStateLock(fn func() error) error {
 	}
 
 	release, err := acquireStateLock(path, stateLockTimeout)
+	if err != nil {
+		return err
+	}
+
+	defer release()
+
+	return fn()
+}
+
+// WithFileLock runs fn while holding an exclusive lock on path, waiting up to
+// timeout for another holder to release it. It creates the lock file and its
+// directory when they are missing. The lock is the same one withStateLock
+// takes, so on Unix the kernel releases it when its process exits and a
+// killed ocfp never leaves a stale lock behind.
+func WithFileLock(path string, timeout time.Duration, fn func() error) error {
+	err := os.MkdirAll(filepath.Dir(path), fileLockDirMode)
+	if err != nil {
+		return fmt.Errorf("failed to create the directory for lock %s: %w", path, err)
+	}
+
+	release, err := acquireStateLock(path, timeout)
+	if errors.Is(err, ErrStateLockTimeout) {
+		return fmt.Errorf("%w after %s: %s", ErrFileLockTimeout, timeout, path)
+	}
+
 	if err != nil {
 		return err
 	}

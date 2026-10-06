@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -293,4 +295,54 @@ func TestRecoverInceptionKeys_LeavesASharedKeyFileAlone(t *testing.T) {
 
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
 	assert.NoFileExists(t, paths["rootKeyFile"])
+}
+
+// Each bloc locks its own file under the state home, outside <bloc>/vault,
+// because the archive renames that directory away while the lock is held.
+func TestInceptionLockFilePerBloc(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	a := getVaultInceptionPaths("ocfp-lab-a", false)
+	b := getVaultInceptionPaths("ocfp-lab-b", false)
+
+	assert.Equal(t, filepath.Join(config.StateHome(), "ocfp-lab-a", "inception-vault.lock"), a["lockFile"])
+	assert.NotEqual(t, a["lockFile"], b["lockFile"])
+	assert.NotContains(t, a["lockFile"], filepath.Dir(a["vaultDir"]))
+	assert.NotEqual(t, a["lockFile"], getVaultInceptionPaths("", false)["lockFile"])
+	assert.NotEqual(t, getVaultInceptionPaths("", false)["lockFile"], getVaultInceptionPaths("", true)["lockFile"])
+}
+
+// A second run for the same bloc waits for the first and then gives up
+// without doing anything, while another bloc goes ahead at once.
+func TestWithInceptionVaultLock(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	orig := inceptionLockTimeout
+	inceptionLockTimeout = 100 * time.Millisecond
+
+	t.Cleanup(func() { inceptionLockTimeout = orig })
+
+	a := getVaultInceptionPaths("ocfp-lab-a", false)
+	b := getVaultInceptionPaths("ocfp-lab-b", false)
+
+	err := withInceptionVaultLock(a, func() error {
+		ran := false
+
+		require.ErrorIs(t, withInceptionVaultLock(a, func() error {
+			ran = true
+
+			return nil
+		}), config.ErrFileLockTimeout)
+		assert.False(t, ran, "a second run for the same bloc must not run")
+
+		require.NoError(t, withInceptionVaultLock(b, func() error {
+			ran = true
+
+			return nil
+		}))
+		assert.True(t, ran, "another bloc must not wait")
+
+		return nil
+	})
+	require.NoError(t, err)
 }
