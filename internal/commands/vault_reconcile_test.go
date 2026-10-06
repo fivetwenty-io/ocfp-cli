@@ -35,7 +35,7 @@ type fakeInception struct {
 	ownsErr        error // the ownership check could not decide
 	migrate        func(paths map[string]string) (string, error)
 	recover        func(paths map[string]string) // what key recovery finds
-	targetToken    string                        // the token ~/.saferc holds for the bloc's target
+	targetToken    string                        // the token ~/.saferc holds for the bloc's target; a stop deletes it
 	tokenFiles     []string                      // the root token file each start was given
 	calls          []string
 }
@@ -66,7 +66,15 @@ func (f *fakeInception) steps() inceptionSteps {
 		stop: func(context.Context, map[string]string, *zap.SugaredLogger) error {
 			f.record("stop")
 
-			return popErr(&f.stopErrs)
+			err := popErr(&f.stopErrs)
+			if err == nil {
+				// A real stop runs safe target delete, so safe no longer
+				// holds the token once the vault is down. A token read
+				// after the stop is therefore always gone.
+				f.targetToken = ""
+			}
+
+			return err
 		},
 		clusterPortFree: func(_ context.Context, port string) error {
 			f.record("cluster-port " + port)
