@@ -305,20 +305,47 @@ func newVaultInceptionCmd() *cobra.Command {
 		Use:     "inception",
 		Aliases: []string{"init"},
 		Short:   "Initialize inception vault for bootstrap",
-		Long: `Initialize vault with inception secrets for a new deployment.
+		Long: `Start, reopen, or migrate this bloc's inception vault.
 
-This command creates a local inception vault using 'safe local' running in a tmux session
-with file-backed storage. The inception vault is used temporarily during bootstrap until the
-production vault is available.
+The inception vault is the local vault that holds a bloc's secrets during
+bootstrap, until the bloc's own production vault is available. ocfp runs it
+with 'safe local' in a tmux session, on integrated raft storage.
 
-The vault listens on a port derived from the bloc name, in the range
-18234-19233, so several blocs can run an inception vault side by side. Port
-8234 is the legacy value, used only when no bloc is named. Override with
-OCFP_VAULT_INCEPTION_PORT or the bloc's own config. It stores data in
-~/.local/share/ocfp/{bloc}/vault/data (or $XDG_DATA_HOME/ocfp/{bloc}/vault/data if set).
-Root and unseal keys are saved to ~/.local/share/ocfp/{bloc}/vault/{root.key,unseal.keys}.
-Falls back to the legacy ~/.ocfp/{bloc}/vault/... layout when only that exists;
-set OCFP_HOME to force it.
+The API port is derived from the bloc name, in the range 18234-19233, so
+several blocs can run an inception vault side by side. The raft cluster port
+is the API port plus 1000, in the range 19234-20233, and it must be free too.
+Port 8234 is the legacy value, used only when no bloc is named. To move both
+ports, set OCFP_VAULT_INCEPTION_PORT or the port in the bloc's own config.
+
+The data lives in ~/.local/share/ocfp/{bloc}/vault/data, or under
+$XDG_DATA_HOME/ocfp when that is set. The root token and the unseal key are
+saved beside it, in ~/.local/share/ocfp/{bloc}/vault/{root.key,unseal.keys}.
+ocfp falls back to the legacy ~/.ocfp/{bloc}/vault/... layout when only that
+exists, and OCFP_HOME forces it.
+
+Each run leaves the bloc with a running raft vault, and it changes as little
+as it can on the way:
+
+  - A healthy vault is left running, and its safe target is restored if it
+    went missing.
+  - A stopped vault is restarted in place with its saved keys, so its secrets
+    survive a reboot or a killed tmux session.
+  - A file-backed vault from an older ocfp is stopped and migrated to raft
+    with the engine's 'operator migrate'. The file store is kept beside the
+    data as data.file-backup-{timestamp}, and an interrupted migration
+    resumes on the next run.
+  - Only when a key is missing, or the engine rejects the saved keys, does
+    ocfp rename the old vault to vault.superseded-{timestamp} and start a new
+    one. Nothing is ever deleted.
+
+One run at a time works on a bloc's vault. A second run for the same bloc
+waits up to five minutes for the first to finish.
+
+This needs safe v1.25.0 or later. The engine is OpenBao or HashiCorp Vault,
+chosen the way safe chooses it. Migrating a file-backed vault also needs an
+engine that can still read file storage, such as OpenBao 2.7 or earlier.
+docs/inception-vault.md describes the states, the backup directories, and how
+to recover from each error.
 
 The 'init' alias is available for operator convenience: 'ocfp vault init' is equivalent.`,
 		Example: `  # Initialize inception vault
@@ -1373,7 +1400,16 @@ func newVaultTeardownCmd() *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "teardown",
 		Short: "Stop and clean up inception vault",
-		Long:  `Stops the inception vault and removes all associated files and sessions.`,
+		Long: `Stop this bloc's inception vault and delete its safe target.
+
+Teardown deletes nothing on disk. The vault's data and both key files are
+moved together to vault.superseded-{timestamp}, beside the bloc's vault
+directory, so the next 'ocfp vault inception' starts a new vault and the old
+secrets can still be read from the archive.
+
+Teardown stops only a vault it can prove is this bloc's own. When something
+else answers on the bloc's port, such as another bloc's vault on a colliding
+port, it stops nothing and says why.`,
 		Example: `  # Teardown inception vault
   ocfp vault teardown
 
