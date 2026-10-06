@@ -1218,8 +1218,10 @@ func capturePaneArgs(session, start string) []string {
 // saveVaultKeys extracts and persists vault seal key and root token.
 func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	// The tee'd log holds safe's output exactly as printed, so it is read
-	// first, and the pane's history only when the log lacks the key.
-	outputStr := runningVaultOutput(ctx, paths)
+	// first, and the pane's history only when the log lacks the key. The
+	// logs of earlier starts are never read here: they may hold the key of a
+	// vault this one replaced.
+	outputStr := currentStartOutput(ctx, paths)
 
 	if outputStr == "" {
 		log.Warn("No vault output available for key extraction")

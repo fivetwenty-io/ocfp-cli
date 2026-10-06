@@ -1196,6 +1196,11 @@ func TestReconcile_TruncatedUnsealKeyIsRepairedFromTheOutput(t *testing.T) {
 		"pane": func(fake *fakeVaultOps, paths map[string]string) {
 			fakePaneHistory(fake, paths, line)
 		},
+		"older log": func(_ *fakeVaultOps, paths map[string]string) {
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Now targeting x\n"), 0o600))
+			require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte("Now targeting x\n"), 0o600))
+			require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-110000", []byte(line), 0o600))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ops := installFakeVaultOps(t)
@@ -1249,6 +1254,7 @@ func TestReconcile_TruncatedUnsealKeyNotFoundChangesNothing(t *testing.T) {
 			require.ErrorIs(t, err, ErrUnsealKeyFileMalformed)
 			assert.NotContains(t, err.Error(), testSealKey[:20])
 			assert.Contains(t, err.Error(), paths["unsealKeysFile"])
+			assert.Contains(t, err.Error(), paths["logFile"])
 			assert.Equal(t, []string{"probe"}, fake.calls)
 			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
 			assert.Empty(t, archivesOf(t, paths))
@@ -1640,6 +1646,49 @@ func TestReconcile_HealthyVaultWithoutSavedKeysFails(t *testing.T) {
 	}
 }
 
+// The keys of a vault are printed once, on the start that created it, so after
+// a few restarts they sit in an older log. The keys-not-saved error names
+// every log that exists, newest first, so the operator knows where to look.
+func TestReconcile_KeysNotSavedNamesEveryLog(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, false)
+	require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+
+	logs := []string{
+		paths["logFile"],
+		paths["logFile"] + ".previous",
+		paths["logFile"] + ".previous-20261006-110000-2",
+		paths["logFile"] + ".previous-20261006-110000",
+	}
+
+	for _, logFile := range logs {
+		require.NoError(t, os.WriteFile(logFile, []byte("Now targeting x\n"), 0o600))
+	}
+
+	fake := &fakeInception{probe: healthyRaftProbe(), session: true, target: true}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
+
+	last := -1
+
+	for _, logFile := range logs {
+		at := strings.Index(err.Error(), logFile+",")
+		if at < 0 {
+			at = strings.Index(err.Error(), logFile+" ")
+		}
+
+		if at < 0 && strings.HasSuffix(err.Error(), logFile) {
+			at = len(err.Error()) - len(logFile)
+		}
+
+		require.GreaterOrEqual(t, at, 0, "the error names %s", logFile)
+		assert.Greater(t, at, last, "the logs are named newest first")
+		last = at
+	}
+}
+
 // When recovery finds the missing key, the healthy vault is left running and
 // the run succeeds.
 func TestReconcile_HealthyVaultRecoversMissingKeys(t *testing.T) {
@@ -1666,6 +1715,7 @@ func TestReconcile_StoppedVaultRecoversTheUnsealKeyFromItsLogs(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		log, previous string
+		older         map[string]string // timestamp, and any -N, of each .previous-<ts> log
 		file          bool
 		want          string
 	}{
@@ -1674,6 +1724,22 @@ func TestReconcile_StoppedVaultRecoversTheUnsealKeyFromItsLogs(t *testing.T) {
 		"newest log wins":     {log: line(testSealKey), previous: line(other), want: testSealKey},
 		"file data migrates":  {log: line(testSealKey), file: true, want: testSealKey},
 		"blank key file":      {previous: line(testSealKey), want: testSealKey},
+		"in an older log": {
+			log: "Now targeting x\n", previous: "Now targeting x\n",
+			older: map[string]string{"20261006-110000": line(testSealKey)}, want: testSealKey,
+		},
+		"newest older log wins": {
+			older: map[string]string{
+				"20261006-090000":    line(other),
+				"20261006-110000":    line(other),
+				"20261006-110000-2":  line(other),
+				"20261006-110000-10": line(testSealKey),
+			},
+			want: testSealKey,
+		},
+		"previous beats older": {
+			previous: line(testSealKey), older: map[string]string{"20261006-110000": line(other)}, want: testSealKey,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			paths := reconcilePaths(t)
@@ -1697,6 +1763,10 @@ func TestReconcile_StoppedVaultRecoversTheUnsealKeyFromItsLogs(t *testing.T) {
 
 			if tc.previous != "" {
 				require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte(tc.previous), 0o600))
+			}
+
+			for stamp, body := range tc.older {
+				require.NoError(t, os.WriteFile(paths["logFile"]+".previous-"+stamp, []byte(body), 0o600))
 			}
 
 			fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}

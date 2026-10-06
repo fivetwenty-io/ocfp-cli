@@ -434,9 +434,9 @@ func (run *inceptionRun) requireSavedKeys(ctx context.Context) error {
 	run.log.Errorw("The running inception vault's keys are not both saved; it cannot be reopened after it stops",
 		"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
 
-	return fmt.Errorf("%w: the vault at %s is still running, but %s and %s do not both hold a valid key; "+
-		"its full keys are in the vault log at %s", ErrInceptionKeysNotSaved, "http://127.0.0.1:"+paths["port"],
-		paths["rootKeyFile"], paths["unsealKeysFile"], paths["logFile"])
+	return fmt.Errorf("%w: the vault at %s is still running, but %s and %s do not both hold a valid key; %s",
+		ErrInceptionKeysNotSaved, "http://127.0.0.1:"+paths["port"], paths["rootKeyFile"], paths["unsealKeysFile"],
+		vaultLogHint(paths))
 }
 
 // startFromDisk starts a stopped vault from what its data directory and key

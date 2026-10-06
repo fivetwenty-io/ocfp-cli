@@ -343,8 +343,8 @@ func finishInceptionVault(
 			log.Errorw("The new inception vault's keys were not both saved; it cannot be reopened after it stops",
 				"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
 
-			return errors.Join(fmt.Errorf("%w: the vault is still running, and its full keys are in the vault log at %s",
-				ErrInceptionKeysNotSaved, paths["logFile"]), keysErr)
+			return errors.Join(fmt.Errorf("%w: the vault is still running; %s",
+				ErrInceptionKeysNotSaved, vaultLogHint(paths)), keysErr)
 		}
 	}
 
@@ -400,8 +400,8 @@ func setAsidePreviousVaultLog(logFile string) error {
 
 // recoverInceptionKeys writes whichever of the bloc's key files are missing or
 // blank, from what its running vault left behind. The unseal key comes from
-// the log safe local tees its output to, or failing that from the tmux pane's
-// history. The root token comes from the bloc's own target in ~/.saferc, and
+// the newest of the logs safe local tees its output to that holds one, or
+// failing that from the tmux pane's history. The root token comes from the bloc's own target in ~/.saferc, and
 // only when that target points at the bloc's port; the global current target
 // is never read, because any sibling bloc can move it. A key file that holds
 // a value is never replaced, and one that exists but cannot be read is an
@@ -423,7 +423,12 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 	}
 
 	if !unseal {
-		sealKey := extractSealKey(runningVaultOutput(ctx, paths))
+		output, err := runningVaultOutput(ctx, paths)
+		if err != nil {
+			return fmt.Errorf("refusing to recover the unseal key: %w", err)
+		}
+
+		sealKey := extractSealKey(output)
 		if sealKey == "" {
 			log.Warnw("The running inception vault's unseal key is not in its log", "log", paths["logFile"])
 		} else {
@@ -471,8 +476,8 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 // only the start of one, the way older captures of a tmux pane cut the key
 // at the pane's edge. The engine would refuse the cut key and the vault would
 // be archived while its real key still sat in safe's output, so the key file
-// is repaired from that output before anything starts: the tee'd log, the log
-// of the run before it, and the pane's history.
+// is repaired from that output before anything starts: the tee'd log, the
+// logs of the runs before it, and the pane's history.
 //
 // Only a key that begins with what the file holds is taken, so a key from
 // some other vault is never written. When none is found, the disk is left
@@ -501,9 +506,15 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 		return canonicalizeKeyFile(keyFile, data, held, log)
 	}
 
+	sources, err := unsealKeySources(ctx, paths)
+	if err != nil {
+		return fmt.Errorf("cannot repair %s, which holds only part of an unseal key: %w; "+
+			"nothing was started, stopped, or changed", keyFile, err)
+	}
+
 	var found []string
 
-	for _, output := range unsealKeySources(ctx, paths) {
+	for _, output := range sources {
 		for _, key := range sealKeysIn(output) {
 			if strings.HasPrefix(key, held) && !slices.Contains(found, key) {
 				found = append(found, key)
@@ -512,10 +523,10 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 	}
 
 	if len(found) != 1 {
-		return fmt.Errorf("%w: %s: %w, and safe's output in %s, %s.previous, and the tmux session %s "+
+		return fmt.Errorf("%w: %s: %w, and safe's output in the vault logs and the tmux session %s "+
 			"holds no single whole key that it is the start of, so nothing was started, stopped, or changed; "+
-			"put the vault's whole unseal key in that file and run this again",
-			ErrUnsealKeyFileMalformed, keyFile, shapeErr, paths["logFile"], paths["logFile"], paths["tmuxSession"])
+			"%s; put the vault's whole unseal key in that file and run this again",
+			ErrUnsealKeyFileMalformed, keyFile, shapeErr, paths["tmuxSession"], vaultLogHint(paths))
 	}
 
 	err = keyfile.WriteRecovered(keyFile, found[0])
@@ -574,8 +585,9 @@ func canonicalizeRootKeyFile(paths map[string]string, log *zap.SugaredLogger) er
 
 // recoverUnsealKeyFromLogs writes a missing or blank unseal.keys of a
 // stopped vault from the whole unseal key that safe printed into the vault
-// log, or into the log of the start before it. Without it the vault would be
-// archived for a missing key while its key still sat in a log.
+// log, or into the log of a start before it, the previous one or an older
+// one. Without it the vault would be archived for a missing key while its
+// key still sat in a log.
 //
 // The newest log that holds a whole key is used, since a new vault prints
 // its key once, on the start that created the data now on disk. A log that
@@ -592,7 +604,13 @@ func recoverUnsealKeyFromLogs(paths map[string]string, log *zap.SugaredLogger) e
 		return err
 	}
 
-	for _, logFile := range vaultLogFiles(paths) {
+	logFiles, err := vaultLogFiles(paths)
+	if err != nil {
+		return fmt.Errorf("cannot look for the unseal key %s is missing; nothing was started or archived: %w",
+			keyFile, err)
+	}
+
+	for _, logFile := range logFiles {
 		data, readErr := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
 		if errors.Is(readErr, fs.ErrNotExist) {
 			continue
@@ -621,32 +639,32 @@ func recoverUnsealKeyFromLogs(paths map[string]string, log *zap.SugaredLogger) e
 	return nil
 }
 
-// vaultLogFiles lists the bloc's vault log and the log of the start before
-// it, newest first.
-func vaultLogFiles(paths map[string]string) []string {
-	return []string{paths["logFile"], paths["logFile"] + previousVaultLogSuffix}
-}
-
 // unsealKeySources returns what safe printed for the bloc's vault, from the
-// tee'd log, the previous run's log, and the tmux pane's whole history.
-func unsealKeySources(ctx context.Context, paths map[string]string) []string {
+// tee'd log, the logs of the runs before it, and the tmux pane's whole
+// history. A log that cannot be read is skipped, since the repair takes a key
+// only when exactly one candidate begins with what the key file holds. A log
+// directory that cannot be listed is an error.
+func unsealKeySources(ctx context.Context, paths map[string]string) ([]string, error) {
+	logFiles, err := vaultLogFiles(paths)
+	if err != nil {
+		return nil, err
+	}
+
 	var sources []string
 
-	for _, logFile := range vaultLogFiles(paths) {
-		data, err := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
-		if err == nil {
+	for _, logFile := range logFiles {
+		data, readErr := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
+		if readErr == nil {
 			sources = append(sources, stripANSI(string(data)))
 		}
 	}
 
-	pane, err := vaultOps.run(ctx, cleanupCommand{
-		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-"), tmux: true,
-	})
-	if err == nil {
-		sources = append(sources, stripANSI(string(pane)))
+	pane := vaultPaneHistory(ctx, paths)
+	if pane != "" {
+		sources = append(sources, pane)
 	}
 
-	return sources
+	return sources, nil
 }
 
 // sealKeysIn returns every whole unseal key in safe's output, in the order
@@ -664,10 +682,46 @@ func sealKeysIn(output string) []string {
 	return keys
 }
 
-// runningVaultOutput returns safe local's output for the running vault, from
-// the tee'd log when it has the seal key, and otherwise from the whole of the
-// tmux pane's history.
-func runningVaultOutput(ctx context.Context, paths map[string]string) string {
+// runningVaultOutput returns safe local's output for the running vault that
+// holds its seal key. The current start's log and the tmux pane's history
+// come first, because they belong to the start that is running now. The
+// vault printed its key once, on the start that created it, and after a few
+// restarts that is an older log, so the logs of earlier starts are searched
+// next, newest first. A log that exists but cannot be read is an error,
+// because it may hold that key. When no source has a key, it returns the
+// pane's history, which may be empty.
+func runningVaultOutput(ctx context.Context, paths map[string]string) (string, error) {
+	logFiles, err := vaultLogFiles(paths)
+	if err != nil {
+		return "", err
+	}
+
+	output, err := vaultLogWithSealKey(logFiles[0])
+	if err != nil || output != "" {
+		return output, err
+	}
+
+	pane := vaultPaneHistory(ctx, paths)
+	if extractSealKey(pane) != "" {
+		return pane, nil
+	}
+
+	for _, logFile := range logFiles[1:] {
+		output, err = vaultLogWithSealKey(logFile)
+		if err != nil || output != "" {
+			return output, err
+		}
+	}
+
+	return pane, nil
+}
+
+// currentStartOutput returns what safe local printed on the start that runs
+// now: the tee'd log when it has the seal key, and otherwise the whole of the
+// tmux pane's history. It never reads the log of an earlier start, which may
+// hold a superseded vault's key, so a new vault's keys are taken only from
+// its own start.
+func currentStartOutput(ctx context.Context, paths map[string]string) string {
 	logData, err := os.ReadFile(paths["logFile"]) // #nosec G304 -- the bloc's own log file from getVaultInceptionPaths()
 	if err == nil {
 		output := stripANSI(string(logData))
@@ -676,6 +730,34 @@ func runningVaultOutput(ctx context.Context, paths map[string]string) string {
 		}
 	}
 
+	return vaultPaneHistory(ctx, paths)
+}
+
+// vaultLogWithSealKey returns a log's text, without colour codes, when it
+// holds a seal key, and "" when it does not exist or holds none. A log that
+// exists but cannot be read is an error.
+func vaultLogWithSealKey(logFile string) (string, error) {
+	data, err := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("cannot read %s, which may hold the running vault's unseal key: %w", logFile, err)
+	}
+
+	output := stripANSI(string(data))
+	if extractSealKey(output) == "" {
+		return "", nil
+	}
+
+	return output, nil
+}
+
+// vaultPaneHistory returns the whole of the bloc's tmux pane history without
+// colour codes, or "" when the pane cannot be captured, such as when the
+// session is gone. A pane that cannot be read holds no key ocfp can use.
+func vaultPaneHistory(ctx context.Context, paths map[string]string) string {
 	pane, err := vaultOps.run(ctx, cleanupCommand{
 		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-"), tmux: true,
 	})
