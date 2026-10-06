@@ -142,8 +142,10 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 	cmd.Flags().Bool("no-proxy-jump", false, "Connect directly to the artifacts VM (use when running on the bastion or otherwise on the SDN)")
 
 	// Bind flags to viper
-	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
-	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
+	bindFlagsOnRun(cmd, map[string]string{
+		"ssh.user": "user",
+		"ssh.key":  "key",
+	})
 	_ = viper.BindPFlag("ssh.options", cmd.Flags().Lookup("ssh-options"))
 
 	return cmd
