@@ -182,12 +182,25 @@ func TestStopInceptionVault_EscalatesWhenTheDataStaysLocked(t *testing.T) {
 
 	fake.outputs[lsofDataCommand(paths)] = append(held, "")
 
+	sleepsAtKill := -1
+	run := vaultOps.run
+	vaultOps.run = func(ctx context.Context, spec cleanupCommand) ([]byte, error) {
+		if spec.name == "kill" && sleepsAtKill < 0 {
+			sleepsAtKill = fake.sleeps
+		}
+
+		return run(ctx, spec)
+	}
+
 	require.NoError(t, stopInceptionVault(context.Background(), paths, zap.NewNop().Sugar()))
 
 	text := fake.commandText()
 	assert.Contains(t, text, "kill -9 4242")
 	assert.Less(t, strings.Index(text, "pkill -f"), strings.Index(text, "kill -9 4242"),
 		"SIGKILL comes only after the ordinary stop")
+	assert.Equal(t, vaultStopEscalateAfter, sleepsAtKill,
+		"the engine gets the whole grace period to let go of the data before SIGKILL")
+	assert.Equal(t, 1, strings.Count(text, "kill -9 4242"), "one SIGKILL is enough once the lock clears")
 }
 
 func TestStopInceptionVault_FailsWhenTheDataNeverUnlocks(t *testing.T) {

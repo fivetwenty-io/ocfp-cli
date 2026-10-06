@@ -127,8 +127,16 @@ func TestWaitForVaultReady_UnsealedWithoutNowTargetingIsNotReady(t *testing.T) {
 	assert.NotContains(t, err.Error(), "SEAL-KEY-SENTINEL")
 }
 
-func TestMaxVaultReadyAttemptsCoversRaftElection(t *testing.T) {
-	assert.GreaterOrEqual(t, MaxVaultReadyAttempts, 60)
+// A raft node has to elect itself before safe prints "Now targeting", so the
+// wait must give a quiet start a full minute before it gives up.
+func TestWaitForVaultReady_WaitsAMinuteBeforeGivingUp(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := readyTestPaths(t)
+	fake.outputs[paneCommand(paths)] = []string{"starting raft\n"}
+
+	err := waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrVaultNotReady)
+	assert.GreaterOrEqual(t, fake.sleeps, 60, "each sleep is one second of waiting")
 }
 
 func TestRedactVaultOutput(t *testing.T) {
