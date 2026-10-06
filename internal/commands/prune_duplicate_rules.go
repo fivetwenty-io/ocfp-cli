@@ -172,10 +172,10 @@ func verifyNextTarget(rules []*cpi.SecurityRule, target duplicateRule) (int, err
 			continue
 		}
 
-		switch {
-		case rule.ID == targetID:
+		switch rule.ID {
+		case targetID:
 			found = true
-		case rule.ID == target.keep.ID:
+		case target.keep.ID:
 			twin = true
 		}
 	}
@@ -208,7 +208,7 @@ func pruneGroup(ctx context.Context, security cpi.SecurityManager, group *cpi.Se
 
 		deleted++
 
-		fmt.Fprintf(out, "deleted %s/%d\n", group.Name, target.pos)
+		_, _ = fmt.Fprintf(out, "deleted %s/%d\n", group.Name, target.pos)
 
 		current, err = security.ListSecurityRules(ctx, group.ID)
 		if err != nil {
@@ -250,7 +250,7 @@ func pruneDuplicateRules(ctx context.Context, security cpi.SecurityManager, owne
 		}
 
 		for _, dup := range dups {
-			fmt.Fprintf(out, "%s/%d  %s  (duplicate of %s/%s)\n", group.Name, dup.pos, describeRule(dup.rule), group.Name, dup.keep.ID)
+			_, _ = fmt.Fprintf(out, "%s/%d  %s  (duplicate of %s/%s)\n", group.Name, dup.pos, describeRule(dup.rule), group.Name, dup.keep.ID)
 		}
 
 		result.Duplicates += len(dups)
@@ -268,13 +268,13 @@ func pruneDuplicateRules(ctx context.Context, security cpi.SecurityManager, owne
 			verb = "deleted"
 		}
 
-		fmt.Fprintf(out, "%s: %d duplicate rule(s) of %d, %s %d\n", group.Name, len(dups), len(rules), verb, len(dups))
+		_, _ = fmt.Fprintf(out, "%s: %d duplicate rule(s) of %d, %s %d\n", group.Name, len(dups), len(rules), verb, len(dups))
 	}
 
 	if apply {
-		fmt.Fprintf(out, "Total: %d duplicate rule(s) found, %d deleted\n", result.Duplicates, result.Deleted)
+		_, _ = fmt.Fprintf(out, "Total: %d duplicate rule(s) found, %d deleted\n", result.Duplicates, result.Deleted)
 	} else {
-		fmt.Fprintf(out, "Total: %d duplicate rule(s) found, none deleted (dry run; use --apply to delete)\n", result.Duplicates)
+		_, _ = fmt.Fprintf(out, "Total: %d duplicate rule(s) found, none deleted (dry run; use --apply to delete)\n", result.Duplicates)
 	}
 
 	return result, nil
