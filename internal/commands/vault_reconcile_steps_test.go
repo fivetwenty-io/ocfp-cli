@@ -265,7 +265,7 @@ func TestRecoverInceptionKeys_FallsBackToThePane(t *testing.T) {
 
 	paths := keyRecoveryPaths(t)
 	writeKeys(t, paths, true, false)
-	fake.outputs["tmux capture-pane -t "+paths["tmuxSession"]+" -p -S -"] = []string{
+	fake.outputs[historyCommand(paths)] = []string{
 		"Your Vault Seal Key is PANE-SEAL-KEY\n",
 	}
 
@@ -358,4 +358,68 @@ func TestExtractSealKey_ReadsEveryEngineTitle(t *testing.T) {
 		out := "Storing data (encrypted) in /x\nYour " + title + " Seal Key is " + testSealKey + "\nCtrl-C to shut down\n"
 		assert.Equal(t, testSealKey, extractSealKey(out), title)
 	}
+}
+
+// historyCommand is the capture of a bloc's whole pane history. -J joins
+// lines tmux wrapped at the pane's width back into the line safe printed.
+func historyCommand(paths map[string]string) string {
+	return "tmux capture-pane -t " + paths["tmuxSession"] + " -p -J -S -"
+}
+
+// wrapAt breaks every line of s at width columns, the way a tmux pane shows
+// a long line and the way capture-pane prints it without -J.
+func wrapAt(s string, width int) string {
+	var b strings.Builder
+
+	for line := range strings.Lines(s) {
+		line = strings.TrimSuffix(line, "\n")
+		for len(line) > width {
+			b.WriteString(line[:width] + "\n")
+			line = line[width:]
+		}
+
+		b.WriteString(line + "\n")
+	}
+
+	return b.String()
+}
+
+// fakePaneHistory makes every capture of the bloc's pane return out, wrapped
+// at 80 columns unless the capture asks tmux to join wrapped lines.
+func fakePaneHistory(fake *fakeVaultOps, paths map[string]string, out string) {
+	fake.outputs[historyCommand(paths)] = []string{out}
+	for _, start := range []string{"-", "-50", "-200"} {
+		fake.outputs["tmux capture-pane -t "+paths["tmuxSession"]+" -p -S "+start] = []string{wrapAt(out, 80)}
+	}
+}
+
+// The seal key line is longer than an 80-column pane, so a capture without -J
+// cuts the key at the pane's edge. The saved key must be the whole key.
+func TestSaveVaultKeys_KeepsAWrappedKeyWhole(t *testing.T) {
+	for name, logged := range map[string]bool{"from the log": true, "from the pane": false} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := keyRecoveryPaths(t)
+			out := "Now targeting (temporary) x at http://127.0.0.1:1\nYour OpenBao Seal Key is " + testSealKey + "\n"
+			fakePaneHistory(fake, paths, out)
+
+			if logged {
+				require.NoError(t, os.WriteFile(paths["logFile"], []byte(out), 0o600))
+			}
+
+			require.NoError(t, saveVaultKeys(context.Background(), paths, zap.NewNop().Sugar()))
+			assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+		})
+	}
+}
+
+// Recovery from a running vault's pane reads the same long line.
+func TestRecoverInceptionKeys_KeepsAWrappedKeyWhole(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := keyRecoveryPaths(t)
+	writeKeys(t, paths, true, false)
+	fakePaneHistory(fake, paths, "Your Vault Seal Key is "+testSealKey+"\n")
+
+	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
 }

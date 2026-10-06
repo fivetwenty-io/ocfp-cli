@@ -1090,7 +1090,7 @@ func isSafeNonFatalWarning(line string) bool {
 // log file that tee writes, with colour codes removed.
 func vaultStartupOutput(ctx context.Context, paths map[string]string) string {
 	pane, _ := vaultOps.run(ctx, cleanupCommand{
-		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-200"}, tmux: true,
+		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-200"), tmux: true,
 	})
 
 	logData, _ := os.ReadFile(paths["logFile"])
@@ -1138,7 +1138,7 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 // output is redacted before it is logged.
 func dumpVaultDiagnostics(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
 	pane, paneErr := vaultOps.run(ctx, cleanupCommand{
-		name: "tmux", args: []string{"capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50"}, tmux: true,
+		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-50"), tmux: true,
 	})
 	if paneErr == nil {
 		log.Errorw("Vault ready timeout - tmux pane dump", "output", redactVaultOutput(stripANSI(string(pane))))
@@ -1175,26 +1175,19 @@ func targetInceptionVault(ctx context.Context, safePath string, paths map[string
 	return nil
 }
 
+// capturePaneArgs returns the tmux arguments that print a session's pane from
+// line start on. -J joins the lines tmux wrapped at the pane's width, so a
+// line longer than the pane, such as the one with the seal key, comes back
+// whole rather than cut at the pane's edge.
+func capturePaneArgs(session, start string) []string {
+	return []string{"capture-pane", "-t", session, "-p", "-J", "-S", start}
+}
+
 // saveVaultKeys extracts and persists vault seal key and root token.
 func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
-	// Try tmux capture-pane first, then log file
-	var outputStr string
-
-	captureCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", paths["tmuxSession"], "-p", "-S", "-50") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
-	ensureTmuxEnv(captureCmd)
-
-	paneOutput, paneErr := captureCmd.Output()
-	if paneErr == nil && len(paneOutput) > 0 {
-		outputStr = stripANSI(string(paneOutput))
-	}
-
-	// Fallback to log file
-	if outputStr == "" {
-		logData, logErr := os.ReadFile(paths["logFile"])
-		if logErr == nil {
-			outputStr = stripANSI(string(logData))
-		}
-	}
+	// The tee'd log holds safe's output exactly as printed, so it is read
+	// first, and the pane's history only when the log lacks the key.
+	outputStr := runningVaultOutput(ctx, paths)
 
 	if outputStr == "" {
 		log.Warn("No vault output available for key extraction")
