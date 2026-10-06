@@ -36,7 +36,7 @@ func TestNormalizeRemoteCIDR(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"": "", "any": "", "ANY": "", "0.0.0.0/0": "", "::/0": "",
+		"": "", "any": "", "ANY": "", "0.0.0.0/0": "", "::/0": "::/0", "*": "",
 		"10.0.0.5":       "10.0.0.5/32",
 		"10.0.0.5/32":    "10.0.0.5/32",
 		"10.4.1.7/20":    "10.4.0.0/20",
@@ -49,6 +49,22 @@ func TestNormalizeRemoteCIDR(t *testing.T) {
 	for in, want := range cases {
 		if got := cpi.NormalizeRemoteCIDR(in); got != want {
 			t.Errorf("NormalizeRemoteCIDR(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNormalizeRemoteCIDRExact(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"": "", "any": "", "ANY": "", "*": "",
+		"0.0.0.0/0": "0.0.0.0/0", "0.0.0.0/0 ": "0.0.0.0/0", "::/0": "::/0", "0::0/0": "::/0",
+		"10.0.0.5":    "10.0.0.5/32",
+		"10.4.1.7/20": "10.4.0.0/20",
+	}
+	for in, want := range cases {
+		if got := cpi.NormalizeRemoteCIDRExact(in); got != want {
+			t.Errorf("NormalizeRemoteCIDRExact(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

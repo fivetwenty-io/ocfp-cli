@@ -157,3 +157,33 @@ func TestRulesMatchRequiresPlainAcceptRule(t *testing.T) {
 		})
 	}
 }
+
+// IPv6-any is a different rule from IPv4-any. An empty or "any" source and
+// 0.0.0.0/0 still mean the same thing.
+func TestRulesMatchKeepsAddressFamiliesApart(t *testing.T) {
+	t.Parallel()
+
+	rule := func(source string) *cpi.SecurityRule {
+		return &cpi.SecurityRule{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: source}
+	}
+
+	tests := []struct {
+		current, desired string
+		want             bool
+	}{
+		{"::/0", "0.0.0.0/0", false},
+		{"0.0.0.0/0", "::/0", false},
+		{"::/0", "", false},
+		{"", "::/0", false},
+		{"::/0", "::/0", true},
+		{"", "0.0.0.0/0", true},
+		{"0.0.0.0/0", "", true},
+		{"any", "0.0.0.0/0", true},
+	}
+
+	for _, tt := range tests {
+		if got := bootstrap.RulesMatch(rule(tt.current), rule(tt.desired)); got != tt.want {
+			t.Errorf("RulesMatch(%q, %q) = %v, want %v", tt.current, tt.desired, got, tt.want)
+		}
+	}
+}

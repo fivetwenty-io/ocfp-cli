@@ -53,7 +53,9 @@ func ownedSecurityGroup(blocName, groupName string, ruleDefs map[string][]*cpi.S
 }
 
 // ruleKey is the full normalized identity of a rule. Rules with the same key
-// are exact duplicates. The rule ID and position are left out on purpose.
+// are exact duplicates. The rule ID and position are left out on purpose. The
+// source keeps an empty value, 0.0.0.0/0, and ::/0 apart, so only exact twins
+// are ever paired.
 func ruleKey(rule *cpi.SecurityRule) string {
 	attrs := make([]string, 0, len(rule.Attributes))
 	for k, v := range rule.Attributes {
@@ -66,7 +68,7 @@ func ruleKey(rule *cpi.SecurityRule) string {
 		cpi.NormalizeDirection(rule.Direction),
 		cpi.NormalizeProtocol(rule.Protocol),
 		strconv.Itoa(rule.PortRangeMin) + "-" + strconv.Itoa(rule.PortRangeMax),
-		cpi.NormalizeRemoteCIDR(rule.RemoteIPCIDR),
+		cpi.NormalizeRemoteCIDRExact(rule.RemoteIPCIDR),
 		strings.TrimSpace(rule.RemoteGroup),
 		strings.TrimSpace(rule.Description),
 		strings.Join(attrs, ","),
@@ -85,7 +87,7 @@ func describeRule(rule *cpi.SecurityRule) string {
 		ports = fmt.Sprintf("port %d", rule.PortRangeMin)
 	}
 
-	remote := cpi.NormalizeRemoteCIDR(rule.RemoteIPCIDR)
+	remote := cpi.NormalizeRemoteCIDRExact(rule.RemoteIPCIDR)
 	if remote == "" {
 		remote = "anywhere"
 	}

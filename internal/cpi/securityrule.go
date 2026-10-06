@@ -39,14 +39,28 @@ func NormalizeProtocol(protocol string) string {
 }
 
 // NormalizeRemoteCIDR returns a canonical form of a remote address so that
-// equivalent spellings compare equal. An empty value, "any", "0.0.0.0/0", and
-// "::/0" all mean "anywhere" and become "". A bare IP becomes a host CIDR
-// (/32 or /128), and a CIDR is rewritten to its masked network form.
+// equivalent spellings compare equal. An empty value, "any", and "0.0.0.0/0"
+// all mean "anywhere" and become "". IPv6-any ("::/0") stays "::/0": PVE reads
+// 0.0.0.0/0 as IPv4 only and ::/0 as IPv6 only, so the two are not the same
+// rule. A bare IP becomes a host CIDR (/32 or /128), and a CIDR is rewritten
+// to its masked network form.
 func NormalizeRemoteCIDR(remote string) string {
+	if exact := NormalizeRemoteCIDRExact(remote); exact != "0.0.0.0/0" {
+		return exact
+	}
+
+	return ""
+}
+
+// NormalizeRemoteCIDRExact is NormalizeRemoteCIDR without the folding of
+// 0.0.0.0/0 into the empty value. An empty source (or "any") applies to both
+// address families, 0.0.0.0/0 to IPv4 only, and ::/0 to IPv6 only, so all
+// three stay distinct. Use it to tell whether two rules are exact twins.
+func NormalizeRemoteCIDRExact(remote string) string {
 	r := strings.ToLower(strings.TrimSpace(remote))
 
 	switch r {
-	case "", "any", "0.0.0.0/0", "::/0", "*":
+	case "", "any", "*":
 		return ""
 	}
 
@@ -59,10 +73,6 @@ func NormalizeRemoteCIDR(remote string) string {
 	}
 
 	if _, network, err := net.ParseCIDR(r); err == nil {
-		if network.String() == "0.0.0.0/0" || network.String() == "::/0" {
-			return ""
-		}
-
 		return network.String()
 	}
 

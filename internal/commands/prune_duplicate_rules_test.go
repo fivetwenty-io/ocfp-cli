@@ -275,7 +275,7 @@ func TestPruneTreatsEquivalentSpellingsAsDuplicates(t *testing.T) {
 	t.Parallel()
 
 	a := pruneRule("in", "", "ssh", 22)
-	b := pruneRule("ingress", "0.0.0.0/0", "ssh", 22)
+	b := pruneRule("ingress", "", "ssh", 22)
 	c := pruneRule("INGRESS", "any", "ssh", 22)
 	c.Protocol = "TCP"
 
@@ -319,6 +319,58 @@ func TestPruneKeepsRulesThatDifferInAttributes(t *testing.T) {
 
 	if res.Duplicates != 0 || len(fake.removed) != 0 {
 		t.Errorf("rules with different action or enable were treated as twins: %+v", res)
+	}
+}
+
+// An empty source (both address families), 0.0.0.0/0 (IPv4 only), and ::/0
+// (IPv6 only) are three different rules, so none of them is a duplicate of
+// another.
+func TestPruneKeepsAnywhereSourcesApart(t *testing.T) {
+	t.Parallel()
+
+	fake := newPruneFake(
+		map[string][]*cpi.SecurityRule{"g1": {
+			pruneRule("ingress", "0.0.0.0/0", "ssh", 22),
+			pruneRule("ingress", "::/0", "ssh", 22),
+			pruneRule("ingress", "", "ssh", 22),
+		}},
+		&cpi.SecurityGroup{ID: "g1", Name: "lab-bastion"},
+	)
+
+	var out bytes.Buffer
+
+	res, err := pruneDuplicateRules(context.Background(), fake, pruneOwned, true, &out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if res.Duplicates != 0 || len(fake.removed) != 0 {
+		t.Errorf("rules with different anywhere sources were treated as twins: %+v\n%s", res, out.String())
+	}
+}
+
+func TestPruneStillPairsExactAnywhereTwins(t *testing.T) {
+	t.Parallel()
+
+	for _, source := range []string{"", "0.0.0.0/0", "::/0"} {
+		fake := newPruneFake(
+			map[string][]*cpi.SecurityRule{"g1": {
+				pruneRule("ingress", source, "ssh", 22),
+				pruneRule("ingress", source, "ssh", 22),
+			}},
+			&cpi.SecurityGroup{ID: "g1", Name: "lab-bastion"},
+		)
+
+		var out bytes.Buffer
+
+		res, err := pruneDuplicateRules(context.Background(), fake, pruneOwned, false, &out)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if res.Duplicates != 1 {
+			t.Errorf("source %q: duplicates = %d, want 1", source, res.Duplicates)
+		}
 	}
 }
 
