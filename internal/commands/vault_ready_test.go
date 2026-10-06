@@ -58,7 +58,13 @@ func TestWaitForVaultReady_RejectedTokenIsAKeyFailure(t *testing.T) {
 func TestWaitForVaultReady_KeyFailuresFromTheLog(t *testing.T) {
 	for _, line := range []string{
 		"!! The root token in /x/vault/root.key is not a root token",
-		"!! Unable to unseal the new (temporary) OpenBao server: invalid key",
+		"!! The root token in /x/vault/root.key was rejected by HashiCorp Vault",
+		"!! Unable to unseal the new (temporary) OpenBao server: Error 500: unable to retrieve stored keys: " +
+			"invalid key: failed to decrypt keys from storage: cipher: message authentication failed",
+		"!! Unable to unseal the new (temporary) OpenBao server: Error 400: invalid key: key is shorter than minimum 16 bytes",
+		"!! Unable to unseal the new (temporary) OpenBao server: Error 400: 'key' must be a valid hex or base64 string",
+		"!! Unable to unseal the new (temporary) OpenBao server: Error 400: " +
+			"'key' must be specified in request body as JSON, or 'reset' set to true",
 	} {
 		t.Run(line, func(t *testing.T) {
 			installFakeVaultOps(t)
@@ -67,6 +73,30 @@ func TestWaitForVaultReady_KeyFailuresFromTheLog(t *testing.T) {
 
 			err := waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar())
 			require.ErrorIs(t, err, ErrVaultKeysRejected)
+		})
+	}
+}
+
+// safe wraps every unseal error as "Unable to unseal", including a timeout or
+// an engine that failed mid-request, and safe prints "Unable to check the root
+// token" when the token lookup could not be made at all. Neither says the key
+// is wrong, so neither may lead to archiving a vault whose keys are fine.
+func TestWaitForVaultReady_UnsealAndLookupTroubleIsEnvironmental(t *testing.T) {
+	for _, line := range []string{
+		"!! Unable to unseal the new (temporary) OpenBao server: Put \"http://127.0.0.1:18234/v1/sys/unseal\": " +
+			"context deadline exceeded",
+		"!! Unable to unseal the new (temporary) OpenBao server: Error 503: Vault is sealed",
+		"!! Unable to unseal the new (temporary) HashiCorp Vault server: dial tcp 127.0.0.1:18234: connect: connection refused",
+		"!! Unable to check the root token in /x/vault/root.key: Error 500: internal error",
+	} {
+		t.Run(line, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := readyTestPaths(t)
+			fake.outputs[paneCommand(paths)] = []string{line + "\n"}
+
+			err := waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrVaultStartupError)
+			assert.NotErrorIs(t, err, ErrVaultKeysRejected)
 		})
 	}
 }
