@@ -1526,6 +1526,38 @@ func (p *PVEVaultProvider) ConfigureLoadBalancers(_envPath, envType string, repo
 	return nil
 }
 
+// derivedFQDNRecord builds the full fqdns record for one plane: every known
+// service resolved through GetFQDN (an explicit blocs.<bloc>.fqdns.<plane>.<svc>
+// value wins over the derived default) plus the descriptive env_type and base
+// keys. Both the full populate and the fqdns phase read it, so they agree.
+func (p *PVEVaultProvider) derivedFQDNRecord(envType string) map[string]any {
+	fqdnCfg := p.Config.FQDNs
+	explicit := ExplicitFQDNsForEnv(fqdnCfg, envType)
+
+	base := fqdnCfg.Base
+	if base == "" {
+		base = p.Config.DomainName
+	}
+
+	// Infra-service UIs sit behind the *.system wildcard edge when an ingress
+	// provider fronts the bloc (cloudflared tunnel or tailscale); derive them
+	// as {svc}.system.{base}.
+	systemScoped := config.SystemScoped(p.Config)
+
+	fqdnConfig := PopulateFQDNsForEnv(envType, explicit, base, systemScoped)
+	if fqdnConfig == nil {
+		fqdnConfig = map[string]any{}
+	}
+
+	// Preserve the descriptive keys the PVE path has always written.
+	fqdnConfig["env_type"] = envType
+	if base != "" {
+		fqdnConfig["base"] = base
+	}
+
+	return fqdnConfig
+}
+
 // ConfigureFQDNs configures FQDN settings.
 func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	phaseName := "fqdns-" + envType
@@ -1555,28 +1587,7 @@ func (p *PVEVaultProvider) ConfigureFQDNs(_envPath, envType string, reporter pro
 		}
 	}
 
-	explicit := ExplicitFQDNsForEnv(fqdnCfg, envType)
-
-	base := fqdnCfg.Base
-	if base == "" {
-		base = p.Config.DomainName
-	}
-
-	// Infra-service UIs sit behind the *.system wildcard edge when an ingress
-	// provider fronts the bloc (cloudflared tunnel or tailscale); derive them
-	// as {svc}.system.{base}.
-	systemScoped := config.SystemScoped(p.Config)
-
-	fqdnConfig := PopulateFQDNsForEnv(envType, explicit, base, systemScoped)
-	if fqdnConfig == nil {
-		fqdnConfig = map[string]any{}
-	}
-
-	// Preserve the descriptive keys the PVE path has always written.
-	fqdnConfig["env_type"] = envType
-	if base != "" {
-		fqdnConfig["base"] = base
-	}
+	fqdnConfig := p.derivedFQDNRecord(envType)
 
 	err := p.Safe.SetMultiple(p.PathBuilder.GetFQDNsPath(envType), fqdnConfig)
 	if err != nil {

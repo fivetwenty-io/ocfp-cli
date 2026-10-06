@@ -57,6 +57,7 @@ const (
 	PhaseCertificates = "certificates"
 	PhasePublicIPs    = "public-ips"
 	PhaseReservedIPs  = "reserved-ips"
+	PhaseFQDNs        = "fqdns"
 	PhaseConfig       = "config"
 )
 
