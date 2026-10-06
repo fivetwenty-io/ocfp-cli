@@ -35,8 +35,8 @@ var ErrVaultArchiveExists = errors.New("vault archive already exists")
 // The bloc layout is <bloc>/vault/{data,root.key,unseal.keys}, so archiving
 // the parent captures keys and data together. Legacy and test-mode layouts put
 // vaultDir at ~/.vault with keys loose in the home directory; there the parent
-// is the user's home, so only the data directory is renamed and the key files
-// stay where they are.
+// is the user's home, so only the data directory is renamed here and
+// archiveAndForgetVault moves the loose key file aside on its own.
 func archiveVaultState(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {
 	vaultDir := paths["vaultDir"]
 	target := vaultDir
@@ -96,4 +96,65 @@ func vaultRootContains(vaultDir, vaultRoot string, keyFiles ...string) bool {
 	}
 
 	return true
+}
+
+// archiveAndForgetVault moves a stopped vault's data and keys aside so a
+// fresh vault can start in their place. It never deletes anything, and the
+// caller must have stopped the vault first.
+//
+// In the bloc layout archiveVaultState renames <bloc>/vault, which carries
+// the keys along with the data. In the legacy and test layouts the key file
+// sits loose in the home directory, where the next fresh vault would write
+// its own key over it, so it is renamed aside under the same suffix. Deleting
+// it instead, as this path once did, would leave the archived data with no
+// way back in.
+func archiveAndForgetVault(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {
+	archived, err := archiveVaultState(paths, suffix, log)
+	if err != nil {
+		return "", err
+	}
+
+	seen := map[string]bool{}
+
+	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
+		if keyFile == "" || seen[keyFile] {
+			continue
+		}
+
+		seen[keyFile] = true
+
+		err = moveAsideIfPresent(keyFile, keyFile+VaultArchiveSuffix+suffix, log)
+		if err != nil {
+			return archived, err
+		}
+	}
+
+	return archived, nil
+}
+
+// moveAsideIfPresent renames path to aside when path exists, refusing to
+// replace anything already at aside.
+func moveAsideIfPresent(path, aside string, log *zap.SugaredLogger) error {
+	_, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to inspect %s: %w", path, err)
+	}
+
+	_, err = os.Lstat(aside)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s", ErrVaultArchiveExists, aside)
+	}
+
+	err = os.Rename(path, aside)
+	if err != nil {
+		return fmt.Errorf("failed to move %s aside: %w", path, err)
+	}
+
+	log.Warnw("Preserved superseded vault key file", "archive", aside)
+
+	return nil
 }
