@@ -63,6 +63,12 @@ type sealStatusResponse struct {
 // vaultHealthCheckTimeout, is a stranger: we cannot start a vault on that
 // port, and we must not assume the vault behind it is gone.
 func probeInceptionVault(ctx context.Context, addr string) vaultProbe {
+	return probeInceptionVaultWith(ctx, http.DefaultClient, addr)
+}
+
+// probeInceptionVaultWith probes addr with the given HTTP client, so a test
+// can supply the dial rather than race other tests for a closed port.
+func probeInceptionVaultWith(ctx context.Context, client *http.Client, addr string) vaultProbe {
 	ctx, cancel := context.WithTimeout(ctx, vaultHealthCheckTimeout)
 	defer cancel()
 
@@ -73,7 +79,7 @@ func probeInceptionVault(ctx context.Context, addr string) vaultProbe {
 		return stranger
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			return vaultProbe{state: vaultProbeStopped}
