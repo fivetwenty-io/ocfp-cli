@@ -150,29 +150,7 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 			continue
 		}
 
-		rule := &cpi.SecurityRule{
-			ID:           strconv.Itoa(i),
-			Direction:    getStringFromMap(ruleData, "type"),
-			Protocol:     getStringFromMap(ruleData, "proto"),
-			RemoteIPCIDR: getStringFromMap(ruleData, "source"),
-			Description:  getStringFromMap(ruleData, "comment"),
-		}
-
-		// Parse port range
-		if dport := getStringFromMap(ruleData, "dport"); dport != "" {
-			if strings.Contains(dport, ":") {
-				parts := strings.Split(dport, ":")
-				if len(parts) == 2 { //nolint:mnd // splitting port range "from:to" always yields 2 parts
-					_, _ = fmt.Sscanf(parts[0], "%d", &rule.PortRangeMin)
-					_, _ = fmt.Sscanf(parts[1], "%d", &rule.PortRangeMax)
-				}
-			} else {
-				_, _ = fmt.Sscanf(dport, "%d", &rule.PortRangeMin)
-				rule.PortRangeMax = rule.PortRangeMin
-			}
-		}
-
-		rules = append(rules, rule)
+		rules = append(rules, parsePVERule(ruleData, i))
 	}
 
 	return &cpi.SecurityGroup{
@@ -181,6 +159,47 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 		Rules: rules,
 		Tags:  make(map[string]string),
 	}, nil
+}
+
+// parsePVERule converts one PVE firewall rule into a cpi.SecurityRule using
+// the canonical spellings the rest of the CLI compares against. PVE reports
+// the direction as "in" or "out", omits proto and source for "any", and may
+// give a bare IP for a source.
+func parsePVERule(ruleData map[string]interface{}, index int) *cpi.SecurityRule {
+	rule := &cpi.SecurityRule{
+		ID:           strconv.Itoa(index),
+		Direction:    cpi.NormalizeDirection(getStringFromMap(ruleData, pveKeyType)),
+		Protocol:     cpi.NormalizeProtocol(getStringFromMap(ruleData, "proto")),
+		RemoteIPCIDR: cpi.NormalizeRemoteCIDR(getStringFromMap(ruleData, "source")),
+		Description:  getStringFromMap(ruleData, "comment"),
+	}
+
+	// PVE numbers rules by "pos", which is what the delete endpoint takes.
+	if pos, ok := ruleData["pos"]; ok {
+		switch v := pos.(type) {
+		case float64:
+			rule.ID = strconv.Itoa(int(v))
+		case int:
+			rule.ID = strconv.Itoa(v)
+		case string:
+			rule.ID = v
+		}
+	}
+
+	dport := strings.TrimSpace(getStringFromMap(ruleData, "dport"))
+	if dport == "" {
+		return rule
+	}
+
+	if lo, hi, found := strings.Cut(dport, ":"); found {
+		_, _ = fmt.Sscanf(lo, "%d", &rule.PortRangeMin)
+		_, _ = fmt.Sscanf(hi, "%d", &rule.PortRangeMax)
+	} else {
+		_, _ = fmt.Sscanf(dport, "%d", &rule.PortRangeMin)
+		rule.PortRangeMax = rule.PortRangeMin
+	}
+
+	return rule
 }
 
 // ListSecurityGroups lists all firewall groups.
@@ -271,7 +290,7 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 
 	// Map direction
 	ruleType := "in"
-	if rule.Direction == "egress" {
+	if cpi.NormalizeDirection(rule.Direction) == cpi.DirectionEgress {
 		ruleType = "out"
 	}
 
@@ -292,8 +311,8 @@ func (m *SecurityManager) AddSecurityRule(ctx context.Context, groupID string, r
 		pveKeyEnable: 1,
 	}
 
-	if rule.Protocol != "" && rule.Protocol != "all" {
-		params["proto"] = rule.Protocol
+	if proto := cpi.NormalizeProtocol(rule.Protocol); proto != "all" {
+		params["proto"] = proto
 	}
 
 	if dport != "" {

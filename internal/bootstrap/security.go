@@ -505,42 +505,42 @@ func (m *Manager) ruleExists(currentRules []*cpi.SecurityRule, expectedRule *cpi
 	return false
 }
 
-// RulesMatch compares two security rules for equivalence.
+// RulesMatch compares two security rules for equivalence. Direction,
+// protocol, and remote address are compared in normalized form, so a rule read
+// back from a provider ("in", "TCP", a bare IP) matches the desired rule
+// ("ingress", "tcp", a host CIDR).
 func RulesMatch(r1, r2 *cpi.SecurityRule) bool { //nolint:varnamelen // r2 is clear in context
-	// Direction must match
-	if r1.Direction != r2.Direction {
+	if cpi.NormalizeDirection(r1.Direction) != cpi.NormalizeDirection(r2.Direction) {
 		return false
 	}
 
-	// Protocol must match (treat empty and "all" as equivalent)
-	proto1 := r1.Protocol
-	proto2 := r2.Protocol
-
-	if proto1 == "" {
-		proto1 = protocolAll
+	proto := cpi.NormalizeProtocol(r1.Protocol)
+	if proto != cpi.NormalizeProtocol(r2.Protocol) {
+		return false
 	}
 
-	if proto2 == "" {
-		proto2 = protocolAll
-	}
-
-	if proto1 != proto2 {
+	if cpi.NormalizeRemoteCIDR(r1.RemoteIPCIDR) != cpi.NormalizeRemoteCIDR(r2.RemoteIPCIDR) ||
+		r1.RemoteGroup != r2.RemoteGroup {
 		return false
 	}
 
 	// For protocol "all", ports don't matter
-	if proto1 == protocolAll || proto2 == protocolAll {
-		// Check CIDR or remote group
-		return r1.RemoteIPCIDR == r2.RemoteIPCIDR && r1.RemoteGroup == r2.RemoteGroup
+	if proto == protocolAll {
+		return true
 	}
 
-	// Port ranges must match
-	if r1.PortRangeMin != r2.PortRangeMin || r1.PortRangeMax != r2.PortRangeMax {
-		return false
+	return normalizePortRange(r1) == normalizePortRange(r2)
+}
+
+// normalizePortRange returns the effective port range, treating a zero max as
+// a single-port range and an unset range as "every port".
+func normalizePortRange(rule *cpi.SecurityRule) [2]int {
+	lo, hi := rule.PortRangeMin, rule.PortRangeMax
+	if hi < lo {
+		hi = lo
 	}
 
-	// Remote CIDR or remote group must match
-	return r1.RemoteIPCIDR == r2.RemoteIPCIDR && r1.RemoteGroup == r2.RemoteGroup
+	return [2]int{lo, hi}
 }
 
 // ==============================================================================
