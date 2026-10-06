@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
@@ -396,6 +397,53 @@ func TestValidatePruneOptions(t *testing.T) {
 	} {
 		if err := validatePruneOptions(opts); !errors.Is(err, ErrPruneFlagConflict) {
 			t.Errorf("%+v = %v, want ErrPruneFlagConflict", opts, err)
+		}
+	}
+}
+
+// listingForbiddenProvider fails the test if pruning reaches the security
+// manager, which is where the listing starts.
+type listingForbiddenProvider struct {
+	cpi.Provider
+	t *testing.T
+}
+
+func (p listingForbiddenProvider) SecurityManager() cpi.SecurityManager {
+	p.t.Helper()
+	p.t.Error("prune reached the security manager on a provider that is not PVE")
+
+	return nil
+}
+
+func TestPruneRefusesProvidersOtherThanPVE(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"aws", "azure", "gcp", "stackit", ""} {
+		cfg := &config.Config{Provider: name}
+
+		var out bytes.Buffer
+
+		err := runPruneDuplicateRules(context.Background(), cfg, listingForbiddenProvider{t: t}, pruneBloc, false, &out)
+		if !errors.Is(err, ErrPruneProviderUnsupported) {
+			t.Errorf("provider %q: error = %v, want ErrPruneProviderUnsupported", name, err)
+		}
+
+		if !strings.Contains(fmt.Sprint(err), "supported only on PVE") {
+			t.Errorf("provider %q: error %q does not say PVE only", name, err)
+		}
+
+		if out.Len() != 0 {
+			t.Errorf("provider %q: output before the refusal: %q", name, out.String())
+		}
+	}
+}
+
+func TestPruneAcceptsPVEProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"pve", "PVE"} {
+		if err := validatePruneProvider(&config.Config{Provider: name}); err != nil {
+			t.Errorf("provider %q refused: %v", name, err)
 		}
 	}
 }
