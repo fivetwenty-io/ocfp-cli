@@ -4,20 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 )
 
 // sealKeyHexLength is the length of the unseal key safe local prints. safe
 // initializes its vault with a single key share, which is the 32-byte key
 // itself, and prints it hex-encoded.
 const sealKeyHexLength = 64
-
-// rootTokenMinLength and rootTokenMaxLength bound a root token. Vault and
-// OpenBao tokens run from about two dozen characters to a little under a
-// hundred, so these bounds reject only what cannot be a token.
-const (
-	rootTokenMinLength = 8
-	rootTokenMaxLength = 512
-)
 
 var (
 	// ErrSealKeyMalformed reports an unseal key that is not the 64
@@ -26,7 +20,7 @@ var (
 	ErrSealKeyMalformed = errors.New("the inception vault unseal key is malformed")
 	// ErrRootTokenMalformed reports a root token holding characters no
 	// engine issues, or of a length no token has.
-	ErrRootTokenMalformed = errors.New("the inception vault root token is malformed")
+	ErrRootTokenMalformed = keyfile.ErrRootTokenMalformed
 	// ErrInceptionKeysNotSaved reports a running inception vault, new or
 	// not, whose root token and unseal key are not both saved in a valid
 	// shape, so it could not be reopened once it stopped.
@@ -39,7 +33,7 @@ var (
 	// cannot be read, such as one left owned by root. It says nothing about
 	// whether the key is good, so nothing may be stopped, moved, or
 	// replaced because of it.
-	ErrInceptionKeyFileUnreadable = errors.New("an inception vault key file cannot be read")
+	ErrInceptionKeyFileUnreadable = keyfile.ErrUnreadable
 )
 
 // checkSealKey reports why key cannot be the unseal key safe printed. The
@@ -58,26 +52,4 @@ func checkSealKey(key string) error {
 
 func notHexDigit(r rune) bool {
 	return !strings.ContainsRune("0123456789abcdefABCDEF", r)
-}
-
-// checkRootToken reports why token cannot be a root token. The error
-// describes the token's shape and never its value.
-func checkRootToken(token string) error {
-	if len(token) < rootTokenMinLength || len(token) > rootTokenMaxLength {
-		return fmt.Errorf("%w: it has %d characters, outside %d to %d",
-			ErrRootTokenMalformed, len(token), rootTokenMinLength, rootTokenMaxLength)
-	}
-
-	if strings.IndexFunc(token, notTokenChar) != -1 {
-		return fmt.Errorf("%w: it holds characters other than letters, digits, '.', '_', and '-'", ErrRootTokenMalformed)
-	}
-
-	return nil
-}
-
-// tokenChars are the characters a Vault or OpenBao token is made of.
-const tokenChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-
-func notTokenChar(r rune) bool {
-	return !strings.ContainsRune(tokenChars, r)
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1161,30 +1162,30 @@ func TestReconcile_UnreadableKeyFileChangesNothing(t *testing.T) {
 func TestReadKeyFile(t *testing.T) {
 	dir := t.TempDir()
 
-	value, err := readKeyFile(filepath.Join(dir, "absent"))
+	value, err := keyfile.Read(filepath.Join(dir, "absent"))
 	require.NoError(t, err)
 	assert.Empty(t, value)
 
 	held := filepath.Join(dir, "held")
 	require.NoError(t, os.WriteFile(held, []byte("\n  s.TOKEN-VALUE \n"), 0o600))
-	value, err = readKeyFile(held)
+	value, err = keyfile.Read(held)
 	require.NoError(t, err)
 	assert.Equal(t, "s.TOKEN-VALUE", value)
 
 	empty := filepath.Join(dir, "empty")
 	require.NoError(t, os.WriteFile(empty, nil, 0o600))
 	makeUnreadable(t, empty)
-	value, err = readKeyFile(empty)
+	value, err = keyfile.Read(empty)
 	require.NoError(t, err)
 	assert.Empty(t, value)
 
 	makeUnreadable(t, held)
-	_, err = readKeyFile(held)
+	_, err = keyfile.Read(held)
 	require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable)
 	assert.Contains(t, err.Error(), held)
 	assert.NotContains(t, err.Error(), "s.TOKEN-VALUE")
 
-	_, err = readKeyFile(dir)
+	_, err = keyfile.Read(dir)
 	require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable, "a directory is not a key file")
 }
 
