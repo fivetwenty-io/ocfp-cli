@@ -100,7 +100,7 @@ and, when present, install an nftables table named `ocfp_ingress`:
 table ip ocfp_ingress {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "tailscale0" tcp dport { 80, 443 } dnat to <origin_ip>
+    iifname "tailscale0" fib daddr type local tcp dport { 80, 443 } dnat to <origin_ip>
   }
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
@@ -110,7 +110,10 @@ table ip ocfp_ingress {
 ```
 
 The prerouting rule DNATs inbound tailnet traffic on ports 80/443 to the
-haproxy origin. The postrouting masquerade rule exists because the origin's
+haproxy origin. It matches only traffic addressed to the bastion itself
+(`fib daddr type local`), so 80/443 traffic that reaches the bastion as a
+subnet route and is bound for other VMs in the SDN passes through
+untouched. The postrouting masquerade rule exists because the origin's
 default route points at the SDN gateway, not the bastion — without it, the
 origin's reply to a tailnet client would be sent straight to the SDN
 gateway carrying the client's real 100.x source address, which the SDN
@@ -119,10 +122,11 @@ rewrites the source to the bastion's own address so the reply naturally
 routes back through it.
 
 nftables state does not survive a reboot. `ocfp-tailscale-watchdog`
-reinstalls the `ocfp_ingress` table only when `nft list table ip
+reinstalls the `ocfp_ingress` table when `nft list table ip
 ocfp_ingress` comes back empty, so a reboot self-heals within one watchdog
-cycle (≤ 5 minutes) without needless churn on a table that's already
-present.
+cycle (≤ 5 minutes). It also replaces a table whose prerouting rule lacks
+`fib daddr type local`, which upgrades bastions that still carry the older
+unscoped rule. A table that is already correct is left alone.
 
 ## Operator prerequisites
 

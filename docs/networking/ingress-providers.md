@@ -119,7 +119,7 @@ sequenceDiagram
    (`{origin_ip, ports}`, default ports `[80, 443]`) whenever the resolved
    provider is tailscale — see `internal/cpi/pve/smbios.go` and
    `bastionIngressSpec` in `internal/bootstrap/compute.go`, which derives
-   `origin_ip` from `cloudflare.origin`. Firstboot v2 and the watchdog v3
+   `origin_ip` from `cloudflare.origin`. Firstboot v3 and the watchdog v4
    script (`internal/cpi/pve/templates_firstboot.go`) both read that field
    and install an nftables table:
 
@@ -127,7 +127,7 @@ sequenceDiagram
    table ip ocfp_ingress {
      chain prerouting {
        type nat hook prerouting priority dstnat; policy accept;
-       iifname "tailscale0" tcp dport { 80, 443 } dnat to <origin_ip>
+       iifname "tailscale0" fib daddr type local tcp dport { 80, 443 } dnat to <origin_ip>
      }
      chain postrouting {
        type nat hook postrouting priority srcnat; policy accept;
@@ -135,6 +135,12 @@ sequenceDiagram
      }
    }
    ```
+
+   The prerouting rule matches only traffic addressed to the bastion itself
+   (`fib daddr type local`). The bastion also advertises its SDN subnet as a
+   tailscale route, so subnet-routed 80/443 traffic bound for other VMs
+   passes through to its real destination instead of being rewritten to
+   the haproxy origin.
 
    **Why the masquerade rule is required:** the haproxy origin's default
    route points at the SDN gateway, not at the bastion. Without
@@ -147,9 +153,10 @@ sequenceDiagram
 
    nftables rules are not persisted across reboot. The watchdog timer
    (every 5 minutes) checks `nft list table ip ocfp_ingress` and
-   reinstalls the table only when it's missing, so a reboot is self-healing
-   within one watchdog cycle without needlessly recreating a table that's
-   already there.
+   reinstalls the table when it's missing or when its prerouting rule lacks
+   `fib daddr type local` (the older unscoped form), so a reboot is
+   self-healing within one watchdog cycle and old bastions pick up the
+   scoped rule. A table that is already correct is left alone.
 
 3. **haproxy.** The CF kit's haproxy is the actual TLS terminator and
    router; nothing about its cf-deployment configuration changes for the
