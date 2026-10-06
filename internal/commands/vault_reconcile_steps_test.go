@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -58,23 +59,133 @@ func TestOwnsInceptionVault_LsofFailureIsNotAnAnswer(t *testing.T) {
 	require.ErrorIs(t, err, ErrVaultOwnerUnknown)
 }
 
-// Without raft data there is no lock to compare, so the bloc's own tmux
-// session is the evidence that the vault on the port is this bloc's.
-func TestOwnsInceptionVault_WithoutRaftDataTheSessionDecides(t *testing.T) {
+func paneListCommand(paths map[string]string) string {
+	return "tmux list-panes -s -t =" + paths["tmuxSession"] + " -F #{pane_pid}"
+}
+
+func parentCommand(pid string) string {
+	return "ps -o ppid= -p " + pid
+}
+
+// fakeParents scripts ps so that each child in chain reports the next entry
+// as its parent: fakeParents(fake, "4242", "4200", "100") makes 4200 the
+// parent of 4242 and 100 the parent of 4200.
+func fakeParents(fake *fakeVaultOps, chain ...string) {
+	for i := 0; i+1 < len(chain); i++ {
+		fake.outputs[parentCommand(chain[i])] = []string{"  " + chain[i+1] + "\n"}
+	}
+}
+
+// Without raft data there is no lock to compare. A session alone proves
+// nothing, because it outlives safe and a sibling's vault can take a shared
+// port, so the listener itself must run under one of the session's panes.
+func TestOwnsInceptionVault_WithoutRaftDataTheListenerMustRunInTheSession(t *testing.T) {
+	for name, tc := range map[string]struct {
+		parents [][]string
+		want    bool
+	}{
+		"engine under safe in the pane": {parents: [][]string{{"4242", "4200", "4100", "100"}}, want: true},
+		"engine orphaned by safe":       {parents: [][]string{{"4242", "1"}}},
+		"a sibling's engine":            {parents: [][]string{{"4242", "5000", "900", "1"}}},
+		"pane beyond the walk": {parents: [][]string{{
+			"4242", "4201", "4202", "4203", "4204", "4205", "4206", "4207", "4208", "4209", "100",
+		}}},
+	} {
+		for _, data := range []vaultDataState{vaultDataFile, vaultDataAbsent} {
+			t.Run(name+"/"+fmt.Sprint(data), func(t *testing.T) {
+				fake := installFakeVaultOps(t)
+				paths := stopTestPaths(t, "ocfp-lab-drgao")
+				fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+				fake.outputs[paneListCommand(paths)] = []string{"100\n300\n"}
+
+				for _, chain := range tc.parents {
+					fakeParents(fake, chain...)
+				}
+
+				owned, err := ownsInceptionVault(context.Background(), paths, data)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, owned)
+			})
+		}
+	}
+}
+
+func TestOwnsInceptionVault_WithoutRaftDataOrSessionNothingIsOurs(t *testing.T) {
 	fake := installFakeVaultOps(t)
 	paths := stopTestPaths(t, "ocfp-lab-drgao")
-	hasSession := "tmux has-session -t " + paths["tmuxSession"]
+	fake.errs["tmux has-session -t "+paths["tmuxSession"]] = exitError(t, 1)
 
 	owned, err := ownsInceptionVault(context.Background(), paths, vaultDataFile)
 	require.NoError(t, err)
-	assert.True(t, owned)
+	assert.False(t, owned)
+	assert.False(t, fake.ran("lsof"), "without a session there is nothing to compare")
+}
 
-	fake.errs[hasSession] = exitError(t, 1)
+func TestOwnsInceptionVault_WithoutRaftDataNothingListening(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := stopTestPaths(t, "ocfp-lab-drgao")
+	fake.errs[listenerCommand(paths)] = exitError(t, lsofNoMatchExit)
+	fake.outputs[paneListCommand(paths)] = []string{"100\n"}
 
-	owned, err = ownsInceptionVault(context.Background(), paths, vaultDataFile)
+	owned, err := ownsInceptionVault(context.Background(), paths, vaultDataFile)
 	require.NoError(t, err)
 	assert.False(t, owned)
-	assert.False(t, fake.ran("lsof"), "lsof has nothing to check without raft data")
+}
+
+// A listener that exits during the walk is not ours to stop, and ps says so
+// by exiting 1 with no output.
+func TestOwnsInceptionVault_ListenerGoneDuringTheWalk(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := stopTestPaths(t, "ocfp-lab-drgao")
+	fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+	fake.outputs[paneListCommand(paths)] = []string{"100\n"}
+	fake.errs[parentCommand("4242")] = exitError(t, 1)
+
+	owned, err := ownsInceptionVault(context.Background(), paths, vaultDataFile)
+	require.NoError(t, err)
+	assert.False(t, owned)
+}
+
+// Any lookup that fails leaves ownership unknown, and the caller then stops
+// nothing.
+func TestOwnsInceptionVault_WithoutRaftDataFailedLookupsAreNotAnAnswer(t *testing.T) {
+	for name, script := range map[string]func(t *testing.T, fake *fakeVaultOps, paths map[string]string){
+		"lsof fails": func(t *testing.T, fake *fakeVaultOps, paths map[string]string) {
+			t.Helper()
+			fake.errs[listenerCommand(paths)] = exitError(t, 2)
+		},
+		"tmux cannot list the panes": func(t *testing.T, fake *fakeVaultOps, paths map[string]string) {
+			t.Helper()
+			fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+			fake.errs[paneListCommand(paths)] = exitError(t, 1)
+		},
+		"the session has no panes": func(t *testing.T, fake *fakeVaultOps, paths map[string]string) {
+			t.Helper()
+			fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+			fake.outputs[paneListCommand(paths)] = []string{"\n"}
+		},
+		"ps fails": func(t *testing.T, fake *fakeVaultOps, paths map[string]string) {
+			t.Helper()
+			fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+			fake.outputs[paneListCommand(paths)] = []string{"100\n"}
+			fake.errs[parentCommand("4242")] = exitError(t, 2)
+		},
+		"ps prints something other than a pid": func(t *testing.T, fake *fakeVaultOps, paths map[string]string) {
+			t.Helper()
+			fake.outputs[listenerCommand(paths)] = []string{"4242\n"}
+			fake.outputs[paneListCommand(paths)] = []string{"100\n"}
+			fake.outputs[parentCommand("4242")] = []string{"ps: illegal option\n"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := stopTestPaths(t, "ocfp-lab-drgao")
+			script(t, fake, paths)
+
+			_, err := ownsInceptionVault(context.Background(), paths, vaultDataFile)
+			require.ErrorIs(t, err, ErrVaultOwnerUnknown)
+		})
+	}
 }
 
 func TestInceptionClusterPortFree(t *testing.T) {

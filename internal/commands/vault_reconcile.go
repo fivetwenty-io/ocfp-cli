@@ -237,7 +237,7 @@ func (run *inceptionRun) preflight(ctx context.Context) (preflightFindings, erro
 	}
 
 	if !owned {
-		return preflightFindings{}, inceptionPortTakenError(paths, "a vault answers there that does not hold this bloc's data")
+		return preflightFindings{}, inceptionPortTakenError(paths, "a vault answers there that this bloc cannot prove is its own")
 	}
 
 	return preflightFindings{
