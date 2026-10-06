@@ -878,12 +878,54 @@ var safeNonFatalWarnings = []*regexp.Regexp{
 	regexp.MustCompile(`^!! You are still authenticated to it`),
 }
 
-// safeKeyFailures mark the "!! " lines safe prints when the saved root token
-// or unseal key does not open the vault. Only these may lead the caller to
-// archive a vault and start a fresh one.
+// safeTokenRefusals are the endings safe gives its "The root token in <file>"
+// line when the engine refused the saved token, or the token is not root.
 //
 //nolint:gochecknoglobals // fixed list, read-only
-var safeKeyFailures = []string{"The root token in", "Unable to unseal"}
+var safeTokenRefusals = []string{" was rejected by ", " is not a root token"}
+
+// unsealKeyRefusals are what an engine says, lower-cased, when it refuses the
+// unseal key itself: a key that does not decrypt the keyring, one too short,
+// one that is not hex or base64, and an empty one. safe wraps every unseal
+// error as "Unable to unseal", including timeouts and engine faults, so only
+// these mark the key as wrong.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var unsealKeyRefusals = []string{
+	"message authentication failed",
+	"invalid key",
+	"must be a valid hex or base64 string",
+	"'key' must be specified",
+}
+
+// isSafeKeyFailure reports whether a "!! " line says the saved root token or
+// unseal key does not open the vault. Only such a line may lead the caller to
+// archive a vault and start a fresh one.
+func isSafeKeyFailure(line string) bool {
+	if strings.Contains(line, "The root token in ") {
+		for _, refusal := range safeTokenRefusals {
+			if strings.Contains(line, refusal) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	if !strings.Contains(line, "Unable to unseal") {
+		return false
+	}
+
+	lower := strings.ToLower(line)
+
+	for _, refusal := range unsealKeyRefusals {
+		if strings.Contains(lower, refusal) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // vaultSecretMarkers precede the secret values safe prints, the seal key of a
 // new vault and a root token it could not save.
@@ -915,8 +957,9 @@ func redactVaultOutput(s string) string {
 // refused, and ErrVaultStartupError for any other failure.
 //
 // The difference matters to the caller. A key failure means the keys on disk
-// do not open this vault; anything else, such as a busy port, says nothing
-// about the keys or the data and must never lead to archiving.
+// do not open this vault; anything else, such as a busy port or an unseal
+// request that timed out, says nothing about the keys or the data and must
+// never lead to archiving.
 func classifyVaultStartup(output string) (bool, error) {
 	if strings.Contains(output, "Now targeting") {
 		return true, nil
@@ -926,10 +969,8 @@ func classifyVaultStartup(output string) (bool, error) {
 		line = strings.TrimSpace(line)
 
 		if strings.HasPrefix(line, "!! ") && !isSafeNonFatalWarning(line) {
-			for _, marker := range safeKeyFailures {
-				if strings.Contains(line, marker) {
-					return false, fmt.Errorf("%w: %s", ErrVaultKeysRejected, redactVaultOutput(line))
-				}
+			if isSafeKeyFailure(line) {
+				return false, fmt.Errorf("%w: %s", ErrVaultKeysRejected, redactVaultOutput(line))
 			}
 
 			return false, fmt.Errorf("%w: %s", ErrVaultStartupError, redactVaultOutput(line))
