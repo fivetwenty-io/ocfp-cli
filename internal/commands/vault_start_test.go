@@ -143,3 +143,116 @@ func TestBuildSafeLocalCommand_RunsTheCheckedSafe(t *testing.T) {
 	require.NoError(t, err, string(out))
 	assert.Equal(t, "CHECKED-SAFE\n", string(out))
 }
+
+// longStartTestPaths returns paths whose every directory is near the longest
+// name a filesystem allows, so the full safe command is far past what tmux
+// send-keys will type in one go.
+func longStartTestPaths(t *testing.T) map[string]string {
+	t.Helper()
+
+	long := strings.Repeat("d", 200)
+	base := filepath.Join(t.TempDir(), long, long)
+
+	paths := startTestPaths(t, filepath.Join(base, long, "vault", "data"))
+	paths["logDir"] = filepath.Join(base, "logs", long)
+	paths["logFile"] = filepath.Join(paths["logDir"], "vault-inception.log")
+	paths["vaultName"] = "ocfp-lab-" + strings.Repeat("b", 60) + "-inception"
+
+	require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+
+	return paths
+}
+
+// tmux send-keys cuts typed input off at about 1024 bytes, which would run a
+// truncated safe command. The pane is handed a short line that runs a
+// launcher script instead, however long the paths are.
+func TestSafeLocalLauncher_TypedLineStaysShort(t *testing.T) {
+	paths := longStartTestPaths(t)
+	tools := testTools()
+
+	full := buildSafeLocalCommand(paths, tools, safeLocalRestart)
+	require.Greater(t, len(full), tmuxSendKeysLimit, "the fixture must be long enough to matter")
+
+	script, err := writeSafeLocalLauncher(paths, tools, safeLocalRestart)
+	require.NoError(t, err)
+
+	line, err := safeLocalLauncherLine(script)
+	require.NoError(t, err)
+	assert.Equal(t, "sh "+shellQuote(script), line)
+	assert.Less(t, len(line), tmuxSendKeysLimit)
+	assert.NotContains(t, line, paths["vaultDir"])
+}
+
+// A launcher path too long to type safely is refused rather than typed
+// truncated into the pane.
+func TestSafeLocalLauncherLine_RefusesAnOverlongPath(t *testing.T) {
+	_, err := safeLocalLauncherLine("/" + strings.Repeat("x", tmuxSendKeysLimit))
+	require.ErrorIs(t, err, ErrSafeLocalLineTooLong)
+}
+
+// The launcher holds the same command the pane used to be typed, in a file
+// only the user can read, and never the key values.
+func TestSafeLocalLauncher_HoldsTheCommandAndNoKeys(t *testing.T) {
+	paths := longStartTestPaths(t)
+	tools := testTools()
+
+	for _, mode := range []safeLocalMode{safeLocalFresh, safeLocalRestart} {
+		script, err := writeSafeLocalLauncher(paths, tools, mode)
+		require.NoError(t, err)
+		assert.Equal(t, paths["logDir"], filepath.Dir(script))
+
+		info, err := os.Stat(script)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+		body, err := os.ReadFile(script) // #nosec G304 -- test reads the launcher it just wrote
+		require.NoError(t, err)
+		assert.Equal(t, "#!/bin/sh\n"+buildSafeLocalCommand(paths, tools, mode)+"\n", string(body))
+		assert.NotContains(t, string(body), "ROOT-TOKEN-SENTINEL")
+		assert.NotContains(t, string(body), "UNSEAL-KEY-SENTINEL")
+	}
+}
+
+// A launcher left from an earlier start, even one another user could read,
+// is replaced whole with a private file.
+func TestSafeLocalLauncher_ReplacesAnOldLauncher(t *testing.T) {
+	paths := longStartTestPaths(t)
+	tools := testTools()
+
+	script, err := writeSafeLocalLauncher(paths, tools, safeLocalFresh)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(script, []byte("echo stale\n"), 0o600))
+	require.NoError(t, os.Chmod(script, 0o644)) // #nosec G302 -- the test makes the old launcher readable on purpose
+
+	again, err := writeSafeLocalLauncher(paths, tools, safeLocalRestart)
+	require.NoError(t, err)
+	assert.Equal(t, script, again)
+
+	info, err := os.Stat(again)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+	body, err := os.ReadFile(again) // #nosec G304 -- test reads the launcher it just wrote
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "--root-token-file")
+}
+
+// The pane's shell runs the launcher through sh, and safe gets exactly the
+// arguments the full command would have given it.
+func TestSafeLocalLauncher_RunsThroughTheShell(t *testing.T) {
+	paths := longStartTestPaths(t)
+	tools := inceptionTools{
+		safe:   writeFakeExecutable(t, t.TempDir(), "safe", `for a in "$@"; do printf '%s\n' "$a"; done`),
+		engine: inceptionEngine{name: "bao", path: "/opt/engines/bin/bao"},
+	}
+
+	script, err := writeSafeLocalLauncher(paths, tools, safeLocalFresh)
+	require.NoError(t, err)
+
+	line, err := safeLocalLauncherLine(script)
+	require.NoError(t, err)
+
+	out, err := exec.Command("sh", "-c", line).CombinedOutput() // #nosec G204 -- test runs the line it just built against a stub
+	require.NoError(t, err, string(out))
+	assert.Contains(t, string(out), "--raft\n"+paths["vaultDir"]+"\n")
+}
