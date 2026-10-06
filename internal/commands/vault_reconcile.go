@@ -413,6 +413,13 @@ func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 	paths := run.paths
 	data := classifyVaultData(paths["vaultDir"])
 
+	if data == vaultDataRaft || data == vaultDataFile {
+		err := recoverUnsealKeyFromLogs(paths, run.log)
+		if err != nil {
+			return err
+		}
+	}
+
 	keys, err := inceptionKeysUsable(paths)
 	if err != nil {
 		return err
