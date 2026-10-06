@@ -295,8 +295,17 @@ func (om *OCFPManager) mergeDeploymentNames(defaults []string, configured []stri
 // current directory, and with -f/--force deletes an existing target first.
 // The deployment directories already hold operator data (env files, ops/,
 // and a dev symlink), so the repo is staged in a private temp directory and
-// only its .genesis is moved into place. A failed repo-init fails the phase:
-// a warning here left a bastion with no .genesis anywhere and a green init.
+// only its .genesis is moved into place. When the deployment already has a
+// .genesis (kits or manifests committed to a deployments repo), only the
+// config is added to it. A failed repo-init fails the phase: a warning here
+// left a bastion with no .genesis anywhere and a green init.
+//
+// Release-mode deployments come from the deployments repo, which commits
+// .genesis/kits with the pinned kit tarballs but gitignores .genesis/config
+// as host-specific. Their repo-init runs with no kit, because -k would
+// download the latest release rather than the pinned one, and some kits have
+// no release to download at all. The empty dev/ that repo-init creates without a kit
+// stays behind in the staging directory.
 //
 //nolint:funcorder // Helper placed after exported methods
 func (om *OCFPManager) generateGenesisRepoInitScript() []string {
@@ -308,7 +317,8 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		"# and --force would delete the env files and dev symlink already there, so",
 		"# each repo is staged under mktemp and only its .genesis is moved into place.",
 		"# --skip-vault defers the secrets provider until the inception step runs.",
-		"# Release-mode deployments arrive with their .genesis from the deployments repo.",
+		"# Release-mode deployments arrive with .genesis/kits from the deployments repo",
+		"# but no .genesis/config, so they get a kit-less repo-init for the config alone.",
 		"# repo-init refuses to run without a git identity, so one is exported for the",
 		"# genesis invocation alone; the bastion's global git config is left untouched.",
 		"",
@@ -350,10 +360,45 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		"        exit 1",
 		"    fi",
 		`    mkdir -p "${DEPLOY_PATH}"`,
-		`    mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
+		`    if [ -d "${DEPLOY_PATH}/.genesis" ]; then`,
+		`        mv "${STAGE_DIR}/${deployment}/.genesis/config" "${DEPLOY_PATH}/.genesis/config"`,
+		"    else",
+		`        mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
+		"    fi",
 		`    if [ ! -e "${DEPLOY_PATH}/dev" ]; then`,
 		`        ln -s "${KIT_DIR}" "${DEPLOY_PATH}/dev"`,
 		`        log_info "Linked ${DEPLOY_PATH}/dev -> ${KIT_DIR}"`,
+		"    fi",
+		`    rm -rf "${STAGE_DIR}"`,
+		`    log_success "genesis repo-init completed for ${deployment}"`,
+		"done",
+		"",
+		`log_info 'Initialising genesis config for release-mode deployments'`,
+		`for deployment in "${RELEASE_DEPLOYMENTS[@]}"; do`,
+		`    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`,
+		`    if [ ! -d "${DEPLOY_PATH}" ]; then`,
+		"        continue",
+		"    fi",
+		`    if [ -f "${DEPLOY_PATH}/.genesis/config" ]; then`,
+		`        log_info "genesis repo already initialised: ${deployment}"`,
+		"        continue",
+		"    fi",
+		`    log_info "Running genesis repo-init for ${deployment}"`,
+		`    STAGE_DIR=$(mktemp -d)`,
+		`    if ! (cd "${STAGE_DIR}" && GIT_AUTHOR_NAME="${REPO_INIT_GIT_NAME}" GIT_AUTHOR_EMAIL="${REPO_INIT_GIT_EMAIL}" genesis repo-init --skip-vault --no-commit "${deployment}"); then`,
+		`        log_error "genesis repo-init failed for ${deployment}"`,
+		`        rm -rf "${STAGE_DIR}"`,
+		"        exit 1",
+		"    fi",
+		`    if [ ! -f "${STAGE_DIR}/${deployment}/.genesis/config" ]; then`,
+		`        log_error "genesis repo-init wrote no .genesis/config for ${deployment}"`,
+		`        rm -rf "${STAGE_DIR}"`,
+		"        exit 1",
+		"    fi",
+		`    if [ -d "${DEPLOY_PATH}/.genesis" ]; then`,
+		`        mv "${STAGE_DIR}/${deployment}/.genesis/config" "${DEPLOY_PATH}/.genesis/config"`,
+		"    else",
+		`        mv "${STAGE_DIR}/${deployment}/.genesis" "${DEPLOY_PATH}/.genesis"`,
 		"    fi",
 		`    rm -rf "${STAGE_DIR}"`,
 		`    log_success "genesis repo-init completed for ${deployment}"`,
