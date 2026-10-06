@@ -571,7 +571,6 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 			assert.Equal(t, vault.MgmtEnvType, row[0])
 		case "grafana":
 			grafanaCount++
-			assert.Equal(t, vault.MgmtEnvType, row[0])
 		}
 
 		if row[0] == vault.MgmtEnvType {
@@ -580,13 +579,18 @@ func TestCollectServiceFQDNSection_MgmtAndOCF(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, doomsdayCount, "doomsday is mgmt-only")
-	assert.Equal(t, 1, grafanaCount, "grafana is mgmt-only, alongside the prometheus kit's other FQDN keys")
+	assert.Equal(t, 2, grafanaCount, "grafana is derived for both the mgmt and ocf environments")
 
 	grafanaRow := findFQDNRow(t, section.Rows, vault.MgmtEnvType, "grafana")
 	assert.Equal(t, "grafana.system."+base, grafanaRow[2], "grafana is system-scoped")
 
 	alertmanagerRow := findFQDNRow(t, section.Rows, vault.MgmtEnvType, "alertmanager")
 	assert.Equal(t, "alertmanager."+base, alertmanagerRow[2], "alertmanager is not system-scoped")
+
+	for _, service := range []string{"prometheus", "grafana", "alertmanager"} {
+		ocfRow := findFQDNRow(t, section.Rows, vault.OCFEnvType, service)
+		assert.NotEmpty(t, ocfRow[2], "ocf %s derives an FQDN", service)
+	}
 }
 
 // TestCollectServiceFQDNSection_GateAffectedServiceOriginPopulated is the

@@ -45,6 +45,8 @@ var OCFServices = []string{
 	"vault",
 	"concourse",
 	"prometheus",
+	"grafana",
+	"alertmanager",
 	"bastion",
 	"blacksmith",
 	"bosh",

@@ -91,6 +91,15 @@ func TestCompactWorkloadTable(t *testing.T) {
 			t.Fatalf("blacksmith/ocf offset = %d, want 26", ocfBlacksmith.Offset)
 		}
 
+		ocfPrometheus, ok := table["prometheus"]["ocf"]
+		if !ok {
+			t.Fatal("WorkloadTable() missing prometheus/ocf assignment")
+		}
+
+		if ocfPrometheus.Offset != 27 {
+			t.Fatalf("prometheus/ocf offset = %d, want 27", ocfPrometheus.Offset)
+		}
+
 		haproxy, ok := table["haproxy"]["ocf"]
 		if !ok {
 			t.Fatal("WorkloadTable() missing haproxy/ocf assignment")
@@ -218,4 +227,50 @@ func TestCompactValidateSubnet(t *testing.T) {
 			t.Fatal("ValidateSubnet(\"not-a-cidr\") = nil error, want error")
 		}
 	})
+}
+
+// TestCompactOCFStaticOffsetsAreUnique proves no two ocf-tier statics share
+// an offset, and that every ocf static sits inside the ocf reserved band
+// (0-35), so a new row such as prometheus cannot silently alias another
+// service's address.
+func TestCompactOCFStaticOffsetsAreUnique(t *testing.T) {
+	t.Parallel()
+
+	compact, err := netlayout.Lookup("compact")
+	if err != nil {
+		t.Fatalf("Lookup(\"compact\") returned unexpected error: %v", err)
+	}
+
+	table, err := compact.WorkloadTable("10.64.64.0/26")
+	if err != nil {
+		t.Fatalf("WorkloadTable() returned unexpected error: %v", err)
+	}
+
+	seen := map[int]string{}
+
+	for role, tiers := range table {
+		if role == "available" || role == "reserved" {
+			continue
+		}
+
+		assignment, ok := tiers["ocf"]
+		if !ok {
+			continue
+		}
+
+		if other, dup := seen[assignment.Offset]; dup {
+			t.Errorf("ocf offset %d assigned to both %q and %q", assignment.Offset, other, role)
+		}
+
+		seen[assignment.Offset] = role
+
+		// haproxy sits just past the reserved band by design (band start + 1).
+		if role != "haproxy" && assignment.Offset > 35 {
+			t.Errorf("ocf static %q at offset %d is outside the reserved band 0-35", role, assignment.Offset)
+		}
+	}
+
+	if got := seen[27]; got != "prometheus" {
+		t.Errorf("ocf offset 27 held by %q, want %q", got, "prometheus")
+	}
 }
