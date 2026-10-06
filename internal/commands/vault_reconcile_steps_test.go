@@ -220,13 +220,13 @@ func TestRecoverInceptionKeys_WritesOnlyTheMissingFiles(t *testing.T) {
 	paths := keyRecoveryPaths(t)
 	url := "http://127.0.0.1:" + paths["port"]
 	require.NoError(t, os.WriteFile(paths["logFile"],
-		[]byte("Your Vault Seal Key is LOGGED-SEAL-KEY\nNow targeting x\n"), 0o600))
+		[]byte("Your Vault Seal Key is "+testSealKey+"\nNow targeting x\n"), 0o600))
 	writeSafeRC(t, "current: other\nvaults:\n"+
 		"  other:\n    url: "+url+"\n    token: s.OTHER-TOKEN\n"+
 		"  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
 
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
-	assert.Equal(t, "LOGGED-SEAL-KEY\n", readKey(t, paths["unsealKeysFile"]))
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
 	assert.Equal(t, "s.BLOC-TOKEN\n", readKey(t, paths["rootKeyFile"]), "the token comes from this bloc's own target")
 
 	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
@@ -240,7 +240,7 @@ func TestRecoverInceptionKeys_WritesOnlyTheMissingFiles(t *testing.T) {
 	require.NoError(t, os.Remove(paths["unsealKeysFile"]))
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
 	assert.Equal(t, "s.KEPT\n", readKey(t, paths["rootKeyFile"]))
-	assert.Equal(t, "LOGGED-SEAL-KEY\n", readKey(t, paths["unsealKeysFile"]))
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
 }
 
 // A target with this bloc's name but another URL belongs to some other vault,
@@ -266,11 +266,11 @@ func TestRecoverInceptionKeys_FallsBackToThePane(t *testing.T) {
 	paths := keyRecoveryPaths(t)
 	writeKeys(t, paths, true, false)
 	fake.outputs[historyCommand(paths)] = []string{
-		"Your Vault Seal Key is PANE-SEAL-KEY\n",
+		"Your Vault Seal Key is " + testSealKey + "\n",
 	}
 
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
-	assert.Equal(t, "PANE-SEAL-KEY\n", readKey(t, paths["unsealKeysFile"]))
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
 }
 
 func TestRecoverInceptionKeys_NothingToFindChangesNothing(t *testing.T) {
@@ -291,7 +291,7 @@ func TestRecoverInceptionKeys_LeavesASharedKeyFileAlone(t *testing.T) {
 
 	paths := keyRecoveryPaths(t)
 	paths["unsealKeysFile"] = paths["rootKeyFile"]
-	require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your Vault Seal Key is LOGGED-SEAL-KEY\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your Vault Seal Key is "+testSealKey+"\n"), 0o600))
 
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
 	assert.NoFileExists(t, paths["rootKeyFile"])
@@ -422,4 +422,63 @@ func TestRecoverInceptionKeys_KeepsAWrappedKeyWhole(t *testing.T) {
 
 	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
 	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+}
+
+// A key that is not 64 hexadecimal digits cannot be the key safe printed, so
+// it is never written: a partial key would be fed to the engine on the next
+// start and look like a key the engine refused.
+func TestSaveVaultKeys_RefusesAMalformedKey(t *testing.T) {
+	for name, key := range map[string]string{
+		"cut short": testSealKey[:57],
+		"not hex":   strings.Repeat("z", sealKeyHexLength),
+		"overlong":  testSealKey + "00",
+	} {
+		t.Run(name, func(t *testing.T) {
+			installFakeVaultOps(t)
+			paths := keyRecoveryPaths(t)
+			url := "http://127.0.0.1:" + paths["port"]
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your OpenBao Seal Key is "+key+"\n"), 0o600))
+			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
+
+			err := saveVaultKeys(context.Background(), paths, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrSealKeyMalformed)
+			assert.NotContains(t, err.Error(), key)
+			assert.NoFileExists(t, paths["unsealKeysFile"])
+			assert.Equal(t, "s.BLOC-TOKEN\n", readKey(t, paths["rootKeyFile"]), "a good root token is still saved")
+		})
+	}
+}
+
+func TestRecoverInceptionKeys_RefusesAMalformedKey(t *testing.T) {
+	installFakeVaultOps(t)
+
+	paths := keyRecoveryPaths(t)
+	writeKeys(t, paths, true, false)
+	require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your Vault Seal Key is "+testSealKey[:56]+"\n"), 0o600))
+	before := treeDigest(t, blocDir(paths))
+
+	err := recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrSealKeyMalformed)
+	assert.NotContains(t, err.Error(), testSealKey[:56])
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+}
+
+// A token with whitespace or other characters no engine issues is not
+// written either, whether the new vault saves it or recovery does.
+func TestRootTokenWritesRefuseAMalformedToken(t *testing.T) {
+	installFakeVaultOps(t)
+
+	paths := keyRecoveryPaths(t)
+	url := "http://127.0.0.1:" + paths["port"]
+	writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: \"s.BAD TOKEN\"\n")
+
+	err := saveRootTokenFromSafeRC(paths, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrRootTokenMalformed)
+	assert.NotContains(t, err.Error(), "BAD TOKEN")
+	assert.NoFileExists(t, paths["rootKeyFile"])
+
+	writeKeys(t, paths, false, true)
+	err = recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrRootTokenMalformed)
+	assert.NoFileExists(t, paths["rootKeyFile"])
 }
