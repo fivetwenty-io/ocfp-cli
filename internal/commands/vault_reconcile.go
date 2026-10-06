@@ -71,6 +71,9 @@ type inceptionSteps struct {
 	// migrate copies a stopped file vault into raft storage, swaps the raft
 	// store into place, and returns where the file store was kept.
 	migrate func(ctx context.Context, paths map[string]string, tools inceptionTools, log *zap.SugaredLogger) (string, error)
+	// recoverKeys writes whichever key files are missing from what the bloc's
+	// running vault left behind, and never replaces a key file that exists.
+	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
 	// now stamps archive names.
 	now func() time.Time
 }
@@ -96,13 +99,23 @@ type inceptionRun struct {
 func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	paths := run.paths
 
-	journal, healthy, err := run.preflight(ctx)
+	found, err := run.preflight(ctx)
 	if err != nil {
 		return err
 	}
 
-	if healthy {
+	if found.healthy {
 		return run.keepHealthy(ctx)
+	}
+
+	// The log and safe's target hold the keys of a vault that runs now, so
+	// they are recovered before the stop. Without both keys the vault goes
+	// down the archive path below and is never migrated.
+	if found.running && !inceptionKeysUsable(paths) {
+		err = run.steps.recoverKeys(ctx, paths, run.log)
+		if err != nil {
+			return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
+		}
 	}
 
 	err = run.steps.stop(ctx, paths, run.log)
@@ -116,53 +129,66 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 			ErrInceptionClusterPortTaken, paths["clusterPort"], paths["port"], err, inceptionPortEnvVar)
 	}
 
-	if journal != nil {
-		return run.resumeMigration(ctx, journal)
+	if found.journal != nil {
+		return run.resumeMigration(ctx, found.journal)
 	}
 
 	return run.startFromDisk(ctx)
 }
 
+// preflightFindings is what preflight learned about the bloc.
+type preflightFindings struct {
+	// journal is the migration in flight, if any.
+	journal *migrationJournal
+	// running reports that this bloc's own vault answers on the port.
+	running bool
+	// healthy reports that the running vault can be left as it is.
+	healthy bool
+}
+
 // preflight runs every check that can refuse before anything is stopped or
-// moved. It returns the journal of a migration in flight, if any, and whether
-// the running vault is healthy and can be left as it is.
-func (run *inceptionRun) preflight(ctx context.Context) (*migrationJournal, bool, error) {
+// moved, and reports what it found.
+func (run *inceptionRun) preflight(ctx context.Context) (preflightFindings, error) {
 	paths := run.paths
 
 	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
 	if probe.state == vaultProbeStranger {
-		return nil, false, inceptionPortTakenError(paths, "something that is not a vault answers there")
+		return preflightFindings{}, inceptionPortTakenError(paths, "something that is not a vault answers there")
 	}
 
 	journal, err := readMigrationJournal(paths["vaultDir"])
 	if err != nil {
-		return nil, false, err
+		return preflightFindings{}, err
 	}
 
 	data := classifyVaultData(paths["vaultDir"])
 	if data == vaultDataMixed {
-		return nil, false, fmt.Errorf("%w: %s; inspect it by hand, ocfp will not touch it", ErrVaultDataMixed, paths["vaultDir"])
+		return preflightFindings{}, fmt.Errorf("%w: %s; inspect it by hand, ocfp will not touch it", ErrVaultDataMixed, paths["vaultDir"])
 	}
 
 	if journal != nil && journal.Phase == migratePhaseMigrating && data != vaultDataFile {
-		return nil, false, fmt.Errorf("%w: it records an unfinished copy, but %s is %s storage rather than file; "+
+		return preflightFindings{}, fmt.Errorf("%w: it records an unfinished copy, but %s is %s storage rather than file; "+
 			"inspect it by hand", ErrMigrationJournalInvalid, paths["vaultDir"]+migrationJournalSuffix, data)
 	}
 
 	if probe.state != vaultProbeVault {
-		return journal, false, nil
+		return preflightFindings{journal: journal}, nil
 	}
 
 	owned, err := run.steps.ownsVault(ctx, paths, data)
 	if err != nil {
-		return nil, false, err
+		return preflightFindings{}, err
 	}
 
 	if !owned {
-		return nil, false, inceptionPortTakenError(paths, "a vault answers there that does not hold this bloc's data")
+		return preflightFindings{}, inceptionPortTakenError(paths, "a vault answers there that does not hold this bloc's data")
 	}
 
-	return journal, journal == nil && run.isHealthy(ctx, probe, data), nil
+	return preflightFindings{
+		journal: journal,
+		running: true,
+		healthy: journal == nil && run.isHealthy(ctx, probe, data),
+	}, nil
 }
 
 // resumeMigration picks up a migration that an earlier run left part way.
