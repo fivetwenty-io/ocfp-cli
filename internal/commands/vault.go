@@ -458,8 +458,9 @@ func findInceptionCommand(name string) (string, bool) {
 
 // checkVaultInceptionPrerequisites verifies required commands are available,
 // that safe is new enough to run a raft-backed inception vault, and which
-// engine safe will run. Either engine will do.
-func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogger) (inceptionEngine, error) {
+// engine safe will run. Either engine will do. It returns the absolute path
+// of the safe it checked, so the vault is started by that same binary.
+func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogger) (inceptionTools, error) {
 	requiredCommands := map[string]error{
 		"safe": ErrSafeNotFound,
 		"tmux": ErrTmuxNotFound,
@@ -468,7 +469,7 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 	for cmd, cmdErr := range requiredCommands {
 		cmdPath, found := findInceptionCommand(cmd)
 		if !found {
-			return inceptionEngine{}, cmdErr
+			return inceptionTools{}, cmdErr
 		}
 
 		log.Infow("Found required command", "command", cmd, "path", cmdPath)
@@ -476,16 +477,21 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 
 	engine, err := resolveInceptionEngine()
 	if err != nil {
-		return inceptionEngine{}, err
+		return inceptionTools{}, err
 	}
 
 	log.Infow("Found vault engine", "engine", engine.name, "path", engine.path)
 
 	safePath, _ := findInceptionCommand("safe")
 
+	safePath, err = filepath.Abs(safePath)
+	if err != nil {
+		return inceptionTools{}, fmt.Errorf("cannot resolve the path of safe: %w", err)
+	}
+
 	err = checkSafeCompatibility(ctx, safePath)
 	if err != nil {
-		return inceptionEngine{}, err
+		return inceptionTools{}, err
 	}
 
 	// Advisory: script command for non-PTY SSH fallback
@@ -494,7 +500,7 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 		log.Warn("script command not found — tmux may fail in non-PTY SSH sessions")
 	}
 
-	return engine, nil
+	return inceptionTools{safe: safePath, engine: engine}, nil
 }
 
 // isVaultAlreadyRunning checks if the inception vault is already running and healthy.
@@ -794,8 +800,10 @@ func shellQuote(s string) string {
 // buildSafeLocalCommand builds the line typed into the bloc's tmux session to
 // run its inception vault on raft storage.
 //
-// The PATH prefix and --engine make safe run the same engine binary ocfp
-// resolved, so the two can never disagree about which engine owns the data.
+// The line runs the safe ocfp checked by its absolute path, so a different
+// safe in the engine's directory can never answer instead. The PATH prefix
+// and --engine make that safe run the same engine binary ocfp resolved, so
+// the two can never disagree about which engine owns the data.
 // The line carries paths to the key files and never their contents, because
 // anything typed into tmux lands in the pane, its scrollback, and the log.
 //
@@ -804,15 +812,15 @@ func shellQuote(s string) string {
 // instead of waiting forever on a prompt nobody will answer. A restart feeds
 // the saved unseal key on stdin and hands safe the saved root token, which
 // spares it from calling generate-root.
-func buildSafeLocalCommand(paths map[string]string, engine inceptionEngine, mode safeLocalMode) string {
+func buildSafeLocalCommand(paths map[string]string, tools inceptionTools, mode safeLocalMode) string {
 	args := []string{
-		"PATH=" + shellQuote(filepath.Dir(engine.path)) + `:"$PATH"`,
-		"safe", "local",
+		"PATH=" + shellQuote(filepath.Dir(tools.engine.path)) + `:"$PATH"`,
+		shellQuote(tools.safe), "local",
 		"--raft", shellQuote(paths["vaultDir"]),
 		"--as", shellQuote(paths["vaultName"]),
 		"--port", paths["port"],
 		"--cluster-port", paths["clusterPort"],
-		"--engine", engine.name,
+		"--engine", tools.engine.name,
 	}
 
 	stdin := "/dev/null"
@@ -829,7 +837,7 @@ func buildSafeLocalCommand(paths map[string]string, engine inceptionEngine, mode
 
 // startVaultInTmux starts the vault inside a tmux session with output captured via tee.
 func startVaultInTmux(
-	ctx context.Context, paths map[string]string, engine inceptionEngine, mode safeLocalMode, log *zap.SugaredLogger,
+	ctx context.Context, paths map[string]string, tools inceptionTools, mode safeLocalMode, log *zap.SugaredLogger,
 ) error {
 	log.Info("Starting vault in tmux session...")
 
@@ -848,7 +856,7 @@ func startVaultInTmux(
 
 	time.Sleep(1 * time.Second)
 
-	safeCmd := buildSafeLocalCommand(paths, engine, mode)
+	safeCmd := buildSafeLocalCommand(paths, tools, mode)
 
 	// Send command to tmux session
 	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- every path in safeCmd is shell-quoted by buildSafeLocalCommand
@@ -1279,7 +1287,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	engine, err := checkVaultInceptionPrerequisites(context.TODO(), log)
+	tools, err := checkVaultInceptionPrerequisites(context.TODO(), log)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
@@ -1301,7 +1309,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	err = startVaultInTmux(context.TODO(), paths, engine, safeLocalFresh, log)
+	err = startVaultInTmux(context.TODO(), paths, tools, safeLocalFresh, log)
 	if err != nil {
 		return fmt.Errorf("failed to start vault: %w", err)
 	}
