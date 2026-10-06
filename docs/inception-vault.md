@@ -37,6 +37,8 @@ Two more files live under the state home, which is `~/.local/state/ocfp` unless 
 | `<bloc>/logs/vault/vault-inception.log` | Everything `safe local` printed on its last start. The previous start's log is kept beside it with a `.previous` suffix, and each older log is kept as `.previous-<timestamp>`. ocfp never replaces or deletes any of them, because a log may hold the only copy of a new vault's unseal key. We treat every one of them like a key file. |
 | `<bloc>/inception-vault.lock` | The lock that lets only one ocfp run work on the bloc's vault at a time. |
 
+When no bloc is named, the vault keeps its data in `~/.vault`, the root token in `~/vault.root.key`, and the unseal key in `~/vault.unseal.keys`, each key file with mode 0600. Older releases wrote both keys to a single `~/vault.key`, where the second write replaced the first. ocfp no longer reads, writes, moves, or deletes that file. If it exists, it stays where it is, and we keep it until we know the vault it belonged to is no longer needed, because it may hold that vault's only copy of a key.
+
 ## What a run does
 
 Each run of `ocfp vault inception` brings the bloc to a running raft vault and changes as little on disk as it can. Every check that can refuse runs before anything is stopped or moved, so a refusal always leaves the disk exactly as it was.
@@ -92,7 +94,7 @@ ocfp archives a vault only when one of its keys is missing, when key files exist
 
 When the engine refuses the token in `root.key` and ocfp kept a different token from safe's target before the stop, ocfp restarts the vault once more with that token before it archives anything. If the engine takes it, `root.key` is updated to hold it, the refused token moves to `root.key.rejected-<timestamp>`, and the vault keeps its data. If the engine refuses that token too, ocfp archives the vault with both tokens inside the archive. A retry that fails for any other reason returns an error and archives nothing.
 
-An archive renames the bloc's whole `vault` directory, with its data and both key files, to `vault.superseded-<timestamp>` beside it. Nothing is deleted. A new vault then starts in an empty `vault` directory, and the command ends with an error-level log line that names the archive, so the change is hard to miss. In the legacy and test layouts, where the key file sits in the home directory, the data directory and the key file are each renamed aside under the same suffix.
+An archive renames the bloc's whole `vault` directory, with its data and both key files, to `vault.superseded-<timestamp>` beside it. Nothing is deleted. A new vault then starts in an empty `vault` directory, and the command ends with an error-level log line that names the archive, so the change is hard to miss. In the layout without a bloc and in the test layout, where the key files sit in the home directory, the data directory and each key file are renamed aside under the same suffix. An old `~/vault.key` is never part of an archive and is left in place.
 
 To read the old secrets, we start a throwaway vault from the archive with safe by hand, using the archived `root.key` and `unseal.keys`, on a scratch port.
 

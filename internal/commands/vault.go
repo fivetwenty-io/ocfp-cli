@@ -373,9 +373,14 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	home, _ := homeDir()
 
 	vaultDir := filepath.Join(home, ".vault")
+	// Without a bloc, the root token and the unseal key each get their own
+	// file in the home directory. Older releases wrote both to ~/vault.key,
+	// where the second write replaced the first. That file is still listed
+	// as vaultKeyFile, but nothing reads, writes, moves, or deletes it, so a
+	// key it may hold stays where the operator left it.
 	vaultKeyFile := filepath.Join(home, "vault.key")
-	rootKeyFile := filepath.Join(home, "vault.key")
-	unsealKeysFile := filepath.Join(home, "vault.key")
+	rootKeyFile := filepath.Join(home, "vault.root.key")
+	unsealKeysFile := filepath.Join(home, "vault.unseal.keys")
 	tmuxSession := "inception-vault"
 	vaultName := "inception"
 	port := VaultInceptionPort

@@ -385,8 +385,8 @@ func TestCleanupExistingVault_ArchivesKeysAndDataTogether(t *testing.T) {
 	assert.FileExists(t, filepath.Join(archives[0], "unseal.keys"))
 }
 
-// In the legacy layout the archive renames only the data directory. The key
-// file must move aside with it, not be deleted, or the archived data could
+// Outside a bloc's vault directory the archive renames only the data
+// directory. The key file must move aside with it, not be deleted, or the archived data could
 // never be opened again; and it must not stay in place, where the next fresh
 // vault would overwrite it.
 func TestArchiveAndForgetVault_LegacyLayoutKeepsTheKeyBesideTheArchive(t *testing.T) {

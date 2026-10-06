@@ -10,6 +10,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestGetVaultInceptionPaths_PortIsPerBloc guards concurrent bootstraps: two
@@ -161,6 +162,68 @@ func TestGetVaultInceptionPaths_TestModeKeyFilesAreSeparate(t *testing.T) {
 	saved, err = inceptionKeysSaved(paths)
 	require.NoError(t, err)
 	assert.True(t, saved, "a test-mode vault with both keys written must count as saved")
+}
+
+// Without a bloc, the root token and the unseal key each get their own file
+// in the home directory. Older releases wrote both to ~/vault.key, where the
+// second write replaced the first, so that file is no longer read or written.
+func TestGetVaultInceptionPaths_NoBlocKeyFilesAreSeparate(t *testing.T) {
+	home := t.TempDir()
+
+	original := homeDirFn
+	homeDirFn = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { homeDirFn = original })
+
+	paths := getVaultInceptionPaths("", false)
+
+	assert.Equal(t, filepath.Join(home, "vault.root.key"), paths["rootKeyFile"])
+	assert.Equal(t, filepath.Join(home, "vault.unseal.keys"), paths["unsealKeysFile"])
+	assert.Equal(t, filepath.Join(home, ".vault"), paths["vaultDir"])
+
+	oldKeyFile := filepath.Join(home, "vault.key")
+	for _, key := range []string{"rootKeyFile", "unsealKeysFile"} {
+		assert.NotEqual(t, oldKeyFile, paths[key], "%s must not be the shared file older releases wrote", key)
+	}
+
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("hvs.nobloctoken0123456789\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte(testSealKey+"\n"), 0o600))
+
+	saved, err := inceptionKeysSaved(paths)
+	require.NoError(t, err)
+	assert.True(t, saved, "a vault with both keys written must count as saved")
+}
+
+// An archive without a bloc moves the data and both key files aside, and
+// never renames, replaces, or deletes the ~/vault.key an older release left.
+func TestArchiveAndForgetVault_NoBlocLeavesTheOldKeyFile(t *testing.T) {
+	home := t.TempDir()
+
+	original := homeDirFn
+	homeDirFn = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { homeDirFn = original })
+
+	paths := getVaultInceptionPaths("", false)
+	oldKeyFile := filepath.Join(home, "vault.key")
+	suffix := "20261006-120000"
+
+	require.NoError(t, os.MkdirAll(filepath.Join(paths["vaultDir"], "raft"), 0o700))
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("root\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte("unseal\n"), 0o600))
+	require.NoError(t, os.WriteFile(oldKeyFile, []byte("older-release-key\n"), 0o600))
+
+	archived, err := archiveAndForgetVault(paths, suffix, zap.NewNop().Sugar())
+	require.NoError(t, err)
+
+	assert.Equal(t, paths["vaultDir"]+VaultArchiveSuffix+suffix, archived)
+	assert.FileExists(t, paths["rootKeyFile"]+VaultArchiveSuffix+suffix)
+	assert.FileExists(t, paths["unsealKeysFile"]+VaultArchiveSuffix+suffix)
+
+	kept, err := os.ReadFile(oldKeyFile) // #nosec G304 -- the test's own file
+	require.NoError(t, err)
+	assert.Equal(t, "older-release-key\n", string(kept))
+	assert.NoFileExists(t, oldKeyFile+VaultArchiveSuffix+suffix)
 }
 
 // TestGetVaultInceptionPaths_NoBlocLogDirUnderStateHomeNotOcfpHome verifies
