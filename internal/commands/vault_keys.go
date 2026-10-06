@@ -34,6 +34,11 @@ var (
 	// something other than a whole key, whose whole key could not be found
 	// in what safe printed.
 	ErrUnsealKeyFileMalformed = errors.New("the inception vault unseal key file does not hold a whole key")
+	// ErrInceptionKeyFileUnreadable reports a key file that exists but
+	// cannot be read, such as one left owned by root. It says nothing about
+	// whether the key is good, so nothing may be stopped, moved, or
+	// replaced because of it.
+	ErrInceptionKeyFileUnreadable = errors.New("an inception vault key file cannot be read")
 )
 
 // checkSealKey reports why key cannot be the unseal key safe printed. The

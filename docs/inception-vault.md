@@ -37,6 +37,8 @@ Two more files live under the state home, which is `~/.local/state/ocfp` unless 
 
 Each run of `ocfp vault inception` brings the bloc to a running raft vault and changes as little on disk as it can. Every check that can refuse runs before anything is stopped or moved, so a refusal always leaves the disk exactly as it was.
 
+One of those checks reads both key files. A key file that exists but cannot be read, such as one that a `sudo ocfp` run left owned by root, says nothing about whether the key is good, so ocfp stops with an error that names the file. It never treats such a file as missing, and it never archives the vault or writes a recovered key over it. An empty file counts as missing whatever its mode.
+
 ```mermaid
 flowchart TD
     A[Probe the API port] -->|something that is not a vault| X1[Refuse: port taken]
@@ -66,7 +68,7 @@ A vault counts as this bloc's own when the process listening on the API port als
 
 A vault is healthy when it is initialized and unsealed, it reports raft storage or no storage type at all, the data directory holds raft data, and the bloc's tmux session exists. ocfp leaves a healthy vault running. If safe has lost the bloc's target, ocfp registers it again and authenticates it with the token in `root.key`.
 
-Before ocfp stops a running vault that is missing a key, it tries to recover the key while the vault still runs. The unseal key comes from the vault's log, or failing that from the tmux pane's history. The root token comes from the bloc's own target in `~/.saferc`, and only when that target points at the bloc's port. ocfp writes only the key files that are missing or blank, and it never replaces a key file that holds a value.
+Before ocfp stops a running vault that is missing a key, it tries to recover the key while the vault still runs. The unseal key comes from the vault's log, or failing that from the tmux pane's history. The root token comes from the bloc's own target in `~/.saferc`, and only when that target points at the bloc's port. ocfp writes only the key files that are missing or blank, and it never replaces a key file that holds a value or one that it cannot read.
 
 ## The archive
 
@@ -159,6 +161,7 @@ A new vault is held to the same standard. When ocfp starts one and cannot save b
 | `the inception vault did not restart after its migration to raft` | The raft data is in place, but the vault did not open on it. Nothing was archived. | Read the vault log. The error names both the raft data and the file backup, so we can move the backup back to `data` to return to the old vault. |
 | `the raft migration journal cannot be trusted` | The journal is unreadable or describes a migration ocfp could not have left. | Inspect the journal and the directories beside `data`, put them right by hand, and remove the journal. |
 | `the interrupted raft migration cannot be finished safely` | A `swapping` journal exists, but the directories match none of the points at which a swap can stop. | Inspect the named paths by hand. ocfp moved nothing. |
+| `an inception vault key file cannot be read` | `root.key` or `unseal.keys` exists but this user cannot read it, often because a `sudo` run left it owned by root. Nothing was started, stopped, or changed. | Give the file back to this user with mode 0600, for example with `sudo chown "$USER" <file>` and `chmod 600 <file>`, and run the command again. |
 | `the inception vault unseal key file does not hold a whole key` | `unseal.keys` is cut short and no log or pane history still holds the whole key. | Follow the steps in the section on a cut-short unseal key, then run the command again. Nothing on disk changed. |
 | `the new inception vault's keys were not saved` | A new vault is running, but the root token or the unseal key could not be saved in a valid shape. | Find the full keys in the vault log that the error names, write them to `root.key` and `unseal.keys` at mode 0600, and run the command again. The vault was left running. |
 | `timed out waiting for another ocfp run to release its lock` | Another ocfp run has worked on this bloc's vault for more than five minutes. | Wait for that run to finish, or stop it, and run the command again. A killed run releases the lock on its own. |
