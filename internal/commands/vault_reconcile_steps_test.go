@@ -165,24 +165,42 @@ func TestSetAsidePreviousVaultLog(t *testing.T) {
 }
 
 func TestInceptionKeysUsable(t *testing.T) {
+	usable := func(paths map[string]string) bool {
+		t.Helper()
+
+		ok, err := inceptionKeysUsable(paths)
+		require.NoError(t, err)
+
+		return ok
+	}
+
+	present := func(paths map[string]string) bool {
+		t.Helper()
+
+		ok, err := anyInceptionKeyPresent(paths)
+		require.NoError(t, err)
+
+		return ok
+	}
+
 	paths := reconcilePaths(t)
-	assert.False(t, inceptionKeysUsable(paths))
-	assert.False(t, anyInceptionKeyPresent(paths))
+	assert.False(t, usable(paths))
+	assert.False(t, present(paths))
 
 	writeKeys(t, paths, true, false)
-	assert.False(t, inceptionKeysUsable(paths))
-	assert.True(t, anyInceptionKeyPresent(paths))
+	assert.False(t, usable(paths))
+	assert.True(t, present(paths))
 
 	writeKeys(t, paths, true, true)
-	assert.True(t, inceptionKeysUsable(paths))
+	assert.True(t, usable(paths))
 
 	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte("\n\t \n"), 0o600))
-	assert.False(t, inceptionKeysUsable(paths), "a blank key file counts as missing")
+	assert.False(t, usable(paths), "a blank key file counts as missing")
 
 	shared := reconcilePaths(t)
 	writeKeys(t, shared, true, false)
 	shared["unsealKeysFile"] = shared["rootKeyFile"]
-	assert.False(t, inceptionKeysUsable(shared), "one file cannot hold both keys")
+	assert.False(t, usable(shared), "one file cannot hold both keys")
 }
 
 // keyRecoveryPaths is a bloc with a log file and a scratch HOME whose
@@ -515,6 +533,32 @@ func TestFinishInceptionVault_FailsWhenNewKeysAreNotSaved(t *testing.T) {
 			assert.NotContains(t, err.Error(), "s.BLOC-TOKEN")
 			assert.False(t, fake.ran("tmux kill"), "the vault keeps running")
 			assert.NoFileExists(t, paths["unsealKeysFile"])
+		})
+	}
+}
+
+// Recovery writes only key files that are missing or blank. A key file that
+// exists but cannot be read may hold the only copy of its key, so recovery
+// refuses rather than replace it.
+func TestRecoverInceptionKeys_NeverReplacesAnUnreadableKeyFile(t *testing.T) {
+	for _, keyFile := range []string{"rootKeyFile", "unsealKeysFile"} {
+		t.Run(keyFile, func(t *testing.T) {
+			installFakeVaultOps(t)
+
+			paths := keyRecoveryPaths(t)
+			url := "http://127.0.0.1:" + paths["port"]
+			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your Vault Seal Key is "+testSealKey+"\n"), 0o600))
+			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
+			require.NoError(t, os.WriteFile(paths[keyFile], []byte("held-value\n"), 0o600))
+
+			restore := makeUnreadable(t, paths[keyFile])
+
+			err := recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrInceptionKeyFileUnreadable)
+			assert.Contains(t, err.Error(), paths[keyFile])
+
+			restore()
+			assert.Equal(t, "held-value\n", readKey(t, paths[keyFile]))
 		})
 	}
 }

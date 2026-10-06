@@ -221,12 +221,13 @@ func finishInceptionVault(
 			log.Warnw("Failed to save vault keys", "error", saveErr)
 		}
 
-		if !inceptionKeysUsable(paths) {
+		keys, keysErr := inceptionKeysUsable(paths)
+		if keysErr != nil || !keys {
 			log.Errorw("The new inception vault's keys were not both saved; it cannot be reopened after it stops",
 				"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
 
-			return fmt.Errorf("%w: the vault is still running, and its full keys are in the vault log at %s",
-				ErrInceptionKeysNotSaved, paths["logFile"])
+			return errors.Join(fmt.Errorf("%w: the vault is still running, and its full keys are in the vault log at %s",
+				ErrInceptionKeysNotSaved, paths["logFile"]), keysErr)
 		}
 	}
 
@@ -255,14 +256,25 @@ func setAsidePreviousVaultLog(logFile string) error {
 // history. The root token comes from the bloc's own target in ~/.saferc, and
 // only when that target points at the bloc's port; the global current target
 // is never read, because any sibling bloc can move it. A key file that holds
-// a value is never replaced, and finding nothing is not an error: the vault
-// then goes down the archive path.
+// a value is never replaced, and one that exists but cannot be read is an
+// error, since it may hold that value. Finding nothing is not an error: the
+// vault then goes down the archive path.
 func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
 		return nil
 	}
 
-	if !keyFileHasValue(paths["unsealKeysFile"]) {
+	unseal, err := keyFileHasValue(paths["unsealKeysFile"])
+	if err != nil {
+		return fmt.Errorf("refusing to recover the unseal key: %w", err)
+	}
+
+	root, err := keyFileHasValue(paths["rootKeyFile"])
+	if err != nil {
+		return fmt.Errorf("refusing to recover the root token: %w", err)
+	}
+
+	if !unseal {
 		sealKey := extractSealKey(runningVaultOutput(ctx, paths))
 		if sealKey == "" {
 			log.Warnw("The running inception vault's unseal key is not in its log", "log", paths["logFile"])
@@ -282,7 +294,7 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 		}
 	}
 
-	if !keyFileHasValue(paths["rootKeyFile"]) {
+	if !root {
 		token := blocTargetToken(paths)
 		if token == "" {
 			log.Warnw("No root token for the inception vault in ~/.saferc", "target", paths["vaultName"])
@@ -317,16 +329,17 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 // Only a key that begins with what the file holds is taken, so a key from
 // some other vault is never written. When none is found, the disk is left
 // exactly as it is and the error says so. A missing or blank key file is
-// left to the archive path, as before.
+// left to the archive path, as before, and one that cannot be read is an
+// error.
 func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	keyFile := paths["unsealKeysFile"]
 	if paths["rootKeyFile"] == keyFile {
 		return nil
 	}
 
-	data, err := os.ReadFile(keyFile) // #nosec G304 -- the bloc's own key file from getVaultInceptionPaths()
+	data, err := readKeyFileBytes(keyFile)
 	if err != nil {
-		return nil //nolint:nilerr // a missing or unreadable key file is the archive path's to handle
+		return err
 	}
 
 	held := strings.TrimSpace(string(data))
