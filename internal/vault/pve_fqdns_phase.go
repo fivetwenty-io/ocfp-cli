@@ -142,7 +142,7 @@ func (m *Manager) populateFQDNsPhase(opts *PopulateOptions, w io.Writer) error {
 		return fmt.Errorf("fqdns configuration failed: %w", err)
 	}
 
-	writeFQDNsPlan(w, "", plan, opts.Force, false)
+	writeFQDNsPlan(w, m.blocName, "", plan, opts.Force, false)
 
 	return nil
 }
@@ -160,7 +160,7 @@ func (m *Manager) populateFQDNsDryRun(provider providers.VaultProvider, force bo
 		return err
 	}
 
-	writeFQDNsPlan(w, target, plan, force, true)
+	writeFQDNsPlan(w, m.blocName, target, plan, force, true)
 
 	return nil
 }
@@ -182,8 +182,9 @@ func (m *Manager) fqdnsProvider(safe SafeInterface) (*PVEVaultProvider, error) {
 
 // writeFQDNsPlan renders the per-plane additions, and under force the
 // overwrites with old and new values. FQDNs are hostnames, not secrets, so
-// values are printed.
-func writeFQDNsPlan(w io.Writer, target string, plan []FQDNPlaneChanges, force, dryRun bool) {
+// values are printed. An empty plan means the bloc has no fqdns configuration,
+// so the phase evaluated nothing, and the output says so.
+func writeFQDNsPlan(w io.Writer, bloc, target string, plan []FQDNPlaneChanges, force, dryRun bool) {
 	prefix, addVerb, overVerb := "", "added", "overwritten"
 
 	if dryRun {
@@ -193,6 +194,10 @@ func writeFQDNsPlan(w io.Writer, target string, plan []FQDNPlaneChanges, force, 
 	}
 
 	total := 0
+
+	if len(plan) == 0 {
+		_, _ = fmt.Fprintf(w, "%sNo fqdns are configured for bloc %s, so nothing was evaluated; add an fqdns block to the bloc config to populate them\n", prefix, bloc)
+	}
 
 	for _, change := range plan {
 		if change.Empty() {
