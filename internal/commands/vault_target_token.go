@@ -23,13 +23,13 @@ const (
 	// once safe's token has opened the vault: root.key.rejected-<timestamp>.
 	rejectedTokenInfix = ".rejected-"
 
-	// keyFileNameAttempts bounds the -N suffixes tried for a free name.
-	keyFileNameAttempts = 100
+	// keepNameAttempts bounds the -N suffixes tried for a free name.
+	keepNameAttempts = 100
 )
 
-// ErrKeyFileNameTaken reports that every name tried for a kept copy of a key
-// was already taken.
-var ErrKeyFileNameTaken = errors.New("no free name to keep a copy of the inception vault root token")
+// ErrNoFreeKeepName reports that every name tried for keeping a copy of a
+// root token, or an older vault log, was already taken.
+var ErrNoFreeKeepName = errors.New("no free name left to keep an inception vault file")
 
 // preserveTargetToken makes sure the root token safe holds for the bloc's
 // target is on disk before anything stops the vault. Stopping deletes that
@@ -137,7 +137,7 @@ func keptTokenCopies(rootKeyFile string) ([]string, error) {
 func writeKeyFileUnderFreeName(base, value string) (string, error) {
 	candidate := base
 
-	for n := 2; n <= keyFileNameAttempts; n++ {
+	for n := 2; n <= keepNameAttempts; n++ {
 		err := writeNewKeyFile(candidate, value)
 		if err == nil {
 			return candidate, nil
@@ -150,7 +150,7 @@ func writeKeyFileUnderFreeName(base, value string) (string, error) {
 		candidate = base + "-" + strconv.Itoa(n)
 	}
 
-	return "", fmt.Errorf("%w: %s", ErrKeyFileNameTaken, base)
+	return "", fmt.Errorf("%w: %s", ErrNoFreeKeepName, base)
 }
 
 // promoteTargetToken makes root.key hold the token that just opened the
@@ -189,7 +189,7 @@ func promoteTargetToken(paths map[string]string, token string, now time.Time, lo
 func moveAsideUnderFreeName(path, base string) (string, error) {
 	candidate := base
 
-	for n := 2; n <= keyFileNameAttempts; n++ {
+	for n := 2; n <= keepNameAttempts; n++ {
 		err := renameRefusingExisting(path, candidate)
 		if err == nil {
 			return candidate, nil
@@ -202,5 +202,5 @@ func moveAsideUnderFreeName(path, base string) (string, error) {
 		candidate = base + "-" + strconv.Itoa(n)
 	}
 
-	return "", fmt.Errorf("%w: %s", ErrKeyFileNameTaken, base)
+	return "", fmt.Errorf("%w: %s", ErrNoFreeKeepName, base)
 }

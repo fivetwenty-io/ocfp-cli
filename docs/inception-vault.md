@@ -32,7 +32,7 @@ Two more files live under the state home, which is `~/.local/state/ocfp` unless 
 
 | Path | What it holds |
 |------|---------------|
-| `<bloc>/logs/vault/vault-inception.log` | Everything `safe local` printed on its last start. The previous start's log is kept beside it with a `.previous` suffix. The log holds the unseal key of a new vault, so we treat it like a key file. |
+| `<bloc>/logs/vault/vault-inception.log` | Everything `safe local` printed on its last start. The previous start's log is kept beside it with a `.previous` suffix, and each older log is kept as `.previous-<timestamp>`. ocfp never replaces or deletes any of them, because a log may hold the only copy of a new vault's unseal key. We treat every one of them like a key file. |
 | `<bloc>/inception-vault.lock` | The lock that lets only one ocfp run work on the bloc's vault at a time. |
 
 ## What a run does
@@ -177,7 +177,7 @@ A new vault is held to the same standard. When ocfp starts one and cannot save b
 | `an inception vault key file cannot be read` | `root.key` or `unseal.keys` exists but this user cannot read it, often because a `sudo` run left it owned by root. Nothing was started, stopped, or changed. | Give the file back to this user with mode 0600, for example with `sudo chown "$USER" <file>` and `chmod 600 <file>`, and run the command again. |
 | `the inception vault unseal key file does not hold a whole key` | `unseal.keys` is cut short and no log or pane history still holds the whole key. | Follow the steps in the section on a cut-short unseal key, then run the command again. Nothing on disk changed. |
 | `the inception vault's keys were not saved` | A vault is running, but its root token or unseal key is not saved in a valid shape. Either a new vault's keys could not be captured, or a running vault's keys were never saved and could not be recovered. | Find the full keys in the vault log that the error names, write them to `root.key` and `unseal.keys` at mode 0600, and run the command again. The vault was left running. |
-| `no free name to keep a copy of the inception vault root token` | ocfp tried to keep a copy of a root token beside `root.key`, but every name it tried was already taken. Nothing was stopped. | Move old `root.key.saferc-*` or `root.key.rejected-*` files somewhere safe, and run the command again. |
+| `no free name left to keep an inception vault file` | ocfp tried to keep a copy of a root token beside `root.key`, or to keep an older vault log, but every name it tried was already taken. | Move old `root.key.saferc-*`, `root.key.rejected-*`, or `vault-inception.log.previous-*` files somewhere safe, and run the command again. |
 | `timed out waiting for another ocfp run to release its lock` | Another ocfp run has worked on this bloc's vault for more than five minutes. | Wait for that run to finish, or stop it, and run the command again. A killed run releases the lock on its own. |
 
 ## Testing on a workstation
