@@ -360,3 +360,163 @@ func TestUniqueAsidePath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, base+"-2", second)
 }
+
+// writeJournal plants a journal as an interrupted run would have left it.
+func writeJournal(t *testing.T, paths map[string]string, phase, backup string) {
+	t.Helper()
+
+	body := `{"phase":"` + phase + `","started":"20261006-110000","backup":"` + backup + `"}` + "\n"
+	require.NoError(t, os.WriteFile(paths["vaultDir"]+".raft-migration.json", []byte(body), 0o600))
+}
+
+func readJournalForTest(t *testing.T, paths map[string]string) *migrationJournal {
+	t.Helper()
+
+	journal, err := readMigrationJournal(paths["vaultDir"])
+	require.NoError(t, err)
+
+	return journal
+}
+
+func TestReadMigrationJournal(t *testing.T) {
+	paths := migrationPaths(t)
+
+	journal, err := readMigrationJournal(paths["vaultDir"])
+	require.NoError(t, err)
+	assert.Nil(t, journal, "no journal means no migration in flight")
+
+	backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+	writeJournal(t, paths, "swapping", backup)
+
+	journal = readJournalForTest(t, paths)
+	assert.Equal(t, "swapping", journal.Phase)
+	assert.Equal(t, backup, journal.Backup)
+}
+
+// A journal ocfp cannot trust stops the run with the disk unchanged, rather
+// than being ignored and the half-migrated bloc read as empty.
+func TestReadMigrationJournal_RefusesWhatItCannotTrust(t *testing.T) {
+	for name, body := range map[string]string{
+		"not json":        "{",
+		"unknown phase":   `{"phase":"copying","backup":"BACKUP"}`,
+		"foreign backup":  `{"phase":"swapping","backup":"/elsewhere/data.file-backup-1"}`,
+		"unrelated name":  `{"phase":"swapping","backup":"DATA.superseded-1"}`,
+		"no backup":       `{"phase":"swapping"}`,
+		"nested backup":   `{"phase":"swapping","backup":"DATA.file-backup-1/x"}`,
+		"backup is data":  `{"phase":"swapping","backup":"DATA"}`,
+		"dotdot backup":   `{"phase":"swapping","backup":"DATA.file-backup-1/../../x"}`,
+		"empty file body": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := migrationPaths(t)
+			body = strings.ReplaceAll(body, "BACKUP", paths["vaultDir"]+".file-backup-1")
+			body = strings.ReplaceAll(body, "DATA", paths["vaultDir"])
+			require.NoError(t, os.WriteFile(paths["vaultDir"]+".raft-migration.json", []byte(body), 0o600))
+
+			_, err := readMigrationJournal(paths["vaultDir"])
+			require.ErrorIs(t, err, ErrMigrationJournalInvalid)
+			assert.Contains(t, err.Error(), paths["vaultDir"]+".raft-migration.json")
+		})
+	}
+}
+
+// A copy that never finished left data untouched. Its staging directory is
+// kept as data.raft-partial-<ts> and the journal goes, so the next migration
+// starts clean.
+func TestAbandonInterruptedCopy(t *testing.T) {
+	paths := migrationPaths(t)
+	before := treeDigest(t, paths["vaultDir"])
+
+	staging := paths["vaultDir"] + ".raft-migrating"
+	require.NoError(t, os.MkdirAll(filepath.Join(staging, "raft"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "vault.db"), []byte("partial"), 0o600))
+	writeJournal(t, paths, "migrating", paths["vaultDir"]+".file-backup-20261006-110000")
+
+	require.NoError(t, abandonInterruptedCopy(paths, readJournalForTest(t, paths), zap.NewNop().Sugar()))
+
+	partial := globOne(t, paths["vaultDir"]+".raft-partial-*")
+	assert.FileExists(t, filepath.Join(partial, "vault.db"))
+	assert.NoDirExists(t, staging)
+	assert.NoFileExists(t, paths["vaultDir"]+".raft-migration.json")
+	assert.Equal(t, before, treeDigest(t, paths["vaultDir"]))
+}
+
+// stageCompleteRaftStore writes the raft store a finished copy leaves.
+func stageCompleteRaftStore(t *testing.T, paths map[string]string) {
+	t.Helper()
+
+	writeRaftData(t, paths["vaultDir"]+".raft-migrating")
+}
+
+func TestFinishInterruptedSwap(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, paths map[string]string, backup string){
+		"before either rename": func(t *testing.T, paths map[string]string, _ string) {
+			t.Helper()
+			stageCompleteRaftStore(t, paths)
+		},
+		"after the first rename": func(t *testing.T, paths map[string]string, backup string) {
+			t.Helper()
+			stageCompleteRaftStore(t, paths)
+			require.NoError(t, os.Rename(paths["vaultDir"], backup))
+		},
+		"after both renames": func(t *testing.T, paths map[string]string, backup string) {
+			t.Helper()
+			require.NoError(t, os.Rename(paths["vaultDir"], backup))
+			writeRaftData(t, paths["vaultDir"])
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := migrationPaths(t)
+			original := treeDigest(t, paths["vaultDir"])
+			backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+
+			setup(t, paths, backup)
+			writeJournal(t, paths, "swapping", backup)
+
+			got, err := finishInterruptedSwap(paths, readJournalForTest(t, paths), zap.NewNop().Sugar())
+			require.NoError(t, err)
+			assert.Equal(t, backup, got)
+
+			assert.Equal(t, vaultDataRaft, classifyVaultData(paths["vaultDir"]))
+			assert.Equal(t, original, treeDigest(t, backup))
+			assert.NoDirExists(t, paths["vaultDir"]+".raft-migrating")
+			assert.NoFileExists(t, paths["vaultDir"]+".raft-migration.json")
+		})
+	}
+}
+
+// A swap whose pieces do not add up to one of the three moments a crash can
+// leave is refused with every path named, and nothing moves.
+func TestFinishInterruptedSwap_RefusesAnInconsistentDisk(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, paths map[string]string, backup string){
+		"nothing anywhere": func(t *testing.T, paths map[string]string, backup string) {
+			t.Helper()
+			require.NoError(t, os.Rename(paths["vaultDir"], backup))
+			require.NoError(t, os.RemoveAll(backup)) // test fixture only
+		},
+		"incomplete staging": func(t *testing.T, paths map[string]string, _ string) {
+			t.Helper()
+			require.NoError(t, os.MkdirAll(paths["vaultDir"]+".raft-migrating/raft", 0o700))
+		},
+		"backup and data both file": func(t *testing.T, paths map[string]string, backup string) {
+			t.Helper()
+			writeFileData(t, backup)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := migrationPaths(t)
+			backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+
+			setup(t, paths, backup)
+			writeJournal(t, paths, "swapping", backup)
+
+			before := treeDigest(t, filepath.Dir(paths["vaultDir"]))
+
+			_, err := finishInterruptedSwap(paths, readJournalForTest(t, paths), zap.NewNop().Sugar())
+			require.ErrorIs(t, err, ErrMigrationSwapUnclear)
+			assert.Contains(t, err.Error(), paths["vaultDir"])
+			assert.Contains(t, err.Error(), backup)
+			assert.Equal(t, before, treeDigest(t, filepath.Dir(paths["vaultDir"])))
+		})
+	}
+}

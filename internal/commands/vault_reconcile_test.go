@@ -683,3 +683,114 @@ func TestReconcile_RestartFailureAfterMigrationNeverArchives(t *testing.T) {
 		})
 	}
 }
+
+// A copy that never finished is moved aside and run again from the data,
+// which the interrupted run never touched.
+func TestReconcile_ResumesAnUnfinishedCopy(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+	writeRaftData(t, paths["vaultDir"]+".raft-migrating")
+	writeJournal(t, paths, "migrating", paths["vaultDir"]+".file-backup-20261006-110000")
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+	}, fake.calls)
+	globOne(t, paths["vaultDir"]+".raft-partial-*")
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+// With data renamed away and the raft store still in staging, the bloc
+// looks empty. The journal is what stops it starting a fresh vault there.
+func TestReconcile_ResumesAnUnfinishedSwapAndNeverStartsFresh(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+	writeRaftData(t, paths["vaultDir"]+".raft-migrating")
+	require.NoError(t, os.Rename(paths["vaultDir"], backup))
+	writeJournal(t, paths, "swapping", backup)
+
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "start restart", "finish restart",
+	}, fake.calls)
+	assert.Equal(t, vaultDataRaft, classifyVaultData(paths["vaultDir"]))
+	assert.DirExists(t, filepath.Join(backup, "core"))
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+func TestReconcile_RestartFailureAfterAResumedSwapNeverArchives(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeKeys(t, paths, true, true)
+
+	backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+	writeFileData(t, backup)
+	writeRaftData(t, paths["vaultDir"])
+	writeJournal(t, paths, "swapping", backup)
+
+	fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{ErrVaultKeysRejected}}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrRestartAfterMigrationFailed)
+	assert.Contains(t, err.Error(), backup)
+	assert.NotContains(t, fake.calls, "start fresh")
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+// A migration in flight is never mistaken for a healthy vault, even when a
+// vault answers as one, because the journal says the disk is mid-change.
+func TestReconcile_JournalSkipsTheFastPath(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeKeys(t, paths, true, true)
+
+	backup := paths["vaultDir"] + ".file-backup-20261006-110000"
+	writeFileData(t, backup)
+	writeRaftData(t, paths["vaultDir"])
+	writeJournal(t, paths, "swapping", backup)
+
+	fake := &fakeInception{probe: healthyRaftProbe(), session: true, target: true}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Contains(t, fake.calls, "stop")
+	assert.Contains(t, fake.calls, "start restart")
+	assert.NoFileExists(t, paths["vaultDir"]+".raft-migration.json")
+}
+
+func TestReconcile_UntrustedJournalChangesNothing(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+	require.NoError(t, os.WriteFile(paths["vaultDir"]+".raft-migration.json", []byte("{"), 0o600))
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrMigrationJournalInvalid)
+	assert.Equal(t, []string{"probe"}, fake.calls)
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+}
+
+// A journal that says the copy was running while data is no longer the file
+// store does not describe anything ocfp left, so nothing moves.
+func TestReconcile_CopyJournalWithoutFileDataChangesNothing(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+	writeJournal(t, paths, "migrating", paths["vaultDir"]+".file-backup-20261006-110000")
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrMigrationJournalInvalid)
+	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start")
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+}
