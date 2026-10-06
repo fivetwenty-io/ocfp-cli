@@ -69,7 +69,7 @@ flowchart TD
     RT -->|engine rejects it too| AR
 ```
 
-A vault counts as this bloc's own when the process listening on the API port also holds this bloc's `vault.db`. Without raft data there is no lock to compare, so the bloc's own tmux session is the evidence instead. Derived ports can collide between blocs, and this check is what keeps one bloc from stopping a sibling's vault.
+A vault counts as this bloc's own when the process listening on the API port also holds this bloc's `vault.db`. Without raft data there is no lock to compare, and the bloc's tmux session alone proves nothing, because its shell outlives safe. So ocfp follows the listening process up through its parents, at most eight levels, and counts the vault as the bloc's own only when it reaches a pane of the bloc's tmux session. An engine that outlived its safe has been adopted by init and fails this check, so ocfp leaves it running and reports the port as taken. We stop such an engine by hand once we have confirmed it is the bloc's. Derived ports can collide between blocs, and this check is what keeps one bloc from stopping a sibling's vault.
 
 A vault is healthy when it is initialized and unsealed, it reports raft storage or no storage type at all, the data directory holds raft data, and the bloc's tmux session exists. ocfp leaves a healthy vault running. If safe has lost the bloc's target, ocfp registers it again and authenticates it with the token in `root.key`.
 
@@ -163,9 +163,9 @@ A new vault is held to the same standard. When ocfp starts one and cannot save b
 | Error | What it means | What to do |
 |-------|---------------|------------|
 | `safe is too old for raft-backed inception vaults` | The safe on `PATH` cannot run a raft vault. | Install safe v1.25.0 or later and run the command again. Nothing on disk changed. |
-| `the inception vault port is taken` | Something that is not this bloc's vault answers on the API port, such as another program or another bloc's vault on a colliding port. | Stop whatever holds the port, or set `OCFP_VAULT_INCEPTION_PORT` to move this bloc's ports. |
+| `the inception vault port is taken` | Something that is not this bloc's vault answers on the API port, such as another program or another bloc's vault on a colliding port. It can also be this bloc's own engine on file storage after its safe exited, because ocfp can no longer prove that engine is the bloc's. | Stop whatever holds the port, or set `OCFP_VAULT_INCEPTION_PORT` to move this bloc's ports. |
 | `the inception vault cluster port is taken` | The cluster port, the API port plus 1000, is in use, so the engine could not bind it. | Free the cluster port, or set `OCFP_VAULT_INCEPTION_PORT` to move both ports. |
-| `cannot tell whose vault holds the inception vault port` | `lsof` is missing or failed, so ocfp cannot tell whose vault answers on the port. | Make sure `lsof` is installed and on `PATH`, then run the command again. |
+| `cannot tell whose vault holds the inception vault port` | `lsof`, `tmux`, or `ps` is missing or failed, so ocfp cannot tell whose vault answers on the port. | Make sure `lsof`, `tmux`, and `ps` are installed and on `PATH`, then run the command again. |
 | `cannot tell whether the inception vault data is still in use` | `lsof` is missing or failed, so ocfp cannot tell whether an engine still holds `vault.db`. | Make sure `lsof` is installed and on `PATH`, then run the command again. |
 | `the inception vault data holds both raft and file storage` | The data directory has both `core/` and raft data, which ocfp never creates on its own. | Inspect the directory by hand and decide which store to keep. ocfp will not touch it. |
 | `inception vault did not stop` | A process still holds `vault.db` or the port after the stop. | Find the process with `lsof -t <data>/vault.db` and stop it, then run the command again. |

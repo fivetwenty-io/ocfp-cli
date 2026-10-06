@@ -63,11 +63,13 @@ func inceptionSessionExists(ctx context.Context, paths map[string]string) bool {
 //
 // A raft engine keeps vault.db locked while it runs, so the vault is this
 // bloc's exactly when the process listening on the port holds this bloc's
-// vault.db. Without raft data there is no lock to compare, and the bloc's own
-// tmux session is the evidence instead.
+// vault.db. Without raft data there is no lock to compare. The bloc's tmux
+// session is not enough on its own, because the session's shell outlives
+// safe, so the process listening on the port must also run under one of the
+// session's panes.
 func ownsInceptionVault(ctx context.Context, paths map[string]string, data vaultDataState) (bool, error) {
 	if data != vaultDataRaft {
-		return inceptionSessionExists(ctx, paths), nil
+		return listenerRunsInSession(ctx, paths)
 	}
 
 	listeners, err := portListeners(ctx, paths["port"])
@@ -87,6 +89,120 @@ func ownsInceptionVault(ctx context.Context, paths map[string]string, data vault
 	}
 
 	return false, nil
+}
+
+// maxOwnerAncestry bounds the walk from a listener up through its parents.
+// The engine is safe's child, and safe runs in the pane's shell, sometimes
+// under a subshell for its pipe into tee, so the pane is at most a few
+// levels up.
+const maxOwnerAncestry = 8
+
+// listenerRunsInSession reports whether a process listening on the bloc's
+// port descends from a pane of the bloc's tmux session. An engine that safe
+// left behind has been adopted by init, and a sibling's engine descends from
+// the sibling's own pane, so neither passes.
+func listenerRunsInSession(ctx context.Context, paths map[string]string) (bool, error) {
+	if !inceptionSessionExists(ctx, paths) {
+		return false, nil
+	}
+
+	listeners, err := portListeners(ctx, paths["port"])
+	if err != nil || len(listeners) == 0 {
+		return false, err
+	}
+
+	panes, err := inceptionPanePIDs(ctx, paths)
+	if err != nil {
+		return false, err
+	}
+
+	for _, pid := range listeners {
+		under, err := descendsFrom(ctx, pid, panes)
+		if err != nil || under {
+			return under, err
+		}
+	}
+
+	return false, nil
+}
+
+// inceptionPanePIDs lists the PIDs of the processes that the bloc's session
+// started in its panes. The "=" asks tmux for this exact session name rather
+// than the first one that starts with it.
+func inceptionPanePIDs(ctx context.Context, paths map[string]string) ([]string, error) {
+	out, err := vaultOps.run(ctx, cleanupCommand{
+		name: "tmux", args: []string{"list-panes", "-s", "-t", "=" + paths["tmuxSession"], "-F", "#{pane_pid}"}, tmux: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: tmux could not list the panes of session %s: %w",
+			ErrVaultOwnerUnknown, paths["tmuxSession"], err)
+	}
+
+	var pids []string
+
+	for line := range strings.SplitSeq(string(out), "\n") {
+		pid := strings.TrimSpace(line)
+		if isPID(pid) {
+			pids = append(pids, pid)
+		}
+	}
+
+	if len(pids) == 0 {
+		return nil, fmt.Errorf("%w: tmux listed no panes for session %s", ErrVaultOwnerUnknown, paths["tmuxSession"])
+	}
+
+	return pids, nil
+}
+
+// descendsFrom reports whether pid, or one of its parents within
+// maxOwnerAncestry levels, is one of ancestors. A process that exits during
+// the walk descends from nothing. The walk ends at init, PID 1, which no
+// pane can be.
+func descendsFrom(ctx context.Context, pid string, ancestors []string) (bool, error) {
+	for range maxOwnerAncestry + 1 {
+		if slices.Contains(ancestors, pid) {
+			return true, nil
+		}
+
+		if pid == "1" {
+			return false, nil
+		}
+
+		parent, gone, err := parentPID(ctx, pid)
+		if err != nil || gone {
+			return false, err
+		}
+
+		pid = parent
+	}
+
+	return false, nil
+}
+
+// psNoProcessExit is the status ps exits with, printing nothing, when the
+// process it was asked about does not exist.
+const psNoProcessExit = 1
+
+// parentPID returns the parent of pid. gone is true when pid no longer
+// exists. Anything else ps prints, or any other failure, is not an answer.
+func parentPID(ctx context.Context, pid string) (string, bool, error) {
+	out, err := vaultOps.run(ctx, cleanupCommand{name: "ps", args: []string{"-o", "ppid=", "-p", pid}})
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == psNoProcessExit && strings.TrimSpace(string(out)) == "" {
+		return "", true, nil
+	}
+
+	if err != nil {
+		return "", false, fmt.Errorf("%w: ps could not find the parent of process %s: %w", ErrVaultOwnerUnknown, pid, err)
+	}
+
+	parent := strings.TrimSpace(string(out))
+	if !isPID(parent) {
+		return "", false, fmt.Errorf("%w: ps did not report a parent for process %s", ErrVaultOwnerUnknown, pid)
+	}
+
+	return parent, false, nil
 }
 
 // portListeners lists the processes listening on the loopback port. lsof
