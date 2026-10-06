@@ -147,7 +147,15 @@ func newVaultPopulateCmd() *cobra.Command {
 		Long: `Populate vault with secrets from configuration or file.
 
 This command reads secrets from a configuration file and populates them
-into Vault or CredHub at the appropriate paths for the deployment.`,
+into Vault or CredHub at the appropriate paths for the deployment.
+
+An optional phase name limits the run to one part of the tree:
+
+  public-ips     write the public IP records
+  reserved-ips   write the reserved-ips records (PVE only)
+  fqdns          add the FQDN keys vault does not hold yet, for the mgmt and
+                 ocf planes (PVE only). Existing keys are never changed unless
+                 --force is given. Use --dry-run to list the additions.`,
 		Example: `  # Populate vault from default config
   ocfp vault populate
 
@@ -159,6 +167,15 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 
   # Populate with AWS KMS key for BOSH disk encryption (AWS only)
   ocfp vault populate --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/mrk-abc123
+
+  # Add only the missing FQDN keys, per plane (PVE only)
+  ocfp vault populate fqdns
+
+  # Preview the FQDN additions (with values) without writing
+  ocfp vault populate fqdns --dry-run
+
+  # Overwrite existing FQDN keys too; the dry run shows old and new values
+  ocfp vault populate fqdns --force --dry-run
 
   # Populate with PVE blobstore endpoint (PVE only)
   ocfp vault populate --blobstore-endpoint https://s3.dc1.example.com`,
@@ -181,7 +198,7 @@ into Vault or CredHub at the appropriate paths for the deployment.`,
 
 	cmd.Flags().StringVar(&vaultPath, "vault-path", "", "vault path prefix")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "load secrets from file")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets (for the fqdns phase, existing FQDN keys)")
 	cmd.Flags().BoolVar(&forceReallocate, "force-reallocate", false,
 		"move reserved IPs onto this build's derived addresses (recreates the VMs holding them; "+
 			"omit to keep the addresses vault records and report the divergence)")
@@ -231,7 +248,7 @@ func runVaultPopulate(
 
 	defer func() { _ = manager.Close() }()
 
-	// Handle subcommand (public-ips)
+	// Handle subcommand (public-ips, reserved-ips, fqdns)
 	var subcommand string
 	if len(args) > 0 {
 		subcommand = args[0]
@@ -1447,7 +1464,7 @@ func newVaultImportCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&vaultPath, "path", "", "vault path to import to")
 	cmd.Flags().StringVar(&inputFile, "file", "", "input file")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets (for the fqdns phase, existing FQDN keys)")
 
 	return cmd
 }

@@ -232,6 +232,16 @@ Vault and the deployed kits still serve the old one, until an operator
 re-runs FQDN provisioning for that bloc (`ocfp vault populate`) and
 redeploys the kits that consume the affected FQDNs.
 
+To add only the FQDN keys a bloc's record is missing, without touching
+the ones it already holds, run `ocfp vault populate fqdns` (PVE only).
+It works on both planes, at `secret/config/<bloc>/<plane>/fqdns`, and
+writes `env_type` and `base` only when they are absent too. An explicit
+`fqdns.<plane>.<svc>` value from the bloc config wins over the derived
+default, exactly as in a full populate. `--dry-run` lists the keys it
+would add per plane, with their values, and writes nothing. `--force`
+overwrites keys that already exist, and combined with `--dry-run` it
+also lists each overwrite with the old and new value.
+
 **Do not read a corrected FQDN in this command's output as evidence
 that a bloc has already been fixed.** This command shows what the
 configuration says should be true. It does not show what is currently
