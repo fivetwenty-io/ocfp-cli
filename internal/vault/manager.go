@@ -51,6 +51,10 @@ var (
 	// phase or migrate/status operation is attempted against a non-PVE
 	// provider: the scoped writers it drives exist only on *PVEVaultProvider.
 	ErrReservedIPsRequiresPVE = errors.New("reserved-ips is only supported on the PVE provider")
+
+	// ErrFQDNsRequiresPVE is returned when the fqdns populate phase is
+	// requested for a provider other than PVE.
+	ErrFQDNsRequiresPVE = errors.New("the fqdns phase is only supported on the PVE provider")
 )
 
 // Manager provides core vault management operations
@@ -211,6 +215,8 @@ func (m *Manager) populate(opts *PopulateOptions) error {
 		return m.populatePublicIPs(opts.ProgressReporter)
 	case PhaseReservedIPs:
 		return m.populateReservedIPsPhase(opts.ProgressReporter, opts, os.Stdout)
+	case PhaseFQDNs:
+		return m.populateFQDNsPhase(opts, os.Stdout)
 	case "":
 		// Full configuration populate (provider reports all phases)
 		return m.populateFullConfiguration(opts.ProgressReporter, opts.KMSKeyARN, opts, os.Stdout)
@@ -644,6 +650,10 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	}
 
 	switch opts.Subcommand {
+	case PhaseFQDNs:
+		// The fqdns phase prints its own per-key plan (FQDNs are not
+		// secrets, so values are shown) instead of the path/key plan.
+		return m.populateFQDNsDryRun(provider, opts.Force, target, w)
 	case PhasePublicIPs:
 		err = provider.ConfigurePublicIPs(opts.ProgressReporter, 1, 1)
 	case PhaseReservedIPs:
