@@ -1243,7 +1243,7 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 		keyErr = fmt.Errorf("refusing to save the unseal key in the vault's output to %s: %w",
 			paths["unsealKeysFile"], checkSealKey(sealKey))
 	default:
-		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) // #nosec G703 -- path is the OCFP-managed vault output dir
+		err := keyfile.WriteRecovered(paths["unsealKeysFile"], sealKey)
 		if err != nil {
 			return fmt.Errorf("failed to write unseal key: %w", err)
 		}
@@ -1303,7 +1303,7 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 			return fmt.Errorf("refusing to save the root token of target %s to %s: %w", targetName, paths["rootKeyFile"], err)
 		}
 
-		err = os.WriteFile(paths["rootKeyFile"], []byte(v.Token+"\n"), VaultOutputFileMode)
+		err = keyfile.WriteRecovered(paths["rootKeyFile"], v.Token)
 		if err != nil {
 			return fmt.Errorf("failed to write root token: %w", err)
 		}

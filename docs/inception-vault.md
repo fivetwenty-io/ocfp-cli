@@ -28,6 +28,8 @@ In the bloc layout, which every current bloc uses, the vault's files live under 
 | `<bloc>/vault/root.key.saferc-<timestamp>` | A copy of the root token that safe held for the bloc's target, kept with mode 0600 when it differed from `root.key` at the moment ocfp stopped the vault. |
 | `<bloc>/vault/root.key.rejected-<timestamp>` | A root token that the engine refused, moved aside after the token from safe's target opened the vault instead. |
 
+ocfp writes every key file through a temporary file in the same directory. It flushes that file to disk before the file takes the key file's name, and it flushes the directory afterwards, so neither a crash nor a power loss can leave a key file empty or half-written.
+
 Two more files live under the state home, which is `~/.local/state/ocfp` unless `XDG_STATE_HOME` or `OCFP_HOME` says otherwise.
 
 | Path | What it holds |
