@@ -32,6 +32,16 @@ type inceptionEngine struct {
 	path string
 }
 
+// inceptionTools are the binaries the inception vault runs on, as
+// checkVaultInceptionPrerequisites validated them.
+type inceptionTools struct {
+	// safe is the absolute path of the safe whose version was checked. The
+	// tmux pane runs this exact binary, never whatever safe PATH finds.
+	safe string
+	// engine is the server binary safe runs.
+	engine inceptionEngine
+}
+
 // resolveInceptionEngine picks the engine the way safe's selectEngine does:
 // SAFE_ENGINE when it is set, otherwise vault before bao. A pinned engine
 // that is missing is an error, never a fallback to the other one.

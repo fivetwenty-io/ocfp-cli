@@ -113,7 +113,9 @@ func TestCheckVaultInceptionPrerequisites_AcceptsBaoAlone(t *testing.T) {
 	writeFakeExecutable(t, bin, "script", "exit 0\n")
 	isolateEngineLookup(t, bin)
 
-	engine, err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
+	tools, err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
 	require.NoError(t, err)
-	assert.Equal(t, "bao", engine.name)
+	assert.Equal(t, "bao", tools.engine.name)
+	assert.Equal(t, filepath.Join(bin, "safe"), tools.safe, "the checked safe is the one that runs")
+	assert.True(t, filepath.IsAbs(tools.safe))
 }
