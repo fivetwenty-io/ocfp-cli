@@ -164,13 +164,14 @@ func (m *SecurityManager) GetSecurityGroup(ctx context.Context, id string) (*cpi
 // parsePVERule converts one PVE firewall rule into a cpi.SecurityRule using
 // the canonical spellings the rest of the CLI compares against. PVE reports
 // the direction as "in" or "out", omits proto and source for "any", and may
-// give a bare IP for a source.
+// give a bare IP for a source. The source keeps 0.0.0.0/0, ::/0, and no source
+// apart, because they are different rules.
 func parsePVERule(ruleData map[string]interface{}, index int) *cpi.SecurityRule {
 	rule := &cpi.SecurityRule{
 		ID:           strconv.Itoa(index),
 		Direction:    cpi.NormalizeDirection(getStringFromMap(ruleData, pveKeyType)),
 		Protocol:     cpi.NormalizeProtocol(getStringFromMap(ruleData, "proto")),
-		RemoteIPCIDR: cpi.NormalizeRemoteCIDR(getStringFromMap(ruleData, "source")),
+		RemoteIPCIDR: cpi.NormalizeRemoteCIDRExact(getStringFromMap(ruleData, "source")),
 		Description:  getStringFromMap(ruleData, "comment"),
 	}
 

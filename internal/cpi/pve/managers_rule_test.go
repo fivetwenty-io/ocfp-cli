@@ -17,7 +17,7 @@ func TestParsePVERuleUsesCanonicalSpellings(t *testing.T) {
 	}
 
 	out := parsePVERule(map[string]interface{}{"type": "out", "source": "0.0.0.0/0"}, 1)
-	if out.Direction != "egress" || out.Protocol != "all" || out.RemoteIPCIDR != "" || out.ID != "1" {
+	if out.Direction != "egress" || out.Protocol != "all" || out.RemoteIPCIDR != "0.0.0.0/0" || out.ID != "1" {
 		t.Errorf("unexpected egress parse: %+v", out)
 	}
 
@@ -53,5 +53,20 @@ func TestParsePVERuleKeepsUnmodeledFields(t *testing.T) {
 	plain := parsePVERule(map[string]interface{}{"type": "in", "dport": "1024:2048", "action": "ACCEPT"}, 0)
 	if _, ok := plain.Attributes["dport"]; ok {
 		t.Errorf("a plain port range should not be kept as an attribute: %v", plain.Attributes)
+	}
+}
+
+func TestParsePVERuleKeepsAnywhereSourcesApart(t *testing.T) {
+	t.Parallel()
+
+	for source, want := range map[string]string{"": "", "0.0.0.0/0": "0.0.0.0/0", "::/0": "::/0"} {
+		data := map[string]interface{}{"type": "in"}
+		if source != "" {
+			data["source"] = source
+		}
+
+		if got := parsePVERule(data, 0).RemoteIPCIDR; got != want {
+			t.Errorf("source %q read back as %q, want %q", source, got, want)
+		}
 	}
 }
