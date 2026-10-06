@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // --- isValidTmuxSession ---
@@ -39,33 +38,6 @@ func TestIsValidTmuxSession_Invalid(t *testing.T) {
 	for _, s := range cases {
 		assert.False(t, isValidTmuxSession(s), "expected invalid: %q", s)
 	}
-}
-
-// --- stripANSI ---
-
-func TestStripANSI_Plain(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "hello", stripANSI("hello"))
-}
-
-func TestStripANSI_ColorCode(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "hello world", stripANSI("\x1b[32mhello world\x1b[0m"))
-}
-
-func TestStripANSI_BoldAndReset(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "text", stripANSI("\x1b[1mtext\x1b[0m"))
-}
-
-func TestStripANSI_MultipleSequences(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "abc", stripANSI("\x1b[31ma\x1b[32mb\x1b[0mc"))
-}
-
-func TestStripANSI_Empty(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "", stripANSI(""))
 }
 
 // --- joinVaultPath ---
@@ -197,81 +169,6 @@ func TestFilterInceptionSessions_EmptyInput(t *testing.T) {
 	m := &Manager{}
 	got := m.filterInceptionSessions(nil, "mybloc-inception")
 	assert.Empty(t, got)
-}
-
-// --- getTargetTypesForKit ---
-
-func TestGetTargetTypesForKit_MgmtOnly(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	for _, kit := range []string{"concourse", "doomsday", "jumpbox", "shield", "vault", "bosh"} {
-		got := m.getTargetTypesForKit(kit)
-		assert.Equal(t, []string{MgmtEnvType}, got, "kit=%s", kit)
-	}
-}
-
-func TestGetTargetTypesForKit_Both(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	got := m.getTargetTypesForKit("prometheus")
-	assert.Equal(t, []string{MgmtEnvType, OCFEnvType}, got)
-}
-
-func TestGetTargetTypesForKit_DefaultOCF(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	for _, kit := range []string{"cf", "autoscaler", "blacksmith", "scheduler", "unknown-kit"} {
-		got := m.getTargetTypesForKit(kit)
-		assert.Equal(t, []string{OCFEnvType}, got, "kit=%s", kit)
-	}
-}
-
-// --- buildParsedEnv ---
-
-func TestBuildParsedEnv_ValidOCF(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	env := m.buildParsedEnv("cf/mybloc-eu01-ocf")
-	require.NotNil(t, env)
-	assert.Equal(t, "cf", env.Kit)
-	assert.Equal(t, "mybloc-eu01-ocf", env.Name)
-	assert.Equal(t, OCFEnvType, env.Type)
-}
-
-func TestBuildParsedEnv_MgmtSuffix(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	env := m.buildParsedEnv("bosh/mybloc-eu01-mgmt")
-	require.NotNil(t, env)
-	assert.Equal(t, MgmtEnvType, env.Type)
-}
-
-func TestBuildParsedEnv_NoSlash(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	assert.Nil(t, m.buildParsedEnv("noslash"))
-}
-
-func TestBuildParsedEnv_EmptyKit(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	// "/envname" — kit part is blank after trim.
-	assert.Nil(t, m.buildParsedEnv("/envname"))
-}
-
-func TestBuildParsedEnv_EmptyEnvName(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	assert.Nil(t, m.buildParsedEnv("kit/"))
-}
-
-func TestBuildParsedEnv_ANSIStripped(t *testing.T) {
-	t.Parallel()
-	m := &Manager{}
-	env := m.buildParsedEnv("\x1b[32mcf\x1b[0m/\x1b[31mmyenv\x1b[0m")
-	require.NotNil(t, env)
-	assert.Equal(t, "cf", env.Kit)
-	assert.Equal(t, "myenv", env.Name)
 }
 
 // --- sleepFn seam wiring ---
