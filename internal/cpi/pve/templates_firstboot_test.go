@@ -1,6 +1,9 @@
 package pve
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -201,6 +204,7 @@ func TestFirstbootScript_InstallsIngressDNAT(t *testing.T) {
 		`.ingress.origin_ip // ""`,
 		"table ip ocfp_ingress",
 		"dnat to $ing_origin",
+		"fib daddr type local",
 		"masquerade",
 	} {
 		if !strings.Contains(firstbootScript, want) {
@@ -213,9 +217,174 @@ func TestWatchdogScript_ReassertsIngressDNAT(t *testing.T) {
 	for _, want := range []string{
 		`.ingress.origin_ip // ""`,
 		"nft list table ip ocfp_ingress",
+		"fib daddr type local",
 	} {
 		if !strings.Contains(watchdogScript, want) {
 			t.Errorf("watchdogScript missing %q", want)
+		}
+	}
+}
+
+// Fake executables for the watchdog ingress harness. Each records its calls
+// to ${FAKE_LOG}; nft keeps the installed table text in ${FAKE_NFT_STATE} so
+// the script sees what a previous install left behind.
+const (
+	fakeDmidecode = `#!/bin/bash
+case "$2" in
+  system-family) echo ocfp-bastion ;;
+  system-serial-number) echo tskey-test ;;
+  system-sku-number) echo '{"ingress":{"origin_ip":"10.0.0.9","ports":[80,443]}}' ;;
+esac
+`
+	fakeNft = `#!/bin/bash
+echo "nft $*" >> "${FAKE_LOG}"
+case "$1 $2" in
+  "list table")
+    [ -f "${FAKE_NFT_STATE}" ] || exit 1
+    cat "${FAKE_NFT_STATE}"
+    ;;
+  "delete table")
+    rm -f "${FAKE_NFT_STATE}"
+    ;;
+  "-f -")
+    cat > "${FAKE_NFT_STATE}"
+    ;;
+esac
+`
+	fakeLogger = `#!/bin/bash
+echo "logger $*" >> "${FAKE_LOG}"
+`
+
+	// watchdogConnectivityMarker is where the ingress block ends and the
+	// tailscale health checks begin. The harness stops there so it needs no
+	// tailscale, systemctl, or tailnet peers.
+	watchdogConnectivityMarker = "status=$(tailscale status --json"
+)
+
+// runWatchdogIngress runs the ingress block of watchdogScript under /bin/bash
+// (3.2 on macOS) with fake dmidecode, nft, and logger on PATH. existing is
+// the table text nft already holds, or empty for no table. It returns the
+// recorded call log and the table text left behind.
+func runWatchdogIngress(t *testing.T, existing string) (calls, table string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed")
+	}
+
+	head, _, ok := strings.Cut(watchdogScript, watchdogConnectivityMarker)
+	if !ok {
+		t.Fatalf("watchdogScript has no %q marker", watchdogConnectivityMarker)
+	}
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, body := range map[string]string{"dmidecode": fakeDmidecode, "nft": fakeNft, "logger": fakeLogger} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil { //nolint:gosec // test stub must be executable
+			t.Fatal(err)
+		}
+	}
+
+	script := filepath.Join(dir, "watchdog.sh")
+	if err := os.WriteFile(script, []byte(head), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state := filepath.Join(dir, "nft-state")
+	if existing != "" {
+		if err := os.WriteFile(state, []byte(existing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	logFile := filepath.Join(dir, "calls.log")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"FAKE_LOG="+logFile,
+		"FAKE_NFT_STATE="+state,
+	)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("watchdog ingress block failed: %v\n%s", err, out)
+	}
+
+	logBytes, _ := os.ReadFile(logFile)
+	stateBytes, _ := os.ReadFile(state)
+
+	return string(logBytes), string(stateBytes)
+}
+
+const (
+	oldUnscopedTable = `table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" tcp dport { 80, 443 } dnat to 10.0.0.9
+  }
+}
+`
+	scopedTable = `table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" fib daddr type local tcp dport { 80, 443 } dnat to 10.0.0.9
+  }
+}
+`
+	scopedRule = `iifname "tailscale0" fib daddr type local tcp dport { 80, 443 } dnat to 10.0.0.9`
+)
+
+func TestWatchdogIngress_InstallsScopedTableWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	calls, table := runWatchdogIngress(t, "")
+
+	if !strings.Contains(table, scopedRule) {
+		t.Errorf("installed table lacks scoped rule %q:\n%s", scopedRule, table)
+	}
+
+	if !strings.Contains(table, "masquerade") {
+		t.Errorf("installed table lost the masquerade rule:\n%s", table)
+	}
+
+	if !strings.Contains(calls, "logger -t ocfp-tailscale-watchdog") {
+		t.Errorf("missing table install was not logged:\n%s", calls)
+	}
+}
+
+func TestWatchdogIngress_ReplacesUnscopedTable(t *testing.T) {
+	t.Parallel()
+
+	calls, table := runWatchdogIngress(t, oldUnscopedTable)
+
+	if !strings.Contains(calls, "nft delete table ip ocfp_ingress") {
+		t.Errorf("unscoped table was not deleted:\n%s", calls)
+	}
+
+	if !strings.Contains(table, scopedRule) {
+		t.Errorf("replacement table lacks scoped rule %q:\n%s", scopedRule, table)
+	}
+
+	if !strings.Contains(calls, "logger -t ocfp-tailscale-watchdog") {
+		t.Errorf("replacement was not logged:\n%s", calls)
+	}
+}
+
+func TestWatchdogIngress_LeavesScopedTableAlone(t *testing.T) {
+	t.Parallel()
+
+	calls, table := runWatchdogIngress(t, scopedTable)
+
+	if table != scopedTable {
+		t.Errorf("scoped table was modified:\n%s", table)
+	}
+
+	for _, bad := range []string{"nft delete", "nft -f", "logger"} {
+		if strings.Contains(calls, bad) {
+			t.Errorf("scoped table should be left alone, saw %q:\n%s", bad, calls)
 		}
 	}
 }

@@ -16,11 +16,29 @@ package pve
 // the firstboot script exits 0 without touching them.
 const smbiosFamilyBastion = "ocfp-bastion"
 
+// ingressNftTable is the nftables table both scripts install when the SMBIOS
+// sku carries .ingress.origin_ip. The prerouting rule matches only traffic
+// addressed to the bastion itself (fib daddr type local). The bastion also
+// advertises its SDN subnet as a tailscale route, and without that match the
+// DNAT would capture 80/443 bound for every other VM in the subnet. The
+// shell variables are expanded by the heredoc in each script.
+const ingressNftTable = `table ip ocfp_ingress {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "tailscale0" fib daddr type local tcp dport { $ing_ports } dnat to $ing_origin
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
+  }
+}
+`
+
 // firstbootScript reads the bastion config from SMBIOS, installs tailscale
 // (idempotent), and runs `tailscale up`. Invoked once by
 // ocfp-firstboot.service after cloud-init + network-online.
 const firstbootScript = `#!/bin/bash
-# ocfp-firstboot v2 — runs once at first boot of a VM cloned from an
+# ocfp-firstboot v3 — runs once at first boot of a VM cloned from an
 # OCFP-provisioned template. Reads its config from SMBIOS so the cloning
 # step needs no file delivery to the PVE host (PVE 9.x API doesn't permit
 # snippet uploads).
@@ -107,17 +125,7 @@ if [[ -n "$ing_origin" ]]; then
   # Idempotent: drop and recreate our own table only.
   nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
   nft -f - <<NFT
-table ip ocfp_ingress {
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
-  }
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
-  }
-}
-NFT
+` + ingressNftTable + `NFT
 fi
 `
 
@@ -129,7 +137,7 @@ fi
 // Triggered by ocfp-tailscale-watchdog.timer. Reads SMBIOS each invocation so
 // PVE-side config edits propagate without bastion restart.
 const watchdogScript = `#!/bin/bash
-# ocfp-tailscale-watchdog v3 — recover tailscale connectivity automatically.
+# ocfp-tailscale-watchdog v4 — recover tailscale connectivity automatically.
 #
 # Two distinct failure modes, two distinct remedies:
 #   1. Offline (Self.Online=false): coordinated drops (lab observed: all
@@ -151,20 +159,21 @@ family=$(dmidecode -s system-family 2>/dev/null || true)
 ing_sku=$(dmidecode -s system-sku-number 2>/dev/null || true)
 ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$ing_sku" 2>/dev/null || true)
 ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$ing_sku" 2>/dev/null || true)
-if [[ -n "$ing_origin" ]] && ! nft list table ip ocfp_ingress >/dev/null 2>&1; then
-  logger -t ocfp-tailscale-watchdog "ingress nft table missing; reinstalling"
+ing_reason=""
+ing_current=""
+if [[ -n "$ing_origin" ]] && ! ing_current=$(nft list table ip ocfp_ingress 2>/dev/null); then
+  ing_reason="ingress nft table missing; reinstalling"
+fi
+# Tables from older scripts DNAT every tailnet 80/443 packet, including
+# subnet-routed traffic bound for other VMs. Replace them.
+if [[ -n "$ing_origin" && -z "$ing_reason" && "$ing_current" != *"fib daddr type local"* ]]; then
+  ing_reason="ingress nft table not scoped to local traffic; replacing"
+  nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
+fi
+if [[ -n "$ing_reason" ]]; then
+  logger -t ocfp-tailscale-watchdog "$ing_reason"
   nft -f - <<NFT
-table ip ocfp_ingress {
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "tailscale0" tcp dport { $ing_ports } dnat to $ing_origin
-  }
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip daddr $ing_origin tcp dport { $ing_ports } masquerade
-  }
-}
-NFT
+` + ingressNftTable + `NFT
 fi
 
 status=$(tailscale status --json 2>/dev/null || true)
