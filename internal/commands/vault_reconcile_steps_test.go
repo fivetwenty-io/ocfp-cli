@@ -388,6 +388,65 @@ func TestRecoverInceptionKeys_IgnoresTargetsForOtherVaults(t *testing.T) {
 	assert.NoFileExists(t, paths["rootKeyFile"])
 }
 
+// A running vault printed its unseal key on the start that created it, and
+// after a few restarts that start's log has been kept as .previous-<ts>.
+// Recovery searches the older logs, newest first, before the pane.
+func TestRecoverInceptionKeys_SearchesOlderLogs(t *testing.T) {
+	installFakeVaultOps(t)
+
+	paths := keyRecoveryPaths(t)
+	writeKeys(t, paths, true, false)
+	other := strings.Repeat("fedcba9876543210", 4)
+
+	require.NoError(t, os.WriteFile(paths["logFile"], []byte("Now targeting x\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte("Now targeting x\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-090000",
+		[]byte("Your Vault Seal Key is "+other+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-110000",
+		[]byte("Your Vault Seal Key is "+testSealKey+"\n"), 0o600))
+
+	require.NoError(t, recoverInceptionKeys(context.Background(), paths, zap.NewNop().Sugar()))
+	assert.Equal(t, testSealKey+"\n", readKey(t, paths["unsealKeysFile"]))
+}
+
+// vaultLogFiles lists the log, .previous, and each older log newest first.
+// Older logs are ordered by their timestamp and then by their -N suffix, as a
+// number. Directories and names that are not a kept log are left out.
+func TestVaultLogFiles_ListsOlderLogsNewestFirst(t *testing.T) {
+	paths := reconcilePaths(t)
+	require.NoError(t, os.MkdirAll(paths["logDir"], 0o700))
+
+	logFile := paths["logFile"]
+
+	for _, name := range []string{
+		".previous-20261006-110000", ".previous-20261006-120000", ".previous-20261006-120000-2",
+		".previous-20261006-120000-10", ".previous-notatime", ".previous-20261006-120000-x",
+		".previous-20261006-120000-1", ".previous-20261306-120000",
+	} {
+		require.NoError(t, os.WriteFile(logFile+name, []byte("x\n"), 0o600))
+	}
+
+	require.NoError(t, os.Mkdir(logFile+".previous-20261006-130000", 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(paths["logDir"], "other.log.previous-20261006-140000"), []byte("x\n"), 0o600))
+
+	files, err := vaultLogFiles(paths)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		logFile,
+		logFile + ".previous",
+		logFile + ".previous-20261006-120000-10",
+		logFile + ".previous-20261006-120000-2",
+		logFile + ".previous-20261006-120000",
+		logFile + ".previous-20261006-110000",
+	}, files)
+
+	missing := reconcilePaths(t)
+	files, err = vaultLogFiles(missing)
+	require.NoError(t, err)
+	assert.Equal(t, []string{missing["logFile"], missing["logFile"] + ".previous"}, files,
+		"a log directory that does not exist yet holds no older logs")
+}
+
 // The log is the first place to look, and the tmux pane's history the next.
 func TestRecoverInceptionKeys_FallsBackToThePane(t *testing.T) {
 	fake := installFakeVaultOps(t)
@@ -542,6 +601,22 @@ func TestSaveVaultKeys_KeepsAWrappedKeyWhole(t *testing.T) {
 	}
 }
 
+// A new vault's keys come only from its own start. The logs of earlier starts
+// may hold the key of a vault this one replaced, and saving that key would
+// make a vault that cannot be reopened look saved.
+func TestSaveVaultKeys_NeverReadsAnOlderLog(t *testing.T) {
+	installFakeVaultOps(t)
+
+	paths := keyRecoveryPaths(t)
+	old := "Your OpenBao Seal Key is " + testSealKey + "\n"
+	require.NoError(t, os.WriteFile(paths["logFile"], []byte("Now targeting x\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"]+".previous", []byte(old), 0o600))
+	require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-110000", []byte(old), 0o600))
+
+	require.NoError(t, saveVaultKeys(context.Background(), paths, zap.NewNop().Sugar()))
+	assert.NoFileExists(t, paths["unsealKeysFile"])
+}
+
 // Recovery from a running vault's pane reads the same long line.
 func TestRecoverInceptionKeys_KeepsAWrappedKeyWhole(t *testing.T) {
 	fake := installFakeVaultOps(t)
@@ -631,10 +706,13 @@ func TestFinishInceptionVault_FailsWhenNewKeysAreNotSaved(t *testing.T) {
 			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your OpenBao Seal Key is "+key+"\n"), 0o600))
 			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
 
+			require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-110000", []byte("Now targeting x\n"), 0o600))
+
 			err := finishInceptionVault(context.Background(), safePath, paths, safeLocalFresh, zap.NewNop().Sugar())
 			require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
 			assert.Contains(t, err.Error(), "still running")
 			assert.Contains(t, err.Error(), paths["logFile"])
+			assert.Contains(t, err.Error(), paths["logFile"]+".previous-20261006-110000")
 
 			if key != "" {
 				assert.NotContains(t, err.Error(), key)
