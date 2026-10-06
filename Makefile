@@ -208,6 +208,76 @@ bench: ## Run benchmarks
 	@go test -bench=. -benchmem ./...
 	@echo "$(GREEN)✓ Benchmarks complete$(RESET)"
 
+##@ CI
+
+# Everything below mirrors .github/workflows/ci.yml job for job. Steps that
+# are more than a one-liner live in scripts/ci/, which both ci.yml and these
+# targets call, so the two cannot drift apart.
+
+# The one place the golangci-lint version is set; ci.yml reads the same file.
+GOLANGCI_LINT_VERSION = $(shell tr -d '[:space:]' < .golangci-version)
+GOLANGCI_LINT_BIN := $(CURDIR)/.bin/golangci-lint
+HOST_BINARY = dist/ocfp-$(shell go env GOOS)-$(shell go env GOARCH)
+
+# Mirrors the GOFLAGS cap in ci.yml, which bounds compiler parallelism.
+# `make preflight` warns when ci.yml's value differs from this one.
+PREFLIGHT_GOFLAGS := -p=4
+CI_GOFLAGS = $(shell sed -n 's/^[[:space:]]*GOFLAGS:[[:space:]]*//p' .github/workflows/ci.yml | head -n 1)
+
+# The prebuilt release binary CI uses, not a local `go install` build; the
+# script skips the download when .bin already holds exactly this version.
+$(GOLANGCI_LINT_BIN): .golangci-version
+	@bash scripts/ci/install-golangci-lint.sh .golangci-version $(CURDIR)/.bin
+	@touch $@
+
+.PHONY: test-scripts
+test-scripts: ## Run the shell script tests (scripts/ci/tests)
+	@echo "$(GREEN)Running script tests...$(RESET)"
+	@bash scripts/ci/tests/run.sh
+	@echo "$(GREEN)✓ Script tests complete$(RESET)"
+
+.PHONY: preflight
+preflight: ## Run every CI check locally (lint, test, build, integration, security)
+	@bash scripts/ci/check-go-version.sh
+	@[ "$(CI_GOFLAGS)" = "$(PREFLIGHT_GOFLAGS)" ] || echo "WARNING: preflight uses GOFLAGS '$(PREFLIGHT_GOFLAGS)' but ci.yml sets '$(CI_GOFLAGS)'" >&2
+	@$(MAKE) --no-print-directory preflight-lint && \
+		$(MAKE) --no-print-directory preflight-test && \
+		$(MAKE) --no-print-directory preflight-build && \
+		$(MAKE) --no-print-directory preflight-integration && \
+		$(MAKE) --no-print-directory preflight-security
+	@echo "$(GREEN)✓ Preflight passed$(RESET)"
+
+# CI runs these jobs as a chain, not a fan-out: a wide fan-out OOM-killed the
+# runners. The recipe above runs each one in its own sub-make joined with
+# &&, so they stay in order and stop at the first failure even under
+# `make -j`.
+.PHONY: preflight-lint preflight-test preflight-build preflight-integration preflight-security
+preflight-lint: $(GOLANGCI_LINT_BIN) ## CI Lint job: gofmt, go vet, golangci-lint
+	@echo "$(GREEN)[preflight] Lint$(RESET)"
+	@bash scripts/ci/check-gofmt.sh
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go vet ./...
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" $(GOLANGCI_LINT_BIN) run
+
+preflight-test: test-scripts ## CI Test job (plus the script tests)
+	@echo "$(GREEN)[preflight] Test$(RESET)"
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go mod download
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go test -race -timeout 25m -coverprofile=coverage.txt -covermode=atomic ./...
+
+preflight-build: ## CI Build job: cross-compile every target
+	@echo "$(GREEN)[preflight] Build$(RESET)"
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" bash scripts/ci/build-all.sh
+
+# CI runs dist/ocfp-linux-amd64, which cannot execute on a macOS host, so
+# this runs the binary built for the host platform instead. The commands
+# exercised are identical.
+preflight-integration: ## CI Integration Tests job, against the host-platform binary
+	@echo "$(GREEN)[preflight] Integration$(RESET)"
+	@bash scripts/ci/integration-smoke.sh $(HOST_BINARY)
+
+preflight-security: ## CI Security Scan job: govulncheck and gosec
+	@echo "$(GREEN)[preflight] Security$(RESET)"
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" GOBIN=$(CURDIR)/.bin bash scripts/ci/security-scan.sh
+
 ##@ Code Quality
 
 .PHONY: fmt
