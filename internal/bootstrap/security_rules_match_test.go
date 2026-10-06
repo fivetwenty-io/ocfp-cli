@@ -100,3 +100,60 @@ func TestDefaultRulesMatchTheirPVEReadBack(t *testing.T) {
 		}
 	}
 }
+
+// A current rule satisfies a desired rule only when it is a plain ACCEPT rule.
+// Rules that drop, are disabled, or narrow the match by destination, source
+// port, macro, or interface must not hide a missing allow rule.
+func TestRulesMatchRequiresPlainAcceptRule(t *testing.T) {
+	t.Parallel()
+
+	ssh := &cpi.SecurityRule{Direction: "ingress", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "10.4.0.0/20"}
+	allowAll := &cpi.SecurityRule{Direction: "egress", Protocol: "all", RemoteIPCIDR: "0.0.0.0/0", Description: "Allow all outbound"}
+
+	sshWith := func(attrs map[string]string) *cpi.SecurityRule {
+		return &cpi.SecurityRule{Direction: "in", Protocol: "tcp", PortRangeMin: 22, PortRangeMax: 22, RemoteIPCIDR: "10.4.0.0/20", Attributes: attrs}
+	}
+
+	tests := []struct {
+		name    string
+		current *cpi.SecurityRule
+		desired *cpi.SecurityRule
+		want    bool
+	}{
+		{"no attributes", sshWith(nil), ssh, true},
+		{"accept and enabled", sshWith(map[string]string{"action": "ACCEPT", "enable": "1"}), ssh, true},
+		{"lower-case accept", sshWith(map[string]string{"action": "accept"}), ssh, true},
+		{"neutral attributes", sshWith(map[string]string{"action": "ACCEPT", "enable": "1", "log": "nolog", "ipversion": "4", "comment": "x", "digest": "abc"}), ssh, true},
+		{"numeric dport is not an attribute", sshWith(map[string]string{"dport": "22"}), ssh, true},
+		{"drop", sshWith(map[string]string{"action": "DROP", "enable": "1"}), ssh, false},
+		{"reject", sshWith(map[string]string{"action": "REJECT"}), ssh, false},
+		{"disabled", sshWith(map[string]string{"action": "ACCEPT", "enable": "0"}), ssh, false},
+		{"destination scoped", sshWith(map[string]string{"action": "ACCEPT", "dest": "10.0.0.5"}), ssh, false},
+		{"source port scoped", sshWith(map[string]string{"sport": "1024"}), ssh, false},
+		{"interface scoped", sshWith(map[string]string{"iface": "net0"}), ssh, false},
+		{"port list", sshWith(map[string]string{"dport": "22,2222"}), ssh, false},
+		{"macro on a port rule", sshWith(map[string]string{"macro": "SSH"}), ssh, false},
+		{
+			name:    "macro-only egress does not satisfy allow-all",
+			current: &cpi.SecurityRule{Direction: "out", Protocol: "all", Attributes: map[string]string{"action": "ACCEPT", "enable": "1", "macro": "DNS"}},
+			desired: allowAll,
+			want:    false,
+		},
+		{
+			name:    "plain egress satisfies allow-all",
+			current: &cpi.SecurityRule{Direction: "out", Protocol: "all", Attributes: map[string]string{"action": "ACCEPT", "enable": "1"}},
+			desired: allowAll,
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := bootstrap.RulesMatch(tt.current, tt.desired); got != tt.want {
+				t.Errorf("RulesMatch = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
