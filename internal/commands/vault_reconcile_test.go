@@ -911,3 +911,38 @@ func TestReconcile_KeyRecoveryOnlyForTheBlocsRunningVault(t *testing.T) {
 	require.ErrorIs(t, runReconcile(t, other, stranger), ErrInceptionPortTaken)
 	assert.NotContains(t, stranger.calls, "recover-keys")
 }
+
+// Teardown stops whatever listens on the bloc's port, so it first makes sure
+// that is this bloc's own vault. A stranger, a sibling bloc's vault on a
+// colliding port, or a listener whose owner lsof cannot name is refused.
+func TestGuardInceptionTeardown(t *testing.T) {
+	for name, tc := range map[string]struct {
+		probe   vaultProbe
+		notOurs bool
+		ownsErr error
+		want    error
+	}{
+		"stopped":       {probe: stoppedProbe()},
+		"ours":          {probe: healthyRaftProbe()},
+		"stranger":      {probe: vaultProbe{state: vaultProbeStranger}, want: ErrInceptionPortTaken},
+		"sibling":       {probe: healthyRaftProbe(), notOurs: true, want: ErrInceptionPortTaken},
+		"owner unknown": {probe: healthyRaftProbe(), ownsErr: ErrVaultOwnerUnknown, want: ErrVaultOwnerUnknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeRaftData(t, paths["vaultDir"])
+
+			fake := &fakeInception{probe: tc.probe, notOurs: tc.notOurs, ownsErr: tc.ownsErr}
+			steps := fake.steps()
+
+			err := guardInceptionTeardown(context.Background(), paths, steps.probe, steps.ownsVault)
+			if tc.want == nil {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
