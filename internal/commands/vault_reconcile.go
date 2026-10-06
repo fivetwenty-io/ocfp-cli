@@ -244,6 +244,39 @@ func inceptionPortTakenError(paths map[string]string, why string) error {
 		ErrInceptionPortTaken, paths["port"], why, inceptionPortEnvVar)
 }
 
+// guardInceptionTeardown refuses a teardown that would stop something other
+// than this bloc's own vault. Teardown kills whatever listens on the bloc's
+// API port, and derived ports can collide, so the listener must be this
+// bloc's vault by the same evidence startup uses before it stops one.
+func guardInceptionTeardown(
+	ctx context.Context, paths map[string]string,
+	probe func(ctx context.Context, addr string) vaultProbe,
+	owns func(ctx context.Context, paths map[string]string, data vaultDataState) (bool, error),
+) error {
+	found := probe(ctx, "http://127.0.0.1:"+paths["port"])
+
+	switch found.state {
+	case vaultProbeStopped:
+		return nil
+	case vaultProbeStranger:
+		return inceptionPortTakenError(paths, "something that is not a vault answers there, so teardown leaves it alone")
+	case vaultProbeVault:
+	}
+
+	owned, err := owns(ctx, paths, classifyVaultData(paths["vaultDir"]))
+	if err != nil {
+		return err
+	}
+
+	if !owned {
+		return inceptionPortTakenError(paths,
+			"a vault answers there that this bloc cannot prove is its own, so teardown leaves it alone; "+
+				"stop it by hand if it is this bloc's")
+	}
+
+	return nil
+}
+
 // isHealthy reports whether the running vault can be left exactly as it is:
 // its session exists, and it is an initialized, unsealed vault on raft data.
 // An engine that does not report its storage is judged by the data alone.

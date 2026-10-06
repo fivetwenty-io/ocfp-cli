@@ -1398,7 +1398,12 @@ func runVaultTeardown() error {
 	return withInceptionVaultLock(paths, func() error {
 		log.Info("=== Tearing Down Inception Vault ===")
 
-		err := cleanupExistingVault(context.TODO(), paths, log)
+		err := guardInceptionTeardown(context.TODO(), paths, probeInceptionVault, ownsInceptionVault)
+		if err != nil {
+			return fmt.Errorf("teardown refused: %w", err)
+		}
+
+		err = cleanupExistingVault(context.TODO(), paths, log)
 		if err != nil {
 			return fmt.Errorf("teardown failed: %w", err)
 		}
