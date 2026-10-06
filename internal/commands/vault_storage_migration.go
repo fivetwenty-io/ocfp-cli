@@ -149,7 +149,7 @@ func migrateFileVaultToRaft(
 		return "", err
 	}
 
-	err = prepareMigration(paths, layout, cfg)
+	err = prepareMigration(paths, layout, cfg, log)
 	if err != nil {
 		return "", err
 	}
@@ -188,15 +188,15 @@ func checkEngineCanMigrate(ctx context.Context, engine inceptionEngine) error {
 // prepareMigration moves any stray staging directory aside, then writes the
 // journal, the staging directory, and the config, in that order, so a crash
 // at any point leaves a journal that says a migration began.
-func prepareMigration(paths map[string]string, layout migrationLayout, cfg string) error {
+func prepareMigration(paths map[string]string, layout migrationLayout, cfg string, log *zap.SugaredLogger) error {
 	err := moveStagingAside(layout, migrationPartialSuffix)
 	if err != nil {
 		return err
 	}
 
-	err = os.MkdirAll(paths["logDir"], VaultDirMode)
+	err = makeVaultLogDir(paths, log)
 	if err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+		return err
 	}
 
 	err = writeMigrationJournal(layout, migratePhaseMigrating)
