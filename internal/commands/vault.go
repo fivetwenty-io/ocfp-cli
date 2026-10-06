@@ -428,8 +428,36 @@ func requireClusterPort(paths map[string]string) error {
 	return nil
 }
 
-// checkVaultInceptionPrerequisites verifies required commands are available.
-func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
+// inceptionCommandFallbackDirs are searched for inception vault tools that
+// are not on PATH, which happens in non-interactive SSH sessions on the
+// bastion where linuxbrew's bin directory is missing.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var inceptionCommandFallbackDirs = []string{"/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"}
+
+// findInceptionCommand resolves a tool on PATH, then in the fallback
+// directories, and returns its path.
+func findInceptionCommand(name string) (string, bool) {
+	cmdPath, err := exec.LookPath(name)
+	if err == nil {
+		return cmdPath, true
+	}
+
+	for _, dir := range inceptionCommandFallbackDirs {
+		explicitPath := filepath.Join(dir, name)
+
+		_, statErr := os.Stat(explicitPath)
+		if statErr == nil {
+			return explicitPath, true
+		}
+	}
+
+	return "", false
+}
+
+// checkVaultInceptionPrerequisites verifies required commands are available,
+// and that safe is new enough to run a raft-backed inception vault.
+func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogger) error {
 	requiredCommands := map[string]error{
 		"safe":  ErrSafeNotFound,
 		"vault": ErrVaultNotFound,
@@ -437,30 +465,19 @@ func checkVaultInceptionPrerequisites(log *zap.SugaredLogger) error {
 	}
 
 	for cmd, cmdErr := range requiredCommands {
-		// First try the PATH
-		cmdPath, err := exec.LookPath(cmd)
-		if err != nil {
-			// If not in PATH, check known installation directories
-			found := false
-
-			for _, dir := range []string{"/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"} {
-				explicitPath := filepath.Join(dir, cmd)
-
-				_, statErr := os.Stat(explicitPath)
-				if statErr == nil {
-					cmdPath = explicitPath
-					found = true
-
-					break
-				}
-			}
-
-			if !found {
-				return cmdErr
-			}
+		cmdPath, found := findInceptionCommand(cmd)
+		if !found {
+			return cmdErr
 		}
 
 		log.Infow("Found required command", "command", cmd, "path", cmdPath)
+	}
+
+	safePath, _ := findInceptionCommand("safe")
+
+	err := checkSafeCompatibility(ctx, safePath)
+	if err != nil {
+		return err
 	}
 
 	// Advisory: script command for non-PTY SSH fallback
@@ -1129,7 +1146,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	err = checkVaultInceptionPrerequisites(log)
+	err = checkVaultInceptionPrerequisites(context.TODO(), log)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
