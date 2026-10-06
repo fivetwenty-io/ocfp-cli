@@ -768,8 +768,63 @@ func startTmuxServerAndRetry(ctx context.Context, session string) ([]byte, error
 	return output, nil
 }
 
+// safeLocalMode chooses between starting a new inception vault and reopening
+// an existing one.
+type safeLocalMode int
+
+const (
+	// safeLocalFresh starts a new, empty vault.
+	safeLocalFresh safeLocalMode = iota
+	// safeLocalRestart reopens an initialized vault with its saved keys.
+	safeLocalRestart
+)
+
+// shellQuote quotes s for a POSIX shell. Inside single quotes nothing is
+// special except the quote itself, which is closed, escaped, and reopened.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// buildSafeLocalCommand builds the line typed into the bloc's tmux session to
+// run its inception vault on raft storage.
+//
+// The PATH prefix and --engine make safe run the same engine binary ocfp
+// resolved, so the two can never disagree about which engine owns the data.
+// The line carries paths to the key files and never their contents, because
+// anything typed into tmux lands in the pane, its scrollback, and the log.
+//
+// A fresh start reads stdin from /dev/null. If safe unexpectedly finds an
+// initialized store, it then reads an empty unseal key and exits at once
+// instead of waiting forever on a prompt nobody will answer. A restart feeds
+// the saved unseal key on stdin and hands safe the saved root token, which
+// spares it from calling generate-root.
+func buildSafeLocalCommand(paths map[string]string, engine inceptionEngine, mode safeLocalMode) string {
+	args := []string{
+		"PATH=" + shellQuote(filepath.Dir(engine.path)) + `:"$PATH"`,
+		"safe", "local",
+		"--raft", shellQuote(paths["vaultDir"]),
+		"--as", shellQuote(paths["vaultName"]),
+		"--port", paths["port"],
+		"--cluster-port", paths["clusterPort"],
+		"--engine", engine.name,
+	}
+
+	stdin := "/dev/null"
+
+	if mode == safeLocalRestart {
+		args = append(args, "--root-token-file", shellQuote(paths["rootKeyFile"]))
+		stdin = shellQuote(paths["unsealKeysFile"])
+	}
+
+	args = append(args, "<", stdin, "2>&1", "|", "tee", shellQuote(paths["logFile"]))
+
+	return strings.Join(args, " ")
+}
+
 // startVaultInTmux starts the vault inside a tmux session with output captured via tee.
-func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+func startVaultInTmux(
+	ctx context.Context, paths map[string]string, engine inceptionEngine, mode safeLocalMode, log *zap.SugaredLogger,
+) error {
 	log.Info("Starting vault in tmux session...")
 
 	// Clean stale session
@@ -787,12 +842,10 @@ func startVaultInTmux(ctx context.Context, paths map[string]string, log *zap.Sug
 
 	time.Sleep(1 * time.Second)
 
-	// Build the safe local command — pipe through tee to also capture in log file
-	safeCmd := fmt.Sprintf("safe local --file %s --as %s --port %s 2>&1 | tee %s",
-		paths["vaultDir"], paths["vaultName"], paths["port"], paths["logFile"]) // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
+	safeCmd := buildSafeLocalCommand(paths, engine, mode)
 
 	// Send command to tmux session
-	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- paths come from controlled getVaultInceptionPaths() function
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- every path in safeCmd is shell-quoted by buildSafeLocalCommand
 	ensureTmuxEnv(cmd)
 
 	sendOutput, sendErr := cmd.CombinedOutput()
@@ -1060,9 +1113,10 @@ func printVaultInfo(paths map[string]string, log *zap.SugaredLogger) {
 }
 
 // prepareVaultDirectories creates the log directory for vault inception.
-// NOTE: Do NOT create paths["vaultDir"] here. safe local --file creates it.
-// If it already exists, safe prompts for the unseal key interactively (stdin read)
-// and hangs in automation.
+// The data directory is left to safe local --raft, which creates it. An empty
+// data directory no longer matters either way: safe treats a store as
+// initialized only when it holds vault.db or raft/, and a fresh start reads
+// stdin from /dev/null, so nothing can wait on an unseal prompt.
 func prepareVaultDirectories(paths map[string]string, log *zap.SugaredLogger) error {
 	err := os.MkdirAll(paths["logDir"], VaultDirMode)
 	if err != nil {
@@ -1103,7 +1157,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	_, err = checkVaultInceptionPrerequisites(context.TODO(), log)
+	engine, err := checkVaultInceptionPrerequisites(context.TODO(), log)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
@@ -1125,7 +1179,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return err
 	}
 
-	err = startVaultInTmux(context.TODO(), paths, log)
+	err = startVaultInTmux(context.TODO(), paths, engine, safeLocalFresh, log)
 	if err != nil {
 		return fmt.Errorf("failed to start vault: %w", err)
 	}
@@ -1135,7 +1189,7 @@ func ensureInceptionVault(blocName string, testMode bool) error {
 		return fmt.Errorf("vault did not become ready: %w", err)
 	}
 
-	// safe local --file handles targeting automatically, but verify
+	// safe local targets the new vault itself, but verify
 	err = targetInceptionVault(context.TODO(), paths, log)
 	if err != nil {
 		return fmt.Errorf("failed to target vault: %w", err)
