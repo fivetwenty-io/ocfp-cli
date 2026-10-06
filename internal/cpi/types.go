@@ -98,6 +98,11 @@ type SecurityRule struct {
 	RemoteIPCIDR string
 	RemoteGroup  string
 	Description  string
+
+	// Attributes carries provider-specific rule fields that the typed fields
+	// above do not model, such as a PVE rule's action or enable flag. Two
+	// rules are only exact twins when these match as well.
+	Attributes map[string]string
 }
 
 // FloatingIP represents a floating/elastic IP.

@@ -70,6 +70,18 @@ ocfp bootstrap --bloc production
 ocfp configure --bloc production
 ```
 
+Runs of `ocfp configure` made before rule matching normalized direction and addresses could leave exact duplicate security group rules behind. To clean them up, list them first and then delete them.
+
+```bash
+# List the duplicates in ocfp-owned groups; this changes nothing
+ocfp configure --bloc production --prune-duplicate-rules
+
+# Delete them, highest rule position first
+ocfp configure --bloc production --prune-duplicate-rules --apply
+```
+
+The prune option runs on its own, so it cannot be combined with `--dry-run` or the `--skip-*` options, and `--apply` is only valid with it. Rules are twins only when direction, protocol, port range, remote address, comment, and every other field the rule carries match after normalization. The lowest position in each set of twins is always kept, so the last copy of a rule is never removed. Only groups named `<bloc>-<name>` that ocfp defines rules for are touched. Before each delete the command re-lists the group, and it stops with an error if the rule at the next position is not the duplicate it expected.
+
 ### 3. Access bastion host
 
 ```bash

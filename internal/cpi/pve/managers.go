@@ -186,6 +186,8 @@ func parsePVERule(ruleData map[string]interface{}, index int) *cpi.SecurityRule 
 		}
 	}
 
+	rule.Attributes = pveRuleAttributes(ruleData)
+
 	dport := strings.TrimSpace(getStringFromMap(ruleData, "dport"))
 	if dport == "" {
 		return rule
@@ -200,6 +202,38 @@ func parsePVERule(ruleData map[string]interface{}, index int) *cpi.SecurityRule 
 	}
 
 	return rule
+}
+
+// pveRuleModeled lists the PVE rule keys parsePVERule maps to typed
+// SecurityRule fields, plus the bookkeeping keys that say nothing about what a
+// rule does.
+var pveRuleModeled = map[string]bool{ //nolint:gochecknoglobals // constant lookup table
+	pveKeyType: true, "proto": true, "source": true, "comment": true,
+	"dport": true, "pos": true, "digest": true,
+}
+
+// pveRuleAttributes returns every other field a PVE rule carries (action,
+// enable, dest, sport, macro, iface, log, and so on) as strings, so that rule
+// comparison does not treat two rules as the same when they differ in a field
+// the typed SecurityRule cannot express. A destination port list or other
+// spelling that the typed port range cannot hold is kept here verbatim.
+func pveRuleAttributes(ruleData map[string]interface{}) map[string]string {
+	attrs := make(map[string]string)
+
+	for key, value := range ruleData {
+		if pveRuleModeled[key] {
+			continue
+		}
+
+		attrs[key] = strings.TrimSpace(fmt.Sprint(value))
+	}
+
+	dport := strings.TrimSpace(getStringFromMap(ruleData, "dport"))
+	if strings.Trim(dport, "0123456789:") != "" || strings.Count(dport, ":") > 1 {
+		attrs["dport"] = dport
+	}
+
+	return attrs
 }
 
 // ListSecurityGroups lists all firewall groups.

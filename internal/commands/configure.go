@@ -23,6 +23,8 @@ type configureOptions struct {
 	skipFloatingIPs bool
 	skipSecGroups   bool
 	skipBastion     bool
+	pruneDuplicates bool
+	apply           bool
 }
 
 // NewConfigureCmd creates the configure command.
@@ -50,7 +52,12 @@ configuration to your infrastructure.`,
   ocfp configure --bloc production --dry-run
 
   # Skip specific configuration steps
-  ocfp configure --bloc production --skip-routes --skip-floating-ips`,
+  ocfp configure --bloc production --skip-routes --skip-floating-ips
+
+  # List exact duplicate security group rules that earlier runs left behind
+  # (changes nothing), then delete them
+  ocfp configure --bloc production --prune-duplicate-rules
+  ocfp configure --bloc production --prune-duplicate-rules --apply`,
 		// This command runs a full bastion provision, and it carries no
 		// subcommands.  Without a validator cobra silently discards a stray
 		// positional, so `ocfp configure deployments` -- which the generated
@@ -69,6 +76,10 @@ configuration to your infrastructure.`,
 	cmd.Flags().BoolVar(&opts.skipSecGroups, "skip-security-groups", false, "skip security group configuration")
 	cmd.Flags().BoolVar(&opts.skipBastion, "skip-bastion", false, "skip bastion configuration")
 
+	cmd.Flags().BoolVar(&opts.pruneDuplicates, "prune-duplicate-rules", false,
+		"list exact duplicate rules in ocfp security groups and do nothing else (a dry run unless --apply is given)")
+	cmd.Flags().BoolVar(&opts.apply, "apply", false, "with --prune-duplicate-rules, delete the duplicates it lists")
+
 	// Bind flags to viper
 	_ = viper.BindPFlag("configure.dry_run", cmd.Flags().Lookup("dry-run"))
 	_ = viper.BindPFlag("configure.skip_routes", cmd.Flags().Lookup("skip-routes"))
@@ -82,6 +93,11 @@ configuration to your infrastructure.`,
 //
 //nolint:funlen // sequential configuration phases cannot be meaningfully split
 func runConfigure(opts *configureOptions) error {
+	err := validatePruneOptions(opts)
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -109,6 +125,12 @@ func runConfigure(opts *configureOptions) error {
 	}
 
 	defer func() { _ = provider.Cleanup(ctx) }()
+
+	// Pruning is a separate job. It returns before any configure phase so it
+	// cannot add, reorder, or change anything else.
+	if opts.pruneDuplicates {
+		return runPruneDuplicateRules(ctx, cfg, provider, blocName, opts.apply, os.Stdout)
+	}
 
 	log.Infow("Starting configuration", "provider", cfg.Provider, "dry-run", opts.dryRun)
 
@@ -153,6 +175,25 @@ func runConfigure(opts *configureOptions) error {
 	return nil
 }
 
+// validatePruneOptions keeps --prune-duplicate-rules apart from the rest of
+// configure. Combining it with another option is refused rather than guessed
+// at, and --apply means nothing without it.
+func validatePruneOptions(opts *configureOptions) error {
+	if !opts.pruneDuplicates {
+		if opts.apply {
+			return ErrApplyWithoutPrune
+		}
+
+		return nil
+	}
+
+	if opts.dryRun || opts.skipRoutes || opts.skipFloatingIPs || opts.skipSecGroups || opts.skipBastion {
+		return ErrPruneFlagConflict
+	}
+
+	return nil
+}
+
 // configureSecurityGroups reconciles existing security groups against the
 // rule definitions derived from config — the same definitions bootstrap
 // creates them from — so config changes (e.g. allowed_ingress_ips) take
@@ -180,8 +221,8 @@ func configureSecurityGroups(ctx context.Context, provider cpi.Provider, cfg *co
 		// definition for (including hand-made ones) are left untouched.
 		shortName := strings.TrimPrefix(group.Name, blocName+"-")
 
-		expected, ok := ruleDefs[shortName]
-		if !ok || shortName == group.Name {
+		expected := ruleDefs[shortName]
+		if !ownedSecurityGroup(blocName, group.Name, ruleDefs) {
 			log.Infow("Skipping security group with no ocfp definition", "name", group.Name)
 
 			continue

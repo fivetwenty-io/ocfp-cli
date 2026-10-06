@@ -35,3 +35,23 @@ func TestParsePVERuleMatchesDesiredRuleShape(t *testing.T) {
 		t.Errorf("direction = %q", got.Direction)
 	}
 }
+
+func TestParsePVERuleKeepsUnmodeledFields(t *testing.T) {
+	t.Parallel()
+
+	got := parsePVERule(map[string]interface{}{
+		"type": "in", "action": "DROP", "enable": float64(1), "dport": "80,443", "dest": "10.0.0.5", "pos": float64(0),
+	}, 0)
+
+	want := map[string]string{"action": "DROP", "enable": "1", "dport": "80,443", "dest": "10.0.0.5"}
+	for k, v := range want {
+		if got.Attributes[k] != v {
+			t.Errorf("attribute %s = %q, want %q (all: %v)", k, got.Attributes[k], v, got.Attributes)
+		}
+	}
+
+	plain := parsePVERule(map[string]interface{}{"type": "in", "dport": "1024:2048", "action": "ACCEPT"}, 0)
+	if _, ok := plain.Attributes["dport"]; ok {
+		t.Errorf("a plain port range should not be kept as an attribute: %v", plain.Attributes)
+	}
+}
