@@ -264,7 +264,13 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 		if sealKey == "" {
 			log.Warnw("The running inception vault's unseal key is not in its log", "log", paths["logFile"])
 		} else {
-			err := writeRecoveredKey(paths["unsealKeysFile"], sealKey)
+			err := checkSealKey(sealKey)
+			if err != nil {
+				return fmt.Errorf("refusing to recover the unseal key in the vault's output into %s: %w",
+					paths["unsealKeysFile"], err)
+			}
+
+			err = writeRecoveredKey(paths["unsealKeysFile"], sealKey)
 			if err != nil {
 				return err
 			}
@@ -281,7 +287,13 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 			return nil
 		}
 
-		err := writeRecoveredKey(paths["rootKeyFile"], token)
+		err := checkRootToken(token)
+		if err != nil {
+			return fmt.Errorf("refusing to recover the root token of target %s into %s: %w",
+				paths["vaultName"], paths["rootKeyFile"], err)
+		}
+
+		err = writeRecoveredKey(paths["rootKeyFile"], token)
 		if err != nil {
 			return err
 		}
