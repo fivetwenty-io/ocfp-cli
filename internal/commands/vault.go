@@ -1464,7 +1464,7 @@ func newVaultImportCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&vaultPath, "path", "", "vault path to import to")
 	cmd.Flags().StringVar(&inputFile, "file", "", "input file")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets (for the fqdns phase, existing FQDN keys)")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing secrets")
 
 	return cmd
 }
