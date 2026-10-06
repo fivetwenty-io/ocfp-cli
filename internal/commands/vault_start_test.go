@@ -207,7 +207,9 @@ func TestSafeLocalLauncher_HoldsTheCommandAndNoKeys(t *testing.T) {
 
 		body, err := os.ReadFile(script) // #nosec G304 -- test reads the launcher it just wrote
 		require.NoError(t, err)
-		assert.Equal(t, "#!/bin/sh\n"+buildSafeLocalCommand(paths, tools, mode)+"\n", string(body))
+		// umask 077 makes the log tee creates, and anything else the
+		// start creates, private to the user.
+		assert.Equal(t, "#!/bin/sh\numask 077\n"+buildSafeLocalCommand(paths, tools, mode)+"\n", string(body))
 		assert.NotContains(t, string(body), "ROOT-TOKEN-SENTINEL")
 		assert.NotContains(t, string(body), "UNSEAL-KEY-SENTINEL")
 	}

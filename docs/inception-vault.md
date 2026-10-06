@@ -37,6 +37,8 @@ Two more files live under the state home, which is `~/.local/state/ocfp` unless 
 | `<bloc>/logs/vault/vault-inception.log` | Everything `safe local` printed on its last start. The previous start's log is kept beside it with a `.previous` suffix, and each older log is kept as `.previous-<timestamp>`. ocfp never replaces or deletes any of them, because a log may hold the only copy of a new vault's unseal key. We treat every one of them like a key file. |
 | `<bloc>/inception-vault.lock` | The lock that lets only one ocfp run work on the bloc's vault at a time. |
 
+The log directory has mode 0700, and the vault starts under `umask 077`, so each new log has mode 0600. Older releases left the directory and its logs readable by other users. Every run removes group and other access from the directory and from each log in it, changing only their modes and never reading them. When a mode cannot be changed, for example because a `sudo` run left a log owned by root, the run logs a warning that names the file and carries on, and we fix the owner and mode by hand.
+
 When no bloc is named, the vault keeps its data in `~/.vault`, the root token in `~/vault.root.key`, and the unseal key in `~/vault.unseal.keys`, each key file with mode 0600. Older releases wrote both keys to a single `~/vault.key`, where the second write replaced the first. ocfp no longer reads, writes, moves, or deletes that file. If it exists, it stays where it is, and we keep it until we know the vault it belonged to is no longer needed, because it may hold that vault's only copy of a key.
 
 ## What a run does
