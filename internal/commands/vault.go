@@ -1196,20 +1196,29 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 	}
 
 	// Parse the seal key from "Your <engine> Seal Key is <key>".
+	// A key of the wrong shape is never written, because a partial key would
+	// be fed to the engine on the next start and read as a refused key.
+	var keyErr error
+
 	sealKey := extractSealKey(outputStr)
-	if sealKey != "" {
+
+	switch {
+	case sealKey == "":
+		log.Warn("Seal key not found in output (may be pre-existing vault)")
+	case checkSealKey(sealKey) != nil:
+		keyErr = fmt.Errorf("refusing to save the unseal key in the vault's output to %s: %w",
+			paths["unsealKeysFile"], checkSealKey(sealKey))
+	default:
 		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) // #nosec G703 -- path is the OCFP-managed vault output dir
 		if err != nil {
 			return fmt.Errorf("failed to write unseal key: %w", err)
 		}
 
 		log.Infow("Saved unseal key", "path", paths["unsealKeysFile"])
-	} else {
-		log.Warn("Seal key not found in output (may be pre-existing vault)")
 	}
 
 	// Extract root token from ~/.saferc
-	return saveRootTokenFromSafeRC(paths, log)
+	return errors.Join(keyErr, saveRootTokenFromSafeRC(paths, log))
 }
 
 // saveRootTokenFromSafeRC reads the root token from ~/.saferc and writes it to the key file.
@@ -1255,6 +1264,11 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 	}
 
 	if v, ok := safeCfg.Vaults[targetName]; ok && v.Token != "" {
+		err = checkRootToken(v.Token)
+		if err != nil {
+			return fmt.Errorf("refusing to save the root token of target %s to %s: %w", targetName, paths["rootKeyFile"], err)
+		}
+
 		err = os.WriteFile(paths["rootKeyFile"], []byte(v.Token+"\n"), VaultOutputFileMode)
 		if err != nil {
 			return fmt.Errorf("failed to write root token: %w", err)
