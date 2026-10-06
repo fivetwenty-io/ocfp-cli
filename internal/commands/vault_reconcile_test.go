@@ -32,6 +32,7 @@ type fakeInception struct {
 	notOurs        bool  // the vault on the port is not this bloc's
 	ownsErr        error // the ownership check could not decide
 	migrate        func(paths map[string]string) (string, error)
+	recover        func(paths map[string]string) // what key recovery finds
 	calls          []string
 }
 
@@ -86,6 +87,15 @@ func (f *fakeInception) steps() inceptionSteps {
 			}
 
 			return f.migrate(paths)
+		},
+		recoverKeys: func(_ context.Context, paths map[string]string, _ *zap.SugaredLogger) error {
+			f.record("recover-keys")
+
+			if f.recover != nil {
+				f.recover(paths)
+			}
+
+			return nil
 		},
 		now: func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
 	}
@@ -793,4 +803,111 @@ func TestReconcile_CopyJournalWithoutFileDataChangesNothing(t *testing.T) {
 	require.ErrorIs(t, err, ErrMigrationJournalInvalid)
 	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start")
 	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+}
+
+func runningFileProbe() vaultProbe {
+	return vaultProbe{state: vaultProbeVault, initialized: true, storageType: "file"}
+}
+
+// A running file vault with a key missing gets the key back while it still
+// runs, because the log and safe's target only help a live vault. Then it is
+// stopped, and only then migrated.
+func TestReconcile_RunningFileVaultRecoversKeysThenStopsThenMigrates(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, false, true)
+
+	fake := &fakeInception{
+		probe:   runningFileProbe(),
+		session: true,
+		migrate: fakeMigration(t),
+		recover: func(paths map[string]string) { writeKeys(t, paths, true, false) },
+	}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "recover-keys", "stop", "cluster-port " + paths["clusterPort"],
+		"migrate", "start restart", "finish restart",
+	}, fake.calls)
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+// A running vault over File data is migrated even when its seal status does
+// not report a storage type, and with both keys there is nothing to recover.
+func TestReconcile_RunningVaultOverFileDataStopsThenMigrates(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{
+		probe:   vaultProbe{state: vaultProbeVault, initialized: true},
+		session: true,
+		migrate: fakeMigration(t),
+	}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+	}, fake.calls)
+}
+
+// When recovery finds nothing, the vault cannot be reopened after it stops,
+// so it is archived with its data and never migrated.
+func TestReconcile_RunningFileVaultWithoutRecoverableKeysIsArchived(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, false, true)
+
+	fake := &fakeInception{probe: runningFileProbe(), session: true, migrate: fakeMigration(t)}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, "recover-keys", fake.calls[1])
+	assert.NotContains(t, fake.calls, "migrate")
+	assert.Contains(t, fake.calls, "start fresh")
+
+	archives := archivesOf(t, paths)
+	require.Len(t, archives, 1)
+	assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+}
+
+// A file vault that will not stop, or whose port or data stays held, must
+// never be migrated: the copy would race a live engine writing the store.
+func TestReconcile_RunningFileVaultThatWillNotStopIsNotMigrated(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{
+		probe:    runningFileProbe(),
+		session:  true,
+		migrate:  fakeMigration(t),
+		stopErrs: []error{ErrVaultWouldNotStop},
+	}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrVaultWouldNotStop)
+	assert.NotContains(t, fake.calls, "migrate")
+	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start")
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+}
+
+// Keys can only be recovered from a vault that runs, and a vault that is not
+// this bloc's is never asked.
+func TestReconcile_KeyRecoveryOnlyForTheBlocsRunningVault(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, false, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.NotContains(t, fake.calls, "recover-keys")
+
+	other := reconcilePaths(t)
+	writeFileData(t, other["vaultDir"])
+	writeKeys(t, other, false, true)
+
+	stranger := &fakeInception{probe: runningFileProbe(), notOurs: true}
+	require.ErrorIs(t, runReconcile(t, other, stranger), ErrInceptionPortTaken)
+	assert.NotContains(t, stranger.calls, "recover-keys")
 }
