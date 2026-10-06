@@ -194,6 +194,13 @@ linters:
       - path: internal/bootstrap/recycle_safety\.go
         linters:
           - unused
+      # The inception vault data-dir classifier is built and tested ahead of
+      # the start-up state machine that will call it. With tests:false the
+      # linter sees no caller yet and reports it as unused. Drop this rule
+      # once ensureInceptionVault calls classifyVaultData.
+      - path: internal/commands/vault_state\.go
+        linters:
+          - unused
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:
