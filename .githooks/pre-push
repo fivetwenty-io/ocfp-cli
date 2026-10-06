@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Runs `make preflight` before a push that updates refs/heads/main or any
+# tag, since those are the pushes CI and the release workflow act on.
+# Feature-branch pushes and ref deletions skip it. Enable the hook with
+# `make hooks`; `git push --no-verify` bypasses it.
+#
+# Preflight tests the checkout, not the pushed commit, so the hook refuses
+# a gated push unless the pushed sha is HEAD and no tracked file has
+# uncommitted changes. Untracked files do not count.
+set -euo pipefail
+
+gated_shas=()
+
+# git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  if [[ "$local_sha" =~ ^0+$ ]]; then
+    continue # deleting a remote ref; the all-zero sha is 40 or 64 digits long
+  fi
+  case "$remote_ref" in
+    refs/heads/main | refs/tags/*) gated_shas+=("$local_sha") ;;
+  esac
+done
+
+if [ "${#gated_shas[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+refuse() {
+  echo "pre-push: preflight can only vouch for HEAD with a clean tree, and $1." >&2
+  echo "pre-push: check out the commit you are pushing and commit or stash tracked changes, or use git push --no-verify to override." >&2
+  exit 1
+}
+
+head_sha="$(git rev-parse HEAD)"
+for sha in "${gated_shas[@]}"; do
+  if [ "$sha" != "$head_sha" ]; then
+    refuse "this push includes ${sha}, which is not HEAD (${head_sha})"
+  fi
+done
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  refuse "tracked files have uncommitted changes"
+fi
+
+echo "pre-push: running make preflight (skip with git push --no-verify)" >&2
+if ! make preflight; then
+  echo "pre-push: preflight failed; push aborted. Fix the failure, or use git push --no-verify to override." >&2
+  exit 1
+fi
