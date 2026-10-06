@@ -7,10 +7,10 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"go.uber.org/zap"
 )
 
@@ -19,7 +19,7 @@ import (
 const inceptionPortEnvVar = "OCFP_VAULT_INCEPTION_PORT"
 
 // vaultArchiveTimeFormat stamps the directories a superseded vault moves to.
-const vaultArchiveTimeFormat = "20060102-150405"
+const vaultArchiveTimeFormat = keyfile.TimestampFormat
 
 // inceptionLockFileName is the per-bloc lock that serialises every ocfp run
 // that starts, migrates, or tears down the bloc's inception vault.
@@ -169,7 +169,8 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	// of the root token, whether or not the vault is running now.
 	run.targetToken = run.steps.targetToken(paths)
 
-	run.targetTokenFile, err = preserveTargetToken(paths, run.targetToken, run.steps.now(), run.log)
+	run.targetTokenFile, err = keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], run.targetToken,
+		run.steps.now(), run.log)
 	if err != nil {
 		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
 	}
@@ -545,7 +546,7 @@ func (run *inceptionRun) stopAfterFailedRestart(ctx context.Context, startErr er
 // token, and safe's target held a different, token-shaped one.
 func (run *inceptionRun) retryTokenFile(err error) string {
 	if !errors.Is(err, ErrVaultRootTokenRejected) || run.targetTokenFile == "" ||
-		run.targetTokenFile == run.paths["rootKeyFile"] || checkRootToken(run.targetToken) != nil {
+		run.targetTokenFile == run.paths["rootKeyFile"] || keyfile.CheckRootToken(run.targetToken) != nil {
 		return ""
 	}
 
@@ -632,61 +633,10 @@ func (run *inceptionRun) fresh(ctx context.Context) error {
 	return run.steps.finish(ctx, paths, safeLocalFresh, run.log)
 }
 
-// readKeyFileBytes returns exactly what a key file holds. A file that does
-// not exist, or that is empty, holds nothing, and an empty file counts as
-// empty even when its mode would keep it from being read. A file that exists
-// with content but cannot be read is ErrInceptionKeyFileUnreadable, because
-// it may hold the only copy of its key: treating it as missing would archive
-// the vault or write a recovered key over it.
-func readKeyFileBytes(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, keyFileUnreadableError(path, err)
-	}
-
-	if info.Mode().IsRegular() && info.Size() == 0 {
-		return nil, nil
-	}
-
-	data, err := os.ReadFile(path) // #nosec G304 -- path is the bloc's own key file from getVaultInceptionPaths()
-	if err != nil {
-		return nil, keyFileUnreadableError(path, err)
-	}
-
-	return data, nil
-}
-
-// readKeyFile returns what a key file holds with surrounding whitespace
-// trimmed, or "" when it is missing or blank.
-func readKeyFile(path string) (string, error) {
-	data, err := readKeyFileBytes(path)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(data)), nil
-}
-
-// keyFileUnreadableError names the key file and why it could not be read,
-// never what it holds.
-func keyFileUnreadableError(path string, err error) error {
-	var pathErr *fs.PathError
-	if errors.As(err, &pathErr) {
-		err = pathErr.Err
-	}
-
-	return fmt.Errorf("%w: %s: %w; make it readable by this user and run this again",
-		ErrInceptionKeyFileUnreadable, path, err)
-}
-
 // keyFileHasValue reports whether path holds anything besides whitespace.
 // safe refuses an empty token file, and an empty unseal key opens nothing.
 func keyFileHasValue(path string) (bool, error) {
-	value, err := readKeyFile(path)
+	value, err := keyfile.Read(path)
 
 	return value != "", err
 }
@@ -695,7 +645,7 @@ func keyFileHasValue(path string) (bool, error) {
 // before anything is stopped or moved.
 func requireReadableKeyFiles(paths map[string]string) error {
 	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
-		_, err := readKeyFileBytes(keyFile)
+		_, err := keyfile.ReadBytes(keyFile)
 		if err != nil {
 			return fmt.Errorf("%w; nothing was started, stopped, or changed", err)
 		}
@@ -732,17 +682,17 @@ func inceptionKeysSaved(paths map[string]string) (bool, error) {
 		return false, nil
 	}
 
-	root, err := readKeyFile(paths["rootKeyFile"])
+	root, err := keyfile.Read(paths["rootKeyFile"])
 	if err != nil {
 		return false, err
 	}
 
-	unseal, err := readKeyFile(paths["unsealKeysFile"])
+	unseal, err := keyfile.Read(paths["unsealKeysFile"])
 	if err != nil {
 		return false, err
 	}
 
-	return checkRootToken(root) == nil && checkSealKey(unseal) == nil, nil
+	return keyfile.CheckRootToken(root) == nil && checkSealKey(unseal) == nil, nil
 }
 
 // anyInceptionKeyPresent reports whether either key file exists. A lookup
@@ -756,7 +706,7 @@ func anyInceptionKeyPresent(paths map[string]string) (bool, error) {
 		}
 
 		if !errors.Is(err, fs.ErrNotExist) {
-			return false, keyFileUnreadableError(keyFile, err)
+			return false, keyfile.UnreadableError(keyFile, err)
 		}
 	}
 

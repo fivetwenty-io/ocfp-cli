@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 	"go.uber.org/zap"
 )
 
@@ -15,7 +16,7 @@ import (
 const VaultArchiveSuffix = ".superseded-"
 
 // ErrVaultArchiveExists reports an archive path that is already taken.
-var ErrVaultArchiveExists = errors.New("vault archive already exists")
+var ErrVaultArchiveExists = keyfile.ErrExists
 
 // archiveVaultState moves a bloc's vault aside so a fresh one can start in
 // its place, and never deletes anything.
