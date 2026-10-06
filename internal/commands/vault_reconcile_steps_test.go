@@ -346,3 +346,16 @@ func TestWithInceptionVaultLock(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// testSealKey has the shape of the key safe local prints: one 32-byte share,
+// hex-encoded. It is not a real key.
+var testSealKey = strings.Repeat("0123456789abcdef", 4)
+
+// safe names the engine in the line that carries the seal key, so a vault
+// run on OpenBao prints "Your OpenBao Seal Key is", not "Your Vault ...".
+func TestExtractSealKey_ReadsEveryEngineTitle(t *testing.T) {
+	for _, title := range []string{"Vault", "OpenBao"} {
+		out := "Storing data (encrypted) in /x\nYour " + title + " Seal Key is " + testSealKey + "\nCtrl-C to shut down\n"
+		assert.Equal(t, testSealKey, extractSealKey(out), title)
+	}
+}
