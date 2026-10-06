@@ -8,6 +8,8 @@ This page explains where the vault keeps its files, what `ocfp vault inception` 
 
 ocfp v0.3.9 needs safe v1.25.0 or later, because that is the first safe release that can reopen a raft vault with a saved root token. An older safe fails the prerequisite check with an upgrade message before anything is stopped or moved. The engine is OpenBao or HashiCorp Vault, and ocfp finds it the same way safe does, honouring `SAFE_ENGINE` when it is set.
 
+ocfp also needs `tmux`, `lsof`, and `ps`, because it finds the processes that hold the vault's port and data with them, and it refuses to stop or archive a vault when it cannot. `ocfp init bastion` installs `lsof` on the bastion with the other system packages. macOS ships it, and on a Linux workstation we install it from the distribution's `lsof` package.
+
 Migrating a file-backed vault from an older ocfp also needs an engine that can still read file storage and that has the `operator migrate` command. OpenBao 2.7 and earlier and HashiCorp Vault both qualify. When the engine on `PATH` cannot do it, the command says so and leaves the file-backed data where it is.
 
 ## Ports
