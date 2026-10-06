@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1358,11 +1359,26 @@ func (m *Manager) killTmuxSession(ctx context.Context, session string) error {
 	return nil
 }
 
-// killSafeProcesses kills safe local processes running on the specified port.
+// killSafeProcesses kills safe local processes running on the specified port,
+// and then an engine that outlived its safe while still listening there and
+// holding this bloc's raft data. A safe killed by SIGKILL cannot stop its
+// engine, which otherwise keeps the port and the data locked.
 // This matches the Perl implementation in OCFP::Vault::Manager::decommission_inception.
 //
 //nolint:unparam // error return maintains consistency; best-effort operations don't fail
 func (m *Manager) killSafeProcesses(port int) error {
+	err := m.killSafeLocalProcesses(port)
+
+	killOrphanedInceptionEngine(context.Background(), strconv.Itoa(port), localInceptionVaultDB(m.blocName), m.logger)
+
+	return err
+}
+
+// killSafeLocalProcesses sends SIGTERM and then SIGKILL to the safe local
+// processes serving the port.
+//
+//nolint:unparam // error return maintains consistency; best-effort operations don't fail
+func (m *Manager) killSafeLocalProcesses(port int) error {
 	ctx := context.Background()
 
 	// Find processes using ps and grep
