@@ -121,6 +121,11 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		return err
 	}
 
+	err = repairUnsealKeyFile(ctx, paths, run.log)
+	if err != nil {
+		return err
+	}
+
 	if found.healthy {
 		return run.keepHealthy(ctx)
 	}
