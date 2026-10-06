@@ -96,32 +96,16 @@ type inceptionRun struct {
 func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	paths := run.paths
 
-	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
-	if probe.state == vaultProbeStranger {
-		return inceptionPortTakenError(paths, "something that is not a vault answers there")
+	journal, healthy, err := run.preflight(ctx)
+	if err != nil {
+		return err
 	}
 
-	data := classifyVaultData(paths["vaultDir"])
-	if data == vaultDataMixed {
-		return fmt.Errorf("%w: %s; inspect it by hand, ocfp will not touch it", ErrVaultDataMixed, paths["vaultDir"])
+	if healthy {
+		return run.keepHealthy(ctx)
 	}
 
-	if probe.state == vaultProbeVault {
-		owned, err := run.steps.ownsVault(ctx, paths, data)
-		if err != nil {
-			return err
-		}
-
-		if !owned {
-			return inceptionPortTakenError(paths, "a vault answers there that does not hold this bloc's data")
-		}
-
-		if run.isHealthy(ctx, probe, data) {
-			return run.keepHealthy(ctx)
-		}
-	}
-
-	err := run.steps.stop(ctx, paths, run.log)
+	err = run.steps.stop(ctx, paths, run.log)
 	if err != nil {
 		return fmt.Errorf("failed to stop the inception vault before starting it: %w", err)
 	}
@@ -132,7 +116,83 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 			ErrInceptionClusterPortTaken, paths["clusterPort"], paths["port"], err, inceptionPortEnvVar)
 	}
 
+	if journal != nil {
+		return run.resumeMigration(ctx, journal)
+	}
+
 	return run.startFromDisk(ctx)
+}
+
+// preflight runs every check that can refuse before anything is stopped or
+// moved. It returns the journal of a migration in flight, if any, and whether
+// the running vault is healthy and can be left as it is.
+func (run *inceptionRun) preflight(ctx context.Context) (*migrationJournal, bool, error) {
+	paths := run.paths
+
+	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
+	if probe.state == vaultProbeStranger {
+		return nil, false, inceptionPortTakenError(paths, "something that is not a vault answers there")
+	}
+
+	journal, err := readMigrationJournal(paths["vaultDir"])
+	if err != nil {
+		return nil, false, err
+	}
+
+	data := classifyVaultData(paths["vaultDir"])
+	if data == vaultDataMixed {
+		return nil, false, fmt.Errorf("%w: %s; inspect it by hand, ocfp will not touch it", ErrVaultDataMixed, paths["vaultDir"])
+	}
+
+	if journal != nil && journal.Phase == migratePhaseMigrating && data != vaultDataFile {
+		return nil, false, fmt.Errorf("%w: it records an unfinished copy, but %s is %s storage rather than file; "+
+			"inspect it by hand", ErrMigrationJournalInvalid, paths["vaultDir"]+migrationJournalSuffix, data)
+	}
+
+	if probe.state != vaultProbeVault {
+		return journal, false, nil
+	}
+
+	owned, err := run.steps.ownsVault(ctx, paths, data)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !owned {
+		return nil, false, inceptionPortTakenError(paths, "a vault answers there that does not hold this bloc's data")
+	}
+
+	return journal, journal == nil && run.isHealthy(ctx, probe, data), nil
+}
+
+// resumeMigration picks up a migration that an earlier run left part way.
+// An unfinished copy never touched the data, so it is set aside and the
+// migration runs again. An unfinished swap is completed and the vault is
+// restarted, and its missing data directory is never read as an empty bloc.
+func (run *inceptionRun) resumeMigration(ctx context.Context, journal *migrationJournal) error {
+	paths := run.paths
+
+	if journal.Phase == migratePhaseMigrating {
+		err := abandonInterruptedCopy(paths, journal, run.log)
+		if err != nil {
+			return err
+		}
+
+		return run.startFromDisk(ctx)
+	}
+
+	backup, err := finishInterruptedSwap(paths, journal, run.log)
+	if err != nil {
+		return err
+	}
+
+	if !inceptionKeysUsable(paths) {
+		return fmt.Errorf("%w: the raft data is in %s and the file store it came from is kept in %s, "+
+			"but %s and %s do not hold both keys", ErrRestartAfterMigrationFailed, paths["vaultDir"], backup,
+			paths["rootKeyFile"], paths["unsealKeysFile"])
+	}
+
+	return run.restartAfterMigration(ctx, backup)
 }
 
 // inceptionPortTakenError says why the API port cannot be used.
@@ -215,7 +275,17 @@ func (run *inceptionRun) migrateAndRestart(ctx context.Context) error {
 		return err
 	}
 
-	err = run.steps.start(ctx, paths, run.tools, safeLocalRestart, run.log)
+	return run.restartAfterMigration(ctx, backup)
+}
+
+// restartAfterMigration reopens a vault whose storage was just moved to raft.
+// The keys opened the file store moments earlier, so a failure here is the
+// migration's and not the keys': the vault is stopped and an error names both
+// directories, and nothing is archived.
+func (run *inceptionRun) restartAfterMigration(ctx context.Context, backup string) error {
+	paths := run.paths
+
+	err := run.steps.start(ctx, paths, run.tools, safeLocalRestart, run.log)
 	if err == nil {
 		return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
 	}

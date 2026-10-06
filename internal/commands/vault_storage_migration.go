@@ -80,6 +80,14 @@ var (
 	// complete raft store.
 	ErrRaftMigrationFailed = errors.New("the file-to-raft migration failed")
 
+	// ErrMigrationJournalInvalid reports a migration journal that cannot be
+	// read, or that does not describe a migration ocfp could have left.
+	ErrMigrationJournalInvalid = errors.New("the raft migration journal cannot be trusted")
+
+	// ErrMigrationSwapUnclear reports an interrupted swap whose directories
+	// do not match any point at which the swap could have stopped.
+	ErrMigrationSwapUnclear = errors.New("the interrupted raft migration cannot be finished safely")
+
 	// ErrMigrationAsideTaken reports that no free name was found to move a
 	// staging directory aside to.
 	ErrMigrationAsideTaken = errors.New("no free name to move the migration staging directory aside")
@@ -460,4 +468,116 @@ func checkMigrationPath(path string) error {
 	}
 
 	return nil
+}
+
+// readMigrationJournal reads the journal beside the data directory, or
+// returns nil when there is none. A journal that cannot be read, or whose
+// phase or backup path is not one ocfp writes, is an error: ignoring it could
+// read a half-swapped bloc as empty and start a fresh vault over it.
+func readMigrationJournal(data string) (*migrationJournal, error) {
+	path := data + migrationJournalSuffix
+
+	raw, err := os.ReadFile(path) // #nosec G304 -- the journal sits beside the bloc's own data dir
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil //nolint:nilnil // no journal means no migration in flight
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrMigrationJournalInvalid, path, err)
+	}
+
+	var journal migrationJournal
+
+	err = json.Unmarshal(raw, &journal)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrMigrationJournalInvalid, path, err)
+	}
+
+	if journal.Phase != migratePhaseMigrating && journal.Phase != migratePhaseSwapping {
+		return nil, fmt.Errorf("%w: %s: unknown phase %q", ErrMigrationJournalInvalid, path, journal.Phase)
+	}
+
+	backupPrefix := filepath.Base(data) + migrationBackupSuffix
+
+	if journal.Backup != filepath.Clean(journal.Backup) || filepath.Dir(journal.Backup) != filepath.Dir(data) ||
+		!strings.HasPrefix(filepath.Base(journal.Backup), backupPrefix) ||
+		len(filepath.Base(journal.Backup)) == len(backupPrefix) {
+		return nil, fmt.Errorf("%w: %s: backup path %q is not a %s* sibling of %s",
+			ErrMigrationJournalInvalid, path, journal.Backup, backupPrefix, data)
+	}
+
+	return &journal, nil
+}
+
+// abandonInterruptedCopy clears up after a copy that never finished. Such a
+// run never touched the data directory, so its staging directory is kept as
+// data.raft-partial-<ts> and the journal goes, and the next migration starts
+// clean.
+func abandonInterruptedCopy(paths map[string]string, journal *migrationJournal, log *zap.SugaredLogger) error {
+	layout := newMigrationLayout(paths, time.Now())
+
+	err := moveStagingAside(layout, migrationPartialSuffix)
+	if err != nil {
+		return err
+	}
+
+	log.Warnw("Moved aside an interrupted file-to-raft copy; the migration will run again",
+		"data", layout.data, "started", journal.Started)
+
+	return removeMigrationJournal(layout)
+}
+
+// finishInterruptedSwap completes a swap that a crash cut short and returns
+// where the file store is kept. A crash can stop it at three points: before
+// either rename, after the file store became the backup, or after both
+// renames. Each is recognised by what sits where, and any other arrangement
+// is refused with every path named and nothing moved.
+func finishInterruptedSwap(paths map[string]string, journal *migrationJournal, log *zap.SugaredLogger) (string, error) {
+	layout := newMigrationLayout(paths, time.Now())
+	layout.backup = journal.Backup
+
+	_, dataErr := os.Lstat(layout.data)
+	dataGone := errors.Is(dataErr, fs.ErrNotExist)
+	data := classifyVaultData(layout.data)
+	staged := completeRaftStore(layout.staging)
+	stagingThere := entryMayExist(layout.staging)
+	backupThere := entryMayExist(layout.backup)
+	backupIsFile := classifyVaultData(layout.backup) == vaultDataFile
+
+	var err error
+
+	switch {
+	case data == vaultDataFile && staged && !backupThere:
+		err = renameRefusingExisting(layout.data, layout.backup)
+		if err == nil {
+			err = renameRefusingExisting(layout.staging, layout.data)
+		}
+	case dataGone && staged && backupIsFile:
+		err = renameRefusingExisting(layout.staging, layout.data)
+	case data == vaultDataRaft && !stagingThere && backupIsFile:
+	default:
+		return "", fmt.Errorf("%w: data %s is %s, staging %s is %s, and backup %s is %s; inspect them by hand",
+			ErrMigrationSwapUnclear, layout.data, data, layout.staging, stagingState(stagingThere, staged),
+			layout.backup, classifyVaultData(layout.backup))
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	log.Warnw("Finished an interrupted file-to-raft migration", "data", layout.data, "file_backup", layout.backup)
+
+	return layout.backup, removeMigrationJournal(layout)
+}
+
+// stagingState describes a staging directory for an error message.
+func stagingState(there, complete bool) string {
+	switch {
+	case complete:
+		return "a complete raft store"
+	case there:
+		return "an incomplete raft store"
+	default:
+		return "absent"
+	}
 }
