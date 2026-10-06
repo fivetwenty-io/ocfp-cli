@@ -28,6 +28,7 @@ type fakeInception struct {
 	retargetErr    error
 	startErrs      []error // one per start call; missing entries succeed
 	stopErrs       []error // one per stop call; missing entries succeed
+	finishErr      error   // what every finish call returns
 	clusterPortErr error
 	notOurs        bool  // the vault on the port is not this bloc's
 	ownsErr        error // the ownership check could not decide
@@ -83,7 +84,7 @@ func (f *fakeInception) steps() inceptionSteps {
 		finish: func(_ context.Context, _ map[string]string, mode safeLocalMode, _ *zap.SugaredLogger) error {
 			f.record("finish " + modeName(mode))
 
-			return nil
+			return f.finishErr
 		},
 		migrate: func(_ context.Context, paths map[string]string, _ inceptionTools, _ *zap.SugaredLogger) (string, error) {
 			f.record("migrate")
@@ -311,6 +312,30 @@ func TestReconcile_RejectedKeysArchiveAndStartFresh(t *testing.T) {
 	assert.FileExists(t, filepath.Join(archives[0], "data", "vault.db"))
 	assert.FileExists(t, filepath.Join(archives[0], "root.key"))
 	assert.FileExists(t, filepath.Join(archives[0], "unseal.keys"))
+}
+
+// A new vault that started after an archive but whose keys could not be saved
+// is running. The error must say where the old vault went and that the new
+// one is up without saved keys, never that it did not start.
+func TestReconcile_ArchivedThenNewVaultWithoutSavedKeys(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, false)
+
+	fake := &fakeInception{
+		probe:     stoppedProbe(),
+		finishErr: fmt.Errorf("%w: the vault is still running", ErrInceptionKeysNotSaved),
+	}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysNotSaved)
+
+	archives := archivesOf(t, paths)
+	require.Len(t, archives, 1)
+	assert.Contains(t, err.Error(), "the previous inception vault was kept at "+archives[0])
+	assert.Contains(t, err.Error(), "a new vault is running")
+	assert.NotContains(t, err.Error(), "did not start")
+	assert.Equal(t, "finish fresh", fake.calls[len(fake.calls)-1], "the new vault must be left running")
 }
 
 // A rejected key that leaves a vault we cannot stop must not archive data out
