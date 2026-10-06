@@ -1202,7 +1202,7 @@ func saveVaultKeys(ctx context.Context, paths map[string]string, log *zap.Sugare
 		return nil
 	}
 
-	// Parse seal key: "Your Vault Seal Key is <key>" or "Vault Seal Key is <key>"
+	// Parse the seal key from "Your <engine> Seal Key is <key>".
 	sealKey := extractSealKey(outputStr)
 	if sealKey != "" {
 		err := os.WriteFile(paths["unsealKeysFile"], []byte(sealKey+"\n"), VaultOutputFileMode) // #nosec G703 -- path is the OCFP-managed vault output dir
@@ -1275,9 +1275,11 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 	return nil
 }
 
-// extractSealKey parses a vault seal key from output containing "Vault Seal Key is <key>".
+// extractSealKey parses the seal key from safe local's output. safe names the
+// engine in that line, as in "Your Vault Seal Key is <key>" or "Your OpenBao
+// Seal Key is <key>", so the marker leaves the engine's title out.
 func extractSealKey(outputStr string) string {
-	const marker = "Vault Seal Key is "
+	const marker = "Seal Key is "
 
 	idx := strings.Index(outputStr, marker)
 	if idx == -1 {
