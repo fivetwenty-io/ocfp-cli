@@ -5,12 +5,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // sealStatusServer answers /v1/sys/seal-status with body and status.
@@ -114,30 +114,18 @@ func TestProbeInceptionVault_NoAnswerInTimeIsAStranger(t *testing.T) {
 	assert.Equal(t, vaultProbeStranger, probeInceptionVault(ctx, srv.URL).state)
 }
 
-// A closed port can be handed to another listener the moment it is freed,
-// since tests across packages run at the same time. A port that turns out to
-// be taken again is retried with a new one; a port that still refuses
-// connections must have been reported as stopped.
+// The probe must report a refused connection as a stopped vault. The dial is
+// injected to refuse, because a real closed port can be taken by another test
+// between the close and the probe.
 func TestProbeInceptionVault_ClosedPortIsStopped(t *testing.T) {
 	t.Parallel()
 
-	for range 5 {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		addr := srv.URL
-		srv.Close()
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+		},
+	}}
 
-		state := probeInceptionVault(context.Background(), addr).state
-		if state == vaultProbeStopped {
-			return
-		}
-
-		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(addr, "http://"), time.Second)
-		require.NoError(t, err, "a port that refuses connections was reported as %v", state)
-
-		_ = conn.Close()
-	}
-
-	t.Fatal("every closed port was taken again before it could be probed")
+	state := probeInceptionVaultWith(context.Background(), client, "http://127.0.0.1:1").state
+	assert.Equal(t, vaultProbeStopped, state)
 }
