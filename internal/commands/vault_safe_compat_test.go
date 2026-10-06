@@ -136,8 +136,8 @@ func TestCheckVaultInceptionPrerequisites_RefusesOldSafe(t *testing.T) {
 	writeFakeExecutable(t, bin, "vault", "exit 0\n")
 	writeFakeExecutable(t, bin, "tmux", "exit 0\n")
 	writeFakeExecutable(t, bin, "script", "exit 0\n")
-	t.Setenv("PATH", bin)
+	isolateEngineLookup(t, bin)
 
-	err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
+	_, err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
 	require.ErrorIs(t, err, ErrSafeTooOld)
 }
