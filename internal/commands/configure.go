@@ -77,7 +77,7 @@ configuration to your infrastructure.`,
 	cmd.Flags().BoolVar(&opts.skipBastion, "skip-bastion", false, "skip bastion configuration")
 
 	cmd.Flags().BoolVar(&opts.pruneDuplicates, "prune-duplicate-rules", false,
-		"list exact duplicate rules in ocfp security groups and do nothing else (a dry run unless --apply is given)")
+		"list exact duplicate rules in ocfp security groups and do nothing else (PVE only; a dry run unless --apply is given)")
 	cmd.Flags().BoolVar(&opts.apply, "apply", false, "with --prune-duplicate-rules, delete the duplicates it lists")
 
 	// Bind flags to viper
@@ -110,6 +110,14 @@ func runConfigure(opts *configureOptions) error {
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Refuse pruning on other providers before any provider is initialized.
+	if opts.pruneDuplicates {
+		err = validatePruneProvider(cfg)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Get provider

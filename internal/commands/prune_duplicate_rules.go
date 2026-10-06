@@ -20,6 +20,8 @@ var (
 	ErrApplyWithoutPrune   = errors.New("--apply only applies to --prune-duplicate-rules")
 	ErrPruneUnexpectedRule = errors.New("security group changed during pruning")
 	ErrPruneBadPosition    = errors.New("rule has a non-numeric position")
+
+	ErrPruneProviderUnsupported = errors.New("--prune-duplicate-rules is supported only on PVE")
 )
 
 // pruneResult totals one pruning run.
@@ -281,6 +283,11 @@ func pruneDuplicateRules(ctx context.Context, security cpi.SecurityManager, owne
 // runPruneDuplicateRules prunes the provider's owned groups and does nothing
 // else.
 func runPruneDuplicateRules(ctx context.Context, cfg *config.Config, provider cpi.Provider, blocName string, apply bool, out io.Writer) error {
+	err := validatePruneProvider(cfg)
+	if err != nil {
+		return err
+	}
+
 	security := provider.SecurityManager()
 	if security == nil {
 		return ErrProviderDoesNotSupportSecurityMgmt
@@ -288,9 +295,21 @@ func runPruneDuplicateRules(ctx context.Context, cfg *config.Config, provider cp
 
 	ruleDefs := bootstrap.DefaultSecurityGroupRules(cfg)
 
-	_, err := pruneDuplicateRules(ctx, security, func(name string) bool {
+	_, err = pruneDuplicateRules(ctx, security, func(name string) bool {
 		return ownedSecurityGroup(blocName, name, ruleDefs)
 	}, apply, out)
 
 	return err
+}
+
+// validatePruneProvider refuses providers other than PVE. Pruning deletes a
+// rule by its numeric position in the group, which only PVE reports. Other
+// providers identify rules by UUIDs or composite names, so their rules could
+// not be listed or deleted this way.
+func validatePruneProvider(cfg *config.Config) error {
+	if !strings.EqualFold(strings.TrimSpace(cfg.Provider), "pve") {
+		return fmt.Errorf("%w (this bloc uses %q)", ErrPruneProviderUnsupported, cfg.Provider)
+	}
+
+	return nil
 }
