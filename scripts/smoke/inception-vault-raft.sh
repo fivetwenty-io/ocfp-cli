@@ -341,11 +341,15 @@ case_b2() {
 # B3 records whether a single raft node reopens with a new cluster address.
 # A failure here means ocfp must record the cluster port per bloc.
 case_b3() {
-  local moved
+  local moved keys
   moved=$(api_port smoke-a-moved)
+  keys=$(key_sha smoke-a)
   stop_vault smoke-a || return 1
   new_ocfp smoke-a "$moved" || fail "raft did not reopen after the cluster port moved; see $S/logs/$CASE.log" || return 1
+  [[ $(key_sha smoke-a) == "$keys" ]] || fail "the keys changed, so the vault was not reopened" || return 1
+  assert_no_archive smoke-a || return 1
   expect_raft smoke-a "$moved" || return 1
+  check_canary smoke-a || return 1
   tmux kill-session -t smoke-a-inception-vault >/dev/null 2>&1 || true
   wait_port_closed "$moved" 15 || fail "smoke-a would not stop on the moved port"
 }
@@ -418,7 +422,8 @@ case_d1() {
   local archive
   new_ocfp smoke-f || fail "fresh start failed; see $S/logs/$CASE.log" || return 1
   stop_vault smoke-f || return 1
-  mv "$(vault_root smoke-f)/unseal.keys" "$S/aside/smoke-f.unseal.keys"
+  mv "$(vault_root smoke-f)/unseal.keys" "$S/aside/smoke-f.unseal.keys" ||
+    fail "the fresh start left no unseal.keys to move aside" || return 1
   new_ocfp smoke-f || fail "the run after losing a key failed; see $S/logs/$CASE.log" || return 1
   archive=$(archive_of smoke-f)
   [[ -n $archive && -f $archive/data/vault.db ]] || fail "the archive does not hold the old data" || return 1
@@ -431,6 +436,8 @@ case_d2() {
   local archive logs
   new_ocfp smoke-g || fail "fresh start failed; see $S/logs/$CASE.log" || return 1
   stop_vault smoke-g || return 1
+  [[ -s $(vault_root smoke-g)/root.key && -s $(vault_root smoke-g)/unseal.keys ]] ||
+    fail "the fresh start did not save both keys" || return 1
   head -c 24 /dev/urandom | base64 >"$(vault_root smoke-g)/root.key"
   new_ocfp smoke-g || fail "the run with a wrong token failed; see $S/logs/$CASE.log" || return 1
   logs="$(vault_log smoke-g) $(vault_log smoke-g).previous"
