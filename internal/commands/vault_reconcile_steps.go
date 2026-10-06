@@ -456,12 +456,67 @@ func canonicalizeRootKeyFile(paths map[string]string, log *zap.SugaredLogger) er
 	return nil
 }
 
+// recoverUnsealKeyFromLogs writes a missing or blank unseal.keys of a
+// stopped vault from the whole unseal key that safe printed into the vault
+// log, or into the log of the start before it. Without it the vault would be
+// archived for a missing key while its key still sat in a log.
+//
+// The newest log that holds a whole key is used, since a new vault prints
+// its key once, on the start that created the data now on disk. A log that
+// exists but cannot be read is an error, and nothing is written then.
+// Finding no key leaves the disk as it was.
+func recoverUnsealKeyFromLogs(paths map[string]string, log *zap.SugaredLogger) error {
+	keyFile := paths["unsealKeysFile"]
+	if paths["rootKeyFile"] == keyFile {
+		return nil
+	}
+
+	held, err := keyFileHasValue(keyFile)
+	if err != nil || held {
+		return err
+	}
+
+	for _, logFile := range vaultLogFiles(paths) {
+		data, readErr := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
+		if errors.Is(readErr, fs.ErrNotExist) {
+			continue
+		}
+
+		if readErr != nil {
+			return fmt.Errorf("cannot read %s, which may hold the unseal key %s is missing; "+
+				"nothing was started or archived: %w", logFile, keyFile, readErr)
+		}
+
+		keys := sealKeysIn(stripANSI(string(data)))
+		if len(keys) == 0 {
+			continue
+		}
+
+		err = writeRecoveredKey(keyFile, keys[len(keys)-1])
+		if err != nil {
+			return err
+		}
+
+		log.Warnw("Recovered the stopped vault's missing unseal key from its log", "path", keyFile, "log", logFile)
+
+		return nil
+	}
+
+	return nil
+}
+
+// vaultLogFiles lists the bloc's vault log and the log of the start before
+// it, newest first.
+func vaultLogFiles(paths map[string]string) []string {
+	return []string{paths["logFile"], paths["logFile"] + previousVaultLogSuffix}
+}
+
 // unsealKeySources returns what safe printed for the bloc's vault, from the
 // tee'd log, the previous run's log, and the tmux pane's whole history.
 func unsealKeySources(ctx context.Context, paths map[string]string) []string {
 	var sources []string
 
-	for _, logFile := range []string{paths["logFile"], paths["logFile"] + ".previous"} {
+	for _, logFile := range vaultLogFiles(paths) {
 		data, err := os.ReadFile(logFile) // #nosec G304 -- the bloc's own log files from getVaultInceptionPaths()
 		if err == nil {
 			sources = append(sources, stripANSI(string(data)))
