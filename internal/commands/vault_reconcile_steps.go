@@ -238,13 +238,44 @@ func finishInceptionVault(
 	return nil
 }
 
+// previousVaultLogSuffix names the log of the start before the current one.
+const previousVaultLogSuffix = ".previous"
+
 // setAsidePreviousVaultLog moves the last run's log to <log>.previous before
-// a start, replacing any older one. The wait reads the log, and the last
-// run's "Now targeting" would pass for ready, while its rejected-token line
-// would archive a vault whose keys are fine.
+// a start. The wait reads the log, and the last run's "Now targeting" would
+// pass for ready, while its rejected-token line would archive a vault whose
+// keys are fine.
+//
+// A log can hold the only copy of a new vault's unseal key, and the log sits
+// outside <bloc>/vault, so an archive does not carry it. An existing
+// .previous is therefore moved to .previous-<timestamp> first, and no log is
+// ever replaced or deleted.
 func setAsidePreviousVaultLog(logFile string) error {
-	err := os.Rename(logFile, logFile+".previous")
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	_, err := os.Lstat(logFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to inspect the previous inception vault log %s: %w", logFile, err)
+	}
+
+	previous := logFile + previousVaultLogSuffix
+
+	_, err = os.Lstat(previous)
+
+	switch {
+	case err == nil:
+		_, err = moveAsideUnderFreeName(previous, previous+"-"+time.Now().Format(vaultArchiveTimeFormat))
+		if err != nil {
+			return fmt.Errorf("failed to keep the older inception vault log: %w", err)
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("failed to inspect the older inception vault log %s: %w", previous, err)
+	}
+
+	err = renameRefusingExisting(logFile, previous)
+	if err != nil {
 		return fmt.Errorf("failed to set the previous inception vault log aside: %w", err)
 	}
 

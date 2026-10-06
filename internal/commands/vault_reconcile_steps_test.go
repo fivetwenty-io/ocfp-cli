@@ -562,3 +562,33 @@ func TestRecoverInceptionKeys_NeverReplacesAnUnreadableKeyFile(t *testing.T) {
 		})
 	}
 }
+
+// The log of a new vault can hold the only copy of its unseal key, so no
+// start may ever replace an older log. Each start moves the last log to
+// .previous, and moves an existing .previous to a name of its own first.
+func TestSetAsidePreviousVaultLog_NeverReplacesAnOlderLog(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "vault-inception.log")
+
+	for _, run := range []string{"run 1\n", "run 2\n", "run 3\n", "run 4\n"} {
+		require.NoError(t, os.WriteFile(logFile, []byte(run), 0o600))
+		require.NoError(t, setAsidePreviousVaultLog(logFile))
+		assert.NoFileExists(t, logFile)
+	}
+
+	assert.Equal(t, "run 4\n", readKey(t, logFile+".previous"))
+
+	older, err := filepath.Glob(logFile + ".previous-*")
+	require.NoError(t, err)
+
+	var kept []string
+
+	for _, path := range older {
+		kept = append(kept, readKey(t, path))
+	}
+
+	assert.ElementsMatch(t, []string{"run 1\n", "run 2\n", "run 3\n"}, kept)
+
+	// With no current log there is nothing to move, and .previous stays.
+	require.NoError(t, setAsidePreviousVaultLog(logFile))
+	assert.Equal(t, "run 4\n", readKey(t, logFile+".previous"))
+}
