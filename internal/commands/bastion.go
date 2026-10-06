@@ -82,10 +82,12 @@ func NewBastionCmd() *cobra.Command {
 		"recycle: pause once the replacement holds the data disk, before the original is destroyed")
 
 	// Bind to viper for reuse
-	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
-	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
-	_ = viper.BindPFlag("dry-run", cmd.Flags().Lookup("dry-run"))
+	bindFlagsOnRun(cmd, map[string]string{
+		"ssh.user": "user",
+		"ssh.key":  "key",
+		"bloc":     "bloc",
+		"dry-run":  "dry-run",
+	})
 	_ = viper.BindPFlag("bastion.init.force", cmd.Flags().Lookup("force"))
 
 	return cmd

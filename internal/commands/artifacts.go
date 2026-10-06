@@ -92,10 +92,12 @@ secret/ocfp/{bloc}/ca and never mints one unless --generate is passed.`,
 	cmd.Flags().String("out", "", "ca action: write the CA cert PEM to this file (0644) instead of stdout")
 	cmd.Flags().Bool("generate", false, "ca action: mint a new bloc CA if one is not already configured")
 
-	_ = viper.BindPFlag("bloc", cmd.Flags().Lookup("bloc"))
-	_ = viper.BindPFlag("ssh.user", cmd.Flags().Lookup("user"))
-	_ = viper.BindPFlag("ssh.key", cmd.Flags().Lookup("key"))
-	_ = viper.BindPFlag("dry-run", cmd.Flags().Lookup("dry-run"))
+	bindFlagsOnRun(cmd, map[string]string{
+		"bloc":     "bloc",
+		"ssh.user": "user",
+		"ssh.key":  "key",
+		"dry-run":  "dry-run",
+	})
 
 	return cmd
 }
