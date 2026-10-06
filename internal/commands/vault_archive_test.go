@@ -203,3 +203,89 @@ func TestArchiveAndForgetVault_KeyMoveFailureKeepsEverything(t *testing.T) {
 	assert.DirExists(t, filepath.Join(archived, "core"))
 	assert.FileExists(t, paths["rootKeyFile"])
 }
+
+// noBlocVaultLayout points the home directory at a temporary directory and
+// lays out a stopped vault without a bloc: ~/.vault with both key files
+// loose beside it.
+func noBlocVaultLayout(t *testing.T) (string, map[string]string) {
+	t.Helper()
+
+	home := t.TempDir()
+
+	original := homeDirFn
+	homeDirFn = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { homeDirFn = original })
+
+	paths := getVaultInceptionPaths("", false)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(paths["vaultDir"], "raft"), 0o700))
+	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("root\n"), 0o600))
+	require.NoError(t, os.WriteFile(paths["unsealKeysFile"], []byte("unseal\n"), 0o600))
+
+	return home, paths
+}
+
+// The copies of a root token kept beside the root key file belong to the
+// vault being archived. Without a bloc they sit loose in the home directory,
+// so the archive renames each one under the archive's suffix, where the next
+// vault never mistakes it for a copy of its own token.
+func TestArchiveAndForgetVault_NoBlocMovesTheKeptTokensWithTheArchive(t *testing.T) {
+	home, paths := noBlocVaultLayout(t)
+	root := paths["rootKeyFile"]
+	suffix := "20261006-120000"
+
+	kept := map[string]string{
+		".saferc-20261006-110000":   "s.SAFE-ONE\n",
+		".saferc-20261006-110000-2": "s.SAFE-TWO\n",
+		".rejected-20261006-110500": "s.REFUSED\n",
+	}
+	for rest, value := range kept {
+		require.NoError(t, os.WriteFile(root+rest, []byte(value), 0o600))
+	}
+
+	otherLayout := filepath.Join(home, "test-vault.root.key.saferc-20261006-110000")
+	require.NoError(t, os.WriteFile(otherLayout, []byte("s.TEST-MODE\n"), 0o600))
+
+	archived, err := archiveAndForgetVault(paths, suffix, zap.NewNop().Sugar())
+	require.NoError(t, err)
+	assert.Equal(t, paths["vaultDir"]+VaultArchiveSuffix+suffix, archived)
+
+	for rest, value := range kept {
+		assert.NoFileExists(t, root+rest, "the copy must not stay beside the next vault's root key file")
+
+		moved, readErr := os.ReadFile(root + VaultArchiveSuffix + suffix + rest) // #nosec G304 -- the test's own file
+		require.NoError(t, readErr, "the copy must travel with the archive")
+		assert.Equal(t, value, string(moved))
+	}
+
+	left, err := filepath.Glob(root + ".saferc-*")
+	require.NoError(t, err)
+	assert.Empty(t, left)
+
+	assert.FileExists(t, otherLayout, "another layout's copies are not this vault's")
+}
+
+// A kept copy whose archive name is already taken stays where it is, and the
+// file at that name is not replaced.
+func TestArchiveAndForgetVault_KeptTokenMoveRefusesAnExistingName(t *testing.T) {
+	_, paths := noBlocVaultLayout(t)
+	root := paths["rootKeyFile"]
+	suffix := "20261006-120000"
+	copyPath := root + ".saferc-20261006-110000"
+	taken := root + VaultArchiveSuffix + suffix + ".saferc-20261006-110000"
+
+	require.NoError(t, os.WriteFile(copyPath, []byte("s.SAFE\n"), 0o600))
+	require.NoError(t, os.WriteFile(taken, []byte("s.OLDER\n"), 0o600))
+
+	_, err := archiveAndForgetVault(paths, suffix, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrVaultArchiveExists)
+
+	current, err := os.ReadFile(copyPath) // #nosec G304 -- the test's own file
+	require.NoError(t, err)
+	assert.Equal(t, "s.SAFE\n", string(current))
+
+	older, err := os.ReadFile(taken) // #nosec G304 -- the test's own file
+	require.NoError(t, err)
+	assert.Equal(t, "s.OLDER\n", string(older))
+}

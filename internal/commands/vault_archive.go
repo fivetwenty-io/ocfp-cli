@@ -37,7 +37,7 @@ var ErrVaultArchiveExists = keyfile.ErrExists
 // the parent captures keys and data together. Legacy and test-mode layouts put
 // vaultDir at ~/.vault with keys loose in the home directory; there the parent
 // is the user's home, so only the data directory is renamed here and
-// archiveAndForgetVault moves the loose key file aside on its own.
+// archiveAndForgetVault moves the loose key files aside on its own.
 func archiveVaultState(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {
 	vaultDir := paths["vaultDir"]
 	target := vaultDir
@@ -107,8 +107,9 @@ func vaultRootContains(vaultDir, vaultRoot string, keyFiles ...string) bool {
 // the keys along with the data. In the legacy and test layouts the key files
 // sit loose in the home directory, where the next fresh vault would write
 // its own keys over them, so each is renamed aside under the same suffix. Deleting
-// it instead, as this path once did, would leave the archived data with no
-// way back in.
+// them instead, as this path once did, would leave the archived data with no
+// way back in. The copies of a root token kept beside the root key file move
+// with them, so every token of the archived vault stays with its archive.
 func archiveAndForgetVault(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {
 	archived, err := archiveVaultState(paths, suffix, log)
 	if err != nil {
@@ -130,7 +131,56 @@ func archiveAndForgetVault(paths map[string]string, suffix string, log *zap.Suga
 		}
 	}
 
+	err = moveKeptTokensAside(paths["rootKeyFile"], suffix, log)
+	if err != nil {
+		return archived, err
+	}
+
 	return archived, nil
+}
+
+// moveKeptTokensAside renames each copy of a root token still kept beside
+// rootKeyFile, root.key.saferc-<timestamp> and root.key.rejected-<timestamp>,
+// to root.key.superseded-<suffix>.saferc-<timestamp> and so on. The new name
+// no longer starts with the prefix a kept copy is found by, so the next vault
+// never takes the archived vault's token for its own. In the bloc layout the
+// copies already moved with <bloc>/vault and there is nothing left to do.
+// It renames only, and refuses to replace anything.
+func moveKeptTokensAside(rootKeyFile, suffix string, log *zap.SugaredLogger) error {
+	if rootKeyFile == "" {
+		return nil
+	}
+
+	dir := filepath.Dir(rootKeyFile)
+
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to list the root token copies in %s: %w", dir, err)
+	}
+
+	base := filepath.Base(rootKeyFile)
+
+	for _, entry := range entries {
+		rest, ok := strings.CutPrefix(entry.Name(), base)
+		if !ok || !entry.Type().IsRegular() {
+			continue
+		}
+
+		if !strings.HasPrefix(rest, keyfile.TokenCopyInfix) && !strings.HasPrefix(rest, rejectedTokenInfix) {
+			continue
+		}
+
+		err = moveAsideIfPresent(filepath.Join(dir, entry.Name()), rootKeyFile+VaultArchiveSuffix+suffix+rest, log)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // moveAsideIfPresent renames path to aside when path exists, refusing to
