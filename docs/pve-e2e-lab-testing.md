@@ -1283,7 +1283,7 @@ Fresh execution of the e2e flow after the lab rebuild (bloc `ocfp-lab-wayne`, pe
 
 - **Env-file requirements (hand-crafted envs).** `genesis.bosh_exodus_base` must be set explicitly in the bosh env; the vault env's exodus `bosh_env` must be RELATIVE (`<env>@/secret/exodus/`) so it follows the current secrets provider post-migrate.
 
-- **ocfp CLI bug (fixed).** `ocfp vault migrate --force` ran `genesis ... secrets-provider` (and `genesis envs`) from the caller's cwd, but genesis `@env:type` addressing only resolves from inside the deployments repo. Fixed: both invocations now run from `DEPLOYMENTS_DIR` (fallback `~/ocfp/deployments`; caller cwd when neither exists) — `internal/vault/manager.go` `genesisWorkDir()`.
+- **ocfp CLI bug (fixed).** `ocfp vault migrate --force` ran `genesis ... secrets-provider` (and `genesis envs`) from the caller's cwd, but genesis `@env:type` addressing only resolves from inside the deployments repo. Fixed: both invocations now run from `DEPLOYMENTS_DIR` (fallback `~/ocfp/deployments`; caller cwd when neither exists) — `internal/vault/manager.go` `genesisWorkDir()`. Later superseded: `genesis envs` itself needs a live secrets provider, so after the inception vault stopped it skipped every repo. The update step no longer calls it. It finds each deployment repo under that directory by its `.genesis/config` and runs `genesis secrets-provider <bloc>-mgmt` inside it.
 
 ### Phase 6 findings & fixes (cf kit + env)
 
