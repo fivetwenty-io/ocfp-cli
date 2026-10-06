@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -135,8 +136,17 @@ func notTokenChar(r rune) bool {
 	return !strings.ContainsRune(tokenChars, r)
 }
 
+// syncFile flushes a written file's data and mode to disk, and syncDir
+// flushes a directory's entries. Tests replace them to check the order and
+// how a failure is handled.
+var (
+	syncFile = (*os.File).Sync //nolint:gochecknoglobals // tests replace the sync to observe it
+	syncDir  = syncDirectory   //nolint:gochecknoglobals // tests replace the sync to observe it
+)
+
 // WriteRecovered writes one key file with mode 0600, through a temporary
-// file and a rename so a crash never leaves a partial key behind.
+// file and a rename, so neither a crash nor a power loss leaves a partial or
+// empty key behind.
 func WriteRecovered(path, value string) error {
 	return writeFile(path, value, true)
 }
@@ -152,6 +162,13 @@ func WriteNew(path, value string) error {
 // temporary file in the same directory. With replace it renames the
 // temporary file over path. Without it, it hard-links the temporary file to
 // path, which fails when path exists, so nothing there is ever replaced.
+//
+// A rename can reach the disk before the data it points at, so a power loss
+// soon after it could leave the only copy of a key empty. The temporary file
+// is therefore synced before it takes its name, and the directory is synced
+// after the name changes. A failure before the rename or link leaves path as
+// it was and removes the temporary file. A directory sync that fails after
+// it leaves the new key at path, and the error says so.
 func writeFile(path, value string, replace bool) error {
 	dir := filepath.Dir(path)
 
@@ -168,32 +185,21 @@ func writeFile(path, value string, replace bool) error {
 	tmpName := tmp.Name()
 
 	_, err = tmp.WriteString(value + "\n")
-	closeErr := tmp.Close()
+	if err == nil {
+		err = tmp.Chmod(FileMode)
+	}
 
+	if err == nil {
+		err = syncFile(tmp)
+	}
+
+	closeErr := tmp.Close()
 	if err == nil {
 		err = closeErr
 	}
 
 	if err == nil {
-		err = os.Chmod(tmpName, FileMode)
-	}
-
-	if err == nil && replace {
-		err = os.Rename(tmpName, path)
-	}
-
-	if err == nil && !replace {
-		err = os.Link(tmpName, path)
-		if errors.Is(err, fs.ErrExist) {
-			err = fmt.Errorf("%w: %s", ErrExists, path)
-		}
-
-		if err == nil {
-			err = os.Remove(tmpName)
-			if err != nil {
-				return fmt.Errorf("wrote %s, but could not remove its temporary copy %s: %w", path, tmpName, err)
-			}
-		}
+		err = placeFile(tmpName, path, replace)
 	}
 
 	if err != nil {
@@ -202,7 +208,60 @@ func writeFile(path, value string, replace bool) error {
 		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 
+	if !replace {
+		err = os.Remove(tmpName)
+		if err != nil {
+			return fmt.Errorf("wrote %s, but could not remove its temporary copy %s: %w", path, tmpName, err)
+		}
+	}
+
+	err = syncDir(dir)
+	if err != nil {
+		return fmt.Errorf("wrote %s, but could not flush its directory %s to disk: %w", path, dir, err)
+	}
+
 	return nil
+}
+
+// placeFile gives the synced temporary file the key file's name, by a
+// rename that replaces path, or by a hard link that refuses an existing path
+// and leaves the temporary name for the caller to remove.
+func placeFile(tmpName, path string, replace bool) error {
+	if replace {
+		return os.Rename(tmpName, path)
+	}
+
+	err := os.Link(tmpName, path)
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%w: %s", ErrExists, path)
+	}
+
+	return err
+}
+
+// syncDirectory flushes dir's entries to disk, so a rename or link in it
+// survives a power loss. A filesystem that cannot sync a directory at all
+// reports EINVAL or ENOTSUP, and then there is nothing more to do.
+func syncDirectory(dir string) error {
+	d, err := os.Open(dir) // #nosec G304 -- the directory of the bloc's own key file
+	if err != nil {
+		return err
+	}
+
+	err = d.Sync()
+	closeErr := d.Close()
+
+	if err != nil && !dirSyncUnsupported(err) {
+		return err
+	}
+
+	return closeErr
+}
+
+// dirSyncUnsupported reports a directory sync that the filesystem does not
+// support, as opposed to one that failed.
+func dirSyncUnsupported(err error) bool {
+	return errors.Is(err, syscall.EINVAL) || errors.Is(err, errors.ErrUnsupported)
 }
 
 // TargetToken returns the token safe holds for the named target, or "" unless
