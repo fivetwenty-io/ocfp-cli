@@ -113,13 +113,18 @@ func testPVEReservedIPsMgmtOcfDisjointCompact(t *testing.T) {
 	assert.Equal(t, "10.64.64.10", mgmt["blacksmith_ip"])
 	assert.Equal(t, "10.64.64.26", ocf["blacksmith_ip"])
 
+	// prometheus is the one monitoring-stack static both tiers carry: mgmt
+	// at 8, ocf at 27 (the last free offset below mgmt's available band).
+	assert.Equal(t, "10.64.64.8", mgmt["prometheus_ip"])
+	assert.Equal(t, "10.64.64.27", ocf["prometheus_ip"])
+
 	// haproxy sits INSIDE the ocf available band (start+1), same coupling as
 	// wide's.
 	assert.Equal(t, "10.64.64.37", ocf["haproxy_ip"], "ocf haproxy: available band start + 1")
 	assert.NotContains(t, mgmt, "haproxy_ip", "mgmt has no CF, no haproxy static")
 
 	// mgmt-only named statics must never appear in ocf's tree.
-	for _, key := range []string{"bastion_ip", "concourse_ip", "prometheus_ip", "shield_ip", "artifacts_ip",
+	for _, key := range []string{"bastion_ip", "concourse_ip", "shield_ip", "artifacts_ip",
 		"wireguard_ip", "ovpn_ip", "rustfs_ip", "rustfs_ip_smoke", "proxycache_ip", "nfs_ip", "ocfp_ui_ip",
 		"doomsday_ip", "shout_ip", "garage_ip", "garage_ip_smoke"} {
 		assert.Contains(t, mgmt, key)
