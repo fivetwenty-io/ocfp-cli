@@ -12,14 +12,14 @@ import (
 // fakeGuestOptioner is a provider that supports converging guest options. It
 // records what it was asked to do so a test can assert the VM and the flag.
 type fakeGuestOptioner struct {
-	ids       []string
-	protected []bool
-	err       error
+	ids     []string
+	options []cpi.GuestOptions
+	err     error
 }
 
-func (f *fakeGuestOptioner) EnsureGuestOptions(_ context.Context, instanceID string, protected bool) error {
+func (f *fakeGuestOptioner) EnsureGuestOptions(_ context.Context, instanceID string, options cpi.GuestOptions) error {
 	f.ids = append(f.ids, instanceID)
-	f.protected = append(f.protected, protected)
+	f.options = append(f.options, options)
 
 	return f.err
 }
@@ -43,8 +43,12 @@ func TestEnsureGuestOptionsAsksThePVEProvider(t *testing.T) {
 		t.Fatalf("ids = %v, want [20000]", optioner.ids)
 	}
 
-	if !optioner.protected[0] {
+	if !optioner.options[0].Protected {
 		t.Error("the bastion and artifacts VMs must be asked for protection")
+	}
+
+	if !optioner.options[0].StartOnBoot {
+		t.Error("the bastion and artifacts VMs must be asked to start on boot")
 	}
 }
 
@@ -72,6 +76,10 @@ func TestBastionInstanceRequestIsProtected(t *testing.T) {
 	if !req.Protected {
 		t.Error("the bastion request must ask for a protected VM")
 	}
+
+	if !req.StartOnBoot {
+		t.Error("the bastion request must ask for a VM that starts on boot")
+	}
 }
 
 // fakeGuestOptionerProvider is a provider whose compute manager converges
@@ -94,8 +102,8 @@ type fakeGuestOptionerCompute struct {
 	ids []string
 }
 
-func (f *fakeGuestOptionerCompute) EnsureGuestOptions(_ context.Context, instanceID string, protected bool) error {
-	if protected {
+func (f *fakeGuestOptionerCompute) EnsureGuestOptions(_ context.Context, instanceID string, options cpi.GuestOptions) error {
+	if options.Protected && options.StartOnBoot {
 		f.ids = append(f.ids, instanceID)
 	}
 
