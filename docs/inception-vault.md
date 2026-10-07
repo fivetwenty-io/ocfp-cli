@@ -2,7 +2,7 @@
 
 The inception vault is the small vault that holds a bloc's secrets while the bloc is being bootstrapped, before the bloc has a production vault of its own. ocfp runs it with `safe local` inside a tmux session, first on the operator's workstation during `ocfp bootstrap` and then on the bastion during `ocfp init bastion`. Since ocfp v0.3.9 the vault keeps its data in integrated raft storage, so a stopped vault can be reopened with its saved keys instead of being replaced.
 
-This page explains where the vault keeps its files, what `ocfp vault inception` does with each state it finds on disk, which directories a migration or an archive leaves behind, and how we recover from each error the command can return.
+This page explains where the vault keeps its files, what `ocfp vault inception` does with each state it finds on disk, which directories a migration or an archive leaves behind, how the bastion brings the vault back after a reboot, and how we recover from each error the commands can return.
 
 ## Requirements
 
@@ -18,7 +18,9 @@ Migrating a file-backed vault from an older ocfp also needs an engine that can s
 
 The API port is derived from the bloc name and lands somewhere between 18234 and 19233, so several blocs can run an inception vault on one machine. Raft also needs a cluster port, and ocfp always uses the API port plus 1000, which puts it between 19234 and 20233. Both ports must be free when the vault starts. Port 8234 is the legacy API port, and ocfp uses it only when no bloc is named.
 
-To move a bloc's vault, we set `OCFP_VAULT_INCEPTION_PORT`, or the port in the bloc's config, and the cluster port moves with it. An API port above 64535 leaves no room for its cluster port, so ocfp rejects it before doing any work.
+To move a bloc's vault, we set `OCFP_VAULT_INCEPTION_PORT`, or `vault_inception_port` in the bloc's entry in `~/.config/ocfp/config.yml`, and the cluster port moves with it. ocfp reads the legacy `~/.ocfp/config.yml` instead when that is the only config file there is. An API port above 64535 leaves no room for its cluster port, so ocfp rejects it before doing any work.
+
+On a bastion, we move the port in the config file and not in the environment. The boot unit runs `ocfp vault start` with only the environment that the unit sets, so it never sees `OCFP_VAULT_INCEPTION_PORT`, and it uses the port from the config file or the derived port. A vault that we started on a port set only in our shell would come back on a different port after a reboot.
 
 ## Files on disk
 
@@ -153,11 +155,74 @@ cluster_addr = "https://127.0.0.1:<cluster port>"
 
 The node ID must be `safe-local`, because that is the ID safe gives its raft node, and a store migrated under any other ID will not open. We create the destination directory with mode 0700, run `<engine> operator migrate -config=<file>` with the older engine, and wait for it to report that all the keys were migrated. Then we rename `data` to `data.file-backup-manual` and `data.raft-manual` to `data`. The next `ocfp vault inception` finds raft data with both keys and restarts the vault in place.
 
+## Bringing the vault back after a reboot
+
+The vault runs inside a tmux session, so a reboot stops it, and nothing in the vault starts it again. `ocfp vault start` restarts it, and on the bastion a systemd unit runs that command at boot.
+
+### ocfp vault start
+
+`ocfp vault start --bloc <bloc>` reopens the bloc's existing raft vault with its saved keys, and it does nothing else. It takes the same per-bloc lock as `ocfp vault inception`, so the two commands never work on the vault at the same time. It never archives a vault, never migrates one, never recovers a missing key or replaces a key with a different one, and never starts a new vault. When the vault is not one it can simply reopen, it refuses before it writes anything, and it exits non-zero. A test in the ocfp source walks every function the command can reach and fails if any of them can archive a vault, start a new one, or save or recover a key.
+
+Before it restarts a vault, the command may repair a key file, and every repair keeps the key the file already holds. When `unseal.keys` holds only the start of its key, the command restores the whole key, as the section on a cut-short unseal key describes. When `root.key` or `unseal.keys` holds its key with stray whitespace around it, the command rewrites the file to hold just the key and a newline. It also keeps the token from safe's target before it stops the vault, the way the section on stopping and teardown describes. It writes nothing else.
+
+The command handles each state it can find in one of these ways:
+
+- An open vault, which means one that is initialized, unsealed, and serving, is left running, and the command exits 0. The command only starts a vault that is stopped or sealed, so it leaves an open vault alone even when the vault is not healthy, for example because its tmux session is gone. It also leaves the key files alone in that case, even when one of them is missing or needs a repair. When the vault is not healthy, or its keys are not both saved, the command logs a warning that points at `ocfp vault inception`.
+
+- A stopped or sealed vault with raft data and both key files is restarted in place with the saved keys, the same way `ocfp vault inception` restarts it, after the key repairs described above.
+
+- The command refuses when the data directory holds no raft data, when `root.key` or `unseal.keys` is missing or blank, when the data is file storage or a migration journal exists, or when the data holds both raft and file storage. It also refuses when something other than this bloc's vault holds the API port, or when the cluster port is taken.
+
+- Right before each stop, including the stop that follows a failed start, the command probes the API port again. When the vault there is no longer this bloc's own, for example because another bloc whose port collides with this one took the port while this vault was down, the command stops nothing and leaves that vault running.
+
+- When the engine rejects the saved root token or unseal key, the command stops what it started and refuses. Unlike `ocfp vault inception`, it does not try the token from safe's target, and it never archives.
+
+- Any other failure, such as an engine that never comes up, also stops what the command started, and the command returns the error.
+
+Every refusal carries the error `ocfp vault start refused to restart the inception vault`, followed by the check that failed. In each case we look at the vault by hand, and once we are sure of what we want, we run `ocfp vault inception`, which is the command that can migrate, recover, or archive.
+
+### The boot unit
+
+`ocfp init bastion` installs the boot unit in its `vault_boot_unit` phase, which runs right before `vault_inception`. The phase first runs `/usr/local/bin/ocfp vault start --check-support`, which uses a hidden flag that exits 0 and touches no vault. An ocfp that predates `vault start` rejects the flag, and the phase then fails and asks for a newer ocfp, because a unit that runs a missing command would fail at every boot.
+
+The unit comes in two files. The template at `/etc/systemd/system/ocfp-vault@.service` is the same for every bloc and names no user. The bloc's drop-in at `/etc/systemd/system/ocfp-vault@<bloc>.service.d/operator.conf` names the operator that the bloc's instance runs as and the key files it waits for. The phase decodes both files into a temporary directory and checks them with `systemd-analyze verify` when that command is installed. Only then does it install them with mode 0644, so a unit that fails the check leaves the installed files as they were. The phase enables the bloc's instance, `ocfp-vault@<bloc>.service`, but it does not start it, because `vault_inception` is what starts the vault during init. On every boot after that, the unit runs `ocfp vault start --bloc <bloc>` once. The phase uses passwordless sudo, which bastion init already relies on, and a later run of bastion init writes both files again and enables the instance again.
+
+The unit is a system unit that runs as the operator, the user that bastion init connects as. We chose a system unit because a user unit could not wait for `ocfp-dataset.service`, which is the system unit that mounts the operator's home from the data disk on a PVE bastion, and because a user unit would also need lingering turned on for that user. The unit behaves in these ways:
+
+- It starts after `ocfp-dataset.service` and `network-online.target`. On a bastion that has no `ocfp-dataset.service`, such as one on AWS, that ordering has no effect.
+
+- It starts only when the bloc's drop-in exists and the bloc's `unseal.keys` exists, either in `~/.local/share/ocfp/<bloc>/vault/` or in the legacy `~/.ocfp/<bloc>/vault/`. On a bastion where the vault was never created, or was archived, systemd skips the unit without an error. An instance without its drop-in never starts, so the template never runs the vault as root.
+
+- It is a oneshot that stays active after the command exits, and it never restarts on its own. A failed start stays failed until we look at it.
+
+- Its drop-in sets `HOME` to the operator's home and puts `/home/linuxbrew/.linuxbrew/bin` on `PATH` ahead of the system directories, so ocfp finds safe, tmux, and the engine. ocfp needs nothing else from the environment, because the unit passes the bloc with `--bloc`.
+
+- It finds the bloc's files in ocfp's default directories under the operator's home, such as `~/.local/share/ocfp` and `~/.config/ocfp`, because it sets neither `OCFP_HOME` nor any `XDG_*` variable. On a bastion we therefore set neither of them for ocfp, since the unit would not find a vault that ocfp created under some other directory.
+
+- It gives the command ten minutes, which covers a wait for the lock and the vault's readiness check.
+
+- Stopping or restarting the unit leaves the vault running. The unit sets `KillMode=process`, so systemd kills only the unit's own process, which has already exited, and the vault's tmux server lives on. We stop the vault with `ocfp vault teardown`, never through the unit. When the bastion shuts down, the vault is stopped along with every other process on the system.
+
+### Checking the unit
+
+We check the unit and read what the last boot's run logged with these two commands.
+
+```bash
+systemctl status ocfp-vault@<bloc>.service
+journalctl -b -u ocfp-vault@<bloc>.service
+```
+
+After a successful start, `systemctl status` shows the unit as `active (exited)`. After a refusal or a failed start it shows `failed`, and the journal holds the command's log with the reason. When systemd skipped the unit because no `unseal.keys` exists, the status says that its start condition was not met. ocfp never writes a key to the journal.
+
+To run the same start again, we run `ocfp vault start --bloc <bloc>` as the operator, which does exactly what the unit does. Because the unit stays active after it exits, `sudo systemctl start` does nothing once it has run, so we use `sudo systemctl restart ocfp-vault@<bloc>.service` when we want the run to go through systemd and land in the journal.
+
 ## Stopping and teardown
 
 ocfp stops a vault by killing the bloc's tmux session, the listener on the bloc's API port, and any `safe local` process for that port. It then waits up to fifteen seconds for the port to close and for no process to hold `vault.db`, and it sends SIGKILL to anything still holding the data after a grace period. If the data stays locked, ocfp returns an error and moves nothing, because archiving or migrating under a live engine is how a store gets corrupted.
 
 `ocfp vault teardown` stops the bloc's vault the same way, deletes its safe target, and archives it as described above. Before it stops anything, it keeps the token from the bloc's safe target in `root.key`, or beside it when `root.key` holds something else, so the token goes into the archive with the data. It first checks that the vault on the port is the bloc's own, and it stops nothing when it cannot prove that. When the vault is open, which means it is initialized and unsealed, teardown also checks that `root.key` and `unseal.keys` both hold a valid key, because the archive can never be unsealed without them. When a key is missing, or `unseal.keys` holds only the start of the key, teardown tries to recover the whole key from what the running vault left behind, the same way `ocfp vault inception` does. If either key is still missing, teardown stops nothing, moves nothing, and leaves the vault running, and its error names the vault logs where the keys may still be found. We can then save the keys by hand and run teardown again, or run `ocfp vault teardown --force` to archive the vault anyway, knowing that the archive cannot be unsealed without the keys. When teardown cannot read a key file, it also stops nothing and leaves the vault running, and the fix is to make the file readable by our user, not to use `--force`. A sealed or stopped vault holds nothing in memory that its files do not, so teardown archives it without this check. When `ocfp init bastion` hands the vault over to the bastion, it stops the workstation's vault, and before it stops anything or deletes the safe target, it keeps the token from that target the same way, in the workstation bloc's `root.key` or beside it. When the token cannot be kept, the handover stops nothing and deletes nothing, and says why. The stop includes an engine that outlived its safe but still holds the bloc's raft data. The workstation's data stays on disk as a snapshot of the bootstrap-era secrets.
+
+Teardown also disables the bloc's boot unit, `ocfp-vault@<bloc>.service`, when systemctl reports it enabled. It does this only after it has stopped and archived the vault. A refused teardown leaves the unit enabled along with the running vault, and so does a teardown whose stop or archive fails, because the vault may still be in place. Teardown disables the unit with `sudo -n` and never stops it, and it leaves the bloc's drop-in where it is. When sudo wants a password, or the disable fails for any other reason, teardown logs a warning and still succeeds, because the vault is archived by then. A unit left enabled does no harm, because once `unseal.keys` has moved into the archive, systemd skips the unit, and `ocfp vault start` would refuse a bloc with no data in any case. On a workstation without systemctl, there is nothing to disable. A teardown in test mode leaves the unit alone, because the unit serves the bloc's real vault and not the test one. After a later `ocfp vault inception` creates a new vault on the bastion, we run `ocfp init bastion` again, or run `sudo systemctl enable ocfp-vault@<bloc>.service`, so that the new vault comes back after a reboot too.
 
 ## A cut-short unseal key
 
@@ -193,6 +258,14 @@ A new vault is held to the same standard. When ocfp starts one, it takes the new
 | `the inception vault unseal key file does not hold a whole key` | `unseal.keys` is cut short and no log or pane history still holds the whole key. | Follow the steps in the section on a cut-short unseal key, then run the command again. Nothing on disk changed. |
 | `the inception vault's keys were not saved` | A vault is running, but its root token or unseal key is not saved in a valid shape. Either a new vault's keys could not be captured, or a running vault's keys were never saved and could not be recovered. `ocfp vault teardown` returns it too when it refuses to archive an open vault whose keys are not saved. | Find the full keys in the vault logs that the error names, write them to `root.key` and `unseal.keys` at mode 0600, and run the command again. The vault was left running. For teardown, `--force` archives the vault anyway, but that archive cannot be unsealed without the keys. |
 | `no free name left to keep an inception vault file` | ocfp tried to keep a copy of a root token beside `root.key`, or to keep an older vault log, but every name it tried was already taken. | Move old `root.key.saferc-*`, `root.key.rejected-*`, or `vault-inception.log.previous-*` files somewhere safe, and run the command again. |
+| `ocfp vault start refused to restart the inception vault` | `ocfp vault start` found a vault it cannot simply reopen. Every refusal from that command starts with this message and goes on to name the check that failed. Nothing was archived, and no new vault was started. | Read the rest of the error. Once we have looked at the vault, `ocfp vault inception` can migrate, recover, or archive it. |
+| `the inception vault has no raft data to restart` | `ocfp vault start` found no raft data in the bloc's data directory. | Run `ocfp vault inception` if we mean to create a vault for the bloc. |
+| `an inception vault key file is missing or empty` | `ocfp vault start` found `root.key` or `unseal.keys` missing or blank, or both keys pointed at one file. | Restore the key from a backup or from the vault logs and run the command again. `ocfp vault inception` can recover the key from the logs, but when it cannot, it archives the vault. |
+| `the inception vault needs 'ocfp vault inception' run by hand` | `ocfp vault start` found file storage or an unfinished migration to raft, and only `ocfp vault inception` handles either one. | Run `ocfp vault inception`. |
+| `the engine refused a saved inception vault key` | During `ocfp vault start`, the engine refused the saved root token or unseal key. The command stopped what it started, unless another bloc's vault had taken the port by then, and it archived nothing. | Compare the key files with the vault logs. `ocfp vault inception` tries the token from safe's target, and it archives the vault when the keys are still refused. |
+| `ocfp vault start refused to restart the inception vault: the inception vault port is taken` | `ocfp vault start` found something other than this bloc's vault on the API port, either at its first look or when it probed the port again right before a stop. It stopped nothing and left whatever holds the port running. | Find what holds the port with `lsof -i :<port>`, and stop it if it does not belong there. To move this bloc's ports for the boot unit, set `vault_inception_port` in the bloc's entry in `~/.config/ocfp/config.yml`, because the unit never sees `OCFP_VAULT_INCEPTION_PORT`. |
+| `ocfp vault start refused to restart the inception vault: the inception vault cluster port is taken` | `ocfp vault start` found the cluster port, which is the API port plus 1000, in use. When the vault was running, the command found this only after it had stopped the vault, so the vault stays stopped. | Free the cluster port and run `ocfp vault start --bloc <bloc>` again, or move both ports with `vault_inception_port` in the config file. |
+| `the installed ocfp binary has no 'vault start' command` | The `vault_boot_unit` phase of `ocfp init bastion` ran `/usr/local/bin/ocfp vault start --check-support` on the bastion, and it failed, usually because that ocfp predates `vault start`. Nothing was installed or enabled. | Install an ocfp release that has `ocfp vault start` on the bastion, and run `ocfp init bastion` again. |
 | `timed out waiting for another ocfp run to release its lock` | Another ocfp run has worked on this bloc's vault for more than five minutes. | Wait for that run to finish, or stop it, and run the command again. A killed run releases the lock on its own. |
 
 ## Testing on a workstation
