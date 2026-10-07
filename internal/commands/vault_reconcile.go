@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -428,14 +429,420 @@ func tearDownInceptionVault(
 	return nil
 }
 
+var (
+	// ErrVaultStartRefused is wrapped by every refusal of 'ocfp vault start'.
+	// A refusal never archives the vault and never starts a new one.
+	ErrVaultStartRefused = errors.New("ocfp vault start refused to restart the inception vault")
+
+	// ErrVaultStartNoData reports a bloc with no raft data to restart.
+	ErrVaultStartNoData = errors.New("the inception vault has no raft data to restart")
+
+	// ErrVaultStartKeyMissing reports a missing or empty root.key or
+	// unseal.keys, without which a vault cannot be reopened.
+	ErrVaultStartKeyMissing = errors.New("an inception vault key file is missing or empty")
+
+	// ErrVaultStartNeedsInception reports data that only 'ocfp vault
+	// inception' may change, such as file storage or an unfinished migration.
+	ErrVaultStartNeedsInception = errors.New("the inception vault needs 'ocfp vault inception' run by hand")
+
+	// ErrVaultStartKeysRejected reports an engine that refused a saved key
+	// during the restart. What was started has been stopped.
+	ErrVaultStartKeysRejected = errors.New("the engine refused a saved inception vault key")
+)
+
+// vaultStartSteps are the only actions 'ocfp vault start' may take. They are
+// a narrower set than inceptionSteps on purpose: there is no migrate step,
+// and reopen takes no safe local mode, so the only start it can run is a
+// restart with the saved keys. Nothing vault start runs can archive a vault
+// or start a new one, and a test walks its calls to keep it that way.
+type vaultStartSteps struct {
+	// probe asks the API port for seal status.
+	probe func(ctx context.Context, addr string) vaultProbe
+	// hasSession reports whether the bloc's tmux session exists.
+	hasSession func(ctx context.Context, paths map[string]string) bool
+	// ownsVault reports whether the vault answering on the port is this
+	// bloc's own.
+	ownsVault func(ctx context.Context, paths map[string]string, data vaultDataState) (bool, error)
+	// stop stops the bloc's vault and waits until the port and data are free.
+	stop func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// clusterPortFree reports why the cluster port cannot be bound, if it
+	// cannot.
+	clusterPortFree func(ctx context.Context, port string) error
+	// reopen runs safe local in restart mode with the saved keys and waits
+	// until the vault is ready.
+	reopen func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// finish targets the reopened vault.
+	finish func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// targetToken returns the root token safe holds for the bloc's target,
+	// read before a stop deletes that target.
+	targetToken func(paths map[string]string) string
+	// now stamps the copy of a kept target token.
+	now func() time.Time
+}
+
+// newVaultStartSteps wires the real vault start actions, using the safe and
+// engine binaries the prerequisite check validated.
+func newVaultStartSteps(tools inceptionTools) vaultStartSteps {
+	return wireVaultStartSteps(tools, startInceptionVault, finishReopenedVault)
+}
+
+// wireVaultStartSteps is newVaultStartSteps with the start and the finish
+// passed in, so a test can run the wiring production uses and see the mode
+// it hands safe local. The reopen always asks for a restart with the saved
+// keys, and the finish takes no mode at all.
+func wireVaultStartSteps(
+	tools inceptionTools,
+	start func(ctx context.Context, paths map[string]string, tools inceptionTools, mode safeLocalMode,
+		log *zap.SugaredLogger) error,
+	finish func(ctx context.Context, safePath string, paths map[string]string, log *zap.SugaredLogger) error,
+) vaultStartSteps {
+	return vaultStartSteps{
+		probe:           probeInceptionVault,
+		hasSession:      inceptionSessionExists,
+		ownsVault:       ownsInceptionVault,
+		stop:            stopInceptionVault,
+		clusterPortFree: inceptionClusterPortFree,
+		reopen: func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+			return start(ctx, paths, tools, safeLocalRestart, log)
+		},
+		finish: func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+			return finish(ctx, tools.safe, paths, log)
+		},
+		targetToken: blocTargetToken,
+		now:         time.Now,
+	}
+}
+
+// vaultStartRun is one pass of restartInceptionVaultInPlace over one bloc.
+type vaultStartRun struct {
+	paths map[string]string
+	steps vaultStartSteps
+	log   *zap.SugaredLogger
+}
+
+// vaultStartFindings is what vault start's checks learned about the bloc.
+type vaultStartFindings struct {
+	// healthy reports a running vault that is left as it is.
+	healthy bool
+	// running reports that this bloc's own vault answers on the port.
+	running bool
+	// open reports that the running vault is initialized and unsealed, so
+	// it is left running too.
+	open bool
+}
+
+// restartInceptionVaultInPlace is what 'ocfp vault start' does, and it runs
+// unattended at boot, so it only ever brings back the vault the bloc already
+// has.
+//
+// This bloc's own vault, when it is open and serving, is left running
+// whether it is healthy or not, before its data or keys are checked or
+// touched. Every check that can refuse runs
+// before anything is stopped or written: a stranger or a sibling's vault on
+// the API port, something on the cluster port, data that is missing or that
+// only 'ocfp vault inception' may change, and a missing or empty key file. A
+// refusal wraps ErrVaultStartRefused and leaves the disk as it was.
+// Otherwise the port is probed again, and nothing is stopped when what
+// answers is not this bloc's own. Only then do the key files get the
+// value-preserving repairs reconcile gives them, which restore a cut-short
+// unseal key to the whole key that begins with it and strip whitespace from
+// around a key, and no other write. The vault is then stopped and reopened
+// in place with its saved keys. When the engine refuses a key, what was
+// started is stopped, after the port is probed again, and the run refuses.
+// Nothing here archives a vault, starts a new one, migrates one, or
+// recovers or replaces a key.
+func restartInceptionVaultInPlace(ctx context.Context, run *vaultStartRun) error {
+	paths := run.paths
+
+	found, err := run.check(ctx)
+	if err != nil {
+		return err
+	}
+
+	if found.healthy || found.open {
+		run.leaveRunning(found)
+
+		return nil
+	}
+
+	// The port is probed again before the key files are repaired, so a
+	// refusal because it changed hands follows no write.
+	err = run.requireOwnPortHolder(ctx)
+	if err != nil {
+		return refuseVaultStart(err)
+	}
+
+	err = prepareInceptionKeyFiles(ctx, paths, run.log)
+	if err != nil {
+		return refuseVaultStart(err)
+	}
+
+	// Stopping deletes the bloc's safe target, which may hold the only copy
+	// of the root token, so it is kept first, as reconcile keeps it.
+	_, err = keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], run.steps.targetToken(paths),
+		run.steps.now(), run.log)
+	if err != nil {
+		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
+	}
+
+	err = run.steps.stop(ctx, paths, run.log)
+	if err != nil {
+		return fmt.Errorf("failed to stop the inception vault before restarting it: %w", err)
+	}
+
+	if found.running {
+		// A running vault holds its own cluster port, so the port can be
+		// judged only once that vault is down.
+		err = run.requireClusterPortFree(ctx)
+		if err != nil {
+			return fmt.Errorf("the inception vault was stopped and not restarted: %w", err)
+		}
+	}
+
+	return run.reopenInPlace(ctx)
+}
+
+// check runs every check that can refuse before anything is stopped or
+// written, and reports what it found.
+func (run *vaultStartRun) check(ctx context.Context) (vaultStartFindings, error) {
+	paths := run.paths
+
+	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
+	if probe.state == vaultProbeStranger {
+		return vaultStartFindings{}, refuseVaultStart(inceptionPortTakenError(paths, "something that is not a vault answers there"))
+	}
+
+	data := classifyVaultData(paths["vaultDir"])
+
+	journal, err := readMigrationJournal(paths["vaultDir"])
+	if err != nil {
+		return vaultStartFindings{}, refuseVaultStart(err)
+	}
+
+	running := probe.state == vaultProbeVault
+	if running {
+		owned, ownErr := run.steps.ownsVault(ctx, paths, data)
+		if ownErr != nil {
+			return vaultStartFindings{}, refuseVaultStart(ownErr)
+		}
+
+		if !owned {
+			return vaultStartFindings{}, refuseVaultStart(inceptionPortTakenError(paths,
+				"a vault answers there that this bloc cannot prove is its own"))
+		}
+
+		if journal == nil && inceptionVaultHealthy(ctx, paths, probe, data, run.steps.hasSession) {
+			return vaultStartFindings{healthy: true}, nil
+		}
+
+		// An open vault is serving, and vault start only starts a stopped
+		// one, so nothing about its data or keys can change what happens
+		// next.
+		if probe.initialized && !probe.sealed {
+			return vaultStartFindings{running: true, open: true}, nil
+		}
+	}
+
+	err = requireRestartableData(paths, data, journal)
+	if err != nil {
+		return vaultStartFindings{}, refuseVaultStart(err)
+	}
+
+	err = requireStartKeys(paths)
+	if err != nil {
+		return vaultStartFindings{}, refuseVaultStart(err)
+	}
+
+	if !running {
+		err = run.requireClusterPortFree(ctx)
+		if err != nil {
+			return vaultStartFindings{}, err
+		}
+	}
+
+	return vaultStartFindings{running: running}, nil
+}
+
+// leaveRunning leaves an open vault running and changes nothing, because
+// vault start only starts a stopped vault. An open vault that is not
+// healthy, for example one that lost its tmux session, would be lost if it
+// stopped and its saved keys no longer opened it, so that is a warning. A vault
+// whose keys are not both saved cannot be reopened once it stops, so that is
+// a warning too, and recovering them is left to 'ocfp vault inception',
+// which can do it while the vault runs.
+func (run *vaultStartRun) leaveRunning(found vaultStartFindings) {
+	paths := run.paths
+
+	if !found.healthy {
+		run.log.Warnw("The inception vault is open and serving but is not healthy, for example because its "+
+			"tmux session is gone; vault start only starts a stopped vault, so it left this one running. "+
+			"Run 'ocfp vault inception' by hand to bring it back to health",
+			"tmux_session", paths["tmuxSession"], "data", paths["vaultDir"])
+	}
+
+	saved, err := inceptionKeysSaved(paths)
+	if err != nil || !saved {
+		run.log.Warnw("The inception vault is running, but its keys are not both saved; "+
+			"run 'ocfp vault inception' while it runs to recover them",
+			"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"], "error", err)
+	}
+
+	run.log.Infow("Inception vault is already running; vault start left it alone",
+		"url", "http://127.0.0.1:"+paths["port"])
+}
+
+// requireClusterPortFree refuses when the cluster port cannot be bound.
+func (run *vaultStartRun) requireClusterPortFree(ctx context.Context) error {
+	paths := run.paths
+
+	err := run.steps.clusterPortFree(ctx, paths["clusterPort"])
+	if err != nil {
+		return refuseVaultStart(fmt.Errorf("%w: cluster port %s (API port %s plus 1000): %w; free it, or set %s to move both ports",
+			ErrInceptionClusterPortTaken, paths["clusterPort"], paths["port"], err, inceptionPortEnvVar))
+	}
+
+	return nil
+}
+
+// reopenInPlace restarts the stopped vault with its saved keys. Any failure
+// stops what was started, once a fresh probe shows that what holds the port
+// is this bloc's own. A key the engine refused is a refusal, and any other
+// failure says nothing about the keys; either way the data and keys are left
+// where they are.
+func (run *vaultStartRun) reopenInPlace(ctx context.Context) error {
+	paths := run.paths
+
+	run.log.Infow("Restarting the inception vault in place with its saved keys", "data", paths["vaultDir"])
+
+	err := run.steps.reopen(ctx, paths, run.log)
+	if err == nil {
+		return run.steps.finish(ctx, paths, run.log)
+	}
+
+	stopErr := run.requireOwnPortHolder(ctx)
+	if stopErr == nil {
+		stopErr = wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log))
+	}
+
+	if errors.Is(err, ErrVaultKeysRejected) {
+		return refuseVaultStart(errors.Join(fmt.Errorf("%w: %w; its data in %s and its keys were left as they were; "+
+			"check %s and %s before running 'ocfp vault inception', which archives a vault whose keys the engine "+
+			"refuses", ErrVaultStartKeysRejected, err, paths["vaultDir"],
+			paths["rootKeyFile"], paths["unsealKeysFile"]), stopErr))
+	}
+
+	return errors.Join(fmt.Errorf("failed to restart the inception vault, and its data in %s and its keys were left "+
+		"as they were: %w", paths["vaultDir"], err), stopErr)
+}
+
+// requireOwnPortHolder probes the API port again right before a stop, and
+// fails unless nothing answers there or the vault that answers is this
+// bloc's own. A stop kills whatever listens on the port and every safe local
+// for it, and a bloc whose port collides with this one's can start its own
+// vault between vault start's checks and its stop, as two boot units do
+// when they run at once. What answers then is left running.
+func (run *vaultStartRun) requireOwnPortHolder(ctx context.Context) error {
+	paths := run.paths
+
+	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
+
+	switch probe.state {
+	case vaultProbeStopped:
+		return nil
+	case vaultProbeStranger:
+		return inceptionPortTakenError(paths,
+			"something that is not a vault answers there now, so vault start stopped nothing and left it running")
+	case vaultProbeVault:
+	}
+
+	owned, err := run.steps.ownsVault(ctx, paths, classifyVaultData(paths["vaultDir"]))
+	if err != nil {
+		return fmt.Errorf("vault start stopped nothing, because it cannot tell whose vault answers on port %s now: %w",
+			paths["port"], err)
+	}
+
+	if !owned {
+		return inceptionPortTakenError(paths, "a vault answers there now that this bloc cannot prove is its own, "+
+			"so vault start stopped nothing and left it running")
+	}
+
+	return nil
+}
+
+// refuseVaultStart marks err as a refusal of vault start.
+func refuseVaultStart(err error) error {
+	return fmt.Errorf("%w: %w", ErrVaultStartRefused, err)
+}
+
+// requireRestartableData refuses data that vault start cannot reopen as it
+// is. Raft data with no migration in flight is the only kind it restarts.
+func requireRestartableData(paths map[string]string, data vaultDataState, journal *migrationJournal) error {
+	dir := paths["vaultDir"]
+
+	switch {
+	case data == vaultDataMixed:
+		return fmt.Errorf("%w: %s; inspect it by hand, ocfp will not touch it", ErrVaultDataMixed, dir)
+	case journal != nil:
+		return fmt.Errorf("%w: %s records a migration to raft that has not finished, and only that command resumes it",
+			ErrVaultStartNeedsInception, dir+migrationJournalSuffix)
+	case data == vaultDataFile:
+		return fmt.Errorf("%w: %s holds file storage, and only that command migrates it to raft",
+			ErrVaultStartNeedsInception, dir)
+	case data == vaultDataAbsent:
+		return fmt.Errorf("%w: %s holds no vault data, and vault start never creates a vault; "+
+			"'ocfp vault inception' starts a new one", ErrVaultStartNoData, dir)
+	}
+
+	return nil
+}
+
+// requireStartKeys refuses a restart unless root.key and unseal.keys are
+// separate files that both hold something. vault start never recovers or
+// replaces a missing key, because that is the path where reconcile may
+// archive the vault.
+func requireStartKeys(paths map[string]string) error {
+	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
+		return fmt.Errorf("%w: the root token and the unseal key share %s, which cannot hold both",
+			ErrVaultStartKeyMissing, paths["rootKeyFile"])
+	}
+
+	var missing []string
+
+	for _, keyFile := range []string{paths["rootKeyFile"], paths["unsealKeysFile"]} {
+		held, err := keyFileHasValue(keyFile)
+		if err != nil {
+			return err
+		}
+
+		if !held {
+			missing = append(missing, keyFile)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s; vault start never recovers or replaces a key, so run 'ocfp vault inception' by hand",
+			ErrVaultStartKeyMissing, strings.Join(missing, " and "))
+	}
+
+	return nil
+}
+
 // isHealthy reports whether the running vault can be left exactly as it is:
 // its session exists, and it is an initialized, unsealed vault on raft data.
 // An engine that does not report its storage is judged by the data alone.
 func (run *inceptionRun) isHealthy(ctx context.Context, probe vaultProbe, data vaultDataState) bool {
+	return inceptionVaultHealthy(ctx, run.paths, probe, data, run.steps.hasSession)
+}
+
+// inceptionVaultHealthy is the check behind isHealthy, shared with vault
+// start, which judges a running vault by the same rule.
+func inceptionVaultHealthy(
+	ctx context.Context, paths map[string]string, probe vaultProbe, data vaultDataState,
+	hasSession func(ctx context.Context, paths map[string]string) bool,
+) bool {
 	raft := probe.storageType == "raft" || probe.storageType == ""
 
-	return probe.initialized && !probe.sealed && raft && data == vaultDataRaft &&
-		run.steps.hasSession(ctx, run.paths)
+	return probe.initialized && !probe.sealed && raft && data == vaultDataRaft && hasSession(ctx, paths)
 }
 
 // keepHealthy leaves a healthy vault running. The current safe target is

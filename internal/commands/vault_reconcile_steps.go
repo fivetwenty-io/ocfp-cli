@@ -323,7 +323,7 @@ func startInceptionVault(
 
 // finishInceptionVault targets a vault safe just started and, for a new
 // vault, saves the keys it printed. A restarted vault was opened with the
-// saved keys, so they are left exactly as they are.
+// saved keys, so finishReopenedVault leaves them exactly as they are.
 func finishInceptionVault(
 	ctx context.Context, safePath string, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger,
 ) error {
@@ -348,10 +348,29 @@ func finishInceptionVault(
 		}
 	}
 
-	log.Info("=== Vault Inception Completed Successfully ===")
-	printVaultInfo(paths, log)
+	reportInceptionVaultReady(paths, log)
 
 	return nil
+}
+
+// finishReopenedVault targets a vault that safe reopened with its saved
+// keys, and leaves the keys exactly as they are. It takes no mode, so
+// nothing that calls it can ask for a new vault's keys to be saved.
+func finishReopenedVault(ctx context.Context, safePath string, paths map[string]string, log *zap.SugaredLogger) error {
+	err := targetInceptionVault(ctx, safePath, paths, log)
+	if err != nil {
+		return fmt.Errorf("failed to target vault: %w", err)
+	}
+
+	reportInceptionVaultReady(paths, log)
+
+	return nil
+}
+
+// reportInceptionVaultReady logs that the vault is up and how to reach it.
+func reportInceptionVaultReady(paths map[string]string, log *zap.SugaredLogger) {
+	log.Info("=== Vault Inception Completed Successfully ===")
+	printVaultInfo(paths, log)
 }
 
 // previousVaultLogSuffix names the log of the start before the current one.

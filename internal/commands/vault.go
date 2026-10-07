@@ -125,6 +125,7 @@ or CredHub for BOSH and Cloud Foundry deployments.`,
 	cmd.AddCommand(newVaultPopulateCmd())
 	cmd.AddCommand(newVaultReservedIPsCmd())
 	cmd.AddCommand(newVaultInceptionCmd())
+	cmd.AddCommand(newVaultStartCmd())
 	cmd.AddCommand(newVaultTeardownCmd())
 	cmd.AddCommand(newVaultMigrateCmd())
 	cmd.AddCommand(newVaultExportCmd())
@@ -1490,6 +1491,107 @@ func ensureInceptionVaultLocked(blocName string, paths map[string]string) error 
 		paths: paths,
 		tools: tools,
 		steps: newInceptionSteps(tools),
+		log:   log,
+	})
+}
+
+// vaultStartCheckSupportFlag makes vault start exit 0 without touching any
+// vault. Bastion init runs it to learn whether the installed ocfp has vault
+// start, because an ocfp that predates the command rejects the flag and
+// exits non-zero, while a probe of the help text would depend on its words.
+const vaultStartCheckSupportFlag = "check-support"
+
+// newVaultStartCmd creates the vault start subcommand.
+func newVaultStartCmd() *cobra.Command {
+	var checkSupport bool
+
+	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
+		Use:   "start",
+		Short: "Restart this bloc's existing inception vault in place",
+		Long: `Bring this bloc's existing inception vault back after a reboot.
+
+This is the command the ocfp-vault@<bloc> boot unit runs on a bastion, so it
+only ever brings back the vault the bloc already has. It never archives a
+vault, never starts a new one, and never migrates one.
+
+  - A vault that is open and serving is left running, and the command exits
+    0, even when its tmux session is gone. The command only starts a vault
+    that is stopped or sealed.
+  - A stopped or sealed vault with its raft data and both key files is
+    restarted in place with its saved keys, the way 'ocfp vault inception'
+    restarts it. Before the restart, the command may repair a key file
+    without changing its key. It restores an unseal key file that holds only
+    the start of its key to the whole key, and it strips whitespace from
+    around a key. It writes nothing else to the key files.
+  - The command refuses, changes nothing, and exits non-zero when the raft
+    data or either key file is missing, when something other than this
+    bloc's vault holds the API port or the cluster port, or when the data
+    needs a migration.
+  - When the engine refuses a saved key, the command stops what it started,
+    refuses, and leaves the data and keys where they were.
+  - Right before each stop, the command probes the API port again, and it
+    stops nothing when the vault there is not this bloc's own.
+
+Every refusal names what is wrong. 'ocfp vault inception' is the command
+that decides what to do with a vault that cannot simply be reopened, and an
+operator runs it by hand. docs/inception-vault.md describes both commands and
+the boot unit.`,
+		Example: `  # Restart the bloc's inception vault after a reboot
+  ocfp vault start --bloc production`,
+		RunE: func(_cmd *cobra.Command, _args []string) error {
+			if checkSupport {
+				return nil
+			}
+
+			return runVaultStart()
+		},
+	}
+
+	cmd.Flags().BoolVar(&checkSupport, vaultStartCheckSupportFlag, false,
+		"exit 0 without touching any vault, to show that this ocfp has vault start")
+
+	cmd.Flags().Lookup(vaultStartCheckSupportFlag).Hidden = true
+
+	return cmd
+}
+
+// runVaultStart executes the vault start command.
+func runVaultStart() error {
+	blocName := viper.GetString("bloc")
+	paths := getVaultInceptionPaths(blocName, viper.GetBool("test"))
+
+	return withInceptionVaultLock(paths, func() error {
+		return startInceptionVaultLocked(blocName, paths)
+	})
+}
+
+// startInceptionVaultLocked does the work of vault start while the bloc's
+// inception vault lock is held.
+func startInceptionVaultLocked(blocName string, paths map[string]string) error {
+	log := logger.Get()
+
+	log.Infow("=== Starting the OCFP inception vault in place ===",
+		"bloc", blocName,
+		"vault_name", paths["vaultName"],
+		"port", paths["port"],
+		"cluster_port", paths["clusterPort"],
+		"tmux_session", paths["tmuxSession"],
+		"vault_dir", paths["vaultDir"],
+	)
+
+	err := requireClusterPort(paths)
+	if err != nil {
+		return err
+	}
+
+	tools, err := checkVaultInceptionPrerequisites(context.TODO(), log)
+	if err != nil {
+		return fmt.Errorf("prerequisite check failed: %w", err)
+	}
+
+	return restartInceptionVaultInPlace(context.TODO(), &vaultStartRun{
+		paths: paths,
+		steps: newVaultStartSteps(tools),
 		log:   log,
 	})
 }
