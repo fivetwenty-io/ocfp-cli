@@ -500,7 +500,8 @@ func TestValidateCheckCPIRoleOptions(t *testing.T) {
 }
 
 func TestConfigureCmdHasCheckCPIRoleFlags(t *testing.T) {
-	t.Parallel()
+	// Not parallel: NewConfigureCmd binds its flags into viper's global
+	// instance, so two configure commands built at once race.
 
 	cmd := NewConfigureCmd()
 	assert.NotNil(t, cmd.Flags().Lookup("check-cpi-role"))

@@ -364,7 +364,8 @@ func TestConfigureSecurityGroupsReconcilesFromConfig(t *testing.T) {
 // The generated bastion-init script called `ocfp configure deployments`, and
 // provisioning regenerates that script, so the two ran each other unbounded.
 func TestConfigureCmd_RejectsStrayPositional(t *testing.T) {
-	t.Parallel()
+	// Not parallel: NewConfigureCmd binds its flags into viper's global
+	// instance, so two configure commands built at once race.
 
 	cmd := NewConfigureCmd()
 
