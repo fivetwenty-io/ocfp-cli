@@ -287,6 +287,70 @@ func TestPVEVaultProvider_ConfigureAZs_MultiNode(t *testing.T) {
 	}
 }
 
+// TestPVEVaultProvider_ConfigureAZs_PinAZNodesFalse — pin_az_nodes: false writes
+// cloud_properties as "{}" rather than skipping the key, so the next populate
+// overwrites a target_node pin already in vault. node_name, index, and status
+// are unchanged.
+func TestPVEVaultProvider_ConfigureAZs_PinAZNodesFalse(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *config.Config
+		wantNodes []string
+	}{
+		{
+			name:      "one node",
+			cfg:       &config.Config{Region: "pve-node1", PinAZNodes: new(false)},
+			wantNodes: []string{"pve-node1", "pve-node1", "pve-node1"},
+		},
+		{
+			name:      "several nodes",
+			cfg:       &config.Config{Nodes: []string{"pve-a", "pve-b", "pve-c"}, PinAZNodes: new(false)},
+			wantNodes: []string{"pve-a", "pve-b", "pve-c"},
+		},
+		{
+			name:      "fewer nodes than zones",
+			cfg:       &config.Config{Nodes: []string{"pve-a", "pve-b"}, PinAZNodes: new(false)},
+			wantNodes: []string{"pve-a", "pve-b", "pve-a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &awsMockSafe{}
+			provider := newTestPVEProvider(tt.cfg, mock)
+
+			require.NoError(t, provider.ConfigureAZs(MgmtEnvType))
+			require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount, "one AZ write per workload zone")
+
+			for z := range pveWorkloadAZCount {
+				zone := pveAZKeyPrefix + string(rune('a'+z))
+				call := mock.findSetMultipleCall(provider.PathBuilder.GetAZPath(MgmtEnvType, zone))
+				require.NotNil(t, call, "AZ entry for zone %s must be written", zone)
+				assert.Equal(t, tt.wantNodes[z], call.data["node_name"])
+				assert.Equal(t, z+1, call.data["index"], "zone %s must carry 1-based index", zone)
+				assert.Equal(t, "configured", call.data["status"])
+				assert.Equal(t, "{}", call.data["cloud_properties"],
+					"zone %s must write an empty cloud_properties to clear any existing pin", zone)
+			}
+		})
+	}
+}
+
+// TestPVEVaultProvider_ConfigureAZs_PinAZNodesTrue — an explicit true pins
+// nodes exactly like an unset key.
+func TestPVEVaultProvider_ConfigureAZs_PinAZNodesTrue(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1", PinAZNodes: new(true)}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureAZs(MgmtEnvType))
+	require.Len(t, mock.setMultipleCalls, pveWorkloadAZCount)
+
+	for _, call := range mock.setMultipleCalls {
+		assert.Equal(t, `{"target_node":"pve-node1"}`, call.data["cloud_properties"])
+	}
+}
+
 // TestPVEVaultProvider_ConfigureAZs_EmptyBoth — empty Region means no write,
 // no error.
 func TestPVEVaultProvider_ConfigureAZs_EmptyBoth(t *testing.T) {
