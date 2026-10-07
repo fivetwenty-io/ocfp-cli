@@ -284,9 +284,7 @@ func runWatchdogIngress(t *testing.T, existing string) (calls, table string) {
 	}
 
 	for name, body := range map[string]string{"dmidecode": fakeDmidecode, "nft": fakeNft, "logger": fakeLogger} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil { //nolint:gosec // test stub must be executable
-			t.Fatal(err)
-		}
+		writeFakeExecutableFile(t, filepath.Join(bin, name), body)
 	}
 
 	script := filepath.Join(dir, "watchdog.sh")

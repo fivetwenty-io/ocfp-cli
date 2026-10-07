@@ -699,7 +699,7 @@ func TestFinishInceptionVault_FailsWhenNewKeysAreNotSaved(t *testing.T) {
 			fake := installFakeVaultOps(t)
 			paths := keyRecoveryPaths(t)
 			safePath := filepath.Join(t.TempDir(), "safe")
-			require.NoError(t, os.WriteFile(safePath, []byte("#!/bin/sh\nexit 0\n"), 0o700)) // #nosec G306 -- test stub must be executable
+			writeFakeExecutableFile(t, safePath, "#!/bin/sh\nexit 0\n")
 
 			url := "http://127.0.0.1:" + paths["port"]
 			fake.outputs[safePath+" targets --json"] = []string{`[{"name":"` + paths["vaultName"] + `","url":"` + url + `"}]`}

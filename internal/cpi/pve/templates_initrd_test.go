@@ -182,9 +182,7 @@ func runInitrdScript(t *testing.T, run initrdRun) (string, string, error) {
 	}
 
 	for name, body := range fakes {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil { //nolint:gosec // test fake must be executable
-			t.Fatalf("write fake %s: %v", name, err)
-		}
+		writeFakeExecutableFile(t, filepath.Join(bin, name), "#!/bin/sh\n"+body)
 	}
 
 	if err := os.WriteFile(lsinitrdPath, []byte(run.lsinitrd), 0o600); err != nil {
