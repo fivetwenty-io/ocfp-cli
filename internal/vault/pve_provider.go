@@ -2285,7 +2285,8 @@ const (
 // subnet's az ("pvea"...) against these keys; keying by node ("pve") instead
 // leaves them unresolvable ("AZ pvea not found in the available AZs for the
 // network"). Each zone records the node that physically backs it via node_name
-// and pins VMs to that node via cloud_properties (see the in-loop comment);
+// and, unless pin_az_nodes is false, pins VMs to that node via cloud_properties
+// (see the in-loop comment);
 // multi-node blocs spread zones across Config.Nodes round-robin, while a
 // single-node bloc backs every zone with the one node.
 //
@@ -2328,7 +2329,11 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 		// over availability_zone + pve.placement.az_map because it works with
 		// zero kit or CPI-config changes; without it every BOSH AZ carries
 		// cloud_properties: {} and nothing pins a VM to its node.
-		cloudProps, err := json.Marshal(map[string]string{"target_node": node})
+		//
+		// pin_az_nodes: false writes "{}" instead. The key is still written
+		// because populate never deletes keys, so this is what clears a pin
+		// already in vault.
+		cloudProps, err := pveAZCloudProperties(p.Config.PinAZNodesEnabled(), node)
 		if err != nil {
 			return fmt.Errorf("failed to encode cloud_properties for zone %s: %w", zone, err)
 		}
@@ -2337,7 +2342,7 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 			"node_name":        node,
 			"index":            z + 1,
 			"status":           "configured",
-			"cloud_properties": string(cloudProps),
+			"cloud_properties": cloudProps,
 		}
 
 		err = p.Safe.SetMultiple(azPath, azData)
@@ -2349,6 +2354,25 @@ func (p *PVEVaultProvider) ConfigureAZs(envType string) error {
 	}
 
 	return nil
+}
+
+// pveAZCloudProperties returns the cloud_properties JSON string for a zone
+// backed by node. With pinning on it carries target_node. With pinning off it
+// is "{}", written rather than skipped because populate merges into existing
+// records and never deletes keys, so an empty object is how a pin already in
+// vault gets cleared.
+func pveAZCloudProperties(pin bool, node string) (string, error) {
+	props := map[string]string{}
+	if pin {
+		props["target_node"] = node
+	}
+
+	encoded, err := json.Marshal(props)
+	if err != nil {
+		return "", fmt.Errorf("marshal cloud_properties: %w", err)
+	}
+
+	return string(encoded), nil
 }
 
 // configureSharedComponents configures shared vault paths.
