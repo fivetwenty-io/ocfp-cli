@@ -86,7 +86,10 @@ Offsets 3–22 are fully used; 23–31 are spare for future growth within the mg
 | vault | 65 |
 | jumpbox | 66 |
 | blacksmith | 67 |
+| prometheus | 68 |
 | haproxy | 97 |
+
+The `ocf` prometheus static at offset 68 is new to `wide` and `spanning`, so a bloc that already sets a `network.bands.mgmt` override reaching offset 68 now fails validation with `ErrBandOverrideCollidesStatic`, and its band has to be moved clear of 68 before the next run.
 
 **Available bands:**
 
@@ -112,7 +115,7 @@ mgmt's complement wraps around its own available band on both sides — it exclu
 flowchart LR
     A["0-2\nnetwork + gateway"] --> B["3-31\nmgmt statics\n(3-22 named, 23-31 spare)"]
     B --> C["32-63\nmgmt available band"]
-    C --> D["64-95\nocf statics\n(64-67 named, 68-95 spare)"]
+    C --> D["64-95\nocf statics\n(64-68 named, 69-95 spare)"]
     D --> E["96-...\nocf available band\n(haproxy static at 97)"]
 ```
 
@@ -125,6 +128,7 @@ flowchart LR
 | mgmt vault | 5 | 10.64.64.5 |
 | mgmt available band | 32–63 | 10.64.64.32 – 10.64.64.63 |
 | ocf bosh | 64 | 10.64.64.64 |
+| ocf prometheus | 68 | 10.64.64.68 |
 | ocf available band start | 96 | 10.64.64.96 |
 | ocf haproxy | 97 | 10.64.64.97 |
 | last usable address | — | 10.64.67.254 |
@@ -146,7 +150,7 @@ The mgmt tier's statics are numerically identical to `wide`'s (offsets 3–22, s
 | prometheus | 27 |
 | haproxy | 37 |
 
-Offset 27 holds the `ocf` prometheus static, which is the last offset before the mgmt available band. The `wide` and `spanning` strategies do not give the `ocf` tier a prometheus static.
+Offset 27 holds the `ocf` prometheus static, which is the last offset before the mgmt available band. The `wide` and `spanning` strategies also give the `ocf` tier a prometheus static, at offset 68 right after blacksmith.
 
 **Available bands:**
 
@@ -224,6 +228,7 @@ This is the default strategy for AWS (whose three VPC subnets are always separat
 | vault | 65 | every subnet |
 | jumpbox | 66 | every subnet |
 | blacksmith | 67 | subnet 1 |
+| prometheus | 68 | every subnet |
 | haproxy | 97 | subnet 0 |
 
 **Available bands and reserved complements** are unpinned (open to every subnet index) and numerically identical to `wide`'s: mgmt 32–63 (complement 0–31, 64 and above), ocf 96 and above (complement 0–95).
@@ -238,7 +243,7 @@ A "pinned to subnet N" static's `<role>_ip` key is written ONLY into that one su
 
 | Index 0 (`ocfp-0`) ocf | Index 1 (`ocfp-1`) ocf | Index 2 (`ocfp-2`) ocf |
 | --- | --- | --- |
-| bosh 64, vault 65, jumpbox 66, haproxy 97 | vault 65, jumpbox 66, blacksmith 67 | vault 65, jumpbox 66 |
+| bosh 64, vault 65, jumpbox 66, prometheus 68, haproxy 97 | vault 65, jumpbox 66, blacksmith 67, prometheus 68 | vault 65, jumpbox 66, prometheus 68 |
 
 ```mermaid
 flowchart TD
@@ -424,7 +429,7 @@ For `wide`:
 
 - mgmt available band: 32–63
 
-- ocf static range: 64–95 (named 64–67, spare 68–95)
+- ocf static range: 64–95 (named 64–68, spare 69–95)
 
 - ocf available band: 96 and above
 
@@ -444,7 +449,7 @@ For `compact`:
 
 For `spanning`:
 
-- offsets are numerically identical to `wide`'s (3–22 mgmt, 64–67/97 ocf, 32–63 mgmt available, 96+ ocf available) — only WHICH subnet index carries each role differs
+- offsets are numerically identical to `wide`'s (3–22 mgmt, 64–68/97 ocf, 32–63 mgmt available, 96+ ocf available) — only WHICH subnet index carries each role differs
 
 - verify each subnet's own per-index table (section 6) before drawing it: `ocfp-0` carries every singleton mgmt/ocf role plus the unpinned roles; `ocfp-1` carries only doomsday, shout, ocf-tier blacksmith, plus the unpinned roles; `ocfp-2` carries only ocfp_ui plus the unpinned roles
 

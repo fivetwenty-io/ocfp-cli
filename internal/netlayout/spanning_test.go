@@ -91,6 +91,24 @@ func TestSpanningWorkloadTable(t *testing.T) {
 		}
 	})
 
+	t.Run("OCFPrometheusIsUnpinnedOffset", func(t *testing.T) {
+		t.Parallel()
+
+		table, err := spanning.WorkloadTable("10.4.4.0/22")
+		if err != nil {
+			t.Fatalf("WorkloadTable() returned unexpected error: %v", err)
+		}
+
+		prometheus, ok := table["prometheus"]["ocf"]
+		if !ok {
+			t.Fatal("WorkloadTable() missing prometheus/ocf assignment")
+		}
+
+		if prometheus.Offset != 68 || prometheus.SubnetMapping != nil {
+			t.Fatalf("prometheus/ocf = %+v, want unpinned Offset 68", prometheus)
+		}
+	})
+
 	t.Run("UnpinnedSmokeStaticsKeepIPKey", func(t *testing.T) {
 		t.Parallel()
 
