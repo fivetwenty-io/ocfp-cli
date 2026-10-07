@@ -140,6 +140,8 @@ func newVaultPopulateCmd() *cobra.Command {
 		fromFile           string
 		force              bool
 		forceReallocate    bool
+		fqdnPlanes         []string
+		fqdnKeys           []string
 		kmsKeyARN          string
 		blobstoreEndpoint  string
 		blobstoreMode      string
@@ -162,7 +164,15 @@ An optional phase name limits the run to one part of the tree:
   reserved-ips   write the reserved-ips records (PVE only)
   fqdns          add the FQDN keys vault does not hold yet, for the mgmt and
                  ocf planes (PVE only). Existing keys are never changed unless
-                 --force is given. Use --dry-run to list the additions.`,
+                 --force is given. Use --dry-run to list the additions.
+                 --plane and --key limit the phase to some planes and keys.
+
+The --plane and --key flags apply to the fqdns phase only. Each can be
+repeated or given comma-separated values. --plane keeps only the named planes (mgmt,
+ocf). --key keeps only the named service keys within those planes, and it
+accepts only keys the planes compute, so env_type and base cannot be selected.
+Without them the phase covers every plane and every key. They narrow the plan
+itself, so --dry-run, the write, and the summary all show the same keys.`,
 		Example: `  # Populate vault from default config
   ocfp vault populate
 
@@ -184,6 +194,12 @@ An optional phase name limits the run to one part of the tree:
   # Overwrite existing FQDN keys too; the dry run shows old and new values
   ocfp vault populate fqdns --force --dry-run
 
+  # Overwrite one FQDN key on both planes and leave the rest alone
+  ocfp vault populate fqdns --force --key shield
+
+  # Overwrite two keys on the ocf plane only, after a dry run
+  ocfp vault populate fqdns --force --plane ocf --key shield --key prometheus --dry-run
+
   # Populate with PVE blobstore endpoint (PVE only)
   ocfp vault populate --blobstore-endpoint https://s3.dc1.example.com`,
 		SilenceUsage: true,
@@ -193,6 +209,8 @@ An optional phase name limits the run to one part of the tree:
 				Force:           force,
 				ForceReallocate: forceReallocate,
 				KMSKeyARN:       kmsKeyARN,
+				FQDNPlanes:      fqdnPlanes,
+				FQDNKeys:        fqdnKeys,
 			}, vaultPopulateBlobstoreFlags{
 				Endpoint:  blobstoreEndpoint,
 				Mode:      blobstoreMode,
@@ -210,6 +228,10 @@ An optional phase name limits the run to one part of the tree:
 		"move reserved IPs onto this build's derived addresses (recreates the VMs holding them; "+
 			"omit to keep the addresses vault records and report the divergence)")
 	cmd.Flags().Bool("dry-run", false, "preview actions without making changes")
+	cmd.Flags().StringSliceVar(&fqdnPlanes, "plane", nil,
+		"limit the fqdns phase to these planes (mgmt, ocf); repeat the flag or comma-separate values (default: all planes)")
+	cmd.Flags().StringSliceVar(&fqdnKeys, "key", nil,
+		"limit the fqdns phase to these service keys within the selected planes; repeat the flag or comma-separate values (default: all keys)")
 	cmd.Flags().StringVar(&kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for BOSH disk encryption (AWS only; omit to skip KMS configuration)")
 	cmd.Flags().StringVar(&blobstoreEndpoint, "blobstore-endpoint", "", "S3-compatible blobstore endpoint URL (PVE only; omit to skip blobstore endpoint configuration)")
 	cmd.Flags().StringVar(&blobstoreMode, "blobstore-mode", "", "PVE blobstore mode: 'local' (default; skip buckets) or 'external' (S3-compatible)")
@@ -238,6 +260,8 @@ type vaultPopulateFlags struct {
 	Force           bool
 	ForceReallocate bool
 	KMSKeyARN       string
+	FQDNPlanes      []string
+	FQDNKeys        []string
 }
 
 // runVaultPopulate executes the vault populate command.
@@ -247,6 +271,30 @@ func runVaultPopulate(
 	log := logger.Get()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
+	// Handle subcommand (public-ips, reserved-ips, fqdns)
+	var subcommand string
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	// A flag the phase does not support, a plane it does not cover, or a flag
+	// that was given with no usable value is a usage error, so it fails before
+	// any config or vault access. The empty case needs Changed, because pflag
+	// turns --key "" into an empty slice that would read as no filter.
+	err := vault.ValidateFQDNFlagValues("plane", cmd.Flags().Changed("plane"), flags.FQDNPlanes)
+	if err == nil {
+		err = vault.ValidateFQDNFlagValues("key", cmd.Flags().Changed("key"), flags.FQDNKeys)
+	}
+
+	if err == nil {
+		fqdnFilter := vault.FQDNFilter{Planes: flags.FQDNPlanes, Keys: flags.FQDNKeys}
+		err = fqdnFilter.ValidateScope(subcommand)
+	}
+
+	if err != nil {
+		return fmt.Errorf("invalid populate flags: %w", err)
+	}
+
 	// Load configuration and create manager
 	manager, err := loadConfigAndManager()
 	if err != nil {
@@ -254,12 +302,6 @@ func runVaultPopulate(
 	}
 
 	defer func() { _ = manager.Close() }()
-
-	// Handle subcommand (public-ips, reserved-ips, fqdns)
-	var subcommand string
-	if len(args) > 0 {
-		subcommand = args[0]
-	}
 
 	// Detect output mode for progress reporting
 	mode := bastion.SelectOutputMode(os.Stdout)
@@ -287,6 +329,8 @@ func runVaultPopulate(
 		BlobstoreAccessKey: blobstoreFlags.AccessKey,
 		BlobstoreSecretKey: blobstoreFlags.SecretKey,
 		ForceReallocate:    flags.ForceReallocate,
+		FQDNPlanes:         flags.FQDNPlanes,
+		FQDNKeys:           flags.FQDNKeys,
 	}
 
 	// Handle file input
