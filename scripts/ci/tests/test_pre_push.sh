@@ -51,6 +51,14 @@ push "refs/tags/v1.2.3 $HEAD_SHA refs/tags/v1.2.3 $ZERO\n"
 assert_status 0 "tag push of HEAD passes when preflight passes"
 assert_call_count "make preflight" 1 "tag push runs preflight"
 
+# git hands the hook an annotated tag's own object sha, not its commit's.
+git -C "$REPO" tag -a -m annotated v1.2.4
+TAG_SHA="$(git -C "$REPO" rev-parse v1.2.4)"
+: >"$CALLS"
+push "refs/tags/v1.2.4 $TAG_SHA refs/tags/v1.2.4 $ZERO\n"
+assert_status 0 "an annotated tag on HEAD passes"
+assert_call_count "make preflight" 1 "an annotated tag on HEAD runs preflight"
+
 : >"$CALLS"
 push "refs/heads/feature $OTHER refs/heads/feature $ZERO\n"
 assert_status 0 "feature push passes"
@@ -101,6 +109,14 @@ assert_out_contains "--no-verify" "mentions --no-verify"
 : >"$CALLS"
 push "refs/tags/v9.9.9 $OTHER refs/tags/v9.9.9 $ZERO\n"
 assert_status 1 "a tag that is not HEAD is refused"
+
+# An annotated tag on a commit other than HEAD, made without moving HEAD.
+LATER_SHA="$(git -C "$REPO" commit-tree 'HEAD^{tree}' -p HEAD -m later)"
+git -C "$REPO" tag -a -m annotated v9.9.8 "$LATER_SHA"
+: >"$CALLS"
+push "refs/tags/v9.9.8 $(git -C "$REPO" rev-parse v9.9.8) refs/tags/v9.9.8 $ZERO\n"
+assert_status 1 "an annotated tag on a commit that is not HEAD is refused"
+assert_call_count "make preflight" 0 "does not run preflight for that tag"
 
 echo two >"$REPO/tracked.txt"
 : >"$CALLS"
