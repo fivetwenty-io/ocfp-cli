@@ -321,6 +321,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		// endpoint over TLS, and ocfp_configure must precede
 		// genesis_secrets_providers because it clones the deployment
 		// repositories the latter walks.
+		{"vault_boot_unit", manager.installVaultBootUnit},
 		{"vault_inception", manager.setupVaultInception},
 		{"vault_populate", manager.runVaultPopulate},
 		// pmx_context reads the PVE CPI record vault_populate just wrote, so it
