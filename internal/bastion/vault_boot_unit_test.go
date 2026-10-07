@@ -132,6 +132,19 @@ func TestInstallVaultBootUnit_FailsWhenTheBinaryHasNoVaultStart(t *testing.T) {
 	assert.Len(t, mock.commands, 1, "nothing is probed or installed")
 }
 
+// A login shell's profile can print before the probe does, as a local init
+// run through bash -l may, so the user and home are the probe's last lines.
+func TestInstallVaultBootUnit_ReadsTheOperatorFromTheProbesLastLines(t *testing.T) {
+	t.Parallel()
+
+	mock := &bootUnitMockSSHClient{whoami: "Welcome to the bastion\n\nubuntu\n/home/ubuntu\n"}
+	m := bootUnitManager(mock, false)
+
+	require.NoError(t, m.installVaultBootUnit(context.Background()))
+	require.Len(t, mock.commands, 3)
+	assert.Contains(t, installedDropIn(t, mock.commands[2]), "User=ubuntu\n")
+}
+
 func TestInstallVaultBootUnit_DryRunTouchesNothing(t *testing.T) {
 	t.Parallel()
 
