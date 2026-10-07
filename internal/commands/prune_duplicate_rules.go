@@ -17,7 +17,7 @@ import (
 // Errors reported while pruning duplicate security group rules.
 var (
 	ErrPruneFlagConflict   = errors.New("--prune-duplicate-rules runs on its own and cannot be combined with other configure options")
-	ErrApplyWithoutPrune   = errors.New("--apply only applies to --prune-duplicate-rules")
+	ErrApplyWithoutPrune   = errors.New("--apply only applies to --prune-duplicate-rules or --check-cpi-role")
 	ErrPruneUnexpectedRule = errors.New("security group changed during pruning")
 	ErrPruneBadPosition    = errors.New("rule has a non-numeric position")
 
