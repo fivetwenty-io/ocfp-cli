@@ -645,6 +645,16 @@ type NetworkConfig struct {
 	SubnetStrategy string   `json:"subnetStrategy,omitempty" mapstructure:"subnetStrategy" yaml:"subnetStrategy,omitempty"`
 	Subnets        []Subnet `json:"subnets,omitempty"        mapstructure:"subnets"        yaml:"subnets,omitempty"`
 
+	// SubnetRecords selects how the PVE vault populate writes each subnet
+	// record's cidr, cidr_block and gateway. SubnetRecordsParent (the empty
+	// default) stamps the parent network CIDR and gateway on every record,
+	// for blocs whose subnets are carves of one flat network with one
+	// gateway. SubnetRecordsPerSubnet writes each subnet's own child CIDR
+	// and the child's base+1 gateway, for blocs where every subnet routes
+	// through its own gateway. PVE-specific; validated by
+	// ValidateSubnetRecords.
+	SubnetRecords string `json:"subnetRecords,omitempty" mapstructure:"subnetRecords" yaml:"subnetRecords,omitempty"`
+
 	// AvailableIPStart / AvailableIPEnd bound the per-subnet available allocation
 	// band written to vault as available_0/available_1 reserved-ips keys. Genesis'
 	// cloud-config IPAM (_get_subnet_ranges) reads these to confine kit-generated
@@ -733,6 +743,9 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		SubnetStrategy string   `yaml:"subnetStrategy,omitempty"`
 		Subnets        []Subnet `yaml:"subnets,omitempty"`
 
+		SubnetRecords   string `yaml:"subnetRecords,omitempty"`
+		SubnetRecordsSC string `yaml:"subnet_records,omitempty"`
+
 		AvailableIPStart   string `yaml:"availableIpStart,omitempty"`
 		AvailableIPStartSC string `yaml:"available_ip_start,omitempty"`
 		AvailableIPEnd     string `yaml:"availableIpEnd,omitempty"`
@@ -778,6 +791,7 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 
 	n.SubnetStrategy = raw.SubnetStrategy
 	n.Subnets = raw.Subnets
+	n.SubnetRecords = firstSetString(raw.SubnetRecords, raw.SubnetRecordsSC)
 	n.AvailableIPStart = firstSetString(raw.AvailableIPStart, raw.AvailableIPStartSC)
 	n.AvailableIPEnd = firstSetString(raw.AvailableIPEnd, raw.AvailableIPEndSC)
 
@@ -801,6 +815,27 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	n.Bands = raw.Bands
 
 	return nil
+}
+
+// Allowed values for network.subnet_records.
+const (
+	// SubnetRecordsParent writes the parent network CIDR and gateway on every
+	// subnet record. It is the behavior when the key is empty.
+	SubnetRecordsParent = "parent"
+	// SubnetRecordsPerSubnet writes each subnet's own CIDR and base+1 gateway.
+	SubnetRecordsPerSubnet = "per_subnet"
+)
+
+// ValidateSubnetRecords reports whether value is an accepted
+// network.subnet_records setting: empty (meaning parent), "parent", or
+// "per_subnet".
+func ValidateSubnetRecords(value string) error {
+	switch value {
+	case "", SubnetRecordsParent, SubnetRecordsPerSubnet:
+		return nil
+	default:
+		return ErrSubnetRecordsInvalid(value)
+	}
 }
 
 func firstSetString(values ...string) string {
@@ -2312,6 +2347,11 @@ func validatePVE(cfg *Config) error {
 	}
 
 	err = validateTemplateSeedNet(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = ValidateSubnetRecords(cfg.Network.SubnetRecords)
 	if err != nil {
 		return err
 	}

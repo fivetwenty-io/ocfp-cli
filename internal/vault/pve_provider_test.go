@@ -2263,3 +2263,197 @@ func TestConfigureCPI_CfMaxInFlight_KeyAlwaysPresent(t *testing.T) {
 	_, ok := mock.setMultipleCalls[0].data["cf_max_in_flight"]
 	assert.True(t, ok, "cf_max_in_flight key must always be present in the CPI vault payload")
 }
+
+// seedPerSubnetPVEState records the pve-cpi shape: a /20 parent carved into
+// an infra /22 and three workload /22s, each state record still carrying the
+// parent gateway that bootstrap stores.
+func seedPerSubnetPVEState(t *testing.T, blocName string) {
+	t.Helper()
+
+	sm := seedPVEState(t, blocName)
+
+	for _, sub := range []struct{ name, child, az string }{
+		{"infra", "10.254.16.0/22", ""},
+		{"ocfp-0", "10.254.20.0/22", "pvea"},
+		{"ocfp-1", "10.254.24.0/22", "pveb"},
+		{"ocfp-2", "10.254.28.0/22", "pvec"},
+	} {
+		require.NoError(t, sm.AddResource(&state.Resource{
+			ID:   "subnet-" + sub.name,
+			Type: "subnet",
+			Name: blocName + "-" + sub.name,
+			Properties: map[string]any{
+				"cidr":              sub.child,
+				"availability_zone": sub.az,
+				"gateway":           "10.254.16.1",
+				"parent_cidr":       "10.254.16.0/20",
+				"network_id":        "ocfp",
+			},
+		}))
+	}
+
+	require.NoError(t, sm.Save())
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_PerSubnetRecords — with
+// network.subnet_records: per_subnet every record carries its own child CIDR
+// and the child's base+1 gateway, for infra and workload subnets alike,
+// while the child-derived reserved bands are unchanged.
+func TestPVEVaultProvider_ConfigureSubnets_PerSubnetRecords(t *testing.T) {
+	const blocName = "test-bloc"
+
+	seedPerSubnetPVEState(t, blocName)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		DNS: []string{"10.254.16.2"},
+		Network: config.NetworkConfig{
+			CIDR:          "10.254.16.0/20",
+			SubnetRecords: config.SubnetRecordsPerSubnet,
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+
+	want := []struct{ name, cidr, gateway, az string }{
+		{"infra", "10.254.16.0/22", "10.254.16.1", ""},
+		{"ocfp-0", "10.254.20.0/22", "10.254.20.1", "pvea"},
+		{"ocfp-1", "10.254.24.0/22", "10.254.24.1", "pveb"},
+		{"ocfp-2", "10.254.28.0/22", "10.254.28.1", "pvec"},
+	}
+
+	for _, w := range want {
+		call := mock.findSetMultipleCall(filepath.Join(subnetsPath, w.name))
+		require.NotNil(t, call, "subnet %s must be written", w.name)
+		assert.Equal(t, w.cidr, call.data["cidr"], "%s: record carries its own child CIDR", w.name)
+		assert.Equal(t, w.cidr, call.data["cidr_block"], "%s: cidr_block carries its own child CIDR", w.name)
+		assert.Equal(t, w.gateway, call.data["gateway"], "%s: gateway is the child's base+1", w.name)
+		assert.Equal(t, w.az, call.data["az"], "%s: az preserved", w.name)
+		assert.Equal(t, "10.254.16.2", call.data["dns"], "%s: configured DNS still wins", w.name)
+		assert.Equal(t, "ocfp", call.data["id"])
+	}
+
+	// Reserved bands stay derived from the child /22 (mgmt-tier available
+	// band starts at offset 32).
+	band := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-1", "reserved-ips"))
+	require.NotNil(t, band, "ocfp-1 reserved-ips must be written")
+	assert.Equal(t, "10.254.24.32", band.data["available_0"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_PerSubnetBadChildCIDR — per_subnet
+// derives the gateway from the child CIDR, so a child CIDR that does not
+// parse is an error rather than a record with an empty gateway.
+func TestPVEVaultProvider_ConfigureSubnets_PerSubnetBadChildCIDR(t *testing.T) {
+	const blocName = "test-bloc"
+
+	sm := seedPVEState(t, blocName)
+	require.NoError(t, sm.AddResource(&state.Resource{
+		ID:   "subnet-infra",
+		Type: "subnet",
+		Name: blocName + "-infra",
+		Properties: map[string]any{
+			"cidr":        "10.254.16.0/99",
+			"gateway":     "10.254.16.1",
+			"parent_cidr": "10.254.16.0/20",
+			"network_id":  "ocfp",
+		},
+	}))
+	require.NoError(t, sm.Save())
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			CIDR:          "10.254.16.0/20",
+			SubnetRecords: config.SubnetRecordsPerSubnet,
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "10.254.16.0/99")
+	assert.Nil(t, mock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath(MgmtEnvType), "infra")))
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_PerSubnetDNSFallsBackToChildGateway —
+// with no configured DNS the per-subnet record's dns is its own child
+// gateway, not the parent's.
+func TestPVEVaultProvider_ConfigureSubnets_PerSubnetDNSFallsBackToChildGateway(t *testing.T) {
+	const blocName = "test-bloc"
+
+	seedPerSubnetPVEState(t, blocName)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			CIDR:          "10.254.16.0/20",
+			SubnetRecords: config.SubnetRecordsPerSubnet,
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	subnetsPath := provider.PathBuilder.GetSubnetsPath(MgmtEnvType)
+
+	infra := mock.findSetMultipleCall(filepath.Join(subnetsPath, "infra"))
+	require.NotNil(t, infra)
+	assert.Equal(t, "10.254.16.1", infra.data["dns"])
+
+	ocfp1 := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-1"))
+
+	require.NotNil(t, ocfp1)
+	assert.Equal(t, "10.254.24.1", ocfp1.data["dns"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_ExplicitParentRecords — setting
+// subnet_records: parent behaves exactly like the unset default: the parent
+// CIDR and the state's parent gateway on every record.
+func TestPVEVaultProvider_ConfigureSubnets_ExplicitParentRecords(t *testing.T) {
+	const blocName = "test-bloc"
+
+	seedPerSubnetPVEState(t, blocName)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			CIDR:          "10.254.16.0/20",
+			SubnetRecords: config.SubnetRecordsParent,
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1))
+
+	call := mock.findSetMultipleCall(filepath.Join(provider.PathBuilder.GetSubnetsPath(MgmtEnvType), "ocfp-0"))
+	require.NotNil(t, call)
+	assert.Equal(t, "10.254.16.0/20", call.data["cidr"])
+	assert.Equal(t, "10.254.16.0/20", call.data["cidr_block"])
+	assert.Equal(t, "10.254.16.1", call.data["gateway"])
+}
+
+// TestPVEVaultProvider_ConfigureSubnets_UnknownSubnetRecordsRejected — an
+// unrecognized subnet_records value fails before anything is written.
+func TestPVEVaultProvider_ConfigureSubnets_UnknownSubnetRecordsRejected(t *testing.T) {
+	const blocName = "test-bloc"
+
+	seedPerSubnetPVEState(t, blocName)
+
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			CIDR:          "10.254.16.0/20",
+			SubnetRecords: "carved",
+		},
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	err := provider.ConfigureSubnets("", MgmtEnvType, nil, 0, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network.subnet_records")
+	assert.Contains(t, err.Error(), "per_subnet")
+	assert.Empty(t, mock.setMultipleCalls, "nothing may be written for an invalid value")
+}
