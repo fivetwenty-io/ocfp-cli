@@ -132,17 +132,7 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 		return err
 	}
 
-	err = requireReadableKeyFiles(paths)
-	if err != nil {
-		return err
-	}
-
-	err = repairUnsealKeyFile(ctx, paths, run.log)
-	if err != nil {
-		return err
-	}
-
-	err = canonicalizeRootKeyFile(paths, run.log)
+	err = prepareInceptionKeyFiles(ctx, paths, run.log)
 	if err != nil {
 		return err
 	}
@@ -353,6 +343,91 @@ func guardInceptionTeardown(
 	return nil
 }
 
+// teardownSteps are the actions tearDownInceptionVault takes. Production code
+// wires the real ones through newTeardownSteps, and tests script the probe,
+// the ownership check, and key recovery the way they do for reconcile.
+type teardownSteps struct {
+	// probe asks the API port for seal status.
+	probe func(ctx context.Context, addr string) vaultProbe
+	// ownsVault reports whether the vault answering on the port is this
+	// bloc's own.
+	ownsVault func(ctx context.Context, paths map[string]string, data vaultDataState) (bool, error)
+	// recoverKeys writes whichever key files are missing from what the bloc's
+	// running vault left behind, and never replaces a key file that exists.
+	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// cleanup stops the bloc's vault and archives its data and keys.
+	cleanup func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+}
+
+// newTeardownSteps wires the real teardown actions.
+func newTeardownSteps() teardownSteps {
+	return teardownSteps{
+		probe:       probeInceptionVault,
+		ownsVault:   ownsInceptionVault,
+		recoverKeys: recoverInceptionKeys,
+		cleanup:     cleanupExistingVault,
+	}
+}
+
+// tearDownInceptionVault stops the bloc's own inception vault and archives
+// its data and keys.
+//
+// An open vault, initialized and unsealed, still serves its secrets, and its
+// archive can be reopened only with both keys. Teardown therefore holds an
+// open vault to the same rule reconcile does: its key files are prepared the
+// way reconcile prepares them, so a cut-short unseal key is restored from the
+// vault's output, its missing keys are recovered from what it left behind,
+// and when both still are not saved, teardown refuses before it keeps a
+// token, stops, or archives anything, and the vault keeps running. Only a
+// refusal for keys that are not saved offers --force; any other failure, such
+// as a key file that cannot be read, has its own fix. With force, a failed
+// check is logged as a warning and the vault is archived anyway. A sealed,
+// never-initialized, or stopped vault holds nothing in memory that its files
+// do not, so it is archived as it is.
+func tearDownInceptionVault(
+	ctx context.Context, paths map[string]string, steps teardownSteps, force bool, log *zap.SugaredLogger,
+) error {
+	// The ownership guard and the key check judge one answer from the port,
+	// so the probe runs once and its result is kept here.
+	var found vaultProbe
+
+	probe := func(ctx context.Context, addr string) vaultProbe {
+		found = steps.probe(ctx, addr)
+
+		return found
+	}
+
+	err := guardInceptionTeardown(ctx, paths, probe, steps.ownsVault)
+	if err != nil {
+		return fmt.Errorf("teardown refused: %w", err)
+	}
+
+	open := found.state == vaultProbeVault && found.initialized && !found.sealed
+	if open {
+		err = requireOpenVaultKeys(ctx, paths, steps.recoverKeys, log)
+	}
+
+	switch {
+	case err == nil:
+	case force:
+		log.Warnw("Archiving the open inception vault anyway because --force was given; "+
+			"without both keys its archive can never be unsealed", "error", err)
+	case errors.Is(err, ErrInceptionKeysNotSaved), errors.Is(err, ErrUnsealKeyFileMalformed):
+		return fmt.Errorf("teardown refused, and the vault was left running: %w; "+
+			"'ocfp vault teardown --force' archives it anyway, but without both keys the archive can never be unsealed",
+			err)
+	default:
+		return fmt.Errorf("teardown refused, and the vault was left running: %w", err)
+	}
+
+	err = steps.cleanup(ctx, paths, log)
+	if err != nil {
+		return fmt.Errorf("teardown failed: %w", err)
+	}
+
+	return nil
+}
+
 // isHealthy reports whether the running vault can be left exactly as it is:
 // its session exists, and it is an initialized, unsealed vault on raft data.
 // An engine that does not report its storage is judged by the data alone.
@@ -414,14 +489,61 @@ func (run *inceptionRun) keepHealthy(ctx context.Context) error {
 // valid shape, recovering whichever is missing from what the vault left
 // behind, and fails with ErrInceptionKeysNotSaved when they still are not.
 func (run *inceptionRun) requireSavedKeys(ctx context.Context) error {
-	paths := run.paths
+	return requireSavedInceptionKeys(ctx, run.paths, run.steps.recoverKeys, run.log)
+}
 
+// prepareInceptionKeyFiles readies the bloc's key files before anything judges
+// them, and runs the same way for reconcile and teardown. A key file that
+// cannot be read is an error, since it may hold the key. An unseal key file
+// that holds only the start of a key is restored to the whole key from the
+// vault's output, and a key file that holds its key with stray whitespace
+// around it is rewritten to the key and a newline. A missing or blank key
+// file is left for recovery to fill.
+func prepareInceptionKeyFiles(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+	err := requireReadableKeyFiles(paths)
+	if err != nil {
+		return err
+	}
+
+	err = repairUnsealKeyFile(ctx, paths, log)
+	if err != nil {
+		return err
+	}
+
+	return canonicalizeRootKeyFile(paths, log)
+}
+
+// requireOpenVaultKeys holds an open vault to reconcile's rule before
+// teardown stops it: its key files are prepared the way reconcile prepares
+// them, and then both keys must be saved, recovering whichever is missing.
+func requireOpenVaultKeys(
+	ctx context.Context, paths map[string]string,
+	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error,
+	log *zap.SugaredLogger,
+) error {
+	err := prepareInceptionKeyFiles(ctx, paths, log)
+	if err != nil {
+		return err
+	}
+
+	return requireSavedInceptionKeys(ctx, paths, recoverKeys, log)
+}
+
+// requireSavedInceptionKeys is the check behind requireSavedKeys, shared with
+// teardown. It recovers whichever key the running vault left behind with
+// recoverKeys, and fails with ErrInceptionKeysNotSaved, naming the logs that
+// may still hold the keys, when both are still not saved.
+func requireSavedInceptionKeys(
+	ctx context.Context, paths map[string]string,
+	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error,
+	log *zap.SugaredLogger,
+) error {
 	saved, err := inceptionKeysSaved(paths)
 	if err != nil || saved {
 		return err
 	}
 
-	err = run.steps.recoverKeys(ctx, paths, run.log)
+	err = recoverKeys(ctx, paths, log)
 	if err != nil {
 		return fmt.Errorf("failed to recover the running inception vault's keys: %w", err)
 	}
@@ -431,7 +553,7 @@ func (run *inceptionRun) requireSavedKeys(ctx context.Context) error {
 		return err
 	}
 
-	run.log.Errorw("The running inception vault's keys are not both saved; it cannot be reopened after it stops",
+	log.Errorw("The running inception vault's keys are not both saved; it cannot be reopened after it stops",
 		"root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
 
 	return fmt.Errorf("%w: the vault at %s is still running, but %s and %s do not both hold a valid key; %s",
