@@ -128,6 +128,69 @@ func TestPVEVaultProvider_configureCPI_WritesPath_UserPassMode(t *testing.T) {
 	assert.Nil(t, call.data["api_token"], "api_token key must be absent in user/pass mode")
 }
 
+// TestPVEVaultProvider_configureCPI_CPIHostOverride — cpi_host replaces the
+// host record (reduced to a bare hostname or IP like api_endpoint), while the
+// port keeps coming from api_endpoint. Unset, host follows api_endpoint.
+func TestPVEVaultProvider_configureCPI_CPIHostOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		cpiHost  string
+		wantHost string
+		wantPort string
+	}{
+		{name: "bare IP", cpiHost: "10.254.16.5", wantHost: "10.254.16.5", wantPort: "8443"},
+		{name: "URL form is reduced", cpiHost: "https://10.254.16.5:8006", wantHost: "10.254.16.5", wantPort: "8443"},
+		{name: "unset follows api_endpoint", cpiHost: "", wantHost: "pve.tail1234.ts.net", wantPort: "8443"},
+		{name: "whitespace-only follows api_endpoint", cpiHost: "  ", wantHost: "pve.tail1234.ts.net", wantPort: "8443"},
+		{name: "bare IPv6 stays whole", cpiHost: "fd00::1", wantHost: "fd00::1", wantPort: "8443"},
+		{name: "bracketed IPv6 with port is reduced", cpiHost: "https://[fd00::1]:8006", wantHost: "[fd00::1]", wantPort: "8443"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &awsMockSafe{}
+			cfg := &config.Config{
+				APIEndpoint: "https://pve.tail1234.ts.net:8443",
+				CPIHost:     tt.cpiHost,
+				AuthToken:   "root@pam!mytoken",
+				TokenSecret: "supersecret",
+				Region:      "pve-node1",
+			}
+			provider := newTestPVEProvider(cfg, mock)
+
+			require.NoError(t, provider.configureCPI(MgmtEnvType))
+			require.Len(t, mock.setMultipleCalls, 1)
+
+			call := mock.setMultipleCalls[0]
+			assert.Equal(t, tt.wantHost, call.data["host"])
+			assert.Equal(t, tt.wantPort, call.data["port"], "port always comes from api_endpoint")
+		})
+	}
+}
+
+// TestPVEVaultProvider_configureCPI_CPIHostWithoutHost — a cpi_host that
+// reduces to no host at all is a config error, not a silent empty record.
+func TestPVEVaultProvider_configureCPI_CPIHostWithoutHost(t *testing.T) {
+	for _, cpiHost := range []string{"https://", ":8006"} {
+		t.Run(cpiHost, func(t *testing.T) {
+			mock := &awsMockSafe{}
+			cfg := &config.Config{
+				APIEndpoint: "https://pve.tail1234.ts.net:8443",
+				CPIHost:     cpiHost,
+				AuthToken:   "root@pam!mytoken",
+				TokenSecret: "supersecret",
+				Region:      "pve-node1",
+			}
+			provider := newTestPVEProvider(cfg, mock)
+
+			err := provider.configureCPI(MgmtEnvType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cpi_host")
+			assert.Empty(t, mock.setMultipleCalls, "nothing is written")
+		})
+	}
+}
+
 // TestPVEVaultProvider_configureCPI_MissingHostAndAuth — empty APIEndpoint produces
 // an error whose message references "host". Verified before auth mode detection.
 func TestPVEVaultProvider_configureCPI_MissingHost(t *testing.T) {
@@ -2404,7 +2467,6 @@ func TestPVEVaultProvider_ConfigureSubnets_PerSubnetDNSFallsBackToChildGateway(t
 	assert.Equal(t, "10.254.16.1", infra.data["dns"])
 
 	ocfp1 := mock.findSetMultipleCall(filepath.Join(subnetsPath, "ocfp-1"))
-
 	require.NotNil(t, ocfp1)
 	assert.Equal(t, "10.254.24.1", ocfp1.data["dns"])
 }
