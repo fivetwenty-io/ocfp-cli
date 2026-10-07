@@ -1614,6 +1614,14 @@ Teardown stops only a vault it can prove is this bloc's own. When something
 else answers on the bloc's port, such as another bloc's vault on a colliding
 port, it stops nothing and says why.
 
+After it has stopped and archived the vault, teardown disables the bloc's
+boot unit, ocfp-vault@<bloc>.service, when it is enabled. If the disable
+fails, for example because sudo wants a password, teardown only warns,
+because the unit only runs 'ocfp vault start', which refuses once the vault
+is archived. A refused teardown, or one whose stop or archive fails, leaves
+the unit enabled. A teardown in test mode leaves the unit alone, because it
+serves the bloc's real vault.
+
 An archive can be unsealed only with both keys. When the vault is open, which
 means it is initialized and unsealed, and root.key or unseal.keys does not
 hold a valid key, teardown first tries to recover the missing key from what
@@ -1651,7 +1659,9 @@ func runVaultTeardown(force bool) error {
 	return withInceptionVaultLock(paths, func() error {
 		log.Info("=== Tearing Down Inception Vault ===")
 
-		err := tearDownInceptionVault(context.TODO(), paths, newTeardownSteps(), force, log)
+		steps := newTeardownSteps(teardownBootUnitBloc(blocName, testMode))
+
+		err := tearDownInceptionVault(context.TODO(), paths, steps, force, log)
 		if err != nil {
 			return err
 		}
@@ -1660,6 +1670,17 @@ func runVaultTeardown(force bool) error {
 
 		return nil
 	})
+}
+
+// teardownBootUnitBloc returns the bloc whose boot unit a teardown disables.
+// A test-mode vault lives apart from the bloc's real one, and no boot unit
+// brings it back, so in test mode it returns "", which disables nothing.
+func teardownBootUnitBloc(bloc string, testMode bool) string {
+	if testMode {
+		return ""
+	}
+
+	return bloc
 }
 
 // newVaultMigrateCmd creates the vault migrate subcommand.

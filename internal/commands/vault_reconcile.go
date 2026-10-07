@@ -356,17 +356,23 @@ type teardownSteps struct {
 	// recoverKeys writes whichever key files are missing from what the bloc's
 	// running vault left behind, and never replaces a key file that exists.
 	recoverKeys func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
+	// disableBootUnit disables the unit that brings the bloc's vault back
+	// after a reboot.
+	disableBootUnit func(ctx context.Context, log *zap.SugaredLogger) error
 	// cleanup stops the bloc's vault and archives its data and keys.
 	cleanup func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error
 }
 
-// newTeardownSteps wires the real teardown actions.
-func newTeardownSteps() teardownSteps {
+// newTeardownSteps wires the real teardown actions for bloc.
+func newTeardownSteps(bloc string) teardownSteps {
 	return teardownSteps{
 		probe:       probeInceptionVault,
 		ownsVault:   ownsInceptionVault,
 		recoverKeys: recoverInceptionKeys,
-		cleanup:     cleanupExistingVault,
+		disableBootUnit: func(ctx context.Context, log *zap.SugaredLogger) error {
+			return disableVaultBootUnit(ctx, bloc, log)
+		},
+		cleanup: cleanupExistingVault,
 	}
 }
 
@@ -385,6 +391,12 @@ func newTeardownSteps() teardownSteps {
 // check is logged as a warning and the vault is archived anyway. A sealed,
 // never-initialized, or stopped vault holds nothing in memory that its files
 // do not, so it is archived as it is.
+//
+// Only after the vault has been stopped and archived does teardown disable
+// the bloc's boot unit. A refused teardown leaves the vault running, and a
+// cleanup that fails can leave it in place, so both leave the unit enabled.
+// A disable that fails is only a warning, because the unit only runs 'ocfp
+// vault start', which refuses once the vault is archived.
 func tearDownInceptionVault(
 	ctx context.Context, paths map[string]string, steps teardownSteps, force bool, log *zap.SugaredLogger,
 ) error {
@@ -423,7 +435,13 @@ func tearDownInceptionVault(
 
 	err = steps.cleanup(ctx, paths, log)
 	if err != nil {
-		return fmt.Errorf("teardown failed: %w", err)
+		return fmt.Errorf("teardown failed, and the boot unit was left enabled: %w", err)
+	}
+
+	err = steps.disableBootUnit(ctx, log)
+	if err != nil {
+		log.Warnw("The inception vault is archived, but its boot unit could not be disabled; "+
+			"the unit only runs 'ocfp vault start', which refuses once the vault is archived", "error", err)
 	}
 
 	return nil

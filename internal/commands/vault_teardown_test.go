@@ -30,8 +30,17 @@ func runInceptionTeardown(t *testing.T, paths map[string]string, fake *fakeIncep
 		probe:       scripted.probe,
 		ownsVault:   scripted.ownsVault,
 		recoverKeys: scripted.recoverKeys,
+		disableBootUnit: func(context.Context, *zap.SugaredLogger) error {
+			fake.record("disable-boot-unit")
+
+			return fake.disableErr
+		},
 		cleanup: func(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 			fake.record("cleanup")
+
+			if fake.cleanupErr != nil {
+				return fake.cleanupErr
+			}
 
 			return cleanupExistingVault(ctx, paths, log)
 		},
@@ -91,7 +100,7 @@ func TestTeardown_OpenVaultWhoseKeysAreRecoveredIsArchived(t *testing.T) {
 
 	_, err := runInceptionTeardown(t, paths, fake, false)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"probe", "recover-keys", "cleanup"}, fake.calls)
+	assert.Equal(t, []string{"probe", "recover-keys", "cleanup", "disable-boot-unit"}, fake.calls)
 
 	archives := archivesOf(t, paths)
 	require.Len(t, archives, 1)
@@ -110,7 +119,7 @@ func TestTeardown_OpenVaultWithSavedKeysIsArchived(t *testing.T) {
 
 	_, err := runInceptionTeardown(t, paths, fake, false)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"probe", "cleanup"}, fake.calls)
+	assert.Equal(t, []string{"probe", "cleanup", "disable-boot-unit"}, fake.calls)
 
 	archives := archivesOf(t, paths)
 	require.Len(t, archives, 1)
@@ -136,7 +145,7 @@ func TestTeardown_VaultThatIsNotOpenIsArchivedWithoutAKeyCheck(t *testing.T) {
 
 			_, err := runInceptionTeardown(t, paths, fake, false)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"probe", "cleanup"}, fake.calls)
+			assert.Equal(t, []string{"probe", "cleanup", "disable-boot-unit"}, fake.calls)
 
 			archives := archivesOf(t, paths)
 			require.Len(t, archives, 1)
@@ -158,7 +167,7 @@ func TestTeardown_ForceArchivesAnOpenVaultWithoutSavedKeys(t *testing.T) {
 
 	_, err := runInceptionTeardown(t, paths, fake, true)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"probe", "recover-keys", "cleanup"}, fake.calls)
+	assert.Equal(t, []string{"probe", "recover-keys", "cleanup", "disable-boot-unit"}, fake.calls)
 
 	archives := archivesOf(t, paths)
 	require.Len(t, archives, 1)
@@ -199,7 +208,7 @@ func TestTeardown_OpenVaultWithCutShortUnsealKeyIsRepairedAndArchived(t *testing
 
 	_, err := runInceptionTeardown(t, paths, fake, false)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"probe", "cleanup"}, fake.calls, "a repaired key leaves nothing to recover")
+	assert.Equal(t, []string{"probe", "cleanup", "disable-boot-unit"}, fake.calls, "a repaired key leaves nothing to recover")
 
 	archives := archivesOf(t, paths)
 	require.Len(t, archives, 1)
@@ -296,7 +305,7 @@ func TestTeardown_ForceArchivesAnOpenVaultWhoseKeyRecoveryFails(t *testing.T) {
 
 	ops, err := runInceptionTeardown(t, paths, fake, true)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"probe", "recover-keys", "cleanup"}, fake.calls)
+	assert.Equal(t, []string{"probe", "recover-keys", "cleanup", "disable-boot-unit"}, fake.calls)
 	assert.NotEmpty(t, ops.commands, "the stop runs")
 
 	archives := archivesOf(t, paths)
@@ -310,4 +319,66 @@ func TestVaultTeardownCmd_ForceFlagDefaultsOff(t *testing.T) {
 	flag := newVaultTeardownCmd().Flags().Lookup("force")
 	require.NotNil(t, flag)
 	assert.Equal(t, "false", flag.DefValue)
+}
+
+// The boot unit would bring an archived vault's bloc back on the next boot
+// only to have 'ocfp vault start' refuse, so teardown disables it, and does
+// so only after the vault has been stopped and archived.
+func TestTeardown_DisablesTheBootUnitAfterArchiving(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	_, err := runInceptionTeardown(t, paths, fake, false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"probe", "cleanup", "disable-boot-unit"}, fake.calls)
+	assert.Len(t, archivesOf(t, paths), 1)
+}
+
+// A disable that fails, for example because sudo wants a password, is a
+// warning. The vault is archived by then, and the unit left enabled can only
+// run 'ocfp vault start', which refuses once the vault is archived.
+func TestTeardown_SucceedsWhenTheBootUnitCannotBeDisabled(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), disableErr: errors.New("sudo: a password is required")}
+
+	_, err := runInceptionTeardown(t, paths, fake, false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"probe", "cleanup", "disable-boot-unit"}, fake.calls)
+	assert.Len(t, archivesOf(t, paths), 1)
+}
+
+// A refused teardown leaves the vault running, so it leaves the unit that
+// brings that vault back after a reboot enabled too.
+func TestTeardown_RefusalLeavesTheBootUnitEnabled(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: healthyRaftProbe(), session: true, notOurs: true}
+
+	_, err := runInceptionTeardown(t, paths, fake, false)
+	require.Error(t, err)
+	assert.NotContains(t, fake.calls, "disable-boot-unit")
+	assert.Empty(t, archivesOf(t, paths))
+}
+
+// A cleanup that fails can leave the vault in place, so teardown leaves the
+// unit that brings it back after a reboot enabled.
+func TestTeardown_FailedCleanupLeavesTheBootUnitEnabled(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), cleanupErr: errors.New("moving the vault data: permission denied")}
+
+	_, err := runInceptionTeardown(t, paths, fake, false)
+	require.ErrorContains(t, err, "permission denied")
+	assert.Equal(t, []string{"probe", "cleanup"}, fake.calls)
+	assert.NotContains(t, fake.calls, "disable-boot-unit")
 }

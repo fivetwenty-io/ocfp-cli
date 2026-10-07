@@ -39,6 +39,8 @@ type fakeInception struct {
 	targetToken    string                                                              // the token ~/.saferc holds for the bloc's target; a stop deletes it
 	tokenFiles     []string                                                            // the root token file each start was given
 	onStart        func(f *fakeInception, paths map[string]string, mode safeLocalMode) // what a start leaves behind
+	disableErr     error                                                               // what teardown's boot unit disable returns
+	cleanupErr     error                                                               // what teardown's cleanup returns instead of running
 	calls          []string
 }
 
