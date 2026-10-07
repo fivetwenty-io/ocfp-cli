@@ -316,15 +316,17 @@ Provision tools on the bastion via SSH (Genesis, BOSH, CF, Vault, Safe, etc.):
 
 ## Guest options on the bastion and artifacts VMs
 
-Both VMs are created with two Proxmox options that differ from the defaults a clone inherits.
+Both VMs are created with three Proxmox options that differ from the defaults a clone inherits.
 
 `Use tablet for pointer` is set to `No`. The emulated USB tablet exists so a graphical console can do absolute pointing, and neither of these guests is ever driven that way, so all it earns the host is a wakeup for every pointer event.
 
 `Protection` is set to `Yes`. Proxmox then refuses to destroy the guest, and it refuses to remove a disk from it. That is the guard against a mistaken click in the web UI taking away a bastion that holds an operator's deployment trees, or an artifacts VM that holds the bloc's blobstore. Adding a disk is not affected, so the data disk still attaches after the guest is created.
 
+`Start at boot` is set to `Yes`, which is the `onboot` flag. Both VMs start when the Proxmox node boots, so a host restart brings the bastion and the artifacts blobstore back without anyone starting them by hand. Bootstrap sets it on existing blocs the next time it runs, and the change is a config write that does not restart either VM. Worker VMs created by `ocfp scale` do not get it, and neither do templates.
+
 ocfp clears the flag itself wherever a removal is the point. `ocfp teardown` drops it before destroying a guest, the preserve path drops it before detaching a data disk that has to survive, and a recycle drops it before destroying the machine it replaced. An operator who runs one of those has already answered the question the flag exists to ask.
 
-Both options are converged on every bootstrap run, so a bloc built before they existed picks them up on the next `ocfp bootstrap`. The bastion gets them from the `Ensure Bastion Guest Options` step, and the artifacts VM gets them on the skip path that an already-deployed artifacts VM takes. Neither needs a rebuild, and blocs on the other providers are untouched, because these options are Proxmox's own.
+All three options are converged on every bootstrap run, so a bloc built before they existed picks them up on the next `ocfp bootstrap`. The bastion gets them from the `Ensure Bastion Guest Options` step, and the artifacts VM gets them on the skip path that an already-deployed artifacts VM takes. Neither needs a rebuild, and blocs on the other providers are untouched, because these options are Proxmox's own.
 
 ## Testing the artifacts blobstore
 

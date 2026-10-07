@@ -20,23 +20,33 @@ const (
 	// disks. See PVE::QemuConfig->check_protection in the API: it refuses
 	// the destroy and both halves of a detach, and nothing else.
 	pveKeyProtection = "protection"
+
+	// pveKeyOnBoot starts the guest when the Proxmox node boots. A write to it
+	// is a config change only, so it never restarts a running guest.
+	pveKeyOnBoot = "onboot"
 )
 
 // guestOptionParams builds the config write that carries ocfp's guest options.
 //
-// Both keys are always written, so the resulting state is the same whether the
+// Every key is always written, so the resulting state is the same whether the
 // guest is new or is being converged: an unprotected guest is explicitly
-// unprotected rather than left at whatever the template happened to carry.
-func guestOptionParams(protected bool) map[string]interface{} {
-	protection := 0
-	if protected {
-		protection = 1
-	}
-
+// unprotected, and a guest that should not autostart is explicitly set not to,
+// rather than left at whatever the template happened to carry.
+func guestOptionParams(options cpi.GuestOptions) map[string]interface{} {
 	return map[string]interface{}{
 		pveKeyTablet:     0,
-		pveKeyProtection: protection,
+		pveKeyProtection: flagValue(options.Protected),
+		pveKeyOnBoot:     flagValue(options.StartOnBoot),
 	}
+}
+
+// flagValue is how the PVE config API spells a boolean option.
+func flagValue(enabled bool) int {
+	if enabled {
+		return 1
+	}
+
+	return 0
 }
 
 // applyGuestOptions writes the guest options for a freshly created VM.
@@ -46,18 +56,22 @@ func guestOptionParams(protected bool) map[string]interface{} {
 // attached after this point still attaches; see EnsureGuestOptions for the
 // operations that have to drop the flag first.
 func (m *ComputeManager) applyGuestOptions(ctx context.Context, node string, vmid int, req *cpi.InstanceRequest) error {
-	protected := req != nil && req.Protected
+	var options cpi.GuestOptions
+	if req != nil {
+		options = cpi.GuestOptions{Protected: req.Protected, StartOnBoot: req.StartOnBoot}
+	}
 
-	return m.writeGuestConfig(ctx, node, vmid, guestOptionParams(protected))
+	return m.writeGuestConfig(ctx, node, vmid, guestOptionParams(options))
 }
 
 // EnsureGuestOptions converges the guest options on a VM that already exists.
 //
 // The bastion and artifacts VMs of every bloc built before these options
-// existed carry the Proxmox defaults, a live pointer device and no protection,
-// and the web UI is otherwise the only way to change them. Bootstrap calls
+// existed carry the Proxmox defaults, a live pointer device, no protection,
+// and no start on boot, and the web UI is otherwise the only way to change
+// them. Bootstrap calls
 // this on each run so a re-run fixes them.
-func (m *ComputeManager) EnsureGuestOptions(ctx context.Context, instanceID string, protected bool) error {
+func (m *ComputeManager) EnsureGuestOptions(ctx context.Context, instanceID string, options cpi.GuestOptions) error {
 	vmid, err := parseVMID(instanceID)
 	if err != nil {
 		return err
@@ -68,7 +82,7 @@ func (m *ComputeManager) EnsureGuestOptions(ctx context.Context, instanceID stri
 		return err
 	}
 
-	return m.writeGuestConfig(ctx, node, vmid, guestOptionParams(protected))
+	return m.writeGuestConfig(ctx, node, vmid, guestOptionParams(options))
 }
 
 // SetProtection turns the protection flag on or off, leaving every other
@@ -93,12 +107,7 @@ func (m *ComputeManager) SetProtection(ctx context.Context, instanceID string, e
 
 // protectionParams is the config write that toggles protection alone.
 func protectionParams(enabled bool) map[string]interface{} {
-	value := 0
-	if enabled {
-		value = 1
-	}
-
-	return map[string]interface{}{pveKeyProtection: value}
+	return map[string]interface{}{pveKeyProtection: flagValue(enabled)}
 }
 
 // writeGuestConfig PUTs a guest's config keys.

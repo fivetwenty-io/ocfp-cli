@@ -7,27 +7,47 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 )
 
-// TestGuestOptionParams pins the two options every guest ocfp creates on PVE
-// carries: the USB tablet pointer is off, because these are headless servers
+// TestGuestOptionParams pins the options every guest ocfp creates on PVE
+// carries. The USB tablet pointer is off, because these are headless servers
 // reached over SSH and the emulated absolute-pointing device only costs the
-// host wakeups, and protection reflects what the caller asked for.
+// host wakeups. Protection and start-on-boot reflect what the caller asked
+// for, and both are always written so a converged guest ends up in the same
+// state as a new one.
 func TestGuestOptionParams(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name           string
-		protected      bool
+		options        cpi.GuestOptions
 		wantProtection int
+		wantOnBoot     int
 	}{
-		{name: "protected guest", protected: true, wantProtection: 1},
-		{name: "unprotected guest", protected: false, wantProtection: 0},
+		{
+			name:           "protected guest that starts on boot",
+			options:        cpi.GuestOptions{Protected: true, StartOnBoot: true},
+			wantProtection: 1,
+			wantOnBoot:     1,
+		},
+		{
+			name:           "protected guest that stays off at boot",
+			options:        cpi.GuestOptions{Protected: true},
+			wantProtection: 1,
+			wantOnBoot:     0,
+		},
+		{
+			name:           "unprotected guest that starts on boot",
+			options:        cpi.GuestOptions{StartOnBoot: true},
+			wantProtection: 0,
+			wantOnBoot:     1,
+		},
+		{name: "unprotected guest that stays off at boot", options: cpi.GuestOptions{}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			params := guestOptionParams(tc.protected)
+			params := guestOptionParams(tc.options)
 
 			if got := params[pveKeyTablet]; got != 0 {
 				t.Errorf("%s = %v, want 0", pveKeyTablet, got)
@@ -37,8 +57,12 @@ func TestGuestOptionParams(t *testing.T) {
 				t.Errorf("%s = %v, want %d", pveKeyProtection, got, tc.wantProtection)
 			}
 
-			if len(params) != 2 {
-				t.Errorf("guest options must write only tablet and protection, got %v", params)
+			if got := params[pveKeyOnBoot]; got != tc.wantOnBoot {
+				t.Errorf("%s = %v, want %d", pveKeyOnBoot, got, tc.wantOnBoot)
+			}
+
+			if len(params) != 3 {
+				t.Errorf("guest options must write only tablet, protection, and onboot, got %v", params)
 			}
 		})
 	}
@@ -85,6 +109,68 @@ func TestApplyGuestOptionsWritesBothKeys(t *testing.T) {
 
 	if got := call.Params[pveKeyProtection]; got != 1 {
 		t.Errorf("protection = %v, want 1", got)
+	}
+}
+
+// TestApplyGuestOptionsStartOnBootFollowsTheRequest drives the create path for
+// both answers. A guest created with StartOnBoot comes back after the Proxmox
+// node reboots, and one created without it is written as explicitly not
+// starting, so a worker cloned from a template that carried onboot never
+// autostarts.
+func TestApplyGuestOptionsStartOnBootFollowsTheRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  *cpi.InstanceRequest
+		want int
+	}{
+		{name: "start on boot requested", req: &cpi.InstanceRequest{StartOnBoot: true}, want: 1},
+		{name: "start on boot not requested", req: &cpi.InstanceRequest{}, want: 0},
+		{name: "no request at all", req: nil, want: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			manager, fake := newOptionsTestManager()
+
+			err := manager.applyGuestOptions(context.Background(), "pve1", 20000, tc.req)
+			if err != nil {
+				t.Fatalf("applyGuestOptions: %v", err)
+			}
+
+			if !fake.wrotePut("/nodes/pve1/qemu/20000/config", pveKeyOnBoot, tc.want) {
+				t.Errorf("want onboot = %d in the config PUT, got %v", tc.want, fake.putParams)
+			}
+		})
+	}
+}
+
+// TestEnsureGuestOptionsWritesOnBootOnAnExistingGuest covers the converge path
+// for a bastion or artifacts VM built before onboot was set. The write is a
+// config PUT, so it reaches a running guest without restarting it.
+func TestEnsureGuestOptionsWritesOnBootOnAnExistingGuest(t *testing.T) {
+	t.Parallel()
+
+	manager, fake := newOptionsTestManager()
+
+	err := manager.EnsureGuestOptions(context.Background(), "20000", cpi.GuestOptions{Protected: true, StartOnBoot: true})
+	if err != nil {
+		t.Fatalf("EnsureGuestOptions: %v", err)
+	}
+
+	if len(fake.putParams) != 1 {
+		t.Fatalf("want one config PUT, got %d: %v", len(fake.putParams), fake.putParams)
+	}
+
+	if !fake.wrotePut("/nodes/pve1/qemu/20000/config", pveKeyOnBoot, 1) {
+		t.Errorf("want onboot = 1 in the config PUT, got %v", fake.putParams)
+	}
+
+	if !fake.wrotePut("/nodes/pve1/qemu/20000/config", pveKeyProtection, 1) {
+		t.Errorf("want protection = 1 in the config PUT, got %v", fake.putParams)
 	}
 }
 

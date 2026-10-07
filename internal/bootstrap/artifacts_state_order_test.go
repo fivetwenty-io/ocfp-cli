@@ -197,6 +197,35 @@ func TestCreateArtifacts_InterruptedRunLeavesVMInPlace(t *testing.T) {
 	}
 }
 
+// TestCreateArtifacts_RequestsProtectionAndStartOnBoot asserts the artifacts VM
+// is created guarded against deletion and set to come back when the provider's
+// host reboots, rather than relying on a later convergence pass to fix either.
+func TestCreateArtifacts_RequestsProtectionAndStartOnBoot(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	st := &cancelOnAttachStorage{cancel: cancel}
+	manager, compute, _ := newArtifactsOrderManager(t, st)
+
+	if err := manager.CreateArtifacts(ctx); err == nil {
+		t.Fatal("CreateArtifacts returned nil for an interrupted run")
+	}
+
+	if compute.lastReq == nil {
+		t.Fatal("the artifacts VM was never requested")
+	}
+
+	if !compute.lastReq.Protected {
+		t.Error("the artifacts request must ask for a protected VM")
+	}
+
+	if !compute.lastReq.StartOnBoot {
+		t.Error("the artifacts request must ask for a VM that starts on boot")
+	}
+}
+
 // TestCreateArtifacts_StateSaveFailureIsFatalAndKeepsVM asserts that when the
 // early save cannot reach disk, the step fails with a wrapped error rather
 // than carrying on into a long wait with nothing durable recorded. The VM

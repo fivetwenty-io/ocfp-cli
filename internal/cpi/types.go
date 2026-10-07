@@ -459,7 +459,17 @@ type InstanceRequest struct {
 	//
 	// Only the PVE provider implements it today, as Proxmox's protection
 	// flag; elsewhere it is ignored.
-	Protected       bool
+	Protected bool
+	// StartOnBoot asks the provider to bring the VM back up when its host
+	// boots.
+	//
+	// The bastion and artifacts VMs set it, because a bloc is unreachable
+	// until they are running again after a host restart. Worker VMs leave it
+	// unset and stay off until ocfp starts them.
+	//
+	// Only the PVE provider implements it today, as Proxmox's onboot flag;
+	// elsewhere it is ignored.
+	StartOnBoot     bool
 	PublicKey       string   // Optional: SSH public key (OpenSSH single-line form) to inject at VM-create time (PVE cloud-init sshkeys)
 	DefaultUsername string   // Optional: cloud-init default username (PVE ciuser); defaults to image's built-in user when empty
 	GatewayIP       string   // Optional: explicit default gateway for static IP configurations (PVE bridge mode)
@@ -594,4 +604,16 @@ type UpdateLoadBalancerRequest struct {
 	Name           *string
 	SecurityGroups []string
 	Tags           map[string]string
+}
+
+// GuestOptions are the provider-level options ocfp converges on a VM it owns.
+//
+// Only the PVE provider implements them today. Both fields are written
+// whichever way they point, so a converged guest ends up in the same state as
+// one created with the matching InstanceRequest.
+type GuestOptions struct {
+	// Protected guards the VM against deletion.
+	Protected bool
+	// StartOnBoot brings the VM back up when its host boots.
+	StartOnBoot bool
 }
