@@ -255,6 +255,13 @@ type Config struct {
 	ServiceAccountKeyPath string `json:"service_account_key_path" mapstructure:"service_account_key_path" yaml:"service_account_key_path,omitempty"`
 	// Optional: override STACKIT API endpoint (e.g., https://iaas.api.stackit.cloud)
 	APIEndpoint string `json:"api_endpoint" mapstructure:"api_endpoint" yaml:"api_endpoint,omitempty"`
+	// CPIHost optionally overrides the host the PVE CPI record in vault carries,
+	// for blocs whose api_endpoint is a name the directors cannot resolve (a
+	// MagicDNS name, for instance). Accepts a bare hostname or IP, or a URL
+	// that is reduced to one. The CPI port still comes from api_endpoint.
+	// PVE-specific. With verify_ssl true, a cert issued for the api_endpoint
+	// name will not match an IP given here.
+	CPIHost string `json:"cpi_host" mapstructure:"cpi_host" yaml:"cpi_host,omitempty"`
 	// VerifySSL controls TLS certificate verification for provider API calls.
 	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
 	// certs work out of the box. Set true when targeting a PVE host with a

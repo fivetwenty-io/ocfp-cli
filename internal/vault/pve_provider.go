@@ -1800,7 +1800,7 @@ func (p *PVEVaultProvider) configureEnvironment(envType string, reporter provide
 //     Writes username and password. Does NOT write token_id or token_secret.
 //
 // Common fields written in both modes:
-//   - host   — PVE API endpoint (Config.APIEndpoint)
+//   - host   — PVE API host (Config.CPIHost when set, else Config.APIEndpoint)
 //   - node   — Primary Proxmox node name (Config.Region)
 //   - status — literal "configured"
 //
@@ -1851,11 +1851,21 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	// config value or the default is always sufficient). Operators who want the
 	// live-derived value should set cf_max_in_flight in the bloc config explicitly.
 	cfMaxInFlight := pveCFMaxInFlight(p.Config)
+	// cpi_host, when set, replaces only the host record; the port still
+	// follows api_endpoint.
+	cpiHost := pveHostnameOnly(host)
+	if override := strings.TrimSpace(p.Config.CPIHost); override != "" {
+		cpiHost = pveHostnameOnly(override)
+		if cpiHost == "" {
+			return fmt.Errorf("pve configureCPI: cpi_host %q has no host part", override)
+		}
+	}
+
 	cpiConfig := map[string]any{
 		"cf_max_in_flight": strconv.Itoa(cfMaxInFlight),
 		"disk_format":      pveDiskFormat(diskStorage, p.Config.DiskStorageType),
 		"disk_storage":     diskStorage,
-		"host":             pveHostnameOnly(host),
+		"host":             cpiHost,
 		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
 		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "vmbr0"),
 		"node":             node,
@@ -1905,6 +1915,11 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 func pveHostnameOnly(host string) string {
 	if idx := indexOf(host, "://"); idx >= 0 {
 		host = host[idx+3:]
+	}
+	// A bare IPv6 literal cannot carry a port without brackets, so its
+	// colons are all part of the address.
+	if strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[") {
+		return host
 	}
 	// strip trailing :port if present
 	for i := len(host) - 1; i >= 0; i-- {
