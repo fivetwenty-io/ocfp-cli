@@ -82,6 +82,21 @@ ocfp configure --bloc production --prune-duplicate-rules --apply
 
 The prune option works only on PVE blocs, because it deletes rules by the numeric position PVE reports, and it stops with an error on any other provider before it lists anything. It runs on its own, so it cannot be combined with `--dry-run` or the `--skip-*` options, and `--apply` is only valid with it. Rules are twins only when direction, protocol, port range, remote address, comment, and every other field the rule carries match after normalization. The lowest position in each set of twins is always kept, so the last copy of a rule is never removed. Only groups named `<bloc>-<name>` that ocfp defines rules for are touched. Before each delete the command re-lists the group, and it stops with an error if the rule at the next position is not the duplicate it expected.
 
+Labs bootstrapped before 2026-09-14 created the Proxmox role `OCFPCpi` without `Pool.Audit`, and the CPI's pools preflight fails without it. We can check any lab's role with `--check-cpi-role`, which reads the role through pmx.
+
+```bash
+# Report missing privileges; exits non-zero when any are missing
+ocfp configure --check-cpi-role
+
+# Add the missing privileges, then read the role again to confirm
+ocfp configure --check-cpi-role --apply
+
+# Pick the PVE cluster explicitly when pmx knows several
+ocfp configure --check-cpi-role --pmx-context lab-b
+```
+
+The output names the pmx context and endpoint it checked, which privileges are missing, and the exact `pmx pve access role set` command that `--apply` would run. That command always carries `--append`, so it only adds privileges and never removes one. Privileges the role holds beyond the required list are shown for information and are never treated as wrong. If the role does not exist the command stops with an error that points at the runbook, because ocfp does not create the role. The check runs on its own and returns before any provisioning, so it cannot be combined with `--prune-duplicate-rules`, `--dry-run`, or the `--skip-*` options. It needs `pmx` on the PATH, and `--pmx-context` is passed to pmx as `-c`. The check uses the pmx context and never reads the bloc config, so `--bloc` does not pick the cluster. When `PMX_API_ENDPOINT` is set, pmx talks to that endpoint instead of the context's, and the output reports it.
+
 ### 3. Access bastion host
 
 ```bash
