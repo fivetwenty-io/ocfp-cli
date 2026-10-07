@@ -824,7 +824,7 @@ func (m *Manager) pushCATrustToBastion(ctx context.Context, caPEM string) error 
 	if err != nil {
 		stderr := ""
 		if result != nil {
-			stderr = extractTail(result.Stderr, 20) //nolint:mnd
+			stderr = extractTail(result.Stderr)
 		}
 
 		if stderr != "" {
@@ -894,9 +894,9 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 				"stderr", logger.RedactSecrets(result.Stderr))
 
 			// Include meaningful script output in the error so users can diagnose failures
-			output := extractTail(result.Stderr, 20) //nolint:mnd
+			output := extractTail(result.Stderr)
 			if output == "" {
-				output = extractTail(result.Stdout, 20) //nolint:mnd
+				output = extractTail(result.Stdout)
 			}
 
 			if output != "" {
@@ -915,20 +915,24 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 	return ErrLocalScriptExecutionNotImplemented
 }
 
-// extractTail returns the last n lines of a string.
-// If the string has fewer than n lines, the entire string is returned.
-func extractTail(text string, maxLines int) string {
+// remoteOutputTailLines is how many trailing lines of a failed remote
+// command's output an error carries.
+const remoteOutputTailLines = 20
+
+// extractTail returns the last remoteOutputTailLines lines of a string.
+// If the string has fewer lines, the entire string is returned.
+func extractTail(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
 	}
 
 	lines := strings.Split(text, "\n")
-	if len(lines) <= maxLines {
+	if len(lines) <= remoteOutputTailLines {
 		return text
 	}
 
-	return strings.Join(lines[len(lines)-maxLines:], "\n")
+	return strings.Join(lines[len(lines)-remoteOutputTailLines:], "\n")
 }
 
 // brewShellEnvSetup sources the Linuxbrew environment so brew-installed binaries are on PATH.
