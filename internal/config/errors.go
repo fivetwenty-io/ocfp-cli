@@ -65,6 +65,12 @@ func ErrBastionGitHubSSHPortInvalid(port int) error {
 	return fmt.Errorf("bastion config: githubSshPort must be 22 or 443, got %d", port) //nolint:err113 // dynamic error with context
 }
 
+// ErrSubnetRecordsInvalid returns an error when network.subnet_records is set
+// to anything other than the allowed values.
+func ErrSubnetRecordsInvalid(value string) error {
+	return fmt.Errorf("network.subnet_records must be %q or %q, got %q", SubnetRecordsParent, SubnetRecordsPerSubnet, value) //nolint:err113 // dynamic error with context
+}
+
 // ErrInvalidProvider returns an error for an unrecognized or unsupported cloud provider.
 func ErrInvalidProvider(provider string) error {
 	return fmt.Errorf("invalid provider: %s", provider) //nolint:err113 // dynamic error with context

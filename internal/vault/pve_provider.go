@@ -248,11 +248,13 @@ func (p *PVEVaultProvider) ConfigureNetworks(_envPath, envType string, reporter 
 //	{subnetsPath}/{subnetName}                          → cidr, az, gateway
 //	{subnetsPath}/{subnetName}/reserved-ips/{role}      → ip
 //
-// Every record carries the PARENT network CIDR and gateway (the flat/shared-
-// gateway subnet shape — see the in-loop comment); only the reserved-ips
-// bands are derived from each subnet's own child CIDR, keeping the records
-// disjoint so Genesis' Logical Subnet Amalgamation merges them into one BOSH
-// subnet spanning all three AZs.
+// By default every record carries the PARENT network CIDR and gateway (the
+// flat/shared-gateway subnet shape — see the in-loop comment); with
+// network.subnet_records: per_subnet each record carries its own child CIDR
+// and base+1 gateway instead. Either way the reserved-ips bands are derived
+// from each subnet's own child CIDR, keeping the records disjoint so
+// Genesis' Logical Subnet Amalgamation can merge parent-shaped records into
+// one BOSH subnet spanning all three AZs.
 //
 // When no bootstrap state is present the method falls back to the legacy
 // single-blob write so `populate` does not fail in stateless contexts.
@@ -267,6 +269,14 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 	}
 
 	p.logger.Infow("Configuring subnets", "env_type", envType)
+
+	// Config load already validates this; repeat it here because a Config
+	// assembled without the loader reaches populate too.
+	if err := config.ValidateSubnetRecords(p.Config.Network.SubnetRecords); err != nil {
+		return err
+	}
+
+	perSubnetRecords := p.Config.Network.SubnetRecords == config.SubnetRecordsPerSubnet
 
 	sm := p.loadStateManager()
 	if sm == nil {
@@ -328,21 +338,12 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 		// range/gateway records into a single BOSH subnet via Logical Subnet
 		// Amalgamation (CloudConfig.pm _build_logical_subnet_amalgamation),
 		// preserving the per-child AZs and the DISJOINT reserved/available
-		// bands, which stay derived from the child CIDR below.
-		parentCIDR, _ := sub.Properties["parent_cidr"].(string)
-		if parentCIDR == "" {
-			// State predating the parent_cidr property, or a hand-built
-			// resource: the configured network CIDR is the same parent.
-			parentCIDR = pveFirstNonEmpty(p.Config.Network.CIDR, p.Config.VPCCIDRBlock, childCIDR)
-		}
-
-		// Bootstrap state already records the parent gateway per virtual
-		// subnet (network.go addVirtualSubnetToState → CIDRGatewayIP(parent)),
-		// which is what the bastion boots with; derive it from the parent
-		// CIDR only when state carries no gateway.
-		gateway, _ := sub.Properties["gateway"].(string)
-		if gateway == "" {
-			gateway = pveCIDRGateway(parentCIDR)
+		// bands, which stay derived from the child CIDR below. Networks where
+		// each child does route through its own base+1 gateway opt out with
+		// network.subnet_records: per_subnet, handled after the parent values.
+		recordCIDR, gateway, err := p.pveSubnetRecordRange(sub.Name, sub.Properties, childCIDR, perSubnetRecords)
+		if err != nil {
+			return err
 		}
 
 		dns := pveFirstNonEmpty(pveFirstDNS(p.Config.DNS), gateway, "1.1.1.1")
@@ -360,8 +361,8 @@ func (p *PVEVaultProvider) ConfigureSubnets(_envPath, envType string, reporter p
 
 		subnetPath := filepath.Join(subnetsPath, genesisName)
 		if err := p.Safe.SetMultiple(subnetPath, map[string]any{
-			"cidr":       parentCIDR,
-			"cidr_block": parentCIDR,
+			"cidr":       recordCIDR,
+			"cidr_block": recordCIDR,
 			"az":         az,
 			"gateway":    gateway,
 			"dns":        dns,
@@ -864,6 +865,43 @@ func pveFirstDNS(dns []string) string {
 	}
 
 	return dns[0]
+}
+
+// pveSubnetRecordRange picks the CIDR and gateway a PVE subnet record
+// carries: the parent network's by default, or the subnet's own child CIDR
+// and its base+1 gateway under network.subnet_records: per_subnet.
+func (p *PVEVaultProvider) pveSubnetRecordRange(name string, props map[string]any, childCIDR string, perSubnet bool) (string, string, error) {
+	parentCIDR, _ := props["parent_cidr"].(string)
+	if parentCIDR == "" {
+		// State predating the parent_cidr property, or a hand-built
+		// resource: the configured network CIDR is the same parent.
+		parentCIDR = pveFirstNonEmpty(p.Config.Network.CIDR, p.Config.VPCCIDRBlock, childCIDR)
+	}
+
+	// Bootstrap state already records the parent gateway per virtual
+	// subnet (network.go addVirtualSubnetToState → CIDRGatewayIP(parent)),
+	// which is what the bastion boots with; derive it from the parent
+	// CIDR only when state carries no gateway.
+	gateway, _ := props["gateway"].(string)
+	if gateway == "" {
+		gateway = pveCIDRGateway(parentCIDR)
+	}
+
+	recordCIDR := parentCIDR
+
+	if perSubnet {
+		// network.subnet_records: per_subnet — each subnet routes through
+		// its own gateway (base+1 of its own CIDR), so the record carries
+		// the child CIDR and that gateway instead of the parent's.
+		recordCIDR = childCIDR
+
+		gateway = pveCIDRGateway(childCIDR)
+		if gateway == "" {
+			return "", "", fmt.Errorf("subnet %s: cannot derive a gateway from cidr %q", name, childCIDR)
+		}
+	}
+
+	return recordCIDR, gateway, nil
 }
 
 // pveCIDRGateway returns the conventional gateway IP for a CIDR: the first
