@@ -22,6 +22,7 @@ nfs            mgmt  offset=16
 ocfp_ui        mgmt  offset=17
 ovpn           mgmt  offset=13
 prometheus     mgmt  offset=8
+prometheus     ocf   offset=68
 proxycache     mgmt  offset=15
 reserved       mgmt  range=0-31,64->
 reserved       ocf   range=0-95
@@ -116,6 +117,9 @@ haproxy_ip             10.0.0.97
 jumpbox_a              10.0.0.65
 jumpbox_b              10.0.0.67
 jumpbox_ip             10.0.0.66
+prometheus_a           10.0.0.67
+prometheus_b           10.0.0.69
+prometheus_ip          10.0.0.68
 reserved_0             10.0.0.0
 reserved_1             10.0.0.95
 vault_a                10.0.0.64

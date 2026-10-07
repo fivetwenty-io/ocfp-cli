@@ -52,6 +52,7 @@ func wideDefinitionLiteral() Definition {
 					"vault":      {Offset: 65},
 					"jumpbox":    {Offset: 66},
 					"blacksmith": {Offset: 67},
+					"prometheus": {Offset: 68},
 					"haproxy":    {Offset: 97},
 				},
 				Available: []BandPlacement{{Start: 96}},
@@ -512,7 +513,9 @@ func TestValidateBandMgmtWide(t *testing.T) {
 		{"inside mgmt band, no collisions", 40, 50, nil, ""},
 		{"inside mgmt band, no collisions (2)", 32, 40, nil, ""},
 		{"collides with mgmt statics 20-22", 20, 40, ErrBandOverrideCollidesStatic, "mgmt"},
-		{"collides with ocf statics 64-67", 30, 70, ErrBandOverrideCollidesStatic, "ocf"},
+		{"collides with ocf statics 64-68", 30, 70, ErrBandOverrideCollidesStatic, "ocf"},
+		{"collides with only the ocf prometheus static at 68", 68, 80, ErrBandOverrideCollidesStatic, "prometheus"},
+		{"starts just past the last ocf low static", 69, 80, nil, ""},
 		{"crosses into ocf's open band, no statics", 98, 120, ErrBandOverrideCrossTier, ""},
 	}
 

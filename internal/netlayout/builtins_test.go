@@ -13,7 +13,8 @@ import (
 // c72be26:internal/netlayout/wide.go for the original). It is the byte-compat
 // contract for every bloc already deployed under scheme "2": the vault-layer
 // reserved-ips a redeploy computes must not move, so a change here is a
-// change to live infrastructure, never a test fixup.
+// change to live infrastructure, never a test fixup. The one addition since
+// is the ocf prometheus static at 68, which only adds a role.
 func wideGoldenTable() reservedip.AssignmentTable {
 	return reservedip.AssignmentTable{
 		"bastion":      {"mgmt": {Offset: 3}},
@@ -21,7 +22,7 @@ func wideGoldenTable() reservedip.AssignmentTable {
 		"vault":        {"mgmt": {Offset: 5}, "ocf": {Offset: 65}},
 		"jumpbox":      {"mgmt": {Offset: 6}, "ocf": {Offset: 66}},
 		"concourse":    {"mgmt": {Offset: 7}},
-		"prometheus":   {"mgmt": {Offset: 8}},
+		"prometheus":   {"mgmt": {Offset: 8}, "ocf": {Offset: 68}},
 		"shield":       {"mgmt": {Offset: 9}},
 		"blacksmith":   {"mgmt": {Offset: 10}, "ocf": {Offset: 67}},
 		"artifacts":    {"mgmt": {Offset: 11}},
