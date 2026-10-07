@@ -262,6 +262,12 @@ type Config struct {
 	// PVE-specific. With verify_ssl true, a cert issued for the api_endpoint
 	// name will not match an IP given here.
 	CPIHost string `json:"cpi_host" mapstructure:"cpi_host" yaml:"cpi_host,omitempty"`
+	// PinAZNodes controls whether vault populate pins each PVE availability
+	// zone to its backing node through target_node in the zone's
+	// cloud_properties. Unset means true. When false, populate writes an empty
+	// cloud_properties instead, which clears a pin already in vault. Read it
+	// through PinAZNodesEnabled. PVE-specific.
+	PinAZNodes *bool `json:"pin_az_nodes,omitempty" mapstructure:"pin_az_nodes" yaml:"pin_az_nodes,omitempty"`
 	// VerifySSL controls TLS certificate verification for provider API calls.
 	// PVE-specific. Defaults to false (skip verification) so self-signed PVE
 	// certs work out of the box. Set true when targeting a PVE host with a
