@@ -25,6 +25,8 @@ type configureOptions struct {
 	skipBastion     bool
 	pruneDuplicates bool
 	apply           bool
+	checkCPIRole    bool
+	pmxContext      string
 }
 
 // NewConfigureCmd creates the configure command.
@@ -57,7 +59,14 @@ configuration to your infrastructure.`,
   # List exact duplicate security group rules that earlier runs left behind
   # (changes nothing), then delete them
   ocfp configure --bloc production --prune-duplicate-rules
-  ocfp configure --bloc production --prune-duplicate-rules --apply`,
+  ocfp configure --bloc production --prune-duplicate-rules --apply
+
+  # Check that the Proxmox OCFPCpi role holds every privilege the CPI needs
+  # (changes nothing, exits non-zero when any are missing), then add the
+  # missing ones. Labs built before 2026-09-14 need this. Use --pmx-context to
+  # pick the PVE cluster when pmx knows several.
+  ocfp configure --check-cpi-role
+  ocfp configure --check-cpi-role --pmx-context lab-b --apply`,
 		// This command runs a full bastion provision, and it carries no
 		// subcommands.  Without a validator cobra silently discards a stray
 		// positional, so `ocfp configure deployments` -- which the generated
@@ -78,7 +87,11 @@ configuration to your infrastructure.`,
 
 	cmd.Flags().BoolVar(&opts.pruneDuplicates, "prune-duplicate-rules", false,
 		"list exact duplicate rules in ocfp security groups and do nothing else (PVE only; a dry run unless --apply is given)")
-	cmd.Flags().BoolVar(&opts.apply, "apply", false, "with --prune-duplicate-rules, delete the duplicates it lists")
+	cmd.Flags().BoolVar(&opts.apply, "apply", false,
+		"with --prune-duplicate-rules, delete the duplicates it lists; with --check-cpi-role, append the missing privileges")
+	cmd.Flags().BoolVar(&opts.checkCPIRole, "check-cpi-role", false,
+		"check the Proxmox OCFPCpi role through pmx and do nothing else, using the pmx context and not the bloc config (a report unless --apply is given, which only appends missing privileges)")
+	cmd.Flags().StringVar(&opts.pmxContext, "pmx-context", "", "with --check-cpi-role, the pmx context (-c) to use")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("configure.dry_run", cmd.Flags().Lookup("dry-run"))
@@ -93,13 +106,19 @@ configuration to your infrastructure.`,
 //
 //nolint:funlen // sequential configuration phases cannot be meaningfully split
 func runConfigure(opts *configureOptions) error {
-	err := validatePruneOptions(opts)
+	err := validateConfigureModes(opts)
 	if err != nil {
 		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The role check talks only to pmx. It returns before any config load or
+	// provider setup so it cannot provision anything.
+	if opts.checkCPIRole {
+		return runCheckCPIRole(ctx, opts.pmxContext, opts.apply, os.Stdout)
+	}
 
 	log := logger.Get()
 
@@ -183,11 +202,20 @@ func runConfigure(opts *configureOptions) error {
 	return nil
 }
 
-// validatePruneOptions keeps --prune-duplicate-rules apart from the rest of
-// configure. Combining it with another option is refused rather than guessed
-// at, and --apply means nothing without it.
-func validatePruneOptions(opts *configureOptions) error {
-	if !opts.pruneDuplicates {
+// validateConfigureModes keeps --prune-duplicate-rules and --check-cpi-role
+// apart from the rest of configure and from each other. Combining either with
+// another option is refused rather than guessed at. --apply needs exactly one
+// of the two, and --pmx-context belongs to the role check.
+func validateConfigureModes(opts *configureOptions) error {
+	if opts.pruneDuplicates && opts.checkCPIRole {
+		return ErrConfigureModeConflict
+	}
+
+	if opts.pmxContext != "" && !opts.checkCPIRole {
+		return ErrPmxContextWithoutCheck
+	}
+
+	if !opts.pruneDuplicates && !opts.checkCPIRole {
 		if opts.apply {
 			return ErrApplyWithoutPrune
 		}
@@ -196,6 +224,10 @@ func validatePruneOptions(opts *configureOptions) error {
 	}
 
 	if opts.dryRun || opts.skipRoutes || opts.skipFloatingIPs || opts.skipSecGroups || opts.skipBastion {
+		if opts.checkCPIRole {
+			return ErrCheckCPIRoleFlagConflict
+		}
+
 		return ErrPruneFlagConflict
 	}
 

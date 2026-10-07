@@ -378,15 +378,15 @@ func TestPruneStillPairsExactAnywhereTwins(t *testing.T) {
 func TestValidatePruneOptions(t *testing.T) {
 	t.Parallel()
 
-	if err := validatePruneOptions(&configureOptions{pruneDuplicates: true}); err != nil {
+	if err := validateConfigureModes(&configureOptions{pruneDuplicates: true}); err != nil {
 		t.Errorf("plain prune rejected: %v", err)
 	}
 
-	if err := validatePruneOptions(&configureOptions{pruneDuplicates: true, apply: true}); err != nil {
+	if err := validateConfigureModes(&configureOptions{pruneDuplicates: true, apply: true}); err != nil {
 		t.Errorf("prune with apply rejected: %v", err)
 	}
 
-	if err := validatePruneOptions(&configureOptions{apply: true}); !errors.Is(err, ErrApplyWithoutPrune) {
+	if err := validateConfigureModes(&configureOptions{apply: true}); !errors.Is(err, ErrApplyWithoutPrune) {
 		t.Errorf("apply alone = %v, want ErrApplyWithoutPrune", err)
 	}
 
@@ -395,7 +395,7 @@ func TestValidatePruneOptions(t *testing.T) {
 		{pruneDuplicates: true, skipRoutes: true},
 		{pruneDuplicates: true, skipBastion: true},
 	} {
-		if err := validatePruneOptions(opts); !errors.Is(err, ErrPruneFlagConflict) {
+		if err := validateConfigureModes(opts); !errors.Is(err, ErrPruneFlagConflict) {
 			t.Errorf("%+v = %v, want ErrPruneFlagConflict", opts, err)
 		}
 	}
