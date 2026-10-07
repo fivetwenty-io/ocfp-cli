@@ -68,6 +68,9 @@ func ConfigureBlobstoresFromArtifactsState(sm *state.Manager, blocName string) (
 		return nil, nil
 	}
 
+	// Host is empty for an endpoint that does not parse. The caller copies
+	// Endpoint into the provider, and configureExternalBlobstore rejects it
+	// before the metadata record is written, so the empty Host is never stored.
 	return &ArtifactsBlobstoreSource{
 		Endpoint:          lr.Endpoint,
 		AccessKey:         lr.AccessKey,
