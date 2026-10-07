@@ -2519,3 +2519,123 @@ func TestPVEVaultProvider_ConfigureSubnets_UnknownSubnetRecordsRejected(t *testi
 	assert.Contains(t, err.Error(), "per_subnet")
 	assert.Empty(t, mock.setMultipleCalls, "nothing may be written for an invalid value")
 }
+
+// TestPVEVaultProvider_configureCPI_APIEndpointWithoutHost — an api_endpoint
+// that reduces to no host (it fails to parse, or has nothing before the port)
+// is a config error naming the value, not an empty host record.
+func TestPVEVaultProvider_configureCPI_APIEndpointWithoutHost(t *testing.T) {
+	for _, endpoint := range []string{"https://pve:abc", ":8006x", "https://my host:8006", "fe80::1%vmbr0", "https://", ":8006"} {
+		t.Run(endpoint, func(t *testing.T) {
+			mock := &awsMockSafe{}
+			cfg := &config.Config{
+				APIEndpoint: endpoint,
+				AuthToken:   "root@pam!mytoken",
+				TokenSecret: "supersecret",
+				Region:      "pve-node1",
+			}
+			provider := newTestPVEProvider(cfg, mock)
+
+			err := provider.configureCPI(MgmtEnvType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "api_endpoint")
+			assert.Contains(t, err.Error(), endpoint)
+			assert.Empty(t, mock.setMultipleCalls, "nothing is written")
+		})
+	}
+}
+
+// TestPVEVaultProvider_configureCPI_InvalidAPIEndpointPort — an explicit port
+// that is not 1-65535 is a config error naming the endpoint, while a missing
+// port still defaults to 8006.
+func TestPVEVaultProvider_configureCPI_InvalidAPIEndpointPort(t *testing.T) {
+	for _, endpoint := range []string{"https://pve:0", "https://pve:65536", "https://pve:99999", "pve:70000"} {
+		t.Run(endpoint, func(t *testing.T) {
+			mock := &awsMockSafe{}
+			cfg := &config.Config{
+				APIEndpoint: endpoint,
+				AuthToken:   "root@pam!mytoken",
+				TokenSecret: "supersecret",
+				Region:      "pve-node1",
+			}
+			provider := newTestPVEProvider(cfg, mock)
+
+			err := provider.configureCPI(MgmtEnvType)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "api_endpoint")
+			assert.Contains(t, err.Error(), endpoint)
+			assert.Empty(t, mock.setMultipleCalls, "nothing is written")
+		})
+	}
+
+	t.Run("missing port defaults", func(t *testing.T) {
+		mock := &awsMockSafe{}
+		cfg := &config.Config{
+			APIEndpoint: "https://pve.example.com",
+			AuthToken:   "root@pam!mytoken",
+			TokenSecret: "supersecret",
+			Region:      "pve-node1",
+		}
+		provider := newTestPVEProvider(cfg, mock)
+
+		require.NoError(t, provider.configureCPI(MgmtEnvType))
+		require.Len(t, mock.setMultipleCalls, 1)
+		assert.Equal(t, "8006", mock.setMultipleCalls[0].data["port"])
+	})
+}
+
+// TestPVEVaultProvider_configureCPI_CPIHostRescuesHostlessAPIEndpoint — the
+// cpi_host override replaces the host record, so an api_endpoint that carries
+// only a port still works, and the port follows it.
+func TestPVEVaultProvider_configureCPI_CPIHostRescuesHostlessAPIEndpoint(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{
+		APIEndpoint: ":8443",
+		CPIHost:     "10.254.16.5",
+		AuthToken:   "root@pam!mytoken",
+		TokenSecret: "supersecret",
+		Region:      "pve-node1",
+	}
+	provider := newTestPVEProvider(cfg, mock)
+
+	require.NoError(t, provider.configureCPI(MgmtEnvType))
+	require.Len(t, mock.setMultipleCalls, 1)
+	assert.Equal(t, "10.254.16.5", mock.setMultipleCalls[0].data["host"])
+	assert.Equal(t, "8443", mock.setMultipleCalls[0].data["port"])
+}
+
+// TestPVEVaultProvider_ConfigureBlobstores_EndpointWithoutHost — a blobstore
+// endpoint that reduces to no host is an error naming the endpoint, and no
+// blobstore record is written with an empty host.
+func TestPVEVaultProvider_ConfigureBlobstores_EndpointWithoutHost(t *testing.T) {
+	for _, endpoint := range []string{"https://10.0.0.11:9000x", "https://s3:abc", "https://my host:9000", "https://"} {
+		t.Run(endpoint, func(t *testing.T) {
+			for _, envType := range []string{MgmtEnvType, "ocf"} {
+				mock := &awsMockSafe{}
+				cfg := &config.Config{Region: "pve-node1"}
+				provider := newTestPVEProvider(cfg, mock)
+				provider.BlobstoreMode = "external"
+				provider.BlobstoreEndpoint = endpoint
+
+				err := provider.ConfigureBlobstores("", envType, nil, 0, 1)
+				require.Error(t, err, envType)
+				assert.Contains(t, err.Error(), endpoint, envType)
+				assert.Empty(t, mock.setMultipleCalls, "no record is written with an empty host (%s)", envType)
+			}
+		})
+	}
+}
+
+// TestPVEVaultProvider_configureScopedBlobstore_EndpointWithoutHost — the
+// scoped writer rejects an endpoint with no host on its own, so it never
+// writes host "" even when called directly.
+func TestPVEVaultProvider_configureScopedBlobstore_EndpointWithoutHost(t *testing.T) {
+	mock := &awsMockSafe{}
+	cfg := &config.Config{Region: "pve-node1"}
+	provider := newTestPVEProvider(cfg, mock)
+	provider.BlobstoreEndpoint = "https://10.0.0.11:9000x"
+
+	err := provider.configureScopedBlobstore(MgmtEnvType, "shield", "main", "shield", "SHIELD archive", "us-east-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https://10.0.0.11:9000x")
+	assert.Empty(t, mock.setMultipleCalls)
+}
