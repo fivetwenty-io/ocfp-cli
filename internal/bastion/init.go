@@ -653,6 +653,10 @@ func (m *Manager) getInitializationPhases() []struct {
 		// as it clones the deployment repositories containing .genesis directories
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"helper_scripts", m.installHelperScripts},
+		// vault_boot_unit enables the unit that brings the inception vault
+		// back after a reboot. It runs before vault_inception so a reboot at
+		// any later point in init finds the unit in place.
+		{"vault_boot_unit", m.installVaultBootUnit},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		// pmx_context reads the PVE CPI record vault_populate just wrote, so it
@@ -759,6 +763,10 @@ func (m *Manager) parallelPostPhaseList() []struct {
 		{"system_environment", m.setupSystemEnvironment},
 		{"ocfp_cli_setup", m.setupOCFPCLI},
 		{"helper_scripts", m.installHelperScripts},
+		// vault_boot_unit enables the unit that brings the inception vault
+		// back after a reboot. It runs before vault_inception so a reboot at
+		// any later point in init finds the unit in place.
+		{"vault_boot_unit", m.installVaultBootUnit},
 		{"vault_inception", m.setupVaultInception},
 		{"vault_populate", m.runVaultPopulate},
 		// pmx_context: see the sequential list's comment above. Keep both
