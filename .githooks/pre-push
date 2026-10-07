@@ -35,7 +35,11 @@ refuse() {
 
 head_sha="$(git rev-parse HEAD)"
 for sha in "${gated_shas[@]}"; do
-  if [ "$sha" != "$head_sha" ]; then
+  # An annotated tag arrives as the tag object's sha, so compare the
+  # commit it points at. A sha that names no commit stays as it is and
+  # is refused below.
+  commit_sha="$(git rev-parse --verify --quiet "${sha}^{commit}" || echo "$sha")"
+  if [ "$commit_sha" != "$head_sha" ]; then
     refuse "this push includes ${sha}, which is not HEAD (${head_sha})"
   fi
 done
