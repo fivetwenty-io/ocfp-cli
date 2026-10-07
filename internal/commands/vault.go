@@ -1496,6 +1496,8 @@ func ensureInceptionVaultLocked(blocName string, paths map[string]string) error 
 
 // newVaultTeardownCmd creates the vault teardown subcommand.
 func newVaultTeardownCmd() *cobra.Command {
+	var force bool
+
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "teardown",
 		Short: "Stop and clean up inception vault",
@@ -1508,22 +1510,36 @@ secrets can still be read from the archive.
 
 Teardown stops only a vault it can prove is this bloc's own. When something
 else answers on the bloc's port, such as another bloc's vault on a colliding
-port, it stops nothing and says why.`,
+port, it stops nothing and says why.
+
+An archive can be unsealed only with both keys. When the vault is open, which
+means it is initialized and unsealed, and root.key or unseal.keys does not
+hold a valid key, teardown first tries to recover the missing key from what
+the running vault left behind. If it still cannot save both keys, teardown
+leaves the vault running, stops and moves nothing, and names the vault logs
+where the keys may still be found. With --force it archives the vault anyway,
+and that archive can never be unsealed without the keys.`,
 		Example: `  # Teardown inception vault
   ocfp vault teardown
 
   # Teardown with specific bloc
-  ocfp vault teardown --bloc production`,
+  ocfp vault teardown --bloc production
+
+  # Archive an open vault even though its keys are not saved
+  ocfp vault teardown --force`,
 		RunE: func(_cmd *cobra.Command, _args []string) error {
-			return runVaultTeardown()
+			return runVaultTeardown(force)
 		},
 	}
+
+	cmd.Flags().BoolVar(&force, "force", false,
+		"archive an open vault even when its keys are not saved, which leaves an archive that cannot be unsealed")
 
 	return cmd
 }
 
 // runVaultTeardown executes the vault teardown command.
-func runVaultTeardown() error {
+func runVaultTeardown(force bool) error {
 	log := logger.Get()
 	blocName := viper.GetString("bloc")
 	testMode := viper.GetBool("test")
@@ -1533,14 +1549,9 @@ func runVaultTeardown() error {
 	return withInceptionVaultLock(paths, func() error {
 		log.Info("=== Tearing Down Inception Vault ===")
 
-		err := guardInceptionTeardown(context.TODO(), paths, probeInceptionVault, ownsInceptionVault)
+		err := tearDownInceptionVault(context.TODO(), paths, newTeardownSteps(), force, log)
 		if err != nil {
-			return fmt.Errorf("teardown refused: %w", err)
-		}
-
-		err = cleanupExistingVault(context.TODO(), paths, log)
-		if err != nil {
-			return fmt.Errorf("teardown failed: %w", err)
+			return err
 		}
 
 		log.Info("=== Teardown Completed ===")

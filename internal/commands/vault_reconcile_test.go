@@ -35,6 +35,7 @@ type fakeInception struct {
 	ownsErr        error // the ownership check could not decide
 	migrate        func(paths map[string]string) (string, error)
 	recover        func(paths map[string]string)                                       // what key recovery finds
+	recoverErr     error                                                               // what every key recovery returns, after recover runs
 	targetToken    string                                                              // the token ~/.saferc holds for the bloc's target; a stop deletes it
 	tokenFiles     []string                                                            // the root token file each start was given
 	onStart        func(f *fakeInception, paths map[string]string, mode safeLocalMode) // what a start leaves behind
@@ -116,7 +117,7 @@ func (f *fakeInception) steps() inceptionSteps {
 				f.recover(paths)
 			}
 
-			return nil
+			return f.recoverErr
 		},
 		targetToken: func(map[string]string) string { return f.targetToken },
 		now:         func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
