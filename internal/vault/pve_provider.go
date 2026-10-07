@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1168,6 +1169,15 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		return errors.New("pve blobstore external mode requires --blobstore-endpoint")
 	}
 
+	// host is the endpoint's bare host (the artifacts VM private_ip on PVE);
+	// the bosh director blobstore job template reads `host` rather than the
+	// full endpoint URL. An endpoint with no usable host fails here, before
+	// any CA recovery or vault write.
+	host, err := pveBlobstoreHost(p.BlobstoreEndpoint)
+	if err != nil {
+		return err
+	}
+
 	// Resolve (and, for internal-ca, recover from vault) the CA cert BEFORE
 	// writing any blobstore config. This must happen before the CF write
 	// below, not lazily inside bucket creation: bucket creation for the CF
@@ -1183,11 +1193,6 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 	if region == "" {
 		region = "us-east-1"
 	}
-
-	// host is the endpoint's bare host (the artifacts VM private_ip on PVE);
-	// the bosh director blobstore job template reads `host` rather than the
-	// full endpoint URL.
-	host := pveHostnameOnly(p.BlobstoreEndpoint)
 
 	// Bucket name follows the <bloc>-<scope>-cf convention shared with
 	// ArtifactsWriter and bootstrap.artifactsBucketList.
@@ -1209,7 +1214,7 @@ func (p *PVEVaultProvider) configureExternalBlobstore(envType, blobstorePath str
 		blobstoreConfig["ca_cert"] = p.blobstoreCACert
 	}
 
-	err := p.Safe.SetMultiple(blobstorePath, blobstoreConfig)
+	err = p.Safe.SetMultiple(blobstorePath, blobstoreConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set blobstore configuration: %w", err)
 	}
@@ -1392,6 +1397,8 @@ func (p *PVEVaultProvider) blobstoreS3Target() (artifacts.Endpoint, artifacts.Cr
 		return artifacts.Endpoint{}, artifacts.Credentials{}, true, err
 	}
 
+	// Host is informational: the S3 client dials ep.URL, and the record
+	// writers reject a hostless endpoint before any bucket is created.
 	ep.Host = pveHostnameOnly(p.BlobstoreEndpoint)
 	ep.Region = region
 
@@ -1459,7 +1466,11 @@ func (p *PVEVaultProvider) configureSHIELDBlobstoreForScope(scope, region string
 func (p *PVEVaultProvider) configureScopedBlobstore(scope, system, entry, suffix, label, region string) error {
 	path := p.PathBuilder.GetSystemBlobstorePath(scope, system, entry)
 	bucketName := fmt.Sprintf("%s-%s-%s", p.BlocName, scope, suffix)
-	host := pveHostnameOnly(p.BlobstoreEndpoint)
+
+	host, err := pveBlobstoreHost(p.BlobstoreEndpoint)
+	if err != nil {
+		return err
+	}
 
 	p.logger.Infow("Configuring external "+label+" blobstore",
 		"scope", scope, "endpoint", p.BlobstoreEndpoint, "region", region, "path", path)
@@ -1478,7 +1489,7 @@ func (p *PVEVaultProvider) configureScopedBlobstore(scope, system, entry, suffix
 		blobstoreConfig["ca_cert"] = p.blobstoreCACert
 	}
 
-	err := p.Safe.SetMultiple(path, blobstoreConfig)
+	err = p.Safe.SetMultiple(path, blobstoreConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set %s blobstore configuration: %w", label, err)
 	}
@@ -1859,6 +1870,13 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		if cpiHost == "" {
 			return fmt.Errorf("pve configureCPI: cpi_host %q has no host part", override)
 		}
+	} else if cpiHost == "" {
+		return fmt.Errorf("pve configureCPI: api_endpoint %q has no host part", host)
+	}
+
+	cpiPort, err := pveEndpointPort(host)
+	if err != nil {
+		return fmt.Errorf("pve configureCPI: api_endpoint: %w", err)
 	}
 
 	cpiConfig := map[string]any{
@@ -1869,7 +1887,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		"iso_storage":      pveFirstNonEmpty(p.Config.IsoStorage, "local"),
 		"network_bridge":   pveFirstNonEmpty(p.Config.Network.Name, "vmbr0"),
 		"node":             node,
-		"port":             strconv.Itoa(pveCPIPort(host)),
+		"port":             strconv.Itoa(cpiPort),
 		"status":           "configured",
 		"stemcell_storage": pveCPIStemcellStorage(p.Config),
 		"storage_backend":  pveStorageBackend(diskStorage, p.Config.DiskStorageType),
@@ -1899,7 +1917,7 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 		cpiConfig["password"] = p.Config.Password
 	}
 
-	err := p.Safe.SetMultiple(cpiPath, cpiConfig)
+	err = p.Safe.SetMultiple(cpiPath, cpiConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set PVE CPI configuration: %w", err)
 	}
@@ -1909,95 +1927,112 @@ func (p *PVEVaultProvider) configureCPI(envType string) error {
 	return nil
 }
 
-// pveHostnameOnly strips scheme and trailing :port from a URL-shaped host
-// value, returning the bare hostname.  "https://pve.example.com:8006" →
-// "pve.example.com".  Leaves bare hostnames unchanged.
-func pveHostnameOnly(host string) string {
-	if idx := indexOf(host, "://"); idx >= 0 {
-		host = host[idx+3:]
+// pveBlobstoreHost returns the bare host of a blobstore endpoint for the
+// `host` field of a blobstore record. An endpoint with no usable host, such as
+// one whose port is not numeric or that contains a space, is an error naming
+// the endpoint, so no record is written with an empty host.
+func pveBlobstoreHost(endpoint string) (string, error) {
+	host := pveHostnameOnly(endpoint)
+	if host == "" {
+		return "", fmt.Errorf("pve blobstore: endpoint %q has no usable host part", endpoint)
 	}
-	// A bare IPv6 literal cannot carry a port without brackets, so its
-	// colons are all part of the address.
-	if strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[") {
-		return host
+
+	return host, nil
+}
+
+// pveHostnameOnly reduces an endpoint to its bare host. Scheme, user info,
+// port, path, query, and fragment are dropped, so "https://pve.example.com:8006/"
+// becomes "pve.example.com". A bracketed IPv6 literal keeps its brackets
+// ("https://[fd00::1]:8006" becomes "[fd00::1]"), and an unbracketed IPv6
+// literal is returned as is. An endpoint with no host part, or one that does
+// not parse, yields "".
+func pveHostnameOnly(endpoint string) string {
+	u, bare, ok := pveParseEndpoint(endpoint)
+	if !ok {
+		return ""
 	}
-	// strip trailing :port if present
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			port := host[i+1:]
 
-			allDigits := port != ""
-			for _, c := range port {
-				if c < '0' || c > '9' {
-					allDigits = false
-
-					break
-				}
-			}
-
-			if allDigits {
-				host = host[:i]
-			}
-
-			break
-		}
-
-		if host[i] == '/' {
-			break
-		}
-	}
-	// strip any trailing path
-	if idx := indexOf(host, "/"); idx >= 0 {
-		host = host[:idx]
+	host := u.Hostname()
+	if strings.Contains(host, ":") && !bare {
+		return "[" + host + "]"
 	}
 
 	return host
 }
 
-func indexOf(s, sub string) int {
-	if len(sub) == 0 || len(sub) > len(s) {
-		return -1
+// pveDefaultAPIPort is the port the PVE API listens on when the endpoint names
+// none.
+const pveDefaultAPIPort = 8006
+
+// pveEndpointPort returns the PVE API port from the endpoint. An endpoint with
+// no port gets the standard 8006. An explicit port that is not a number in
+// 1-65535, or an endpoint that does not parse, is an error naming the endpoint,
+// so a typo is reported instead of quietly pointing the CPI at 8006.
+func pveEndpointPort(endpoint string) (int, error) {
+	const maxPort = 65535
+
+	u, _, ok := pveParseEndpoint(endpoint)
+	if !ok {
+		return 0, fmt.Errorf("endpoint %q does not parse as a host and port", endpoint)
 	}
 
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
+	raw := u.Port()
+	if raw == "" {
+		return pveDefaultAPIPort, nil
 	}
 
-	return -1
+	port, err := strconv.Atoi(raw)
+	if err != nil || port < 1 || port > maxPort {
+		return 0, fmt.Errorf("endpoint %q has invalid port %q, want a number from 1 to %d", endpoint, raw, maxPort)
+	}
+
+	return port, nil
 }
 
-// pveCPIPort returns the PVE API port from the host URL or the standard 8006.
-func pveCPIPort(host string) int {
-	const defaultPort = 8006
-	// host is "https://pve.example.com:8006".  Cheap parse — proper URL parsing
-	// adds a dependency for one substring extraction.
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			port := 0
-
-			for _, c := range host[i+1:] {
-				if c < '0' || c > '9' {
-					return defaultPort
-				}
-
-				port = port*10 + int(c-'0')
-			}
-
-			if port > 0 {
-				return port
-			}
-
-			break
-		}
-
-		if host[i] == '/' {
-			break
-		}
+// pveParseEndpoint parses a PVE endpoint through net/url. An endpoint with no
+// scheme gets "https://" prefixed first. A bare IPv6 literal in the authority
+// is bracketed before parsing, because net/url would otherwise read its last
+// group as a port. The bare result reports whether that bracketing happened.
+func pveParseEndpoint(endpoint string) (u *url.URL, bare, ok bool) {
+	raw := strings.TrimSpace(endpoint)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
 
-	return defaultPort
+	raw, bare = bracketBareIPv6Authority(raw)
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, false, false
+	}
+
+	return u, bare, true
+}
+
+// bracketBareIPv6Authority wraps an unbracketed IPv6 host in the authority of a
+// "scheme://authority/..." string in brackets, leaving everything else alone.
+// It reports whether it added brackets.
+func bracketBareIPv6Authority(raw string) (string, bool) {
+	schemeEnd := strings.Index(raw, "://") + len("://")
+	rest := raw[schemeEnd:]
+
+	authEnd := len(rest)
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authEnd = i
+	}
+
+	authority := rest[:authEnd]
+	userInfo, hostPort := "", authority
+
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		userInfo, hostPort = authority[:at+1], authority[at+1:]
+	}
+
+	if strings.Count(hostPort, ":") < 2 || strings.HasPrefix(hostPort, "[") {
+		return raw, false
+	}
+
+	return raw[:schemeEnd] + userInfo + "[" + hostPort + "]" + rest[authEnd:], true
 }
 
 // pveCPIUser extracts the user@realm portion from a PVE API token id
