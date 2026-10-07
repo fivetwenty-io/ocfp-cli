@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
@@ -33,45 +35,192 @@ func (c FQDNPlaneChanges) Empty() bool {
 	return len(c.Adds) == 0 && len(c.Overwrites) == 0
 }
 
-// PlanFQDNs reads each plane's live fqdns record and works out which keys the
-// phase would add and, under force, which existing keys it would overwrite.
-// Resolution is the one ConfigureFQDNs uses (derivedFQDNRecord), so an
-// explicit blocs.<bloc>.fqdns.<plane>.<svc> value wins over the derived
+// fqdnDescriptiveKeys are written to every plane record but describe the
+// record rather than a service, so --key cannot select them.
+var fqdnDescriptiveKeys = []string{"env_type", "base"}
+
+// FQDNFilter narrows the fqdns phase. An empty Planes keeps every plane and an
+// empty Keys keeps every key, so the zero value is the unfiltered phase.
+type FQDNFilter struct {
+	// Planes keeps only the named planes (mgmt, ocf).
+	Planes []string
+
+	// Keys keeps only the named service keys, within the selected planes.
+	Keys []string
+}
+
+// Empty reports whether the filter selects everything.
+func (f FQDNFilter) Empty() bool {
+	return len(f.Planes) == 0 && len(f.Keys) == 0
+}
+
+// ValidateFQDNFlagValues rejects a --plane or --key flag that was given but
+// holds no usable value. pflag turns an explicit empty string into an empty
+// slice, which the filter would read as no filter at all, so the command calls
+// this with whether the flag was set. The values need at least one entry, and
+// no entry may be empty or all whitespace, which also catches a stray comma.
+func ValidateFQDNFlagValues(flag string, given bool, values []string) error {
+	if !given {
+		return nil
+	}
+
+	if len(values) == 0 {
+		return fmt.Errorf("%w: --%s was given without a value", ErrFQDNFilterEmptyValue, flag)
+	}
+
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%w: --%s has an empty item in %q", ErrFQDNFilterEmptyValue, flag, strings.Join(values, ","))
+		}
+	}
+
+	return nil
+}
+
+// ValidateScope rejects a filter handed to a phase other than fqdns, and a
+// plane name the phase does not cover. It needs no config and reads nothing,
+// so the command can run it before it touches vault.
+func (f FQDNFilter) ValidateScope(phase string) error {
+	if phase != PhaseFQDNs && !f.Empty() {
+		return fmt.Errorf("%w: the %q phase was given %s", ErrFQDNFilterWrongPhase, phase, f.describe())
+	}
+
+	_, err := f.selectedPlanes()
+
+	return err
+}
+
+// describe names the filter flags that were set, for error messages.
+func (f FQDNFilter) describe() string {
+	var set []string
+
+	if len(f.Planes) > 0 {
+		set = append(set, "--plane")
+	}
+
+	if len(f.Keys) > 0 {
+		set = append(set, "--key")
+	}
+
+	return strings.Join(set, " and ")
+}
+
+// selectedPlanes returns the planes the filter keeps, in report order, or
+// ErrUnknownFQDNPlane for a name the phase does not cover.
+func (f FQDNFilter) selectedPlanes() ([]string, error) {
+	for _, plane := range f.Planes {
+		if !slices.Contains(fqdnPlanes, plane) {
+			return nil, fmt.Errorf("%w %q; valid planes are %s", ErrUnknownFQDNPlane, plane, strings.Join(fqdnPlanes, ", "))
+		}
+	}
+
+	if len(f.Planes) == 0 {
+		return fqdnPlanes, nil
+	}
+
+	selected := make([]string, 0, len(fqdnPlanes))
+
+	for _, plane := range fqdnPlanes {
+		if slices.Contains(f.Planes, plane) {
+			selected = append(selected, plane)
+		}
+	}
+
+	return selected, nil
+}
+
+// keepsKey reports whether key passes the key filter.
+func (f FQDNFilter) keepsKey(key string) bool {
+	return len(f.Keys) == 0 || slices.Contains(f.Keys, key)
+}
+
+// selectableFQDNKeys returns the service keys of a derived record, sorted,
+// without the descriptive keys.
+func selectableFQDNKeys(record map[string]any) []string {
+	keys := make([]string, 0, len(record))
+
+	for key := range record {
+		if !slices.Contains(fqdnDescriptiveKeys, key) {
+			keys = append(keys, key)
+		}
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// validateKeys checks every requested key against the derived records of the
+// selected planes. A key must exist in at least one of them.
+func (f FQDNFilter) validateKeys(selected []string, records map[string]map[string]any) error {
+	if len(f.Keys) == 0 {
+		return nil
+	}
+
+	valid := map[string]bool{}
+
+	for _, plane := range selected {
+		for _, key := range selectableFQDNKeys(records[plane]) {
+			valid[key] = true
+		}
+	}
+
+	for _, key := range f.Keys {
+		if !valid[key] {
+			names := make([]string, 0, len(valid))
+			for name := range valid {
+				names = append(names, name)
+			}
+
+			sort.Strings(names)
+
+			return fmt.Errorf("%w %q for plane(s) %s; valid keys are %s",
+				ErrUnknownFQDNKey, key, strings.Join(selected, ", "), strings.Join(names, ", "))
+		}
+	}
+
+	return nil
+}
+
+// PlanFQDNs reads each selected plane's live fqdns record and works out which
+// keys the phase would add and, under force, which existing keys it would
+// overwrite. Resolution is the one ConfigureFQDNs uses (derivedFQDNRecord), so
+// an explicit blocs.<bloc>.fqdns.<plane>.<svc> value wins over the derived
 // default. A key vault already holds is left alone without force.
-func (p *PVEVaultProvider) PlanFQDNs(force bool) ([]FQDNPlaneChanges, error) {
-	plan := make([]FQDNPlaneChanges, 0, len(fqdnPlanes))
+//
+// The filter narrows the plan itself, so the dry run, the write, and the
+// printed summary all see the same keys. The filter is checked before any
+// read of vault, and a bad plane or key fails the whole plan.
+func (p *PVEVaultProvider) PlanFQDNs(force bool, filter FQDNFilter) ([]FQDNPlaneChanges, error) {
+	selected, err := filter.selectedPlanes()
+	if err != nil {
+		return nil, err
+	}
+
+	plan := make([]FQDNPlaneChanges, 0, len(selected))
 
 	if p.Config.FQDNs == nil {
+		if len(filter.Keys) > 0 {
+			return nil, ErrFQDNKeysUncheckable
+		}
+
 		return plan, nil
 	}
 
-	for _, envType := range fqdnPlanes {
-		path := p.PathBuilder.GetFQDNsPath(envType)
+	records := make(map[string]map[string]any, len(selected))
+	for _, envType := range selected {
+		records[envType] = p.derivedFQDNRecord(envType)
+	}
 
-		existing, err := p.Safe.GetAll(path)
-		if err != nil && !errors.Is(err, ErrSecretNotFound) {
-			// An unreadable record must not be mistaken for an empty one.
-			return nil, fmt.Errorf("failed to read FQDN record at %s: %w", path, err)
-		}
+	err = filter.validateKeys(selected, records)
+	if err != nil {
+		return nil, err
+	}
 
-		change := FQDNPlaneChanges{
-			EnvType:    envType,
-			Path:       path,
-			Adds:       map[string]string{},
-			Overwrites: map[string]FQDNChange{},
-		}
-
-		for key, value := range p.derivedFQDNRecord(envType) {
-			derived := valueString(value)
-
-			current, held := existing[key]
-
-			switch {
-			case !held:
-				change.Adds[key] = derived
-			case force && valueString(current) != derived:
-				change.Overwrites[key] = FQDNChange{Old: valueString(current), New: derived}
-			}
+	for _, envType := range selected {
+		change, err := p.planFQDNPlane(envType, records[envType], force, filter)
+		if err != nil {
+			return nil, err
 		}
 
 		plan = append(plan, change)
@@ -80,18 +229,61 @@ func (p *PVEVaultProvider) PlanFQDNs(force bool) ([]FQDNPlaneChanges, error) {
 	return plan, nil
 }
 
+// planFQDNPlane diffs one plane's derived record against what vault holds.
+func (p *PVEVaultProvider) planFQDNPlane(envType string, record map[string]any, force bool, filter FQDNFilter) (FQDNPlaneChanges, error) {
+	path := p.PathBuilder.GetFQDNsPath(envType)
+
+	existing, err := p.Safe.GetAll(path)
+	if err != nil && !errors.Is(err, ErrSecretNotFound) {
+		// An unreadable record must not be mistaken for an empty one.
+		return FQDNPlaneChanges{}, fmt.Errorf("failed to read FQDN record at %s: %w", path, err)
+	}
+
+	change := FQDNPlaneChanges{
+		EnvType:    envType,
+		Path:       path,
+		Adds:       map[string]string{},
+		Overwrites: map[string]FQDNChange{},
+	}
+
+	for key, value := range record {
+		if !filter.keepsKey(key) {
+			continue
+		}
+
+		derived := valueString(value)
+
+		current, held := existing[key]
+
+		switch {
+		case !held:
+			change.Adds[key] = derived
+		case force && valueString(current) != derived:
+			change.Overwrites[key] = FQDNChange{Old: valueString(current), New: derived}
+		}
+	}
+
+	return change, nil
+}
+
 // ConfigureMissingFQDNs writes only the FQDN keys vault does not hold, per
 // plane, and with force also the keys whose value differs. Only the keys to
 // write are sent, and SetMultiple merges into the record, so every other key
 // survives.
 func (p *PVEVaultProvider) ConfigureMissingFQDNs(force bool, reporter providers.ProgressReporter) error {
+	return p.ConfigureFQDNsScoped(force, FQDNFilter{}, reporter)
+}
+
+// ConfigureFQDNsScoped is ConfigureMissingFQDNs limited to the planes and keys
+// the filter selects.
+func (p *PVEVaultProvider) ConfigureFQDNsScoped(force bool, filter FQDNFilter, reporter providers.ProgressReporter) error {
 	phaseStart := time.Now()
 
 	if reporter != nil {
 		reporter.ReportPhaseStart(PhaseFQDNs, 1, 1)
 	}
 
-	plan, err := p.PlanFQDNs(force)
+	plan, err := p.PlanFQDNs(force, filter)
 	if err != nil {
 		return err
 	}
@@ -132,12 +324,14 @@ func (m *Manager) populateFQDNsPhase(opts *PopulateOptions, w io.Writer) error {
 		return err
 	}
 
-	plan, err := pveProvider.PlanFQDNs(opts.Force)
+	filter := opts.fqdnFilter()
+
+	plan, err := pveProvider.PlanFQDNs(opts.Force, filter)
 	if err != nil {
 		return err
 	}
 
-	err = pveProvider.ConfigureMissingFQDNs(opts.Force, opts.ProgressReporter)
+	err = pveProvider.ConfigureFQDNsScoped(opts.Force, filter, opts.ProgressReporter)
 	if err != nil {
 		return fmt.Errorf("fqdns configuration failed: %w", err)
 	}
@@ -149,13 +343,13 @@ func (m *Manager) populateFQDNsPhase(opts *PopulateOptions, w io.Writer) error {
 
 // populateFQDNsDryRun prints what the fqdns phase would write and writes
 // nothing. The provider handed in was built over a recording safe.
-func (m *Manager) populateFQDNsDryRun(provider providers.VaultProvider, force bool, target string, w io.Writer) error {
+func (m *Manager) populateFQDNsDryRun(provider providers.VaultProvider, force bool, filter FQDNFilter, target string, w io.Writer) error {
 	pveProvider, ok := provider.(*PVEVaultProvider)
 	if !ok {
 		return fmt.Errorf("%w: got %q", ErrFQDNsRequiresPVE, m.config.Provider)
 	}
 
-	plan, err := pveProvider.PlanFQDNs(force)
+	plan, err := pveProvider.PlanFQDNs(force, filter)
 	if err != nil {
 		return err
 	}
