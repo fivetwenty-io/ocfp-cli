@@ -242,6 +242,10 @@ would add per plane, with their values, and writes nothing. `--force`
 overwrites keys that already exist, and combined with `--dry-run` it
 also lists each overwrite with the old and new value.
 
+A forced write overwrites every key in the computed set, which can clobber a value someone set by hand. To limit it, add `--plane` and `--key`. Both can be repeated or given comma-separated values. `--plane` keeps only the named planes, and the valid names are `mgmt` and `ocf`. `--key` keeps only the named service keys within those planes. For example, `ocfp vault populate fqdns --force --plane ocf --key shield` overwrites `shield` on the `ocf` plane and nothing else. Without `--force`, the same flags narrow the set of keys the command will add. Leaving both flags off covers every key, as it did before, but a flag given with an empty value is an error.
+
+The filter shapes the plan itself, so `--dry-run`, the write, and the printed summary all show the same keys. The command checks the filter before it reads or writes anything. An unknown plane is an error that lists the valid planes. A key that no selected plane computes is an error that names the key and lists the valid keys. The `env_type` and `base` keys cannot be selected with `--key`, because they only describe the record. Giving `--plane` or `--key` to any phase other than `fqdns` is also an error.
+
 **Do not read a corrected FQDN in this command's output as evidence
 that a bloc has already been fixed.** This command shows what the
 configuration says should be true. It does not show what is currently

@@ -55,3 +55,64 @@ func TestRunVaultReservedIPsStatus_CleanReport(t *testing.T) {
 
 	assert.Empty(t, sb.String())
 }
+
+// TestNewVaultPopulateCmd_FQDNFilterFlags pins --plane and --key as
+// repeatable flags that default to everything.
+func TestNewVaultPopulateCmd_FQDNFilterFlags(t *testing.T) {
+	cmd := newVaultPopulateCmd()
+
+	for _, name := range []string{"plane", "key"} {
+		flag := cmd.Flags().Lookup(name)
+		require.NotNil(t, flag, "expected a --%s flag", name)
+		assert.Equal(t, "stringSlice", flag.Value.Type())
+		assert.Equal(t, "[]", flag.DefValue)
+	}
+
+	require.NoError(t, cmd.Flags().Parse([]string{"--plane", "mgmt", "--plane", "ocf", "--key", "shield,prometheus"}))
+
+	planes, err := cmd.Flags().GetStringSlice("plane")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mgmt", "ocf"}, planes)
+
+	keys, err := cmd.Flags().GetStringSlice("key")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shield", "prometheus"}, keys)
+}
+
+// TestNewVaultPopulateCmd_FQDNFilterValidatedBeforeVault runs the command with
+// no bloc configured. A usage error has to win over the missing bloc, which
+// proves the check runs before any config or vault access.
+func TestNewVaultPopulateCmd_FQDNFilterValidatedBeforeVault(t *testing.T) {
+	t.Setenv("OCFP_BLOC", "")
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr error
+	}{
+		{"plane on another phase", []string{"public-ips", "--plane", "mgmt"}, vault.ErrFQDNFilterWrongPhase},
+		{"key on the full populate", []string{"--key", "shield"}, vault.ErrFQDNFilterWrongPhase},
+		{"unknown plane", []string{"fqdns", "--plane", "prod"}, vault.ErrUnknownFQDNPlane},
+		{"empty key", []string{"fqdns", "--force", "--key", ""}, vault.ErrFQDNFilterEmptyValue},
+		{"empty plane", []string{"fqdns", "--force", "--plane", ""}, vault.ErrFQDNFilterEmptyValue},
+		{"empty key equals form", []string{"fqdns", "--key="}, vault.ErrFQDNFilterEmptyValue},
+		{"whitespace key", []string{"fqdns", "--key", "  "}, vault.ErrFQDNFilterEmptyValue},
+		{"whitespace plane", []string{"fqdns", "--plane", " "}, vault.ErrFQDNFilterEmptyValue},
+		{"trailing comma in key", []string{"fqdns", "--key", "shield,"}, vault.ErrFQDNFilterEmptyValue},
+		{"leading comma in plane", []string{"fqdns", "--plane", ",ocf"}, vault.ErrFQDNFilterEmptyValue},
+		{"empty key on public-ips", []string{"public-ips", "--key", ""}, vault.ErrFQDNFilterEmptyValue},
+		{"empty plane on reserved-ips", []string{"reserved-ips", "--plane", ""}, vault.ErrFQDNFilterEmptyValue},
+		{"empty key on the full populate", []string{"--key", ""}, vault.ErrFQDNFilterEmptyValue},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newVaultPopulateCmd()
+			cmd.SetArgs(tt.args)
+			cmd.SetOut(&strings.Builder{})
+			cmd.SetErr(&strings.Builder{})
+
+			require.ErrorIs(t, cmd.Execute(), tt.wantErr)
+		})
+	}
+}

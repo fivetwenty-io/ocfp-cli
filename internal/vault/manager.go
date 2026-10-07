@@ -56,6 +56,27 @@ var (
 	// ErrFQDNsRequiresPVE is returned when the fqdns populate phase is
 	// requested for a provider other than PVE.
 	ErrFQDNsRequiresPVE = errors.New("the fqdns phase is only supported on the PVE provider")
+
+	// ErrFQDNFilterWrongPhase is returned when --plane or --key is given to a
+	// populate phase other than fqdns.
+	ErrFQDNFilterWrongPhase = errors.New("--plane and --key only apply to the fqdns phase")
+
+	// ErrUnknownFQDNPlane is returned when --plane names a plane the fqdns
+	// phase does not cover.
+	ErrUnknownFQDNPlane = errors.New("unknown fqdns plane")
+
+	// ErrUnknownFQDNKey is returned when --key names a key that no selected
+	// plane's computed fqdns record holds.
+	ErrUnknownFQDNKey = errors.New("unknown fqdns key")
+
+	// ErrFQDNFilterEmptyValue is returned when --plane or --key is given but
+	// holds no usable value, such as an empty string or a stray comma. It
+	// would otherwise read as no filter and widen the phase to everything.
+	ErrFQDNFilterEmptyValue = errors.New("empty fqdns filter value")
+
+	// ErrFQDNKeysUncheckable is returned when --key is given for a bloc with
+	// no fqdns configuration, because the valid keys derive from that block.
+	ErrFQDNKeysUncheckable = errors.New("the bloc has no fqdns configuration, so --key cannot be checked")
 )
 
 // Manager provides core vault management operations
@@ -176,6 +197,17 @@ type PopulateOptions struct {
 	// reporting the divergence. Moving a reserved address means recreating
 	// the VM that holds it, so this is never the default.
 	ForceReallocate bool
+
+	// FQDNPlanes and FQDNKeys narrow the fqdns phase (--plane and --key).
+	// Empty means every plane and every key. They are an error with any
+	// other phase.
+	FQDNPlanes []string
+	FQDNKeys   []string
+}
+
+// fqdnFilter returns the fqdns phase filter these options carry.
+func (o *PopulateOptions) fqdnFilter() FQDNFilter {
+	return FQDNFilter{Planes: o.FQDNPlanes, Keys: o.FQDNKeys}
 }
 
 // ProgressReporter defines the interface for progress reporting during vault operations.
@@ -192,9 +224,15 @@ type ProgressReporter interface {
 func (m *Manager) Populate(opts *PopulateOptions) error {
 	m.logger.Infow("Starting vault populate", "provider", m.config.Provider)
 
+	// A bad filter is a usage error, so it fails before vault is touched.
+	err := opts.fqdnFilter().ValidateScope(opts.Subcommand)
+	if err != nil {
+		return err
+	}
+
 	// Validate vault connection (dry-run needs it too: the plan is computed
 	// from reads of the live vault).
-	err := m.client.ValidateConnection()
+	err = m.client.ValidateConnection()
 	if err != nil {
 		return fmt.Errorf("vault connection validation failed: %w", err)
 	}
@@ -211,6 +249,11 @@ func (m *Manager) Populate(opts *PopulateOptions) error {
 // live vault connection — Populate has already validated one by the time
 // this runs.
 func (m *Manager) populate(opts *PopulateOptions) error {
+	err := opts.fqdnFilter().ValidateScope(opts.Subcommand)
+	if err != nil {
+		return err
+	}
+
 	switch opts.Subcommand {
 	case PhasePublicIPs:
 		return m.populatePublicIPs(opts.ProgressReporter)
@@ -626,6 +669,11 @@ func applyPopulateProviderOptions(provider providers.VaultProvider, kmsKeyARN st
 // bucket creation is stubbed out so a dry-run cannot touch the blobstore
 // either.
 func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, target string, w io.Writer) error {
+	err := opts.fqdnFilter().ValidateScope(opts.Subcommand)
+	if err != nil {
+		return err
+	}
+
 	recorder := newRecordingSafe(base)
 
 	// Guard above the recorder, so the plan shows what would actually be
@@ -654,7 +702,7 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	case PhaseFQDNs:
 		// The fqdns phase prints its own per-key plan (FQDNs are not
 		// secrets, so values are shown) instead of the path/key plan.
-		return m.populateFQDNsDryRun(provider, opts.Force, target, w)
+		return m.populateFQDNsDryRun(provider, opts.Force, opts.fqdnFilter(), target, w)
 	case PhasePublicIPs:
 		err = provider.ConfigurePublicIPs(opts.ProgressReporter, 1, 1)
 	case PhaseReservedIPs:
