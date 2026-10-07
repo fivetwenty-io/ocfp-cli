@@ -85,6 +85,15 @@ func NewVaultCmd() *cobra.Command {
 
 The vault command provides utilities for managing secrets in HashiCorp Vault
 or CredHub for BOSH and Cloud Foundry deployments.`,
+		// A parent command that cannot run prints its help and exits 0 for
+		// a subcommand it does not have, so a boot unit or a script that
+		// runs a subcommand this binary lacks would look as if it worked.
+		// NoArgs turns that into an "unknown command" error, and run on its
+		// own, 'ocfp vault' still prints its help.
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Call parent's PersistentPreRun to ensure viper is properly set up
 			if cmd.Parent() != nil && cmd.Parent().PersistentPreRun != nil {

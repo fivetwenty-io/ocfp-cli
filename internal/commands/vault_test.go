@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -314,4 +317,39 @@ func TestRequireClusterPort_FailsBeforeAnyWork(t *testing.T) {
 	if err != nil {
 		t.Errorf("requireClusterPort rejected a usable API port: %v", err)
 	}
+}
+
+// A boot unit or a script that runs a vault subcommand this binary does not
+// have must fail, not print help and exit 0 as if it had worked.
+func TestNewVaultCmd_UnknownSubcommandFails(t *testing.T) {
+	root := &cobra.Command{Use: "ocfp"} //nolint:exhaustruct // a bare root is all the test needs
+	root.AddCommand(NewVaultCmd())
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"vault", "no-such-subcommand"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown command "no-such-subcommand"`)
+}
+
+// 'ocfp vault' on its own still prints its help and succeeds.
+func TestNewVaultCmd_BareCommandPrintsHelp(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OCFP_HOME", filepath.Join(home, "ocfp"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	var out bytes.Buffer
+
+	root := &cobra.Command{Use: "ocfp"} //nolint:exhaustruct // a bare root is all the test needs
+	root.AddCommand(NewVaultCmd())
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"vault"})
+
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "Available Commands:")
+	assert.Contains(t, out.String(), "start")
 }
