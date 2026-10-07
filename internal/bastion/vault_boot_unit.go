@@ -127,10 +127,13 @@ func (m *Manager) probeOperator(ctx context.Context) (string, string, error) {
 		return "", "", fmt.Errorf("reading the bastion operator's user and home: %w", errEmptyOperatorProbe)
 	}
 
+	// A login shell's profile can print before the probe does, so the user
+	// and the home are the last two lines, and Render rejects anything that
+	// is not a plain user name and an absolute path.
 	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
-	if len(lines) != 2 { //nolint:mnd // one line for the user, one for the home
+	if len(lines) < 2 { //nolint:mnd // one line for the user, one for the home
 		return "", "", fmt.Errorf("reading the bastion operator's user and home: %w", errEmptyOperatorProbe)
 	}
 
-	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
+	return strings.TrimSpace(lines[len(lines)-2]), strings.TrimSpace(lines[len(lines)-1]), nil
 }
