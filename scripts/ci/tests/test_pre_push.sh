@@ -21,8 +21,9 @@ git -C "$REPO" commit -q -m first
 HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
 ROOT_PHYSICAL="$(cd "$REPO" && pwd -P)"
 
-# The fake make records the directory it ran in.
-fake_cmd make 'echo "cwd=$(pwd -P)" >>"$CALLS_FILE"; exit "${FAKE_MAKE_EXIT:-0}"'
+# The fake make records the directory it ran in and any GIT_DIR it inherited.
+# shellcheck disable=SC2016 # the fake expands these when it runs
+fake_cmd make 'echo "cwd=$(pwd -P)" >>"$CALLS_FILE"; echo "gitdir=${GIT_DIR:-unset}" >>"$CALLS_FILE"; exit "${FAKE_MAKE_EXIT:-0}"'
 
 # push feeds the hook the lines git sends on stdin (local ref, local sha,
 # remote ref, remote sha), running it from the directory in $HOOK_CWD.
@@ -136,6 +137,34 @@ echo draft >"$REPO/plans/notes.md"
 push "refs/heads/main $HEAD_SHA refs/heads/main $OTHER\n"
 assert_status 0 "an untracked-only change is allowed"
 assert_call_count "make preflight" 1 "runs preflight with only untracked files"
+
+# A push from a linked worktree. git runs the hook through the absolute
+# core.hooksPath that `make hooks` leaves behind, and exports GIT_DIR for the
+# worktree, so the hook has to work in the worktree it was pushed from and
+# keep GIT_DIR away from preflight.
+REMOTE="$SANDBOX/remote.git"
+git init -q --bare "$REMOTE"
+WT="$SANDBOX/wt"
+git -C "$REPO" worktree add -q -b wt-branch "$WT" HEAD
+git -C "$REPO" config core.hooksPath "$REPO/.githooks"
+WT_PHYSICAL="$(cd "$WT" && pwd -P)"
+: >"$CALLS"
+set +e
+# shellcheck disable=SC2034 # OUT is read by the assert helpers
+OUT="$(cd "$WT" && PATH="$FAKE_BIN:$PATH" CALLS_FILE="$CALLS" git push -q "$REMOTE" HEAD:refs/heads/main 2>&1)"
+# shellcheck disable=SC2034 # STATUS is read by the assert helpers
+STATUS=$?
+set -e
+assert_status 0 "a push from a linked worktree passes"
+assert_call_count "make preflight" 1 "a push from a linked worktree runs preflight"
+assert_calls_contain "cwd=$WT_PHYSICAL" "runs preflight in the linked worktree"
+assert_calls_contain "gitdir=unset" "preflight does not inherit GIT_DIR"
+if [ "$(git -C "$REPO" config --get core.bare)" = "false" ]; then pass "the main repository stays non-bare"; else fail "the main repository stays non-bare" "core.bare is $(git -C "$REPO" config --get core.bare)"; fi
+
+# The script tests may themselves run under a hook, so lib.sh clears the
+# variables git exports to hooks before any test touches a repository.
+leaked="$(GIT_DIR=/nonexistent GIT_INDEX_FILE=/nonexistent GIT_WORK_TREE=/nonexistent bash -c 'source "$1"; echo "${GIT_DIR-unset} ${GIT_INDEX_FILE-unset} ${GIT_WORK_TREE-unset}"' _ "$REPO_ROOT/scripts/ci/tests/lib.sh")"
+if [ "$leaked" = "unset unset unset" ]; then pass "lib.sh clears git's hook variables"; else fail "lib.sh clears git's hook variables" "$leaked"; fi
 
 # make hooks points core.hooksPath at the checked-in hooks.
 out="$(make -n -C "$REPO_ROOT" hooks 2>&1)"
