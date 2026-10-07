@@ -8,6 +8,10 @@ TESTS_FAILED=0
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 export REPO_ROOT
 
+# The tests can run under a git hook, where git exports GIT_DIR and friends.
+# Clear them so each test's git commands act on its own scratch repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+
 # new_sandbox creates a scratch dir with a bin/ for fakes, and sets SANDBOX.
 new_sandbox() {
   SANDBOX="$(mktemp -d)"

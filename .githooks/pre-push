@@ -25,7 +25,13 @@ if [ "${#gated_shas[@]}" -eq 0 ]; then
   exit 0
 fi
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# git exports GIT_DIR to a hook run from a linked worktree, and
+# core.hooksPath points every worktree at the main checkout's hooks. Drop
+# git's variables so git finds the repository from the working directory,
+# and so preflight's own git commands never act on this repository, then
+# move to the top of the worktree being pushed.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+cd "$(git rev-parse --show-toplevel)"
 
 refuse() {
   echo "pre-push: preflight can only vouch for HEAD with a clean tree, and $1." >&2
