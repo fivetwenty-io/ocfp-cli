@@ -688,6 +688,7 @@ func (m *Manager) buildInstanceRequest(bastionName, flavorID, imageID, networkID
 		TailscaleAuthKey: m.resolveBastionTailscaleAuthKey(),
 		DataDisk:         m.bastionDataDiskSpec(),
 		Protected:        true,
+		StartOnBoot:      true,
 	}
 }
 

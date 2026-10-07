@@ -221,6 +221,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		VCPUsOverride:         m.config.Artifacts.CPU,
 		MemoryMiBOverride:     m.config.Artifacts.MemoryMiB,
 		Protected:             true,
+		StartOnBoot:           true,
 	}
 
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)
