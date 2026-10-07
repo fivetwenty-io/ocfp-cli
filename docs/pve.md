@@ -201,15 +201,25 @@ blocs:
 | `region` | yes | PVE node name (matches `pvesh get /nodes`). |
 | `nodes` | optional | List of cluster nodes for multi-AZ; defaults to `[region]`. |
 | `api_endpoint` | yes | Full URL including scheme and port (`https://host:8006`). |
+| `cpi_host` | optional | Host that the PVE CPI vault record carries, given as a bare hostname or IP (a URL is reduced to its host). Set it when `api_endpoint` is a name the directors cannot resolve, such as a MagicDNS name. The CPI port still comes from `api_endpoint`, and an empty value uses the `api_endpoint` host. With `verify_ssl: true`, a certificate issued for the `api_endpoint` name will not match an IP given here. |
 | `auth_token` + `token_secret` | one of two auth modes | Token ID is `user@realm!token-name`; secret is the UUID. |
 | `username` + `password` | alternative auth mode | Mutually exclusive with API token. Token preferred. |
 | `verify_ssl` | optional | Defaults to `false` (skip TLS verification — safe for self-signed PVE certs). Set `true` only when the PVE host presents a certificate that chains to a trusted CA and the hostname in `api_endpoint` matches the cert SAN. Requires `proxmox-apiclient-go >= v3.1.1` (released as `pve-apiclient-go` at that version). |
 | `network.name` | yes | Existing Linux bridge (bridge mode) or VNet (SDN mode). |
 | `network.network_cidr` | optional | CIDR of the bridge subnet. Informational in bridge mode. |
+| `network.subnet_records` | optional | Allowed values are `parent` and `per_subnet`, and an empty value means `parent`. Any other value is a config error. The setting controls the `cidr`, `cidr_block`, and `gateway` that vault populate writes on each subnet record. See [Per-subnet gateways](#per-subnet-gateways). |
 | `bastion.flavor` | yes | One of `small`, `medium`, `large`, `xlarge`, `bastion`, `bosh`. |
 | `bastion.image` | yes | PVE template name or VMID. Must exist before bootstrap runs. |
 | `bastion.ssh_user` | optional | Defaults to `ubuntu`. |
 | `bastion.keys` | optional | Extra public keys merged into authorized_keys via cloud-init. |
+
+### Per-subnet gateways
+
+By default (`network.subnet_records: parent`), vault populate writes the parent network CIDR and gateway on every subnet record. That is correct when the subnets are carves of one flat network, such as one SDN vnet, because there is only one gateway and Genesis merges the identical records into a single BOSH subnet.
+
+Some blocs instead give each subnet its own gateway at the base address plus one, for example 10.254.20.1 for 10.254.20.0/22. For those blocs, set `network.subnet_records: per_subnet`. Each record then carries its own CIDR and its own base-plus-one gateway, and the `dns` fallback uses that gateway. The reserved-IP bands are derived from each subnet's own CIDR in both modes, so they do not change.
+
+Populate applies this setting on every pass, so a bloc that needs `per_subnet` and does not set it has its per-subnet records overwritten with the parent CIDR each time. Populate has no PVE client to inspect the SDN, so it cannot detect the layout on its own.
 
 ## Global PVE credential defaults
 
