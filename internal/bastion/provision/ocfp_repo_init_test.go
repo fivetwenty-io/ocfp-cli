@@ -50,7 +50,7 @@ func newRepoInitHarness(t *testing.T) *repoInitHarness {
 
 	bin := filepath.Join(root, "bin")
 	require.NoError(t, os.MkdirAll(bin, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "genesis"), []byte(fakeGenesis), 0o755)) //nolint:gosec // test stub must be executable
+	writeFakeExecutableFile(t, filepath.Join(bin, "genesis"), fakeGenesis)
 
 	return h
 }

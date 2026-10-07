@@ -27,7 +27,7 @@ func runVaultInception(t *testing.T, exitCode int, errexit bool) (string, string
 	argsFile := filepath.Join(dir, "ocfp-args.log")
 	ocfp := filepath.Join(dir, "ocfp")
 	fake := fmt.Sprintf("#!/bin/bash\necho \"$*\" >> %s\nexit %d\n", shellSingleQuote(argsFile), exitCode)
-	require.NoError(t, os.WriteFile(ocfp, []byte(fake), 0o700)) // #nosec G306 -- test executable in t.TempDir
+	writeFakeExecutableFile(t, ocfp, fake)
 
 	om := NewOCFPManager("pve", &config.Config{Name: "ocfp-lab"}, nil)
 

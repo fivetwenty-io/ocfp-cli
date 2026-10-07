@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,14 +12,14 @@ import (
 
 // writeFakeExecutable writes a shell script into dir under name and returns
 // its path. The inception vault tests use these in place of safe, tmux, and
-// the vault engines so nothing real ever starts.
+// the vault engines so nothing real ever starts. It returns only once the
+// script can be exec'd, so a parallel test's fork cannot leave it busy.
 func writeFakeExecutable(t *testing.T, dir, name, body string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
 
-	err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700) // #nosec G306 -- test fixture must be executable
-	require.NoError(t, err)
+	writeFakeExecutableFile(t, path, "#!/bin/sh\n"+body)
 
 	return path
 }
