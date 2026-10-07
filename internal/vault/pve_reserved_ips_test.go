@@ -45,6 +45,11 @@ func testPVEReservedIPsMgmtOcfDisjointWide(t *testing.T) {
 	assert.Equal(t, "10.64.64.10", mgmt["blacksmith_ip"])
 	assert.Equal(t, "10.64.64.67", ocf["blacksmith_ip"])
 
+	// prometheus is the one monitoring-stack static both tiers carry: mgmt
+	// at 8, ocf at 68 (right after blacksmith).
+	assert.Equal(t, "10.64.64.8", mgmt["prometheus_ip"])
+	assert.Equal(t, "10.64.64.68", ocf["prometheus_ip"])
+
 	// haproxy sits INSIDE the ocf available band (start+1): the cf kit derives
 	// its subnet statics from the top of its band claim, and the manifest's
 	// haproxy_ip must land inside that claim-derived static window.
@@ -52,7 +57,7 @@ func testPVEReservedIPsMgmtOcfDisjointWide(t *testing.T) {
 	assert.NotContains(t, mgmt, "haproxy_ip", "mgmt has no CF, no haproxy static")
 
 	// mgmt-only named statics must never appear in ocf's tree.
-	for _, key := range []string{"bastion_ip", "concourse_ip", "prometheus_ip", "shield_ip", "artifacts_ip",
+	for _, key := range []string{"bastion_ip", "concourse_ip", "shield_ip", "artifacts_ip",
 		"wireguard_ip", "ovpn_ip", "rustfs_ip", "rustfs_ip_smoke", "proxycache_ip", "nfs_ip", "ocfp_ui_ip",
 		"doomsday_ip", "shout_ip", "garage_ip", "garage_ip_smoke"} {
 		assert.Contains(t, mgmt, key)
@@ -247,8 +252,12 @@ func TestPVEReservedIPs_MgmtBandOverrideValidatedByLayout(t *testing.T) {
 			cidr: "10.64.64.0/22", start: 40, end: 50,
 		},
 		{
-			name: "wide collides with its own ocf statics (64-67), checked before cross-tier", strategy: "wide",
+			name: "wide collides with its own ocf statics (64-68), checked before cross-tier", strategy: "wide",
 			cidr: "10.64.64.0/22", start: 30, end: 70, wantErr: netlayout.ErrBandOverrideCollidesStatic,
+		},
+		{
+			name: "wide collides with only the ocf prometheus static at 68", strategy: "wide",
+			cidr: "10.64.64.0/22", start: 68, end: 80, wantErr: netlayout.ErrBandOverrideCollidesStatic,
 		},
 		{
 			name: "wide crosses into ocf's open available band", strategy: "wide",
@@ -301,10 +310,10 @@ func TestPVEReservedIPs_MgmtBandOverrideCompactAppliesToTable(t *testing.T) {
 // replaced "available" row (everything below start, everything from end+1
 // up) for an override well above the strategy's own default band, not only
 // for the narrow within-band cases above: wide's default mgmt band is
-// 32-63, and 68-95 sits unclaimed by any static or tier's available band
-// (ocf's own statics stop at 67, its available band opens at 96), so 70-90
-// is a valid override whose replaced reserved/mgmt row must cover 0-69 and
-// 91-> without a gap.
+// 32-63, and 69-95 sits unclaimed by any static or tier's available band
+// (ocf's own low statics stop at 68, its available band opens at 96), so
+// 70-90 is a valid override whose replaced reserved/mgmt row must cover 0-69
+// and 91-> without a gap.
 func TestPVEReservedIPs_MgmtBandOverrideReservedIsGapFree(t *testing.T) {
 	layout, err := netlayout.Lookup("wide")
 	require.NoError(t, err)

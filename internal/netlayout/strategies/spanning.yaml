@@ -35,5 +35,6 @@ tiers:
       vault:      65
       jumpbox:    66
       blacksmith: { offset: 67, subnets: [1] }
+      prometheus: 68
       haproxy:    { offset: 97, subnets: [0] }
     available: { start: 96 }

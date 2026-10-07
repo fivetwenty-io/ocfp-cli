@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
 )
 
 // TestWideWorkloadTable proves wide's WorkloadTable/SchemeVersion are real
@@ -61,6 +62,15 @@ func TestWideWorkloadTable(t *testing.T) {
 
 		if ocfBosh.Offset != 64 {
 			t.Fatalf("bosh/ocf offset = %d, want 64", ocfBosh.Offset)
+		}
+
+		ocfPrometheus, ok := table["prometheus"]["ocf"]
+		if !ok {
+			t.Fatal("WorkloadTable() missing prometheus/ocf assignment")
+		}
+
+		if ocfPrometheus.Offset != 68 {
+			t.Fatalf("prometheus/ocf offset = %d, want 68 (right after blacksmith at 67)", ocfPrometheus.Offset)
 		}
 
 		haproxy, ok := table["haproxy"]["ocf"]
@@ -163,4 +173,73 @@ func TestWideValidateSubnet_RejectsSubnetSmallerThan25(t *testing.T) {
 			t.Fatal("ValidateSubnet(\"not-a-cidr\") = nil error, want error")
 		}
 	})
+}
+
+// ocfStaticOffsets collects every offset an ocf-tier static occupies in
+// table, keyed by offset. A pinned static carries its offsets as
+// SubnetMapping keys instead of Offset, so both forms are read.
+func ocfStaticOffsets(t *testing.T, table reservedip.AssignmentTable) map[int]string {
+	t.Helper()
+
+	seen := map[int]string{}
+
+	record := func(offset int, role string) {
+		if other, dup := seen[offset]; dup {
+			t.Errorf("ocf offset %d assigned to both %q and %q", offset, other, role)
+		}
+
+		seen[offset] = role
+	}
+
+	for role, tiers := range table {
+		if role == "available" || role == "reserved" {
+			continue
+		}
+
+		assignment, ok := tiers["ocf"]
+		if !ok {
+			continue
+		}
+
+		if len(assignment.SubnetMapping) > 0 {
+			for offset := range assignment.SubnetMapping {
+				record(offset, role)
+			}
+
+			continue
+		}
+
+		record(assignment.Offset, role)
+	}
+
+	return seen
+}
+
+// TestWideAndSpanningOCFStaticOffsetsAreUnique proves no two ocf-tier
+// statics share an offset in wide or spanning, and that prometheus holds 68,
+// so the new row cannot silently alias another service's address.
+func TestWideAndSpanningOCFStaticOffsetsAreUnique(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"wide", "spanning"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			layout, err := netlayout.Lookup(name)
+			if err != nil {
+				t.Fatalf("Lookup(%q) returned unexpected error: %v", name, err)
+			}
+
+			table, err := layout.WorkloadTable("10.64.64.0/22")
+			if err != nil {
+				t.Fatalf("WorkloadTable() returned unexpected error: %v", err)
+			}
+
+			seen := ocfStaticOffsets(t, table)
+
+			if got := seen[68]; got != "prometheus" {
+				t.Errorf("ocf offset 68 held by %q, want %q", got, "prometheus")
+			}
+		})
+	}
 }
