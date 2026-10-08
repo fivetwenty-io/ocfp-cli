@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,6 +88,12 @@ func TestVaultCommands_VaultInBothDirsRefuseBeforeTouchingAnything(t *testing.T)
 		"inception": func() error { return ensureInceptionVault(vaultBlocDirTestBloc, false) },
 		"start":     runVaultStart,
 		"teardown":  func() error { return runVaultTeardown(true) },
+		"migrate-storage": func() error {
+			return runVaultMigrateStorage(io.Discard, false)
+		},
+		"migrate-storage dry run": func() error {
+			return runVaultMigrateStorage(io.Discard, true)
+		},
 	}
 
 	for name, run := range commands {

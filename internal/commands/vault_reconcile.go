@@ -1395,9 +1395,9 @@ func wrapStopAfterFailure(stopErr error) error {
 // archiveAndStartFresh moves the stopped vault aside, keeping its data and
 // any keys, and starts a new, empty vault in its place. Its one caller is
 // startWithoutData, which reaches it only when there is no data to lose,
-// and vault start never reaches it. It succeeds with an error-level warning,
-// because the bloc now runs on a vault without the old secrets and a person
-// has to know where they went.
+// and neither vault start nor vault migrate-storage ever reaches it. It
+// succeeds with an error-level warning, because the bloc now runs on a vault
+// without the old secrets and a person has to know where they went.
 func (run *inceptionRun) archiveAndStartFresh(ctx context.Context, reason string) error {
 	paths := run.paths
 
