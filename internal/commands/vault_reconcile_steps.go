@@ -425,7 +425,7 @@ func setAsidePreviousVaultLog(logFile string) error {
 // is never read, because any sibling bloc can move it. A key file that holds
 // a value is never replaced, and one that exists but cannot be read is an
 // error, since it may hold that value. Finding nothing is not an error: the
-// vault then goes down the archive path.
+// run then refuses data that is missing a key, and leaves it as it is.
 func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
 		return nil
@@ -501,9 +501,10 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 // Only a key that begins with what the file holds is taken, so a key from
 // some other vault is never written. When none is found, the disk is left
 // exactly as it is and the error says so. A missing or blank key file is
-// left to the archive path, as before, and one that cannot be read is an
-// error. A whole key with stray whitespace around it is rewritten to the key
-// and a newline, which is the only form safe passes on intact.
+// left to key recovery, which refuses the vault when it finds nothing, and
+// one that cannot be read is an error. A whole key with stray whitespace
+// around it is rewritten to the key and a newline, which is the only form
+// safe passes on intact.
 func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	keyFile := paths["unsealKeysFile"]
 	if paths["rootKeyFile"] == keyFile {
@@ -605,7 +606,7 @@ func canonicalizeRootKeyFile(paths map[string]string, log *zap.SugaredLogger) er
 // recoverUnsealKeyFromLogs writes a missing or blank unseal.keys of a
 // stopped vault from the whole unseal key that safe printed into the vault
 // log, or into the log of a start before it, the previous one or an older
-// one. Without it the vault would be archived for a missing key while its
+// one. Without it the vault would be refused for a missing key while its
 // key still sat in a log.
 //
 // The newest log that holds a whole key is used, since a new vault prints
