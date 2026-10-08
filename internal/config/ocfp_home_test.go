@@ -38,7 +38,11 @@ func TestOcfpBlocDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("OCFP_HOME", tmpDir)
 
-	got := config.OcfpBlocDir("mybloc")
+	got, err := config.OcfpBlocDir("mybloc")
+	if err != nil {
+		t.Fatalf("OcfpBlocDir() error = %v", err)
+	}
+
 	want := filepath.Join(tmpDir, "mybloc")
 
 	if got != want {

@@ -150,7 +150,7 @@ func modeName(mode safeLocalMode) string {
 func reconcilePaths(t *testing.T) map[string]string {
 	t.Helper()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	vaultRoot := filepath.Join(t.TempDir(), "ocfp-lab-drgao", "vault")
 
 	paths["vaultDir"] = filepath.Join(vaultRoot, "data")

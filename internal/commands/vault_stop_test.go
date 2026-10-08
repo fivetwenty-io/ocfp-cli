@@ -173,7 +173,7 @@ func installFakeVaultOps(t *testing.T) *fakeVaultOps {
 func stopTestPaths(t *testing.T, bloc string) map[string]string {
 	t.Helper()
 
-	paths := getVaultInceptionPaths(bloc, false)
+	paths := mustInceptionPaths(t, bloc, false)
 
 	// Teardown reads the bloc's target from ~/.saferc, which must never be
 	// the real one.

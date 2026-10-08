@@ -17,7 +17,7 @@ import (
 func readyTestPaths(t *testing.T) map[string]string {
 	t.Helper()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	paths["logFile"] = filepath.Join(t.TempDir(), "vault-inception.log")
 
 	return paths

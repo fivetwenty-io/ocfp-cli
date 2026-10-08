@@ -380,8 +380,11 @@ ports, set OCFP_VAULT_INCEPTION_PORT or the port in the bloc's own config.
 The data lives in ~/.local/share/ocfp/{bloc}/vault/data, or under
 $XDG_DATA_HOME/ocfp when that is set. The root token and the unseal key are
 saved beside it, in ~/.local/share/ocfp/{bloc}/vault/{root.key,unseal.keys}.
-ocfp falls back to the legacy ~/.ocfp/{bloc}/vault/... layout when only that
-exists, and OCFP_HOME forces it.
+A bloc may still keep its files in the legacy ~/.ocfp/{bloc} directory. ocfp
+uses whichever of the two directories holds the bloc's vault, so a directory
+without a vault never hides one, and two directories joined by a link count
+as one. When both hold a vault, ocfp refuses and names both. OCFP_HOME forces
+the legacy layout.
 
 Each run leaves the bloc with a running raft vault, and it changes as little
 as it can on the way:
@@ -423,8 +426,12 @@ The 'init' alias is available for operator convenience: 'ocfp vault init' is equ
 	return cmd
 }
 
-// getVaultInceptionPaths returns the paths for vault inception based on bloc name and test mode.
-func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
+// getVaultInceptionPaths returns the paths for vault inception based on bloc
+// name and test mode. A bloc's vault lives in its resolved bloc directory
+// (see config.OcfpBlocDir), and the error is that resolution's: a bloc with
+// a vault in both its XDG and its legacy directory, or a directory that
+// cannot be inspected. Every caller refuses on it before touching a vault.
+func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, error) {
 	home, _ := homeDir()
 
 	vaultDir := filepath.Join(home, ".vault")
@@ -444,9 +451,19 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 	lockFile := filepath.Join(config.StateHome(), inceptionLockFileName)
 
 	if blocName != "" {
-		vaultDir = filepath.Join(config.OcfpBlocDir(blocName), "vault", "data")
-		rootKeyFile = filepath.Join(config.OcfpBlocDir(blocName), "vault", "root.key")
-		unsealKeysFile = filepath.Join(config.OcfpBlocDir(blocName), "vault", "unseal.keys")
+		// A test-mode vault lives apart from the bloc's, so only a real one
+		// needs the bloc's directory.
+		if !testMode {
+			blocDir, err := config.OcfpBlocDir(blocName)
+			if err != nil {
+				return nil, err
+			}
+
+			vaultDir = filepath.Join(blocDir, "vault", "data")
+			rootKeyFile = filepath.Join(blocDir, "vault", "root.key")
+			unsealKeysFile = filepath.Join(blocDir, "vault", "unseal.keys")
+		}
+
 		tmuxSession = blocName + "-inception-vault"
 		vaultName = blocName + "-inception"
 		// Every other resource here is already bloc-scoped; the port must be
@@ -506,7 +523,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) map[string]string {
 
 	paths["pidFile"] = filepath.Join(paths["vaultDir"], "vault.pid")
 
-	return paths
+	return paths, nil
 }
 
 // requireClusterPort reports why paths has no cluster port. The port is
@@ -1460,7 +1477,10 @@ func runVaultInception() error {
 // the vault is up before the artifacts step, instead of failing late (after
 // the bastion is created) on a dead vault.
 func ensureInceptionVault(blocName string, testMode bool) error {
-	paths := getVaultInceptionPaths(blocName, testMode)
+	paths, err := getVaultInceptionPaths(blocName, testMode)
+	if err != nil {
+		return err
+	}
 
 	return withInceptionVaultLock(paths, func() error {
 		return ensureInceptionVaultLocked(blocName, paths)
@@ -1567,7 +1587,11 @@ the boot unit.`,
 // runVaultStart executes the vault start command.
 func runVaultStart() error {
 	blocName := viper.GetString("bloc")
-	paths := getVaultInceptionPaths(blocName, viper.GetBool("test"))
+
+	paths, err := getVaultInceptionPaths(blocName, viper.GetBool("test"))
+	if err != nil {
+		return refuseVaultStart(err)
+	}
 
 	return withInceptionVaultLock(paths, func() error {
 		return startInceptionVaultLocked(blocName, paths)
@@ -1663,7 +1687,10 @@ func runVaultTeardown(force bool) error {
 	blocName := viper.GetString("bloc")
 	testMode := viper.GetBool("test")
 
-	paths := getVaultInceptionPaths(blocName, testMode)
+	paths, err := getVaultInceptionPaths(blocName, testMode)
+	if err != nil {
+		return fmt.Errorf("teardown refused: %w", err)
+	}
 
 	return withInceptionVaultLock(paths, func() error {
 		log.Info("=== Tearing Down Inception Vault ===")

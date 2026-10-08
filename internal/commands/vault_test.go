@@ -23,8 +23,8 @@ import (
 func TestGetVaultInceptionPaths_PortIsPerBloc(t *testing.T) {
 	t.Parallel()
 
-	first := getVaultInceptionPaths("ocfp-lab-drgao", false)
-	second := getVaultInceptionPaths("ocfp-lab-drhu", false)
+	first := mustInceptionPaths(t, "ocfp-lab-drgao", false)
+	second := mustInceptionPaths(t, "ocfp-lab-drhu", false)
 
 	if first["port"] == second["port"] {
 		t.Errorf("blocs share inception port %q", first["port"])
@@ -42,8 +42,8 @@ func TestGetVaultInceptionPaths_PortIsPerBloc(t *testing.T) {
 func TestGetVaultInceptionPaths_LogFileIsPerBloc(t *testing.T) {
 	t.Parallel()
 
-	first := getVaultInceptionPaths("ocfp-lab-drgao", false)
-	second := getVaultInceptionPaths("ocfp-lab-drhu", false)
+	first := mustInceptionPaths(t, "ocfp-lab-drgao", false)
+	second := mustInceptionPaths(t, "ocfp-lab-drhu", false)
 
 	if first["logFile"] == second["logFile"] {
 		t.Errorf("blocs share inception log file %q", first["logFile"])
@@ -85,8 +85,8 @@ func TestGetVaultInceptionPaths(t *testing.T) {
 				"tmuxSession": "520-aws-wayne-inception-vault",
 				"vaultName":   "520-aws-wayne-inception",
 				"port":        strconv.Itoa(config.InceptionVaultPort("520-aws-wayne")),
-				"vaultDir":    filepath.Join(config.OcfpBlocDir("520-aws-wayne"), "vault", "data"),
-				"rootKeyFile": filepath.Join(config.OcfpBlocDir("520-aws-wayne"), "vault", "root.key"),
+				"vaultDir":    filepath.Join(mustBlocDir(t, "520-aws-wayne"), "vault", "data"),
+				"rootKeyFile": filepath.Join(mustBlocDir(t, "520-aws-wayne"), "vault", "root.key"),
 				"clusterPort": strconv.Itoa(config.InceptionVaultPort("520-aws-wayne") + config.InceptionVaultClusterPortOffset),
 			},
 		},
@@ -96,7 +96,7 @@ func TestGetVaultInceptionPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			paths := getVaultInceptionPaths(tc.blocName, tc.testMode)
+			paths := mustInceptionPaths(t, tc.blocName, tc.testMode)
 
 			for key, expected := range tc.checks {
 				if paths[key] != expected {
@@ -111,7 +111,7 @@ func TestGetVaultInceptionPaths_TestMode(t *testing.T) {
 	t.Parallel()
 
 	homeDir := os.Getenv("HOME")
-	paths := getVaultInceptionPaths("any-bloc", true)
+	paths := mustInceptionPaths(t, "any-bloc", true)
 
 	// Test mode should override bloc-specific paths
 	if paths["tmuxSession"] != "test-inception-vault" {
@@ -147,7 +147,7 @@ func TestGetVaultInceptionPaths_TestModeKeyFilesAreSeparate(t *testing.T) {
 
 	t.Cleanup(func() { homeDirFn = original })
 
-	paths := getVaultInceptionPaths("any-bloc", true)
+	paths := mustInceptionPaths(t, "any-bloc", true)
 
 	assert.Equal(t, filepath.Join(home, "test-vault.root.key"), paths["rootKeyFile"])
 	assert.Equal(t, filepath.Join(home, "test-vault.unseal.keys"), paths["unsealKeysFile"])
@@ -178,7 +178,7 @@ func TestGetVaultInceptionPaths_NoBlocKeyFilesAreSeparate(t *testing.T) {
 
 	t.Cleanup(func() { homeDirFn = original })
 
-	paths := getVaultInceptionPaths("", false)
+	paths := mustInceptionPaths(t, "", false)
 
 	assert.Equal(t, filepath.Join(home, "vault.root.key"), paths["rootKeyFile"])
 	assert.Equal(t, filepath.Join(home, "vault.unseal.keys"), paths["unsealKeysFile"])
@@ -207,7 +207,7 @@ func TestArchiveAndForgetVault_NoBlocLeavesTheOldKeyFile(t *testing.T) {
 
 	t.Cleanup(func() { homeDirFn = original })
 
-	paths := getVaultInceptionPaths("", false)
+	paths := mustInceptionPaths(t, "", false)
 	oldKeyFile := filepath.Join(home, "vault.key")
 	suffix := "20261006-120000"
 
@@ -245,7 +245,7 @@ func TestGetVaultInceptionPaths_NoBlocLogDirUnderStateHomeNotOcfpHome(t *testing
 
 	wantLogDir := filepath.Join(config.GetLogDir(), "vault")
 
-	paths := getVaultInceptionPaths("", false)
+	paths := mustInceptionPaths(t, "", false)
 
 	if paths["logDir"] != wantLogDir {
 		t.Errorf("logDir = %q, want %q", paths["logDir"], wantLogDir)
@@ -258,7 +258,7 @@ func TestGetVaultInceptionPaths_NoBlocLogDirUnderStateHomeNotOcfpHome(t *testing
 
 // TestGetVaultInceptionPaths_BlocLogDirUnderStateHomeNotDataHome verifies
 // the bloc-scoped inception log directory resolves under the XDG
-// state-class root rather than config.OcfpBlocDir() (data-class), when
+// state-class root rather than mustBlocDir(t, ) (data-class), when
 // neither the new nor the legacy log directory pre-exists.
 func TestGetVaultInceptionPaths_BlocLogDirUnderStateHomeNotDataHome(t *testing.T) {
 	legacyHome := t.TempDir()
@@ -275,7 +275,7 @@ func TestGetVaultInceptionPaths_BlocLogDirUnderStateHomeNotDataHome(t *testing.T
 
 	wantLogDir := filepath.Join(xdgStateBase, "ocfp", blocName, VaultInceptionLogDir)
 
-	paths := getVaultInceptionPaths(blocName, false)
+	paths := mustInceptionPaths(t, blocName, false)
 
 	if paths["logDir"] != wantLogDir {
 		t.Errorf("logDir = %q, want %q", paths["logDir"], wantLogDir)
@@ -296,7 +296,7 @@ func TestGetVaultInceptionPaths_BlocLogDirUnderStateHomeNotDataHome(t *testing.T
 func TestRequireClusterPort_FailsBeforeAnyWork(t *testing.T) {
 	t.Setenv(config.InceptionVaultPortEnvVar, "64600")
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 
 	if paths["clusterPort"] != "" {
 		t.Fatalf("clusterPort = %q, want empty for an API port past 64535", paths["clusterPort"])
@@ -313,7 +313,7 @@ func TestRequireClusterPort_FailsBeforeAnyWork(t *testing.T) {
 
 	t.Setenv(config.InceptionVaultPortEnvVar, "18500")
 
-	err = requireClusterPort(getVaultInceptionPaths("ocfp-lab-drgao", false))
+	err = requireClusterPort(mustInceptionPaths(t, "ocfp-lab-drgao", false))
 	if err != nil {
 		t.Errorf("requireClusterPort rejected a usable API port: %v", err)
 	}
@@ -352,4 +352,30 @@ func TestNewVaultCmd_BareCommandPrintsHelp(t *testing.T) {
 	require.NoError(t, root.Execute())
 	assert.Contains(t, out.String(), "Available Commands:")
 	assert.Contains(t, out.String(), "start")
+}
+
+// mustInceptionPaths returns getVaultInceptionPaths for a bloc whose
+// directory resolves, failing the test when it does not.
+func mustInceptionPaths(t *testing.T, blocName string, testMode bool) map[string]string {
+	t.Helper()
+
+	paths, err := getVaultInceptionPaths(blocName, testMode)
+	if err != nil {
+		t.Fatalf("getVaultInceptionPaths(%q, %v) error = %v", blocName, testMode, err)
+	}
+
+	return paths
+}
+
+// mustBlocDir returns config.OcfpBlocDir for a bloc whose directory
+// resolves, failing the test when it does not.
+func mustBlocDir(t *testing.T, blocName string) string {
+	t.Helper()
+
+	dir, err := config.OcfpBlocDir(blocName)
+	if err != nil {
+		t.Fatalf("config.OcfpBlocDir(%q) error = %v", blocName, err)
+	}
+
+	return dir
 }

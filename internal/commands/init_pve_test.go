@@ -563,7 +563,7 @@ func TestInitPVE_FlagOverridesEnvVar(t *testing.T) {
 
 // TestInitPVE_UsesXDGDataHomeWhenOCFPHomeUnset verifies that with OCFP_HOME
 // unset, the generated deployment env files and ops files land under the
-// XDG data root (config.OcfpBlocDir(bloc)/deployments/...), not a hardcoded
+// XDG data root (mustBlocDir(t, bloc)/deployments/...), not a hardcoded
 // legacy path. A fake HOME is set so that, were the implementation to fall
 // back to the legacy ~/.ocfp layout, it would land in a throwaway temp dir
 // rather than the real developer home directory.
@@ -596,7 +596,7 @@ func TestInitPVE_UsesXDGDataHomeWhenOCFPHomeUnset(t *testing.T) {
 	// neither the new XDG path nor the legacy path exists, so
 	// config.OcfpBlocDir's dual-read returns the new XDG location. Resolving
 	// it after the write would let dual-read mask a legacy write as a pass.
-	wantDeploymentsDir := filepath.Join(config.OcfpBlocDir(bloc), "deployments")
+	wantDeploymentsDir := filepath.Join(mustBlocDir(t, bloc), "deployments")
 
 	err := initializePVE(makeBlocCmd(t, bloc), nil)
 	require.NoError(t, err)

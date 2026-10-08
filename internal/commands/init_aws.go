@@ -118,7 +118,8 @@ func resolveInitAWSParams(cmd *cobra.Command) (*initAWSParams, error) {
 // env files so that downstream `genesis ocfp` operations resolve the correct
 // vault paths, under the bloc's resolved deployment directory
 // (config.OcfpBlocDir(bloc) + "/deployments"; the XDG data root by default,
-// falling back to the legacy ~/.ocfp/<bloc> layout when only that exists):
+// or the legacy ~/.ocfp/<bloc> directory when that one holds the bloc's vault
+// or is the only one with content):
 //
 //   - deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env)
 //   - deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
@@ -186,7 +187,13 @@ func writeMonitoringEnvFile(bloc, iaas string) error {
 	}
 
 	envFileName := bloc + "-ocf.yml"
-	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", "prometheus", envFileName)
+
+	blocDir, err := config.OcfpBlocDir(bloc)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+	}
+
+	envFilePath := filepath.Join(blocDir, "deployments", "prometheus", envFileName)
 
 	opts := vault.WriteEnvFileV32Opts{
 		Path:     envFilePath,
@@ -203,7 +210,7 @@ func writeMonitoringEnvFile(bloc, iaas string) error {
 		},
 	}
 
-	err := vault.WriteEnvFileV32Opts_Write(opts)
+	err = vault.WriteEnvFileV32Opts_Write(opts)
 	if err != nil {
 		return fmt.Errorf("failed to write monitoring env file %s: %w", envFilePath, err)
 	}
@@ -242,11 +249,17 @@ func writeAWSDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) 
 	}
 
 	envFileName := bloc + "-" + deployment + ".yml"
-	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", deployment, envFileName)
+
+	blocDir, err := config.OcfpBlocDir(bloc)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+	}
+
+	envFilePath := filepath.Join(blocDir, "deployments", deployment, envFileName)
 
 	const iaas = "aws"
 
-	err := vault.WriteEnvFileV32Opts_Write(vault.WriteEnvFileV32Opts{
+	err = vault.WriteEnvFileV32Opts_Write(vault.WriteEnvFileV32Opts{
 		Path:         envFilePath,
 		EnvName:      deployment,
 		UseCreateEnv: useCreateEnv,

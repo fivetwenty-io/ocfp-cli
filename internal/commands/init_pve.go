@@ -85,8 +85,8 @@ func resolveInitPVEParams(cmd *cobra.Command) (*initPVEParams, error) {
 // minimal v3.2 Genesis env files so that downstream `genesis ocfp` operations
 // resolve the correct vault paths, under the bloc's resolved deployment
 // directory (config.OcfpBlocDir(bloc) + "/deployments"; the XDG data root by
-// default, falling back to the legacy ~/.ocfp/<bloc> layout when only that
-// exists):
+// default, or the legacy ~/.ocfp/<bloc> directory when that one holds the
+// bloc's vault or is the only one with content):
 //
 //   - deployments/mgmt/<bloc>-mgmt.yml  (BOSH director, create-env, iaas=pve)
 //   - deployments/ocf/<bloc>-ocf.yml    (Cloud Foundry, non-create-env)
@@ -127,7 +127,10 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
 
-	blocDir := config.OcfpBlocDir(params.bloc)
+	blocDir, err := config.OcfpBlocDir(params.bloc)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", params.bloc, err)
+	}
 
 	for _, deployment := range []string{"mgmt", "ocf"} {
 		err := writePVEOpsFiles(blocDir, params.bloc, deployment)
@@ -192,7 +195,13 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 	}
 
 	envFileName := bloc + "-" + deployment + ".yml"
-	envFilePath := filepath.Join(config.OcfpBlocDir(bloc), "deployments", deployment, envFileName)
+
+	blocDir, err := config.OcfpBlocDir(bloc)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+	}
+
+	envFilePath := filepath.Join(blocDir, "deployments", deployment, envFileName)
 
 	const iaas = "pve"
 
@@ -214,7 +223,7 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 		}
 	}
 
-	err := vault.WriteEnvFileV32Opts_Write(opts)
+	err = vault.WriteEnvFileV32Opts_Write(opts)
 	if err != nil {
 		return fmt.Errorf("failed to write genesis env file %s: %w", envFilePath, err)
 	}
@@ -232,8 +241,8 @@ func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, 
 //     (pve-guest-agent.yml)
 //
 // blocDir is the bloc's resolved directory (config.OcfpBlocDir(bloc): the XDG
-// data root by default, falling back to the legacy ~/.ocfp/<bloc> layout when
-// only that exists).
+// data root by default, or the legacy ~/.ocfp/<bloc> directory when that one
+// holds the bloc's vault or is the only one with content).
 //
 // Both directories are created with MkdirAll mode 0755 if they do not exist.
 // blocDir must be non-empty; bloc and deployment must be non-empty validated
