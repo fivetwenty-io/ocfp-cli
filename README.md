@@ -313,7 +313,9 @@ OCFP uses XDG Base Directory specification for organizing configuration, state, 
 - **State & Logs**: `~/.local/state/ocfp/` (or `$XDG_STATE_HOME/ocfp`)
 - **Data (SSH keys, bloc state)**: `~/.local/share/ocfp/` (or `$XDG_DATA_HOME/ocfp`)
 
-For backward compatibility, OCFP looks for files in the legacy `~/.ocfp/` directory if the XDG path does not exist, and emits a single deprecation warning per session. To force the legacy flat-directory layout entirely, set:
+For backward compatibility, OCFP looks for files in the legacy `~/.ocfp/` directory if the XDG path does not exist, and emits a single deprecation warning per session. A bloc's own directory follows a stricter rule, because it can hold the bloc's inception vault. OCFP uses whichever of `~/.local/share/ocfp/<bloc>` and `~/.ocfp/<bloc>` holds the vault, so an empty or vault-less XDG directory never hides a legacy vault, and it refuses to choose when both hold one. The [inception vault guide](docs/inception-vault.md#files-on-disk) describes the rule in full and how to settle a bloc with two vaults.
+
+To force the legacy flat-directory layout entirely, set:
 
 ```bash
 export OCFP_HOME=~/.ocfp

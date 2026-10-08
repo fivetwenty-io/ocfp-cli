@@ -127,17 +127,18 @@ func ResolveExisting(newPath, legacyPath string) (string, bool) {
 	return resolveExisting(newPath, legacyPath)
 }
 
-// OcfpBlocDir returns the directory path for a specific bloc. Resolves
-// under DataHome(), with a dual-read fallback to the pre-migration
-// ~/.ocfp/<bloc> directory when only that exists (e.g. a bloc created
-// before the XDG migration).
-func OcfpBlocDir(blocName string) string {
+// OcfpBlocDir returns the directory path for a specific bloc: either
+// DataHome()/<bloc> or the pre-migration ~/.ocfp/<bloc>. The XDG directory
+// wins only when it holds the bloc's vault, or holds other bloc content while
+// neither directory holds a vault, so an empty or vault-less XDG directory
+// never hides a legacy vault. A bloc with a vault in both directories is an
+// error wrapping ErrBlocVaultInBothDirs, and so is a directory that cannot be
+// inspected. See resolveBlocDir for the full rules.
+func OcfpBlocDir(blocName string) (string, error) {
 	newPath := filepath.Join(DataHome(), blocName)
 	legacyPath := filepath.Join(OcfpHome(), blocName)
 
-	path, _ := ResolveExisting(newPath, legacyPath)
-
-	return path
+	return resolveBlocDir(blocName, newPath, legacyPath)
 }
 
 // OcfpSSHKeyDir returns the SSH key directory path for a specific bloc.

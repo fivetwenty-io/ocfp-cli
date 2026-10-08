@@ -27,7 +27,7 @@ func planText(cmds []cleanupCommand) string {
 func TestVaultCleanupCommands_TouchOnlyOwnBloc(t *testing.T) {
 	t.Parallel()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	text := planText(vaultCleanupCommands(paths))
 
 	ownPort := strconv.Itoa(config.InceptionVaultPort("ocfp-lab-drgao"))
@@ -51,7 +51,7 @@ func TestVaultCleanupCommands_TouchOnlyOwnBloc(t *testing.T) {
 func TestVaultCleanupCommands_LeavesSharedBareNamesAlone(t *testing.T) {
 	t.Parallel()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 
 	for _, cmd := range vaultCleanupCommands(paths) {
 		for _, arg := range cmd.args {
@@ -65,7 +65,7 @@ func TestVaultCleanupCommands_LeavesSharedBareNamesAlone(t *testing.T) {
 func TestVaultCleanupCommands_TargetsOwnSessionAndTarget(t *testing.T) {
 	t.Parallel()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	text := planText(vaultCleanupCommands(paths))
 
 	if !strings.Contains(text, "ocfp-lab-drgao-inception-vault") {
@@ -80,7 +80,7 @@ func TestVaultCleanupCommands_TargetsOwnSessionAndTarget(t *testing.T) {
 func TestVaultCleanupCommands_PortKillSparesThisProcessAndClients(t *testing.T) {
 	t.Parallel()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	text := planText(vaultCleanupCommands(paths))
 
 	if !strings.Contains(text, "-sTCP:LISTEN") {

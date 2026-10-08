@@ -490,14 +490,14 @@ func TestRecoverInceptionKeys_LeavesASharedKeyFileAlone(t *testing.T) {
 func TestInceptionLockFilePerBloc(t *testing.T) {
 	t.Setenv("OCFP_HOME", t.TempDir())
 
-	a := getVaultInceptionPaths("ocfp-lab-a", false)
-	b := getVaultInceptionPaths("ocfp-lab-b", false)
+	a := mustInceptionPaths(t, "ocfp-lab-a", false)
+	b := mustInceptionPaths(t, "ocfp-lab-b", false)
 
 	assert.Equal(t, filepath.Join(config.StateHome(), "ocfp-lab-a", "inception-vault.lock"), a["lockFile"])
 	assert.NotEqual(t, a["lockFile"], b["lockFile"])
 	assert.NotContains(t, a["lockFile"], filepath.Dir(a["vaultDir"]))
-	assert.NotEqual(t, a["lockFile"], getVaultInceptionPaths("", false)["lockFile"])
-	assert.NotEqual(t, getVaultInceptionPaths("", false)["lockFile"], getVaultInceptionPaths("", true)["lockFile"])
+	assert.NotEqual(t, a["lockFile"], mustInceptionPaths(t, "", false)["lockFile"])
+	assert.NotEqual(t, mustInceptionPaths(t, "", false)["lockFile"], mustInceptionPaths(t, "", true)["lockFile"])
 }
 
 // A second run for the same bloc waits for the first and then gives up
@@ -510,8 +510,8 @@ func TestWithInceptionVaultLock(t *testing.T) {
 
 	t.Cleanup(func() { inceptionLockTimeout = orig })
 
-	a := getVaultInceptionPaths("ocfp-lab-a", false)
-	b := getVaultInceptionPaths("ocfp-lab-b", false)
+	a := mustInceptionPaths(t, "ocfp-lab-a", false)
+	b := mustInceptionPaths(t, "ocfp-lab-b", false)
 
 	err := withInceptionVaultLock(a, func() error {
 		ran := false
