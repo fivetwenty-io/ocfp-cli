@@ -610,7 +610,14 @@ func tearDownInceptionVault(
 		return found
 	}
 
-	err := guardInceptionTeardown(ctx, paths, probe, steps.ownsVault)
+	// An archive never renames a vault directory that is a link, so a
+	// teardown that would end in one refuses before it stops anything.
+	err := refuseLinkedVaultDir(paths)
+	if err != nil {
+		return fmt.Errorf("teardown refused, and the vault was left running: %w", err)
+	}
+
+	err = guardInceptionTeardown(ctx, paths, probe, steps.ownsVault)
 	if err != nil {
 		return fmt.Errorf("teardown refused: %w", err)
 	}

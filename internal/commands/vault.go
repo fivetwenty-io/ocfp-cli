@@ -680,13 +680,21 @@ func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
 // and keys aside. A vault that will not stop is left exactly where it is,
 // because archiving data out from under a running engine is how a store gets
 // corrupted.
+//
+// A vault directory that is a link is refused before anything stops, since
+// the archive would refuse it after the stop and leave the vault down.
 func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
+	err := refuseLinkedVaultDir(paths)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 
 	// The stop deletes the bloc's safe target, which may hold the only copy
 	// of the root token, so the token is put beside the data first and goes
 	// into the archive with it.
-	_, err := keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], blocTargetToken(paths), now, log)
+	_, err = keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], blocTargetToken(paths), now, log)
 	if err != nil {
 		return fmt.Errorf("failed to keep the root token from safe's target before stopping the inception vault: %w", err)
 	}
@@ -1656,6 +1664,11 @@ secrets can still be read from the archive.
 Teardown stops only a vault it can prove is this bloc's own. When something
 else answers on the bloc's port, such as another bloc's vault on a colliding
 port, it stops nothing and says why.
+
+Teardown never archives a vault directory that is a link, because renaming
+the link would leave the vault where it was. It stops nothing in that case,
+names the link and the directory it leads to, and leaves us to archive that
+directory or remove the link by hand.
 
 After it has stopped and archived the vault, teardown disables the bloc's
 boot unit, ocfp-vault@<bloc>.service, when it is enabled. If the disable
