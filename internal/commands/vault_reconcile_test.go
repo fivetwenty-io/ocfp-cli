@@ -162,7 +162,8 @@ func (f *fakeInception) steps() inceptionSteps {
 
 			return f.recoverErr
 		},
-		targetToken: func(map[string]string) string { return f.targetToken },
+		targetToken:    func(map[string]string) string { return f.targetToken },
+		rootTokenWorks: f.rootTokenWorks,
 		safeTarget: safeCurrentTargetSteps{
 			current: func(context.Context) (string, error) {
 				if f.safeCurrentErr != nil {
@@ -1985,4 +1986,94 @@ func TestReconcile_StoppedVaultWithoutAKeyInItsLogsIsRefused(t *testing.T) {
 			requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
 		})
 	}
+}
+
+// An open file vault is stopped only to be migrated, and the restart after
+// the migration opens it with the token in root.key. So vault inception asks
+// the running vault about that token first, and when the vault refuses it,
+// or cannot say, the run refuses with the vault still running and nothing
+// written, and names the tokens ocfp kept that the vault may take.
+func TestReconcile_OpenFileVaultThatRefusesRootKeyIsLeftRunning(t *testing.T) {
+	for name, tokenErr := range map[string]error{
+		"refused":      fmt.Errorf("%w: test", ErrInceptionRootTokenRefused),
+		"cannot check": errors.New("the vault did not answer the lookup"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			earlier := paths["rootKeyFile"] + ".saferc-20261001-090000"
+			require.NoError(t, os.WriteFile(earlier, []byte("s.EARLIER-TOKEN-SENTINEL\n"), 0o600))
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{
+				probe: runningFileProbe(), session: true, targetToken: safeRCToken, rootTokenErr: tokenErr,
+			}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, tokenErr)
+			assert.Equal(t, 1, fake.rootTokenChecks)
+			assert.NotContains(t, fake.calls, "stop")
+			assert.NotContains(t, fake.calls, "migrate")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)), "nothing is written, not even a token copy")
+
+			msg := err.Error()
+			assert.Contains(t, msg, paths["rootKeyFile"])
+			assert.Contains(t, msg, "stopped nothing")
+			assert.Contains(t, msg, "safe's target "+paths["vaultName"])
+			assert.Contains(t, msg, earlier)
+			assert.NotContains(t, msg, "SENTINEL")
+		})
+	}
+}
+
+// Only an open vault that the run would migrate is asked about root.key. A
+// sealed vault holds nothing the restart could lose, and an open raft vault
+// that is restarted gets the retry with safe's token, as before.
+func TestReconcile_ChecksTheRootTokenOnlyBeforeMigratingAnOpenVault(t *testing.T) {
+	for name, tc := range map[string]struct {
+		probe  vaultProbe
+		data   func(t *testing.T, dir string)
+		checks int
+	}{
+		"open file vault":   {probe: runningFileProbe(), data: writeFileData, checks: 1},
+		"sealed file vault": {probe: sealedFileProbe(), data: writeFileData},
+		"open raft vault, no session": {
+			probe: healthyRaftProbe(), data: writeRaftData,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			tc.data(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			fake := &fakeInception{probe: tc.probe, session: tc.checks > 0, migrate: fakeMigration(t)}
+
+			require.NoError(t, runReconcile(t, paths, fake))
+			assert.Equal(t, tc.checks, fake.rootTokenChecks)
+			assert.Contains(t, fake.calls, "stop")
+		})
+	}
+}
+
+// A restart right after the migration that the engine refuses the root
+// token for names the tokens ocfp kept, since one of them may be the token
+// the vault takes, as well as both directories.
+func TestReconcile_RefusedRestartAfterMigrationNamesKeptTokenCopies(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	earlier := paths["rootKeyFile"] + ".saferc-20261001-090000"
+	require.NoError(t, os.WriteFile(earlier, []byte("s.EARLIER-TOKEN-SENTINEL\n"), 0o600))
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t), startErrs: []error{tokenRejected()}}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrRestartAfterMigrationFailed)
+
+	msg := err.Error()
+	assert.Contains(t, msg, "ocfp kept in "+earlier)
+	assert.NotContains(t, msg, "SENTINEL")
 }

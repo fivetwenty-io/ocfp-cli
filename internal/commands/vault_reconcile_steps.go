@@ -41,11 +41,12 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		finish: func(ctx context.Context, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger) error {
 			return finishInceptionVault(ctx, tools.safe, paths, mode, log)
 		},
-		migrate:     migrateFileVaultToRaft,
-		recoverKeys: recoverInceptionKeys,
-		targetToken: blocTargetToken,
-		safeTarget:  newSafeCurrentTargetSteps(tools.safe),
-		now:         time.Now,
+		migrate:        migrateFileVaultToRaft,
+		recoverKeys:    recoverInceptionKeys,
+		targetToken:    blocTargetToken,
+		rootTokenWorks: checkInceptionRootToken,
+		safeTarget:     newSafeCurrentTargetSteps(tools.safe),
+		now:            time.Now,
 	}
 }
 
