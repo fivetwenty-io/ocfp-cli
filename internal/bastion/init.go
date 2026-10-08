@@ -161,18 +161,23 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return fmt.Errorf("bastion key sync failed: %w", err)
 	}
 
-	// A narrow mode runs before the provisioned check, so it still works on
-	// a bastion that init has already provisioned.
+	return m.runModeOrPhases(ctx)
+}
+
+// runModeOrPhases runs the narrow mode the options ask for, or else the full
+// phase list unless the bastion is already provisioned. A narrow mode runs
+// before the provisioned check because a provisioned bastion is exactly the
+// one that needs a single piece redone, such as a boot unit that predates
+// it.
+func (m *Manager) runModeOrPhases(ctx context.Context) error {
 	if _, narrow := m.narrowMode(false); narrow != nil {
 		return narrow(ctx)
 	}
 
-	// Check if already provisioned
 	if m.checkAndSkipIfProvisioned(ctx) {
 		return nil
 	}
 
-	// Handle dry-run preview
 	if m.options.DryRun {
 		m.previewConfigChanges(ctx)
 	}
@@ -183,9 +188,10 @@ func (m *Manager) Initialize(ctx context.Context) error {
 // Narrow modes, named after the flags that ask for them. Each runs one piece
 // of init instead of the full phase list.
 const (
-	narrowModeOCFP    = "ocfp"
-	narrowModeConfig  = "config"
-	narrowModeGenesis = "genesis"
+	narrowModeOCFP          = "ocfp"
+	narrowModeConfig        = "config"
+	narrowModeGenesis       = "genesis"
+	narrowModeVaultBootUnit = "vault-boot-unit"
 )
 
 // ErrConfigModeOnBastion reports --config on a run that is already on the
@@ -216,6 +222,8 @@ func (m *Manager) narrowMode(onBastion bool) (string, func(context.Context) erro
 		return narrowModeConfig, m.runConfigOnlyMode
 	case m.options.GenesisOnly:
 		return narrowModeGenesis, m.runGenesisOnlyMode
+	case m.options.VaultBootUnitOnly:
+		return narrowModeVaultBootUnit, m.runVaultBootUnitOnlyMode
 	default:
 		return "", nil
 	}
@@ -258,6 +266,22 @@ func (m *Manager) runConfigOnlyMode(ctx context.Context) error {
 	}
 
 	m.log.Info("Configuration sync completed successfully")
+
+	return nil
+}
+
+// runVaultBootUnitOnlyMode installs and enables the inception vault's boot
+// unit and does nothing else, for a bastion that init provisioned before the
+// unit existed.
+func (m *Manager) runVaultBootUnitOnlyMode(ctx context.Context) error {
+	m.log.Info("Vault-boot-unit mode: installing the inception vault boot unit only")
+
+	err := m.installVaultBootUnit(ctx)
+	if err != nil {
+		return fmt.Errorf("vault boot unit install failed: %w", err)
+	}
+
+	m.log.Info("Inception vault boot unit installed and enabled")
 
 	return nil
 }

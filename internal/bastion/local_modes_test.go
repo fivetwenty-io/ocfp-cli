@@ -33,6 +33,8 @@ func TestNarrowMode_SelectsTheRequestedMode(t *testing.T) {
 		{"--ocfp remotely", &ProvisioningOptions{OCFPOnly: true}, false, narrowModeOCFP},
 		{"--config on the bastion", &ProvisioningOptions{ConfigOnly: true}, true, narrowModeConfig},
 		{"--config remotely", &ProvisioningOptions{ConfigOnly: true}, false, narrowModeConfig},
+		{"--vault-boot-unit on the bastion", &ProvisioningOptions{VaultBootUnitOnly: true}, true, narrowModeVaultBootUnit},
+		{"--vault-boot-unit remotely", &ProvisioningOptions{VaultBootUnitOnly: true}, false, narrowModeVaultBootUnit},
 	}
 
 	for _, tc := range tests {
@@ -102,4 +104,64 @@ func TestLocalExecutor_ConfigOnlyRefusesOnTheBastion(t *testing.T) {
 	assert.Contains(t, err.Error(), "workstation")
 	assert.Empty(t, mock.commands, "a refused --config must not run anything on the bastion")
 	assert.Empty(t, mock.transfers)
+}
+
+// --vault-boot-unit on the bastion installs and enables the boot unit and
+// does nothing else: one support check, one probe for the operator, and one
+// install.
+func TestLocalExecutor_VaultBootUnitOnlyRunsOnlyThatPhase(t *testing.T) {
+	t.Parallel()
+
+	mock := &bootUnitMockSSHClient{whoami: "ubuntu\n/home/ubuntu\n"}
+	le, m := localModeManager(&ProvisioningOptions{VaultBootUnitOnly: true}, mock)
+	m.config.Name = "ocfp-lab-drgao"
+
+	require.NoError(t, le.run(context.Background(), m))
+	require.Len(t, mock.commands, 3, "a support check, an operator probe, and the install, and nothing else")
+	assert.Contains(t, mock.commands[0], "vault start --check-support")
+	assert.Contains(t, mock.commands[2], "ocfp-vault@ocfp-lab-drgao.service")
+}
+
+// A bastion that a full init has already provisioned is exactly the one
+// that needs the boot unit added later, so --vault-boot-unit from a
+// workstation must not stop at the provisioned marker. The mock answers the
+// marker check as present.
+func TestRunModeOrPhases_VaultBootUnitRunsOnAProvisionedBastion(t *testing.T) {
+	t.Parallel()
+
+	mock := &bootUnitMockSSHClient{whoami: "ubuntu\n/home/ubuntu\n"}
+	m := bootUnitManager(mock, false)
+	m.options.VaultBootUnitOnly = true
+
+	require.NoError(t, m.runModeOrPhases(context.Background()))
+	require.Len(t, mock.commands, 3, "a support check, an operator probe, and the install, and nothing else")
+	assert.Contains(t, mock.commands[2], "ocfp-vault@ocfp-lab-drgao.service")
+
+	for _, cmd := range mock.commands {
+		assert.NotContains(t, cmd, ProvisionedMarkerPath, "a narrow mode must not consult the provisioned marker")
+	}
+}
+
+// A full init from a workstation still stops at the provisioned marker, so
+// the narrow mode above is what reaches a provisioned bastion.
+func TestRunModeOrPhases_FullInitStopsAtTheProvisionedMarker(t *testing.T) {
+	t.Parallel()
+
+	mock := &bootUnitMockSSHClient{whoami: "ubuntu\n/home/ubuntu\n"}
+	m := bootUnitManager(mock, false)
+
+	require.NoError(t, m.runModeOrPhases(context.Background()))
+	require.Len(t, mock.commands, 1, "only the marker check runs on a provisioned bastion")
+	assert.Contains(t, mock.commands[0], ProvisionedMarkerPath)
+}
+
+// A dry run of --vault-boot-unit reports the unit and touches nothing.
+func TestLocalExecutor_VaultBootUnitOnlyDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	mock := &bootUnitMockSSHClient{whoami: "ubuntu\n/home/ubuntu\n"}
+	le, m := localModeManager(&ProvisioningOptions{VaultBootUnitOnly: true, DryRun: true}, mock)
+
+	require.NoError(t, le.run(context.Background(), m))
+	assert.Empty(t, mock.commands)
 }
