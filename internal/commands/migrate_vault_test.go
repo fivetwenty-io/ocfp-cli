@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -275,4 +276,91 @@ func TestBlocInceptionEndpoint_MatchesVaultPaths(t *testing.T) {
 			t.Errorf("blocInceptionEndpoint()[%q] = %q, want %q", key, got[key], paths[key])
 		}
 	}
+}
+
+// A bloc whose vault is split across both directories, with keys on one
+// side and data on the other, is never merged into one vault/, because the
+// merge hides which side held what. The command refuses, names both, and
+// moves nothing. A vault/ that is empty on one side holds no vault.
+func TestRunMigrate_BlocVaultOnBothSidesRefuses(t *testing.T) {
+	for name, tc := range map[string]struct {
+		xdgEntry string
+		refuses  bool
+	}{
+		"data in the XDG directory":        {xdgEntry: filepath.Join("data", "raft", "raft.db"), refuses: true},
+		"empty vault in the XDG directory": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := isolateXDGEnv(t)
+			legacyDir := filepath.Join(home, ".ocfp")
+			legacyVault := filepath.Join(legacyDir, migrateVaultTestBloc, "vault")
+			xdgVault := filepath.Join(config.DataHome(), migrateVaultTestBloc, "vault")
+
+			writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+			writeMigrateTestFile(t, filepath.Join(legacyVault, "root.key"), "root")
+			writeMigrateTestFile(t, filepath.Join(legacyVault, "unseal.keys"), "unseal")
+
+			if tc.xdgEntry != "" {
+				writeMigrateTestFile(t, filepath.Join(xdgVault, tc.xdgEntry), "raft")
+			} else if err := os.MkdirAll(xdgVault, 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			useMigrateVaults(t, &fakeMigrateVaults{})
+
+			err := runMigrate(false)
+			if !tc.refuses {
+				if err != nil {
+					t.Fatalf("runMigrate() error = %v, want nil", err)
+				}
+
+				mustExist(t, filepath.Join(xdgVault, "root.key"))
+
+				return
+			}
+
+			if !errors.Is(err, ErrMigrateHasConflicts) {
+				t.Fatalf("runMigrate() error = %v, want %v", err, ErrMigrateHasConflicts)
+			}
+
+			for _, dir := range []string{legacyVault, xdgVault} {
+				if !strings.Contains(err.Error(), dir) {
+					t.Errorf("error %q does not name %s", err, dir)
+				}
+			}
+
+			mustExist(t, filepath.Join(legacyVault, "root.key"))
+			mustNotExist(t, filepath.Join(xdgVault, "root.key"))
+		})
+	}
+}
+
+// A vault/ that is a link to the other side's vault/ is refused like any
+// bloc with something in both places, and nothing moves.
+func TestRunMigrate_LinkedBlocVaultRefuses(t *testing.T) {
+	home := isolateXDGEnv(t)
+	legacyDir := filepath.Join(home, ".ocfp")
+	legacyVault := filepath.Join(legacyDir, migrateVaultTestBloc, "vault")
+	xdgVault := filepath.Join(config.DataHome(), migrateVaultTestBloc, "vault")
+
+	writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+	writeMigrateTestFile(t, filepath.Join(xdgVault, "root.key"), "root")
+
+	if err := os.MkdirAll(filepath.Dir(legacyVault), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(xdgVault, legacyVault); err != nil {
+		t.Fatal(err)
+	}
+
+	useMigrateVaults(t, &fakeMigrateVaults{})
+
+	err := runMigrate(false)
+	if !errors.Is(err, ErrMigrateHasConflicts) {
+		t.Fatalf("runMigrate() error = %v, want %v", err, ErrMigrateHasConflicts)
+	}
+
+	mustExist(t, filepath.Join(xdgVault, "root.key"))
+	mustExist(t, filepath.Join(legacyDir, "config.yml"))
 }
