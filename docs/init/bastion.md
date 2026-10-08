@@ -52,6 +52,10 @@ Each narrow flag runs one piece of init instead of the full phase list, and init
 
   Runs only the `vault_boot_unit` phase, which installs and enables the systemd unit that brings the inception vault back after a reboot. It's the mode for a bastion that init provisioned before the unit existed, and it doesn't start or restart the vault. With `--dry-run` it logs the unit it would install and changes nothing, and `--force` only skips the confirmation prompt, because the install is the same on every run.
 
+### Where the modes apply
+
+The four mode flags belong to the bastion component. `ocfp init all`, `aws`, `pve`, `pg`, `cf`, and `bosh` refuse them before they load the config or ask anything, and the error names `ocfp init bastion --<mode>` as the command to run instead.
+
 ## Installation Phases
 
 The bastion initialization proceeds through these phases:
