@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion"
 	bastionproviders "github.com/ocfp/ocfp-cli-go/internal/bastion/providers"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -21,9 +20,13 @@ import (
 // NewBastionCmd creates the bastion command.
 func NewBastionCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                    "bastion <action>",
-		Short:                  "Bastion host management",
-		Long:                   `Manage bastion host operations and configuration.`,
+		Use:   "bastion <action>",
+		Short: "Bastion host management",
+		Long: `Manage bastion host operations and configuration.
+
+"bastion init" runs the same code as "ocfp init bastion", including three of its four modes (--genesis, --ocfp, and --vault-boot-unit, at most one) and its check for whether it runs on the bastion itself. It asks no confirmation, and --force means reinstall the ocfp CLI. The mode flags apply only to "bastion init".
+
+The config-only mode is not offered here, because --config is the global flag that names the configuration file for every command, and "bastion init", "bastion provision", and "bastion recycle" all read it. To copy the workstation's configuration files to the bastion, run "ocfp init bastion --config".`,
 		Aliases:                []string{},
 		SuggestFor:             []string{},
 		GroupID:                "",
@@ -90,6 +93,10 @@ func NewBastionCmd() *cobra.Command {
 	})
 	_ = viper.BindPFlag("bastion.init.force", cmd.Flags().Lookup("force"))
 
+	cmd.Flags().Bool("genesis", false, "init: only install/update Genesis and related components")
+	cmd.Flags().Bool("ocfp", false, "init: only install/update the ocfp CLI binary")
+	cmd.Flags().Bool("vault-boot-unit", false, "init: only install and enable the inception vault boot unit")
+
 	return cmd
 }
 
@@ -97,9 +104,14 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 	log := logger.WithOperation("bastion")
 	action := args[0]
 
+	err := refuseModeFlagsFor("ocfp bastion", action, "init", "ocfp bastion init", activeModeNames(bastionModeFlagValues(cmd)))
+	if err != nil {
+		return err
+	}
+
 	switch action {
 	case "init":
-		return bastionInit(cmd, log)
+		return bastionInit(cmd)
 	case "provision":
 		return bastionProvision(cmd, log)
 	case "recycle":
@@ -109,8 +121,29 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func bastionInit(cmd *cobra.Command, log logger.Logger) error {
+// bastionModeFlagValues reads the mode flags "bastion init" offers. The
+// config-only mode is not among them, because --config is the root flag that
+// names the configuration file.
+func bastionModeFlagValues(cmd *cobra.Command) (genesis, ocfp, configOnly, vaultBootUnit bool) {
+	genesis, _ = cmd.Flags().GetBool("genesis")
+	ocfp, _ = cmd.Flags().GetBool("ocfp")
+	vaultBootUnit, _ = cmd.Flags().GetBool("vault-boot-unit")
+
+	return genesis, ocfp, false, vaultBootUnit
+}
+
+// bastionModeFromFlags selects the mode the command's flags ask for.
+func bastionModeFromFlags(cmd *cobra.Command) (bastionInitMode, error) {
+	return selectBastionMode(bastionModeFlagValues(cmd))
+}
+
+func bastionInit(cmd *cobra.Command) error {
 	ctx := cmd.Context()
+
+	mode, err := bastionModeFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Get bloc name from viper (bound to --bloc flag)
 	blocName := viper.GetString("bloc")
@@ -124,24 +157,13 @@ func bastionInit(cmd *cobra.Command, log logger.Logger) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Create bastion manager
-	bastionMgr := bastion.NewManager(ctx, cfg, &bastion.ProvisioningOptions{
-		DryRun:      viper.GetBool("dry-run"),
-		Force:       viper.GetBool("bastion.init.force"),
-		Resume:      false,
-		Parallel:    false,
-		ProgressOut: os.Stdout,
+	// No prompt here, and --force keeps its meaning of reinstalling the CLI.
+	// runBastionInit logs the completion, so this does not log it again.
+	return runBastionInit(ctx, cfg, mode, bastionRunParams{
+		force:   viper.GetBool("bastion.init.force"),
+		dryRun:  viper.GetBool("dry-run"),
+		verbose: false, parallel: false, resume: false, reboot: false,
 	})
-
-	// Initialize bastion
-	err = bastionMgr.Initialize(ctx)
-	if err != nil {
-		return fmt.Errorf("bastion initialization failed: %w", err)
-	}
-
-	log.Info("Bastion initialization completed successfully")
-
-	return nil
 }
 
 func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
