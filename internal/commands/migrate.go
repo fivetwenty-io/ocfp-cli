@@ -192,7 +192,13 @@ directory would pull the vault's data and keys out from under it. It checks
 each bloc's vault API port and tmux session, even on a dry run, and names
 every bloc that is up. Stop each vault with 'tmux kill-session -t
 <bloc>-inception-vault', migrate, and then bring the vault back with
-'ocfp vault start --bloc <bloc>'.
+'ocfp vault start --bloc <bloc>'. A vault started by hand on a port that
+neither OCFP_VAULT_INCEPTION_PORT nor the bloc's vault_inception_port
+names cannot be found, so stop it before you migrate. While it moves the
+blocs, the command holds each one's inception vault lock and checks the
+vaults and the other running ocfp commands once more. It refuses when
+another ocfp run holds one of those locks, and a vault command that starts
+during the moves waits for them.
 
 Destination directories that already exist are merged: ordinary ocfp use
 writes command locks and per-bloc logs under the XDG state directory long
@@ -258,8 +264,11 @@ func runMigrate(dryRun bool) error {
 	// A running inception vault keeps its data and keys open inside the
 	// bloc directory, so no bloc moves while its vault is up. This check
 	// only reads, so it runs on a dry run too, and it runs before the
-	// live-process guard below so that a refusal changes nothing on disk,
-	// not even a stale lock.
+	// live-process guard below so that this refusal leaves even stale
+	// command locks in place. A refusal from the checks made again under
+	// the blocs' inception vault locks may leave those lock files behind.
+	// They are flock files, so they never block a later run, and they are
+	// harmless.
 	err = refuseIfBlocVaultsRunning(context.Background(), plan, migrateVaultProbes)
 	if err != nil {
 		return err
@@ -283,11 +292,47 @@ func runMigrate(dryRun bool) error {
 		return newMigrateConflictsError(conflicts)
 	}
 
-	printMigratePlan(plan, warnings, dryRun)
-
+	// A dry run takes no lock, because taking one writes the lock file.
 	if dryRun {
+		printMigratePlan(plan, warnings, dryRun)
+
 		return nil
 	}
+
+	// Each bloc is locked against the vault commands until the moves end,
+	// whether or not it has a vault/ yet, and the checks that a vault
+	// command could have made stale since they ran are made again under
+	// the locks.
+	return withBlocVaultLocks(migratingBlocVaults(plan), func() error {
+		return moveMigratePlanLocked(legacyDir, plan, warnings)
+	})
+}
+
+// moveMigratePlanLocked moves every plan entry while config migrate holds
+// the inception vault lock of each bloc it moves. It probes the blocs'
+// vaults and checks for conflicts once more first, because a vault command
+// may have started a vault, or written into a bloc's vault/, between the
+// first checks and the locks, and it moves nothing when either refuses.
+func moveMigratePlanLocked(legacyDir string, plan []migratePlanEntry, warnings []string) error {
+	// An ocfp command that started after the live-process guard first ran
+	// would have its state and logs moved out from under it, so the guard
+	// runs again first.
+	err := refuseIfLiveProcessesActive(legacyDir, config.StateHome())
+	if err != nil {
+		return err
+	}
+
+	err = refuseIfBlocVaultsRunning(context.Background(), plan, migrateVaultProbes)
+	if err != nil {
+		return err
+	}
+
+	conflicts := conflictingMigrateDestinations(plan)
+	if len(conflicts) > 0 {
+		return newMigrateConflictsError(conflicts)
+	}
+
+	printMigratePlan(plan, warnings, false)
 
 	for _, entry := range plan {
 		verb, err := moveMigrateEntry(entry)
