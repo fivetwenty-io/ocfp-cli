@@ -18,6 +18,11 @@ const VaultArchiveSuffix = ".superseded-"
 // ErrVaultArchiveExists reports an archive path that is already taken.
 var ErrVaultArchiveExists = keyfile.ErrExists
 
+// ErrVaultDirIsLink reports a vault directory that an archive would rename
+// but that is a symbolic link. Renaming the link would leave the vault
+// where it is, so a later run could find the old vault again.
+var ErrVaultDirIsLink = errors.New("refusing to archive an inception vault directory that is a link")
+
 // archiveVaultState moves a bloc's vault aside so a fresh one can start in
 // its place, and never deletes anything.
 //
@@ -38,22 +43,24 @@ var ErrVaultArchiveExists = keyfile.ErrExists
 // vaultDir at ~/.vault with keys loose in the home directory; there the parent
 // is the user's home, so only the data directory is renamed here and
 // archiveAndForgetVault moves the loose key files aside on its own.
+//
+// A vault directory that is a link is never renamed, because the rename
+// would move the link and leave the vault where it was. It is refused with
+// ErrVaultDirIsLink instead, before anything moves.
 func archiveVaultState(paths map[string]string, suffix string, log *zap.SugaredLogger) (string, error) {
-	vaultDir := paths["vaultDir"]
-	target := vaultDir
+	target := vaultArchiveTarget(paths)
 
-	vaultRoot := filepath.Dir(vaultDir)
-	if vaultRootContains(vaultDir, vaultRoot, paths["rootKeyFile"], paths["unsealKeysFile"]) {
-		target = vaultRoot
-	}
-
-	_, err := os.Lstat(target)
+	info, err := os.Lstat(target)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
 
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect vault state at %s: %w", target, err)
+	}
+
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return "", linkedVaultDirError(target)
 	}
 
 	archivePath := target + VaultArchiveSuffix + suffix
@@ -73,6 +80,64 @@ func archiveVaultState(paths map[string]string, suffix string, log *zap.SugaredL
 	log.Warnw("Preserved existing vault state rather than deleting it", "archive", archivePath)
 
 	return archivePath, nil
+}
+
+// vaultArchiveTarget returns the directory an archive renames: the bloc's
+// vault directory in the bloc layout, and the data directory in the legacy
+// and test layouts.
+func vaultArchiveTarget(paths map[string]string) string {
+	vaultDir := paths["vaultDir"]
+
+	vaultRoot := filepath.Dir(vaultDir)
+	if vaultRootContains(vaultDir, vaultRoot, paths["rootKeyFile"], paths["unsealKeysFile"]) {
+		return vaultRoot
+	}
+
+	return vaultDir
+}
+
+// refuseLinkedVaultDir returns an error wrapping ErrVaultDirIsLink when the
+// directory an archive would rename is a link, and nil when that directory
+// does not exist, since the archive itself reports that. A directory that
+// cannot be examined is an error naming the path, because the archive would
+// fail on it too. A command that stops the vault before it archives it calls
+// this first, so a vault it would refuse to archive is never stopped.
+func refuseLinkedVaultDir(paths map[string]string) error {
+	target := vaultArchiveTarget(paths)
+
+	info, err := os.Lstat(target)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("cannot examine the vault directory %s: %w", target, err)
+	}
+
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return linkedVaultDirError(target)
+	}
+
+	return nil
+}
+
+// linkedVaultDirError names the link at link and where it leads, and tells
+// the operator to archive the directory it leads to, or to remove the link,
+// by hand.
+func linkedVaultDirError(link string) error {
+	dest, err := os.Readlink(link)
+	if err != nil {
+		return fmt.Errorf("%w: %s is a link, and where it leads cannot be read: %w. Archive the directory it "+
+			"leads to yourself, or remove the link, and then run the command again", ErrVaultDirIsLink, link, err)
+	}
+
+	if !filepath.IsAbs(dest) {
+		dest = filepath.Join(filepath.Dir(link), dest)
+	}
+
+	return fmt.Errorf("%w: %s is a link to %s. An archive renames the vault directory, and renaming the link "+
+		"would leave the vault where it is, so nothing was moved. Archive %s yourself, or remove the link, and "+
+		"then run the command again", ErrVaultDirIsLink, link, dest, dest)
 }
 
 // vaultRootContains reports whether the paths form the bloc-scoped layout,
