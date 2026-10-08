@@ -27,6 +27,9 @@ type fakeInception struct {
 	// vault returns, and rootTokenChecks counts those checks.
 	rootTokenErr    error
 	rootTokenChecks int
+	// canMigrateErr is what every check of the engine's migration support
+	// returns.
+	canMigrateErr error
 
 	probe          vaultProbe
 	session        bool
@@ -164,6 +167,11 @@ func (f *fakeInception) steps() inceptionSteps {
 		},
 		targetToken:    func(map[string]string) string { return f.targetToken },
 		rootTokenWorks: f.rootTokenWorks,
+		canMigrate: func(context.Context) error {
+			f.record("can-migrate")
+
+			return f.canMigrateErr
+		},
 		safeTarget: safeCurrentTargetSteps{
 			current: func(context.Context) (string, error) {
 				if f.safeCurrentErr != nil {
@@ -931,7 +939,8 @@ func TestReconcile_FileVaultWithKeysMigratesThenRestarts(t *testing.T) {
 
 	require.NoError(t, runReconcile(t, paths, fake))
 	assert.Equal(t, []string{
-		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+		"probe", "can-migrate", "stop", "cluster-port " + paths["clusterPort"],
+		"migrate", "start restart", "finish restart",
 	}, fake.calls)
 	assert.Empty(t, archivesOf(t, paths))
 }
@@ -1006,7 +1015,8 @@ func TestReconcile_ResumesAnUnfinishedCopy(t *testing.T) {
 
 	require.NoError(t, runReconcile(t, paths, fake))
 	assert.Equal(t, []string{
-		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+		"probe", "can-migrate", "stop", "cluster-port " + paths["clusterPort"],
+		"migrate", "start restart", "finish restart",
 	}, fake.calls)
 	globOne(t, paths["vaultDir"]+".raft-partial-*")
 	assert.Empty(t, archivesOf(t, paths))
@@ -1125,7 +1135,7 @@ func TestReconcile_RunningFileVaultRecoversKeysThenStopsThenMigrates(t *testing.
 
 	require.NoError(t, runReconcile(t, paths, fake))
 	assert.Equal(t, []string{
-		"probe", "recover-keys", "stop", "cluster-port " + paths["clusterPort"],
+		"probe", "recover-keys", "can-migrate", "stop", "cluster-port " + paths["clusterPort"],
 		"migrate", "start restart", "finish restart",
 	}, fake.calls)
 	assert.Empty(t, archivesOf(t, paths))
@@ -1146,7 +1156,8 @@ func TestReconcile_RunningVaultOverFileDataStopsThenMigrates(t *testing.T) {
 
 	require.NoError(t, runReconcile(t, paths, fake))
 	assert.Equal(t, []string{
-		"probe", "stop", "cluster-port " + paths["clusterPort"], "migrate", "start restart", "finish restart",
+		"probe", "can-migrate", "stop", "cluster-port " + paths["clusterPort"],
+		"migrate", "start restart", "finish restart",
 	}, fake.calls)
 }
 
@@ -2076,4 +2087,47 @@ func TestReconcile_RefusedRestartAfterMigrationNamesKeptTokenCopies(t *testing.T
 	msg := err.Error()
 	assert.Contains(t, msg, "ocfp kept in "+earlier)
 	assert.NotContains(t, msg, "SENTINEL")
+}
+
+// An engine that cannot migrate file storage is refused before anything is
+// stopped, so a running file vault keeps serving rather than being stopped
+// for a copy that cannot succeed, and a stopped one is left as it was.
+func TestReconcile_EngineWithoutFileStorageRefusesBeforeTheStop(t *testing.T) {
+	for name, probe := range map[string]vaultProbe{
+		"running vault": runningFileProbe(),
+		"sealed vault":  sealedFileProbe(),
+		"stopped vault": stoppedProbe(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{
+				probe: probe, session: true, migrate: fakeMigration(t), targetToken: safeRCToken,
+				canMigrateErr: fmt.Errorf("%w: test", ErrEngineCannotReadFile),
+			}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrEngineCannotReadFile)
+			assert.Contains(t, fake.calls, "can-migrate")
+			assert.NotContains(t, fake.calls, "stop")
+			assert.NotContains(t, fake.calls, "migrate")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)), "nothing is written, not even a token copy")
+		})
+	}
+}
+
+// A vault that needs no copy needs no engine that can migrate, so a raft
+// vault and an unfinished swap never ask.
+func TestReconcile_RaftVaultNeverChecksTheEngineMigration(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), canMigrateErr: ErrEngineCannotMigrate}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.NotContains(t, fake.calls, "can-migrate")
 }

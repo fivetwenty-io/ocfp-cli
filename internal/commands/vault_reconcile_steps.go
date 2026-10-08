@@ -45,8 +45,11 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		recoverKeys:    recoverInceptionKeys,
 		targetToken:    blocTargetToken,
 		rootTokenWorks: checkInceptionRootToken,
-		safeTarget:     newSafeCurrentTargetSteps(tools.safe),
-		now:            time.Now,
+		canMigrate: func(ctx context.Context) error {
+			return checkEngineCanMigrateFileStorage(ctx, tools.engine)
+		},
+		safeTarget: newSafeCurrentTargetSteps(tools.safe),
+		now:        time.Now,
 	}
 }
 

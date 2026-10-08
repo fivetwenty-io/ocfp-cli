@@ -116,6 +116,9 @@ type inceptionSteps struct {
 	// rootTokenWorks reports why the running vault does not take the token
 	// in root.key, if it does not.
 	rootTokenWorks func(ctx context.Context, paths map[string]string) error
+	// canMigrate reports why the engine cannot migrate file storage to
+	// raft, if it cannot.
+	canMigrate func(ctx context.Context) error
 	// safeTarget reads and sets safe's current target, so that a run that
 	// brings back the bloc's existing vault can put back the target that
 	// was current before it.
@@ -149,8 +152,9 @@ type inceptionRun struct {
 // Every check that can refuse runs before anything is stopped or moved: a
 // stranger on the port, someone else's vault on the port, a data directory
 // holding both kinds of storage, and a cluster port in use all return an
-// error with the disk exactly as it was, and so does an open vault whose
-// keys cannot be saved, or one the run would migrate that does not take the
+// error with the disk exactly as it was, and so do an engine that cannot
+// migrate file storage when the run would, and an open vault whose keys
+// cannot be saved, or one the run would migrate that does not take the
 // token in root.key, which is left running. A healthy vault is left
 // running. A vault with its data and both keys is restarted in place. Data
 // without both keys, and keys the engine refused, stop the run with the data
@@ -185,6 +189,11 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	}
 
 	err = run.recoverRunningKeys(ctx, found)
+	if err != nil {
+		return err
+	}
+
+	err = run.requireEngineForMigration(ctx, found)
 	if err != nil {
 		return err
 	}
@@ -256,6 +265,25 @@ func (run *inceptionRun) recoverRunningKeys(ctx context.Context, found preflight
 	}
 
 	return nil
+}
+
+// requireEngineForMigration refuses, before anything is stopped or written,
+// a run that would copy file storage to raft with an engine that cannot,
+// because it has no 'operator migrate' or reports a version that cannot
+// read file storage. A running file vault keeps serving rather than being
+// stopped for a copy that cannot succeed. A run that only finishes a swap,
+// or has raft data, copies nothing and needs no such engine.
+func (run *inceptionRun) requireEngineForMigration(ctx context.Context, found preflightFindings) error {
+	copies := found.data == vaultDataFile
+	if found.journal != nil {
+		copies = found.journal.Phase == migratePhaseMigrating
+	}
+
+	if !copies {
+		return nil
+	}
+
+	return run.steps.canMigrate(ctx)
 }
 
 // requireWorkingRootToken refuses to stop an open vault that the run would
