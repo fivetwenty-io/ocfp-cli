@@ -118,6 +118,8 @@ api_port() {
     smoke-g) echo $((PORT_BASE + 6)) ;;
     smoke-a-moved) echo $((PORT_BASE + 7)) ;;
     smoke-h) echo $((PORT_BASE + 8)) ;;
+    smoke-i) echo $((PORT_BASE + 9)) ;;
+    smoke-j) echo $((PORT_BASE + 10)) ;;
     *) die "no port for bloc $1" ;;
   esac
 }
@@ -125,7 +127,7 @@ api_port() {
 cluster_port() { echo $(($(api_port "$1") + 1000)); }
 
 ALL_PORTS=""
-for bloc in smoke-a smoke-c smoke-d smoke-e smoke-f smoke-g smoke-a-moved smoke-h; do
+for bloc in smoke-a smoke-c smoke-d smoke-e smoke-f smoke-g smoke-a-moved smoke-h smoke-i smoke-j; do
   ALL_PORTS="$ALL_PORTS $(api_port "$bloc") $(cluster_port "$bloc")"
 done
 
@@ -566,6 +568,48 @@ case_d4() {
   [[ $(tree_sha "$(vault_root smoke-h)") == "$before" ]] || fail "the refusal changed the disk"
 }
 
+# --- F. Migrate-storage dry run and the put-back of safe's target ---------------------
+
+# F1 runs the dry run of migrate-storage on a stopped file vault and proves by
+# hashes that it changed nothing, then runs the real command.
+case_f1() {
+  local before after
+  make_file_vault smoke-i || return 1
+  stop_vault smoke-i || return 1
+  before=$(tree_sha "$(vault_root smoke-i)")
+  new_ocfp_vault smoke-i migrate-storage --dry-run ||
+    fail "the dry run failed; see $S/logs/$CASE.log" || return 1
+  after=$(tree_sha "$(vault_root smoke-i)")
+  [[ $before == "$after" ]] || fail "the dry run changed the vault directory" || return 1
+  [[ -z $(listeners "$(api_port smoke-i)") ]] || fail "the dry run started a vault" || return 1
+  [[ -z $(listeners "$(cluster_port smoke-i)") ]] || fail "the dry run holds the cluster port" || return 1
+  new_ocfp_vault smoke-i migrate-storage ||
+    fail "migrate-storage failed; see $S/logs/$CASE.log" || return 1
+  expect_migrated smoke-i
+}
+
+# current_target prints the name of safe's current target in the scratch HOME.
+current_target() {
+  scratch_safe target --json 2>/dev/null |
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get("name", ""))' 2>/dev/null || true
+}
+
+# F2 makes a scratch target current, restarts the bloc's stopped vault, and
+# checks that the scratch target is current again afterwards.
+case_f2() {
+  local port
+  port=$(api_port smoke-j)
+  new_ocfp smoke-j || fail "fresh start failed; see $S/logs/$CASE.log" || return 1
+  scratch_safe target scratch-keep "http://127.0.0.1:$port" >/dev/null 2>&1 ||
+    fail "could not register the scratch target" || return 1
+  [[ $(current_target) == scratch-keep ]] || fail "the scratch target is not current" || return 1
+  stop_vault smoke-j || return 1
+  new_ocfp_vault smoke-j start || fail "vault start failed; see $S/logs/$CASE.log" || return 1
+  expect_raft smoke-j || return 1
+  [[ $(current_target) == scratch-keep ]] ||
+    fail "the restart left $(current_target) current instead of the scratch target"
+}
+
 # --- E. Teardown and read-only proof ------------------------------------------------
 
 case_e() {
@@ -588,6 +632,8 @@ run_case "D1 recover a missing key, or refuse without it" case_d1
 run_case "D2 refuse a wrong token, then replace by hand" case_d2
 run_case "D3 refuse a taken cluster port" case_d3
 run_case "D4 refuse an old safe" case_d4
+run_case "F1 migrate-storage dry run changes nothing" case_f1
+run_case "F2 restart puts back the current target" case_f2
 run_case "E teardown and read-only proof" case_e
 
 printf '\n=== Results ===%s\n' "$RESULTS"
