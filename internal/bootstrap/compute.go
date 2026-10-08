@@ -2,7 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -1563,6 +1565,8 @@ func (m *Manager) verifyExistingKeypair(ctx context.Context, keypairName string)
 	_, err := os.Stat(keyFile) // #nosec -- path components are from trusted config
 	if err == nil {
 		localKeyExists = true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("cannot tell whether the private key %s exists: %w", keyFile, err)
 	}
 
 	// Providers without a server-side keypair store (STACKIT, PVE) can never
@@ -1702,7 +1706,11 @@ func (m *Manager) generateLocalSSHKeyPair() ([]byte, []byte, bool, error) {
 	// key and lock bootstrap out of every VM created with the old public
 	// half, so the private key on disk is always authoritative.
 	_, keyStatErr := os.Stat(existingKeyPath) // #nosec -- path components are from trusted config
-	if keyStatErr == nil {                    //nolint:nestif // SSH key validation requires nested checks
+	if keyStatErr != nil && !errors.Is(keyStatErr, fs.ErrNotExist) {
+		return nil, nil, false, fmt.Errorf("cannot tell whether the private key %s exists: %w", existingKeyPath, keyStatErr)
+	}
+
+	if keyStatErr == nil { //nolint:nestif // SSH key validation requires nested checks
 		_, _ = fmt.Fprintf(os.Stdout, "      ↳ Using existing local ed25519 key pair...\n")
 
 		privateKeyData, readErr := os.ReadFile(existingKeyPath) // #nosec G304 -- path is controlled
@@ -1902,8 +1910,12 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
 	// Check if we have the local keypair (Ed25519 preferred)
-	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(keyFile); err == nil { // #nosec -- path components are from trusted config
+	_, edStatErr := os.Stat(keyFile) // #nosec -- path components are from trusted config
+	if edStatErr != nil && !errors.Is(edStatErr, fs.ErrNotExist) {
+		return nil, false, fmt.Errorf("cannot tell whether the private key %s exists: %w", keyFile, edStatErr)
+	}
+
+	if edStatErr == nil {
 		// Local keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local key found at %s, reusing", keypairName, keyFile)
@@ -1920,8 +1932,12 @@ func (m *Manager) handleDuplicateKeyPair(ctx context.Context, computeMgr cpi.Com
 	// Check for RSA key fallback (pre-existing deployments)
 	rsaKeyFile := filepath.Join(keyDir, "id_rsa")
 
-	//nolint:noinlineerr // Idiomatic file existence check pattern
-	if _, err := os.Stat(rsaKeyFile); err == nil { // #nosec -- path components are from trusted config
+	_, rsaStatErr := os.Stat(rsaKeyFile) // #nosec -- path components are from trusted config
+	if rsaStatErr != nil && !errors.Is(rsaStatErr, fs.ErrNotExist) {
+		return nil, false, fmt.Errorf("cannot tell whether the private key %s exists: %w", rsaKeyFile, rsaStatErr)
+	}
+
+	if rsaStatErr == nil {
 		// Local RSA keypair exists - fetch from AWS and reuse
 		_, _ = fmt.Fprintf(os.Stdout, "    • SSH keypair %s already exists in AWS and local RSA key found, reusing\n", keypairName)
 		logger.Infof("Keypair %s already exists in AWS and local RSA key found at %s, reusing", keypairName, rsaKeyFile)
