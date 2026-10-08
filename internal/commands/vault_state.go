@@ -23,8 +23,9 @@ const (
 	// raft/ directory, and no core/.
 	vaultDataRaft
 	// vaultDataMixed means both backends' markers are present, or an entry
-	// could not be examined. Nothing may touch such a directory until a
-	// person has looked at it.
+	// could not be examined, or the data path is a link to nothing or not a
+	// directory. Nothing may touch such a directory until a person has
+	// looked at it.
 	vaultDataMixed
 )
 
@@ -50,11 +51,14 @@ func (s vaultDataState) String() string {
 // and safe agree on when a raft directory is initialized. Any lookup that
 // fails for a reason other than the entry not existing counts as the marker
 // being there: a directory we cannot read is not proof that it is empty, and
-// treating it as empty would start a fresh vault over real data.
+// treating it as empty would start a fresh vault over real data. For the same
+// reason, dir is absent only when nothing at all is there. A link to nothing,
+// such as one into a disk that is not mounted, and an entry that is not a
+// directory both count as data that cannot be examined.
 func classifyVaultData(dir string) vaultDataState {
 	info, err := os.Stat(dir)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) && !entryExists(dir) {
 			return vaultDataAbsent
 		}
 
@@ -62,7 +66,7 @@ func classifyVaultData(dir string) vaultDataState {
 	}
 
 	if !info.IsDir() {
-		return vaultDataAbsent
+		return vaultDataMixed
 	}
 
 	raft := entryMayExist(filepath.Join(dir, "vault.db")) || entryMayExist(filepath.Join(dir, "raft"))
@@ -78,6 +82,15 @@ func classifyVaultData(dir string) vaultDataState {
 	default:
 		return vaultDataAbsent
 	}
+}
+
+// entryExists reports whether anything, a dangling link included, is at
+// path, counting a lookup that fails for any reason other than absence as
+// something being there.
+func entryExists(path string) bool {
+	_, err := os.Lstat(path)
+
+	return err == nil || !errors.Is(err, fs.ErrNotExist)
 }
 
 // entryMayExist reports whether path exists, counting a lookup that fails for
