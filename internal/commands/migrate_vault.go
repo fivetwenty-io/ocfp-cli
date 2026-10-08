@@ -29,6 +29,13 @@ var ErrMigrateInceptionVaultRunning = errors.New(
 var ErrMigrateInceptionVaultBusy = errors.New(
 	"refusing to migrate while another ocfp run works on a bloc's inception vault")
 
+// ErrMigrateBlocVaultMigrating is returned when a bloc that config migrate
+// would move holds a journal of an unfinished migration of its inception
+// vault to raft storage. The journal names the file store's backup by its
+// full path, so once the bloc moved, every vault command would refuse it.
+var ErrMigrateBlocVaultMigrating = errors.New(
+	"refusing to migrate a bloc whose inception vault is part way through a migration to raft storage")
+
 // migrateBlocLockTimeout bounds how long config migrate waits for each
 // bloc's inception vault lock. It is short, because a run that holds the
 // lock may hold it for minutes, and config migrate refuses rather than wait
@@ -120,6 +127,48 @@ func refuseIfBlocVaultsRunning(ctx context.Context, plan []migratePlanEntry, pro
 		"the port, run 'ocfp config migrate' again, and then bring the vault back with "+
 		"'ocfp vault start --bloc <bloc>'",
 		ErrMigrateInceptionVaultRunning, strings.Join(lines, "\n"))
+}
+
+// refuseBlocsWithMigrationJournals refuses when any bloc directory in plan
+// holds a journal of an unfinished migration of its inception vault to raft
+// storage, and names every such journal. A journal path that cannot be
+// examined, such as one under a vault/ that is a regular file or that this
+// user cannot read, is not taken for a journal, but it still refuses, with
+// the error that examining it gave, since a journal may still be there. The
+// check only reads, so it runs on a dry run as well.
+func refuseBlocsWithMigrationJournals(plan []migratePlanEntry) error {
+	var lines []string
+
+	for _, entry := range plan {
+		if entry.class != migrateClassDataOther {
+			continue
+		}
+
+		journal := filepath.Join(entry.src, "vault", "data"+migrationJournalSuffix)
+
+		_, err := os.Lstat(journal)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("refusing to migrate, because ocfp cannot tell whether bloc %s holds the journal "+
+				"of a migration to raft storage at %s. Nothing was moved. Fix the cause given at the end of this "+
+				"message, and then run 'ocfp config migrate' again: %w", entry.name, journal, err)
+		}
+
+		lines = append(lines, fmt.Sprintf("  bloc %s: %s; finish the migration with 'ocfp vault inception --bloc %s'",
+			entry.name, journal, entry.name))
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%w. Nothing was moved. These blocs hold the journal of a migration to raft storage that "+
+		"has not finished:\n%s\nA journal names the file store it kept by its full path, so after a move every "+
+		"vault command would refuse the bloc. Finish each migration first, and then run 'ocfp config migrate' again",
+		ErrMigrateBlocVaultMigrating, strings.Join(lines, "\n"))
 }
 
 // mayHoldBlocVault reports whether a legacy data directory could hold an

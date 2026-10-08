@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -700,4 +701,85 @@ func TestRunMigrate_VaultCommandStartedDuringTheMovesWaitsForThem(t *testing.T) 
 	}
 
 	mustNotExist(t, filepath.Join(legacyDir, migrateVaultTestBloc))
+}
+
+// A migration journal names its file-store backup by its full path, which
+// stops matching once the bloc moves, and every vault command would then
+// refuse the bloc. config migrate refuses such a bloc, on a dry run too,
+// names the journal and the command that finishes the migration, and moves
+// nothing.
+func TestRunMigrate_BlocWithAMigrationJournalRefuses(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run("dry-run="+strconv.FormatBool(dryRun), func(t *testing.T) {
+			home := isolateXDGEnv(t)
+			legacyDir := filepath.Join(home, ".ocfp")
+			journal := filepath.Join(legacyDir, migrateVaultTestBloc, "vault", "data"+migrationJournalSuffix)
+
+			writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+			writeLegacyBlocVault(t, legacyDir)
+			writeMigrateTestFile(t, journal, `{"phase":"swapping"}`)
+			useMigrateVaults(t, &fakeMigrateVaults{})
+
+			err := runMigrate(dryRun)
+			if !errors.Is(err, ErrMigrateBlocVaultMigrating) {
+				t.Fatalf("runMigrate(%v) error = %v, want ErrMigrateBlocVaultMigrating", dryRun, err)
+			}
+
+			for _, want := range []string{journal, "ocfp vault inception --bloc " + migrateVaultTestBloc, "Nothing was moved"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+
+			mustExist(t, journal)
+			requireLegacyBlocNotMoved(t, legacyDir)
+		})
+	}
+}
+
+// A journal path that cannot be examined for any reason other than being
+// absent, such as one under a vault that is a regular file, is not taken
+// for a journal. config migrate still refuses, on a dry run too, but with
+// the error it got, and without the advice to finish a migration, which
+// would not help. Nothing moves.
+func TestRunMigrate_UnexaminableJournalPathRefusesWithItsError(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run("dry-run="+strconv.FormatBool(dryRun), func(t *testing.T) {
+			home := isolateXDGEnv(t)
+			legacyDir := filepath.Join(home, ".ocfp")
+			vaultFile := filepath.Join(legacyDir, migrateVaultTestBloc, "vault")
+			journal := filepath.Join(vaultFile, "data"+migrationJournalSuffix)
+
+			writeMigrateTestFile(t, filepath.Join(legacyDir, "config.yml"), "name: test\n")
+			writeMigrateTestFile(t, vaultFile, "not a directory")
+			useMigrateVaults(t, &fakeMigrateVaults{})
+
+			err := runMigrate(dryRun)
+			if err == nil {
+				t.Fatalf("runMigrate(%v) error = nil, want a refusal", dryRun)
+			}
+
+			if errors.Is(err, ErrMigrateBlocVaultMigrating) {
+				t.Errorf("runMigrate(%v) error = %v, want one that does not report a journal", dryRun, err)
+			}
+
+			if !errors.Is(err, syscall.ENOTDIR) {
+				t.Errorf("runMigrate(%v) error = %v, want it to wrap ENOTDIR", dryRun, err)
+			}
+
+			for _, want := range []string{"bloc " + migrateVaultTestBloc, journal, "Nothing was moved"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+
+			if strings.Contains(err.Error(), "finish the migration") {
+				t.Errorf("error %q advises finishing a migration", err)
+			}
+
+			mustExist(t, vaultFile)
+			mustExist(t, filepath.Join(legacyDir, "config.yml"))
+			mustNotExist(t, filepath.Join(config.DataHome(), migrateVaultTestBloc))
+		})
+	}
 }

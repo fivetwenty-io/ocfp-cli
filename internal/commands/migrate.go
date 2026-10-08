@@ -207,7 +207,10 @@ command refuses to move anything when a file would be overwritten, or
 when a bloc's vault directory holds something in both the legacy and the
 XDG directory, because it will not merge two vaults. It lists every such
 conflict so you can resolve them by hand, and it moves no files when it
-finds one.`,
+finds one. It also refuses a bloc whose vault is part way through a
+migration to raft storage, because the migration's journal names the
+bloc's paths in full. Finish that migration with 'ocfp vault inception
+--bloc <bloc>' first.`,
 		Example: `  # Preview what would move, without changing anything
   ocfp config migrate --dry-run
 
@@ -287,9 +290,9 @@ func runMigrate(dryRun bool) error {
 		}
 	}
 
-	conflicts := conflictingMigrateDestinations(plan)
-	if len(conflicts) > 0 {
-		return newMigrateConflictsError(conflicts)
+	err = refuseUnmovableBlocs(plan)
+	if err != nil {
+		return err
 	}
 
 	// A dry run takes no lock, because taking one writes the lock file.
@@ -308,11 +311,24 @@ func runMigrate(dryRun bool) error {
 	})
 }
 
+// refuseUnmovableBlocs refuses a plan that would overwrite something at its
+// destination, or that would move a bloc part way through a migration of its
+// inception vault to raft storage. It only reads.
+func refuseUnmovableBlocs(plan []migratePlanEntry) error {
+	conflicts := conflictingMigrateDestinations(plan)
+	if len(conflicts) > 0 {
+		return newMigrateConflictsError(conflicts)
+	}
+
+	return refuseBlocsWithMigrationJournals(plan)
+}
+
 // moveMigratePlanLocked moves every plan entry while config migrate holds
 // the inception vault lock of each bloc it moves. It probes the blocs'
 // vaults and checks for conflicts once more first, because a vault command
-// may have started a vault, or written into a bloc's vault/, between the
-// first checks and the locks, and it moves nothing when either refuses.
+// may have started a vault, written into a bloc's vault/, or left a
+// migration unfinished between the first checks and the locks, and it moves
+// nothing when any of them refuses.
 func moveMigratePlanLocked(legacyDir string, plan []migratePlanEntry, warnings []string) error {
 	// An ocfp command that started after the live-process guard first ran
 	// would have its state and logs moved out from under it, so the guard
@@ -327,9 +343,9 @@ func moveMigratePlanLocked(legacyDir string, plan []migratePlanEntry, warnings [
 		return err
 	}
 
-	conflicts := conflictingMigrateDestinations(plan)
-	if len(conflicts) > 0 {
-		return newMigrateConflictsError(conflicts)
+	err = refuseUnmovableBlocs(plan)
+	if err != nil {
+		return err
 	}
 
 	printMigratePlan(plan, warnings, false)
