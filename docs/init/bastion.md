@@ -56,6 +56,8 @@ Each narrow flag runs one piece of init instead of the full phase list, and init
 
 The four mode flags belong to the bastion component. `ocfp init all`, `aws`, `pve`, `pg`, `cf`, and `bosh` refuse them before they load the config or ask anything, and the error names `ocfp init bastion --<mode>` as the command to run instead.
 
+`ocfp bastion init` runs the same code and takes three of the four mode flags, `--genesis`, `--ocfp`, and `--vault-boot-unit`, with the same rule that only one may be set. It does not take `--config` as a mode, because `--config <path>` on every `ocfp bastion` action is the global flag that names the configuration file, and it works there as it always has. The config-only mode is on `ocfp init bastion --config`. It differs from `ocfp init bastion` in several ways. It never asks for confirmation, so `--force` has no prompt to skip and keeps its one meaning there, which is to reinstall the ocfp CLI. It does not run the prerequisite connectivity check. It has no `--parallel`, `--resume`, `--verbose`, `--reboot`, or `--skip-checks`, so those always stay off. `ocfp bastion provision` and `ocfp bastion recycle` refuse the mode flags.
+
 ## Installation Phases
 
 The bastion initialization proceeds through these phases:
