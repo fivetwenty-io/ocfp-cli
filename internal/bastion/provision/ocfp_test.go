@@ -725,7 +725,7 @@ func TestGenerateOCFPConfigureScript_KitClonesWithoutDeploymentsURL(t *testing.T
 		`[bosh]="https://github.com/genesis-community/bosh-genesis-kit.git"`,
 		`git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"} "$KIT_REPO" "$KIT_DIR"`,
 		`is not a git checkout; leaving it in place`,
-		`ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`,
+		`ln -s "$KIT_DIR" "$DEV_LINK"`,
 	}
 
 	for _, s := range required {

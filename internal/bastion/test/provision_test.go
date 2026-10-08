@@ -117,7 +117,7 @@ func TestProvisionScriptIncludesDeploymentRepoSetup(t *testing.T) {
 		t.Fatalf("expected deployments repo clone command in script\nscript: %s", script)
 	}
 
-	if !strings.Contains(script, `ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`) {
+	if !strings.Contains(script, `ln -s "$KIT_DIR" "$DEV_LINK"`) {
 		t.Fatalf("expected dev kit symlink in script\nscript: %s", script)
 	}
 
