@@ -155,6 +155,9 @@ type inceptionSteps struct {
 	// rootTokenWorks reports why the running vault does not take the token
 	// in root.key, if it does not.
 	rootTokenWorks func(ctx context.Context, paths map[string]string) error
+	// targetTokenWorks reports why the running vault does not take token,
+	// which safe's target holds, if it does not.
+	targetTokenWorks func(ctx context.Context, paths map[string]string, token string) error
 	// canMigrate reports why the engine cannot migrate file storage to
 	// raft, if it cannot.
 	canMigrate func(ctx context.Context) error
@@ -325,35 +328,67 @@ func (run *inceptionRun) requireEngineForMigration(ctx context.Context, found pr
 	return run.steps.canMigrate(ctx)
 }
 
-// requireWorkingRootToken refuses to stop an open vault that the run would
-// migrate when that vault does not take the token in root.key, or cannot say
-// whether it does. The restart after a migration opens the vault with that
-// token alone, so such a vault would stay down, while left running it still
-// serves its secrets. A sealed vault holds nothing a stop could lose, and an
-// open raft vault is restarted by restart, which retries safe's token.
+// requireWorkingRootToken refuses to stop an open vault when the restart
+// that follows could not reopen it, and the vault cannot say otherwise. Left
+// running, such a vault still serves its secrets, while stopped it would stay
+// down. A sealed vault holds nothing a stop could lose.
+//
+// The restart after a migration opens the vault with the token in root.key
+// alone, so a vault the run would migrate must take that token. An open raft
+// vault is restarted in place, and that restart retries once with the token
+// safe's target holds, so such a vault must take one of the two.
 func (run *inceptionRun) requireWorkingRootToken(ctx context.Context, found preflightFindings) error {
-	if !found.open || (found.data != vaultDataFile && found.journal == nil) {
+	if !found.open {
 		return nil
 	}
 
 	err := run.steps.rootTokenWorks(ctx, run.paths)
-	if err != nil {
-		return fmt.Errorf("%w%s", err, rootTokenRefusedAdvice(run.paths, "vault inception", run.steps.targetToken(run.paths)))
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	targetToken := run.steps.targetToken(run.paths)
+
+	if found.data == vaultDataFile || found.journal != nil {
+		return fmt.Errorf("%w%s", err,
+			rootTokenRefusedAdvice(run.paths, "vault inception", restartAfterMigration, targetToken))
+	}
+
+	held, _ := keyfile.Read(run.paths["rootKeyFile"])
+	if targetToken == "" || targetToken == held || keyfile.CheckRootToken(targetToken) != nil {
+		return fmt.Errorf("%w%s", err,
+			rootTokenRefusedAdvice(run.paths, "vault inception", restartInPlace, targetToken))
+	}
+
+	targetErr := run.steps.targetTokenWorks(ctx, run.paths, targetToken)
+	if targetErr == nil {
+		return nil
+	}
+
+	// The advice need not offer safe's token, since the vault just refused
+	// it, or could not say whether it takes it, which the error says.
+	return fmt.Errorf("%w; the token safe's target %s holds did not open the vault either: %w%s",
+		err, run.paths["vaultName"], targetErr, rootTokenRefusedAdvice(run.paths, "vault inception", restartInPlace, ""))
 }
 
+// The restarts rootTokenRefusedAdvice can name as the reason a stop was
+// refused.
+const (
+	restartAfterMigration = "the restart after the migration"
+	restartInPlace        = "the restart"
+)
+
 // rootTokenRefusedAdvice explains why command stopped nothing when an open
-// vault does not take the token in root.key, and how to go on. It names
-// safe's target when that target holds a token other than root.key's, and
-// every copy of a token ocfp kept beside root.key, since one of them may be
-// the token the vault takes. It never quotes a token.
-func rootTokenRefusedAdvice(paths map[string]string, command, targetToken string) string {
+// vault does not take the token in root.key, which the restart that
+// restartPhrase names would open it with, and how to go on. It names safe's target when that target holds a
+// token other than root.key's, and every copy of a token ocfp kept beside
+// root.key, since one of them may be the token the vault takes. It never
+// quotes a token.
+func rootTokenRefusedAdvice(paths map[string]string, command, restartPhrase, targetToken string) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "; the restart after the migration opens the vault with that token, so %s stopped nothing, "+
-		"and the vault is still running", command)
+	fmt.Fprintf(&b, "; %s opens the vault with that token, so %s stopped nothing, "+
+		"and the vault is still running", restartPhrase, command)
 
 	held, _ := keyfile.Read(paths["rootKeyFile"])
 	if targetToken != "" && targetToken != held {

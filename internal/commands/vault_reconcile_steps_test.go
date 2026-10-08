@@ -2,8 +2,11 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -791,4 +794,60 @@ func TestSetAsidePreviousVaultLog_NeverReplacesAnOlderLog(t *testing.T) {
 	// With no current log there is nothing to move, and .previous stays.
 	require.NoError(t, setAsidePreviousVaultLog(logFile))
 	assert.Equal(t, "run 4\n", readKey(t, logFile+".previous"))
+}
+
+// The token safe's target holds is checked the way root.key's is: sent once,
+// in the header only, and never quoted. A 401 or 403 refuses it, and any
+// other answer, or none, leaves the question open.
+func TestCheckInceptionTargetTokenWith(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		status  int
+		refused bool
+		ok      bool
+	}{
+		"taken":         {status: http.StatusOK, ok: true},
+		"forbidden":     {status: http.StatusForbidden, refused: true},
+		"unauthorized":  {status: http.StatusUnauthorized, refused: true},
+		"sealed":        {status: http.StatusServiceUnavailable},
+		"server failed": {status: http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var seen []string
+
+			srv := tokenLookupServer(t, tc.status, &seen)
+
+			err := checkInceptionTargetTokenWith(context.Background(), srv.Client(), srv.URL, "ocfp-lab-drgao-inception",
+				"s.TARGET-TOKEN-SENTINEL")
+			assert.Equal(t, []string{"s.TARGET-TOKEN-SENTINEL"}, seen, "the token is sent once")
+
+			if tc.ok {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+			assert.Equal(t, tc.refused, errors.Is(err, ErrInceptionTargetTokenRefused))
+			assert.Contains(t, err.Error(), "ocfp-lab-drgao-inception")
+			assert.NotContains(t, err.Error(), "SENTINEL")
+		})
+	}
+
+	t.Run("no answer", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.NotFoundHandler())
+		addr := srv.URL
+		srv.Close()
+
+		err := checkInceptionTargetTokenWith(context.Background(), http.DefaultClient, addr, "ocfp-lab-drgao-inception",
+			"s.TARGET-TOKEN-SENTINEL")
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrInceptionTargetTokenRefused)
+		assert.NotContains(t, err.Error(), "SENTINEL")
+	})
 }
