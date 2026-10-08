@@ -35,6 +35,14 @@ if [ "$1" = targets ]; then
   exit 0
 fi
 if [ "$1" = target ] && [ $# -eq 1 ]; then
+  if [ -e "$dir/target_fails" ]; then
+    printf 'Current target not found in ~/.saferc\n' >&2
+    exit 1
+  fi
+  if [ -n "${SAFE_TARGET:-}" ]; then
+    printf 'SAFE_TARGET names an unknown target\n' >&2
+    exit 1
+  fi
   current=$(cat "$dir/current")
   if [ -n "$current" ]; then
     printf 'Currently targeting %s at https://vault.example:8200\n' "$current" >&2
@@ -50,14 +58,44 @@ exit 1
 func runInceptionGate(t *testing.T, bloc string, targets []string, current string) (string, string) {
 	t.Helper()
 
+	return runInceptionGateWith(t, gateSetup{bloc: bloc, targets: targets, current: current})
+}
+
+// gateSetup describes the fake safe and the environment an inception gate
+// run sees.
+type gateSetup struct {
+	bloc    string
+	targets []string
+	current string
+	// targetFails makes a bare 'safe target' exit 1, as it does when the
+	// rc file names a current target that no longer exists.
+	targetFails bool
+	// noSafe leaves safe off the PATH altogether, so running it exits 127.
+	noSafe bool
+	// env is added to the script's environment.
+	env []string
+}
+
+func runInceptionGateWith(t *testing.T, gs gateSetup) (string, string) {
+	t.Helper()
+
+	bloc, targets, current := gs.bloc, gs.targets, gs.current
+
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is not available")
 	}
 
 	bin := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "safe"), []byte(fakeSafeScript), 0o700)) // #nosec G306 -- the fake safe must be executable
+	if !gs.noSafe {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "safe"), []byte(fakeSafeScript), 0o700)) // #nosec G306 -- the fake safe must be executable
+	}
+
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "targets"), []byte(strings.Join(targets, "\n")+"\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "current"), []byte(current), 0o600))
+
+	if gs.targetFails {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "target_fails"), nil, 0o600))
+	}
 
 	om := NewOCFPManager("pve", nil, nil)
 	script := strings.Join([]string{
@@ -69,7 +107,24 @@ func runInceptionGate(t *testing.T, bloc string, targets []string, current strin
 	}, "\n")
 
 	cmd := exec.CommandContext(t.Context(), "bash", "-c", script)
-	cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + bin}
+	path := bin + string(os.PathListSeparator) + os.Getenv("PATH")
+
+	if gs.noSafe {
+		// Only the tools the snippets use, so a real safe on this machine
+		// can't be found.
+		tools := t.TempDir()
+
+		for _, tool := range []string{"env", "grep", "sed", "head", "dirname", "cat"} {
+			found, err := exec.LookPath(tool)
+			require.NoError(t, err)
+			require.NoError(t, os.Symlink(found, filepath.Join(tools, tool)))
+		}
+
+		path = tools
+	}
+
+	cmd.Env = []string{"PATH=" + path, "HOME=" + bin}
+	cmd.Env = append(cmd.Env, gs.env...)
 
 	out, err := cmd.Output()
 	require.NoError(t, err, string(out))
@@ -128,4 +183,55 @@ func TestInceptionActiveSnippet_KeysOffTheBlocTargets(t *testing.T) {
 			assert.Equal(t, tc.wantTarget, target)
 		})
 	}
+}
+
+// 'safe target' with no arguments exits non-zero when the rc file names a
+// current target that no longer exists, when SAFE_TARGET names a target safe
+// doesn't know, and when safe isn't installed. None of those may end the
+// phase, which runs under set -e, before it has said anything.
+func TestInceptionActiveSnippet_ASafeTargetFailureEndsNothing(t *testing.T) {
+	const bloc = "ocfp-lab-example"
+
+	t.Run("the bloc's targets still decide", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{
+			bloc: bloc, targets: []string{bloc + "-inception"}, current: "ops", targetFails: true,
+		})
+		assert.Equal(t, "yes", active)
+		assert.Equal(t, bloc+"-inception", target)
+	})
+
+	t.Run("a bloc vault target still wins", func(t *testing.T) {
+		active, _ := runInceptionGateWith(t, gateSetup{
+			bloc: bloc, targets: []string{bloc + "-inception", bloc + "-mgmt"}, targetFails: true,
+		})
+		assert.Equal(t, "no", active)
+	})
+
+	t.Run("no bloc named, a failing target means no inception vault", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{
+			targets: []string{"inception"}, current: "inception", targetFails: true,
+		})
+		assert.Equal(t, "no", active)
+		assert.Empty(t, target)
+	})
+
+	t.Run("safe isn't installed, and a named bloc has no inception vault", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{bloc: bloc, noSafe: true})
+		assert.Equal(t, "no", active)
+		assert.Empty(t, target)
+	})
+
+	t.Run("safe isn't installed, and no bloc is named", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{noSafe: true})
+		assert.Equal(t, "no", active)
+		assert.Empty(t, target)
+	})
+
+	t.Run("no bloc named, SAFE_TARGET naming an unknown target is ignored", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{
+			targets: []string{"inception"}, current: "inception", env: []string{"SAFE_TARGET=ghost"},
+		})
+		assert.Equal(t, "yes", active)
+		assert.Equal(t, "inception", target)
+	})
 }
