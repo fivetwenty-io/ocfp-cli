@@ -554,9 +554,12 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 	for _, want := range []string{
 		"INCEPTION_ACTIVE=no",
 		`BLOC_VAULT_TARGET="${OCFP_BLOC}-mgmt"`,
-		`safe targets 2>&1 | grep -q "$BLOC_VAULT_TARGET"`,
+		`safe targets 2>&1 | grep "$BLOC_VAULT_TARGET" >/dev/null`,
 		`CURRENT_VAULT_TARGET="$(safe target 2>&1 | sed -n 's/^Currently targeting \(.*\) at .*$/\1/p' | head -n 1)"`,
 		`INCEPTION_TARGET="$CURRENT_VAULT_TARGET"`,
+		`BLOC_INCEPTION_TARGET="${OCFP_BLOC}-inception"`,
+		`safe targets --json 2>&1 | grep "\"name\": *\"$BLOC_INCEPTION_TARGET\"" >/dev/null`,
+		`INCEPTION_TARGET="$BLOC_INCEPTION_TARGET"`,
 		`if [ "$INCEPTION_ACTIVE" != yes ]; then`,
 		"genesis secrets-provider -c",
 		"printf 'secrets_provider: (( prune ))\\n'",
