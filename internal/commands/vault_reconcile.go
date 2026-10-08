@@ -32,12 +32,50 @@ const inceptionLockFileName = "inception-vault.lock"
 // same bloc. It covers a migration, which may take several minutes.
 var inceptionLockTimeout = 5 * time.Minute //nolint:gochecknoglobals // tests shorten the wait
 
-// withInceptionVaultLock runs fn while holding the bloc's inception vault
-// lock. Two runs for one bloc would otherwise stop each other's vault, or
-// migrate a store the other is starting on; the second waits, and usually
-// then finds the vault healthy and leaves it running.
-func withInceptionVaultLock(paths map[string]string, fn func() error) error {
-	return config.WithFileLock(paths["lockFile"], inceptionLockTimeout, fn)
+// inceptionLockPath returns the lock file of a bloc's inception vault. It is
+// built from the bloc name and the test mode alone, never from the bloc's
+// resolved directory, so a run can take the lock before it resolves that
+// directory. The lock sits outside <bloc>/vault because the archive renames
+// that directory while the lock is held, and under the state home, which
+// 'ocfp config migrate' never moves.
+func inceptionLockPath(blocName string, testMode bool) string {
+	switch {
+	case testMode:
+		return filepath.Join(config.StateHome(), "test-"+inceptionLockFileName)
+	case blocName != "":
+		return filepath.Join(config.StateHome(), blocName, inceptionLockFileName)
+	default:
+		return filepath.Join(config.StateHome(), inceptionLockFileName)
+	}
+}
+
+// withLockedInceptionPaths runs fn with the bloc's inception vault paths
+// while holding the bloc's inception vault lock. Two runs for one bloc would
+// otherwise stop each other's vault, or migrate a store the other is
+// starting on; the second waits, and usually then finds the vault healthy
+// and leaves it running.
+//
+// The paths are resolved only once the lock is held. 'ocfp config migrate'
+// holds the same lock while it moves the bloc, so a run that waited for it
+// works on the directory the bloc moved to, and never on the one it left,
+// where it would find no data and could start a new vault. When the bloc's
+// directory does not resolve, the run refuses with refuse's wrapping of that
+// error, or with the error itself when refuse is nil, and fn never runs.
+func withLockedInceptionPaths(blocName string, testMode bool, refuse func(error) error,
+	fn func(paths map[string]string) error,
+) error {
+	return config.WithFileLock(inceptionLockPath(blocName, testMode), inceptionLockTimeout, func() error {
+		paths, err := getVaultInceptionPaths(blocName, testMode)
+		if err != nil {
+			if refuse != nil {
+				return refuse(err)
+			}
+
+			return err
+		}
+
+		return fn(paths)
+	})
 }
 
 var (

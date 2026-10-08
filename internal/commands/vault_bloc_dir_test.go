@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/spf13/viper"
@@ -81,22 +82,27 @@ func TestGetVaultInceptionPaths_VaultInBothDirsRefuses(t *testing.T) {
 	}
 }
 
-// Each vault command refuses before it takes the lock or touches either
-// vault when the bloc has a vault in both directories.
+// Each vault command refuses before it touches either vault when the bloc
+// has a vault in both directories. Every real run resolves the bloc's
+// directory only once it holds the bloc's lock, so it has written the lock
+// file by then, and the dry run, which takes no lock, writes nothing.
 func TestVaultCommands_VaultInBothDirsRefuseBeforeTouchingAnything(t *testing.T) {
-	commands := map[string]func() error{
-		"inception": func() error { return ensureInceptionVault(vaultBlocDirTestBloc, false) },
-		"start":     runVaultStart,
-		"teardown":  func() error { return runVaultTeardown(true) },
-		"migrate-storage": func() error {
+	commands := map[string]struct {
+		run   func() error
+		locks bool
+	}{
+		"inception": {run: func() error { return ensureInceptionVault(vaultBlocDirTestBloc, false) }, locks: true},
+		"start":     {run: runVaultStart, locks: true},
+		"teardown":  {run: func() error { return runVaultTeardown(true) }, locks: true},
+		"migrate-storage": {run: func() error {
 			return runVaultMigrateStorage(io.Discard, false)
-		},
-		"migrate-storage dry run": func() error {
+		}, locks: true},
+		"migrate-storage dry run": {run: func() error {
 			return runVaultMigrateStorage(io.Discard, true)
-		},
+		}},
 	}
 
-	for name, run := range commands {
+	for name, command := range commands {
 		t.Run(name, func(t *testing.T) {
 			xdgDir, legacyDir := vaultBlocDirs(t)
 			writeTestVault(t, xdgDir)
@@ -106,7 +112,7 @@ func TestVaultCommands_VaultInBothDirsRefuseBeforeTouchingAnything(t *testing.T)
 			t.Cleanup(viper.Reset)
 			viper.Set("bloc", vaultBlocDirTestBloc)
 
-			err := run()
+			err := command.run()
 			if !errors.Is(err, config.ErrBlocVaultInBothDirs) {
 				t.Fatalf("error = %v, want ErrBlocVaultInBothDirs", err)
 			}
@@ -115,7 +121,12 @@ func TestVaultCommands_VaultInBothDirsRefuseBeforeTouchingAnything(t *testing.T)
 				t.Errorf("vault start error = %v, want it to wrap ErrVaultStartRefused", err)
 			}
 
-			mustNotExist(t, filepath.Join(config.StateHome(), vaultBlocDirTestBloc, inceptionLockFileName))
+			lockFile := filepath.Join(config.StateHome(), vaultBlocDirTestBloc, inceptionLockFileName)
+			if command.locks {
+				mustExist(t, lockFile)
+			} else {
+				mustNotExist(t, lockFile)
+			}
 
 			for _, dir := range []string{xdgDir, legacyDir} {
 				entries, readErr := os.ReadDir(filepath.Join(dir, "vault"))
@@ -132,5 +143,68 @@ func TestVaultCommands_VaultInBothDirsRefuseBeforeTouchingAnything(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+// A vault command builds its lock's path from the bloc name alone and
+// resolves the bloc's directory only once it holds the lock. A run that
+// waited while 'ocfp config migrate' moved the bloc therefore works on the
+// directory the bloc moved to, rather than starting over in the one it left.
+func TestLockedInceptionPaths_ResolveWhereTheBlocIsOnceTheLockIsFree(t *testing.T) {
+	xdgDir, legacyDir := vaultBlocDirs(t)
+	writeTestVault(t, legacyDir)
+
+	resolved := make(chan string, 1)
+
+	err := config.WithFileLock(inceptionLockPath(vaultBlocDirTestBloc, false), time.Second, func() error {
+		go func() {
+			runErr := withLockedInceptionPaths(vaultBlocDirTestBloc, false, nil, func(paths map[string]string) error {
+				resolved <- paths["vaultDir"]
+
+				return nil
+			})
+			if runErr != nil {
+				resolved <- "error: " + runErr.Error()
+			}
+		}()
+
+		// A run that resolved before it waited would see only the legacy
+		// directory, and it has had time to do so by now.
+		time.Sleep(200 * time.Millisecond)
+
+		mkErr := os.MkdirAll(filepath.Dir(xdgDir), 0o700)
+		if mkErr != nil {
+			return mkErr
+		}
+
+		return os.Rename(legacyDir, xdgDir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-resolved:
+		if want := filepath.Join(xdgDir, "vault", "data"); got != want {
+			t.Errorf("the waiting run resolved %q, want %q", got, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting run never took the lock")
+	}
+}
+
+// The lock's path depends only on the bloc name and the test mode, and it is
+// the path getVaultInceptionPaths reports.
+func TestInceptionLockPath_MatchesTheResolvedPaths(t *testing.T) {
+	_, legacyDir := vaultBlocDirs(t)
+	writeTestVault(t, legacyDir)
+
+	for _, bloc := range []string{"", vaultBlocDirTestBloc} {
+		for _, testMode := range []bool{false, true} {
+			paths := mustInceptionPaths(t, bloc, testMode)
+			if got := inceptionLockPath(bloc, testMode); got != paths["lockFile"] {
+				t.Errorf("inceptionLockPath(%q, %v) = %q, want %q", bloc, testMode, got, paths["lockFile"])
+			}
+		}
 	}
 }
