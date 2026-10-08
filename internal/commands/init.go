@@ -323,10 +323,21 @@ func (f *initFlags) initializeBastionFromFlags(ctx context.Context, cfg *config.
 		return err
 	}
 
-	return runBastionInit(ctx, cfg, mode, bastionRunParams{
+	return runBastionInit(ctx, cfg, mode, f.bastionRunParams())
+}
+
+// initializeBastionFull runs the full bastion init. "init all" refuses the
+// mode flags before it gets here, so it never has a narrow mode to pick.
+func (f *initFlags) initializeBastionFull(ctx context.Context, cfg *config.Config) error {
+	return runBastionInit(ctx, cfg, bastionModeFull, f.bastionRunParams())
+}
+
+// bastionRunParams collects the settings every bastion init mode shares.
+func (f *initFlags) bastionRunParams() bastionRunParams {
+	return bastionRunParams{
 		force: f.force, parallel: f.parallel, dryRun: f.dryRun,
 		resume: f.resume, verbose: f.verbose, reboot: f.reboot,
-	})
+	}
 }
 
 // initializeAllComponents initializes all components in proper order.
@@ -339,7 +350,7 @@ func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Con
 		fn   func() error
 	}{
 		{"bastion", func() error {
-			return f.initializeBastionFromFlags(ctx, cfg)
+			return f.initializeBastionFull(ctx, cfg)
 		}},
 		{"PostgreSQL", initializePostgreSQL},
 		{"BOSH", func() error { return initializeBOSH(ctx, cfg) }},
@@ -384,6 +395,8 @@ Bastion Initialization Modes (at most one, and only with the bastion component):
 
 Init refuses a mode flag on any other component, including all, before it
 asks anything, and the error names the bastion command to run instead.
+"ocfp bastion init" takes the --genesis, --ocfp, and --vault-boot-unit modes
+and does the same work. The config-only mode is on "ocfp init bastion" alone.
 
 A mode runs on an already provisioned bastion too, and every mode except
 --config does the same work from a workstation as on the bastion itself.
@@ -1005,7 +1018,7 @@ func (m bastionInitMode) text() bastionModeText {
 	switch m {
 	case bastionModeGenesis:
 		return bastionModeText{"\n⚙️  Installing/updating Genesis and related components...\n",
-			"Genesis installation", "Genesis installation completed successfully"}
+			"genesis installation", "Genesis installation completed successfully"}
 	case bastionModeOCFP:
 		return bastionModeText{"\n🔧 Installing/updating OCFP CLI binary to bastion...\n",
 			"OCFP CLI installation", "OCFP CLI installation completed successfully"}
@@ -1016,10 +1029,38 @@ func (m bastionInitMode) text() bastionModeText {
 		return bastionModeText{"\n🔧 Installing the inception vault boot unit...\n",
 			"vault boot unit install", "Vault boot unit installed and enabled"}
 	case bastionModeFull:
+		fallthrough
+	default:
 		return bastionModeText{"", "bastion initialization", "Bastion initialization completed successfully"}
 	}
+}
 
-	return bastionModeText{"", "bastion initialization", "Bastion initialization completed successfully"}
+// failedHeading is the failure name with a capital first letter, for the line
+// printed to the operator. The error itself keeps the lower-case form.
+func (t bastionModeText) failedHeading() string {
+	if t.failed == "" {
+		return ""
+	}
+
+	return strings.ToUpper(t.failed[:1]) + t.failed[1:]
+}
+
+// String names the mode for logs.
+func (m bastionInitMode) String() string {
+	switch m {
+	case bastionModeGenesis:
+		return "genesis"
+	case bastionModeOCFP:
+		return "ocfp"
+	case bastionModeConfig:
+		return "config"
+	case bastionModeVaultBootUnit:
+		return "vault-boot-unit"
+	case bastionModeFull:
+		fallthrough
+	default:
+		return "full"
+	}
 }
 
 // runBastionInit performs bastion initialization in a mode. Both
@@ -1028,7 +1069,7 @@ func (m bastionInitMode) text() bastionModeText {
 func runBastionInit(ctx context.Context, cfg *config.Config, mode bastionInitMode, params bastionRunParams) error {
 	log := logger.Get()
 	text := mode.text()
-	log.Infow("Initializing bastion host", "mode", int(mode))
+	log.Infow("Initializing bastion host", "mode", mode.String())
 
 	if text.start != "" {
 		_, _ = fmt.Fprint(os.Stdout, text.start)
@@ -1038,7 +1079,7 @@ func runBastionInit(ctx context.Context, cfg *config.Config, mode bastionInitMod
 	err := bastion.InitializeBastionWithMode(ctx, cfg, buildBastionOptions(mode, params))
 	if err != nil {
 		if mode != bastionModeFull {
-			_, _ = fmt.Fprintf(os.Stdout, "❌ %s failed: %v\n\n", text.failed, err)
+			_, _ = fmt.Fprintf(os.Stdout, "❌ %s failed: %v\n\n", text.failedHeading(), err)
 		}
 
 		return fmt.Errorf("%s failed: %w", text.failed, err)
