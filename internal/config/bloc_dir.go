@@ -220,7 +220,7 @@ func blocVaultInBothDirsError(blocName, newPath, legacyPath string) error {
 
 	return fmt.Errorf("%w: bloc %s has a vault in %s and another in %s. ocfp will not guess which one holds "+
 		"the secrets the bloc needs, so it has left both as they are and will use neither until one is set aside. "+
-		"First make sure they really are two vaults, because a link can make one vault show up in both places. "+
+		"First make sure they are two vaults, because a link can make one vault show up in both places. "+
 		"Run 'ls -l %s %s' and 'realpath %s %s'. If either listing shows a link, such as a data directory or a "+
 		"key file that points into the other vault directory, there may be only one vault behind both paths, "+
 		"so move nothing and sort out the link by hand, because moving a directory that a link points into "+
