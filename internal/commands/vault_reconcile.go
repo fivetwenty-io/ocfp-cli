@@ -113,6 +113,10 @@ type inceptionSteps struct {
 	// targetToken returns the root token safe holds for the bloc's own
 	// target, read before a stop deletes that target.
 	targetToken func(paths map[string]string) string
+	// safeTarget reads and sets safe's current target, so that a run that
+	// brings back the bloc's existing vault can put back the target that
+	// was current before it.
+	safeTarget safeCurrentTargetSteps
 	// now stamps archive names.
 	now func() time.Time
 }
@@ -129,6 +133,11 @@ type inceptionRun struct {
 	// held it since. Both are empty when safe had no such target.
 	targetToken     string
 	targetTokenFile string
+
+	// createdVault reports that the run started a new, empty vault, whose
+	// target stays safe's current one. A new vault that failed to start
+	// leaves it false, so the earlier target is put back.
+	createdVault bool
 }
 
 // reconcileInceptionVault brings a bloc's inception vault from whatever state
@@ -155,6 +164,17 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	if err != nil {
 		return err
 	}
+
+	// Registering the bloc's target again, and starting its vault, both
+	// make the bloc's target safe's current one. Whatever was current
+	// before is put back however the run ends, unless the run created a new
+	// vault, which stays current as it always has.
+	earlier := rememberSafeCurrentTarget(ctx, run.steps.safeTarget)
+	defer func() {
+		if !run.createdVault {
+			putBackSafeCurrentTarget(ctx, run.steps.safeTarget, earlier, paths["vaultName"], run.log)
+		}
+	}()
 
 	if found.healthy {
 		return run.keepHealthy(ctx)
@@ -512,6 +532,9 @@ type vaultStartSteps struct {
 	// targetToken returns the root token safe holds for the bloc's target,
 	// read before a stop deletes that target.
 	targetToken func(paths map[string]string) string
+	// safeTarget reads and sets safe's current target, so that the restart
+	// can put back the target that was current before it.
+	safeTarget safeCurrentTargetSteps
 	// now stamps the copy of a kept target token.
 	now func() time.Time
 }
@@ -545,6 +568,7 @@ func wireVaultStartSteps(
 			return finish(ctx, tools.safe, paths, log)
 		},
 		targetToken: blocTargetToken,
+		safeTarget:  newSafeCurrentTargetSteps(tools.safe),
 		now:         time.Now,
 	}
 }
@@ -612,6 +636,13 @@ func restartInceptionVaultInPlace(ctx context.Context, run *vaultStartRun) error
 	if err != nil {
 		return refuseVaultStart(err)
 	}
+
+	// From the stop on, safe's current target can move, because the stop
+	// deletes the bloc's target and the restart registers it again and makes
+	// it current. Whatever was current before is put back however the run
+	// ends.
+	earlier := rememberSafeCurrentTarget(ctx, run.steps.safeTarget)
+	defer putBackSafeCurrentTarget(ctx, run.steps.safeTarget, earlier, paths["vaultName"], run.log)
 
 	// Stopping deletes the bloc's safe target, which may hold the only copy
 	// of the root token, so it is kept first, as reconcile keeps it.
@@ -1436,6 +1467,8 @@ func (run *inceptionRun) fresh(ctx context.Context) error {
 
 	err := run.steps.start(ctx, paths, run.tools, safeLocalFresh, run.log)
 	if err == nil {
+		run.createdVault = true
+
 		return run.steps.finish(ctx, paths, safeLocalFresh, run.log)
 	}
 

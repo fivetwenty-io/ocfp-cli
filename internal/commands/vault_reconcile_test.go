@@ -47,6 +47,24 @@ type fakeInception struct {
 	disableErr     error                                                               // what teardown's boot unit disable returns
 	cleanupErr     error                                                               // what teardown's cleanup returns instead of running
 	calls          []string
+
+	// safeCurrent is safe's current target, the one a bare safe command
+	// uses. A start, a finish, and a retarget make the bloc's target
+	// current, as safe local and safe target do, and a stop that deletes
+	// the bloc's target while it is current leaves no target current.
+	safeCurrent string
+	// safeCurrentErr is what every read of the current target returns.
+	safeCurrentErr error
+	// setCurrentErr is what every attempt to make a target current returns.
+	setCurrentErr error
+	// currentSets lists each target the run tried to make current again.
+	currentSets []string
+}
+
+// targetBloc does what safe local and safe target do to safe's current
+// target: they make the bloc's target current.
+func (f *fakeInception) targetBloc(paths map[string]string) {
+	f.safeCurrent = paths["vaultName"]
 }
 
 // rootTokenWorks is the fake check of root.key against the running vault.
@@ -74,12 +92,16 @@ func (f *fakeInception) steps() inceptionSteps {
 		targetRegistered: func(context.Context, map[string]string) bool {
 			return f.target
 		},
-		retarget: func(context.Context, map[string]string, *zap.SugaredLogger) error {
+		retarget: func(_ context.Context, paths map[string]string, _ *zap.SugaredLogger) error {
 			f.record("retarget")
+
+			if f.retargetErr == nil {
+				f.targetBloc(paths)
+			}
 
 			return f.retargetErr
 		},
-		stop: func(context.Context, map[string]string, *zap.SugaredLogger) error {
+		stop: func(_ context.Context, paths map[string]string, _ *zap.SugaredLogger) error {
 			f.record("stop")
 
 			err := popErr(&f.stopErrs)
@@ -88,6 +110,11 @@ func (f *fakeInception) steps() inceptionSteps {
 				// holds the token once the vault is down. A token read
 				// after the stop is therefore always gone.
 				f.targetToken = ""
+
+				// Deleting the current target leaves none current.
+				if f.safeCurrent == paths["vaultName"] {
+					f.safeCurrent = ""
+				}
 			}
 
 			return err
@@ -99,6 +126,7 @@ func (f *fakeInception) steps() inceptionSteps {
 		},
 		start: func(_ context.Context, paths map[string]string, _ inceptionTools, mode safeLocalMode, _ *zap.SugaredLogger) error {
 			f.record("start " + modeName(mode))
+			f.targetBloc(paths)
 
 			if mode == safeLocalRestart {
 				f.tokenFiles = append(f.tokenFiles, paths["rootKeyFile"])
@@ -110,8 +138,9 @@ func (f *fakeInception) steps() inceptionSteps {
 
 			return popErr(&f.startErrs)
 		},
-		finish: func(_ context.Context, _ map[string]string, mode safeLocalMode, _ *zap.SugaredLogger) error {
+		finish: func(_ context.Context, paths map[string]string, mode safeLocalMode, _ *zap.SugaredLogger) error {
 			f.record("finish " + modeName(mode))
+			f.targetBloc(paths)
 
 			return f.finishErr
 		},
@@ -134,7 +163,27 @@ func (f *fakeInception) steps() inceptionSteps {
 			return f.recoverErr
 		},
 		targetToken: func(map[string]string) string { return f.targetToken },
-		now:         func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
+		safeTarget: safeCurrentTargetSteps{
+			current: func(context.Context) (string, error) {
+				if f.safeCurrentErr != nil {
+					return "", f.safeCurrentErr
+				}
+
+				return f.safeCurrent, nil
+			},
+			setCurrent: func(_ context.Context, name string) error {
+				f.currentSets = append(f.currentSets, name)
+
+				if f.setCurrentErr != nil {
+					return f.setCurrentErr
+				}
+
+				f.safeCurrent = name
+
+				return nil
+			},
+		},
+		now: func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
 	}
 }
 
