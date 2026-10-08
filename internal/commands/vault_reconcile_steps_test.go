@@ -200,6 +200,20 @@ func TestInceptionClusterPortFree(t *testing.T) {
 	require.NoError(t, inceptionClusterPortFree(context.Background(), port))
 }
 
+// The dry run's check reports a port in use only when something accepts a
+// connection on it, and it never binds the port itself.
+func TestInceptionClusterPortAnswers(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+
+	require.ErrorIs(t, inceptionClusterPortAnswers(context.Background(), port), errClusterPortAnswers)
+	require.NoError(t, ln.Close())
+	require.NoError(t, inceptionClusterPortAnswers(context.Background(), port))
+}
+
 // The fast path reads every registered target rather than the current one,
 // which any sibling bloc can move.
 func TestInceptionTargetRegistered(t *testing.T) {

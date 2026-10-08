@@ -51,6 +51,11 @@ func (f *fakeInception) migrateStorageSteps(canMigrateErr error, probes ...vault
 		engine:         testTools().engine,
 		engineVersion:  func(context.Context) string { return "OpenBao v2.7.0 (test build)" },
 		rootTokenWorks: f.rootTokenWorks,
+		clusterPortInUse: func(_ context.Context, port string) error {
+			f.record("cluster-dial " + port)
+
+			return f.clusterPortErr
+		},
 	}
 }
 
@@ -978,4 +983,73 @@ func TestMigrateStorage_DryRunSaysItWillTryAnEngineOfUnknownVersion(t *testing.T
 	assert.Contains(t, out.String(), "can migrate: it has 'operator migrate', but ocfp cannot read its version")
 	assert.Contains(t, out.String(), "a real run will try the copy")
 	assert.NotContains(t, out.String(), "can migrate: yes")
+}
+
+// The dry run takes no lock, so binding the cluster port, even for a moment,
+// could make a real run's restart fail to bind it. The dry run only dials
+// the port, and it reports the port in use when something accepts the
+// connection. The bind step fails the test if anything calls it.
+func TestMigrateStorage_DryRunDialsTheClusterPortAndNeverBindsIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		dialErr error
+		say     string
+	}{
+		"nothing answers":   {say: "cluster port: %s, nothing accepts connections on it"},
+		"something answers": {dialErr: errors.New("something accepts connections on it"), say: "cluster port: %s, in use"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			fake := &fakeInception{probe: stoppedProbe()}
+			steps := fake.migrateStorageSteps(nil)
+			steps.vaultStart.clusterPortFree = func(context.Context, string) error {
+				t.Error("the dry run bound the cluster port")
+
+				return nil
+			}
+
+			var dialed []string
+
+			steps.clusterPortInUse = func(_ context.Context, port string) error {
+				dialed = append(dialed, port)
+
+				return tc.dialErr
+			}
+
+			var out bytes.Buffer
+
+			err := reportInceptionVaultStorage(context.Background(), newMigrateStorageRun(paths, steps, &out))
+			if tc.dialErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrInceptionClusterPortTaken)
+			}
+
+			assert.Equal(t, []string{paths["clusterPort"]}, dialed, "the dry run dials the port once")
+			assert.Contains(t, out.String(), fmt.Sprintf(tc.say, paths["clusterPort"]))
+		})
+	}
+}
+
+// A real run still binds the cluster port, the stricter check, and never
+// settles for the dial.
+func TestMigrateStorage_RealRunBindsTheClusterPort(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
+	steps := fake.migrateStorageSteps(nil)
+	steps.clusterPortInUse = func(context.Context, string) error {
+		t.Error("the real run dialed the cluster port instead of binding it")
+
+		return nil
+	}
+
+	var out bytes.Buffer
+
+	require.NoError(t, migrateInceptionVaultStorage(context.Background(), newMigrateStorageRun(paths, steps, &out)))
+	assert.Contains(t, fake.calls, "cluster-port "+paths["clusterPort"])
 }
