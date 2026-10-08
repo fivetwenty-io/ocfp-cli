@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,9 +197,11 @@ every bloc that is up. Stop each vault with 'tmux kill-session -t
 Destination directories that already exist are merged: ordinary ocfp use
 writes command locks and per-bloc logs under the XDG state directory long
 before a migration, and that content is kept alongside what moves in. The
-command refuses to move anything only when a file would be overwritten,
-listing every such conflict so you can resolve them manually; no files are
-moved when a conflict is found.`,
+command refuses to move anything when a file would be overwritten, or
+when a bloc's vault directory holds something in both the legacy and the
+XDG directory, because it will not merge two vaults. It lists every such
+conflict so you can resolve them by hand, and it moves no files when it
+finds one.`,
 		Example: `  # Preview what would move, without changing anything
   ocfp config migrate --dry-run
 
@@ -441,17 +444,55 @@ func migrateDestinationFor(class migrateEntryClass, name string) string {
 // migration, so refusing on those would make the command impossible to run
 // on exactly the machines it exists for. Such directories are merged by
 // moveMigrateEntry; only a file that would be overwritten, or a directory
-// that would land on a non-directory, counts as a conflict.
+// that would land on a non-directory, counts as a conflict. The one
+// exception is a bloc's vault/, which is one unit: when it holds something
+// on both sides, the bloc has a vault in each, and merging them would hide
+// which side held what, so that is a conflict too.
 func conflictingMigrateDestinations(plan []migratePlanEntry) []string {
 	conflicts := make([]string, 0, len(plan))
 
 	for _, entry := range plan {
+		if entry.class == migrateClassDataOther {
+			conflicts = append(conflicts, blocVaultConflict(entry.src, entry.dst)...)
+		}
+
 		conflicts = append(conflicts, migrateConflictsBetween(entry.src, entry.dst)...)
 	}
 
 	sort.Strings(conflicts)
 
 	return conflicts
+}
+
+// blocVaultConflict reports a bloc whose vault/ holds something in both the
+// legacy and the XDG directory. A vault/ that is a link to the other is
+// refused too, because moving it would strand the vault behind the link.
+func blocVaultConflict(src, dst string) []string {
+	srcVault, dstVault := filepath.Join(src, "vault"), filepath.Join(dst, "vault")
+	if !vaultDirHoldsSomething(srcVault) || !vaultDirHoldsSomething(dstVault) {
+		return nil
+	}
+
+	return []string{fmt.Sprintf("%s (holds an inception vault, and so does %s; ocfp will not merge two vaults, "+
+		"so move one of them aside by hand)", dstVault, srcVault)}
+}
+
+// vaultDirHoldsSomething reports whether a vault/ directory holds anything,
+// counting an entry that is not a directory, and a directory that cannot be
+// read, as holding something.
+func vaultDirHoldsSomething(dir string) bool {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return !errors.Is(err, fs.ErrNotExist)
+	}
+
+	if !info.IsDir() {
+		return true
+	}
+
+	entries, err := os.ReadDir(dir)
+
+	return err != nil || len(entries) > 0
 }
 
 // migrateConflictsBetween walks src and reports every path under it that
