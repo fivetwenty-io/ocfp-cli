@@ -247,6 +247,35 @@ func inceptionClusterPortFree(ctx context.Context, port string) error {
 	return ln.Close()
 }
 
+// clusterPortDialTimeout bounds the dry run's dial of the cluster port. A
+// listener on loopback answers at once, so a dial that takes longer finds
+// nothing there.
+const clusterPortDialTimeout = time.Second
+
+// errClusterPortAnswers reports a cluster port on which something accepts
+// connections.
+var errClusterPortAnswers = errors.New("something accepts connections on it")
+
+// inceptionClusterPortAnswers dials the cluster port on loopback and reports
+// it in use when something accepts the connection. It never binds the port,
+// so a dry run cannot take it from a real run's restart for even a moment.
+// It cannot see a port that is bound but not listening, which the real
+// run's bind still catches.
+func inceptionClusterPortAnswers(ctx context.Context, port string) error {
+	dialer := net.Dialer{Timeout: clusterPortDialTimeout}
+
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		// A refused or timed-out dial means nothing accepts connections
+		// there, which is the answer, not a failure.
+		return nil //nolint:nilerr // the dial's failure is the result
+	}
+
+	_ = conn.Close()
+
+	return errClusterPortAnswers
+}
+
 // safeTarget is one entry of `safe targets --json`.
 type safeTarget struct {
 	Name string `json:"name"`
