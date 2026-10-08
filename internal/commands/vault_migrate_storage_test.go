@@ -842,3 +842,140 @@ func TestMigrateStorage_CannotReachArchiveOrFreshStart(t *testing.T) {
 		assert.False(t, reached[name] || named[name], "migrate-storage can reach %s", name)
 	}
 }
+
+// fakeVersionedEngineScript is a stand-in for vault or bao that has
+// 'operator migrate' and answers 'version' with the contents of the file
+// named version beside it. Every invocation is appended to calls, so a test
+// can see that no migration was run.
+const fakeVersionedEngineScript = `
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/calls"
+case "$*" in
+  "operator migrate -h")
+    printf 'Usage: %s operator migrate [options]\n\n  This command starts a storage backend migration.\n' "$(basename "$0")"
+    exit 0 ;;
+  "version")
+    cat "$dir/version"
+    exit 0 ;;
+esac
+printf 'Unknown command\n' >&2
+exit 1
+`
+
+// installVersionedEngine writes a fake engine named name that reports
+// version, and returns the tools that use it and its directory.
+func installVersionedEngine(t *testing.T, name, version string) (inceptionTools, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := writeFakeExecutable(t, dir, name, fakeVersionedEngineScript)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "version"), []byte(version), 0o600))
+
+	return inceptionTools{safe: "/opt/safe/bin/safe", engine: inceptionEngine{name: name, path: path}}, dir
+}
+
+// An engine can have 'operator migrate' and still be unable to read file
+// storage, as OpenBao 2.8 and later cannot. The engine check behind
+// migrate-storage reads the version the engine reports, so a vault binary
+// that is really OpenBao is judged by what it says it is, and an engine
+// whose version cannot be read is left for the copy to judge.
+func TestMigrateStorageSteps_CanMigrateNeedsAnEngineThatReadsFileStorage(t *testing.T) {
+	for name, tc := range map[string]struct {
+		engine  string
+		version string
+		refuse  bool
+	}{
+		"OpenBao 2.7":              {engine: "bao", version: "OpenBao v2.7.3 (abc123), built 2026-01-01T00:00:00Z\n"},
+		"OpenBao 2.8":              {engine: "bao", version: "OpenBao v2.8.0 (abc123), built 2026-06-01T00:00:00Z\n", refuse: true},
+		"OpenBao 2.8 pre-release":  {engine: "bao", version: "OpenBao v2.8.0-beta1 (abc123)\n", refuse: true},
+		"OpenBao 2.8 tag on minor": {engine: "bao", version: "OpenBao v2.8-rc1 (abc123)\n", refuse: true},
+		"OpenBao 2.10":             {engine: "bao", version: "OpenBao v2.10.1 (abc123)\n", refuse: true},
+		"OpenBao 3.0":              {engine: "bao", version: "OpenBao v3.0.0 (abc123)\n", refuse: true},
+		"OpenBao 1.9":              {engine: "bao", version: "OpenBao v1.9.0 (abc123)\n"},
+		"vault that is OpenBao":    {engine: "vault", version: "OpenBao v2.8.1 (abc123)\n", refuse: true},
+		"HashiCorp Vault":          {engine: "vault", version: "Vault v1.18.3 (abc123), built 2025-12-01T00:00:00Z\n"},
+		"no version":               {engine: "bao", version: ""},
+		"version that is not one":  {engine: "bao", version: "OpenBao vnext\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tools, dir := installVersionedEngine(t, tc.engine, tc.version)
+
+			err := newMigrateStorageSteps(tools).canMigrate(context.Background())
+
+			for _, call := range engineCalls(t, dir) {
+				assert.Contains(t, []string{"operator migrate -h", "version"}, call, "the check only asks")
+			}
+
+			if !tc.refuse {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.ErrorIs(t, err, ErrEngineCannotReadFile)
+			assert.Contains(t, err.Error(), tools.engine.path)
+			assert.Contains(t, err.Error(), strings.TrimSpace(strings.SplitN(tc.version, "\n", 2)[0]))
+			assert.Contains(t, err.Error(), "SAFE_ENGINE")
+		})
+	}
+}
+
+// A real run with an engine that cannot read file storage refuses before it
+// stops or writes anything, so the vault keeps serving on its file store
+// rather than being stopped for a copy that cannot succeed. The dry run
+// reports the same refusal.
+func TestMigrateStorage_EngineWithoutFileStorageRefusesBeforeTheStop(t *testing.T) {
+	for name, probe := range map[string]vaultProbe{
+		"running vault": sealedFileProbe(),
+		"stopped vault": stoppedProbe(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeFileData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			tools, _ := installVersionedEngine(t, "bao", "OpenBao v2.8.0 (abc123)\n")
+			fake := &fakeInception{probe: probe, session: true, migrate: fakeMigration(t)}
+			steps := fake.migrateStorageSteps(nil)
+			steps.canMigrate = newMigrateStorageSteps(tools).canMigrate
+
+			before := treeDigest(t, blocDir(paths))
+
+			var out bytes.Buffer
+
+			err := migrateInceptionVaultStorage(context.Background(), newMigrateStorageRun(paths, steps, &out))
+			require.ErrorIs(t, err, ErrEngineCannotReadFile)
+			assert.NotContains(t, fake.calls, "stop")
+			assert.NotContains(t, fake.calls, "migrate")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+			assertNeverReplaced(t, paths, fake)
+
+			out.Reset()
+
+			err = reportInceptionVaultStorage(context.Background(), newMigrateStorageRun(paths, steps, &out))
+			require.ErrorIs(t, err, ErrEngineCannotReadFile)
+			assert.Contains(t, out.String(), "can migrate: no")
+			assert.Contains(t, out.String(), "would refuse")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+		})
+	}
+}
+
+// An engine whose version cannot be read is not refused, and the dry run
+// says the command will try and why, rather than reporting a plain yes.
+func TestMigrateStorage_DryRunSaysItWillTryAnEngineOfUnknownVersion(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeFileData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{probe: stoppedProbe()}
+	steps := fake.migrateStorageSteps(nil)
+	steps.engineVersion = func(context.Context) string { return engineVersionUnknown }
+
+	var out bytes.Buffer
+
+	require.NoError(t, reportInceptionVaultStorage(context.Background(), newMigrateStorageRun(paths, steps, &out)))
+	assert.Contains(t, out.String(), "can migrate: it has 'operator migrate', but ocfp cannot read its version")
+	assert.Contains(t, out.String(), "a real run will try the copy")
+	assert.NotContains(t, out.String(), "can migrate: yes")
+}
