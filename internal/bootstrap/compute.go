@@ -1655,8 +1655,7 @@ func (m *Manager) createLocalKeyPair(ctx context.Context, computeMgr cpi.Compute
 
 	publicKeyStr := strings.TrimSpace(string(publicKeyData))
 
-	// DEBUG: Log first 50 bytes of privateKeyData for verification
-	logger.Debugf("generateLocalSSHKeyPair returned privateKeyData (first 50 bytes): %s...", string(privateKeyData[:min(50, len(privateKeyData))])) //nolint:mnd
+	logger.Debugf("generateLocalSSHKeyPair returned a private key of %d bytes", len(privateKeyData))
 	logger.Debugf("generateLocalSSHKeyPair returned publicKeyStr: %s", publicKeyStr)
 	logger.Debugf("Keys were read from existing file: %v", wasReadFromFile)
 
@@ -1680,9 +1679,6 @@ func (m *Manager) createLocalKeyPair(ctx context.Context, computeMgr cpi.Compute
 		PublicKey:  publicKeyStr,
 		PrivateKey: string(privateKeyData),
 	}
-
-	// DEBUG: Log keypair.PrivateKey that will be saved
-	logger.Debugf("keypair.PrivateKey (first 50 bytes): %s...", keypair.PrivateKey[:min(50, len(keypair.PrivateKey))]) //nolint:mnd
 
 	// Return the inverse of wasReadFromFile:
 	// - If read from existing file (wasReadFromFile=true), DON'T save again (return false)
@@ -2081,8 +2077,7 @@ func (m *Manager) savePrivateKey(privateKey, publicKey string) error {
 	keyDir := config.OcfpSSHKeyDir(m.options.BlocName)
 	keyFile := filepath.Join(keyDir, "id_ed25519")
 
-	// DEBUG: Log what we're about to save
-	logger.Debugf("savePrivateKey called with data (first 50 bytes): %s...", privateKey[:min(50, len(privateKey))]) //nolint:mnd
+	logger.Debugf("savePrivateKey called with a private key of %d bytes for %s", len(privateKey), keyFile)
 
 	// Create directory if it doesn't exist
 	err := os.MkdirAll(keyDir, sshKeyDirMode) // #nosec -- path components are from trusted config
