@@ -50,8 +50,9 @@ var (
 	ErrInceptionClusterPortTaken = errors.New("the inception vault cluster port is taken")
 
 	// ErrVaultDataMixed reports a data directory that holds both raft and
-	// file storage, which only a person can sort out.
-	ErrVaultDataMixed = errors.New("the inception vault data holds both raft and file storage")
+	// file storage, or one ocfp cannot examine, such as a link into a disk
+	// that is not mounted, which only a person can sort out.
+	ErrVaultDataMixed = errors.New("the inception vault data holds both raft and file storage, or ocfp cannot examine it")
 
 	// ErrInceptionTargetLost reports a healthy vault that safe has no target
 	// for and that ocfp has no root token to re-target.

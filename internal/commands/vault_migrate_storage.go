@@ -687,7 +687,7 @@ func describeVaultData(data vaultDataState) string {
 	case vaultDataAbsent:
 		return "no vault data"
 	case vaultDataMixed:
-		return "both file and raft storage, or an entry that could not be read"
+		return "both file and raft storage, or an entry that could not be examined"
 	case vaultDataFile, vaultDataRaft:
 	}
 
