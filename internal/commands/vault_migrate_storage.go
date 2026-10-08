@@ -45,6 +45,11 @@ type migrateStorageSteps struct {
 	// rootTokenWorks reports why the running vault does not take the token
 	// in root.key, if it does not.
 	rootTokenWorks func(ctx context.Context, paths map[string]string) error
+	// clusterPortInUse is the dry run's check of the cluster port. It only
+	// dials the port, and it reports the port in use when something accepts
+	// the connection, so the dry run never holds the port, even for a
+	// moment. A real run binds it instead, with vaultStart.clusterPortFree.
+	clusterPortInUse func(ctx context.Context, port string) error
 }
 
 // newMigrateStorageSteps wires the real migrate-storage actions, using the
@@ -62,7 +67,8 @@ func newMigrateStorageSteps(tools inceptionTools) migrateStorageSteps {
 		engineVersion: func(ctx context.Context) string {
 			return inceptionEngineVersion(ctx, tools.engine)
 		},
-		rootTokenWorks: checkInceptionRootToken,
+		rootTokenWorks:   checkInceptionRootToken,
+		clusterPortInUse: inceptionClusterPortAnswers,
 	}
 }
 
@@ -195,6 +201,9 @@ type migrateStorageFindings struct {
 	canMigrateErr      error
 	clusterPortChecked bool
 	clusterPortErr     error
+	// clusterPortDialed reports that the cluster port was only dialed, as
+	// the dry run does, rather than bound.
+	clusterPortDialed bool
 
 	action migrateStorageAction
 }
@@ -232,6 +241,27 @@ type migrateStorageRun struct {
 	// out is where the command speaks to the operator: the dry run's report
 	// and the outcome of a run that changed nothing.
 	out io.Writer
+	// dryRun reports that this pass is the dry run, which only dials the
+	// cluster port and never binds it.
+	dryRun bool
+}
+
+// checkClusterPort checks the cluster port before anything is stopped and
+// records the answer. The dry run takes no lock, so it only dials the port,
+// because a bind, however short, could make a real run's restart fail to
+// bind it. A real run binds it, which also catches a port that is bound but
+// does not accept connections.
+func (run *migrateStorageRun) checkClusterPort(ctx context.Context, found *migrateStorageFindings) {
+	found.clusterPortChecked = true
+
+	if run.dryRun {
+		found.clusterPortDialed = true
+		found.clusterPortErr = run.steps.clusterPortInUse(ctx, run.paths["clusterPort"])
+
+		return
+	}
+
+	found.clusterPortErr = run.steps.vaultStart.clusterPortFree(ctx, run.paths["clusterPort"])
 }
 
 // migrateInceptionVaultStorage is what 'ocfp vault migrate-storage' does. It
@@ -382,8 +412,7 @@ func (run *migrateStorageRun) plan(ctx context.Context) (*migrateStorageFindings
 	}
 
 	if !found.running() {
-		found.clusterPortChecked = true
-		found.clusterPortErr = run.steps.vaultStart.clusterPortFree(ctx, paths["clusterPort"])
+		run.checkClusterPort(ctx, found)
 
 		if found.clusterPortErr != nil {
 			found.action = migrateStorageRefuse
@@ -610,10 +639,13 @@ func alreadyOnRaftMessage(paths map[string]string, found *migrateStorageFindings
 
 // reportInceptionVaultStorage is migrate-storage's dry run. It runs the same
 // checks as the real run and reports what they found and what the real run
-// would do. It stops, starts, and writes nothing, and it never prints a key.
-// It fails with the same error the real run would refuse with.
+// would do. It stops, starts, and writes nothing, it never binds a port, and
+// it never prints a key. It checks the cluster port by dialing it, so it
+// fails with the error the real run would refuse with whenever something
+// accepts connections there.
 func reportInceptionVaultStorage(ctx context.Context, run *migrateStorageRun) error {
 	paths := run.paths
+	run.dryRun = true
 
 	found, planErr := run.plan(ctx)
 
@@ -632,8 +664,7 @@ func reportInceptionVaultStorage(ctx context.Context, run *migrateStorageRun) er
 	}
 
 	if !found.clusterPortChecked && !found.running() && found.action != migrateStorageNothingToDo {
-		found.clusterPortChecked = true
-		found.clusterPortErr = run.steps.vaultStart.clusterPortFree(ctx, paths["clusterPort"])
+		run.checkClusterPort(ctx, found)
 	}
 
 	var b strings.Builder
@@ -796,6 +827,8 @@ func describeClusterPort(found *migrateStorageFindings) string {
 	switch {
 	case found.clusterPortChecked && found.clusterPortErr != nil:
 		return "in use, " + found.clusterPortErr.Error()
+	case found.clusterPortDialed:
+		return "nothing accepts connections on it, and a real run binds it before it stops anything"
 	case found.clusterPortChecked:
 		return "free"
 	case found.running():
@@ -883,7 +916,8 @@ and the tmux session all stay where they were.
     unfinished copy is set aside and made again, and an unfinished swap is
     finished.
 
-With --dry-run, the command stops, starts, and writes nothing. It reports
+With --dry-run, the command stops, starts, and writes nothing, and it
+only dials the cluster port rather than binding it. It reports
 the storage, the paths, the engine and whether it can migrate, the ports,
 whether both keys are present, and whether an open vault takes the token in
 root.key, and then says what a real run would do.
