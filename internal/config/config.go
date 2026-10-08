@@ -141,16 +141,15 @@ func OcfpBlocDir(blocName string) (string, error) {
 	return resolveBlocDir(blocName, newPath, legacyPath)
 }
 
-// OcfpSSHKeyDir returns the SSH key directory path for a specific bloc.
-// Resolves under DataHome() with the same dual-read fallback as
-// OcfpBlocDir.
+// OcfpSSHKeyDir returns the SSH key directory path for a specific bloc. A
+// directory that holds an id_ed25519 or an id_rsa wins, so an empty XDG ssh
+// directory never hides the keys in the pre-migration ~/.ocfp layout. See
+// resolveSSHKeyDir for the full rules.
 func OcfpSSHKeyDir(blocName string) string {
 	newPath := filepath.Join(DataHome(), blocName, "ssh")
 	legacyPath := filepath.Join(OcfpHome(), blocName, "ssh")
 
-	path, _ := ResolveExisting(newPath, legacyPath)
-
-	return path
+	return resolveSSHKeyDir(newPath, legacyPath)
 }
 
 // testSafetyGuard panics if OCFP_TEST_SAFETY_GUARD is set and any of

@@ -58,6 +58,8 @@ When `--key` is not specified, the SSH key is searched in the following order:
 
 2. `~/.local/share/ocfp/{bloc}/ssh/id_rsa` (fallback)
 
+These paths are the current layout. A bloc whose keys still sit in the legacy `~/.ocfp/{bloc}/ssh` directory keeps using them, even when an empty `ssh` directory also exists under `~/.local/share/ocfp`, and ocfp prints a one-time notice that the legacy path is in use. When both directories hold keys, ocfp uses the ones under `~/.local/share/ocfp` and warns if they differ, unless only the legacy directory holds an `id_ed25519`, in which case it uses the legacy directory and still warns.
+
 Key permissions are verified and automatically corrected to `0600` if needed.
 
 ## When to Use RSync vs SCP
