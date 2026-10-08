@@ -907,23 +907,29 @@ docs/inception-vault.md describes the migration and how to roll it back.`,
 }
 
 // runVaultMigrateStorage executes the vault migrate-storage command. A real
-// run holds the bloc's inception vault lock throughout. A dry run takes no
-// lock, because taking it would write the lock file. A bloc whose directory
-// does not resolve, such as one with a vault in both of its directories, is
-// refused before either run takes the lock or looks at a vault.
+// run takes the bloc's inception vault lock, resolves the bloc's directory
+// under it, and holds it throughout. A dry run takes no lock, because taking
+// it would write the lock file. A bloc whose directory does not resolve,
+// such as one with a vault in both of its directories, is refused before
+// either run looks at a vault.
 func runVaultMigrateStorage(out io.Writer, dryRun bool) error {
 	blocName := viper.GetString("bloc")
+	testMode := viper.GetBool("test")
 
-	paths, err := getVaultInceptionPaths(blocName, viper.GetBool("test"))
-	if err != nil {
+	refuse := func(err error) error {
 		return fmt.Errorf("migrate-storage refused, and nothing was stopped or changed: %w", err)
 	}
 
 	if dryRun {
+		paths, err := getVaultInceptionPaths(blocName, testMode)
+		if err != nil {
+			return refuse(err)
+		}
+
 		return migrateInceptionVaultStorageWith(blocName, paths, out, reportInceptionVaultStorage)
 	}
 
-	return withInceptionVaultLock(paths, func() error {
+	return withLockedInceptionPaths(blocName, testMode, refuse, func(paths map[string]string) error {
 		return migrateInceptionVaultStorageWith(blocName, paths, out, migrateInceptionVaultStorage)
 	})
 }

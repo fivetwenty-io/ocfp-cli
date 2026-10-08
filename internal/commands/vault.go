@@ -467,7 +467,6 @@ func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, 
 	port := VaultInceptionPort
 	logDir := filepath.Join(config.GetLogDir(), "vault")
 	logFile := filepath.Join(logDir, VaultInceptionLogFile)
-	lockFile := filepath.Join(config.StateHome(), inceptionLockFileName)
 
 	if blocName != "" {
 		// A test-mode vault lives apart from the bloc's, so only a real one
@@ -499,9 +498,6 @@ func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, 
 		legacyLogDir := filepath.Join(config.OcfpHome(), blocName, VaultInceptionLogDir)
 		logDir, _ = config.ResolveExisting(newLogDir, legacyLogDir)
 		logFile = filepath.Join(logDir, VaultInceptionLogFile)
-		// The lock sits outside <bloc>/vault because the archive renames that
-		// directory while the lock is held.
-		lockFile = filepath.Join(config.StateHome(), blocName, inceptionLockFileName)
 	}
 
 	if testMode {
@@ -515,7 +511,6 @@ func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, 
 		tmuxSession = "test-inception-vault"
 		vaultName = "test-inception"
 		port = TestVaultInceptionPort
-		lockFile = filepath.Join(config.StateHome(), "test-"+inceptionLockFileName)
 	}
 
 	paths := map[string]string{
@@ -529,7 +524,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, 
 		"clusterPort":    "",
 		"logDir":         logDir,
 		"logFile":        logFile,
-		"lockFile":       lockFile,
+		"lockFile":       inceptionLockPath(blocName, testMode),
 	}
 
 	// An API port too high to leave room for its cluster port leaves the
@@ -1498,12 +1493,7 @@ func runVaultInception() error {
 // the vault is up before the artifacts step, instead of failing late (after
 // the bastion is created) on a dead vault.
 func ensureInceptionVault(blocName string, testMode bool) error {
-	paths, err := getVaultInceptionPaths(blocName, testMode)
-	if err != nil {
-		return err
-	}
-
-	return withInceptionVaultLock(paths, func() error {
+	return withLockedInceptionPaths(blocName, testMode, nil, func(paths map[string]string) error {
 		return ensureInceptionVaultLocked(blocName, paths)
 	})
 }
@@ -1612,14 +1602,10 @@ the boot unit.`,
 func runVaultStart() error {
 	blocName := viper.GetString("bloc")
 
-	paths, err := getVaultInceptionPaths(blocName, viper.GetBool("test"))
-	if err != nil {
-		return refuseVaultStart(err)
-	}
-
-	return withInceptionVaultLock(paths, func() error {
-		return startInceptionVaultLocked(blocName, paths)
-	})
+	return withLockedInceptionPaths(blocName, viper.GetBool("test"), refuseVaultStart,
+		func(paths map[string]string) error {
+			return startInceptionVaultLocked(blocName, paths)
+		})
 }
 
 // startInceptionVaultLocked does the work of vault start while the bloc's
@@ -1711,12 +1697,11 @@ func runVaultTeardown(force bool) error {
 	blocName := viper.GetString("bloc")
 	testMode := viper.GetBool("test")
 
-	paths, err := getVaultInceptionPaths(blocName, testMode)
-	if err != nil {
+	refuse := func(err error) error {
 		return fmt.Errorf("teardown refused: %w", err)
 	}
 
-	return withInceptionVaultLock(paths, func() error {
+	return withLockedInceptionPaths(blocName, testMode, refuse, func(paths map[string]string) error {
 		log.Info("=== Tearing Down Inception Vault ===")
 
 		steps := newTeardownSteps(teardownBootUnitBloc(blocName, testMode))
