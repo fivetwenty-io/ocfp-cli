@@ -93,7 +93,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "resume from last successful checkpoint")
 	cmd.Flags().BoolVar(&f.verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
-	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only sync configuration files to bastion (for bastion init)")
+	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only copy the workstation's configuration files to the bastion (for bastion init, run from the workstation)")
 	cmd.Flags().BoolVar(&f.genesisOnly, "genesis", false, "only install/update Genesis and related components (for bastion init)")
 	cmd.Flags().BoolVar(&f.reboot, "reboot", false, "reboot bastion after successful initialization (applies updates)")
 	cmd.Flags().StringVar(&f.secretsBackend, "secrets-backend", "", "genesis secrets deployment backend: openbao (default) or vault")
@@ -324,12 +324,16 @@ Components:
   bastion - Initialize bastion host
   all     - Initialize all components (default)
 
-Bastion Initialization Modes:
+Bastion Initialization Modes (at most one):
   --genesis  - Install/update only Genesis and related components
                (genesis CLI, yq, genesis kits, genesis config, deployments)
   --ocfp     - Install/update only OCFP CLI binary
-  --config   - Sync only configuration files to bastion
+  --config   - Copy only the workstation's configuration files to the bastion
+               (refused when run on the bastion, which has none to copy)
   (default)  - Full bastion initialization with all components
+
+A mode runs on an already provisioned bastion too, and every mode except
+--config does the same work from a workstation as on the bastion itself.
 
 The init command prepares and initializes the core components required
 for a Cloud Foundry deployment. It ensures proper ordering of component

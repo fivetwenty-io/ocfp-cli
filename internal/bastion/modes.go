@@ -236,27 +236,22 @@ func (le *LocalExecutor) Initialize(ctx context.Context) error {
 	// Load provisioning configuration
 	manager.provConfig = manager.loadProvisioningConfig()
 
-	// `--genesis` promises to install or update Genesis and nothing else. The
-	// remote path honours it (Manager.Initialize), this one did not, so a flag
-	// asked for in order to NARROW the work silently ran a full bastion
-	// re-provision instead. That is how a genesis-only update came to re-run
-	// vault_inception, which repoints safe at the bootstrap vault, and
-	// ocfp_configure, neither of which genesis-only mode touches at all.
-	if le.genesisOnlyRequested() {
-		le.log.Info("Genesis-only mode: updating Genesis without running the full local phase list")
-
-		return manager.runGenesisOnlyMode(ctx)
-	}
-
-	// Execute local initialization
-	return le.executeLocalPhases(ctx, manager)
+	return le.run(ctx, manager)
 }
 
-// genesisOnlyRequested reports whether this run was asked to touch Genesis
-// alone. Options are nil for callers that take every default, so the nil check
-// is load-bearing rather than defensive.
-func (le *LocalExecutor) genesisOnlyRequested() bool {
-	return le.options != nil && le.options.GenesisOnly
+// run takes the narrow mode the options ask for, or the full local phase
+// list when they ask for none. A narrow flag is asked for to narrow the work,
+// and this path used to ignore every one of them and run the full list, so
+// `--genesis` re-ran vault_inception, which repoints safe at the bootstrap
+// vault, and ocfp_configure, and `--ocfp` and `--config` did the same.
+func (le *LocalExecutor) run(ctx context.Context, manager *Manager) error {
+	if name, narrow := manager.narrowMode(true); narrow != nil {
+		le.log.Infow("Running one narrow mode instead of the full local phase list", "mode", name)
+
+		return narrow(ctx)
+	}
+
+	return le.executeLocalPhases(ctx, manager)
 }
 
 // executeLocalPhases executes initialization phases locally.
