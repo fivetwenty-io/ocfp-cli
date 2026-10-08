@@ -595,17 +595,22 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 }
 
 // inceptionActiveSnippet decides whether the inception vault is still the
-// bloc's source of truth. The inception vault exists only to bootstrap a bloc:
-// it is torn down at the end of every init, and it holds nothing once the
+// bloc's source of truth. The inception vault exists only to bootstrap a bloc.
+// It is torn down at the end of every init, and it holds nothing once the
 // bloc's own vault is up. Genesis 3.2 fails hard when a configured
 // secrets_provider is unreachable, so pointing an established bloc's
 // deployments at it breaks every manifest render and deploy after an init.
 //
-// `safe` is targeted at the inception vault for exactly as long as the bloc is
-// being bootstrapped, which makes the current target the signal to key off.
-// safe reports its target and its target list on stderr, so both streams are
-// read; reading stdout alone never matched and left every deployment without
-// a provider.
+// The decision rests on the bloc's own targets, never on safe's current
+// target, which an operator, another bloc, or ocfp's put-back of the earlier
+// target can move at any time. The bloc vault's <bloc>-mgmt target appears
+// when that vault is deployed, and it wins. Otherwise the bloc's
+// <bloc>-inception target, which exists from vault inception until
+// teardown, marks a bloc that is still being bootstrapped, and its name is
+// matched exactly in 'safe targets --json', so a sibling bloc's inception
+// target never counts. Only when no bloc is named does the current target
+// still decide, as it did before. safe prints its human reports on stderr,
+// so every safe command here is read with 2>&1.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) inceptionActiveSnippet() []string {
@@ -614,19 +619,34 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"    # of every init and empty once the bloc's own vault is up. The bloc",
 		"    # vault's safe target is created when that vault is deployed, so its",
 		"    # existence is what separates a bloc still being bootstrapped from one",
-		"    # already running. Keying off the *current* target is not enough: init",
-		"    # points safe at the inception vault while it works.",
-		"    # safe prints its target report on stderr, hence the 2>&1 below.",
+		"    # already running. Until then, the bloc's own inception target marks",
+		"    # a bloc in bootstrap. safe's *current* target decides nothing for a",
+		"    # named bloc, because anyone can move it, and ocfp puts back whichever",
+		"    # target was current before it restarted the inception vault.",
+		"    # safe prints its target reports on stderr, hence the 2>&1 below.",
+		"    # grep reads all of safe's output rather than quitting at the first",
+		"    # match with -q, so safe never dies of SIGPIPE and fails the pipeline",
+		"    # under pipefail.",
 		"    BLOC_VAULT_TARGET=\"\"",
+		"    BLOC_INCEPTION_TARGET=\"\"",
 		"    if [ -n \"${OCFP_BLOC:-}\" ]; then",
 		"        BLOC_VAULT_TARGET=\"${OCFP_BLOC}-mgmt\"",
+		"        BLOC_INCEPTION_TARGET=\"${OCFP_BLOC}-inception\"",
 		"    fi",
 		"    ",
 		"    CURRENT_VAULT_TARGET=\"$(safe target 2>&1 | sed -n 's/^Currently targeting \\(.*\\) at .*$/\\1/p' | head -n 1)\"",
 		"    INCEPTION_ACTIVE=no",
 		"    INCEPTION_TARGET=\"\"",
-		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>&1 | grep -q \"$BLOC_VAULT_TARGET\"; then",
+		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>&1 | grep \"$BLOC_VAULT_TARGET\" >/dev/null; then",
 		"        log_info \"Bloc vault $BLOC_VAULT_TARGET is authoritative; clearing any inception secrets provider\"",
+		"    elif [ -n \"$BLOC_INCEPTION_TARGET\" ]; then",
+		`        if safe targets --json 2>&1 | grep "\"name\": *\"$BLOC_INCEPTION_TARGET\"" >/dev/null; then`,
+		"            INCEPTION_ACTIVE=yes",
+		"            INCEPTION_TARGET=\"$BLOC_INCEPTION_TARGET\"",
+		"            log_info \"Inception vault $INCEPTION_TARGET is still registered; configuring deployments to use it\"",
+		"        else",
+		"            log_info 'No bloc vault or inception target found; leaving deployments on the system-targeted vault'",
+		"        fi",
 		"    elif printf '%s\\n' \"$CURRENT_VAULT_TARGET\" | grep -q 'inception'; then",
 		"        INCEPTION_ACTIVE=yes",
 		"        INCEPTION_TARGET=\"$CURRENT_VAULT_TARGET\"",
