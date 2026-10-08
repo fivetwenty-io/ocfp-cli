@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ func newMigrateStorageSteps(tools inceptionTools) migrateStorageSteps {
 			return migrateFileVaultToRaft(ctx, paths, tools, log)
 		},
 		canMigrate: func(ctx context.Context) error {
-			return checkEngineCanMigrate(ctx, tools.engine)
+			return checkEngineCanMigrateFileStorage(ctx, tools.engine)
 		},
 		engine: tools.engine,
 		engineVersion: func(ctx context.Context) string {
@@ -65,8 +66,75 @@ func newMigrateStorageSteps(tools inceptionTools) migrateStorageSteps {
 	}
 }
 
+// openBaoVersionPrefix starts the version line of every OpenBao build, even
+// one installed under the name vault.
+const openBaoVersionPrefix = "OpenBao v"
+
+// The first OpenBao release that cannot read file storage is 2.8.
+const (
+	openBaoNoFileStorageMajor = 2
+	openBaoNoFileStorageMinor = 8
+)
+
+// checkEngineCanMigrateFileStorage reports why the engine cannot migrate a
+// file-storage vault, if it cannot. The engine needs 'operator migrate', and
+// it must still read file storage, which OpenBao 2.8 and later do not. The
+// second check reads the version the engine reports, because the copy is
+// the only other step that finds out, and it runs after the vault is
+// stopped. An engine whose version cannot be read is not refused here, and
+// the copy still refuses it without touching the file store.
+func checkEngineCanMigrateFileStorage(ctx context.Context, engine inceptionEngine) error {
+	err := checkEngineCanMigrate(ctx, engine)
+	if err != nil {
+		return err
+	}
+
+	version := inceptionEngineVersion(ctx, engine)
+	if !engineVersionDropsFileStorage(version) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %s reports %s, and OpenBao 2.8 and later cannot read file storage; point %s and "+
+		"PATH at HashiCorp Vault or at OpenBao 2.7 or earlier to migrate it, and nothing was stopped or changed",
+		ErrEngineCannotReadFile, engine.path, version, safeEngineEnvVar)
+}
+
+// engineVersionDropsFileStorage reports whether a version line names an
+// OpenBao release of 2.8 or later. A line it cannot read reports false.
+func engineVersionDropsFileStorage(version string) bool {
+	rest, isOpenBao := strings.CutPrefix(version, openBaoVersionPrefix)
+	if !isOpenBao {
+		return false
+	}
+
+	majorText, rest, found := strings.Cut(rest, ".")
+	if !found {
+		return false
+	}
+
+	// The minor number may run straight into a pre-release tag, as in 2.8-rc1.
+	minorText := rest[:len(rest)-len(strings.TrimLeft(rest, "0123456789"))]
+
+	major, err := strconv.Atoi(majorText)
+	if err != nil {
+		return false
+	}
+
+	minor, err := strconv.Atoi(minorText)
+	if err != nil {
+		return false
+	}
+
+	return major > openBaoNoFileStorageMajor ||
+		(major == openBaoNoFileStorageMajor && minor >= openBaoNoFileStorageMinor)
+}
+
+// engineVersionUnknown stands for the version of an engine that does not say
+// what it is.
+const engineVersionUnknown = "version unknown"
+
 // inceptionEngineVersion returns the first line of '<engine> version', or
-// "version unknown" when the engine does not say.
+// engineVersionUnknown when the engine does not say.
 func inceptionEngineVersion(ctx context.Context, engine inceptionEngine) string {
 	ctx, cancel := context.WithTimeout(ctx, engineVersionTimeout)
 	defer cancel()
@@ -75,7 +143,7 @@ func inceptionEngineVersion(ctx context.Context, engine inceptionEngine) string 
 	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 
 	if err != nil || line == "" {
-		return "version unknown"
+		return engineVersionUnknown
 	}
 
 	return strings.TrimSpace(line)
@@ -174,12 +242,13 @@ type migrateStorageRun struct {
 // stranger, or a vault this bloc cannot prove is its own, on the API port,
 // data that is mixed or missing, a key file that is missing, empty, or
 // shared, an open vault that does not take the token in root.key, an engine
-// without 'operator migrate', and a cluster port in use while the vault is
-// stopped. A vault already on raft storage is left as it is. Otherwise the
-// port is probed again, and nothing is stopped when what answers is not this
-// bloc's own. The key files get vault start's value-preserving repairs, an
-// open vault must have both keys saved in a valid shape, and the root token
-// in safe's target is kept before the stop.
+// without 'operator migrate' or one whose version cannot read file storage,
+// and a cluster port in use while the vault is stopped. A vault already on
+// raft storage is left as it is. Otherwise the port is probed again, and
+// nothing is stopped when what answers is not this bloc's own. The key files
+// get vault start's value-preserving repairs, an open vault must have both
+// keys saved in a valid shape, and the root token in safe's target is kept
+// before the stop.
 // The vault is then stopped and migrated with node_id safe-local, and
 // restarted by vault start's restart. When the engine refuses a key after
 // the migration, what was started is stopped and the run refuses, naming
@@ -610,14 +679,15 @@ func reportInceptionVaultStorage(ctx context.Context, run *migrateStorageRun) er
 // reportLines describes, one line each, what the dry run found.
 func (run *migrateStorageRun) reportLines(ctx context.Context, found *migrateStorageFindings) []string {
 	paths := run.paths
+	version := run.steps.engineVersion(ctx)
 
 	lines := []string{
 		"data: " + paths["vaultDir"] + " (" + describeVaultData(found.data) + ")",
 		"journal: " + describeJournal(paths, found.journal),
 		"root token: " + paths["rootKeyFile"] + " (" + describeRootKey(found) + ")",
 		"unseal key: " + paths["unsealKeysFile"] + " (" + describeKey(found, found.unsealKey) + ")",
-		fmt.Sprintf("engine: %s at %s, %s", run.steps.engine.name, run.steps.engine.path, run.steps.engineVersion(ctx)),
-		"can migrate: " + describeCanMigrate(found),
+		fmt.Sprintf("engine: %s at %s, %s", run.steps.engine.name, run.steps.engine.path, version),
+		"can migrate: " + describeCanMigrate(found, version),
 		"API port: " + paths["port"] + ", " + describePort(found),
 		"tmux session: " + paths["tmuxSession"] + " (" + describeSession(ctx, run, paths) + ")",
 		"cluster port: " + paths["clusterPort"] + ", " + describeClusterPort(found),
@@ -691,15 +761,22 @@ func describeRootKey(found *migrateStorageFindings) string {
 	}
 }
 
-func describeCanMigrate(found *migrateStorageFindings) string {
+// describeCanMigrate says whether the engine can migrate. An engine whose
+// version cannot be read is not refused, because the version check exists
+// only to refuse the releases known to drop file storage, so the report says
+// a real run will try and that the copy is the step that finds out.
+func describeCanMigrate(found *migrateStorageFindings, version string) string {
 	switch {
 	case !found.canMigrateChecked:
 		return "not needed"
 	case found.canMigrateErr != nil:
 		return "no, " + found.canMigrateErr.Error()
+	case version == engineVersionUnknown:
+		return "it has 'operator migrate', but ocfp cannot read its version, so a real run will try the copy, " +
+			"and an engine that cannot read file storage then fails the copy and leaves the vault stopped on its unchanged file store"
 	default:
-		return "yes, it has 'operator migrate'; an engine that cannot read file storage, such as OpenBao 2.8 " +
-			"and later, fails only during the copy, after the stop"
+		return "yes, it has 'operator migrate', and its version is not OpenBao 2.8 or later, " +
+			"which cannot read file storage"
 	}
 }
 
@@ -809,8 +886,11 @@ and the tmux session all stay where they were.
   - Every check that can refuse runs before anything is stopped. The command
     refuses when the bloc has no vault data or has both file and raft data,
     when either key file is missing, empty, or shared with the other, when
-    the engine has no 'operator migrate', and when the cluster port is in
-    use.
+    the engine has no 'operator migrate' or reports a version that cannot
+    read file storage, as OpenBao 2.8 and later cannot, and when the cluster
+    port is in use. An engine whose version cannot be read is not refused,
+    so the copy is the step that finds out, and a failed copy leaves the
+    vault stopped on its unchanged file store.
   - The command stops a running vault only when it can prove that the vault
     is this bloc's own, which for file storage means that it runs under the
     bloc's tmux session. It refuses a vault that was started by hand outside
