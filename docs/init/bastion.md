@@ -19,9 +19,34 @@ ocfp --bloc <bloc-name> init bastion [flags]
 ```
 
 ### Flags
-- `--dry-run`: Show what would be installed without making changes
-- `--force`: Force re-initialization even if already provisioned
-- `--skip-verification`: Skip post-installation verification steps
+
+| Flag | What it does |
+|------|--------------|
+| `--dry-run` | Logs what each phase would do and changes nothing. |
+| `--force` | Skips the confirmation prompt and reinstalls the ocfp CLI even when the bastion already has the wanted version. A full init run from a workstation still skips a bastion that has the provisioned marker. |
+| `--resume` | Skips the phases that an earlier run finished. |
+| `--parallel` | Runs independent phases in parallel. |
+| `--verbose` | Logs in more detail. |
+| `--reboot` | Reboots the bastion after a full init succeeds. |
+| `--skip-checks` | Skips the prerequisite checks. |
+| `--secrets-backend` | Chooses `openbao`, the default, or `vault` for the genesis secrets deployment. |
+| `--genesis`, `--ocfp`, `--config` | Each one runs a single narrow mode, as the next section describes. |
+
+### Narrow modes
+
+Each narrow flag runs one piece of init instead of the full phase list, and init refuses more than one of them at a time. A narrow mode runs before init looks for the provisioned marker, so it works on a bastion that init has already provisioned. It does the same work whether we run it from a workstation or on the bastion itself, with one exception for `--config`. The narrow modes ignore `--reboot` and `--resume`.
+
+- `--genesis`
+
+  Installs or updates Genesis and writes its configuration file.
+
+- `--ocfp`
+
+  Installs or updates the ocfp CLI at `/usr/local/bin/ocfp`, exactly as the `ocfp_cli_setup` phase does, and any failure to install it fails the run. With `--force` it reinstalls the CLI even when the bastion already has the wanted version.
+
+- `--config`
+
+  Copies the workstation's ocfp configuration files to the bastion. On the bastion itself there is no workstation config to copy, so the command fails with a message that says so, and we run it from the workstation instead.
 
 ## Installation Phases
 
