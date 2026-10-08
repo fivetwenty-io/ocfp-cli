@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -184,7 +185,13 @@ in that case so nothing is lost.
 The command refuses to run when OCFP_HOME is set, since that variable is
 an explicit request for the legacy flat layout. It also refuses to run
 while another ocfp command is still running, because that command's lock
-and log files are among the things being moved.
+and log files are among the things being moved, and while any bloc it would
+move still has its inception vault running, because moving the bloc's
+directory would pull the vault's data and keys out from under it. It checks
+each bloc's vault API port and tmux session, even on a dry run, and names
+every bloc that is up. Stop each vault with 'tmux kill-session -t
+<bloc>-inception-vault', migrate, and then bring the vault back with
+'ocfp vault start --bloc <bloc>'.
 
 Destination directories that already exist are merged: ordinary ocfp use
 writes command locks and per-bloc logs under the XDG state directory long
@@ -243,6 +250,16 @@ func runMigrate(dryRun bool) error {
 		_, _ = fmt.Fprintf(os.Stdout, "nothing to migrate: %s is empty\n", legacyDir)
 
 		return nil
+	}
+
+	// A running inception vault keeps its data and keys open inside the
+	// bloc directory, so no bloc moves while its vault is up. This check
+	// only reads, so it runs on a dry run too, and it runs before the
+	// live-process guard below so that a refusal changes nothing on disk,
+	// not even a stale lock.
+	err = refuseIfBlocVaultsRunning(context.Background(), plan, migrateVaultProbes)
+	if err != nil {
+		return err
 	}
 
 	// The guard runs before the conflict check and before the plan is
