@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -606,15 +607,15 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 // target can move at any time. The bloc vault's <bloc>-mgmt target appears
 // when that vault is deployed, and it wins. Otherwise the bloc's
 // <bloc>-inception target, which exists from vault inception until
-// teardown, marks a bloc that is still being bootstrapped, and its name is
-// matched exactly in 'safe targets --json', so a sibling bloc's inception
-// target never counts. Only when no bloc is named does the current target
+// teardown, marks a bloc that is still being bootstrapped. Both names are
+// matched exactly in 'safe targets --json', so a sibling bloc's target
+// never counts. Only when no bloc is named does the current target
 // still decide, as it did before. safe prints its human reports on stderr,
 // so every safe command here is read with 2>&1.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) inceptionActiveSnippet() []string {
-	return []string{
+	return slices.Concat(om.currentSafeTargetSnippet(), []string{
 		"    # The inception vault is a bootstrap-only store, torn down at the end",
 		"    # of every init and empty once the bloc's own vault is up. The bloc",
 		"    # vault's safe target is created when that vault is deployed, so its",
@@ -634,23 +635,17 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"        BLOC_INCEPTION_TARGET=\"${OCFP_BLOC}-inception\"",
 		"    fi",
 		"    ",
-		"    # Prints the name of safe's current target, or nothing. It never fails:",
-		"    # 'safe target' exits non-zero when the rc file names a target that is",
-		"    # gone, when the rc file can't be parsed, when SAFE_TARGET names an",
-		"    # unknown target, and when safe isn't installed, and a failing command",
-		"    # substitution would end this phase under set -e. SAFE_TARGET is",
-		"    # dropped so the rc file's own current target is the one reported.",
-		"    ocfp_current_safe_target() {",
-		"        local report",
-		"        report=\"$(env -u SAFE_TARGET safe target 2>&1)\" || return 0",
-		"        printf '%s\\n' \"$report\" | sed -n 's/^Currently targeting \\(.*\\) at .*$/\\1/p' | head -n 1 || true",
+		"    # Matches a target by its whole name, as a fixed string, so a bloc name's",
+		"    # dots and stars match only themselves and never another bloc's target.",
+		"    ocfp_safe_has_target() {",
+		"        safe targets --json 2>&1 | sed -n 's/^ *\"name\": *\"\\(.*\\)\",\\{0,1\\} *$/\\1/p' | grep -Fx -- \"$1\" >/dev/null",
 		"    }",
 		"    INCEPTION_ACTIVE=no",
 		"    INCEPTION_TARGET=\"\"",
-		"    if [ -n \"$BLOC_VAULT_TARGET\" ] && safe targets 2>&1 | grep \"$BLOC_VAULT_TARGET\" >/dev/null; then",
+		`    if [ -n "$BLOC_VAULT_TARGET" ] && ocfp_safe_has_target "$BLOC_VAULT_TARGET"; then`,
 		"        log_info \"Bloc vault $BLOC_VAULT_TARGET is authoritative; clearing any inception secrets provider\"",
 		"    elif [ -n \"$BLOC_INCEPTION_TARGET\" ]; then",
-		`        if safe targets --json 2>&1 | grep "\"name\": *\"$BLOC_INCEPTION_TARGET\"" >/dev/null; then`,
+		`        if ocfp_safe_has_target "$BLOC_INCEPTION_TARGET"; then`,
 		"            INCEPTION_ACTIVE=yes",
 		"            INCEPTION_TARGET=\"$BLOC_INCEPTION_TARGET\"",
 		"            log_info \"Inception vault $INCEPTION_TARGET is still registered; configuring deployments to use it\"",
@@ -672,6 +667,27 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"        esac",
 		"    fi",
 		"    ",
+	})
+}
+
+// currentSafeTargetSnippet defines ocfp_current_safe_target. Both the gate
+// and the restore emit it, so neither depends on the other having run
+// first, and defining the same function twice in one script is harmless.
+//
+//nolint:funcorder // helper placed after the exported method that uses it
+func (om *OCFPManager) currentSafeTargetSnippet() []string {
+	return []string{
+		"    # Prints the name of safe's current target, or nothing. It never fails:",
+		"    # 'safe target' exits non-zero when the rc file names a target that is",
+		"    # gone, when the rc file can't be parsed, when SAFE_TARGET names an",
+		"    # unknown target, and when safe isn't installed, and a failing command",
+		"    # substitution would end this phase under set -e. SAFE_TARGET is",
+		"    # dropped so the rc file's own current target is the one reported.",
+		"    ocfp_current_safe_target() {",
+		"        local report",
+		"        report=\"$(env -u SAFE_TARGET safe target 2>&1)\" || return 0",
+		"        printf '%s\\n' \"$report\" | sed -n 's/^Currently targeting \\(.*\\) at .*$/\\1/p' | head -n 1 || true",
+		"    }",
 	}
 }
 
@@ -679,13 +695,15 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 // inception work is done. Init targets safe at the inception vault while it
 // bootstraps, and nothing else moves it back, so an established bloc would be
 // left pointing at a torn-down, empty vault: every later genesis command then
-// reports its secrets as missing.
+// reports its secrets as missing. It defines the helper function it needs, and
+// it reads BLOC_VAULT_TARGET and INCEPTION_ACTIVE, which the gate sets.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
-	return []string{
+	return slices.Concat(om.currentSafeTargetSnippet(), []string{
 		"    if [ \"$INCEPTION_ACTIVE\" != yes ] && [ -n \"$BLOC_VAULT_TARGET\" ]; then",
-		"        if safe target 2>&1 | grep -q \"$BLOC_VAULT_TARGET\"; then",
+		"        RESTORE_CURRENT_TARGET=\"$(ocfp_current_safe_target)\"",
+		"        if [ \"$RESTORE_CURRENT_TARGET\" = \"$BLOC_VAULT_TARGET\" ]; then",
 		"            log_info \"safe already targets $BLOC_VAULT_TARGET\"",
 		"        elif safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
 		"            log_success \"Restored safe target to $BLOC_VAULT_TARGET\"",
@@ -694,7 +712,7 @@ func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
 		"        fi",
 		"    fi",
 		"    ",
-	}
+	})
 }
 
 // secretsProviderClearSnippet removes the deployment's secrets_provider block so
