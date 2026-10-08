@@ -378,7 +378,7 @@ const previousVaultLogSuffix = ".previous"
 
 // setAsidePreviousVaultLog moves the last run's log to <log>.previous before
 // a start. The wait reads the log, and the last run's "Now targeting" would
-// pass for ready, while its rejected-token line would archive a vault whose
+// pass for ready, while its rejected-token line would refuse a vault whose
 // keys are fine.
 //
 // A log can hold the only copy of a new vault's unseal key, and the log sits
@@ -493,10 +493,10 @@ func recoverInceptionKeys(ctx context.Context, paths map[string]string, log *zap
 
 // repairUnsealKeyFile restores a whole unseal key to a key file that holds
 // only the start of one, the way older captures of a tmux pane cut the key
-// at the pane's edge. The engine would refuse the cut key and the vault would
-// be archived while its real key still sat in safe's output, so the key file
-// is repaired from that output before anything starts: the tee'd log, the
-// logs of the runs before it, and the pane's history.
+// at the pane's edge. The engine would refuse the cut key and the run would
+// refuse the vault while its real key still sat in safe's output, so the key
+// file is repaired from that output before anything starts: the tee'd log,
+// the logs of the runs before it, and the pane's history.
 //
 // Only a key that begins with what the file holds is taken, so a key from
 // some other vault is never written. When none is found, the disk is left
@@ -562,8 +562,8 @@ func repairUnsealKeyFile(ctx context.Context, paths map[string]string, log *zap.
 // key, but whose bytes are not exactly that key and a newline. safe reads only
 // the first line of what it is fed and strips only the line ending, so a key
 // behind a blank line or beside a stray space reaches the engine as a key it
-// refuses, and a refused key archives the vault. A file already in that form
-// is left untouched.
+// refuses, and a refused key makes the run refuse the vault. A file already
+// in that form is left untouched.
 func canonicalizeKeyFile(keyFile string, data []byte, key string, log *zap.SugaredLogger) error {
 	if string(data) == key+"\n" {
 		return nil

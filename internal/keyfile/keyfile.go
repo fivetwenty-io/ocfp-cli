@@ -342,7 +342,7 @@ func PreserveTargetToken(rootKeyFile, vaultName, token string, now time.Time, lo
 // keepTokenCopy keeps the target's token beside root.key, reusing a copy an
 // earlier run kept when it holds the same token.
 func keepTokenCopy(rootKeyFile, vaultName, token string, now time.Time, log *zap.SugaredLogger) (string, error) {
-	existing, err := keptTokenCopies(rootKeyFile)
+	existing, err := KeptTokenCopies(rootKeyFile)
 	if err != nil {
 		return "", err
 	}
@@ -367,8 +367,9 @@ func keepTokenCopy(rootKeyFile, vaultName, token string, now time.Time, log *zap
 	return kept, nil
 }
 
-// keptTokenCopies lists the copies of safe's token kept beside root.key.
-func keptTokenCopies(rootKeyFile string) ([]string, error) {
+// KeptTokenCopies lists the copies of safe's token kept beside root.key,
+// sorted by name, so the newest timestamp comes last.
+func KeptTokenCopies(rootKeyFile string) ([]string, error) {
 	dir := filepath.Dir(rootKeyFile)
 
 	entries, err := os.ReadDir(dir)
