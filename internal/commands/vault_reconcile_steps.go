@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,10 +43,11 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		finish: func(ctx context.Context, paths map[string]string, mode safeLocalMode, log *zap.SugaredLogger) error {
 			return finishInceptionVault(ctx, tools.safe, paths, mode, log)
 		},
-		migrate:        migrateFileVaultToRaft,
-		recoverKeys:    recoverInceptionKeys,
-		targetToken:    blocTargetToken,
-		rootTokenWorks: checkInceptionRootToken,
+		migrate:          migrateFileVaultToRaft,
+		recoverKeys:      recoverInceptionKeys,
+		targetToken:      blocTargetToken,
+		rootTokenWorks:   checkInceptionRootToken,
+		targetTokenWorks: checkInceptionTargetToken,
 		canMigrate: func(ctx context.Context) error {
 			return checkEngineCanMigrateFileStorage(ctx, tools.engine)
 		},
@@ -826,4 +829,53 @@ func vaultPaneHistory(ctx context.Context, paths map[string]string) string {
 // "" unless that target exists and points at the bloc's port.
 func blocTargetToken(paths map[string]string) string {
 	return keyfile.TargetToken(paths["vaultName"], paths["port"])
+}
+
+// ErrInceptionTargetTokenRefused reports a running inception vault that does
+// not take the token safe's target holds for the bloc.
+var ErrInceptionTargetTokenRefused = errors.New("the running inception vault refuses the token safe's target holds")
+
+// checkInceptionTargetToken asks the bloc's running vault whether it takes
+// token, the one safe's target holds for the bloc.
+func checkInceptionTargetToken(ctx context.Context, paths map[string]string, token string) error {
+	return checkInceptionTargetTokenWith(ctx, http.DefaultClient, "http://127.0.0.1:"+paths["port"],
+		paths["vaultName"], token)
+}
+
+// checkInceptionTargetTokenWith asks the vault at addr to look up token, which
+// safe's target named target holds. It answers as checkInceptionRootTokenWith
+// does for root.key: the token travels only in the request header, no error
+// quotes it, a vault that answers 401 or 403 refuses it, and any other
+// answer, or none, leaves the question open, which is an error of its own.
+func checkInceptionTargetTokenWith(ctx context.Context, client *http.Client, addr, target, token string) error {
+	ctx, cancel := context.WithTimeout(ctx, vaultHealthCheckTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/v1/auth/token/lookup-self", nil)
+	if err != nil {
+		return fmt.Errorf("cannot ask the vault at %s whether it takes the token safe's target %s holds: %w",
+			addr, target, err)
+	}
+
+	req.Header.Set("X-Vault-Token", token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cannot ask the vault at %s whether it takes the token safe's target %s holds: %w",
+			addr, target, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultProbeBodyLimit))
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("%w: %s", ErrInceptionTargetTokenRefused, target)
+	default:
+		return fmt.Errorf("cannot tell whether the vault at %s takes the token safe's target %s holds, "+
+			"because it answered %s", addr, target, resp.Status)
+	}
 }
