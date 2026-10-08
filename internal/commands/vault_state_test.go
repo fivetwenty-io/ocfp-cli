@@ -87,3 +87,30 @@ func TestVaultDataState_String(t *testing.T) {
 	assert.Equal(t, "raft", vaultDataRaft.String())
 	assert.Equal(t, "mixed", vaultDataMixed.String())
 }
+
+// A data directory that is a link to nothing, such as one on a disk that is
+// not mounted, or that is not a directory at all, cannot be examined. It is
+// not proof that the bloc has no data, so it is never reported as absent.
+func TestClassifyVaultData_DataThatIsNotADirectoryIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, make := range map[string]func(t *testing.T, dir string){
+		"dangling link": func(t *testing.T, dir string) {
+			t.Helper()
+			require.NoError(t, os.Symlink(filepath.Join(filepath.Dir(dir), "unmounted", "data"), dir))
+		},
+		"regular file": func(t *testing.T, dir string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(dir, []byte("x"), 0o600))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := filepath.Join(t.TempDir(), "data")
+			make(t, dir)
+
+			assert.Equal(t, vaultDataMixed, classifyVaultData(dir))
+		})
+	}
+}

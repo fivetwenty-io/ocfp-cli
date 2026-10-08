@@ -280,6 +280,17 @@ func treeDigest(t *testing.T, dir string) map[string]string {
 			return nil
 		}
 
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+
+			digest[rel] = "link to " + target
+
+			return nil
+		}
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -2130,4 +2141,25 @@ func TestReconcile_RaftVaultNeverChecksTheEngineMigration(t *testing.T) {
 
 	require.NoError(t, runReconcile(t, paths, fake))
 	assert.NotContains(t, fake.calls, "can-migrate")
+}
+
+// A data directory that is a link to a disk that is not mounted looks like
+// no data at all, but the keys beside it still open the vault on that disk.
+// The run refuses and changes nothing rather than archiving the keys and
+// starting a new vault.
+func TestReconcile_DanglingDataLinkRefusesAndKeepsTheKeys(t *testing.T) {
+	paths := reconcilePaths(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(paths["vaultDir"]), 0o700))
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "unmounted", "data"), paths["vaultDir"]))
+	writeKeys(t, paths, true, true)
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrVaultDataMixed)
+	assert.Contains(t, err.Error(), "cannot examine")
+	assert.NotContains(t, fake.calls, "stop")
+	assert.Empty(t, archivesOf(t, paths))
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
 }
