@@ -80,6 +80,7 @@ type initFlags struct {
 	ocfpOnly       bool
 	configOnly     bool
 	genesisOnly    bool
+	vaultBootUnit  bool
 	reboot         bool
 	secretsBackend string
 }
@@ -95,6 +96,8 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
 	cmd.Flags().BoolVar(&f.configOnly, "config", false, "only copy the workstation's configuration files to the bastion (for bastion init, run from the workstation)")
 	cmd.Flags().BoolVar(&f.genesisOnly, "genesis", false, "only install/update Genesis and related components (for bastion init)")
+	cmd.Flags().BoolVar(&f.vaultBootUnit, "vault-boot-unit", false,
+		"only install and enable the inception vault boot unit (for bastion init, also on a provisioned bastion)")
 	cmd.Flags().BoolVar(&f.reboot, "reboot", false, "reboot bastion after successful initialization (applies updates)")
 	cmd.Flags().StringVar(&f.secretsBackend, "secrets-backend", "", "genesis secrets deployment backend: openbao (default) or vault")
 }
@@ -102,17 +105,18 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 // bindViperFlags binds flags to viper.
 func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 	bindFlagsToViper(cmd, map[string]string{
-		"init.force":        "force",
-		"init.skip_checks":  "skip-checks",
-		"init.parallel":     "parallel",
-		"init.dry_run":      "dry-run",
-		"init.resume":       "resume",
-		"init.verbose":      "verbose",
-		"init.ocfp_only":    "ocfp",
-		"init.config_only":  "config",
-		"init.genesis_only": "genesis",
-		"init.reboot":       "reboot",
-		"secrets_backend":   "secrets-backend",
+		"init.force":                "force",
+		"init.skip_checks":          "skip-checks",
+		"init.parallel":             "parallel",
+		"init.dry_run":              "dry-run",
+		"init.resume":               "resume",
+		"init.verbose":              "verbose",
+		"init.ocfp_only":            "ocfp",
+		"init.config_only":          "config",
+		"init.genesis_only":         "genesis",
+		"init.vault_boot_unit_only": "vault-boot-unit",
+		"init.reboot":               "reboot",
+		"secrets_backend":           "secrets-backend",
 	})
 
 	_ = viper.BindEnv("secrets_backend", "OCFP_SECRETS_BACKEND")
@@ -166,6 +170,7 @@ func (f *initFlags) validateModeFlags() error {
 		{"genesis", f.genesisOnly},
 		{"ocfp", f.ocfpOnly},
 		{"config", f.configOnly},
+		{"vault-boot-unit", f.vaultBootUnit},
 	}
 
 	var activeModes []string
@@ -274,6 +279,10 @@ func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Comman
 			return initializeBastionConfigOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
 		}
 
+		if f.vaultBootUnit {
+			return initializeBastionVaultBootUnitOnly(ctx, cfg, f.force, f.dryRun, f.verbose)
+		}
+
 		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
@@ -330,6 +339,9 @@ Bastion Initialization Modes (at most one):
   --ocfp     - Install/update only OCFP CLI binary
   --config   - Copy only the workstation's configuration files to the bastion
                (refused when run on the bastion, which has none to copy)
+  --vault-boot-unit
+             - Install and enable only the inception vault's boot unit
+               (ocfp-vault@<bloc>.service), without starting it
   (default)  - Full bastion initialization with all components
 
 A mode runs on an already provisioned bastion too, and every mode except
@@ -365,6 +377,9 @@ func getInitExamples() string {
 
   # Sync configuration files to bastion only (fast, ~1-5 seconds)
   ocfp init bastion --config
+
+  # Install the inception vault boot unit on an already provisioned bastion
+  ocfp init bastion --vault-boot-unit
 
   # Force initialization, skipping confirmation
   ocfp init all --force
@@ -1008,6 +1023,38 @@ func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force,
 	_, _ = fmt.Fprintf(os.Stdout, "✅ Configuration sync completed successfully\n\n")
 
 	log.Info("Configuration sync completed successfully")
+
+	return nil
+}
+
+// initializeBastionVaultBootUnitOnly installs and enables the inception
+// vault's boot unit and does nothing else. It runs on a provisioned bastion
+// too, because that is where a unit added after provisioning is missing.
+func initializeBastionVaultBootUnitOnly(ctx context.Context, cfg *config.Config, force, dryRun, verbose bool) error {
+	log := logger.Get()
+	log.Info("Installing the inception vault boot unit only")
+
+	_, _ = fmt.Fprintf(os.Stdout, "\n🔧 Installing the inception vault boot unit...\n")
+
+	options := &bastion.ProvisioningOptions{
+		DryRun:            dryRun,
+		Force:             force,
+		Verbose:           verbose,
+		MaxWorkers:        DefaultMaxWorkers,
+		ProgressOut:       os.Stdout,
+		VaultBootUnitOnly: true,
+	}
+
+	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, "❌ Vault boot unit install failed: %v\n\n", err)
+
+		return fmt.Errorf("vault boot unit install failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "✅ Vault boot unit installed and enabled\n\n")
+
+	log.Info("Vault boot unit installed and enabled")
 
 	return nil
 }

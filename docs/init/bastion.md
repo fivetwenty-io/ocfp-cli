@@ -30,7 +30,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 | `--reboot` | Reboots the bastion after a full init succeeds. |
 | `--skip-checks` | Skips the prerequisite checks. |
 | `--secrets-backend` | Chooses `openbao`, the default, or `vault` for the genesis secrets deployment. |
-| `--genesis`, `--ocfp`, `--config` | Each one runs a single narrow mode, as the next section describes. |
+| `--genesis`, `--ocfp`, `--config`, `--vault-boot-unit` | Each one runs a single narrow mode, as the next section describes. |
 
 ### Narrow modes
 
@@ -47,6 +47,10 @@ Each narrow flag runs one piece of init instead of the full phase list, and init
 - `--config`
 
   Copies the workstation's ocfp configuration files to the bastion. On the bastion itself there is no workstation config to copy, so the command fails with a message that says so, and we run it from the workstation instead.
+
+- `--vault-boot-unit`
+
+  Runs only the `vault_boot_unit` phase, which installs and enables the systemd unit that brings the inception vault back after a reboot. It's the mode for a bastion that init provisioned before the unit existed, and it doesn't start or restart the vault. With `--dry-run` it logs the unit it would install and changes nothing, and `--force` only skips the confirmation prompt, because the install is the same on every run.
 
 ## Installation Phases
 
@@ -371,6 +375,8 @@ The `genesis-secrets-providers` phase then wires each repository to a vault. Whi
 The `vault_boot_unit` phase runs right before `vault_inception` and installs the systemd unit that brings the bloc's inception vault back after the bastion reboots. It first checks that `/usr/local/bin/ocfp` has `ocfp vault start`, and it fails the init when it does not. It then writes the template to `/etc/systemd/system/ocfp-vault@.service` and the bloc's drop-in to `/etc/systemd/system/ocfp-vault@<bloc>.service.d/operator.conf`, checks both with `systemd-analyze verify` when that command is installed, reloads systemd, and enables the bloc's instance, `ocfp-vault@<bloc>.service`. It does not start the instance, because `vault_inception` is what starts the vault during init. The phase uses passwordless sudo, as the other system phases do, and it fails the init when the unit cannot be installed or enabled. A dry run logs what it would install and changes nothing.
 
 The unit is a system unit that runs as the user that bastion init connects as. The template names no user, and the bloc's drop-in names that user and its home, so each bloc on a bastion can run as its own operator. It waits for `ocfp-dataset.service`, which mounts the operator's home from the data disk on a PVE bastion, and for the network. At boot it runs `ocfp vault start --bloc <bloc>` once, and only when the bloc's `unseal.keys` exists. That command reopens the existing vault with its saved keys or refuses, and it never archives a vault or starts a new one. `ocfp vault teardown` disables the unit after it has archived the vault, and it leaves the drop-in in place.
+
+A bastion that init provisioned before this phase existed doesn't have the unit, and a full init run from a workstation skips that bastion because of its provisioned marker. We install the unit there with `ocfp init bastion --vault-boot-unit`, either from the workstation or on the bastion itself, and it runs this phase and nothing else.
 
 We check the unit with `systemctl status ocfp-vault@<bloc>.service`, and we read the last boot's run with `journalctl -b -u ocfp-vault@<bloc>.service`. [The Inception Vault](../inception-vault.md) describes what `ocfp vault start` does in each case, the unit's settings, and each error the command can return.
 
